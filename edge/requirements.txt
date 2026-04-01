@@ -1,0 +1,25 @@
+# TimeLapse Pro — Edge Agent Dependencies
+# Install: pip install -r requirements.txt
+
+# Core
+pyyaml>=6.0
+requests>=2.31.0
+paramiko>=3.3.0
+
+# Image quality (CPU-only build — no GPU/CUDA required)
+opencv-python-headless>=4.8.0
+
+# Scheduling & timezone support
+# (zoneinfo is stdlib in Python 3.9+, backport for older)
+# tzdata>=2024.1  # uncomment if zoneinfo data not on system
+
+# GPIO (install the appropriate one for your hardware)
+# OPi.GPIO>=0.5.4       # Orange Pi — pip install OPi.GPIO
+# RPi.GPIO>=0.7.1       # Raspberry Pi — pip install RPi.GPIO
+
+# System notifications (optional — for systemd watchdog integration)
+# sdnotify>=0.3.2       # pip install sdnotify
+
+# Development / testing only
+# pytest>=7.4.0
+# pytest-mock>=3.11.0

@@ -1,0 +1,47 @@
+[Unit]
+Description=TimeLapse Pro Edge Agent
+Documentation=https://github.com/yourorg/timelapse-pro
+After=network-online.target time-sync.target
+Wants=network-online.target time-sync.target
+# Do not start until the SSD is mounted
+RequiresMountsFor=/data
+
+[Service]
+Type=notify
+User=timelapse
+Group=timelapse
+WorkingDirectory=/opt/timelapse/edge
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/timelapse/edge
+
+# Main process
+ExecStart=/opt/timelapse/venv/bin/python /opt/timelapse/edge/agent.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy — always restart, even on clean exit
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Watchdog — agent must call sd_notify WATCHDOG=1 every 120s
+# (or systemd will restart it)
+WatchdogSec=120
+NotifyAccess=main
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=timelapse-edge
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/data /opt/timelapse/edge /run/timelapse
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target

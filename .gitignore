@@ -1,0 +1,27 @@
+# Secrets og lokale overrides
+edge/config.yaml
+edge/local_network.yaml
+edge/ssh/
+edge/bootstrap.yaml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Database og temp
+*.db
+*.db-journal
+*.db-wal
+/data/
+
+# Thumbnails og captures
+.thumbs/
+/captures/
+
+# OS
+.DS_Store
+Thumbs.db
+edge/api_token.txt
