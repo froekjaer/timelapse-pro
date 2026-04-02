@@ -120,7 +120,6 @@ class EdgeAgent:
                 debug_cfg = self._cfg.get("debug_mode", {})
 
                 if debug_cfg.get("enabled"):
-                    log.info("DEBUG: entering lab_tick, enabled=%s", debug_cfg.get("enabled"))
                     self._lab_tick(debug_cfg)
                 else:
                     # Reset lab state if switching back to normal
@@ -209,7 +208,6 @@ class EdgeAgent:
         # Check capture schedule
         if self._should_capture(now, mode):
             self._do_capture_cycle()
-            self._sync_captures()
 
         # Heartbeat (every 60 minutes)
         heartbeat_interval = timedelta(minutes=int(
@@ -221,6 +219,7 @@ class EdgeAgent:
 
         # Calculate sleep until next event
         sleep_s = self._seconds_until_next_event(now, mode)
+
         if sleep_s > 60:
             log.info("Sleeping %ds until next capture…", sleep_s)
         time.sleep(min(sleep_s, 60))   # wake at least every 60s to check signals
@@ -536,6 +535,11 @@ class EdgeAgent:
                 if commands:
                     self._driver.apply_initial_commands(commands)
                 log.info("LAB MODE — camera connected and ready")
+                # Signal til headend at kamera er klar
+                try:
+                    self._api._post("/lab/" + self._device_id + "/camera-ready", {"ready": True})
+                except Exception:
+                    pass
             except Exception as exc:
                 log.warning("LAB MODE — camera connect failed: %s", exc)
 
@@ -556,8 +560,6 @@ class EdgeAgent:
                 return
             lab_cmd      = cfg_data.get("lab_command", {})
             pending_params = cfg_data.get("pending_params", [])
-            if lab_cmd:
-                log.info("LAB — command: %s", lab_cmd.get("type"))
 
             # Apply pending parameter changes
             for param in pending_params:
@@ -579,8 +581,8 @@ class EdgeAgent:
                 log.info("LAB — full capture requested")
                 self._do_capture_cycle()
                 self._api.clear_lab_command(self._device_id)
-                # _do_capture_cycle slukker relay — marker til genstart
                 self._lab_relay_on = False
+
             elif cmd_type == "get_params":
                 log.info("LAB — fetching all camera params")
                 try:
@@ -590,8 +592,50 @@ class EdgeAgent:
                 except Exception as exc:
                     log.warning("LAB — get_params failed: %s", exc)
                 self._api.clear_lab_command(self._device_id)
-                # Relay slukkes af _do_capture_cycle — tænd igen
-                self._lab_relay_on = False
+
+            elif cmd_type == "wifi_scan":
+                log.info("LAB — WiFi scan")
+                try:
+                    from diagnostics.wifi import scan, status, list_saved
+                    networks = scan()
+                    current  = status()
+                    saved    = list_saved()
+                    self._api._post("/lab/" + self._device_id + "/wifi/result", {
+                        "type": "scan", "networks": networks,
+                        "current": current, "saved": saved,
+                    })
+                    log.info("LAB — WiFi scan: %d netvaerk", len(networks))
+                except Exception as exc:
+                    log.warning("LAB — WiFi scan failed: %s", exc)
+                self._api.clear_lab_command(self._device_id)
+
+            elif cmd_type == "wifi_connect":
+                ssid     = lab_cmd.get("ssid", "")
+                password = lab_cmd.get("password", "")
+                log.info("LAB — WiFi connect: %s", ssid)
+                try:
+                    from diagnostics.wifi import connect, status
+                    result  = connect(ssid, password)
+                    current = status()
+                    self._api._post("/lab/" + self._device_id + "/wifi/result", {
+                        "type": "connect", "result": result, "current": current,
+                    })
+                except Exception as exc:
+                    log.warning("LAB — WiFi connect failed: %s", exc)
+                self._api.clear_lab_command(self._device_id)
+
+            elif cmd_type == "wifi_forget":
+                ssid = lab_cmd.get("ssid", "")
+                log.info("LAB — WiFi forget: %s", ssid)
+                try:
+                    from diagnostics.wifi import forget
+                    result = forget(ssid)
+                    self._api._post("/lab/" + self._device_id + "/wifi/result", {
+                        "type": "forget", "result": result,
+                    })
+                except Exception as exc:
+                    log.warning("LAB — WiFi forget failed: %s", exc)
+                self._api.clear_lab_command(self._device_id)
 
         time.sleep(poll_s)
 

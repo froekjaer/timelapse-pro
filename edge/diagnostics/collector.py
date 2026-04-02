@@ -70,7 +70,10 @@ class DiagnosticsCollector:
             result["solar_voltage"] = self._solar_voltage()
 
         if "connectivity_type" in self._enabled:
-            result["connectivity_type"] = self._connectivity_type()
+            conn_type = self._connectivity_type()
+            result["connectivity_type"] = conn_type
+            if conn_type == "wifi":
+                result["wifi_ssid"] = self._wifi_ssid()
 
         result["uptime_s"] = self._uptime()
 
@@ -214,6 +217,21 @@ class DiagnosticsCollector:
 
         except Exception:
             return None
+
+    def _wifi_ssid(self) -> Optional[str]:
+        """Get current WiFi SSID."""
+        try:
+            r = subprocess.run(
+                ["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in r.stdout.splitlines():
+                parts = line.split(":")
+                if len(parts) >= 2 and parts[0] == "yes":
+                    return parts[1]
+        except Exception:
+            pass
+        return None
 
     def _uptime(self) -> Optional[int]:
         """Return system uptime in seconds."""
