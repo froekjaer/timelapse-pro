@@ -13,23 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install dependencies
         run: pip install pyflakes
-
-      - name: Syntax check — edge
+      - name: Syntax check edge
         run: |
           python -m py_compile edge/agent.py
           python -m py_compile edge/upload/headend_client.py
           python -m py_compile edge/utils/database.py
           echo "Edge syntax OK"
-
-      - name: Syntax check — headend
+      - name: Syntax check headend
         run: |
           python -m py_compile headend/main.py
           python -m py_compile headend/database.py
@@ -38,25 +34,19 @@ jobs:
   ui-check:
     name: Web UI Build Check
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     defaults:
       run:
         working-directory: timelapse-ui
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-
       - name: Install dependencies
         run: npm ci
-
       - name: TypeScript check
         run: npx tsc --noEmit
-
       - name: Build check
         run: npm run build
 
@@ -68,8 +58,6 @@ jobs:
     steps:
       - name: Deploy signal
         run: |
-          echo "✅ Alle checks OK"
-          echo "📦 Commit: ${{ github.sha }}"
-          echo "🕐 Tidspunkt: $(date -u)"
+          echo "Alle checks OK"
+          echo "Commit ${{ github.sha }}"
           echo "Pi 5 henter ny kode inden for 1 minut"
-          echo "Edge enheder opdaterer inden for 5 min"
