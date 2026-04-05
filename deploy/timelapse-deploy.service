@@ -1,0 +1,14 @@
+[Unit]
+Description=TimeLapse Pro — Headend Deploy Poller
+After=network-online.target timelapse-headend.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=peter
+ExecStart=/home/peter/timelapse-pro/deploy/headend_poller.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
