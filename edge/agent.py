@@ -204,6 +204,8 @@ class EdgeAgent:
         config_interval = timedelta(minutes=5)
         if now - self._last_config_pull > config_interval:
             self._pull_config()
+            # Tjek om headend har bedt om en opdatering
+            self._check_update()
 
         # Check capture schedule
         if self._should_capture(now, mode):
@@ -475,6 +477,33 @@ class EdgeAgent:
             log.info("Config pull failed — using cached config")
         self._last_config_pull = datetime.now(timezone.utc)
 
+    def _check_update(self) -> None:
+        """Tjek om headend har bedt om en edge opdatering."""
+        import subprocess
+        update_requested = self._cfg.get("update_requested", False)
+        if not update_requested:
+            return
+        debug_cfg = self._cfg.get("debug_mode", {})
+        if debug_cfg.get("enabled"):
+            log.info("Opdatering anmodet men LAB mode aktiv — springer over")
+            return
+        version = self._cfg.get("update_version", "unknown")
+        log.info("Opdatering anmodet — version %s", version)
+        update_script = "/opt/timelapse/deploy/edge_update.sh"
+        try:
+            result = subprocess.run(
+                [update_script],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            if result.returncode != 0:
+                log.warning("Opdatering fejlede: %s", result.stderr)
+        except subprocess.TimeoutExpired:
+            log.warning("Opdatering timeout efter 120s")
+        except Exception as exc:
+            log.warning("Opdatering fejl: %s", exc)
+
     def _send_heartbeat(self) -> None:
         """Collect diagnostics and send heartbeat to headend."""
         try:
@@ -502,7 +531,7 @@ class EdgeAgent:
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""
         try:
-            unsynced = self._db.get_unsynced_captures(limit=100)
+            unsynced = self._db.get_unsynced_captures(limit=20)
             if not unsynced:
                 return
             log.debug("Syncing %d captures to headend…", len(unsynced))
