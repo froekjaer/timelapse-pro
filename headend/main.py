@@ -11,7 +11,6 @@ Docs: http://<ip>:8000/docs
 from __future__ import annotations
 
 import json
-import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -154,6 +153,10 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+
+    # Opdater last_seen ved config pull — bruges til LAB ready detection
+    device.last_seen = now_utc()
+    db.commit()
 
     base_url = os.environ.get("BASE_URL", "http://192.168.86.132:8000")
 
@@ -303,6 +306,7 @@ def heartbeat(
         battery_v    = diag.get("battery_voltage"),
         solar_v      = diag.get("solar_voltage"),
         connectivity = diag.get("connectivity_type"),
+        wifi_ssid    = diag.get("wifi_ssid"),
         uptime_s     = diag.get("uptime_s"),
         capture_total   = stats.get("total"),
         capture_passed  = stats.get("passed"),
@@ -517,6 +521,7 @@ def get_device(device_id: str, db: Session = Depends(get_db)):
             "camera_name":    device.camera_name,
             "installed_date": device.installed_date,
             "installed_time": device.installed_time,
+            "device_config":  device.device_config,
         },
         "diagnostics": {
             "cpu_temp_c":   latest_diag.cpu_temp_c   if latest_diag else None,
@@ -535,6 +540,7 @@ def get_device(device_id: str, db: Session = Depends(get_db)):
             "cpu_load_pct": latest_diag.cpu_load_pct if latest_diag else None,
             "disk_used_gb": latest_diag.disk_used_gb if latest_diag else None,
             "connectivity": latest_diag.connectivity if latest_diag else None,
+            "wifi_ssid":   latest_diag.wifi_ssid if latest_diag else None,
             "uptime_s":     latest_diag.uptime_s     if latest_diag else None,
         } if latest_diag else None,
         "captures": [
@@ -655,9 +661,13 @@ def get_thumbnail(device_id: str, filename: str):
     thumb = thumbs_dir / filename
     if not thumb.exists():
         try:
-            img = Image.open(src)
-            img.thumbnail((400, 400), Image.LANCZOS)
-            img.save(str(thumb), "JPEG", quality=75)
+            img = Image.open(src).convert("RGB")
+            # Landscape 16:9 thumbnail (320x180)
+            img.thumbnail((320, 180), Image.LANCZOS)
+            canvas = Image.new("RGB", (320, 180), (15, 15, 15))
+            offset = ((320 - img.width) // 2, (180 - img.height) // 2)
+            canvas.paste(img, offset)
+            canvas.save(str(thumb), "JPEG", quality=78)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     return FileResponse(str(thumb), media_type="image/jpeg")
@@ -680,6 +690,10 @@ def set_debug_mode(device_id: str, payload: dict, db: Session = Depends(get_db))
         "config_poll_s":     payload.get("config_poll_s", 1),
         "support_tier":      payload.get("support_tier", "standard"),
     }
+    # Nulstil lab_camera_ready når debug mode aktiveres
+    if enabled:
+        existing["lab_camera_ready"] = False
+
     device.device_config = json.dumps(existing)
     db.commit()
     log.info("Debug mode %s for %s", "ENABLED" if enabled else "DISABLED", device_id)
@@ -732,6 +746,33 @@ def set_camera_param(device_id: str, payload: dict, db: Session = Depends(get_db
     device.device_config = json.dumps(existing)
     db.commit()
     return {"status": "ok", "key": key, "value": value}
+
+
+@app.post("/api/lab/{device_id}/params")
+def lab_store_params(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Edge poster live kamera-parametre til headend efter get_params kommando."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device: raise HTTPException(status_code=404)
+    existing = json.loads(device.device_config or "{}")
+    existing["camera_params"] = payload.get("params", [])
+    existing.pop("lab_command", None)
+    device.device_config = json.dumps(existing)
+    db.commit()
+    log.info("LAB params stored for %s: %d params", device_id, len(existing["camera_params"]))
+    return {"status": "ok"}
+
+
+@app.post("/api/lab/{device_id}/get-params")
+def lab_get_params(device_id: str, db: Session = Depends(get_db)):
+    """Queue get-params kommando til edge."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device: raise HTTPException(status_code=404)
+    existing = json.loads(device.device_config or "{}")
+    existing["lab_command"] = {"type": "get_params"}
+    device.device_config = json.dumps(existing)
+    db.commit()
+    log.info("LAB get-params queued for %s", device_id)
+    return {"status": "ok"}
 
 
 @app.get("/api/lab/{device_id}/previews")
@@ -797,27 +838,136 @@ def lab_clear_params(device_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "ok"}
 
-@app.post("/api/lab/{device_id}/get-params")
-def request_get_params(device_id: str, db: Session = Depends(get_db)):
-    """Request full camera parameter list from device."""
+
+@app.post("/api/lab/{device_id}/camera-ready")
+def lab_camera_ready(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Edge melder at kameraet er forbundet og klar i LAB mode."""
     device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404)
+    if not device: raise HTTPException(status_code=404)
     existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {"type": "get_params", "requested_at": now_utc().isoformat()}
+    existing["lab_camera_ready"] = payload.get("ready", False)
+    device.device_config = json.dumps(existing)
+    device.last_seen = now_utc()
+    db.commit()
+    log.info("LAB camera ready: %s", device_id)
+    return {"status": "ok"}
+
+# ── WiFi konfiguration endpoints ─────────────────────────────────────────────
+
+@app.post("/api/lab/{device_id}/wifi/scan")
+def wifi_scan(device_id: str, db: Session = Depends(get_db)):
+    """Request WiFi scan from device."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device: raise HTTPException(status_code=404)
+    existing = json.loads(device.device_config or "{}")
+    existing["lab_command"] = {"type": "wifi_scan", "requested_at": now_utc().isoformat()}
     device.device_config = json.dumps(existing)
     db.commit()
-    return {"status": "ok", "command": "get_params"}
+    return {"status": "ok", "command": "wifi_scan"}
 
-@app.post("/api/lab/{device_id}/params")
-def receive_params(device_id: str, payload: dict, db: Session = Depends(get_db)):
-    """Receive full camera params from edge agent."""
+@app.post("/api/lab/{device_id}/wifi/connect")
+def wifi_connect(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Request WiFi connection on device."""
     device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404)
+    if not device: raise HTTPException(status_code=404)
+    ssid     = payload.get("ssid", "")
+    password = payload.get("password", "")
+    if not ssid: raise HTTPException(status_code=400, detail="ssid required")
     existing = json.loads(device.device_config or "{}")
-    existing["camera_params"] = payload.get("params", [])
+    existing["lab_command"] = {
+        "type": "wifi_connect",
+        "ssid": ssid,
+        "password": password,
+        "requested_at": now_utc().isoformat()
+    }
+    device.device_config = json.dumps(existing)
+    db.commit()
+    return {"status": "ok", "command": "wifi_connect", "ssid": ssid}
+
+@app.post("/api/lab/{device_id}/wifi/forget")
+def wifi_forget(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Request removal of saved WiFi network."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device: raise HTTPException(status_code=404)
+    ssid = payload.get("ssid", "")
+    if not ssid: raise HTTPException(status_code=400, detail="ssid required")
+    existing = json.loads(device.device_config or "{}")
+    existing["lab_command"] = {
+        "type": "wifi_forget",
+        "ssid": ssid,
+        "requested_at": now_utc().isoformat()
+    }
+    device.device_config = json.dumps(existing)
+    db.commit()
+    return {"status": "ok", "command": "wifi_forget", "ssid": ssid}
+
+@app.post("/api/lab/{device_id}/wifi/result")
+def wifi_result(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Receive WiFi operation result from edge agent."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device: raise HTTPException(status_code=404)
+    existing = json.loads(device.device_config or "{}")
+    existing["wifi_data"] = payload
     existing.pop("lab_command", None)
     device.device_config = json.dumps(existing)
     db.commit()
     return {"status": "ok"}
+
+@app.get("/api/admin/captures/timeline")
+def captures_timeline(
+    device_id: str,
+    year:  Optional[int] = None,
+    month: Optional[int] = None,
+    day:   Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Hent captures til timeline navigation.
+    - Uden parametre: returner antal captures per dag (alle tider)
+    - Med year+month+day: returner alle captures den dag
+    """
+    q = db.query(Capture).filter(
+        Capture.device_id == device_id,
+        Capture.captured_at.isnot(None)
+    )
+
+    if year and month and day:
+        # Hent alle captures på en specifik dag
+        from datetime import date
+        d_start = f"{year:04d}-{month:02d}-{day:02d} 00:00:00"
+        d_end   = f"{year:04d}-{month:02d}-{day:02d} 23:59:59"
+        captures = q.filter(
+            Capture.captured_at >= d_start,
+            Capture.captured_at <= d_end
+        ).order_by(Capture.captured_at.asc()).all()
+        return [
+            {
+                "id":           c.id,
+                "device_id":    c.device_id,
+                "filename":     c.filename,
+                "captured_at":  c.captured_at.isoformat() if c.captured_at else None,
+                "quality_flag": c.quality_flag,
+                "quality_passed": c.quality_passed,
+                "blur_score":   round(c.blur_score, 1) if c.blur_score else None,
+                "brightness":   round(c.brightness_mean, 1) if c.brightness_mean else None,
+                "filesize_mb":  round(c.filesize / 1e6, 1) if c.filesize else None,
+                "uploaded":     c.uploaded,
+            }
+            for c in captures
+        ]
+    else:
+        # Returner daglig tæller for hele historikken
+        from sqlalchemy import func
+        rows = db.query(
+            func.strftime("%Y", Capture.captured_at).label("year"),
+            func.strftime("%m", Capture.captured_at).label("month"),
+            func.strftime("%d", Capture.captured_at).label("day"),
+            func.count(Capture.id).label("count")
+        ).filter(
+            Capture.device_id == device_id,
+            Capture.captured_at.isnot(None)
+        ).group_by("year", "month", "day").order_by("year", "month", "day").all()
+        return [
+            {"year": int(r.year), "month": int(r.month), "day": int(r.day), "count": r.count}
+            for r in rows
+        ]
