@@ -201,7 +201,7 @@ class EdgeAgent:
         now = datetime.now(timezone.utc)
 
         # Periodic config re-pull (every 6 hours)
-        config_interval = timedelta(minutes=5)
+        config_interval = timedelta(minutes=1)
         if now - self._last_config_pull > config_interval:
             self._pull_config()
             # Tjek om headend har bedt om en opdatering
@@ -374,6 +374,7 @@ class EdgeAgent:
 
             # Send heartbeat immediately after capture with fresh camera diagnostics
             self._send_heartbeat()
+            self._sync_captures()
             success = True
 
         except Exception as exc:
@@ -479,7 +480,7 @@ class EdgeAgent:
 
     def _check_update(self) -> None:
         """Tjek om headend har bedt om en edge opdatering."""
-        import subprocess
+        import subprocess, os
         update_requested = self._cfg.get("update_requested", False)
         if not update_requested:
             return
@@ -489,20 +490,37 @@ class EdgeAgent:
             return
         version = self._cfg.get("update_version", "unknown")
         log.info("Opdatering anmodet — version %s", version)
-        update_script = "/opt/timelapse/deploy/edge_update.sh"
+        repo = "/opt/timelapse"
         try:
-            result = subprocess.run(
-                [update_script],
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-            if result.returncode != 0:
-                log.warning("Opdatering fejlede: %s", result.stderr)
-        except subprocess.TimeoutExpired:
-            log.warning("Opdatering timeout efter 120s")
+            git = "/usr/bin/git"
+            import os
+            env = os.environ.copy()
+            env["HOME"] = "/home/orangepi"
+            env["GIT_CONFIG_COUNT"] = "1"
+            env["GIT_CONFIG_KEY_0"] = "safe.directory"
+            env["GIT_CONFIG_VALUE_0"] = "*"
+            # Fetch
+            r = subprocess.run([git, "-C", repo, "fetch", "origin", "main", "--quiet"],
+                               capture_output=True, text=True, env=env)
+            if r.returncode != 0:
+                log.warning("Opdatering fetch fejlede: %s", r.stderr.strip())
+                return
+            # Check versions
+            current = subprocess.check_output([git, "-C", repo, "rev-parse", "HEAD"], env=env).decode().strip()
+            remote  = subprocess.check_output([git, "-C", repo, "rev-parse", "origin/main"], env=env).decode().strip()
+            if current == remote:
+                log.info("Edge allerede opdateret")
+                return
+            log.info("Opdaterer edge: %s → %s", current[:7], remote[:7])
+            # Pull
+            subprocess.run([git, "-C", repo, "pull", "origin", "main", "--quiet"], env=env)
+            subprocess.run(["find", f"{repo}/edge", "-name", "__pycache__",
+                           "-exec", "rm", "-rf", "{}", "+"])
+            log.info("Opdatering OK — genstarter timelapse-edge")
+            subprocess.run(["systemctl", "restart", "timelapse-edge"])
         except Exception as exc:
             log.warning("Opdatering fejl: %s", exc)
+
 
     def _send_heartbeat(self) -> None:
         """Collect diagnostics and send heartbeat to headend."""
@@ -531,14 +549,17 @@ class EdgeAgent:
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""
         try:
-            unsynced = self._db.get_unsynced_captures(limit=20)
+            unsynced = self._db.get_unsynced_captures(limit=100)
             if not unsynced:
                 return
-            log.debug("Syncing %d captures to headend…", len(unsynced))
+            log.info("Syncing %d captures to headend…", len(unsynced))
+            synced = 0
             for row in unsynced:
                 ok, _ = self._api.sync_capture(row)
                 if ok:
                     self._db.mark_synced(row["id"])
+                    synced += 1
+            log.info("Capture sync done: %d/%d synced", synced, len(unsynced))
         except Exception as exc:
             log.warning("Capture sync error: %s", exc)
 
