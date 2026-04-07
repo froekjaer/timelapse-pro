@@ -11,6 +11,8 @@ jobs:
   python-check:
     name: Python Syntax Check
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -18,7 +20,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install pyflakes
+        run: pip install pyflakes pytest
       - name: Syntax check edge
         run: |
           python -m py_compile edge/agent.py
@@ -30,10 +32,16 @@ jobs:
           python -m py_compile headend/main.py
           python -m py_compile headend/database.py
           echo "Headend syntax OK"
+      - name: Agent integrity tests
+        run: pytest tests/test_agent_integrity.py -v
+      - name: Headend endpoint tests
+        run: pytest tests/test_headend_endpoints.py -v
 
   ui-check:
     name: Web UI Build Check
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     defaults:
       run:
         working-directory: timelapse-ui
@@ -58,6 +66,8 @@ jobs:
     steps:
       - name: Deploy signal
         run: |
-          echo "Alle checks OK"
-          echo "Commit ${{ github.sha }}"
+          echo "✅ Alle checks OK"
+          echo "📦 Commit: ${{ github.sha }}"
+          echo "🕐 Tidspunkt: $(date -u)"
           echo "Pi 5 henter ny kode inden for 1 minut"
+          echo "Edge enheder opdaterer inden for 5 min"
