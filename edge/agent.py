@@ -201,7 +201,7 @@ class EdgeAgent:
         now = datetime.now(timezone.utc)
 
         # Periodic config re-pull (every 6 hours)
-        config_interval = timedelta(minutes=1)
+        config_interval = timedelta(minutes=5)
         if now - self._last_config_pull > config_interval:
             self._pull_config()
             # Tjek om headend har bedt om en opdatering
