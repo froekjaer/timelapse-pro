@@ -201,11 +201,13 @@ class EdgeAgent:
         now = datetime.now(timezone.utc)
 
         # Periodic config re-pull (every 6 hours)
-        config_interval = timedelta(minutes=5)
+        config_interval = timedelta(minutes=1)
         if now - self._last_config_pull > config_interval:
             self._pull_config()
             # Tjek om headend har bedt om en opdatering
             self._check_update()
+            # Tjek om headend har bedt om en backup
+            self._check_backup()
 
         # Check capture schedule
         if self._should_capture(now, mode):
@@ -522,6 +524,135 @@ class EdgeAgent:
             log.warning("Opdatering fejl: %s", exc)
 
 
+    def _check_backup(self) -> None:
+        """Tjek om headend har bedt om en edge backup."""
+        import subprocess, os, datetime as _dt
+        backup_requested = self._cfg.get("backup_requested", False)
+        if not backup_requested:
+            return
+        log.info("Backup anmodet fra headend — starter edge backup")
+        try:
+            date = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dir = f"/tmp/timelapse-backup-edge-{date}"
+            archive    = f"{backup_dir}.tar.gz"
+            home       = str(Path("/home/orangepi"))
+
+            os.makedirs(f"{backup_dir}/database", exist_ok=True)
+            os.makedirs(f"{backup_dir}/configs",  exist_ok=True)
+            os.makedirs(f"{backup_dir}/packages", exist_ok=True)
+
+            # Database
+            import shutil as _shutil
+            db_path = self._cfg.get("storage", {}).get("db_path", "/data/timelapse_edge.db")
+            if os.path.exists(db_path):
+                _shutil.copy2(db_path, f"{backup_dir}/database/timelapse_edge.db")
+                subprocess.run(
+                    ["sqlite3", db_path, f".dump"],
+                    stdout=open(f"{backup_dir}/database/timelapse_edge_dump.sql", "w"),
+                    stderr=subprocess.DEVNULL
+                )
+                log.info("Backup: database OK")
+
+            # Systemd service
+            svc = "/etc/systemd/system/timelapse-edge.service"
+            if os.path.exists(svc):
+                _shutil.copy2(svc, f"{backup_dir}/configs/timelapse-edge.service")
+
+            # Sudoers
+            for f in ["timelapse-edge", "timelapse-deploy", "timelapse-git"]:
+                s = f"/etc/sudoers.d/{f}"
+                if os.path.exists(s):
+                    _shutil.copy2(s, f"{backup_dir}/configs/sudoers-{f}")
+
+            # Gitconfigs
+            for f in ["/home/orangepi/.gitconfig", "/root/.gitconfig"]:
+                if os.path.exists(f):
+                    _shutil.copy2(f, f"{backup_dir}/configs/{os.path.basename(f)}")
+
+            # pip freeze
+            venv_pip = "/opt/timelapse/venv/bin/pip"
+            if os.path.exists(venv_pip):
+                result = subprocess.run([venv_pip, "freeze"], capture_output=True, text=True)
+                with open(f"{backup_dir}/packages/pip-requirements.txt", "w") as fp:
+                    fp.write(result.stdout)
+
+            # Systeminfo
+            with open(f"{backup_dir}/SYSTEMINFO.txt", "w") as fp:
+                fp.write("TimeLapse Pro — Edge Backup\n")
+                fp.write(f"Dato: {date}\n")
+                fp.write(f"Device ID: {self._device_id}\n")
+                git_head = subprocess.run(
+                    ["/usr/bin/git", "-C", "/opt/timelapse", "rev-parse", "HEAD"],
+                    capture_output=True, text=True
+                ).stdout.strip()
+                fp.write(f"Git HEAD: {git_head}\n")
+
+            # Pak til tar.gz
+            subprocess.run(
+                ["tar", "czf", archive, "-C", "/tmp", f"timelapse-backup-edge-{date}"],
+                check=True, capture_output=True
+            )
+            _shutil.rmtree(backup_dir, ignore_errors=True)
+
+            size_kb = os.path.getsize(archive) // 1024
+            log.info("Edge backup komplet: %s (%d KB)", archive, size_kb)
+
+            # Upload backup fil til headend via SFTP
+            sftp_cfg  = self._cfg.get("sftp", {})
+            sftp_host = sftp_cfg.get("host", "192.168.86.132")
+            sftp_port = int(sftp_cfg.get("port", 22))
+            sftp_user = sftp_cfg.get("username", "sftp_test")
+            sftp_pass = sftp_cfg.get("password", "")
+            sftp_base = sftp_cfg.get("remote_base", "/incoming")
+
+            remote_backup_dir  = f"{sftp_base}/_backups/{self._device_id}"
+            remote_backup_file = f"{remote_backup_dir}/{os.path.basename(archive)}"
+
+            try:
+                import paramiko as _paramiko
+                ssh = _paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(_paramiko.AutoAddPolicy())
+                ssh.connect(sftp_host, port=sftp_port, username=sftp_user,
+                           password=sftp_pass, timeout=30)
+                sftp = ssh.open_sftp()
+
+                # Opret remote mappe hvis den ikke findes
+                try:
+                    sftp.stat(sftp_base + "/_backups")
+                except FileNotFoundError:
+                    sftp.mkdir(sftp_base + "/_backups")
+                try:
+                    sftp.stat(remote_backup_dir)
+                except FileNotFoundError:
+                    sftp.mkdir(remote_backup_dir)
+
+                # Upload backup fil
+                log.info("Uploader backup til headend via SFTP: %s", remote_backup_file)
+                sftp.put(archive, remote_backup_file)
+                sftp.close()
+                ssh.close()
+                log.info("Backup upload OK: %s", remote_backup_file)
+
+                # Ryd lokal backup op
+                os.unlink(archive)
+
+            except Exception as sftp_exc:
+                log.warning("Backup SFTP upload fejlede: %s — backup beholdes lokalt", sftp_exc)
+                remote_backup_file = archive  # Behold lokal sti som reference
+
+            # Send bekræftelse til headend API
+            try:
+                self._api._post(f"/admin/backup/edge-complete/{self._device_id}", {
+                    "filename": os.path.basename(archive),
+                    "size_kb":  size_kb,
+                    "path":     remote_backup_file,
+                })
+            except Exception:
+                pass
+
+        except Exception as exc:
+            log.warning("Edge backup fejl: %s", exc)
+
     def _send_heartbeat(self) -> None:
         """Collect diagnostics and send heartbeat to headend."""
         try:
@@ -549,17 +680,14 @@ class EdgeAgent:
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""
         try:
-            unsynced = self._db.get_unsynced_captures(limit=100)
+            unsynced = self._db.get_unsynced_captures(limit=20)
             if not unsynced:
                 return
-            log.info("Syncing %d captures to headend…", len(unsynced))
-            synced = 0
+            log.debug("Syncing %d captures to headend…", len(unsynced))
             for row in unsynced:
                 ok, _ = self._api.sync_capture(row)
                 if ok:
                     self._db.mark_synced(row["id"])
-                    synced += 1
-            log.info("Capture sync done: %d/%d synced", synced, len(unsynced))
         except Exception as exc:
             log.warning("Capture sync error: %s", exc)
 
