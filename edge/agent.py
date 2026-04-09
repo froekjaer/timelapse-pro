@@ -680,7 +680,7 @@ class EdgeAgent:
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""
         try:
-            unsynced = self._db.get_unsynced_captures(limit=20)
+            unsynced = self._db.get_unsynced_captures(limit=100)
             if not unsynced:
                 return
             log.debug("Syncing %d captures to headend…", len(unsynced))
