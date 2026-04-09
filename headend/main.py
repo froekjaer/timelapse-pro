@@ -203,6 +203,13 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
             "circular_buffer_gb": 50,
             "db_path":            "/data/timelapse_edge.db",
         },
+        "location": {
+            "gps_lat":   None,
+            "gps_lon":   None,
+            "gps_alt":   None,
+            "gps_source": "manual",  # manual | gpsd
+            "address":   None,
+        },
         "sftp": {
             "host":        "192.168.86.132",
             "port":        22,
@@ -543,6 +550,13 @@ def get_device(device_id: str, db: Session = Depends(get_db)):
             "wifi_ssid":   latest_diag.wifi_ssid if latest_diag else None,
             "uptime_s":     latest_diag.uptime_s     if latest_diag else None,
         } if latest_diag else None,
+        "gps": {
+            "lat":    device_cfg.get("location", {}).get("gps_lat"),
+            "lon":    device_cfg.get("location", {}).get("gps_lon"),
+            "alt":    device_cfg.get("location", {}).get("gps_alt"),
+            "source": device_cfg.get("location", {}).get("gps_source", "manual"),
+            "address":device_cfg.get("location", {}).get("address"),
+        } if (device_cfg := json.loads(device.device_config or "{}")) else None,
         "captures": [
             {
                 "id":           c.id,
@@ -554,6 +568,10 @@ def get_device(device_id: str, db: Session = Depends(get_db)):
                 "blur_score":    round(c.blur_score, 1) if c.blur_score else None,
                 "brightness":    round(c.brightness_mean, 1) if c.brightness_mean else None,
                 "filesize_mb":   round(c.filesize / 1e6, 1) if c.filesize else None,
+                "iso":           c.iso,
+                "aperture":      c.aperture,
+                "shutter_speed": c.shutter_speed if hasattr(c, 'shutter_speed') else None,
+                "focal_length":  c.focal_length if hasattr(c, 'focal_length') else None,
             }
             for c in captures
         ],
@@ -583,6 +601,9 @@ def list_captures(
             "brightness":    round(c.brightness_mean, 1) if c.brightness_mean else None,
             "filesize_mb":   round(c.filesize / 1e6, 1) if c.filesize else None,
             "uploaded":      c.uploaded,
+            "iso":           c.iso,
+            "aperture":      c.aperture,
+            "shutter_speed": c.shutter_speed if hasattr(c, 'shutter_speed') else None,
         }
         for c in captures
     ]
@@ -746,6 +767,173 @@ def set_camera_param(device_id: str, payload: dict, db: Session = Depends(get_db
     device.device_config = json.dumps(existing)
     db.commit()
     return {"status": "ok", "key": key, "value": value}
+
+
+# ── Backup ────────────────────────────────────────────────────────────────────
+
+import subprocess as _subprocess
+import threading as _threading
+import tempfile as _tempfile
+import shutil as _shutil
+from fastapi.responses import FileResponse as _FileResponse
+
+_backup_status = {"running": False, "progress": [], "file": None, "error": None}
+
+def _run_backup():
+    """Kør backup i baggrunden."""
+    global _backup_status
+    _backup_status = {"running": True, "progress": [], "file": None, "error": None}
+    try:
+        import datetime, os, json, sqlite3 as _sqlite3
+        date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = f"/tmp/timelapse-backup-headend-{date}"
+        os.makedirs(f"{backup_dir}/database", exist_ok=True)
+        os.makedirs(f"{backup_dir}/configs", exist_ok=True)
+        os.makedirs(f"{backup_dir}/logs", exist_ok=True)
+
+        _backup_status["progress"].append("Database backup...")
+        db_src = "/home/peter/headend/timelapse_headend.db"
+        if os.path.exists(db_src):
+            _shutil.copy2(db_src, f"{backup_dir}/database/timelapse_headend.db")
+            conn = _sqlite3.connect(db_src)
+            with open(f"{backup_dir}/database/timelapse_headend_dump.sql", "w") as f:
+                for line in conn.iterdump():
+                    f.write(line + "\n")
+            conn.close()
+            _backup_status["progress"].append("Database OK")
+
+        _backup_status["progress"].append("Config backup...")
+        for f in ["timelapse-headend.service", "timelapse-deploy.service", "timelapse-deploy.timer"]:
+            src = f"/etc/systemd/system/{f}"
+            if os.path.exists(src):
+                _shutil.copy2(src, f"{backup_dir}/configs/{f}")
+        for f in ["timelapse-deploy", "timelapse-headend"]:
+            src = f"/etc/sudoers.d/{f}"
+            if os.path.exists(src):
+                _shutil.copy2(src, f"{backup_dir}/configs/sudoers-{f}")
+        poller = "/home/peter/timelapse-pro/deploy/headend_poller.sh"
+        if os.path.exists(poller):
+            _shutil.copy2(poller, f"{backup_dir}/configs/headend_poller.sh")
+        _backup_status["progress"].append("Config OK")
+
+        _backup_status["progress"].append("System info...")
+        import platform
+        with open(f"{backup_dir}/SYSTEMINFO.txt", "w") as f:
+            f.write(f"TimeLapse Pro — Headend Backup\nDato: {date}\n")
+            f.write(f"OS: {platform.platform()}\n")
+        _backup_status["progress"].append("System info OK")
+
+        _backup_status["progress"].append("Pakker backup...")
+        archive = f"/tmp/timelapse-backup-headend-{date}.tar.gz"
+        _subprocess.run(["tar", "czf", archive, "-C", "/tmp", f"timelapse-backup-headend-{date}"],
+                       check=True, capture_output=True)
+        _shutil.rmtree(backup_dir, ignore_errors=True)
+
+        # Kopier til NAS hvis konfigureret
+        nas_path = _get_nas_path()
+        if nas_path and os.path.isdir(nas_path):
+            _shutil.copy2(archive, nas_path)
+            _backup_status["progress"].append(f"Kopieret til NAS: {nas_path}")
+
+        _backup_status["file"] = archive
+        _backup_status["running"] = False
+        _backup_status["progress"].append(f"✅ Backup komplet: {os.path.getsize(archive)//1024} KB")
+        log.info("Backup komplet: %s", archive)
+    except Exception as e:
+        _backup_status["error"] = str(e)
+        _backup_status["running"] = False
+        _backup_status["progress"].append(f"❌ Fejl: {e}")
+        log.error("Backup fejl: %s", e)
+
+def _get_nas_path():
+    """Hent NAS sti fra settings i DB."""
+    try:
+        from sqlalchemy import text
+        from database import SessionLocal
+        db = SessionLocal()
+        result = db.execute(text("SELECT value FROM settings WHERE key='backup_nas_path'")).fetchone()
+        db.close()
+        return result[0] if result else None
+    except:
+        return None
+
+@app.post("/api/admin/backup/trigger")
+def trigger_backup():
+    """Start backup i baggrunden."""
+    global _backup_status
+    if _backup_status.get("running"):
+        return {"status": "already_running", "progress": _backup_status["progress"]}
+    _backup_status = {"running": True, "progress": ["Starter backup..."], "file": None, "error": None}
+    t = _threading.Thread(target=_run_backup, daemon=True)
+    t.start()
+    return {"status": "started"}
+
+@app.get("/api/admin/backup/status")
+def backup_status():
+    """Hent backup status."""
+    return {
+        "running": _backup_status.get("running", False),
+        "progress": _backup_status.get("progress", []),
+        "ready": _backup_status.get("file") is not None,
+        "error": _backup_status.get("error"),
+        "filename": os.path.basename(_backup_status["file"]) if _backup_status.get("file") else None,
+    }
+
+@app.get("/api/admin/backup/download")
+def download_backup():
+    """Download seneste backup fil."""
+    import os
+    f = _backup_status.get("file")
+    if not f or not os.path.exists(f):
+        raise HTTPException(status_code=404, detail="Ingen backup klar — kør trigger først")
+    return _FileResponse(
+        path=f,
+        filename=os.path.basename(f),
+        media_type="application/gzip"
+    )
+
+@app.put("/api/admin/backup/settings")
+def update_backup_settings(payload: dict, db: Session = Depends(get_db)):
+    """Gem backup indstillinger (NAS sti, auto-backup interval)."""
+    try:
+        from sqlalchemy import text
+        for key, value in payload.items():
+            if key in ["backup_nas_path", "backup_auto_interval", "backup_include_images"]:
+                db.execute(text(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (:k, :v)"
+                ), {"k": key, "v": str(value)})
+        db.commit()
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/backup/settings")
+def get_backup_settings(db: Session = Depends(get_db)):
+    """Hent backup indstillinger."""
+    try:
+        from sqlalchemy import text
+        keys = ["backup_nas_path", "backup_auto_interval", "backup_include_images"]
+        result = {}
+        for k in keys:
+            row = db.execute(text("SELECT value FROM settings WHERE key=:k"), {"k": k}).fetchone()
+            result[k] = row[0] if row else None
+        return result
+    except:
+        return {"backup_nas_path": None, "backup_auto_interval": "manual", "backup_include_images": "false"}
+
+
+@app.post("/api/admin/backup/trigger-edge/{device_id}")
+def trigger_edge_backup(device_id: str, db: Session = Depends(get_db)):
+    """Anmod edge enhed om at lave backup."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    existing = json.loads(device.device_config or "{}")
+    existing["backup_requested"] = True
+    existing["backup_requested_at"] = now_utc().isoformat()
+    device.device_config = json.dumps(existing)
+    db.commit()
+    return {"status": "ok", "message": f"Backup anmodet for {device_id}"}
 
 
 @app.post("/api/lab/{device_id}/params")
