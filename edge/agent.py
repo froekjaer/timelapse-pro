@@ -136,7 +136,7 @@ class EdgeAgent:
                     self._device_id, "ERROR", "system",
                     f"Unhandled loop error: {exc}"
                 )
-                time.sleep(30)
+                time.sleep(int(self._cfg.get("system", {}).get("error_recovery_sleep_s", 30)))
 
         self._shutdown()
 
@@ -201,7 +201,9 @@ class EdgeAgent:
         now = datetime.now(timezone.utc)
 
         # Periodic config re-pull (every 6 hours)
-        config_interval = timedelta(minutes=1)
+        config_interval = timedelta(minutes=int(
+            self._cfg.get("diagnostics", {}).get("config_poll_interval_minutes", 5)
+        ))
         if now - self._last_config_pull > config_interval:
             self._pull_config()
             # Tjek om headend har bedt om en opdatering
@@ -463,7 +465,7 @@ class EdgeAgent:
                     pass
             until_capture = max(1, int(min_secs))
         else:
-            until_capture = 60
+            until_capture = int(self._cfg.get("system", {}).get("min_sleep_s", 60))
         elapsed_heartbeat = (now - self._last_heartbeat).total_seconds()
         until_heartbeat   = max(1, heartbeat_min * 60 - elapsed_heartbeat)
         return int(min(until_capture, until_heartbeat))
@@ -569,7 +571,11 @@ class EdgeAgent:
             current = subprocess.check_output([git, "-C", repo, "rev-parse", "HEAD"], env=env).decode().strip()
             remote  = subprocess.check_output([git, "-C", repo, "rev-parse", "origin/main"], env=env).decode().strip()
             if current == remote:
-                log.info("Edge allerede opdateret")
+                log.info("Edge allerede opdateret — nulstiller update_requested flag")
+                try:
+                    self._api._post(f"/admin/devices/{self._device_id}/clear-update", {})
+                except Exception:
+                    pass
                 return
             log.info("Opdaterer edge: %s → %s", current[:7], remote[:7])
             # Pull
@@ -609,7 +615,7 @@ class EdgeAgent:
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""
         try:
-            unsynced = self._db.get_unsynced_captures(limit=100)
+            unsynced = self._db.get_unsynced_captures(limit=20)
             if not unsynced:
                 return
             log.debug("Syncing %d captures to headend…", len(unsynced))
@@ -777,7 +783,7 @@ class EdgeAgent:
                         port     = int(sftp_cfg.get("port", 22)),
                         username = sftp_cfg["username"],
                         password = sftp_cfg.get("password", ""),
-                        timeout  = 15,
+                        timeout  = int(self._cfg.get("system", {}).get("api_timeout_s", 15)),
                     )
                     sftp = ssh.open_sftp()
                     remote_dir = str(
