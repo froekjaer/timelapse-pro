@@ -190,6 +190,7 @@ class ConfigDefaults(Base):
     quality     = Column(Text, default="{}")
     storage     = Column(Text, default="{}")
     diagnostics = Column(Text, default="{}")
+    system      = Column(Text, default="{}")
     updated_at  = Column(DateTime, default=now_utc)
 
 

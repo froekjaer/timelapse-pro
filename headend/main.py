@@ -230,7 +230,13 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
         },
         "diagnostics": json.loads(defaults.diagnostics) if defaults and defaults.diagnostics else {
             "heartbeat_interval_minutes": 60,
+            "config_poll_interval_minutes": 5,
             "collect": ["cpu_temperature", "cpu_load", "memory_usage", "disk_usage", "connectivity_type"],
+        },
+        "system": json.loads(defaults.system) if defaults and hasattr(defaults, 'system') and defaults.system else {
+            "error_recovery_sleep_s": 30,
+            "min_sleep_s": 60,
+            "api_timeout_s": 15,
         },
     }
 
@@ -1266,6 +1272,21 @@ def update_config_defaults(payload: dict, db: Session = Depends(get_db)):
 
 
 # ── Device overrides (kamera-niveau config) ───────────────────────────────────
+
+@app.post("/api/admin/devices/{device_id}/clear-update")
+def clear_update_flag(device_id: str, db: Session = Depends(get_db)):
+    """Edge kalder dette når den allerede er opdateret — nulstil update_requested."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    existing = json.loads(device.device_config or "{}")
+    if existing.get("update_requested"):
+        existing["update_requested"] = False
+        device.device_config = json.dumps(existing)
+        db.commit()
+        log.info("update_requested nulstillet for %s", device_id)
+    return {"status": "ok"}
+
 
 @app.put("/api/admin/devices/{device_id}/overrides")
 def update_device_overrides(device_id: str, payload: dict, db: Session = Depends(get_db)):
