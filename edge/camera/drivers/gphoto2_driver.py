@@ -204,7 +204,14 @@ class GPhoto2Driver(CameraBase):
             raise CameraError("Not connected — call connect() first")
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc)
+        _tz_name = self._config.get("schedule", {}).get("timezone", "Europe/Copenhagen")
+        try:
+            import zoneinfo as _zi; _tz = _zi.ZoneInfo(_tz_name)
+        except Exception:
+            _tz = timezone.utc
+        timestamp_local = datetime.now(_tz)
+        timestamp = timestamp_local  # bruges til filnavn (lokal tid)
+        timestamp_utc = datetime.now(timezone.utc)  # til DB
 
         # Use a temp dir inside dest_dir so the atomic rename stays on the
         # same filesystem (avoids cross-device link errors on SSD + tmpfs).
@@ -269,7 +276,7 @@ class GPhoto2Driver(CameraBase):
 
         return CaptureResult(
             filepath      = final_path,
-            timestamp     = timestamp,
+            timestamp     = timestamp_utc,
             filesize      = final_path.stat().st_size,
             sha256        = sha256,
             camera_model  = self._model or "Unknown Canon DSLR",
