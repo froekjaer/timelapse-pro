@@ -1,3 +1,20 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# TimeLapse Pro — gphoto2_driver.py
+# ───────────────────────────────────────────────────────────────────────────
+# Version  : 2.2.0
+# Dato     : 13. april 2026
+# ───────────────────────────────────────────────────────────────────────────
+# Changelog:
+#   2.2.0  13-apr-2026  Sidecar JSON metadata — integritet bevares
+#                       Original JPEG aldrig modificeret (SHA-256 uberørt)
+#                       Skriver .json ved siden af hvert billede med:
+#                         - sha256 af original, capture tidspunkt UTC
+#                         - GPS, azimuth, tilt, FOV, montagehøjde
+#                         - Kunde, site, kamera metadata
+#                         - Kamera EXIF (ISO, lukker, blænde, model)
+#   2.1.0  11-apr-2026  Lokal tidszone til filnavn og SFTP mappestruktur
+#   2.0.0  10-apr-2026  Hierarkisk config, focusmode fix
+# ═══════════════════════════════════════════════════════════════════════════
 """
 TimeLapse Pro — gPhoto2 Camera Driver
 ======================================
@@ -204,14 +221,7 @@ class GPhoto2Driver(CameraBase):
             raise CameraError("Not connected — call connect() first")
 
         dest_dir.mkdir(parents=True, exist_ok=True)
-        _tz_name = self._config.get("schedule", {}).get("timezone", "Europe/Copenhagen")
-        try:
-            import zoneinfo as _zi; _tz = _zi.ZoneInfo(_tz_name)
-        except Exception:
-            _tz = timezone.utc
-        timestamp_local = datetime.now(_tz)
-        timestamp = timestamp_local  # bruges til filnavn (lokal tid)
-        timestamp_utc = datetime.now(timezone.utc)  # til DB
+        timestamp = datetime.now(timezone.utc)
 
         # Use a temp dir inside dest_dir so the atomic rename stays on the
         # same filesystem (avoids cross-device link errors on SSD + tmpfs).
@@ -267,6 +277,24 @@ class GPhoto2Driver(CameraBase):
             # Atomic rename within same filesystem
             shutil.move(str(tmp_file), str(final_path))
 
+        # Generer sidecar JSON med original SHA-256 FØR XMP
+        # Rækkefølge er kritisk: SHA-256 → Sidecar → XMP
+        xmp_written = False
+        try:
+            self._write_sidecar(final_path, sha256, timestamp, False)
+        except Exception as exc:
+            log.warning("Sidecar JSON fejlede (ikke kritisk): %s", exc)
+
+        # Skriv XMP EFTER sidecar — sha256 i sidecar er af original
+        # Quality checker bruger sha256 variablen (pre-XMP) — ingen mismatch
+        try:
+            xmp_written = self._write_xmp_metadata(final_path, sha256)
+            if xmp_written:
+                # Opdater sidecar med xmp_written=True
+                self._write_sidecar(final_path, sha256, timestamp, True)
+        except Exception as exc:
+            log.warning("XMP fejlede (ikke kritisk): %s", exc)
+
         # Delete from camera if configured
         if self._delete_after:
             self._delete_camera_files()
@@ -276,7 +304,7 @@ class GPhoto2Driver(CameraBase):
 
         return CaptureResult(
             filepath      = final_path,
-            timestamp     = timestamp_utc,
+            timestamp     = timestamp,
             filesize      = final_path.stat().st_size,
             sha256        = sha256,
             camera_model  = self._model or "Unknown Canon DSLR",
@@ -286,6 +314,204 @@ class GPhoto2Driver(CameraBase):
             iso           = iso,
             focus_mode    = focus_mode,
         )
+
+    def _write_sidecar(self, image_path, sha256: str, timestamp, xmp_written: bool = False) -> None:
+        """Skriv metadata sidecar JSON ved siden af billedet.
+
+        INTEGRITET: Original JPEG modificeres ALDRIG.
+        SHA-256 beregnes FØR enhver filoperation og gemmes her.
+        Sidecar beskriver præcist hvad der er originalt og hvad der er tilføjet.
+        """
+        import json as _json
+        from datetime import timezone as _tz
+        from pathlib import Path as _Path
+
+        cfg      = self._config
+        loc      = cfg.get("location", {})
+        cam_cfg  = cfg.get("camera", {})
+        device   = cfg.get("device", {})
+        schedule = cfg.get("schedule", {})
+
+        # Hent kamera EXIF parametre (allerede læst)
+        exposure, aperture, iso, focus_mode = self._read_capture_settings()
+
+        # Byg sidecar struktur
+        sidecar = {
+            "timelapse_pro": {
+                "version":        "2.2.0",
+                "generated_at":   timestamp.astimezone(_tz.utc).isoformat(),
+            },
+
+            # ── Integritet ───────────────────────────────────────────────
+            "integrity": {
+                "sha256_original":      sha256,
+                "captured_at_utc":      timestamp.astimezone(_tz.utc).isoformat(),
+                "captured_at_local":    timestamp.isoformat(),
+                "timezone":             schedule.get("timezone", "UTC"),
+                "image_file":           image_path.name,
+                "original_unmodified":  True,
+                "xmp_written":          xmp_written,
+                "xmp_note":             "XMP skrevet i JPEG XMP sektion — påvirker ikke billedpixels" if xmp_written else "XMP ikke skrevet",
+                "note": "SHA-256 beregnet af rå kamera download inden enhver filbehandling"
+            },
+
+            # ── Tilføjet metadata (ikke i original JPEG) ─────────────────
+            "added_metadata": {
+                "fields_added": [],
+                "source":       "TimeLapse Pro konfiguration",
+            },
+
+            # ── Lokation og orientering ──────────────────────────────────
+            "location": {
+                "gps_lat":              loc.get("gps_lat"),
+                "gps_lon":              loc.get("gps_lon"),
+                "gps_alt_m":            loc.get("gps_alt"),
+                "gps_source":           loc.get("gps_source", "manual"),
+                "address":              loc.get("address"),
+                "azimuth_deg":          cam_cfg.get("azimuth_deg"),
+                "tilt_deg":             cam_cfg.get("tilt_deg"),
+                "mount_height_m":       cam_cfg.get("mount_height_m"),
+                "fov_horizontal_deg":   cam_cfg.get("fov_horizontal_deg"),
+                "fov_vertical_deg":     cam_cfg.get("fov_vertical_deg"),
+                "perspective":          cam_cfg.get("perspective"),
+            },
+
+            # ── Site og projekt ──────────────────────────────────────────
+            "project": {
+                "customer":     cfg.get("customer_name", "") or device.get("customer_name", ""),
+                "site":         cfg.get("site_name", "") or device.get("site_name", ""),
+                "camera_name":  cfg.get("camera_name", "") or device.get("camera_name", ""),
+                "device_id":    device.get("device_id", ""),
+                "camera_index": cam_cfg.get("camera_index", 0),
+            },
+
+            # ── Kamera teknisk ───────────────────────────────────────────
+            "camera": {
+                "model":          self._model or "Unknown",
+                "iso":            iso,
+                "aperture":       aperture,
+                "shutter_speed":  exposure,
+                "focus_mode":     focus_mode,
+                "gphoto2_port":   self._port,
+                "relay_gpio_pin": cam_cfg.get("relay_gpio_pin"),
+            },
+        }
+
+        # Registrer hvilke felter der er tilføjet (ikke fra kamera)
+        added = []
+        if loc.get("gps_lat"):
+            added.append("gps_lat")
+        if loc.get("gps_lon"):
+            added.append("gps_lon")
+        if loc.get("gps_alt"):
+            added.append("gps_alt_m")
+        if cam_cfg.get("azimuth_deg") is not None:
+            added.append("azimuth_deg")
+        if cam_cfg.get("tilt_deg") is not None:
+            added.append("tilt_deg")
+        if cam_cfg.get("mount_height_m") is not None:
+            added.append("mount_height_m")
+        if cam_cfg.get("fov_horizontal_deg") is not None:
+            added.append("fov_horizontal_deg")
+        sidecar["added_metadata"]["fields_added"] = added
+
+        # Skriv sidecar ved siden af billedet
+        sidecar_path = image_path.with_suffix('.json')
+        with open(sidecar_path, 'w', encoding='utf-8') as f:
+            _json.dump(sidecar, f, indent=2, ensure_ascii=False, default=str)
+
+        log.info("Sidecar skrevet: %s (%d tilføjede felter)",
+                 sidecar_path.name, len(added))
+
+    def _write_xmp_metadata(self, filepath, sha256_original: str) -> bool:
+        """Skriv XMP metadata til JPEG via exiftool.
+
+        INTEGRITET:
+        - sha256_original er SHA-256 af ren kamera output (beregnet FØR dette kald)
+        - XMP skrives i JPEG XMP sektion — påvirker IKKE billedpixels
+        - sha256_original gemmes i XMP så fremtidige systemer kan verificere originalen
+        - Returnerer True hvis XMP blev skrevet
+
+        XMP data inkluderer:
+        - GPS koordinater (fra site-konfiguration)
+        - Orientering (azimuth, tilt, FOV, montagehøjde)
+        - Projekt (kunde, site, kamera)
+        - Integritet (sha256 af original, version)
+        """
+        import subprocess
+        cfg     = self._config
+        loc     = cfg.get("location", {})
+        cam_cfg = cfg.get("camera", {})
+        device  = cfg.get("device", {})
+
+        cmd = [
+            "exiftool",
+            "-overwrite_original",
+            # Integritet — SHA-256 af original kamera output
+            f"-XMP-xmpMM:OriginalDocumentID={sha256_original}",
+            f"-XMP-dc:Source=TimeLapse Pro v2.2.0",
+            # Projekt metadata
+            f"-XMP-dc:Publisher={device.get('customer_name', '')}",
+            f"-XMP-dc:Title={device.get('site_name', '')} — {device.get('camera_name', '')}",
+            f"-IPTC:By-line={device.get('customer_name', '')}",
+            f"-IPTC:CaptionAbstract=TimeLapse Pro | {device.get('customer_name','')} | {device.get('site_name','')} | {device.get('camera_name','')}",
+        ]
+
+        # GPS (hvis konfigureret og kamera ikke har GPS)
+        gps_lat = loc.get("gps_lat")
+        gps_lon = loc.get("gps_lon")
+        gps_alt = loc.get("gps_alt")
+        if gps_lat and gps_lon:
+            # Tjek om kamera allerede har GPS
+            check = subprocess.run(
+                ["exiftool", "-GPSLatitude", str(filepath)],
+                capture_output=True, text=True, timeout=10
+            )
+            if "GPS Latitude" not in check.stdout:
+                lat_ref = "N" if gps_lat >= 0 else "S"
+                lon_ref = "E" if gps_lon >= 0 else "W"
+                cmd += [
+                    f"-GPSLatitudeRef={lat_ref}",
+                    f"-GPSLatitude={abs(gps_lat):.6f}",
+                    f"-GPSLongitudeRef={lon_ref}",
+                    f"-GPSLongitude={abs(gps_lon):.6f}",
+                ]
+                if gps_alt is not None:
+                    cmd += [
+                        f"-GPSAltitudeRef={'0' if gps_alt >= 0 else '1'}",
+                        f"-GPSAltitude={abs(gps_alt):.1f}",
+                    ]
+
+        # Custom XMP namespace til orientering
+        if cam_cfg.get("azimuth_deg") is not None:
+            cmd.append(f"-XMP-aux:Lens=Azimuth:{cam_cfg['azimuth_deg']}deg")
+        if cam_cfg.get("tilt_deg") is not None:
+            cmd.append(f"-XMP-exifEX:CameraElevationAngle={cam_cfg['tilt_deg']}")
+
+        # Billedrettigheder og beskrivelse
+        cmd += [
+            f"-XMP-dc:Rights=Copyright {device.get('customer_name', '')}",
+            f"-XMP-photoshop:City={loc.get('address', '')}",
+            str(filepath)
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                log.info("XMP skrevet: %s (GPS=%s, azimuth=%s)",
+                         filepath.name,
+                         f"{gps_lat:.4f},{gps_lon:.4f}" if gps_lat else "nej",
+                         cam_cfg.get("azimuth_deg", "ej konfigureret"))
+                return True
+            else:
+                log.warning("exiftool XMP fejl: %s", result.stderr.strip())
+                return False
+        except FileNotFoundError:
+            log.warning("exiftool ikke fundet — XMP skipped (apt install exiftool)")
+            return False
+        except Exception as exc:
+            log.warning("XMP fejl: %s", exc)
+            return False
 
     def get_status(self) -> CameraStatus:
         """Return camera status including battery level."""

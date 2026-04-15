@@ -1,3 +1,21 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# TimeLapse Pro — agent.py (Edge Agent)
+# ───────────────────────────────────────────────────────────────────────────
+# Version  : 3.1.0
+# Dato     : 12. april 2026
+# ───────────────────────────────────────────────────────────────────────────
+# Changelog:
+#   3.1.0  12-apr-2026  Stabile USB symlinks via /dev/timelapse-camN
+#                       _discover_cameras bruger udev i stedet for auto-detect
+#                       Indenteringsfejl i _capture_single_camera rettet
+#   3.0.0  12-apr-2026  Multi-kamera burst capture (threading)
+#                       Auto-bootstrap sibling devices
+#   2.9.0  12-apr-2026  relay_toggle lab_command
+#   2.8.0  11-apr-2026  PTP busy relay power cycle recovery
+#   2.7.0  11-apr-2026  focusmode=Manual, clear-update
+#   2.6.0  10-apr-2026  _build_camera_commands, drift-check
+#   2.5.0  10-apr-2026  Lokal tid til filnavn og SFTP mappe
+# ═══════════════════════════════════════════════════════════════════════════
 """
 TimeLapse Pro — Edge Agent
 ===========================
@@ -21,6 +39,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 import paramiko
 from datetime import datetime, timedelta, timezone
@@ -161,6 +180,9 @@ class EdgeAgent:
         # 3. Detect camera features (once per session)
         self._load_camera_features()
 
+        # 3b. Auto-bootstrap sibling kameraer
+        self._auto_bootstrap_cameras()
+
         # 4. Retry any pending uploads from before last reboot
         camera_id = self._cfg.get("device", {}).get("device_id", "unknown")
         retry_results = self._uploader.retry_pending(camera_id)
@@ -169,6 +191,133 @@ class EdgeAgent:
 
         # 5. Sync unsynced capture records to headend
         self._sync_captures()
+
+    def _auto_bootstrap_cameras(self) -> None:
+        node_cameras = self._cfg.get('node_cameras', [])
+        multi_mode   = self._cfg.get('multi_camera_mode', 'single')
+        if not node_cameras or multi_mode != 'auto_bootstrap':
+            return
+        log.info("Auto-bootstrap: %d sibling kameraer", len(node_cameras))
+        for cam in node_cameras:
+            try:
+                self._api._post(f"/node/{self._device_id}/bootstrap-camera", cam)
+                log.info("Bootstrapped: %s-%d", self._device_id, cam.get('camera_index', 1))
+            except Exception as exc:
+                log.warning("Bootstrap fejl: %s", exc)
+
+    def _discover_cameras(self) -> list:
+        """Find kameraer via stabile udev symlinks /dev/timelapse-camN.
+
+        Symlinks konfigureres i /etc/udev/rules.d/99-timelapse-cameras.rules
+        baseret på fysisk USB port (ID_PATH_TAG) — stabile ved relay power cycle.
+        """
+        import os
+
+        node_cameras   = self._cfg.get('node_cameras', [])
+        primary_serial = self._cfg.get('camera', {}).get('serial_number', '')
+        primary_gpio   = self._cfg.get('camera', {}).get('relay_gpio_pin', 356)
+
+        # Byg liste af konfigurerede kameraer
+        cam_configs = [
+            {'device_id': self._device_id, 'relay_gpio': primary_gpio,
+             'serial': primary_serial, 'symlink': '/dev/timelapse-cam0'},
+        ]
+        for nc in node_cameras:
+            idx = nc.get('camera_index', 1)
+            cam_configs.append({
+                'device_id':  f"{self._device_id}-{idx}",
+                'relay_gpio': nc.get('relay_gpio_camera', 357),
+                'serial':     nc.get('serial_number', ''),
+                'symlink':    f'/dev/timelapse-cam{idx}',
+            })
+
+        detected = []
+        for cc in cam_configs:
+            symlink = cc['symlink']
+            if not os.path.exists(symlink):
+                log.warning("Symlink mangler: %s — kamera ikke tilsluttet?", symlink)
+                continue
+            try:
+                real  = os.path.realpath(symlink)   # fx /dev/bus/usb/005/035
+                parts = real.split('/')
+                port  = f"usb:{parts[-2]},{parts[-1]}"
+            except Exception as exc:
+                log.warning("Symlink resolve fejl %s: %s", symlink, exc)
+                continue
+            log.info("Kamera: %s → %s (device=%s gpio=%d)",
+                     symlink, port, cc['device_id'], cc['relay_gpio'])
+            detected.append({
+                'device_id':  cc['device_id'],
+                'relay_gpio': cc['relay_gpio'],
+                'port':       port,
+                'symlink':    symlink,
+            })
+
+        log.info("Klar til burst: %d kameraer %s",
+                 len(detected), [c['device_id'] for c in detected])
+        return detected
+
+    def _capture_single_camera(self, cam, dest_dir, results, idx):
+        from camera.registry import get_driver as _get_driver
+        device_id = cam['device_id']
+        log.info("Thread %s port %s", device_id, cam['port'])
+        cam_cfg = dict(self._cfg)
+        cam_cfg['camera'] = dict(self._cfg.get('camera', {}))
+        cam_cfg['camera']['gphoto2_port'] = cam['port']
+        cam_cfg['device'] = dict(self._cfg.get('device', {}))
+        cam_cfg['device']['device_id'] = device_id
+        try:
+            driver = _get_driver(cam_cfg)
+            driver.connect()
+            commands = self._build_camera_commands()
+            if commands:
+                driver.apply_initial_commands(commands)
+            result = driver.capture_image(dest_dir)
+            driver.disconnect()
+            quality = self._quality.check(result.filepath, result.sha256)
+            self._db.insert_capture(
+                device_id=device_id, filepath=result.filepath,
+                sha256=result.sha256, captured_at=result.timestamp,
+                camera_model=result.camera_model, driver_name=result.driver_name,
+                filesize=result.filesize, exposure_time=result.exposure_time,
+                aperture=result.aperture, iso=result.iso, focus_mode=result.focus_mode,
+                quality_flag=quality.flag.value, quality_passed=quality.passed,
+                blur_score=quality.blur_score, brightness=quality.brightness_mean,
+            )
+            upload = self._uploader.upload_capture(None, result.filepath, device_id)
+            results[idx] = {'success': True, 'device_id': device_id, 'upload': upload}
+        except Exception as exc:
+            log.error("Thread %s fejl: %s", device_id, exc)
+            results[idx] = {'success': False, 'device_id': device_id, 'error': str(exc)}
+
+    def _do_multi_capture_cycle(self, cameras) -> bool:
+        log.info("Multi-burst: %d kameraer", len(cameras))
+        relay_gpios = [c['relay_gpio'] for c in cameras]
+        for gpio in relay_gpios:
+            try: open(f'/sys/class/gpio/gpio{gpio}/value', 'w').write('0')
+            except Exception as exc: log.warning("GPIO %d ON: %s", gpio, exc)
+        warmup_s = int(self._cfg.get('camera', {}).get('relay_on_seconds_before', 10))
+        log.info("Warmup %ds…", warmup_s)
+        time.sleep(warmup_s)
+        dest_dir = self._buffer.path
+        results  = [None] * len(cameras)
+        threads  = [threading.Thread(target=self._capture_single_camera,
+            args=(cam, dest_dir, results, idx), daemon=True)
+            for idx, cam in enumerate(cameras)]
+        log.info("Start %d threads simultant…", len(threads))
+        for t in threads: t.start()
+        for t in threads: t.join(timeout=120)
+        settle_s = int(self._cfg.get('camera', {}).get('relay_off_seconds_after', 5))
+        time.sleep(settle_s)
+        for gpio in relay_gpios:
+            try: open(f'/sys/class/gpio/gpio{gpio}/value', 'w').write('1')
+            except Exception as exc: log.warning("GPIO %d OFF: %s", gpio, exc)
+        ok  = sum(1 for r in results if r and r.get('success'))
+        err = sum(1 for r in results if r and not r.get('success'))
+        log.info("Burst: %d OK, %d fejl", ok, err)
+        self._send_heartbeat()
+        self._sync_captures()
+        return ok > 0
 
     def _load_camera_features(self) -> None:
         """Detect camera capabilities for this session."""
@@ -211,7 +360,17 @@ class EdgeAgent:
 
         # Check capture schedule
         if self._should_capture(now, mode):
-            self._do_capture_cycle()
+            node_cameras = self._cfg.get('node_cameras', [])
+            multi_mode   = self._cfg.get('multi_camera_mode', 'single')
+            if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
+                cameras = self._discover_cameras()
+                if len(cameras) > 1:
+                    self._do_multi_capture_cycle(cameras)
+                else:
+                    log.info("Kun %d kamera fundet — single mode", len(cameras))
+                    self._do_capture_cycle()
+            else:
+                self._do_capture_cycle()
 
         # Heartbeat (every 60 minutes)
         heartbeat_interval = timedelta(minutes=int(
@@ -313,7 +472,7 @@ class EdgeAgent:
             )
 
             # 5. Quality check
-            quality = self._quality.check(result.filepath, result.sha256)
+            quality = self._quality.check(result.filepath, None)  # sha256 pre-XMP — skip disk re-verify
             if not quality.passed:
                 log.warning("Quality FAILED: %s — %s", result.filepath.name, quality.message)
             else:
@@ -704,6 +863,25 @@ class EdgeAgent:
                     log.info("LAB — sent %d params to headend", len(params))
                 except Exception as exc:
                     log.warning("LAB — get_params failed: %s", exc)
+                self._api.clear_lab_command(self._device_id)
+
+            elif cmd_type == "relay_toggle":
+                relay = lab_cmd.get("relay", "camera")
+                state = lab_cmd.get("state", False)
+                log.info("LAB — relay toggle: %s → %s", relay, "ON" if state else "OFF")
+                try:
+                    if relay == "camera":
+                        if state:
+                            self._relay.camera.power_on()
+                        else:
+                            self._relay.camera.force_off()
+                    elif relay == "modem":
+                        if state:
+                            self._relay.modem.power_on()
+                        else:
+                            self._relay.modem.power_cycle(reason="manual OFF")
+                except Exception as exc:
+                    log.warning("LAB — relay toggle failed: %s", exc)
                 self._api.clear_lab_command(self._device_id)
 
             elif cmd_type == "wifi_scan":

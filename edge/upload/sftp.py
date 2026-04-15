@@ -1,3 +1,14 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# TimeLapse Pro — sftp.py (Upload Manager)
+# ───────────────────────────────────────────────────────────────────────────
+# Version  : 1.1.0
+# Dato     : 13. april 2026
+# ───────────────────────────────────────────────────────────────────────────
+# Changelog:
+#   1.1.0  13-apr-2026  Sidecar JSON uploades automatisk med billedet
+#                       Samme remote mappe og filnavn men .json extension
+#   1.0.0  09-apr-2026  Initial SFTP upload med hierarkisk mappestruktur
+# ═══════════════════════════════════════════════════════════════════════════
 """
 TimeLapse Pro — SFTP Upload Manager
 =====================================
@@ -15,7 +26,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-import re
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
@@ -91,13 +101,6 @@ class UploadManager:
             log.warning("No SFTP targets configured — uploads disabled")
         return targets
 
-    def update_config(self, config: dict) -> None:
-        """Update SFTP targets and device identity after config pull."""
-        device = config.get("device", {})
-        self._customer_name = device.get("customer_name", self._customer_name)
-        self._site_name     = device.get("site_name", self._site_name)
-        self._targets       = self._build_targets(config)
-
     def upload_capture(
         self,
         capture_id: int,
@@ -160,6 +163,15 @@ class UploadManager:
                 )
                 sftp.put(str(filepath), remote_path)
 
+                # Upload sidecar JSON hvis den findes
+                sidecar_local  = filepath.with_suffix('.json')
+                sidecar_remote = str(PurePosixPath(remote_dir) / sidecar_local.name)
+                if sidecar_local.exists():
+                    sftp.put(str(sidecar_local), sidecar_remote)
+                    log.info("Sidecar uploaded: %s", sidecar_local.name)
+                else:
+                    log.debug("Ingen sidecar fundet for %s", filepath.name)
+
             log.info("Upload complete: %s → %s", filepath.name, target.name)
             self._db.log_event(
                 self._device_id, "INFO", "upload",
@@ -200,8 +212,9 @@ class UploadManager:
         customer = self._customer_name
         site     = self._site_name
 
+        import re as _re
         def _safe(s):
-            return re.sub(r"[^A-Za-z0-9æøåÆØÅ_-]", "_", s).strip("_")
+            return _re.sub(r"[^A-Za-z0-9æøåÆØÅ_-]", "_", s).strip("_")
         if customer and site:
             return str(PurePosixPath(remote_base) / _safe(customer) / _safe(site) / yyyy / mm / dd)
         elif customer:
