@@ -8,7 +8,29 @@
 #   2.7.1  15-apr-2026  FIX: Fjernet duplikerede imports (subprocess/threading)
 #                       FIX: Rettet syntax error i slutningen af create_timelapse
 #   2.7.0  13-apr-2026  Timelapse video rendering via FFmpeg
+#                       /api/timelapse/frames, create, status, download
+#   2.6.0  12-apr-2026  SystemAdmin relay endpoint tilføjet
+#                       Alle kendte AttributeErrors fjernet permanent
+#                       Customer/Site/Device CRUD (Sprint A) tilføjet
+#                       config-defaults endpoint tilføjet
+#                       clear-update endpoint tilføjet
+#                       Versionsnummer indført
+#   2.5.0  11-apr-2026  PTP relay recovery, focusmode fix, clear-update draft
+#   2.4.0  10-apr-2026  Sprint A: hierarkisk config merge, CameraPage endpoints
+#   2.3.0  09-apr-2026  Backup UI, edge backup via SFTP, NAS support
+#   2.2.0  08-apr-2026  LAB mode, preview, histogram, WiFi scan
+#   2.1.0  07-apr-2026  CI/CD pipeline, edge self-update
+#   2.0.0  06-apr-2026  Multi-tenant DB, customers, sites
 # ═══════════════════════════════════════════════════════════════════════════
+
+"""TimeLapse Pro — Headend API
+============================
+Minimal FastAPI application for test phase.
+Receives heartbeats, captures and bootstrap requests from edge nodes.
+
+Run:  uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+Docs: http://<ip>:8000/docs
+"""
 
 from __future__ import annotations
 
