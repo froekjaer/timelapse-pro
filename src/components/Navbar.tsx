@@ -1,11 +1,13 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Camera, Settings } from 'lucide-react'
+import { Camera, Settings, Database, Globe } from 'lucide-react'
 
 export function Navbar() {
   const { pathname } = useLocation()
 
 const links = [
   { to: '/', label: 'Enheder', icon: Camera },
+  { to: '/backup', label: 'Backup', icon: Database },
+  { to: '/global-config', label: 'Global Config', icon: Globe },
   { to: '/settings', label: 'Indstillinger', icon: Settings },
 ]
   return (

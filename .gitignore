@@ -25,9 +25,11 @@ venv/
 .DS_Store
 Thumbs.db
 edge/api_token.txt
-".env" 
-"node_modules/" 
-"dist/" 
-"src_v2.tar" 
-"src_v3.zip" 
-dist/ 
+.env
+*.tar
+node_modules/ 
+dist/
+*.zip
+src_v2.tar 
+src_v3.zip 
+dist/

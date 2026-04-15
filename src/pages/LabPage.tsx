@@ -1,8 +1,18 @@
+// ═══════════════════════════════════════════════════════════════
+// LabPage.tsx
+// Version: 5.2.0  |  12. april 2026
+// ───────────────────────────────────────────────────────────────
+// Changelog:
+//   5.2.0  12-apr-2026  useParams fix, histogram stale closure fix
+//   5.1.0  11-apr-2026  Histogram, preview polling
+//   5.0.0  10-apr-2026  LAB mode komplet
+// ═══════════════════════════════════════════════════════════════
+// v5.1
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Camera, FlaskConical, Power, PowerOff, RefreshCw,
-  Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check
+  Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi
 } from 'lucide-react'
 import {
   setDebugMode, requestPreview, requestCapture,
@@ -29,7 +39,7 @@ const PARAM_GROUPS: Record<string, string[]> = {
 }
 
 // ── Histogram hook ────────────────────────────────────────────────────────────
-function useHistogram(imgRef: React.RefObject<HTMLImageElement>) {
+function useHistogram(imgRef: React.RefObject<HTMLImageElement | null>) {
   const [hist, setHist] = useState<{ r: number[]; g: number[]; b: number[]; lum: number[] } | null>(null)
   const compute = useCallback(() => {
     const img = imgRef.current
@@ -117,7 +127,8 @@ function ParamRow({
       const key = param.path.replace('/main/', '')
       await setParam(deviceId, key, value)
       setSaved(true)
-      setTimeout(() => { setSaved(false); setEditing(false); onChanged() }, 800)
+      setTimeout(() => { setSaved(false); setEditing(false); }, 800)
+      setTimeout(() => { onChanged() }, 3000)  // Vent til edge har sat parameteren
     } catch {
       setError('Fejl')
     } finally {
@@ -179,7 +190,7 @@ function ParamRow({
 
 // ── Main LabPage ──────────────────────────────────────────────────────────────
 export default function LabPage() {
-  const { id } = useParams<{ id: string }>()
+  const { deviceId: id } = useParams<{ deviceId: string }>()
   const navigate = useNavigate()
   const deviceId = id!
 
@@ -190,16 +201,38 @@ export default function LabPage() {
   const [params, setParams]           = useState<CameraParam[]>([])
   const [selectedPreview, setSelectedPreview] = useState<LabPreview | null>(null)
   const userSelectedRef = useRef(false)
+  const selectedPreviewRef = useRef<LabPreview | null>(null)
   const [loadingPreview, setLoadingPreview]   = useState(false)
   const [loadingCapture, setLoadingCapture]   = useState(false)
   const [loadingParams, setLoadingParams]     = useState(false)
   const [activeGroup, setActiveGroup] = useState<string>('Eksponering')
+  const [wifiData, setWifiData]       = useState<any>(null)
+  const [wifiLoading, setWifiLoading] = useState(false)
+  const [wifiPasswords, setWifiPasswords] = useState<Record<string, string>>({})
+  const [wifiConnecting, setWifiConnecting] = useState('')
   const [zoom, setZoom]               = useState(1)
   const [showHistogram, setShowHistogram] = useState(true)
   const [pollInterval, setPollInterval]   = useState<ReturnType<typeof setInterval> | null>(null)
   const [statusMsg, setStatusMsg]     = useState('')
+  const [labConnecting, setLabConnecting] = useState(false)
+  const [labConnectSecs, setLabConnectSecs] = useState(0)
+  const [labReady, setLabReady]           = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
   const { hist, compute, clear } = useHistogram(imgRef)
+
+  // Hold ref synkroniseret med state for brug i polling closure
+  useEffect(() => { selectedPreviewRef.current = selectedPreview }, [selectedPreview])
+
+  // Genberegn histogram når selectedPreview ændres (håndterer cached billeder)
+  useEffect(() => {
+    if (selectedPreview && showHistogram) {
+      // Vent til img er klar i DOM — brug lille delay for cached billeder
+      const t = setTimeout(() => {
+        if (imgRef.current?.complete) compute()
+      }, 150)
+      return () => clearTimeout(t)
+    }
+  }, [selectedPreview?.filename, showHistogram])
 
   // Load device info
   useEffect(() => {
@@ -228,9 +261,8 @@ export default function LabPage() {
         listPreviews(deviceId).then(p => {
           setPreviews(p)
           // Auto-select kun nyeste hvis bruger ikke har valgt manuelt
-          if (p.length > 0 && !userSelectedRef.current && p[0].filename !== selectedPreview?.filename) {
+          if (p.length > 0 && !userSelectedRef.current && p[0].filename !== selectedPreviewRef.current?.filename) {
             setSelectedPreview(p[0])
-            clear()
           }
         }).catch(() => {})
       }, 3000)
@@ -244,18 +276,75 @@ export default function LabPage() {
   async function toggleLab() {
     const next = !labActive
     setLabActive(next)
-    setStatusMsg(next ? 'Aktiverer lab mode…' : 'Deaktiverer lab mode…')
-    try {
-      await setDebugMode(deviceId, next, 2)
-      setStatusMsg(next ? 'Lab mode aktiv — kamera tænder…' : 'Lab mode deaktiveret')
-      setTimeout(() => setStatusMsg(''), 3000)
-      if (next) {
-        // Load previews after short delay
-        setTimeout(() => listPreviews(deviceId).then(setPreviews).catch(() => {}), 3000)
+    if (next) {
+      setLabConnecting(true)
+      const warmupS     = 30   // relay 10s + connect + commands
+      const configPullS = 60   // edge waker hvert 60s
+
+      // Beregn sekunder til næste 60s wake (synkroniseret)
+      const nowS        = Math.floor(Date.now() / 1000)
+      const secsToPull  = configPullS - (nowS % configPullS)
+      const totalWait   = secsToPull + warmupS
+      setLabConnectSecs(totalWait)
+
+      // Nedtælling — viser realistisk ventetid
+      let remaining = totalWait
+      const countdown = setInterval(() => {
+        remaining -= 1
+        setLabConnectSecs(Math.max(0, remaining))
+      }, 1000)
+
+      try {
+        // Sæt debug mode — edge vil opdage det ved næste config pull (~60s)
+        await setDebugMode(deviceId, true, 5)
+
+        // Poll headend for faktisk LAB CAMERA READY signal
+        // Edge sender /lab/{id}/camera-ready når kameraet er forbundet
+        // Det er det præcise signal vi venter på
+        const check = setInterval(async () => {
+          try {
+            const apiUrl = (await import('../api/client')).getApiUrl()
+            const r = await fetch(`${apiUrl}/api/admin/devices/${deviceId}`)
+            const data = await r.json()
+            const cfg = data?.device?.device_config ? JSON.parse(data.device.device_config) : {}
+            if (cfg?.lab_camera_ready === true) {
+              clearInterval(check)
+              clearInterval(countdown)
+              setLabConnecting(false)
+              setLabConnectSecs(0)
+              listPreviews(deviceId).then(setPreviews).catch(() => {})
+              setLabReady(true)
+            }
+          } catch { /* ignore */ }
+        }, 3000)
+
+      } catch {
+        setLabActive(false)
+        setLabConnecting(false)
+        setLabConnectSecs(0)
+        clearInterval(countdown)
+        setStatusMsg('Fejl ved aktivering af lab mode')
       }
-    } catch {
-      setLabActive(!next)
-      setStatusMsg('Fejl ved skift af lab mode')
+    } else {
+      setLabConnecting(false)
+      setLabConnectSecs(0)
+      setLabReady(false)
+      // Nulstil camera-ready signal på headend
+      try {
+        const apiUrl = (await import('../api/client')).getApiUrl()
+        await fetch(`${apiUrl}/api/lab/${deviceId}/camera-ready`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ready: false})
+        }).catch(() => {})
+      } catch { /* ignore */ }
+      try {
+        await setDebugMode(deviceId, false)
+        setStatusMsg('Lab mode deaktiveret')
+        setTimeout(() => setStatusMsg(''), 2000)
+      } catch {
+        setLabActive(true)
+        setStatusMsg('Fejl ved deaktivering')
+      }
     }
   }
 
@@ -345,6 +434,57 @@ export default function LabPage() {
     }
   }
 
+  async function wifiScan() {
+    setWifiLoading(true)
+    setStatusMsg('Scanner WiFi netværk…')
+    try {
+      const apiUrl = (await import('../api/client')).getApiUrl()
+      await fetch(`${apiUrl}/api/lab/${deviceId}/wifi/scan`, { method: 'POST' })
+      // Poll for result
+      let attempts = 0
+      const poll = setInterval(async () => {
+        attempts++
+        const cfg = await getDeviceRawConfig(deviceId)
+        const wd  = cfg?.wifi_data
+        if (wd?.type === 'scan') {
+          setWifiData(wd)
+          setWifiLoading(false)
+          setStatusMsg(`${wd.networks?.length ?? 0} netværk fundet`)
+          setTimeout(() => setStatusMsg(''), 3000)
+          clearInterval(poll)
+        }
+        if (attempts > 15) { clearInterval(poll); setWifiLoading(false); setStatusMsg('Timeout') }
+      }, 1500)
+    } catch { setWifiLoading(false) }
+  }
+
+  async function wifiConnect(ssid: string, password: string) {
+    setWifiConnecting(ssid)
+    setStatusMsg(`Tilslutter til ${ssid}…`)
+    try {
+      const apiUrl = (await import('../api/client')).getApiUrl()
+      await fetch(`${apiUrl}/api/lab/${deviceId}/wifi/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid, password })
+      })
+      let attempts = 0
+      const poll = setInterval(async () => {
+        attempts++
+        const cfg = await getDeviceRawConfig(deviceId)
+        const wd  = cfg?.wifi_data
+        if (wd?.type === 'connect') {
+          setWifiData((prev: any) => ({ ...prev, current: wd.current }))
+          setWifiConnecting('')
+          setStatusMsg(wd.result?.success ? `✓ Tilsluttet ${ssid}` : `Fejl ved tilslutning til ${ssid}`)
+          setTimeout(() => setStatusMsg(''), 4000)
+          clearInterval(poll)
+        }
+        if (attempts > 20) { clearInterval(poll); setWifiConnecting('') }
+      }, 1500)
+    } catch { setWifiConnecting('') }
+  }
+
   function lockParams() {
     // Build initial_commands from current known params
     const LOCKABLE = ['capturetarget', 'iso', 'colorspace', 'meteringmode',
@@ -357,7 +497,7 @@ export default function LabPage() {
       })
     if (commands.length === 0) { setStatusMsg('Ingen parametre at låse'); return }
     // Update config via API
-    const client = import('../api/client').then(({ getApiUrl }) => {
+    import('../api/client').then(({ getApiUrl }) => {
       fetch(`${getApiUrl()}/api/admin/devices/${deviceId}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -402,14 +542,36 @@ export default function LabPage() {
             {statusMsg && (
               <span className="text-sm text-sky-600 bg-sky-50 px-3 py-1 rounded-full">{statusMsg}</span>
             )}
-            <button onClick={toggleLab}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all ${
-                labActive
-                  ? 'bg-red-500 hover:bg-red-600 text-white'
-                  : 'bg-purple-600 hover:bg-purple-700 text-white'
-              }`}>
-              {labActive ? <><PowerOff className="w-4 h-4" /> Stop lab</> : <><Power className="w-4 h-4" /> Start lab</>}
-            </button>
+            <div className="flex items-center gap-3">
+              {labReady && labActive && (
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl animate-pulse">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                  Lab klar!
+                </span>
+              )}
+              <button onClick={toggleLab} disabled={labConnecting}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all ${
+                  labConnecting
+                    ? 'bg-amber-400 text-white cursor-wait'
+                    : labActive
+                      ? 'bg-red-500 hover:bg-red-600 text-white'
+                      : 'bg-purple-600 hover:bg-purple-700 text-white'
+                }`}>
+                {labConnecting ? (
+                  <><RefreshCw className="w-4 h-4 animate-spin" />
+                  {labConnectSecs > 60
+                    ? `Venter ~${Math.floor(labConnectSecs/60)}m ${labConnectSecs%60}s`
+                    : labConnectSecs > 0
+                      ? `Venter ~${labConnectSecs}s`
+                      : 'Venter på enhed…'
+                  }</>
+                ) : labActive ? (
+                  <><PowerOff className="w-4 h-4" /> Stop lab</>
+                ) : (
+                  <><Power className="w-4 h-4" /> Start lab</>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -453,15 +615,14 @@ export default function LabPage() {
             <div className="bg-gray-900 aspect-video flex items-center justify-center overflow-hidden relative">
               {selectedPreview ? (
                 <img
+                  key={selectedPreview.filename}
                   ref={imgRef}
                   src={getPreviewUrl(deviceId, selectedPreview.filename)}
                   alt="preview"
                   crossOrigin="anonymous"
                   onLoad={() => {
-                  if (showHistogram) {
-                    setTimeout(compute, 100)
-                  }
-                }}
+                    if (showHistogram) setTimeout(compute, 100)
+                  }}
                   style={{
                     transform: `scale(${zoom})`,
                     transformOrigin: 'center center',
@@ -504,7 +665,7 @@ export default function LabPage() {
               <div className="px-4 pb-4">
                 <div className="flex gap-1.5 overflow-x-auto">
                   {previews.map(p => (
-                    <button key={p.filename} onClick={() => { userSelectedRef.current = true; setSelectedPreview(p); clear() }}
+                    <button key={p.filename} onClick={() => { userSelectedRef.current = true; setSelectedPreview(p) }}
                       className={`flex-shrink-0 w-16 h-12 rounded-lg overflow-hidden border-2 transition-all ${
                         selectedPreview?.filename === p.filename ? 'border-purple-400' : 'border-transparent opacity-60 hover:opacity-100'
                       }`}>
@@ -580,6 +741,69 @@ export default function LabPage() {
               </>
             )}
           </div>
+
+          {/* WiFi Panel */}
+          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden xl:col-span-2">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+            <h2 className="font-semibold text-gray-800 flex items-center gap-2">
+              <Wifi className="w-4 h-4 text-purple-500" /> WiFi Konfiguration
+            </h2>
+            <div className="flex items-center gap-3">
+              {wifiData?.current?.connected && (
+                <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full flex items-center gap-1">
+                  <Wifi className="w-3 h-3" /> {wifiData.current.ssid} · {wifiData.current.signal ?? 0}%
+                </span>
+              )}
+              <button onClick={wifiScan} disabled={wifiLoading}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg font-medium">
+                {wifiLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Wifi className="w-3 h-3" />}
+                Scan netværk
+              </button>
+            </div>
+          </div>
+          {!wifiData ? (
+            <div className="flex items-center justify-center text-gray-400 text-sm flex-col gap-2 p-8">
+              <Wifi className="w-8 h-8 opacity-20" />
+              <p>Klik "Scan netværk" for at se tilgængelige WiFi netværk</p>
+            </div>
+          ) : (
+            <div className="overflow-y-auto max-h-64 p-4 space-y-2">
+              {(wifiData.networks ?? []).map((net: any) => (
+                <div key={net.ssid} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+                  net.in_use ? 'bg-emerald-50 border-emerald-200' : 'bg-gray-50 border-gray-200 hover:border-purple-200'
+                }`}>
+                  <Wifi className={`w-4 h-4 flex-shrink-0 ${net.in_use ? 'text-emerald-500' : 'text-gray-400'}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm text-gray-800 truncate">{net.ssid}</span>
+                      {net.in_use && <span className="text-xs text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">Aktiv</span>}
+                      {net.saved && !net.in_use && <span className="text-xs text-sky-600 bg-sky-50 px-1.5 py-0.5 rounded">Gemt</span>}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">{net.bars} {net.signal}% · {net.security || 'Åbent'} · Kanal {net.channel}</div>
+                  </div>
+                  {!net.in_use && (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {net.security && !net.saved && (
+                        <input type="password" placeholder="Password" value={wifiPasswords[net.ssid] ?? ''}
+                          onChange={e => setWifiPasswords(p => ({...p, [net.ssid]: e.target.value}))}
+                          className="text-xs border border-gray-200 rounded px-2 py-1 w-24 focus:outline-none focus:border-purple-300"
+                          onKeyDown={e => e.key === 'Enter' && wifiConnect(net.ssid, wifiPasswords[net.ssid] ?? '')} />
+                      )}
+                      <button onClick={() => wifiConnect(net.ssid, net.saved ? '' : (wifiPasswords[net.ssid] ?? ''))}
+                        disabled={wifiConnecting === net.ssid}
+                        className="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg font-medium flex items-center gap-1">
+                        {wifiConnecting === net.ssid
+                          ? <RefreshCw className="w-3 h-3 animate-spin" />
+                          : 'Tilslut'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          </div>
+
         </div>
       )}
     </div>
