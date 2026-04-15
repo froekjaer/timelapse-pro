@@ -1,5 +1,27 @@
-"""
-TimeLapse Pro — Headend API
+# ═══════════════════════════════════════════════════════════════════════════
+# TimeLapse Pro — main.py (Headend API)
+# ───────────────────────────────────────────────────────────────────────────
+# Version  : 2.7.0
+# Dato     : 13. april 2026
+# ───────────────────────────────────────────────────────────────────────────
+# Changelog:
+#   2.7.0  13-apr-2026  Timelapse video rendering via FFmpeg
+#                       /api/timelapse/frames, create, status, download
+#   2.6.0  12-apr-2026  SystemAdmin relay endpoint tilføjet
+#                       Alle kendte AttributeErrors fjernet permanent
+#                       Customer/Site/Device CRUD (Sprint A) tilføjet
+#                       config-defaults endpoint tilføjet
+#                       clear-update endpoint tilføjet
+#                       Versionsnummer indført
+#   2.5.0  11-apr-2026  PTP relay recovery, focusmode fix, clear-update draft
+#   2.4.0  10-apr-2026  Sprint A: hierarkisk config merge, CameraPage endpoints
+#   2.3.0  09-apr-2026  Backup UI, edge backup via SFTP, NAS support
+#   2.2.0  08-apr-2026  LAB mode, preview, histogram, WiFi scan
+#   2.1.0  07-apr-2026  CI/CD pipeline, edge self-update
+#   2.0.0  06-apr-2026  Multi-tenant DB, customers, sites
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""TimeLapse Pro — Headend API
 ============================
 Minimal FastAPI application for test phase.
 Receives heartbeats, captures and bootstrap requests from edge nodes.
@@ -22,10 +44,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from datetime import timezone as _tz
+
+def ensure_utc(dt):
+    if dt is None: return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
+
 from database import (
-    Capture, Customer, Device, Diagnostic, Event, Site, ConfigDefaults, Settings,
+    Capture, Customer, ConfigDefaults, Device, Diagnostic, Event, Settings, Site,
     create_tables, get_db, now_utc
 )
+import uuid as _uuid
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -52,6 +81,28 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     create_tables()
+    # DB migration — tilføj nye kolonner hvis de mangler
+    try:
+        from sqlalchemy import text
+        engine = next(iter([].__class__.mro())) if False else __import__('database').engine
+        new_cols = [
+            ("gps_lat", "REAL"), ("gps_lon", "REAL"), ("gps_alt_m", "REAL"),
+            ("gps_source", "VARCHAR(20)"), ("azimuth_deg", "REAL"),
+            ("tilt_deg", "REAL"), ("mount_height_m", "REAL"),
+            ("fov_horizontal_deg", "REAL"), ("fov_vertical_deg", "REAL"),
+            ("perspective", "VARCHAR(50)"), ("sha256_pre_xmp", "VARCHAR(64)"),
+            ("xmp_written", "BOOLEAN"), ("sidecar_path", "VARCHAR(500)"),
+        ]
+        with engine.connect() as conn:
+            for col, typ in new_cols:
+                try:
+                    conn.execute(text(f"ALTER TABLE captures ADD COLUMN {col} {typ}"))
+                    conn.commit()
+                    log.info("DB migration: captures.%s tilføjet", col)
+                except Exception:
+                    pass  # Kolonnen findes allerede
+    except Exception as exc:
+        log.warning("DB migration fejl (ikke kritisk): %s", exc)
     log.info("TimeLapse Pro Headend started — database ready")
 
 
@@ -89,6 +140,21 @@ class CaptureRequest(BaseModel):
     exposure_time:  Optional[str] = None
     aperture:       Optional[str] = None
     iso:            Optional[int] = None
+    # Lokation og orientering
+    gps_lat:             Optional[float] = None
+    gps_lon:             Optional[float] = None
+    gps_alt_m:           Optional[float] = None
+    gps_source:          Optional[str] = None
+    azimuth_deg:         Optional[float] = None
+    tilt_deg:            Optional[float] = None
+    mount_height_m:      Optional[float] = None
+    fov_horizontal_deg:  Optional[float] = None
+    fov_vertical_deg:    Optional[float] = None
+    perspective:         Optional[str] = None
+    # Integritet
+    sha256_pre_xmp:      Optional[str] = None
+    xmp_written:         Optional[bool] = None
+    sidecar_path:        Optional[str] = None
 
 class EventRequest(BaseModel):
     device_id: str
@@ -147,29 +213,19 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
 
 @app.get("/api/config/{device_id}")
 def get_config(device_id: str, db: Session = Depends(get_db)):
-    """Return merged operational config for a device.
-    Merger: Default → Kunde → Site → Kamera → Runtime
+    """Return operational config for a device.
+    Merges base defaults with per-device overrides from device_config column.
     """
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
+    # Opdater last_seen ved config pull — bruges til LAB ready detection
     device.last_seen = now_utc()
     db.commit()
 
     base_url = os.environ.get("BASE_URL", "http://192.168.86.132:8000")
 
-    def deep_merge(base: dict, override: dict) -> dict:
-        result = base.copy()
-        for k, v in override.items():
-            if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-                result[k] = deep_merge(result[k], v)
-            else:
-                result[k] = v
-        return result
-
-    # ── Lag 1: Globale defaults ───────────────────────────────────
-    defaults = db.query(ConfigDefaults).first()
     cfg = {
         "device": {
             "device_id":     device_id,
@@ -178,17 +234,16 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
             "customer_name": device.customer_name or "",
             "site_name":     device.site_name or "",
             "camera_name":   device.camera_name or "",
-            "camera_index":  device.camera_index or 0,
         },
-        "schedule": json.loads(defaults.schedule) if defaults and defaults.schedule else {
-            "timezone": "Europe/Copenhagen",
-            "capture_mode": "interval",
+        "schedule": {
+            "timezone":         "Europe/Copenhagen",
+            "capture_mode":     "interval",
             "interval_minutes": 60,
-            "active_hours": ["06:00", "21:00"],
+            "active_hours":     ["06:00", "21:00"],
         },
         "camera": {
             "device_id":               device_id,
-            "relay_gpio_pin":          device.relay_gpio_camera or 356,
+            "relay_gpio_pin":          356,
             "relay_on_seconds_before": 10,
             "relay_off_seconds_after": 5,
             "relay_simulate":          False,
@@ -196,29 +251,29 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
             "delete_after_download":   True,
         },
         "modem": {
-            "modem_relay_gpio_pin":        device.relay_gpio_modem or 361,
+            "modem_relay_gpio_pin":        361,
             "modem_power_cycle_off_s":     5,
             "modem_power_cycle_recover_s": 15,
             "modem_cycle_after_failures":  3,
             "modem_min_cycle_interval_s":  600,
         },
-        "quality": json.loads(defaults.quality) if defaults and defaults.quality else {
-            "check_enabled": True,
-            "blur_threshold": 80,
-            "dark_threshold": 25,
+        "quality": {
+            "check_enabled":    True,
+            "blur_threshold":   80,
+            "dark_threshold":   25,
             "bright_threshold": 230,
         },
-        "storage": json.loads(defaults.storage) if defaults and defaults.storage else {
-            "local_path": "/data/captures",
+        "storage": {
+            "local_path":         "/data/captures",
             "circular_buffer_gb": 50,
-            "db_path": "/data/timelapse_edge.db",
+            "db_path":            "/data/timelapse_edge.db",
         },
         "location": {
-            "gps_lat":    None,
-            "gps_lon":    None,
-            "gps_alt":    None,
-            "gps_source": "manual",
-            "address":    None,
+            "gps_lat":   None,
+            "gps_lon":   None,
+            "gps_alt":   None,
+            "gps_source": "manual",  # manual | gpsd
+            "address":   None,
         },
         "sftp": {
             "host":        "192.168.86.132",
@@ -228,60 +283,85 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
             "key_file":    "",
             "remote_base": "/incoming",
         },
-        "diagnostics": json.loads(defaults.diagnostics) if defaults and defaults.diagnostics else {
+        "diagnostics": {
             "heartbeat_interval_minutes": 60,
-            "config_poll_interval_minutes": 5,
-            "collect": ["cpu_temperature", "cpu_load", "memory_usage", "disk_usage", "connectivity_type"],
-        },
-        "system": json.loads(defaults.system) if defaults and hasattr(defaults, 'system') and defaults.system else {
-            "error_recovery_sleep_s": 30,
-            "min_sleep_s": 60,
-            "api_timeout_s": 15,
+            "collect": [
+                "cpu_temperature", "cpu_load",
+                "memory_usage", "disk_usage", "connectivity_type"
+            ],
         },
     }
 
-    # ── Lag 2+3: Site og Kunde overrides ─────────────────────────
-    if device.site_id:
-        site = db.query(Site).filter_by(id=device.site_id).first()
-        if site:
-            if site.timezone:
-                cfg["schedule"]["timezone"] = site.timezone
-            if site.gps_lat and site.gps_lon:
-                cfg["location"].update({
-                    "gps_lat": site.gps_lat,
-                    "gps_lon": site.gps_lon,
-                    "gps_alt": site.gps_alt,
-                    "gps_source": "site",
-                })
-            if site.config_overrides and site.config_overrides != "{}":
-                try:
-                    cfg = deep_merge(cfg, json.loads(site.config_overrides))
-                except Exception as exc:
-                    log.warning("Invalid site config_overrides: %s", exc)
-
-            customer = db.query(Customer).filter_by(id=site.customer_id).first()
-            if customer and customer.config_overrides and customer.config_overrides != "{}":
-                try:
-                    cfg = deep_merge(cfg, json.loads(customer.config_overrides))
-                except Exception as exc:
-                    log.warning("Invalid customer config_overrides: %s", exc)
-
-    # ── Lag 4: Kamera overrides (device.config_overrides) ─────────
-    if device.config_overrides and device.config_overrides != "{}":
-        try:
-            cfg = deep_merge(cfg, json.loads(device.config_overrides))
-        except Exception as exc:
-            log.warning("Invalid device config_overrides for %s: %s", device_id, exc)
-
-    # ── Lag 5: Runtime state (device_config — LAB, backup flags) ──
+    # Apply per-device overrides from database
     if device.device_config:
         try:
-            cfg = deep_merge(cfg, json.loads(device.device_config))
+            overrides = json.loads(device.device_config or "{}")
+            for section, values in overrides.items():
+                if section in cfg and isinstance(cfg[section], dict):
+                    cfg[section].update(values)
+                else:
+                    cfg[section] = values
         except Exception as exc:
             log.warning("Invalid device_config for %s: %s", device_id, exc)
 
-    return cfg
+    # Apply hierarchical config overrides (Sprint A)
+    try:
+        from database import Customer, Site
+        site    = db.query(Site).filter_by(id=device.site_id).first() if hasattr(device, "site_id") and device.site_id else None
+        customer = db.query(Customer).filter_by(id=site.customer_id).first() if site else None
+        defaults = db.query(ConfigDefaults).first()
+        # Lag 1: config_defaults
+        if defaults:
+            for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system"]:
+                if hasattr(defaults, section):
+                    val = getattr(defaults, section)
+                    if val:
+                        d = json.loads(val)
+                        if section in cfg and isinstance(cfg[section], dict):
+                            cfg[section] = _deep_merge(d, cfg[section])
+                        else:
+                            cfg[section] = d
+        # Lag 2: customer overrides
+        if customer and customer.config_overrides:
+            for section, values in json.loads(customer.config_overrides).items():
+                if section in cfg and isinstance(cfg[section], dict):
+                    cfg[section] = _deep_merge(cfg[section], values)
+                else:
+                    cfg[section] = values
+        # Lag 3: site overrides + GPS + timezone
+        if site:
+            if site.config_overrides:
+                for section, values in json.loads(site.config_overrides).items():
+                    if section in cfg and isinstance(cfg[section], dict):
+                        cfg[section] = _deep_merge(cfg[section], values)
+                    else:
+                        cfg[section] = values
+            if site.gps_lat:
+                cfg["location"]["gps_lat"] = site.gps_lat
+                cfg["location"]["gps_lon"] = site.gps_lon
+            if site.timezone:
+                cfg["schedule"]["timezone"] = site.timezone
+        # Lag 4: device config_overrides
+        if hasattr(device, "config_overrides") and device.config_overrides:
+            for section, values in json.loads(device.config_overrides).items():
+                if section in cfg and isinstance(cfg[section], dict):
+                    cfg[section] = _deep_merge(cfg[section], values)
+                else:
+                    cfg[section] = values
+    except Exception as exc:
+        log.warning("Hierarkisk config merge fejl for %s: %s", device_id, exc)
 
+    # Tilføj node_cameras — andre kameraer på samme fysiske node
+    try:
+        node_cfg = json.loads(device.device_config or "{}")
+        node_cameras = node_cfg.get("node_cameras", [])
+        cfg["node_cameras"] = node_cameras
+        cfg["multi_camera_mode"] = node_cfg.get("multi_camera_mode", "single")
+    except Exception:
+        cfg["node_cameras"] = []
+        cfg["multi_camera_mode"] = "single"
+
+    return cfg
 
 
 @app.put("/api/admin/devices/{device_id}/config")
@@ -355,7 +435,6 @@ def heartbeat(
         battery_v    = diag.get("battery_voltage"),
         solar_v      = diag.get("solar_voltage"),
         connectivity = diag.get("connectivity_type"),
-        wifi_ssid    = diag.get("wifi_ssid"),
         uptime_s     = diag.get("uptime_s"),
         capture_total   = stats.get("total"),
         capture_passed  = stats.get("passed"),
@@ -498,7 +577,7 @@ def update_device_info(
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    for field in ["customer_name", "site_name", "camera_name", "installed_date", "installed_time", "location_name"]:
+    for field in ["customer_name", "site_name", "camera_name", "location_name"]:
         if field in info:
             setattr(device, field, info[field])
     db.commit()
@@ -521,6 +600,7 @@ def list_devices(db: Session = Depends(get_db)):
         result.append({
             "device_id":      d.device_id,
             "location_name":  d.location_name,
+            "tenant_id":      d.tenant_id,
             "ip_address":     d.ip_address,
             "status":         "online" if online else "offline",
             "last_seen":      d.last_seen.isoformat() if d.last_seen else None,
@@ -528,91 +608,9 @@ def list_devices(db: Session = Depends(get_db)):
             "customer_name":  d.customer_name,
             "site_name":      d.site_name,
             "camera_name":    d.camera_name,
-        })
+                                })
     return result
 
-
-@app.get("/api/admin/devices/{device_id}")
-def get_device(device_id: str, db: Session = Depends(get_db)):
-    """Get device details with latest diagnostics and captures."""
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-
-    # Latest diagnostics
-    latest_diag = (
-        db.query(Diagnostic)
-        .filter_by(device_id=device_id)
-        .order_by(Diagnostic.recorded_at.desc())
-        .first()
-    )
-
-    # Last 200 captures for graphs
-    captures = (
-        db.query(Capture)
-        .filter_by(device_id=device_id)
-        .order_by(Capture.captured_at.desc())
-        .limit(200)
-        .all()
-    )
-
-    return {
-        "device": {
-            "device_id":      device.device_id,
-            "location_name":  device.location_name,
-            "ip_address":     device.ip_address,
-            "last_seen":      device.last_seen.isoformat() if device.last_seen else None,
-            "customer_name":  device.customer_name,
-            "site_name":      device.site_name,
-            "camera_name":    device.camera_name,
-            "device_config":  device.device_config,
-        },
-        "diagnostics": {
-            "cpu_temp_c":   latest_diag.cpu_temp_c   if latest_diag else None,
-            "ntp_offset_s":  latest_diag.ntp_offset_s  if latest_diag else None,
-            "ssd_used_pct":  latest_diag.ssd_used_pct  if latest_diag else None,
-            "ssd_free_gb":   latest_diag.ssd_free_gb   if latest_diag else None,
-            "service_restarts": latest_diag.service_restarts if latest_diag else None,
-            "upload_queue":  latest_diag.upload_queue  if latest_diag else None,
-            "cam_battery_pct": latest_diag.cam_battery_pct if latest_diag else None,
-            "cam_shutter_cnt": latest_diag.cam_shutter_cnt if latest_diag else None,
-            "cam_shutter_pct": latest_diag.cam_shutter_pct if latest_diag else None,
-            "cam_shutter_alarm": latest_diag.cam_shutter_alarm if latest_diag else None,
-            "cam_lens_name": latest_diag.cam_lens_name if latest_diag else None,
-            "cam_config_json": latest_diag.cam_config_json if latest_diag else None,
-            "cam_drift_json": latest_diag.cam_drift_json if latest_diag else None,
-            "cpu_load_pct": latest_diag.cpu_load_pct if latest_diag else None,
-            "disk_used_gb": latest_diag.disk_used_gb if latest_diag else None,
-            "connectivity": latest_diag.connectivity if latest_diag else None,
-            "wifi_ssid":   latest_diag.wifi_ssid if latest_diag else None,
-            "uptime_s":     latest_diag.uptime_s     if latest_diag else None,
-        } if latest_diag else None,
-        "gps": {
-            "lat":    device_cfg.get("location", {}).get("gps_lat"),
-            "lon":    device_cfg.get("location", {}).get("gps_lon"),
-            "alt":    device_cfg.get("location", {}).get("gps_alt"),
-            "source": device_cfg.get("location", {}).get("gps_source", "manual"),
-            "address":device_cfg.get("location", {}).get("address"),
-        } if (device_cfg := json.loads(device.device_config or "{}")) else None,
-        "captures": [
-            {
-                "id":           c.id,
-                "device_id":     c.device_id,
-                "filename":      c.filename,
-                "captured_at":   c.captured_at.isoformat() if c.captured_at else None,
-                "quality_flag":  c.quality_flag,
-                "quality_passed":c.quality_passed,
-                "blur_score":    round(c.blur_score, 1) if c.blur_score else None,
-                "brightness":    round(c.brightness_mean, 1) if c.brightness_mean else None,
-                "filesize_mb":   round(c.filesize / 1e6, 1) if c.filesize else None,
-                "iso":           c.iso,
-                "aperture":      c.aperture,
-                "shutter_speed": c.shutter_speed if hasattr(c, 'shutter_speed') else None,
-                "focal_length":  c.focal_length if hasattr(c, 'focal_length') else None,
-            }
-            for c in captures
-        ],
-    }
 
 
 @app.get("/api/admin/captures")
@@ -641,6 +639,11 @@ def list_captures(
             "iso":           c.iso,
             "aperture":      c.aperture,
             "shutter_speed": c.shutter_speed if hasattr(c, 'shutter_speed') else None,
+            "gps_lat":       c.gps_lat if hasattr(c, 'gps_lat') else None,
+            "gps_lon":       c.gps_lon if hasattr(c, 'gps_lon') else None,
+            "azimuth_deg":   c.azimuth_deg if hasattr(c, 'azimuth_deg') else None,
+            "tilt_deg":      c.tilt_deg if hasattr(c, 'tilt_deg') else None,
+            "xmp_written":   c.xmp_written if hasattr(c, 'xmp_written') else None,
         }
         for c in captures
     ]
@@ -663,6 +666,364 @@ def stats(db: Session = Depends(get_db)):
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/sidecar/{device_id}/{filename}")
+def get_sidecar(device_id: str, filename: str):
+    """Returner sidecar JSON metadata for et billede."""
+    import re as _re
+    from fastapi.responses import JSONResponse
+    # Find billedet samme sted som thumbnails
+    m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
+    if m:
+        yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
+        matches = list(SFTP_BASE.glob(f"*/*/{yyyy}/{mm}/{dd}/{filename}"))
+        if matches:
+            sidecar_path = matches[0]
+            if sidecar_path.exists():
+                import json as _json
+                return _json.loads(sidecar_path.read_text(encoding='utf-8'))
+    # Fallback: flat struktur
+    flat = SFTP_BASE / device_id / filename
+    if flat.exists():
+        import json as _json
+        return _json.loads(flat.read_text(encoding='utf-8'))
+    raise HTTPException(status_code=404, detail="Sidecar ikke fundet")
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Timelapse Video Rendering
+# ═══════════════════════════════════════════════════════════════════════════
+
+import subprocess as _subprocess
+import threading as _threading
+import uuid as _render_uuid
+from pathlib import Path as _RPath
+
+RENDER_JOBS: dict = {}          # job_id → {status, progress, error, output_path}
+RENDER_OUTPUT_DIR = _RPath("/tmp/timelapse_renders")
+RENDER_OUTPUT_DIR.mkdir(exist_ok=True)
+
+
+@app.get("/api/timelapse/frames")
+def get_timelapse_frames(
+    request: Request,
+    device_id: str,
+    start: str,
+    end: str,
+    min_blur: float = 0,
+    quality_only: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Returner billeder i tidsinterval til timelapse preview."""
+    from datetime import datetime as _dt
+    try:
+        start_dt = _dt.fromisoformat(start.replace("Z", "+00:00"))
+        end_dt   = _dt.fromisoformat(end.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ugyldigt datoformat")
+
+    q = db.query(Capture).filter(
+        Capture.device_id == device_id,
+        Capture.captured_at >= start_dt,
+        Capture.captured_at <= end_dt,
+        Capture.captured_at.isnot(None),
+    ).order_by(Capture.captured_at.asc())
+
+    if quality_only:
+        q = q.filter(Capture.quality_passed == True)
+    if min_blur > 0:
+        q = q.filter(Capture.blur_score >= min_blur)
+    # Lysstyrke filter
+    min_brightness = float(request.query_params.get("min_brightness", 0))
+    max_brightness = float(request.query_params.get("max_brightness", 255))
+    if min_brightness > 0:
+        q = q.filter(Capture.brightness_mean >= min_brightness)
+    if max_brightness < 255:
+        q = q.filter(Capture.brightness_mean <= max_brightness)
+    # Dag/nat filter via capture tidspunkt og GPS koordinater
+    day_night = request.query_params.get("day_night", "all")
+    if day_night in ("day", "night"):
+        try:
+            from datetime import timezone as _tz
+            import math as _math
+            lat = float(request.query_params.get("gps_lat", 0))
+            lon = float(request.query_params.get("gps_lon", 0))
+            if lat == 0 and lon == 0:
+                lat, lon = 55.7, 12.6  # Default DK
+            def _is_daytime(dt):
+                if not dt: return True
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=_tz.utc)
+                doy = dt.timetuple().tm_yday
+                hour = dt.hour + dt.minute/60 + dt.second/3600 + lon/15
+                decl = 23.45 * _math.sin(_math.radians(360/365 * (doy - 81)))
+                ha = (hour - 12) * 15
+                elev = _math.degrees(_math.asin(
+                    _math.sin(_math.radians(lat))*_math.sin(_math.radians(decl)) +
+                    _math.cos(_math.radians(lat))*_math.cos(_math.radians(decl))*_math.cos(_math.radians(ha))
+                ))
+                return elev > -0.833
+            frames_all = q.all()
+            if day_night == "day":
+                frames_all = [f for f in frames_all if _is_daytime(f.captured_at)]
+            else:
+                frames_all = [f for f in frames_all if not _is_daytime(f.captured_at)]
+            frames = frames_all
+        except Exception as exc:
+            import traceback
+            log.warning("Dag/nat filter fejl: %s\n%s", exc, traceback.format_exc())
+    else:
+        frames = q.all()
+        frames = q.all()
+    return [
+        {
+            "id":            c.id,
+            "filename":      c.filename,
+            "device_id":     c.device_id,
+            "captured_at":   c.captured_at.isoformat() if c.captured_at else None,
+            "blur_score":    round(c.blur_score, 1) if c.blur_score else None,
+            "quality_passed":c.quality_passed,
+            "quality_flag":  c.quality_flag,
+            "filesize_mb":   round(c.filesize / 1e6, 1) if c.filesize else None,
+            "brightness":    round(c.brightness_mean, 1) if c.brightness_mean else None,
+        }
+        for c in frames
+    ]
+
+
+@app.post("/api/timelapse/create")
+def create_timelapse(payload: dict, db: Session = Depends(get_db)):
+    """Start timelapse video rendering job.
+
+    payload: {
+        device_id: str,
+        frame_ids: [int],           # Valgte billeder (sorteret)
+        fps: int,                   # 12|24|25|30|60
+        resolution: str,            # "1080p"|"4k"|"original"
+        codec: str,                 # "h264"|"h265"
+        deflicker: bool,
+        fade_frames: int,           # 0 = ingen fade
+        timestamp_overlay: bool,
+        timestamp_position: str,    # "tl"|"tr"|"bl"|"br"
+        ken_burns: str,             # "none"|"zoom_in"|"zoom_out"
+        crop_ratio: str,            # "16:9"|"4:3"|"1:1"|"original"
+        title: str,                 # Til filnavn
+    }
+    """
+    device_id  = payload.get("device_id")
+    frame_ids  = payload.get("frame_ids", [])
+    fps        = int(payload.get("fps", 25))
+    resolution = payload.get("resolution", "1080p")
+    codec      = payload.get("codec", "h264")
+    deflicker  = bool(payload.get("deflicker", False))
+    fade_frames= int(payload.get("fade_frames", 0))
+    ts_overlay = bool(payload.get("timestamp_overlay", False))
+    ts_pos     = payload.get("timestamp_position", "br")
+    ken_burns  = payload.get("ken_burns", "none")
+    crop_ratio = payload.get("crop_ratio", "16:9")
+    title      = payload.get("title", "timelapse")
+
+    if not frame_ids:
+        raise HTTPException(status_code=400, detail="Ingen billeder valgt")
+
+    # Hent billeder fra DB
+    frames = db.query(Capture).filter(
+        Capture.id.in_(frame_ids)
+    ).order_by(Capture.captured_at.asc()).all()
+
+    if not frames:
+        raise HTTPException(status_code=404, detail="Ingen billeder fundet")
+
+    # Find billedstier
+    image_paths = []
+    for f in frames:
+        path = _find_image(f.device_id, f.filename)
+        if path:
+            image_paths.append((str(path), f.captured_at))
+
+    if len(image_paths) < 2:
+        raise HTTPException(status_code=400, detail="For få billeder fundet på disk")
+
+    job_id = str(_render_uuid.uuid4())[:8]
+    RENDER_JOBS[job_id] = {
+        "status":   "queued",
+        "progress": 0,
+        "error":    None,
+        "output_path": None,
+        "frame_count": len(image_paths),
+        "fps": fps,
+        "duration_s": round(len(image_paths) / fps, 1),
+        "title": title,
+    }
+
+    # Start render i baggrunden
+    t = _threading.Thread(
+        target=_render_timelapse,
+        args=(job_id, image_paths, fps, resolution, codec,
+              deflicker, fade_frames, ts_overlay, ts_pos,
+              ken_burns, crop_ratio, title),
+        daemon=True
+    )
+    t.start()
+    log.info("Timelapse job %s startet: %d frames @ %d fps", job_id, len(image_paths), fps)
+    return {"job_id": job_id, "frame_count": len(image_paths), "duration_s": round(len(image_paths)/fps, 1)}
+
+
+def _render_timelapse(job_id, image_paths, fps, resolution, codec,
+                      deflicker, fade_frames, ts_overlay, ts_pos,
+                      ken_burns, crop_ratio, title):
+    """Kør FFmpeg rendering i baggrundstråd."""
+    import os, tempfile
+
+    RENDER_JOBS[job_id]["status"] = "rendering"
+    output_file = RENDER_OUTPUT_DIR / f"{job_id}_{title.replace(' ','_')}.mp4"
+
+    try:
+        # Skriv billedliste til temp fil (FFmpeg concat demuxer)
+        list_file = RENDER_OUTPUT_DIR / f"{job_id}_list.txt"
+        with open(list_file, "w") as lf:
+            for path, captured_at in image_paths:
+                lf.write(f"file '{path}'\n")
+                lf.write(f"duration {1/fps:.6f}\n")
+            # Gentag sidste billede (FFmpeg krav)
+            lf.write(f"file '{image_paths[-1][0]}'\n")
+
+        # Byg FFmpeg video filter kæde
+        vf_parts = []
+
+        # Beskæring — safe crop
+        if crop_ratio == "16:9":
+            vf_parts.append("crop='min(iw,ih*16/9)':'min(ih,iw*9/16)'")
+        elif crop_ratio == "4:3":
+            vf_parts.append("crop='min(iw,ih*4/3)':'min(ih,iw*3/4)'")
+        elif crop_ratio == "1:1":
+            vf_parts.append("crop='min(iw,ih)':'min(iw,ih)'")
+
+        # Opløsning
+        if resolution == "1080p":
+            vf_parts.append("scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2")
+        elif resolution == "4k":
+            vf_parts.append("scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2")
+
+        # Deflicker
+        if deflicker:
+            vf_parts.append("deflicker=size=10:mode=pm")
+
+        # Ken Burns
+        if ken_burns == "zoom_in":
+            vf_parts.append("zoompan=z='min(zoom+0.0015,1.3)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'")
+        elif ken_burns == "zoom_out":
+            vf_parts.append("zoompan=z='if(lte(zoom,1.0),1.3,max(1.001,zoom-0.0015))':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'")
+
+        # Fade in/ud
+        n = len(image_paths)
+        if fade_frames > 0:
+            vf_parts.append(f"fade=t=in:st=0:d={fade_frames/fps:.2f}")
+            vf_parts.append(f"fade=t=out:st={(n-fade_frames)/fps:.2f}:d={fade_frames/fps:.2f}")
+
+        # Tidsstempel overlay
+        if ts_overlay:
+            positions = {
+                "tl": "x=20:y=20",
+                "tr": "x=w-tw-20:y=20",
+                "bl": "x=20:y=h-th-20",
+                "br": "x=w-tw-20:y=h-th-20",
+            }
+            pos = positions.get(ts_pos, positions["br"])
+            vf_parts.append(
+                f"drawtext=fontsize=36:fontcolor=white:borderw=2:bordercolor=black:"
+                f"text='%{{pts\:hms}}':box=1:boxcolor=black@0.4:boxborderw=5:{pos}"
+            )
+
+        vf = ",".join(vf_parts) if vf_parts else "null"
+
+        # Codec indstillinger
+        codec_args = ["-c:v", "libx264", "-crf", "18", "-preset", "slow"]
+        if codec == "h265":
+            codec_args = ["-c:v", "libx265", "-crf", "20", "-preset", "slow"]
+
+        # FFmpeg kommando
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_file),
+            "-vf", vf,
+            "-r", str(fps),
+            *codec_args,
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            str(output_file)
+        ]
+
+        log.info("FFmpeg: %s", " ".join(cmd))
+
+        proc = _subprocess.Popen(
+            cmd,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.PIPE,
+            text=True
+        )
+
+        # Læs stderr for progress
+        total = len(image_paths)
+        for line in proc.stderr:
+            if "frame=" in line:
+                try:
+                    frame_str = line.split("frame=")[1].split()[0]
+                    frame_num = int(frame_str)
+                    RENDER_JOBS[job_id]["progress"] = min(95, int(100 * frame_num / total))
+                except Exception:
+                    pass
+
+        proc.wait()
+
+        if proc.returncode == 0 and output_file.exists():
+            RENDER_JOBS[job_id]["status"]      = "done"
+            RENDER_JOBS[job_id]["progress"]    = 100
+            RENDER_JOBS[job_id]["output_path"] = str(output_file)
+            RENDER_JOBS[job_id]["filesize_mb"] = round(output_file.stat().st_size / 1e6, 1)
+            log.info("Timelapse %s færdig: %s (%.1f MB)", job_id, output_file.name,
+                     RENDER_JOBS[job_id]["filesize_mb"])
+        else:
+            err = proc.stderr.read() if proc.stderr else "Ukendt fejl"
+            raise Exception(f"FFmpeg fejl: {err[:200]}")
+
+    except Exception as exc:
+        log.error("Timelapse %s fejlede: %s", job_id, exc)
+        RENDER_JOBS[job_id]["status"] = "error"
+        RENDER_JOBS[job_id]["error"]  = str(exc)
+    finally:
+        # Ryd op
+        try: list_file.unlink()
+        except Exception: pass
+
+
+@app.get("/api/timelapse/status/{job_id}")
+def timelapse_status(job_id: str):
+    job = RENDER_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job ikke fundet")
+    return job
+
+
+@app.get("/api/timelapse/download/{job_id}")
+def timelapse_download(job_id: str):
+    from fastapi.responses import FileResponse as _FR
+    job = RENDER_JOBS.get(job_id)
+    if not job or job.get("status") != "done":
+        raise HTTPException(status_code=404, detail="Video ikke klar")
+    path = _RPath(job["output_path"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Fil ikke fundet")
+    return _FR(str(path), media_type="video/mp4",
+               filename=path.name, headers={"Content-Disposition": f"attachment; filename={path.name}"})
+
+
+@app.get("/api/timelapse/jobs")
+def list_timelapse_jobs():
+    return [{"job_id": k, **{kk: vv for kk, vv in v.items() if kk != "output_path"}}
+            for k, v in RENDER_JOBS.items()]
 
 @app.get("/health")
 def health():
@@ -756,6 +1117,26 @@ def set_debug_mode(device_id: str, payload: dict, db: Session = Depends(get_db))
     db.commit()
     log.info("Debug mode %s for %s", "ENABLED" if enabled else "DISABLED", device_id)
     return {"status": "ok", "device_id": device_id, "debug_mode": existing["debug_mode"]}
+
+
+@app.post("/api/lab/{device_id}/relay")
+def toggle_relay(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Toggle relay TIL/FRA — bruges af SystemAdminPage til test."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    relay   = payload.get("relay", "camera")
+    state   = payload.get("state", False)
+    existing = json.loads(device.device_config or "{}")
+    existing["lab_command"] = {
+        "type":  "relay_toggle",
+        "relay": relay,
+        "state": state,
+    }
+    device.device_config = json.dumps(existing)
+    db.commit()
+    log.info("Relay toggle: %s %s → %s", device_id, relay, state)
+    return {"status": "ok", "relay": relay, "state": state}
 
 
 @app.post("/api/lab/{device_id}/preview")
@@ -889,6 +1270,422 @@ def _get_nas_path():
         return result[0] if result else None
     except:
         return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sprint A — Customer / Site / Device CRUD
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Rekursiv merge — override vinder ved konflikt."""
+    result = dict(base)
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+# ── Customers ─────────────────────────────────────────────────────────────
+
+@app.get("/api/admin/customers")
+def list_customers(db: Session = Depends(get_db)):
+    customers = db.query(Customer).order_by(Customer.name).all()
+    return [
+        {
+            "id":            c.id,
+            "name":          c.name,
+            "contact_name":  c.contact_name,
+            "contact_email": c.contact_email,
+            "contact_phone": c.contact_phone,
+            "address":       c.address,
+            "notes":         c.notes,
+            "sites_count":   len(c.sites) if hasattr(c, "sites") else 0,
+            "config_overrides": json.loads(c.config_overrides or "{}"),
+        }
+        for c in customers
+    ]
+
+
+@app.post("/api/admin/customers")
+def create_customer(payload: dict, db: Session = Depends(get_db)):
+    c = Customer(
+        id=str(_uuid.uuid4()),
+        name=payload.get("name", "Ny kunde"),
+        contact_name=payload.get("contact_name"),
+        contact_email=payload.get("contact_email"),
+        contact_phone=payload.get("contact_phone"),
+        address=payload.get("address"),
+        notes=payload.get("notes"),
+    )
+    db.add(c); db.commit(); db.refresh(c)
+    log.info("Kunde oprettet: %s", c.id)
+    return {"id": c.id}
+
+
+@app.get("/api/admin/customers/{customer_id}")
+def get_customer(customer_id: str, db: Session = Depends(get_db)):
+    c = db.query(Customer).filter_by(id=customer_id).first()
+    if not c:
+        raise HTTPException(status_code=404)
+    sites = db.query(Site).filter_by(customer_id=customer_id).all()
+    return {
+        "id": c.id, "name": c.name,
+        "contact_name": c.contact_name, "contact_email": c.contact_email,
+        "contact_phone": c.contact_phone, "address": c.address, "notes": c.notes,
+        "config_overrides": json.loads(c.config_overrides or "{}"),
+        "sites": [
+            {
+                "id": s.id, "name": s.name, "address": s.address,
+                "gps_lat": s.gps_lat, "gps_lon": s.gps_lon,
+                "devices_count": 0,
+            }
+            for s in sites
+        ],
+    }
+
+
+@app.put("/api/admin/customers/{customer_id}")
+def update_customer(customer_id: str, payload: dict, db: Session = Depends(get_db)):
+    c = db.query(Customer).filter_by(id=customer_id).first()
+    if not c:
+        raise HTTPException(status_code=404)
+    for f in ["name", "contact_name", "contact_email", "contact_phone", "address", "notes"]:
+        if f in payload:
+            setattr(c, f, payload[f])
+    db.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/api/admin/customers/{customer_id}")
+def delete_customer(customer_id: str, db: Session = Depends(get_db)):
+    c = db.query(Customer).filter_by(id=customer_id).first()
+    if not c:
+        raise HTTPException(status_code=404)
+    if db.query(Site).filter_by(customer_id=customer_id).count():
+        raise HTTPException(status_code=400, detail="Slet sites først")
+    db.delete(c); db.commit()
+    return {"status": "ok"}
+
+
+# ── Sites ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/admin/sites")
+def list_sites(db: Session = Depends(get_db)):
+    sites = db.query(Site).all()
+    return [
+        {
+            "id":            s.id,
+            "customer_id":   s.customer_id,
+            "customer_name": db.query(Customer).filter_by(id=s.customer_id).first().name if s.customer_id else "",
+            "name":          s.name,
+            "address":       s.address,
+            "gps_lat":       s.gps_lat,
+            "gps_lon":       s.gps_lon,
+            "timezone":      s.timezone or "Europe/Copenhagen",
+            "devices_count": 0,
+        }
+        for s in sites
+    ]
+
+
+@app.post("/api/admin/sites")
+def create_site(payload: dict, db: Session = Depends(get_db)):
+    s = Site(
+        id=str(_uuid.uuid4()),
+        customer_id=payload.get("customer_id"),
+        name=payload.get("name", "Nyt site"),
+        address=payload.get("address"),
+        gps_lat=payload.get("gps_lat"),
+        gps_lon=payload.get("gps_lon"),
+        timezone=payload.get("timezone", "Europe/Copenhagen"),
+    )
+    db.add(s); db.commit(); db.refresh(s)
+    return {"id": s.id}
+
+
+@app.get("/api/admin/sites/{site_id}")
+def get_site(site_id: str, db: Session = Depends(get_db)):
+    s = db.query(Site).filter_by(id=site_id).first()
+    if not s:
+        raise HTTPException(status_code=404)
+    customer = db.query(Customer).filter_by(id=s.customer_id).first()
+    devices  = db.query(Device).filter_by(site_id=site_id).all()
+    return {
+        "id": s.id, "customer_id": s.customer_id,
+        "customer_name": customer.name if customer else "",
+        "name": s.name, "address": s.address,
+        "gps_lat": s.gps_lat, "gps_lon": s.gps_lon,
+        "gps_alt": s.gps_alt if hasattr(s, "gps_alt") else None,
+        "timezone": s.timezone or "Europe/Copenhagen",
+        "notes": s.notes if hasattr(s, "notes") else None,
+        "config_overrides": json.loads(s.config_overrides or "{}"),
+        "devices": [
+            {
+                "device_id":    d.device_id,
+                "camera_name":  d.camera_name,
+                "camera_index": d.camera_index if hasattr(d, "camera_index") else 0,
+                "status":       "online" if d.last_seen and (now_utc() - d.last_seen).total_seconds() < 300 else "offline",
+                "last_seen":    d.last_seen.isoformat() if d.last_seen else None,
+            }
+            for d in devices
+        ],
+    }
+
+
+@app.put("/api/admin/sites/{site_id}")
+def update_site(site_id: str, payload: dict, db: Session = Depends(get_db)):
+    s = db.query(Site).filter_by(id=site_id).first()
+    if not s:
+        raise HTTPException(status_code=404)
+    for f in ["name", "address", "gps_lat", "gps_lon", "timezone", "notes"]:
+        if f in payload:
+            setattr(s, f, payload[f])
+    if hasattr(s, "gps_alt") and "gps_alt" in payload:
+        s.gps_alt = payload["gps_alt"]
+    db.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/api/admin/sites/{site_id}")
+def delete_site(site_id: str, db: Session = Depends(get_db)):
+    s = db.query(Site).filter_by(id=site_id).first()
+    if not s:
+        raise HTTPException(status_code=404)
+    if db.query(Device).filter_by(site_id=site_id).count():
+        raise HTTPException(status_code=400, detail="Flyt enheder først")
+    db.delete(s); db.commit()
+    return {"status": "ok"}
+
+
+# ── Device overrides ──────────────────────────────────────────────────────
+
+@app.put("/api/admin/devices/{device_id}/overrides")
+def update_device_overrides(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    if "camera_index" in payload and hasattr(device, "camera_index"):
+        device.camera_index = payload["camera_index"]
+    if "relay_gpio_camera" in payload and hasattr(device, "relay_gpio_camera"):
+        device.relay_gpio_camera = payload["relay_gpio_camera"]
+    if "relay_gpio_modem" in payload and hasattr(device, "relay_gpio_modem"):
+        device.relay_gpio_modem = payload["relay_gpio_modem"]
+    if "config_overrides" in payload:
+        device.config_overrides = json.dumps(payload["config_overrides"])
+    db.commit()
+    return {"status": "ok"}
+
+
+@app.get("/api/admin/devices/{device_id}")
+def get_device_detail(device_id: str, db: Session = Depends(get_db)):
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    online = device.last_seen and (now_utc() - ensure_utc(device.last_seen)).total_seconds() < 300
+    diag   = db.query(Diagnostic).filter_by(device_id=device_id).order_by(Diagnostic.id.desc()).first()
+    d_cfg  = json.loads(device.device_config or "{}")
+    return {
+        "device": {
+            "device_id":        device.device_id,
+            "location_name":    device.location_name,
+            "ip_address":       device.ip_address,
+            "status":           "online" if online else "offline",
+            "last_seen":        device.last_seen.isoformat() if device.last_seen else None,
+            "first_seen":       device.first_seen.isoformat() if device.first_seen else None,
+            "customer_name":    device.customer_name,
+            "site_name":        device.site_name,
+            "camera_name":      device.camera_name,
+            "camera_index":     device.camera_index if hasattr(device, "camera_index") else 0,
+            "relay_gpio_camera":device.relay_gpio_camera if hasattr(device, "relay_gpio_camera") else 356,
+            "relay_gpio_modem": device.relay_gpio_modem if hasattr(device, "relay_gpio_modem") else 361,
+            "camera_model":     d_cfg.get("camera_model"),
+            "app_version":      d_cfg.get("app_version"),
+            "config_overrides": json.loads(device.config_overrides or "{}") if hasattr(device, "config_overrides") else {},
+            "site_id":          device.site_id if hasattr(device, "site_id") else None,
+        },
+        "device_config": d_cfg,
+        "update_requested": d_cfg.get("update_requested", False),
+        "update_version":   d_cfg.get("update_version"),
+        "backup_requested": d_cfg.get("backup_requested", False),
+        "lab_camera_ready": d_cfg.get("lab_camera_ready", False),
+    }
+
+
+@app.delete("/api/admin/devices/{device_id}")
+def delete_device(device_id: str, db: Session = Depends(get_db)):
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    db.query(Capture).filter_by(device_id=device_id).delete()
+    db.query(Diagnostic).filter_by(device_id=device_id).delete()
+    db.query(Event).filter_by(device_id=device_id).delete()
+    db.delete(device); db.commit()
+    return {"status": "ok"}
+
+
+@app.post("/api/admin/devices/{device_id}/clear-update")
+def clear_update_flag(device_id: str, db: Session = Depends(get_db)):
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    existing = json.loads(device.device_config or "{}")
+    if existing.get("update_requested"):
+        existing["update_requested"] = False
+        device.device_config = json.dumps(existing)
+        db.commit()
+        log.info("update_requested nulstillet for %s", device_id)
+    return {"status": "ok"}
+
+
+# ── Config defaults ───────────────────────────────────────────────────────
+
+def _get_or_create_defaults(db: Session) -> ConfigDefaults:
+    d = db.query(ConfigDefaults).first()
+    if not d:
+        d = ConfigDefaults(
+            schedule    = json.dumps({"timezone": "Europe/Copenhagen", "capture_mode": "interval", "interval_minutes": 60, "active_hours": ["06:00", "21:00"]}),
+            camera      = json.dumps({"relay_on_seconds_before": 10, "relay_off_seconds_after": 5, "delete_after_download": True, "gphoto2_port": "usb:"}),
+            quality     = json.dumps({"check_enabled": True, "blur_threshold": 80, "dark_threshold": 25, "bright_threshold": 230}),
+            storage     = json.dumps({"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"}),
+            diagnostics = json.dumps({"heartbeat_interval_minutes": 60, "config_poll_interval_minutes": 5}),
+            system      = json.dumps({"error_recovery_sleep_s": 30, "min_sleep_s": 60, "api_timeout_s": 15}),
+        )
+        db.add(d); db.commit(); db.refresh(d)
+    return d
+
+
+@app.get("/api/admin/config-defaults")
+def get_config_defaults(db: Session = Depends(get_db)):
+    d = _get_or_create_defaults(db)
+    return {
+        "schedule":    json.loads(d.schedule    or "{}"),
+        "camera":      json.loads(d.camera      or "{}"),
+        "quality":     json.loads(d.quality     or "{}"),
+        "storage":     json.loads(d.storage     or "{}"),
+        "diagnostics": json.loads(d.diagnostics or "{}"),
+        "system":      json.loads(d.system      or "{}") if hasattr(d, "system") else {},
+    }
+
+
+@app.put("/api/admin/config-defaults")
+def update_config_defaults(payload: dict, db: Session = Depends(get_db)):
+    d = _get_or_create_defaults(db)
+    for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system"]:
+        if section in payload and hasattr(d, section):
+            setattr(d, section, json.dumps(payload[section]))
+    db.commit()
+    return {"status": "ok"}
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Multi-kamera node management
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/node/{device_id}/bootstrap-camera")
+def bootstrap_camera(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Auto-bootstrap et sibling kamera på samme node.
+    
+    Opretter et nyt device med ID: {device_id}-{camera_index}
+    Kopierer site_id, customer_name, site_name fra primary device.
+    """
+    primary = db.query(Device).filter_by(device_id=device_id).first()
+    if not primary:
+        raise HTTPException(status_code=404, detail="Primary device not found")
+
+    camera_index    = payload.get("camera_index", 1)
+    relay_gpio      = payload.get("relay_gpio_camera", 357)
+    camera_name     = payload.get("camera_name", f"Kamera {camera_index + 1}")
+    sibling_id      = f"{device_id}-{camera_index}"
+
+    # Opret eller opdater sibling device
+    sibling = db.query(Device).filter_by(device_id=sibling_id).first()
+    if not sibling:
+        sibling = Device(device_id=sibling_id)
+        db.add(sibling)
+        log.info("Auto-bootstrap nyt kamera: %s", sibling_id)
+    else:
+        log.info("Opdaterer sibling kamera: %s", sibling_id)
+
+    # Kopier site/kunde info fra primary
+    sibling.customer_name  = primary.customer_name
+    sibling.site_name      = primary.site_name
+    sibling.camera_name    = camera_name
+    sibling.location_name  = primary.location_name
+    sibling.last_seen      = now_utc()
+    sibling.ip_address     = primary.ip_address
+
+    if hasattr(sibling, "site_id"):
+        sibling.site_id = primary.site_id if hasattr(primary, "site_id") else None
+    if hasattr(sibling, "camera_index"):
+        sibling.camera_index = camera_index
+    if hasattr(sibling, "relay_gpio_camera"):
+        sibling.relay_gpio_camera = relay_gpio
+
+    # Sæt config_overrides med relay GPIO og ISO
+    primary_overrides = json.loads(primary.config_overrides or "{}") if hasattr(primary, "config_overrides") else {}
+    cam_overrides = dict(primary_overrides.get("camera", {}))
+    cam_overrides["relay_gpio_pin"] = relay_gpio
+
+    sibling.config_overrides = json.dumps({
+        **primary_overrides,
+        "camera": cam_overrides,
+    })
+
+    db.commit()
+    log.info("Kamera bootstrapped: %s (GPIO %d)", sibling_id, relay_gpio)
+    return {"status": "ok", "device_id": sibling_id, "camera_index": camera_index}
+
+
+@app.get("/api/node/{device_id}/cameras")
+def list_node_cameras(device_id: str, db: Session = Depends(get_db)):
+    """Returner alle kameraer på samme fysiske node (primary + siblings)."""
+    primary = db.query(Device).filter_by(device_id=device_id).first()
+    if not primary:
+        raise HTTPException(status_code=404)
+
+    # Find alle siblings: device_id starter med primary device_id + "-"
+    all_devices = db.query(Device).all()
+    node_devices = [d for d in all_devices
+                    if d.device_id == device_id or d.device_id.startswith(device_id + "-")]
+    node_devices.sort(key=lambda d: d.device_id)
+
+    return [
+        {
+            "device_id":    d.device_id,
+            "camera_index": d.camera_index if hasattr(d, "camera_index") else 0,
+            "camera_name":  d.camera_name,
+            "relay_gpio":   d.relay_gpio_camera if hasattr(d, "relay_gpio_camera") else 356,
+            "status":       "online" if d.last_seen and (now_utc() - (d.last_seen.replace(tzinfo=__import__("datetime").timezone.utc) if d.last_seen.tzinfo is None else d.last_seen)).total_seconds() < 300 else "offline",
+        }
+        for d in node_devices
+    ]
+
+
+@app.put("/api/node/{device_id}/multi-camera-config")
+def set_multi_camera_config(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Gem multi-kamera konfiguration på primary device.
+    
+    payload: {
+        multi_camera_mode: "single" | "auto_bootstrap" | "manual",
+        node_cameras: [{camera_index, relay_gpio_camera, camera_name}, ...]
+    }
+    """
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+
+    existing = json.loads(device.device_config or "{}")
+    existing["multi_camera_mode"] = payload.get("multi_camera_mode", "single")
+    existing["node_cameras"]      = payload.get("node_cameras", [])
+    device.device_config = json.dumps(existing)
+    db.commit()
+    log.info("Multi-camera config opdateret for %s: %d kameraer",
+             device_id, len(existing["node_cameras"]))
+    return {"status": "ok"}
+
 
 @app.post("/api/admin/backup/trigger")
 def trigger_backup():
@@ -1029,298 +1826,6 @@ def edge_backup_status(device_id: str, db: Session = Depends(get_db)):
         "requested_at":   cfg.get("backup_requested_at"),
         "complete":       cfg.get("backup_complete"),
     }
-
-
-# ── Customers ─────────────────────────────────────────────────────────────────
-
-@app.get("/api/admin/customers")
-def list_customers(db: Session = Depends(get_db)):
-    customers = db.query(Customer).order_by(Customer.name).all()
-    result = []
-    for c in customers:
-        sites = db.query(Site).filter_by(customer_id=c.id).all()
-        result.append({
-            "id":             c.id,
-            "name":           c.name,
-            "contact_name":   c.contact_name,
-            "contact_email":  c.contact_email,
-            "contact_phone":  c.contact_phone,
-            "address":        c.address,
-            "config_overrides": json.loads(c.config_overrides or "{}"),
-            "notes":          c.notes,
-            "created_at":     c.created_at.isoformat() if c.created_at else None,
-            "sites_count":    len(sites),
-        })
-    return result
-
-@app.post("/api/admin/customers")
-def create_customer(payload: dict, db: Session = Depends(get_db)):
-    import uuid as _uuid
-    c = Customer(
-        id             = str(_uuid.uuid4()),
-        name           = payload.get("name", "").strip(),
-        contact_name   = payload.get("contact_name"),
-        contact_email  = payload.get("contact_email"),
-        contact_phone  = payload.get("contact_phone"),
-        address        = payload.get("address"),
-        config_overrides = json.dumps(payload.get("config_overrides", {})),
-        notes          = payload.get("notes"),
-        created_at     = now_utc(),
-        updated_at     = now_utc(),
-    )
-    if not c.name:
-        raise HTTPException(status_code=400, detail="name er påkrævet")
-    db.add(c)
-    db.commit()
-    db.refresh(c)
-    log.info("Kunde oprettet: %s (%s)", c.name, c.id)
-    return {"id": c.id, "name": c.name}
-
-@app.get("/api/admin/customers/{customer_id}")
-def get_customer(customer_id: str, db: Session = Depends(get_db)):
-    c = db.query(Customer).filter_by(id=customer_id).first()
-    if not c:
-        raise HTTPException(status_code=404)
-    sites = db.query(Site).filter_by(customer_id=c.id).all()
-    return {
-        "id":             c.id,
-        "name":           c.name,
-        "contact_name":   c.contact_name,
-        "contact_email":  c.contact_email,
-        "contact_phone":  c.contact_phone,
-        "address":        c.address,
-        "config_overrides": json.loads(c.config_overrides or "{}"),
-        "notes":          c.notes,
-        "created_at":     c.created_at.isoformat() if c.created_at else None,
-        "sites": [{
-            "id":   s.id,
-            "name": s.name,
-            "address": s.address,
-            "gps_lat": s.gps_lat,
-            "gps_lon": s.gps_lon,
-            "timezone": s.timezone,
-            "devices_count": db.query(Device).filter_by(site_id=s.id).count(),
-        } for s in sites],
-    }
-
-@app.put("/api/admin/customers/{customer_id}")
-def update_customer(customer_id: str, payload: dict, db: Session = Depends(get_db)):
-    c = db.query(Customer).filter_by(id=customer_id).first()
-    if not c:
-        raise HTTPException(status_code=404)
-    for field in ["name", "contact_name", "contact_email", "contact_phone", "address", "notes"]:
-        if field in payload:
-            setattr(c, field, payload[field])
-    if "config_overrides" in payload:
-        c.config_overrides = json.dumps(payload["config_overrides"])
-    c.updated_at = now_utc()
-    db.commit()
-    return {"status": "ok"}
-
-@app.delete("/api/admin/customers/{customer_id}")
-def delete_customer(customer_id: str, db: Session = Depends(get_db)):
-    c = db.query(Customer).filter_by(id=customer_id).first()
-    if not c:
-        raise HTTPException(status_code=404)
-    site_count = db.query(Site).filter_by(customer_id=customer_id).count()
-    if site_count > 0:
-        raise HTTPException(status_code=400, detail=f"Kan ikke slette — {site_count} sites eksisterer")
-    db.delete(c)
-    db.commit()
-    return {"status": "ok"}
-
-
-# ── Sites ──────────────────────────────────────────────────────────────────────
-
-@app.get("/api/admin/sites")
-def list_sites(customer_id: Optional[str] = None, db: Session = Depends(get_db)):
-    q = db.query(Site)
-    if customer_id:
-        q = q.filter_by(customer_id=customer_id)
-    sites = q.order_by(Site.name).all()
-    result = []
-    for s in sites:
-        customer = db.query(Customer).filter_by(id=s.customer_id).first()
-        devices = db.query(Device).filter_by(site_id=s.id).all()
-        result.append({
-            "id":             s.id,
-            "customer_id":    s.customer_id,
-            "customer_name":  customer.name if customer else None,
-            "name":           s.name,
-            "address":        s.address,
-            "gps_lat":        s.gps_lat,
-            "gps_lon":        s.gps_lon,
-            "gps_alt":        s.gps_alt,
-            "timezone":       s.timezone,
-            "config_overrides": json.loads(s.config_overrides or "{}"),
-            "notes":          s.notes,
-            "created_at":     s.created_at.isoformat() if s.created_at else None,
-            "devices_count":  len(devices),
-        })
-    return result
-
-@app.post("/api/admin/sites")
-def create_site(payload: dict, db: Session = Depends(get_db)):
-    import uuid as _uuid
-    customer_id = payload.get("customer_id")
-    if not customer_id or not db.query(Customer).filter_by(id=customer_id).first():
-        raise HTTPException(status_code=400, detail="Ugyldig customer_id")
-    s = Site(
-        id               = str(_uuid.uuid4()),
-        customer_id      = customer_id,
-        name             = payload.get("name", "").strip(),
-        address          = payload.get("address"),
-        gps_lat          = payload.get("gps_lat"),
-        gps_lon          = payload.get("gps_lon"),
-        gps_alt          = payload.get("gps_alt"),
-        timezone         = payload.get("timezone", "Europe/Copenhagen"),
-        config_overrides = json.dumps(payload.get("config_overrides", {})),
-        notes            = payload.get("notes"),
-        created_at       = now_utc(),
-        updated_at       = now_utc(),
-    )
-    if not s.name:
-        raise HTTPException(status_code=400, detail="name er påkrævet")
-    db.add(s)
-    db.commit()
-    db.refresh(s)
-    log.info("Site oprettet: %s (%s)", s.name, s.id)
-    return {"id": s.id, "name": s.name}
-
-@app.get("/api/admin/sites/{site_id}")
-def get_site(site_id: str, db: Session = Depends(get_db)):
-    s = db.query(Site).filter_by(id=site_id).first()
-    if not s:
-        raise HTTPException(status_code=404)
-    customer = db.query(Customer).filter_by(id=s.customer_id).first()
-    devices = db.query(Device).filter_by(site_id=s.id).all()
-    return {
-        "id":             s.id,
-        "customer_id":    s.customer_id,
-        "customer_name":  customer.name if customer else None,
-        "name":           s.name,
-        "address":        s.address,
-        "gps_lat":        s.gps_lat,
-        "gps_lon":        s.gps_lon,
-        "gps_alt":        s.gps_alt,
-        "timezone":       s.timezone,
-        "config_overrides": json.loads(s.config_overrides or "{}"),
-        "notes":          s.notes,
-        "devices": [{
-            "device_id":    d.device_id,
-            "camera_name":  d.camera_name,
-            "camera_index": d.camera_index,
-            "status":       d.status,
-            "last_seen":    d.last_seen.isoformat() if d.last_seen else None,
-        } for d in devices],
-    }
-
-@app.put("/api/admin/sites/{site_id}")
-def update_site(site_id: str, payload: dict, db: Session = Depends(get_db)):
-    s = db.query(Site).filter_by(id=site_id).first()
-    if not s:
-        raise HTTPException(status_code=404)
-    for field in ["name", "address", "gps_lat", "gps_lon", "gps_alt", "timezone", "notes"]:
-        if field in payload:
-            setattr(s, field, payload[field])
-    if "config_overrides" in payload:
-        s.config_overrides = json.dumps(payload["config_overrides"])
-    s.updated_at = now_utc()
-    db.commit()
-    return {"status": "ok"}
-
-@app.delete("/api/admin/sites/{site_id}")
-def delete_site(site_id: str, db: Session = Depends(get_db)):
-    s = db.query(Site).filter_by(id=site_id).first()
-    if not s:
-        raise HTTPException(status_code=404)
-    device_count = db.query(Device).filter_by(site_id=site_id).count()
-    if device_count > 0:
-        raise HTTPException(status_code=400, detail=f"Kan ikke slette — {device_count} enheder eksisterer")
-    db.delete(s)
-    db.commit()
-    return {"status": "ok"}
-
-
-# ── Config Defaults ────────────────────────────────────────────────────────────
-
-@app.get("/api/admin/config-defaults")
-def get_config_defaults(db: Session = Depends(get_db)):
-    d = db.query(ConfigDefaults).first()
-    if not d:
-        return {}
-    return {
-        "schedule":    json.loads(d.schedule or "{}"),
-        "camera":      json.loads(d.camera or "{}"),
-        "quality":     json.loads(d.quality or "{}"),
-        "storage":     json.loads(d.storage or "{}"),
-        "diagnostics": json.loads(d.diagnostics or "{}"),
-    }
-
-@app.put("/api/admin/config-defaults")
-def update_config_defaults(payload: dict, db: Session = Depends(get_db)):
-    d = db.query(ConfigDefaults).first()
-    if not d:
-        d = ConfigDefaults()
-        db.add(d)
-    for field in ["schedule", "camera", "quality", "storage", "diagnostics"]:
-        if field in payload:
-            setattr(d, field, json.dumps(payload[field]))
-    d.updated_at = now_utc()
-    db.commit()
-    return {"status": "ok"}
-
-
-# ── Device overrides (kamera-niveau config) ───────────────────────────────────
-
-@app.post("/api/admin/devices/{device_id}/clear-update")
-def clear_update_flag(device_id: str, db: Session = Depends(get_db)):
-    """Edge kalder dette når den allerede er opdateret — nulstil update_requested."""
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404)
-    existing = json.loads(device.device_config or "{}")
-    if existing.get("update_requested"):
-        existing["update_requested"] = False
-        device.device_config = json.dumps(existing)
-        db.commit()
-        log.info("update_requested nulstillet for %s", device_id)
-    return {"status": "ok"}
-
-
-@app.put("/api/admin/devices/{device_id}/overrides")
-def update_device_overrides(device_id: str, payload: dict, db: Session = Depends(get_db)):
-    """Gem kamera-niveau config_overrides + hardware felter."""
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404)
-    if "camera_index" in payload:
-        device.camera_index = payload["camera_index"]
-    if "relay_gpio_camera" in payload:
-        device.relay_gpio_camera = payload["relay_gpio_camera"]
-    if "relay_gpio_modem" in payload:
-        device.relay_gpio_modem = payload["relay_gpio_modem"]
-    if "config_overrides" in payload:
-        device.config_overrides = json.dumps(payload["config_overrides"])
-    db.commit()
-    log.info("Device overrides opdateret: %s", device_id)
-    return {"status": "ok"}
-
-
-@app.delete("/api/admin/devices/{device_id}")
-def delete_device(device_id: str, db: Session = Depends(get_db)):
-    """Slet en device og alle dens captures og diagnostics."""
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404)
-    # Slet relaterede data
-    db.query(Capture).filter_by(device_id=device_id).delete()
-    db.query(Diagnostic).filter_by(device_id=device_id).delete()
-    db.query(Event).filter_by(device_id=device_id).delete()
-    db.delete(device)
-    db.commit()
-    log.info("Device slettet: %s", device_id)
-    return {"status": "ok"}
 
 
 @app.post("/api/lab/{device_id}/params")
