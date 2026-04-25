@@ -40,7 +40,24 @@ _RELAY_OFF = "1"
 # ── Platform detection ────────────────────────────────────────────────────────
 
 def _detect_platform() -> str:
-    """Returns 'rk3588' or 'h3' based on /proc/cpuinfo."""
+    """Returns 'rk3588' or 'h3'.
+
+    Detection order:
+      1. /proc/device-tree/compatible  (most reliable on Armbian)
+      2. /proc/cpuinfo                 (fallback)
+      3. Default to rk3588 with warning
+    """
+    # 1. Device tree — preferred
+    try:
+        dt = Path("/proc/device-tree/compatible").read_bytes().replace(b"\x00", b"\n").decode()
+        if "orangepi-4-pro" in dt or "sun60iw2p1" in dt:
+            return "rk3588"
+        if "orangepi-pc-plus" in dt or "sun8i-h3" in dt:
+            return "h3"
+    except OSError:
+        pass
+
+    # 2. cpuinfo — fallback
     try:
         info = Path("/proc/cpuinfo").read_text()
         if "RK3588" in info:
@@ -49,6 +66,7 @@ def _detect_platform() -> str:
             return "h3"
     except OSError:
         pass
+
     log.warning("Unknown platform — defaulting to rk3588 (sysfs)")
     return "rk3588"
 
