@@ -1,6 +1,20 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// TimeLapse Pro — DevicePage.tsx
+// ───────────────────────────────────────────────────────────────────────────
+// Version  : 5.4.0
+// Dato     : 13. april 2026
+// ───────────────────────────────────────────────────────────────────────────
+// Changelog:
+//   5.4.0  13-apr-2026  Komplet metadata panel: 3 kolonner, alle felter vist
+//   5.3.0  13-apr-2026  Scroll fix via metaRef — onWheel ignorerer metadata panel
+//   5.2.0  13-apr-2026  Metadata panel: blur score, scroll fix (onWheel stop),
+//                       projekt sektion, duplikat panel fjernet
+//   5.1.0  12-apr-2026  Sidecar metadata panel, integritet, XMP status
+//   5.0.0  12-apr-2026  Sprint A, LAB route fix /lab/:deviceId
+// ═══════════════════════════════════════════════════════════════════════════
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { FlaskConical, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Image, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
+import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Image, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, CartesianGrid, ReferenceLine } from 'recharts'
 import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getThumbnailUrl, updateDeviceInfo, setParam } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
@@ -25,10 +39,32 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [showHistogram, setShowHistogram] = useState(false)
   const [histogram, setHistogram]         = useState<{r:number[],g:number[],b:number[],lum:number[]} | null>(null)
+  const [showMetadata, setShowMetadata]   = useState(false)
+  const [sidecar, setSidecar]             = useState<any>(null)
   const [overexposed, setOverexposed]     = useState(0)
   const [underexposed, setUnderexposed]   = useState(0)
   const imgRef = useRef<HTMLImageElement>(null)
+  const metaRef = useRef<HTMLDivElement>(null)
+
+  // Kompakt metadata række
+  const MR = ({ l, v }: { l: string; v: React.ReactNode }) => (
+    <div className="flex gap-1.5 min-w-0">
+      <span className="text-white/35 shrink-0" style={{width:'90px'}}>{l}</span>
+      <span className="text-white/75 min-w-0 truncate">{v ?? '—'}</span>
+    </div>
+  )
   const c = captures[cur]
+
+  // Hent sidecar JSON når billede skifter
+  useEffect(() => {
+    setSidecar(null)
+    const sidecarName = c.filename.replace(/\.[^.]+$/, '.json')
+    const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
+    fetch(`${apiUrl}/api/sidecar/${c.device_id}/${sidecarName}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setSidecar(d))
+      .catch(() => {})
+  }, [cur])
 
   // Compute histogram from image pixels via canvas
   function computeHistogram() {
@@ -83,6 +119,8 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
 
   function onWheel(e: React.WheelEvent) {
     e.stopPropagation()
+    // Ignorer wheel events fra metadata panelet
+    if (metaRef.current && metaRef.current.contains(e.target as Node)) return
     const delta = e.deltaY > 0 ? -0.3 : 0.3
     setZoom(z => { const nz = Math.max(1, Math.min(z + delta, 5)); if (nz === 1) setPan({ x: 0, y: 0 }); return nz })
   }
@@ -101,6 +139,12 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
   const time = c.captured_at
     ? new Date(c.captured_at + 'Z').toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     : '–'
+
+  // Parse kunde/site/kamera fra filnavn: Kunde_Site_Kamera_YYYYMMDD_HHMMSS.jpg
+  const nameParts = c.filename?.replace('.jpg','').split('_') ?? []
+  const kunde    = nameParts[0] ?? '–'
+  const site     = nameParts[1] ?? '–'
+  const kamera   = nameParts[2] ?? '–'
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col" onClick={zoom === 1 ? onClose : undefined}>
@@ -143,6 +187,10 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
             }}
             className={`text-xs px-2 py-1 rounded-lg transition-colors ${showHistogram ? 'bg-sky-500/40 text-sky-200' : 'bg-white/10 text-white/50 hover:text-white'}`}>
             Histogram
+          </button>
+          <button onClick={() => setShowMetadata(m => !m)}
+            className={`text-xs px-2 py-1 rounded-lg transition-colors ${showMetadata ? 'bg-emerald-500/40 text-emerald-200' : 'bg-white/10 text-white/50 hover:text-white'}`}>
+            {sidecar ? '🔒 Metadata' : 'Metadata'}
           </button>
           <a href={getImageUrl(c.device_id, c.filename)} download={c.filename} onClick={e => e.stopPropagation()}
             className="text-white/50 hover:text-white text-xs px-2 py-1 bg-white/10 rounded-lg">Download</a>
@@ -240,7 +288,74 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
         </div>
       )}
 
+      {/* Metadata + integritetspanel */}
+      {showMetadata && (
+        <div ref={metaRef} className="flex-shrink-0 bg-black/90 border-t border-white/10 px-4 py-3 overflow-y-auto" style={{maxHeight: '60vh', overscrollBehavior: 'contain'}} onClick={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
+          {!sidecar ? (
+            <p className="text-white/40 text-xs italic">Ingen sidecar — billede optaget før v2.2.0 eller ikke uploadet endnu.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-x-6 gap-y-0 text-xs">
+
+              {/* Kolonne 1: Integritet + Kvalitet */}
+              <div className="space-y-0.5">
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">🔒 Integritet</p>
+                <MR l="SHA-256" v={<span className="font-mono text-[9px] break-all">{sidecar.integrity?.sha256_original}</span>} />
+                <MR l="Optaget UTC" v={sidecar.integrity?.captured_at_utc?.replace('T',' ').slice(0,19)} />
+                <MR l="Lokal tid" v={sidecar.integrity?.captured_at_local?.replace('T',' ').slice(0,19)} />
+                <MR l="Tidszone" v={sidecar.integrity?.timezone} />
+                <MR l="Original uberørt" v={<span className={sidecar.integrity?.original_unmodified ? 'text-emerald-400' : 'text-red-400'}>{sidecar.integrity?.original_unmodified ? '✅ Ja' : '⚠️ Nej'}</span>} />
+                <MR l="XMP skrevet" v={<span className={sidecar.integrity?.xmp_written ? 'text-emerald-400' : 'text-white/40'}>{sidecar.integrity?.xmp_written ? '✅ Ja' : 'Nej'}</span>} />
+                {sidecar.added_metadata?.fields_added?.length > 0 && (
+                  <MR l="Tilføjede felter" v={<span className="text-amber-300/80">{sidecar.added_metadata.fields_added.join(', ')}</span>} />
+                )}
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">📊 Kvalitet</p>
+                <MR l="Blur score" v={c.blur_score != null ? `${Math.round(c.blur_score)} ${c.blur_score > 100 ? '✅' : '⚠️ lav'}` : '—'} />
+                <MR l="Lysstyrke" v={c.brightness != null ? `${Math.round(c.brightness)}/255` : '—'} />
+                <MR l="Kvalitetsflag" v={<span className={c.quality_passed ? 'text-emerald-400' : 'text-red-400'}>{c.quality_flag ?? '—'}</span>} />
+                <MR l="Størrelse" v={c.filesize_mb != null ? `${c.filesize_mb.toFixed(1)} MB` : '—'} />
+              </div>
+
+              {/* Kolonne 2: Kamera EXIF */}
+              <div className="space-y-0.5">
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📷 Kamera EXIF</p>
+                <MR l="Model" v={sidecar.camera?.model} />
+                <MR l="ISO" v={sidecar.camera?.iso} />
+                <MR l="Lukker" v={sidecar.camera?.shutter_speed} />
+                <MR l="Blænde" v={sidecar.camera?.aperture} />
+                <MR l="Fokustilstand" v={sidecar.camera?.focus_mode} />
+                <MR l="USB port" v={sidecar.camera?.gphoto2_port} />
+                <MR l="Relay GPIO" v={sidecar.camera?.relay_gpio_pin} />
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🏗️ Projekt</p>
+                <MR l="Kunde" v={sidecar.project?.customer || '—'} />
+                <MR l="Site" v={sidecar.project?.site || '—'} />
+                <MR l="Kamera" v={sidecar.project?.camera_name || '—'} />
+                <MR l="Device ID" v={<span className="font-mono text-[10px]">{sidecar.project?.device_id}</span>} />
+                <MR l="Kamera index" v={sidecar.project?.camera_index ?? '—'} />
+                <MR l="TLP version" v={sidecar.timelapse_pro?.version} />
+              </div>
+
+              {/* Kolonne 3: Lokation + Orientering */}
+              <div className="space-y-0.5">
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📍 Lokation</p>
+                <MR l="GPS" v={sidecar.location?.gps_lat != null ? `${sidecar.location.gps_lat.toFixed(6)}°, ${sidecar.location.gps_lon?.toFixed(6)}°` : '—'} />
+                <MR l="Højde" v={sidecar.location?.gps_alt_m != null ? `${sidecar.location.gps_alt_m} m` : '—'} />
+                <MR l="GPS kilde" v={sidecar.location?.gps_source || '—'} />
+                <MR l="Adresse" v={sidecar.location?.address || '—'} />
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🧭 Orientering</p>
+                <MR l="Azimut" v={sidecar.location?.azimuth_deg != null ? `${sidecar.location.azimuth_deg}°` : '—'} />
+                <MR l="Tilt" v={sidecar.location?.tilt_deg != null ? `${sidecar.location.tilt_deg}°` : '—'} />
+                <MR l="Montagehøjde" v={sidecar.location?.mount_height_m != null ? `${sidecar.location.mount_height_m} m` : '—'} />
+                <MR l="Horis. FOV" v={sidecar.location?.fov_horizontal_deg != null ? `${sidecar.location.fov_horizontal_deg}°` : '—'} />
+                <MR l="Vert. FOV" v={sidecar.location?.fov_vertical_deg != null ? `${sidecar.location.fov_vertical_deg}°` : '—'} />
+                <MR l="Perspektiv" v={sidecar.location?.perspective || '—'} />
+              </div>
+
+            </div>
+          )}
+        </div>
+      )}
       {/* Filmstrip
+
 
       {/* Filmstrip */}
       <div className="flex-shrink-0 flex gap-1 overflow-x-auto px-4 py-2 justify-center bg-black/50" onClick={e => e.stopPropagation()}>
@@ -322,22 +437,42 @@ function CaptureCard({ capture, onClick }: { capture: Capture; onClick: () => vo
 // ── Statistics ────────────────────────────────────────────────────────────────
 
 // ── Camera param row (bruges i ConfigTab) ────────────────────────────────────
-function CameraParamRow({ param, deviceId, onChanged }: {
-  param: any; deviceId: string; onChanged: () => void
+function CameraParamRow({ param, deviceId }: {
+  param: any; deviceId: string
 }) {
-  const [editing, setEditing] = useState(false)
-  const [value, setValue]     = useState(param.current)
-  const [saving, setSaving]   = useState(false)
-  const [saved, setSaved]     = useState(false)
+  const [editing, setEditing]         = useState(false)
+  const [value, setValue]             = useState(param.current)
+  const [displayValue, setDisplayValue] = useState(param.current)
+  const [saving, setSaving]           = useState(false)
+  const [saved, setSaved]             = useState(false)
 
   async function save() {
     setSaving(true)
     try {
       const key = param.path.replace('/main/', '')
       await setParam(deviceId, key, value)
+      // Opdater camera_params i headend så refresh ikke nulstiller værdien
+      const apiUrl = (await import('../api/client')).getApiUrl()
+      const cfg = await (await fetch(`${apiUrl}/api/admin/devices/${deviceId}`)).json()
+      const updatedParams = (cfg?.device?.device_config ? 
+        JSON.parse(typeof cfg.device.device_config === 'string' ? cfg.device.device_config : JSON.stringify(cfg.device.device_config)) : {}
+      )
+      if (updatedParams.camera_params) {
+        updatedParams.camera_params = updatedParams.camera_params.map((cp: any) =>
+          cp.path.endsWith(key) ? { ...cp, current: value } : cp
+        )
+        await fetch(`${apiUrl}/api/admin/devices/${deviceId}/config`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ camera_params: updatedParams.camera_params })
+        })
+      }
       setSaved(true)
-      setTimeout(() => { setSaved(false); setEditing(false); onChanged() }, 800)
-    } catch { /* ignore */ }
+      setDisplayValue(value)
+      setTimeout(() => { setSaved(false); setEditing(false) }, 800)
+    } catch (err) { 
+      console.error('save error:', err)
+    }
     setSaving(false)
   }
 
@@ -350,8 +485,8 @@ function CameraParamRow({ param, deviceId, onChanged }: {
       <div className="flex items-center gap-2 flex-shrink-0">
         {!editing ? (
           <>
-            <span className="text-sm px-2 py-0.5 rounded font-mono text-sky-700 bg-sky-50">{param.current || '–'}</span>
-            <button onClick={() => { setValue(param.current); setEditing(true) }}
+            <span className="text-sm px-2 py-0.5 rounded font-mono text-sky-700 bg-sky-50">{displayValue || '–'}</span>
+            <button onClick={() => { setValue(displayValue); setEditing(true) }}
               className="p-1 text-gray-400 hover:text-sky-600 rounded">
               <Settings className="w-3.5 h-3.5" />
             </button>
@@ -460,14 +595,67 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
             {cfg.camera_params
               .filter((p: any) => !p.readonly && p.current)
               .map((p: any) => (
-              <CameraParamRow key={p.path} param={p} deviceId={deviceId} onChanged={() =>
-                getConfig(deviceId).then(d => setCfg(d))
-              } />
+              <CameraParamRow key={p.path} param={p} deviceId={deviceId} />
             ))}
           </div>
           <p className="text-xs text-gray-300 mt-3">Readonly-parametre vises ikke. Gå til Kamera-lab for fuld liste.</p>
         </div>
       )}
+
+      {/* GPS / Lokation */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-4">GPS og Lokation</h3>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Breddegrad (lat)</label>
+              <input type="number" step="0.000001" placeholder="55.676098"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+                value={cfg?.location?.gps_lat ?? ''}
+                onChange={e => setCfg({ ...cfg, location: { ...(cfg.location ?? {}), gps_lat: e.target.value ? parseFloat(e.target.value) : null } })} />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Længdegrad (lon)</label>
+              <input type="number" step="0.000001" placeholder="12.568337"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+                value={cfg?.location?.gps_lon ?? ''}
+                onChange={e => setCfg({ ...cfg, location: { ...(cfg.location ?? {}), gps_lon: e.target.value ? parseFloat(e.target.value) : null } })} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Højde (meter over hav)</label>
+              <input type="number" step="1" placeholder="0"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+                value={cfg?.location?.gps_alt ?? ''}
+                onChange={e => setCfg({ ...cfg, location: { ...(cfg.location ?? {}), gps_alt: e.target.value ? parseFloat(e.target.value) : null } })} />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">GPS kilde</label>
+              <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                value={cfg?.location?.gps_source ?? 'manual'}
+                onChange={e => setCfg({ ...cfg, location: { ...(cfg.location ?? {}), gps_source: e.target.value } })}>
+                <option value="manual">Manuelt indsat</option>
+                <option value="gpsd">gpsd (Orange Pi GPS modul)</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Adresse (valgfri)</label>
+            <input type="text" placeholder="Nordre Villavej 17c, 7100 Vejle"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              value={cfg?.location?.address ?? ''}
+              onChange={e => setCfg({ ...cfg, location: { ...(cfg.location ?? {}), address: e.target.value } })} />
+          </div>
+          {cfg?.location?.gps_lat && cfg?.location?.gps_lon && (
+            <a href={`https://www.openstreetmap.org/?mlat=${cfg.location.gps_lat}&mlon=${cfg.location.gps_lon}&zoom=17`}
+              target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs text-sky-500 hover:text-sky-700">
+              🗺️ Vis på kort (OpenStreetMap)
+            </a>
+          )}
+        </div>
+      </div>
 
       {/* Schedule */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -937,6 +1125,10 @@ export function DevicePage() {
         </div>
 
         <div className="flex gap-1 mb-6 border-b border-gray-200">
+          <button onClick={() => navigate(`/devices/${id}/timelapse`)}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-sky-600 hover:text-sky-700 border-b-2 border-transparent hover:border-sky-400 -mb-px transition-colors mr-2">
+            <Film className="w-4 h-4" />Timelapse Video
+          </button>
           <button onClick={() => navigate(`/devices/${id}/lab`)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-purple-600 hover:text-purple-700 border-b-2 border-transparent hover:border-purple-400 -mb-px transition-colors mr-2">
             <FlaskConical className="w-4 h-4" />Lab

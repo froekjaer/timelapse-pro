@@ -1,3 +1,12 @@
+// ═══════════════════════════════════════════════════════════════
+// LabPage.tsx
+// Version: 5.2.0  |  12. april 2026
+// ───────────────────────────────────────────────────────────────
+// Changelog:
+//   5.2.0  12-apr-2026  useParams fix, histogram stale closure fix
+//   5.1.0  11-apr-2026  Histogram, preview polling
+//   5.0.0  10-apr-2026  LAB mode komplet
+// ═══════════════════════════════════════════════════════════════
 // v5.1
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
@@ -118,7 +127,8 @@ function ParamRow({
       const key = param.path.replace('/main/', '')
       await setParam(deviceId, key, value)
       setSaved(true)
-      setTimeout(() => { setSaved(false); setEditing(false); onChanged() }, 800)
+      setTimeout(() => { setSaved(false); setEditing(false); }, 800)
+      setTimeout(() => { onChanged() }, 3000)  // Vent til edge har sat parameteren
     } catch {
       setError('Fejl')
     } finally {
@@ -180,7 +190,7 @@ function ParamRow({
 
 // ── Main LabPage ──────────────────────────────────────────────────────────────
 export default function LabPage() {
-  const { id } = useParams<{ id: string }>()
+  const { deviceId: id } = useParams<{ deviceId: string }>()
   const navigate = useNavigate()
   const deviceId = id!
 
@@ -191,6 +201,7 @@ export default function LabPage() {
   const [params, setParams]           = useState<CameraParam[]>([])
   const [selectedPreview, setSelectedPreview] = useState<LabPreview | null>(null)
   const userSelectedRef = useRef(false)
+  const selectedPreviewRef = useRef<LabPreview | null>(null)
   const [loadingPreview, setLoadingPreview]   = useState(false)
   const [loadingCapture, setLoadingCapture]   = useState(false)
   const [loadingParams, setLoadingParams]     = useState(false)
@@ -208,6 +219,20 @@ export default function LabPage() {
   const [labReady, setLabReady]           = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
   const { hist, compute, clear } = useHistogram(imgRef)
+
+  // Hold ref synkroniseret med state for brug i polling closure
+  useEffect(() => { selectedPreviewRef.current = selectedPreview }, [selectedPreview])
+
+  // Genberegn histogram når selectedPreview ændres (håndterer cached billeder)
+  useEffect(() => {
+    if (selectedPreview && showHistogram) {
+      // Vent til img er klar i DOM — brug lille delay for cached billeder
+      const t = setTimeout(() => {
+        if (imgRef.current?.complete) compute()
+      }, 150)
+      return () => clearTimeout(t)
+    }
+  }, [selectedPreview?.filename, showHistogram])
 
   // Load device info
   useEffect(() => {
@@ -236,9 +261,8 @@ export default function LabPage() {
         listPreviews(deviceId).then(p => {
           setPreviews(p)
           // Auto-select kun nyeste hvis bruger ikke har valgt manuelt
-          if (p.length > 0 && !userSelectedRef.current && p[0].filename !== selectedPreview?.filename) {
+          if (p.length > 0 && !userSelectedRef.current && p[0].filename !== selectedPreviewRef.current?.filename) {
             setSelectedPreview(p[0])
-            clear()
           }
         }).catch(() => {})
       }, 3000)
@@ -591,15 +615,14 @@ export default function LabPage() {
             <div className="bg-gray-900 aspect-video flex items-center justify-center overflow-hidden relative">
               {selectedPreview ? (
                 <img
+                  key={selectedPreview.filename}
                   ref={imgRef}
                   src={getPreviewUrl(deviceId, selectedPreview.filename)}
                   alt="preview"
                   crossOrigin="anonymous"
                   onLoad={() => {
-                  if (showHistogram) {
-                    setTimeout(compute, 100)
-                  }
-                }}
+                    if (showHistogram) setTimeout(compute, 100)
+                  }}
                   style={{
                     transform: `scale(${zoom})`,
                     transformOrigin: 'center center',
@@ -642,7 +665,7 @@ export default function LabPage() {
               <div className="px-4 pb-4">
                 <div className="flex gap-1.5 overflow-x-auto">
                   {previews.map(p => (
-                    <button key={p.filename} onClick={() => { userSelectedRef.current = true; setSelectedPreview(p); clear() }}
+                    <button key={p.filename} onClick={() => { userSelectedRef.current = true; setSelectedPreview(p) }}
                       className={`flex-shrink-0 w-16 h-12 rounded-lg overflow-hidden border-2 transition-all ${
                         selectedPreview?.filename === p.filename ? 'border-purple-400' : 'border-transparent opacity-60 hover:opacity-100'
                       }`}>
