@@ -233,15 +233,15 @@ class UploadManager:
     @staticmethod
     def _mkdir_p(sftp: paramiko.SFTPClient, remote_dir: str) -> None:
         """Create remote directory hierarchy, ignore if exists."""
-        parts = PurePosixPath(remote_dir).parts
-        current = ""
-        for part in parts:
-            current = str(PurePosixPath(current) / part) if current else part
+        path = PurePosixPath(remote_dir)
+        current = PurePosixPath("/")
+        for part in path.parts[1:]:
+            current = current / part
             try:
-                sftp.stat(current)
+                sftp.stat(str(current))
             except FileNotFoundError:
                 try:
-                    sftp.mkdir(current)
+                    sftp.mkdir(str(current))
                     log.debug("Created remote dir: %s", current)
                 except Exception:
                     pass

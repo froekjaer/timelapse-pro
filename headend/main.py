@@ -1041,7 +1041,7 @@ def health():
 from pathlib import Path as _Path
 from fastapi.responses import FileResponse
 from PIL import Image
-SFTP_BASE = _Path("/data/sftp/incoming")
+SFTP_BASE = _Path(os.getenv("SFTP_BASE", "/data/sftp/incoming"))
 
 #Peter import re as _re
 
