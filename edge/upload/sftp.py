@@ -101,6 +101,14 @@ class UploadManager:
             log.warning("No SFTP targets configured — uploads disabled")
         return targets
 
+    def update_config(self, config: dict) -> None:
+        """Rebuild SFTP targets from updated config."""
+        device              = config.get("device", {})
+        self._device_id     = device.get("device_id", self._device_id)
+        self._customer_name = device.get("customer_name", "")
+        self._site_name     = device.get("site_name", "")
+        self._targets       = self._build_targets(config)
+
     def upload_capture(
         self,
         capture_id: int,
