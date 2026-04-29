@@ -137,7 +137,7 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
   function onMouseUp() { setDragging(false) }
 
   const time = c.captured_at
-    ? new Date(c.captured_at + 'Z').toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    ? new Date(c.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     : '–'
 
   // Parse kunde/site/kamera fra filnavn: Kunde_Site_Kamera_YYYYMMDD_HHMMSS.jpg
@@ -382,7 +382,7 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
 // ── Capture thumbnail ─────────────────────────────────────────────────────────
 function CaptureCard({ capture, onClick }: { capture: Capture; onClick: () => void }) {
   const time = capture.captured_at
-    ? new Date(capture.captured_at + 'Z').toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    ? new Date(capture.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '–'
   const passed = capture.quality_passed !== false
   const thumbUrl = getThumbnailUrl(capture.device_id, capture.filename)
@@ -792,7 +792,7 @@ function StatsTab({ captures, diagnostics }: { captures: Capture[]; diagnostics:
   const qualityData = sorted
     .filter(c => c.captured_at)
     .map(c => ({
-      time: new Date(c.captured_at! + 'Z').toLocaleTimeString('da-DK', { timeZone: getTz(), hour: '2-digit', minute: '2-digit' }),
+      time: new Date(c.captured_at!).toLocaleTimeString('da-DK', { timeZone: getTz(), hour: '2-digit', minute: '2-digit' }),
       blur:       c.blur_score != null ? Math.round(c.blur_score) : null,
       brightness: c.brightness != null ? Math.round(c.brightness) : null,
       size:       c.filesize_mb ?? null,
