@@ -71,3 +71,24 @@ jobs:
           echo "🕐 Tidspunkt: $(date -u)"
           echo "Pi 5 henter ny kode inden for 1 minut"
           echo "Edge enheder opdaterer inden for 5 min"
+
+  deploy-macmini:
+    name: Deploy to Mac mini Headend
+    runs-on: self-hosted
+    needs: [ python-check, ui-check ]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Pull latest code
+        run: |
+          cd ~/projects/timelapse-pro
+          git pull origin main
+      - name: Restart headend
+        run: |
+          sudo launchctl stop dk.froekjaer.timelapse-headend
+          sudo launchctl start dk.froekjaer.timelapse-headend
+          echo "✅ Headend genstartet"
+      - name: Rebuild UI dependencies if needed
+        run: |
+          cd ~/projects/timelapse-pro/timelapse-ui
+          npm install --silent
+          echo "✅ UI dependencies OK"
