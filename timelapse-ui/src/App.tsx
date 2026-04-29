@@ -28,6 +28,7 @@ export default function App() {
             <Route path="/cameras/:deviceId" element={<CameraPage />} />
             <Route path="/global-config" element={<GlobalConfigPage />} />
             <Route path="/lab/:deviceId" element={<LabPage />} />
+            <Route path="/devices/:deviceId/lab" element={<LabPage />} />
             <Route path="/system-admin" element={<SystemAdminPage />} />
             <Route path="/devices/:id/timelapse" element={<TimelapseVideoPage />} />
           </Routes>

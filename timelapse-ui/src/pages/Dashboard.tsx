@@ -247,7 +247,12 @@ export function Dashboard() {
       {/* Kunder → Sites → Kameraer */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-900">Kunder</h2>
-        <span className="text-xs text-gray-400">{customers.length} kunde{customers.length !== 1 ? 'r' : ''} · {sites.length} site{sites.length !== 1 ? 's' : ''} · {devices.length} enhed{devices.length !== 1 ? 'er' : ''}</span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-400">{customers.length} kunde{customers.length !== 1 ? 'r' : ''} · {sites.length} site{sites.length !== 1 ? 's' : ''} · {devices.length} enhed{devices.length !== 1 ? 'er' : ''}</span>
+          <Link to="/customers/new" className="flex items-center gap-1 text-xs text-sky-500 hover:text-sky-700">
+            <Plus className="w-3.5 h-3.5" /> Ny kunde
+          </Link>
+        </div>
       </div>
 
       {loading && customers.length === 0 ? (
