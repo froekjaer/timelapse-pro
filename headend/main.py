@@ -238,7 +238,7 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
     cfg = {
         "device": {
             "device_id":     device_id,
-            "location_name": device.location_name or "Unknown",
+            "location_name": device.location_name or (f"{device.customer_name} — {device.site_name} — {device.camera_name}" if device.customer_name and device.site_name else "Unknown"),
             "headend_url":   base_url + "/api",
             "customer_name": device.customer_name or "",
             "site_name":     device.site_name or "",
@@ -948,13 +948,13 @@ def _render_timelapse(job_id, image_paths, fps, resolution, codec,
         vf = ",".join(vf_parts) if vf_parts else "null"
 
         # Codec indstillinger
-        codec_args = ["-c:v", "libx264", "-crf", "18", "-preset", "slow"]
+        codec_args = ["-c:v", "h264_videotoolbox", "-q:v", "50"]
         if codec == "h265":
-            codec_args = ["-c:v", "libx265", "-crf", "20", "-preset", "slow"]
+            codec_args = ["-c:v", "hevc_videotoolbox", "-q:v", "50"]
 
         # FFmpeg kommando
         cmd = [
-            "ffmpeg", "-y",
+            os.getenv("FFMPEG_PATH", "ffmpeg"), "-y",
             "-f", "concat", "-safe", "0",
             "-i", str(list_file),
             "-vf", vf,
