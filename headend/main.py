@@ -2059,9 +2059,9 @@ def captures_timeline(
         # Returner daglig tæller for hele historikken
         from sqlalchemy import func
         rows = db.query(
-            func.strftime("%Y", Capture.captured_at).label("year"),
-            func.strftime("%m", Capture.captured_at).label("month"),
-            func.strftime("%d", Capture.captured_at).label("day"),
+            func.extract("year",  Capture.captured_at).label("year"),
+            func.extract("month", Capture.captured_at).label("month"),
+            func.extract("day",   Capture.captured_at).label("day"),
             func.count(Capture.id).label("count")
         ).filter(
             Capture.device_id == device_id,
