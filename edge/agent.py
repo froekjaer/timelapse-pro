@@ -639,7 +639,7 @@ class EdgeAgent:
                 self._cfg_mgr.save_config(data)
                 self._cfg = self._cfg_mgr.load()
                 # Update uploader with new customer/site names
-                self._uploader.update_config(self._cfg)
+                self._uploader.update_config(data)  # brug rå headend data med SFTP
                 log.info("Config updated from headend")
             except Exception as exc:
                 log.warning("Could not apply headend config: %s", exc)
