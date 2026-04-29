@@ -87,10 +87,13 @@ class ConfigManager:
         log.info("API token saved")
 
     def save_config(self, config_dict: dict) -> None:
-        """Write updated operational config to disk (from headend)."""
+        """Write updated operational config to disk (from headend).
+        SFTP credentials are NOT cached to disk — always fetched fresh from headend.
+        """
         cfg_path = self._base / "config.yaml"
+        safe_dict = {k: v for k, v in config_dict.items() if k != "sftp"}
         with open(cfg_path, "w") as f:
-            yaml.dump(config_dict, f, default_flow_style=False, allow_unicode=True)
+            yaml.dump(safe_dict, f, default_flow_style=False, allow_unicode=True)
         log.info("Operational config saved to %s", cfg_path)
         # Reload
         self._operational = config_dict
