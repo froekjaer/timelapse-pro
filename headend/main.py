@@ -2096,3 +2096,28 @@ def update_settings(payload: dict, db: Session = Depends(get_db)):
             db.execute(text("INSERT INTO settings (key, value) VALUES (:k, :v)"), {"k": key, "v": str(value)})
     db.commit()
     return {"ok": True}
+
+
+@app.put("/api/admin/devices/{device_id}/assign")
+def assign_device(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    """Tildel en device til et site og en kunde."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    site_id = payload.get("site_id")
+    if site_id:
+        site = db.query(Site).filter_by(id=site_id).first()
+        if not site:
+            raise HTTPException(status_code=404, detail="Site ikke fundet")
+        customer = db.query(Customer).filter_by(id=site.customer_id).first()
+        device.site_id      = site_id
+        device.site_name    = site.name
+        device.customer_name = customer.name if customer else ""
+    else:
+        device.site_id       = None
+        device.site_name     = None
+        device.customer_name = None
+    if "camera_name" in payload:
+        device.camera_name = payload["camera_name"]
+    db.commit()
+    return {"status": "ok"}
