@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, Terminal, Cpu, Radio, Wifi, Camera, Save, CheckCircle,
-         Power, PowerOff, RefreshCw, AlertTriangle, ChevronDown, ChevronRight,
+         Power, PowerOff, RefreshCw, AlertTriangle, ChevronDown, ChevronRight, Database,
          Zap, Shield, Clock, HardDrive, Activity } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -207,6 +207,9 @@ function RelayTester({ deviceId, labActive }: { deviceId: string; labActive: boo
 export function SystemAdminPage() {
   const [devices, setDevices]   = useState<Device[]>([])
   const [selectedDevice, setSelectedDevice] = useState('')
+  const [settings, setSettings] = useState<Record<string,string>>({})
+  const [savingSettings, setSavingSettings] = useState(false)
+  const [savedSettings, setSavedSettings] = useState(false)
   const [saving, setSaving]     = useState(false)
   const [saved, setSaved]       = useState(false)
   const [cfg, setCfg]           = useState<any>(null)
@@ -234,6 +237,19 @@ export function SystemAdminPage() {
   const [errorSleepS, setErrorSleepS]         = useState('30')
   const [minSleepS, setMinSleepS]             = useState('60')
   const [apiTimeoutS, setApiTimeoutS]         = useState('15')
+
+  useEffect(() => {
+    api('/api/admin/settings').then((s: any) => setSettings(s)).catch(() => {})
+  }, [])
+
+  async function saveSettings() {
+    setSavingSettings(true)
+    try {
+      await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(settings) })
+      setSavedSettings(true)
+      setTimeout(() => setSavedSettings(false), 2000)
+    } catch { } finally { setSavingSettings(false) }
+  }
 
   useEffect(() => {
     api('/api/admin/devices').then((d: any) => {
@@ -557,6 +573,40 @@ export function SystemAdminPage() {
               </button>
             </div>
           )}
+        </div>
+      </Section>
+
+      {/* Headend Settings */}
+      <Section title="Headend indstillinger" icon={<Database className="w-4 h-4" />}
+        description="SFTP, ffmpeg og system URLs — gemmes i databasen">
+        <Field label="SFTP host" description="IP eller hostname på SFTP serveren">
+          <Txt value={settings.sftp_host ?? ''} onChange={v => setSettings(s => ({...s, sftp_host: v}))} mono />
+        </Field>
+        <Field label="SFTP port" description="Port nummer (standard 22, lab 2222)">
+          <Txt value={settings.sftp_port ?? ''} onChange={v => setSettings(s => ({...s, sftp_port: v}))} mono />
+        </Field>
+        <Field label="SFTP brugernavn">
+          <Txt value={settings.sftp_user ?? ''} onChange={v => setSettings(s => ({...s, sftp_user: v}))} mono />
+        </Field>
+        <Field label="SFTP password">
+          <input type="password" className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-mono"
+            value={settings.sftp_password ?? ''} onChange={e => setSettings(s => ({...s, sftp_password: e.target.value}))} />
+        </Field>
+        <Field label="SFTP remote base" description="Sti på serveren hvor billeder uploades til">
+          <Txt value={settings.sftp_remote_base ?? ''} onChange={v => setSettings(s => ({...s, sftp_remote_base: v}))} mono />
+        </Field>
+        <Field label="FFmpeg sti" description="Fuld sti til ffmpeg binary">
+          <Txt value={settings.ffmpeg_path ?? ''} onChange={v => setSettings(s => ({...s, ffmpeg_path: v}))} mono />
+        </Field>
+        <Field label="Base URL" description="Headend URL som vises i edge config">
+          <Txt value={settings.base_url ?? ''} onChange={v => setSettings(s => ({...s, base_url: v}))} mono />
+        </Field>
+        <div className="flex justify-end mt-3">
+          <button onClick={saveSettings} disabled={savingSettings}
+            className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
+            {savedSettings ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            {savedSettings ? 'Gemt!' : savingSettings ? 'Gemmer…' : 'Gem indstillinger'}
+          </button>
         </div>
       </Section>
 
