@@ -346,7 +346,7 @@ class GPhoto2Driver(CameraBase):
             "integrity": {
                 "sha256_original":      sha256,
                 "captured_at_utc":      timestamp.astimezone(_tz.utc).isoformat(),
-                "captured_at_local":    timestamp.isoformat(),
+                "captured_at_local":    timestamp.astimezone(__import__("zoneinfo").ZoneInfo(schedule.get("timezone", "UTC"))).isoformat(),
                 "timezone":             schedule.get("timezone", "UTC"),
                 "image_file":           image_path.name,
                 "original_unmodified":  True,
