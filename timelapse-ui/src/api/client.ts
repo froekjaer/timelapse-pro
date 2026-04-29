@@ -2,7 +2,7 @@ import axios from 'axios'
 import type { Device, DeviceDetail, Stats, Capture, DeviceConfig } from '../types'
 
 export const API_STORAGE_KEY = 'timelapse_api_url'
-export const DEFAULT_API_URL = 'http://192.168.86.132:8000'
+export const DEFAULT_API_URL = typeof window !== 'undefined' ? window.location.origin : 'http://192.168.86.102:8000'
 
 export const getApiUrl = () =>
   localStorage.getItem(API_STORAGE_KEY) ?? import.meta.env.VITE_API_URL ?? DEFAULT_API_URL
