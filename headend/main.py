@@ -306,6 +306,8 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
         try:
             overrides = json.loads(device.device_config or "{}")
             for section, values in overrides.items():
+                if section == "device":
+                    continue  # device-sektion styres af DB-kolonner, ikke device_config
                 if section in cfg and isinstance(cfg[section], dict):
                     cfg[section].update(values)
                 else:
