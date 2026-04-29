@@ -1464,6 +1464,8 @@ def update_site(site_id: str, payload: dict, db: Session = Depends(get_db)):
             setattr(s, f, payload[f])
     if hasattr(s, "gps_alt") and "gps_alt" in payload:
         s.gps_alt = payload["gps_alt"]
+    if "config_overrides" in payload:
+        s.config_overrides = json.dumps(payload["config_overrides"])
     db.commit()
     return {"status": "ok"}
 

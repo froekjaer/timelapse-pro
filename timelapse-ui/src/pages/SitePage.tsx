@@ -51,6 +51,9 @@ export function SitePage() {
 
   // Editable fields
   const [name, setName] = useState('')
+  const [sftpUser, setSftpUser] = useState('')
+  const [sftpPassword, setSftpPassword] = useState('')
+  const [sftpPort, setSftpPort] = useState('2222')
   const [address, setAddress] = useState('')
   const [gpsLat, setGpsLat] = useState('')
   const [gpsLon, setGpsLon] = useState('')
@@ -70,6 +73,10 @@ export function SitePage() {
         setGpsAlt(d.gps_alt ?? '')
         setTimezone(d.timezone ?? 'Europe/Copenhagen')
         setNotes(d.notes ?? '')
+        const sftp = d.config_overrides?.sftp ?? {}
+        setSftpUser(sftp.username ?? '')
+        setSftpPassword(sftp.password ?? '')
+        setSftpPort(String(sftp.port ?? '2222'))
       })
       .catch(() => setError('Kunne ikke hente site'))
       .finally(() => setLoading(false))
@@ -86,6 +93,13 @@ export function SitePage() {
           gps_lon: gpsLon ? parseFloat(gpsLon) : null,
           gps_alt: gpsAlt ? parseFloat(gpsAlt) : null,
           timezone, notes,
+          config_overrides: {
+            sftp: {
+              username: sftpUser,
+              password: sftpPassword,
+              port: parseInt(sftpPort),
+            }
+          }
         })
       })
       setSaved(true)
@@ -167,6 +181,31 @@ export function SitePage() {
             <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={2}
               placeholder="Interne noter om dette site..."
               value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      {/* SFTP */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
+        <h2 className="text-sm font-semibold text-gray-700 mb-1">SFTP adgang</h2>
+        <p className="text-xs text-gray-400 mb-4">Credentials til edge-nodernes upload på dette site</p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">SFTP brugernavn</label>
+            <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="sftp_nvj17c"
+              value={sftpUser} onChange={e => setSftpUser(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">SFTP password</label>
+            <input type="password" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              value={sftpPassword} onChange={e => setSftpPassword(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Port</label>
+            <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="2222"
+              value={sftpPort} onChange={e => setSftpPort(e.target.value)} />
           </div>
         </div>
       </div>
