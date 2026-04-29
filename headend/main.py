@@ -242,7 +242,7 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
     device.last_seen = now_utc()
     db.commit()
 
-    base_url = os.environ.get("BASE_URL", "http://192.168.86.132:8000")
+    base_url = _get_setting(db, "base_url", os.environ.get("BASE_URL", "http://192.168.86.102:8000"))
 
     cfg = {
         "device": {
