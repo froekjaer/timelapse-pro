@@ -112,6 +112,13 @@ export function CameraPage() {
   const [relayCamera, setRelayCamera] = useState(356)
   const [relayModem, setRelayModem]   = useState(361)
   const [overrides, setOverrides]     = useState<Record<string, unknown>>({})
+  const [sites, setSites]             = useState<{id:string, name:string, customer_name:string}[]>([])
+  const [assignSiteId, setAssignSiteId] = useState('')
+  const [assigning, setAssigning]     = useState(false)
+
+  useEffect(() => {
+    fetch(`${getApiUrl()}/api/admin/sites`).then(r=>r.json()).then((ss:any[]) => setSites(ss)).catch(()=>{})
+  }, [])
 
   useEffect(() => {
     if (!deviceId) return
@@ -182,6 +189,19 @@ export function CameraPage() {
     ? new Date(device.last_seen + 'Z').toLocaleString('da-DK', { timeZone: TZ(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '–'
 
+  async function assignToSite() {
+    if (!assignSiteId) return
+    setAssigning(true)
+    try {
+      await api(`/api/admin/devices/${deviceId}/assign`, {
+        method: 'PUT',
+        body: JSON.stringify({ site_id: assignSiteId })
+      })
+      const d = await api(`/api/admin/devices/${deviceId}`)
+      setDevice(d)
+    } catch { } finally { setAssigning(false) }
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       {/* Breadcrumb */}
@@ -206,6 +226,49 @@ export function CameraPage() {
         <Camera className="w-3.5 h-3.5 text-sky-500" />
         <span className="text-gray-700 font-medium">{device.camera_name || device.device_id}</span>
       </div>
+
+      {/* Tildel til site */}
+      {(!device.site_name || !device.customer_name) && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
+          <p className="text-sm font-medium text-amber-800 mb-3">⚠️ Denne enhed er ikke tildelt et site</p>
+          <div className="flex gap-2">
+            <select className="flex-1 border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white"
+              value={assignSiteId} onChange={e => setAssignSiteId(e.target.value)}>
+              <option value="">Vælg site…</option>
+              {sites.map(s => (
+                <option key={s.id} value={s.id}>{s.customer_name} — {s.name}</option>
+              ))}
+            </select>
+            <button onClick={assignToSite} disabled={!assignSiteId || assigning}
+              className="px-4 py-2 bg-amber-500 text-white text-sm rounded-lg hover:bg-amber-600 disabled:opacity-50">
+              {assigning ? 'Tildeler…' : 'Tildel'}
+            </button>
+          </div>
+        </div>
+      )}
+      {device.site_name && (
+        <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <MapPin className="w-4 h-4 text-sky-500" />
+            <span>{device.customer_name} — {device.site_name}</span>
+          </div>
+          <div className="flex gap-2">
+            <select className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white"
+              value={assignSiteId} onChange={e => setAssignSiteId(e.target.value)}>
+              <option value="">Flyt til andet site…</option>
+              {sites.map(s => (
+                <option key={s.id} value={s.id}>{s.customer_name} — {s.name}</option>
+              ))}
+            </select>
+            {assignSiteId && (
+              <button onClick={assignToSite} disabled={assigning}
+                className="px-3 py-1 bg-sky-500 text-white text-xs rounded-lg hover:bg-sky-600 disabled:opacity-50">
+                {assigning ? '…' : 'Flyt'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
