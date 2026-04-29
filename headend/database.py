@@ -27,23 +27,29 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Integer,
     String, Text, create_engine, event
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-DATABASE_URL = "sqlite:///./timelapse_headend.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./timelapse_headend.db")
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},  # SQLite only
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 )
 
 # Enable WAL mode for SQLite — power-loss resilience
-@event.listens_for(engine, "connect")
-def set_sqlite_pragma(conn, _):
-    conn.execute("PRAGMA journal_mode=WAL")
+if DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(conn, _):
+        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
 
@@ -71,6 +77,8 @@ class Device(Base):
     device_config   = Column(Text)
     customer_name   = Column(String(200))
     site_name       = Column(String(200))
+    site_id         = Column(String(36))
+    camera_index    = Column(Integer, default=0)
     camera_name     = Column(String(200))
     installed_date  = Column(String(10))
     installed_time  = Column(String(5))

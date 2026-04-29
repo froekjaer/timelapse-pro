@@ -1446,7 +1446,7 @@ def get_site(site_id: str, db: Session = Depends(get_db)):
                 "device_id":    d.device_id,
                 "camera_name":  d.camera_name,
                 "camera_index": d.camera_index if hasattr(d, "camera_index") else 0,
-                "status":       "online" if d.last_seen and (now_utc() - d.last_seen).total_seconds() < 300 else "offline",
+                "status":       "online" if d.last_seen and (now_utc() - d.last_seen.replace(tzinfo=_tz.utc) if d.last_seen.tzinfo is None else d.last_seen).total_seconds() < 300 else "offline",
                 "last_seen":    d.last_seen.isoformat() if d.last_seen else None,
             }
             for d in devices
