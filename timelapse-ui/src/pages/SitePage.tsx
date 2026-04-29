@@ -52,6 +52,7 @@ export function SitePage() {
   // Editable fields
   const [name, setName] = useState('')
   const [sftpUser, setSftpUser] = useState('')
+  const [sftpRemoteBase, setSftpRemoteBase] = useState('')
   const [sftpPassword, setSftpPassword] = useState('')
   const [sftpPort, setSftpPort] = useState('2222')
   const [address, setAddress] = useState('')
@@ -77,6 +78,7 @@ export function SitePage() {
         setSftpUser(sftp.username ?? '')
         setSftpPassword(sftp.password ?? '')
         setSftpPort(String(sftp.port ?? '2222'))
+        setSftpRemoteBase(sftp.remote_base ?? '')
       })
       .catch(() => setError('Kunne ikke hente site'))
       .finally(() => setLoading(false))
@@ -98,6 +100,7 @@ export function SitePage() {
               username: sftpUser,
               password: sftpPassword,
               port: parseInt(sftpPort),
+              remote_base: sftpRemoteBase,
             }
           }
         })
@@ -200,6 +203,12 @@ export function SitePage() {
             <label className="text-xs text-gray-400 block mb-1">SFTP password</label>
             <input type="password" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               value={sftpPassword} onChange={e => setSftpPassword(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Remote base sti</label>
+            <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="/Users/Shared/timelapse/incoming/sftp_nvj17c"
+              value={sftpRemoteBase} onChange={e => setSftpRemoteBase(e.target.value)} />
           </div>
           <div>
             <label className="text-xs text-gray-400 block mb-1">Port</label>
