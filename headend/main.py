@@ -117,6 +117,15 @@ def startup():
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
+def _get_setting(db: Session, key: str, default: str = "") -> str:
+    """Hent en setting fra databasen."""
+    try:
+        row = db.execute(text("SELECT value FROM settings WHERE key = :k"), {"k": key}).fetchone()
+        return row[0] if row else default
+    except Exception:
+        return default
+
+
 class BootstrapRequest(BaseModel):
     device_id:       str
     bootstrap_token: str
@@ -285,12 +294,12 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
             "address":   None,
         },
         "sftp": {
-            "host":        os.getenv("SFTP_HOST", ""),
-            "port":        int(os.getenv("SFTP_PORT", "22")),
-            "username":    os.getenv("SFTP_USER", ""),
-            "password":    os.getenv("SFTP_PASSWORD", ""),
+            "host":        _get_setting(db, "sftp_host", os.getenv("SFTP_HOST", "")),
+            "port":        int(_get_setting(db, "sftp_port", os.getenv("SFTP_PORT", "22"))),
+            "username":    _get_setting(db, "sftp_user", os.getenv("SFTP_USER", "")),
+            "password":    _get_setting(db, "sftp_password", os.getenv("SFTP_PASSWORD", "")),
             "key_file":    "",
-            "remote_base": os.getenv("SFTP_REMOTE_BASE", "/incoming"),
+            "remote_base": _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/incoming")),
         },
         "diagnostics": {
             "heartbeat_interval_minutes": 60,
