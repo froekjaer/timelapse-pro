@@ -1052,7 +1052,12 @@ def health():
 from pathlib import Path as _Path
 from fastapi.responses import FileResponse
 from PIL import Image
-SFTP_BASE = _Path(os.getenv("SFTP_BASE", "/data/sftp/incoming"))
+def _init_sftp_base():
+    from sqlalchemy.orm import Session
+    db = next(get_db())
+    return _Path(_get_setting(db, "sftp_base", os.getenv("SFTP_BASE", "/Users/Shared/timelapse/incoming")))
+
+SFTP_BASE = _init_sftp_base()
 
 #Peter import re as _re
 
