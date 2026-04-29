@@ -11,6 +11,7 @@ import { GlobalConfigPage } from './pages/GlobalConfigPage'
 import LabPage from './pages/LabPage'
 import { SystemAdminPage } from './pages/SystemAdminPage'
 import TimelapseVideoPage from './pages/TimelapseVideoPage'
+import NewCustomerPage from './pages/NewCustomerPage'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/backup" element={<BackupPage />} />
             <Route path="/sites/:siteId" element={<SitePage />} />
+            <Route path="/customers/new" element={<NewCustomerPage />} />
             <Route path="/customers/:customerId" element={<CustomerPage />} />
             <Route path="/cameras/:deviceId" element={<CameraPage />} />
             <Route path="/global-config" element={<GlobalConfigPage />} />
