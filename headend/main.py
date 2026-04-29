@@ -285,12 +285,12 @@ def get_config(device_id: str, db: Session = Depends(get_db)):
             "address":   None,
         },
         "sftp": {
-            "host":        "192.168.86.132",
-            "port":        22,
-            "username":    "sftp_test",
-            "password":    "timelapse123",
+            "host":        os.getenv("SFTP_HOST", ""),
+            "port":        int(os.getenv("SFTP_PORT", "22")),
+            "username":    os.getenv("SFTP_USER", ""),
+            "password":    os.getenv("SFTP_PASSWORD", ""),
             "key_file":    "",
-            "remote_base": "/incoming",
+            "remote_base": os.getenv("SFTP_REMOTE_BASE", "/incoming"),
         },
         "diagnostics": {
             "heartbeat_interval_minutes": 60,
@@ -2062,3 +2062,26 @@ def captures_timeline(
             {"year": int(r.year), "month": int(r.month), "day": int(r.day), "count": r.count}
             for r in rows
         ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# System Settings
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/admin/settings")
+def get_settings(db: Session = Depends(get_db)):
+    """Returner alle system settings."""
+    rows = db.execute(text("SELECT key, value FROM settings")).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+@app.put("/api/admin/settings")
+def update_settings(payload: dict, db: Session = Depends(get_db)):
+    """Opdater system settings."""
+    for key, value in payload.items():
+        existing = db.execute(text("SELECT id FROM settings WHERE key = :k"), {"k": key}).fetchone()
+        if existing:
+            db.execute(text("UPDATE settings SET value = :v WHERE key = :k"), {"v": str(value), "k": key})
+        else:
+            db.execute(text("INSERT INTO settings (key, value) VALUES (:k, :v)"), {"k": key, "v": str(value)})
+    db.commit()
+    return {"ok": True}
