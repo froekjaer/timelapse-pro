@@ -25,8 +25,9 @@ function toLocal(iso: string) {
 }
 
 function fmtLocal(iso: string) {
-  const utc = new Date(iso.endsWith('Z') ? iso : iso + 'Z')
-  return utc.toLocaleTimeString('da-DK', { timeZone: getTz(), hour: '2-digit', minute: '2-digit' })
+  // captured_at er lokal tid gemt uden timezone — behandl som lokal direkte
+  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso.replace('T', 'T'))
+  return d.toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })
 }
 
 export function TimelineNavigator({ deviceId, captures, onSelect }: Props) {

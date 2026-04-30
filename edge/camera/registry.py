@@ -55,6 +55,9 @@ def get_driver(config: dict) -> CameraBase:
     cam_cfg.setdefault("customer_name", device_cfg.get("customer_name", ""))
     cam_cfg.setdefault("site_name",     device_cfg.get("site_name", ""))
     cam_cfg.setdefault("camera_name",   device_cfg.get("camera_name", ""))
+    # Inject schedule and location so driver can use timezone etc.
+    cam_cfg["schedule"] = config.get("schedule", {})
+    cam_cfg["location"] = config.get("location", {})
 
     explicit_driver = cam_cfg.get("driver", "").lower()
     if explicit_driver:

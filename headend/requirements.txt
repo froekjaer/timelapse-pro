@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+pillow
+paramiko
+python-multipart
+python-jose[cryptography]
+bcrypt
+passlib
+psycopg2-binary
