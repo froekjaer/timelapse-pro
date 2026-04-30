@@ -17,7 +17,16 @@ const getTz = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenh
 const MONTHS = ['Jan','Feb','Mar','Apr','Maj','Jun','Jul','Aug','Sep','Okt','Nov','Dec']
 
 function toLocal(iso: string) {
-  return new Date(new Date(iso + 'Z').toLocaleString('en-US', { timeZone: getTz() }))
+  // iso er UTC uden timezone suffix — tilføj Z og konverter til lokal tid
+  const utc = new Date(iso.endsWith('Z') ? iso : iso + 'Z')
+  // Returner UTC date — lad getHours/getMinutes bruge lokal browsertime
+  // I stedet formatér direkte med Intl
+  return utc
+}
+
+function fmtLocal(iso: string) {
+  const utc = new Date(iso.endsWith('Z') ? iso : iso + 'Z')
+  return utc.toLocaleTimeString('da-DK', { timeZone: getTz(), hour: '2-digit', minute: '2-digit' })
 }
 
 export function TimelineNavigator({ deviceId, captures, onSelect }: Props) {
@@ -167,8 +176,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect }: Props) {
               <p className="text-xs text-gray-400 mb-3">{dayCaptures.length} billeder</p>
               <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-1.5">
                 {dayCaptures.map(c => {
-                  const d   = c.captured_at ? toLocal(c.captured_at) : null
-                  const lbl = d ? `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}` : ''
+                  const lbl = c.captured_at ? fmtLocal(c.captured_at) : ''
                   return (
                     <button key={c.id} onClick={() => openCapture(c)}
                       className={`relative rounded-lg overflow-hidden border-2 transition-all hover:scale-105 ${selFilename===c.filename ? 'border-sky-400' : 'border-transparent'} ${!c.quality_passed ? 'ring-1 ring-red-400' : ''}`}>
