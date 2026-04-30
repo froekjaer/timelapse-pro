@@ -95,6 +95,12 @@ class ConfigManager:
         with open(cfg_path, "w") as f:
             yaml.dump(safe_dict, f, default_flow_style=False, allow_unicode=True)
         log.info("Operational config saved to %s", cfg_path)
+        # Cache SFTP separately for cold-start resilience
+        if "sftp" in config_dict:
+            sftp_path = self._base / "sftp_cache.yaml"
+            with open(sftp_path, "w") as f:
+                yaml.dump({"sftp": config_dict["sftp"]}, f, default_flow_style=False, allow_unicode=True)
+            log.info("SFTP config cached to %s", sftp_path)
         # Reload
         self._operational = config_dict
         self._merged      = self._merge()
@@ -139,7 +145,15 @@ class ConfigManager:
         if not path.exists():
             log.warning("config.yaml not found — agent will attempt bootstrap from headend")
             return {}
-        return _load_yaml(path)
+        data = _load_yaml(path)
+        # Inject cached SFTP config for cold-start resilience
+        sftp_path = self._base / "sftp_cache.yaml"
+        if sftp_path.exists() and "sftp" not in data:
+            sftp_data = _load_yaml(sftp_path)
+            if "sftp" in sftp_data:
+                data["sftp"] = sftp_data["sftp"]
+                log.info("SFTP config loaded from cold-start cache")
+        return data
 
     def _merge(self) -> dict:
         """Deep merge all layers. Operational config wins on conflict."""
