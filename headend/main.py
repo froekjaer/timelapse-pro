@@ -38,7 +38,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -227,10 +227,23 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     )
 
 
+
+# ── API Token auth ───────────────────────────────────────────────────────────
+
+def _verify_token(authorization: str = Header(default=""), db: Session = Depends(get_db)) -> None:
+    """Validate Bearer token on edge-facing endpoints."""
+    token = _get_setting(db, "api_token", "")
+    if not token:
+        return  # Auth ikke konfigureret — tillad alt
+    scheme, _, provided = authorization.partition(" ")
+    if scheme.lower() != "bearer" or provided != token:
+        raise HTTPException(status_code=401, detail="Ugyldig eller manglende API token")
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/config/{device_id}")
-def get_config(device_id: str, db: Session = Depends(get_db)):
+def get_config(device_id: str, _auth: None = Depends(_verify_token), db: Session = Depends(get_db)):
     """Return operational config for a device.
     Merges base defaults with per-device overrides from device_config column.
     """
@@ -1044,6 +1057,18 @@ def timelapse_download(job_id: str):
 def list_timelapse_jobs():
     return [{"job_id": k, **{kk: vv for kk, vv in v.items() if kk != "output_path"}}
             for k, v in RENDER_JOBS.items()]
+
+# ── API Token auth ────────────────────────────────────────────────────────────
+
+def _verify_token(authorization: str = Header(default=""), db: Session = Depends(get_db)) -> None:
+    """Validate Bearer token on edge-facing endpoints."""
+    token = _get_setting(db, "api_token", "")
+    if not token:
+        return  # Auth ikke konfigureret — tillad alt
+    scheme, _, provided = authorization.partition(" ")
+    if scheme.lower() != "bearer" or provided != token:
+        raise HTTPException(status_code=401, detail="Ugyldig eller manglende API token")
+
 
 @app.get("/health")
 def health():
