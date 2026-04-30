@@ -2131,3 +2131,122 @@ def assign_device(device_id: str, payload: dict, db: Session = Depends(get_db)):
         device.camera_name = payload["camera_name"]
     db.commit()
     return {"status": "ok"}
+
+
+# ── Slet capture ──────────────────────────────────────────────────────────────
+
+@app.delete("/api/admin/captures/{capture_id}")
+def delete_capture(capture_id: int, db: Session = Depends(get_db)):
+    """Slet et billede: fil, thumbnail, sidecar JSON og DB-record."""
+    capture = db.query(Capture).filter(Capture.id == capture_id).first()
+    if not capture:
+        raise HTTPException(status_code=404, detail="Capture ikke fundet")
+
+    deleted = {"file": False, "thumbnail": False, "sidecar": False, "db": False}
+
+    # Slet billedfil
+    path = _find_image(capture.device_id, capture.filename)
+    if path and path.exists():
+        try:
+            path.unlink()
+            deleted["file"] = True
+        except Exception as exc:
+            log.warning("Kunne ikke slette fil %s: %s", path, exc)
+
+        # Slet thumbnail
+        thumb = _thumbs_dir_for(path) / capture.filename
+        if thumb.exists():
+            try:
+                thumb.unlink()
+                deleted["thumbnail"] = True
+            except Exception as exc:
+                log.warning("Kunne ikke slette thumbnail %s: %s", thumb, exc)
+
+        # Slet sidecar JSON
+        sidecar = path.with_suffix(".json")
+        if sidecar.exists():
+            try:
+                sidecar.unlink()
+                deleted["sidecar"] = True
+            except Exception as exc:
+                log.warning("Kunne ikke slette sidecar %s: %s", sidecar, exc)
+
+    # Slet fra DB
+    db.delete(capture)
+    db.commit()
+    deleted["db"] = True
+
+    log.info("Capture %d slettet: %s", capture_id, deleted)
+    return {"status": "ok", "capture_id": capture_id, "deleted": deleted}
+
+
+@app.post("/api/admin/captures/bulk-delete")
+def delete_captures_bulk(payload: dict, db: Session = Depends(get_db)):
+    """Slet flere captures på én gang. payload: {ids: [int]}"""
+    ids = payload.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Ingen ids angivet")
+    results = []
+    for cid in ids:
+        try:
+            capture = db.query(Capture).filter(Capture.id == cid).first()
+            if not capture:
+                results.append({"id": cid, "status": "not_found"})
+                continue
+            path = _find_image(capture.device_id, capture.filename)
+            if path and path.exists():
+                path.unlink(missing_ok=True)
+                (_thumbs_dir_for(path) / capture.filename).unlink(missing_ok=True)
+                path.with_suffix(".json").unlink(missing_ok=True)
+            db.delete(capture)
+            results.append({"id": cid, "status": "ok"})
+        except Exception as exc:
+            results.append({"id": cid, "status": "error", "error": str(exc)})
+    db.commit()
+    log.info("Bulk slettet %d captures", len([r for r in results if r["status"] == "ok"]))
+    return {"status": "ok", "results": results}
+
+
+# ── Slet captures ─────────────────────────────────────────────────────────────
+
+@app.delete("/api/admin/captures/{capture_id}")
+def delete_capture(capture_id: int, db: Session = Depends(get_db)):
+    """Slet et billede: fil, thumbnail, sidecar og DB-record."""
+    capture = db.query(Capture).filter(Capture.id == capture_id).first()
+    if not capture:
+        raise HTTPException(status_code=404, detail="Capture ikke fundet")
+    path = _find_image(capture.device_id, capture.filename)
+    if path and path.exists():
+        path.unlink(missing_ok=True)
+        (_thumbs_dir_for(path) / capture.filename).unlink(missing_ok=True)
+        path.with_suffix(".json").unlink(missing_ok=True)
+    db.delete(capture)
+    db.commit()
+    log.info("Capture %d slettet: %s", capture_id, capture.filename)
+    return {"status": "ok", "capture_id": capture_id}
+
+
+@app.post("/api/admin/captures/bulk-delete")
+def delete_captures_bulk(payload: dict, db: Session = Depends(get_db)):
+    """Bulk-slet captures. Body: {ids: [int]}"""
+    ids = payload.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Ingen ids")
+    ok = 0
+    for cid in ids:
+        try:
+            c = db.query(Capture).filter(Capture.id == cid).first()
+            if not c:
+                continue
+            path = _find_image(c.device_id, c.filename)
+            if path and path.exists():
+                path.unlink(missing_ok=True)
+                (_thumbs_dir_for(path) / c.filename).unlink(missing_ok=True)
+                path.with_suffix(".json").unlink(missing_ok=True)
+            db.delete(c)
+            ok += 1
+        except Exception as exc:
+            log.warning("Bulk slet fejl id=%d: %s", cid, exc)
+    db.commit()
+    log.info("Bulk slettet %d captures", ok)
+    return {"status": "ok", "deleted": ok}

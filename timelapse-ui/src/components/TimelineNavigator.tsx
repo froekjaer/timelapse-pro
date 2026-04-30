@@ -1,8 +1,8 @@
 // v5.1
 import { useState, useMemo, useEffect } from 'react'
-import { ChevronLeft } from 'lucide-react'
+import { ChevronLeft, Trash2, CheckSquare, Square, X } from 'lucide-react'
 import type { Capture } from '../types'
-import { getThumbnailUrl, getApiUrl } from '../api/client'
+import { getThumbnailUrl, getApiUrl, deleteCapturesBulk } from '../api/client'
 
 interface DayCount {
   year: number; month: number; day: number; count: number
@@ -11,6 +11,7 @@ interface Props {
   deviceId: string
   captures: Capture[]
   onSelect: (index: number) => void
+  onDeleted?: () => void
 }
 
 const getTz = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
@@ -30,12 +31,15 @@ function fmtLocal(iso: string) {
   return d.toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })
 }
 
-export function TimelineNavigator({ deviceId, captures, onSelect }: Props) {
+export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: Props) {
   const [dayCounts, setDayCounts]     = useState<DayCount[]>([])
   const [dayCaptures, setDayCaptures] = useState<Capture[]>([])
   const [selected, setSelected]       = useState<{ year?: number; month?: number; day?: number }>({})
   const [loading, setLoading]         = useState(false)
   const [selFilename, setSelFilename] = useState<string | null>(null)
+  const [deleteMode, setDeleteMode]   = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const [deleting, setDeleting]       = useState(false)
 
   useEffect(() => {
     if (!deviceId) return
@@ -95,15 +99,61 @@ export function TimelineNavigator({ deviceId, captures, onSelect }: Props) {
     }
   }
 
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return
+    if (!confirm(`Slet ${selectedIds.size} billeder? Dette kan ikke fortrydes.`)) return
+    setDeleting(true)
+    try {
+      await deleteCapturesBulk([...selectedIds])
+      setSelectedIds(new Set())
+      setDeleteMode(false)
+      // Genindlæs dag-captures
+      if (selected.year && selected.month && selected.day) {
+        setLoading(true)
+        fetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
+          .then(r => r.json()).then((data: Capture[]) => { setDayCaptures(data); setLoading(false) })
+          .catch(() => setLoading(false))
+        fetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}`)
+          .then(r => r.json()).then((data: DayCount[]) => setDayCounts(data)).catch(() => {})
+      }
+      onDeleted?.()
+    } catch { alert('Sletning fejlede') }
+    finally { setDeleting(false) }
+  }
+
+  function toggleSelect(id: number) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 text-sm text-gray-400 flex-wrap">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3 text-sm text-gray-400 flex-wrap">
         <span>{total.toLocaleString()} billeder totalt · {dayCounts.length} dage</span>
         {selected.year && selected.month && selected.day && (
           <span className="text-sky-600 font-medium">
             {selected.day}. {MONTHS[selected.month-1]} {selected.year} — {days.find(d => d.day === selected.day)?.count ?? 0} billeder
           </span>
         )}
+        </div>
+        <div className="flex items-center gap-2">
+          {deleteMode && selectedIds.size > 0 && (
+            <button onClick={handleBulkDelete} disabled={deleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 disabled:opacity-50">
+              <Trash2 className="w-3.5 h-3.5" />
+              {deleting ? 'Sletter…' : `Slet ${selectedIds.size}`}
+            </button>
+          )}
+          <button onClick={() => { setDeleteMode(m => !m); setSelectedIds(new Set()) }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border transition-colors ${deleteMode ? 'bg-gray-100 border-gray-300 text-gray-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+            {deleteMode ? <X className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
+            {deleteMode ? 'Annuller' : 'Vælg til sletning'}
+          </button>
+        </div>
       </div>
 
       {/* År */}
@@ -179,11 +229,18 @@ export function TimelineNavigator({ deviceId, captures, onSelect }: Props) {
                 {dayCaptures.map(c => {
                   const lbl = c.captured_at ? fmtLocal(c.captured_at) : ''
                   return (
-                    <button key={c.id} onClick={() => openCapture(c)}
-                      className={`relative rounded-lg overflow-hidden border-2 transition-all hover:scale-105 ${selFilename===c.filename ? 'border-sky-400' : 'border-transparent'} ${!c.quality_passed ? 'ring-1 ring-red-400' : ''}`}>
-                      <img src={getThumbnailUrl(c.device_id, c.filename)} alt="" className="w-full aspect-video object-cover" />
-                      <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-center py-0.5" style={{fontSize:9}}>{lbl}</div>
-                    </button>
+                    <div key={c.id} className="relative">
+                      <button onClick={() => deleteMode ? toggleSelect(c.id) : openCapture(c)}
+                        className={`relative w-full rounded-lg overflow-hidden border-2 transition-all ${deleteMode ? '' : 'hover:scale-105'} ${deleteMode && selectedIds.has(c.id) ? 'border-red-400' : selFilename===c.filename ? 'border-sky-400' : 'border-transparent'} ${!c.quality_passed ? 'ring-1 ring-red-400' : ''}`}>
+                        <img src={getThumbnailUrl(c.device_id, c.filename)} alt="" className="w-full aspect-video object-cover" />
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-center py-0.5" style={{fontSize:9}}>{lbl}</div>
+                        {deleteMode && (
+                          <div className={`absolute top-1 right-1 ${selectedIds.has(c.id) ? 'text-red-400' : 'text-white/70'}`}>
+                            {selectedIds.has(c.id) ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                          </div>
+                        )}
+                      </button>
+                    </div>
                   )
                 })}
               </div>

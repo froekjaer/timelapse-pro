@@ -68,3 +68,9 @@ export const getPreviewThumbUrl = (deviceId: string, filename: string) =>
 
 export const getDeviceRawConfig = (deviceId: string) =>
   getClient().get(`/api/config/${deviceId}`).then(r => r.data)
+
+export const deleteCapture = (id: number) =>
+  getClient().delete(`/api/admin/captures/${id}`).then(r => r.data)
+
+export const deleteCapturesBulk = (ids: number[]) =>
+  getClient().post('/api/admin/captures/bulk-delete', { ids }).then(r => r.data.deleted as number)
