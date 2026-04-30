@@ -2041,11 +2041,13 @@ def captures_timeline(
     if year and month and day:
         # Hent alle captures på en specifik dag
         from datetime import date
-        d_start = f"{year:04d}-{month:02d}-{day:02d} 00:00:00"
-        d_end   = f"{year:04d}-{month:02d}-{day:02d} 23:59:59"
+        from sqlalchemy import func
+        tz = "Europe/Copenhagen"
+        local_ts = func.timezone(tz, Capture.captured_at)
         captures = q.filter(
-            Capture.captured_at >= d_start,
-            Capture.captured_at <= d_end
+            func.extract("year",  local_ts) == year,
+            func.extract("month", local_ts) == month,
+            func.extract("day",   local_ts) == day,
         ).order_by(Capture.captured_at.asc()).all()
         return [
             {
@@ -2065,10 +2067,13 @@ def captures_timeline(
     else:
         # Returner daglig tæller for hele historikken
         from sqlalchemy import func
+        from sqlalchemy import func as _func, text as _text
+        tz = "Europe/Copenhagen"
+        local_ts = func.timezone(tz, Capture.captured_at)
         rows = db.query(
-            func.extract("year",  Capture.captured_at).label("year"),
-            func.extract("month", Capture.captured_at).label("month"),
-            func.extract("day",   Capture.captured_at).label("day"),
+            func.extract("year",  local_ts).label("year"),
+            func.extract("month", local_ts).label("month"),
+            func.extract("day",   local_ts).label("day"),
             func.count(Capture.id).label("count")
         ).filter(
             Capture.device_id == device_id,
