@@ -32,4 +32,4 @@ dist/
 *.zip
 src_v2.tar 
 src_v3.zip 
-dist/
+dist/Icon?
