@@ -545,6 +545,35 @@ def receive_capture(
 
     db.commit()
 
+    # Læs EXIF fra filen i baggrunden og gem i DB
+    _cap_id = capture.id
+    _dev_id = device_id
+    _fname  = req.filename
+    def _enrich_exif():
+        try:
+            import exifread
+            src = _find_image(_dev_id, _fname)
+            if not src or not src.exists():
+                return
+            with open(str(src), "rb") as fh:
+                tags = exifread.process_file(fh, details=True)
+            if not tags:
+                return
+            exif_json = _json.dumps({k: str(v) for k, v in tags.items()}, ensure_ascii=False)
+            # Opdater capture record
+            db2 = next(get_db())
+            try:
+                c2 = db2.query(Capture).filter(Capture.id == _cap_id).first()
+                if c2:
+                    c2.exif_data = exif_json
+                    db2.commit()
+                    log.info("EXIF gemt for capture %d (%d felter)", _cap_id, len(tags))
+            finally:
+                db2.close()
+        except Exception as exc:
+            log.warning("EXIF baggrunds-læsning fejl: %s", exc)
+    _threading.Thread(target=_enrich_exif, daemon=True).start()
+
     quality = "PASS" if req.quality_passed else "FAIL"
     log.info(
         "Capture: %s | %s | %s | blur=%.1f brightness=%.1f",
@@ -2257,6 +2286,90 @@ def get_exif(device_id: str, filename: str):
     except Exception as exc:
         log.warning("EXIF læsning fejl %s: %s", filename, exc)
         return {"exif": {}, "error": str(exc)}
+
+
+
+# ── Diagnostics historik ──────────────────────────────────────────────────
+
+@app.get("/api/admin/devices/{device_id}/diagnostics/history")
+def get_diagnostics_history(
+    device_id: str,
+    days: int = 7,
+    limit: int = 500,
+    db: Session = Depends(get_db),
+):
+    """Hent diagnostics time-series for en device (seneste N dage)."""
+    from datetime import timedelta
+    since = now_utc() - timedelta(days=days)
+    rows = (
+        db.query(Diagnostic)
+        .filter(Diagnostic.device_id == device_id, Diagnostic.recorded_at >= since)
+        .order_by(Diagnostic.recorded_at.asc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "ts":                  r.recorded_at.isoformat() if r.recorded_at else None,
+            "cpu_temp_c":          r.cpu_temp_c,
+            "cpu_load_pct":        r.cpu_load_pct,
+            "ram_used_mb":         r.ram_used_mb,
+            "disk_used_gb":        r.disk_used_gb,
+            "ssd_used_pct":        r.ssd_used_pct,
+            "ssd_free_gb":         r.ssd_free_gb,
+            "ntp_offset_s":        r.ntp_offset_s,
+            "connectivity":        r.connectivity,
+            "uptime_s":            r.uptime_s,
+            "upload_queue":        r.upload_queue,
+            "service_restarts":    r.service_restarts,
+            "cam_battery_pct":     r.cam_battery_pct,
+            "cam_shutter_cnt":     r.cam_shutter_cnt,
+            "cam_shutter_pct":     r.cam_shutter_pct,
+            "cam_shutter_alarm":   r.cam_shutter_alarm,
+            "cam_available_shots": r.cam_available_shots,
+            "capture_total":       r.capture_total,
+            "capture_passed":      r.capture_passed,
+            "capture_uploaded":    r.capture_uploaded,
+        }
+        for r in rows
+    ]
+
+
+# ── EXIF statistik ────────────────────────────────────────────────────────
+
+@app.get("/api/admin/captures/stats/exif")
+def get_exif_stats(device_id: str, db: Session = Depends(get_db)):
+    """EXIF-baseret statistik: ISO, lukkertid, blænde fordeling."""
+    rows = (
+        db.query(Capture.exif_data)
+        .filter(Capture.device_id == device_id, Capture.exif_data.isnot(None))
+        .order_by(Capture.captured_at.desc())
+        .limit(1000)
+        .all()
+    )
+    iso_dist, shutter_dist, aperture_dist, lens_dist = {}, {}, {}, {}
+    for (exif_json,) in rows:
+        try:
+            exif = _json.loads(exif_json)
+        except Exception:
+            continue
+        if iso := exif.get("EXIF ISOSpeedRatings"):
+            iso_dist[iso] = iso_dist.get(iso, 0) + 1
+        if sh := exif.get("EXIF ExposureTime"):
+            shutter_dist[sh] = shutter_dist.get(sh, 0) + 1
+        if ap := exif.get("EXIF FNumber"):
+            aperture_dist[ap] = aperture_dist.get(ap, 0) + 1
+        if ln := exif.get("EXIF LensModel"):
+            lens_dist[ln] = lens_dist.get(ln, 0) + 1
+    def top(d, n=15):
+        return sorted(d.items(), key=lambda x: -x[1])[:n]
+    return {
+        "total_with_exif": len(rows),
+        "iso":      [{"value": k, "count": v} for k, v in top(iso_dist)],
+        "shutter":  [{"value": k, "count": v} for k, v in top(shutter_dist)],
+        "aperture": [{"value": k, "count": v} for k, v in top(aperture_dist)],
+        "lens":     [{"value": k, "count": v} for k, v in top(lens_dist)],
+    }
 
 
 # ── Slet captures ─────────────────────────────────────────────────────────────
