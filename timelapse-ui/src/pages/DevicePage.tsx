@@ -808,7 +808,15 @@ function DriftBadge({ param, expected, actual }: { param: string; expected: stri
   )
 }
 
-function StatsTab({ captures, diagnostics }: { captures: Capture[]; diagnostics: any }) {
+function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; diagnostics: any; deviceId: string }) {
+  const [diagHistory, setDiagHistory] = useState<any[]>([])
+  useEffect(() => {
+    const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
+    fetch(`${apiUrl}/api/admin/devices/${deviceId}/diagnostics/history?days=7&limit=500`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setDiagHistory(d))
+      .catch(() => {})
+  }, [deviceId])
   const sorted = [...captures].sort((a, b) =>
     new Date(a.captured_at ?? 0).getTime() - new Date(b.captured_at ?? 0).getTime()
   )
@@ -996,6 +1004,91 @@ function StatsTab({ captures, diagnostics }: { captures: Capture[]; diagnostics:
         </div>
       )}
 
+      {/* Diagnostics historik */}
+      {diagHistory.length > 1 && (
+        <>
+          {/* CPU temp historik */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700">CPU temperatur — seneste 7 dage</h3>
+              <span className="text-xs text-gray-400">alarm &gt;75°C</span>
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={diagHistory}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                  interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="°" />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)}°C`, 'CPU temp']} />
+                <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="4 2" label={{ value: 'Alarm 75°', fontSize: 10, fill: '#ef4444', position: 'insideTopLeft' }} />
+                <Area type="monotone" dataKey="cpu_temp_c" name="CPU temp" stroke="#f97316" fill="#fed7aa" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* SSD forbrug historik */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700">SSD forbrug — seneste 7 dage</h3>
+              <span className="text-xs text-gray-400">alarm &gt;85%</span>
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={diagHistory}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                  interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="%" domain={[0, 100]} />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)}%`, 'SSD brugt']} />
+                <ReferenceLine y={85} stroke="#ef4444" strokeDasharray="4 2" label={{ value: 'Alarm 85%', fontSize: 10, fill: '#ef4444', position: 'insideTopLeft' }} />
+                <Area type="monotone" dataKey="ssd_used_pct" name="SSD %" stroke="#3b82f6" fill="#dbeafe" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Kamera shutter historik */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700">Kamera shutter-tæller — seneste 7 dage</h3>
+              <span className="text-xs text-gray-400">alarm &gt;60% af levetid</span>
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={diagHistory}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                  interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                <Tooltip formatter={(v: any) => [Number(v).toLocaleString('da-DK'), 'Shutter']} />
+                <Area type="monotone" dataKey="cam_shutter_cnt" name="Shutter" stroke="#8b5cf6" fill="#ede9fe" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* NTP offset historik */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700">NTP offset — seneste 7 dage</h3>
+              <span className="text-xs text-gray-400">alarm &gt;±2s</span>
+            </div>
+            <ResponsiveContainer width="100%" height={130}>
+              <AreaChart data={diagHistory}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                  interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="s" />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(3)}s`, 'NTP offset']} />
+                <ReferenceLine y={2}   stroke="#ef4444" strokeDasharray="4 2" />
+                <ReferenceLine y={-2}  stroke="#ef4444" strokeDasharray="4 2" />
+                <Area type="monotone" dataKey="ntp_offset_s" name="NTP" stroke="#10b981" fill="#d1fae5" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+
       {/* Kvalitetsgrafer */}
       {qualityData.length > 1 && (
         <>
@@ -1180,7 +1273,7 @@ export function DevicePage() {
         )}
 
         {tab === 'timeline' && id && <TimelineNavigator deviceId={id} captures={captures} onSelect={i => { setLightbox(i) }} />}
-        {tab === 'stats' && <StatsTab captures={captures} diagnostics={diagnostics} />}
+        {tab === 'stats' && id && <StatsTab captures={captures} diagnostics={diagnostics} deviceId={id} />}
         {tab === 'config' && id && <ConfigTab deviceId={id} />}
       </div>
     </>
