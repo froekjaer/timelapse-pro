@@ -2237,35 +2237,23 @@ def delete_captures_bulk(payload: dict, db: Session = Depends(get_db)):
 
 @app.get("/api/exif/{device_id}/{filename}")
 def get_exif(device_id: str, filename: str):
-    """Læs raw EXIF metadata fra billedfil."""
+    """Læs komplet EXIF metadata fra billedfil via exifread."""
     src = _find_image(device_id, filename)
     if not src or not src.exists():
         raise HTTPException(status_code=404, detail="Billede ikke fundet")
     try:
-        from PIL import Image
-        from PIL.ExifTags import TAGS, GPSTAGS
-        import PIL._util
-        img   = Image.open(str(src))
-        exif_raw = img._getexif()
-        if not exif_raw:
+        import exifread
+        with open(str(src), "rb") as f:
+            tags = exifread.process_file(f, details=True)
+        if not tags:
             return {"exif": {}, "note": "Ingen EXIF i fil"}
         exif = {}
-        for tag_id, value in exif_raw.items():
-            tag = TAGS.get(tag_id, str(tag_id))
+        for key, value in tags.items():
             try:
-                if isinstance(value, bytes):
-                    try:    value = value.decode("utf-8", errors="replace")
-                    except: value = value.hex()
-                elif isinstance(value, tuple) and len(value) == 2:
-                    # IFDRational
-                    num, den = int(value[0]), int(value[1])
-                    value = f"{num}/{den}" if den != 0 else str(num)
-                else:
-                    value = str(value)
-                exif[tag] = value
+                exif[key] = str(value)
             except Exception:
-                exif[tag] = "—"
-        return {"exif": exif}
+                exif[key] = "—"
+        return {"exif": exif, "count": len(exif)}
     except Exception as exc:
         log.warning("EXIF læsning fejl %s: %s", filename, exc)
         return {"exif": {}, "error": str(exc)}
