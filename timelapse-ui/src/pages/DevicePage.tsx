@@ -41,6 +41,7 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
   const [histogram, setHistogram]         = useState<{r:number[],g:number[],b:number[],lum:number[]} | null>(null)
   const [showMetadata, setShowMetadata]   = useState(false)
   const [sidecar, setSidecar]             = useState<any>(null)
+  const [exif, setExif]               = useState<Record<string,string> | null>(null)
   const [overexposed, setOverexposed]     = useState(0)
   const [underexposed, setUnderexposed]   = useState(0)
   const imgRef = useRef<HTMLImageElement>(null)
@@ -63,6 +64,10 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
     fetch(`${apiUrl}/api/sidecar/${c.device_id}/${sidecarName}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setSidecar(d))
+      .catch(() => {})
+    fetch(`${apiUrl}/api/exif/${c.device_id}/${c.filename}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setExif(d?.exif ?? null))
       .catch(() => {})
   }, [cur])
 
@@ -100,6 +105,7 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
     setHistogram(null)
     setOverexposed(0)
     setUnderexposed(0)
+    setExif(null)
   }, [cur])
 
   const prev = useCallback(() => { setCur(i => Math.max(0, i - 1)); setZoom(1); setPan({ x: 0, y: 0 }) }, [])
@@ -349,6 +355,20 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
                 <MR l="Vert. FOV" v={sidecar.location?.fov_vertical_deg != null ? `${sidecar.location.fov_vertical_deg}°` : '—'} />
                 <MR l="Perspektiv" v={sidecar.location?.perspective || '—'} />
               </div>
+
+              {/* Kolonne 4: Raw EXIF */}
+              {exif && Object.keys(exif).length > 0 && (
+              <div className="space-y-0.5 col-span-3 mt-3 border-t border-white/10 pt-3">
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📷 Raw EXIF ({Object.keys(exif).length} felter)</p>
+                <div className="grid grid-cols-3 gap-x-6 gap-y-0.5">
+                  {Object.entries(exif)
+                    .filter(([k]) => !['MakerNote','UserComment','PrintImageMatching','FlashPixVersion','ExifVersion','ComponentsConfiguration','SceneType','FileSource'].includes(k))
+                    .map(([k, v]) => (
+                    <MR key={k} l={k} v={<span className="text-[9px] break-all">{v}</span>} />
+                  ))}
+                </div>
+              </div>
+              )}
 
             </div>
           )}
