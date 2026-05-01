@@ -356,15 +356,19 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
                 <MR l="Perspektiv" v={sidecar.location?.perspective || '—'} />
               </div>
 
-              {/* Kolonne 4: Raw EXIF */}
+              {/* Raw EXIF */}
               {exif && Object.keys(exif).length > 0 && (
-              <div className="space-y-0.5 col-span-3 mt-3 border-t border-white/10 pt-3">
-                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📷 Raw EXIF ({Object.keys(exif).length} felter)</p>
-                <div className="grid grid-cols-3 gap-x-6 gap-y-0.5">
+              <div className="col-span-3 mt-3 border-t border-white/10 pt-3">
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-2">📷 Raw EXIF fra JPG ({Object.keys(exif).length} felter)</p>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-0.5 text-xs">
                   {Object.entries(exif)
-                    .filter(([k]) => !['MakerNote','UserComment','PrintImageMatching','FlashPixVersion','ExifVersion','ComponentsConfiguration','SceneType','FileSource'].includes(k))
+                    .filter(([k]) => !['MakerNote','UserComment','PrintImageMatching','FlashPixVersion','ExifVersion','ComponentsConfiguration','SceneType','FileSource','GPSInfo'].includes(k))
+                    .sort(([a], [b]) => a.localeCompare(b))
                     .map(([k, v]) => (
-                    <MR key={k} l={k} v={<span className="text-[9px] break-all">{v}</span>} />
+                    <div key={k} className="flex gap-2 min-w-0">
+                      <span className="text-white/35 shrink-0 text-[10px]" style={{width:'160px'}}>{k}</span>
+                      <span className="text-white/75 min-w-0 truncate text-[10px]" title={v}>{v}</span>
+                    </div>
                   ))}
                 </div>
               </div>
