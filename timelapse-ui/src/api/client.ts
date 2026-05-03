@@ -7,7 +7,26 @@ export const DEFAULT_API_URL = typeof window !== 'undefined' ? window.location.o
 export const getApiUrl = () =>
   localStorage.getItem(API_STORAGE_KEY) ?? import.meta.env.VITE_API_URL ?? DEFAULT_API_URL
 
-const getClient = () => axios.create({ baseURL: getApiUrl() })
+const getToken = () => localStorage.getItem('timelapse_api_token') || ''
+
+export const bootstrapToken = async () => {
+  if (localStorage.getItem('timelapse_api_token')) return
+  try {
+    const res = await fetch(`${getApiUrl()}/api/admin/settings`)
+    if (!res.ok) return
+    const settings = await res.json()
+    const token = settings['api_token']
+    if (token) localStorage.setItem('timelapse_api_token', token)
+  } catch { /* ignore */ }
+}
+
+const getClient = () => {
+  const token = getToken()
+  return axios.create({
+    baseURL: getApiUrl(),
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+}
 
 export const getStats = () =>
   getClient().get<Stats>('/api/admin/stats').then(r => r.data)
