@@ -5,8 +5,12 @@ import { ArrowLeft, Building2, MapPin, Camera, Save, Trash2, ChevronRight,
 import { getApiUrl } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
+  const token = localStorage.getItem('timelapse_api_token') || ''
   return fetch(`${getApiUrl()}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
     ...opts
   }).then(r => {
     if (!r.ok) throw new Error(`${r.status}`)
