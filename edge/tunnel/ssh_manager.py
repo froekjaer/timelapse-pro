@@ -173,20 +173,31 @@ class SshTunnelManager:
                         self._connected = False
                         self._proc = None
 
-                # Auto-start ved API-tab
-                if self._auto_on_api_loss() and not self._connected:
-                    # Forsøg API ping
+                # Start tunnel:
+                # 1. Altid aktiv hvis enabled=true (always_on mode)
+                # 2. Auto-start ved API-tab hvis auto_on_api_loss=true
+                if not self._connected:
                     api_ok = self._api.ping()
                     if api_ok:
                         api_last_ok = time.monotonic()
                     else:
                         elapsed = time.monotonic() - api_last_ok
-                        if elapsed >= self._api_loss_threshold_s():
-                            log.warning(
-                                "SSH tunnel: API utilgængeligt i %.0fs — starter tunnel",
-                                elapsed
-                            )
-                            self._connect()
+
+                    always_on = self._tunnel_cfg().get("always_on", True)  # default: altid aktiv
+                    api_loss  = self._auto_on_api_loss() and not api_ok and                                 (time.monotonic() - api_last_ok) >= self._api_loss_threshold_s()
+
+                    if always_on:
+                        if not api_ok:
+                            log.info("SSH tunnel: enabled=True — starter tunnel (API utilgængeligt)")
+                        else:
+                            log.info("SSH tunnel: enabled=True — starter tunnel")
+                        self._connect()
+                    elif api_loss:
+                        log.warning(
+                            "SSH tunnel: API utilgængeligt i %.0fs — starter tunnel",
+                            time.monotonic() - api_last_ok
+                        )
+                        self._connect()
 
                 # Tjek om tunnel stadig er alive
                 if self._connected:
