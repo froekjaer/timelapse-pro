@@ -89,11 +89,12 @@ jobs:
           sudo launchctl stop dk.froekjaer.timelapse-headend
           sudo launchctl start dk.froekjaer.timelapse-headend
           echo "✅ Headend genstartet"
-      - name: Rebuild UI dependencies if needed
+      - name: Rebuild UI
         run: |
           cd ~/projects/timelapse-pro/timelapse-ui
           npm install --silent
-          echo "✅ UI dependencies OK"
+          npm run build
+          echo "✅ UI bygget OK"
       - name: Signal edge nodes to update
         run: |
           cd ~/projects/timelapse-pro/headend
