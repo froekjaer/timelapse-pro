@@ -2144,21 +2144,33 @@ SFTP_BASE = _init_sftp_base()
 
 def _find_image(device_id: str, filename: str) -> Optional[_Path]:
     """
-    Find image in either:
-      - New structure:  SFTP_BASE/customer/site/YYYY/MM/DD/filename
-      - Old structure:  SFTP_BASE/device_id/filename
+    Find image — håndterer tre strukturer:
+      1. Ny chroot:   SFTP_BASE/{sftp_user}/data/{customer}/{site}/YYYY/MM/DD/filename
+      2. Gammel:      SFTP_BASE/{customer}/{site}/YYYY/MM/DD/filename
+      3. Flad:        SFTP_BASE/{device_id}/filename
     """
-    # Try new hierarchical structure first — extract date from filename
     m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
     if m:
         yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
-        # Search all customer/site dirs for this date + filename
-        date_glob = f"*/*/{yyyy}/{mm}/{dd}/{filename}"
-        matches = list(SFTP_BASE.glob(date_glob))
+
+        # Struktur 1 — chroot: sftp_user/data/customer/site/YYYY/MM/DD/
+        chroot_glob = f"*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
+        matches = list(SFTP_BASE.glob(chroot_glob))
         if matches:
             return matches[0]
 
-    # Fallback: flat structure SFTP_BASE/device_id/filename
+        # Struktur 2 — gammel hierarkisk: customer/site/YYYY/MM/DD/
+        old_glob = f"*/*/{yyyy}/{mm}/{dd}/{filename}"
+        matches = list(SFTP_BASE.glob(old_glob))
+        if matches:
+            return matches[0]
+
+        # Struktur 3 — rekursiv fallback (langsommere men sikker)
+        matches = list(SFTP_BASE.rglob(filename))
+        if matches:
+            return matches[0]
+
+    # Flad struktur SFTP_BASE/device_id/filename
     flat = SFTP_BASE / device_id / filename
     if flat.exists():
         return flat

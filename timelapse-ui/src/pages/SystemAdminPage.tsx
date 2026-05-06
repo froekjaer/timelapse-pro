@@ -214,6 +214,13 @@ export function SystemAdminPage() {
   const [saved, setSaved]       = useState(false)
   const [cfg, setCfg]           = useState<any>(null)
   const [labActive, setLabActive] = useState(false)
+  const [tunnelEnabled, setTunnelEnabled] = useState(false)
+  const [tunnelPrimary, setTunnelPrimary] = useState('peter@timelapse.froekjaer.dk:22')
+  const [tunnelRemotePort, setTunnelRemotePort] = useState('2201')
+  const [tunnelKeyFile, setTunnelKeyFile] = useState('/opt/timelapse/edge/ssh/tunnel_key')
+  const [tunnelAutoOnApiLoss, setTunnelAutoOnApiLoss] = useState(true)
+  const [tunnelDeny, setTunnelDeny] = useState(false)
+  const [tunnelSaved, setTunnelSaved] = useState(false)
   const [multiCameraMode, setMultiCameraMode] = useState('single')
   const [nodeCameras, setNodeCameras] = useState<{camera_index:number, relay_gpio_camera:number, camera_name:string, serial_number:string}[]>([])
   const [savingMultiCam, setSavingMultiCam] = useState(false)
@@ -265,6 +272,13 @@ export function SystemAdminPage() {
       const dc = d.device_config ?? {}
       setLabActive(!!(dc.debug_mode?.enabled))
       setMultiCameraMode(dc.multi_camera_mode ?? 'single')
+      const tun = dc.ssh_tunnel ?? {}
+      setTunnelEnabled(!!tun.enabled)
+      setTunnelPrimary(tun.primary ?? 'peter@timelapse.froekjaer.dk:22')
+      setTunnelRemotePort(String(tun.remote_port ?? '2201'))
+      setTunnelKeyFile(tun.key_file ?? '/opt/timelapse/edge/ssh/tunnel_key')
+      setTunnelAutoOnApiLoss(tun.auto_on_api_loss !== false)
+      setTunnelDeny(!!tun.deny)
       setNodeCameras(dc.node_cameras ?? [])
     }).catch(() => {})
     api(`/api/config/${selectedDevice}`).then((c: any) => {
@@ -337,6 +351,32 @@ export function SystemAdminPage() {
 
   function removeNodeCamera(idx: number) {
     setNodeCameras(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  async function saveTunnel() {
+    if (!selectedDevice) return
+    const apiUrl = (await import('../api/client')).getApiUrl()
+    const res = await fetch(`${apiUrl}/api/admin/devices/${selectedDevice}`)
+    const data = await res.json()
+    const existing = data.device?.device_config ?? {}
+    const cfg = typeof existing === 'string' ? JSON.parse(existing) : existing
+    cfg.ssh_tunnel = {
+      enabled: tunnelEnabled,
+      primary: tunnelPrimary,
+      remote_port: parseInt(tunnelRemotePort),
+      local_port: 22,
+      key_file: tunnelKeyFile,
+      auto_on_api_loss: tunnelAutoOnApiLoss,
+      auto_on_api_loss_threshold_s: 300,
+      deny: tunnelDeny,
+    }
+    await fetch(`${apiUrl}/api/admin/devices/${selectedDevice}/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssh_tunnel: cfg.ssh_tunnel }),
+    })
+    setTunnelSaved(true)
+    setTimeout(() => setTunnelSaved(false), 2000)
   }
 
   async function save() {
@@ -606,6 +646,45 @@ export function SystemAdminPage() {
             className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
             {savedSettings ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
             {savedSettings ? 'Gemt!' : savingSettings ? 'Gemmer…' : 'Gem indstillinger'}
+          </button>
+        </div>
+      </Section>
+
+      {/* SSH Tunnel */}
+      <Section title="SSH Tunnel" icon={<Terminal className="w-4 h-4" />}
+        description="Reverse SSH tunnel til remote adgang — edge initierer forbindelsen">
+        <Field label="Aktiver tunnel"
+          description="Edge åbner tunnel til headend ved næste config-poll">
+          <Toggle value={tunnelEnabled} onChange={setTunnelEnabled} />
+        </Field>
+        <Field label="Primær endpoint"
+          description="Bruger og host som edge forbinder til (user@host:port)">
+          <Txt value={tunnelPrimary} onChange={setTunnelPrimary} mono placeholder="peter@timelapse.froekjaer.dk:22" />
+        </Field>
+        <Field label="Remote port"
+          description="Port der åbnes på headend — unik pr. device">
+          <Num value={tunnelRemotePort} onChange={setTunnelRemotePort} placeholder="2201" />
+        </Field>
+        <Field label="Nøglefil (edge)"
+          description="Sti til SSH privat nøgle på edge-enheden">
+          <Txt value={tunnelKeyFile} onChange={setTunnelKeyFile} mono placeholder="/opt/timelapse/edge/ssh/tunnel_key" />
+        </Field>
+        <Field label="Auto-start ved API-tab"
+          description="Start tunnel automatisk hvis headend API er utilgængeligt i 5 min">
+          <Toggle value={tunnelAutoOnApiLoss} onChange={setTunnelAutoOnApiLoss} />
+        </Field>
+        <Field label="Forbyd tunnel"
+          description="Denne enhed må aldrig oprette SSH tunnel (tilsidesætter enabled)">
+          <Toggle value={tunnelDeny} onChange={setTunnelDeny} />
+        </Field>
+        <div className="flex justify-end mt-3">
+          <button onClick={saveTunnel}
+            className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-colors ${
+              tunnelSaved
+                ? 'bg-emerald-500 text-white'
+                : 'bg-sky-500 hover:bg-sky-600 text-white'
+            }`}>
+            {tunnelSaved ? '✓ Gemt!' : 'Gem tunnel config'}
           </button>
         </div>
       </Section>
