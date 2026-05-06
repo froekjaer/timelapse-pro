@@ -272,6 +272,7 @@ class SshTunnelManager:
                 "-o", f"ServerAliveCountMax={KEEPALIVE_COUNT_MAX}",
                 "-o", "ExitOnForwardFailure=yes",
                 "-o", "BatchMode=yes",                          # ingen password prompts
+                "-o", f"UserKnownHostsFile={str(key_file.parent / 'known_hosts')}",
                 f"{user}@{host}",
             ]
 
@@ -334,7 +335,7 @@ class SshTunnelManager:
     def _notify_connected(self):
         """Notificer headend om aktiv tunnel."""
         try:
-            self._api._post("/api/ssh-tunnel/event", {
+            self._api._post("/ssh-tunnel/event", {
                 "device_id":   self._api._device_id,
                 "event":       "connected",
                 "remote_port": self._remote_port(),
@@ -348,7 +349,7 @@ class SshTunnelManager:
     def _notify_disconnected(self, duration_s: Optional[int]):
         """Notificer headend om afbrudt tunnel."""
         try:
-            self._api._post("/api/ssh-tunnel/event", {
+            self._api._post("/ssh-tunnel/event", {
                 "device_id":  self._api._device_id,
                 "event":      "disconnected",
                 "remote_port": self._remote_port(),
@@ -361,7 +362,7 @@ class SshTunnelManager:
     def _notify_failed(self):
         """Notificer headend om fejlet connect-forsøg."""
         try:
-            self._api._post("/api/ssh-tunnel/event", {
+            self._api._post("/ssh-tunnel/event", {
                 "device_id":  self._api._device_id,
                 "event":      "failed",
                 "remote_port": self._remote_port(),
