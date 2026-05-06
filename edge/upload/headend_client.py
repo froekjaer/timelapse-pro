@@ -173,6 +173,15 @@ class HeadendClient:
             log.warning("GET %s failed: %s", path, exc)
             return False, None
 
+    def ping(self) -> bool:
+        """Returnerer True hvis headend API er tilgængeligt."""
+        try:
+            session = _build_session(self._cfg_mgr.api_token)
+            r = session.get(f"{self._base_url}/api/health", timeout=5)
+            return r.status_code == 200
+        except Exception:
+            return False
+
     def _post(self, path: str, payload: dict) -> tuple[bool, Optional[dict]]:
         url = f"{self._base_url}{path}"
         try:

@@ -58,7 +58,12 @@ from capture.buffer         import CircularBuffer
 from config.manager         import ConfigManager
 from diagnostics.collector  import DiagnosticsCollector
 from upload.sftp            import UploadManager
-from upload.headend_client  import HeadendClient
+from upload.headend_client import HeadendClient
+try:
+    from tunnel.ssh_manager import SshTunnelManager
+    _SSH_TUNNEL_AVAILABLE = True
+except ImportError:
+    _SSH_TUNNEL_AVAILABLE = False
 from utils.database         import EdgeDatabase
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -178,6 +183,16 @@ class EdgeAgent:
 
         # 2. Send startup heartbeat
         self._send_heartbeat()
+
+                # SSH tunnel manager (Sprint C)
+        self._tunnel = None
+        if _SSH_TUNNEL_AVAILABLE:
+            try:
+                self._tunnel = SshTunnelManager(self._cfg, self._api)
+                self._tunnel.start()
+                log.info("SSH tunnel manager initialiseret")
+            except Exception as exc:
+                log.warning("SSH tunnel manager fejl: %s", exc)
 
         # 3. Detect camera features (once per session)
         self._load_camera_features()

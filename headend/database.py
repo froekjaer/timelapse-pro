@@ -1,10 +1,12 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # TimeLapse Pro — database.py (Headend)
 # ───────────────────────────────────────────────────────────────────────────
-# Version  : 2.1.0
-# Dato     : 13. april 2026
+# Version  : 3.0.0
+# Dato     : 06. maj 2026
 # ───────────────────────────────────────────────────────────────────────────
 # Changelog:
+#   3.0.0  06-maj-2026  Sprint C: User, Camera, DeviceAssignment,
+#                       SshTunnelLog, PendingUpdate tabeller
 #   2.1.0  13-apr-2026  Capture tabel udvidet med lokation/orientering:
 #                         gps_lat, gps_lon, gps_alt, azimuth_deg, tilt_deg
 #                         mount_height_m, fov_horizontal_deg, fov_vertical_deg
@@ -174,6 +176,105 @@ class Event(Base):
 
 
 
+
+
+class User(Base):
+    """RBAC brugere — super_admin, admin, operator, viewer."""
+    __tablename__ = "users"
+
+    id            = Column(Integer, primary_key=True)
+    username      = Column(String(100), unique=True, nullable=False, index=True)
+    email         = Column(String(200), unique=True)
+    password_hash = Column(String(200), nullable=False)
+    role          = Column(String(50), default="viewer")   # super_admin|admin|operator|viewer
+    customer_id   = Column(String(36))                     # null = adgang til alle kunder
+    is_active     = Column(Boolean, default=True)
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_login    = Column(DateTime)
+
+
+class Camera(Base):
+    """Logisk kamera — adskilt fra fysisk Orange Pi hardware."""
+    __tablename__ = "cameras"
+
+    id            = Column(String(36), primary_key=True)   # UUID
+    site_id       = Column(String(36), index=True)
+    customer_id   = Column(String(36), index=True)
+    camera_name   = Column(String(200), nullable=False)
+    serial_number = Column(String(100))
+    model         = Column(String(100))
+    notes         = Column(Text)
+    config        = Column(Text, default="{}")             # JSON camera-specifikke config overrides
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    retired_at    = Column(DateTime)                       # null = aktiv
+
+
+class DeviceAssignment(Base):
+    """Historik: hvilken Orange Pi kørte hvilket logisk kamera hvornår."""
+    __tablename__ = "device_assignments"
+
+    id            = Column(Integer, primary_key=True)
+    device_id     = Column(String(50), nullable=False, index=True)   # MAC-baseret
+    camera_id     = Column(String(36), nullable=False, index=True)   # → Camera.id
+    assigned_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    unassigned_at = Column(DateTime)                                 # null = aktiv assignment
+    assigned_by   = Column(String(100))                              # brugernavn
+    notes         = Column(Text)
+
+
+class SshTunnelLog(Base):
+    """Audit log over SSH tunnel sessioner — SABSA Accountability."""
+    __tablename__ = "ssh_tunnel_log"
+
+    id           = Column(Integer, primary_key=True)
+    device_id    = Column(String(50), nullable=False, index=True)
+    event        = Column(String(50))    # connected|disconnected|failed|denied
+    remote_port  = Column(Integer)
+    local_port   = Column(Integer, default=22)
+    initiated_by = Column(String(100))   # "edge_auto" | "admin:<username>"
+    duration_s   = Column(Integer)       # udfyldes ved disconnect
+    event_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    extra        = Column(Text)          # JSON: fejlbesked, IP osv.
+
+
+class PendingUpdate(Base):
+    """Opdateringer der afventer godkendelse eller deployment."""
+    __tablename__ = "pending_updates"
+
+    id          = Column(Integer, primary_key=True)
+    update_type = Column(String(50))    # app_security|os_security|app_updates|os_updates
+    version     = Column(String(100))
+    description = Column(Text)
+    severity    = Column(String(20))    # critical|high|medium|low
+    scope       = Column(String(20))    # global|customer|site|device
+    scope_id    = Column(String(36))    # customer_id, site_id eller device_id
+    status      = Column(String(30), default="pending")
+    # pending|approved|rejected|deployed|rolled_back
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    approved_at = Column(DateTime)
+    approved_by = Column(String(100))
+    deployed_at = Column(DateTime)
+    rollback_at = Column(DateTime)
+
+
+class BootstrapToken(Base):
+    """Éngangsbrug bootstrap tokens til provisionering af nye edge-enheder."""
+    __tablename__ = "bootstrap_tokens"
+
+    id           = Column(Integer, primary_key=True)
+    token        = Column(String(100), unique=True, nullable=False, index=True)
+    device_label = Column(String(200))     # menneskevenligt navn (fx "NVJ17c Kamera 1")
+    site_id      = Column(String(36))
+    customer_id  = Column(String(36))
+    camera_name  = Column(String(200))
+    created_by   = Column(String(100))
+    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at   = Column(DateTime, nullable=False)
+    used_at      = Column(DateTime)        # udfyldes når token bruges
+    used_by_device = Column(String(50))    # device_id der brugte token
+    revoked      = Column(Boolean, default=False)
+
+
 class Customer(Base):
     __tablename__ = "customers"
     id               = Column(String(36), primary_key=True)
@@ -184,6 +285,12 @@ class Customer(Base):
     address          = Column(String(500))
     notes            = Column(Text)
     config_overrides = Column(Text, default="{}")
+    # ── Sikkerhed og compliance ───────────────────────────────────────
+    mfa_required          = Column(Boolean, default=False)
+    mfa_method            = Column(String(50), default="none")   # totp|hardware_key|sms|none
+    mfa_documented_at     = Column(DateTime)
+    mfa_documented_by     = Column(String(100))
+    data_classification   = Column(String(30), default="internal")
 
 
 class Site(Base):
@@ -198,6 +305,15 @@ class Site(Base):
     timezone         = Column(String(50), default="Europe/Copenhagen")
     notes            = Column(Text)
     config_overrides = Column(Text, default="{}")
+    # ── SFTP isolation og compliance ──────────────────────────────────
+    sftp_user             = Column(String(100))          # fx sftp_nvj17c
+    sftp_chroot_verified  = Column(Boolean, default=False)
+    sftp_chroot_verified_at = Column(DateTime)
+    mfa_required          = Column(Boolean, default=False)
+    mfa_method            = Column(String(50), default="none")
+    mfa_documented_at     = Column(DateTime)
+    mfa_documented_by     = Column(String(100))
+    data_classification   = Column(String(30), default="internal")
 
 
 class ConfigDefaults(Base):

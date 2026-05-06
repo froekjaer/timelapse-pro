@@ -1,10 +1,12 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # TimeLapse Pro — main.py (Headend API)
 # ───────────────────────────────────────────────────────────────────────────
-# Version  : 2.7.0
+# Version  : 3.0.0
 # Dato     : 13. april 2026
 # ───────────────────────────────────────────────────────────────────────────
 # Changelog:
+#   3.0.0  06-maj-2026  Sprint C: RBAC, JWT auth, User CRUD,
+#                       Camera/Pi-kobling, SSH tunnel, Opdateringsstyring
 #   2.7.0  13-apr-2026  Timelapse video rendering via FFmpeg
 #                       /api/timelapse/frames, create, status, download
 #   2.6.0  12-apr-2026  SystemAdmin relay endpoint tilføjet
@@ -53,6 +55,21 @@ import subprocess as _subprocess
 import threading as _threading
 import json as _json
 import os, tempfile
+# ── Auth imports (Sprint C) ───────────────────────────────────────────────
+from jose import JWTError, jwt as _jwt
+from passlib.context import CryptContext
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import Security
+import secrets as _secrets
+
+_pwd_ctx      = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+JWT_SECRET    = os.getenv("JWT_SECRET", _secrets.token_hex(32))
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_H  = 12   # access token levetid
+
+
 
 
 def ensure_utc(dt):
@@ -60,7 +77,9 @@ def ensure_utc(dt):
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
 
 from database import (
-    Capture, Customer, ConfigDefaults, Device, Diagnostic, Event, Settings, Site,
+    BootstrapToken,
+    Capture, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
+    Diagnostic, Event, PendingUpdate, Settings, Site, SshTunnelLog, User,
     create_tables, get_db, now_utc
 )
 import uuid as _uuid
@@ -112,6 +131,34 @@ def startup():
                     pass  # Kolonnen findes allerede
     except Exception as exc:
         log.warning("DB migration fejl (ikke kritisk): %s", exc)
+
+        # Sprint C: MFA + SFTP isolation kolonner (migration)
+        new_cols_v3 = [
+            # customers
+            ("customers", "mfa_required",        "BOOLEAN DEFAULT 0"),
+            ("customers", "mfa_method",           "VARCHAR(50) DEFAULT 'none'"),
+            ("customers", "mfa_documented_at",    "DATETIME"),
+            ("customers", "mfa_documented_by",    "VARCHAR(100)"),
+            ("customers", "data_classification",  "VARCHAR(30) DEFAULT 'internal'"),
+            # sites
+            ("sites", "sftp_user",                "VARCHAR(100)"),
+            ("sites", "sftp_chroot_verified",     "BOOLEAN DEFAULT 0"),
+            ("sites", "sftp_chroot_verified_at",  "DATETIME"),
+            ("sites", "mfa_required",             "BOOLEAN DEFAULT 0"),
+            ("sites", "mfa_method",               "VARCHAR(50) DEFAULT 'none'"),
+            ("sites", "mfa_documented_at",        "DATETIME"),
+            ("sites", "mfa_documented_by",        "VARCHAR(100)"),
+            ("sites", "data_classification",      "VARCHAR(30) DEFAULT 'internal'"),
+        ]
+        with engine.connect() as conn:
+            for table, col, typ in new_cols_v3:
+                try:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
+                    conn.commit()
+                    log.info("DB migration: %s.%s tilføjet", table, col)
+                except Exception:
+                    pass  # Kolonnen findes allerede
+
     log.info("TimeLapse Pro Headend started — database ready")
 
 
@@ -198,8 +245,23 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     """
     # In test phase: accept any token starting with "test-"
     # In production: look up token in a provisioning table
-    if not req.bootstrap_token.startswith("test-"):
-        raise HTTPException(status_code=401, detail="Invalid bootstrap token")
+    # Valider bootstrap token — tjek DB eller accepter "test-" prefix i DEV
+    token_record = db.query(BootstrapToken).filter_by(
+        token=req.bootstrap_token, revoked=False
+    ).first()
+    if token_record:
+        # Produktions-token fra DB
+        if token_record.expires_at and now_utc() > token_record.expires_at.replace(tzinfo=_tz.utc):
+            raise HTTPException(status_code=401, detail="Bootstrap token udløbet")
+        if token_record.used_at:
+            raise HTTPException(status_code=401, detail="Bootstrap token allerede brugt")
+        # Marker som brugt
+        token_record.used_at = now_utc()
+        token_record.used_by_device = req.device_id
+    elif req.bootstrap_token.startswith("test-"):
+        pass  # DEV-mode: accepter test- prefix
+    else:
+        raise HTTPException(status_code=401, detail="Ugyldigt eller ukendt bootstrap token")
 
     # Create or update device
     device = db.query(Device).filter_by(device_id=req.device_id).first()
@@ -605,6 +667,733 @@ def receive_event(
     ))
     db.commit()
     return {"status": "ok"}
+
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ── SSH TUNNEL ENDPOINTS (Sprint C) ──────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+
+class SshTunnelEventRequest(BaseModel):
+    device_id:      str
+    event:          str          # connected|disconnected|failed|denied
+    remote_port:    Optional[int] = None
+    local_port:     Optional[int] = 22
+    duration_s:     Optional[int] = None
+    using_fallback: Optional[bool] = False
+    timestamp:      str
+
+@app.post("/api/ssh-tunnel/event")
+def ssh_tunnel_event(req: SshTunnelEventRequest, db: Session = Depends(get_db)):
+    """Edge notificerer headend om SSH tunnel events (connect, disconnect, fail)."""
+    from database import SshTunnelLog
+    entry = SshTunnelLog(
+        device_id    = req.device_id,
+        event        = req.event,
+        remote_port  = req.remote_port,
+        local_port   = req.local_port,
+        initiated_by = "edge_auto",
+        duration_s   = req.duration_s,
+        extra        = _json.dumps({"using_fallback": req.using_fallback}) if req.using_fallback else None,
+    )
+    db.add(entry); db.commit()
+    log.info("SSH tunnel %s: device=%s port=%s", req.event, req.device_id, req.remote_port)
+    return {"status": "ok"}
+
+@app.get("/api/ssh-tunnel/active")
+def ssh_tunnel_active(
+    _user=require_role("super_admin", "admin", "operator"),
+    db: Session = Depends(get_db)
+):
+    """Returnerer liste af devices med aktiv SSH tunnel."""
+    from database import SshTunnelLog
+    from sqlalchemy import text as _t
+
+    # Find seneste event pr. device — aktiv = seneste event er "connected"
+    rows = db.execute(_t("""
+        SELECT s.device_id, s.remote_port, s.local_port, s.event_at, s.extra
+        FROM ssh_tunnel_log s
+        INNER JOIN (
+            SELECT device_id, MAX(event_at) as max_at
+            FROM ssh_tunnel_log
+            GROUP BY device_id
+        ) latest ON s.device_id = latest.device_id AND s.event_at = latest.max_at
+        WHERE s.event = 'connected'
+        ORDER BY s.event_at DESC
+    """)).fetchall()
+
+    return [
+        {
+            "device_id":   r[0],
+            "remote_port": r[1],
+            "local_port":  r[2],
+            "connected_at": r[3],
+        }
+        for r in rows
+    ]
+
+@app.get("/api/ssh-tunnel/log/{device_id}")
+def ssh_tunnel_log(
+    device_id: str,
+    limit: int = 50,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Audit log for SSH tunnel sessioner på en device."""
+    from database import SshTunnelLog
+    entries = (
+        db.query(SshTunnelLog)
+        .filter_by(device_id=device_id)
+        .order_by(SshTunnelLog.event_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "event":       e.event,
+            "remote_port": e.remote_port,
+            "duration_s":  e.duration_s,
+            "initiated_by":e.initiated_by,
+            "event_at":    e.event_at.isoformat() if e.event_at else None,
+        }
+        for e in entries
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ── CAMERA / PI KOBLING (Sprint C) ────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/admin/cameras")
+def list_cameras(
+    _user=require_role("super_admin", "admin", "operator"),
+    db: Session = Depends(get_db)
+):
+    """List alle logiske kameraer."""
+    from database import Camera, DeviceAssignment
+    cameras = db.query(Camera).filter(Camera.retired_at.is_(None)).all()
+    result = []
+    for cam in cameras:
+        # Find aktiv device assignment
+        assignment = (
+            db.query(DeviceAssignment)
+            .filter_by(camera_id=cam.id)
+            .filter(DeviceAssignment.unassigned_at.is_(None))
+            .first()
+        )
+        result.append({
+            "id":            cam.id,
+            "site_id":       cam.site_id,
+            "customer_id":   cam.customer_id,
+            "camera_name":   cam.camera_name,
+            "serial_number": cam.serial_number,
+            "model":         cam.model,
+            "notes":         cam.notes,
+            "current_device_id": assignment.device_id if assignment else None,
+            "assigned_at":   assignment.assigned_at.isoformat() if assignment and assignment.assigned_at else None,
+            "created_at":    cam.created_at.isoformat() if cam.created_at else None,
+        })
+    return result
+
+@app.post("/api/admin/cameras")
+def create_camera(
+    payload: dict,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Opret et nyt logisk kamera."""
+    from database import Camera
+    import uuid as _u
+    cam = Camera(
+        id          = str(_u.uuid4()),
+        site_id     = payload.get("site_id"),
+        customer_id = payload.get("customer_id"),
+        camera_name = payload.get("camera_name", "Nyt kamera"),
+        serial_number = payload.get("serial_number"),
+        model       = payload.get("model"),
+        notes       = payload.get("notes"),
+        config      = _json.dumps(payload.get("config", {})),
+    )
+    db.add(cam); db.commit()
+    log.info("Kamera oprettet: %s (%s)", cam.camera_name, cam.id)
+    return {"id": cam.id}
+
+@app.post("/api/admin/cameras/{camera_id}/assign")
+def assign_camera_to_device(
+    camera_id: str,
+    payload: dict,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Tildel et logisk kamera til en fysisk device (Orange Pi).
+    Afslutter eventuel eksisterende assignment automatisk.
+    """
+    from database import Camera, DeviceAssignment, Device
+    import uuid as _u
+
+    camera = db.query(Camera).filter_by(id=camera_id).first()
+    if not camera:
+        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+
+    device_id = payload.get("device_id")
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id påkrævet")
+
+    # Afslut eksisterende aktive assignments for dette kamera
+    old = (
+        db.query(DeviceAssignment)
+        .filter_by(camera_id=camera_id)
+        .filter(DeviceAssignment.unassigned_at.is_(None))
+        .all()
+    )
+    for o in old:
+        o.unassigned_at = now_utc()
+        log.info("Assignment afsluttet: device=%s kamera=%s", o.device_id, camera_id)
+
+    # Afslut også eksisterende assignments for denne device (til andre kameraer)
+    old_dev = (
+        db.query(DeviceAssignment)
+        .filter_by(device_id=device_id)
+        .filter(DeviceAssignment.unassigned_at.is_(None))
+        .all()
+    )
+    for o in old_dev:
+        o.unassigned_at = now_utc()
+
+    # Opret ny assignment
+    assignment = DeviceAssignment(
+        device_id   = device_id,
+        camera_id   = camera_id,
+        assigned_by = payload.get("assigned_by", "admin"),
+        notes       = payload.get("notes"),
+    )
+    db.add(assignment)
+
+    # Synkroniser camera_name, site, customer til device (for bagudkompatibilitet)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if device:
+        device.camera_name   = camera.camera_name
+        device.site_id       = camera.site_id
+        device.customer_id   = camera.customer_id
+
+    db.commit()
+    log.info("Kamera %s tildelt device %s", camera_id, device_id)
+    return {"ok": True, "camera_id": camera_id, "device_id": device_id}
+
+@app.get("/api/admin/cameras/{camera_id}/history")
+def camera_assignment_history(
+    camera_id: str,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Historik over alle device-assignments for et kamera."""
+    from database import DeviceAssignment
+    entries = (
+        db.query(DeviceAssignment)
+        .filter_by(camera_id=camera_id)
+        .order_by(DeviceAssignment.assigned_at.desc())
+        .all()
+    )
+    return [
+        {
+            "device_id":     e.device_id,
+            "assigned_at":   e.assigned_at.isoformat() if e.assigned_at else None,
+            "unassigned_at": e.unassigned_at.isoformat() if e.unassigned_at else None,
+            "assigned_by":   e.assigned_by,
+            "notes":         e.notes,
+            "active":        e.unassigned_at is None,
+        }
+        for e in entries
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ── OPDATERINGSSTYRING (Sprint C) ─────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/updates/pending")
+def list_pending_updates(
+    status: Optional[str] = None,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """List opdateringer der afventer godkendelse eller deployment."""
+    from database import PendingUpdate
+    q = db.query(PendingUpdate)
+    if status:
+        q = q.filter_by(status=status)
+    else:
+        q = q.filter(PendingUpdate.status.in_(["pending", "approved"]))
+    updates = q.order_by(PendingUpdate.created_at.desc()).all()
+    return [
+        {
+            "id":          u.id,
+            "update_type": u.update_type,
+            "version":     u.version,
+            "description": u.description,
+            "severity":    u.severity,
+            "scope":       u.scope,
+            "scope_id":    u.scope_id,
+            "status":      u.status,
+            "created_at":  u.created_at.isoformat() if u.created_at else None,
+            "approved_at": u.approved_at.isoformat() if u.approved_at else None,
+            "approved_by": u.approved_by,
+        }
+        for u in updates
+    ]
+
+@app.post("/api/updates/{update_id}/approve")
+def approve_update(
+    update_id: int,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Godkend en opdatering til deployment."""
+    from database import PendingUpdate
+    u = db.query(PendingUpdate).filter_by(id=update_id, status="pending").first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet eller ikke pending")
+    u.status      = "approved"
+    u.approved_at = now_utc()
+    u.approved_by = current_user.username
+    db.commit()
+    log.info("Opdatering godkendt: %s v%s af %s", u.update_type, u.version, current_user.username)
+    return {"ok": True}
+
+@app.post("/api/updates/{update_id}/reject")
+def reject_update(
+    update_id: int,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Afvis en opdatering."""
+    from database import PendingUpdate
+    u = db.query(PendingUpdate).filter_by(id=update_id, status="pending").first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    u.status      = "rejected"
+    u.approved_by = current_user.username
+    u.approved_at = now_utc()
+    db.commit()
+    return {"ok": True}
+
+@app.get("/api/updates/policy/{device_id}")
+def get_update_policy(
+    device_id: str,
+    db: Session = Depends(get_db)
+):
+    """Returnerer resolved update_policy for et device (bruges af edge)."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+
+    # Default policy
+    policy = {
+        "app_security":  "auto",
+        "os_security":   "auto",
+        "app_updates":   "manual",
+        "os_updates":    "manual",
+        "maintenance_window": "02:00-04:00",
+    }
+
+    # Merge hierarki (global → customer → site → device)
+    try:
+        site     = db.query(Site).filter_by(id=device.site_id).first() if device.site_id else None
+        customer = db.query(Customer).filter_by(id=site.customer_id).first() if site else None
+        defaults = db.query(ConfigDefaults).first()
+
+        if defaults and getattr(defaults, "system", None):
+            sys_cfg = _json.loads(defaults.system)
+            if "update_policy" in sys_cfg:
+                policy.update(sys_cfg["update_policy"])
+
+        for obj in [customer, site, device]:
+            if not obj:
+                continue
+            overrides_raw = getattr(obj, "config_overrides", None) or getattr(obj, "device_config", None)
+            if overrides_raw:
+                try:
+                    overrides = _json.loads(overrides_raw) if isinstance(overrides_raw, str) else overrides_raw
+                    if "update_policy" in overrides:
+                        # Mest restriktive vinder: manual > auto
+                        for k, v in overrides["update_policy"].items():
+                            if k in policy:
+                                if v == "manual" or policy[k] == "auto":
+                                    policy[k] = v
+                except Exception:
+                    pass
+    except Exception as exc:
+        log.warning("Update policy resolution fejl: %s", exc)
+
+    return policy
+
+@app.post("/api/updates/report")
+def report_update(payload: dict, db: Session = Depends(get_db)):
+    """Edge rapporterer resultat af deployment (deployed/rolled_back)."""
+    from database import PendingUpdate
+    update_id = payload.get("update_id")
+    status    = payload.get("status")  # deployed|rolled_back
+    if not update_id or status not in ("deployed", "rolled_back"):
+        raise HTTPException(status_code=400)
+    u = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not u:
+        raise HTTPException(status_code=404)
+    u.status = status
+    if status == "deployed":
+        u.deployed_at = now_utc()
+    elif status == "rolled_back":
+        u.rollback_at = now_utc()
+    db.commit()
+    log.info("Update %d rapporteret som %s fra device", update_id, status)
+    return {"ok": True}
+
+
+
+
+
+# ════════════════════════════════════════════════════════════════════════
+# ── PROVISION PACKAGE (Sprint C) ─────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════
+
+from fastapi.responses import StreamingResponse
+import io as _io
+import zipfile as _zipfile
+
+def _generate_ed25519_keypair() -> tuple[str, str]:
+    """Generer Ed25519 nøglepar — returnerer (privat_pem, offentlig_openssh)."""
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding, PrivateFormat, PublicFormat, NoEncryption
+        )
+        private_key = Ed25519PrivateKey.generate()
+        private_pem = private_key.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.OpenSSH,
+            encryption_algorithm=NoEncryption()
+        ).decode()
+        public_openssh = private_key.public_key().public_bytes(
+            encoding=Encoding.OpenSSH,
+            format=PublicFormat.OpenSSH
+        ).decode()
+        return private_pem, public_openssh
+    except ImportError:
+        # Fallback: brug subprocess + ssh-keygen
+        import subprocess, tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = os.path.join(tmp, "key")
+            subprocess.run(
+                ["ssh-keygen", "-t", "ed25519", "-f", key_path, "-N", "", "-C", "timelapse-provision"],
+                check=True, capture_output=True
+            )
+            priv = open(key_path).read()
+            pub  = open(key_path + ".pub").read().strip()
+        return priv, pub
+
+
+def _build_bootstrap_yaml(device_id_hint: str, headend_url: str, token: str,
+                           location_name: str) -> str:
+    return f"""# TimeLapse Pro — Bootstrap Configuration
+# Genereret: {now_utc().strftime('%Y-%m-%d %H:%M UTC')}
+# Kopiér til: /opt/timelapse/edge/bootstrap.yaml
+
+device_id: {device_id_hint}
+headend_url: {headend_url}
+bootstrap_token: {token}
+location_name: {location_name}
+"""
+
+
+def _build_install_md(site_name: str, camera_name: str, headend_url: str,
+                      tunnel_pub: str, sftp_pub: str, device_hint: str) -> str:
+    return f"""# TimeLapse Pro — Installationsguide
+## {site_name} — {camera_name}
+Genereret: {now_utc().strftime('%Y-%m-%d %H:%M UTC')}
+
+---
+
+## Forudsætninger
+
+- Orange Pi 4 Pro med Ubuntu 22.04
+- TimeLapse Pro edge-kode deployed via GitHub Actions
+- Kamera tilsluttet via USB
+- Netværksforbindelse
+
+---
+
+## Trin 1 — Kopiér provisionerings-filer til Orange Pi
+
+Fra Mac Mini (erstat `<orange-pi-ip>`):
+```bash
+scp bootstrap.yaml pi@<orange-pi-ip>:/opt/timelapse/edge/
+scp tunnel_key pi@<orange-pi-ip>:/opt/timelapse/edge/ssh/
+scp tunnel_key.pub pi@<orange-pi-ip>:/opt/timelapse/edge/ssh/
+scp sftp_key pi@<orange-pi-ip>:/opt/timelapse/edge/ssh/
+scp sftp_key.pub pi@<orange-pi-ip>:/opt/timelapse/edge/ssh/
+```
+
+---
+
+## Trin 2 — Sæt korrekte filrettigheder på Orange Pi
+
+```bash
+chmod 600 /opt/timelapse/edge/ssh/tunnel_key
+chmod 644 /opt/timelapse/edge/ssh/tunnel_key.pub
+chmod 600 /opt/timelapse/edge/ssh/sftp_key
+chmod 644 /opt/timelapse/edge/ssh/sftp_key.pub
+chmod 600 /opt/timelapse/edge/bootstrap.yaml
+```
+
+---
+
+## Trin 3 — Tilføj tunnel-nøgle til headend
+
+På Mac Mini headend:
+```bash
+echo "{tunnel_pub} {device_hint}" >> /home/tunnel/.ssh/authorized_keys
+```
+
+---
+
+## Trin 4 — Tilføj SFTP-nøgle til headend
+
+På Mac Mini headend (erstat `sftp_<site-kode>` med den rigtige bruger):
+```bash
+echo "{sftp_pub} {site_name}" >> /Users/Shared/timelapse/sftp_keys/authorized_keys_<site-kode>
+```
+
+---
+
+## Trin 5 — Start timelapse-edge service
+
+```bash
+sudo systemctl restart timelapse-edge
+sudo systemctl status timelapse-edge
+```
+
+Forventet output:
+```
+● timelapse-edge.service — TimeLapse Pro Edge Agent
+   Active: active (running)
+   ...
+   Config loaded — device_id=TL-... location={site_name} — {camera_name}
+   Bootstrapping device TL-... with headend…
+   Bootstrap OK
+```
+
+---
+
+## Trin 6 — Verificer i UI
+
+1. Åbn TimeLapse Pro UI → Dashboard
+2. Ny enhed vises som online
+3. Tildel enheden til site: **{site_name}** → kamera: **{camera_name}**
+4. Start LAB mode for at verificere kameraforbindelsen
+
+---
+
+## Fejlfinding
+
+```bash
+# Tjek logs
+journalctl -u timelapse-edge -f
+
+# Tjek netværk
+curl {headend_url}/health
+
+# Tjek SSH tunnel
+ssh -T -i /opt/timelapse/edge/ssh/tunnel_key tunnel@<headend-host>
+```
+
+---
+
+*TimeLapse Pro v3.0.0 — Headend: {headend_url}*
+"""
+
+
+# ── Bootstrap Token CRUD ──────────────────────────────────────────────────────
+
+@app.get("/api/admin/bootstrap-tokens")
+def list_bootstrap_tokens(
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """List aktive bootstrap tokens."""
+    from datetime import timedelta
+    tokens = (
+        db.query(BootstrapToken)
+        .filter_by(revoked=False)
+        .order_by(BootstrapToken.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return [
+        {
+            "token":         t.token,
+            "device_label":  t.device_label,
+            "site_id":       t.site_id,
+            "camera_name":   t.camera_name,
+            "created_by":    t.created_by,
+            "created_at":    t.created_at.isoformat() if t.created_at else None,
+            "expires_at":    t.expires_at.isoformat() if t.expires_at else None,
+            "used":          t.used_at is not None,
+            "used_by_device":t.used_by_device,
+        }
+        for t in tokens
+    ]
+
+
+@app.post("/api/admin/bootstrap-tokens")
+def create_bootstrap_token(
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Generer nyt bootstrap token (24 timers levetid)."""
+    import secrets
+    from datetime import timedelta
+    token_str = f"test-{secrets.token_hex(24)}"   # "test-" prefix for bagudkompatibilitet med DEV
+    expires_hours = int(payload.get("expires_hours", 24))
+    t = BootstrapToken(
+        token        = token_str,
+        device_label = payload.get("device_label", "Ny enhed"),
+        site_id      = payload.get("site_id"),
+        customer_id  = payload.get("customer_id"),
+        camera_name  = payload.get("camera_name"),
+        created_by   = current_user.username,
+        expires_at   = now_utc() + timedelta(hours=expires_hours),
+    )
+    db.add(t); db.commit()
+    log.info("Bootstrap token oprettet af %s til %s", current_user.username, t.device_label)
+    return {
+        "token":      token_str,
+        "expires_at": t.expires_at.isoformat(),
+        "device_label": t.device_label,
+    }
+
+
+@app.delete("/api/admin/bootstrap-tokens/{token}")
+def revoke_bootstrap_token(
+    token: str,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Revokér et bootstrap token."""
+    t = db.query(BootstrapToken).filter_by(token=token).first()
+    if not t:
+        raise HTTPException(status_code=404)
+    t.revoked = True
+    db.commit()
+    return {"ok": True}
+
+
+# ── Provision Package ─────────────────────────────────────────────────────────
+
+@app.post("/api/admin/provision-package")
+def create_provision_package(
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """
+    Generer komplet provisionerings-ZIP til ny Orange Pi edge-enhed.
+
+    ZIP indeholder:
+      bootstrap.yaml       — device_id (foreløbig), headend_url, bootstrap_token
+      tunnel_key           — Ed25519 privat nøgle til reverse SSH tunnel
+      tunnel_key.pub       — Tilhørende public key (kopiér til headend authorized_keys)
+      sftp_key             — Ed25519 privat nøgle til SFTP upload
+      sftp_key.pub         — Tilhørende public key
+      INSTALL.md           — Trin-for-trin installationsguide
+    """
+    site_id     = payload.get("site_id")
+    camera_name = payload.get("camera_name", "Kamera 1")
+    device_id   = payload.get("device_id")  # valgfrit — hvis None genereres foreløbig ID
+
+    if not site_id:
+        raise HTTPException(status_code=400, detail="site_id er påkrævet")
+
+    # Hent site og kunde-info
+    site     = db.query(Site).filter_by(id=site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site ikke fundet")
+    customer = db.query(Customer).filter_by(id=site.customer_id).first()
+
+    site_name     = site.name
+    customer_name = customer.name if customer else "Ukendt kunde"
+    location_name = f"{customer_name} — {site_name} — {camera_name}"
+
+    # Generer foreløbigt device_id hvis ikke angivet
+    device_id_hint = device_id or f"TL-PROV-{_uuid.uuid4().hex[:8].upper()}"
+
+    # Headend URL fra settings
+    headend_url = _get_setting(db, "base_url", os.getenv("BASE_URL", "http://timelapse.froekjaer.dk:8000"))
+
+    # Generer bootstrap token
+    import secrets
+    from datetime import timedelta
+    token_str = f"test-{secrets.token_hex(24)}"
+    token_rec = BootstrapToken(
+        token        = token_str,
+        device_label = location_name,
+        site_id      = site_id,
+        customer_id  = site.customer_id,
+        camera_name  = camera_name,
+        created_by   = current_user.username,
+        expires_at   = now_utc() + timedelta(hours=48),
+    )
+    db.add(token_rec)
+    db.commit()
+
+    # Generer SSH-nøglepar
+    tunnel_priv, tunnel_pub = _generate_ed25519_keypair()
+    sftp_priv,   sftp_pub   = _generate_ed25519_keypair()
+
+    # Tilføj kommentar til public keys
+    tunnel_pub = f"{tunnel_pub.strip()} {device_id_hint}"
+    sftp_pub   = f"{sftp_pub.strip()} sftp@{site_name.replace(' ', '_')}"
+
+    # Byg filindhold
+    bootstrap_yaml = _build_bootstrap_yaml(device_id_hint, headend_url, token_str, location_name)
+    install_md     = _build_install_md(site_name, camera_name, headend_url, tunnel_pub, sftp_pub, device_id_hint)
+
+    # Byg ZIP i hukommelsen
+    zip_buffer = _io.BytesIO()
+    safe_site  = site_name.replace(" ", "_").replace("/", "-")[:20]
+
+    with _zipfile.ZipFile(zip_buffer, "w", _zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("bootstrap.yaml",   bootstrap_yaml)
+        zf.writestr("tunnel_key",       tunnel_priv)
+        zf.writestr("tunnel_key.pub",   tunnel_pub + "\n")
+        zf.writestr("sftp_key",         sftp_priv)
+        zf.writestr("sftp_key.pub",     sftp_pub + "\n")
+        zf.writestr("INSTALL.md",       install_md)
+
+    zip_buffer.seek(0)
+
+    # Log audit-event
+    db.add(Event(
+        device_id = device_id_hint,
+        level     = "INFO",
+        category  = "provision",
+        message   = f"Provisionerings-pakke genereret til {location_name}",
+        extra     = _json.dumps({
+            "site_id":    site_id,
+            "created_by": current_user.username,
+            "token":      token_str[:16] + "…",
+        }),
+    ))
+    db.commit()
+    log.info("Provisionerings-pakke genereret: %s af %s", location_name, current_user.username)
+
+    filename = f"timelapse_provision_{safe_site}_{now_utc().strftime('%Y%m%d')}.zip"
+    return StreamingResponse(
+        _io.BytesIO(zip_buffer.read()),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
 
 
 # ── Reverse SSH ───────────────────────────────────────────────────────────────
@@ -1349,6 +2138,242 @@ def _get_nas_path():
         return result[0] if result else None
     except:
         return None
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ── AUTH / RBAC ───────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _hash_password(pw: str) -> str:
+    return _pwd_ctx.hash(pw)
+
+def _verify_password(plain: str, hashed: str) -> bool:
+    return _pwd_ctx.verify(plain, hashed)
+
+def _create_token(data: dict, expire_hours: int = JWT_EXPIRE_H) -> str:
+    from datetime import timedelta
+    payload = data.copy()
+    payload["exp"] = now_utc() + timedelta(hours=expire_hours)
+    return _jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+def _decode_token(token: str) -> dict | None:
+    try:
+        return _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        return None
+
+def _ensure_super_admin(db):
+    """Opretter standard super_admin hvis ingen brugere findes."""
+    from database import User
+    if db.query(User).count() == 0:
+        admin = User(
+            username      = "admin",
+            email         = "admin@timelapse.local",
+            password_hash = _hash_password("changeme"),
+            role          = "super_admin",
+            is_active     = True,
+        )
+        db.add(admin)
+        db.commit()
+        log.warning("Standard super_admin oprettet — SKIFT PASSWORD STRAKS via /api/auth/change-password")
+
+def get_current_user(
+    token: str = Security(_oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    """FastAPI dependency — returnerer current user eller None."""
+    if not token:
+        return None
+    payload = _decode_token(token)
+    if not payload:
+        return None
+    from database import User
+    user = db.query(User).filter_by(username=payload.get("sub"), is_active=True).first()
+    return user
+
+def require_role(*roles: str):
+    """FastAPI dependency factory — kræver en af de angivne roller."""
+    def _check(user=Depends(get_current_user)):
+        if user is None:
+            raise HTTPException(status_code=401, detail="Ikke autentificeret")
+        if user.role not in roles:
+            raise HTTPException(status_code=403, detail=f"Kræver rolle: {', '.join(roles)}")
+        return user
+    return Depends(_check)
+
+
+# ── Auth models ───────────────────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+class UserCreateRequest(BaseModel):
+    username:    str
+    email:       Optional[str] = None
+    password:    str
+    role:        str = "viewer"
+    customer_id: Optional[str] = None
+
+class UserUpdateRequest(BaseModel):
+    email:       Optional[str] = None
+    role:        Optional[str] = None
+    customer_id: Optional[str] = None
+    is_active:   Optional[bool] = None
+
+
+# ── Auth endpoints ────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+def _startup_ensure_admin():
+    """Ensure super_admin exists on startup."""
+    db = next(get_db())
+    try:
+        _ensure_super_admin(db)
+    finally:
+        db.close()
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    """Login — returnerer JWT access token."""
+    from database import User
+    user = db.query(User).filter_by(username=req.username, is_active=True).first()
+    if not user or not _verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Forkert brugernavn eller adgangskode")
+    user.last_login = now_utc()
+    db.commit()
+    token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id})
+    log.info("Login: %s (%s)", user.username, user.role)
+    return {
+        "access_token": token,
+        "token_type":   "bearer",
+        "role":         user.role,
+        "username":     user.username,
+        "expires_in":   JWT_EXPIRE_H * 3600,
+    }
+
+@app.post("/api/auth/logout")
+def logout():
+    """Logout — klienten sletter token lokalt."""
+    return {"ok": True}
+
+@app.post("/api/auth/change-password")
+def change_password(
+    req: ChangePasswordRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Skift adgangskode for den indloggede bruger."""
+    if current_user is None:
+        raise HTTPException(status_code=401)
+    if not _verify_password(req.old_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Forkert nuværende adgangskode")
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Adgangskode skal være mindst 8 tegn")
+    current_user.password_hash = _hash_password(req.new_password)
+    db.commit()
+    log.info("Adgangskode skiftet: %s", current_user.username)
+    return {"ok": True}
+
+@app.get("/api/auth/me")
+def me(current_user=Depends(get_current_user)):
+    """Returnerer den aktuelle brugers info."""
+    if current_user is None:
+        raise HTTPException(status_code=401)
+    return {
+        "username":    current_user.username,
+        "email":       current_user.email,
+        "role":        current_user.role,
+        "customer_id": current_user.customer_id,
+    }
+
+
+# ── User CRUD (kun super_admin) ───────────────────────────────────────────
+
+@app.get("/api/admin/users")
+def list_users(
+    _user=require_role("super_admin"),
+    db: Session = Depends(get_db)
+):
+    from database import User
+    users = db.query(User).order_by(User.username).all()
+    return [
+        {
+            "id":          u.id,
+            "username":    u.username,
+            "email":       u.email,
+            "role":        u.role,
+            "customer_id": u.customer_id,
+            "is_active":   u.is_active,
+            "created_at":  u.created_at.isoformat() if u.created_at else None,
+            "last_login":  u.last_login.isoformat() if u.last_login else None,
+        }
+        for u in users
+    ]
+
+@app.post("/api/admin/users")
+def create_user(
+    req: UserCreateRequest,
+    _user=require_role("super_admin"),
+    db: Session = Depends(get_db)
+):
+    from database import User
+    if db.query(User).filter_by(username=req.username).first():
+        raise HTTPException(status_code=400, detail="Brugernavn findes allerede")
+    if req.role not in ("super_admin", "admin", "operator", "viewer"):
+        raise HTTPException(status_code=400, detail="Ugyldig rolle")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Adgangskode skal være mindst 8 tegn")
+    u = User(
+        username      = req.username,
+        email         = req.email,
+        password_hash = _hash_password(req.password),
+        role          = req.role,
+        customer_id   = req.customer_id,
+    )
+    db.add(u); db.commit(); db.refresh(u)
+    log.info("Bruger oprettet: %s (%s)", u.username, u.role)
+    return {"id": u.id, "username": u.username}
+
+@app.put("/api/admin/users/{user_id}")
+def update_user(
+    user_id: int,
+    req: UserUpdateRequest,
+    _user=require_role("super_admin"),
+    db: Session = Depends(get_db)
+):
+    from database import User
+    u = db.query(User).filter_by(id=user_id).first()
+    if not u:
+        raise HTTPException(status_code=404)
+    if req.role and req.role not in ("super_admin", "admin", "operator", "viewer"):
+        raise HTTPException(status_code=400, detail="Ugyldig rolle")
+    for field in ["email", "role", "customer_id", "is_active"]:
+        val = getattr(req, field)
+        if val is not None:
+            setattr(u, field, val)
+    db.commit()
+    return {"ok": True}
+
+@app.delete("/api/admin/users/{user_id}")
+def delete_user(
+    user_id: int,
+    current_user=require_role("super_admin"),
+    db: Session = Depends(get_db)
+):
+    from database import User
+    u = db.query(User).filter_by(id=user_id).first()
+    if not u:
+        raise HTTPException(status_code=404)
+    if u.username == "admin" and u.role == "super_admin":
+        raise HTTPException(status_code=400, detail="Kan ikke slette primær super_admin")
+    db.delete(u); db.commit()
+    return {"ok": True}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
