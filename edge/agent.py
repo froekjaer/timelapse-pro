@@ -1,10 +1,12 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # TimeLapse Pro — agent.py (Edge Agent)
 # ───────────────────────────────────────────────────────────────────────────
-# Version  : 3.1.0
-# Dato     : 12. april 2026
+# Version  : 3.2.0
+# Dato     : 06. maj 2026
 # ───────────────────────────────────────────────────────────────────────────
 # Changelog:
+#   3.2.0  06-maj-2026  LAB capture bug fix: disconnect + power_off FØR
+#                       _do_capture_cycle for at undgå dobbelt gphoto2-connect
 #   3.1.0  12-apr-2026  Stabile USB symlinks via /dev/timelapse-camN
 #                       _discover_cameras bruger udev i stedet for auto-detect
 #                       Indenteringsfejl i _capture_single_camera rettet
@@ -850,10 +852,21 @@ class EdgeAgent:
                 self._lab_capture_preview()
                 self._api.clear_lab_command(self._device_id)
             elif cmd_type == "capture":
-                log.info("LAB — full capture requested")
+                log.info("LAB — full capture requested — disconnecting before cycle")
+                # Disconnect og sluk relay INDEN _do_capture_cycle kaldes.
+                # _do_capture_cycle forventer at kameraet IKKE er forbundet —
+                # den laver selv power_on -> connect -> capture -> disconnect -> power_off.
+                # Dobbelt-connect på et allerede tilsluttet gphoto2-kamera fejler stille.
+                try:
+                    self._driver.disconnect()
+                except Exception:
+                    pass
+                self._relay.camera.power_off()
+                self._lab_relay_on = False          # tvinger re-init på næste tick
                 self._do_capture_cycle()
                 self._api.clear_lab_command(self._device_id)
-                self._lab_relay_on = False
+                # _lab_relay_on er allerede False — næste _lab_tick re-initialiserer
+                # relay + connect + camera-ready signal automatisk
 
             elif cmd_type == "get_params":
                 log.info("LAB — fetching all camera params")
