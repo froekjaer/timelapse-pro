@@ -684,12 +684,17 @@ def get_config(device_id: str, _auth: None = Depends(_verify_token), db: Session
     except Exception as exc:
         log.warning("Hierarkisk config merge fejl for %s: %s", device_id, exc)
 
-    # Tilføj node_cameras — andre kameraer på samme fysiske node
+    # Tilføj felter fra device_config til edge-config
     try:
         node_cfg = json.loads(device.device_config or "{}")
-        node_cameras = node_cfg.get("node_cameras", [])
-        cfg["node_cameras"] = node_cameras
-        cfg["multi_camera_mode"] = node_cfg.get("multi_camera_mode", "single")
+        cfg["node_cameras"]     = node_cfg.get("node_cameras", [])
+        cfg["multi_camera_mode"]= node_cfg.get("multi_camera_mode", "single")
+        # SSH tunnel config — edgen bruger dette til at styre tunnelen
+        if "ssh_tunnel" in node_cfg:
+            cfg["ssh_tunnel"] = node_cfg["ssh_tunnel"]
+        # Opdateringspolitik
+        if "update_policy" in node_cfg:
+            cfg["update_policy"] = node_cfg["update_policy"]
     except Exception:
         cfg["node_cameras"] = []
         cfg["multi_camera_mode"] = "single"
