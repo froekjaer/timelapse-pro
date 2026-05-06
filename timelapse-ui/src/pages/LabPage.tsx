@@ -291,6 +291,54 @@ export default function LabPage() {
     return () => { cancelled = true }
   }, [deviceId])
 
+  // ── Genopret LAB-state ved side-refresh ──────────────────────────────────
+  // Hvis headend viser debug_mode.enabled=true og lab_camera_ready=true,
+  // spring "Venter"-fasen over og vis LAB direkte som aktiv og klar.
+  useEffect(() => {
+    if (!deviceId) return
+    let cancelled = false
+
+    async function checkExistingLab() {
+      try {
+        const apiUrl = (await import('../api/client')).getApiUrl()
+        const res = await fetch(`${apiUrl}/api/admin/devices/${deviceId}`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled) return
+
+        const raw = data.device?.device_config
+        let cfg: Record<string, any> = {}
+        if (raw) {
+          try {
+            cfg = typeof raw === 'string' ? JSON.parse(raw) : raw
+          } catch { /* ignorer parse-fejl */ }
+        }
+
+        const debugEnabled = cfg?.debug_mode?.enabled === true
+        const cameraReady  = cfg?.lab_camera_ready === true
+
+        if (debugEnabled && cameraReady) {
+          // LAB er aktiv og kamera er klar — vis direkte uden "Venter"
+          setLabActive(true)
+          setLabConnecting(false)
+          setLabConnectSecs(0)
+          setLabReady(true)
+          listPreviews(deviceId).then(setPreviews).catch(() => {})
+        } else if (debugEnabled && !cameraReady) {
+          // LAB er startet men kamera ikke klar endnu — vis "Venter"
+          setLabActive(true)
+          setLabConnecting(true)
+        }
+        // Hvis debug_mode ikke er enabled: gør ingenting
+      } catch {
+        // Netværksfejl ved mount — ignorer
+      }
+    }
+
+    checkExistingLab()
+    return () => { cancelled = true }
+  }, [deviceId])
+
   async function loadConfig() {
     try {
       const cfg = await getDeviceRawConfig(deviceId)
