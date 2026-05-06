@@ -1381,7 +1381,11 @@ chmod 644 /opt/timelapse/edge/ssh/tunnel_key.pub
 chmod 600 /opt/timelapse/edge/ssh/sftp_key
 chmod 644 /opt/timelapse/edge/ssh/sftp_key.pub
 chmod 600 /opt/timelapse/edge/bootstrap.yaml
+chmod 644 /opt/timelapse/edge/ssh/known_hosts
 ```
+
+> **Bemærk:** `known_hosts` indeholder headendens SSH-fingerprint.
+> Orange Pi verificerer automatisk at den forbinder til den rigtige server.
 
 ---
 
@@ -1596,6 +1600,24 @@ def create_provision_package(
     bootstrap_yaml = _build_bootstrap_yaml(device_id_hint, headend_url, token_str, location_name)
     install_md     = _build_install_md(site_name, camera_name, headend_url, tunnel_pub, sftp_pub, device_id_hint)
 
+    # Generer known_hosts med headendens SSH fingerprint
+    known_hosts_content = ""
+    try:
+        import subprocess as _sp
+        headend_host = headend_url.replace("https://", "").replace("http://", "").split(":")[0]
+        result = _sp.run(
+            ["ssh-keyscan", "-H", headend_host],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            known_hosts_content = result.stdout
+            log.info("known_hosts genereret for %s (%d linjer)",
+                     headend_host, len(result.stdout.splitlines()))
+        else:
+            log.warning("ssh-keyscan fejlede for %s — known_hosts udelades", headend_host)
+    except Exception as exc:
+        log.warning("known_hosts generering fejlede: %s", exc)
+
     # Byg ZIP i hukommelsen
     zip_buffer = _io.BytesIO()
     safe_site  = site_name.replace(" ", "_").replace("/", "-")[:20]
@@ -1606,6 +1628,8 @@ def create_provision_package(
         zf.writestr("tunnel_key.pub",   tunnel_pub + "\n")
         zf.writestr("sftp_key",         sftp_priv)
         zf.writestr("sftp_key.pub",     sftp_pub + "\n")
+        if known_hosts_content:
+            zf.writestr("known_hosts", known_hosts_content)
         zf.writestr("INSTALL.md",       install_md)
 
     zip_buffer.seek(0)
