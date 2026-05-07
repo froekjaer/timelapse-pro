@@ -16,8 +16,8 @@ export function Navbar() {
 
   const adminLinks = [
     hasRole('super_admin', 'admin') && { to: '/system-admin',    label: 'System Admin',   icon: Shield },
-    hasRole('super_admin')          && { to: '/users',            label: 'Brugere',        icon: Users },
-    hasRole('super_admin')          && { to: '/key-management',   label: 'Nøgler',         icon: Key },
+    hasRole('super_admin', 'admin') && { to: '/users',            label: 'Brugere',        icon: Users },
+    hasRole('super_admin', 'admin') && { to: '/key-management',   label: 'Nøgler',         icon: Key },
   ].filter(Boolean) as { to: string; label: string; icon: any }[]
 
   function handleLogout() {
