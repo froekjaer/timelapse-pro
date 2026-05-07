@@ -1,7 +1,8 @@
 // ───────────────────────────────────────────────────────────────────
 // LoginPage.tsx — RBAC Login til TimeLapse Pro
 // ───────────────────────────────────────────────────────────────────
-import { useState, FormEvent } from 'react'
+import { useState } from 'react'
+import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'

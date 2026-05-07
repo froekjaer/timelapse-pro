@@ -2,6 +2,7 @@
 // App.tsx — TimeLapse Pro med RBAC auth guard
 // ───────────────────────────────────────────────────────────────────
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import type { ReactElement } from 'react'
 import { Navbar } from './components/Navbar'
 import { Dashboard } from './pages/Dashboard'
 import { DevicePage } from './pages/DevicePage'
@@ -20,7 +21,7 @@ import UsersPage from './pages/UsersPage'
 import KeyManagementPage from './pages/KeyManagementPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
-function RequireAuth({ children }: { children: JSX.Element }) {
+function RequireAuth({ children }: { children: ReactElement }) {
   const { isAuthenticated } = useAuth()
   const location = useLocation()
   if (!isAuthenticated) {
