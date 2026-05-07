@@ -83,8 +83,15 @@ jobs:
       - name: Pull latest code
         run: |
           cd ~/projects/timelapse-pro
-          git fetch origin main
-          git reset --hard origin/main
+          # Robust deploy: fresh clone til tmp, sync til working dir
+          git clone --depth 1 git@github.com:froekjaer/timelapse-pro.git /tmp/tl_deploy_fresh 2>/dev/null || true
+          if [ -d /tmp/tl_deploy_fresh ]; then
+            rsync -a --delete --exclude='.git' --exclude='venv' --exclude='__pycache__' \
+              /tmp/tl_deploy_fresh/ ~/projects/timelapse-pro/
+            rm -rf /tmp/tl_deploy_fresh
+          else
+            git fetch origin main && git reset --hard origin/main
+          fi
           find . -name $'Icon\r' -delete 2>/dev/null || true
       - name: Restart headend
         run: |
