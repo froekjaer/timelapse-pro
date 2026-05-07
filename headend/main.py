@@ -3547,3 +3547,39 @@ def delete_captures_bulk(payload: dict, db: Session = Depends(get_db)):
     db.commit()
     log.info("Bulk slettet %d captures", ok)
     return {"status": "ok", "deleted": ok}
+
+
+@app.put("/api/admin/users/{user_id}/password")
+def change_user_password(
+    user_id: int,
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    u = db.query(User).filter_by(id=user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Bruger ikke fundet")
+    pw = payload.get("password", "")
+    policy = _get_password_policy(db)
+    errors = _validate_password(pw, policy)
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    u.password_hash = _hash_password(pw)
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/users/{user_id}")
+def delete_user(
+    user_id: int,
+    current_user=require_role("super_admin"),
+    db: Session = Depends(get_db)
+):
+    u = db.query(User).filter_by(id=user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Bruger ikke fundet")
+    if u.username == current_user.username:
+        raise HTTPException(status_code=400, detail="Du kan ikke slette dig selv")
+    db.delete(u)
+    db.commit()
+    return {"ok": True}

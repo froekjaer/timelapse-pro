@@ -108,5 +108,5 @@ jobs:
         run: |
           cd ~/projects/timelapse-pro/headend
           source venv/bin/activate
-          python3 deploy/signal_edge_update.py
+          DATABASE_URL=postgresql://timelapse@localhost/timelapse_db python3 deploy/signal_edge_update.py
           echo "✅ Edge enheder signaleret"
