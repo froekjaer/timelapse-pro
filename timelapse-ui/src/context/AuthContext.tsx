@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.detail ?? 'Login fejlede')
     }
     const data = await res.json()
-    const u: User = { username: data.user?.username ?? username, role: data.user?.role ?? 'viewer' }
+    const u: User = { username: data.username ?? data.user?.username ?? username, role: data.role ?? data.user?.role ?? 'viewer' }
     localStorage.setItem('tl_token', data.access_token)
     localStorage.setItem('tl_user', JSON.stringify(u))
     setToken(data.access_token)
