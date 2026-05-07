@@ -1857,7 +1857,12 @@ def get_sidecar(device_id: str, filename: str):
     m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
     if m:
         yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
-        matches = list(SFTP_BASE.glob(f"*/*/{yyyy}/{mm}/{dd}/{filename}"))
+        json_filename = filename.rsplit(".", 1)[0] + ".json"
+        # Chroot struktur: sftp_user/data/customer/site/yyyy/mm/dd/
+        matches = list(SFTP_BASE.glob(f"*/data/*/*/{yyyy}/{mm}/{dd}/{json_filename}"))
+        # Fallback: gammel struktur
+        if not matches:
+            matches = list(SFTP_BASE.glob(f"*/*/{yyyy}/{mm}/{dd}/{json_filename}"))
         if matches:
             sidecar_path = matches[0]
             if sidecar_path.exists():
