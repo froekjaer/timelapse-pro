@@ -52,8 +52,8 @@ if DATABASE_URL.startswith("sqlite"):
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(conn, _):
         conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA foreign_keys=ON")
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
