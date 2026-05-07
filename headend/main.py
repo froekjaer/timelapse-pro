@@ -1459,6 +1459,69 @@ ssh -T -i /opt/timelapse/edge/ssh/tunnel_key tunnel@<headend-host>
 """
 
 
+
+
+# ── Password politik ──────────────────────────────────────────────────────────
+
+def _get_password_policy(db: Session) -> dict:
+    """Hent password-politik fra settings."""
+    return {
+        "min_length":        int(_get_setting(db, "pw_min_length",        "8")),
+        "require_uppercase": _get_setting(db, "pw_require_uppercase", "false").lower() == "true",
+        "require_number":    _get_setting(db, "pw_require_number",    "false").lower() == "true",
+        "require_special":   _get_setting(db, "pw_require_special",   "false").lower() == "true",
+    }
+
+
+def _validate_password(pw: str, policy: dict) -> list[str]:
+    """Returnerer liste af fejl — tom liste = OK."""
+    errors = []
+    if len(pw) < policy["min_length"]:
+        errors.append(f"Mindst {policy['min_length']} tegn")
+    if policy["require_uppercase"] and not any(c.isupper() for c in pw):
+        errors.append("Mindst ét stort bogstav")
+    if policy["require_number"] and not any(c.isdigit() for c in pw):
+        errors.append("Mindst ét tal")
+    if policy["require_special"] and not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in pw):
+        errors.append("Mindst ét specialtegn")
+    return errors
+
+
+@app.get("/api/admin/password-policy")
+def get_password_policy(
+    _user=require_role("super_admin", "admin", "operator", "viewer"),
+    db: Session = Depends(get_db)
+):
+    """Returner gældende password-politik."""
+    return _get_password_policy(db)
+
+
+@app.put("/api/admin/password-policy")
+def update_password_policy(
+    payload: dict,
+    _user=require_role("super_admin"),
+    db: Session = Depends(get_db)
+):
+    """Opdater password-politik i settings."""
+    mapping = {
+        "min_length":        ("pw_min_length",        str),
+        "require_uppercase": ("pw_require_uppercase", lambda v: "true" if v else "false"),
+        "require_number":    ("pw_require_number",    lambda v: "true" if v else "false"),
+        "require_special":   ("pw_require_special",   lambda v: "true" if v else "false"),
+    }
+    for key, (setting_key, converter) in mapping.items():
+        if key in payload:
+            val = converter(payload[key])
+            existing = db.query(Settings).filter_by(key=setting_key).first()
+            if existing:
+                existing.value = val
+            else:
+                db.add(Settings(key=setting_key, value=val))
+    db.commit()
+    return _get_password_policy(db)
+
+
+
 # ── Bootstrap Token CRUD ──────────────────────────────────────────────────────
 
 @app.get("/api/admin/bootstrap-tokens")
