@@ -83,7 +83,9 @@ jobs:
       - name: Pull latest code
         run: |
           cd ~/projects/timelapse-pro
-          git pull origin main
+          git fetch origin main
+          git reset --hard origin/main
+          find . -name $'Icon\r' -delete 2>/dev/null || true
       - name: Restart headend
         run: |
           sudo launchctl stop dk.froekjaer.timelapse-headend
