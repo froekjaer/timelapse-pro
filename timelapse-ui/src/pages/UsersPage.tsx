@@ -45,6 +45,7 @@ export default function UsersPage() {
   const [newUser,  setNewUser]  = useState('')
   const [newPw,    setNewPw]    = useState('')
   const [newRole,  setNewRole]  = useState<Role>('viewer')
+  const [newEmail, setNewEmail] = useState('')
   const [creating, setCreating] = useState(false)
 
   // Skift password
@@ -68,9 +69,9 @@ export default function UsersPage() {
     try {
       await api('/api/admin/users', {
         method: 'POST',
-        body: JSON.stringify({ username: newUser, password: newPw, role: newRole }),
+        body: JSON.stringify({ username: newUser, password: newPw, role: newRole, email: newEmail || `${newUser}@timelapse.local` }),
       })
-      setShowNew(false); setNewUser(''); setNewPw(''); setNewRole('viewer')
+      setShowNew(false); setNewUser(''); setNewPw(''); setNewRole('viewer'); setNewEmail('')
       load()
     } catch (e: any) { alert('Fejl: ' + e.message) }
     finally { setCreating(false) }
@@ -132,6 +133,13 @@ export default function UsersPage() {
               <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
                 placeholder="••••••••" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Email (valgfrit)</label>
+              <input value={newEmail} onChange={e => setNewEmail(e.target.value)}
+                type="email"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
+                placeholder={`${newUser || 'bruger'}@timelapse.local`} />
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Rolle</label>
