@@ -541,20 +541,28 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
 
 # ── API Token auth ───────────────────────────────────────────────────────────
 
-def _verify_token(authorization: str = Header(default=""), db: Session = Depends(get_db)) -> None:
-    """Validate Bearer token on edge-facing endpoints."""
-    token = _get_setting(db, "api_token", "")
-    if not token:
-        return  # Auth ikke konfigureret — tillad alt
-    scheme, _, provided = authorization.partition(" ")
-    if scheme.lower() != "bearer" or provided != token:
-        raise HTTPException(status_code=401, detail="Ugyldig eller manglende API token")
 
+
+
+def _verify_device_token(
+    device_id: str,
+    authorization: str = Header(default=""),
+    db: Session = Depends(get_db),
+) -> None:
+    """Validér per-device Bearer token på edge-vendte endpoints."""
+    scheme, _, provided = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not provided:
+        raise HTTPException(status_code=401, detail="Manglende Bearer token")
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device or not device.api_token:
+        raise HTTPException(status_code=401, detail="Ukendt device eller token ikke sat")
+    if provided != device.api_token:
+        raise HTTPException(status_code=401, detail="Ugyldig API token for dette device")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/config/{device_id}")
-def get_config(device_id: str, _auth: None = Depends(_verify_token), db: Session = Depends(get_db)):
+def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: Session = Depends(get_db)):
     """Return operational config for a device.
     Merges base defaults with per-device overrides from device_config column.
     """
@@ -759,6 +767,7 @@ def update_device_config(
 def heartbeat(
     device_id: str,
     req: HeartbeatRequest,
+    _auth: None = Depends(_verify_device_token),
     db: Session = Depends(get_db),
 ):
     """Receive periodic heartbeat with diagnostics from edge node."""
@@ -831,6 +840,7 @@ def heartbeat(
 def receive_capture(
     device_id: str,
     req: CaptureRequest,
+    _auth: None = Depends(_verify_device_token),
     db: Session = Depends(get_db),
 ):
     """Receive capture metadata from edge node."""
@@ -916,6 +926,7 @@ def receive_capture(
 def receive_event(
     device_id: str,
     req: EventRequest,
+    _auth: None = Depends(_verify_device_token),
     db: Session = Depends(get_db),
 ):
     """Receive event/log entry from edge node."""
@@ -1242,6 +1253,7 @@ def reject_update(
 @app.get("/api/updates/policy/{device_id}")
 def get_update_policy(
     device_id: str,
+    _auth: None = Depends(_verify_device_token),
     db: Session = Depends(get_db)
 ):
     """Returnerer resolved update_policy for et device (bruges af edge)."""
@@ -2233,14 +2245,6 @@ def list_timelapse_jobs():
 
 # ── API Token auth ────────────────────────────────────────────────────────────
 
-def _verify_token(authorization: str = Header(default=""), db: Session = Depends(get_db)) -> None:
-    """Validate Bearer token on edge-facing endpoints."""
-    token = _get_setting(db, "api_token", "")
-    if not token:
-        return  # Auth ikke konfigureret — tillad alt
-    scheme, _, provided = authorization.partition(" ")
-    if scheme.lower() != "bearer" or provided != token:
-        raise HTTPException(status_code=401, detail="Ugyldig eller manglende API token")
 
 
 @app.get("/health")
