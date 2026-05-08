@@ -674,9 +674,9 @@ class EdgeAgent:
         """Anvend config-ændringer live uden genstart."""
         # SSH tunnel
         try:
-            if hasattr(self, "_tunnel_mgr") and self._tunnel_mgr:
+            if hasattr(self, "_tunnel") and self._tunnel:
                 tunnel_cfg = data.get("ssh_tunnel", {})
-                self._tunnel_mgr.apply_config(tunnel_cfg)
+                self._tunnel.apply_config(tunnel_cfg)
                 log.info("SSH tunnel config anvendt live")
         except Exception as exc:
             log.warning("SSH tunnel live apply fejl: %s", exc)

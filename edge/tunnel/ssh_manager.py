@@ -93,49 +93,26 @@ class SshTunnelManager:
     def apply_config(self, tunnel_cfg: dict) -> None:
         """
         Anvend tunnel-config live uden agent-genstart.
-        Kaldes fra agent._apply_config_changes() ved config-version ændring.
+        enabled → always_on da loop bruger always_on til at styre forbindelsen.
         """
         enabled = tunnel_cfg.get("enabled", False)
         deny    = tunnel_cfg.get("deny", False)
 
-        if deny or not enabled:
-            # Skal stoppes
-            if self._proc is not None and self._proc.poll() is None:
+        # Map enabled til always_on som loop'en forstår
+        updated = dict(tunnel_cfg)
+        updated["always_on"] = enabled and not deny
+
+        self._cfg["ssh_tunnel"] = updated
+        log.info("SSH tunnel: live config apply — enabled=%s always_on=%s", enabled, updated["always_on"])
+
+        if not enabled or deny:
+            if self._connected:
                 log.info("SSH tunnel: deaktiveret via live config — stopper")
-                try:
-                    self._proc.terminate()
-                    self._proc.wait(timeout=5)
-                except Exception:
-                    pass
-                self._proc = None
+                self._disconnect()
         else:
-            # Skal køre — tjek om noget er ændret
-            new_endpoint    = tunnel_cfg.get("endpoint", "")
-            new_remote_port = int(tunnel_cfg.get("remote_port", 2201))
-            cur_running     = self._proc is not None and self._proc.poll() is None
-
-            endpoint_changed = (
-                new_endpoint    != self._cfg.get("endpoint", "") or
-                new_remote_port != int(self._cfg.get("remote_port", 2201))
-            )
-
-            if cur_running and not endpoint_changed:
-                log.debug("SSH tunnel: kører allerede med korrekt config — ingen ændring")
-                return
-
-            if cur_running and endpoint_changed:
-                log.info("SSH tunnel: endpoint ændret — genstarter")
-                try:
-                    self._proc.terminate()
-                    self._proc.wait(timeout=5)
-                except Exception:
-                    pass
-                self._proc = None
-
-            # Opdater intern config og start
-            self._cfg.update(tunnel_cfg)
-            log.info("SSH tunnel: starter via live config apply")
-            self._start_primary()
+            if not self._connected:
+                log.info("SSH tunnel: aktiveret via live config — starter")
+                self._connect()
 
     
     def stop(self ):
