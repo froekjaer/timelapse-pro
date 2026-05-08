@@ -1840,7 +1840,7 @@ def list_captures(
 
 
 @app.get("/api/admin/stats")
-def stats(db: Session = Depends(get_db)):
+def stats(_user=require_role("viewer"), db: Session = Depends(get_db)):
     """Overall system statistics."""
     total_devices  = db.query(Device).count()
     total_captures = db.query(Capture).count()
@@ -2319,7 +2319,7 @@ def get_thumbnail(device_id: str, filename: str):
 # ── Kamera-laboratorium endpoints ─────────────────────────────────────────────
 
 @app.put("/api/admin/devices/{device_id}/debug")
-def set_debug_mode(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Enable or disable debug/lab mode for a device."""
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
@@ -2689,7 +2689,7 @@ def delete_site(site_id: str, _user=require_role("super_admin"), db: Session = D
 # ── Device overrides ──────────────────────────────────────────────────────
 
 @app.put("/api/admin/devices/{device_id}/overrides")
-def update_device_overrides(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def update_device_overrides(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
@@ -2706,7 +2706,7 @@ def update_device_overrides(device_id: str, payload: dict, db: Session = Depends
 
 
 @app.get("/api/admin/devices/{device_id}")
-def get_device_detail(device_id: str, db: Session = Depends(get_db)):
+def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
@@ -2741,7 +2741,7 @@ def get_device_detail(device_id: str, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/admin/devices/{device_id}")
-def delete_device(device_id: str, db: Session = Depends(get_db)):
+def delete_device(device_id: str, _user=require_role("super_admin"), db: Session = Depends(get_db)):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
@@ -2753,7 +2753,7 @@ def delete_device(device_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/admin/devices/{device_id}/clear-update")
-def clear_update_flag(device_id: str, db: Session = Depends(get_db)):
+def clear_update_flag(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
@@ -2784,7 +2784,7 @@ def _get_or_create_defaults(db: Session) -> ConfigDefaults:
 
 
 @app.get("/api/admin/config-defaults")
-def get_config_defaults(db: Session = Depends(get_db)):
+def get_config_defaults(_user=require_role("admin"), db: Session = Depends(get_db)):
     d = _get_or_create_defaults(db)
     return {
         "schedule":    json.loads(d.schedule    or "{}"),
@@ -2797,7 +2797,7 @@ def get_config_defaults(db: Session = Depends(get_db)):
 
 
 @app.put("/api/admin/config-defaults")
-def update_config_defaults(payload: dict, db: Session = Depends(get_db)):
+def update_config_defaults(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
     d = _get_or_create_defaults(db)
     for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system"]:
         if section in payload and hasattr(d, section):
@@ -2915,7 +2915,7 @@ def set_multi_camera_config(device_id: str, payload: dict, db: Session = Depends
 
 
 @app.post("/api/admin/backup/trigger")
-def trigger_backup():
+def trigger_backup(_user=require_role("admin")):
     """Start backup i baggrunden."""
     global _backup_status
     if _backup_status.get("running"):
@@ -2926,7 +2926,7 @@ def trigger_backup():
     return {"status": "started"}
 
 @app.get("/api/admin/backup/status")
-def backup_status():
+def backup_status(_user=require_role("viewer")):
     """Hent backup status."""
     return {
         "running": _backup_status.get("running", False),
@@ -2937,7 +2937,7 @@ def backup_status():
     }
 
 @app.get("/api/admin/backup/download")
-def download_backup():
+def download_backup(_user=require_role("admin")):
     """Download seneste backup fil."""
 #Peter    import os
     f = _backup_status.get("file")
@@ -2950,7 +2950,7 @@ def download_backup():
     )
 
 @app.put("/api/admin/backup/settings")
-def update_backup_settings(payload: dict, db: Session = Depends(get_db)):
+def update_backup_settings(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Gem backup indstillinger (NAS sti, auto-backup interval)."""
     try:
 #Peter        from sqlalchemy import text
@@ -2965,7 +2965,7 @@ def update_backup_settings(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/admin/backup/settings")
-def get_backup_settings(db: Session = Depends(get_db)):
+def get_backup_settings(_user=require_role("admin"), db: Session = Depends(get_db)):
     """Hent backup indstillinger."""
     try:
 #Peter        from sqlalchemy import text
@@ -2980,7 +2980,7 @@ def get_backup_settings(db: Session = Depends(get_db)):
 
 
 @app.post("/api/admin/backup/trigger-edge/{device_id}")
-def trigger_edge_backup(device_id: str, db: Session = Depends(get_db)):
+def trigger_edge_backup(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Anmod edge enhed om at lave backup."""
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
@@ -3042,7 +3042,7 @@ def edge_backup_complete(device_id: str, payload: dict, db: Session = Depends(ge
 
 
 @app.get("/api/admin/backup/edge-status/{device_id}")
-def edge_backup_status(device_id: str, db: Session = Depends(get_db)):
+def edge_backup_status(device_id: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """Hent backup status for en edge enhed."""
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
@@ -3126,7 +3126,7 @@ def get_preview_thumb(device_id: str, filename: str):
     return FileResponse(str(thumb), media_type="image/jpeg")
 
 @app.post("/api/admin/devices/{device_id}/lab-clear-command")
-def lab_clear_command(device_id: str, db: Session = Depends(get_db)):
+def lab_clear_command(device_id: str, _user=require_role("operator"), db: Session = Depends(get_db)):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
     cfg = json.loads(device.device_config or "{}")
@@ -3136,7 +3136,7 @@ def lab_clear_command(device_id: str, db: Session = Depends(get_db)):
     return {"status": "ok"}
 
 @app.post("/api/admin/devices/{device_id}/lab-clear-params")
-def lab_clear_params(device_id: str, db: Session = Depends(get_db)):
+def lab_clear_params(device_id: str, _user=require_role("operator"), db: Session = Depends(get_db)):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
     cfg = json.loads(device.device_config or "{}")
@@ -3309,7 +3309,7 @@ def update_settings(payload: dict, _user=require_role("super_admin"), db: Sessio
 
 
 @app.put("/api/admin/devices/{device_id}/assign")
-def assign_device(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def assign_device(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Tildel en device til et site og en kunde."""
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
@@ -3484,7 +3484,7 @@ def get_diagnostics_history(
 # ── EXIF statistik ────────────────────────────────────────────────────────
 
 @app.get("/api/admin/captures/stats/exif")
-def get_exif_stats(device_id: str, db: Session = Depends(get_db)):
+def get_exif_stats(device_id: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """EXIF-baseret statistik: ISO, lukkertid, blænde fordeling."""
     rows = (
         db.query(Capture.exif_data)
