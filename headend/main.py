@@ -699,6 +699,9 @@ def get_config(device_id: str, _auth: None = Depends(_verify_token), db: Session
         cfg["node_cameras"] = []
         cfg["multi_camera_mode"] = "single"
 
+    # Inkluder config_version så edge kan detektere ændringer
+    cfg["config_version"] = device.config_version or ""
+
     return cfg
 
 
