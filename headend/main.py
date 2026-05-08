@@ -709,6 +709,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_token), db: Session
 def update_device_config(
     device_id: str,
     config: dict,
+    _user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
     """Update per-device config overrides.
@@ -1758,6 +1759,7 @@ def reverse_ssh_ready(req: ReverseSshRequest, db: Session = Depends(get_db)):
 def update_device_info(
     device_id: str,
     info: dict,
+    _user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
     """Update device metadata: customer_name, site_name, camera_name, installed_date, installed_time."""
@@ -1773,7 +1775,7 @@ def update_device_info(
 
 
 @app.get("/api/admin/devices")
-def list_devices(db: Session = Depends(get_db)):
+def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
     """List all devices with latest status."""
     devices = db.query(Device).order_by(Device.last_seen.desc()).all()
     result = []
@@ -1804,6 +1806,7 @@ def list_devices(db: Session = Depends(get_db)):
 def list_captures(
     device_id: Optional[str] = None,
     limit: int = 50,
+    _user=require_role("viewer"),
     db: Session = Depends(get_db),
 ):
     """List recent captures, optionally filtered by device."""
@@ -2512,7 +2515,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 # ── Customers ─────────────────────────────────────────────────────────────
 
 @app.get("/api/admin/customers")
-def list_customers(db: Session = Depends(get_db)):
+def list_customers(_user=require_role("viewer"), db: Session = Depends(get_db)):
     customers = db.query(Customer).order_by(Customer.name).all()
     return [
         {
@@ -2531,7 +2534,7 @@ def list_customers(db: Session = Depends(get_db)):
 
 
 @app.post("/api/admin/customers")
-def create_customer(payload: dict, db: Session = Depends(get_db)):
+def create_customer(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     c = Customer(
         id=str(_uuid.uuid4()),
         name=payload.get("name", "Ny kunde"),
@@ -2547,7 +2550,7 @@ def create_customer(payload: dict, db: Session = Depends(get_db)):
 
 
 @app.get("/api/admin/customers/{customer_id}")
-def get_customer(customer_id: str, db: Session = Depends(get_db)):
+def get_customer(customer_id: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     c = db.query(Customer).filter_by(id=customer_id).first()
     if not c:
         raise HTTPException(status_code=404)
@@ -2569,7 +2572,7 @@ def get_customer(customer_id: str, db: Session = Depends(get_db)):
 
 
 @app.put("/api/admin/customers/{customer_id}")
-def update_customer(customer_id: str, payload: dict, db: Session = Depends(get_db)):
+def update_customer(customer_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     c = db.query(Customer).filter_by(id=customer_id).first()
     if not c:
         raise HTTPException(status_code=404)
@@ -2581,7 +2584,7 @@ def update_customer(customer_id: str, payload: dict, db: Session = Depends(get_d
 
 
 @app.delete("/api/admin/customers/{customer_id}")
-def delete_customer(customer_id: str, db: Session = Depends(get_db)):
+def delete_customer(customer_id: str, _user=require_role("super_admin"), db: Session = Depends(get_db)):
     c = db.query(Customer).filter_by(id=customer_id).first()
     if not c:
         raise HTTPException(status_code=404)
@@ -2594,7 +2597,7 @@ def delete_customer(customer_id: str, db: Session = Depends(get_db)):
 # ── Sites ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/admin/sites")
-def list_sites(db: Session = Depends(get_db)):
+def list_sites(_user=require_role("viewer"), db: Session = Depends(get_db)):
     sites = db.query(Site).all()
     return [
         {
@@ -2613,7 +2616,7 @@ def list_sites(db: Session = Depends(get_db)):
 
 
 @app.post("/api/admin/sites")
-def create_site(payload: dict, db: Session = Depends(get_db)):
+def create_site(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     s = Site(
         id=str(_uuid.uuid4()),
         customer_id=payload.get("customer_id"),
@@ -2628,7 +2631,7 @@ def create_site(payload: dict, db: Session = Depends(get_db)):
 
 
 @app.get("/api/admin/sites/{site_id}")
-def get_site(site_id: str, db: Session = Depends(get_db)):
+def get_site(site_id: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     s = db.query(Site).filter_by(id=site_id).first()
     if not s:
         raise HTTPException(status_code=404)
@@ -2657,7 +2660,7 @@ def get_site(site_id: str, db: Session = Depends(get_db)):
 
 
 @app.put("/api/admin/sites/{site_id}")
-def update_site(site_id: str, payload: dict, db: Session = Depends(get_db)):
+def update_site(site_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     s = db.query(Site).filter_by(id=site_id).first()
     if not s:
         raise HTTPException(status_code=404)
@@ -2673,7 +2676,7 @@ def update_site(site_id: str, payload: dict, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/admin/sites/{site_id}")
-def delete_site(site_id: str, db: Session = Depends(get_db)):
+def delete_site(site_id: str, _user=require_role("super_admin"), db: Session = Depends(get_db)):
     s = db.query(Site).filter_by(id=site_id).first()
     if not s:
         raise HTTPException(status_code=404)
@@ -3287,13 +3290,13 @@ def captures_timeline(
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/admin/settings")
-def get_settings(db: Session = Depends(get_db)):
+def get_settings(_user=require_role("admin"), db: Session = Depends(get_db)):
     """Returner alle system settings."""
     rows = db.execute(text("SELECT key, value FROM settings")).fetchall()
     return {row[0]: row[1] for row in rows}
 
 @app.put("/api/admin/settings")
-def update_settings(payload: dict, db: Session = Depends(get_db)):
+def update_settings(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
     """Opdater system settings."""
     for key, value in payload.items():
         existing = db.execute(text("SELECT id FROM settings WHERE key = :k"), {"k": key}).fetchone()
@@ -3333,7 +3336,7 @@ def assign_device(device_id: str, payload: dict, db: Session = Depends(get_db)):
 # ── Slet capture ──────────────────────────────────────────────────────────────
 
 @app.delete("/api/admin/captures/{capture_id}")
-def delete_capture(capture_id: int, db: Session = Depends(get_db)):
+def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Slet et billede: fil, thumbnail, sidecar JSON og DB-record."""
     capture = db.query(Capture).filter(Capture.id == capture_id).first()
     if not capture:
