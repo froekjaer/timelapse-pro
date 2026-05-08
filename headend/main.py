@@ -2913,7 +2913,7 @@ def delete_device(device_id: str, _user=require_role("super_admin"), db: Session
 
 
 @app.post("/api/admin/devices/{device_id}/clear-update")
-def clear_update_flag(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
+def clear_update_flag(device_id: str, _auth: None = Depends(_verify_device_token), db: Session = Depends(get_db)):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
