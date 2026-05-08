@@ -802,27 +802,39 @@ class EdgeAgent:
 
 
     def _collect_update_info(self) -> dict:
-        """Saml OS opdateringsinfo fra lokal apt-cache og git commit.
-        Ingen internet nødvendig — bruger kun lokale data."""
+        """Saml OS opdateringsinfo og git commit. Ingen internet nødvendig."""
         info = {"os_security_count": 0, "os_updates_count": 0, "app_version": "ukendt"}
+
+        # OS opdateringer — læs Ubuntu's pre-beregnede update-notifier fil
         try:
-            r = subprocess.run(
-                ["apt", "list", "--upgradable"],
-                capture_output=True, text=True, timeout=15
-            )
-            lines = [l for l in r.stdout.splitlines() if "/" in l]
-            info["os_security_count"] = len([l for l in lines if "security" in l.lower()])
-            info["os_updates_count"]  = max(0, len(lines) - info["os_security_count"])
+            notifier = Path("/var/lib/update-notifier/updates-available")
+            if notifier.exists():
+                txt = notifier.read_text()
+                for line in txt.splitlines():
+                    if "security" in line.lower():
+                        nums = [int(w) for w in line.split() if w.isdigit()]
+                        if nums:
+                            info["os_security_count"] = nums[0]
+                    elif "update" in line.lower():
+                        nums = [int(w) for w in line.split() if w.isdigit()]
+                        if nums:
+                            info["os_updates_count"] = max(0, nums[0] - info["os_security_count"])
         except Exception as e:
-            log.debug("apt check fejl: %s", e)
+            log.debug("update-notifier læsning fejl: %s", e)
+
+        # App version — git commit hash
         try:
+            import os as _os
+            repo = Path(_os.path.dirname(_os.path.abspath(__file__))).parent
             r = subprocess.run(
-                ["git", "-C", "/opt/timelapse", "rev-parse", "HEAD"],
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
                 capture_output=True, text=True, timeout=5
             )
-            info["app_version"] = r.stdout.strip()[:7]
+            if r.returncode == 0 and r.stdout.strip():
+                info["app_version"] = r.stdout.strip()[:7]
         except Exception as e:
             log.debug("git rev-parse fejl: %s", e)
+
         return info
 
     def _send_heartbeat(self) -> None:
