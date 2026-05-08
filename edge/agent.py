@@ -650,19 +650,55 @@ class EdgeAgent:
 
     def _pull_config(self) -> None:
         """Fetch and apply updated config from headend."""
+        old_version = self._cfg.get("config_version", "")
         ok, data = self._api.fetch_config()
         if ok and data:
             try:
+                new_version = data.get("config_version", "")
                 self._cfg_mgr.save_config(data)
                 self._cfg = self._cfg_mgr.load()
-                # Update uploader with new customer/site names
-                self._uploader.update_config(data)  # brug rå headend data med SFTP
-                log.info("Config updated from headend")
+                self._uploader.update_config(data)
+
+                if new_version != old_version:
+                    log.info("Config version ændret %s→%s — anvender live", old_version[:8], new_version[:8])
+                    self._apply_config_changes(data)
+                else:
+                    log.debug("Config uændret — ingen live apply nødvendig")
             except Exception as exc:
                 log.warning("Could not apply headend config: %s", exc)
         else:
             log.info("Config pull failed — using cached config")
         self._last_config_pull = datetime.now(timezone.utc)
+
+    def _apply_config_changes(self, data: dict) -> None:
+        """Anvend config-ændringer live uden genstart."""
+        # SSH tunnel
+        try:
+            if hasattr(self, "_tunnel_mgr") and self._tunnel_mgr:
+                tunnel_cfg = data.get("ssh_tunnel", {})
+                self._tunnel_mgr.apply_config(tunnel_cfg)
+                log.info("SSH tunnel config anvendt live")
+        except Exception as exc:
+            log.warning("SSH tunnel live apply fejl: %s", exc)
+
+        # Lab mode
+        try:
+            debug_cfg = data.get("debug_mode", {})
+            lab_now = debug_cfg.get("enabled", False)
+            if lab_now:
+                log.info("Lab mode aktiveret via config-ændring")
+            else:
+                log.info("Lab mode deaktiveret via config-ændring")
+        except Exception as exc:
+            log.warning("Lab mode live apply fejl: %s", exc)
+
+        # Capture interval (træder i kraft ved næste søvncyklus)
+        try:
+            interval = self._cfg.get("schedule", {}).get("interval_minutes")
+            if interval:
+                log.info("Capture interval opdateret til %s min", interval)
+        except Exception:
+            pass
 
     def _build_camera_commands(self) -> list[str]:
         """Byg kamera kommandoliste fra hierarkisk config.
