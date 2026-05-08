@@ -20,6 +20,7 @@ import LoginPage from './pages/LoginPage'
 import UsersPage from './pages/UsersPage'
 import KeyManagementPage from './pages/KeyManagementPage'
 import { SshTunnelPage } from './pages/SshTunnelPage'
+import { UpdatesPage } from './pages/UpdatesPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 function RequireAuth({ children }: { children: ReactElement }) {
@@ -60,6 +61,7 @@ function AppRoutes() {
                 <Route path="/users" element={<UsersPage />} />
                 <Route path="/key-management" element={<KeyManagementPage />} />
                 <Route path="/ssh-tunnel" element={<SshTunnelPage />} />
+                <Route path="/updates" element={<UpdatesPage />} />
               </Routes>
             </main>
           </div>

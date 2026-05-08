@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { Camera, Settings, Database, Globe, Users, LogOut, Shield, Key, Terminal } from 'lucide-react'
+import { Camera, Settings, Database, Globe, Users, LogOut, Shield, Key, Terminal, Package } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export function Navbar() {
@@ -19,6 +19,7 @@ export function Navbar() {
     hasRole('super_admin', 'admin') && { to: '/users',            label: 'Brugere',        icon: Users },
     hasRole('super_admin', 'admin') && { to: '/key-management',   label: 'Nøgler',         icon: Key },
     hasRole('super_admin', 'admin') && { to: '/ssh-tunnel',       label: 'SSH Tunnels',    icon: Terminal },
+    hasRole('super_admin', 'admin') && { to: '/updates',          label: 'Opdateringer',   icon: Package },
   ].filter(Boolean) as { to: string; label: string; icon: any }[]
 
   function handleLogout() {
