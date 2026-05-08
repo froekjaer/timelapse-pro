@@ -13,6 +13,30 @@ fi
 touch "$LOCK_FILE"
 trap "rm -f $LOCK_FILE" EXIT
 
+import_gpg_key() {
+    local keyfile="$REPO_DIR/deployment/keys/timelapse-pro-public.asc"
+    if [ -f "$keyfile" ]; then
+        gpg --batch --import "$keyfile" 2>/dev/null || true
+    fi
+}
+
+verify_latest_signed_tag() {
+    local tag
+    tag=$(git -C "$REPO_DIR" tag --sort=-version:refname | head -n1)
+    if [ -z "$tag" ]; then
+        log "ADVARSEL: Ingen tags fundet — springer GPG-check over"
+        return 0
+    fi
+    log "Verificerer GPG-signatur paa tag: $tag"
+    if git -C "$REPO_DIR" tag -v "$tag" 2>&1 | grep -qE "Good signature|God underskrift"; then
+        log "GPG OK: $tag"
+    else
+        log "FEJL: Ugyldig GPG-signatur paa $tag — opdatering AFBRUDT"
+        exit 1
+    fi
+}
+
+
 cd "$REPO_DIR"
 
 CURRENT=$(git rev-parse HEAD)
@@ -29,6 +53,9 @@ if [ "$CURRENT" = "$REMOTE" ]; then
 fi
 
 log "Opdaterer: ${CURRENT:0:7} → ${REMOTE:0:7}"
+
+import_gpg_key
+verify_latest_signed_tag
 
 GIT_DIR="$REPO_DIR/.git" GIT_WORK_TREE="$REPO_DIR" git pull origin main --quiet
 find /opt/timelapse/edge -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
