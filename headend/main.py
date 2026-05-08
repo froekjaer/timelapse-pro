@@ -761,6 +761,65 @@ def update_device_config(
     return {"status": "ok", "device_id": device_id, "config": existing}
 
 
+
+def _process_update_report(device_id: str, diag: dict, db) -> None:
+    """Opret PendingUpdate-poster baseret på update-info fra heartbeat."""
+    from database import PendingUpdate
+    updates = diag.get("updates", {})
+    if not updates:
+        return
+
+    os_security  = int(updates.get("os_security_count", 0))
+    os_total     = int(updates.get("os_updates_count", 0))
+    edge_version = updates.get("app_version", "")
+
+    # Headend's egen git-commit som reference
+    try:
+        import subprocess as _sp
+        headend_version = _sp.run(
+            ["git", "-C", "/Users/peter/projects/timelapse-pro", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip()[:7]
+    except Exception:
+        headend_version = ""
+
+    def _has_pending(update_type: str) -> bool:
+        return db.query(PendingUpdate).filter_by(
+            update_type=update_type, scope="device",
+            scope_id=device_id, status="pending"
+        ).first() is not None
+
+    if os_security > 0 and not _has_pending("os_security"):
+        db.add(PendingUpdate(
+            update_type = "os_security",
+            version     = f"{os_security} pakker",
+            description = f"{os_security} sikkerhedsopdatering(er) klar til installation (apt)",
+            severity    = "high" if os_security >= 10 else "medium",
+            scope="device", scope_id=device_id, status="pending",
+        ))
+        log.info("PendingUpdate oprettet: os_security for %s (%d pakker)", device_id, os_security)
+
+    if os_total > 0 and not _has_pending("os_updates"):
+        db.add(PendingUpdate(
+            update_type = "os_updates",
+            version     = f"{os_total} pakker",
+            description = f"{os_total} funktionelle OS-opdatering(er) klar via apt",
+            severity    = "low",
+            scope="device", scope_id=device_id, status="pending",
+        ))
+        log.info("PendingUpdate oprettet: os_updates for %s (%d pakker)", device_id, os_total)
+
+    if edge_version and headend_version and edge_version != headend_version:
+        if not _has_pending("app_updates"):
+            db.add(PendingUpdate(
+                update_type = "app_updates",
+                version     = headend_version,
+                description = f"TimeLapse Pro opdatering tilgængelig (edge: {edge_version} → headend: {headend_version})",
+                severity    = "medium",
+                scope="device", scope_id=device_id, status="pending",
+            ))
+            log.info("PendingUpdate oprettet: app_updates for %s", device_id)
+
 # ── Heartbeat ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/heartbeat/{device_id}")
@@ -821,6 +880,10 @@ def heartbeat(
         cam_config_json = json.dumps(cam_config) if cam_config else None,
         cam_drift_json  = json.dumps(cam.get("camera_config_drift", [])),
     ))
+    db.commit()
+
+    log.info("UPDATE DEBUG: updates felt=%s", diag.get('updates'))
+    _process_update_report(device_id, diag, db)
     db.commit()
 
     log.info(
@@ -1326,6 +1389,84 @@ def report_update(payload: dict, db: Session = Depends(get_db)):
 
 
 # ════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/updates/available")
+def report_available_updates(
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """Edge rapporterer tilgængelige opdateringer — opretter PendingUpdate-poster."""
+    from database import PendingUpdate
+
+    device_id          = payload.get("device_id", "unknown")
+    os_security_count  = int(payload.get("os_security_count", 0))
+    os_updates_count   = int(payload.get("os_updates_count", 0))
+    app_version        = payload.get("app_version", "")
+    app_behind_commits = int(payload.get("app_behind_commits", 0))
+    app_security       = bool(payload.get("app_security", False))
+
+    created = []
+
+    def _has_pending(update_type: str) -> bool:
+        return db.query(PendingUpdate).filter_by(
+            update_type=update_type,
+            scope="device",
+            scope_id=device_id,
+            status="pending",
+        ).first() is not None
+
+    if os_security_count > 0 and not _has_pending("os_security"):
+        db.add(PendingUpdate(
+            update_type = "os_security",
+            version     = f"{os_security_count} pakker",
+            description = f"{os_security_count} sikkerhedsopdatering(er) klar til installation via apt",
+            severity    = "high" if os_security_count >= 10 else "medium",
+            scope       = "device",
+            scope_id    = device_id,
+            status      = "pending",
+        ))
+        created.append("os_security")
+
+    if os_updates_count > 0 and not _has_pending("os_updates"):
+        db.add(PendingUpdate(
+            update_type = "os_updates",
+            version     = f"{os_updates_count} pakker",
+            description = f"{os_updates_count} funktionelle OS-opdatering(er) klar via apt",
+            severity    = "low",
+            scope       = "device",
+            scope_id    = device_id,
+            status      = "pending",
+        ))
+        created.append("os_updates")
+
+    if app_security and not _has_pending("app_security"):
+        db.add(PendingUpdate(
+            update_type = "app_security",
+            version     = app_version or "ukendt",
+            description = "TimeLapse Pro sikkerhedsopdatering tilgængelig",
+            severity    = "critical",
+            scope       = "device",
+            scope_id    = device_id,
+            status      = "pending",
+        ))
+        created.append("app_security")
+
+    if app_behind_commits > 0 and not _has_pending("app_updates"):
+        db.add(PendingUpdate(
+            update_type = "app_updates",
+            version     = app_version or "ukendt",
+            description = f"TimeLapse Pro er {app_behind_commits} commit(s) bagud",
+            severity    = "medium",
+            scope       = "device",
+            scope_id    = device_id,
+            status      = "pending",
+        ))
+        created.append("app_updates")
+
+    db.commit()
+    log.info("Update rapport fra %s: %s", device_id, created or "ingen nye")
+    return {"ok": True, "created": created}
+
 # ── PROVISION PACKAGE (Sprint C) ─────────────────────────────────────
 # ════════════════════════════════════════════════════════════════════════
 

@@ -800,6 +800,31 @@ class EdgeAgent:
             log.warning("Opdatering fejl: %s", exc)
 
 
+
+    def _collect_update_info(self) -> dict:
+        """Saml OS opdateringsinfo fra lokal apt-cache og git commit.
+        Ingen internet nødvendig — bruger kun lokale data."""
+        info = {"os_security_count": 0, "os_updates_count": 0, "app_version": "ukendt"}
+        try:
+            r = subprocess.run(
+                ["apt", "list", "--upgradable"],
+                capture_output=True, text=True, timeout=15
+            )
+            lines = [l for l in r.stdout.splitlines() if "/" in l]
+            info["os_security_count"] = len([l for l in lines if "security" in l.lower()])
+            info["os_updates_count"]  = max(0, len(lines) - info["os_security_count"])
+        except Exception as e:
+            log.debug("apt check fejl: %s", e)
+        try:
+            r = subprocess.run(
+                ["git", "-C", "/opt/timelapse", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5
+            )
+            info["app_version"] = r.stdout.strip()[:7]
+        except Exception as e:
+            log.debug("git rev-parse fejl: %s", e)
+        return info
+
     def _send_heartbeat(self) -> None:
         """Collect diagnostics and send heartbeat to headend."""
         try:
@@ -811,6 +836,7 @@ class EdgeAgent:
             if hasattr(self, "_last_cam_diag") and self._last_cam_diag:
                 diag_data["camera"] = self._last_cam_diag
 
+            diag_data["updates"] = self._collect_update_info()
             ok, _ = self._api.send_heartbeat(diag_data, capture_stats)
             if ok:
                 log.info("Heartbeat sent OK")
