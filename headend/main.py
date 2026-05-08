@@ -776,8 +776,9 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
     # Headend's egen git-commit som reference
     try:
         import subprocess as _sp
+        repo_dir = _os.getenv("TIMELAPSE_REPO_DIR", "/Users/peter/projects/timelapse-pro")
         headend_version = _sp.run(
-            ["git", "-C", "/Users/peter/projects/timelapse-pro", "rev-parse", "HEAD"],
+            ["git", "-C", repo_dir, "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=5
         ).stdout.strip()[:7]
     except Exception:
