@@ -287,12 +287,23 @@ def get_current_user(
     user = db.query(User).filter_by(username=payload.get("sub"), is_active=True).first()
     return user
 
+# Rollehierarki — højere roller inkluderer lavere rollers rettigheder
+_ROLE_HIERARCHY = {
+    "super_admin": {"super_admin", "admin", "operator", "viewer"},
+    "admin":       {"admin", "operator", "viewer"},
+    "operator":    {"operator", "viewer"},
+    "viewer":      {"viewer"},
+}
+
 def require_role(*roles: str):
-    """FastAPI dependency factory — kræver en af de angivne roller."""
+    """FastAPI dependency factory — kræver en af de angivne roller.
+    Rollehierarki: super_admin > admin > operator > viewer.
+    """
     def _check(user=Depends(get_current_user)):
         if user is None:
             raise HTTPException(status_code=401, detail="Ikke autentificeret")
-        if user.role not in roles:
+        allowed = _ROLE_HIERARCHY.get(user.role, {user.role})
+        if not allowed.intersection(set(roles)):
             raise HTTPException(status_code=403, detail=f"Kræver rolle: {', '.join(roles)}")
         return user
     return Depends(_check)
