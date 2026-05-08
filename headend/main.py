@@ -2995,7 +2995,7 @@ def trigger_edge_backup(device_id: str, _user=require_role("admin"), db: Session
 
 
 @app.post("/api/admin/backup/edge-complete/{device_id}")
-def edge_backup_complete(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def edge_backup_complete(device_id: str, payload: dict, _user=require_role("operator"), db: Session = Depends(get_db)):
     """Edge rapporterer at backup er komplet — flyt til backup mappe lokalt på Pi 5."""
     import os as _os
     import shutil as _sh
@@ -3226,6 +3226,7 @@ def captures_timeline(
     year:  Optional[int] = None,
     month: Optional[int] = None,
     day:   Optional[int] = None,
+    _user=require_role("viewer"),
     db: Session = Depends(get_db),
 ):
     """
@@ -3381,7 +3382,7 @@ def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = D
 
 
 @app.post("/api/admin/captures/bulk-delete")
-def delete_captures_bulk(payload: dict, db: Session = Depends(get_db)):
+def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Slet flere captures på én gang. payload: {ids: [int]}"""
     ids = payload.get("ids", [])
     if not ids:
@@ -3442,6 +3443,7 @@ def get_diagnostics_history(
     device_id: str,
     days: int = 7,
     limit: int = 500,
+    _user=require_role("viewer"),
     db: Session = Depends(get_db),
 ):
     """Hent diagnostics time-series for en device (seneste N dage)."""
@@ -3521,7 +3523,7 @@ def get_exif_stats(device_id: str, _user=require_role("viewer"), db: Session = D
 # ── Slet captures ─────────────────────────────────────────────────────────────
 
 @app.delete("/api/admin/captures/{capture_id}")
-def delete_capture(capture_id: int, db: Session = Depends(get_db)):
+def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Slet et billede: fil, thumbnail, sidecar og DB-record."""
     capture = db.query(Capture).filter(Capture.id == capture_id).first()
     if not capture:
@@ -3538,7 +3540,7 @@ def delete_capture(capture_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/admin/captures/bulk-delete")
-def delete_captures_bulk(payload: dict, db: Session = Depends(get_db)):
+def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Bulk-slet captures. Body: {ids: [int]}"""
     ids = payload.get("ids", [])
     if not ids:
