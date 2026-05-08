@@ -28,7 +28,13 @@ interface Site {
 }
 
 function api(path: string) {
-  return fetch(`${getApiUrl()}${path}`).then(r => r.json())
+  const token = localStorage.getItem('tl_token') ?? ''
+  return fetch(`${getApiUrl()}${path}`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  }).then(r => {
+    if (!r.ok) throw new Error(`${r.status}`)
+    return r.json()
+  })
 }
 
 const TZ = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'

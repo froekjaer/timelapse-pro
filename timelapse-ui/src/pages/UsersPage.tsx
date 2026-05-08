@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react'
 import {
   Users, Plus, Trash2, Key, Shield, Check, AlertTriangle,
-  Eye, EyeOff, Settings, ChevronDown, ChevronRight, X
+  Eye, EyeOff, Settings, ChevronDown, ChevronRight, X, Pencil
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -185,6 +185,13 @@ export default function UsersPage() {
   const [changePwId, setChangePwId] = useState<number | null>(null)
   const [newPwFor,   setNewPwFor]   = useState('')
   const [changePwErr,setChangePwErr]= useState<string | null>(null)
+  const [editId,     setEditId]     = useState<number | null>(null)
+  const [editRole,   setEditRole]   = useState<Role>('viewer')
+  const [editEmail,  setEditEmail]  = useState('')
+  const [editCust,   setEditCust]   = useState('')
+  const [editActive, setEditActive] = useState(true)
+  const [editErr,    setEditErr]    = useState<string | null>(null)
+  const [editSaving, setEditSaving] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -228,6 +235,28 @@ export default function UsersPage() {
     if (!confirm('Slet bruger?')) return
     await api(`/api/admin/users/${id}`, { method: 'DELETE' }).catch(e => alert(e.message))
     load()
+  }
+
+  function startEdit(u: UserRec) {
+    setEditId(u.id)
+    setEditRole(u.role)
+    setEditEmail(u.email ?? '')
+    setEditCust(u.customer_id ?? '')
+    setEditActive(u.is_active)
+    setEditErr(null)
+  }
+
+  async function saveEdit(id: number) {
+    setEditSaving(true); setEditErr(null)
+    try {
+      await api(`/api/admin/users/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ role: editRole, email: editEmail || null, customer_id: editCust || null, is_active: editActive })
+      })
+      setEditId(null)
+      load()
+    } catch (e: any) { setEditErr(e.message) }
+    finally { setEditSaving(false) }
   }
 
   async function changePassword(id: number) {
@@ -406,10 +435,63 @@ export default function UsersPage() {
                     {policy && newPwFor && <PwStrength pw={newPwFor} policy={policy} />}
                   </div>
                 )}
+
+                {editId === u.id && (
+                  <div className="mt-3 space-y-2 border-t border-gray-50 pt-3">
+                    {editErr && (
+                      <p className="text-xs text-red-600 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" /> {editErr}
+                      </p>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-gray-400 mb-1 block">Rolle</label>
+                        <select value={editRole} onChange={e => setEditRole(e.target.value as Role)}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-300">
+                          {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-400 mb-1 block">Email</label>
+                        <input value={editEmail} onChange={e => setEditEmail(e.target.value)}
+                          placeholder="email@timelapse.local"
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-300" />
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-400 mb-1 block">Kunde</label>
+                        <select value={editCust} onChange={e => setEditCust(e.target.value)}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-violet-300">
+                          <option value="">Global adgang</option>
+                          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="flex items-end pb-0.5">
+                        <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-600">
+                          <input type="checkbox" checked={editActive} onChange={e => setEditActive(e.target.checked)}
+                            className="rounded border-gray-300" />
+                          Aktiv konto
+                        </label>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button onClick={() => saveEdit(u.id)} disabled={editSaving}
+                        className="px-3 py-1.5 bg-violet-500 text-white text-xs rounded-lg disabled:opacity-50">
+                        {editSaving ? 'Gemmer…' : 'Gem ændringer'}
+                      </button>
+                      <button onClick={() => setEditId(null)}
+                        className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg">Annuller</button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button onClick={() => startEdit(u)}
+                  title="Rediger bruger"
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors">
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
                 <button onClick={() => { setChangePwId(changePwId === u.id ? null : u.id); setNewPwFor(''); setChangePwErr(null) }}
                   title="Skift adgangskode"
                   className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">

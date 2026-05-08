@@ -4,8 +4,9 @@ import { ArrowLeft, Globe, Save, CheckCircle, RotateCcw } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
+  const token = localStorage.getItem('tl_token') ?? ''
   return fetch(`${getApiUrl()}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
     ...opts
   }).then(r => {
     if (!r.ok) throw new Error(`${r.status}`)
