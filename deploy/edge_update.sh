@@ -34,3 +34,20 @@ GIT_DIR="$REPO_DIR/.git" GIT_WORK_TREE="$REPO_DIR" git pull origin main --quiet
 find /opt/timelapse/edge -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 log "Opdatering OK — genstarter timelapse-edge"
 sudo systemctl restart timelapse-edge
+
+# Health-check — rollback ved fejl
+sleep 30
+if ! systemctl is-active --quiet timelapse-edge; then
+    log "FEJL: timelapse-edge startede ikke — ruller tilbage til $CURRENT"
+    GIT_DIR="$REPO_DIR/.git" GIT_WORK_TREE="$REPO_DIR" git checkout "$CURRENT" --quiet
+    find /opt/timelapse/edge -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+    sudo systemctl restart timelapse-edge
+    sleep 10
+    if systemctl is-active --quiet timelapse-edge; then
+        log "Rollback OK — kører igen på $CURRENT"
+    else
+        log "KRITISK: Rollback fejlede — manuel indgriben krævet"
+    fi
+    exit 1
+fi
+log "Health-check OK — opdatering vellykket til ${REMOTE:0:7}"
