@@ -815,6 +815,11 @@ class EdgeAgent:
             if ok:
                 log.info("Heartbeat sent OK")
                 self._connectivity.report_success()
+                # Tjek om config er ændret siden sidst
+                hb_version = (_ or {}).get("config_version", "") if isinstance(_, dict) else ""
+                if hb_version and hb_version != self._cfg.get("config_version", ""):
+                    log.info("Config version ændret via heartbeat — henter ny config")
+                    self._pull_config()
             else:
                 log.warning("Heartbeat failed — headend unreachable")
                 self._connectivity.report_failure()
