@@ -1409,11 +1409,12 @@ def report_available_updates(
     created = []
 
     def _has_pending(update_type: str) -> bool:
-        return db.query(PendingUpdate).filter_by(
-            update_type=update_type,
-            scope="device",
-            scope_id=device_id,
-            status="pending",
+        from sqlalchemy import or_
+        return db.query(PendingUpdate).filter(
+            PendingUpdate.update_type == update_type,
+            PendingUpdate.scope == "device",
+            PendingUpdate.scope_id == device_id,
+            or_(PendingUpdate.status == "pending", PendingUpdate.status == "approved"),
         ).first() is not None
 
     if os_security_count > 0 and not _has_pending("os_security"):

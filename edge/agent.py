@@ -824,10 +824,10 @@ class EdgeAgent:
 
         # App version — git commit hash
         try:
-            import os as _os
-            repo = Path(_os.path.dirname(_os.path.abspath(__file__))).parent
-            r = subprocess.run(
-                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            import os as _os, subprocess as _sub
+            repo = Path(_os.getenv('TIMELAPSE_REPO_DIR', '/opt/timelapse'))
+            r = _sub.run(
+                ["/usr/bin/git", "-c", "safe.directory=/opt/timelapse", "-C", str(repo), "rev-parse", "HEAD"],
                 capture_output=True, text=True, timeout=5
             )
             if r.returncode == 0 and r.stdout.strip():
