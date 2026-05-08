@@ -730,6 +730,9 @@ def update_device_config(
             existing[section] = values
 
     device.device_config = json.dumps(existing, ensure_ascii=False)
+    # Genberegn config_version så edge opdager ændringen
+    import hashlib as _hl
+    device.config_version = _hl.md5(device.device_config.encode()).hexdigest()
     db.commit()
     log.info("Updated device config for %s: %s", device_id, list(config.keys()))
     return {"status": "ok", "device_id": device_id, "config": existing}
