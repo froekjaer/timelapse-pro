@@ -2437,26 +2437,29 @@ def _run_backup():
     global _backup_status
     _backup_status = {"running": True, "progress": [], "file": None, "error": None}
     try:
-        import datetime, os, json, sqlite3 as _sqlite3
+        import datetime, os, json
         date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         nas_path = _get_nas_path()
         base_dir = nas_path if (nas_path and os.path.isdir(nas_path)) else "/tmp"
         backup_dir = f"{base_dir}/timelapse-backup-headend-{date}"
         os.makedirs(f"{backup_dir}/database", exist_ok=True)
         os.makedirs(f"{backup_dir}/configs", exist_ok=True)
-        os.makedirs(f"{backup_dir}/logs", exist_ok=True)
 
-        _backup_status["progress"].append("Database backup...")
-        db_src = "/home/peter/headend/timelapse_headend.db"
-        if os.path.exists(db_src):
-            _shutil.copy2(db_src, f"{backup_dir}/database/timelapse_headend.db")
-            conn = _sqlite3.connect(db_src)
-            with open(f"{backup_dir}/database/timelapse_headend_dump.sql", "w") as f:
-                for line in conn.iterdump():
-                    f.write(line + "\n")
-            conn.close()
-            _backup_status["progress"].append("Database OK")
-
+        _backup_status["progress"].append("Database backup (pg_dump)...")
+        db_url = os.environ.get("DATABASE_URL", "postgresql://timelapse@localhost/timelapse_db")
+        db_name = db_url.rstrip("/").split("/")[-1].split("?")[0]
+        db_user = db_url.split("://")[1].split("@")[0].split(":")[0]
+        sql_path = f"{backup_dir}/database/timelapse_db_{date}.sql"
+        r = _subprocess.run(
+            ["/opt/homebrew/bin/pg_dump", "-U", db_user, "-h", "localhost", "--no-password", db_name],
+            capture_output=True, text=True
+        )
+        if r.returncode == 0:
+            with open(sql_path, "w") as f:
+                f.write(r.stdout)
+            _backup_status["progress"].append(f"Database OK ({len(r.stdout)//1024} KB SQL)")
+        else:
+            raise Exception(f"pg_dump fejlede: {r.stderr[:300]}")
         _backup_status["progress"].append("Config backup...")
         for f in ["timelapse-headend.service", "timelapse-deploy.service", "timelapse-deploy.timer"]:
             src = f"/etc/systemd/system/{f}"
