@@ -17,10 +17,9 @@
 """
 TimeLapse Pro — Headend Database
 ==================================
-SQLite for test phase, PostgreSQL-ready for production.
-Switch by changing DATABASE_URL in .env:
-  SQLite:     sqlite:///./timelapse_headend.db
-  PostgreSQL: postgresql://user:pass@localhost/timelapse_db
+Produktion: PostgreSQL (timelapse_db).
+DATABASE_URL sættes via launchd plist:
+  postgresql://timelapse@localhost/timelapse_db
 """
 
 from __future__ import annotations

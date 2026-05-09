@@ -104,7 +104,7 @@ export function BackupPage() {
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
         <h2 className="text-sm font-semibold text-gray-700 mb-1">Headend backup</h2>
         <p className="text-xs text-gray-400 mb-4">
-          Gemmer database, konfiguration og systeminfo fra Raspberry Pi 5.
+          Gemmer database, konfiguration og systeminfo fra Mac Mini.
         </p>
         <div className="flex gap-3 flex-wrap">
           <button onClick={triggerBackup} disabled={isRunning || triggering}
@@ -192,7 +192,7 @@ export function BackupPage() {
         <h2 className="text-sm font-semibold text-gray-600 mb-3">Hvad gemmes i backup</h2>
         <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
           {[
-            ['SQLite database', 'Alle enheder, captures, diagnostics'],
+            ['PostgreSQL database', 'Alle enheder, captures, diagnostics'],
             ['SQL dump', 'Gendannelig tekstversion af DB'],
             ['Device configs', 'JSON konfiguration per enhed'],
             ['Systemd services', 'timelapse-headend + deploy'],
