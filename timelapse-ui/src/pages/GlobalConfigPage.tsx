@@ -21,6 +21,7 @@ interface ConfigDefaults {
   storage:     Record<string, unknown>
   diagnostics: Record<string, unknown>
   system:      Record<string, unknown>
+  session_policy: Record<string, unknown>
 }
 
 interface FieldDef {
@@ -178,6 +179,7 @@ export function GlobalConfigPage() {
       storage:     { local_path: '/data/captures', circular_buffer_gb: 50, db_path: '/data/timelapse_edge.db' },
       diagnostics: { heartbeat_interval_minutes: 60, config_poll_interval_minutes: 5 },
       system:      { error_recovery_sleep_s: 30, min_sleep_s: 60, api_timeout_s: 15 },
+      session_policy: { session_duration_hours: 12, remember_me_days: 30, absolute_max_days: 90, rolling_enabled: true, remember_me_allowed: true, mfa_required: false, webauthn_required: false },
     }
     setCfg(defaults)
   }

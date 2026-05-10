@@ -316,6 +316,39 @@ def require_role(*roles: str):
 
 
 
+
+@app.get("/api/auth/session-policy")
+def get_session_policy(request: Request, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Returnerer resolved session policy for den indloggede bruger."""
+    if current_user is None:
+        raise HTTPException(status_code=401)
+
+    policy = {
+        "session_duration_hours": 12,
+        "remember_me_days":       30,
+        "absolute_max_days":      90,
+        "rolling_enabled":        True,
+        "remember_me_allowed":    True,
+        "mfa_required":           False,
+        "webauthn_required":      False,
+    }
+
+    try:
+        defaults = db.query(ConfigDefaults).first()
+        if defaults and defaults.session_policy:
+            policy.update(json.loads(defaults.session_policy))
+
+        if current_user.customer_id:
+            customer = db.query(Customer).filter_by(id=current_user.customer_id).first()
+            if customer and customer.config_overrides:
+                overrides = json.loads(customer.config_overrides)
+                if "session_policy" in overrides:
+                    policy.update(overrides["session_policy"])
+    except Exception as e:
+        log.warning("session_policy resolver fejl: %s", e)
+
+    return policy
+
 # ── WebAuthn / FIDO2 ───────────────────────────────────────────────────────
 
 WEBAUTHN_RP_ID   = os.getenv("WEBAUTHN_RP_ID",   "timelapse.froekjaer.dk")
@@ -645,7 +678,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         mfa_token = _create_token({"sub": user.username, "type": "mfa_pending"}, expire_hours=5/60)
         log.info("Login MFA påkrævet: %s", user.username)
         return {"mfa_required": True, "mfa_token": mfa_token}
-    token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id})
+    token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id, "max_age": max_age})
     log.info("Login: %s (%s)", user.username, user.role)
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={
@@ -654,7 +687,20 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         "username":    user.username,
         "customer_id": user.customer_id,
     })
-    max_age = (30 * 24 * 3600) if req.remember else (JWT_EXPIRE_H * 3600)
+    # Hent session policy
+    try:
+        defaults = db.query(ConfigDefaults).first()
+        sp = json.loads(defaults.session_policy or "{}") if defaults and defaults.session_policy else {}
+    except Exception:
+        sp = {}
+    remember_me_days      = int(sp.get("remember_me_days",       30))
+    session_duration_hours = int(sp.get("session_duration_hours", JWT_EXPIRE_H))
+    remember_me_allowed   = bool(sp.get("remember_me_allowed",   True))
+
+    if req.remember and remember_me_allowed:
+        max_age = remember_me_days * 24 * 3600
+    else:
+        max_age = session_duration_hours * 3600
     cookie_val = (
         f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax;"
         f" Max-Age={max_age}"
@@ -985,7 +1031,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         defaults = db.query(ConfigDefaults).first()
         # Lag 1: config_defaults
         if defaults:
-            for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system"]:
+            for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
                 if hasattr(defaults, section):
                     val = getattr(defaults, section)
                     if val:
@@ -3276,6 +3322,7 @@ def _get_or_create_defaults(db: Session) -> ConfigDefaults:
             storage     = json.dumps({"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"}),
             diagnostics = json.dumps({"heartbeat_interval_minutes": 60, "config_poll_interval_minutes": 5}),
             system      = json.dumps({"error_recovery_sleep_s": 30, "min_sleep_s": 60, "api_timeout_s": 15}),
+            session_policy = json.dumps({"session_duration_hours": 12, "remember_me_days": 30, "absolute_max_days": 90, "rolling_enabled": True, "remember_me_allowed": True, "mfa_required": False, "webauthn_required": False}),
         )
         db.add(d); db.commit(); db.refresh(d)
     return d
@@ -3291,13 +3338,14 @@ def get_config_defaults(_user=require_role("admin"), db: Session = Depends(get_d
         "storage":     json.loads(d.storage     or "{}"),
         "diagnostics": json.loads(d.diagnostics or "{}"),
         "system":      json.loads(d.system      or "{}") if hasattr(d, "system") else {},
+        "session_policy": json.loads(d.session_policy or "{}") if hasattr(d, "session_policy") else {},
     }
 
 
 @app.put("/api/admin/config-defaults")
 def update_config_defaults(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
     d = _get_or_create_defaults(db)
-    for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system"]:
+    for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
         if section in payload and hasattr(d, section):
             setattr(d, section, json.dumps(payload[section]))
     db.commit()
