@@ -4,7 +4,8 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone } from 'lucide-react'
+import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
+import { startAuthentication } from '@simplewebauthn/browser'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
@@ -44,6 +45,36 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function handleWebAuthn() {
+    if (!username.trim()) { setError('Indtast brugernavn først'); return }
+    setError(null); setLoading(true)
+    try {
+      const opts = await fetch(`${(await import('../api/client')).getApiUrl()}/api/auth/webauthn/login-begin`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim() })
+      }).then(r => { if (!r.ok) throw new Error('Ingen registreret enhed for denne bruger'); return r.json() })
+
+      const result = await startAuthentication({ optionsJSON: opts })
+
+      const data = await fetch(`${(await import('../api/client')).getApiUrl()}/api/auth/webauthn/login-complete`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...result, username: username.trim() })
+      }).then(r => { if (!r.ok) throw new Error('Autentificering fejlede'); return r.json() })
+
+      const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
+      localStorage.setItem('tl_user', JSON.stringify(u))
+      const { login: _l, ...ctx } = useAuth()
+      navigate(from, { replace: true })
+      window.location.href = from
+    } catch (e: any) {
+      setError(e.message ?? 'WebAuthn fejlede')
+    } finally { setLoading(false) }
   }
 
   return (
@@ -129,6 +160,13 @@ export default function LoginPage() {
               <p className="text-xs text-gray-400 mt-1">Åbn din authenticator app og indtast den 6-cifrede kode</p>
             </div>
           )}
+
+          {/* WebAuthn / biometrisk login */}
+          <button type="button" onClick={handleWebAuthn} disabled={loading}
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 border border-gray-200 text-gray-600 text-sm font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50">
+            <Fingerprint className="w-4 h-4 text-sky-500" />
+            Log ind med Windows Hello / Touch ID
+          </button>
 
           {/* Submit */}
           <button type="submit" disabled={loading || !username || !password}

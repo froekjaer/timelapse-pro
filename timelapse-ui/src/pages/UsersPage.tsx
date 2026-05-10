@@ -4,8 +4,9 @@
 import { useState, useEffect } from 'react'
 import {
   Users, Plus, Trash2, Key, Shield, Check, AlertTriangle,
-  Eye, EyeOff, Settings, ChevronDown, ChevronRight, X, Pencil
+  Eye, EyeOff, Settings, ChevronDown, ChevronRight, X, Pencil, Fingerprint, Trash
 } from 'lucide-react'
+import { startRegistration } from '@simplewebauthn/browser'
 import { getApiUrl } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 
@@ -200,6 +201,11 @@ export default function UsersPage() {
   const [mfaCode,       setMfaCode]       = useState('')
   const [mfaErr,        setMfaErr]        = useState<string | null>(null)
   const [mfaSaving,     setMfaSaving]     = useState(false)
+  const [waId,          setWaId]          = useState<number | null>(null)
+  const [waDeviceName,  setWaDeviceName]  = useState('')
+  const [waCredentials, setWaCredentials] = useState<any[]>([])
+  const [waLoading,     setWaLoading]     = useState(false)
+  const [waErr,         setWaErr]         = useState<string | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -285,13 +291,45 @@ export default function UsersPage() {
   }
 
   async function disableMfa(id: number) {
-    if (!mfaCode) { setMfaErr('Indtast TOTP-kode for at deaktivere MFA'); return }
     setMfaSaving(true); setMfaErr(null)
     try {
-      await api('/api/auth/disable-mfa', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
+      await api('/api/auth/disable-mfa', { method: 'POST', body: JSON.stringify({ user_id: id }) })
       setMfaId(null); load()
     } catch (e: any) { setMfaErr(e.message) }
     finally { setMfaSaving(false) }
+  }
+
+  async function openWebAuthn(u: UserRec) {
+    setWaId(u.id); setWaErr(null); setWaDeviceName(''); setWaLoading(true)
+    try {
+      const creds = await api(`/api/auth/webauthn/credentials`)
+      setWaCredentials(creds)
+    } catch { setWaCredentials([]) }
+    finally { setWaLoading(false) }
+  }
+
+  async function registerWebAuthn() {
+    setWaErr(null); setWaLoading(true)
+    try {
+      const opts = await api('/api/auth/webauthn/register-begin', { method: 'POST', body: JSON.stringify({}) })
+      const result = await startRegistration({ optionsJSON: opts })
+      await api('/api/auth/webauthn/register-complete', {
+        method: 'POST',
+        body: JSON.stringify({ ...result, deviceName: waDeviceName || 'Denne enhed' })
+      })
+      const creds = await api('/api/auth/webauthn/credentials')
+      setWaCredentials(creds)
+      setWaDeviceName('')
+    } catch (e: any) {
+      setWaErr(e.message ?? 'Registrering fejlede')
+    } finally { setWaLoading(false) }
+  }
+
+  async function deleteWebAuthnCred(credId: number) {
+    try {
+      await api(`/api/auth/webauthn/credentials/${credId}`, { method: 'DELETE' })
+      setWaCredentials(prev => prev.filter(c => c.id !== credId))
+    } catch (e: any) { setWaErr(e.message) }
   }
 
   async function changePassword(id: number) {
@@ -537,16 +575,19 @@ export default function UsersPage() {
                       </div>
                     )}
                     <div className="flex items-center gap-2">
+                      {!u.mfa_enabled && (
                       <input type="text" inputMode="numeric" maxLength={6}
                         value={mfaCode} onChange={e => setMfaCode(e.target.value.replace(/[^0-9]/g, ''))}
                         placeholder="000000" autoFocus
                         className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono w-28 text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-violet-300" />
+                      )}
                       {!u.mfa_enabled ? (
                         <button onClick={() => confirmMfaSetup(u.id)} disabled={mfaSaving || mfaCode.length < 6}
                           className="px-3 py-1.5 bg-violet-500 text-white text-xs rounded-lg disabled:opacity-50">
                           {mfaSaving ? 'Aktiverer…' : 'Bekræft og aktiver'}
                         </button>
-                      ) : (
+                      ) : null}
+                      {u.mfa_enabled && (
                         <button onClick={() => disableMfa(u.id)} disabled={mfaSaving}
                           className="px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg disabled:opacity-50">
                           {mfaSaving ? 'Deaktiverer…' : 'Deaktiver MFA'}
@@ -559,6 +600,11 @@ export default function UsersPage() {
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button onClick={() => { setWaId(waId === u.id ? null : u.id); if (waId !== u.id) openWebAuthn(u) }}
+                  title="Windows Hello / Touch ID"
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
+                  <Fingerprint className="w-3.5 h-3.5" />
+                </button>
                 <button onClick={() => { setMfaId(mfaId === u.id ? null : u.id); if (mfaId !== u.id && !u.mfa_enabled) startMfaSetup(u.id) }}
                   title={u.mfa_enabled ? 'Administrer MFA' : 'Aktiver MFA'}
                   className={`p-1.5 rounded-lg transition-colors ${u.mfa_enabled ? 'text-green-500 hover:bg-green-50' : 'text-gray-400 hover:text-violet-600 hover:bg-violet-50'}`}>

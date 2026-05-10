@@ -35,7 +35,8 @@ load_dotenv()
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Integer,
-    String, Text, create_engine, event
+    String, Text, create_engine, event,
+    LargeBinary, BigInteger
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -256,6 +257,19 @@ class PendingUpdate(Base):
     approved_by = Column(String(100))
     deployed_at = Column(DateTime)
     rollback_at = Column(DateTime)
+
+
+class WebAuthnCredential(Base):
+    """FIDO2/WebAuthn credentials — Windows Hello, Touch ID, Face ID."""
+    __tablename__ = "webauthn_credentials"
+
+    id            = Column(Integer, primary_key=True)
+    user_id       = Column(Integer, nullable=False)
+    credential_id = Column(LargeBinary, nullable=False, unique=True)
+    public_key    = Column(LargeBinary, nullable=False)
+    sign_count    = Column(BigInteger, nullable=False, default=0)
+    device_name   = Column(String(200))
+    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class BootstrapToken(Base):

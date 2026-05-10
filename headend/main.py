@@ -315,6 +315,199 @@ def require_role(*roles: str):
 
 
 
+
+# ── WebAuthn / FIDO2 ───────────────────────────────────────────────────────
+
+WEBAUTHN_RP_ID   = os.getenv("WEBAUTHN_RP_ID",   "timelapse.froekjaer.dk")
+WEBAUTHN_RP_NAME = os.getenv("WEBAUTHN_RP_NAME",  "TimeLapse Pro")
+WEBAUTHN_ORIGIN  = os.getenv("WEBAUTHN_ORIGIN",   "https://timelapse.froekjaer.dk")
+
+@app.post("/api/auth/webauthn/register-begin")
+def webauthn_register_begin(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Trin 1: Generer WebAuthn registreringsudfordring."""
+    import webauthn
+    from webauthn.helpers.structs import (
+        AuthenticatorSelectionCriteria, UserVerificationRequirement,
+        ResidentKeyRequirement
+    )
+    from database import WebAuthnCredential
+    if current_user is None:
+        raise HTTPException(status_code=401)
+
+    existing = db.query(WebAuthnCredential).filter_by(user_id=current_user.id).all()
+    exclude_creds = [
+        webauthn.helpers.structs.PublicKeyCredentialDescriptor(id=c.credential_id)
+        for c in existing
+    ]
+
+    options = webauthn.generate_registration_options(
+        rp_id                    = WEBAUTHN_RP_ID,
+        rp_name                  = WEBAUTHN_RP_NAME,
+        user_id                  = str(current_user.id).encode(),
+        user_name                = current_user.username,
+        user_display_name        = current_user.username,
+        exclude_credentials      = exclude_creds,
+        authenticator_selection  = AuthenticatorSelectionCriteria(
+            user_verification    = UserVerificationRequirement.PREFERRED,
+            resident_key         = ResidentKeyRequirement.DISCOURAGED,
+        ),
+    )
+
+    import json as _json
+    opts_json = webauthn.options_to_json(options)
+    # Gem challenge i session (midlertidigt i DB via settings)
+    db.query(Settings).filter_by(key=f"wabauthn_challenge_{current_user.id}").delete()
+    db.add(Settings(key=f"wabauthn_challenge_{current_user.id}", value=opts_json))
+    db.commit()
+    return _json.loads(opts_json)
+
+@app.post("/api/auth/webauthn/register-complete")
+def webauthn_register_complete(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Trin 2: Valider og gem WebAuthn credential."""
+    import webauthn, json as _json
+    from database import WebAuthnCredential
+    if current_user is None:
+        raise HTTPException(status_code=401)
+
+    setting = db.query(Settings).filter_by(key=f"wabauthn_challenge_{current_user.id}").first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Ingen aktiv udfordring")
+
+    opts = _json.loads(setting.value)
+    challenge = webauthn.base64url_to_bytes(opts["challenge"])
+
+    try:
+        verification = webauthn.verify_registration_response(
+            credential          = payload,
+            expected_challenge  = challenge,
+            expected_rp_id      = WEBAUTHN_RP_ID,
+            expected_origin     = WEBAUTHN_ORIGIN,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Verifikation fejlede: {e}")
+
+    device_name = payload.get("deviceName", "Ukendt enhed")
+    db.add(WebAuthnCredential(
+        user_id       = current_user.id,
+        credential_id = verification.credential_id,
+        public_key    = verification.credential_public_key,
+        sign_count    = verification.sign_count,
+        device_name   = device_name,
+    ))
+    db.query(Settings).filter_by(key=f"wabauthn_challenge_{current_user.id}").delete()
+    db.commit()
+    log.info("WebAuthn credential registreret for %s (%s)", current_user.username, device_name)
+    return {"ok": True}
+
+@app.post("/api/auth/webauthn/login-begin")
+def webauthn_login_begin(payload: dict, db: Session = Depends(get_db)):
+    """Trin 1 login: Generer WebAuthn autentificeringsudfordring."""
+    import webauthn, json as _json
+    from database import WebAuthnCredential
+    username = payload.get("username", "")
+    user = db.query(User).filter_by(username=username, is_active=True).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Bruger ikke fundet")
+
+    creds = db.query(WebAuthnCredential).filter_by(user_id=user.id).all()
+    if not creds:
+        raise HTTPException(status_code=404, detail="Ingen WebAuthn credentials registreret")
+
+    allow_creds = [
+        webauthn.helpers.structs.PublicKeyCredentialDescriptor(id=c.credential_id)
+        for c in creds
+    ]
+    options = webauthn.generate_authentication_options(
+        rp_id             = WEBAUTHN_RP_ID,
+        allow_credentials = allow_creds,
+    )
+    opts_json = webauthn.options_to_json(options)
+    db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").delete()
+    db.add(Settings(key=f"wabauthn_auth_challenge_{user.id}", value=opts_json))
+    db.commit()
+    return _json.loads(opts_json)
+
+@app.post("/api/auth/webauthn/login-complete")
+def webauthn_login_complete(payload: dict, db: Session = Depends(get_db)):
+    """Trin 2 login: Valider WebAuthn og udsted session cookie."""
+    import webauthn, json as _json
+    from database import WebAuthnCredential
+    username = payload.get("username", "")
+    user = db.query(User).filter_by(username=username, is_active=True).first()
+    if not user:
+        raise HTTPException(status_code=401)
+
+    setting = db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").first()
+    if not setting:
+        raise HTTPException(status_code=400, detail="Ingen aktiv udfordring")
+
+    opts = _json.loads(setting.value)
+    challenge = webauthn.base64url_to_bytes(opts["challenge"])
+
+    credential_id = webauthn.base64url_to_bytes(payload.get("rawId", ""))
+    cred = db.query(WebAuthnCredential).filter_by(
+        user_id=user.id, credential_id=credential_id
+    ).first()
+    if not cred:
+        raise HTTPException(status_code=401, detail="Credential ikke fundet")
+
+    try:
+        verification = webauthn.verify_authentication_response(
+            credential          = payload,
+            expected_challenge  = challenge,
+            expected_rp_id      = WEBAUTHN_RP_ID,
+            expected_origin     = WEBAUTHN_ORIGIN,
+            credential_public_key = cred.public_key,
+            credential_current_sign_count = cred.sign_count,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Autentificering fejlede: {e}")
+
+    cred.sign_count = verification.new_sign_count
+    db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").delete()
+    db.commit()
+
+    session_token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id})
+    log.info("WebAuthn login OK: %s", user.username)
+    from fastapi.responses import JSONResponse as _JR
+    _resp = _JR(content={"ok": True, "role": user.role, "username": user.username, "customer_id": user.customer_id})
+    cookie_val = (
+        f"{COOKIE_NAME}={session_token}; Path=/; HttpOnly; SameSite=Lax;"
+        f" Max-Age={JWT_EXPIRE_H * 3600}"
+        + ("; Secure" if COOKIE_SECURE else "")
+    )
+    _resp.headers.append("Set-Cookie", cookie_val)
+    return _resp
+
+@app.get("/api/auth/webauthn/credentials")
+def list_webauthn_credentials(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """List brugerens registrerede WebAuthn credentials."""
+    from database import WebAuthnCredential
+    if current_user is None:
+        raise HTTPException(status_code=401)
+    creds = db.query(WebAuthnCredential).filter_by(user_id=current_user.id).all()
+    return [
+        {
+            "id":         c.id,
+            "device_name": c.device_name,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        }
+        for c in creds
+    ]
+
+@app.delete("/api/auth/webauthn/credentials/{cred_id}")
+def delete_webauthn_credential(cred_id: int, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Slet en WebAuthn credential."""
+    from database import WebAuthnCredential
+    if current_user is None:
+        raise HTTPException(status_code=401)
+    cred = db.query(WebAuthnCredential).filter_by(id=cred_id, user_id=current_user.id).first()
+    if not cred:
+        raise HTTPException(status_code=404)
+    db.delete(cred)
+    db.commit()
+    return {"ok": True}
+
 # ── MFA / TOTP ─────────────────────────────────────────────────────────────
 
 @app.post("/api/auth/setup-mfa")
@@ -356,19 +549,20 @@ def confirm_mfa(payload: dict, current_user=Depends(get_current_user), db: Sessi
 
 @app.post("/api/auth/disable-mfa")
 def disable_mfa(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    """Deaktiver MFA — kræver bekræftelse med TOTP-kode."""
-    import pyotp
+    """Deaktiver MFA — super_admin kan deaktivere for andre brugere via user_id."""
     if current_user is None:
         raise HTTPException(status_code=401)
-    if current_user.mfa_enabled:
-        code = payload.get("code", "")
-        totp = pyotp.TOTP(current_user.totp_secret)
-        if not totp.verify(code, valid_window=1):
-            raise HTTPException(status_code=400, detail="Forkert kode")
-    current_user.mfa_enabled = False
-    current_user.totp_secret = None
+    user_id = payload.get("user_id")
+    if user_id and current_user.role in ("super_admin", "admin"):
+        target = db.query(User).filter_by(id=user_id).first()
+        if not target:
+            raise HTTPException(status_code=404)
+    else:
+        target = current_user
+    target.mfa_enabled = False
+    target.totp_secret = None
     db.commit()
-    log.info("MFA deaktiveret for %s", current_user.username)
+    log.info("MFA deaktiveret for %s af %s", target.username, current_user.username)
     return {"ok": True}
 
 @app.post("/api/auth/verify-mfa")
