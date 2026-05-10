@@ -186,7 +186,9 @@ class User(Base):
     email         = Column(String(200), unique=True)
     password_hash = Column(String(200), nullable=False)
     role          = Column(String(50), default="viewer")   # super_admin|admin|operator|viewer
-    customer_id   = Column(String(36))                     # null = adgang til alle kunder
+    customer_id   = Column(String(36))
+    totp_secret   = Column(String(64))
+    mfa_enabled   = Column(Boolean, default=False)                     # null = adgang til alle kunder
     is_active     = Column(Boolean, default=True)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login    = Column(DateTime)

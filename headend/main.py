@@ -314,6 +314,93 @@ def require_role(*roles: str):
     return Depends(_check)
 
 
+
+# ── MFA / TOTP ─────────────────────────────────────────────────────────────
+
+@app.post("/api/auth/setup-mfa")
+def setup_mfa(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Generér TOTP secret og returner QR-kode til authenticator app."""
+    import pyotp, qrcode, base64
+    from io import BytesIO
+    if current_user is None:
+        raise HTTPException(status_code=401)
+    secret = pyotp.random_base32()
+    current_user.totp_secret = secret
+    db.commit()
+    uri = pyotp.totp.TOTP(secret).provisioning_uri(
+        name=current_user.username,
+        issuer_name="TimeLapse Pro"
+    )
+    img = qrcode.make(uri)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+    return {"secret": secret, "qr_code": f"data:image/png;base64,{qr_b64}"}
+
+@app.post("/api/auth/confirm-mfa")
+def confirm_mfa(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Bekræft TOTP-kode og aktiver MFA."""
+    import pyotp
+    if current_user is None:
+        raise HTTPException(status_code=401)
+    code = payload.get("code", "")
+    if not current_user.totp_secret:
+        raise HTTPException(status_code=400, detail="Kør setup-mfa først")
+    totp = pyotp.TOTP(current_user.totp_secret)
+    if not totp.verify(code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Forkert kode — prøv igen")
+    current_user.mfa_enabled = True
+    db.commit()
+    log.info("MFA aktiveret for %s", current_user.username)
+    return {"ok": True}
+
+@app.post("/api/auth/disable-mfa")
+def disable_mfa(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """Deaktiver MFA — kræver bekræftelse med TOTP-kode."""
+    import pyotp
+    if current_user is None:
+        raise HTTPException(status_code=401)
+    if current_user.mfa_enabled:
+        code = payload.get("code", "")
+        totp = pyotp.TOTP(current_user.totp_secret)
+        if not totp.verify(code, valid_window=1):
+            raise HTTPException(status_code=400, detail="Forkert kode")
+    current_user.mfa_enabled = False
+    current_user.totp_secret = None
+    db.commit()
+    log.info("MFA deaktiveret for %s", current_user.username)
+    return {"ok": True}
+
+@app.post("/api/auth/verify-mfa")
+def verify_mfa(payload: dict, db: Session = Depends(get_db)):
+    """Trin 2 login: valider TOTP-kode og udsted session cookie."""
+    import pyotp
+    from database import User as _User
+    mfa_token = payload.get("mfa_token", "")
+    code      = payload.get("code", "")
+    if not mfa_token or not code:
+        raise HTTPException(status_code=400, detail="mfa_token og code påkrævet")
+    payload_data = _decode_token(mfa_token)
+    if not payload_data or payload_data.get("type") != "mfa_pending":
+        raise HTTPException(status_code=401, detail="Ugyldig eller udløbet MFA token")
+    user = db.query(_User).filter_by(username=payload_data.get("sub")).first()
+    if not user or not user.mfa_enabled or not user.totp_secret:
+        raise HTTPException(status_code=401)
+    totp = pyotp.TOTP(user.totp_secret)
+    if not totp.verify(code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Forkert kode")
+    session_token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id})
+    log.info("MFA login OK: %s", user.username)
+    from fastapi.responses import JSONResponse as _JR
+    _resp = _JR(content={"ok": True, "role": user.role, "username": user.username, "customer_id": user.customer_id})
+    cookie_val = (
+        f"{COOKIE_NAME}={session_token}; Path=/; HttpOnly; SameSite=Lax;"
+        f" Max-Age={JWT_EXPIRE_H * 3600}"
+        + ("; Secure" if COOKIE_SECURE else "")
+    )
+    _resp.headers.append("Set-Cookie", cookie_val)
+    return _resp
+
 # ── Auth models ───────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
@@ -358,6 +445,11 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Forkert brugernavn eller adgangskode")
     user.last_login = now_utc()
     db.commit()
+    # MFA check
+    if user.mfa_enabled:
+        mfa_token = _create_token({"sub": user.username, "type": "mfa_pending"}, expire_hours=5/60)
+        log.info("Login MFA påkrævet: %s", user.username)
+        return {"mfa_required": True, "mfa_token": mfa_token}
     token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id})
     log.info("Login: %s (%s)", user.username, user.role)
     from fastapi.responses import JSONResponse as _JR
@@ -433,6 +525,7 @@ def list_users(
             "is_active":   u.is_active,
             "created_at":  u.created_at.isoformat() if u.created_at else None,
             "last_login":  u.last_login.isoformat() if u.last_login else None,
+            "mfa_enabled": bool(u.mfa_enabled),
         }
         for u in users
     ]

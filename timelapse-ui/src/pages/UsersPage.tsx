@@ -39,6 +39,7 @@ interface Policy {
 }
 
 interface UserRec {
+  mfa_enabled?: boolean
   id: number
   username: string
   email?: string
@@ -192,7 +193,13 @@ export default function UsersPage() {
   const [editCust,   setEditCust]   = useState('')
   const [editActive, setEditActive] = useState(true)
   const [editErr,    setEditErr]    = useState<string | null>(null)
-  const [editSaving, setEditSaving] = useState(false)
+  const [editSaving,    setEditSaving]    = useState(false)
+  const [mfaId,         setMfaId]         = useState<number | null>(null)
+  const [mfaQr,         setMfaQr]         = useState('')
+  const [mfaSecret,     setMfaSecret]     = useState('')
+  const [mfaCode,       setMfaCode]       = useState('')
+  const [mfaErr,        setMfaErr]        = useState<string | null>(null)
+  const [mfaSaving,     setMfaSaving]     = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -258,6 +265,33 @@ export default function UsersPage() {
       load()
     } catch (e: any) { setEditErr(e.message) }
     finally { setEditSaving(false) }
+  }
+
+  async function startMfaSetup(id: number) {
+    setMfaId(id); setMfaQr(''); setMfaSecret(''); setMfaCode(''); setMfaErr(null)
+    try {
+      const d = await api('/api/auth/setup-mfa', { method: 'POST' })
+      setMfaQr(d.qr_code); setMfaSecret(d.secret)
+    } catch (e: any) { setMfaErr(e.message) }
+  }
+
+  async function confirmMfaSetup(id: number) {
+    setMfaSaving(true); setMfaErr(null)
+    try {
+      await api('/api/auth/confirm-mfa', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
+      setMfaId(null); load()
+    } catch (e: any) { setMfaErr(e.message) }
+    finally { setMfaSaving(false) }
+  }
+
+  async function disableMfa(id: number) {
+    if (!mfaCode) { setMfaErr('Indtast TOTP-kode for at deaktivere MFA'); return }
+    setMfaSaving(true); setMfaErr(null)
+    try {
+      await api('/api/auth/disable-mfa', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
+      setMfaId(null); load()
+    } catch (e: any) { setMfaErr(e.message) }
+    finally { setMfaSaving(false) }
   }
 
   async function changePassword(id: number) {
@@ -486,8 +520,50 @@ export default function UsersPage() {
                 )}
               </div>
 
+
+                {mfaId === u.id && (
+                  <div className="mt-3 space-y-2 border-t border-gray-50 pt-3">
+                    <p className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-violet-500" />
+                      {u.mfa_enabled ? 'Deaktiver MFA' : 'Aktiver MFA (TOTP)'}
+                    </p>
+                    {mfaErr && <p className="text-xs text-red-600">{mfaErr}</p>}
+                    {!u.mfa_enabled && !mfaQr && <p className="text-xs text-gray-400">Henter QR-kode…</p>}
+                    {!u.mfa_enabled && mfaQr.length > 0 && (
+                      <div className="flex flex-col items-center gap-2">
+                        <img src={mfaQr} alt="QR kode" className="w-40 h-40 rounded-lg border border-gray-200" />
+                        <p className="text-xs text-gray-400 font-mono bg-gray-50 px-2 py-1 rounded">{mfaSecret}</p>
+                        <p className="text-xs text-gray-400">Scan QR-koden i din authenticator app</p>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <input type="text" inputMode="numeric" maxLength={6}
+                        value={mfaCode} onChange={e => setMfaCode(e.target.value.replace(/[^0-9]/g, ''))}
+                        placeholder="000000" autoFocus
+                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono w-28 text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-violet-300" />
+                      {!u.mfa_enabled ? (
+                        <button onClick={() => confirmMfaSetup(u.id)} disabled={mfaSaving || mfaCode.length < 6}
+                          className="px-3 py-1.5 bg-violet-500 text-white text-xs rounded-lg disabled:opacity-50">
+                          {mfaSaving ? 'Aktiverer…' : 'Bekræft og aktiver'}
+                        </button>
+                      ) : (
+                        <button onClick={() => disableMfa(u.id)} disabled={mfaSaving}
+                          className="px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg disabled:opacity-50">
+                          {mfaSaving ? 'Deaktiverer…' : 'Deaktiver MFA'}
+                        </button>
+                      )}
+                      <button onClick={() => setMfaId(null)} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg">Annuller</button>
+                    </div>
+                  </div>
+                )}
+
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button onClick={() => { setMfaId(mfaId === u.id ? null : u.id); if (mfaId !== u.id && !u.mfa_enabled) startMfaSetup(u.id) }}
+                  title={u.mfa_enabled ? 'Administrer MFA' : 'Aktiver MFA'}
+                  className={`p-1.5 rounded-lg transition-colors ${u.mfa_enabled ? 'text-green-500 hover:bg-green-50' : 'text-gray-400 hover:text-violet-600 hover:bg-violet-50'}`}>
+                  <Shield className="w-3.5 h-3.5" />
+                </button>
                 <button onClick={() => startEdit(u)}
                   title="Rediger bruger"
                   className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors">

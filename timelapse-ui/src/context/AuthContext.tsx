@@ -11,11 +11,14 @@ export interface User {
   customer_id: string | null
 }
 
+interface MfaResult { mfa_required?: boolean; mfa_token?: string }
+
 interface AuthCtx {
   user: User | null
   token: string | null
-  login: (username: string, password: string) => Promise<void>
-  logout: () => void
+  login:     (username: string, password: string) => Promise<MfaResult | void>
+  logout:    () => void
+  verifyMfa: (mfa_token: string, code: string) => Promise<void>
   isAuthenticated: boolean
   loading: boolean
   hasRole: (...roles: User['role'][]) => boolean
@@ -65,7 +68,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.detail ?? 'Login fejlede')
     }
     const data = await res.json()
-    const u: User = { username: data.username ?? data.user?.username ?? username, role: data.role ?? data.user?.role ?? 'viewer', customer_id: data.customer_id ?? null }
+    if (data.mfa_required) {
+      return { mfa_required: true, mfa_token: data.mfa_token }
+    }
+    const u: User = { username: data.username ?? username, role: data.role ?? 'viewer', customer_id: data.customer_id ?? null }
+    localStorage.setItem('tl_user', JSON.stringify(u))
+    setUser(u)
+    return {}
+  }
+
+  async function verifyMfa(mfa_token: string, code: string) {
+    const res = await fetch(`${getApiUrl()}/api/auth/verify-mfa`, {
+      method:      'POST',
+      credentials: 'include',
+      headers:     { 'Content-Type': 'application/json' },
+      body:        JSON.stringify({ mfa_token, code }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail ?? 'Forkert kode')
+    }
+    const data = await res.json()
+    const u: User = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
     localStorage.setItem('tl_user', JSON.stringify(u))
     setUser(u)
   }
@@ -80,7 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hasRole = (...roles: User['role'][]) => !!user && roles.includes(user.role)
 
   return (
-    <Ctx.Provider value={{ user, token, login, logout, isAuthenticated: !!user, hasRole, loading }}>
+    <Ctx.Provider value={{ user, token, login, logout, verifyMfa, isAuthenticated: !!user, hasRole, loading }}>
       {children}
     </Ctx.Provider>
   )

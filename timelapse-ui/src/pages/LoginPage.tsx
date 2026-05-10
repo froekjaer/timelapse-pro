@@ -4,11 +4,11 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Camera, Lock, User, Eye, EyeOff, AlertTriangle } from 'lucide-react'
+import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { login, verifyMfa } = useAuth()
   const navigate  = useNavigate()
   const location  = useLocation()
   const from = (location.state as any)?.from?.pathname ?? '/'
@@ -18,14 +18,27 @@ export default function LoginPage() {
   const [showPw,   setShowPw]   = useState(false)
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
+  const [mfaRequired, setMfaRequired] = useState(false)
+  const [mfaToken,    setMfaToken]    = useState('')
+  const [mfaCode,     setMfaCode]     = useState('')
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
     setLoading(true)
     try {
-      await login(username.trim(), password)
-      navigate(from, { replace: true })
+      if (mfaRequired) {
+        await verifyMfa(mfaToken, mfaCode)
+        navigate(from, { replace: true })
+      } else {
+        const result = await login(username.trim(), password)
+        if (result?.mfa_required) {
+          setMfaRequired(true)
+          setMfaToken(result.mfa_token ?? '')
+        } else {
+          navigate(from, { replace: true })
+        }
+      }
     } catch (err: any) {
       setError(err.message ?? 'Ukendt fejl')
     } finally {
@@ -95,6 +108,27 @@ export default function LoginPage() {
               </button>
             </div>
           </div>
+
+          {/* MFA TOTP felt */}
+          {mfaRequired && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                <span className="flex items-center gap-1.5"><Smartphone className="w-4 h-4" /> Engangskode (Authenticator)</span>
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={6}
+                value={mfaCode}
+                onChange={e => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="000000"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono text-center text-lg tracking-widest"
+                autoFocus
+              />
+              <p className="text-xs text-gray-400 mt-1">Åbn din authenticator app og indtast den 6-cifrede kode</p>
+            </div>
+          )}
 
           {/* Submit */}
           <button type="submit" disabled={loading || !username || !password}
