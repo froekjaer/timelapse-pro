@@ -4,6 +4,7 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { getApiUrl } from '../api/client'
+import { startAuthentication } from '@simplewebauthn/browser'
 
 export interface User {
   username:    string
@@ -40,16 +41,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Verificér cookie stadig er gyldig
     fetch(`${getApiUrl()}/api/auth/me`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
-      .then(d => {
+      .then(async d => {
         if (d) {
           setUser({ username: d.username, role: d.role, customer_id: d.customer_id })
           localStorage.setItem('tl_user', JSON.stringify(d))
         } else {
-          // Behold bruger fra localStorage — cookie valideres ved næste API-kald
-          // Ryd kun hvis ingen bruger i localStorage
-          if (!localStorage.getItem('tl_user')) {
-            setUser(null)
+          // Cookie mangler — forsøg WebAuthn auto-login hvis bruger er gemt
+          const saved = localStorage.getItem('tl_user')
+          if (saved) {
+            try {
+              const savedUser = JSON.parse(saved)
+              const opts = await fetch(`${getApiUrl()}/api/auth/webauthn/login-begin`, {
+                method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: savedUser.username })
+              })
+              if (opts.ok) {
+                const optsJson = await opts.json()
+                const result = await startAuthentication({ optionsJSON: optsJson })
+                const loginRes = await fetch(`${getApiUrl()}/api/auth/webauthn/login-complete`, {
+                  method: 'POST', credentials: 'include',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ...result, username: savedUser.username })
+                })
+                if (loginRes.ok) {
+                  const data = await loginRes.json()
+                  const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
+                  localStorage.setItem('tl_user', JSON.stringify(u))
+                  setUser(u)
+                  return
+                }
+              }
+            } catch { /* WebAuthn ikke tilgængeligt eller afvist */ }
           }
+          if (!localStorage.getItem('tl_user')) setUser(null)
         }
       })
       .catch(() => {})

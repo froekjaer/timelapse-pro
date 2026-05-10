@@ -22,6 +22,7 @@ export default function LoginPage() {
   const [mfaRequired, setMfaRequired] = useState(false)
   const [mfaToken,    setMfaToken]    = useState('')
   const [mfaCode,     setMfaCode]     = useState('')
+  const [remember,     setRemember]     = useState(false)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -159,6 +160,15 @@ export default function LoginPage() {
               />
               <p className="text-xs text-gray-400 mt-1">Åbn din authenticator app og indtast den 6-cifrede kode</p>
             </div>
+          )}
+
+          {/* Husk denne enhed */}
+          {!mfaRequired && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-sky-500 focus:ring-sky-400" />
+              <span className="text-sm text-gray-500">Husk denne enhed i 30 dage</span>
+            </label>
           )}
 
           {/* WebAuthn / biometrisk login */}

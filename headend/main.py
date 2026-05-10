@@ -600,6 +600,7 @@ def verify_mfa(payload: dict, db: Session = Depends(get_db)):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    remember: bool = False
 
 class ChangePasswordRequest(BaseModel):
     old_password: str
@@ -653,9 +654,10 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         "username":    user.username,
         "customer_id": user.customer_id,
     })
+    max_age = (30 * 24 * 3600) if req.remember else (JWT_EXPIRE_H * 3600)
     cookie_val = (
         f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax;"
-        f" Max-Age={JWT_EXPIRE_H * 3600}"
+        f" Max-Age={max_age}"
         + ("; Secure" if COOKIE_SECURE else "")
     )
     _resp.headers.append("Set-Cookie", cookie_val)
@@ -688,16 +690,33 @@ def change_password(
     return {"ok": True}
 
 @app.get("/api/auth/me")
-def me(current_user=Depends(get_current_user)):
-    """Returnerer den aktuelle brugers info."""
+def me(request: Request, current_user=Depends(get_current_user)):
+    """Returnerer brugerinfo og fornyr rolling session cookie."""
     if current_user is None:
         raise HTTPException(status_code=401)
-    return {
+    from fastapi.responses import JSONResponse as _JR
+    data = {
         "username":    current_user.username,
         "email":       current_user.email,
         "role":        current_user.role,
         "customer_id": current_user.customer_id,
     }
+    # Forny rolling session
+    existing = request.cookies.get(COOKIE_NAME)
+    if existing:
+        token = existing
+        payload_data = _decode_token(token)
+        max_age = payload_data.get("max_age", JWT_EXPIRE_H * 3600) if payload_data else JWT_EXPIRE_H * 3600
+        new_token = _create_token({"sub": current_user.username, "role": current_user.role, "cid": current_user.customer_id, "max_age": max_age})
+        resp = _JR(content=data)
+        cookie_val = (
+            f"{COOKIE_NAME}={new_token}; Path=/; HttpOnly; SameSite=Lax;"
+            f" Max-Age={max_age}"
+            + ("; Secure" if COOKIE_SECURE else "")
+        )
+        resp.headers.append("Set-Cookie", cookie_val)
+        return resp
+    return data
 
 
 # ── User CRUD (kun super_admin) ───────────────────────────────────────────
