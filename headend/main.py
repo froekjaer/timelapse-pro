@@ -724,6 +724,22 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     return cfg
 
 
+
+@app.get("/api/admin/devices/{device_id}/config")
+def get_device_config_admin(
+    device_id: str,
+    _user=require_role("super_admin", "admin", "operator"),
+    db: Session = Depends(get_db),
+):
+    """Hent merged device config til UI (JWT-beskyttet admin version af /api/config/{device_id})."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device ikke fundet")
+
+    # Brug samme merge-logik som get_config
+    from sqlalchemy.orm import Session as _S
+    return get_config(device_id=device_id, _auth=None, db=db)
+
 @app.put("/api/admin/devices/{device_id}/config")
 def update_device_config(
     device_id: str,

@@ -4,6 +4,13 @@ import { ChevronLeft, Trash2, CheckSquare, Square, X } from 'lucide-react'
 import type { Capture } from '../types'
 import { getThumbnailUrl, getApiUrl, deleteCapturesBulk } from '../api/client'
 
+function authFetch(url: string) {
+  const token = localStorage.getItem('tl_token') ?? ''
+  return fetch(url, { headers: { 'Authorization': `Bearer ${token}` } })
+}
+
+
+
 interface DayCount {
   year: number; month: number; day: number; count: number
 }
@@ -43,7 +50,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
 
   useEffect(() => {
     if (!deviceId) return
-    fetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}`)
+    authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}`)
       .then(r => r.json())
       .then((data: DayCount[]) => {
         setDayCounts(data)
@@ -57,7 +64,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
   useEffect(() => {
     if (!selected.year || !selected.month || !selected.day) return
     setLoading(true)
-    fetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
+    authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
       .then(r => r.json())
       .then((data: Capture[]) => { setDayCaptures(data); setLoading(false) })
       .catch(() => setLoading(false))
@@ -110,10 +117,10 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
       // Genindlæs dag-captures
       if (selected.year && selected.month && selected.day) {
         setLoading(true)
-        fetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
+        authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
           .then(r => r.json()).then((data: Capture[]) => { setDayCaptures(data); setLoading(false) })
           .catch(() => setLoading(false))
-        fetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}`)
+        authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}`)
           .then(r => r.json()).then((data: DayCount[]) => setDayCounts(data)).catch(() => {})
       }
       onDeleted?.()

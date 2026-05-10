@@ -46,7 +46,7 @@ export const getCaptures = (deviceId?: string, limit = 100) =>
   }).then(r => r.data)
 
 export const getConfig = (deviceId: string) =>
-  getClient().get(`/api/config/${deviceId}`).then(r => r.data)
+  getClient().get(`/api/admin/devices/${deviceId}/config`).then(r => r.data)
 
 export const updateConfig = (deviceId: string, config: DeviceConfig) =>
   getClient().put(`/api/admin/devices/${deviceId}/config`, config).then(r => r.data)

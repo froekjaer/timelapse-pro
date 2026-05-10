@@ -21,6 +21,16 @@ import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import type { DeviceDetail, Capture } from '../types'
 
+function authFetch(url: string, opts?: RequestInit) {
+  const token = localStorage.getItem('tl_token') ?? ''
+  return fetch(url, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(opts?.headers ?? {}) }
+  })
+}
+
+
+
 const getTz = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
 
 function formatUptime(s: number) {
@@ -61,11 +71,11 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
     setSidecar(null)
     const sidecarName = c.filename.replace(/\.[^.]+$/, '.json')
     const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
-    fetch(`${apiUrl}/api/sidecar/${c.device_id}/${sidecarName}`)
+    authFetch(`${apiUrl}/api/sidecar/${c.device_id}/${sidecarName}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setSidecar(d))
       .catch(() => {})
-    fetch(`${apiUrl}/api/exif/${c.device_id}/${c.filename}`)
+    authFetch(`${apiUrl}/api/exif/${c.device_id}/${c.filename}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setExif(d?.exif ?? null))
       .catch(() => {})
@@ -477,7 +487,7 @@ function CameraParamRow({ param, deviceId }: {
       await setParam(deviceId, key, value)
       // Opdater camera_params i headend så refresh ikke nulstiller værdien
       const apiUrl = (await import('../api/client')).getApiUrl()
-      const cfg = await (await fetch(`${apiUrl}/api/admin/devices/${deviceId}`)).json()
+      const cfg = await (await authFetch(`${apiUrl}/api/admin/devices/${deviceId}`)).json()
       const updatedParams = (cfg?.device?.device_config ? 
         JSON.parse(typeof cfg.device.device_config === 'string' ? cfg.device.device_config : JSON.stringify(cfg.device.device_config)) : {}
       )
@@ -485,7 +495,7 @@ function CameraParamRow({ param, deviceId }: {
         updatedParams.camera_params = updatedParams.camera_params.map((cp: any) =>
           cp.path.endsWith(key) ? { ...cp, current: value } : cp
         )
-        await fetch(`${apiUrl}/api/admin/devices/${deviceId}/config`, {
+        await authFetch(`${apiUrl}/api/admin/devices/${deviceId}/config`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ camera_params: updatedParams.camera_params })
@@ -812,7 +822,7 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
   const [diagHistory, setDiagHistory] = useState<any[]>([])
   useEffect(() => {
     const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
-    fetch(`${apiUrl}/api/admin/devices/${deviceId}/diagnostics/history?days=7&limit=500`)
+    authFetch(`${apiUrl}/api/admin/devices/${deviceId}/diagnostics/history?days=7&limit=500`)
       .then(r => r.ok ? r.json() : [])
       .then(d => setDiagHistory(d))
       .catch(() => {})
