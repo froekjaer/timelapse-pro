@@ -28,9 +28,9 @@ interface Site {
 }
 
 function api(path: string) {
-  const token = localStorage.getItem('tl_token') ?? ''
   return fetch(`${getApiUrl()}${path}`, {
-    headers: { 'Authorization': `Bearer ${token}` }
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }
   }).then(r => {
     if (!r.ok) throw new Error(`${r.status}`)
     return r.json()

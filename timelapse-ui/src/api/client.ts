@@ -7,8 +7,6 @@ export const DEFAULT_API_URL = typeof window !== 'undefined' ? window.location.o
 export const getApiUrl = () =>
   localStorage.getItem(API_STORAGE_KEY) ?? import.meta.env.VITE_API_URL ?? DEFAULT_API_URL
 
-const getToken = () => localStorage.getItem('tl_token') || ''
-
 export const bootstrapToken = async () => {
   if (localStorage.getItem('timelapse_api_token')) return
   try {
@@ -21,14 +19,10 @@ export const bootstrapToken = async () => {
 }
 
 const getClient = () => {
-  const token = getToken()
-  const client = axios.create({ baseURL: getApiUrl() })
-  client.interceptors.request.use(cfg => {
-    const t = localStorage.getItem('tl_token') ?? token
-    if (t) cfg.headers['Authorization'] = `Bearer ${t}`
-    return cfg
+  return axios.create({
+    baseURL:         getApiUrl(),
+    withCredentials: true,
   })
-  return client
 }
 
 export const getStats = () =>

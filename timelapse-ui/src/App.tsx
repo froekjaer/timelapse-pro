@@ -24,8 +24,9 @@ import { UpdatesPage } from './pages/UpdatesPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 
 function RequireAuth({ children }: { children: ReactElement }) {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, loading } = useAuth()
   const location = useLocation()
+  if (loading) return null
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }

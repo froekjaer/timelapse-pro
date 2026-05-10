@@ -14,7 +14,7 @@ function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${localStorage.getItem('token') ?? ''}`
+
     }, ...opts
   }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
 }

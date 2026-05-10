@@ -9,7 +9,7 @@ function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+
     },
     ...opts
   }).then(r => {

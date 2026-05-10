@@ -64,13 +64,12 @@ import secrets as _secrets
 
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
+
 JWT_SECRET    = os.getenv("JWT_SECRET", _secrets.token_hex(32))
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_H  = 12   # access token levetid
-
-
-
-
+COOKIE_NAME   = "tl_session"
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"
 def ensure_utc(dt):
     if dt is None: return None
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
@@ -82,6 +81,9 @@ from database import (
     create_tables, get_db, now_utc
 )
 import uuid as _uuid
+
+
+
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -98,11 +100,14 @@ app = FastAPI(
     version     = "1.0.0",
 )
 
+ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://timelapse.froekjaer.dk")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins  = ["*"],   # tighten in production
-    allow_methods  = ["*"],
-    allow_headers  = ["*"],
+    allow_origins      = [ALLOWED_ORIGIN],
+    allow_methods      = ["*"],
+    allow_headers      = ["*"],
+    allow_credentials  = True,
 )
 
 @app.on_event("startup")
@@ -274,16 +279,16 @@ def _ensure_super_admin(db):
         log.warning("Standard super_admin oprettet — SKIFT PASSWORD STRAKS via /api/auth/change-password")
 
 def get_current_user(
-    token: str = Security(_oauth2_scheme),
+    request: Request,
     db: Session = Depends(get_db)
 ):
-    """FastAPI dependency — returnerer current user eller None."""
+    """FastAPI dependency — returnerer current user fra cookie eller None."""
+    token = request.cookies.get(COOKIE_NAME)
     if not token:
         return None
     payload = _decode_token(token)
     if not payload:
         return None
-    from database import User
     user = db.query(User).filter_by(username=payload.get("sub"), is_active=True).first()
     return user
 
@@ -355,18 +360,28 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     db.commit()
     token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id})
     log.info("Login: %s (%s)", user.username, user.role)
-    return {
-        "access_token": token,
-        "token_type":   "bearer",
-        "role":         user.role,
-        "username":     user.username,
-        "expires_in":   JWT_EXPIRE_H * 3600,
-    }
+    from fastapi.responses import JSONResponse as _JR
+    _resp = _JR(content={
+        "ok":          True,
+        "role":        user.role,
+        "username":    user.username,
+        "customer_id": user.customer_id,
+    })
+    cookie_val = (
+        f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax;"
+        f" Max-Age={JWT_EXPIRE_H * 3600}"
+        + ("; Secure" if COOKIE_SECURE else "")
+    )
+    _resp.headers.append("Set-Cookie", cookie_val)
+    return _resp
 
 @app.post("/api/auth/logout")
 def logout():
-    """Logout — klienten sletter token lokalt."""
-    return {"ok": True}
+    """Logout — ryd session cookie."""
+    from fastapi.responses import JSONResponse as _JR
+    _resp = _JR(content={"ok": True})
+    _resp.headers.append("Set-Cookie", f"{COOKIE_NAME}=; Path=/; HttpOnly; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+    return _resp
 
 @app.post("/api/auth/change-password")
 def change_password(

@@ -11,9 +11,9 @@ import {
 import { getApiUrl } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
-  const token = localStorage.getItem('tl_token') ?? ''
   return fetch(`${getApiUrl()}${path}`, {
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...(opts?.headers ?? {}) },
     ...opts
   }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
 }

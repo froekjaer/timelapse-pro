@@ -53,9 +53,10 @@ interface Customer { id: string; name: string }
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${localStorage.getItem('tl_token') ?? ''}`,
+
     },
     ...opts,
   }).then(async r => {

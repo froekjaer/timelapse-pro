@@ -5,8 +5,7 @@ import type { Capture } from '../types'
 import { getThumbnailUrl, getApiUrl, deleteCapturesBulk } from '../api/client'
 
 function authFetch(url: string) {
-  const token = localStorage.getItem('tl_token') ?? ''
-  return fetch(url, { headers: { 'Authorization': `Bearer ${token}` } })
+  return fetch(url, { credentials: 'include' })
 }
 
 

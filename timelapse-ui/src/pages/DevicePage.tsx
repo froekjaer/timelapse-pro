@@ -22,11 +22,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import type { DeviceDetail, Capture } from '../types'
 
 function authFetch(url: string, opts?: RequestInit) {
-  const token = localStorage.getItem('tl_token') ?? ''
-  return fetch(url, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, ...(opts?.headers ?? {}) }
-  })
+  return fetch(url, { credentials: 'include', ...opts })
 }
 
 
