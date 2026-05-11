@@ -2918,6 +2918,12 @@ SFTP_BASE = _init_sftp_base()
 #Peter import re as _re
 
 def _find_image(device_id: str, filename: str) -> Optional[_Path]:
+    log.info("_find_image: device=%s filename=%r base=%s", device_id, filename, SFTP_BASE)
+    try:
+        top = list(SFTP_BASE.iterdir())
+        log.info("SFTP_BASE contents: %s", [x.name for x in top])
+    except Exception as e:
+        log.error("SFTP_BASE iterdir fejl: %s", e)
     """
     Find image — håndterer tre strukturer:
       1. Ny chroot:   SFTP_BASE/{sftp_user}/data/{customer}/{site}/YYYY/MM/DD/filename
@@ -2935,7 +2941,9 @@ def _find_image(device_id: str, filename: str) -> Optional[_Path]:
 
         # Struktur 1 — chroot: sftp_user/data/customer/site/YYYY/MM/DD/
         chroot_glob = f"*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
+        log.info("chroot_glob=%r", chroot_glob)
         matches = list(SFTP_BASE.glob(chroot_glob))
+        log.info("chroot matches=%s", matches)
         if matches:
             return matches[0]
 
@@ -2963,6 +2971,8 @@ def _thumbs_dir_for(image_path: _Path) -> _Path:
 
 @app.get("/api/images/{device_id}/{filename}")
 def get_image(device_id: str, filename: str):
+    from urllib.parse import unquote as _unquote
+    filename = _unquote(filename)
     path = _find_image(device_id, filename)
     if not path:
         raise HTTPException(status_code=404, detail="Image not found")
@@ -2970,6 +2980,8 @@ def get_image(device_id: str, filename: str):
 
 @app.get("/api/thumbnails/{device_id}/{filename}")
 def get_thumbnail(device_id: str, filename: str):
+    from urllib.parse import unquote as _unquote
+    filename = _unquote(filename)
     src = _find_image(device_id, filename)
     if not src:
         raise HTTPException(status_code=404, detail="Image not found")

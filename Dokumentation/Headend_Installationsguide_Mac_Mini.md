@@ -329,3 +329,24 @@ python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().
 | SSH auth events mangler i SIEM | macOS Sequoia logger ikke til klassiske filer | Brug nginx access log + `last` |
 | `inventory.py` fejler med `/sys/class/net` | Linux-kode på macOS | Platform-check i `_primary_interface()` |
 | `DB_USER` fejler i migrations-script | macOS har ikke `postgres` bruger | Kør `DB_USER=peter bash script.sh` eller brug `psql` direkte |
+---
+
+## 13. Full Disk Access (macOS krav)
+
+LaunchDaemon-processer har IKKE automatisk adgang til bruger-monterede volumes (ekstern disk, NAS).
+
+**Påkrævet for at headend kan tilgå billeder på ekstern disk:**
+Systemindstillinger → Beskyttelse og sikkerhed → Fuld diskadgang
+→ Klik + → Navigér til:
+/Users/peter/projects/timelapse-pro/headend/venv/bin/python
+→ Tilføj
+
+Genstart headend efter tilføjelse:
+```bash
+sudo launchctl stop dk.froekjaer.timelapse-headend
+sudo launchctl start dk.froekjaer.timelapse-headend
+```
+
+> ⚠️ Uden Full Disk Access fejler `glob()` og `iterdir()` på externe diske
+> med `[Errno 1] Operation not permitted` — selv for root-processer.
+
