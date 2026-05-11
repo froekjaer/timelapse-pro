@@ -2928,6 +2928,11 @@ def _find_image(device_id: str, filename: str) -> Optional[_Path]:
     if m:
         yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
 
+        # Struktur 0 — device_id/YYYY/MM/DD/ (primær struktur)
+        p = SFTP_BASE / device_id / yyyy / mm / dd / filename
+        if p.exists():
+            return p
+
         # Struktur 1 — chroot: sftp_user/data/customer/site/YYYY/MM/DD/
         chroot_glob = f"*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
         matches = list(SFTP_BASE.glob(chroot_glob))
