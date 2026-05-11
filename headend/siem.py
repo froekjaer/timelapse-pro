@@ -93,11 +93,6 @@ def ingest_events(device_id: str, payload: dict, db: Session = Depends(get_db)):
                 ev.get("source_ip", ""),
             )
 
-            # Tjek duplikat
-            if db.query(SecurityEvent).filter_by(dedup_hash=h).first():
-                duplicates += 1
-                continue
-
             row = SecurityEvent(
                 device_id   = device_id,
                 event_type  = ev.get("event_type", "unknown"),
@@ -108,8 +103,14 @@ def ingest_events(device_id: str, payload: dict, db: Session = Depends(get_db)):
                 occurred_at = occurred,
                 dedup_hash  = h,
             )
-            db.add(row)
-            inserted += 1
+            try:
+                db.add(row)
+                db.flush()
+                inserted += 1
+            except Exception:
+                db.rollback()
+                duplicates += 1
+                continue
 
         except Exception as e:
             log.warning("Event-ingest fejl: %s — %s", e, ev)

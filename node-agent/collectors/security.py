@@ -33,6 +33,8 @@ SUDO_FAILURE   = "sudo_failure"
 SERVICE_CRASH  = "service_crash"
 NEW_USER       = "new_user"
 PASSWD_CHANGE  = "passwd_change"
+HTTP_ERROR         = "http_error"
+SUSPICIOUS_REQUEST = "suspicious_request"
 
 SEVERITY_INFO     = "info"
 SEVERITY_WARNING  = "warning"
@@ -282,6 +284,49 @@ def _parse_macos_ts(line: str) -> str:
     return _now_utc().isoformat()
 
 
+
+
+def _collect_nginx(log_path: str, lookback_seconds: int) -> list[dict]:
+    """Parser nginx access log for security events."""
+    events = []
+    since = _now_utc() - __import__('datetime').timedelta(seconds=lookback_seconds)
+    SUSPICIOUS = [".env", "wp-admin", "phpmyadmin", ".git", "xmlrpc",
+                  "shell", "passwd", "etc/shadow", "cmd=", "eval("]
+    try:
+        with open(log_path) as f:
+            for line in f:
+                m = re.match(
+                    r"([\d.]+) .+ \[(.+?)\] \"(\S+) (\S+) \S+\" (\d+)",
+                    line
+                )
+                if not m:
+                    continue
+                ip, ts_str, method, path_req, status = m.groups()
+                status = int(status)
+                try:
+                    from datetime import datetime
+                    ts = datetime.strptime(ts_str, "%d/%b/%Y:%H:%M:%S %z")
+                except Exception:
+                    continue
+                if ts < since:
+                    continue
+                ts_iso = ts.isoformat()
+                if status >= 400:
+                    events.append(_event(
+                        "http_error", ts_iso,
+                        source_ip=ip,
+                        raw=f"{method} {path_req} -> {status}"
+                    ))
+                if any(s in path_req.lower() for s in SUSPICIOUS):
+                    events.append(_event(
+                        "suspicious_request", ts_iso,
+                        source_ip=ip,
+                        raw=f"{method} {path_req} -> {status}"
+                    ))
+    except Exception as e:
+        log.debug("Nginx log fejl: %s", e)
+    return events
+
 # ── Fælles event-builder ──────────────────────────────────────────────────
 
 def _event(event_type: str, occurred_at: str,
@@ -313,6 +358,13 @@ def collect_security_events(cfg) -> list[dict]:
             events = _collect_linux(cfg.security_lookback)
         log.debug("Security collector: %d events fundet (%s)",
                   len(events), "macOS" if is_macos else "Linux")
+        # Nginx access log
+        nginx_log = getattr(cfg, 'nginx_access_log', '')
+        if nginx_log:
+            from pathlib import Path
+            if Path(nginx_log).exists():
+                events.extend(_collect_nginx(nginx_log, cfg.security_lookback))
+
         return events
     except Exception as e:
         log.warning("Security collector fejlede: %s", e)

@@ -29,7 +29,8 @@ class NodeAgentConfig:
     ssh_log_path:       str = ""    # Auto-detekteret hvis tom
 
     # Auth
-    api_token:          str = ""    # Til fremtidig JWT-auth
+    api_token:          str = ""
+    nginx_access_log:   str = ""    # Til fremtidig JWT-auth
 
     @classmethod
     def load(cls, path: Path) -> "NodeAgentConfig":
@@ -45,6 +46,7 @@ class NodeAgentConfig:
             security_lookback  = int(s.get("security_lookback",  "120")),
             ssh_log_path       = s.get("ssh_log_path", ""),
             api_token          = s.get("api_token", ""),
+            nginx_access_log   = s.get("nginx_access_log", ""),
         )
         return cfg
 
