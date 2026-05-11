@@ -347,7 +347,35 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
     except Exception as e:
         log.warning("session_policy resolver fejl: %s", e)
 
-    return policy
+    # Find godkendte opdateringer til denne enhed
+    from database import PendingUpdate as _PU
+    from sqlalchemy import or_
+
+    approved = db.query(_PU).filter(
+        _PU.status.in_(["approved", "rollback_requested"]),
+        or_(
+            _PU.scope == "global",
+            _PU.scope_id == device_id,
+        )
+    ).all()
+
+    # Filtrer target_device_ids hvis sat
+    filtered = []
+    for u in approved:
+        if u.target_device_ids:
+            targets = json.loads(u.target_device_ids)
+            if device_id not in targets:
+                continue
+        filtered.append({
+            "id":          u.id,
+            "update_type": u.update_type,
+            "version":     u.version,
+            "status":      u.status,
+            "environment": u.environment,
+            "severity":    u.severity,
+        })
+
+    return {**policy, "pending_updates": filtered}
 
 # ── WebAuthn / FIDO2 ───────────────────────────────────────────────────────
 
@@ -1662,22 +1690,37 @@ def list_pending_updates(
         for u in updates
     ]
 
+class ApprovePayload(BaseModel):
+    environment: Optional[str] = "production"
+    scope: Optional[str] = None
+    scope_id: Optional[str] = None
+    target_device_ids: Optional[list] = None
+
 @app.post("/api/updates/{update_id}/approve")
 def approve_update(
     update_id: int,
+    payload: ApprovePayload = ApprovePayload(),
     current_user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db)
 ):
-    """Godkend en opdatering til deployment."""
+    """Godkend en opdatering til deployment med scope og miljø."""
     from database import PendingUpdate
-    u = db.query(PendingUpdate).filter_by(id=update_id, status="pending").first()
+    u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
-        raise HTTPException(status_code=404, detail="Opdatering ikke fundet eller ikke pending")
-    u.status      = "approved"
-    u.approved_at = now_utc()
-    u.approved_by = current_user.username
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    if u.status not in ("pending", "rejected"):
+        raise HTTPException(status_code=400, detail=f"Kan ikke godkende opdatering med status '{u.status}'")
+    u.status            = "approved"
+    u.approved_at       = now_utc()
+    u.approved_by       = current_user.username
+    u.environment       = payload.environment or "production"
+    u.scope             = payload.scope or u.scope or "device"
+    u.scope_id          = payload.scope_id or u.scope_id
+    target_ids          = payload.target_device_ids
+    u.target_device_ids = json.dumps(target_ids) if target_ids else None
     db.commit()
-    log.info("Opdatering godkendt: %s v%s af %s", u.update_type, u.version, current_user.username)
+    log.info("Opdatering godkendt: %s v%s → %s/%s af %s",
+             u.update_type, u.version, u.environment, u.scope, current_user.username)
     return {"ok": True}
 
 @app.post("/api/updates/{update_id}/reject")
@@ -1695,6 +1738,57 @@ def reject_update(
     u.approved_by = current_user.username
     u.approved_at = now_utc()
     db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/updates/{update_id}/promote")
+def promote_update(
+    update_id: int,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Promovér en test-godkendt opdatering til produktion."""
+    from database import PendingUpdate
+    u = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not u:
+        raise HTTPException(status_code=404)
+    if u.environment != "test":
+        raise HTTPException(status_code=400, detail="Kan kun promovere test-opdateringer")
+    if u.status not in ("deployed", "approved"):
+        raise HTTPException(status_code=400, detail="Opdatering skal være deployet i test først")
+    # Opret ny PendingUpdate til produktion
+    prod_update = PendingUpdate(
+        update_type       = u.update_type,
+        version           = u.version,
+        description       = f"[Promoveret fra test] {u.description or ''}",
+        severity          = u.severity,
+        scope             = u.scope,
+        scope_id          = u.scope_id,
+        status            = "approved",
+        approved_at       = now_utc(),
+        approved_by       = current_user.username,
+        environment       = "production",
+        target_device_ids = u.target_device_ids,
+    )
+    db.add(prod_update)
+    db.commit()
+    log.info("Opdatering %d promoveret til produktion af %s", update_id, current_user.username)
+    return {"ok": True, "new_id": prod_update.id}
+
+@app.post("/api/updates/{update_id}/force-rollback")
+def force_rollback(
+    update_id: int,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Marker en opdatering til tvungen rollback — edge ruller tilbage ved næste check."""
+    from database import PendingUpdate
+    u = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not u:
+        raise HTTPException(status_code=404)
+    u.status = "rollback_requested"
+    db.commit()
+    log.info("Rollback anmodet for opdatering %d af %s", update_id, current_user.username)
     return {"ok": True}
 
 @app.get("/api/updates/policy/{device_id}")

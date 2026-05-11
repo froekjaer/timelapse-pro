@@ -837,6 +837,67 @@ class EdgeAgent:
 
         return info
 
+
+    def _check_and_apply_updates(self) -> None:
+        """Tjek om der er godkendte opdateringer og eksekvér dem."""
+        log.info("Update-check: starter...")
+        try:
+            ok, policy = self._api._get(f"/updates/policy/{self._device_id}")
+            if not ok or not policy:
+                return
+            pending = policy.get("pending_updates", [])
+            if not pending:
+                return
+
+            for update in pending:
+                uid    = update["id"]
+                utype  = update["update_type"]
+                status = update["status"]
+
+                if status == "rollback_requested":
+                    log.info("Rollback anmodet for opdatering %d (%s)", uid, utype)
+                    self._run_rollback(uid)
+                    return
+
+                if status == "approved":
+                    log.info("Udfører opdatering %d: %s", uid, utype)
+                    self._run_update(uid, utype)
+                    return  # Ét ad gangen
+
+        except Exception as e:
+            log.warning("Update-check fejl: %s", e, exc_info=True)
+
+    def _run_update(self, update_id: int, update_type: str) -> None:
+        """Kør edge_update.sh og rapportér resultat."""
+        import subprocess as _sp
+        script = Path("/opt/timelapse/deploy/edge_update.sh")
+        if not script.exists():
+            log.warning("edge_update.sh ikke fundet — kan ikke opdatere")
+            self._api.post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            return
+
+        env = {**__import__("os").environ, "UPDATE_TYPE": update_type, "UPDATE_ID": str(update_id)}
+        result = _sp.run(["bash", str(script)], capture_output=True, text=True, timeout=300, env=env)
+
+        if result.returncode == 0:
+            log.info("Opdatering %d gennemført OK", update_id)
+            self._api.post("/updates/report", {"update_id": update_id, "status": "deployed"})
+        else:
+            log.warning("Opdatering %d fejlede — rullet tilbage\n%s", update_id, result.stderr[-500:])
+            self._api.post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+
+    def _run_rollback(self, update_id: int) -> None:
+        """Tving rollback til forrige version."""
+        import subprocess as _sp
+        prev = Path("/opt/timelapse/prev")
+        if not prev.exists():
+            log.warning("Ingen forrige version til rollback")
+            self._api.post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            return
+        _sp.run(["bash", "-c", f"cp -r {prev}/* /opt/timelapse/"], timeout=60)
+        log.info("Rollback til forrige version gennemført")
+        self._api.post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+
     def _send_heartbeat(self) -> None:
         """Collect diagnostics and send heartbeat to headend."""
         try:
@@ -866,6 +927,7 @@ class EdgeAgent:
             self._connectivity.report_failure()
         finally:
             self._last_heartbeat = datetime.now(timezone.utc)
+            self._check_and_apply_updates()
 
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""

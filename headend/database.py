@@ -256,7 +256,11 @@ class PendingUpdate(Base):
     approved_at = Column(DateTime)
     approved_by = Column(String(100))
     deployed_at = Column(DateTime)
-    rollback_at = Column(DateTime)
+    rollback_at       = Column(DateTime)
+    environment       = Column(String(20), default="production")  # test|production
+    target_device_ids = Column(Text)          # JSON liste af specifikke device_ids
+    deployed_count    = Column(Integer, default=0)
+    failed_count      = Column(Integer, default=0)
 
 
 class WebAuthnCredential(Base):

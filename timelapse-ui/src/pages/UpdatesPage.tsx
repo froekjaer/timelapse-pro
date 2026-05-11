@@ -19,20 +19,29 @@ function api(path: string, opts?: RequestInit) {
 }
 
 interface Update {
-  id:          number
-  update_type: string
-  version:     string
-  description: string | null
-  severity:    string
-  scope:       string
-  scope_id:    string | null
-  status:      string
-  created_at:  string | null
-  approved_at: string | null
-  approved_by: string | null
+  id:                number
+  update_type:       string
+  version:           string
+  description:       string | null
+  severity:          string
+  scope:             string
+  scope_id:          string | null
+  status:            string
+  environment:       string | null
+  deployed_count:    number
+  failed_count:      number
+  created_at:        string | null
+  approved_at:       string | null
+  approved_by:       string | null
 }
 
-type Filter = 'pending' | 'approved' | 'deployed' | 'rejected' | 'all'
+interface ApproveOptions {
+  environment:      'test' | 'production'
+  scope:            'global' | 'device'
+  scope_id:         string
+}
+
+type Filter = 'pending' | 'approved' | 'deployed' | 'rejected' | 'rolled_back' | 'all'
 
 function fmt(iso: string | null) {
   if (!iso) return '—'
@@ -78,10 +87,12 @@ const TYPE_LABELS: Record<string, string> = {
   os_updates:   'OS opdatering',
 }
 
-function UpdateRow({ u, onApprove, onReject, busy }: {
+function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, busy }: {
   u: Update
-  onApprove: (id: number) => void
-  onReject:  (id: number) => void
+  onApprove:  (id: number) => void
+  onReject:   (id: number) => void
+  onPromote:  (id: number) => void
+  onRollback: (id: number) => void
   busy: number | null
 }) {
   const [open, setOpen] = useState(false)
@@ -103,6 +114,11 @@ function UpdateRow({ u, onApprove, onReject, busy }: {
             <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${statusBadge(u.status)}`}>
               {STATUS_LABELS[u.status] ?? u.status}
             </span>
+            {u.environment && (
+              <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${u.environment === 'test' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
+                {u.environment === 'test' ? '🧪 test' : '🚀 prod'}
+              </span>
+            )}
             {u.scope !== 'global' && (
               <span className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 border-gray-200">
                 {u.scope}{u.scope_id ? `: ${u.scope_id}` : ''}
@@ -113,7 +129,8 @@ function UpdateRow({ u, onApprove, onReject, busy }: {
         </div>
         {u.status === 'pending' && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
-            <button onClick={() => onApprove(u.id)} disabled={isBusy}
+            <button onClick={() => { onApprove(u.id) }}
+              disabled={isBusy}
               className="flex items-center gap-1 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white text-xs rounded-lg disabled:opacity-50 transition-colors">
               <CheckCircle className="w-3.5 h-3.5" />
               Godkend
@@ -122,6 +139,22 @@ function UpdateRow({ u, onApprove, onReject, busy }: {
               className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg border border-red-200 disabled:opacity-50 transition-colors">
               <XCircle className="w-3.5 h-3.5" />
               Afvis
+            </button>
+          </div>
+        )}
+        {u.status === 'deployed' && u.environment === 'test' && (
+          <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <button onClick={() => onPromote(u.id)} disabled={isBusy}
+              className="flex items-center gap-1 px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white text-xs rounded-lg disabled:opacity-50">
+              🚀 Promovér til prod
+            </button>
+          </div>
+        )}
+        {u.status === 'deployed' && (
+          <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <button onClick={() => onRollback(u.id)} disabled={isBusy}
+              className="flex items-center gap-1 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs rounded-lg border border-amber-200 disabled:opacity-50">
+              ↩ Rollback
             </button>
           </div>
         )}
@@ -159,7 +192,9 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'pending',  label: 'Afventer' },
   { key: 'approved', label: 'Godkendt' },
   { key: 'deployed', label: 'Deployet' },
-  { key: 'rejected', label: 'Afvist' },
+  { key: 'rejected',     label: 'Afvist' },
+  { key: 'deployed',     label: 'Deployet' },
+  { key: 'rolled_back',  label: 'Rullet tilbage' },
   { key: 'all',      label: 'Alle' },
 ]
 
@@ -171,6 +206,10 @@ export function UpdatesPage() {
   const [lastRefresh, setLast]      = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError]           = useState<string | null>(null)
+  const [approveId, setApproveId]   = useState<number | null>(null)
+  const [approveOpts, setApproveOpts] = useState<ApproveOptions>({
+    environment: 'production', scope: 'device', scope_id: ''
+  })
 
   const load = useCallback(async (spin = false) => {
     if (spin) setRefreshing(true)
@@ -200,6 +239,21 @@ export function UpdatesPage() {
   async function reject(id: number) {
     setBusy(id)
     try { await api(`/api/updates/${id}/reject`, { method: 'POST' }); load() }
+    catch (e: any) { setError(e.message) }
+    finally { setBusy(null) }
+  }
+
+  async function promote(id: number) {
+    setBusy(id)
+    try { await api(`/api/updates/${id}/promote`, { method: 'POST' }); load() }
+    catch (e: any) { setError(e.message) }
+    finally { setBusy(null) }
+  }
+
+  async function forceRollback(id: number) {
+    if (!confirm('Er du sikker på at du vil rulle denne opdatering tilbage?')) return
+    setBusy(id)
+    try { await api(`/api/updates/${id}/force-rollback`, { method: 'POST' }); load() }
     catch (e: any) { setError(e.message) }
     finally { setBusy(null) }
   }
@@ -256,6 +310,51 @@ export function UpdatesPage() {
         ))}
       </div>
 
+
+      {approveId !== null && (
+        <div className="bg-white rounded-xl border border-green-200 p-4 mb-4 shadow-sm">
+          <h3 className="text-sm font-semibold text-gray-800 mb-3">⚙️ Godkend opdatering</h3>
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Miljø</label>
+              <select value={approveOpts.environment}
+                onChange={e => setApproveOpts(o => ({...o, environment: e.target.value as any}))}
+                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
+                <option value="test">🧪 Test (deploy til testmiljø først)</option>
+                <option value="production">🚀 Produktion</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Scope</label>
+              <select value={approveOpts.scope}
+                onChange={e => setApproveOpts(o => ({...o, scope: e.target.value as any}))}
+                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
+                <option value="global">Alle enheder</option>
+                <option value="device">Specifik enhed</option>
+              </select>
+            </div>
+            {approveOpts.scope === 'device' && (
+              <div className="col-span-2">
+                <label className="text-xs text-gray-500 block mb-1">Device ID</label>
+                <input value={approveOpts.scope_id}
+                  onChange={e => setApproveOpts(o => ({...o, scope_id: e.target.value}))}
+                  placeholder="fx TL-C87FF9587CA0"
+                  className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono" />
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => approve(approveId)}
+              className="px-4 py-1.5 bg-green-500 text-white text-xs rounded-lg hover:bg-green-600">
+              ✓ Bekræft godkendelse
+            </button>
+            <button onClick={() => setApproveId(null)}
+              className="px-4 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg">
+              Annuller
+            </button>
+          </div>
+        </div>
+      )}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {loading ? (
           <div className="py-12 text-center">
@@ -272,7 +371,7 @@ export function UpdatesPage() {
           </div>
         ) : (
           updates.map(u => (
-            <UpdateRow key={u.id} u={u} onApprove={approve} onReject={reject} busy={busy} />
+            <UpdateRow key={u.id} u={u} onApprove={id => { setApproveId(id); setApproveOpts({environment:'production',scope:'device',scope_id:u.scope_id||''}) }} onReject={reject} onPromote={id => promote(id)} onRollback={id => forceRollback(id)} busy={busy} />
           ))
         )}
       </div>
