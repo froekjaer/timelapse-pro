@@ -868,22 +868,34 @@ class EdgeAgent:
             log.warning("Update-check fejl: %s", e, exc_info=True)
 
     def _run_update(self, update_id: int, update_type: str) -> None:
-        """Kør edge_update.sh og rapportér resultat."""
-        import subprocess as _sp
-        script = Path("/opt/timelapse/deploy/edge_update.sh")
-        if not script.exists():
-            log.warning("edge_update.sh ikke fundet — kan ikke opdatere")
-            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
-            return
+        """Kør opdatering baseret på type og rapportér resultat."""
+        import subprocess as _sp, os as _os
 
-        env = {**__import__("os").environ, "UPDATE_TYPE": update_type, "UPDATE_ID": str(update_id)}
-        result = _sp.run(["bash", str(script)], capture_output=True, text=True, timeout=300, env=env)
+        if update_type in ("os_security", "os_updates"):
+            # OS opdateringer via apt — kræver sudo
+            log.info("OS opdatering %d: kører apt upgrade (sikker, non-interactive)", update_id)
+            env = {**_os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+            result = _sp.run(
+                ["sudo", "apt-get", "upgrade", "-y", "--only-upgrade",
+                 "-o", "Dpkg::Options::=--force-confdef",
+                 "-o", "Dpkg::Options::=--force-confold"],
+                capture_output=True, text=True, timeout=600, env=env
+            )
+        else:
+            # App opdateringer via git pull (edge_update.sh)
+            script = Path("/opt/timelapse/deploy/edge_update.sh")
+            if not script.exists():
+                log.warning("edge_update.sh ikke fundet")
+                self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+                return
+            env = {**_os.environ, "UPDATE_TYPE": update_type, "UPDATE_ID": str(update_id)}
+            result = _sp.run(["bash", str(script)], capture_output=True, text=True, timeout=300, env=env)
 
         if result.returncode == 0:
             log.info("Opdatering %d gennemført OK", update_id)
             self._api._post("/updates/report", {"update_id": update_id, "status": "deployed"})
         else:
-            log.warning("Opdatering %d fejlede — rullet tilbage\n%s", update_id, result.stderr[-500:])
+            log.warning("Opdatering %d fejlede (rc=%d)\n%s", update_id, result.returncode, result.stderr[-300:])
             self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
 
     def _run_rollback(self, update_id: int) -> None:
