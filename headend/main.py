@@ -1840,7 +1840,30 @@ def get_update_policy(
     except Exception as exc:
         log.warning("Update policy resolution fejl: %s", exc)
 
-    return policy
+    # Find godkendte opdateringer til denne enhed
+    from database import PendingUpdate as _PU
+    from sqlalchemy import or_
+    approved = db.query(_PU).filter(
+        _PU.status.in_(["approved", "rollback_requested"]),
+        or_(_PU.scope == "global", _PU.scope_id == device_id)
+    ).all()
+
+    filtered = []
+    for u in approved:
+        if u.target_device_ids:
+            targets = json.loads(u.target_device_ids)
+            if device_id not in targets:
+                continue
+        filtered.append({
+            "id":          u.id,
+            "update_type": u.update_type,
+            "version":     u.version,
+            "status":      u.status,
+            "environment": u.environment,
+            "severity":    u.severity,
+        })
+
+    return {**policy, "pending_updates": filtered}
 
 @app.post("/api/updates/report")
 def report_update(payload: dict, db: Session = Depends(get_db)):

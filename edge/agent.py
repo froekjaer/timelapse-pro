@@ -873,7 +873,7 @@ class EdgeAgent:
         script = Path("/opt/timelapse/deploy/edge_update.sh")
         if not script.exists():
             log.warning("edge_update.sh ikke fundet — kan ikke opdatere")
-            self._api.post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
             return
 
         env = {**__import__("os").environ, "UPDATE_TYPE": update_type, "UPDATE_ID": str(update_id)}
@@ -881,10 +881,10 @@ class EdgeAgent:
 
         if result.returncode == 0:
             log.info("Opdatering %d gennemført OK", update_id)
-            self._api.post("/updates/report", {"update_id": update_id, "status": "deployed"})
+            self._api._post("/updates/report", {"update_id": update_id, "status": "deployed"})
         else:
             log.warning("Opdatering %d fejlede — rullet tilbage\n%s", update_id, result.stderr[-500:])
-            self._api.post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
 
     def _run_rollback(self, update_id: int) -> None:
         """Tving rollback til forrige version."""
@@ -892,11 +892,11 @@ class EdgeAgent:
         prev = Path("/opt/timelapse/prev")
         if not prev.exists():
             log.warning("Ingen forrige version til rollback")
-            self._api.post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
             return
         _sp.run(["bash", "-c", f"cp -r {prev}/* /opt/timelapse/"], timeout=60)
         log.info("Rollback til forrige version gennemført")
-        self._api.post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+        self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
 
     def _send_heartbeat(self) -> None:
         """Collect diagnostics and send heartbeat to headend."""
