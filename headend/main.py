@@ -2893,6 +2893,7 @@ def list_timelapse_jobs():
 
 
 # ── CMDB ──────────────────────────────────────────────────────────────────
+app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
 
 @app.post("/api/inventory/{device_id}")
