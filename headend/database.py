@@ -36,7 +36,7 @@ load_dotenv()
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Integer,
     String, Text, create_engine, event,
-    LargeBinary, BigInteger
+    LargeBinary, BigInteger, UniqueConstraint
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
