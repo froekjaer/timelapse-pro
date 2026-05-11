@@ -22,6 +22,8 @@ import KeyManagementPage from './pages/KeyManagementPage'
 import { SshTunnelPage } from './pages/SshTunnelPage'
 import { UpdatesPage } from './pages/UpdatesPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { CMDBPage, CMDBDetailPage } from './pages/CMDBPage'
+
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { isAuthenticated, loading } = useAuth()
@@ -63,6 +65,8 @@ function AppRoutes() {
                 <Route path="/key-management" element={<KeyManagementPage />} />
                 <Route path="/ssh-tunnel" element={<SshTunnelPage />} />
                 <Route path="/updates" element={<UpdatesPage />} />
+        <Route path="/cmdb" element={<CMDBPage />} />
+        <Route path="/cmdb/:deviceId" element={<CMDBDetailPage />} />
               </Routes>
             </main>
           </div>

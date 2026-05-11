@@ -361,6 +361,134 @@ def ensure_utc(dt):
         return dt.replace(tzinfo=timezone.utc)
     return dt
 
+class DeviceInventory(Base):
+    """
+    CMDB-registrering af en edge-enhed.
+
+    Oprettes første gang edge rapporterer inventar (POST /api/inventory/{device_id}).
+    Opdateres ved hvert genstart af edge-agenten.
+
+    Relation: 1:1 med devices.device_id (ikke FK constraint — edge kan rapportere
+    før den er fuldt registreret, men headend-siden validerer device_id).
+    """
+    __tablename__ = "device_inventory"
+
+    id                      = Column(Integer, primary_key=True)
+    device_id               = Column(String(50), unique=True, nullable=False, index=True)
+
+    # ── Miljø ────────────────────────────────────────────────────────────
+    environment             = Column(String(20), default="production")
+    # Mulige værdier: lab | staging | production
+
+    # ── Hardware (rapporteret af edge) ───────────────────────────────────
+    hardware_model          = Column(String(100))   # "Orange Pi 4 Pro"
+    soc_model               = Column(String(50))    # "RK3588S" | "Allwinner H3"
+    cpu_cores               = Column(Integer)
+    ram_mb                  = Column(Integer)
+    mac_address             = Column(String(20))    # primær ethernet MAC
+    serial_number           = Column(String(100))   # /proc/cpuinfo Serial
+    hostname                = Column(String(100))
+
+    # ── OS / Software ────────────────────────────────────────────────────
+    os_name                 = Column(String(100))   # "Ubuntu 24.04.1 LTS"
+    kernel_version          = Column(String(100))   # "6.1.0-armbian"
+    python_version          = Column(String(20))    # "3.12.3"
+    app_version             = Column(String(50))    # TimeLapse Pro edge version
+    venv_packages           = Column(Text)
+    # JSON: {"gphoto2": "2.5.28", "paramiko": "3.4.0", ...}
+
+    # ── Storage ──────────────────────────────────────────────────────────
+    boot_storage_type       = Column(String(20))    # emmc | sd | nvme
+    boot_storage_total_gb   = Column(Float)
+    boot_storage_used_pct   = Column(Float)
+    data_partition_path     = Column(String(100))   # "/data"
+    data_partition_total_gb = Column(Float)
+    data_partition_used_pct = Column(Float)
+
+    # ── Netværk ──────────────────────────────────────────────────────────
+    primary_interface       = Column(String(20))    # "end0" | "eth0"
+    wifi_capable            = Column(Boolean, default=False)
+    wifi_ssid               = Column(String(100))   # hvis tilsluttet WiFi
+
+    # ── Signering ────────────────────────────────────────────────────────
+    gpg_fingerprint         = Column(String(64))
+    # GPG-nøglens fingerprint — til verifikation af pakke-signaturer
+
+    # ── Lokation (pre-Location Model) ────────────────────────────────────
+    location_id             = Column(String(36))
+    # Udfyldes af admin efter provisioning. FK til kommende locations-tabel.
+
+    # ── Provisioning ─────────────────────────────────────────────────────
+    provisioned_at          = Column(DateTime)
+    provisioned_by          = Column(String(100))   # admin-brugernavn
+
+    # ── Tracking ─────────────────────────────────────────────────────────
+    inventory_reported_at   = Column(DateTime)
+    # Tidspunkt for seneste edge-rapportering
+
+    notes                   = Column(Text)
+
+    created_at              = Column(DateTime,
+                                default=lambda: datetime.now(timezone.utc))
+    updated_at              = Column(DateTime,
+                                default=lambda: datetime.now(timezone.utc),
+                                onupdate=lambda: datetime.now(timezone.utc))
+
+
+class BreakGlassAccount(Base):
+    """
+    Break-the-glass SSH-konto til nødadgang på edge-enheder.
+
+    Én konto pr. device pr. admin. Adgangskoden:
+      - Genereres tilfældigt (24 tegn, alphanumerisk)
+      - Krypteres med Fernet (AES-128-CBC + HMAC-SHA256) inden lagring
+      - Vises ÉN gang ved checkout (GET /api/cmdb/{device_id}/break-glass/checkout)
+      - Roteres AUTOMATISK ved checkout — næste checkout giver nyt password
+      - Rotation sker i baggrunden via headend → edge SSH-kommando (TODO: Sprint CMDB-2)
+
+    Nøgle: env-variabel BREAK_GLASS_ENC_KEY (Fernet-format, base64url 32 bytes)
+    Generér med: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    """
+    __tablename__ = "break_glass_accounts"
+    __table_args__ = (
+        UniqueConstraint("device_id", "admin_username",
+                         name="uq_breakglass_device_admin"),
+    )
+
+    id              = Column(Integer, primary_key=True)
+    device_id       = Column(String(50), nullable=False, index=True)
+    admin_username  = Column(String(100), nullable=False)
+    # Ejerskab: hvilken admin-konto der har adgang til denne instans
+
+    # ── SSH-konto på edge ────────────────────────────────────────────────
+    ssh_username    = Column(String(50), default="emergency")
+    # Bruges til: ssh emergency@<edge-ip>
+    # Denne bruger oprettes på edge ved provisioning (TODO: edge-side)
+
+    password_enc    = Column(Text, nullable=False)
+    # Fernet-krypteret adgangskode — ALDRIG vist i logs eller API-response
+    # undtagen ved eksplicit checkout
+
+    public_key      = Column(Text)
+    # Admin's SSH public key uploadet til edge som authorized_keys (backup)
+    # Gør at admin kan logge ind uden password hvis password-rotation fejler
+
+    # ── Livscyklus ───────────────────────────────────────────────────────
+    is_active       = Column(Boolean, default=True)
+    created_at      = Column(DateTime,
+                        default=lambda: datetime.now(timezone.utc))
+    last_used_at    = Column(DateTime)
+    last_used_by    = Column(String(100))   # admin der sidst checkede ud
+    rotated_at      = Column(DateTime)      # tidspunkt for seneste rotation
+    expires_at      = Column(DateTime)
+    # Udløb — headend advarer 7 dage før. None = udløber ikke.
+
+    # ── Audit ────────────────────────────────────────────────────────────
+    checkout_count  = Column(Integer, default=0)
+    rotation_reason = Column(Text)
+    # Årsag til seneste rotation (manuel, checkout, scheduled)
+
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
 

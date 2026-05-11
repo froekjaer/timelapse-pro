@@ -184,6 +184,14 @@ class EdgeAgent:
         # 2. Send startup heartbeat
         self._send_heartbeat()
 
+        # CMDB: rapportér hardwareinventar til headend (ikke-blokerende)
+        try:
+            from utils.inventory import report_inventory
+            report_inventory(self._cfg, self._api)
+        except Exception as _inv_exc:
+            import logging as _log
+            _log.getLogger(__name__).warning("Inventar-rapportering fejlede: %s", _inv_exc)
+
                 # SSH tunnel manager (Sprint C)
         self._tunnel = None
         if _SSH_TUNNEL_AVAILABLE:
@@ -805,22 +813,22 @@ class EdgeAgent:
         """Saml OS opdateringsinfo og git commit. Ingen internet nødvendig."""
         info = {"os_security_count": 0, "os_updates_count": 0, "app_version": "ukendt"}
 
-        # OS opdateringer — læs Ubuntu's pre-beregnede update-notifier fil
+        # OS opdateringer — læs pakkeliste fra apt
         try:
-            notifier = Path("/var/lib/update-notifier/updates-available")
-            if notifier.exists():
-                txt = notifier.read_text()
-                for line in txt.splitlines():
-                    if "security" in line.lower():
-                        nums = [int(w) for w in line.split() if w.isdigit()]
-                        if nums:
-                            info["os_security_count"] = nums[0]
-                    elif "update" in line.lower():
-                        nums = [int(w) for w in line.split() if w.isdigit()]
-                        if nums:
-                            info["os_updates_count"] = max(0, nums[0] - info["os_security_count"])
+            import subprocess as _sp2
+            r2 = _sp2.run(["apt", "list", "--upgradable"],
+                         capture_output=True, text=True, timeout=15)
+            lines = [l for l in r2.stdout.splitlines() if "/" in l]
+            security_pkgs = [l.split("/")[0] for l in lines if "security" in l.lower()]
+            other_pkgs    = [l.split("/")[0] for l in lines if "security" not in l.lower()]
+            info["os_security_count"]    = len(security_pkgs)
+            info["os_updates_count"]     = len(other_pkgs)
+            info["os_security_packages"] = security_pkgs[:50]
+            info["os_update_packages"]   = other_pkgs[:50]
+            info["os_distro"]            = "noble"
+            info["os_arch"]              = "arm64"
         except Exception as e:
-            log.debug("update-notifier læsning fejl: %s", e)
+            log.debug("apt list fejl: %s", e)
 
         # App version — git commit hash
         try:

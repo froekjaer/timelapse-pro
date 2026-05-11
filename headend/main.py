@@ -74,6 +74,7 @@ def ensure_utc(dt):
     if dt is None: return None
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
 
+from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from database import (
     BootstrapToken,
     Capture, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
@@ -2888,6 +2889,14 @@ def list_timelapse_jobs():
 
 # ── API Token auth ────────────────────────────────────────────────────────────
 
+
+
+# ── CMDB ──────────────────────────────────────────────────────────────────
+app.include_router(cmdb_router, prefix="/api/cmdb")
+
+@app.post("/api/inventory/{device_id}")
+def edge_report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db)):
+    return _cmdb_report_inventory(device_id=device_id, payload=payload, db=db)
 
 
 @app.get("/health")
