@@ -14,11 +14,9 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 1
+      - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install dependencies
@@ -48,7 +46,7 @@ jobs:
       run:
         working-directory: timelapse-ui
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -83,16 +81,7 @@ jobs:
       - name: Pull latest code
         run: |
           cd ~/projects/timelapse-pro
-          # Robust deploy: fresh clone til tmp, sync til working dir
-          git clone --depth 1 git@github.com:froekjaer/timelapse-pro.git /tmp/tl_deploy_fresh 2>/dev/null || true
-          if [ -d /tmp/tl_deploy_fresh ]; then
-            rsync -a --delete --exclude='.git' --exclude='venv' --exclude='__pycache__' \
-              /tmp/tl_deploy_fresh/ ~/projects/timelapse-pro/
-            rm -rf /tmp/tl_deploy_fresh
-          else
-            git fetch origin main && git reset --hard origin/main
-          fi
-          find . -name $'Icon\r' -delete 2>/dev/null || true
+          git pull origin main
       - name: Restart headend
         run: |
           sudo launchctl stop dk.froekjaer.timelapse-headend
@@ -103,10 +92,10 @@ jobs:
           cd ~/projects/timelapse-pro/timelapse-ui
           npm install --silent
           npm run build
-          echo "✅ UI bygget OK"
+          echo "✅ UI bygget"
       - name: Signal edge nodes to update
         run: |
           cd ~/projects/timelapse-pro/headend
           source venv/bin/activate
-          DATABASE_URL=postgresql://timelapse@localhost/timelapse_db python3 deploy/signal_edge_update.py
+          python3 deploy/signal_edge_update.py
           echo "✅ Edge enheder signaleret"
