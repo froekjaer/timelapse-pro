@@ -74,6 +74,7 @@ def ensure_utc(dt):
     if dt is None: return None
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
 
+from importer import router as import_router
 from siem import router as siem_router
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from database import (
@@ -2893,6 +2894,7 @@ def list_timelapse_jobs():
 
 
 # ── CMDB ──────────────────────────────────────────────────────────────────
+app.include_router(import_router, prefix="/api/import")
 app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
 
