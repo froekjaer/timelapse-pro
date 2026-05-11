@@ -877,8 +877,10 @@ class EdgeAgent:
             env = {**_os.environ, "DEBIAN_FRONTEND": "noninteractive"}
             result = _sp.run(
                 ["sudo", "apt-get", "upgrade", "-y", "--only-upgrade",
+                 "-o", "dir::cache=/data/apt-cache",
                  "-o", "Dpkg::Options::=--force-confdef",
                  "-o", "Dpkg::Options::=--force-confold"],
+
                 capture_output=True, text=True, timeout=600, env=env
             )
         else:
