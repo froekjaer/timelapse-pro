@@ -74,6 +74,7 @@ def ensure_utc(dt):
     if dt is None: return None
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
 
+from siem import router as siem_router
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from database import (
     BootstrapToken,
