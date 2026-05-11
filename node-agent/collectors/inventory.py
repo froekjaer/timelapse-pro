@@ -95,6 +95,12 @@ def _serial_number() -> Optional[str]:
 
 
 def _primary_mac(interface: str) -> Optional[str]:
+    if platform.system() == "Darwin":
+        import subprocess, re
+        out = subprocess.run(["ifconfig", interface],
+                             capture_output=True, text=True).stdout
+        m = re.search(r"ether\s+([0-9a-f:]{17})", out)
+        return m.group(1) if m else None
     try:
         return (Path("/sys/class/net") / interface / "address").read_text().strip()
     except OSError:
@@ -102,7 +108,15 @@ def _primary_mac(interface: str) -> Optional[str]:
 
 
 def _primary_interface() -> str:
-    """Finder primær ethernet-interface (end0 > eth0 > første fund)."""
+    """Finder primær ethernet-interface — platform-aware."""
+    if platform.system() == "Darwin":
+        import subprocess
+        out = subprocess.run(["route", "-n", "get", "default"],
+                             capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if "interface:" in line:
+                return line.split()[-1]
+        return "en0"
     net = Path("/sys/class/net")
     for preferred in ("end0", "eth0"):
         if (net / preferred).exists():
@@ -120,6 +134,20 @@ def _primary_interface() -> str:
 def _wifi_info() -> tuple[bool, Optional[str]]:
     """Returnerer (wifi_capable, ssid_eller_None)."""
     # Tjek om WiFi-interface eksisterer
+    if platform.system() == "Darwin":
+        import subprocess
+        # Prøv networksetup (virker på alle macOS versioner)
+        try:
+            out = subprocess.run(
+                ["networksetup", "-getairportnetwork", "en0"],
+                capture_output=True, text=True, timeout=3).stdout
+            if "You are not associated" in out:
+                return True, None
+            m = re.search(r"Current Wi-Fi Network: (.+)", out)
+            return True, m.group(1).strip() if m else None
+        except Exception:
+            return True, None
+
     net = Path("/sys/class/net")
     wifi_iface = None
     for iface in net.iterdir():
@@ -236,7 +264,7 @@ def collect_inventory(config: dict) -> dict:
     mac = _primary_mac(iface)
     wifi_cap, wifi_ssid = _wifi_info()
     boot_type, boot_gb, boot_pct = _storage_info("/")
-    data_path = config.get("storage", {}).get("base_dir", "/data")
+    data_path = "/data"
     data_type, data_gb, data_pct = _storage_info(data_path) if Path(data_path).exists() else (None, None, None)
 
     return {
