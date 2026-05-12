@@ -102,6 +102,20 @@ log = logging.getLogger("headend")
 # ── App ───────────────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address)
 
+def _sanitize_device_id(device_id: str) -> str:
+    """Sanitér device_id — afvis path traversal forsøg."""
+    import re as _re2
+    if not device_id:
+        raise HTTPException(status_code=400, detail="Ugyldigt device_id")
+    # Kun tilladte tegn: bogstaver, tal, bindestreg, underscore
+    if not _re2.match(r'^[A-Za-z0-9_-]{3,60}$', device_id):
+        raise HTTPException(status_code=400, detail="Ugyldigt device_id format")
+    # Afvis path traversal
+    if '..' in device_id or '/' in device_id or '\\' in device_id:
+        raise HTTPException(status_code=400, detail="Ugyldigt device_id")
+    return device_id
+
+
 app = FastAPI(
     title       = "TimeLapse Pro Headend",
     description = "Central control API for TimeLapse Pro edge nodes",
@@ -3046,6 +3060,7 @@ def _thumbs_dir_for(image_path: _Path) -> _Path:
 @app.get("/api/images/{device_id}/{filename}")
 def get_image(device_id: str, filename: str):
     from urllib.parse import unquote as _unquote
+    _sanitize_device_id(device_id)
     filename = _unquote(filename)
     path = _find_image(device_id, filename)
     if not path:
@@ -3772,7 +3787,7 @@ def edge_backup_complete(device_id: str, payload: dict, _user=require_role("oper
 
     # Filen er landet i SFTP incoming — flyt den lokalt til backup mappe
     SFTP_INCOMING = "/data/sftp/incoming"
-    local_sftp_path = _os.path.join(SFTP_INCOMING, "_backups", device_id, filename)
+    local_sftp_path = _os.path.join(SFTP_INCOMING, "_backups", _sanitize_device_id(device_id), filename)
 
     nas = _get_nas_path()
     backup_dest = nas if (nas and _os.path.isdir(nas)) else "/home/peter/backup"
