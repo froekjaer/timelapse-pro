@@ -33,6 +33,9 @@ Docs: http://<ip>:8000/docs
 """
 
 from __future__ import annotations
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 import json
 import logging
@@ -97,11 +100,15 @@ logging.basicConfig(
 log = logging.getLogger("headend")
 
 # ── App ───────────────────────────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(
     title       = "TimeLapse Pro Headend",
     description = "Central control API for TimeLapse Pro edge nodes",
     version     = "1.0.0",
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://timelapse.froekjaer.dk")
 
@@ -696,7 +703,8 @@ def _startup_ensure_admin():
         db.close()
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     """Login — returnerer JWT access token."""
     from database import User
     user = db.query(User).filter_by(username=req.username, is_active=True).first()
