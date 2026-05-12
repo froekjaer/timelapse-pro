@@ -24,6 +24,7 @@ import { UpdatesPage } from './pages/UpdatesPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { CMDBPage, CMDBDetailPage } from './pages/CMDBPage'
 import { SIEMPage } from './pages/SIEMPage'
+import { ImportPage } from './pages/ImportPage'
 
 
 function RequireAuth({ children }: { children: ReactElement }) {
@@ -68,6 +69,7 @@ function AppRoutes() {
                 <Route path="/updates" element={<UpdatesPage />} />
         <Route path="/cmdb" element={<CMDBPage />} />
         <Route path="/siem" element={<SIEMPage />} />
+        <Route path="/import" element={<ImportPage />} />
         <Route path="/cmdb/:deviceId" element={<CMDBDetailPage />} />
               </Routes>
             </main>

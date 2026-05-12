@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Camera, Settings, Database, Globe, LogOut,
   Shield, Users, Key, Terminal, Package, Server,
-  ChevronDown
+  ChevronDown, Upload
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -38,6 +38,7 @@ export function Navbar() {
     { to: '/ssh-tunnel',    label: 'SSH Tunnels',   icon: Terminal },
     { to: '/updates',       label: 'Opdateringer',  icon: Package },
     { to: '/cmdb',          label: 'CMDB',          icon: Server },
+    { to: '/import',        label: 'Import',        icon: Upload },
     { to: '/siem',          label: 'SIEM',          icon: Shield },
   ]
 
