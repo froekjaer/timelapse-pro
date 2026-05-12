@@ -78,6 +78,18 @@ jobs:
     needs: [ python-check, ui-check ]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
+      - name: Verificér GPG-signatur på seneste tag
+        run: |
+          cd ~/projects/timelapse-pro
+          git fetch --tags
+          LATEST_TAG=$(git tag --sort=-version:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "⚠️  Ingen tags fundet — springer signaturcheck over"
+          else
+            echo "Verificerer tag: $LATEST_TAG"
+            git tag -v "$LATEST_TAG" && echo "✅ GPG signatur OK: $LATEST_TAG" || { echo "❌ FEJL: Ugyldig GPG signatur på $LATEST_TAG"; exit 1; }
+          fi
+
       - name: Pull latest code
         run: |
           cd ~/projects/timelapse-pro
