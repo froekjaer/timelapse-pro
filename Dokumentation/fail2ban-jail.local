@@ -1,0 +1,34 @@
+[DEFAULT]
+action = %(action_)s
+bantime  = 3600
+findtime = 600
+maxretry = 5
+backend  = auto
+
+# Email (valgfrit — kræver mailserver)
+# destemail = admin@froekjaer.dk
+# sendername = Fail2Ban
+# action = %(action_mwl)s
+
+[sshd]
+enabled  = false
+
+[timelapse-api-login]
+enabled  = true
+port     = http,https
+filter   = timelapse-api-login
+logpath  = /opt/homebrew/var/log/nginx-timelapse-access.log
+maxretry = 10
+findtime = 60
+bantime  = 600
+action   = %(action_)s
+
+[timelapse-scanner]
+enabled  = true
+port     = http,https
+filter   = timelapse-scanner
+logpath  = /opt/homebrew/var/log/nginx-timelapse-access.log
+maxretry = 20
+findtime = 60
+bantime  = 3600
+action   = %(action_)s
