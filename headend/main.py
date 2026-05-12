@@ -913,8 +913,7 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
         # Marker som brugt
         token_record.used_at = now_utc()
         token_record.used_by_device = req.device_id
-    elif req.bootstrap_token.startswith("test-"):
-        pass  # DEV-mode: accepter test- prefix
+    # DEV-mode fjernet — alle tokens skal være i DB
     else:
         raise HTTPException(status_code=401, detail="Ugyldigt eller ukendt bootstrap token")
 
@@ -966,6 +965,71 @@ def _verify_device_token(
         raise HTTPException(status_code=401, detail="Ugyldig API token for dette device")
 
 # ── Config ────────────────────────────────────────────────────────────────────
+
+
+@app.post("/api/admin/provisioning-tokens")
+def create_provisioning_token(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Generer et nyt bootstrap-token til en edge-enhed."""
+    import secrets as _secrets
+    from sqlalchemy import text as _text
+    from datetime import timedelta as _timedelta
+
+    token = _secrets.token_urlsafe(32)
+    hours = int(payload.get("expires_hours", 24))
+    expires = now_utc() + _timedelta(hours=hours)
+
+    db.execute(_text("""
+        INSERT INTO provisioning_tokens
+            (token, device_id, customer_id, site_id, note, created_by, expires_at)
+        VALUES
+            (:token, :device_id, :customer_id, :site_id, :note, :created_by, :expires_at)
+    """), {
+        "token":       token,
+        "device_id":   payload.get("device_id"),
+        "customer_id": payload.get("customer_id"),
+        "site_id":     payload.get("site_id"),
+        "note":        payload.get("note", ""),
+        "created_by":  current_user.username,
+        "expires_at":  expires,
+    })
+    db.commit()
+    log.info("Provisioning token oprettet af %s — udløber %s", current_user.username, expires)
+    return {"token": token, "expires_at": expires.isoformat()}
+
+
+@app.get("/api/admin/provisioning-tokens")
+def list_provisioning_tokens(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Liste alle provisioning tokens."""
+    from sqlalchemy import text as _text
+    rows = db.execute(_text(
+        "SELECT id, token, device_id, note, created_by, created_at, "
+        "expires_at, used_at, used_by, revoked "
+        "FROM provisioning_tokens ORDER BY created_at DESC LIMIT 50"
+    )).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+@app.delete("/api/admin/provisioning-tokens/{token_id}")
+def revoke_provisioning_token(
+    token_id: str,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    """Revoker et provisioning token."""
+    from sqlalchemy import text as _text
+    db.execute(_text(
+        "UPDATE provisioning_tokens SET revoked = TRUE WHERE id = :id"
+    ), {"id": token_id})
+    db.commit()
+    return {"status": "revoked"}
+
 
 @app.get("/api/config/{device_id}")
 def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: Session = Depends(get_db)):
