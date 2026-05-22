@@ -14,6 +14,8 @@ import { CameraPage } from './pages/CameraPage'
 import { GlobalConfigPage } from './pages/GlobalConfigPage'
 import LabPage from './pages/LabPage'
 import { SystemAdminPage } from './pages/SystemAdminPage'
+import { TagSearchPage } from './pages/TagSearchPage'
+import { NotificationsPage } from './pages/NotificationsPage'
 import TimelapseVideoPage from './pages/TimelapseVideoPage'
 import NewCustomerPage from './pages/NewCustomerPage'
 import LoginPage from './pages/LoginPage'
@@ -25,6 +27,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { CMDBPage, CMDBDetailPage } from './pages/CMDBPage'
 import { SIEMPage } from './pages/SIEMPage'
 import { ImportPage } from './pages/ImportPage'
+import AIPage from './pages/AIPage'
 
 
 function RequireAuth({ children }: { children: ReactElement }) {
@@ -62,6 +65,8 @@ function AppRoutes() {
                 <Route path="/lab/:deviceId" element={<LabPage />} />
                 <Route path="/devices/:deviceId/lab" element={<LabPage />} />
                 <Route path="/system-admin" element={<SystemAdminPage />} />
+            <Route path="/tags" element={<TagSearchPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/devices/:id/timelapse" element={<TimelapseVideoPage />} />
                 <Route path="/users" element={<UsersPage />} />
                 <Route path="/key-management" element={<KeyManagementPage />} />
@@ -71,6 +76,7 @@ function AppRoutes() {
         <Route path="/siem" element={<SIEMPage />} />
         <Route path="/import" element={<ImportPage />} />
         <Route path="/cmdb/:deviceId" element={<CMDBDetailPage />} />
+        <Route path="/ai" element={<AIPage />} />
               </Routes>
             </main>
           </div>

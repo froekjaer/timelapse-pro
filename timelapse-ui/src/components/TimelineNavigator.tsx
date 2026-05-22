@@ -43,6 +43,8 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
   const [selected, setSelected]       = useState<{ year?: number; month?: number; day?: number }>({})
   const [loading, setLoading]         = useState(false)
   const [selFilename, setSelFilename] = useState<string | null>(null)
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const [lightboxCaptures, setLightboxCaptures] = useState<Capture[]>([])
   const [deleteMode, setDeleteMode]   = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleting, setDeleting]       = useState(false)
@@ -231,21 +233,26 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
           ) : (
             <>
               <p className="text-xs text-gray-400 mb-3">{dayCaptures.length} billeder</p>
-              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-1.5">
-                {dayCaptures.map(c => {
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {dayCaptures.map((c, i) => {
                   const lbl = c.captured_at ? fmtLocal(c.captured_at) : ''
+                  const passed = c.quality_passed !== false
                   return (
-                    <div key={c.id} className="relative">
-                      <button onClick={() => deleteMode ? toggleSelect(c.id) : openCapture(c)}
-                        className={`relative w-full rounded-lg overflow-hidden border-2 transition-all ${deleteMode ? '' : 'hover:scale-105'} ${deleteMode && selectedIds.has(c.id) ? 'border-red-400' : selFilename===c.filename ? 'border-sky-400' : 'border-transparent'} ${!c.quality_passed ? 'ring-1 ring-red-400' : ''}`}>
-                        <img src={getThumbnailUrl(c.device_id, c.filename)} alt="" className="w-full aspect-video object-cover" />
-                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-center py-0.5" style={{fontSize:9}}>{lbl}</div>
-                        {deleteMode && (
-                          <div className={`absolute top-1 right-1 ${selectedIds.has(c.id) ? 'text-red-400' : 'text-white/70'}`}>
-                            {selectedIds.has(c.id) ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                          </div>
+                    <div key={c.id}
+                      onClick={() => deleteMode ? toggleSelect(c.id) : openCapture(c)}
+                      className={`rounded-xl border overflow-hidden bg-white cursor-pointer hover:ring-2 hover:ring-sky-300 transition-all
+                        ${deleteMode && selectedIds.has(c.id) ? 'ring-2 ring-red-400 border-red-300' : passed ? 'border-gray-200' : 'border-red-200'}`}>
+                      <div className="aspect-video bg-slate-100 relative overflow-hidden">
+                        <img src={getThumbnailUrl(c.device_id, c.filename)} alt="" className="w-full h-full object-cover" loading="lazy" />
+                        {!passed && <span className="absolute top-1 left-1 text-[10px] bg-red-500 text-white px-1 py-0.5 rounded">QA fejl</span>}
+                        {deleteMode && selectedIds.has(c.id) && <div className="absolute inset-0 bg-red-400/20" />}
+                      </div>
+                      <div className="px-2 py-1">
+                        <p className="text-xs font-medium text-gray-700">{lbl}</p>
+                        {c.blur_score != null && (
+                          <p className={`text-xs ${c.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>⬡ {Math.round(c.blur_score)}</p>
                         )}
-                      </button>
+                      </div>
                     </div>
                   )
                 })}

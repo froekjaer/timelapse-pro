@@ -365,6 +365,11 @@ def _run_import(
                     )
                     db.add(capture)
                     db.commit()
+                    try:
+                        from ai.integration import queue_capture_for_analysis
+                        queue_capture_for_analysis(capture.id)
+                    except Exception:
+                        pass  # AI er valgfri — blokerer aldrig import
             finally:
                 db.close()
 

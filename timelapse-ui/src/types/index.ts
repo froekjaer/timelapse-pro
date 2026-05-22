@@ -33,6 +33,9 @@ export interface Capture {
   filesize_mb: number | null
   uploaded: boolean
   brightness?: number
+  ai_result?:      string | null
+  ai_analyzed_at?: string | null
+  ai_tags?:        string[] | null
 }
 
 export interface Diagnostic {

@@ -1,0 +1,922 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// TimeLapse Pro — AIPage.tsx
+// ───────────────────────────────────────────────────────────────────────────
+// AI-styring: strategi pr. kunde, tag-review, eskalering, daglig korrektion
+// ═══════════════════════════════════════════════════════════════════════════
+
+import TagCleanupTab from './TagCleanupTab'
+import React, { useEffect, useState, useCallback } from 'react'
+import {
+  Brain, Settings2, Tags, AlertTriangle, CalendarCheck,
+  BarChart3, CheckCircle, XCircle, ChevronDown, ChevronUp,
+  Cloud, Cpu, Zap, RefreshCw, Send, Eye, ThumbsUp, ThumbsDown,
+  TrendingUp, Layers, SlidersHorizontal, Info
+} from 'lucide-react'
+import { getApiUrl, getThumbnailUrl } from '../api/client'
+
+const api = (path: string, opts?: RequestInit) =>
+  fetch(`${getApiUrl()}${path}`, opts).then(r => r.json())
+
+// ── Types ─────────────────────────────────────────────────────────────────
+
+type Strategy = 'technical_only' | 'local_only' | 'local_then_cloud' | 'cloud_only'
+
+interface AIConfig {
+  id: number
+  customer_id: string | null
+  site_id: string | null
+  customer_name: string | null
+  strategy: Strategy
+  local_model: string
+  cloud_model: string
+  escalation_threshold: number
+  escalation_new_tags: number
+  tag_vocabulary_limit: number
+  enabled: boolean
+  notes: string | null
+  display_name: string
+}
+
+interface PendingTag {
+  id: number
+  tag: string
+  count: number
+  first_seen: string
+  last_seen: string
+}
+
+interface EscalationItem {
+  analysis_id: number
+  capture_id: number
+  filename: string
+  captured_at: string
+  escalation_score: number
+  escalation_reasons: string[]
+  current_tags: string[]
+  quality_flag: string
+  change_detected: boolean
+}
+
+interface DayCapture {
+  capture_id: number
+  filename: string
+  captured_at: string
+  scene_dk: string
+  current_tags: string[]
+  quality_flag: string
+  quality_ok: boolean
+  corrected_tags: string[] | null
+  is_corrected: boolean
+  should_escalate: boolean
+  gemini_tags: string[] | null
+}
+
+interface AccuracyStat {
+  dt: string
+  total: number
+  no_changes_needed: number
+  accuracy_pct: number
+}
+
+interface TagStat {
+  tag: string
+  category: string
+  total_count: number
+  location_count: number
+  approved: boolean
+}
+
+interface SimilarTagItem {
+  id: number
+  tag: string
+  category: string | null
+  count: number
+  approved: boolean
+  rejected: boolean
+}
+
+interface SimilarTagGroup {
+  canonical_tag: string
+  score: number
+  reason: string
+  tags: SimilarTagItem[]
+  total_count: number
+}
+
+// ── Strategy helpers ──────────────────────────────────────────────────────
+
+const STRATEGY_META: Record<Strategy, { label: string; color: string; icon: React.ReactElement; desc: string }> = {
+  technical_only:   { label: 'Kun OpenCV',        color: 'text-slate-400 bg-slate-800',  icon: <Cpu className="w-3.5 h-3.5" />,   desc: 'Ingen AI — kun blur/brightness' },
+  local_only:       { label: 'Lokal Ollama',       color: 'text-emerald-400 bg-emerald-950', icon: <Cpu className="w-3.5 h-3.5" />,   desc: 'Kun lokal model, ingen cloud' },
+  local_then_cloud: { label: 'Lokal → Cloud',      color: 'text-amber-400 bg-amber-950',  icon: <Zap className="w-3.5 h-3.5" />,   desc: 'Lokal model, Gemini ved usikkerhed' },
+  cloud_only:       { label: 'Kun Gemini',         color: 'text-sky-400 bg-sky-950',      icon: <Cloud className="w-3.5 h-3.5" />, desc: 'Alt til Gemini Flash' },
+}
+
+function StrategyBadge({ strategy }: { strategy: Strategy }) {
+  const m = STRATEGY_META[strategy]
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${m.color}`}>
+      {m.icon}{m.label}
+    </span>
+  )
+}
+
+// ── Tabs ─────────────────────────────────────────────────────────────────
+
+const TABS = [
+  { id: 'strategy',   label: 'Strategi',       icon: SlidersHorizontal },
+  { id: 'tags',       label: 'Tag Review',      icon: Tags },
+  { id: 'cleanup',    label: 'Tag Oprydning',   icon: Layers },
+  { id: 'escalation', label: 'Eskalering',      icon: AlertTriangle },
+  { id: 'review',     label: 'Daglig Review',   icon: CalendarCheck },
+  { id: 'stats',      label: 'Statistik',       icon: BarChart3 },
+]
+
+// ═════════════════════════════════════════════════════════════════════════
+// MAIN PAGE
+// ═════════════════════════════════════════════════════════════════════════
+
+export default function AIPage() {
+  const [tab, setTab] = useState('strategy')
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white">
+      {/* Header */}
+      <div className="border-b border-white/8 bg-gray-900/60 backdrop-blur-sm sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center gap-3">
+          <Brain className="w-5 h-5 text-violet-400" />
+          <h1 className="font-semibold text-sm tracking-tight">AI Styring</h1>
+          <div className="ml-6 flex items-center gap-1">
+            {TABS.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                  tab === t.id
+                    ? 'bg-violet-600 text-white'
+                    : 'text-slate-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <t.icon className="w-3.5 h-3.5" />
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-6 py-6">
+        {tab === 'strategy'   && <StrategyTab />}
+        {tab === 'tags'       && <TagReviewTab />}
+        {tab === 'cleanup'    && <TagCleanupTab />}
+        {tab === 'escalation' && <EscalationTab />}
+        {tab === 'review'     && <DailyReviewTab />}
+        {tab === 'stats'      && <StatsTab />}
+      </div>
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// STRATEGI TAB
+// ═════════════════════════════════════════════════════════════════════════
+
+function StrategyTab() {
+  const [configs, setConfigs] = useState<AIConfig[]>([])
+  const [editing, setEditing] = useState<AIConfig | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    api('/api/settings/config').then(d => { setConfigs(Array.isArray(d) ? d : []); setLoading(false) }).catch(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const save = async () => {
+    if (!editing) return
+    setSaving(true)
+    await api('/api/ai/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editing),
+    })
+    setSaving(false)
+    setEditing(null)
+    load()
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Forklaring */}
+      <div className="bg-violet-950/40 border border-violet-800/30 rounded-xl p-4 flex gap-3">
+        <Info className="w-4 h-4 text-violet-400 mt-0.5 shrink-0" />
+        <div className="text-sm text-slate-300 space-y-1">
+          <p>Strategi bestemmer hvilken AI der bruges pr. kunde. Fallback-hierarki: <strong>Site → Kunde → Global</strong></p>
+          <p className="text-slate-400 text-xs">Ændringer træder i kraft ved næste analyse. Eksisterende analyser påvirkes ikke.</p>
+        </div>
+      </div>
+
+      {/* Strategi-forklaring */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {(Object.entries(STRATEGY_META) as [Strategy, typeof STRATEGY_META[Strategy]][]).map(([key, m]) => (
+          <div key={key} className="bg-gray-900 border border-white/8 rounded-xl p-3 space-y-1">
+            <div className="flex items-center gap-2">
+              <StrategyBadge strategy={key} />
+            </div>
+            <p className="text-xs text-slate-400">{m.desc}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabel */}
+      {loading ? (
+        <div className="text-center py-12 text-slate-500">Henter konfiguration...</div>
+      ) : (
+        <div className="bg-gray-900 border border-white/8 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/8 text-xs text-slate-500 uppercase tracking-wider">
+                <th className="px-4 py-3 text-left">Scope</th>
+                <th className="px-4 py-3 text-left">Strategi</th>
+                <th className="px-4 py-3 text-left">Lokal model</th>
+                <th className="px-4 py-3 text-left">Threshold</th>
+                <th className="px-4 py-3 text-left">Vocab limit</th>
+                <th className="px-4 py-3 text-left">Status</th>
+                <th className="px-4 py-3 text-right"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {configs.map(cfg => (
+                <tr key={cfg.id} className="hover:bg-white/3 transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-white">{cfg.display_name}</div>
+                    {cfg.notes && <div className="text-xs text-slate-500 mt-0.5">{cfg.notes}</div>}
+                  </td>
+                  <td className="px-4 py-3"><StrategyBadge strategy={cfg.strategy} /></td>
+                  <td className="px-4 py-3 text-slate-400 font-mono text-xs">{cfg.local_model}</td>
+                  <td className="px-4 py-3 text-slate-400">{cfg.escalation_threshold}</td>
+                  <td className="px-4 py-3 text-slate-400">{cfg.tag_vocabulary_limit}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs ${cfg.enabled ? 'text-emerald-400' : 'text-slate-500'}`}>
+                      {cfg.enabled ? '● Aktiv' : '○ Deaktiveret'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={() => setEditing({ ...cfg })}
+                      className="text-xs text-violet-400 hover:text-violet-300 px-2 py-1 rounded-lg hover:bg-violet-900/30 transition-colors"
+                    >
+                      Rediger
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editing && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-white/10 rounded-2xl w-full max-w-lg p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-white">{editing.display_name}</h2>
+              <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-white">✕</button>
+            </div>
+
+            {/* Strategi */}
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">Strategi</label>
+              <div className="grid grid-cols-2 gap-2">
+                {(Object.keys(STRATEGY_META) as Strategy[]).map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setEditing({ ...editing, strategy: s })}
+                    className={`flex items-start gap-2 p-3 rounded-xl border text-left transition-all ${
+                      editing.strategy === s
+                        ? 'border-violet-500 bg-violet-950/50'
+                        : 'border-white/8 bg-gray-800 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="mt-0.5"><StrategyBadge strategy={s} /></div>
+                    <p className="text-xs text-slate-400 mt-0.5">{STRATEGY_META[s].desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Lokal model */}
+            {(editing.strategy === 'local_only' || editing.strategy === 'local_then_cloud') && (
+              <div className="space-y-1.5">
+                <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">Lokal model</label>
+                <select
+                  value={editing.local_model}
+                  onChange={e => setEditing({ ...editing, local_model: e.target.value })}
+                  className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                >
+                  <option value="qwen2.5vl:7b">qwen2.5vl:7b (anbefalet)</option>
+                  <option value="llama3.2-vision:11b">llama3.2-vision:11b (tung)</option>
+                  <option value="llava-phi3:latest">llava-phi3:latest (hurtig/svag)</option>
+                </select>
+              </div>
+            )}
+
+            {/* Thresholds */}
+            {editing.strategy === 'local_then_cloud' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                    Eskalér hvis confidence &lt;
+                  </label>
+                  <input
+                    type="number" min="0.5" max="1" step="0.05"
+                    value={editing.escalation_threshold}
+                    onChange={e => setEditing({ ...editing, escalation_threshold: parseFloat(e.target.value) })}
+                    className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                    Eskalér hvis &gt; N nye tags
+                  </label>
+                  <input
+                    type="number" min="1" max="20"
+                    value={editing.escalation_new_tags}
+                    onChange={e => setEditing({ ...editing, escalation_new_tags: parseInt(e.target.value) })}
+                    className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Vocab limit */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                Max tags i prompt (performance)
+              </label>
+              <input
+                type="number" min="20" max="372" step="10"
+                value={editing.tag_vocabulary_limit}
+                onChange={e => setEditing({ ...editing, tag_vocabulary_limit: parseInt(e.target.value) })}
+                className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+              />
+              <p className="text-xs text-slate-500">Færre = hurtigere. 372 = alle tags</p>
+            </div>
+
+            {/* Enabled */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-300">AI aktiveret for denne kunde</span>
+              <button
+                onClick={() => setEditing({ ...editing, enabled: !editing.enabled })}
+                className={`w-11 h-6 rounded-full transition-colors ${editing.enabled ? 'bg-violet-600' : 'bg-gray-700'}`}
+              >
+                <div className={`w-4 h-4 rounded-full bg-white mx-auto transition-transform ${editing.enabled ? 'translate-x-2.5' : '-translate-x-2.5'}`} />
+              </button>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setEditing(null)}
+                className="flex-1 px-4 py-2 rounded-xl border border-white/10 text-sm text-slate-400 hover:text-white transition-colors"
+              >
+                Annuller
+              </button>
+              <button
+                onClick={save}
+                disabled={saving}
+                className="flex-1 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {saving ? 'Gemmer...' : 'Gem'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// TAG REVIEW TAB
+// ═════════════════════════════════════════════════════════════════════════
+
+function TagReviewTab() {
+  const [tags,    setTags]    = useState<PendingTag[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy,    setBusy]    = useState<Set<number>>(new Set())
+
+  const load = () => {
+    setLoading(true)
+    api('/api/ai/vocabulary/pending').then(d => { setTags(Array.isArray(d) ? d : []); setLoading(false) })
+  }
+
+  useEffect(() => { load() }, [])
+
+  const approve = async (id: number, category?: string) => {
+    setBusy(b => new Set(b).add(id))
+    await api(`/api/ai/vocabulary/${id}/approve${category ? `?category=${category}` : ''}`, { method: 'POST' })
+    setTags(t => t.filter(x => x.id !== id))
+    setBusy(b => { const s = new Set(b); s.delete(id); return s })
+  }
+
+  const reject = async (id: number) => {
+    setBusy(b => new Set(b).add(id))
+    await api(`/api/ai/vocabulary/${id}/reject`, { method: 'POST' })
+    setTags(t => t.filter(x => x.id !== id))
+    setBusy(b => { const s = new Set(b); s.delete(id); return s })
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-semibold text-white">Model-opfundne tags</h2>
+          <p className="text-sm text-slate-400 mt-0.5">Tags AI-modellen har fundet selv — godkend eller afvis</p>
+        </div>
+        <button onClick={load} className="flex items-center gap-2 text-sm text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-white/5 transition-colors">
+          <RefreshCw className="w-3.5 h-3.5" /> Opdater
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-slate-500">Henter tags...</div>
+      ) : tags.length === 0 ? (
+        <div className="text-center py-16">
+          <CheckCircle className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
+          <p className="text-slate-400">Ingen tags afventer godkendelse</p>
+        </div>
+      ) : (
+        <div className="bg-gray-900 border border-white/8 rounded-xl overflow-hidden">
+          <div className="px-4 py-2 border-b border-white/5 text-xs text-slate-500 flex gap-4">
+            <span>{tags.length} tags afventer</span>
+            <button
+              onClick={() => tags.forEach(t => approve(t.id))}
+              className="text-emerald-400 hover:text-emerald-300"
+            >
+              Godkend alle →
+            </button>
+          </div>
+          <div className="divide-y divide-white/5">
+            {tags.map(tag => (
+              <div key={tag.id} className="flex items-center gap-4 px-4 py-3 hover:bg-white/3 transition-colors">
+                <code className="text-sm text-violet-300 font-mono bg-violet-950/50 px-2 py-0.5 rounded-lg flex-1">
+                  #{tag.tag}
+                </code>
+                <span className="text-xs text-slate-500">set {tag.count}×</span>
+                <span className="text-xs text-slate-600">
+                  {new Date(tag.first_seen).toLocaleDateString('da-DK')}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => approve(tag.id)}
+                    disabled={busy.has(tag.id)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-900/50 text-emerald-400 hover:bg-emerald-800/50 text-xs transition-colors disabled:opacity-40"
+                  >
+                    <ThumbsUp className="w-3 h-3" /> Godkend
+                  </button>
+                  <button
+                    onClick={() => reject(tag.id)}
+                    disabled={busy.has(tag.id)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-900/30 text-red-400 hover:bg-red-800/30 text-xs transition-colors disabled:opacity-40"
+                  >
+                    <ThumbsDown className="w-3 h-3" /> Afvis
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ESKALERING TAB
+// ═════════════════════════════════════════════════════════════════════════
+
+function EscalationTab() {
+  const [items,    setItems]    = useState<EscalationItem[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [sending,  setSending]  = useState(false)
+  const [stats,    setStats]    = useState<any>(null)
+
+  const load = () => {
+    setLoading(true)
+    Promise.all([
+      api('/api/review/escalation/pending?limit=100'),
+      api('/api/review/escalation/stats?days=7'),
+    ]).then(([q, s]) => {
+      setItems(Array.isArray(q.items) ? q.items : [])
+      setStats(s)
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  const toggle = (id: number) =>
+    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  const approveSelected = async () => {
+    if (selected.size === 0) return
+    setSending(true)
+    await api('/api/review/escalation/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analysis_ids: [...selected], admin_id: 'admin' }),
+    })
+    setSending(false)
+    setSelected(new Set())
+    load()
+  }
+
+  const rejectSelected = async () => {
+    if (selected.size === 0) return
+    await api('/api/review/escalation/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ analysis_ids: [...selected], admin_id: 'admin' }),
+    })
+    setSelected(new Set())
+    load()
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Stats */}
+      {stats && (
+        <div className="grid grid-cols-4 gap-3">
+          {[
+            { label: 'Afventer',   value: stats.pending,   color: 'text-amber-400' },
+            { label: 'Godkendt',   value: stats.approved,  color: 'text-sky-400' },
+            { label: 'Afvist',     value: stats.rejected,  color: 'text-slate-400' },
+            { label: 'Fuldført',   value: stats.completed, color: 'text-emerald-400' },
+          ].map(s => (
+            <div key={s.label} className="bg-gray-900 border border-white/8 rounded-xl p-4 text-center">
+              <div className={`text-2xl font-bold ${s.color}`}>{s.value ?? 0}</div>
+              <div className="text-xs text-slate-500 mt-1">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Actions */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 bg-violet-950/40 border border-violet-800/30 rounded-xl px-4 py-3">
+          <span className="text-sm text-violet-300">{selected.size} billeder valgt</span>
+          <div className="flex gap-2 ml-auto">
+            <button
+              onClick={rejectSelected}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-400 hover:text-white border border-white/10 hover:bg-white/5 transition-colors"
+            >
+              <XCircle className="w-3.5 h-3.5" /> Afvis
+            </button>
+            <button
+              onClick={approveSelected}
+              disabled={sending}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-500 transition-colors disabled:opacity-50"
+            >
+              <Send className="w-3.5 h-3.5" />
+              {sending ? 'Sender til Gemini...' : 'Send til Gemini'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-center py-12 text-slate-500">Henter eskalerings-kø...</div>
+      ) : items.length === 0 ? (
+        <div className="text-center py-16">
+          <CheckCircle className="w-10 h-10 text-emerald-500 mx-auto mb-3" />
+          <p className="text-slate-400">Ingen billeder afventer Gemini-analyse</p>
+        </div>
+      ) : (
+        <div className="bg-gray-900 border border-white/8 rounded-xl overflow-hidden">
+          <div className="px-4 py-2 border-b border-white/5 flex items-center gap-3">
+            <button
+              onClick={() => setSelected(selected.size === items.length ? new Set() : new Set(items.map(i => i.analysis_id)))}
+              className="text-xs text-slate-400 hover:text-white"
+            >
+              {selected.size === items.length ? 'Fravælg alle' : 'Vælg alle'}
+            </button>
+            <span className="text-xs text-slate-600">{items.length} billeder</span>
+          </div>
+          <div className="divide-y divide-white/5">
+            {items.map(item => (
+              <div
+                key={item.analysis_id}
+                className={`flex items-center gap-4 px-4 py-3 cursor-pointer transition-colors hover:bg-white/3 ${selected.has(item.analysis_id) ? 'bg-violet-950/20' : ''}`}
+                onClick={() => toggle(item.analysis_id)}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(item.analysis_id)}
+                  readOnly
+                  className="w-4 h-4 rounded accent-violet-500"
+                />
+                {/* Thumbnail */}
+                <img
+                  src={getThumbnailUrl(item.filename.split('/').pop() || '', item.filename.split('/')[0] || '')}
+                  alt=""
+                  className="w-14 h-10 object-cover rounded-lg bg-gray-800"
+                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-white truncate">{item.filename.split('/').pop()}</div>
+                  <div className="flex gap-2 mt-1 flex-wrap">
+                    {item.escalation_reasons.map(r => (
+                      <span key={r} className="text-xs bg-amber-950/50 text-amber-400 px-1.5 py-0.5 rounded">{r}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-xs font-mono text-amber-400">{(item.escalation_score * 100).toFixed(0)}%</div>
+                  <div className="text-xs text-slate-500">usikkerhed</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// DAGLIG REVIEW TAB
+// ═════════════════════════════════════════════════════════════════════════
+
+function DailyReviewTab() {
+  const today = new Date().toISOString().split('T')[0]
+  const [date,     setDate]     = useState(today)
+  const [captures, setCaptures] = useState<DayCapture[]>([])
+  const [loading,  setLoading]  = useState(false)
+  const [sessionId, setSessionId] = useState<number | null>(null)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editTags,  setEditTags]  = useState('')
+  const [saving,   setSaving]   = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    api(`/api/review/day/${date}?limit=200`).then(d => {
+      setCaptures(Array.isArray(d.captures) ? d.captures : [])
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }
+
+  const startSession = async () => {
+    const d = await api('/api/review/session/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_date: date, admin_id: 'admin' }),
+    })
+    setSessionId(d.session_id)
+    load()
+  }
+
+  const saveCorrection = async (cap: DayCapture) => {
+    let sid = sessionId
+    if (!sid) {
+      const d = await api('/api/review/session/start', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({session_date: date, admin_id: 'admin'})
+      })
+      sid = d.session_id
+      setSessionId(sid)
+    }
+    if (!sid) return
+    setSaving(true)
+    const tags = editTags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean)
+    await api('/api/review/correction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        capture_id: cap.capture_id,
+        session_id: sid,
+        admin_id: 'admin',
+        corrected_tags: tags,
+        corrected_quality_flag: cap.quality_flag,
+        corrected_quality_ok: cap.quality_ok,
+      }),
+    })
+    setSaving(false)
+    setEditingId(null)
+    load()
+  }
+
+  const completeSession = async () => {
+    if (!sessionId) return
+    const result = await api(`/api/review/session/${sessionId}/complete`, { method: 'POST' })
+    alert(`Session afsluttet! ${result.examples_generated} nye prompt-eksempler genereret.`)
+    setSessionId(null)
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Datovælger + session */}
+      <div className="flex items-center gap-4">
+        <input
+          type="date" value={date}
+          onChange={e => setDate(e.target.value)}
+          className="bg-gray-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+        />
+        <button onClick={load} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-sm transition-colors">
+          <Eye className="w-3.5 h-3.5" /> Hent billeder
+        </button>
+        {!sessionId ? (
+          <button onClick={startSession} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-sm font-medium transition-colors">
+            Start korrektions-session
+          </button>
+        ) : (
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-emerald-400">Session #{sessionId} aktiv</span>
+            <button onClick={completeSession} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-sm font-medium transition-colors">
+              <CheckCircle className="w-3.5 h-3.5" /> Afslut session
+            </button>
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-slate-500">Henter billeder...</div>
+      ) : captures.length === 0 ? (
+        <div className="text-center py-12 text-slate-500">Ingen analyserede billeder for {date}</div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-xs text-slate-500 px-1">{captures.length} billeder · {captures.filter(c => c.is_corrected).length} korrigerede</div>
+          {captures.map(cap => (
+            <div
+              key={cap.capture_id}
+              className={`bg-gray-900 border rounded-xl overflow-hidden transition-all ${
+                cap.is_corrected ? 'border-emerald-800/40' : 'border-white/8'
+              }`}
+            >
+              <div className="flex gap-4 p-4">
+                {/* Thumbnail */}
+                <img
+                  src={getThumbnailUrl(cap.filename.split('/').pop() || '', cap.filename.split('/')[0] || '')}
+                  alt=""
+                  className="w-20 h-14 object-cover rounded-lg bg-gray-800 shrink-0"
+                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                />
+                <div className="flex-1 min-w-0 space-y-2">
+                  {/* Scene */}
+                  <p className="text-sm text-slate-300">{cap.scene_dk || 'Ingen beskrivelse'}</p>
+                  {/* Tags */}
+                  <div className="flex flex-wrap gap-1">
+                    {(cap.corrected_tags || cap.current_tags || []).slice(0, 20).map(tag => (
+                      <span key={tag} className={`text-xs px-1.5 py-0.5 rounded font-mono ${
+                        cap.is_corrected ? 'bg-emerald-950/50 text-emerald-300' : 'bg-gray-800 text-slate-400'
+                      }`}>#{tag}</span>
+                    ))}
+                  </div>
+                  {/* Meta */}
+                  <div className="flex items-center gap-3 text-xs text-slate-500">
+                    <span>{new Date(cap.captured_at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}</span>
+                    <span>{cap.quality_flag}</span>
+                    {cap.should_escalate && <span className="text-amber-400">🔺 eskaleret</span>}
+                    {cap.gemini_tags && <span className="text-sky-400">☁️ Gemini</span>}
+                    {cap.is_corrected && <span className="text-emerald-400">✓ korrigeret</span>}
+                  </div>
+                </div>
+                {/* Rediger knap */}
+                {sessionId && (
+                  <button
+                    onClick={() => {
+                      setEditingId(cap.capture_id)
+                      setEditTags((cap.corrected_tags || cap.current_tags || []).join(', '))
+                    }}
+                    className="shrink-0 text-xs text-violet-400 hover:text-violet-300 px-3 py-1.5 rounded-lg hover:bg-violet-900/30 transition-colors self-start"
+                  >
+                    Ret
+                  </button>
+                )}
+              </div>
+
+              {/* Edit panel */}
+              {editingId === cap.capture_id && (
+                <div className="border-t border-white/8 p-4 bg-gray-900/80 space-y-3">
+                  <label className="text-xs text-slate-400">Tags (kommasepareret)</label>
+                  <textarea
+                    value={editTags}
+                    onChange={e => setEditTags(e.target.value)}
+                    rows={3}
+                    className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white font-mono resize-none focus:outline-none focus:border-violet-500/50"
+                    placeholder="tag1, tag2, tag3..."
+                  />
+                  <div className="flex gap-3">
+                    <button onClick={() => setEditingId(null)} className="px-4 py-1.5 rounded-lg text-sm text-slate-400 border border-white/10 hover:text-white transition-colors">
+                      Annuller
+                    </button>
+                    <button
+                      onClick={() => saveCorrection(cap)}
+                      disabled={saving}
+                      className="px-4 py-1.5 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-500 transition-colors disabled:opacity-50"
+                    >
+                      {saving ? 'Gemmer...' : 'Gem korrektion'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// STATISTIK TAB
+// ═════════════════════════════════════════════════════════════════════════
+
+function StatsTab() {
+  const [accuracy, setAccuracy] = useState<AccuracyStat[]>([])
+  const [tagStats, setTagStats] = useState<TagStat[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [tagFilter, setTagFilter] = useState('')
+
+  useEffect(() => {
+    Promise.all([
+      api('/api/review/stats/accuracy?days=30'),
+      api('/api/ai/vocabulary/statistics?limit=200'),
+    ]).then(([acc, tags]) => {
+      setAccuracy(Array.isArray(acc) ? acc : [])
+      setTagStats(Array.isArray(tags) ? tags : [])
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  const filteredTags = tagStats.filter(t =>
+    !tagFilter || t.tag.includes(tagFilter.toLowerCase())
+  )
+
+  if (loading) return <div className="text-center py-12 text-slate-500">Henter statistik...</div>
+
+  return (
+    <div className="space-y-6">
+      {/* Accuracy trend */}
+      {accuracy.length > 0 && (
+        <div className="bg-gray-900 border border-white/8 rounded-xl p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp className="w-4 h-4 text-violet-400" />
+            <h3 className="font-medium text-sm">Model-nøjagtighed over tid</h3>
+            <span className="text-xs text-slate-500 ml-auto">% billeder der ikke krævede korrektion</span>
+          </div>
+          <div className="h-40">
+            <div className="flex items-end gap-1 h-full">
+              {accuracy.slice(-20).map((a, i) => (
+                <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                  <div
+                    className="w-full bg-violet-600 rounded-t"
+                    style={{ height: `${a.accuracy_pct || 0}%`, minHeight: '2px' }}
+                    title={`${a.dt}: ${a.accuracy_pct}%`}
+                  />
+                  {i % 5 === 0 && (
+                    <span className="text-xs text-slate-600 rotate-45 origin-left">
+                      {a.dt.slice(5)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tag statistik */}
+      <div className="bg-gray-900 border border-white/8 rounded-xl overflow-hidden">
+        <div className="px-4 py-3 border-b border-white/5 flex items-center gap-3">
+          <Layers className="w-4 h-4 text-violet-400" />
+          <h3 className="font-medium text-sm">Tag statistik</h3>
+          <input
+            value={tagFilter}
+            onChange={e => setTagFilter(e.target.value)}
+            placeholder="Filtrer tags..."
+            className="ml-auto bg-gray-800 border border-white/10 rounded-lg px-3 py-1 text-xs text-white w-40"
+          />
+        </div>
+        <div className="divide-y divide-white/5 max-h-96 overflow-y-auto">
+          {filteredTags.slice(0, 100).map(t => (
+            <div key={t.tag} className="flex items-center gap-3 px-4 py-2 hover:bg-white/3">
+              <code className="text-xs text-violet-300 font-mono w-48 truncate">#{t.tag}</code>
+              <span className="text-xs text-slate-500 w-24">{t.category}</span>
+              <div className="flex-1 bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="h-full bg-violet-600 rounded-full"
+                  style={{ width: `${Math.min(100, (t.total_count / (tagStats[0]?.total_count || 1)) * 100)}%` }}
+                />
+              </div>
+              <span className="text-xs text-slate-400 w-10 text-right">{t.total_count}×</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}

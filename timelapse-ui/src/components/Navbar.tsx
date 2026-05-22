@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Camera, Settings, Database, Globe, LogOut,
+  Brain, Camera, Settings, Database, Globe, LogOut,
   Shield, Users, Key, Terminal, Package, Server,
   ChevronDown, Upload
-} from 'lucide-react'
+, Tag} from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export function Navbar() {
@@ -28,7 +28,9 @@ export function Navbar() {
     { to: '/',             label: 'Enheder',       icon: Camera },
     { to: '/backup',       label: 'Backup',        icon: Database },
     { to: '/global-config',label: 'Global Config', icon: Globe },
+    { to: '/tags',         label: 'Tag søgning',   icon: Tag },
     { to: '/settings',     label: 'Indstillinger', icon: Settings },
+    { to: '/ai',           label: 'AI Styring',    icon: Brain },
   ]
 
   const adminLinks = [

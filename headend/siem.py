@@ -120,6 +120,31 @@ def ingest_events(device_id: str, payload: dict, db: Session = Depends(get_db)):
         log.info("SIEM: %d events fra %s (%d duplikater ignoreret)",
                  inserted, device_id, duplicates)
 
+        # Notifikation ved kritiske SIEM-events
+        try:
+            from datetime import datetime, timezone
+            from ai.notify import notify, get_notification_config
+            config = get_notification_config(db)
+            if config:
+                for ev in events:
+                    if ev.get("severity") in ("CRITICAL", "ERROR"):
+                        notify({
+                            "rule_name":   f"SIEM: {ev.get('event_type', ev.get('category', 'event'))}",
+                            "rule_id":     "siem",
+                            "severity":    "critical" if ev.get("severity") == "CRITICAL" else "warning",
+                            "device_id":   device_id,
+                            "description": ev.get("raw_message") or ev.get("message", ""),
+                            "matched_on":  [
+                                f"severity:{ev.get('severity')}",
+                                f"type:{ev.get('event_type', '?')}",
+                            ],
+                            "confidence":  1.0,
+                            "triggered_at": datetime.now(timezone.utc).isoformat(),
+                            "capture_id":  None,
+                        }, db)
+        except Exception as _sn:
+            log.debug("SIEM notify fejl (ikke kritisk): %s", _sn)
+
     return {"inserted": inserted, "duplicates": duplicates}
 
 

@@ -125,6 +125,9 @@ class Capture(Base):
     sha256_pre_xmp      = Column(String(64))       # SHA-256 inden XMP
     xmp_written         = Column(Boolean, default=False)
     sidecar_path        = Column(String(500))
+    ai_result           = Column(Text)
+    ai_analyzed_at      = Column(DateTime)
+    ai_tags             = Column(Text)
 
 
 class Diagnostic(Base):

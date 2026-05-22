@@ -37,7 +37,7 @@ function formatUptime(s: number) {
 
 // v5.1
 // ── Lightbox ──────────────────────────────────────────────────────────────────
-function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: number; onClose: () => void }) {
+export function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: number; onClose: () => void }) {
   const [cur, setCur]         = useState(index)
   const [zoom, setZoom]       = useState(1)
   const [pan, setPan]         = useState({ x: 0, y: 0 })
@@ -325,6 +325,65 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
                 <MR l="Lysstyrke" v={c.brightness != null ? `${Math.round(c.brightness)}/255` : '—'} />
                 <MR l="Kvalitetsflag" v={<span className={c.quality_passed ? 'text-emerald-400' : 'text-red-400'}>{c.quality_flag ?? '—'}</span>} />
                 <MR l="Størrelse" v={c.filesize_mb != null ? `${c.filesize_mb.toFixed(1)} MB` : '—'} />
+
+                {/* QA ANALYSE */}
+                {(() => {
+                  const ai = parseAI(c)
+                  const causeLabels: Record<string, string> = {
+                    ok: 'OK', condensation_on_lens: 'Kondens på linse',
+                    dirty_lens: 'Snavset linse', focus_drift: 'Fokusdrift',
+                    camera_moved: 'Kamera flyttet', obstruction: 'Afskærmning',
+                    rain_on_lens: 'Regn på linse', sun_flare: 'Solreflektion',
+                    night_capture: 'Natkamera', hardware_failure: 'Hardwarefejl',
+                    unknown: 'Ukendt',
+                  }
+                  const actionLabels: Record<string, string> = {
+                    none: '—', inspect_camera_housing: 'Tjek kamerahus',
+                    clean_lens: 'Rengør linse', check_focus: 'Tjek fokus',
+                    reposition_camera: 'Juster kamera',
+                    wait_for_conditions: 'Afvent vejr', replace_camera: 'Udskift kamera',
+                  }
+                  return (
+                    <div className="mt-2">
+                      <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">🔬 QA</p>
+                      {!ai ? (
+                        <p className="text-white/30 text-xs italic">Ikke analyseret endnu</p>
+                      ) : (
+                        <>
+                          <MR l="Status" v={
+                            <span className={`font-medium ${ai.alarm ? 'text-red-400' : ai.is_anomaly ? 'text-amber-400' : 'text-emerald-400'}`}>
+                              {ai.alarm ? '🚨 ' : ai.is_anomaly ? '⚠️ ' : '✓ '}
+                              {causeLabels[ai.probable_cause] ?? ai.probable_cause}
+                            </span>
+                          } />
+                          <MR l="Konfidence" v={`${Math.round((ai.confidence ?? 0) * 100)}%`} />
+                          <MR l="Beskrivelse" v={<span className="text-white/60 text-[10px] leading-tight">{ai.description}</span>} />
+                          {ai.action && ai.action !== 'none' && (
+                            <MR l="Handling" v={<span className="text-amber-300">{actionLabels[ai.action] ?? ai.action}</span>} />
+                          )}
+                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          {c.ai_tags && c.ai_tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {c.ai_tags.map((tag: string) => (
+                                <span key={tag} className="text-[10px] bg-white/10 text-white/60 px-1.5 py-0.5 rounded cursor-pointer hover:bg-white/20" title={`Søg på #${tag}`}>
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {c.ai_analyzed_at && (
+                            <MR l="Analyseret" v={
+                              <span className="text-white/30 text-[10px]">
+                                {new Date(c.ai_analyzed_at).toLocaleString('da-DK', {timeZone: getTz(), day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}
+                              </span>
+                            } />
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )
+                })()}
+
               </div>
 
               {/* Kolonne 2: Kamera EXIF */}
@@ -410,7 +469,13 @@ function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: nu
 }
 
 // ── Capture thumbnail ─────────────────────────────────────────────────────────
-function CaptureCard({ capture, onClick }: { capture: Capture; onClick: () => void }) {
+
+function parseAI(capture: any): Record<string, any> | null {
+  if (!capture.ai_result) return null
+  try { return JSON.parse(capture.ai_result) } catch { return null }
+}
+
+export function CaptureCard({ capture, onClick }: { capture: Capture; onClick: () => void }) {
   const time = capture.captured_at
     ? new Date(capture.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '–'
@@ -442,6 +507,15 @@ function CaptureCard({ capture, onClick }: { capture: Capture; onClick: () => vo
               ⬡ {Math.round(capture.blur_score)}
             </p>
           )}
+          {/* QA-BADGE */}
+          {(() => {
+            const ai = parseAI(capture)
+            if (!ai) return null
+            if (ai.alarm)      return <span title={ai.description} className="text-xs flex-shrink-0 cursor-help">🚨</span>
+            if (ai.is_anomaly) return <span title={ai.description} className="text-xs flex-shrink-0 cursor-help">⚠️</span>
+            if (ai.probable_cause === 'ok') return <span title="QA: OK" className="text-[9px] flex-shrink-0 text-emerald-400 font-bold cursor-help">QA✓</span>
+            return null
+          })()}
         </div>
         {(() => {
           const fn = capture.filename.replace('.jpg', '').replace('.JPG', '')
@@ -459,6 +533,16 @@ function CaptureCard({ capture, onClick }: { capture: Capture; onClick: () => vo
             </div>
           )
         })()}
+        {capture.ai_tags && (capture.ai_tags as string[]).length > 0 && (
+          <div className="flex flex-wrap gap-0.5 mt-1">
+            {(capture.ai_tags as string[]).slice(0, 3).map((t: string) => (
+              <span key={t} className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded-full">#{t}</span>
+            ))}
+            {(capture.ai_tags as string[]).length > 3 && (
+              <span className="text-[9px] text-gray-400">+{(capture.ai_tags as string[]).length - 3}</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1008,6 +1092,91 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
             </div>
           ) : null}
         </div>
+      )}
+
+      {/* Diagnostics historik */}
+      {diagHistory.length > 1 && (
+        <>
+          {/* CPU temp historik */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700">CPU temperatur — seneste 7 dage</h3>
+              <span className="text-xs text-gray-400">alarm &gt;75°C</span>
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={diagHistory}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                  interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="°" />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)}°C`, 'CPU temp']} />
+                <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="4 2" label={{ value: 'Alarm 75°', fontSize: 10, fill: '#ef4444', position: 'insideTopLeft' }} />
+                <Area type="monotone" dataKey="cpu_temp_c" name="CPU temp" stroke="#f97316" fill="#fed7aa" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* SSD forbrug historik */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700">SSD forbrug — seneste 7 dage</h3>
+              <span className="text-xs text-gray-400">alarm &gt;85%</span>
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={diagHistory}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                  interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="%" domain={[0, 100]} />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(1)}%`, 'SSD brugt']} />
+                <ReferenceLine y={85} stroke="#ef4444" strokeDasharray="4 2" label={{ value: 'Alarm 85%', fontSize: 10, fill: '#ef4444', position: 'insideTopLeft' }} />
+                <Area type="monotone" dataKey="ssd_used_pct" name="SSD %" stroke="#3b82f6" fill="#dbeafe" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Kamera shutter historik */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700">Kamera shutter-tæller — seneste 7 dage</h3>
+              <span className="text-xs text-gray-400">alarm &gt;60% af levetid</span>
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <AreaChart data={diagHistory}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                  interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                <Tooltip formatter={(v: any) => [Number(v).toLocaleString('da-DK'), 'Shutter']} />
+                <Area type="monotone" dataKey="cam_shutter_cnt" name="Shutter" stroke="#8b5cf6" fill="#ede9fe" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* NTP offset historik */}
+          <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-gray-700">NTP offset — seneste 7 dage</h3>
+              <span className="text-xs text-gray-400">alarm &gt;±2s</span>
+            </div>
+            <ResponsiveContainer width="100%" height={130}>
+              <AreaChart data={diagHistory}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="ts" tick={{ fontSize: 9 }} tickLine={false}
+                  tickFormatter={v => new Date(v).toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit' })}
+                  interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} unit="s" />
+                <Tooltip formatter={(v: any) => [`${Number(v).toFixed(3)}s`, 'NTP offset']} />
+                <ReferenceLine y={2}   stroke="#ef4444" strokeDasharray="4 2" />
+                <ReferenceLine y={-2}  stroke="#ef4444" strokeDasharray="4 2" />
+                <Area type="monotone" dataKey="ntp_offset_s" name="NTP" stroke="#10b981" fill="#d1fae5" strokeWidth={2} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </>
       )}
 
       {/* Diagnostics historik */}

@@ -1,0 +1,1 @@
+# TimeLapse Pro — AI modul

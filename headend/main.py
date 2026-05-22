@@ -78,6 +78,7 @@ def ensure_utc(dt):
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
 
 from importer import router as import_router
+from ai.settings_api import settings_router
 from siem import router as siem_router
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from database import (
@@ -187,6 +188,16 @@ def startup():
                 except Exception:
                     pass  # Kolonnen findes allerede
 
+
+    # ── AI SETUP ──────────────────────────────────────────────────────────
+    try:
+        run_ai_migration(engine)
+        setup_ai(get_db, _find_image)
+        setup_ai_router(get_db, _find_image)
+        app.include_router(ai_router)
+        log.info("AI integration klar — Ollama: http://localhost:11434")
+    except Exception as _ai_err:
+        log.warning("AI integration ikke tilgængelig: %s", _ai_err)
     log.info("TimeLapse Pro Headend started — database ready")
 
 
@@ -731,6 +742,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         mfa_token = _create_token({"sub": user.username, "type": "mfa_pending"}, expire_hours=5/60)
         log.info("Login MFA påkrævet: %s", user.username)
         return {"mfa_required": True, "mfa_token": mfa_token}
+    max_age = 12 * 3600  # default fallback
     token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id, "max_age": max_age})
     log.info("Login: %s (%s)", user.username, user.role)
     from fastapi.responses import JSONResponse as _JR
@@ -1470,6 +1482,12 @@ def receive_capture(
         except Exception as exc:
             log.warning("EXIF baggrunds-læsning fejl: %s", exc)
     _threading.Thread(target=_enrich_exif, daemon=True).start()
+
+    # ── AI KØDNING ──────────────────────────────────────────────────────
+    try:
+        queue_capture_for_analysis(capture.id)
+    except Exception:
+        pass
 
     quality = "PASS" if req.quality_passed else "FAIL"
     log.info(
@@ -2589,6 +2607,9 @@ def list_captures(
             "azimuth_deg":   c.azimuth_deg if hasattr(c, 'azimuth_deg') else None,
             "tilt_deg":      c.tilt_deg if hasattr(c, 'tilt_deg') else None,
             "xmp_written":   c.xmp_written if hasattr(c, 'xmp_written') else None,
+            "ai_result":      c.ai_result if hasattr(c, 'ai_result') else None,
+            "ai_analyzed_at": c.ai_analyzed_at.isoformat() if hasattr(c, 'ai_analyzed_at') and c.ai_analyzed_at else None,
+            "ai_tags":        json.loads(c.ai_tags) if hasattr(c, 'ai_tags') and c.ai_tags else None,
         }
         for c in captures
     ]
@@ -2983,6 +3004,7 @@ def list_timelapse_jobs():
 app.include_router(import_router, prefix="/api/import")
 app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
+app.include_router(settings_router)
 
 @app.post("/api/inventory/{device_id}")
 def edge_report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db)):
@@ -3193,6 +3215,16 @@ def set_camera_param(device_id: str, payload: dict, db: Session = Depends(get_db
 import tempfile as _tempfile
 import shutil as _shutil
 from fastapi.responses import FileResponse as _FileResponse
+
+# ── AI INTEGRATION ──────────────────────────────────────────────────────────
+from ai.integration import (
+    run_ai_migration,
+    setup_ai,
+    setup_ai_router,
+    queue_capture_for_analysis,
+    ai_router,
+)
+
 
 _backup_status = {"running": False, "progress": [], "file": None, "error": None}
 
@@ -4042,6 +4074,9 @@ def captures_timeline(
                 "brightness":   round(c.brightness_mean, 1) if c.brightness_mean else None,
                 "filesize_mb":  round(c.filesize / 1e6, 1) if c.filesize else None,
                 "uploaded":     c.uploaded,
+                "ai_result":      c.ai_result if hasattr(c, 'ai_result') else None,
+                "ai_analyzed_at": c.ai_analyzed_at.isoformat() if hasattr(c, 'ai_analyzed_at') and c.ai_analyzed_at else None,
+                "ai_tags":        json.loads(c.ai_tags) if hasattr(c, 'ai_tags') and c.ai_tags else None,
             }
             for c in captures
         ]
@@ -4069,6 +4104,193 @@ def captures_timeline(
 # ═══════════════════════════════════════════════════════════════════════════
 # System Settings
 # ═══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/captures/bulk-tags")
+def bulk_update_tags(payload: dict, db: Session = Depends(get_db)):
+    """
+    Bulk opdater tags på en liste af captures.
+    Body: {"capture_ids": [1,2,3], "add_tags": ["tag1"], "remove_tags": ["tag2"]}
+    """
+    from database import Capture as _Cap
+    import json as _j
+    from ai.integration import update_sidecar_with_ai
+    capture_ids = payload.get("capture_ids", [])
+    add_tags    = [t.lower().strip() for t in payload.get("add_tags", [])]
+    remove_tags = [t.lower().strip() for t in payload.get("remove_tags", [])]
+
+    updated = 0
+    for cid in capture_ids:
+        cap = db.query(_Cap).filter_by(id=cid).first()
+        if not cap:
+            continue
+        tags = _j.loads(cap.ai_tags) if cap.ai_tags else []
+        tags = [t for t in tags if t not in remove_tags]
+        tags = list(dict.fromkeys(tags + [t for t in add_tags if t not in tags]))
+        cap.ai_tags = _j.dumps(tags, ensure_ascii=False)
+        updated += 1
+    db.commit()
+    return {"updated": updated}
+
+@app.put("/api/captures/{capture_id}/tags")
+def update_capture_tags(capture_id: int, payload: dict, db: Session = Depends(get_db)):
+    """Opdater tags på ét capture. Body: {"tags": ["tag1", "tag2"]}"""
+    from database import Capture as _Cap
+    import json as _j
+    cap = db.query(_Cap).filter_by(id=capture_id).first()
+    if not cap:
+        raise HTTPException(status_code=404, detail="Capture ikke fundet")
+    tags = [t.lower().strip() for t in payload.get("tags", [])]
+    cap.ai_tags = _j.dumps(tags, ensure_ascii=False)
+    db.commit()
+    return {"status": "ok", "tags": tags}
+
+@app.get("/api/ai/qa/search")
+def qa_search(
+    # QA_MULTI_FILTER_FIXED
+    causes:         Optional[str] = None,
+    cause:          Optional[str] = None,
+    is_anomaly:     Optional[str] = None,
+    alarm:          Optional[str] = None,
+    min_confidence: Optional[float] = None,
+    device_ids:     Optional[str] = None,
+    device_id:      Optional[str] = None,
+    date_from:      Optional[str] = None,
+    date_to:        Optional[str] = None,
+    limit:          int = 500,
+    db: Session = Depends(get_db),
+):
+    """
+    Søg captures baseret på QA/AI-analyse resultater.
+    ?cause=condensation_on_lens&is_anomaly=true&min_confidence=0.5
+    """
+    from database import Capture as _Cap
+    import json as _j
+
+    from datetime import datetime as _dt2, timedelta as _td2
+    q = db.query(_Cap).filter(_Cap.ai_result.isnot(None))
+
+    # Multi-device filter
+    all_dev = []
+    if device_ids:
+        all_dev = [d.strip() for d in device_ids.split(",") if d.strip()]
+    elif device_id:
+        all_dev = [device_id]
+    if all_dev:
+        q = q.filter(_Cap.device_id.in_(all_dev))
+
+    # Dato filter i SQL
+    if date_from:
+        try: q = q.filter(_Cap.captured_at >= _dt2.fromisoformat(date_from))
+        except Exception: pass
+    if date_to:
+        try: q = q.filter(_Cap.captured_at < _dt2.fromisoformat(date_to) + _td2(days=1))
+        except Exception: pass
+
+    q = q.order_by(_Cap.captured_at.desc())
+
+    # Multi-cause filter
+    all_causes = []
+    if causes:
+        all_causes = [c.strip() for c in causes.split(",") if c.strip()]
+    elif cause:
+        all_causes = [cause]
+
+    results = []
+    for c in q.limit(limit * 3).all():
+        try:
+            ai = _j.loads(c.ai_result)
+            if all_causes and ai.get("probable_cause") not in all_causes:
+                continue
+            if is_anomaly == "true" and not ai.get("is_anomaly"):
+                continue
+            if is_anomaly == "false" and ai.get("is_anomaly"):
+                continue
+            if alarm == "true" and not ai.get("alarm"):
+                continue
+            if alarm == "false" and ai.get("alarm"):
+                continue
+            if min_confidence is not None and float(ai.get("confidence", 0)) < min_confidence:
+                continue
+            results.append({
+                "id":             c.id,
+                "device_id":      c.device_id,
+                "filename":       c.filename,
+                "captured_at":    c.captured_at.isoformat() if c.captured_at else None,
+                "quality_passed": c.quality_passed,
+                "blur_score":     c.blur_score,
+                "brightness":     c.brightness_mean,
+                "filesize_mb":    round(c.filesize / 1e6, 1) if c.filesize else None,
+                "uploaded":       c.uploaded,
+                "ai_result":      c.ai_result,
+                "ai_tags":        _j.loads(c.ai_tags) if c.ai_tags else None,
+            })
+        except Exception:
+            pass
+        if len(results) >= limit:
+            break
+
+    return {"total": len(results), "results": results}
+
+@app.get("/api/admin/notifications")
+def get_notifications(db: Session = Depends(get_db)):
+    try:
+        from sqlalchemy import text as _t
+        row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
+        if not row:
+            return {}
+        cfg = json.loads(row[0])
+        if "email" in cfg and cfg["email"].get("password"):
+            cfg["email"]["password"] = "••••••••••••••••"
+        if "sms" in cfg and cfg["sms"].get("api_token"):
+            cfg["sms"]["api_token"] = "••••••••"
+        return cfg
+    except Exception as e:
+        return {}
+
+@app.put("/api/admin/notifications")
+def update_notifications(payload: dict, db: Session = Depends(get_db)):
+    try:
+        from sqlalchemy import text as _t
+        row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
+        existing = json.loads(row[0]) if row else {}
+        if "email" in payload and "•" in payload["email"].get("password",""):
+            payload["email"]["password"] = existing.get("email",{}).get("password","")
+        if "sms" in payload and "•" in payload["sms"].get("api_token",""):
+            payload["sms"]["api_token"] = existing.get("sms",{}).get("api_token","")
+        value = json.dumps(payload, ensure_ascii=False, indent=2)
+        if row:
+            db.execute(_t("UPDATE settings SET value=:v WHERE key='notifications'"), {"v": value})
+        else:
+            db.execute(_t("INSERT INTO settings (key, value) VALUES ('notifications', :v)"), {"v": value})
+        db.commit()
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/admin/notifications/test")
+def test_notification(payload: dict, db: Session = Depends(get_db)):
+    channel = payload.get("channel", "email")
+    from sqlalchemy import text as _t
+    row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Ingen notifikations-konfiguration")
+    config = json.loads(row[0])
+    config["min_severity"] = "info"
+    test_alarm = {
+        "rule_name": "Test notifikation", "rule_id": "test", "severity": "info",
+        "device_id": "TL-TEST", "description": "Test fra TimeLapse Pro — systemet virker.",
+        "matched_on": ["test:manual"], "confidence": 1.0,
+        "triggered_at": datetime.now(timezone.utc).isoformat(), "capture_id": None,
+    }
+    try:
+        from ai.notify import send_email, send_sms, send_teams
+        result = False
+        if channel == "email":   result = send_email(test_alarm, config)
+        elif channel == "sms":   result = send_sms(test_alarm, config)
+        elif channel == "teams": result = send_teams(test_alarm, config)
+        return {"status": "ok" if result else "failed", "channel": channel}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/admin/settings")
 def get_settings(_user=require_role("admin"), db: Session = Depends(get_db)):
@@ -4379,3 +4601,7 @@ def delete_user(
     db.delete(u)
     db.commit()
     return {"ok": True}
+
+from ai.vocabulary_routes import vocab_router; app.include_router(vocab_router)
+
+from ai.review_api import review_router as _rev_router; app.include_router(_rev_router)
