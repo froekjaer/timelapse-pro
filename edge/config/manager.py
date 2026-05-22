@@ -100,6 +100,7 @@ class ConfigManager:
             sftp_path = self._base / "sftp_cache.yaml"
             with open(sftp_path, "w") as f:
                 yaml.dump({"sftp": config_dict["sftp"]}, f, default_flow_style=False, allow_unicode=True)
+            sftp_path.chmod(0o600)
             log.info("SFTP config cached to %s", sftp_path)
         # Reload
         self._operational = config_dict

@@ -1,6 +1,7 @@
 # Secrets og lokale overrides
 edge/config.yaml
 edge/local_network.yaml
+edge/sftp_cache.yaml
 edge/ssh/
 edge/bootstrap.yaml
 
