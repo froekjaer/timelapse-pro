@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+if [ "${TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE:-0}" != "1" ]; then
+    echo "Legacy git-based Edge update is disabled. Use Headend signed artifacts." >&2
+    exit 2
+fi
+
 REPO_DIR="/opt/timelapse"
 LOG_TAG="timelapse-edge-update"
 LOCK_FILE="/tmp/timelapse_edge_update.lock"

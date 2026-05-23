@@ -4,6 +4,11 @@
 
 set -euo pipefail
 
+if [ "${TIMELAPSE_ENABLE_LEGACY_GIT_DEPLOY:-0}" != "1" ]; then
+    echo "Legacy git-based Headend deploy poller is disabled. Use signed release workflow." >&2
+    exit 0
+fi
+
 REPO_DIR="/home/peter/timelapse-pro"
 UI_SRC_DIR="/home/peter/timelapse-ui"
 UI_DIST_DIR="/home/peter/timelapse-ui/dist"

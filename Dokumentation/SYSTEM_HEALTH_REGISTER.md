@@ -62,7 +62,7 @@
 
 **Prioritet:** P1  
 **Område:** Update/deployment, Edge offline capability, architecture  
-**Status:** Åben
+**Status:** Mitigeret i kode, arkitekturarbejde mangler
 
 **Observation:** Edge har stadig direkte Git-flow i både `edge/agent.py` og `deploy/edge_update.sh`.
 
@@ -77,7 +77,7 @@
 
 **Foreslået rettelse:**
 
-- Deaktiver eller udfas den gamle `update_requested`/`git pull`-vej.
+- Deaktiver eller udfas den gamle `update_requested`/`git pull`-vej. Første mitigation er implementeret ved at gøre legacy git-update opt-in via `TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE=1`.
 - Erstat app-update med Headend-medieret artifact download fra et signeret release manifest.
 - Edge skal verificere artifact hash/signatur og rapportere per-target resultat tilbage til Headend.
 
@@ -85,7 +85,7 @@
 
 **Prioritet:** P1  
 **Område:** Supply chain, signing, update integrity  
-**Status:** Åben
+**Status:** Mitigeret i kode, arkitekturarbejde mangler
 
 **Observation:** `deploy/edge_update.sh` finder seneste tag og verificerer taggets signatur, men opdaterer derefter til `origin/main`.
 
@@ -95,6 +95,7 @@
 
 **Foreslået rettelse:**
 
+- Legacy scriptet er gjort opt-in via `TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE=1`, så det ikke bruges som uheldig produktionsdefault.
 - Artifact manifest skal binde `release_id`, commit/tag, hash, signer og SBOM sammen.
 - Edge skal verificere præcis det artifact eller commit-id, den installerer.
 - Git-baseret deploy bør ikke bruges direkte på Edge i produktion.

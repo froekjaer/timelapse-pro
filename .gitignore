@@ -33,6 +33,7 @@ edge/api_token.txt
 *.gdoc
 timelapse_pro.md
 timelapse_pro-kopi.md
+src-to-zip.py
 *.tar
 node_modules/ 
 dist/

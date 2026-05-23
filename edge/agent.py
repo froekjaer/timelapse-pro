@@ -761,10 +761,26 @@ class EdgeAgent:
         return commands
 
     def _check_update(self) -> None:
-        """Tjek om headend har bedt om en edge opdatering."""
+        """Legacy LAB-only git update path.
+
+        Production updates must be distributed by Headend as signed artifacts.
+        """
         import subprocess, os
         update_requested = self._cfg.get("update_requested", False)
         if not update_requested:
+            return
+        legacy_enabled = (
+            self._cfg.get("legacy_git_update_enabled") is True
+            or os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") == "1"
+        )
+        if not legacy_enabled:
+            log.warning(
+                "Legacy git update_requested ignoreret; Headend artifact update er påkrævet"
+            )
+            try:
+                self._api._post(f"/admin/devices/{self._device_id}/clear-update", {})
+            except Exception:
+                pass
             return
         debug_cfg = self._cfg.get("debug_mode", {})
         if debug_cfg.get("enabled"):
@@ -892,7 +908,11 @@ class EdgeAgent:
                 capture_output=True, text=True, timeout=600, env=env
             )
         else:
-            # App opdateringer via git pull (edge_update.sh)
+            if _os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") != "1":
+                log.warning("App update %d afvist: legacy git update er slået fra", update_id)
+                self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+                return
+            # LAB-only app opdateringer via git pull (edge_update.sh)
             script = Path("/opt/timelapse/deploy/edge_update.sh")
             if not script.exists():
                 log.warning("edge_update.sh ikke fundet")

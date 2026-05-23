@@ -1,6 +1,14 @@
 import sys, json, os
 sys.path.insert(0, '.')
 
+if os.environ.get("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") != "1":
+    print(
+        "Legacy git-based Edge update signalling is disabled. "
+        "Use Headend signed artifacts.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
 # Læs DATABASE_URL fra plist hvis ikke sat i environment
 if not os.environ.get("DATABASE_URL"):
     try:
