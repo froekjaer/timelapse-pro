@@ -1790,9 +1790,15 @@ def list_pending_updates(
             "scope":       u.scope,
             "scope_id":    u.scope_id,
             "status":      u.status,
+            "environment": u.environment,
+            "target_device_ids": json.loads(u.target_device_ids) if u.target_device_ids else None,
+            "deployed_count": u.deployed_count or 0,
+            "failed_count":   u.failed_count or 0,
             "created_at":  u.created_at.isoformat() if u.created_at else None,
             "approved_at": u.approved_at.isoformat() if u.approved_at else None,
             "approved_by": u.approved_by,
+            "deployed_at": u.deployed_at.isoformat() if u.deployed_at else None,
+            "rollback_at": u.rollback_at.isoformat() if u.rollback_at else None,
         }
         for u in updates
     ]
@@ -1817,12 +1823,17 @@ def approve_update(
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
     if u.status not in ("pending", "rejected"):
         raise HTTPException(status_code=400, detail=f"Kan ikke godkende opdatering med status '{u.status}'")
+    if payload.scope == "device" and not payload.scope_id and not payload.target_device_ids:
+        raise HTTPException(status_code=400, detail="Device scope kræver scope_id eller target_device_ids")
     u.status            = "approved"
     u.approved_at       = now_utc()
     u.approved_by       = current_user.username
     u.environment       = payload.environment or "production"
-    u.scope             = payload.scope or u.scope or "device"
-    u.scope_id          = payload.scope_id or u.scope_id
+    if payload.scope:
+        u.scope    = payload.scope
+        u.scope_id = None if payload.scope == "global" else payload.scope_id
+    else:
+        u.scope    = u.scope or "device"
     target_ids          = payload.target_device_ids
     u.target_device_ids = json.dumps(target_ids) if target_ids else None
     db.commit()

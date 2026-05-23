@@ -193,7 +193,6 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'approved', label: 'Godkendt' },
   { key: 'deployed', label: 'Deployet' },
   { key: 'rejected',     label: 'Afvist' },
-  { key: 'deployed',     label: 'Deployet' },
   { key: 'rolled_back',  label: 'Rullet tilbage' },
   { key: 'all',      label: 'Alle' },
 ]
@@ -230,8 +229,21 @@ export function UpdatesPage() {
   useEffect(() => { load() }, [load])
 
   async function approve(id: number) {
+    if (approveOpts.scope === 'device' && !approveOpts.scope_id.trim()) {
+      setError('Device ID er påkrævet ved specifik enhed')
+      return
+    }
     setBusy(id)
-    try { await api(`/api/updates/${id}/approve`, { method: 'POST' }); load() }
+    const payload = {
+      environment: approveOpts.environment,
+      scope: approveOpts.scope,
+      scope_id: approveOpts.scope === 'device' ? approveOpts.scope_id.trim() : null,
+    }
+    try {
+      await api(`/api/updates/${id}/approve`, { method: 'POST', body: JSON.stringify(payload) })
+      setApproveId(null)
+      load()
+    }
     catch (e: any) { setError(e.message) }
     finally { setBusy(null) }
   }
