@@ -266,6 +266,103 @@ class PendingUpdate(Base):
     failed_count      = Column(Integer, default=0)
 
 
+class ChangeTicket(Base):
+    """Signeret, menneske- og maskinlæsbart change ticket."""
+    __tablename__ = "change_tickets"
+
+    id                 = Column(Integer, primary_key=True)
+    ticket_id          = Column(String(80), unique=True, nullable=False, index=True)
+    title              = Column(String(200), nullable=False)
+    summary            = Column(Text)
+    update_type        = Column(String(50))
+    severity           = Column(String(20))
+    environment        = Column(String(20), default="production")
+    scope              = Column(String(20))
+    scope_id           = Column(String(36))
+    status             = Column(String(30), default="draft", index=True)
+    # draft|ready|pending_approval|approved|rejected|deployed|rolled_back|cancelled
+    source_commit      = Column(String(64))
+    source_ref         = Column(String(200))
+    artifact_id        = Column(String(80))
+    sbom_ref           = Column(String(500))
+    test_evidence_ref  = Column(String(500))
+    rollback_plan      = Column(Text)
+    reboot_required    = Column(Boolean, default=False)
+    maintenance_window = Column(String(50))
+    human_readable_md  = Column(Text)
+    machine_json       = Column(Text)
+    content_sha256     = Column(String(64), index=True)
+    signature          = Column(Text)
+    signed_by          = Column(String(200))
+    signed_at          = Column(DateTime)
+    created_by         = Column(String(100))
+    created_at         = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at         = Column(DateTime)
+
+
+class ChangeApproval(Base):
+    """Godkendelser/afvisninger knyttet til et change ticket."""
+    __tablename__ = "change_approvals"
+
+    id                 = Column(Integer, primary_key=True)
+    ticket_id          = Column(String(80), nullable=False, index=True)
+    decision           = Column(String(30), nullable=False)  # approved|rejected|cancelled
+    decided_by         = Column(String(100), nullable=False)
+    decided_at         = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    approval_context   = Column(Text)       # JSON: IP, MFA, role, customer/site context
+    signature          = Column(Text)
+    signed_payload_sha256 = Column(String(64))
+    notes              = Column(Text)
+
+
+class UpdateArtifact(Base):
+    """Release artifact eller OS/app update manifest distribueret via Headend."""
+    __tablename__ = "update_artifacts"
+
+    id                 = Column(Integer, primary_key=True)
+    artifact_id        = Column(String(80), unique=True, nullable=False, index=True)
+    artifact_type      = Column(String(50), nullable=False)  # app|os|dependency|config
+    version            = Column(String(100))
+    source_commit      = Column(String(64))
+    source_ref         = Column(String(200))
+    filename           = Column(String(500))
+    storage_path       = Column(String(1000))
+    size_bytes         = Column(Integer)
+    sha256             = Column(String(64), nullable=False, index=True)
+    manifest_json      = Column(Text)
+    sbom_ref           = Column(String(500))
+    signature          = Column(Text)
+    signed_by          = Column(String(200))
+    signed_at          = Column(DateTime)
+    created_at         = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class UpdateTarget(Base):
+    """Per-device/per-camera deployment status for en update eller change."""
+    __tablename__ = "update_targets"
+
+    id                 = Column(Integer, primary_key=True)
+    pending_update_id  = Column(Integer, index=True)
+    ticket_id          = Column(String(80), index=True)
+    artifact_id        = Column(String(80), index=True)
+    device_id          = Column(String(50), nullable=False, index=True)
+    camera_id          = Column(String(36), index=True)
+    customer_id        = Column(String(36), index=True)
+    site_id            = Column(String(36), index=True)
+    status             = Column(String(30), default="pending", index=True)
+    # pending|queued|downloading|verifying|installing|deployed|failed|rollback_requested|rolled_back
+    attempt_count      = Column(Integer, default=0)
+    last_error         = Column(Text)
+    current_version    = Column(String(100))
+    target_version     = Column(String(100))
+    rollback_version   = Column(String(100))
+    started_at         = Column(DateTime)
+    completed_at       = Column(DateTime)
+    rollback_at        = Column(DateTime)
+    last_report_at     = Column(DateTime)
+    report_json        = Column(Text)
+
+
 class WebAuthnCredential(Base):
     """FIDO2/WebAuthn credentials — Windows Hello, Touch ID, Face ID."""
     __tablename__ = "webauthn_credentials"
