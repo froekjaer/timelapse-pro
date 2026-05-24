@@ -1833,6 +1833,40 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _sign_payload(payload: str) -> tuple[str, str]:
+    """Signér payload med OpenPGP hvis en key er konfigureret.
+
+    Uden signing key returneres en hash-binding, som er nyttig i LAB men ikke
+    en kryptografisk bruger-/release-signatur.
+    """
+    digest = _sha256_text(payload)
+    key_id = os.getenv("CHANGE_TICKET_GPG_KEY") or os.getenv("TIMELAPSE_GPG_KEY")
+    if not key_id:
+        return f"sha256:{digest}", "system-hash"
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as f:
+            f.write(payload)
+            payload_path = f.name
+        result = _subprocess.run(
+            [
+                "gpg", "--batch", "--yes", "--armor",
+                "--local-user", key_id,
+                "--detach-sign", "--output", "-", payload_path,
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        try:
+            os.unlink(payload_path)
+        except Exception:
+            pass
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip(), key_id
+        log.warning("GPG signering fejlede, bruger hash-binding: %s", result.stderr[-300:])
+    except Exception as exc:
+        log.warning("GPG signering utilgængelig, bruger hash-binding: %s", exc)
+    return f"sha256:{digest}", "system-hash"
+
+
 def _ticket_to_dict(ticket: ChangeTicket) -> dict:
     machine = {}
     if ticket.machine_json:
@@ -1906,6 +1940,7 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
     }
     machine_json = _canonical_json(machine)
     content_sha256 = _sha256_text(machine_json)
+    signature, signed_by = _sign_payload(machine_json)
     human_md = "\n".join([
         f"# {ticket_id} - {title}",
         "",
@@ -1948,8 +1983,8 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
         human_readable_md=human_md,
         machine_json=machine_json,
         content_sha256=content_sha256,
-        signature=f"sha256:{content_sha256}",
-        signed_by="system-hash",
+        signature=signature,
+        signed_by=signed_by,
         signed_at=created_at,
         created_by=user.username,
         created_at=created_at,
@@ -2083,13 +2118,18 @@ def approve_change_ticket(
         "notes": payload.notes,
     }
     signed_hash = _sha256_text(_canonical_json(signed_payload))
+    signature, signed_by = _sign_payload(_canonical_json(signed_payload))
     db.add(ChangeApproval(
         ticket_id=ticket.ticket_id,
         decision="approved",
         decided_by=current_user.username,
         decided_at=decided_at,
-        approval_context=_canonical_json({"role": current_user.role, "customer_id": current_user.customer_id}),
-        signature=f"sha256:{signed_hash}",
+        approval_context=_canonical_json({
+            "role": current_user.role,
+            "customer_id": current_user.customer_id,
+            "signed_by": signed_by,
+        }),
+        signature=signature,
         signed_payload_sha256=signed_hash,
         notes=payload.notes,
     ))
@@ -2127,13 +2167,18 @@ def reject_change_ticket(
         "notes": payload.notes,
     }
     signed_hash = _sha256_text(_canonical_json(signed_payload))
+    signature, signed_by = _sign_payload(_canonical_json(signed_payload))
     db.add(ChangeApproval(
         ticket_id=ticket.ticket_id,
         decision="rejected",
         decided_by=current_user.username,
         decided_at=decided_at,
-        approval_context=_canonical_json({"role": current_user.role, "customer_id": current_user.customer_id}),
-        signature=f"sha256:{signed_hash}",
+        approval_context=_canonical_json({
+            "role": current_user.role,
+            "customer_id": current_user.customer_id,
+            "signed_by": signed_by,
+        }),
+        signature=signature,
         signed_payload_sha256=signed_hash,
         notes=payload.notes,
     ))
