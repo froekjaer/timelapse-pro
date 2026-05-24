@@ -3300,7 +3300,7 @@ def _render_timelapse(job_id, image_paths, fps, resolution, codec,
             pos = positions.get(ts_pos, positions["br"])
             vf_parts.append(
                 f"drawtext=fontsize=36:fontcolor=white:borderw=2:bordercolor=black:"
-                f"text='%{{pts\:hms}}':box=1:boxcolor=black@0.4:boxborderw=5:{pos}"
+                f"text='%{{pts\\:hms}}':box=1:boxcolor=black@0.4:boxborderw=5:{pos}"
             )
 
         vf = ",".join(vf_parts) if vf_parts else "null"
