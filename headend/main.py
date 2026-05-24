@@ -40,6 +40,7 @@ from slowapi.errors import RateLimitExceeded
 import json
 import logging
 #import os
+import hashlib
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -83,6 +84,7 @@ from siem import router as siem_router
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from database import (
     BootstrapToken,
+    ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
     Capture, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
     Diagnostic, Event, PendingUpdate, Settings, Site, SshTunnelLog, User,
     create_tables, get_db, now_utc
@@ -1808,6 +1810,344 @@ class ApprovePayload(BaseModel):
     scope: Optional[str] = None
     scope_id: Optional[str] = None
     target_device_ids: Optional[list] = None
+
+
+class ChangeTicketPayload(BaseModel):
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    rollback_plan: Optional[str] = None
+    maintenance_window: Optional[str] = None
+    reboot_required: Optional[bool] = False
+    status: Optional[str] = "ready"
+
+
+class ChangeDecisionPayload(BaseModel):
+    notes: Optional[str] = None
+
+
+def _canonical_json(data: dict) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _ticket_to_dict(ticket: ChangeTicket) -> dict:
+    machine = {}
+    if ticket.machine_json:
+        try:
+            machine = json.loads(ticket.machine_json)
+        except Exception:
+            machine = {}
+    return {
+        "id": ticket.id,
+        "ticket_id": ticket.ticket_id,
+        "title": ticket.title,
+        "summary": ticket.summary,
+        "pending_update_id": ticket.pending_update_id,
+        "update_type": ticket.update_type,
+        "severity": ticket.severity,
+        "environment": ticket.environment,
+        "scope": ticket.scope,
+        "scope_id": ticket.scope_id,
+        "status": ticket.status,
+        "source_commit": ticket.source_commit,
+        "source_ref": ticket.source_ref,
+        "artifact_id": ticket.artifact_id,
+        "sbom_ref": ticket.sbom_ref,
+        "test_evidence_ref": ticket.test_evidence_ref,
+        "rollback_plan": ticket.rollback_plan,
+        "reboot_required": bool(ticket.reboot_required),
+        "maintenance_window": ticket.maintenance_window,
+        "human_readable_md": ticket.human_readable_md,
+        "machine": machine,
+        "content_sha256": ticket.content_sha256,
+        "signature": ticket.signature,
+        "signed_by": ticket.signed_by,
+        "signed_at": ticket.signed_at.isoformat() if ticket.signed_at else None,
+        "created_by": ticket.created_by,
+        "created_at": ticket.created_at.isoformat() if ticket.created_at else None,
+        "updated_at": ticket.updated_at.isoformat() if ticket.updated_at else None,
+    }
+
+
+def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, user: User) -> ChangeTicket:
+    created_at = now_utc()
+    ticket_id = f"TL-CHG-{created_at:%Y%m%d}-{update.id:05d}"
+    title = payload.title or f"{update.update_type} {update.version}"
+    summary = payload.summary or update.description or ""
+    rollback_plan = payload.rollback_plan or "Automatisk rollback ved fejlet healthcheck; manuel intervention hvis rollback fejler."
+    maintenance_window = payload.maintenance_window or "Efter gældende update policy"
+    machine = {
+        "schema": "timelapse.change_ticket.v1",
+        "ticket_id": ticket_id,
+        "pending_update_id": update.id,
+        "title": title,
+        "summary": summary,
+        "update": {
+            "type": update.update_type,
+            "version": update.version,
+            "severity": update.severity,
+            "environment": update.environment or "production",
+            "scope": update.scope,
+            "scope_id": update.scope_id,
+            "target_device_ids": json.loads(update.target_device_ids) if update.target_device_ids else None,
+        },
+        "risk": {
+            "reboot_required": bool(payload.reboot_required),
+            "maintenance_window": maintenance_window,
+            "rollback_plan": rollback_plan,
+        },
+        "created": {
+            "by": user.username,
+            "at": created_at.isoformat(),
+        },
+    }
+    machine_json = _canonical_json(machine)
+    content_sha256 = _sha256_text(machine_json)
+    human_md = "\n".join([
+        f"# {ticket_id} - {title}",
+        "",
+        f"**Status:** {payload.status or 'ready'}",
+        f"**Update:** {update.update_type} {update.version}",
+        f"**Severity:** {update.severity}",
+        f"**Miljø:** {update.environment or 'production'}",
+        f"**Scope:** {update.scope or 'device'}{f' / {update.scope_id}' if update.scope_id else ''}",
+        f"**Oprettet af:** {user.username}",
+        f"**Oprettet:** {created_at.isoformat()}",
+        "",
+        "## Beskrivelse",
+        summary or "Ingen beskrivelse angivet.",
+        "",
+        "## Rollback-plan",
+        rollback_plan,
+        "",
+        "## Vedligehold/reboot",
+        f"Maintenance window: {maintenance_window}",
+        f"Reboot required: {bool(payload.reboot_required)}",
+        "",
+        "## Maskinlæsbar binding",
+        f"SHA-256: `{content_sha256}`",
+    ])
+    return ChangeTicket(
+        ticket_id=ticket_id,
+        title=title,
+        summary=summary,
+        pending_update_id=update.id,
+        update_type=update.update_type,
+        severity=update.severity,
+        environment=update.environment or "production",
+        scope=update.scope,
+        scope_id=update.scope_id,
+        status=payload.status or "ready",
+        source_commit=update.version if update.update_type in ("app_security", "app_updates") else None,
+        rollback_plan=rollback_plan,
+        reboot_required=bool(payload.reboot_required),
+        maintenance_window=maintenance_window,
+        human_readable_md=human_md,
+        machine_json=machine_json,
+        content_sha256=content_sha256,
+        signature=f"sha256:{content_sha256}",
+        signed_by="system-hash",
+        signed_at=created_at,
+        created_by=user.username,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+
+
+def _resolve_update_targets(db: Session, update: PendingUpdate) -> list[Device]:
+    if update.target_device_ids:
+        ids = json.loads(update.target_device_ids)
+        return db.query(Device).filter(Device.device_id.in_(ids)).all()
+    if update.scope == "global":
+        return db.query(Device).all()
+    if update.scope == "customer" and update.scope_id:
+        return db.query(Device).filter(Device.customer_id == update.scope_id).all()
+    if update.scope == "site" and update.scope_id:
+        return db.query(Device).filter(Device.site_id == update.scope_id).all()
+    if update.scope == "device" and update.scope_id:
+        device = db.query(Device).filter_by(device_id=update.scope_id).first()
+        return [device] if device else []
+    return []
+
+
+def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTicket | None = None) -> int:
+    created = 0
+    for device in _resolve_update_targets(db, update):
+        existing = db.query(UpdateTarget).filter_by(
+            pending_update_id=update.id,
+            device_id=device.device_id,
+        ).first()
+        if existing:
+            continue
+        db.add(UpdateTarget(
+            pending_update_id=update.id,
+            ticket_id=ticket.ticket_id if ticket else None,
+            artifact_id=ticket.artifact_id if ticket else None,
+            device_id=device.device_id,
+            camera_id=None,
+            customer_id=device.customer_id,
+            site_id=device.site_id,
+            status="queued" if update.status == "approved" else "pending",
+            current_version=device.app_version,
+            target_version=update.version,
+        ))
+        created += 1
+    return created
+
+
+@app.get("/api/change-tickets")
+def list_change_tickets(
+    status: Optional[str] = None,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """List change tickets til review, kundegodkendelse og audit."""
+    q = db.query(ChangeTicket)
+    if status:
+        q = q.filter_by(status=status)
+    tickets = q.order_by(ChangeTicket.created_at.desc()).all()
+    return [_ticket_to_dict(t) for t in tickets]
+
+
+@app.get("/api/change-tickets/{ticket_id}")
+def get_change_ticket(
+    ticket_id: str,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    ticket = db.query(ChangeTicket).filter_by(ticket_id=ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Change ticket ikke fundet")
+    approvals = db.query(ChangeApproval).filter_by(ticket_id=ticket_id).order_by(ChangeApproval.decided_at.desc()).all()
+    data = _ticket_to_dict(ticket)
+    data["approvals"] = [
+        {
+            "decision": a.decision,
+            "decided_by": a.decided_by,
+            "decided_at": a.decided_at.isoformat() if a.decided_at else None,
+            "signed_payload_sha256": a.signed_payload_sha256,
+            "signature": a.signature,
+            "notes": a.notes,
+        }
+        for a in approvals
+    ]
+    return data
+
+
+@app.post("/api/updates/{update_id}/change-ticket")
+def create_change_ticket_for_update(
+    update_id: int,
+    payload: ChangeTicketPayload = ChangeTicketPayload(),
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Generér et hash-bundet change ticket for en PendingUpdate."""
+    update = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not update:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    existing = db.query(ChangeTicket).filter_by(pending_update_id=update_id).first()
+    if existing:
+        return _ticket_to_dict(existing)
+    ticket = _build_change_ticket(update, payload, current_user)
+    db.add(ticket)
+    db.flush()
+    created_targets = _ensure_update_targets(db, update, ticket)
+    db.commit()
+    log.info("Change ticket %s oprettet for update %d af %s", ticket.ticket_id, update_id, current_user.username)
+    data = _ticket_to_dict(ticket)
+    data["created_targets"] = created_targets
+    return data
+
+
+@app.post("/api/change-tickets/{ticket_id}/approve")
+def approve_change_ticket(
+    ticket_id: str,
+    payload: ChangeDecisionPayload = ChangeDecisionPayload(),
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Godkend et change ticket og bind godkendelsen til en hash."""
+    ticket = db.query(ChangeTicket).filter_by(ticket_id=ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Change ticket ikke fundet")
+    decided_at = now_utc()
+    signed_payload = {
+        "ticket_id": ticket.ticket_id,
+        "ticket_sha256": ticket.content_sha256,
+        "decision": "approved",
+        "decided_by": current_user.username,
+        "decided_at": decided_at.isoformat(),
+        "notes": payload.notes,
+    }
+    signed_hash = _sha256_text(_canonical_json(signed_payload))
+    db.add(ChangeApproval(
+        ticket_id=ticket.ticket_id,
+        decision="approved",
+        decided_by=current_user.username,
+        decided_at=decided_at,
+        approval_context=_canonical_json({"role": current_user.role, "customer_id": current_user.customer_id}),
+        signature=f"sha256:{signed_hash}",
+        signed_payload_sha256=signed_hash,
+        notes=payload.notes,
+    ))
+    ticket.status = "approved"
+    ticket.updated_at = decided_at
+    if ticket.pending_update_id:
+        update = db.query(PendingUpdate).filter_by(id=ticket.pending_update_id).first()
+        if update and update.status in ("pending", "rejected"):
+            update.status = "approved"
+            update.approved_at = decided_at
+            update.approved_by = current_user.username
+            _ensure_update_targets(db, update, ticket)
+    db.commit()
+    return {"ok": True, "ticket_id": ticket.ticket_id, "signed_payload_sha256": signed_hash}
+
+
+@app.post("/api/change-tickets/{ticket_id}/reject")
+def reject_change_ticket(
+    ticket_id: str,
+    payload: ChangeDecisionPayload = ChangeDecisionPayload(),
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Afvis et change ticket og bind beslutningen til en hash."""
+    ticket = db.query(ChangeTicket).filter_by(ticket_id=ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Change ticket ikke fundet")
+    decided_at = now_utc()
+    signed_payload = {
+        "ticket_id": ticket.ticket_id,
+        "ticket_sha256": ticket.content_sha256,
+        "decision": "rejected",
+        "decided_by": current_user.username,
+        "decided_at": decided_at.isoformat(),
+        "notes": payload.notes,
+    }
+    signed_hash = _sha256_text(_canonical_json(signed_payload))
+    db.add(ChangeApproval(
+        ticket_id=ticket.ticket_id,
+        decision="rejected",
+        decided_by=current_user.username,
+        decided_at=decided_at,
+        approval_context=_canonical_json({"role": current_user.role, "customer_id": current_user.customer_id}),
+        signature=f"sha256:{signed_hash}",
+        signed_payload_sha256=signed_hash,
+        notes=payload.notes,
+    ))
+    ticket.status = "rejected"
+    ticket.updated_at = decided_at
+    if ticket.pending_update_id:
+        update = db.query(PendingUpdate).filter_by(id=ticket.pending_update_id).first()
+        if update and update.status == "pending":
+            update.status = "rejected"
+            update.approved_at = decided_at
+            update.approved_by = current_user.username
+    db.commit()
+    return {"ok": True, "ticket_id": ticket.ticket_id, "signed_payload_sha256": signed_hash}
+
 
 @app.post("/api/updates/{update_id}/approve")
 def approve_update(

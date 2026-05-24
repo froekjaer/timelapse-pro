@@ -3,11 +3,15 @@
 -- Signed change tickets, artifacts and per-target deployment state.
 -- =============================================================================
 
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS customer_id VARCHAR(36);
+CREATE INDEX IF NOT EXISTS idx_devices_customer_id ON devices(customer_id);
+
 CREATE TABLE IF NOT EXISTS change_tickets (
     id                  SERIAL PRIMARY KEY,
     ticket_id           VARCHAR(80) UNIQUE NOT NULL,
     title               VARCHAR(200) NOT NULL,
     summary             TEXT,
+    pending_update_id   INTEGER,
     update_type         VARCHAR(50),
     severity            VARCHAR(20),
     environment         VARCHAR(20) DEFAULT 'production',
@@ -34,6 +38,7 @@ CREATE TABLE IF NOT EXISTS change_tickets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_change_tickets_ticket_id ON change_tickets(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_change_tickets_pending_update_id ON change_tickets(pending_update_id);
 CREATE INDEX IF NOT EXISTS idx_change_tickets_status ON change_tickets(status);
 CREATE INDEX IF NOT EXISTS idx_change_tickets_content_sha256 ON change_tickets(content_sha256);
 CREATE INDEX IF NOT EXISTS idx_change_tickets_created_at ON change_tickets(created_at);
