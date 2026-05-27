@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dk.froekjaer.open-webui</string>
+
+  <key>UserName</key>
+  <string>peter</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/peter/projects/openwebui-env</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/peter/projects/openwebui-env/bin/open-webui</string>
+    <string>serve</string>
+    <string>--host</string>
+    <string>0.0.0.0</string>
+    <string>--port</string>
+    <string>8080</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/peter</string>
+    <key>PATH</key>
+    <string>/Users/peter/projects/openwebui-env/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>DATA_DIR</key>
+    <string>/Users/peter/.open-webui</string>
+    <key>OLLAMA_BASE_URL</key>
+    <string>http://127.0.0.1:11434</string>
+    <key>CORS_ALLOW_ORIGIN</key>
+    <string>*</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/peter/Library/Logs/open-webui.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/peter/Library/Logs/open-webui.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+</dict>
+</plist>
