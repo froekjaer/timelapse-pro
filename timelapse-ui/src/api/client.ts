@@ -46,10 +46,10 @@ export const updateConfig = (deviceId: string, config: DeviceConfig) =>
   getClient().put(`/api/admin/devices/${deviceId}/config`, config).then(r => r.data)
 
 export const getImageUrl = (deviceId: string, filename: string) =>
-  `${getApiUrl()}/api/images/${deviceId}/${filename}`
+  `${getApiUrl()}/api/images/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`
 
 export const getThumbnailUrl = (deviceId: string, filename: string) =>
-  `${getApiUrl()}/api/thumbnails/${deviceId}/${filename}`
+  `${getApiUrl()}/api/thumbnails/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`
 
 export const updateDeviceInfo = (deviceId: string, info: import('../types').DeviceInfo) =>
   getClient().put(`/api/admin/devices/${deviceId}/info`, info).then(r => r.data)
@@ -77,10 +77,10 @@ export const listPreviews = (deviceId: string) =>
   getClient().get(`/api/lab/${deviceId}/previews`).then(r => r.data)
 
 export const getPreviewUrl = (deviceId: string, filename: string) =>
-  `${getApiUrl()}/api/lab/${deviceId}/preview-image/${filename}`
+  `${getApiUrl()}/api/lab/${encodeURIComponent(deviceId)}/preview-image/${encodeURIComponent(filename)}`
 
 export const getPreviewThumbUrl = (deviceId: string, filename: string) =>
-  `${getApiUrl()}/api/lab/${deviceId}/preview-thumb/${filename}`
+  `${getApiUrl()}/api/lab/${encodeURIComponent(deviceId)}/preview-thumb/${encodeURIComponent(filename)}`
 
 export const getDeviceRawConfig = (deviceId: string) =>
   getClient().get(`/api/config/${deviceId}`).then(r => r.data)

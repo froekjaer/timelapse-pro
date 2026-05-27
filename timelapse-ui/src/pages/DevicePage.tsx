@@ -67,11 +67,11 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
     setSidecar(null)
     const sidecarName = c.filename.replace(/\.[^.]+$/, '.json')
     const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
-    authFetch(`${apiUrl}/api/sidecar/${c.device_id}/${sidecarName}`)
+    authFetch(`${apiUrl}/api/sidecar/${encodeURIComponent(c.device_id)}/${encodeURIComponent(sidecarName)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setSidecar(d))
       .catch(() => {})
-    authFetch(`${apiUrl}/api/exif/${c.device_id}/${c.filename}`)
+    authFetch(`${apiUrl}/api/exif/${encodeURIComponent(c.device_id)}/${encodeURIComponent(c.filename)}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => setExif(d?.exif ?? null))
       .catch(() => {})
@@ -81,30 +81,34 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
   function computeHistogram() {
     const img = imgRef.current
     if (!img || !img.complete) return
-    const canvas  = document.createElement('canvas')
-    const scale   = Math.min(1, 400 / Math.max(img.naturalWidth, img.naturalHeight))
-    canvas.width  = Math.round(img.naturalWidth * scale)
-    canvas.height = Math.round(img.naturalHeight * scale)
-    const ctx = canvas.getContext('2d')!
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data
-    const r   = new Array(256).fill(0)
-    const g   = new Array(256).fill(0)
-    const b   = new Array(256).fill(0)
-    const lum = new Array(256).fill(0)
-    let over = 0, under = 0
-    for (let i = 0; i < data.length; i += 4) {
-      const rv = data[i], gv = data[i+1], bv = data[i+2]
-      r[rv]++; g[gv]++; b[bv]++
-      const l = Math.round(0.299 * rv + 0.587 * gv + 0.114 * bv)
-      lum[l]++
-      if (rv > 250 && gv > 250 && bv > 250) over++
-      if (rv < 5  && gv < 5  && bv < 5)  under++
+    try {
+      const canvas  = document.createElement('canvas')
+      const scale   = Math.min(1, 400 / Math.max(img.naturalWidth, img.naturalHeight))
+      canvas.width  = Math.round(img.naturalWidth * scale)
+      canvas.height = Math.round(img.naturalHeight * scale)
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data
+      const r   = new Array(256).fill(0)
+      const g   = new Array(256).fill(0)
+      const b   = new Array(256).fill(0)
+      const lum = new Array(256).fill(0)
+      let over = 0, under = 0
+      for (let i = 0; i < data.length; i += 4) {
+        const rv = data[i], gv = data[i+1], bv = data[i+2]
+        r[rv]++; g[gv]++; b[bv]++
+        const l = Math.round(0.299 * rv + 0.587 * gv + 0.114 * bv)
+        lum[l]++
+        if (rv > 250 && gv > 250 && bv > 250) over++
+        if (rv < 5  && gv < 5  && bv < 5)  under++
+      }
+      const total = canvas.width * canvas.height
+      setOverexposed(Math.round(100 * over / total * 10) / 10)
+      setUnderexposed(Math.round(100 * under / total * 10) / 10)
+      setHistogram({ r, g, b, lum })
+    } catch {
+      setHistogram(null)
     }
-    const total = canvas.width * canvas.height
-    setOverexposed(Math.round(100 * over / total * 10) / 10)
-    setUnderexposed(Math.round(100 * under / total * 10) / 10)
-    setHistogram({ r, g, b, lum })
   }
 
   useEffect(() => {
@@ -225,7 +229,6 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
           src={getImageUrl(c.device_id, c.filename)}
           alt={c.filename}
           draggable={false}
-          crossOrigin="anonymous"
           onLoad={() => { if (showHistogram) computeHistogram() }}
           style={{
             transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
