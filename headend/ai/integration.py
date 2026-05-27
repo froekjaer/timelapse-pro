@@ -114,6 +114,7 @@ _analysis_queue: queue.Queue = queue.Queue(maxsize=500)
 _worker_thread:  Optional[threading.Thread] = None
 OLLAMA_PLAY_MODE_KEY = "peter-vil-gerne-lege-med-ollama"
 _last_play_mode_log = 0.0
+_ollama_analysis_lock = threading.Lock()
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -218,11 +219,12 @@ def _worker(get_db_fn, find_image_fn):
                 continue
 
             vocab, vocabulary_by_cat, approved_tag_set = _load_vocabulary(get_db_fn)
-            result = svc.analyse(
-                image_path=image_path,
-                vocabulary_by_cat=vocabulary_by_cat,
-                approved_tag_set=approved_tag_set,
-            )
+            with _ollama_analysis_lock:
+                result = svc.analyse(
+                    image_path=image_path,
+                    vocabulary_by_cat=vocabulary_by_cat,
+                    approved_tag_set=approved_tag_set,
+                )
             payload = _analysis_payload(result)
             tags = result.approved_tags + result.new_tags
 
@@ -378,11 +380,12 @@ def setup_ai_router(get_db_fn, find_image_fn):
             raise HTTPException(status_code=503, detail="Ollama ikke tilgængelig")
 
         vocab, vocabulary_by_cat, approved_tag_set = _load_vocabulary(get_db_fn)
-        result = svc.analyse(
-            image_path=image_path,
-            vocabulary_by_cat=vocabulary_by_cat,
-            approved_tag_set=approved_tag_set,
-        )
+        with _ollama_analysis_lock:
+            result = svc.analyse(
+                image_path=image_path,
+                vocabulary_by_cat=vocabulary_by_cat,
+                approved_tag_set=approved_tag_set,
+            )
         payload = _analysis_payload(result)
         tags = result.approved_tags + result.new_tags
 

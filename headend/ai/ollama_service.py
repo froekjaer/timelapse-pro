@@ -1,7 +1,7 @@
 """
 TimeLapse Pro — Ollama Vision Service
 =======================================
-Håndterer al kommunikation med llama3.2-vision:11b.
+Håndterer al kommunikation med den lokale Ollama vision-model.
 
 Funktioner:
   - Dansk billed-analyse med selvudvidende tags (~300 startpunkter)
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 # ── Konfiguration ─────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL   = "http://localhost:11434"
-VISION_MODEL      = "llama3.2-vision:11b"
+VISION_MODEL      = "qwen2.5vl:7b"
 TEXT_MODEL        = "llama3.2:latest"
 TIMEOUT_VISION    = 600   # sekunder — vision er tung
 TIMEOUT_TEXT      = 60
@@ -239,7 +239,8 @@ class OllamaVisionService:
             if resp.status_code != 200:
                 return False
             models = [m["name"] for m in resp.json().get("models", [])]
-            available = any(self.vision_model.split(":")[0] in m for m in models)
+            model_family = self.vision_model.split(":")[0]
+            available = any(m == self.vision_model or m.split(":")[0] == model_family for m in models)
             if not available:
                 log.warning("Vision model %s ikke fundet. Tilgængelige: %s",
                             self.vision_model, models)
