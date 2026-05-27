@@ -42,10 +42,25 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./timelapse_headend.db")
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-)
+engine_kwargs = {}
+if DATABASE_URL.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    engine_kwargs.update({
+        "pool_pre_ping": True,
+        "pool_recycle": int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800")),
+        "pool_size": int(os.getenv("DB_POOL_SIZE", "20")),
+        "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
+        "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "10")),
+        "connect_args": {
+            "options": " ".join([
+                f"-c idle_in_transaction_session_timeout={os.getenv('DB_IDLE_TX_TIMEOUT_MS', '300000')}",
+                f"-c statement_timeout={os.getenv('DB_STATEMENT_TIMEOUT_MS', '60000')}",
+            ])
+        },
+    })
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 # Enable WAL mode for SQLite — power-loss resilience
 if DATABASE_URL.startswith("sqlite"):
@@ -601,6 +616,10 @@ def get_db():
     try:
         yield db
     finally:
+        try:
+            db.rollback()
+        except Exception:
+            pass
         db.close()
 
 
