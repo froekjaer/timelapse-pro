@@ -2,10 +2,9 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Building2, MapPin, Camera, Save, Trash2, ChevronRight,
          CheckCircle, Beaker, Image, Settings } from 'lucide-react'
-import { getApiUrl } from '../api/client'
+import { getApiUrl, pathSegment } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
-  const token = localStorage.getItem('timelapse_api_token') || ''
   return fetch(`${getApiUrl()}${path}`, {
     headers: {
       'Content-Type': 'application/json',
@@ -126,7 +125,7 @@ export function CameraPage() {
 
   useEffect(() => {
     if (!deviceId) return
-    api(`/api/admin/devices/${deviceId}`)
+    api(`/api/admin/devices/${pathSegment(deviceId)}`)
       .then((d: any) => {
         const dev = d.device ?? d
         setDevice(dev)
@@ -151,12 +150,12 @@ export function CameraPage() {
     setSaving(true)
     try {
       // Gem kamera info
-      await api(`/api/admin/devices/${deviceId}/info`, {
+      await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}/info`, {
         method: 'PUT',
         body: JSON.stringify({ camera_name: cameraName })
       })
       // Gem config_overrides (kamera-laget)
-      await api(`/api/admin/devices/${deviceId}/overrides`, {
+      await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}/overrides`, {
         method: 'PUT',
         body: JSON.stringify({
           camera_index:      cameraIndex,
@@ -177,7 +176,7 @@ export function CameraPage() {
   async function deleteDevice() {
     if (!confirmDelete) { setConfirmDelete(true); return }
     try {
-      await api(`/api/admin/devices/${deviceId}`, { method: 'DELETE' })
+      await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}`, { method: 'DELETE' })
       navigate('/')
     } catch {
       setError('Sletning fejlede')
@@ -197,11 +196,11 @@ export function CameraPage() {
     if (!assignSiteId) return
     setAssigning(true)
     try {
-      await api(`/api/admin/devices/${deviceId}/assign`, {
+      await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}/assign`, {
         method: 'PUT',
         body: JSON.stringify({ site_id: assignSiteId })
       })
-      const d = await api(`/api/admin/devices/${deviceId}`)
+      const d = await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}`)
       setDevice(d)
     } catch { } finally { setAssigning(false) }
   }
@@ -368,7 +367,7 @@ export function CameraPage() {
 
       {/* Hurtige links */}
       <div className="grid grid-cols-2 gap-3 mb-5">
-        <Link to={`/devices/${deviceId}`}
+        <Link to={`/devices/${pathSegment(deviceId ?? '')}`}
           className="flex items-center gap-3 p-4 bg-white rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors">
           <Image className="w-5 h-5 text-gray-400" />
           <div>
@@ -377,7 +376,7 @@ export function CameraPage() {
           </div>
           <ChevronRight className="w-4 h-4 text-gray-300 ml-auto" />
         </Link>
-        <Link to={`/lab/${deviceId}`}
+        <Link to={`/devices/${pathSegment(deviceId ?? '')}/lab`}
           className="flex items-center gap-3 p-4 bg-white rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors">
           <Beaker className="w-5 h-5 text-purple-400" />
           <div>

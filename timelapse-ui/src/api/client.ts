@@ -25,6 +25,8 @@ const getClient = () => {
   })
 }
 
+export const pathSegment = (value: string) => encodeURIComponent(value)
+
 export const getStats = () =>
   getClient().get<Stats>('/api/admin/stats').then(r => r.data)
 
@@ -32,7 +34,7 @@ export const getDevices = () =>
   getClient().get<Device[]>('/api/admin/devices').then(r => r.data)
 
 export const getDevice = (id: string) =>
-  getClient().get<DeviceDetail>(`/api/admin/devices/${id}`).then(r => r.data)
+  getClient().get<DeviceDetail>(`/api/admin/devices/${pathSegment(id)}`).then(r => r.data)
 
 export const getCaptures = (deviceId?: string, limit = 100) =>
   getClient().get<Capture[]>('/api/admin/captures', {
@@ -40,10 +42,10 @@ export const getCaptures = (deviceId?: string, limit = 100) =>
   }).then(r => r.data)
 
 export const getConfig = (deviceId: string) =>
-  getClient().get(`/api/admin/devices/${deviceId}/config`).then(r => r.data)
+  getClient().get(`/api/admin/devices/${pathSegment(deviceId)}/config`).then(r => r.data)
 
 export const updateConfig = (deviceId: string, config: DeviceConfig) =>
-  getClient().put(`/api/admin/devices/${deviceId}/config`, config).then(r => r.data)
+  getClient().put(`/api/admin/devices/${pathSegment(deviceId)}/config`, config).then(r => r.data)
 
 export const getImageUrl = (deviceId: string, filename: string) =>
   `${getApiUrl()}/api/images/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`
@@ -52,7 +54,7 @@ export const getThumbnailUrl = (deviceId: string, filename: string) =>
   `${getApiUrl()}/api/thumbnails/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`
 
 export const updateDeviceInfo = (deviceId: string, info: import('../types').DeviceInfo) =>
-  getClient().put(`/api/admin/devices/${deviceId}/info`, info).then(r => r.data)
+  getClient().put(`/api/admin/devices/${pathSegment(deviceId)}/info`, info).then(r => r.data)
 
 export const testConnection = () =>
   getClient().get('/health').then(r => r.data)
@@ -60,21 +62,21 @@ export const testConnection = () =>
 // ── Lab / Kamera-laboratorium ─────────────────────────────────────────────────
 
 export const setDebugMode = (deviceId: string, enabled: boolean, pollS = 2) =>
-  getClient().put(`/api/admin/devices/${deviceId}/debug`, {
+  getClient().put(`/api/admin/devices/${pathSegment(deviceId)}/debug`, {
     enabled, config_poll_s: pollS, relay_always_on: true
   }).then(r => r.data)
 
 export const requestPreview = (deviceId: string) =>
-  getClient().post(`/api/lab/${deviceId}/preview`).then(r => r.data)
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/preview`).then(r => r.data)
 
 export const requestCapture = (deviceId: string) =>
-  getClient().post(`/api/lab/${deviceId}/capture`).then(r => r.data)
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/capture`).then(r => r.data)
 
 export const setParam = (deviceId: string, key: string, value: string) =>
-  getClient().post(`/api/lab/${deviceId}/set-param`, { key, value }).then(r => r.data)
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/set-param`, { key, value }).then(r => r.data)
 
 export const listPreviews = (deviceId: string) =>
-  getClient().get(`/api/lab/${deviceId}/previews`).then(r => r.data)
+  getClient().get(`/api/lab/${pathSegment(deviceId)}/previews`).then(r => r.data)
 
 export const getPreviewUrl = (deviceId: string, filename: string) =>
   `${getApiUrl()}/api/lab/${encodeURIComponent(deviceId)}/preview-image/${encodeURIComponent(filename)}`
@@ -83,7 +85,7 @@ export const getPreviewThumbUrl = (deviceId: string, filename: string) =>
   `${getApiUrl()}/api/lab/${encodeURIComponent(deviceId)}/preview-thumb/${encodeURIComponent(filename)}`
 
 export const getDeviceRawConfig = (deviceId: string) =>
-  getClient().get(`/api/config/${deviceId}`).then(r => r.data)
+  getClient().get(`/api/config/${pathSegment(deviceId)}`).then(r => r.data)
 
 export const deleteCapture = (id: number) =>
   getClient().delete(`/api/admin/captures/${id}`).then(r => r.data)

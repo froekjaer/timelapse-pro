@@ -11,7 +11,7 @@ import { Link } from 'react-router-dom'
 import { ArrowLeft, Terminal, Cpu, Radio, Wifi, Camera, Save, CheckCircle,
          Power, PowerOff, RefreshCw, AlertTriangle, ChevronDown, ChevronRight, Database,
          Zap, Shield, Clock, HardDrive, Activity } from 'lucide-react'
-import { getApiUrl } from '../api/client'
+import { getApiUrl, pathSegment } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -84,7 +84,7 @@ function RelayTester({ deviceId, labActive }: { deviceId: string; labActive: boo
   const [msg, setMsg]     = useState('')
 
   async function sendRelayCmd(relay: 'camera' | 'modem', state: boolean) {
-    await api(`/api/lab/${deviceId}/relay`, {
+    await api(`/api/lab/${pathSegment(deviceId)}/relay`, {
       method: 'POST',
       body: JSON.stringify({ relay, state })
     })
@@ -268,7 +268,7 @@ export function SystemAdminPage() {
 
   useEffect(() => {
     if (!selectedDevice) return
-    api(`/api/admin/devices/${selectedDevice}`).then((d: any) => {
+    api(`/api/admin/devices/${pathSegment(selectedDevice)}`).then((d: any) => {
       const dc = d.device_config ?? {}
       setLabActive(!!(dc.debug_mode?.enabled))
       setMultiCameraMode(dc.multi_camera_mode ?? 'single')
@@ -281,7 +281,7 @@ export function SystemAdminPage() {
       setTunnelDeny(!!tun.deny)
       setNodeCameras(dc.node_cameras ?? [])
     }).catch(() => {})
-    api(`/api/config/${selectedDevice}`).then((c: any) => {
+    api(`/api/config/${pathSegment(selectedDevice)}`).then((c: any) => {
       setCfg(c)
       const cam  = c.camera  ?? {}
       const mod  = c.modem   ?? {}
@@ -312,7 +312,7 @@ export function SystemAdminPage() {
   async function saveMultiCamera() {
     setSavingMultiCam(true)
     try {
-      await api(`/api/node/${selectedDevice}/multi-camera-config`, {
+      await api(`/api/node/${pathSegment(selectedDevice)}/multi-camera-config`, {
         method: 'PUT',
         body: JSON.stringify({
           multi_camera_mode: multiCameraMode,
@@ -322,7 +322,7 @@ export function SystemAdminPage() {
       // Auto-bootstrap sibling devices
       if (multiCameraMode === 'auto_bootstrap') {
         for (const cam of nodeCameras) {
-          await api(`/api/node/${selectedDevice}/bootstrap-camera`, {
+          await api(`/api/node/${pathSegment(selectedDevice)}/bootstrap-camera`, {
             method: 'POST',
             body: JSON.stringify(cam)
           })
@@ -356,7 +356,7 @@ export function SystemAdminPage() {
   async function saveTunnel() {
     if (!selectedDevice) return
     const apiUrl = (await import('../api/client')).getApiUrl()
-    const res = await fetch(`${apiUrl}/api/admin/devices/${selectedDevice}`)
+    const res = await fetch(`${apiUrl}/api/admin/devices/${pathSegment(selectedDevice)}`)
     const data = await res.json()
     const existing = data.device?.device_config ?? {}
     const cfg = typeof existing === 'string' ? JSON.parse(existing) : existing
@@ -370,7 +370,7 @@ export function SystemAdminPage() {
       auto_on_api_loss_threshold_s: 300,
       deny: tunnelDeny,
     }
-    await fetch(`${apiUrl}/api/admin/devices/${selectedDevice}/config`, {
+    await fetch(`${apiUrl}/api/admin/devices/${pathSegment(selectedDevice)}/config`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ssh_tunnel: cfg.ssh_tunnel }),
@@ -382,7 +382,7 @@ export function SystemAdminPage() {
   async function save() {
     setSaving(true)
     try {
-      await api(`/api/admin/devices/${selectedDevice}/overrides`, {
+      await api(`/api/admin/devices/${pathSegment(selectedDevice)}/overrides`, {
         method: 'PUT',
         body: JSON.stringify({
           config_overrides: {

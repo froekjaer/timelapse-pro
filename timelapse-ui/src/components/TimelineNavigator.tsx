@@ -48,10 +48,11 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
   const [deleteMode, setDeleteMode]   = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleting, setDeleting]       = useState(false)
+  const queryDeviceId = encodeURIComponent(deviceId)
 
   useEffect(() => {
     if (!deviceId) return
-    authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}`)
+    authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${encodeURIComponent(deviceId)}`)
       .then(r => r.json())
       .then((data: DayCount[]) => {
         setDayCounts(data)
@@ -65,7 +66,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
   useEffect(() => {
     if (!selected.year || !selected.month || !selected.day) return
     setLoading(true)
-    authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
+    authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${queryDeviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
       .then(r => r.json())
       .then((data: Capture[]) => { setDayCaptures(data); setLoading(false) })
       .catch(() => setLoading(false))
@@ -118,10 +119,10 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
       // Genindlæs dag-captures
       if (selected.year && selected.month && selected.day) {
         setLoading(true)
-        authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
+        authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${queryDeviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
           .then(r => r.json()).then((data: Capture[]) => { setDayCaptures(data); setLoading(false) })
           .catch(() => setLoading(false))
-        authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${deviceId}`)
+        authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${queryDeviceId}`)
           .then(r => r.json()).then((data: DayCount[]) => setDayCounts(data)).catch(() => {})
       }
       onDeleted?.()

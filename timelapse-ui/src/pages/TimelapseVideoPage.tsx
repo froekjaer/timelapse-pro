@@ -19,7 +19,7 @@ import {
   Sliders, Clock, Zap, Eye, EyeOff, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle, Video, Settings2
 } from 'lucide-react'
-import { getApiUrl, getThumbnailUrl } from '../api/client'
+import { getApiUrl, getThumbnailUrl, pathSegment } from '../api/client'
 
 const apiCall = async (path: string, options?: RequestInit) => {
   const base = getApiUrl()
@@ -268,7 +268,7 @@ export default function TimelapseVideoPage() {
       {/* Header */}
       <div className="border-b border-white/10 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-20">
         <div className="max-w-screen-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <Link to={`/devices/${deviceId}`} className="text-white/40 hover:text-white transition-colors">
+          <Link to={`/devices/${pathSegment(deviceId ?? '')}`} className="text-white/40 hover:text-white transition-colors">
             <ArrowLeft className="w-4 h-4" />
           </Link>
           <Film className="w-5 h-5 text-sky-400" />

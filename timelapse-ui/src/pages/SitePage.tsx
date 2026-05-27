@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, MapPin, Building2, Camera, Save, Trash2, Plus, ChevronRight, CheckCircle } from 'lucide-react'
-import { getApiUrl } from '../api/client'
+import { getApiUrl, pathSegment } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -267,7 +267,7 @@ export function SitePage() {
                 ? new Date(d.last_seen + 'Z').toLocaleString('da-DK', { timeZone: TZ(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
                 : null
               return (
-                <Link key={d.device_id} to={`/devices/${d.device_id}`}
+                <Link key={d.device_id} to={`/devices/${pathSegment(d.device_id)}`}
                   className="flex items-center gap-3 px-3 py-2.5 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors group">
                   <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
                     <Camera className="w-4 h-4 text-slate-500" />

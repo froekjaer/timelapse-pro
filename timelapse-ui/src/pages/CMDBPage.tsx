@@ -14,7 +14,7 @@ import {
   HardDrive, Cpu, Wifi, Package, Key, Eye, Trash2,
   Plus, CheckCircle, Clock, ArrowLeft, Edit2, Check, X
 } from 'lucide-react'
-import { getApiUrl } from '../api/client'
+import { getApiUrl, pathSegment } from '../api/client'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -222,7 +222,7 @@ export function CMDBPage() {
                 <tr
                   key={e.device_id}
                   className="border-b border-gray-50 hover:bg-sky-50 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/cmdb/${e.device_id}`)}
+                  onClick={() => navigate(`/cmdb/${pathSegment(e.device_id)}`)}
                 >
                   <td className="px-4 py-3">
                     <div className="font-mono font-medium text-gray-900 flex items-center">
@@ -306,8 +306,8 @@ export function CMDBDetailPage() {
     setLoading(true)
     try {
       const [detailR, bgR] = await Promise.all([
-        api(`/api/cmdb/${deviceId}`),
-        api(`/api/cmdb/${deviceId}/break-glass`),
+        api(`/api/cmdb/${pathSegment(deviceId)}`),
+        api(`/api/cmdb/${pathSegment(deviceId)}/break-glass`),
       ])
       setDetail(await detailR.json())
       setAccounts(await bgR.json())
@@ -320,7 +320,7 @@ export function CMDBDetailPage() {
   async function saveField(field: string, value: string) {
     if (!deviceId) return
     setSaving(true)
-    await apiPut(`/api/cmdb/${deviceId}`, { [field]: value })
+    await apiPut(`/api/cmdb/${pathSegment(deviceId)}`, { [field]: value })
     setSaving(false)
     setEditField(null)
     load()
@@ -329,7 +329,7 @@ export function CMDBDetailPage() {
   async function createBreakGlass() {
     if (!deviceId || !bgAdminUser) return
     setBgCreating(true)
-    await apiPost(`/api/cmdb/${deviceId}/break-glass`, {
+    await apiPost(`/api/cmdb/${pathSegment(deviceId)}/break-glass`, {
       admin_username: bgAdminUser,
       expires_days: bgExpiresDays,
     })
@@ -342,7 +342,7 @@ export function CMDBDetailPage() {
   async function doCheckout(accountId: number) {
     if (!deviceId) return
     setCheckingOut(true)
-    const r = await apiPost(`/api/cmdb/${deviceId}/break-glass/checkout`, {
+    const r = await apiPost(`/api/cmdb/${pathSegment(deviceId)}/break-glass/checkout`, {
       admin_username: accounts.find(a => a.id === accountId)?.admin_username,
       reason: checkoutReason || 'Ikke angivet',
     })
@@ -354,7 +354,7 @@ export function CMDBDetailPage() {
 
   async function deleteAccount(accountId: number) {
     if (!deviceId || !confirm('Slet break-glass konto?')) return
-    await apiDelete(`/api/cmdb/${deviceId}/break-glass/${accountId}`)
+    await apiDelete(`/api/cmdb/${pathSegment(deviceId)}/break-glass/${accountId}`)
     load()
   }
 

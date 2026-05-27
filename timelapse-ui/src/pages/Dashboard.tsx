@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, Camera, Building2, MapPin, ChevronRight, Plus, CheckCircle, AlertCircle, Clock, Settings } from 'lucide-react'
-import { getStats, getDevices, getApiUrl } from '../api/client'
+import { getStats, getDevices, getApiUrl, pathSegment } from '../api/client'
 import { StatCard } from '../components/StatCard'
 import { StatusBadge } from '../components/StatusBadge'
 import type { Stats, Device } from '../types'
@@ -44,7 +44,7 @@ function DeviceRow({ device }: { device: Device }) {
     ? new Date(device.last_seen + 'Z').toLocaleString('da-DK', { timeZone: TZ(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : null
   return (
-    <Link to={`/devices/${device.device_id}`}
+    <Link to={`/devices/${pathSegment(device.device_id)}`}
       className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors rounded-lg group">
       <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
         <Camera className="w-4 h-4 text-slate-500" />
@@ -109,7 +109,7 @@ function SiteCard({ site, devices }: { site: Site; devices: Device[] }) {
             siteDevices.map(d => (
               <div key={d.device_id} className="flex items-center">
                 <div className="flex-1"><DeviceRow device={d} /></div>
-                <Link to={`/cameras/${d.device_id}`}
+                <Link to={`/cameras/${pathSegment(d.device_id)}`}
                   className="flex-shrink-0 p-2 mr-2 text-gray-300 hover:text-sky-500 hover:bg-sky-50 rounded-lg transition-colors"
                   title="Konfigurer kamera">
                   <Settings className="w-3.5 h-3.5" />

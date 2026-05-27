@@ -17,7 +17,7 @@ import {
 import {
   setDebugMode, requestPreview, requestCapture,
   setParam, listPreviews, getPreviewUrl, getPreviewThumbUrl,
-  getDeviceRawConfig, getDevice
+  getDeviceRawConfig, getDevice, pathSegment
 } from '../api/client'
 import type { LabPreview, CameraParam, DebugMode } from '../types'
 
@@ -253,7 +253,7 @@ export default function LabPage() {
     async function checkExistingLab() {
       try {
         const apiUrl = (await import('../api/client')).getApiUrl()
-        const res = await fetch(`${apiUrl}/api/admin/devices/${deviceId}`)
+        const res = await fetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}`)
         if (!res.ok) return
         const data = await res.json()
         if (cancelled) return
@@ -301,7 +301,7 @@ export default function LabPage() {
     async function checkExistingLab() {
       try {
         const apiUrl = (await import('../api/client')).getApiUrl()
-        const res = await fetch(`${apiUrl}/api/admin/devices/${deviceId}`)
+        const res = await fetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}`)
         if (!res.ok) return
         const data = await res.json()
         if (cancelled) return
@@ -400,7 +400,7 @@ export default function LabPage() {
         const check = setInterval(async () => {
           try {
             const apiUrl = (await import('../api/client')).getApiUrl()
-            const r = await fetch(`${apiUrl}/api/admin/devices/${deviceId}`)
+            const r = await fetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}`)
             const data = await r.json()
             const cfg = data?.device?.device_config ? JSON.parse(data.device.device_config) : {}
             if (cfg?.lab_camera_ready === true) {
@@ -428,7 +428,7 @@ export default function LabPage() {
       // Nulstil camera-ready signal på headend
       try {
         const apiUrl = (await import('../api/client')).getApiUrl()
-        await fetch(`${apiUrl}/api/lab/${deviceId}/camera-ready`, {
+        await fetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/camera-ready`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ready: false})
         }).catch(() => {})
@@ -500,7 +500,7 @@ export default function LabPage() {
     try {
       // Trin 1: anmod om get_params kommando
       const apiUrl = (await import('../api/client')).getApiUrl()
-      await fetch(`${apiUrl}/api/lab/${deviceId}/get-params`, { method: 'POST' })
+      await fetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/get-params`, { method: 'POST' })
       setStatusMsg('Venter på kamera-parametre…')
 
       // Trin 2: poll config indtil camera_params er klar
@@ -535,7 +535,7 @@ export default function LabPage() {
     setStatusMsg('Scanner WiFi netværk…')
     try {
       const apiUrl = (await import('../api/client')).getApiUrl()
-      await fetch(`${apiUrl}/api/lab/${deviceId}/wifi/scan`, { method: 'POST' })
+      await fetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/wifi/scan`, { method: 'POST' })
       // Poll for result
       let attempts = 0
       const poll = setInterval(async () => {
@@ -559,7 +559,7 @@ export default function LabPage() {
     setStatusMsg(`Tilslutter til ${ssid}…`)
     try {
       const apiUrl = (await import('../api/client')).getApiUrl()
-      await fetch(`${apiUrl}/api/lab/${deviceId}/wifi/connect`, {
+      await fetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/wifi/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ssid, password })
@@ -594,7 +594,7 @@ export default function LabPage() {
     if (commands.length === 0) { setStatusMsg('Ingen parametre at låse'); return }
     // Update config via API
     import('../api/client').then(({ getApiUrl }) => {
-      fetch(`${getApiUrl()}/api/admin/devices/${deviceId}/config`, {
+      fetch(`${getApiUrl()}/api/admin/devices/${pathSegment(deviceId)}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ camera: { initial_commands: commands } })
@@ -624,7 +624,7 @@ export default function LabPage() {
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate(`/devices/${deviceId}`)}
+            <button onClick={() => navigate(`/devices/${pathSegment(deviceId)}`)}
               className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">
               <ChevronLeft className="w-5 h-5" />
             </button>

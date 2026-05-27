@@ -16,7 +16,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Image, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, CartesianGrid, ReferenceLine } from 'recharts'
-import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getThumbnailUrl, updateDeviceInfo, setParam } from '../api/client'
+import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getThumbnailUrl, updateDeviceInfo, setParam, pathSegment } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import type { DeviceDetail, Capture } from '../types'
@@ -570,7 +570,8 @@ function CameraParamRow({ param, deviceId }: {
       await setParam(deviceId, key, value)
       // Opdater camera_params i headend så refresh ikke nulstiller værdien
       const apiUrl = (await import('../api/client')).getApiUrl()
-      const cfg = await (await authFetch(`${apiUrl}/api/admin/devices/${deviceId}`)).json()
+      const encodedDeviceId = pathSegment(deviceId)
+      const cfg = await (await authFetch(`${apiUrl}/api/admin/devices/${encodedDeviceId}`)).json()
       const updatedParams = (cfg?.device?.device_config ? 
         JSON.parse(typeof cfg.device.device_config === 'string' ? cfg.device.device_config : JSON.stringify(cfg.device.device_config)) : {}
       )
@@ -578,7 +579,7 @@ function CameraParamRow({ param, deviceId }: {
         updatedParams.camera_params = updatedParams.camera_params.map((cp: any) =>
           cp.path.endsWith(key) ? { ...cp, current: value } : cp
         )
-        await authFetch(`${apiUrl}/api/admin/devices/${deviceId}/config`, {
+        await authFetch(`${apiUrl}/api/admin/devices/${encodedDeviceId}/config`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ camera_params: updatedParams.camera_params })
@@ -905,7 +906,7 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
   const [diagHistory, setDiagHistory] = useState<any[]>([])
   useEffect(() => {
     const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
-    authFetch(`${apiUrl}/api/admin/devices/${deviceId}/diagnostics/history?days=7&limit=500`)
+    authFetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}/diagnostics/history?days=7&limit=500`)
       .then(r => r.ok ? r.json() : [])
       .then(d => setDiagHistory(d))
       .catch(() => {})
@@ -1360,6 +1361,7 @@ export function DevicePage() {
   if (!detail) return <div className="max-w-7xl mx-auto px-4 py-16 text-center text-gray-400">Enhed ikke fundet</div>
 
   const { device, diagnostics } = detail
+  const routeDeviceId = pathSegment(device.device_id)
 
   const tabs: { key: Tab; label: string; icon: any }[] = [
     { key: 'captures',  label: `Billeder (${captures.length})`, icon: Camera },
@@ -1420,11 +1422,11 @@ export function DevicePage() {
         </div>
 
         <div className="flex gap-1 mb-6 border-b border-gray-200">
-          <button onClick={() => navigate(`/devices/${id}/timelapse`)}
+          <button onClick={() => navigate(`/devices/${routeDeviceId}/timelapse`)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-sky-600 hover:text-sky-700 border-b-2 border-transparent hover:border-sky-400 -mb-px transition-colors mr-2">
             <Film className="w-4 h-4" />Timelapse Video
           </button>
-          <button onClick={() => navigate(`/devices/${id}/lab`)}
+          <button onClick={() => navigate(`/devices/${routeDeviceId}/lab`)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-purple-600 hover:text-purple-700 border-b-2 border-transparent hover:border-purple-400 -mb-px transition-colors mr-2">
             <FlaskConical className="w-4 h-4" />Lab
           </button>
