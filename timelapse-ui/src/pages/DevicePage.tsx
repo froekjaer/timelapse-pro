@@ -14,11 +14,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Image, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
+import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, CartesianGrid, ReferenceLine } from 'recharts'
 import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getThumbnailUrl, updateDeviceInfo, setParam, pathSegment } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
+import { CaptureThumbnailCard, parseCaptureAI } from '../components/CaptureThumbnailCard'
 import type { DeviceDetail, Capture } from '../types'
 
 function authFetch(url: string, opts?: RequestInit) {
@@ -343,7 +344,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
                 {/* QA ANALYSE */}
                 {(() => {
-                  const ai = parseAI(c, sidecar)
+                  const ai = parseCaptureAI(c, sidecar)
                   const causeLabels: Record<string, string> = {
                     ok: 'OK', condensation_on_lens: 'Kondens på linse',
                     dirty_lens: 'Snavset linse', focus_drift: 'Fokusdrift',
@@ -501,87 +502,6 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
             </button>
           )
         })}
-      </div>
-    </div>
-  )
-}
-
-// ── Capture thumbnail ─────────────────────────────────────────────────────────
-
-function parseAI(capture: any, sidecar?: any): Record<string, any> | null {
-  if (sidecar?.ai_analysis) return sidecar.ai_analysis
-  if (!capture.ai_result) return null
-  try { return JSON.parse(capture.ai_result) } catch { return null }
-}
-
-export function CaptureCard({ capture, onClick }: { capture: Capture; onClick: () => void }) {
-  const time = capture.captured_at
-    ? new Date(capture.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-    : '–'
-  const passed = capture.quality_passed !== false
-  const thumbUrl = getThumbnailUrl(capture.device_id, capture.filename)
-  const [imgOk, setImgOk] = useState(true)
-
-  return (
-    <div
-      onClick={onClick}
-      className={`rounded-xl border overflow-hidden bg-white cursor-pointer hover:ring-2 hover:ring-sky-300 transition-all ${passed ? 'border-gray-200' : 'border-red-200'}`}
-    >
-      <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center">
-        {imgOk ? (
-          <img src={thumbUrl} alt={capture.filename} className="w-full h-full object-cover" loading="lazy" onError={() => setImgOk(false)} />
-        ) : (
-          <Image className="w-8 h-8 text-slate-300" />
-        )}
-        <span className="absolute bottom-1.5 right-1.5 text-xs bg-black/50 text-white px-1 py-0.5 rounded">
-          {capture.filesize_mb ? `${capture.filesize_mb} MB` : '–'}
-        </span>
-        {!passed && <span className="absolute top-1.5 left-1.5 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded">Fejlet</span>}
-      </div>
-      <div className="px-2 py-1.5">
-        <div className="flex items-center justify-between gap-1">
-          <p className="text-xs font-medium text-gray-700">{time}</p>
-          {capture.blur_score != null && (
-            <p className={`text-xs font-medium flex-shrink-0 ${capture.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>
-              ⬡ {Math.round(capture.blur_score)}
-            </p>
-          )}
-          {/* QA-BADGE */}
-          {(() => {
-            const ai = parseAI(capture)
-            if (!ai) return null
-            if (ai.alarm)      return <span title={ai.description} className="text-xs flex-shrink-0 cursor-help">🚨</span>
-            if (ai.is_anomaly) return <span title={ai.description} className="text-xs flex-shrink-0 cursor-help">⚠️</span>
-            if (ai.probable_cause === 'ok') return <span title="QA: OK" className="text-[9px] flex-shrink-0 text-emerald-400 font-bold cursor-help">QA✓</span>
-            return null
-          })()}
-        </div>
-        {(() => {
-          const fn = capture.filename.replace('.jpg', '').replace('.JPG', '')
-          const parts = fn.split('_')
-          const dateIdx = parts.findIndex((p: string) => /^\d{8}$/.test(p))
-          const nameParts = dateIdx > 0 ? parts.slice(0, dateIdx) : parts
-          const customer = nameParts[0] ?? ''
-          const camera   = nameParts.slice(-2).join(' ')
-          const site     = nameParts.slice(1, -2).join(' ')
-          return (
-            <div className="border-t border-gray-100 pt-1 mt-1">
-              <p className="text-xs font-bold text-gray-900 leading-tight truncate">{customer}</p>
-              <p className="text-xs text-gray-800 leading-tight mt-0.5 truncate">{site}</p>
-              <p className="text-xs text-gray-700 leading-tight mt-0.5 truncate">{camera}</p>
-            </div>
-          )
-        })()}
-        {capture.ai_tags && (capture.ai_tags as string[]).length > 0 && (
-          <div className="flex flex-wrap gap-0.5 mt-1">
-            {(capture.ai_tags as string[]).slice(0, 3).map((t: string) => (
-              <span key={t} className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded-full">#{t}</span>
-            ))}
-            {(capture.ai_tags as string[]).length > 3 && (
-              <span className="text-[9px] text-gray-400">+{(capture.ai_tags as string[]).length - 3}</span>
-            )}
-          </div>
-        )}
       </div>
     </div>
   )
@@ -1480,7 +1400,7 @@ export function DevicePage() {
         {tab === 'captures' && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
             {captures.map((c, i) => (
-              <CaptureCard key={c.id} capture={c} onClick={() => setLightbox(i)} />
+              <CaptureThumbnailCard key={c.id} capture={c} onClick={() => setLightbox(i)} />
             ))}
             {captures.length === 0 && (
               <div className="col-span-full py-12 text-center text-gray-400 text-sm">Ingen captures endnu</div>

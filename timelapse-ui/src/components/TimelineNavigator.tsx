@@ -2,7 +2,8 @@
 import { useState, useMemo, useEffect } from 'react'
 import { ChevronLeft, Trash2, CheckSquare, Square, X } from 'lucide-react'
 import type { Capture } from '../types'
-import { getThumbnailUrl, getApiUrl, deleteCapturesBulk } from '../api/client'
+import { getApiUrl, deleteCapturesBulk } from '../api/client'
+import { CaptureThumbnailCard } from './CaptureThumbnailCard'
 
 function authFetch(url: string) {
   return fetch(url, { credentials: 'include' })
@@ -235,26 +236,16 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
             <>
               <p className="text-xs text-gray-400 mb-3">{dayCaptures.length} billeder</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                {dayCaptures.map((c, i) => {
-                  const lbl = c.captured_at ? fmtLocal(c.captured_at) : ''
-                  const passed = c.quality_passed !== false
+                {dayCaptures.map(c => {
                   return (
-                    <div key={c.id}
+                    <CaptureThumbnailCard
+                      key={c.id}
+                      capture={c}
+                      compact
+                      selected={deleteMode && selectedIds.has(c.id)}
                       onClick={() => deleteMode ? toggleSelect(c.id) : openCapture(c)}
-                      className={`rounded-xl border overflow-hidden bg-white cursor-pointer hover:ring-2 hover:ring-sky-300 transition-all
-                        ${deleteMode && selectedIds.has(c.id) ? 'ring-2 ring-red-400 border-red-300' : passed ? 'border-gray-200' : 'border-red-200'}`}>
-                      <div className="aspect-video bg-slate-100 relative overflow-hidden">
-                        <img src={getThumbnailUrl(c.device_id, c.filename)} alt="" className="w-full h-full object-cover" loading="lazy" />
-                        {!passed && <span className="absolute top-1 left-1 text-[10px] bg-red-500 text-white px-1 py-0.5 rounded">QA fejl</span>}
-                        {deleteMode && selectedIds.has(c.id) && <div className="absolute inset-0 bg-red-400/20" />}
-                      </div>
-                      <div className="px-2 py-1">
-                        <p className="text-xs font-medium text-gray-700">{lbl}</p>
-                        {c.blur_score != null && (
-                          <p className={`text-xs ${c.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>⬡ {Math.round(c.blur_score)}</p>
-                        )}
-                      </div>
-                    </div>
+                      overlay={deleteMode && selectedIds.has(c.id) ? <div className="absolute inset-0 bg-red-400/20" /> : null}
+                    />
                   )
                 })}
               </div>

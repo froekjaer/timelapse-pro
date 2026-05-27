@@ -12,7 +12,9 @@ import {
   Cloud, Cpu, Zap, RefreshCw, Send, Eye, ThumbsUp, ThumbsDown,
   TrendingUp, Layers, SlidersHorizontal, Info
 } from 'lucide-react'
-import { getApiUrl, getThumbnailUrl } from '../api/client'
+import { getApiUrl } from '../api/client'
+import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
+import type { Capture } from '../types'
 
 const api = (path: string, opts?: RequestInit) =>
   fetch(`${getApiUrl()}${path}`, opts).then(r => r.json())
@@ -101,6 +103,25 @@ interface SimilarTagGroup {
   reason: string
   tags: SimilarTagItem[]
   total_count: number
+}
+
+function captureFromPath(path: string, overrides: Partial<Capture> = {}): Capture {
+  const parts = path.split('/')
+  const hasDevicePrefix = parts.length > 1
+  return {
+    id: overrides.id ?? 0,
+    device_id: overrides.device_id ?? (hasDevicePrefix ? parts[0] : ''),
+    filename: overrides.filename ?? (hasDevicePrefix ? parts.slice(1).join('/') : path),
+    captured_at: overrides.captured_at ?? null,
+    quality_flag: overrides.quality_flag ?? null,
+    quality_passed: overrides.quality_passed ?? null,
+    blur_score: overrides.blur_score ?? null,
+    filesize_mb: overrides.filesize_mb ?? null,
+    uploaded: overrides.uploaded ?? true,
+    ai_result: overrides.ai_result ?? null,
+    ai_analyzed_at: overrides.ai_analyzed_at ?? null,
+    ai_tags: overrides.ai_tags ?? null,
+  }
 }
 
 interface OllamaPriority {
@@ -675,13 +696,18 @@ function EscalationTab() {
                   readOnly
                   className="w-4 h-4 rounded accent-violet-500"
                 />
-                {/* Thumbnail */}
-                <img
-                  src={getThumbnailUrl(item.filename.split('/').pop() || '', item.filename.split('/')[0] || '')}
-                  alt=""
-                  className="w-14 h-10 object-cover rounded-lg bg-gray-800"
-                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                />
+                <div className="w-32 shrink-0">
+                  <CaptureThumbnailCard
+                    capture={captureFromPath(item.filename, {
+                      id: item.capture_id,
+                      captured_at: item.captured_at,
+                      quality_flag: item.quality_flag,
+                      ai_tags: item.current_tags,
+                    })}
+                    compact
+                    onClick={() => {}}
+                  />
+                </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-white truncate">{item.filename.split('/').pop()}</div>
                   <div className="flex gap-2 mt-1 flex-wrap">
@@ -813,13 +839,18 @@ function DailyReviewTab() {
               }`}
             >
               <div className="flex gap-4 p-4">
-                {/* Thumbnail */}
-                <img
-                  src={getThumbnailUrl(cap.filename.split('/').pop() || '', cap.filename.split('/')[0] || '')}
-                  alt=""
-                  className="w-20 h-14 object-cover rounded-lg bg-gray-800 shrink-0"
-                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                />
+                <div className="w-32 shrink-0">
+                  <CaptureThumbnailCard
+                    capture={captureFromPath(cap.filename, {
+                      id: cap.capture_id,
+                      captured_at: cap.captured_at,
+                      quality_flag: cap.quality_flag,
+                      ai_tags: cap.current_tags,
+                    })}
+                    compact
+                    onClick={() => {}}
+                  />
+                </div>
                 <div className="flex-1 min-w-0 space-y-2">
                   {/* Scene */}
                   <p className="text-sm text-slate-300">{cap.scene_dk || 'Ingen beskrivelse'}</p>

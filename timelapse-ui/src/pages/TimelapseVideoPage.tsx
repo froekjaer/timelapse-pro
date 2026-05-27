@@ -19,7 +19,8 @@ import {
   Sliders, Clock, Zap, Eye, EyeOff, ChevronDown, ChevronUp,
   AlertTriangle, CheckCircle, Video, Settings2
 } from 'lucide-react'
-import { getApiUrl, getThumbnailUrl, pathSegment } from '../api/client'
+import { getApiUrl, pathSegment } from '../api/client'
+import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
 
 const apiCall = async (path: string, options?: RequestInit) => {
   const base = getApiUrl()
@@ -42,6 +43,9 @@ interface Frame {
   quality_passed: boolean | null
   quality_flag: string | null
   filesize_mb: number | null
+  ai_result?: string | null
+  ai_analyzed_at?: string | null
+  ai_tags?: string[] | null
 }
 
 interface RenderJob {
@@ -624,42 +628,24 @@ export default function TimelapseVideoPage() {
               <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-8 2xl:grid-cols-12 gap-1.5">
                 {frames.map((frame, idx) => {
                   const isExcluded = excluded.has(frame.id)
-                  const isFailed   = frame.quality_passed === false
-                  const blur       = frame.blur_score
                   return (
-                    <button key={frame.id} onClick={() => toggleFrame(frame.id)}
-                      title={`${fmtDate(frame.captured_at)}\nBlur: ${blur ?? '—'}\n${isFailed ? '⚠️ Kvalitet FEJL' : '✅ OK'}`}
-                      className={`relative aspect-video rounded-lg overflow-hidden border-2 transition-all cursor-pointer
-                        ${isExcluded ? 'border-red-500/60 opacity-30 scale-95' : isFailed ? 'border-amber-500/60' : 'border-transparent hover:border-sky-500/60'}
-                      `}>
-                      <img
-                        src={getThumbnailUrl(frame.device_id, frame.filename)}
-                        alt={`Frame ${idx + 1}`}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
-                      {/* Status badge */}
-                      {!isExcluded && (
-                        <div className="absolute top-0.5 right-0.5">
-                          {isFailed
-                            ? <span className="w-3.5 h-3.5 bg-amber-500 rounded-full flex items-center justify-center"><AlertTriangle className="w-2 h-2 text-white" /></span>
-                            : <span className="w-3.5 h-3.5 bg-emerald-500/80 rounded-full flex items-center justify-center"><Check className="w-2 h-2 text-white" /></span>
-                          }
-                        </div>
-                      )}
-                      {isExcluded && (
-                        <div className="absolute inset-0 flex items-center justify-center">
+                    <div
+                      key={frame.id}
+                      className={isExcluded ? 'opacity-30 scale-95 transition-all' : 'transition-all'}
+                      title={`${fmtDate(frame.captured_at)}\nFrame ${idx + 1}`}
+                    >
+                      <CaptureThumbnailCard
+                        capture={{ ...frame, uploaded: true }}
+                        compact
+                        selected={isExcluded}
+                        onClick={() => toggleFrame(frame.id)}
+                        overlay={isExcluded ? (
+                          <div className="absolute inset-0 flex items-center justify-center bg-red-400/15">
                           <X className="w-6 h-6 text-red-400" />
-                        </div>
-                      )}
-                      {/* Blur badge */}
-                      {blur != null && !isExcluded && (
-                        <div className={`absolute bottom-0 left-0 right-0 text-[8px] text-center py-0.5
-                          ${blur < 80 ? 'bg-amber-900/80 text-amber-300' : 'bg-black/50 text-white/50'}`}>
-                          {Math.round(blur)}
-                        </div>
-                      )}
-                    </button>
+                          </div>
+                        ) : null}
+                      />
+                    </div>
                   )
                 })}
               </div>

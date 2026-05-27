@@ -9,7 +9,8 @@ import { Link } from 'react-router-dom'
 import { ArrowLeft, Tag, Search, X, Loader2, CheckSquare, Square,
          Save, FlaskConical, ChevronDown, ChevronUp } from 'lucide-react'
 import { getApiUrl } from '../api/client'
-import { CaptureCard, Lightbox } from './DevicePage'
+import { Lightbox } from './DevicePage'
+import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
 import type { Capture } from '../types'
 
 function api(path: string, opts?: RequestInit) {
@@ -430,7 +431,7 @@ export function TagSearchPage() {
                       className="absolute top-1.5 left-1.5 z-10 bg-white/80 rounded backdrop-blur-sm p-0.5">
                       {selectedIds.has(r.id)?<CheckSquare className="w-4 h-4 text-sky-500"/>:<Square className="w-4 h-4 text-gray-400"/>}
                     </button>
-                    <CaptureCard capture={r} onClick={()=>setLightboxIdx(i)}/>
+                    <CaptureThumbnailCard capture={r} onClick={()=>setLightboxIdx(i)}/>
                   </div>
                 ))}
               </div>
