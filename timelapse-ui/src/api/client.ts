@@ -4,8 +4,15 @@ import type { Device, DeviceDetail, Stats, Capture, DeviceConfig } from '../type
 export const API_STORAGE_KEY = 'timelapse_api_url'
 export const DEFAULT_API_URL = typeof window !== 'undefined' ? window.location.origin : 'http://192.168.86.102:8000'
 
-export const getApiUrl = () =>
-  localStorage.getItem(API_STORAGE_KEY) ?? import.meta.env.VITE_API_URL ?? DEFAULT_API_URL
+const isProductionHttpsOrigin = () =>
+  typeof window !== 'undefined' &&
+  window.location.protocol === 'https:' &&
+  !['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
+
+export const getApiUrl = () => {
+  if (isProductionHttpsOrigin()) return window.location.origin
+  return localStorage.getItem(API_STORAGE_KEY) ?? import.meta.env.VITE_API_URL ?? DEFAULT_API_URL
+}
 
 export const bootstrapToken = async () => {
   if (localStorage.getItem('timelapse_api_token')) return
