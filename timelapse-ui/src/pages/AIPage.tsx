@@ -17,7 +17,11 @@ import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
 import type { Capture } from '../types'
 
 const api = (path: string, opts?: RequestInit) =>
-  fetch(`${getApiUrl()}${path}`, opts).then(r => r.json())
+  fetch(`${getApiUrl()}${path}`, opts).then(async r => {
+    const data = await r.json().catch(() => null)
+    if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`)
+    return data
+  })
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -232,14 +236,17 @@ function StrategyTab() {
   const save = async () => {
     if (!editing) return
     setSaving(true)
-    await api('/api/ai/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editing),
-    })
-    setSaving(false)
-    setEditing(null)
-    load()
+    try {
+      await api('/api/settings/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editing),
+      })
+      setEditing(null)
+      load()
+    } finally {
+      setSaving(false)
+    }
   }
 
   const togglePriority = async () => {

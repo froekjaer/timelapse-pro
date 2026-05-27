@@ -74,8 +74,10 @@ CREATE TABLE IF NOT EXISTS ai_config (
 
 -- Global default (indsæt hvis ikke findes)
 INSERT INTO ai_config (customer_id, site_id, strategy, notes)
-VALUES (NULL, NULL, 'cloud_only', 'Global default — cloud_only er sikreste start')
-ON CONFLICT (customer_id, site_id) DO NOTHING;
+SELECT NULL, NULL, 'cloud_only', 'Global default — cloud_only er sikreste start'
+WHERE NOT EXISTS (
+    SELECT 1 FROM ai_config WHERE customer_id IS NULL AND site_id IS NULL
+);
 
 COMMENT ON TABLE ai_config IS
     'AI-strategi konfiguration pr. kunde/site. NULL customer_id = global default.';
@@ -162,6 +164,22 @@ class AIConfigManager:
         from sqlalchemy import text
         try:
             self.db.execute(text(AI_CONFIG_DDL))
+            self.db.execute(text("""
+                DELETE FROM ai_config a
+                USING ai_config b
+                WHERE COALESCE(a.customer_id, '__global__') = COALESCE(b.customer_id, '__global__')
+                  AND COALESCE(a.site_id, '__all__') = COALESCE(b.site_id, '__all__')
+                  AND a.id > b.id
+            """))
+            # NULL-værdier konflikter ikke i almindelige PostgreSQL UNIQUE constraints.
+            # Denne indeks sikrer præcis én global, én pr. kunde og én pr. site/kamera-scope.
+            self.db.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_config_scope
+                ON ai_config (
+                    COALESCE(customer_id, '__global__'),
+                    COALESCE(site_id, '__all__')
+                )
+            """))
             self.db.commit()
         except Exception as e:
             log.warning("ai_config DDL: %s", e)
@@ -263,6 +281,7 @@ class AIConfigManager:
         always_escalate_tags: Optional[list] = None,
         always_cloud_tags:    Optional[list] = None,
         tag_vocabulary_limit: int   = 80,
+        enabled:              bool  = True,
         notes:                Optional[str] = None,
         updated_by:           str   = "admin",
     ) -> AIConfig:
@@ -272,49 +291,7 @@ class AIConfigManager:
         if strategy not in VALID_STRATEGIES:
             raise ValueError(f"Ugyldig strategi '{strategy}'. Gyldige: {VALID_STRATEGIES}")
 
-        if customer_id is None:
-            self.db.execute(text("""
-                UPDATE ai_config SET
-                    strategy=:strategy, local_model=:local, cloud_model=:cloud,
-                    escalation_threshold=:thresh, escalation_new_tags=:new_tags,
-                    always_escalate_tags=:esc_tags, always_cloud_tags=:cloud_tags,
-                    tag_vocabulary_limit=:vocab_limit, notes=:notes,
-                    updated_by=:by, updated_at=NOW()
-                WHERE customer_id IS NULL AND site_id IS NULL
-            """), {"strategy":strategy,"local":local_model,"cloud":cloud_model,
-                   "thresh":escalation_threshold,"new_tags":escalation_new_tags,
-                   "esc_tags":always_escalate_tags or [],"cloud_tags":always_cloud_tags or [],
-                   "vocab_limit":tag_vocabulary_limit,"notes":notes,"by":updated_by})
-            self.db.commit()
-            return self.get_config(None, None)
-        self.db.execute(text("""
-            INSERT INTO ai_config (
-                customer_id, site_id, customer_name, site_name,
-                strategy, local_model, cloud_model,
-                escalation_threshold, escalation_new_tags,
-                always_escalate_tags, always_cloud_tags,
-                tag_vocabulary_limit, notes, updated_by, updated_at
-            ) VALUES (
-                :cid, :sid, :cname, :sname,
-                :strategy, :local, :cloud,
-                :thresh, :new_tags,
-                :esc_tags, :cloud_tags,
-                :vocab_limit, :notes, :by, NOW()
-            )
-            ON CONFLICT (customer_id, site_id) DO UPDATE SET
-                customer_name        = COALESCE(EXCLUDED.customer_name, ai_config.customer_name),
-                strategy             = EXCLUDED.strategy,
-                local_model          = EXCLUDED.local_model,
-                cloud_model          = EXCLUDED.cloud_model,
-                escalation_threshold = EXCLUDED.escalation_threshold,
-                escalation_new_tags  = EXCLUDED.escalation_new_tags,
-                always_escalate_tags = EXCLUDED.always_escalate_tags,
-                always_cloud_tags    = EXCLUDED.always_cloud_tags,
-                tag_vocabulary_limit = EXCLUDED.tag_vocabulary_limit,
-                notes                = EXCLUDED.notes,
-                updated_by           = EXCLUDED.updated_by,
-                updated_at           = NOW()
-        """), {
+        params = {
             "cid":        customer_id,
             "sid":        site_id,
             "cname":      customer_name,
@@ -327,9 +304,45 @@ class AIConfigManager:
             "esc_tags":   always_escalate_tags or GLOBAL_DEFAULTS["always_escalate_tags"],
             "cloud_tags": always_cloud_tags or [],
             "vocab_limit": tag_vocabulary_limit,
+            "enabled":    enabled,
             "notes":      notes,
             "by":         updated_by,
-        })
+        }
+        updated = self.db.execute(text("""
+            UPDATE ai_config SET
+                customer_name        = COALESCE(:cname, customer_name),
+                site_name            = COALESCE(:sname, site_name),
+                strategy             = :strategy,
+                local_model          = :local,
+                cloud_model          = :cloud,
+                escalation_threshold = :thresh,
+                escalation_new_tags  = :new_tags,
+                always_escalate_tags = :esc_tags,
+                always_cloud_tags    = :cloud_tags,
+                tag_vocabulary_limit = :vocab_limit,
+                enabled              = :enabled,
+                notes                = :notes,
+                updated_by           = :by,
+                updated_at           = NOW()
+            WHERE COALESCE(customer_id, '__global__') = COALESCE(:cid, '__global__')
+              AND COALESCE(site_id, '__all__') = COALESCE(:sid, '__all__')
+        """), params)
+        if updated.rowcount == 0:
+            self.db.execute(text("""
+                INSERT INTO ai_config (
+                    customer_id, site_id, customer_name, site_name,
+                    strategy, local_model, cloud_model,
+                    escalation_threshold, escalation_new_tags,
+                    always_escalate_tags, always_cloud_tags,
+                    tag_vocabulary_limit, enabled, notes, updated_by, updated_at
+                ) VALUES (
+                    :cid, :sid, :cname, :sname,
+                    :strategy, :local, :cloud,
+                    :thresh, :new_tags,
+                    :esc_tags, :cloud_tags,
+                    :vocab_limit, :enabled, :notes, :by, NOW()
+                )
+            """), params)
         self.db.commit()
         log.info("AI config sat: customer=%s site=%s strategy=%s", customer_id, site_id, strategy)
         return self.get_config(customer_id, site_id)
