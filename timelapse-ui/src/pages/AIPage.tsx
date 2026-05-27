@@ -103,6 +103,14 @@ interface SimilarTagGroup {
   total_count: number
 }
 
+interface OllamaPriority {
+  key: string
+  open_webui_priority: boolean
+  timelapse_ai_paused: boolean
+  mode: 'open_webui' | 'timelapse'
+  queue_size: number
+}
+
 // ── Strategy helpers ──────────────────────────────────────────────────────
 
 const STRATEGY_META: Record<Strategy, { label: string; color: string; icon: React.ReactElement; desc: string }> = {
@@ -184,15 +192,21 @@ export default function AIPage() {
 function StrategyTab() {
   const [configs, setConfigs] = useState<AIConfig[]>([])
   const [editing, setEditing] = useState<AIConfig | null>(null)
+  const [priority, setPriority] = useState<OllamaPriority | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving,  setSaving]  = useState(false)
+  const [prioritySaving, setPrioritySaving] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
     api('/api/settings/config').then(d => { setConfigs(Array.isArray(d) ? d : []); setLoading(false) }).catch(() => setLoading(false))
   }, [])
 
-  useEffect(() => { load() }, [load])
+  const loadPriority = useCallback(() => {
+    api('/api/ai/ollama-priority').then(d => setPriority(d)).catch(() => setPriority(null))
+  }, [])
+
+  useEffect(() => { load(); loadPriority() }, [load, loadPriority])
 
   const save = async () => {
     if (!editing) return
@@ -207,6 +221,19 @@ function StrategyTab() {
     load()
   }
 
+  const togglePriority = async () => {
+    if (!priority || prioritySaving) return
+    const next = !priority.open_webui_priority
+    setPrioritySaving(true)
+    const updated = await api('/api/ai/ollama-priority', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ open_webui_priority: next }),
+    })
+    setPriority(updated)
+    setPrioritySaving(false)
+  }
+
   return (
     <div className="space-y-4">
       {/* Forklaring */}
@@ -217,6 +244,35 @@ function StrategyTab() {
           <p className="text-slate-400 text-xs">Ændringer træder i kraft ved næste analyse. Eksisterende analyser påvirkes ikke.</p>
         </div>
       </div>
+
+      {/* Ollama prioritet */}
+      {priority && (
+        <div className="bg-gray-900 border border-white/8 rounded-xl p-4 flex items-center gap-4">
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${priority.open_webui_priority ? 'bg-amber-950 text-amber-300' : 'bg-emerald-950 text-emerald-300'}`}>
+            <Cpu className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h2 className="font-semibold text-sm text-white">Peter vil gerne lege med Ollama</h2>
+              <code className="text-[11px] text-slate-500 bg-black/30 rounded px-1.5 py-0.5">{priority.key}</code>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              {priority.open_webui_priority
+                ? `Open WebUI har prioritet. Timelapse AI holder pause, og ${priority.queue_size} billeder venter i analyse-køen.`
+                : `Normal drift. Timelapse AI prioriterer Ollama, og ${priority.queue_size} billeder venter i analyse-køen.`}
+            </p>
+          </div>
+          <button
+            onClick={togglePriority}
+            disabled={prioritySaving}
+            className={`relative w-12 h-7 rounded-full transition-colors shrink-0 disabled:opacity-50 ${priority.open_webui_priority ? 'bg-amber-500' : 'bg-gray-700'}`}
+            aria-pressed={priority.open_webui_priority}
+            aria-label="Skift Ollama prioritet"
+          >
+            <span className={`absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform ${priority.open_webui_priority ? 'translate-x-5' : 'translate-x-0'}`} />
+          </button>
+        </div>
+      )}
 
       {/* Strategi-forklaring */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

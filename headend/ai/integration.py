@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 import queue
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -111,6 +112,27 @@ def update_sidecar_with_ai(image_path: Path, ai_result: dict) -> bool:
 
 _analysis_queue: queue.Queue = queue.Queue(maxsize=500)
 _worker_thread:  Optional[threading.Thread] = None
+OLLAMA_PLAY_MODE_KEY = "peter-vil-gerne-lege-med-ollama"
+_last_play_mode_log = 0.0
+
+
+def _is_truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on", "ja"}
+
+
+def _open_webui_priority_enabled(get_db_fn) -> bool:
+    try:
+        from ai.settings_helper import get_setting
+
+        db_gen = get_db_fn()
+        db = next(db_gen)
+        try:
+            return _is_truthy(get_setting(db, OLLAMA_PLAY_MODE_KEY, "false"))
+        finally:
+            db_gen.close()
+    except Exception as exc:
+        log.debug("AI: kunne ikke læse Ollama-prioritet: %s", exc)
+        return False
 
 
 def _load_vocabulary(get_db_fn):
@@ -154,6 +176,15 @@ def _worker(get_db_fn, find_image_fn):
 
     log.info("AI analyse-worker startet")
     while True:
+        if _open_webui_priority_enabled(get_db_fn):
+            global _last_play_mode_log
+            now = time.monotonic()
+            if now - _last_play_mode_log > 60:
+                log.info("AI: Timelapse-analyse pauset; Open WebUI har Ollama-prioritet")
+                _last_play_mode_log = now
+            time.sleep(10)
+            continue
+
         try:
             capture_id = _analysis_queue.get(timeout=5)
         except queue.Empty:
@@ -292,6 +323,36 @@ def setup_ai_router(get_db_fn, find_image_fn):
             "vision_ready":   svc.health_check(),
             "models":         svc.list_models(),
             "queue_size":     _analysis_queue.qsize(),
+            "open_webui_priority": _open_webui_priority_enabled(get_db_fn),
+        }
+
+    @ai_router.get("/ollama-priority")
+    def get_ollama_priority(db: Session = Depends(get_db_fn)):
+        """Hent driftsprioritet for lokal Ollama."""
+        from ai.settings_helper import get_setting
+
+        enabled = _is_truthy(get_setting(db, OLLAMA_PLAY_MODE_KEY, "false"))
+        return {
+            "key": OLLAMA_PLAY_MODE_KEY,
+            "open_webui_priority": enabled,
+            "timelapse_ai_paused": enabled,
+            "mode": "open_webui" if enabled else "timelapse",
+            "queue_size": _analysis_queue.qsize(),
+        }
+
+    @ai_router.put("/ollama-priority")
+    def set_ollama_priority(payload: dict, db: Session = Depends(get_db_fn)):
+        """Sæt om Open WebUI midlertidigt må prioriteres over Timelapse AI."""
+        from ai.settings_helper import set_setting
+
+        enabled = bool(payload.get("open_webui_priority", False))
+        set_setting(db, OLLAMA_PLAY_MODE_KEY, "true" if enabled else "false", "ui")
+        return {
+            "key": OLLAMA_PLAY_MODE_KEY,
+            "open_webui_priority": enabled,
+            "timelapse_ai_paused": enabled,
+            "mode": "open_webui" if enabled else "timelapse",
+            "queue_size": _analysis_queue.qsize(),
         }
 
     @ai_router.post("/analyze/{capture_id}")
