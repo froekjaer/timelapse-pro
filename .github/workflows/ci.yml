@@ -69,8 +69,8 @@ jobs:
           echo "✅ Alle checks OK"
           echo "📦 Commit: ${{ github.sha }}"
           echo "🕐 Tidspunkt: $(date -u)"
-          echo "Pi 5 henter ny kode inden for 1 minut"
-          echo "Edge enheder opdaterer inden for 5 min"
+          echo "Headend deployes af self-hosted Mac mini runner"
+          echo "Edge-opdateringer håndteres via signerede artifacts/change tickets"
 
   deploy-macmini:
     name: Deploy to Mac mini Headend
@@ -105,9 +105,8 @@ jobs:
           npm install --silent
           npm run build
           echo "✅ UI bygget"
-      - name: Signal edge nodes to update
+      - name: Skip legacy edge update signalling
         run: |
-          cd ~/projects/timelapse-pro/headend
-          source venv/bin/activate
-          python3 deploy/signal_edge_update.py
-          echo "✅ Edge enheder signaleret"
+          echo "ℹ️ Legacy git-baseret Edge update-signalering er deaktiveret."
+          echo "ℹ️ Edge-opdateringer skal oprettes som signerede Headend artifacts/change tickets og godkendes via update governance-flowet."
+          echo "✅ Headend deploy færdig uden legacy Edge signalering"
