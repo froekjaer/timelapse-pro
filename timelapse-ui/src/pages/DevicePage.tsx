@@ -16,7 +16,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, CartesianGrid, ReferenceLine } from 'recharts'
-import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getThumbnailUrl, updateDeviceInfo, setParam, pathSegment } from '../api/client'
+import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setParam, pathSegment } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaptureThumbnailCard, parseCaptureAI } from '../components/CaptureThumbnailCard'
@@ -486,20 +486,23 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
 
       {/* Filmstrip */}
-      <div className="flex-shrink-0 flex gap-1 overflow-x-auto px-4 py-2 justify-center bg-black/50" onClick={e => e.stopPropagation()}>
+      <div className="flex-shrink-0 flex gap-2 overflow-x-auto px-4 py-2 justify-center bg-black/50" onClick={e => e.stopPropagation()}>
         {captures.map((cap, i) => {
           const nearby = Math.abs(i - cur) <= 8
           return (
-            <button key={cap.id} onClick={() => { setCur(i); setZoom(1); setPan({ x: 0, y: 0 }) }}
-              className={`flex-shrink-0 w-14 h-10 rounded overflow-hidden border-2 transition-all ${
-                i === cur ? 'border-sky-400 opacity-100' : 'border-transparent opacity-40 hover:opacity-70'
-              } ${!cap.quality_passed ? 'ring-1 ring-red-500' : ''}`}
-            >
+            <div key={cap.id} className={`flex-shrink-0 w-24 transition-all ${i === cur ? 'opacity-100' : 'opacity-45 hover:opacity-80'}`}>
               {nearby
-                ? <img src={getThumbnailUrl(cap.device_id, cap.filename)} alt="" className="w-full h-full object-cover" />
+                ? (
+                  <CaptureThumbnailCard
+                    capture={cap}
+                    compact
+                    selected={i === cur}
+                    onClick={() => { setCur(i); setZoom(1); setPan({ x: 0, y: 0 }) }}
+                  />
+                )
                 : <div className="w-full h-full bg-white/5" />
               }
-            </button>
+            </div>
           )
         })}
       </div>
