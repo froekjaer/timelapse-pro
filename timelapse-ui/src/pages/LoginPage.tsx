@@ -184,10 +184,6 @@ export default function LoginPage() {
                        text-white text-sm font-medium rounded-lg transition-colors">
             {loading ? 'Logger ind…' : 'Log ind'}
           </button>
-
-          <p className="text-center text-xs text-gray-400">
-            Standard: <span className="font-mono">admin / changeme</span>
-          </p>
         </form>
       </div>
     </div>
