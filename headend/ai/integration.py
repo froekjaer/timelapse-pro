@@ -80,6 +80,11 @@ def update_sidecar_with_ai(image_path: Path, ai_result: dict) -> bool:
     existing["ai_analysis"] = {
         "analyzed_at":   datetime.now(timezone.utc).isoformat(),
         "model":         ai_result.get("model"),
+        "scene_dk":      ai_result.get("scene_dk"),
+        "tags":          ai_result.get("tags", []),
+        "new_tags":      ai_result.get("new_tags", []),
+        "quality_flag":  ai_result.get("quality_flag"),
+        "change_detected": ai_result.get("change_detected", False),
         "probable_cause": ai_result.get("probable_cause"),
         "confidence":    ai_result.get("confidence"),
         "description":   ai_result.get("description"),
@@ -108,6 +113,37 @@ _analysis_queue: queue.Queue = queue.Queue(maxsize=500)
 _worker_thread:  Optional[threading.Thread] = None
 
 
+def _load_vocabulary(get_db_fn):
+    from ai.tag_vocabulary import TagVocabulary
+    vocab = TagVocabulary(get_db_fn)
+    return vocab, vocab.get_approved_by_category(), set(vocab.get_approved_tags())
+
+
+def _analysis_payload(result) -> dict:
+    return {
+        "scene_dk": result.scene_dk,
+        "tags": result.approved_tags,
+        "new_tags": result.new_tags,
+        "change_detected": result.change_detected,
+        "change_summary": result.change_summary,
+        "change_tags": result.change_tags,
+        "quality_flag": result.quality_flag,
+        "quality_ok": result.quality_ok,
+        "has_gdpr_data": result.has_gdpr_data,
+        "gdpr_detections": [
+            {
+                "type": item.detection_type,
+                "detail": item.detail,
+                "bbox": item.bounding_box,
+            }
+            for item in result.gdpr_detections
+        ],
+        "model": result.model,
+        "duration_ms": result.duration_ms,
+        "raw_response": result.raw_response,
+    }
+
+
 def _worker(get_db_fn, find_image_fn):
     """
     Baggrundstråd der analyserer captures fra køen.
@@ -124,15 +160,23 @@ def _worker(get_db_fn, find_image_fn):
             continue
 
         try:
-            db = next(get_db_fn())
             from database import Capture
-            capture = db.query(Capture).filter_by(id=capture_id).first()
-            if not capture:
-                continue
-            if capture.ai_result:
-                continue  # Allerede analyseret
 
-            image_path = find_image_fn(capture.device_id, capture.filename)
+            db_gen = get_db_fn()
+            db = next(db_gen)
+            try:
+                capture = db.query(Capture).filter_by(id=capture_id).first()
+                if not capture:
+                    continue
+                if capture.ai_result:
+                    continue  # Allerede analyseret
+                device_id = capture.device_id
+                filename = capture.filename
+                captured_at = capture.captured_at
+            finally:
+                db_gen.close()
+
+            image_path = find_image_fn(device_id, filename)
             if not image_path:
                 log.debug("AI: billede ikke fundet for capture %d", capture_id)
                 continue
@@ -142,52 +186,50 @@ def _worker(get_db_fn, find_image_fn):
                 log.debug("AI: Ollama ikke tilgængelig — springer over capture %d", capture_id)
                 continue
 
-            context = None
-            if capture.blur_score is not None:
-                context = (
-                    f"blur={capture.blur_score:.1f}, "
-                    f"brightness={capture.brightness_mean:.1f}, "
-                    f"flag={capture.quality_flag}"
-                )
+            vocab, vocabulary_by_cat, approved_tag_set = _load_vocabulary(get_db_fn)
+            result = svc.analyse(
+                image_path=image_path,
+                vocabulary_by_cat=vocabulary_by_cat,
+                approved_tag_set=approved_tag_set,
+            )
+            payload = _analysis_payload(result)
+            tags = result.approved_tags + result.new_tags
 
-            result = svc.analyze_image(image_path, context=context)
-
-            # Gem i DB
-            capture.ai_result      = json.dumps(result.as_dict(), ensure_ascii=False)
-            capture.ai_analyzed_at = datetime.now(timezone.utc)
-            db.commit()
-
-            # Opdater sidecar
-            update_sidecar_with_ai(image_path, result.as_dict())
-
-            # Evaluér alarm-regler
+            db_gen = get_db_fn()
+            db = next(db_gen)
             try:
-                alarm_engine = AlarmEngine(db)
-                tags_json = capture.ai_tags
-                tags = json.loads(tags_json) if tags_json else []
-                alarm_engine.evaluate(
-                    capture_id  = capture_id,
-                    device_id   = capture.device_id,
-                    ai_result   = result.as_dict(),
-                    tags        = tags,
-                    captured_at = capture.captured_at,
-                )
-            except Exception as _ae:
-                log.debug("Alarm engine fejl: %s", _ae)
+                capture = db.query(Capture).filter_by(id=capture_id).first()
+                if capture:
+                    capture.ai_result      = json.dumps(payload, ensure_ascii=False)
+                    capture.ai_tags        = json.dumps(tags, ensure_ascii=False)
+                    capture.ai_analyzed_at = datetime.now(timezone.utc)
+                    db.commit()
 
-            if result.alarm:
-                log.warning(
-                    "AI ALARM: capture=%d %s — %s (%.0f%%)",
-                    capture_id, capture.filename,
-                    result.probable_cause, result.confidence * 100,
-                )
-            else:
-                log.info(
-                    "AI: capture=%d %s → %s (%.0f%%) %dms",
-                    capture_id, capture.filename,
-                    result.probable_cause, result.confidence * 100,
-                    result.latency_ms,
-                )
+                    try:
+                        alarm_engine = AlarmEngine(db)
+                        alarm_engine.evaluate(
+                            capture_id  = capture_id,
+                            device_id   = device_id,
+                            ai_result   = payload,
+                            tags        = tags,
+                            captured_at = captured_at,
+                        )
+                    except Exception as _ae:
+                        log.debug("Alarm engine fejl: %s", _ae)
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db_gen.close()
+
+            vocab.record_usage(result.approved_tags, result.new_tags)
+            update_sidecar_with_ai(image_path, payload)
+
+            log.info(
+                "AI: capture=%d %s → %d tags, quality=%s, change=%s, %dms",
+                capture_id, filename, len(tags), result.quality_flag,
+                result.change_detected, result.duration_ms,
+            )
 
         except Exception as e:
             log.exception("AI worker fejl for capture %d: %s", capture_id, e)
@@ -259,8 +301,14 @@ def setup_ai_router(get_db_fn, find_image_fn):
         capture = db.query(Capture).filter_by(id=capture_id).first()
         if not capture:
             raise HTTPException(status_code=404, detail="Capture ikke fundet")
+        device_id = capture.device_id
+        filename = capture.filename
+        blur_score = capture.blur_score
+        quality_flag = capture.quality_flag
+        quality_passed = capture.quality_passed
+        db.rollback()
 
-        image_path = find_image_fn(capture.device_id, capture.filename)
+        image_path = find_image_fn(device_id, filename)
         if not image_path:
             raise HTTPException(status_code=404, detail="Billedfil ikke fundet på disk")
 
@@ -268,28 +316,34 @@ def setup_ai_router(get_db_fn, find_image_fn):
         if not svc.health_check():
             raise HTTPException(status_code=503, detail="Ollama ikke tilgængelig")
 
-        context = (
-            f"blur={capture.blur_score:.1f}, brightness={capture.brightness_mean:.1f}, "
-            f"flag={capture.quality_flag}"
-        ) if capture.blur_score else None
+        vocab, vocabulary_by_cat, approved_tag_set = _load_vocabulary(get_db_fn)
+        result = svc.analyse(
+            image_path=image_path,
+            vocabulary_by_cat=vocabulary_by_cat,
+            approved_tag_set=approved_tag_set,
+        )
+        payload = _analysis_payload(result)
+        tags = result.approved_tags + result.new_tags
 
-        result = svc.analyze_image(image_path, context=context)
+        capture = db.query(Capture).filter_by(id=capture_id).first()
+        if capture:
+            capture.ai_result      = json.dumps(payload, ensure_ascii=False)
+            capture.ai_tags        = json.dumps(tags, ensure_ascii=False)
+            capture.ai_analyzed_at = datetime.now(timezone.utc)
+            db.commit()
+        vocab.record_usage(result.approved_tags, result.new_tags)
 
-        capture.ai_result      = json.dumps(result.as_dict(), ensure_ascii=False)
-        capture.ai_analyzed_at = datetime.now(timezone.utc)
-        db.commit()
-
-        update_sidecar_with_ai(image_path, result.as_dict())
+        update_sidecar_with_ai(image_path, payload)
 
         return {
             "capture_id": capture_id,
-            "filename":   capture.filename,
+            "filename":   filename,
             "opencv": {
-                "blur_score":    capture.blur_score,
-                "quality_flag":  capture.quality_flag,
-                "quality_passed": capture.quality_passed,
+                "blur_score":    blur_score,
+                "quality_flag":  quality_flag,
+                "quality_passed": quality_passed,
             },
-            "ai": result.as_dict(),
+            "ai": payload,
         }
 
     @ai_router.get("/result/{capture_id}")

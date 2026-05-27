@@ -723,11 +723,12 @@ class UserUpdateRequest(BaseModel):
 @app.on_event("startup")
 def _startup_ensure_admin():
     """Ensure super_admin exists on startup."""
-    db = next(get_db())
+    db_gen = get_db()
+    db = next(db_gen)
     try:
         _ensure_super_admin(db)
     finally:
-        db.close()
+        db_gen.close()
 
 @app.post("/api/auth/login")
 @limiter.limit("10/minute")
@@ -1472,7 +1473,8 @@ def receive_capture(
                 return
             exif_json = _json.dumps({k: str(v) for k, v in tags.items()}, ensure_ascii=False)
             # Opdater capture record
-            db2 = next(get_db())
+            db2_gen = get_db()
+            db2 = next(db2_gen)
             try:
                 c2 = db2.query(Capture).filter(Capture.id == _cap_id).first()
                 if c2:
@@ -1480,7 +1482,7 @@ def receive_capture(
                     db2.commit()
                     log.info("EXIF gemt for capture %d (%d felter)", _cap_id, len(tags))
             finally:
-                db2.close()
+                db2_gen.close()
         except Exception as exc:
             log.warning("EXIF baggrunds-læsning fejl: %s", exc)
     _threading.Thread(target=_enrich_exif, daemon=True).start()
@@ -3416,8 +3418,12 @@ from fastapi.responses import FileResponse
 from PIL import Image
 def _init_sftp_base():
     from sqlalchemy.orm import Session
-    db = next(get_db())
-    return _Path(_get_setting(db, "sftp_base", os.getenv("SFTP_BASE", "/Users/Shared/timelapse/incoming")))
+    db_gen = get_db()
+    db = next(db_gen)
+    try:
+        return _Path(_get_setting(db, "sftp_base", os.getenv("SFTP_BASE", "/Users/Shared/timelapse/incoming")))
+    finally:
+        db_gen.close()
 
 SFTP_BASE = _init_sftp_base()
 

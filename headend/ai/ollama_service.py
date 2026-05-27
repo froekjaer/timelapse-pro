@@ -248,6 +248,16 @@ class OllamaVisionService:
             log.error("Ollama health check fejlede: %s", e)
             return False
 
+    def list_models(self) -> list[str]:
+        """Returnér tilgængelige Ollama-modelnavne."""
+        try:
+            resp = self._client.get(f"{self.base_url}/api/tags", timeout=5)
+            resp.raise_for_status()
+            return [m["name"] for m in resp.json().get("models", [])]
+        except Exception as e:
+            log.error("Ollama model-liste fejlede: %s", e)
+            return []
+
     # ── Intern: HTTP ──────────────────────────────────────────────────────────
 
     def _call_ollama(self, model: str, prompt: str, images: list[str]) -> dict:
