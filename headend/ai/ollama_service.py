@@ -336,6 +336,14 @@ class OllamaVisionService:
         except json.JSONDecodeError:
             pass
 
+        # Forsøg 1b: modellen returnerede JSON-indhold uden ydre klammer.
+        candidate = "{" + text.strip().strip(",") + "}"
+        candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
         # Forsøg 2: udtræk JSON-blok fra markdown
         match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if match:
@@ -355,8 +363,44 @@ class OllamaVisionService:
             except json.JSONDecodeError:
                 pass
 
+        salvaged = self._salvage_response(text)
+        if salvaged:
+            return salvaged
+
         log.warning("Kunne ikke parse model-svar som JSON. Rå svar: %s", text[:300])
         return {}
+
+    def _salvage_response(self, text: str) -> dict:
+        """Best-effort parsing når modellen returnerer næsten-JSON."""
+        result: dict = {}
+
+        scene = re.search(r'"scene"\s*:\s*"([^"]*)"', text, re.DOTALL)
+        if scene:
+            result["scene"] = scene.group(1).strip()
+
+        for key in ("tags", "new_tags"):
+            match = re.search(rf'"{key}"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+            if not match:
+                match = re.search(rf'"{key}"\s*:\s*\[(.*?)(?:"(?:new_tags|quality|gdpr)"\s*:|$)', text, re.DOTALL)
+            if match:
+                result[key] = re.findall(r'"([^"]+)"', match.group(1))
+
+        quality_flag = re.search(r'"flag"\s*:\s*"([^"]*)"', text, re.DOTALL)
+        quality_ok = re.search(r'"ok"\s*:\s*(true|false)', text, re.IGNORECASE)
+        if quality_flag or quality_ok:
+            result["quality"] = {
+                "flag": quality_flag.group(1).strip() if quality_flag else "ukendt",
+                "ok": quality_ok.group(1).lower() == "true" if quality_ok else True,
+            }
+
+        has_gdpr = re.search(r'"has_data"\s*:\s*(true|false)', text, re.IGNORECASE)
+        if has_gdpr:
+            result["gdpr"] = {
+                "has_data": has_gdpr.group(1).lower() == "true",
+                "detections": [],
+            }
+
+        return result
 
     # ── Intern: Byg resultat ──────────────────────────────────────────────────
 
@@ -371,8 +415,10 @@ class OllamaVisionService:
     ) -> ImageAnalysisResult:
 
         # Tags — opdel i kendte (approved) og nye
-        all_tags  = [str(t).lower().strip() for t in parsed.get("tags", [])]
-        raw_new   = [str(t).lower().strip() for t in parsed.get("new_tags", [])]
+        all_tags  = [str(t).lower().strip().replace(" ", "_").replace("-", "_") for t in parsed.get("tags", [])]
+        raw_new   = [str(t).lower().strip().replace(" ", "_").replace("-", "_") for t in parsed.get("new_tags", [])]
+        all_tags  = list(dict.fromkeys(t for t in all_tags if t))[:60]
+        raw_new   = list(dict.fromkeys(t for t in raw_new if t))[:60]
 
         approved_tags = [t for t in all_tags if t in approved_tag_set]
         new_tags      = [t for t in all_tags if t not in approved_tag_set] + raw_new

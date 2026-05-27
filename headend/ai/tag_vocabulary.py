@@ -235,15 +235,23 @@ class TagVocabulary:
 
     def _ensure_table(self):
         from sqlalchemy import text
-        db = next(self._get_db())
+        db_gen = self._get_db()
+        db = next(db_gen)
         try:
-            db.execute(text(VOCABULARY_DDL))
-            db.commit()
-        except Exception as e:
-            log.warning("Vocabulary DDL: %s", e)
-            db.rollback()
+            try:
+                db.execute(text("SELECT 1 FROM ai_tag_vocabulary LIMIT 1")).fetchone()
+                return
+            except Exception:
+                db.rollback()
+
+            try:
+                db.execute(text(VOCABULARY_DDL))
+                db.commit()
+            except Exception as e:
+                log.warning("Vocabulary DDL: %s", e)
+                db.rollback()
         finally:
-            db.close()
+            db_gen.close()
 
     def _seed_predefined(self):
         """Indsæt foruddefinerede tags hvis tabellen er tom."""
