@@ -64,18 +64,30 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
   // Hent sidecar JSON når billede skifter
   useEffect(() => {
+    let cancelled = false
     setSidecar(null)
     const sidecarName = c.filename.replace(/\.[^.]+$/, '.json')
     const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
-    authFetch(`${apiUrl}/api/sidecar/${encodeURIComponent(c.device_id)}/${encodeURIComponent(sidecarName)}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => setSidecar(d))
-      .catch(() => {})
+    const sidecarUrl = `${apiUrl}/api/sidecar/${encodeURIComponent(c.device_id)}/${encodeURIComponent(sidecarName)}`
+    const loadSidecar = (attempt = 0) => {
+      authFetch(`${sidecarUrl}?t=${Date.now()}`, { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (cancelled) return
+          setSidecar(d)
+          if (d && !d.ai_analysis && attempt < 4) {
+            window.setTimeout(() => loadSidecar(attempt + 1), 10000)
+          }
+        })
+        .catch(() => {})
+    }
+    loadSidecar()
     authFetch(`${apiUrl}/api/exif/${encodeURIComponent(c.device_id)}/${encodeURIComponent(c.filename)}`)
       .then(r => r.ok ? r.json() : null)
-      .then(d => setExif(d?.exif ?? null))
+      .then(d => { if (!cancelled) setExif(d?.exif ?? null) })
       .catch(() => {})
-  }, [cur])
+    return () => { cancelled = true }
+  }, [cur, c.device_id, c.filename])
 
   // Compute histogram from image pixels via canvas
   function computeHistogram() {
@@ -331,7 +343,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
                 {/* QA ANALYSE */}
                 {(() => {
-                  const ai = parseAI(c)
+                  const ai = parseAI(c, sidecar)
                   const causeLabels: Record<string, string> = {
                     ok: 'OK', condensation_on_lens: 'Kondens på linse',
                     dirty_lens: 'Snavset linse', focus_drift: 'Fokusdrift',
@@ -351,6 +363,29 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                       <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">🔬 QA</p>
                       {!ai ? (
                         <p className="text-white/30 text-xs italic">Ikke analyseret endnu</p>
+                      ) : ai.scene_dk ? (
+                        <>
+                          <MR l="Scene" v={<span className="text-white/60 text-[10px] leading-tight">{ai.scene_dk}</span>} />
+                          <MR l="Kvalitet" v={<span className={ai.quality_ok === false ? 'text-amber-400' : 'text-emerald-400'}>{ai.quality_flag ?? '—'}</span>} />
+                          <MR l="Ændring" v={ai.change_detected ? (ai.change_summary ?? 'Ja') : 'Nej'} />
+                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          {((ai.tags?.length ?? 0) > 0 || (ai.new_tags?.length ?? 0) > 0 || (c.ai_tags?.length ?? 0) > 0) && (
+                            <div className="flex flex-wrap gap-1 mt-1.5">
+                              {[...(ai.tags ?? []), ...(ai.new_tags ?? []), ...(c.ai_tags ?? [])].filter((tag, idx, arr) => arr.indexOf(tag) === idx).slice(0, 24).map((tag: string) => (
+                                <span key={tag} className="text-[10px] bg-white/10 text-white/60 px-1.5 py-0.5 rounded cursor-pointer hover:bg-white/20" title={`Søg på #${tag}`}>
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {(c.ai_analyzed_at || ai.analyzed_at) && (
+                            <MR l="Analyseret" v={
+                              <span className="text-white/30 text-[10px]">
+                                {new Date(c.ai_analyzed_at ?? ai.analyzed_at).toLocaleString('da-DK', {timeZone: getTz(), day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}
+                              </span>
+                            } />
+                          )}
+                        </>
                       ) : (
                         <>
                           <MR l="Status" v={
@@ -473,7 +508,8 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
 // ── Capture thumbnail ─────────────────────────────────────────────────────────
 
-function parseAI(capture: any): Record<string, any> | null {
+function parseAI(capture: any, sidecar?: any): Record<string, any> | null {
+  if (sidecar?.ai_analysis) return sidecar.ai_analysis
   if (!capture.ai_result) return null
   try { return JSON.parse(capture.ai_result) } catch { return null }
 }

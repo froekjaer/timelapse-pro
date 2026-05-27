@@ -3050,12 +3050,18 @@ def get_sidecar(device_id: str, filename: str):
             sidecar_path = matches[0]
             if sidecar_path.exists():
 #Peter                import json as _json
-                return _json.loads(sidecar_path.read_text(encoding='utf-8'))
+                return JSONResponse(
+                    _json.loads(sidecar_path.read_text(encoding='utf-8')),
+                    headers={"Cache-Control": "no-store"},
+                )
     # Fallback: flat struktur
     flat = SFTP_BASE / device_id / filename
     if flat.exists():
 #Peter        import json as _json
-        return _json.loads(flat.read_text(encoding='utf-8'))
+        return JSONResponse(
+            _json.loads(flat.read_text(encoding='utf-8')),
+            headers={"Cache-Control": "no-store"},
+        )
     raise HTTPException(status_code=404, detail="Sidecar ikke fundet")
 
 
