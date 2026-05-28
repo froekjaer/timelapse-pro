@@ -6679,6 +6679,196 @@ def _openwebui_context(db: Session, area: str = "overview") -> dict:
     }
 
 
+def _openwebui_public_base_url() -> str:
+    return (
+        os.getenv("TIMELAPSE_PUBLIC_URL")
+        or os.getenv("BASE_URL")
+        or ALLOWED_ORIGIN
+        or "https://timelapse.froekjaer.dk"
+    ).rstrip("/")
+
+
+def _json_list(value: str | None) -> list:
+    if not value:
+        return []
+    try:
+        data = json.loads(value)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _json_dict(value: str | None) -> dict:
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _capture_openwebui_payload(capture: Capture) -> dict:
+    from urllib.parse import quote
+
+    device = quote(capture.device_id or "", safe="")
+    filename = quote(capture.filename or "", safe="")
+    base = _openwebui_public_base_url()
+    ai = _json_dict(capture.ai_result)
+    tags = _json_list(capture.ai_tags)
+    image_url = f"{base}/api/images/{device}/{filename}"
+    thumb_url = f"{base}/api/thumbnails/{device}/{filename}"
+    return {
+        "id": capture.id,
+        "device_id": capture.device_id,
+        "filename": capture.filename,
+        "captured_at": capture.captured_at.isoformat() if capture.captured_at else None,
+        "quality": {
+            "passed": capture.quality_passed,
+            "flag": capture.quality_flag,
+            "blur_score": round(capture.blur_score, 1) if capture.blur_score is not None else None,
+            "brightness": round(capture.brightness_mean, 1) if capture.brightness_mean is not None else None,
+        },
+        "ai": {
+            "analyzed_at": capture.ai_analyzed_at.isoformat() if capture.ai_analyzed_at else None,
+            "tags": tags,
+            "scene_dk": ai.get("scene_dk") or ai.get("description"),
+            "quality_flag": ai.get("quality_flag"),
+            "probable_cause": ai.get("probable_cause"),
+            "confidence": ai.get("confidence"),
+        },
+        "image_url": image_url,
+        "thumbnail_url": thumb_url,
+        "markdown": f"![{capture.filename}]({image_url})",
+    }
+
+
+def _capture_date_window(date_value: str | None, tz: str = "Europe/Copenhagen") -> tuple[str, str]:
+    from datetime import timedelta as _td
+    import zoneinfo
+
+    zone = zoneinfo.ZoneInfo(tz)
+    raw = (date_value or "today").strip().lower()
+    today = datetime.now(zone).date()
+    if raw in {"today", "i dag", "idag"}:
+        day = today
+    elif raw in {"yesterday", "i gaar", "i går", "igaar"}:
+        day = today - _td(days=1)
+    else:
+        try:
+            day = datetime.fromisoformat(raw[:10]).date()
+        except Exception:
+            day = today
+    start = datetime(day.year, day.month, day.day, tzinfo=zone).astimezone(timezone.utc)
+    end = start + _td(days=1)
+    return start.isoformat(), end.isoformat()
+
+
+def _query_captures_window(
+    db: Session,
+    date_value: str | None = "today",
+    device_id: str | None = None,
+    limit: int = 20,
+    newest_first: bool = True,
+) -> list[Capture]:
+    start_iso, end_iso = _capture_date_window(date_value)
+    start = datetime.fromisoformat(start_iso)
+    end = datetime.fromisoformat(end_iso)
+    q = db.query(Capture).filter(
+        Capture.captured_at >= start,
+        Capture.captured_at < end,
+        Capture.captured_at.isnot(None),
+    )
+    if device_id:
+        q = q.filter(Capture.device_id == device_id)
+    order = Capture.captured_at.desc() if newest_first else Capture.captured_at.asc()
+    return q.order_by(order).limit(max(1, min(int(limit or 20), 200))).all()
+
+
+def _known_capture_tags(db: Session, max_rows: int = 1000) -> set[str]:
+    tags: set[str] = set()
+    rows = (
+        db.query(Capture.ai_tags)
+        .filter(Capture.ai_tags.isnot(None))
+        .order_by(Capture.captured_at.desc())
+        .limit(max_rows)
+        .all()
+    )
+    for (raw_tags,) in rows:
+        tags.update(str(t).lower() for t in _json_list(raw_tags))
+    return tags
+
+
+def _parse_capture_natural_query(query: str, known_tags: set[str]) -> dict:
+    text_value = (query or "").strip()
+    lower = text_value.lower()
+    explicit_tags = set(_re.findall(r"#([\wæøåÆØÅ-]+)", lower))
+    explicit_tags.update(t.lower() for t in _re.findall(r'"([^"]+)"', lower))
+    mentioned_tags = {tag for tag in known_tags if tag and tag in lower}
+    include_tags = sorted(explicit_tags | mentioned_tags)
+
+    exclude_tags: set[str] = set()
+    for marker in ("uden ", "ekskluder ", "undtagen ", "ikke "):
+        if marker in lower:
+            tail = lower.split(marker, 1)[1][:120]
+            exclude_tags.update(tag for tag in known_tags if tag and tag in tail)
+            exclude_tags.update(_re.findall(r"#([\wæøåÆØÅ-]+)", tail))
+
+    limit_match = _re.search(r"\b(\d{1,3})\b", lower)
+    limit = int(limit_match.group(1)) if limit_match else 20
+    if "seneste" in lower or "nyeste" in lower:
+        sort = "newest"
+    elif "ældste" in lower or "aeldste" in lower:
+        sort = "oldest"
+    else:
+        sort = "newest"
+
+    if "i går" in lower or "igår" in lower or "i gaar" in lower or "igaar" in lower:
+        date_value = "yesterday"
+    elif "i dag" in lower or "idag" in lower:
+        date_value = "today"
+    else:
+        iso_date = _re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", lower)
+        date_value = iso_date.group(1) if iso_date else None
+
+    quality_only = any(term in lower for term in ("skarpe", "ikke slør", "ikke sloer", "quality ok", "gode billeder"))
+    purpose = "timelapse" if "timelapse" in lower or "video" in lower else "search"
+    return {
+        "query": text_value,
+        "date": date_value,
+        "limit": max(1, min(limit, 200)),
+        "sort": sort,
+        "include_tags": include_tags,
+        "exclude_tags": sorted(exclude_tags),
+        "quality_only": quality_only,
+        "purpose": purpose,
+    }
+
+
+def _filter_captures_by_ai(captures: list[Capture], spec: dict) -> list[Capture]:
+    include_tags = set(spec.get("include_tags") or [])
+    exclude_tags = set(spec.get("exclude_tags") or [])
+    filtered = []
+    for capture in captures:
+        tags = set(str(t).lower() for t in _json_list(capture.ai_tags))
+        ai = _json_dict(capture.ai_result)
+        haystack = " ".join([
+            " ".join(tags),
+            str(ai.get("scene_dk") or ""),
+            str(ai.get("description") or ""),
+            str(ai.get("probable_cause") or ""),
+            str(capture.quality_flag or ""),
+        ]).lower()
+        if spec.get("quality_only") and capture.quality_passed is False:
+            continue
+        if include_tags and not all(tag in tags or tag in haystack for tag in include_tags):
+            continue
+        if exclude_tags and any(tag in tags or tag in haystack for tag in exclude_tags):
+            continue
+        filtered.append(capture)
+    return filtered
+
+
 @app.get("/api/openwebui/tools/openapi.json", include_in_schema=False)
 def openwebui_tools_openapi(request: Request):
     _require_openwebui_loopback(request)
@@ -6736,6 +6926,40 @@ def openwebui_tools_openapi(request: Request):
                     "responses": {"200": {"description": "Supported help topics and boundaries"}},
                 }
             },
+            "/api/openwebui/tools/latest-captures": {
+                "get": {
+                    "operationId": "timelapse_get_latest_captures",
+                    "summary": "Get latest TimeLapse Pro images for a day",
+                    "description": "Use this when the user asks to show latest images, newest pictures, today's captures or recent thumbnails. Returns markdown image URLs.",
+                    "parameters": [
+                        {"name": "date", "in": "query", "required": False, "schema": {"type": "string", "default": "today"}},
+                        {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer", "default": 2, "minimum": 1, "maximum": 20}},
+                        {"name": "device_id", "in": "query", "required": False, "schema": {"type": "string"}},
+                    ],
+                    "responses": {"200": {"description": "Latest captures with image and thumbnail URLs"}},
+                }
+            },
+            "/api/openwebui/tools/select-captures": {
+                "post": {
+                    "operationId": "timelapse_select_captures_from_text",
+                    "summary": "Select TimeLapse Pro captures from natural language",
+                    "description": "Use this for natural language image/tag/timelapse selection, e.g. latest two from today, images with crane but without rain, or timelapse frames without blurry images.",
+                    "requestBody": {
+                        "required": True,
+                        "content": {"application/json": {"schema": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string"},
+                                "device_id": {"type": "string"},
+                                "date": {"type": "string"},
+                                "limit": {"type": "integer", "default": 20},
+                            },
+                            "required": ["query"],
+                        }}},
+                    },
+                    "responses": {"200": {"description": "Selected captures and suggested UI filters"}},
+                }
+            },
         },
     }
 
@@ -6773,12 +6997,78 @@ def openwebui_ask_system_question(
     }
 
 
+@app.get("/api/openwebui/tools/latest-captures", include_in_schema=False)
+def openwebui_latest_captures(
+    request: Request,
+    date: str = "today",
+    limit: int = 2,
+    device_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    _require_openwebui_loopback(request)
+    captures = _query_captures_window(db, date, device_id=device_id, limit=limit, newest_first=True)
+    images = [_capture_openwebui_payload(c) for c in captures]
+    return {
+        "date": date,
+        "count": len(images),
+        "images": images,
+        "markdown_gallery": "\n\n".join(image["markdown"] for image in images),
+        "answer_hint": "Vis billederne med markdown_gallery og opsummer tidspunkt, device og QA/AI-status kort.",
+    }
+
+
+@app.post("/api/openwebui/tools/select-captures", include_in_schema=False)
+def openwebui_select_captures(
+    request: Request,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    _require_openwebui_loopback(request)
+    known_tags = _known_capture_tags(db)
+    spec = _parse_capture_natural_query(str(payload.get("query") or ""), known_tags)
+    if payload.get("date"):
+        spec["date"] = payload.get("date")
+    if payload.get("limit"):
+        try:
+            spec["limit"] = max(1, min(int(payload.get("limit")), 200))
+        except Exception:
+            pass
+    newest_first = spec["sort"] != "oldest"
+    base_limit = max(100, spec["limit"] * 5)
+    captures = _query_captures_window(
+        db,
+        spec.get("date") or "today",
+        device_id=payload.get("device_id"),
+        limit=base_limit,
+        newest_first=newest_first,
+    )
+    selected = _filter_captures_by_ai(captures, spec)[:spec["limit"]]
+    images = [_capture_openwebui_payload(c) for c in selected]
+    return {
+        "selection": spec,
+        "count": len(images),
+        "capture_ids": [image["id"] for image in images],
+        "images": images,
+        "markdown_gallery": "\n\n".join(image["markdown"] for image in images[:12]),
+        "suggested_ui_filters": {
+            "tag_search_include": spec["include_tags"],
+            "tag_search_exclude": spec["exclude_tags"],
+            "date": spec.get("date") or "today",
+            "quality_only": spec["quality_only"],
+            "timelapse_frame_ids": [image["id"] for image in images] if spec["purpose"] == "timelapse" else [],
+        },
+        "answer_hint": "Forklar hvilke filtre du brugte. Hvis count er 0, foreslå bredere søgning eller at AI-tags mangler.",
+    }
+
+
 @app.get("/api/openwebui/tools/help-topics", include_in_schema=False)
 def openwebui_help_topics(request: Request):
     _require_openwebui_loopback(request)
     return {
         "topics": [
             "Aktuel driftstatus for Headend, Edge-enheder, kameraer og AI-analyse",
+            "Visning af seneste billeder fra i dag eller en valgt dato",
+            "Naturlig sprogudvælgelse af billeder til tagsøgning og timelapse-forvalg",
             "Forklaring af fejl, røde checks, manglende billeder, offline enheder og SIEM-events",
             "Update/patch status, approval-kø, signerede artifacts og change ticket-flow",
             "Compliance posture mod SABSA, IEC62443, ISO27000, NIS2 og CRA",
