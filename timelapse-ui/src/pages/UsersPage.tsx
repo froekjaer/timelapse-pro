@@ -41,6 +41,7 @@ interface Policy {
 
 interface UserRec {
   mfa_enabled?: boolean
+  webauthn_count?: number
   id: number
   username: string
   email?: string
@@ -302,8 +303,12 @@ export default function UsersPage() {
   async function openWebAuthn(u: UserRec) {
     setWaId(u.id); setWaErr(null); setWaDeviceName(''); setWaLoading(true)
     try {
-      const creds = await api(`/api/auth/webauthn/credentials`)
-      setWaCredentials(creds)
+      if (u.username === me?.username) {
+        const creds = await api(`/api/auth/webauthn/credentials`)
+        setWaCredentials(creds)
+      } else {
+        setWaCredentials([])
+      }
     } catch { setWaCredentials([]) }
     finally { setWaLoading(false) }
   }
@@ -598,11 +603,59 @@ export default function UsersPage() {
                   </div>
                 )}
 
+                {waId === u.id && (
+                  <div className="mt-3 space-y-2 border-t border-gray-50 pt-3">
+                    <p className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
+                      <Fingerprint className="w-3.5 h-3.5 text-sky-500" />
+                      Windows Hello / Touch ID
+                    </p>
+                    {u.username !== me?.username ? (
+                      <p className="text-xs text-gray-400">
+                        Passkeys skal oprettes af brugeren selv på den enhed, der skal bruges til login. Bed brugeren logge ind med password og åbne brugerstyring for sin egen konto.
+                      </p>
+                    ) : (
+                      <>
+                        {waErr && <p className="text-xs text-red-600">{waErr}</p>}
+                        {waLoading ? (
+                          <p className="text-xs text-gray-400">Henter registrerede enheder…</p>
+                        ) : waCredentials.length > 0 ? (
+                          <div className="space-y-1">
+                            {waCredentials.map(c => (
+                              <div key={c.id} className="flex items-center justify-between gap-2 bg-gray-50 border border-gray-100 rounded-lg px-2 py-1.5">
+                                <div className="min-w-0">
+                                  <p className="text-xs font-medium text-gray-700 truncate">{c.device_name || 'Ukendt enhed'}</p>
+                                  <p className="text-[10px] text-gray-400">{c.created_at ? new Date(c.created_at).toLocaleString('da-DK') : 'Ingen dato'}</p>
+                                </div>
+                                <button onClick={() => deleteWebAuthnCred(c.id)}
+                                  className="p-1 text-gray-400 hover:text-red-600 rounded">
+                                  <Trash className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-gray-400">Ingen Windows Hello / Touch ID enheder registreret endnu.</p>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <input value={waDeviceName} onChange={e => setWaDeviceName(e.target.value)}
+                            placeholder="Navn, fx Peters Mac Touch ID"
+                            className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs flex-1 focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                          <button onClick={registerWebAuthn} disabled={waLoading}
+                            className="px-3 py-1.5 bg-sky-500 text-white text-xs rounded-lg disabled:opacity-50">
+                            {waLoading ? 'Starter…' : 'Registrer denne enhed'}
+                          </button>
+                          <button onClick={() => setWaId(null)} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg">Luk</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
                 <button onClick={() => { setWaId(waId === u.id ? null : u.id); if (waId !== u.id) openWebAuthn(u) }}
-                  title="Windows Hello / Touch ID"
-                  className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
+                  title={(u.webauthn_count ?? 0) > 0 ? `${u.webauthn_count} passkey-enhed(er)` : 'Windows Hello / Touch ID'}
+                  className={`p-1.5 rounded-lg transition-colors ${(u.webauthn_count ?? 0) > 0 ? 'text-sky-600 hover:bg-sky-50' : 'text-gray-400 hover:text-sky-600 hover:bg-sky-50'}`}>
                   <Fingerprint className="w-3.5 h-3.5" />
                 </button>
                 <button onClick={() => { setMfaId(mfaId === u.id ? null : u.id); if (mfaId !== u.id && !u.mfa_enabled) startMfaSetup(u.id) }}

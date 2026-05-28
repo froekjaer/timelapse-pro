@@ -54,7 +54,7 @@ from datetime import timezone as _tz
 
 #Peter:
 import re as _re
-from sqlalchemy import text
+from sqlalchemy import func, text
 import subprocess as _subprocess
 import threading as _threading
 import json as _json
@@ -840,8 +840,13 @@ def list_users(
     _user=require_role("super_admin"),
     db: Session = Depends(get_db)
 ):
-    from database import User
+    from database import User, WebAuthnCredential
     users = db.query(User).order_by(User.username).all()
+    cred_counts = dict(
+        db.query(WebAuthnCredential.user_id, func.count(WebAuthnCredential.id))
+        .group_by(WebAuthnCredential.user_id)
+        .all()
+    )
     return [
         {
             "id":          u.id,
@@ -853,6 +858,7 @@ def list_users(
             "created_at":  u.created_at.isoformat() if u.created_at else None,
             "last_login":  u.last_login.isoformat() if u.last_login else None,
             "mfa_enabled": bool(u.mfa_enabled),
+            "webauthn_count": int(cred_counts.get(u.id, 0)),
         }
         for u in users
     ]

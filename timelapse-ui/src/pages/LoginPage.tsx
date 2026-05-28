@@ -70,7 +70,6 @@ export default function LoginPage() {
 
       const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
       localStorage.setItem('tl_user', JSON.stringify(u))
-      const { login: _l, ...ctx } = useAuth()
       navigate(from, { replace: true })
       window.location.href = from
     } catch (e: any) {
