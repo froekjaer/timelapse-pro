@@ -59,6 +59,7 @@ from config.manager         import ConfigManager
 from diagnostics.collector  import DiagnosticsCollector
 from upload.sftp            import UploadManager
 from upload.headend_client import HeadendClient
+from security               import verify_update_artifact
 try:
     from tunnel.ssh_manager import SshTunnelManager
     _SSH_TUNNEL_AVAILABLE = True
@@ -847,6 +848,15 @@ class EdgeAgent:
                     return
 
                 if status == "approved":
+                    ok, reason = verify_update_artifact(update, self._cfg.get("security", {}))
+                    if not ok:
+                        log.error("Opdatering %d afvist af Edge trust policy: %s", uid, reason)
+                        self._api._post("/updates/report", {
+                            "update_id": uid,
+                            "status": "rolled_back",
+                            "reason": f"artifact_verification_failed: {reason}",
+                        })
+                        return
                     log.info("Udfører opdatering %d: %s", uid, utype)
                     self._run_update(uid, utype)
                     return  # Ét ad gangen

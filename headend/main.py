@@ -406,6 +406,7 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
             targets = json.loads(u.target_device_ids)
             if device_id not in targets:
                 continue
+        artifact = _find_artifact_for_update(db, u)
         filtered.append({
             "id":          u.id,
             "update_type": u.update_type,
@@ -413,6 +414,7 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
             "status":      u.status,
             "environment": u.environment,
             "severity":    u.severity,
+            "artifact":    _artifact_for_edge_policy(db, artifact),
         })
 
     return {**policy, "pending_updates": filtered}
@@ -1015,8 +1017,9 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
 
 
 
-def _verify_device_token(
+async def _verify_device_token(
     device_id: str,
+    request: Request,
     authorization: str = Header(default=""),
     db: Session = Depends(get_db),
 ) -> None:
@@ -1030,6 +1033,7 @@ def _verify_device_token(
         .filter_by(entity_type="edge", entity_id=device_id, key_type="api", secret_hash=token_hash)
         .first()
     )
+    active_secret = None
     if credential:
         if credential.status != "active":
             raise HTTPException(status_code=401, detail="API token er ikke aktiv")
@@ -1037,6 +1041,8 @@ def _verify_device_token(
             credential.status = "expired"
             db.commit()
             raise HTTPException(status_code=401, detail="API token er udløbet")
+        active_secret = provided
+        await _verify_edge_request_signature(request, active_secret)
         credential.last_used_at = now_utc()
         credential.use_count = (credential.use_count or 0) + 1
         db.commit()
@@ -1046,6 +1052,41 @@ def _verify_device_token(
         raise HTTPException(status_code=401, detail="Ukendt device eller token ikke sat")
     if not hmac.compare_digest(provided, device.api_token):
         raise HTTPException(status_code=401, detail="Ugyldig API token for dette device")
+    await _verify_edge_request_signature(request, provided)
+
+
+async def _verify_edge_request_signature(request: Request, secret: str) -> None:
+    """Validate optional Edge request signature.
+
+    Legacy devices may omit signatures for now. If signature headers are present,
+    they must be correct. This gives immediate tamper/replay metadata without
+    breaking existing LAB nodes.
+    """
+    signature = request.headers.get("X-TLP-Signature")
+    if not signature:
+        return
+    alg = request.headers.get("X-TLP-Signature-Alg", "")
+    timestamp = request.headers.get("X-TLP-Timestamp", "")
+    nonce = request.headers.get("X-TLP-Nonce", "")
+    if alg != "hmac-sha256-v1" or not timestamp or not nonce:
+        raise HTTPException(status_code=401, detail="Ugyldige Edge signatur-headere")
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Ugyldigt Edge signatur-tidspunkt")
+    if abs(int(now_utc().timestamp()) - ts) > 300:
+        raise HTTPException(status_code=401, detail="Edge signatur er udenfor tidsvindue")
+    body = await request.body()
+    body_text = ""
+    if body:
+        try:
+            body_text = _canonical_json(json.loads(body.decode("utf-8")))
+        except Exception:
+            body_text = body.decode("utf-8", errors="replace")
+    signed = "\n".join([request.method.upper(), request.url.path.removeprefix("/api"), timestamp, nonce, body_text])
+    expected = hmac.new(secret.encode("utf-8"), signed.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Edge request signature mismatch")
 
 
 class KeyCredentialPayload(BaseModel):
@@ -1162,6 +1203,10 @@ def _trusted_release_signers(db: Session) -> list[dict]:
             scopes = json.loads(signer.scopes_json or "[]")
         except Exception:
             scopes = []
+        try:
+            metadata = json.loads(signer.metadata_json or "{}")
+        except Exception:
+            metadata = {}
         if "artifact:sign" not in scopes and "change-ticket:sign" not in scopes:
             continue
         result.append({
@@ -1170,6 +1215,7 @@ def _trusted_release_signers(db: Session) -> list[dict]:
             "label": signer.label,
             "algorithm": signer.algorithm,
             "fingerprint": signer.fingerprint,
+            "gpg_fingerprint": metadata.get("gpg_fingerprint"),
             "public_key": signer.public_key,
             "scopes": scopes,
             "expires_at": signer.expires_at.isoformat() if signer.expires_at else None,
@@ -2677,6 +2723,32 @@ def _find_artifact_for_update(db: Session, update: PendingUpdate) -> UpdateArtif
     return q.filter(UpdateArtifact.version == version).first()
 
 
+def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> dict | None:
+    if not artifact:
+        return None
+    signer_fingerprint = None
+    for signer in _trusted_release_signers(db):
+        if artifact.signed_by and artifact.signed_by in {
+            signer.get("credential_id"),
+            signer.get("gpg_fingerprint"),
+        }:
+            signer_fingerprint = signer.get("fingerprint")
+            break
+    return {
+        "artifact_id": artifact.artifact_id,
+        "artifact_type": artifact.artifact_type,
+        "version": artifact.version,
+        "source_commit": artifact.source_commit,
+        "source_ref": artifact.source_ref,
+        "sha256": artifact.sha256,
+        "manifest": json.loads(artifact.manifest_json) if artifact.manifest_json else None,
+        "signature": artifact.signature,
+        "signed_by": artifact.signed_by,
+        "signed_at": artifact.signed_at.isoformat() if artifact.signed_at else None,
+        "signer_fingerprint": signer_fingerprint,
+    }
+
+
 @app.get("/api/updates/artifacts")
 def list_update_artifacts(
     _user=require_role("super_admin", "admin"),
@@ -3247,6 +3319,7 @@ def get_update_policy(
             targets = json.loads(u.target_device_ids)
             if device_id not in targets:
                 continue
+        artifact = _find_artifact_for_update(db, u)
         filtered.append({
             "id":          u.id,
             "update_type": u.update_type,
@@ -3254,6 +3327,7 @@ def get_update_policy(
             "status":      u.status,
             "environment": u.environment,
             "severity":    u.severity,
+            "artifact":    _artifact_for_edge_policy(db, artifact),
         })
 
     return {**policy, "pending_updates": filtered}

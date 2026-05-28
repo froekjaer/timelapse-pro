@@ -19,6 +19,7 @@ from typing import Any, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from security import request_signature_headers
 
 log = logging.getLogger(__name__)
 
@@ -164,7 +165,8 @@ class HeadendClient:
     def _get(self, path: str) -> tuple[bool, Optional[dict]]:
         url = f"{self._base_url}{path}"
         try:
-            resp = self._session.get(url, timeout=REQUEST_TIMEOUT, verify=True)
+            headers = request_signature_headers(self._cfg_mgr.api_token, "GET", path)
+            resp = self._session.get(url, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
             if resp.status_code == 200:
                 return True, resp.json()
             log.warning("GET %s → HTTP %d", path, resp.status_code)
@@ -185,7 +187,8 @@ class HeadendClient:
     def _post(self, path: str, payload: dict) -> tuple[bool, Optional[dict]]:
         url = f"{self._base_url}{path}"
         try:
-            resp = self._session.post(url, json=payload, timeout=REQUEST_TIMEOUT, verify=True)
+            headers = request_signature_headers(self._cfg_mgr.api_token, "POST", path, payload)
+            resp = self._session.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
             if resp.status_code in (200, 201):
                 return True, resp.json()
             log.warning("POST %s → HTTP %d: %s", path, resp.status_code, resp.text[:200])
