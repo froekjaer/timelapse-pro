@@ -2230,6 +2230,16 @@ def _git_text(args: list[str]) -> str | None:
     return None
 
 
+def _release_worktree_dirty() -> bool:
+    ignored = {"headend/.webui_secret_key"}
+    status = _git_text(["status", "--porcelain"]) or ""
+    for line in status.splitlines():
+        path = line[3:].strip()
+        if path and path not in ignored:
+            return True
+    return False
+
+
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -2293,7 +2303,7 @@ def catalog_current_release_artifact(
     if not commit:
         raise HTTPException(status_code=409, detail="Kunne ikke fastslå git commit for release artifact")
     ref = _git_text(["rev-parse", "--abbrev-ref", "HEAD"]) or "unknown"
-    dirty = bool(_git_text(["status", "--porcelain"]))
+    dirty = _release_worktree_dirty()
     created_at = now_utc()
     artifact_id = f"TL-ART-{created_at:%Y%m%d}-{commit[:12]}"
     existing = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
