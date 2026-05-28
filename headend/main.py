@@ -42,6 +42,7 @@ import logging
 #import os
 import hashlib
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -2182,7 +2183,182 @@ def _ticket_to_dict(ticket: ChangeTicket) -> dict:
     }
 
 
-def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, user: User) -> ChangeTicket:
+def _artifact_to_dict(artifact: UpdateArtifact) -> dict:
+    manifest = {}
+    if artifact.manifest_json:
+        try:
+            manifest = json.loads(artifact.manifest_json)
+        except Exception:
+            manifest = {}
+    return {
+        "id": artifact.id,
+        "artifact_id": artifact.artifact_id,
+        "artifact_type": artifact.artifact_type,
+        "version": artifact.version,
+        "source_commit": artifact.source_commit,
+        "source_ref": artifact.source_ref,
+        "filename": artifact.filename,
+        "storage_path": artifact.storage_path,
+        "size_bytes": artifact.size_bytes,
+        "sha256": artifact.sha256,
+        "manifest": manifest,
+        "sbom_ref": artifact.sbom_ref,
+        "signature": artifact.signature,
+        "signed_by": artifact.signed_by,
+        "signed_at": artifact.signed_at.isoformat() if artifact.signed_at else None,
+        "created_at": artifact.created_at.isoformat() if artifact.created_at else None,
+    }
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _git_text(args: list[str]) -> str | None:
+    try:
+        result = _subprocess.run(
+            ["git", *args],
+            cwd=str(_repo_root()),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception as exc:
+        log.warning("Kunne ikke læse git metadata: %s", exc)
+    return None
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _collect_release_outputs(root: Path) -> list[dict]:
+    candidates = [
+        root / "headend" / "main.py",
+        root / "headend" / "database.py",
+        root / "timelapse-ui" / "dist",
+    ]
+    outputs: list[dict] = []
+    for candidate in candidates:
+        if candidate.is_file():
+            outputs.append({
+                "path": str(candidate.relative_to(root)),
+                "size_bytes": candidate.stat().st_size,
+                "sha256": _file_sha256(candidate),
+            })
+        elif candidate.is_dir():
+            for file_path in sorted(p for p in candidate.rglob("*") if p.is_file()):
+                outputs.append({
+                    "path": str(file_path.relative_to(root)),
+                    "size_bytes": file_path.stat().st_size,
+                    "sha256": _file_sha256(file_path),
+                })
+    return outputs
+
+
+def _find_artifact_for_update(db: Session, update: PendingUpdate) -> UpdateArtifact | None:
+    version = (update.version or "").strip()
+    if not version:
+        return None
+    q = db.query(UpdateArtifact).order_by(UpdateArtifact.created_at.desc())
+    artifact = q.filter(UpdateArtifact.source_commit == version).first()
+    if artifact:
+        return artifact
+    return q.filter(UpdateArtifact.version == version).first()
+
+
+@app.get("/api/updates/artifacts")
+def list_update_artifacts(
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    artifacts = db.query(UpdateArtifact).order_by(UpdateArtifact.created_at.desc()).all()
+    return [_artifact_to_dict(a) for a in artifacts]
+
+
+@app.post("/api/updates/artifacts/catalog-current")
+def catalog_current_release_artifact(
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Registrer den aktuelle Headend/UI release-manifest som signeret artifact."""
+    root = _repo_root()
+    commit = _git_text(["rev-parse", "HEAD"])
+    if not commit:
+        raise HTTPException(status_code=409, detail="Kunne ikke fastslå git commit for release artifact")
+    ref = _git_text(["rev-parse", "--abbrev-ref", "HEAD"]) or "unknown"
+    dirty = bool(_git_text(["status", "--porcelain"]))
+    created_at = now_utc()
+    artifact_id = f"TL-ART-{created_at:%Y%m%d}-{commit[:12]}"
+    existing = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
+    if existing:
+        return _artifact_to_dict(existing)
+
+    outputs = _collect_release_outputs(root)
+    manifest = {
+        "schema": "timelapse.update_artifact.v1",
+        "artifact_id": artifact_id,
+        "artifact_type": "app",
+        "version": commit,
+        "source": {
+            "commit": commit,
+            "ref": ref,
+            "dirty_worktree": dirty,
+        },
+        "distribution_model": "headend_signed_artifact_catalog_edge_pull",
+        "edge_constraints": {
+            "edge_requires_direct_internet": False,
+            "edge_requires_direct_github": False,
+            "headend_is_update_authority": True,
+        },
+        "rollback": {
+            "required": True,
+            "strategy": "keep previous known-good artifact and rollback automatically on failed healthcheck",
+        },
+        "controls": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+        "outputs": outputs,
+        "created": {
+            "by": current_user.username,
+            "at": created_at.isoformat(),
+        },
+    }
+    manifest_json = _canonical_json(manifest)
+    manifest_sha = _sha256_text(manifest_json)
+    signature, signed_by = _sign_payload(manifest_json)
+    artifact = UpdateArtifact(
+        artifact_id=artifact_id,
+        artifact_type="app",
+        version=commit,
+        source_commit=commit,
+        source_ref=ref,
+        filename=f"{artifact_id}.manifest.json",
+        storage_path=str(root),
+        size_bytes=sum(int(o.get("size_bytes") or 0) for o in outputs),
+        sha256=manifest_sha,
+        manifest_json=manifest_json,
+        sbom_ref=None,
+        signature=signature,
+        signed_by=signed_by,
+        signed_at=created_at,
+        created_at=created_at,
+    )
+    db.add(artifact)
+    db.commit()
+    return _artifact_to_dict(artifact)
+
+
+def _build_change_ticket(
+    update: PendingUpdate,
+    payload: ChangeTicketPayload,
+    user: User,
+    artifact: UpdateArtifact | None = None,
+) -> ChangeTicket:
     created_at = now_utc()
     ticket_id = f"TL-CHG-{created_at:%Y%m%d}-{update.id:05d}"
     title = payload.title or f"{update.update_type} {update.version}"
@@ -2220,6 +2396,17 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
             "at": created_at.isoformat(),
         },
     }
+    if artifact:
+        machine["artifact"] = {
+            "artifact_id": artifact.artifact_id,
+            "artifact_type": artifact.artifact_type,
+            "version": artifact.version,
+            "source_commit": artifact.source_commit,
+            "source_ref": artifact.source_ref,
+            "sha256": artifact.sha256,
+            "signed_by": artifact.signed_by,
+            "signed_at": artifact.signed_at.isoformat() if artifact.signed_at else None,
+        }
     machine_json = _canonical_json(machine)
     content_sha256 = _sha256_text(machine_json)
     signature, signed_by = _sign_payload(machine_json)
@@ -2240,6 +2427,11 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
         "",
         "## Deployment-flow",
         "Edge rapporterer inventory og tilgængelige opdateringer til Headend. Headend er update authority og holder signerede artifacts/change tickets. Edge henter kun godkendte opdateringer fra Headend ved næste poll; Headend pusher ikke til Edge i normal drift. SSH-tunnel bruges kun til manuel fejlsøgning.",
+        "",
+        "## Artifact",
+        f"Artifact ID: `{artifact.artifact_id}`" if artifact else "Ingen artifact er bundet endnu. Opret/registrer artifact i Headend-kataloget før produktionsgodkendelse.",
+        f"Artifact SHA-256: `{artifact.sha256}`" if artifact else "",
+        f"Artifact signeret af: {artifact.signed_by or '-'}" if artifact else "",
         "",
         "## Rollback-plan",
         rollback_plan,
@@ -2266,7 +2458,10 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
         scope=update.scope,
         scope_id=update.scope_id,
         status=payload.status or "ready",
-        source_commit=update.version if update.update_type in ("app_security", "app_updates") else None,
+        source_commit=artifact.source_commit if artifact else (update.version if update.update_type in ("app_security", "app_updates") else None),
+        source_ref=artifact.source_ref if artifact else None,
+        artifact_id=artifact.artifact_id if artifact else None,
+        sbom_ref=artifact.sbom_ref if artifact else None,
         rollback_plan=rollback_plan,
         reboot_required=bool(payload.reboot_required),
         maintenance_window=maintenance_window,
@@ -2376,7 +2571,8 @@ def create_change_ticket_for_update(
     existing = db.query(ChangeTicket).filter_by(pending_update_id=update_id).first()
     if existing:
         return _ticket_to_dict(existing)
-    ticket = _build_change_ticket(update, payload, current_user)
+    artifact = _find_artifact_for_update(db, update)
+    ticket = _build_change_ticket(update, payload, current_user, artifact)
     db.add(ticket)
     db.flush()
     created_targets = _ensure_update_targets(db, update, ticket)

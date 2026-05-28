@@ -6,7 +6,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, RefreshCw, CheckCircle, XCircle, Clock,
-  Package, AlertTriangle, Shield, ChevronDown, ChevronRight, Server, BarChart3
+  Package, AlertTriangle, Shield, ChevronDown, ChevronRight, Server, BarChart3, FileCheck, Fingerprint
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -85,6 +85,28 @@ interface UpdateMatrix {
   devices: DeviceUpdateState[]
 }
 
+interface UpdateArtifact {
+  artifact_id: string
+  artifact_type: string
+  version: string | null
+  source_commit: string | null
+  source_ref: string | null
+  filename: string | null
+  size_bytes: number | null
+  sha256: string
+  signed_by: string | null
+  signed_at: string | null
+  created_at: string | null
+  manifest?: {
+    source?: {
+      dirty_worktree?: boolean
+    }
+    outputs?: unknown[]
+    controls?: string[]
+    distribution_model?: string
+  }
+}
+
 interface ApproveOptions {
   environment:      'test' | 'production'
   scope:            'global' | 'device'
@@ -131,6 +153,11 @@ function riskBadge(risk: RiskInfo | null | undefined) {
     low:      'bg-gray-50 text-gray-500 border-gray-200',
   }
   return map[level] ?? map.low
+}
+
+function shortHash(value: string | null | undefined) {
+  if (!value) return '-'
+  return value.length > 18 ? `${value.slice(0, 12)}...${value.slice(-6)}` : value
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -360,6 +387,85 @@ function DeviceUpdateMatrix({ matrix }: { matrix: UpdateMatrix | null }) {
   )
 }
 
+function ArtifactCatalog({
+  artifacts,
+  onCatalogCurrent,
+  busy,
+}: {
+  artifacts: UpdateArtifact[]
+  onCatalogCurrent: () => void
+  busy: boolean
+}) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-5">
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+            <FileCheck className="w-4 h-4 text-gray-500" />
+            Signeret artifact-katalog
+          </h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Release-manifester som Headend kan binde til change tickets og stille klar til Edge pull-flow.
+          </p>
+        </div>
+        <button onClick={onCatalogCurrent} disabled={busy}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
+          <Fingerprint className="w-3.5 h-3.5" />
+          Registrer aktuel release
+        </button>
+      </div>
+      {artifacts.length === 0 ? (
+        <div className="px-5 py-8 text-center text-sm text-gray-400">
+          Ingen artifacts registreret endnu.
+        </div>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {artifacts.slice(0, 5).map(artifact => (
+            <div key={artifact.artifact_id} className="px-5 py-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-gray-900 font-mono">{artifact.artifact_id}</span>
+                    <span className="text-[11px] px-1.5 py-0.5 rounded border bg-sky-50 text-sky-700 border-sky-200">
+                      {artifact.artifact_type}
+                    </span>
+                    {artifact.manifest?.source?.dirty_worktree && (
+                      <span className="text-[11px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
+                        dirty worktree
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-gray-400">
+                    {artifact.source_ref || '-'} / {shortHash(artifact.source_commit)} / {fmt(artifact.created_at)}
+                  </div>
+                  <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+                    <div className="bg-gray-50 rounded-lg px-3 py-2">
+                      <div className="text-gray-400">Manifest SHA-256</div>
+                      <div className="font-mono text-gray-700">{shortHash(artifact.sha256)}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg px-3 py-2">
+                      <div className="text-gray-400">Signeret af</div>
+                      <div className="text-gray-700 truncate">{artifact.signed_by || '-'}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg px-3 py-2">
+                      <div className="text-gray-400">Outputs</div>
+                      <div className="text-gray-700">{artifact.manifest?.outputs?.length ?? 0} filer</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right text-xs text-gray-400 flex-shrink-0">
+                  <div>{artifact.filename || 'manifest'}</div>
+                  <div>{artifact.size_bytes ? `${Math.round(artifact.size_bytes / 1024)} KB` : '-'}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'pending',  label: 'Afventer' },
   { key: 'approved', label: 'Godkendt' },
@@ -372,6 +478,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 export function UpdatesPage() {
   const [updates, setUpdates]       = useState<Update[]>([])
   const [matrix, setMatrix]         = useState<UpdateMatrix | null>(null)
+  const [artifacts, setArtifacts]   = useState<UpdateArtifact[]>([])
   const [loading, setLoading]       = useState(true)
   const [filter, setFilter]         = useState<Filter>('pending')
   const [busy, setBusy]             = useState<number | null>(null)
@@ -388,12 +495,14 @@ export function UpdatesPage() {
     setError(null)
     try {
       const params = filter === 'all' ? '' : `?status=${filter}`
-      const [data, matrixData] = await Promise.all([
+      const [data, matrixData, artifactData] = await Promise.all([
         api(`/api/updates/pending${params}`),
         api('/api/updates/device-matrix'),
+        api('/api/updates/artifacts'),
       ])
       setUpdates(Array.isArray(data) ? data : [])
       setMatrix(matrixData && Array.isArray(matrixData.devices) ? matrixData : null)
+      setArtifacts(Array.isArray(artifactData) ? artifactData : [])
       setLast(new Date())
     } catch (e: any) {
       setError(`Kunne ikke hente opdateringer (${e.message})`)
@@ -445,6 +554,19 @@ export function UpdatesPage() {
     try { await api(`/api/updates/${id}/force-rollback`, { method: 'POST' }); load() }
     catch (e: any) { setError(e.message) }
     finally { setBusy(null) }
+  }
+
+  async function catalogCurrentRelease() {
+    setRefreshing(true)
+    setError(null)
+    try {
+      await api('/api/updates/artifacts/catalog-current', { method: 'POST' })
+      await load()
+    } catch (e: any) {
+      setError(`Kunne ikke registrere artifact (${e.message})`)
+    } finally {
+      setRefreshing(false)
+    }
   }
 
   const pending = updates.filter(u => u.status === 'pending').length
@@ -507,6 +629,8 @@ export function UpdatesPage() {
       </div>
 
       <DeviceUpdateMatrix matrix={matrix} />
+
+      <ArtifactCatalog artifacts={artifacts} onCatalogCurrent={catalogCurrentRelease} busy={refreshing} />
 
       {approveId !== null && (
         <div className="bg-white rounded-xl border border-green-200 p-4 mb-4 shadow-sm">
