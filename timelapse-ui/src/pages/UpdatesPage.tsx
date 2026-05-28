@@ -6,7 +6,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, RefreshCw, CheckCircle, XCircle, Clock,
-  Package, AlertTriangle, Shield, ChevronDown, ChevronRight
+  Package, AlertTriangle, Shield, ChevronDown, ChevronRight, Server, BarChart3
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -33,6 +33,56 @@ interface Update {
   created_at:        string | null
   approved_at:       string | null
   approved_by:       string | null
+}
+
+interface RiskInfo {
+  score: number
+  level: 'low' | 'medium' | 'high' | 'critical' | string
+  factors: string[]
+}
+
+interface UpdateCategory {
+  key: string
+  label: string
+  types: string[]
+}
+
+interface DeviceUpdateCategory {
+  state: string
+  installed: string | null
+  available: string | null
+  missing: boolean
+  pending_update_id: number | null
+  update_type: string | null
+  description: string | null
+  severity: string | null
+  status: string | null
+  created_at: string | null
+  risk: RiskInfo
+}
+
+interface DeviceUpdateState {
+  device_id: string
+  cmdb_ref: string
+  environment: string | null
+  hardware_model: string | null
+  hostname: string | null
+  os_name: string | null
+  kernel_version: string | null
+  app_version: string | null
+  customer_name: string | null
+  site_name: string | null
+  status: string | null
+  last_seen: string | null
+  inventory_reported_at: string | null
+  risk_score: number
+  missing_count: number
+  categories: Record<string, DeviceUpdateCategory>
+}
+
+interface UpdateMatrix {
+  categories: UpdateCategory[]
+  devices: DeviceUpdateState[]
 }
 
 interface ApproveOptions {
@@ -72,12 +122,33 @@ function statusBadge(s: string) {
   return map[s] ?? 'bg-gray-50 text-gray-500 border-gray-200'
 }
 
+function riskBadge(risk: RiskInfo | null | undefined) {
+  const level = risk?.level ?? 'low'
+  const map: Record<string, string> = {
+    critical: 'bg-red-600 text-white border-red-600',
+    high:     'bg-red-50 text-red-700 border-red-200',
+    medium:   'bg-amber-50 text-amber-700 border-amber-200',
+    low:      'bg-gray-50 text-gray-500 border-gray-200',
+  }
+  return map[level] ?? map.low
+}
+
 const STATUS_LABELS: Record<string, string> = {
   pending:     'Afventer',
   approved:    'Godkendt',
   deployed:    'Deployet',
   rejected:    'Afvist',
   rolled_back: 'Rullet tilbage',
+}
+
+const STATE_LABELS: Record<string, string> = {
+  needs_approval: 'Mangler godkendelse',
+  approved: 'Godkendt',
+  deployed: 'Installeret',
+  rolled_back: 'Rollback',
+  rollback_requested: 'Rollback anmodet',
+  no_update_reported: 'Ingen rapporteret',
+  no_inventory: 'Mangler inventory',
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -188,6 +259,107 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, busy }: {
   )
 }
 
+function DeviceUpdateMatrix({ matrix }: { matrix: UpdateMatrix | null }) {
+  if (!matrix) return null
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-5">
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+            <Server className="w-4 h-4 text-gray-500" />
+            CMDB-baseret opdateringsstatus
+          </h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Installeret, tilgængeligt og manglende patches pr. enhed med samlet risikoscore.
+          </p>
+        </div>
+        <div className="text-xs text-gray-400">
+          {matrix.devices.length} enhed{matrix.devices.length === 1 ? '' : 'er'}
+        </div>
+      </div>
+
+      {matrix.devices.length === 0 ? (
+        <div className="py-10 text-center text-sm text-gray-400">Ingen CMDB-enheder fundet</div>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {matrix.devices.map(device => (
+            <div key={device.device_id} className="p-5">
+              <div className="flex items-start justify-between gap-4 mb-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-gray-900 font-mono">{device.device_id}</span>
+                    <span className="text-[11px] px-1.5 py-0.5 rounded border bg-sky-50 text-sky-700 border-sky-200">
+                      {device.cmdb_ref}
+                    </span>
+                    <span className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-600 border-gray-200">
+                      {device.environment || 'ukendt miljø'}
+                    </span>
+                    {device.missing_count > 0 && (
+                      <span className="text-[11px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
+                        {device.missing_count} mangler
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {[device.hardware_model, device.hostname, device.customer_name, device.site_name].filter(Boolean).join(' / ') || 'Ingen ekstra CMDB-kontekst'}
+                  </p>
+                </div>
+                <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs font-medium ${riskBadge({ score: device.risk_score, level: device.risk_score >= 85 ? 'critical' : device.risk_score >= 70 ? 'high' : device.risk_score >= 45 ? 'medium' : 'low', factors: [] })}`}>
+                  <BarChart3 className="w-3.5 h-3.5" />
+                  Risk {device.risk_score}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                {matrix.categories.map(category => {
+                  const cell = device.categories[category.key]
+                  if (!cell) return null
+                  return (
+                    <div key={category.key} className="border border-gray-100 rounded-lg p-3 bg-gray-50">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-xs font-medium text-gray-800">{category.label}</div>
+                          <div className="text-[11px] text-gray-400 mt-0.5">{STATE_LABELS[cell.state] ?? cell.state}</div>
+                        </div>
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${riskBadge(cell.risk)}`}>
+                          {cell.risk.score}
+                        </span>
+                      </div>
+                      <div className="mt-2 space-y-1 text-[11px]">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-400">Installeret</span>
+                          <span className="text-gray-700 truncate text-right">{cell.installed || '-'}</span>
+                        </div>
+                        <div className="flex justify-between gap-2">
+                          <span className="text-gray-400">Tilgængelig</span>
+                          <span className={cell.available ? 'text-gray-800 font-medium truncate text-right' : 'text-gray-300'}>
+                            {cell.available || 'Ingen'}
+                          </span>
+                        </div>
+                        {cell.pending_update_id && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-gray-400">Update ID</span>
+                            <span className="text-gray-600 font-mono">#{cell.pending_update_id}</span>
+                          </div>
+                        )}
+                        {cell.risk.factors.length > 0 && (
+                          <div className="text-gray-400 pt-1 line-clamp-2">
+                            {cell.risk.factors.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'pending',  label: 'Afventer' },
   { key: 'approved', label: 'Godkendt' },
@@ -199,6 +371,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 export function UpdatesPage() {
   const [updates, setUpdates]       = useState<Update[]>([])
+  const [matrix, setMatrix]         = useState<UpdateMatrix | null>(null)
   const [loading, setLoading]       = useState(true)
   const [filter, setFilter]         = useState<Filter>('pending')
   const [busy, setBusy]             = useState<number | null>(null)
@@ -215,8 +388,12 @@ export function UpdatesPage() {
     setError(null)
     try {
       const params = filter === 'all' ? '' : `?status=${filter}`
-      const data = await api(`/api/updates/pending${params}`)
+      const [data, matrixData] = await Promise.all([
+        api(`/api/updates/pending${params}`),
+        api('/api/updates/device-matrix'),
+      ])
       setUpdates(Array.isArray(data) ? data : [])
+      setMatrix(matrixData && Array.isArray(matrixData.devices) ? matrixData : null)
       setLast(new Date())
     } catch (e: any) {
       setError(`Kunne ikke hente opdateringer (${e.message})`)
@@ -273,7 +450,7 @@ export function UpdatesPage() {
   const pending = updates.filter(u => u.status === 'pending').length
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="flex items-center gap-3 mb-8">
         <Link to="/" className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
           <ArrowLeft className="w-4 h-4 text-gray-500" />
@@ -311,6 +488,13 @@ export function UpdatesPage() {
         </div>
       )}
 
+      <div className="bg-sky-50 border border-sky-100 rounded-xl px-4 py-3 mb-4">
+        <div className="text-sm font-medium text-sky-900">Headend-styret pull-flow</div>
+        <p className="text-xs text-sky-700 mt-1 leading-5">
+          Edge rapporterer CMDB-inventory og tilgængelige patches til Headend. Headend genererer signerede change tickets og stiller godkendte artifacts klar. Edge henter selv fra Headend ved næste poll; normal drift kræver ikke direkte internet/GitHub fra Edge, og SSH-tunnel bruges kun til manuel fejlsøgning.
+        </p>
+      </div>
+
       <div className="flex gap-1 mb-4">
         {FILTERS.map(f => (
           <button key={f.key} onClick={() => setFilter(f.key)}
@@ -322,6 +506,7 @@ export function UpdatesPage() {
         ))}
       </div>
 
+      <DeviceUpdateMatrix matrix={matrix} />
 
       {approveId !== null && (
         <div className="bg-white rounded-xl border border-green-200 p-4 mb-4 shadow-sm">

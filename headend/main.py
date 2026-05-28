@@ -86,7 +86,7 @@ from database import (
     BootstrapToken,
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
     Capture, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
-    Diagnostic, Event, PendingUpdate, Settings, Site, SshTunnelLog, User,
+    DeviceInventory, Diagnostic, Event, PendingUpdate, Settings, Site, SshTunnelLog, User,
     create_tables, get_db, now_utc
 )
 import uuid as _uuid
@@ -1813,6 +1813,274 @@ def list_pending_updates(
         for u in updates
     ]
 
+UPDATE_CATEGORIES = [
+    {
+        "key": "os_security",
+        "label": "OS Security update",
+        "types": ["os_security"],
+        "installed_field": "os_name",
+    },
+    {
+        "key": "os_update",
+        "label": "OS update",
+        "types": ["os_updates", "os_update"],
+        "installed_field": "os_name",
+    },
+    {
+        "key": "timelapse_security",
+        "label": "Timelapse Pro Security update",
+        "types": ["app_security", "timelapse_security", "timelapse_pro_security"],
+        "installed_field": "app_version",
+    },
+    {
+        "key": "timelapse_update",
+        "label": "Timelapse Pro update",
+        "types": ["app_updates", "app_update", "timelapse_update", "timelapse_pro_update"],
+        "installed_field": "app_version",
+    },
+    {
+        "key": "application_security",
+        "label": "Application Security update",
+        "types": ["application_security", "dependency_security", "third_party_security"],
+        "installed_field": "venv_packages",
+    },
+    {
+        "key": "application_update",
+        "label": "Application update",
+        "types": ["application_update", "application_updates", "dependency_updates", "third_party_updates"],
+        "installed_field": "venv_packages",
+    },
+]
+
+UPDATE_TYPE_TO_CATEGORY = {
+    update_type: category["key"]
+    for category in UPDATE_CATEGORIES
+    for update_type in category["types"]
+}
+
+
+def _status_rank(status: str | None) -> int:
+    return {
+        "pending": 0,
+        "approved": 1,
+        "rollback_requested": 2,
+        "failed": 3,
+        "rolled_back": 4,
+        "deployed": 5,
+        "rejected": 6,
+    }.get(status or "", 7)
+
+
+def _parse_target_device_ids(value: str | None) -> list[str]:
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        return [str(v) for v in parsed] if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def _update_applies_to_device(update: PendingUpdate, device: Device | None, inv: DeviceInventory) -> bool:
+    target_ids = _parse_target_device_ids(update.target_device_ids)
+    if target_ids:
+        return inv.device_id in target_ids
+    if update.scope == "global":
+        return True
+    if update.scope == "device":
+        return update.scope_id == inv.device_id
+    if update.scope == "customer" and device:
+        return update.scope_id == device.customer_id
+    if update.scope == "site" and device:
+        return update.scope_id == device.site_id
+    return False
+
+
+def _installed_value(inv: DeviceInventory, category_key: str) -> str | None:
+    if category_key.startswith("os_"):
+        parts = [p for p in [inv.os_name, inv.kernel_version] if p]
+        return " / ".join(parts) if parts else None
+    if category_key.startswith("timelapse_"):
+        return inv.app_version
+    if inv.venv_packages:
+        try:
+            packages = json.loads(inv.venv_packages)
+            if isinstance(packages, dict):
+                return f"{len(packages)} Python package(s)"
+        except Exception:
+            return "Package inventory rapporteret"
+    return None
+
+
+def _business_impact(inv: DeviceInventory | None, device: Device | None, update_type: str | None = None) -> tuple[int, list[str]]:
+    factors: list[str] = []
+    score = 35
+    env = (inv.environment if inv else None) or (device.environment if device and hasattr(device, "environment") else None) or "production"
+    if env == "production":
+        score += 25
+        factors.append("produktionsmiljø")
+    elif env == "staging":
+        score += 12
+        factors.append("stagingmiljø")
+    else:
+        score -= 12
+        factors.append("LAB/R&D miljø")
+
+    device_id = (inv.device_id if inv else None) or (device.device_id if device else "")
+    hostname = (inv.hostname if inv else "") or ""
+    if "headend" in device_id.lower() or "headend" in hostname.lower() or "macmini" in device_id.lower():
+        score += 20
+        factors.append("headend/central komponent")
+    if device and (device.customer_id or device.site_id):
+        score += 8
+        factors.append("kunde/site-tilknytning")
+    if device and device.status and device.status != "online":
+        score += 6
+        factors.append(f"enhedsstatus: {device.status}")
+    if inv and inv.data_partition_used_pct and inv.data_partition_used_pct >= 85:
+        score += 8
+        factors.append("høj data-partition udnyttelse")
+    if update_type and "security" in update_type:
+        score += 10
+        factors.append("sikkerhedsrettelse")
+    return max(0, min(100, score)), factors
+
+
+def _risk_assessment(
+    update_type: str | None,
+    severity: str | None,
+    inv: DeviceInventory | None = None,
+    device: Device | None = None,
+    status: str | None = None,
+) -> dict:
+    severity_score = {
+        "critical": 95,
+        "high": 78,
+        "medium": 55,
+        "low": 28,
+    }.get((severity or "low").lower(), 35)
+    category = UPDATE_TYPE_TO_CATEGORY.get(update_type or "", update_type or "unknown")
+    category_score = {
+        "timelapse_security": 90,
+        "os_security": 84,
+        "application_security": 78,
+        "timelapse_update": 58,
+        "application_update": 48,
+        "os_update": 42,
+    }.get(category, 45)
+    impact_score, factors = _business_impact(inv, device, update_type)
+    process_score = 0
+    if status in ("failed", "rolled_back", "rollback_requested"):
+        process_score = 18
+        factors.append(f"tidligere deployment-status: {status}")
+    elif status == "approved":
+        process_score = 6
+        factors.append("godkendt men endnu ikke deployet")
+
+    score = round((severity_score * 0.38) + (category_score * 0.22) + (impact_score * 0.32) + process_score)
+    score = max(0, min(100, score))
+    if score >= 85:
+        level = "critical"
+    elif score >= 70:
+        level = "high"
+    elif score >= 45:
+        level = "medium"
+    else:
+        level = "low"
+    return {
+        "score": score,
+        "level": level,
+        "severity_component": severity_score,
+        "category_component": category_score,
+        "business_impact_component": impact_score,
+        "factors": factors,
+    }
+
+
+@app.get("/api/updates/device-matrix")
+def list_update_device_matrix(
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """CMDB-forankret opdateringsmatrix pr. enhed og update-kategori."""
+    inventories = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    device_map = {d.device_id: d for d in db.query(Device).all()}
+    updates = db.query(PendingUpdate).order_by(PendingUpdate.created_at.desc()).all()
+    category_meta = [
+        {"key": c["key"], "label": c["label"], "types": c["types"]}
+        for c in UPDATE_CATEGORIES
+    ]
+    devices = []
+    for inv in inventories:
+        if inv.device_id.lower() == "test" and not inv.hostname:
+            continue
+        device = device_map.get(inv.device_id)
+        categories = {}
+        device_updates = [u for u in updates if _update_applies_to_device(u, device, inv)]
+        for category in UPDATE_CATEGORIES:
+            candidates = [
+                u for u in device_updates
+                if u.update_type in category["types"]
+            ]
+            candidates.sort(
+                key=lambda u: (
+                    _status_rank(u.status),
+                    -((u.created_at or now_utc()).timestamp()),
+                )
+            )
+            update = candidates[0] if candidates else None
+            installed = _installed_value(inv, category["key"])
+            if update:
+                state = "needs_approval" if update.status == "pending" else update.status
+                risk = _risk_assessment(update.update_type, update.severity, inv, device, update.status)
+                categories[category["key"]] = {
+                    "state": state,
+                    "installed": installed,
+                    "available": update.version,
+                    "missing": update.status in ("pending", "approved", "rollback_requested"),
+                    "pending_update_id": update.id,
+                    "update_type": update.update_type,
+                    "description": update.description,
+                    "severity": update.severity,
+                    "status": update.status,
+                    "created_at": update.created_at.isoformat() if update.created_at else None,
+                    "risk": risk,
+                }
+            else:
+                categories[category["key"]] = {
+                    "state": "no_update_reported" if installed else "no_inventory",
+                    "installed": installed,
+                    "available": None,
+                    "missing": False,
+                    "pending_update_id": None,
+                    "update_type": None,
+                    "description": None,
+                    "severity": None,
+                    "status": None,
+                    "created_at": None,
+                    "risk": _risk_assessment(category["types"][0], "low", inv, device, None),
+                }
+        device_risks = [c["risk"]["score"] for c in categories.values() if c.get("missing")]
+        devices.append({
+            "device_id": inv.device_id,
+            "cmdb_ref": f"CMDB:{inv.device_id}",
+            "environment": inv.environment,
+            "hardware_model": inv.hardware_model,
+            "hostname": inv.hostname,
+            "os_name": inv.os_name,
+            "kernel_version": inv.kernel_version,
+            "app_version": inv.app_version,
+            "customer_name": device.customer_name if device else None,
+            "site_name": device.site_name if device else None,
+            "status": device.status if device else "unknown",
+            "last_seen": device.last_seen.isoformat() if device and device.last_seen else None,
+            "inventory_reported_at": inv.inventory_reported_at.isoformat() if inv.inventory_reported_at else None,
+            "categories": categories,
+            "risk_score": max(device_risks) if device_risks else 0,
+            "missing_count": sum(1 for c in categories.values() if c.get("missing")),
+        })
+    return {"categories": category_meta, "devices": devices}
+
 class ApprovePayload(BaseModel):
     environment: Optional[str] = "production"
     scope: Optional[str] = None
@@ -1921,6 +2189,7 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
     summary = payload.summary or update.description or ""
     rollback_plan = payload.rollback_plan or "Automatisk rollback ved fejlet healthcheck; manuel intervention hvis rollback fejler."
     maintenance_window = payload.maintenance_window or "Efter gældende update policy"
+    risk = _risk_assessment(update.update_type, update.severity, None, None, update.status)
     machine = {
         "schema": "timelapse.change_ticket.v1",
         "ticket_id": ticket_id,
@@ -1935,8 +2204,13 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
             "scope": update.scope,
             "scope_id": update.scope_id,
             "target_device_ids": json.loads(update.target_device_ids) if update.target_device_ids else None,
+            "distribution_model": "edge_pull_via_headend",
+            "internet_dependency": "edge_must_not_require_direct_internet_or_github",
         },
         "risk": {
+            "score": risk["score"],
+            "level": risk["level"],
+            "factors": risk["factors"],
             "reboot_required": bool(payload.reboot_required),
             "maintenance_window": maintenance_window,
             "rollback_plan": rollback_plan,
@@ -1955,6 +2229,7 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
         f"**Status:** {payload.status or 'ready'}",
         f"**Update:** {update.update_type} {update.version}",
         f"**Severity:** {update.severity}",
+        f"**Risk score:** {risk['score']}/100 ({risk['level']})",
         f"**Miljø:** {update.environment or 'production'}",
         f"**Scope:** {update.scope or 'device'}{f' / {update.scope_id}' if update.scope_id else ''}",
         f"**Oprettet af:** {user.username}",
@@ -1963,8 +2238,15 @@ def _build_change_ticket(update: PendingUpdate, payload: ChangeTicketPayload, us
         "## Beskrivelse",
         summary or "Ingen beskrivelse angivet.",
         "",
+        "## Deployment-flow",
+        "Edge rapporterer inventory og tilgængelige opdateringer til Headend. Headend er update authority og holder signerede artifacts/change tickets. Edge henter kun godkendte opdateringer fra Headend ved næste poll; Headend pusher ikke til Edge i normal drift. SSH-tunnel bruges kun til manuel fejlsøgning.",
+        "",
         "## Rollback-plan",
         rollback_plan,
+        "",
+        "## Risikovurdering",
+        "Score beregnes ud fra teknisk severity, update-kategori, miljø/business impact og deployment-status.",
+        f"Faktorer: {', '.join(risk['factors']) if risk['factors'] else 'ingen særlige faktorer'}",
         "",
         "## Vedligehold/reboot",
         f"Maintenance window: {maintenance_window}",
