@@ -4465,7 +4465,11 @@ def update_backup_settings(payload: dict, _user=require_role("admin"), db: Sessi
         for key, value in payload.items():
             if key in ["backup_nas_path", "backup_auto_interval", "backup_include_images"]:
                 db.execute(text(
-                    "INSERT OR REPLACE INTO settings (key, value) VALUES (:k, :v)"
+                    """
+                    INSERT INTO settings (key, value)
+                    VALUES (:k, :v)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """
                 ), {"k": key, "v": str(value)})
         db.commit()
         return {"status": "ok"}
@@ -4485,6 +4489,181 @@ def get_backup_settings(_user=require_role("admin"), db: Session = Depends(get_d
         return result
     except:
         return {"backup_nas_path": None, "backup_auto_interval": "manual", "backup_include_images": "false"}
+
+
+def _resilience_control(status: str, title: str, evidence: str, domains: list[str], recommendation: str = "") -> dict:
+    return {
+        "status": status,
+        "title": title,
+        "evidence": evidence,
+        "domains": domains,
+        "recommendation": recommendation,
+    }
+
+
+@app.get("/api/admin/resilience/assessment")
+def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get_db)):
+    """Backup, restore, provisioning and compliance readiness snapshot."""
+    devices = db.query(Device).order_by(Device.device_id).all()
+    inventory = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    device_ids = {d.device_id for d in devices}
+    tickets = db.query(ChangeTicket).count()
+    artifacts = db.query(UpdateArtifact).count()
+    active_tokens = db.query(BootstrapToken).filter_by(revoked=False).count()
+
+    settings = {}
+    try:
+        rows = db.execute(text(
+            "SELECT key, value FROM settings WHERE key IN "
+            "('backup_nas_path','backup_auto_interval','backup_include_images')"
+        )).fetchall()
+        settings = {r[0]: r[1] for r in rows}
+    except Exception:
+        settings = {}
+
+    cmdb_state_rows = [
+        inv for inv in inventory
+        if getattr(inv, "os_packages", None) or inv.venv_packages or getattr(inv, "software_inventory", None)
+    ]
+    firmware_rows = [inv for inv in inventory if getattr(inv, "firmware_version", None)]
+    backup_complete = []
+    backup_requested = []
+    for device in devices:
+        try:
+            cfg = json.loads(device.device_config or "{}")
+        except Exception:
+            cfg = {}
+        if cfg.get("backup_complete"):
+            backup_complete.append(device.device_id)
+        if cfg.get("backup_requested"):
+            backup_requested.append(device.device_id)
+
+    latest_backup_file = _backup_status.get("file")
+    latest_backup_exists = bool(latest_backup_file and os.path.exists(latest_backup_file))
+    nas_path = settings.get("backup_nas_path")
+    nas_ready = bool(nas_path and os.path.isdir(nas_path))
+
+    controls = [
+        _resilience_control(
+            "pass" if latest_backup_exists else "warning",
+            "Headend database/config backup",
+            f"latest_file={os.path.basename(latest_backup_file) if latest_backup_file else 'none'}",
+            ["ISO27000", "NIS2", "SABSA"],
+            "Run and verify headend backup before approval." if not latest_backup_exists else "",
+        ),
+        _resilience_control(
+            "pass" if nas_ready else "warning",
+            "Off-host backup target",
+            f"backup_nas_path={nas_path or 'not configured'}",
+            ["ISO27000", "NIS2"],
+            "Configure NAS/off-host target and restore test evidence." if not nas_ready else "",
+        ),
+        _resilience_control(
+            "pass" if len(cmdb_state_rows) == len(inventory) and inventory else "fail",
+            "Installed-state CMDB evidence",
+            f"{len(cmdb_state_rows)}/{len(inventory)} inventory rows include package/software state",
+            ["IEC62443", "CRA", "SABSA"],
+            "All nodes must report hardware, firmware, OS packages, venv and software inventory." if len(cmdb_state_rows) < len(inventory) else "",
+        ),
+        _resilience_control(
+            "pass" if len(firmware_rows) == len(inventory) and inventory else "warning",
+            "Firmware inventory",
+            f"{len(firmware_rows)}/{len(inventory)} inventory rows include firmware state",
+            ["IEC62443", "CRA"],
+            "Firmware/bootloader state is needed for bare-metal restore and vulnerability governance." if len(firmware_rows) < len(inventory) else "",
+        ),
+        _resilience_control(
+            "pass" if artifacts else "fail",
+            "Signed update/artifact catalog",
+            f"{artifacts} update artifact(s) registered",
+            ["CRA", "IEC62443", "ISO27000"],
+            "Create signed update/ISO artifact catalog for Headend-driven decisions." if not artifacts else "",
+        ),
+        _resilience_control(
+            "pass" if tickets else "warning",
+            "Signed change workflow",
+            f"{tickets} change ticket(s) registered",
+            ["ISO27000", "NIS2", "SABSA"],
+            "Bind backup, restore, update and ISO decisions to signed change tickets." if not tickets else "",
+        ),
+        _resilience_control(
+            "warning",
+            "Bare-metal edge ISO pipeline",
+            "blueprint defined; image build/sign/verify pipeline not implemented",
+            ["CRA", "IEC62443", "NIS2"],
+            "Build ISO/image generator with hardening profile, call-home bootstrap and signed manifest.",
+        ),
+        _resilience_control(
+            "warning",
+            "Automated restore and rollback tests",
+            f"edge_backup_complete={len(backup_complete)}, edge_backup_requested={len(backup_requested)}",
+            ["NIS2", "ISO27000", "IEC62443"],
+            "Add periodic restore test and rollback test evidence.",
+        ),
+    ]
+
+    counts = {"pass": 0, "warning": 0, "fail": 0}
+    for control in controls:
+        counts[control["status"]] = counts.get(control["status"], 0) + 1
+
+    return {
+        "generated_at": now_utc().isoformat(),
+        "summary": {
+            "devices": len(devices),
+            "inventory_rows": len(inventory),
+            "headend_backup_ready": latest_backup_exists,
+            "nas_ready": nas_ready,
+            "active_bootstrap_tokens": active_tokens,
+            "update_artifacts": artifacts,
+            "change_tickets": tickets,
+            "counts": counts,
+        },
+        "headend_dr": {
+            "latest_backup_file": latest_backup_file,
+            "latest_backup_exists": latest_backup_exists,
+            "nas_path": nas_path,
+            "auto_interval": settings.get("backup_auto_interval", "manual"),
+            "warm_standby_status": "not_configured",
+        },
+        "edge_restore": [
+            {
+                "device_id": inv.device_id,
+                "hardware_model": inv.hardware_model,
+                "firmware_version": getattr(inv, "firmware_version", None),
+                "os_name": inv.os_name,
+                "kernel_version": inv.kernel_version,
+                "app_version": inv.app_version,
+                "package_manager": getattr(inv, "package_manager", None),
+                "has_os_packages": bool(getattr(inv, "os_packages", None)),
+                "has_venv_packages": bool(inv.venv_packages),
+                "has_software_inventory": bool(getattr(inv, "software_inventory", None)),
+                "inventory_reported_at": inv.inventory_reported_at.isoformat() if inv.inventory_reported_at else None,
+                "device_exists": inv.device_id in device_ids,
+            }
+            for inv in inventory
+            if inv.device_id.lower() != "test"
+        ],
+        "iso_blueprint": {
+            "status": "planned",
+            "call_home": "/api/bootstrap with short-lived bootstrap token",
+            "hardening": [
+                "disable password SSH for production profile",
+                "only required users, services and packages",
+                "firewall deny inbound except explicit debug profile",
+                "signed agent, config and artifact verification",
+                "audit logging to SIEM after first contact",
+            ],
+            "required_outputs": [
+                "image file",
+                "sha256",
+                "signed manifest",
+                "SBOM/package inventory",
+                "hardening evidence",
+                "restore/update test evidence",
+            ],
+        },
+        "controls": controls,
+    }
 
 
 @app.post("/api/admin/backup/trigger-edge/{device_id}")

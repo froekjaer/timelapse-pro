@@ -1,9 +1,16 @@
-import { useState, useEffect, useRef } from 'react'
-import { Download, HardDrive, Server, RefreshCw, CheckCircle, AlertCircle, Clock, Wifi, Database } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import {
+  AlertCircle, CheckCircle, Clock, Database, Download, FileCheck,
+  HardDrive, RefreshCw, Server, ShieldCheck, Wifi, Wrench, XCircle
+} from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
-  return fetch(`${getApiUrl()}/api${path}`, { headers: { 'Content-Type': 'application/json' }, ...opts })
+  return fetch(`${getApiUrl()}/api${path}`, {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...(opts?.headers ?? {}) },
+    ...opts,
+  })
 }
 
 interface BackupStatus {
@@ -14,34 +21,110 @@ interface BackupStatus {
   filename: string | null
 }
 
-interface BackupSettings {
-  backup_nas_path: string | null
-  backup_auto_interval: string | null
-  backup_include_images: string | null
+interface ResilienceAssessment {
+  generated_at: string
+  summary: {
+    devices: number
+    inventory_rows: number
+    headend_backup_ready: boolean
+    nas_ready: boolean
+    active_bootstrap_tokens: number
+    update_artifacts: number
+    change_tickets: number
+    counts: Record<string, number>
+  }
+  headend_dr: {
+    latest_backup_file: string | null
+    latest_backup_exists: boolean
+    nas_path: string | null
+    auto_interval: string | null
+    warm_standby_status: string
+  }
+  edge_restore: Array<{
+    device_id: string
+    hardware_model: string | null
+    firmware_version: string | null
+    os_name: string | null
+    kernel_version: string | null
+    app_version: string | null
+    package_manager: string | null
+    has_os_packages: boolean
+    has_venv_packages: boolean
+    has_software_inventory: boolean
+    inventory_reported_at: string | null
+    device_exists: boolean
+  }>
+  iso_blueprint: {
+    status: string
+    call_home: string
+    hardening: string[]
+    required_outputs: string[]
+  }
+  controls: Array<{
+    status: 'pass' | 'warning' | 'fail' | string
+    title: string
+    evidence: string
+    domains: string[]
+    recommendation: string
+  }>
 }
 
+type Tab = 'headend' | 'edge' | 'iso' | 'compliance'
+
+function fmt(iso: string | null) {
+  if (!iso) return '-'
+  return new Date(iso).toLocaleString('da-DK', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  })
+}
+
+function statusStyle(status: string) {
+  if (status === 'pass') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  if (status === 'fail') return 'bg-red-50 text-red-700 border-red-200'
+  return 'bg-amber-50 text-amber-700 border-amber-200'
+}
+
+function StatusIcon({ status }: { status: string }) {
+  if (status === 'pass') return <CheckCircle className="w-4 h-4 text-emerald-500" />
+  if (status === 'fail') return <XCircle className="w-4 h-4 text-red-500" />
+  return <AlertCircle className="w-4 h-4 text-amber-500" />
+}
+
+const tabs: { key: Tab; label: string; icon: any }[] = [
+  { key: 'headend', label: 'Headend DR', icon: Server },
+  { key: 'edge', label: 'Edge restore', icon: HardDrive },
+  { key: 'iso', label: 'Edge ISO', icon: Wrench },
+  { key: 'compliance', label: 'Compliance', icon: ShieldCheck },
+]
+
 export function BackupPage() {
-  const [status, setStatus]       = useState<BackupStatus | null>(null)
-  const [settings, setSettings]   = useState<BackupSettings>({ backup_nas_path: null, backup_auto_interval: 'manual', backup_include_images: 'false' })
-  const [nasPath, setNasPath]     = useState('')
+  const [tab, setTab] = useState<Tab>('headend')
+  const [status, setStatus] = useState<BackupStatus | null>(null)
+  const [assessment, setAssessment] = useState<ResilienceAssessment | null>(null)
+  const [nasPath, setNasPath] = useState('')
   const [autoInterval, setAutoInterval] = useState('manual')
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [triggering, setTriggering] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    loadSettings()
-    loadStatus()
+    loadAll()
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
   }, [])
+
+  async function loadAll() {
+    await Promise.all([loadSettings(), loadStatus(), loadAssessment()])
+  }
 
   async function loadSettings() {
     const r = await api('/admin/backup/settings')
-    if (r.ok) {
-      const d = await r.json()
-      setSettings(d)
-      setNasPath(d.backup_nas_path ?? '')
-      setAutoInterval(d.backup_auto_interval ?? 'manual')
-    }
+    if (!r.ok) return
+    const d = await r.json()
+    setNasPath(d.backup_nas_path ?? '')
+    setAutoInterval(d.backup_auto_interval ?? 'manual')
   }
 
   async function loadStatus() {
@@ -49,9 +132,15 @@ export function BackupPage() {
     if (r.ok) setStatus(await r.json())
   }
 
+  async function loadAssessment() {
+    const r = await api('/admin/resilience/assessment')
+    if (r.ok) setAssessment(await r.json())
+  }
+
   function startPolling() {
     if (pollRef.current) return
     pollRef.current = setInterval(async () => {
+      await loadStatus()
       const r = await api('/admin/backup/status')
       if (r.ok) {
         const d = await r.json()
@@ -59,6 +148,7 @@ export function BackupPage() {
         if (!d.running) {
           clearInterval(pollRef.current!)
           pollRef.current = null
+          loadAssessment()
         }
       }
     }, 1500)
@@ -75,229 +165,285 @@ export function BackupPage() {
   async function saveSettings() {
     await api('/admin/backup/settings', {
       method: 'PUT',
-      body: JSON.stringify({ backup_nas_path: nasPath, backup_auto_interval: autoInterval })
+      body: JSON.stringify({ backup_nas_path: nasPath, backup_auto_interval: autoInterval }),
     })
     setSettingsSaved(true)
     setTimeout(() => setSettingsSaved(false), 2000)
+    loadAssessment()
   }
 
-  async function downloadBackup() {
-    const url = `${getApiUrl()}/api/admin/backup/download`
+  function downloadBackup() {
     const a = document.createElement('a')
-    a.href = url
+    a.href = `${getApiUrl()}/api/admin/backup/download`
     a.download = status?.filename ?? 'timelapse-backup.tar.gz'
     a.click()
   }
 
-  const isRunning = status?.running ?? false
-  const isReady   = status?.ready ?? false
-  const hasError  = !!status?.error
-
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-8">
+    <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className="flex items-center gap-3 mb-6">
         <Database className="w-6 h-6 text-sky-500" />
-        <h1 className="text-2xl font-semibold text-gray-900">Backup</h1>
+        <div className="flex-1">
+          <h1 className="text-2xl font-semibold text-gray-900">Drift & Resilience</h1>
+          <p className="text-sm text-gray-400 mt-0.5">Backup, restore, edge image provisioning og compliance readiness</p>
+        </div>
+        <button onClick={loadAll}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">
+          <RefreshCw className="w-3.5 h-3.5" />
+          Opdater
+        </button>
       </div>
 
-      {/* Backup trigger */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
-        <h2 className="text-sm font-semibold text-gray-700 mb-1">Headend backup</h2>
-        <p className="text-xs text-gray-400 mb-4">
-          Gemmer database, konfiguration og systeminfo fra Mac Mini.
-        </p>
+      {assessment && (
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+          <Metric label="Enheder" value={assessment.summary.devices} />
+          <Metric label="CMDB rows" value={assessment.summary.inventory_rows} />
+          <Metric label="Pass" value={assessment.summary.counts.pass ?? 0} tone="green" />
+          <Metric label="Warnings" value={assessment.summary.counts.warning ?? 0} tone="amber" />
+          <Metric label="Fail" value={assessment.summary.counts.fail ?? 0} tone="red" />
+          <Metric label="Changes" value={assessment.summary.change_tickets} />
+        </div>
+      )}
+
+      <div className="flex gap-1 mb-5 border-b border-gray-200">
+        {tabs.map(({ key, label, icon: Icon }) => (
+          <button key={key} onClick={() => setTab(key)}
+            className={`flex items-center gap-2 px-4 py-2 text-sm border-b-2 transition-colors ${
+              tab === key ? 'border-sky-500 text-sky-700' : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}>
+            <Icon className="w-4 h-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'headend' && (
+        <HeadendDrTab
+          status={status}
+          assessment={assessment}
+          nasPath={nasPath}
+          autoInterval={autoInterval}
+          settingsSaved={settingsSaved}
+          triggering={triggering}
+          setNasPath={setNasPath}
+          setAutoInterval={setAutoInterval}
+          saveSettings={saveSettings}
+          triggerBackup={triggerBackup}
+          downloadBackup={downloadBackup}
+        />
+      )}
+      {tab === 'edge' && <EdgeRestoreTab assessment={assessment} />}
+      {tab === 'iso' && <IsoTab assessment={assessment} />}
+      {tab === 'compliance' && <ComplianceTab assessment={assessment} />}
+    </div>
+  )
+}
+
+function Metric({ label, value, tone = 'gray' }: { label: string; value: string | number; tone?: 'gray' | 'green' | 'amber' | 'red' }) {
+  const colors: Record<string, string> = {
+    gray: 'text-gray-900',
+    green: 'text-emerald-700',
+    amber: 'text-amber-700',
+    red: 'text-red-700',
+  }
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg px-4 py-3">
+      <div className="text-xs text-gray-400">{label}</div>
+      <div className={`text-xl font-semibold mt-1 ${colors[tone]}`}>{value}</div>
+    </div>
+  )
+}
+
+function HeadendDrTab(props: {
+  status: BackupStatus | null
+  assessment: ResilienceAssessment | null
+  nasPath: string
+  autoInterval: string
+  settingsSaved: boolean
+  triggering: boolean
+  setNasPath: (v: string) => void
+  setAutoInterval: (v: string) => void
+  saveSettings: () => void
+  triggerBackup: () => void
+  downloadBackup: () => void
+}) {
+  const isRunning = props.status?.running ?? false
+  const isReady = props.status?.ready ?? false
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-5">
+      <section className="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 className="text-sm font-semibold text-gray-800 mb-1">Headend disaster recovery</h2>
+        <p className="text-xs text-gray-400 mb-4">Database, config, service state og restore-evidens for Mac Mini headend.</p>
         <div className="flex gap-3 flex-wrap">
-          <button onClick={triggerBackup} disabled={isRunning || triggering}
-            className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed">
+          <button onClick={props.triggerBackup} disabled={isRunning || props.triggering}
+            className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
             {isRunning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Server className="w-4 h-4" />}
-            {isRunning ? 'Kører…' : 'Start backup'}
+            {isRunning ? 'Kører...' : 'Start headend backup'}
           </button>
           {isReady && (
-            <button onClick={downloadBackup}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white text-sm rounded-lg hover:bg-emerald-600">
+            <button onClick={props.downloadBackup}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700">
               <Download className="w-4 h-4" />
-              Download til PC ({status?.filename})
+              Download ({props.status?.filename})
             </button>
           )}
         </div>
 
-        {/* Progress log */}
-        {status && status.progress.length > 0 && (
-          <div className="mt-4 bg-gray-50 rounded-lg p-3 font-mono text-xs space-y-1 max-h-48 overflow-y-auto">
-            {status.progress.map((line, i) => (
-              <div key={i} className={`flex items-start gap-2 ${
-                line.startsWith('✅') ? 'text-emerald-600' :
-                line.startsWith('❌') ? 'text-red-500' : 'text-gray-600'
-              }`}>
-                <span className="flex-shrink-0">
-                  {line.startsWith('✅') ? <CheckCircle className="w-3.5 h-3.5 mt-0.5" /> :
-                   line.startsWith('❌') ? <AlertCircle className="w-3.5 h-3.5 mt-0.5" /> :
-                   <Clock className="w-3.5 h-3.5 mt-0.5 opacity-40" />}
-                </span>
+        {props.status && props.status.progress.length > 0 && (
+          <div className="mt-4 bg-gray-50 rounded-lg p-3 font-mono text-xs space-y-1 max-h-56 overflow-y-auto">
+            {props.status.progress.map((line, i) => (
+              <div key={i} className="flex items-start gap-2 text-gray-600">
+                <Clock className="w-3.5 h-3.5 mt-0.5 opacity-50" />
                 {line}
               </div>
             ))}
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Edge backup */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
-        <h2 className="text-sm font-semibold text-gray-700 mb-1">Edge node backup</h2>
-        <p className="text-xs text-gray-400 mb-4">
-          Anmoder Orange Pi om at lave lokal backup af database og konfiguration.
-          Backup downloades herefter via SSH eller gemmes på NAS.
-        </p>
-        <EdgeBackupList />
-      </div>
-
-      {/* NAS indstillinger */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
-        <h2 className="text-sm font-semibold text-gray-700 mb-4">
-          <HardDrive className="w-4 h-4 inline mr-1.5 text-gray-400" />
-          NAS / netværksdrev
-        </h2>
-        <div className="space-y-4">
-          <div>
-            <label className="text-xs text-gray-400 block mb-1">NAS sti (monteret drev)</label>
-            <input type="text"
-              placeholder="/mnt/nas/timelapse-backups  eller  \\\\NAS\backups\timelapse"
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
-              value={nasPath}
-              onChange={e => setNasPath(e.target.value)} />
-            <p className="text-xs text-gray-300 mt-1">
-              Stien skal være monteret på Pi 5. Tom = gem kun lokalt i /tmp.
-            </p>
-          </div>
-          <div>
-            <label className="text-xs text-gray-400 block mb-1">Automatisk backup</label>
-            <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-              value={autoInterval}
-              onChange={e => setAutoInterval(e.target.value)}>
-              <option value="manual">Manuel — kun ved klik</option>
-              <option value="daily">Daglig (kl. 03:30)</option>
-              <option value="weekly">Ugentlig (søndag kl. 03:30)</option>
-            </select>
-          </div>
-          <button onClick={saveSettings}
-            className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600">
-            {settingsSaved ? <CheckCircle className="w-4 h-4" /> : null}
-            {settingsSaved ? 'Gemt!' : 'Gem indstillinger'}
-          </button>
+      <section className="bg-white rounded-xl border border-gray-200 p-6">
+        <h2 className="text-sm font-semibold text-gray-800 mb-4">Off-host target</h2>
+        <label className="text-xs text-gray-400 block mb-1">NAS / backup path</label>
+        <input value={props.nasPath} onChange={e => props.setNasPath(e.target.value)}
+          placeholder="/Volumes/backup/timelapse"
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" />
+        <label className="text-xs text-gray-400 block mt-4 mb-1">Automatisk backup</label>
+        <select value={props.autoInterval} onChange={e => props.setAutoInterval(e.target.value)}
+          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+          <option value="manual">Manuel</option>
+          <option value="daily">Daglig</option>
+          <option value="weekly">Ugentlig</option>
+        </select>
+        <button onClick={props.saveSettings}
+          className="mt-4 flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg">
+          {props.settingsSaved && <CheckCircle className="w-4 h-4" />}
+          {props.settingsSaved ? 'Gemt' : 'Gem'}
+        </button>
+        <div className="mt-4 text-xs text-gray-400">
+          Warm standby: {props.assessment?.headend_dr.warm_standby_status ?? 'ukendt'}
         </div>
-      </div>
+      </section>
+    </div>
+  )
+}
 
-      {/* Hvad gemmes */}
-      <div className="bg-gray-50 rounded-xl border border-gray-200 p-6">
-        <h2 className="text-sm font-semibold text-gray-600 mb-3">Hvad gemmes i backup</h2>
-        <div className="grid grid-cols-2 gap-2 text-xs text-gray-500">
-          {[
-            ['PostgreSQL database', 'Alle enheder, captures, diagnostics'],
-            ['SQL dump', 'Gendannelig tekstversion af DB'],
-            ['Device configs', 'JSON konfiguration per enhed'],
-            ['Systemd services', 'timelapse-headend + deploy'],
-            ['Sudoers regler', 'Kørselsprivilegier'],
-            ['Nginx config', 'Web server konfiguration'],
-            ['Poller script', 'headend_poller.sh'],
-            ['Systeminfo', 'OS, Python, Git version'],
-          ].map(([title, desc]) => (
-            <div key={title} className="flex items-start gap-2 py-1.5 border-b border-gray-100 last:border-0">
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
+function EdgeRestoreTab({ assessment }: { assessment: ResilienceAssessment | null }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100">
+        <h2 className="text-sm font-semibold text-gray-800">Edge restore readiness</h2>
+        <p className="text-xs text-gray-400 mt-0.5">Lokal restore afhænger af CMDB installed-state og Headend-genereret config.</p>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {(assessment?.edge_restore ?? []).map(edge => (
+          <div key={edge.device_id} className="px-5 py-4">
+            <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="font-medium text-gray-600">{title}</div>
-                <div className="text-gray-400">{desc}</div>
+                <div className="text-sm font-semibold text-gray-900 font-mono">{edge.device_id}</div>
+                <div className="text-xs text-gray-400 mt-1">
+                  {[edge.hardware_model, edge.os_name, edge.app_version].filter(Boolean).join(' / ')}
+                </div>
               </div>
+              <span className={`text-xs px-2 py-0.5 rounded border ${edge.device_exists ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                {edge.device_exists ? 'Device linked' : 'CMDB only'}
+              </span>
             </div>
-          ))}
-        </div>
-        <p className="text-xs text-gray-400 mt-3 border-t border-gray-200 pt-3">
-          ⚠️ Passwords og SSH private nøgler gemmes aldrig i backup.
-          Billeder (.jpg) gemmes ikke — de er allerede på NAS via SFTP.
-        </p>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3 text-xs">
+              <Evidence label="Firmware" ok={!!edge.firmware_version} value={edge.firmware_version || '-'} />
+              <Evidence label="OS packages" ok={edge.has_os_packages} value={edge.package_manager || '-'} />
+              <Evidence label="Venv" ok={edge.has_venv_packages} value={edge.has_venv_packages ? 'reported' : '-'} />
+              <Evidence label="Software" ok={edge.has_software_inventory} value={edge.has_software_inventory ? 'reported' : '-'} />
+              <Evidence label="Inventory" ok={!!edge.inventory_reported_at} value={fmt(edge.inventory_reported_at)} />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
 }
 
-function EdgeBackupList() {
-  const [devices, setDevices] = useState<any[]>([])
-  const [triggering, setTriggering] = useState<string | null>(null)
-  const [done, setDone] = useState<string[]>([])
-
-  useEffect(() => {
-    fetch(`${getApiUrl()}/api/admin/devices`)
-      .then(r => r.json())
-      .then(d => setDevices(d.devices ?? d))
-      .catch(() => {})
-  }, [])
-
-  const [edgeStatus, setEdgeStatus] = useState<Record<string, any>>({})
-
-  async function trigger(deviceId: string) {
-    setTriggering(deviceId)
-    await fetch(`${getApiUrl()}/api/admin/backup/trigger-edge/${deviceId}`, { method: 'POST' })
-    setTriggering(null)
-    setDone(p => [...p, deviceId])
-    // Poll edge status
-    let polls = 0
-    const poll = setInterval(async () => {
-      polls++
-      const r = await fetch(`${getApiUrl()}/api/admin/backup/edge-status/${deviceId}`)
-      if (r.ok) {
-        const s = await r.json()
-        setEdgeStatus(prev => ({ ...prev, [deviceId]: s }))
-        if (s.complete || polls > 40) clearInterval(poll)
-      }
-    }, 3000)
-  }
-
-  if (!devices.length) return <p className="text-xs text-gray-400">Ingen enheder fundet.</p>
-
+function Evidence({ label, ok, value }: { label: string; ok: boolean; value: string }) {
   return (
-    <div className="space-y-3">
-      {devices.map((d: any) => {
-        const es = edgeStatus[d.device_id]
-        const isComplete = !!es?.complete
-        return (
-          <div key={d.device_id} className="bg-gray-50 rounded-lg p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm font-medium text-gray-700">{d.camera_name || d.location_name || d.device_id}</div>
-                <div className="text-xs text-gray-400 font-mono">{d.device_id}</div>
-              </div>
-              <button onClick={() => trigger(d.device_id)}
-                disabled={triggering === d.device_id}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50">
-                {triggering === d.device_id ? (
-                  <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Sender…</>
-                ) : done.includes(d.device_id) && !isComplete ? (
-                  <><Clock className="w-3.5 h-3.5" /> Venter på edge…</>
-                ) : (
-                  <><Wifi className="w-3.5 h-3.5" /> Anmod backup</>
-                )}
-              </button>
-            </div>
-            {isComplete && es.complete && (
-              <div className="mt-2 flex items-start gap-2 text-xs text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">
-                <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-medium">Backup komplet</div>
-                  <div className="text-emerald-500 font-mono">{es.complete.filename} ({es.complete.size_kb} KB)</div>
-                  <div className="text-emerald-400 mt-0.5">
-                    Hent: <span className="font-mono">scp orangepi@192.168.86.134:{es.complete.path} .</span>
-                  </div>
-                </div>
-              </div>
-            )}
-            {done.includes(d.device_id) && !isComplete && (
-              <div className="mt-2 text-xs text-gray-400 flex items-center gap-1.5">
-                <RefreshCw className="w-3 h-3 animate-spin" />
-                Backup kører på edge (op til 2 minutter)…
-              </div>
-            )}
+    <div className="border border-gray-100 rounded-lg p-3 bg-gray-50">
+      <div className="flex items-center gap-1.5 text-gray-500">
+        {ok ? <CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> : <AlertCircle className="w-3.5 h-3.5 text-amber-500" />}
+        {label}
+      </div>
+      <div className="text-gray-800 mt-1 truncate">{value}</div>
+    </div>
+  )
+}
+
+function IsoTab({ assessment }: { assessment: ResilienceAssessment | null }) {
+  const blueprint = assessment?.iso_blueprint
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <section className="bg-white border border-gray-200 rounded-xl p-6">
+        <h2 className="text-sm font-semibold text-gray-800 mb-1">Edge ISO / bare-metal image</h2>
+        <p className="text-xs text-gray-400 mb-4">Planlagt pipeline for signerede edge images med call-home bootstrap.</p>
+        <div className="text-xs text-gray-500 mb-4">Call-home: <span className="font-mono text-gray-700">{blueprint?.call_home}</span></div>
+        <button disabled className="px-4 py-2 bg-gray-200 text-gray-500 text-sm rounded-lg cursor-not-allowed">
+          Generer ISO kommer i næste trin
+        </button>
+      </section>
+      <section className="bg-white border border-gray-200 rounded-xl p-6">
+        <h2 className="text-sm font-semibold text-gray-800 mb-3">Hardening og outputkrav</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          <Checklist title="Hardening" items={blueprint?.hardening ?? []} />
+          <Checklist title="Build artifacts" items={blueprint?.required_outputs ?? []} />
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function Checklist({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div>
+      <div className="font-medium text-gray-700 mb-2">{title}</div>
+      <div className="space-y-1.5">
+        {items.map(item => (
+          <div key={item} className="flex items-start gap-2 text-gray-500">
+            <FileCheck className="w-3.5 h-3.5 text-sky-500 mt-0.5 flex-shrink-0" />
+            {item}
           </div>
-        )
-      })}
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ComplianceTab({ assessment }: { assessment: ResilienceAssessment | null }) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100">
+        <h2 className="text-sm font-semibold text-gray-800">Compliance readiness</h2>
+        <p className="text-xs text-gray-400 mt-0.5">SABSA, IEC 62443, ISO 27000, NIS2 og CRA kontroller med evidens.</p>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {(assessment?.controls ?? []).map(control => (
+          <div key={control.title} className="px-5 py-4">
+            <div className="flex items-start gap-3">
+              <StatusIcon status={control.status} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-gray-900">{control.title}</span>
+                  <span className={`text-[11px] px-1.5 py-0.5 rounded border ${statusStyle(control.status)}`}>{control.status}</span>
+                  {control.domains.map(domain => (
+                    <span key={domain} className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 border-gray-200">
+                      {domain}
+                    </span>
+                  ))}
+                </div>
+                <div className="text-xs text-gray-500 mt-1 font-mono">{control.evidence}</div>
+                {control.recommendation && (
+                  <div className="text-xs text-gray-400 mt-1">{control.recommendation}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
