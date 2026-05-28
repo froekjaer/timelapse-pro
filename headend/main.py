@@ -7039,6 +7039,16 @@ def _validate_openwebui_access(request: Request, db: Session) -> User:
     return user
 
 
+def _openwebui_user_email(user: User) -> str:
+    if user.email:
+        return user.email.lower()
+    return f"{user.username}@timelapse.local".lower()
+
+
+def _openwebui_user_role(user: User) -> str:
+    return "admin" if user.role in ("super_admin", "admin") else "user"
+
+
 @app.get("/api/openwebui/access/status")
 def openwebui_access_status(
     request: Request,
@@ -7089,8 +7099,15 @@ def issue_openwebui_access(
 
 @app.get("/api/openwebui/access/check", include_in_schema=False)
 def check_openwebui_access(request: Request, db: Session = Depends(get_db)):
-    _validate_openwebui_access(request, db)
-    return Response(status_code=204)
+    user = _validate_openwebui_access(request, db)
+    return Response(
+        status_code=204,
+        headers={
+            "X-Timelapse-User-Email": _openwebui_user_email(user),
+            "X-Timelapse-User-Name": user.username,
+            "X-Timelapse-User-Role": _openwebui_user_role(user),
+        },
+    )
 
 
 def _openwebui_context(db: Session, area: str = "overview") -> dict:
