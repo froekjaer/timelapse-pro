@@ -3022,8 +3022,21 @@ def _collect_release_outputs(root: Path) -> list[dict]:
         root / "timelapse-ui" / "dist",
     ]
     outputs: list[dict] = []
+
+    def _include_release_file(file_path: Path) -> bool:
+        rel = str(file_path.relative_to(root))
+        if "__pycache__" in file_path.parts:
+            return False
+        if any(ord(ch) < 32 for ch in rel):
+            return False
+        if file_path.name in {".DS_Store", "Icon\r"}:
+            return False
+        return True
+
     for candidate in candidates:
         if candidate.is_file():
+            if not _include_release_file(candidate):
+                continue
             outputs.append({
                 "path": str(candidate.relative_to(root)),
                 "size_bytes": candidate.stat().st_size,
@@ -3031,7 +3044,7 @@ def _collect_release_outputs(root: Path) -> list[dict]:
             })
         elif candidate.is_dir():
             for file_path in sorted(p for p in candidate.rglob("*") if p.is_file()):
-                if "__pycache__" in file_path.parts:
+                if not _include_release_file(file_path):
                     continue
                 outputs.append({
                     "path": str(file_path.relative_to(root)),
