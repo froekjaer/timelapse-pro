@@ -37,6 +37,16 @@ APP_VERSION = "2.8.0"    # Opdateres ved release (TODO: læs fra VERSION-fil)
 GPG_KEY_UID = "timelapse@froekjaer.dk"  # Til fingerprint-opslag
 
 
+def _run(cmd: list[str], timeout: int = 5) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def _cfg_value(config, key: str, default=None):
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
 # ── Hardware-detection ────────────────────────────────────────────────────────
 
 def _detect_hardware_model() -> tuple[str, str]:
@@ -44,6 +54,20 @@ def _detect_hardware_model() -> tuple[str, str]:
     Returnerer (hardware_model, soc_model).
     Eksempel: ("Orange Pi 4 Pro", "RK3588S")
     """
+    if platform.system() == "Darwin":
+        try:
+            model = _run(["sysctl", "-n", "hw.model"], timeout=3).stdout.strip()
+            if model:
+                return model, platform.machine()
+        except Exception:
+            pass
+        try:
+            out = _run(["system_profiler", "SPHardwareDataType"], timeout=10).stdout
+            m = re.search(r"Model Name:\s*(.+)", out)
+            return (m.group(1).strip() if m else "Mac"), platform.machine()
+        except Exception:
+            return "Mac", platform.machine()
+
     try:
         dt = Path("/proc/device-tree/compatible").read_bytes() \
                .replace(b"\x00", b"\n").decode(errors="ignore")
@@ -76,6 +100,20 @@ def _cpu_cores() -> Optional[int]:
 
 
 def _ram_mb() -> Optional[int]:
+    if platform.system() == "Darwin":
+        try:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            if pages and page_size:
+                return int(pages * page_size) // (1024 * 1024)
+        except Exception:
+            pass
+        try:
+            out = _run(["sysctl", "-n", "hw.memsize"], timeout=3).stdout.strip()
+            return int(out) // (1024 * 1024) if out else None
+        except Exception:
+            return None
+
     try:
         info = Path("/proc/meminfo").read_text()
         m = re.search(r"MemTotal:\s+(\d+)\s+kB", info)
@@ -86,6 +124,14 @@ def _ram_mb() -> Optional[int]:
 
 def _serial_number() -> Optional[str]:
     """Henter serienummer fra /proc/cpuinfo (ARM-boards)."""
+    if platform.system() == "Darwin":
+        try:
+            out = _run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], timeout=3).stdout
+            m = re.search(r'"IOPlatformSerialNumber"\s+=\s+"([^"]+)"', out)
+            return m.group(1) if m else None
+        except Exception:
+            return None
+
     try:
         info = Path("/proc/cpuinfo").read_text()
         m = re.search(r"Serial\s*:\s*([0-9a-fA-F]+)", info)
@@ -96,9 +142,7 @@ def _serial_number() -> Optional[str]:
 
 def _primary_mac(interface: str) -> Optional[str]:
     if platform.system() == "Darwin":
-        import subprocess, re
-        out = subprocess.run(["ifconfig", interface],
-                             capture_output=True, text=True).stdout
+        out = _run(["ifconfig", interface], timeout=3).stdout
         m = re.search(r"ether\s+([0-9a-f:]{17})", out)
         return m.group(1) if m else None
     try:
@@ -110,9 +154,7 @@ def _primary_mac(interface: str) -> Optional[str]:
 def _primary_interface() -> str:
     """Finder primær ethernet-interface — platform-aware."""
     if platform.system() == "Darwin":
-        import subprocess
-        out = subprocess.run(["route", "-n", "get", "default"],
-                             capture_output=True, text=True).stdout
+        out = _run(["route", "-n", "get", "default"], timeout=3).stdout
         for line in out.splitlines():
             if "interface:" in line:
                 return line.split()[-1]
@@ -135,12 +177,9 @@ def _wifi_info() -> tuple[bool, Optional[str]]:
     """Returnerer (wifi_capable, ssid_eller_None)."""
     # Tjek om WiFi-interface eksisterer
     if platform.system() == "Darwin":
-        import subprocess
         # Prøv networksetup (virker på alle macOS versioner)
         try:
-            out = subprocess.run(
-                ["networksetup", "-getairportnetwork", "en0"],
-                capture_output=True, text=True, timeout=3).stdout
+            out = _run(["networksetup", "-getairportnetwork", "en0"], timeout=3).stdout
             if "You are not associated" in out:
                 return True, None
             m = re.search(r"Current Wi-Fi Network: (.+)", out)
@@ -182,11 +221,18 @@ def _storage_info(path: str = "/") -> tuple[Optional[str], Optional[float], Opti
         total_gb = usage.total / (1024 ** 3)
         used_pct = (usage.used / usage.total * 100) if usage.total else 0
 
+        if platform.system() == "Darwin":
+            source = ""
+            try:
+                lines = _run(["df", path], timeout=3).stdout.splitlines()
+                source = lines[1].split()[0] if len(lines) > 1 else ""
+            except Exception:
+                pass
+            storage_type = "internal" if "disk" in source else "apfs"
+            return storage_type, round(total_gb, 1), round(used_pct, 1)
+
         # Find enhedsnavn for mount-punkt
-        result = subprocess.run(
-            ["findmnt", "--noheadings", "--output", "SOURCE", path],
-            capture_output=True, text=True, timeout=3
-        )
+        result = _run(["findmnt", "--noheadings", "--output", "SOURCE", path], timeout=3)
         source = result.stdout.strip()
 
         storage_type = "unknown"
@@ -218,16 +264,29 @@ def _storage_info(path: str = "/") -> tuple[Optional[str], Optional[float], Opti
 
 # ── Venv-pakker ───────────────────────────────────────────────────────────────
 
-def _venv_packages() -> dict[str, str]:
+def _venv_packages(config=None) -> dict[str, str]:
     """
     Returnerer dict af installerede venv-pakker: {navn: version}.
     Kører `pip list --format=json` i aktive venv.
     """
     try:
-        result = subprocess.run(
-            ["pip", "list", "--format=json"],
-            capture_output=True, text=True, timeout=10
-        )
+        candidates = []
+        configured = _cfg_value(config, "python_bin") or _cfg_value(config, "venv_python")
+        if configured:
+            candidates.append(Path(configured))
+        candidates.extend([
+            Path("/Users/peter/projects/timelapse-pro/headend/venv/bin/python"),
+            Path("/opt/timelapse-node-agent/venv/bin/python3"),
+        ])
+        which_python = shutil.which("python3")
+        if which_python:
+            candidates.append(Path(which_python))
+        python_bin = next((p for p in candidates if p.exists()), None)
+        cmd = [str(python_bin), "-m", "pip", "list", "--format=json"] if python_bin else ["pip", "list", "--format=json"]
+        result = _run(cmd, timeout=15)
+        if result.returncode != 0:
+            log.debug("venv_packages kommando fejlede: %s", result.stderr[-300:])
+            return {}
         pkgs = json.loads(result.stdout)
         return {p["name"]: p["version"] for p in pkgs}
     except Exception as e:
@@ -240,10 +299,7 @@ def _venv_packages() -> dict[str, str]:
 def _gpg_fingerprint() -> Optional[str]:
     """Henter fingerprint for TimeLapse Pro GPG-nøglen."""
     try:
-        result = subprocess.run(
-            ["gpg", "--list-keys", "--with-colons", GPG_KEY_UID],
-            capture_output=True, text=True, timeout=5
-        )
+        result = _run(["gpg", "--list-keys", "--with-colons", GPG_KEY_UID], timeout=5)
         for line in result.stdout.splitlines():
             if line.startswith("fpr"):
                 return line.split(":")[9]
@@ -264,7 +320,7 @@ def collect_inventory(config: dict) -> dict:
     mac = _primary_mac(iface)
     wifi_cap, wifi_ssid = _wifi_info()
     boot_type, boot_gb, boot_pct = _storage_info("/")
-    data_path = "/data"
+    data_path = "/Volumes/data" if platform.system() == "Darwin" and Path("/Volumes/data").exists() else "/data"
     data_type, data_gb, data_pct = _storage_info(data_path) if Path(data_path).exists() else (None, None, None)
 
     return {
@@ -282,7 +338,7 @@ def collect_inventory(config: dict) -> dict:
         "kernel_version":           platform.release(),
         "python_version":           platform.python_version(),
         "app_version":              APP_VERSION,
-        "venv_packages":            _venv_packages(),
+        "venv_packages":            _venv_packages(config),
 
         # Storage (boot)
         "boot_storage_type":        boot_type,
