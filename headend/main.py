@@ -6154,3 +6154,229 @@ def delete_user(
 from ai.vocabulary_routes import vocab_router; app.include_router(vocab_router)
 
 from ai.review_api import review_router as _rev_router; app.include_router(_rev_router)
+
+
+def _aiops_static_scan() -> dict:
+    """Lightweight read-only SAST snapshot for AI Ops.
+
+    This is intentionally conservative and produces review signals, not proof of
+    vulnerability. It avoids reading generated exports and never returns secret
+    values.
+    """
+    root = _repo_root()
+    patterns = {
+        "hardcoded_secret_terms": ["password=", "api_key=", "secret=", "token="],
+        "shell_execution": ["subprocess.run", "subprocess.check_output", "os.system", "shell=True"],
+        "dangerous_file_ops": ["unlink(", "rmtree(", "chmod 777", "chown "],
+        "legacy_update_paths": ["git pull", "legacy_git_update", "TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE"],
+    }
+    skip_parts = {"dist", "exports", "__pycache__", ".git", "venv", "node_modules"}
+    findings: list[dict] = []
+    scanned = 0
+    for path in root.rglob("*"):
+        if len(findings) >= 80:
+            break
+        if not path.is_file() or path.suffix not in {".py", ".ts", ".tsx", ".js", ".sh", ".sql", ".yaml", ".yml"}:
+            continue
+        if any(part in skip_parts for part in path.parts):
+            continue
+        try:
+            rel = str(path.relative_to(root))
+            text_value = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        scanned += 1
+        for idx, line in enumerate(text_value.splitlines(), start=1):
+            lower = line.lower()
+            for category, needles in patterns.items():
+                if any(n.lower() in lower for n in needles):
+                    snippet = line.strip()
+                    for sensitive in ("password", "api_key", "secret", "token"):
+                        snippet = _re.sub(rf"({sensitive}\s*[=:]\s*)['\"]?[^'\"\s,]+", rf"\1***", snippet, flags=_re.I)
+                    findings.append({
+                        "category": category,
+                        "file": rel,
+                        "line": idx,
+                        "snippet": snippet[:180],
+                    })
+                    break
+            if len(findings) >= 80:
+                break
+    return {"files_scanned": scanned, "findings": findings, "finding_count": len(findings)}
+
+
+def _aiops_snapshot(db: Session) -> dict:
+    device_counts = db.execute(text("""
+        SELECT COALESCE(status, 'unknown') AS status, COUNT(*) AS count
+        FROM devices GROUP BY COALESCE(status, 'unknown') ORDER BY count DESC
+    """)).fetchall()
+    siem_counts = db.execute(text("""
+        SELECT COALESCE(severity, 'unknown') AS severity, COUNT(*) AS count
+        FROM security_events
+        WHERE occurred_at >= now() - interval '24 hours'
+        GROUP BY COALESCE(severity, 'unknown')
+        ORDER BY count DESC
+    """)).fetchall()
+    update_counts = db.execute(text("""
+        SELECT COALESCE(status, 'unknown') AS status, COUNT(*) AS count
+        FROM pending_updates GROUP BY COALESCE(status, 'unknown') ORDER BY count DESC
+    """)).fetchall()
+    latest_critical = db.execute(text("""
+        SELECT device_id, event_type, severity, occurred_at
+        FROM security_events
+        WHERE severity IN ('critical', 'CRITICAL', 'ERROR')
+        ORDER BY occurred_at DESC LIMIT 5
+    """)).fetchall()
+    key_data = list_key_management(_user=object(), db=db)
+    resilience = resilience_assessment(_user=object(), db=db)
+    return {
+        "generated_at": now_utc().isoformat(),
+        "scope": "read_only_aiops_snapshot",
+        "guardrails": {
+            "model_may_write_database": False,
+            "model_may_execute_commands": False,
+            "human_acceptance_required": True,
+            "customer_data_minimized": True,
+        },
+        "cmdb": {
+            "device_count_by_status": {r[0]: r[1] for r in device_counts},
+            "inventory_rows": db.query(DeviceInventory).count(),
+        },
+        "siem": {
+            "last_24h_by_severity": {r[0]: r[1] for r in siem_counts},
+            "latest_critical": [
+                {
+                    "device_id": r[0],
+                    "event_type": r[1],
+                    "severity": r[2],
+                    "occurred_at": r[3].isoformat() if r[3] else None,
+                }
+                for r in latest_critical
+            ],
+        },
+        "updates": {
+            "by_status": {r[0]: r[1] for r in update_counts},
+            "artifact_count": db.query(UpdateArtifact).count(),
+            "change_ticket_count": db.query(ChangeTicket).count(),
+        },
+        "keys": key_data["summary"],
+        "resilience": resilience["summary"],
+        "sast": _aiops_static_scan(),
+    }
+
+
+def _aiops_fallback(snapshot: dict) -> dict:
+    recommendations = []
+    if snapshot["keys"].get("missing_edge_api_key", 0):
+        recommendations.append({
+            "title": "Migrer Edge API credentials",
+            "severity": "high",
+            "domain": ["IEC62443", "ISO27000", "NIS2"],
+            "rationale": f"{snapshot['keys']['missing_edge_api_key']} enheder mangler aktiv key-registry API credential.",
+            "proposed_action": "Udsted og roter Edge API credentials via Nøglehåndtering. Fjern legacy tokens efter agent rollout.",
+            "requires_acceptance": True,
+        })
+    if snapshot["keys"].get("missing_signing_key", 0):
+        recommendations.append({
+            "title": "Udsted Edge signing identities",
+            "severity": "high",
+            "domain": ["CRA", "IEC62443", "ISO27000"],
+            "rationale": "Edge-signaler kan først attesteres stærkt når hver Edge har egen signing key.",
+            "proposed_action": "Registrer public signing key per Edge og aktiver krævet request-signering efter migration.",
+            "requires_acceptance": True,
+        })
+    if snapshot["sast"].get("finding_count", 0):
+        recommendations.append({
+            "title": "Review SAST findings",
+            "severity": "medium",
+            "domain": ["ISO27000", "CRA"],
+            "rationale": f"Den statiske scanner fandt {snapshot['sast']['finding_count']} review-signaler.",
+            "proposed_action": "Gennemgå findings og opret change tickets for reelle sårbarheder.",
+            "requires_acceptance": True,
+        })
+    if not recommendations:
+        recommendations.append({
+            "title": "Ingen kritiske AI Ops fund i baseline",
+            "severity": "low",
+            "domain": ["SABSA", "ISO27000"],
+            "rationale": "Read-only snapshot viser ingen umiddelbar højrisikoindikator.",
+            "proposed_action": "Fortsæt overvågning og kør assessment igen efter næste deployment.",
+            "requires_acceptance": False,
+        })
+    return {
+        "mode": "deterministic_fallback",
+        "summary": "Ollama var ikke tilgængelig eller returnerede ikke gyldigt JSON; anbefalinger er lavet deterministisk fra snapshot.",
+        "risk_level": "high" if any(r["severity"] == "high" for r in recommendations) else "medium",
+        "recommendations": recommendations,
+        "next_checks": ["SAST review", "DAST smoke tests", "Edge signing key rollout", "artifact rollback drill"],
+    }
+
+
+def _call_ollama_text(prompt: str, model: str = "llama3.2:latest") -> dict | None:
+    try:
+        import httpx
+        resp = httpx.post(
+            f"{os.getenv('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/')}/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "options": {"temperature": 0.1, "num_predict": 1800},
+            },
+            timeout=90,
+        )
+        resp.raise_for_status()
+        raw_text = resp.json().get("response", "")
+        match = _re.search(r"(\{.*\})", raw_text, _re.DOTALL)
+        return json.loads(match.group(1) if match else raw_text)
+    except Exception as exc:
+        log.warning("AI Ops Ollama analyse fejlede: %s", exc)
+        return None
+
+
+@app.get("/api/ai/ops/snapshot")
+def aiops_snapshot(
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    return _aiops_snapshot(db)
+
+
+@app.post("/api/ai/ops/analyze")
+def aiops_analyze(
+    payload: dict | None = None,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    snapshot = _aiops_snapshot(db)
+    model = (payload or {}).get("model") or "llama3.2:latest"
+    prompt = f"""
+Du er TimeLapse Pro AI Ops co-pilot. Du må kun analysere read-only data.
+Du må ikke foreslå direkte ændringer uden accept, og du må ikke bede om hemmeligheder.
+Vurder CMDB, SIEM, updates, key management, resilience og SAST-signaler.
+
+Returner KUN JSON:
+{{
+  "mode": "ollama",
+  "summary": "kort dansk status",
+  "risk_level": "low|medium|high|critical",
+  "recommendations": [
+    {{
+      "title": "kort titel",
+      "severity": "low|medium|high|critical",
+      "domain": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+      "rationale": "hvorfor",
+      "proposed_action": "hvad bør vi gøre",
+      "requires_acceptance": true
+    }}
+  ],
+  "next_checks": ["SAST/DAST/pentest/check"]
+}}
+
+SNAPSHOT:
+{json.dumps(snapshot, ensure_ascii=False)[:24000]}
+"""
+    analysis = _call_ollama_text(prompt, model=model) or _aiops_fallback(snapshot)
+    if not isinstance(analysis, dict) or "recommendations" not in analysis:
+        analysis = _aiops_fallback(snapshot)
+    return {"snapshot": snapshot, "analysis": analysis}

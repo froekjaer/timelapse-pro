@@ -10,7 +10,7 @@ import {
   Brain, Settings2, Tags, AlertTriangle, CalendarCheck,
   BarChart3, CheckCircle, XCircle, ChevronDown, ChevronUp,
   Cloud, Cpu, Zap, RefreshCw, Send, Eye, ThumbsUp, ThumbsDown,
-  TrendingUp, Layers, SlidersHorizontal, Info
+  TrendingUp, Layers, SlidersHorizontal, Info, ShieldCheck, Database, Server
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
@@ -160,6 +160,7 @@ const TABS = [
   { id: 'strategy',   label: 'Strategi',       icon: SlidersHorizontal },
   { id: 'tags',       label: 'Tag Review',      icon: Tags },
   { id: 'cleanup',    label: 'Tag Oprydning',   icon: Layers },
+  { id: 'aiops',      label: 'AI Ops',           icon: ShieldCheck },
   { id: 'escalation', label: 'Eskalering',      icon: AlertTriangle },
   { id: 'review',     label: 'Daglig Review',   icon: CalendarCheck },
   { id: 'stats',      label: 'Statistik',       icon: BarChart3 },
@@ -202,10 +203,205 @@ export default function AIPage() {
         {tab === 'strategy'   && <StrategyTab />}
         {tab === 'tags'       && <TagReviewTab />}
         {tab === 'cleanup'    && <TagCleanupTab />}
+        {tab === 'aiops'      && <AIOpsTab />}
         {tab === 'escalation' && <EscalationTab />}
         {tab === 'review'     && <DailyReviewTab />}
         {tab === 'stats'      && <StatsTab />}
       </div>
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// AI OPS TAB
+// ═════════════════════════════════════════════════════════════════════════
+
+interface AIOpsRecommendation {
+  title: string
+  severity: string
+  domain: string[]
+  rationale: string
+  proposed_action: string
+  requires_acceptance: boolean
+}
+
+interface AIOpsAnalysis {
+  mode: string
+  summary: string
+  risk_level: string
+  recommendations: AIOpsRecommendation[]
+  next_checks: string[]
+}
+
+interface AIOpsSnapshot {
+  generated_at: string
+  guardrails: Record<string, boolean>
+  cmdb: { device_count_by_status: Record<string, number>; inventory_rows: number }
+  siem: { last_24h_by_severity: Record<string, number>; latest_critical: unknown[] }
+  updates: { by_status: Record<string, number>; artifact_count: number; change_ticket_count: number }
+  keys: Record<string, number>
+  resilience: { counts?: Record<string, number>; devices?: number; change_tickets?: number }
+  sast: { files_scanned: number; finding_count: number; findings: { category: string; file: string; line: number; snippet: string }[] }
+}
+
+function severityClass(level: string) {
+  const map: Record<string, string> = {
+    critical: 'bg-red-600 text-white border-red-500',
+    high: 'bg-red-950 text-red-200 border-red-800',
+    medium: 'bg-amber-950 text-amber-200 border-amber-800',
+    low: 'bg-emerald-950 text-emerald-200 border-emerald-800',
+  }
+  return map[level] ?? 'bg-slate-800 text-slate-300 border-white/10'
+}
+
+function MiniMetric({ label, value, icon: Icon }: { label: string; value: number | string; icon: React.ElementType }) {
+  return (
+    <div className="bg-gray-900 border border-white/8 rounded-xl p-4">
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <Icon className="w-4 h-4" />
+        {label}
+      </div>
+      <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
+    </div>
+  )
+}
+
+function AIOpsTab() {
+  const [snapshot, setSnapshot] = useState<AIOpsSnapshot | null>(null)
+  const [analysis, setAnalysis] = useState<AIOpsAnalysis | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadSnapshot = useCallback(async () => {
+    setError(null)
+    setLoading(true)
+    try {
+      setSnapshot(await api('/api/ai/ops/snapshot'))
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Kunne ikke hente AI Ops snapshot')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadSnapshot() }, [loadSnapshot])
+
+  const runAnalysis = async () => {
+    setError(null)
+    setLoading(true)
+    try {
+      const data = await api('/api/ai/ops/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'llama3.2:latest' }),
+      })
+      setSnapshot(data.snapshot)
+      setAnalysis(data.analysis)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'AI Ops analyse fejlede')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-violet-950/40 border border-violet-800/30 rounded-xl p-4 flex gap-3">
+        <ShieldCheck className="w-4 h-4 text-violet-400 mt-0.5 shrink-0" />
+        <div className="text-sm text-slate-300 space-y-1">
+          <p>AI Ops bruger Ollama som read-only co-pilot på CMDB, SIEM, updates, key management, resilience og SAST-signaler.</p>
+          <p className="text-slate-400 text-xs">Modellen må ikke ændre database, køre kommandoer eller remediate uden menneskelig accept. Forslag skal videre som change tickets eller manuelle beslutninger.</p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-red-950/40 border border-red-800/40 text-red-200 rounded-xl px-4 py-3 text-sm">
+          {error}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <button onClick={runAnalysis} disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-sm font-medium">
+          <Brain className="w-4 h-4" />
+          Kør Ollama AI Ops analyse
+        </button>
+        <button onClick={loadSnapshot} disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-900 border border-white/10 hover:bg-white/5 disabled:opacity-50 text-sm text-slate-300">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          Opdater snapshot
+        </button>
+        {snapshot && <span className="text-xs text-slate-500">Snapshot: {new Date(snapshot.generated_at).toLocaleString('da-DK')}</span>}
+      </div>
+
+      {snapshot && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <MiniMetric label="CMDB enheder" value={Object.values(snapshot.cmdb.device_count_by_status || {}).reduce((a, b) => a + b, 0)} icon={Server} />
+          <MiniMetric label="SIEM 24h events" value={Object.values(snapshot.siem.last_24h_by_severity || {}).reduce((a, b) => a + b, 0)} icon={AlertTriangle} />
+          <MiniMetric label="Updates" value={Object.values(snapshot.updates.by_status || {}).reduce((a, b) => a + b, 0)} icon={RefreshCw} />
+          <MiniMetric label="SAST findings" value={snapshot.sast.finding_count} icon={Database} />
+        </div>
+      )}
+
+      {analysis && (
+        <div className="bg-gray-900 border border-white/8 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/8 flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-white">AI Ops vurdering</h2>
+                <span className={`text-[11px] px-2 py-0.5 rounded border ${severityClass(analysis.risk_level)}`}>{analysis.risk_level}</span>
+                <span className="text-[11px] px-2 py-0.5 rounded border border-white/10 text-slate-400">{analysis.mode}</span>
+              </div>
+              <p className="text-sm text-slate-300 mt-2">{analysis.summary}</p>
+            </div>
+          </div>
+
+          <div className="divide-y divide-white/6">
+            {analysis.recommendations.map((rec, idx) => (
+              <div key={`${rec.title}-${idx}`} className="p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-sm font-semibold text-white">{rec.title}</h3>
+                      <span className={`text-[11px] px-2 py-0.5 rounded border ${severityClass(rec.severity)}`}>{rec.severity}</span>
+                      {rec.requires_acceptance && (
+                        <span className="text-[11px] px-2 py-0.5 rounded border border-amber-700 bg-amber-950 text-amber-200">kræver accept</span>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-400 mt-2">{rec.rationale}</p>
+                    <p className="text-sm text-slate-200 mt-2">{rec.proposed_action}</p>
+                    <div className="mt-3 flex gap-1 flex-wrap">
+                      {rec.domain.map(d => (
+                        <span key={d} className="text-[11px] px-1.5 py-0.5 rounded border border-white/10 bg-black/20 text-slate-400">{d}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {snapshot?.sast.findings.length ? (
+        <div className="bg-gray-900 border border-white/8 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-white/8">
+            <h2 className="text-sm font-semibold text-white">SAST review-signaler</h2>
+            <p className="text-xs text-slate-500 mt-1">Read-only heuristik. Fund skal vurderes før change ticket.</p>
+          </div>
+          <div className="divide-y divide-white/6 max-h-96 overflow-auto">
+            {snapshot.sast.findings.slice(0, 25).map((f, idx) => (
+              <div key={`${f.file}-${f.line}-${idx}`} className="px-5 py-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-violet-300">{f.category}</span>
+                  <span className="text-slate-500 font-mono">{f.file}:{f.line}</span>
+                </div>
+                <code className="block mt-1 text-slate-400 whitespace-pre-wrap">{f.snippet}</code>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
