@@ -3,8 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Brain, Camera, Settings, Database, Globe, LogOut,
   Shield, Users, Key, Terminal, Package, Server,
-  ChevronDown, ClipboardCheck, Upload
-, Tag} from 'lucide-react'
+  ChevronDown, ClipboardCheck, Upload, Bot, Tag,
+} from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export function Navbar() {
@@ -31,6 +31,7 @@ export function Navbar() {
     { to: '/tags',         label: 'Tag søgning',   icon: Tag },
     { to: '/settings',     label: 'Indstillinger', icon: Settings },
     { to: '/ai',           label: 'AI Styring',    icon: Brain },
+    { to: '/openwebui',    label: 'Open WebUI',    icon: Bot },
     { to: '/compliance',   label: 'Compliance',    icon: ClipboardCheck },
   ]
 

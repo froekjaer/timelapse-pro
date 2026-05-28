@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -76,6 +76,9 @@ JWT_SECRET    = os.getenv("JWT_SECRET", _secrets.token_hex(32))
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_H  = 12   # access token levetid
 COOKIE_NAME   = "tl_session"
+OPENWEBUI_COOKIE_NAME = "tl_openwebui_access"
+OPENWEBUI_COOKIE_DOMAIN = os.getenv("OPENWEBUI_COOKIE_DOMAIN", ".froekjaer.dk")
+OPENWEBUI_PUBLIC_URL = os.getenv("OPENWEBUI_PUBLIC_URL", "https://openwebui.froekjaer.dk/")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"
 def ensure_utc(dt):
     if dt is None: return None
@@ -303,6 +306,48 @@ def _decode_token(token: str) -> dict | None:
         return _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError:
         return None
+
+def _cookie_header(name: str, value: str, max_age: int, *, domain: str | None = None) -> str:
+    parts = [
+        f"{name}={value}",
+        "Path=/",
+        "HttpOnly",
+        "SameSite=Lax",
+        f"Max-Age={max_age}",
+    ]
+    if domain:
+        parts.append(f"Domain={domain}")
+    if COOKIE_SECURE:
+        parts.append("Secure")
+    return "; ".join(parts)
+
+def _delete_cookie_header(name: str, *, domain: str | None = None) -> str:
+    parts = [
+        f"{name}=",
+        "Path=/",
+        "HttpOnly",
+        "Max-Age=0",
+        "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    ]
+    if domain:
+        parts.append(f"Domain={domain}")
+    if COOKIE_SECURE:
+        parts.append("Secure")
+    return "; ".join(parts)
+
+def _session_payload(request: Request) -> dict | None:
+    token = request.cookies.get(COOKIE_NAME)
+    return _decode_token(token) if token else None
+
+def _session_is_mfa_verified(payload: dict | None) -> bool:
+    if not payload:
+        return False
+    if payload.get("mfa_verified") is True:
+        return True
+    amr = payload.get("amr") or []
+    if isinstance(amr, str):
+        amr = [amr]
+    return bool({"totp", "webauthn", "passkey", "fido2"}.intersection(set(amr)))
 
 def _ensure_super_admin(db):
     """Opretter standard super_admin hvis ingen brugere findes."""
@@ -571,16 +616,17 @@ def webauthn_login_complete(payload: dict, db: Session = Depends(get_db)):
     db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").delete()
     db.commit()
 
-    session_token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id})
+    session_token = _create_token({
+        "sub": user.username,
+        "role": user.role,
+        "cid": user.customer_id,
+        "amr": ["webauthn"],
+        "mfa_verified": True,
+    })
     log.info("WebAuthn login OK: %s", user.username)
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={"ok": True, "role": user.role, "username": user.username, "customer_id": user.customer_id})
-    cookie_val = (
-        f"{COOKIE_NAME}={session_token}; Path=/; HttpOnly; SameSite=Lax;"
-        f" Max-Age={JWT_EXPIRE_H * 3600}"
-        + ("; Secure" if COOKIE_SECURE else "")
-    )
-    _resp.headers.append("Set-Cookie", cookie_val)
+    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, JWT_EXPIRE_H * 3600))
     return _resp
 
 @app.get("/api/auth/webauthn/credentials")
@@ -687,16 +733,17 @@ def verify_mfa(payload: dict, db: Session = Depends(get_db)):
     totp = pyotp.TOTP(user.totp_secret)
     if not totp.verify(code, valid_window=1):
         raise HTTPException(status_code=400, detail="Forkert kode")
-    session_token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id})
+    session_token = _create_token({
+        "sub": user.username,
+        "role": user.role,
+        "cid": user.customer_id,
+        "amr": ["password", "totp"],
+        "mfa_verified": True,
+    })
     log.info("MFA login OK: %s", user.username)
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={"ok": True, "role": user.role, "username": user.username, "customer_id": user.customer_id})
-    cookie_val = (
-        f"{COOKIE_NAME}={session_token}; Path=/; HttpOnly; SameSite=Lax;"
-        f" Max-Age={JWT_EXPIRE_H * 3600}"
-        + ("; Secure" if COOKIE_SECURE else "")
-    )
-    _resp.headers.append("Set-Cookie", cookie_val)
+    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, JWT_EXPIRE_H * 3600))
     return _resp
 
 # ── Auth models ───────────────────────────────────────────────────────────
@@ -751,8 +798,6 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         mfa_token = _create_token({"sub": user.username, "type": "mfa_pending"}, expire_hours=5/60)
         log.info("Login MFA påkrævet: %s", user.username)
         return {"mfa_required": True, "mfa_token": mfa_token}
-    max_age = 12 * 3600  # default fallback
-    token = _create_token({"sub": user.username, "role": user.role, "cid": user.customer_id, "max_age": max_age})
     log.info("Login: %s (%s)", user.username, user.role)
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={
@@ -775,12 +820,15 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         max_age = remember_me_days * 24 * 3600
     else:
         max_age = session_duration_hours * 3600
-    cookie_val = (
-        f"{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax;"
-        f" Max-Age={max_age}"
-        + ("; Secure" if COOKIE_SECURE else "")
-    )
-    _resp.headers.append("Set-Cookie", cookie_val)
+    token = _create_token({
+        "sub": user.username,
+        "role": user.role,
+        "cid": user.customer_id,
+        "max_age": max_age,
+        "amr": ["password"],
+        "mfa_verified": False,
+    })
+    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, token, max_age))
     return _resp
 
 @app.post("/api/auth/logout")
@@ -788,7 +836,8 @@ def logout():
     """Logout — ryd session cookie."""
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={"ok": True})
-    _resp.headers.append("Set-Cookie", f"{COOKIE_NAME}=; Path=/; HttpOnly; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT")
+    _resp.headers.append("Set-Cookie", _delete_cookie_header(COOKIE_NAME))
+    _resp.headers.append("Set-Cookie", _delete_cookie_header(OPENWEBUI_COOKIE_NAME, domain=OPENWEBUI_COOKIE_DOMAIN))
     return _resp
 
 @app.post("/api/auth/change-password")
@@ -827,14 +876,16 @@ def me(request: Request, current_user=Depends(get_current_user)):
         token = existing
         payload_data = _decode_token(token)
         max_age = payload_data.get("max_age", JWT_EXPIRE_H * 3600) if payload_data else JWT_EXPIRE_H * 3600
-        new_token = _create_token({"sub": current_user.username, "role": current_user.role, "cid": current_user.customer_id, "max_age": max_age})
+        new_token = _create_token({
+            "sub": current_user.username,
+            "role": current_user.role,
+            "cid": current_user.customer_id,
+            "max_age": max_age,
+            "amr": payload_data.get("amr", ["password"]) if payload_data else ["password"],
+            "mfa_verified": _session_is_mfa_verified(payload_data),
+        })
         resp = _JR(content=data)
-        cookie_val = (
-            f"{COOKIE_NAME}={new_token}; Path=/; HttpOnly; SameSite=Lax;"
-            f" Max-Age={max_age}"
-            + ("; Secure" if COOKIE_SECURE else "")
-        )
-        resp.headers.append("Set-Cookie", cookie_val)
+        resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, new_token, max_age))
         return resp
     return data
 
@@ -6968,6 +7019,78 @@ def _require_openwebui_loopback(request: Request) -> None:
     allowed = {"127.0.0.1", "::1", "localhost"}
     if client_host not in allowed or forwarded_for:
         raise HTTPException(status_code=403, detail="Open WebUI tool access is only allowed from Headend loopback")
+
+
+def _validate_openwebui_access(request: Request, db: Session) -> User:
+    token = request.cookies.get(OPENWEBUI_COOKIE_NAME)
+    payload = _decode_token(token) if token else None
+    if (
+        not payload
+        or payload.get("type") != "openwebui_access"
+        or payload.get("target") != "openwebui"
+        or not _session_is_mfa_verified(payload)
+    ):
+        raise HTTPException(status_code=401, detail="Open WebUI requires MFA-authenticated TimeLapse access")
+    user = db.query(User).filter_by(username=payload.get("sub"), is_active=True).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not active")
+    if user.role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="Open WebUI requires admin role")
+    return user
+
+
+@app.get("/api/openwebui/access/status")
+def openwebui_access_status(
+    request: Request,
+    current_user=require_role("super_admin", "admin"),
+):
+    payload = _session_payload(request)
+    mfa_verified = _session_is_mfa_verified(payload)
+    return {
+        "enabled": True,
+        "url": OPENWEBUI_PUBLIC_URL,
+        "allowed": bool(mfa_verified),
+        "mfa_verified": bool(mfa_verified),
+        "required_role": ["super_admin", "admin"],
+        "expires_minutes": 30,
+        "message": "Open WebUI kræver en MFA-verificeret TimeLapse Pro session.",
+    }
+
+
+@app.post("/api/openwebui/access/issue")
+def issue_openwebui_access(
+    request: Request,
+    current_user=require_role("super_admin", "admin"),
+):
+    payload = _session_payload(request)
+    if not _session_is_mfa_verified(payload):
+        raise HTTPException(status_code=403, detail="Open WebUI kræver MFA-verificeret login")
+    max_age = 30 * 60
+    access_token = _create_token({
+        "type": "openwebui_access",
+        "target": "openwebui",
+        "sub": current_user.username,
+        "role": current_user.role,
+        "amr": payload.get("amr", ["mfa"]) if payload else ["mfa"],
+        "mfa_verified": True,
+    }, expire_hours=0.5)
+    resp = JSONResponse(content={
+        "ok": True,
+        "url": OPENWEBUI_PUBLIC_URL,
+        "expires_seconds": max_age,
+    })
+    resp.headers.append(
+        "Set-Cookie",
+        _cookie_header(OPENWEBUI_COOKIE_NAME, access_token, max_age, domain=OPENWEBUI_COOKIE_DOMAIN),
+    )
+    log.info("Open WebUI access issued to %s (%s) via MFA-authenticated TimeLapse session", current_user.username, current_user.role)
+    return resp
+
+
+@app.get("/api/openwebui/access/check", include_in_schema=False)
+def check_openwebui_access(request: Request, db: Session = Depends(get_db)):
+    _validate_openwebui_access(request, db)
+    return Response(status_code=204)
 
 
 def _openwebui_context(db: Session, area: str = "overview") -> dict:

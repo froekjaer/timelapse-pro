@@ -30,6 +30,7 @@ import { CMDBPage, CMDBDetailPage } from './pages/CMDBPage'
 import { SIEMPage } from './pages/SIEMPage'
 import { ImportPage } from './pages/ImportPage'
 import AIPage from './pages/AIPage'
+import OpenWebUIPage from './pages/OpenWebUIPage'
 
 
 function RequireAuth({ children }: { children: ReactElement }) {
@@ -81,6 +82,7 @@ function AppRoutes() {
         <Route path="/import" element={<ImportPage />} />
         <Route path="/cmdb/:deviceId" element={<CMDBDetailPage />} />
         <Route path="/ai" element={<AIPage />} />
+        <Route path="/openwebui" element={<OpenWebUIPage />} />
               </Routes>
             </main>
           </div>
