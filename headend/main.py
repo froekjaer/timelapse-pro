@@ -3013,6 +3013,12 @@ def _collect_release_outputs(root: Path) -> list[dict]:
     candidates = [
         root / "headend" / "main.py",
         root / "headend" / "database.py",
+        root / "edge" / "agent.py",
+        root / "edge" / "security.py",
+        root / "edge" / "requirements.txt",
+        root / "edge" / "config",
+        root / "edge" / "upload",
+        root / "edge" / "update",
         root / "timelapse-ui" / "dist",
     ]
     outputs: list[dict] = []
@@ -3025,6 +3031,8 @@ def _collect_release_outputs(root: Path) -> list[dict]:
             })
         elif candidate.is_dir():
             for file_path in sorted(p for p in candidate.rglob("*") if p.is_file()):
+                if "__pycache__" in file_path.parts:
+                    continue
                 outputs.append({
                     "path": str(file_path.relative_to(root)),
                     "size_bytes": file_path.stat().st_size,
@@ -3068,6 +3076,50 @@ def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> d
         "signed_at": artifact.signed_at.isoformat() if artifact.signed_at else None,
         "signer_fingerprint": signer_fingerprint,
     }
+
+
+@app.get("/api/updates/artifacts/{artifact_id}/files/{file_path:path}")
+def download_update_artifact_file(
+    artifact_id: str,
+    file_path: str,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
+    """Edge henter kun filer, som er bundet i det signerede artifact-manifest."""
+    artifact = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
+    if not artifact or not artifact.manifest_json:
+        raise HTTPException(status_code=404, detail="Artifact ikke fundet")
+    normalized = str(Path(file_path))
+    if normalized.startswith("../") or normalized.startswith("/") or "/../" in normalized:
+        raise HTTPException(status_code=400, detail="Ugyldig artifact path")
+    manifest = json.loads(artifact.manifest_json)
+    outputs = {
+        str(item.get("path")): item
+        for item in manifest.get("outputs", [])
+        if isinstance(item, dict) and item.get("path")
+    }
+    expected = outputs.get(normalized)
+    if not expected:
+        raise HTTPException(status_code=404, detail="Fil er ikke del af artifact manifest")
+    root = Path(artifact.storage_path or _repo_root()).resolve()
+    full_path = (root / normalized).resolve()
+    if root not in full_path.parents and full_path != root:
+        raise HTTPException(status_code=400, detail="Artifact path udenfor storage root")
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Artifact fil mangler på Headend")
+    actual_sha = _file_sha256(full_path)
+    if actual_sha != expected.get("sha256"):
+        raise HTTPException(status_code=409, detail="Artifact fil matcher ikke manifest SHA-256")
+    return FileResponse(
+        str(full_path),
+        media_type="application/octet-stream",
+        filename=Path(normalized).name,
+        headers={
+            "X-TLP-Artifact-Id": artifact_id,
+            "X-TLP-Artifact-Path": normalized,
+            "X-TLP-Artifact-Sha256": actual_sha,
+        },
+    )
 
 
 @app.get("/api/updates/artifacts")

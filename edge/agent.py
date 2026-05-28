@@ -859,13 +859,13 @@ class EdgeAgent:
                         })
                         return
                     log.info("Udfører opdatering %d: %s", uid, utype)
-                    self._run_update(uid, utype)
+                    self._run_update(uid, utype, update.get("artifact"))
                     return  # Ét ad gangen
 
         except Exception as e:
             log.warning("Update-check fejl: %s", e, exc_info=True)
 
-    def _run_update(self, update_id: int, update_type: str) -> None:
+    def _run_update(self, update_id: int, update_type: str, artifact: dict | None = None) -> None:
         """Kør opdatering baseret på type og rapportér resultat."""
         import subprocess as _sp, os as _os
 
@@ -882,6 +882,9 @@ class EdgeAgent:
                 capture_output=True, text=True, timeout=600, env=env
             )
         else:
+            if artifact:
+                self._run_artifact_app_update(update_id, artifact)
+                return
             if _os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") != "1":
                 log.warning("App update %d afvist: legacy git update er slået fra", update_id)
                 self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
@@ -901,6 +904,85 @@ class EdgeAgent:
         else:
             log.warning("Opdatering %d fejlede (rc=%d)\n%s", update_id, result.returncode, result.stderr[-300:])
             self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+
+    def _run_artifact_app_update(self, update_id: int, artifact: dict) -> None:
+        """Installér app-opdatering fra Headend-signeret artifact uden GitHub adgang."""
+        import hashlib as _hashlib
+        import os as _os
+        import shutil as _shutil
+        import subprocess as _sp
+        import tempfile as _tempfile
+
+        artifact_id = artifact.get("artifact_id")
+        manifest = artifact.get("manifest") if isinstance(artifact.get("manifest"), dict) else {}
+        outputs = [
+            item for item in manifest.get("outputs", [])
+            if isinstance(item, dict) and str(item.get("path", "")).startswith("edge/")
+        ]
+        if not artifact_id or not outputs:
+            log.warning("App update %d mangler edge artifact outputs", update_id)
+            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            return
+
+        repo = Path("/opt/timelapse")
+        staging = Path(_tempfile.mkdtemp(prefix="tlp-artifact-", dir="/tmp"))
+        backup = repo / "prev"
+        try:
+            log.info("App update %d: henter %d edge-filer fra artifact %s", update_id, len(outputs), artifact_id)
+            for item in outputs:
+                rel = str(item["path"])
+                if rel.startswith("/") or ".." in Path(rel).parts:
+                    raise RuntimeError(f"unsafe artifact path: {rel}")
+                ok, content = self._api.download_artifact_file(artifact_id, rel)
+                if not ok or content is None:
+                    raise RuntimeError(f"download failed: {rel}")
+                actual = _hashlib.sha256(content).hexdigest()
+                if actual != item.get("sha256"):
+                    raise RuntimeError(f"sha256 mismatch: {rel}")
+                dest = staging / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(content)
+
+            if backup.exists():
+                _shutil.rmtree(backup)
+            for item in outputs:
+                rel = Path(str(item["path"]))
+                source = repo / rel
+                if source.exists():
+                    backup_dest = backup / rel
+                    backup_dest.parent.mkdir(parents=True, exist_ok=True)
+                    _shutil.copy2(source, backup_dest)
+
+            for item in outputs:
+                rel = Path(str(item["path"]))
+                source = staging / rel
+                dest = repo / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                _shutil.copy2(source, dest)
+                if dest.suffix == ".sh":
+                    dest.chmod(dest.stat().st_mode | 0o111)
+
+            self._api._post("/updates/report", {"update_id": update_id, "status": "deployed"})
+            log.info("App update %d installeret fra signeret artifact — genstarter agent", update_id)
+            _sp.Popen(["systemctl", "restart", "timelapse-edge"])
+        except Exception as exc:
+            log.warning("App artifact update %d fejlede: %s", update_id, exc)
+            try:
+                if backup.exists():
+                    for source in backup.rglob("*"):
+                        if source.is_file():
+                            rel = source.relative_to(backup)
+                            dest = repo / rel
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            _shutil.copy2(source, dest)
+            except Exception as rollback_exc:
+                log.warning("Rollback efter app artifact update fejlede: %s", rollback_exc)
+            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+        finally:
+            try:
+                _shutil.rmtree(staging)
+            except Exception:
+                pass
 
     def _run_rollback(self, update_id: int) -> None:
         """Tving rollback til forrige version."""
