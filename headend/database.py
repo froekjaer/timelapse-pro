@@ -380,6 +380,50 @@ class UpdateTarget(Base):
     report_json        = Column(Text)
 
 
+class KeyCredential(Base):
+    """Lifecycle-styret credential til Headend, Edge, SSH, API og signing."""
+    __tablename__ = "key_credentials"
+
+    id                 = Column(Integer, primary_key=True)
+    credential_id      = Column(String(80), unique=True, nullable=False, index=True)
+    entity_type        = Column(String(30), nullable=False, index=True)   # headend|edge|user|service
+    entity_id          = Column(String(100), nullable=False, index=True)  # CMDB/device/user ref
+    key_type           = Column(String(30), nullable=False, index=True)   # api|ssh|signing|bootstrap
+    label              = Column(String(200))
+    status             = Column(String(30), default="active", index=True) # active|revoked|expired|rotated
+    scopes_json        = Column(Text)
+    public_key         = Column(Text)
+    fingerprint        = Column(String(128), index=True)
+    secret_hash        = Column(String(128), index=True)
+    algorithm          = Column(String(50))
+    compliance_domains = Column(String(200), default="SABSA,IEC62443,ISO27000,NIS2,CRA")
+    created_by         = Column(String(100))
+    created_at         = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    expires_at         = Column(DateTime, index=True)
+    last_used_at       = Column(DateTime)
+    last_used_from     = Column(String(100))
+    use_count          = Column(Integer, default=0)
+    revoked_at         = Column(DateTime)
+    revoked_by         = Column(String(100))
+    revoke_reason      = Column(Text)
+    rotated_from_id    = Column(String(80), index=True)
+    metadata_json      = Column(Text)
+
+
+class KeyAuditEvent(Base):
+    """Auditspor for nøglelivscyklus og compliance-evidens."""
+    __tablename__ = "key_audit_events"
+
+    id                 = Column(Integer, primary_key=True)
+    credential_id      = Column(String(80), index=True)
+    event_type         = Column(String(50), nullable=False, index=True)
+    actor              = Column(String(100))
+    entity_type        = Column(String(30), index=True)
+    entity_id          = Column(String(100), index=True)
+    details_json       = Column(Text)
+    occurred_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class WebAuthnCredential(Base):
     """FIDO2/WebAuthn credentials — Windows Hello, Touch ID, Face ID."""
     __tablename__ = "webauthn_credentials"

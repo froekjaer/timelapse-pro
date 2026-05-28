@@ -41,6 +41,7 @@ import json
 import logging
 #import os
 import hashlib
+import hmac
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -87,7 +88,8 @@ from database import (
     BootstrapToken,
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
     Capture, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
-    DeviceInventory, Diagnostic, Event, PendingUpdate, Settings, Site, SshTunnelLog, User,
+    DeviceInventory, Diagnostic, Event, KeyAuditEvent, KeyCredential,
+    PendingUpdate, Settings, Site, SshTunnelLog, User,
     create_tables, get_db, now_utc
 )
 import uuid as _uuid
@@ -967,6 +969,34 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     device.api_token  = api_token
     device.last_seen  = now_utc()
     device.status     = "online"
+    for old in db.query(KeyCredential).filter_by(
+        entity_type="edge",
+        entity_id=req.device_id,
+        key_type="api",
+        status="active",
+    ).all():
+        old.status = "rotated"
+        old.revoked_at = now_utc()
+        old.revoked_by = "bootstrap"
+        old.revoke_reason = "Device re-bootstrapped and received a new API credential"
+    credential = KeyCredential(
+        credential_id=f"TL-KEY-{now_utc():%Y%m%d}-{_secrets.token_hex(6)}",
+        entity_type="edge",
+        entity_id=req.device_id,
+        key_type="api",
+        label=f"Bootstrap API credential for {req.device_id}",
+        status="active",
+        scopes_json=_canonical_json(_key_scopes("api")),
+        fingerprint=_fingerprint_material(_secret_hash(api_token)),
+        secret_hash=_secret_hash(api_token),
+        algorithm="sha256-token-hash",
+        compliance_domains="SABSA,IEC62443,ISO27000,NIS2,CRA",
+        created_by="bootstrap",
+        created_at=now_utc(),
+        metadata_json=_canonical_json({"bootstrap_token_device_label": token_record.device_label if token_record else None}),
+    )
+    db.add(credential)
+    _audit_key_event(db, credential, "created_by_bootstrap", "bootstrap", {"device_id": req.device_id})
     db.commit()
 
     base_url   = os.environ.get("BASE_URL", "http://192.168.86.132:8000")
@@ -994,11 +1024,364 @@ def _verify_device_token(
     scheme, _, provided = authorization.partition(" ")
     if scheme.lower() != "bearer" or not provided:
         raise HTTPException(status_code=401, detail="Manglende Bearer token")
+    token_hash = _secret_hash(provided)
+    credential = (
+        db.query(KeyCredential)
+        .filter_by(entity_type="edge", entity_id=device_id, key_type="api", secret_hash=token_hash)
+        .first()
+    )
+    if credential:
+        if credential.status != "active":
+            raise HTTPException(status_code=401, detail="API token er ikke aktiv")
+        if credential.expires_at and ensure_utc(credential.expires_at) < now_utc():
+            credential.status = "expired"
+            db.commit()
+            raise HTTPException(status_code=401, detail="API token er udløbet")
+        credential.last_used_at = now_utc()
+        credential.use_count = (credential.use_count or 0) + 1
+        db.commit()
+        return
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device or not device.api_token:
         raise HTTPException(status_code=401, detail="Ukendt device eller token ikke sat")
-    if provided != device.api_token:
+    if not hmac.compare_digest(provided, device.api_token):
         raise HTTPException(status_code=401, detail="Ugyldig API token for dette device")
+
+
+class KeyCredentialPayload(BaseModel):
+    entity_type: str
+    entity_id: str
+    key_type: str
+    label: Optional[str] = None
+    scopes: Optional[list[str]] = None
+    expires_days: Optional[int] = 365
+    public_key: Optional[str] = None
+    generate_keypair: Optional[bool] = False
+    rotated_from_id: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class KeyRevokePayload(BaseModel):
+    reason: Optional[str] = None
+
+
+def _secret_hash(secret: str) -> str:
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_material(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _key_scopes(key_type: str, scopes: list[str] | None = None) -> list[str]:
+    if scopes:
+        return [str(s) for s in scopes if str(s).strip()]
+    defaults = {
+        "api": ["config:read", "heartbeat:write", "capture:write", "updates:poll"],
+        "ssh": ["ssh:manual-debug", "ssh:reverse-tunnel"],
+        "signing": ["artifact:sign", "change-ticket:sign", "inventory:sign"],
+        "bootstrap": ["device:bootstrap"],
+    }
+    return defaults.get(key_type, [])
+
+
+def _credential_state(credential: KeyCredential) -> str:
+    if credential.status != "active":
+        return credential.status
+    if credential.expires_at and ensure_utc(credential.expires_at) < now_utc():
+        return "expired"
+    return "active"
+
+
+def _audit_key_event(
+    db: Session,
+    credential: KeyCredential,
+    event_type: str,
+    actor: str,
+    details: dict | None = None,
+) -> None:
+    db.add(KeyAuditEvent(
+        credential_id=credential.credential_id,
+        event_type=event_type,
+        actor=actor,
+        entity_type=credential.entity_type,
+        entity_id=credential.entity_id,
+        details_json=_canonical_json(details or {}),
+        occurred_at=now_utc(),
+    ))
+
+
+def _credential_to_dict(credential: KeyCredential) -> dict:
+    try:
+        scopes = json.loads(credential.scopes_json or "[]")
+    except Exception:
+        scopes = []
+    try:
+        metadata = json.loads(credential.metadata_json or "{}")
+    except Exception:
+        metadata = {}
+    status = _credential_state(credential)
+    return {
+        "id": credential.id,
+        "credential_id": credential.credential_id,
+        "entity_type": credential.entity_type,
+        "entity_id": credential.entity_id,
+        "key_type": credential.key_type,
+        "label": credential.label,
+        "status": status,
+        "scopes": scopes,
+        "public_key": credential.public_key,
+        "fingerprint": credential.fingerprint,
+        "algorithm": credential.algorithm,
+        "compliance_domains": credential.compliance_domains,
+        "created_by": credential.created_by,
+        "created_at": credential.created_at.isoformat() if credential.created_at else None,
+        "expires_at": credential.expires_at.isoformat() if credential.expires_at else None,
+        "last_used_at": credential.last_used_at.isoformat() if credential.last_used_at else None,
+        "last_used_from": credential.last_used_from,
+        "use_count": credential.use_count or 0,
+        "revoked_at": credential.revoked_at.isoformat() if credential.revoked_at else None,
+        "revoked_by": credential.revoked_by,
+        "revoke_reason": credential.revoke_reason,
+        "rotated_from_id": credential.rotated_from_id,
+        "metadata": metadata,
+        "has_secret": bool(credential.secret_hash),
+    }
+
+
+def _trusted_release_signers(db: Session) -> list[dict]:
+    signers = (
+        db.query(KeyCredential)
+        .filter_by(entity_type="headend", key_type="signing", status="active")
+        .order_by(KeyCredential.created_at.desc())
+        .all()
+    )
+    result = []
+    for signer in signers:
+        try:
+            scopes = json.loads(signer.scopes_json or "[]")
+        except Exception:
+            scopes = []
+        if "artifact:sign" not in scopes and "change-ticket:sign" not in scopes:
+            continue
+        result.append({
+            "credential_id": signer.credential_id,
+            "entity_id": signer.entity_id,
+            "label": signer.label,
+            "algorithm": signer.algorithm,
+            "fingerprint": signer.fingerprint,
+            "public_key": signer.public_key,
+            "scopes": scopes,
+            "expires_at": signer.expires_at.isoformat() if signer.expires_at else None,
+        })
+    return result
+
+
+@app.get("/api/admin/key-management")
+def list_key_management(
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    credentials = db.query(KeyCredential).order_by(KeyCredential.created_at.desc()).all()
+    devices = db.query(Device).order_by(Device.device_id).all()
+    inventories = {i.device_id: i for i in db.query(DeviceInventory).all()}
+    rows = [_credential_to_dict(c) for c in credentials]
+    counts = {
+        "active": sum(1 for c in rows if c["status"] == "active"),
+        "revoked": sum(1 for c in rows if c["status"] == "revoked"),
+        "expired": sum(1 for c in rows if c["status"] == "expired"),
+        "legacy_device_tokens": sum(1 for d in devices if d.api_token),
+        "missing_edge_api_key": 0,
+        "missing_signing_key": 0,
+        "trusted_release_signers": 0,
+    }
+    trusted_release_signers = _trusted_release_signers(db)
+    counts["trusted_release_signers"] = len(trusted_release_signers)
+    active_by_entity_type = {
+        (c.entity_type, c.entity_id, c.key_type)
+        for c in credentials
+        if _credential_state(c) == "active"
+    }
+    device_rows = []
+    for device in devices:
+        inv = inventories.get(device.device_id)
+        has_api = ("edge", device.device_id, "api") in active_by_entity_type
+        has_signing = ("edge", device.device_id, "signing") in active_by_entity_type
+        if not has_api:
+            counts["missing_edge_api_key"] += 1
+        if not has_signing:
+            counts["missing_signing_key"] += 1
+        device_rows.append({
+            "device_id": device.device_id,
+            "status": device.status,
+            "customer_name": device.customer_name,
+            "site_name": device.site_name,
+            "hostname": inv.hostname if inv else None,
+            "hardware_model": inv.hardware_model if inv else None,
+            "has_api_key": has_api,
+            "has_signing_key": has_signing,
+            "has_legacy_token": bool(device.api_token),
+        })
+    controls = [
+        {
+            "status": "warning" if counts["legacy_device_tokens"] else "pass",
+            "title": "Legacy device tokens",
+            "evidence": f"{counts['legacy_device_tokens']} device(s) har stadig plain legacy api_token i devices-tabellen.",
+            "domains": ["ISO27000", "IEC62443", "CRA"],
+            "recommendation": "Roter edge-enheder over på key_credentials og fjern plain legacy token efter agent update.",
+        },
+        {
+            "status": "warning" if counts["missing_edge_api_key"] else "pass",
+            "title": "Edge API identities",
+            "evidence": f"{counts['missing_edge_api_key']} device(s) mangler aktiv Edge API credential.",
+            "domains": ["SABSA", "IEC62443", "NIS2"],
+            "recommendation": "Udsted én aktiv API credential pr. Edge og bind den til CMDB device_id.",
+        },
+        {
+            "status": "warning" if counts["missing_signing_key"] else "pass",
+            "title": "Device signing identities",
+            "evidence": f"{counts['missing_signing_key']} device(s) mangler signing credential til inventory/update attestation.",
+            "domains": ["IEC62443", "ISO27000", "CRA"],
+            "recommendation": "Registrer public signing key pr. Headend og Edge; private keys må aldrig gemmes i Headend DB.",
+        },
+        {
+            "status": "pass" if counts["trusted_release_signers"] else "fail",
+            "title": "Code-signing trust root",
+            "evidence": f"{counts['trusted_release_signers']} aktiv(e) Headend signing key(s) kan bruges til artifact/change-ticket verification.",
+            "domains": ["IEC62443", "ISO27000", "NIS2", "CRA"],
+            "recommendation": "Edge må kun installere artifacts med signatur fra en trusted Headend/release key. Pin root public key i base image og distribuer rotation via signeret trust policy.",
+        },
+        {
+            "status": "warning" if counts["missing_signing_key"] or counts["missing_edge_api_key"] else "pass",
+            "title": "Signal mutual authentication",
+            "evidence": "Edge API credentials autentificerer Edge til Headend; signing credentials skal bruges til attestation af Edge-signaler og update-resultater.",
+            "domains": ["SABSA", "IEC62443", "ISO27000", "NIS2"],
+            "recommendation": "Udvid agenten med request-signatures eller mTLS, så Headend validerer signeret payload og Edge validerer Headend-signeret policy/artifact.",
+        },
+    ]
+    return {
+        "credentials": rows,
+        "devices": device_rows,
+        "summary": counts,
+        "controls": controls,
+        "trust_policy": {
+            "artifact_verification_required": True,
+            "mutual_auth_required": True,
+            "trusted_release_signers": trusted_release_signers,
+            "edge_acceptance_rule": "Edge must verify manifest signature, artifact sha256 and signer fingerprint before install.",
+        },
+    }
+
+
+@app.post("/api/admin/key-management/credentials")
+def create_key_credential(
+    payload: KeyCredentialPayload,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    entity_type = payload.entity_type.strip().lower()
+    key_type = payload.key_type.strip().lower()
+    if entity_type not in {"headend", "edge", "user", "service"}:
+        raise HTTPException(status_code=400, detail="Ugyldig entity_type")
+    if key_type not in {"api", "ssh", "signing", "bootstrap"}:
+        raise HTTPException(status_code=400, detail="Ugyldig key_type")
+    if not payload.entity_id.strip():
+        raise HTTPException(status_code=400, detail="entity_id er påkrævet")
+
+    now = now_utc()
+    expires_at = None
+    if payload.expires_days and payload.expires_days > 0:
+        from datetime import timedelta
+        expires_at = now + timedelta(days=int(payload.expires_days))
+    credential_id = f"TL-KEY-{now:%Y%m%d}-{_secrets.token_hex(6)}"
+    secret_once = None
+    private_key_once = None
+    public_key = payload.public_key.strip() if payload.public_key else None
+    secret_hash = None
+    algorithm = "external"
+
+    if key_type in {"ssh", "signing"} and payload.generate_keypair and not public_key:
+        private_key_once, public_key = _generate_ed25519_keypair()
+        algorithm = "ed25519"
+    elif public_key:
+        algorithm = "ed25519" if public_key.startswith("ssh-ed25519") else "public-key"
+
+    if key_type == "api":
+        secret_once = f"tlp_{entity_type}_{_secrets.token_urlsafe(32)}"
+        secret_hash = _secret_hash(secret_once)
+        algorithm = "sha256-token-hash"
+        if entity_type == "edge":
+            device = db.query(Device).filter_by(device_id=payload.entity_id).first()
+            if device:
+                device.api_token = secret_once
+    elif key_type in {"ssh", "signing"} and not public_key:
+        raise HTTPException(status_code=400, detail="SSH/signing credential kræver public_key eller generate_keypair")
+
+    fingerprint_source = public_key or secret_hash or credential_id
+    credential = KeyCredential(
+        credential_id=credential_id,
+        entity_type=entity_type,
+        entity_id=payload.entity_id.strip(),
+        key_type=key_type,
+        label=payload.label or f"{entity_type}:{payload.entity_id}:{key_type}",
+        status="active",
+        scopes_json=_canonical_json(_key_scopes(key_type, payload.scopes)),
+        public_key=public_key,
+        fingerprint=_fingerprint_material(fingerprint_source),
+        secret_hash=secret_hash,
+        algorithm=algorithm,
+        compliance_domains="SABSA,IEC62443,ISO27000,NIS2,CRA",
+        created_by=current_user.username,
+        created_at=now,
+        expires_at=expires_at,
+        rotated_from_id=payload.rotated_from_id,
+        metadata_json=_canonical_json(payload.metadata or {}),
+    )
+    db.add(credential)
+    _audit_key_event(db, credential, "created", current_user.username, {
+        "key_type": key_type,
+        "entity_type": entity_type,
+        "rotated_from_id": payload.rotated_from_id,
+        "generated_private_key_returned_once": bool(private_key_once),
+    })
+    if payload.rotated_from_id:
+        old = db.query(KeyCredential).filter_by(credential_id=payload.rotated_from_id).first()
+        if old and old.status == "active":
+            old.status = "rotated"
+            old.revoked_at = now
+            old.revoked_by = current_user.username
+            old.revoke_reason = f"Rotated to {credential_id}"
+            _audit_key_event(db, old, "rotated", current_user.username, {"rotated_to": credential_id})
+    db.commit()
+    data = _credential_to_dict(credential)
+    if secret_once:
+        data["secret_once"] = secret_once
+    if private_key_once:
+        data["private_key_once"] = private_key_once
+    return data
+
+
+@app.post("/api/admin/key-management/credentials/{credential_id}/revoke")
+def revoke_key_credential(
+    credential_id: str,
+    payload: KeyRevokePayload = KeyRevokePayload(),
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    credential = db.query(KeyCredential).filter_by(credential_id=credential_id).first()
+    if not credential:
+        raise HTTPException(status_code=404, detail="Credential ikke fundet")
+    credential.status = "revoked"
+    credential.revoked_at = now_utc()
+    credential.revoked_by = current_user.username
+    credential.revoke_reason = payload.reason or "Manuelt revokeret"
+    if credential.entity_type == "edge" and credential.key_type == "api":
+        device = db.query(Device).filter_by(device_id=credential.entity_id).first()
+        if device and device.api_token and credential.secret_hash == _secret_hash(device.api_token):
+            device.api_token = None
+    _audit_key_event(db, credential, "revoked", current_user.username, {"reason": credential.revoke_reason})
+    db.commit()
+    return {"ok": True, "credential_id": credential.credential_id}
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -1105,6 +1488,17 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "relay_simulate":          False,
             "gphoto2_port":            "usb:",
             "delete_after_download":   True,
+        },
+        "security": {
+            "artifact_verification_required": True,
+            "mutual_auth_required": True,
+            "accepted_artifact_signature_scopes": ["artifact:sign", "change-ticket:sign"],
+            "trusted_release_signers": _trusted_release_signers(db),
+            "edge_signal_signing": {
+                "required": False,
+                "planned": True,
+                "note": "Next agent step: sign heartbeat/inventory/update-result payloads with the Edge signing key.",
+            },
         },
         "modem": {
             "modem_relay_gpio_pin":        361,
