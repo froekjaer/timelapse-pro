@@ -3082,6 +3082,7 @@ def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> d
 def download_update_artifact_file(
     artifact_id: str,
     file_path: str,
+    device_id: str,
     _auth: None = Depends(_verify_device_token),
     db: Session = Depends(get_db),
 ):

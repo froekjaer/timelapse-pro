@@ -229,7 +229,13 @@ class HeadendClient:
         try:
             headers = request_signature_headers(self._cfg_mgr.api_token, "GET", path)
             headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "GET", path))
-            resp = self._session.get(url, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
+            resp = self._session.get(
+                url,
+                params={"device_id": self._device_id},
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+                verify=True,
+            )
             if resp.status_code == 200:
                 return True, resp.content
             log.warning("GET artifact %s:%s → HTTP %d: %s", artifact_id, file_path, resp.status_code, resp.text[:200])
