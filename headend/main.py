@@ -6572,3 +6572,223 @@ SNAPSHOT:
     if not isinstance(analysis, dict) or "recommendations" not in analysis:
         analysis = _aiops_fallback(snapshot)
     return {"snapshot": snapshot, "analysis": analysis}
+
+
+def _require_openwebui_loopback(request: Request) -> None:
+    """Open WebUI tool calls must stay local to Headend."""
+    client_host = request.client.host if request.client else ""
+    forwarded_for = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    allowed = {"127.0.0.1", "::1", "localhost"}
+    if client_host not in allowed or forwarded_for:
+        raise HTTPException(status_code=403, detail="Open WebUI tool access is only allowed from Headend loopback")
+
+
+def _openwebui_context(db: Session, area: str = "overview") -> dict:
+    snapshot = _aiops_snapshot(db)
+    compliance = compliance_cockpit(current_user=type("ToolUser", (), {
+        "username": "open-webui-tool",
+        "role": "super_admin",
+        "customer_id": None,
+    })(), db=db)
+    device_rows = db.execute(text("""
+        SELECT device_id, COALESCE(camera_name, device_id) AS name, COALESCE(status, 'unknown') AS status,
+               customer_name, site_name, last_seen
+        FROM devices
+        ORDER BY last_seen DESC NULLS LAST
+        LIMIT 20
+    """)).fetchall()
+    recent_updates = db.execute(text("""
+        SELECT id, update_type, version, severity, status, scope, scope_id, created_at
+        FROM pending_updates
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 10
+    """)).fetchall()
+    recent_events = db.execute(text("""
+        SELECT device_id, event_type, severity, occurred_at
+        FROM security_events
+        ORDER BY occurred_at DESC NULLS LAST
+        LIMIT 10
+    """)).fetchall()
+    return {
+        "generated_at": now_utc().isoformat(),
+        "scope": "open_webui_read_only_headend_tool",
+        "area": area,
+        "guardrails": {
+            "read_only": True,
+            "may_execute_commands": False,
+            "may_write_database": False,
+            "actions_require_signed_change_ticket_or_user_acceptance": True,
+            "edge_is_pull_or_call_home_only": True,
+            "edge_direct_internet_not_required": True,
+            "standards": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+        },
+        "system": {
+            "name": "TimeLapse Pro",
+            "headend_role": "authoritative update, CMDB, SIEM, AI Ops and compliance node",
+            "normal_edge_communication": "Edge calls home to Headend; Headend does not push directly to Edge except manual SSH debug tunnel.",
+        },
+        "summary": {
+            "devices_by_status": snapshot["cmdb"]["device_count_by_status"],
+            "siem_last_24h_by_severity": snapshot["siem"]["last_24h_by_severity"],
+            "updates_by_status": snapshot["updates"]["by_status"],
+            "approval_queue": compliance["summary"]["approval_queue"],
+            "compliance_controls": compliance["summary"]["controls"],
+            "sast_findings": snapshot["sast"]["finding_count"],
+            "keys": snapshot["keys"],
+            "resilience": snapshot["resilience"],
+        },
+        "devices": [
+            {
+                "device_id": r[0],
+                "name": r[1],
+                "status": r[2],
+                "customer": r[3],
+                "site": r[4],
+                "last_seen": r[5].isoformat() if r[5] else None,
+            }
+            for r in device_rows
+        ],
+        "recent_updates": [
+            {
+                "id": r[0],
+                "type": r[1],
+                "version": r[2],
+                "severity": r[3],
+                "status": r[4],
+                "scope": r[5],
+                "scope_id": r[6],
+                "created_at": r[7].isoformat() if r[7] else None,
+            }
+            for r in recent_updates
+        ],
+        "recent_security_events": [
+            {
+                "device_id": r[0],
+                "event_type": r[1],
+                "severity": r[2],
+                "occurred_at": r[3].isoformat() if r[3] else None,
+            }
+            for r in recent_events
+        ],
+        "operator_guidance": [
+            "Svar på dansk og forklar tydeligt om noget er observation, risiko eller anbefalet handling.",
+            "Foreslå aldrig direkte ændringer uden at nævne at de skal accepteres i UI eller via signeret change ticket.",
+            "Ved edge-opdateringer skal svaret respektere call-home/pull-modellen og manglende internetadgang på edge.",
+            "Ved compliance-spørgsmål skal SABSA, IEC62443, ISO27000, NIS2 og CRA vurderes samlet.",
+        ],
+    }
+
+
+@app.get("/api/openwebui/tools/openapi.json", include_in_schema=False)
+def openwebui_tools_openapi(request: Request):
+    _require_openwebui_loopback(request)
+    return {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "TimeLapse Pro Read-only Operations Tools",
+            "version": "1.0.0",
+            "description": "Read-only tools for Open WebUI to answer questions about TimeLapse Pro status, operations, updates and compliance.",
+        },
+        "servers": [{"url": "http://127.0.0.1:8000"}],
+        "paths": {
+            "/api/openwebui/tools/system-context": {
+                "get": {
+                    "operationId": "timelapse_get_system_context",
+                    "summary": "Get TimeLapse Pro status, drift and compliance context",
+                    "description": "Use this before answering questions about TimeLapse Pro status, devices, failures, updates, compliance, AI Ops or operation.",
+                    "parameters": [{
+                        "name": "area",
+                        "in": "query",
+                        "required": False,
+                        "schema": {
+                            "type": "string",
+                            "enum": ["overview", "devices", "updates", "compliance", "aiops", "siem", "backup", "help"],
+                            "default": "overview",
+                        },
+                    }],
+                    "responses": {"200": {"description": "Read-only system context"}},
+                }
+            },
+            "/api/openwebui/tools/ask": {
+                "post": {
+                    "operationId": "timelapse_ask_system_question",
+                    "summary": "Ask for relevant TimeLapse Pro context for a user question",
+                    "description": "Returns concise read-only context and guardrails for answering a TimeLapse Pro operational question.",
+                    "requestBody": {
+                        "required": True,
+                        "content": {"application/json": {"schema": {
+                            "type": "object",
+                            "properties": {
+                                "question": {"type": "string"},
+                                "area": {"type": "string"},
+                            },
+                            "required": ["question"],
+                        }}},
+                    },
+                    "responses": {"200": {"description": "Question-specific context"}},
+                }
+            },
+            "/api/openwebui/tools/help-topics": {
+                "get": {
+                    "operationId": "timelapse_get_help_topics",
+                    "summary": "List things Open WebUI can help with in TimeLapse Pro",
+                    "description": "Use this when the user asks what the Timelapse assistant can help with.",
+                    "responses": {"200": {"description": "Supported help topics and boundaries"}},
+                }
+            },
+        },
+    }
+
+
+@app.get("/api/openwebui/tools/system-context", include_in_schema=False)
+def openwebui_system_context(
+    request: Request,
+    area: str = "overview",
+    db: Session = Depends(get_db),
+):
+    _require_openwebui_loopback(request)
+    return _openwebui_context(db, area=area)
+
+
+@app.post("/api/openwebui/tools/ask", include_in_schema=False)
+def openwebui_ask_system_question(
+    request: Request,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    _require_openwebui_loopback(request)
+    question = str(payload.get("question") or "").strip()[:1000]
+    area = str(payload.get("area") or "overview").strip()[:40] or "overview"
+    context = _openwebui_context(db, area=area)
+    return {
+        "question": question,
+        "context": context,
+        "answer_contract": {
+            "language": "da-DK",
+            "style": "kort, praktisk og tydeligt",
+            "must_state_uncertainty": True,
+            "must_not_claim_to_have_changed_system": True,
+            "for_action_requests": "Forklar trin eller foreslå change ticket; udfør ikke ændringer fra Open WebUI.",
+        },
+    }
+
+
+@app.get("/api/openwebui/tools/help-topics", include_in_schema=False)
+def openwebui_help_topics(request: Request):
+    _require_openwebui_loopback(request)
+    return {
+        "topics": [
+            "Aktuel driftstatus for Headend, Edge-enheder, kameraer og AI-analyse",
+            "Forklaring af fejl, røde checks, manglende billeder, offline enheder og SIEM-events",
+            "Update/patch status, approval-kø, signerede artifacts og change ticket-flow",
+            "Compliance posture mod SABSA, IEC62443, ISO27000, NIS2 og CRA",
+            "Backup/resilience, bare metal restore, edge-provisionering og call-home begrænsninger",
+            "Praktisk hjælp til hvor i UI en handling normalt udføres",
+        ],
+        "boundaries": [
+            "Read-only fra Open WebUI i første fase",
+            "Ingen shell-kommandoer eller databaseændringer",
+            "Ingen hemmeligheder eller tokens returneres",
+            "Ændringer kræver UI-accept eller signeret change ticket",
+        ],
+    }

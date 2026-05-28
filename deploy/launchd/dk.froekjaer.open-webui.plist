@@ -34,6 +34,8 @@
     <string>http://127.0.0.1:11434</string>
     <key>CORS_ALLOW_ORIGIN</key>
     <string>*</string>
+    <key>TOOL_SERVER_CONNECTIONS</key>
+    <string>[{"url":"http://127.0.0.1:8000","path":"/api/openwebui/tools/openapi.json","auth_type":"none","config":{"enable":true},"info":{"id":"timelapse-pro","name":"TimeLapse Pro","description":"Read-only drift, compliance, update and AI Ops context"}}]</string>
   </dict>
 
   <key>StandardOutPath</key>
