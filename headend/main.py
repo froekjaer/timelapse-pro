@@ -1044,6 +1044,7 @@ async def _verify_device_token(
         active_secret = provided
         await _verify_edge_request_signature(request, active_secret)
         credential.last_used_at = now_utc()
+        credential.last_used_from = request.client.host if request.client else None
         credential.use_count = (credential.use_count or 0) + 1
         db.commit()
         return
@@ -1053,6 +1054,12 @@ async def _verify_device_token(
     if not hmac.compare_digest(provided, device.api_token):
         raise HTTPException(status_code=401, detail="Ugyldig API token for dette device")
     await _verify_edge_request_signature(request, provided)
+    migrated = _upsert_legacy_device_api_credential(db, device, actor="legacy-auth")
+    if migrated:
+        migrated.last_used_at = now_utc()
+        migrated.last_used_from = request.client.host if request.client else None
+        migrated.use_count = (migrated.use_count or 0) + 1
+        db.commit()
 
 
 async def _verify_edge_request_signature(request: Request, secret: str) -> None:
@@ -1150,6 +1157,81 @@ def _audit_key_event(
         details_json=_canonical_json(details or {}),
         occurred_at=now_utc(),
     ))
+
+
+def _upsert_legacy_device_api_credential(
+    db: Session,
+    device: Device,
+    actor: str = "migration",
+) -> KeyCredential | None:
+    """Representer et eksisterende legacy device.api_token som lifecycle credential.
+
+    Dette ændrer ikke Edge-hemmeligheden og er derfor en non-breaking bro fra
+    LAB-tokenmodellen til key_credentials, audit og senere revocation/rotation.
+    """
+    if not device or not device.device_id or not device.api_token:
+        return None
+    token_hash = _secret_hash(device.api_token)
+    existing = (
+        db.query(KeyCredential)
+        .filter_by(
+            entity_type="edge",
+            entity_id=device.device_id,
+            key_type="api",
+            secret_hash=token_hash,
+        )
+        .first()
+    )
+    if existing:
+        changed = False
+        if existing.status != "active":
+            existing.status = "active"
+            existing.revoked_at = None
+            existing.revoked_by = None
+            existing.revoke_reason = None
+            changed = True
+        if not existing.metadata_json:
+            existing.metadata_json = _canonical_json({
+                "migrated_from_legacy_device_api_token": True,
+                "secret_material_stored": False,
+                "legacy_token_retained_for_agent_compatibility": True,
+            })
+            changed = True
+        if changed:
+            _audit_key_event(db, existing, "legacy_token_reactivated", actor, {
+                "device_id": device.device_id,
+                "reason": "Existing device.api_token matched credential hash",
+            })
+        return existing
+
+    now = now_utc()
+    credential = KeyCredential(
+        credential_id=f"TL-KEY-{now:%Y%m%d}-{_secrets.token_hex(6)}",
+        entity_type="edge",
+        entity_id=device.device_id,
+        key_type="api",
+        label=f"Legacy API credential for {device.device_id}",
+        status="active",
+        scopes_json=_canonical_json(_key_scopes("api")),
+        fingerprint=_fingerprint_material(token_hash),
+        secret_hash=token_hash,
+        algorithm="sha256-token-hash",
+        compliance_domains="SABSA,IEC62443,ISO27000,NIS2,CRA",
+        created_by=actor,
+        created_at=now,
+        metadata_json=_canonical_json({
+            "migrated_from_legacy_device_api_token": True,
+            "secret_material_stored": False,
+            "legacy_token_retained_for_agent_compatibility": True,
+            "next_step": "Rotate device to a managed API credential and remove devices.api_token after agent confirmation.",
+        }),
+    )
+    db.add(credential)
+    _audit_key_event(db, credential, "legacy_token_migrated", actor, {
+        "device_id": device.device_id,
+        "legacy_token_retained": True,
+    })
+    return credential
 
 
 def _credential_to_dict(credential: KeyCredential) -> dict:
@@ -1316,6 +1398,63 @@ def list_key_management(
             "trusted_release_signers": trusted_release_signers,
             "edge_acceptance_rule": "Edge must verify manifest signature, artifact sha256 and signer fingerprint before install.",
         },
+    }
+
+
+@app.post("/api/admin/key-management/migrate-legacy-device-tokens")
+def migrate_legacy_device_tokens(
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Migrer eksisterende devices.api_token til KeyCredential uden at ændre token.
+
+    Bruges til LAB/R&D-overgangen, hvor Edge allerede har en hemmelighed lokalt.
+    Det giver revocation, audit, last-used og compliance-evidens nu, mens vi
+    planlægger egentlig rotation og fjernelse af legacy-feltet senere.
+    """
+    devices = db.query(Device).order_by(Device.device_id).all()
+    migrated = 0
+    already_registered = 0
+    skipped = 0
+    rows = []
+    actor = current_user.username
+    for device in devices:
+        if not device.api_token:
+            skipped += 1
+            rows.append({
+                "device_id": device.device_id,
+                "status": "skipped_no_legacy_token",
+                "credential_id": None,
+            })
+            continue
+        before = (
+            db.query(KeyCredential)
+            .filter_by(
+                entity_type="edge",
+                entity_id=device.device_id,
+                key_type="api",
+                secret_hash=_secret_hash(device.api_token),
+            )
+            .first()
+        )
+        credential = _upsert_legacy_device_api_credential(db, device, actor=actor)
+        if before:
+            already_registered += 1
+            status = "already_registered"
+        else:
+            migrated += 1
+            status = "migrated"
+        rows.append({
+            "device_id": device.device_id,
+            "status": status,
+            "credential_id": credential.credential_id if credential else None,
+        })
+    db.commit()
+    return {
+        "migrated": migrated,
+        "already_registered": already_registered,
+        "skipped": skipped,
+        "devices": rows,
     }
 
 
@@ -1510,6 +1649,19 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     db.commit()
 
     base_url = _get_setting(db, "base_url", os.environ.get("BASE_URL", "http://192.168.86.102:8000"))
+    api_credential = (
+        db.query(KeyCredential)
+        .filter_by(entity_type="edge", entity_id=device_id, key_type="api", status="active")
+        .order_by(KeyCredential.created_at.desc())
+        .first()
+    )
+    signing_credential = (
+        db.query(KeyCredential)
+        .filter_by(entity_type="edge", entity_id=device_id, key_type="signing", status="active")
+        .order_by(KeyCredential.created_at.desc())
+        .first()
+    )
+    edge_signal_signing_required = _get_setting(db, "edge_signal_signing_required", "false").lower() == "true"
 
     cfg = {
         "device": {
@@ -1540,9 +1692,18 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "mutual_auth_required": True,
             "accepted_artifact_signature_scopes": ["artifact:sign", "change-ticket:sign"],
             "trusted_release_signers": _trusted_release_signers(db),
+            "edge_api_credential": {
+                "registered": bool(api_credential),
+                "credential_id": api_credential.credential_id if api_credential else None,
+                "last_used_at": api_credential.last_used_at.isoformat() if api_credential and api_credential.last_used_at else None,
+                "legacy_token_present": bool(device.api_token),
+                "rotation_required": bool(device.api_token),
+            },
             "edge_signal_signing": {
-                "required": False,
+                "required": edge_signal_signing_required,
                 "planned": True,
+                "registered": bool(signing_credential),
+                "credential_id": signing_credential.credential_id if signing_credential else None,
                 "note": "Next agent step: sign heartbeat/inventory/update-result payloads with the Edge signing key.",
             },
         },
