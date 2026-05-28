@@ -12,8 +12,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 
@@ -61,6 +63,10 @@ def trusted_signer_fingerprints(security_cfg: dict) -> set[str]:
     }
 
 
+def _fingerprint_material(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def verify_update_artifact(update: dict, security_cfg: dict) -> tuple[bool, str]:
     """Validate that an update carries a trusted signed artifact manifest.
 
@@ -97,3 +103,59 @@ def verify_update_artifact(update: dict, security_cfg: dict) -> tuple[bool, str]
         return False, "artifact mangler signatur"
 
     return True, "artifact trust checks OK"
+
+
+def ensure_edge_signing_key(base_dir: str | Path, device_id: str) -> dict[str, str]:
+    """Create or load the Edge-local Ed25519 signing key.
+
+    The private key never leaves the Edge. Headend receives only the OpenSSH
+    public key and binds it to the CMDB device_id.
+    """
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+        PublicFormat,
+        load_pem_private_key,
+    )
+
+    key_dir = Path(base_dir) / "keys"
+    key_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(key_dir, 0o700)
+    except OSError:
+        pass
+    private_path = key_dir / "edge_signing_ed25519.pem"
+    public_path = key_dir / "edge_signing_ed25519.pub"
+
+    if private_path.exists():
+        private_key = load_pem_private_key(private_path.read_bytes(), password=None)
+    else:
+        private_key = Ed25519PrivateKey.generate()
+        private_bytes = private_key.private_bytes(
+            Encoding.PEM,
+            PrivateFormat.PKCS8,
+            NoEncryption(),
+        )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(private_path, flags, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(private_bytes)
+        os.chmod(private_path, 0o600)
+
+    public_key = private_key.public_key().public_bytes(
+        Encoding.OpenSSH,
+        PublicFormat.OpenSSH,
+    ).decode("utf-8")
+    public_path.write_text(f"{public_key} timelapse-edge-{device_id}\n")
+    try:
+        os.chmod(public_path, 0o644)
+    except OSError:
+        pass
+    return {
+        "public_key": public_key,
+        "fingerprint": _fingerprint_material(public_key),
+        "private_key_path": str(private_path),
+        "public_key_path": str(public_path),
+    }

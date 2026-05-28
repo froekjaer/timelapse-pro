@@ -86,6 +86,10 @@ class ConfigManager:
         token_path.write_text(token.strip())
         log.info("API token saved")
 
+    @property
+    def base_dir(self) -> Path:
+        return self._base
+
     def save_config(self, config_dict: dict) -> None:
         """Write updated operational config to disk (from headend).
         SFTP credentials are NOT cached to disk — always fetched fresh from headend.

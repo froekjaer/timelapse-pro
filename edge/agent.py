@@ -663,6 +663,7 @@ class EdgeAgent:
         ok, data = self._api.fetch_config()
         if ok and data:
             try:
+                self._api.ensure_signing_enrolled(data.get("security", {}))
                 new_version = data.get("config_version", "")
                 self._cfg_mgr.save_config(data)
                 self._cfg = self._cfg_mgr.load()

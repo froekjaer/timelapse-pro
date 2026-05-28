@@ -1113,6 +1113,12 @@ class KeyRevokePayload(BaseModel):
     reason: Optional[str] = None
 
 
+class EdgeSigningEnrollmentPayload(BaseModel):
+    public_key: str
+    label: Optional[str] = None
+    algorithm: Optional[str] = "ed25519"
+
+
 def _secret_hash(secret: str) -> str:
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
@@ -1567,6 +1573,93 @@ def revoke_key_credential(
     _audit_key_event(db, credential, "revoked", current_user.username, {"reason": credential.revoke_reason})
     db.commit()
     return {"ok": True, "credential_id": credential.credential_id}
+
+
+@app.post("/api/keys/signing/enroll/{device_id}")
+def enroll_edge_signing_key(
+    device_id: str,
+    payload: EdgeSigningEnrollmentPayload,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
+    """Registrer Edge public signing key uden at Headend modtager privat nøgle."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device ikke fundet")
+    public_key = (payload.public_key or "").strip()
+    if not public_key:
+        raise HTTPException(status_code=400, detail="public_key er påkrævet")
+    if not public_key.startswith("ssh-ed25519 "):
+        raise HTTPException(status_code=400, detail="Kun ssh-ed25519 public keys accepteres for Edge signing")
+
+    now = now_utc()
+    fingerprint = _fingerprint_material(public_key)
+    existing = (
+        db.query(KeyCredential)
+        .filter_by(entity_type="edge", entity_id=device_id, key_type="signing", fingerprint=fingerprint)
+        .first()
+    )
+    if existing:
+        if existing.status != "active":
+            existing.status = "active"
+            existing.revoked_at = None
+            existing.revoked_by = None
+            existing.revoke_reason = None
+            _audit_key_event(db, existing, "edge_signing_key_reactivated", "edge", {"device_id": device_id})
+        existing.last_used_at = now
+        existing.use_count = (existing.use_count or 0) + 1
+        db.commit()
+        return {
+            "status": "already_registered",
+            "credential_id": existing.credential_id,
+            "fingerprint": existing.fingerprint,
+        }
+
+    for old in (
+        db.query(KeyCredential)
+        .filter_by(entity_type="edge", entity_id=device_id, key_type="signing", status="active")
+        .all()
+    ):
+        old.status = "rotated"
+        old.revoked_at = now
+        old.revoked_by = "edge"
+        old.revoke_reason = "Rotated by Edge signing enrollment"
+        _audit_key_event(db, old, "rotated", "edge", {"rotated_by_device": device_id})
+
+    credential = KeyCredential(
+        credential_id=f"TL-KEY-{now:%Y%m%d}-{_secrets.token_hex(6)}",
+        entity_type="edge",
+        entity_id=device_id,
+        key_type="signing",
+        label=payload.label or f"Edge signing key for {device_id}",
+        status="active",
+        scopes_json=_canonical_json(_key_scopes("signing", ["inventory:sign", "heartbeat:sign", "update-result:sign"])),
+        public_key=public_key,
+        fingerprint=fingerprint,
+        algorithm=payload.algorithm or "ed25519",
+        compliance_domains="SABSA,IEC62443,ISO27000,NIS2,CRA",
+        created_by="edge",
+        created_at=now,
+        last_used_at=now,
+        use_count=1,
+        metadata_json=_canonical_json({
+            "private_key_location": "edge-local",
+            "private_key_stored_in_headend": False,
+            "enrollment_model": "edge-call-home",
+            "accepted_for": ["inventory_attestation", "heartbeat_attestation", "update_result_attestation"],
+        }),
+    )
+    db.add(credential)
+    _audit_key_event(db, credential, "edge_signing_key_enrolled", "edge", {
+        "device_id": device_id,
+        "private_key_stored_in_headend": False,
+    })
+    db.commit()
+    return {
+        "status": "enrolled",
+        "credential_id": credential.credential_id,
+        "fingerprint": credential.fingerprint,
+    }
 
 # ── Config ────────────────────────────────────────────────────────────────────
 

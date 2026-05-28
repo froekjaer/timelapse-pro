@@ -19,7 +19,7 @@ from typing import Any, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from security import request_signature_headers
+from security import ensure_edge_signing_key, request_signature_headers
 
 log = logging.getLogger(__name__)
 
@@ -89,6 +89,26 @@ class HeadendClient:
         """Pull current operational config from headend."""
         log.debug("Fetching config for %s", self._device_id)
         return self._get(f"/config/{self._device_id}")
+
+    def ensure_signing_enrolled(self, security_cfg: dict | None = None) -> tuple[bool, Optional[dict]]:
+        """Enroll the Edge-local public signing key when Headend requests it."""
+        policy = (security_cfg or {}).get("edge_signal_signing", {})
+        if policy.get("registered") and policy.get("credential_id"):
+            return True, {"status": "already_registered", "credential_id": policy.get("credential_id")}
+        try:
+            key_info = ensure_edge_signing_key(self._cfg_mgr.base_dir, self._device_id)
+            payload = {
+                "public_key": key_info["public_key"],
+                "label": f"Edge signing key for {self._device_id}",
+                "algorithm": "ed25519",
+            }
+            ok, data = self._post(f"/keys/signing/enroll/{self._device_id}", payload)
+            if ok:
+                log.info("Edge signing key enrolled: %s", data.get("credential_id") if data else "unknown")
+            return ok, data
+        except Exception as exc:
+            log.warning("Edge signing key enrollment failed: %s", exc)
+            return False, None
 
     # ── Heartbeat ───────────────────────────────────────────────────────────
 
