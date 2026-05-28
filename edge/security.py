@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import os
+import base64
 import time
 import uuid
 from pathlib import Path
@@ -41,6 +42,35 @@ def request_signature_headers(
         "X-TLP-Timestamp": timestamp,
         "X-TLP-Nonce": nonce,
         "X-TLP-Signature": signature,
+    }
+
+
+def edge_attestation_headers(
+    base_dir: str | Path,
+    device_id: str,
+    method: str,
+    path: str,
+    payload: dict | None = None,
+) -> dict[str, str]:
+    """Sign an Edge signal with the Edge-local Ed25519 key."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+    key_info = ensure_edge_signing_key(base_dir, device_id)
+    private_key = load_pem_private_key(Path(key_info["private_key_path"]).read_bytes(), password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        return {}
+    timestamp = str(int(time.time()))
+    nonce = uuid.uuid4().hex
+    body = canonical_json(payload or {}) if payload else ""
+    signed = "\n".join([method.upper(), path, timestamp, nonce, body])
+    signature = private_key.sign(signed.encode("utf-8"))
+    return {
+        "X-TLP-Edge-Signature-Alg": "ed25519-v1",
+        "X-TLP-Edge-Signature-Key": key_info["fingerprint"],
+        "X-TLP-Edge-Signature-Timestamp": timestamp,
+        "X-TLP-Edge-Signature-Nonce": nonce,
+        "X-TLP-Edge-Signature": base64.b64encode(signature).decode("ascii"),
     }
 
 

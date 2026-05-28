@@ -19,7 +19,7 @@ from typing import Any, Optional
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from security import ensure_edge_signing_key, request_signature_headers
+from security import edge_attestation_headers, ensure_edge_signing_key, request_signature_headers
 
 log = logging.getLogger(__name__)
 
@@ -186,6 +186,7 @@ class HeadendClient:
         url = f"{self._base_url}{path}"
         try:
             headers = request_signature_headers(self._cfg_mgr.api_token, "GET", path)
+            headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "GET", path))
             resp = self._session.get(url, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
             if resp.status_code == 200:
                 return True, resp.json()
@@ -208,6 +209,8 @@ class HeadendClient:
         url = f"{self._base_url}{path}"
         try:
             headers = request_signature_headers(self._cfg_mgr.api_token, "POST", path, payload)
+            if not path.startswith("/keys/signing/enroll/"):
+                headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "POST", path, payload))
             resp = self._session.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
             if resp.status_code in (200, 201):
                 return True, resp.json()

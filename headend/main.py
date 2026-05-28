@@ -40,6 +40,7 @@ from slowapi.errors import RateLimitExceeded
 import json
 import logging
 #import os
+import base64
 import hashlib
 import hmac
 from datetime import datetime, timezone
@@ -1043,6 +1044,7 @@ async def _verify_device_token(
             raise HTTPException(status_code=401, detail="API token er udløbet")
         active_secret = provided
         await _verify_edge_request_signature(request, active_secret)
+        await _verify_edge_attestation_signature(request, device_id, db)
         credential.last_used_at = now_utc()
         credential.last_used_from = request.client.host if request.client else None
         credential.use_count = (credential.use_count or 0) + 1
@@ -1054,6 +1056,7 @@ async def _verify_device_token(
     if not hmac.compare_digest(provided, device.api_token):
         raise HTTPException(status_code=401, detail="Ugyldig API token for dette device")
     await _verify_edge_request_signature(request, provided)
+    await _verify_edge_attestation_signature(request, device_id, db)
     migrated = _upsert_legacy_device_api_credential(db, device, actor="legacy-auth")
     if migrated:
         migrated.last_used_at = now_utc()
@@ -1094,6 +1097,70 @@ async def _verify_edge_request_signature(request: Request, secret: str) -> None:
     expected = hmac.new(secret.encode("utf-8"), signed.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected):
         raise HTTPException(status_code=401, detail="Edge request signature mismatch")
+
+
+async def _verify_edge_attestation_signature(request: Request, device_id: str, db: Session) -> None:
+    """Validate optional Ed25519 Edge payload attestation.
+
+    This is optional until edge_signal_signing_required is enabled. The Edge can
+    therefore roll out signing before we enforce it fleet-wide.
+    """
+    signature = request.headers.get("X-TLP-Edge-Signature")
+    required = _get_setting(db, "edge_signal_signing_required", "false").lower() == "true"
+    if not signature:
+        if required:
+            raise HTTPException(status_code=401, detail="Edge attestation signature mangler")
+        return
+    alg = request.headers.get("X-TLP-Edge-Signature-Alg", "")
+    key_fingerprint = request.headers.get("X-TLP-Edge-Signature-Key", "")
+    timestamp = request.headers.get("X-TLP-Edge-Signature-Timestamp", "")
+    nonce = request.headers.get("X-TLP-Edge-Signature-Nonce", "")
+    if alg != "ed25519-v1" or not key_fingerprint or not timestamp or not nonce:
+        raise HTTPException(status_code=401, detail="Ugyldige Edge attestation-headere")
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Ugyldigt Edge attestation-tidspunkt")
+    if abs(int(now_utc().timestamp()) - ts) > 300:
+        raise HTTPException(status_code=401, detail="Edge attestation er udenfor tidsvindue")
+    credential = (
+        db.query(KeyCredential)
+        .filter_by(
+            entity_type="edge",
+            entity_id=device_id,
+            key_type="signing",
+            status="active",
+            fingerprint=key_fingerprint,
+        )
+        .first()
+    )
+    if not credential or not credential.public_key:
+        if not required:
+            return
+        raise HTTPException(status_code=401, detail="Ukendt Edge signing key")
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        from cryptography.hazmat.primitives.serialization import load_ssh_public_key
+
+        public_key = load_ssh_public_key(credential.public_key.encode("utf-8"))
+        if not isinstance(public_key, Ed25519PublicKey):
+            raise ValueError("not ed25519")
+        body = await request.body()
+        body_text = ""
+        if body:
+            try:
+                body_text = _canonical_json(json.loads(body.decode("utf-8")))
+            except Exception:
+                body_text = body.decode("utf-8", errors="replace")
+        signed = "\n".join([request.method.upper(), request.url.path.removeprefix("/api"), timestamp, nonce, body_text])
+        public_key.verify(base64.b64decode(signature), signed.encode("utf-8"))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Edge attestation signature mismatch")
+    credential.last_used_at = now_utc()
+    credential.last_used_from = request.client.host if request.client else None
+    credential.use_count = (credential.use_count or 0) + 1
 
 
 class KeyCredentialPayload(BaseModel):
