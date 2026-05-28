@@ -206,7 +206,7 @@ def main():
     if strategy_hint not in ("cloud_only",):
         try:
             from ollama_service import OllamaVisionService
-            model = args.model or get_setting(db, "local_model", "qwen2.5vl:7b")
+            model = args.model or get_setting(db, "local_model", GD["local_model"])
             svc = OllamaVisionService(base_url=ollama_url, vision_model=model)
             if svc.health_check():
                 local_svc = svc
