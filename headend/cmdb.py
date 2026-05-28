@@ -119,10 +119,18 @@ def report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db
     # OS / Software
     inv.os_name                 = payload.get("os_name")
     inv.kernel_version          = payload.get("kernel_version")
+    if hasattr(inv, "firmware_version"):
+        inv.firmware_version    = payload.get("firmware_version")
     inv.python_version          = payload.get("python_version")
     inv.app_version             = payload.get("app_version")
+    if hasattr(inv, "package_manager"):
+        inv.package_manager     = payload.get("package_manager")
+    if hasattr(inv, "os_packages") and "os_packages" in payload:
+        inv.os_packages         = json.dumps(payload["os_packages"])
     if "venv_packages" in payload:
         inv.venv_packages       = json.dumps(payload["venv_packages"])
+    if hasattr(inv, "software_inventory") and "software_inventory" in payload:
+        inv.software_inventory  = json.dumps(payload["software_inventory"])
 
     # Storage
     inv.boot_storage_type       = payload.get("boot_storage_type")
@@ -171,6 +179,8 @@ def list_cmdb(db: Session = Depends(get_db)):
             "soc_model":            inv.soc_model,
             "os_name":              inv.os_name,
             "app_version":          inv.app_version,
+            "firmware_version":     getattr(inv, "firmware_version", None),
+            "package_manager":      getattr(inv, "package_manager", None),
             "hostname":             inv.hostname,
             "location_id":          inv.location_id,
             "inventory_reported_at": inv.inventory_reported_at.isoformat() if inv.inventory_reported_at else None,
@@ -203,6 +213,18 @@ def get_cmdb(device_id: str, db: Session = Depends(get_db)):
             packages = json.loads(inv.venv_packages)
         except Exception:
             pass
+    os_packages = {}
+    if getattr(inv, "os_packages", None):
+        try:
+            os_packages = json.loads(inv.os_packages)
+        except Exception:
+            pass
+    software_inventory = {}
+    if getattr(inv, "software_inventory", None):
+        try:
+            software_inventory = json.loads(inv.software_inventory)
+        except Exception:
+            pass
 
     return {
         "device_id":                inv.device_id,
@@ -218,9 +240,13 @@ def get_cmdb(device_id: str, db: Session = Depends(get_db)):
         # OS/Software
         "os_name":                  inv.os_name,
         "kernel_version":           inv.kernel_version,
+        "firmware_version":         getattr(inv, "firmware_version", None),
         "python_version":           inv.python_version,
         "app_version":              inv.app_version,
+        "package_manager":          getattr(inv, "package_manager", None),
+        "os_packages":              os_packages,
         "venv_packages":            packages,
+        "software_inventory":       software_inventory,
         # Storage
         "boot_storage_type":        inv.boot_storage_type,
         "boot_storage_total_gb":    inv.boot_storage_total_gb,

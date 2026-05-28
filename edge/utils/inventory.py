@@ -207,6 +207,56 @@ def _venv_packages() -> dict[str, str]:
         return {}
 
 
+def _firmware_version() -> Optional[str]:
+    for path in (
+        "/proc/device-tree/model",
+        "/sys/firmware/devicetree/base/model",
+    ):
+        try:
+            value = Path(path).read_bytes().replace(b"\x00", b"").decode(errors="ignore").strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    return None
+
+
+def _os_packages() -> tuple[str, dict[str, str]]:
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Package}=${Version}\\n"],
+            capture_output=True, text=True, timeout=25
+        )
+        packages = {}
+        for line in result.stdout.splitlines():
+            if "=" in line:
+                name, version = line.split("=", 1)
+                packages[name] = version
+        return "apt/dpkg", packages
+    except Exception as e:
+        log.debug("dpkg package inventory fejl: %s", e)
+        return "apt/dpkg", {}
+
+
+def _software_inventory() -> dict[str, str]:
+    inventory = {
+        "timelapse_pro": APP_VERSION,
+        "python": platform.python_version(),
+    }
+    for name, cmd in {
+        "gphoto2": ["gphoto2", "--version"],
+        "libgphoto2": ["gphoto2", "--version"],
+    }.items():
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            line = (result.stdout or result.stderr).strip().splitlines()
+            if line:
+                inventory[name] = line[0]
+        except Exception:
+            pass
+    return inventory
+
+
 # ── GPG fingerprint ───────────────────────────────────────────────────────────
 
 def _gpg_fingerprint() -> Optional[str]:
@@ -238,6 +288,7 @@ def collect_inventory(config: dict) -> dict:
     boot_type, boot_gb, boot_pct = _storage_info("/")
     data_path = config.get("storage", {}).get("base_dir", "/data")
     data_type, data_gb, data_pct = _storage_info(data_path) if Path(data_path).exists() else (None, None, None)
+    package_manager, os_packages = _os_packages()
 
     return {
         # Hardware
@@ -252,9 +303,13 @@ def collect_inventory(config: dict) -> dict:
         # OS / Software
         "os_name":                  _os_name(),
         "kernel_version":           platform.release(),
+        "firmware_version":         _firmware_version(),
         "python_version":           platform.python_version(),
         "app_version":              APP_VERSION,
+        "package_manager":          package_manager,
+        "os_packages":              os_packages,
         "venv_packages":            _venv_packages(),
+        "software_inventory":       _software_inventory(),
 
         # Storage (boot)
         "boot_storage_type":        boot_type,

@@ -825,43 +825,6 @@ class EdgeAgent:
 
 
 
-    def _collect_update_info(self) -> dict:
-        """Saml OS opdateringsinfo og git commit. Ingen internet nødvendig."""
-        info = {"os_security_count": 0, "os_updates_count": 0, "app_version": "ukendt"}
-
-        # OS opdateringer — læs pakkeliste fra apt
-        try:
-            import subprocess as _sp2
-            r2 = _sp2.run(["apt", "list", "--upgradable"],
-                         capture_output=True, text=True, timeout=15)
-            lines = [l for l in r2.stdout.splitlines() if "/" in l]
-            security_pkgs = [l.split("/")[0] for l in lines if "security" in l.lower()]
-            other_pkgs    = [l.split("/")[0] for l in lines if "security" not in l.lower()]
-            info["os_security_count"]    = len(security_pkgs)
-            info["os_updates_count"]     = len(other_pkgs)
-            info["os_security_packages"] = security_pkgs[:50]
-            info["os_update_packages"]   = other_pkgs[:50]
-            info["os_distro"]            = "noble"
-            info["os_arch"]              = "arm64"
-        except Exception as e:
-            log.debug("apt list fejl: %s", e)
-
-        # App version — git commit hash
-        try:
-            import os as _os, subprocess as _sub
-            repo = Path(_os.getenv('TIMELAPSE_REPO_DIR', '/opt/timelapse'))
-            r = _sub.run(
-                ["/usr/bin/git", "-c", "safe.directory=/opt/timelapse", "-C", str(repo), "rev-parse", "HEAD"],
-                capture_output=True, text=True, timeout=5
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                info["app_version"] = r.stdout.strip()[:7]
-        except Exception as e:
-            log.debug("git rev-parse fejl: %s", e)
-
-        return info
-
-
     def _check_and_apply_updates(self) -> None:
         """Tjek om der er godkendte opdateringer og eksekvér dem."""
         log.info("Update-check: starter...")
@@ -951,7 +914,6 @@ class EdgeAgent:
             if hasattr(self, "_last_cam_diag") and self._last_cam_diag:
                 diag_data["camera"] = self._last_cam_diag
 
-            diag_data["updates"] = self._collect_update_info()
             ok, _ = self._api.send_heartbeat(diag_data, capture_stats)
             if ok:
                 log.info("Heartbeat sent OK")

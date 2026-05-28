@@ -38,8 +38,3 @@ def post_inventory(cfg, payload: dict) -> tuple[bool, str]:
 def post_security_events(cfg, events: list[dict]) -> tuple[bool, str]:
     url = f"{cfg.headend_url}/api/siem/events/{cfg.device_id}"
     return _post(url, {"events": events}, cfg.api_token)
-
-
-def post_available_updates(cfg, payload: dict) -> tuple[bool, str]:
-    url = f"{cfg.headend_url}/api/updates/available"
-    return _post(url, payload, cfg.api_token)

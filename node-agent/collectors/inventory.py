@@ -294,6 +294,82 @@ def _venv_packages(config=None) -> dict[str, str]:
         return {}
 
 
+def _firmware_version() -> Optional[str]:
+    if platform.system() == "Darwin":
+        try:
+            out = _run(["system_profiler", "SPHardwareDataType"], timeout=10).stdout
+            boot = re.search(r"System Firmware Version:\s*(.+)", out)
+            os_loader = re.search(r"OS Loader Version:\s*(.+)", out)
+            parts = []
+            if boot:
+                parts.append(f"firmware={boot.group(1).strip()}")
+            if os_loader:
+                parts.append(f"os_loader={os_loader.group(1).strip()}")
+            return "; ".join(parts) if parts else None
+        except Exception:
+            return None
+
+    for path in (
+        "/proc/device-tree/model",
+        "/sys/firmware/devicetree/base/model",
+    ):
+        try:
+            value = Path(path).read_bytes().replace(b"\x00", b"").decode(errors="ignore").strip()
+            if value:
+                return value
+        except OSError:
+            pass
+    return None
+
+
+def _os_packages() -> tuple[Optional[str], dict[str, str]]:
+    if platform.system() == "Darwin":
+        packages: dict[str, str] = {}
+        try:
+            result = _run(["pkgutil", "--pkgs"], timeout=15)
+            for name in result.stdout.splitlines():
+                name = name.strip()
+                if name:
+                    packages[name] = "installed"
+            return "macos/pkgutil", packages
+        except Exception as exc:
+            log.debug("pkgutil package inventory fejl: %s", exc)
+            return "macos/pkgutil", {}
+
+    try:
+        result = _run(["dpkg-query", "-W", "-f=${Package}=${Version}\\n"], timeout=25)
+        packages = {}
+        for line in result.stdout.splitlines():
+            if "=" in line:
+                name, version = line.split("=", 1)
+                packages[name] = version
+        return "apt/dpkg", packages
+    except Exception as exc:
+        log.debug("dpkg package inventory fejl: %s", exc)
+        return "apt/dpkg", {}
+
+
+def _software_inventory(config=None) -> dict[str, str]:
+    inventory = {
+        "timelapse_pro": APP_VERSION,
+        "python": platform.python_version(),
+    }
+    if platform.system() == "Darwin":
+        for name, cmd in {
+            "nginx": ["/opt/homebrew/sbin/nginx", "-v"],
+            "ollama": ["/usr/local/bin/ollama", "--version"],
+            "brew": ["/opt/homebrew/bin/brew", "--version"],
+        }.items():
+            try:
+                result = _run(cmd, timeout=5)
+                text = (result.stdout or result.stderr).strip().splitlines()
+                if text:
+                    inventory[name] = text[0]
+            except Exception:
+                pass
+    return inventory
+
+
 # ── GPG fingerprint ───────────────────────────────────────────────────────────
 
 def _gpg_fingerprint() -> Optional[str]:
@@ -322,6 +398,7 @@ def collect_inventory(config: dict) -> dict:
     boot_type, boot_gb, boot_pct = _storage_info("/")
     data_path = "/Volumes/data" if platform.system() == "Darwin" and Path("/Volumes/data").exists() else "/data"
     data_type, data_gb, data_pct = _storage_info(data_path) if Path(data_path).exists() else (None, None, None)
+    package_manager, os_packages = _os_packages()
 
     return {
         # Hardware
@@ -336,9 +413,13 @@ def collect_inventory(config: dict) -> dict:
         # OS / Software
         "os_name":                  _os_name(),
         "kernel_version":           platform.release(),
+        "firmware_version":         _firmware_version(),
         "python_version":           platform.python_version(),
         "app_version":              APP_VERSION,
+        "package_manager":          package_manager,
+        "os_packages":              os_packages,
         "venv_packages":            _venv_packages(config),
+        "software_inventory":       _software_inventory(config),
 
         # Storage (boot)
         "boot_storage_type":        boot_type,

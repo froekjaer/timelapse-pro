@@ -28,8 +28,7 @@ from pathlib import Path
 from config import NodeAgentConfig
 from collectors.inventory import collect_inventory
 from collectors.security import collect_security_events
-from collectors.updates import collect_available_updates
-from transport import post_available_updates, post_inventory, post_security_events
+from transport import post_inventory, post_security_events
 
 # ── Logging ───────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -74,14 +73,6 @@ def run(cfg: NodeAgentConfig) -> None:
                     log.info("Inventar rapporteret OK")
                 else:
                     log.warning("Inventar-rapportering fejlede: %s", msg)
-                updates = collect_available_updates(cfg)
-                if updates.get("os_security_count") or updates.get("os_updates_count"):
-                    ok, msg = post_available_updates(cfg, updates)
-                    if ok:
-                        log.info("Update-status rapporteret OK: os_security=%s os_updates=%s",
-                                 updates.get("os_security_count"), updates.get("os_updates_count"))
-                    else:
-                        log.warning("Update-status rapportering fejlede: %s", msg)
             except Exception as e:
                 log.warning("Inventar-fejl (uventet): %s", e)
             last_inventory = now

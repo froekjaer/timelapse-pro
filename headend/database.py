@@ -509,10 +509,14 @@ class DeviceInventory(Base):
     # ── OS / Software ────────────────────────────────────────────────────
     os_name                 = Column(String(100))   # "Ubuntu 24.04.1 LTS"
     kernel_version          = Column(String(100))   # "6.1.0-armbian"
+    firmware_version        = Column(String(200))
     python_version          = Column(String(20))    # "3.12.3"
     app_version             = Column(String(50))    # TimeLapse Pro edge version
+    package_manager         = Column(String(50))
+    os_packages             = Column(Text)
     venv_packages           = Column(Text)
     # JSON: {"gphoto2": "2.5.28", "paramiko": "3.4.0", ...}
+    software_inventory      = Column(Text)
 
     # ── Storage ──────────────────────────────────────────────────────────
     boot_storage_type       = Column(String(20))    # emmc | sd | nvme
