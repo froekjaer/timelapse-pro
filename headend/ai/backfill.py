@@ -24,6 +24,9 @@ SFTP_BASE    = Path(os.getenv("SFTP_BASE", "/Volumes/data/timelapse-incoming"))
 OLLAMA_URL   = os.getenv("OLLAMA_URL", "http://localhost:11434")
 os.environ["DATABASE_URL"] = DATABASE_URL
 
+import json
+from datetime import datetime, timezone
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 engine       = create_engine(DATABASE_URL)
@@ -40,17 +43,20 @@ def find_image(filename):
     m = re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
     if m:
         yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
-        for pat in [f"*/*/{yyyy}/{mm}/{dd}/{p.name}",
+        for pat in [f"*/data/*/*/{yyyy}/{mm}/{dd}/{p.name}",
+                    f"*/*/{yyyy}/{mm}/{dd}/{p.name}",
                     f"*/*/*/{yyyy}/{mm}/{dd}/{p.name}",
-                    f"**/{yyyy}/{mm}/{dd}/{p.name}"]:
+                    f"*/*/*/*/{yyyy}/{mm}/{dd}/{p.name}"]:
             hits = list(SFTP_BASE.glob(pat))
             if hits: return hits[0]
-    hits = list(SFTP_BASE.rglob(p.name))
-    return hits[0] if hits else None
+    if os.getenv("TIMELAPSE_BACKFILL_ALLOW_DEEP_SCAN", "").lower() in ("1", "true", "yes"):
+        hits = list(SFTP_BASE.rglob(p.name))
+        return hits[0] if hits else None
+    return None
 
 
 def get_captures(db, args):
-    where = "WHERE a.id IS NULL" if not args.force else "WHERE TRUE"
+    where = "WHERE (c.ai_result IS NULL OR c.ai_tags IS NULL)" if not args.force else "WHERE TRUE"
     q = f"""
         SELECT c.id, c.filename, c.device_id, c.captured_at,
                cust.name AS customer_name, cust.id AS customer_id,
@@ -59,7 +65,6 @@ def get_captures(db, args):
         LEFT JOIN devices d      ON d.device_id  = c.device_id
         LEFT JOIN sites s        ON s.id          = d.site_id
         LEFT JOIN customers cust ON cust.id        = s.customer_id
-        {'LEFT JOIN ai_analyses a ON a.capture_id = c.id' if not args.force else ''}
         {where}
     """
     p = {}
@@ -84,7 +89,7 @@ def get_captures(db, args):
         # Fallback uden sites/customers join
         q2 = "SELECT c.id, c.filename, c.device_id, c.captured_at, NULL::text AS customer_name, NULL::text AS customer_id, NULL::text AS site_name FROM captures c"
         if not args.force:
-            q2 += " LEFT JOIN ai_analyses a ON a.capture_id=c.id WHERE a.id IS NULL"
+            q2 += " WHERE (c.ai_result IS NULL OR c.ai_tags IS NULL)"
         else:
             q2 += " WHERE TRUE"
         if args.date: q2 += " AND DATE(c.captured_at)=:dt"
@@ -178,7 +183,7 @@ def main():
         print("  ✅ Ingen billeder at analysere"); db.close(); return
 
     total_in_db = db.execute(text(
-        "SELECT COUNT(*) FROM captures c LEFT JOIN ai_analyses a ON a.capture_id=c.id WHERE a.id IS NULL"
+        "SELECT COUNT(*) FROM captures c WHERE c.ai_result IS NULL OR c.ai_tags IS NULL"
     )).scalar()
     print(f"── {len(captures)} captures til analyse (af {total_in_db} uanalyserede i alt) ──\n")
 
@@ -299,6 +304,42 @@ def main():
                 approved_tags=result.approved_tags + result.change_tags,
                 new_tags=result.new_tags,
             )
+            payload = {
+                "scene_dk": result.scene_dk,
+                "approved_tags": result.approved_tags,
+                "new_tags": result.new_tags,
+                "change_detected": result.change_detected,
+                "change_summary": result.change_summary,
+                "change_tags": result.change_tags,
+                "quality_flag": result.quality_flag,
+                "quality_ok": result.quality_ok,
+                "has_gdpr_data": result.has_gdpr_data,
+                "gdpr_detections": [
+                    {
+                        "type": item.detection_type,
+                        "detail": item.detail,
+                        "bbox": item.bounding_box,
+                    }
+                    for item in result.gdpr_detections
+                ],
+                "model": model_used,
+                "duration_ms": result.duration_ms,
+                "raw_response": result.raw_response,
+            }
+            tags = result.approved_tags + result.new_tags + result.change_tags
+            db.execute(text("""
+                UPDATE captures
+                SET ai_result = :ai_result,
+                    ai_tags = :ai_tags,
+                    ai_analyzed_at = :ai_analyzed_at
+                WHERE id = :capture_id
+            """), {
+                "capture_id": cap["id"],
+                "ai_result": json.dumps(payload, ensure_ascii=False),
+                "ai_tags": json.dumps(list(dict.fromkeys(tags)), ensure_ascii=False),
+                "ai_analyzed_at": datetime.now(timezone.utc),
+            })
+            db.commit()
             is_cloud = any(x in model_used for x in ["gemini","gpt","claude"])
             stats["sky" if is_cloud else "lokal"] += 1
             flags = ("☁️ " if is_cloud else "") + (f"+{len(result.new_tags)}ny " if result.new_tags else "")

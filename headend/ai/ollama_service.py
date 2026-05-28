@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -31,11 +32,18 @@ log = logging.getLogger(__name__)
 
 # ── Konfiguration ─────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL   = "http://localhost:11434"
-VISION_MODEL      = "qwen2.5vl:7b"
+VISION_MODEL      = os.getenv("TIMELAPSE_VISION_MODEL", "llava-phi3:latest")
+FALLBACK_MODELS   = [
+    m.strip()
+    for m in os.getenv("TIMELAPSE_VISION_FALLBACK_MODELS", "qwen3-vl:8b").split(",")
+    if m.strip()
+]
 TEXT_MODEL        = "llama3.2:latest"
-TIMEOUT_VISION    = 600   # sekunder — vision er tung
+TIMEOUT_VISION    = int(os.getenv("TIMELAPSE_VISION_TIMEOUT", "120"))
 TIMEOUT_TEXT      = 60
-MAX_IMAGE_BYTES   = 5 * 1024 * 1024   # 5 MB — resize hvis større
+MAX_IMAGE_BYTES   = int(os.getenv("TIMELAPSE_VISION_MAX_IMAGE_BYTES", str(1_500_000)))
+MAX_IMAGE_EDGE    = int(os.getenv("TIMELAPSE_VISION_MAX_IMAGE_EDGE", "1280"))
+MAX_PROMPT_TAGS   = int(os.getenv("TIMELAPSE_VISION_MAX_PROMPT_TAGS", "80"))
 
 
 # =============================================================================
@@ -77,53 +85,39 @@ class ImageAnalysisResult:
 # =============================================================================
 
 def _build_vision_prompt(vocabulary_by_category: dict[str, list[str]]) -> str:
-    """Byg enkelt-billed prompt med hele vokabularet."""
+    """Byg kompakt enkelt-billed prompt med begrænset vokabular."""
 
-    # Formater vokabular som kompakt kategoriseret liste
     vocab_lines = []
+    used = 0
     for cat, tags in vocabulary_by_category.items():
-        vocab_lines.append(f"  [{cat}]: {', '.join(tags)}")
+        if used >= MAX_PROMPT_TAGS:
+            break
+        selected = tags[:max(0, MAX_PROMPT_TAGS - used)]
+        if selected:
+            vocab_lines.append(f"{cat}: {', '.join(selected)}")
+            used += len(selected)
     vocab_text = "\n".join(vocab_lines)
 
-    return f"""Du er et præcist AI-system til dokumentation af byggepladser.
-Analyser dette billede og returner KUN et JSON-objekt — ingen forklaring, ingen kommentarer.
+    return f"""Analyser byggeplads-billedet. Svar kun med gyldigt JSON. Ingen markdown, ingen forklaring.
 
-## EKSISTERENDE TAG-VOKABULAR (brug disse præfereret)
+Brug helst disse danske tags når de passer:
 {vocab_text}
 
-## REGLER FOR TAGS
-- Brug eksisterende tags fra listen når de passer
-- Tilføj NYE tags i "new_tags" hvis du ser noget der ikke er dækket
-- Alle tags: dansk, lowercase, underscore (ikke mellemrum)
-- Vær generøs — 15 til 35 tags pr. billede
-- Tag kun det du faktisk kan se
+Regler:
+- Tags skal være dansk, lowercase og bruge underscore.
+- Brug 5 til 20 tags.
+- Beskriv kun det der kan ses.
+- Identificer aldrig personer eller nummerplader.
 
-## GDPR-REGLER (VIGTIGT)
-- Identificer ALDRIG navne, ansigtstræk eller nummerplader som tekst
-- Rapportér KUN: er der et ansigt (ja/nej), er der en nummerplade (ja/nej)
-- For køretøjer: mærke/model KUN hvis tydeligt synligt som model-type, IKKE som identifikation
-
-## RETURNER PRÆCIS DETTE JSON-FORMAT:
+JSON-format:
 {{
-  "scene": "Kort dansk beskrivelse af hvad der foregår på billedet (1-2 sætninger)",
+  "scene": "Billedet viser ...",
   "tags": ["tag1", "tag2", "..."],
-  "new_tags": ["evt_nyt_tag"],
-  "quality": {{
-    "flag": "klart_billede",
-    "ok": true
-  }},
-  "gdpr": {{
-    "has_data": false,
-    "detections": []
-  }}
+  "new_tags": [],
+  "quality": {{"flag": "klart_billede", "ok": true}},
+  "gdpr": {{"has_data": false, "detections": []}}
 }}
-
-Eksempel på gdpr.detections hvis relevant:
-  {{"type": "face", "detail": {{"count": 2, "wearing_helmet": true}}, "bbox": {{"x": 0.3, "y": 0.1, "w": 0.1, "h": 0.15}}}}
-  {{"type": "license_plate", "detail": {{"visible": true, "readable": false}}, "bbox": {{"x": 0.6, "y": 0.7, "w": 0.12, "h": 0.04}}}}
-  {{"type": "person_counted", "detail": {{"count": 5}}, "bbox": null}}
-
-Returner KUN JSON. Ingen tekst før eller efter."""
+Returner kun JSON-objektet."""
 
 
 def _build_change_prompt(vocabulary_by_category: dict[str, list[str]]) -> str:
@@ -180,10 +174,12 @@ class OllamaVisionService:
         self,
         base_url:     str = OLLAMA_BASE_URL,
         vision_model: str = VISION_MODEL,
+        fallback_models: Optional[list[str]] = None,
     ):
-        self.base_url     = base_url.rstrip("/")
-        self.vision_model = vision_model
-        self._client      = httpx.Client(timeout=TIMEOUT_VISION)
+        self.base_url        = base_url.rstrip("/")
+        self.vision_model    = vision_model
+        self.fallback_models = fallback_models if fallback_models is not None else FALLBACK_MODELS
+        self._client         = httpx.Client(timeout=TIMEOUT_VISION)
 
     # ── Offentlig API ─────────────────────────────────────────────────────────
 
@@ -212,12 +208,7 @@ class OllamaVisionService:
         else:
             prompt = _build_vision_prompt(vocabulary_by_cat)
 
-        # Kald model
-        raw = self._call_ollama(
-            model=self.vision_model,
-            prompt=prompt,
-            images=images,
-        )
+        raw, model_used = self._call_ollama_with_fallback(prompt=prompt, images=images)
 
         duration_ms = int((time.monotonic() - start) * 1000)
 
@@ -227,7 +218,7 @@ class OllamaVisionService:
             parsed=parsed,
             approved_tag_set=approved_tag_set,
             has_reference=reference_image_path is not None,
-            model=self.vision_model,
+            model=model_used,
             duration_ms=duration_ms,
             raw_response=raw,
         )
@@ -270,7 +261,10 @@ class OllamaVisionService:
             "stream": False,
             "options": {
                 "temperature": 0.1,      # lav temperatur → konsistente JSON-svar
-                "num_predict": 1500,
+                "top_p": 0.8,
+                "repeat_penalty": 1.18,
+                "num_ctx": 8192,
+                "num_predict": 700,
             },
         }
         try:
@@ -288,6 +282,50 @@ class OllamaVisionService:
             log.error("Ollama HTTP-fejl %d: %s", e.response.status_code, e.response.text[:200])
             raise
 
+    def _call_ollama_with_fallback(self, prompt: str, images: list[str]) -> tuple[dict, str]:
+        """Prøv primær model og derefter fallback-modeller ved runtime-fejl."""
+        candidates = [self.vision_model]
+        candidates.extend(m for m in self.fallback_models if m and m not in candidates)
+
+        last_error: Exception | None = None
+        for idx, model in enumerate(candidates):
+            try:
+                if idx:
+                    log.warning("Ollama: prøver fallback vision-model %s efter fejl i %s", model, candidates[idx - 1])
+                raw = self._sanitize_raw_response(self._call_ollama(model=model, prompt=prompt, images=images))
+                if not str(raw.get("response", "")).strip():
+                    raise ValueError(f"Ollama model {model} returnerede tomt response-felt")
+                return raw, model
+            except (ValueError, httpx.TimeoutException, httpx.HTTPStatusError, httpx.TransportError) as exc:
+                last_error = exc
+                if idx == len(candidates) - 1:
+                    break
+                continue
+
+        if last_error:
+            raise last_error
+        raise RuntimeError("Ingen Ollama vision-modeller konfigureret")
+
+    def _sanitize_raw_response(self, raw: dict) -> dict:
+        """Behold driftsrelevant Ollama-meta uden store token-context felter."""
+        keep = {
+            "model",
+            "created_at",
+            "response",
+            "done",
+            "done_reason",
+            "total_duration",
+            "load_duration",
+            "prompt_eval_count",
+            "prompt_eval_duration",
+            "eval_count",
+            "eval_duration",
+        }
+        cleaned = {k: v for k, v in raw.items() if k in keep}
+        if "thinking" in raw:
+            cleaned["thinking_preview"] = str(raw.get("thinking", ""))[:500]
+        return cleaned
+
     # ── Intern: Billede-kodning ───────────────────────────────────────────────
 
     def _encode_image(self, path: Path | str) -> str:
@@ -298,25 +336,34 @@ class OllamaVisionService:
 
         data = p.read_bytes()
 
-        # Resize hvis over grænse
-        if len(data) > MAX_IMAGE_BYTES:
-            data = self._resize_image(data)
+        data = self._resize_image(data)
 
         return base64.b64encode(data).decode("utf-8")
 
     def _resize_image(self, data: bytes) -> bytes:
-        """Reducer billedstørrelse til under MAX_IMAGE_BYTES."""
+        """Reducer billedstørrelse og pixel-dimensioner til vision-modeller."""
         try:
             import cv2
             import numpy as np
             arr = np.frombuffer(data, np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            scale = (MAX_IMAGE_BYTES / len(data)) ** 0.5 * 0.9
+            if img is None:
+                return data
             h, w = img.shape[:2]
-            img_small = cv2.resize(img, (int(w * scale), int(h * scale)))
-            _, buf = cv2.imencode(".jpg", img_small, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            log.debug("Billede resized: %d KB → %d KB",
-                      len(data) // 1024, len(buf) // 1024)
+            scale = min(1.0, MAX_IMAGE_EDGE / max(h, w))
+            if len(data) > MAX_IMAGE_BYTES:
+                scale = min(scale, (MAX_IMAGE_BYTES / len(data)) ** 0.5 * 0.9)
+            if scale < 1.0:
+                img = cv2.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))))
+            quality = 82
+            ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            while ok and len(buf) > MAX_IMAGE_BYTES and quality > 55:
+                quality -= 7
+                ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            if not ok:
+                return data
+            log.debug("Billede klargjort til AI: %d KB/%dx%d -> %d KB/%dx%d",
+                      len(data) // 1024, w, h, len(buf) // 1024, img.shape[1], img.shape[0])
             return buf.tobytes()
         except Exception as e:
             log.warning("Resize fejlede, bruger original: %s", e)
