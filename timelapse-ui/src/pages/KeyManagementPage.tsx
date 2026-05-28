@@ -28,6 +28,7 @@ interface Credential {
   created_at: string | null
   expires_at: string | null
   last_used_at: string | null
+  last_used_from: string | null
   use_count: number
   revoked_by: string | null
   revoke_reason: string | null
@@ -119,6 +120,7 @@ export default function KeyManagementPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [oneTimeSecret, setOneTimeSecret] = useState<string | null>(null)
+  const [operationMessage, setOperationMessage] = useState<string | null>(null)
   const [form, setForm] = useState({
     entity_type: 'edge',
     entity_id: '',
@@ -153,6 +155,7 @@ export default function KeyManagementPage() {
     setBusy(true)
     setError(null)
     setOneTimeSecret(null)
+    setOperationMessage(null)
     try {
       const payload = {
         ...formOverride,
@@ -179,6 +182,7 @@ export default function KeyManagementPage() {
     const reason = prompt('Årsag til revocation') || 'Manuelt revokeret'
     setBusy(true)
     setError(null)
+    setOperationMessage(null)
     try {
       await api(`/api/admin/key-management/credentials/${credentialId}/revoke`, {
         method: 'POST',
@@ -187,6 +191,23 @@ export default function KeyManagementPage() {
       await load()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Kunne ikke revokere credential')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function migrateLegacyTokens() {
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await api('/api/admin/key-management/migrate-legacy-device-tokens', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+      setOperationMessage(`Migreret: ${result.migrated}. Allerede registreret: ${result.already_registered}. Sprunget over: ${result.skipped}.`)
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Kunne ikke migrere legacy tokens')
     } finally {
       setBusy(false)
     }
@@ -227,6 +248,11 @@ export default function KeyManagementPage() {
           <RefreshCw className="w-3.5 h-3.5" />
           Opdater
         </button>
+        <button onClick={migrateLegacyTokens} disabled={busy}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-amber-200 text-amber-700 rounded-lg hover:bg-amber-50 disabled:opacity-50">
+          <ShieldCheck className="w-3.5 h-3.5" />
+          Migrer legacy
+        </button>
       </div>
 
       {error && (
@@ -244,11 +270,19 @@ export default function KeyManagementPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+      {operationMessage && (
+        <div className="mb-4 px-4 py-3 rounded-lg border border-sky-100 bg-sky-50 text-sky-700 text-sm flex items-center gap-2">
+          <CheckCircle className="w-4 h-4" />
+          {operationMessage}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-5">
         <Metric label="Aktive" value={summary.active ?? 0} />
         <Metric label="Revoked" value={summary.revoked ?? 0} />
         <Metric label="Expired" value={summary.expired ?? 0} />
         <Metric label="Legacy tokens" value={summary.legacy_device_tokens ?? 0} />
+        <Metric label="Mangler API" value={summary.missing_edge_api_key ?? 0} />
         <Metric label="Mangler signing" value={summary.missing_signing_key ?? 0} />
         <Metric label="Release signers" value={summary.trusted_release_signers ?? 0} />
       </div>
@@ -356,6 +390,9 @@ export default function KeyManagementPage() {
                         <div className="bg-gray-50 rounded-lg px-3 py-2">
                           <div className="text-gray-400">Brug</div>
                           <div className="text-gray-700">{credential.use_count} / {fmt(credential.last_used_at)}</div>
+                          {credential.last_used_from && (
+                            <div className="font-mono text-gray-400 mt-0.5">{credential.last_used_from}</div>
+                          )}
                         </div>
                       </div>
                       {credential.scopes.length > 0 && (
