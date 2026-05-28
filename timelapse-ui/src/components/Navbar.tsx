@@ -31,6 +31,7 @@ export function Navbar() {
     { to: '/tags',         label: 'Tag søgning',   icon: Tag },
     { to: '/settings',     label: 'Indstillinger', icon: Settings },
     { to: '/ai',           label: 'AI Styring',    icon: Brain },
+    { to: '/compliance',   label: 'Compliance',    icon: ClipboardCheck },
   ]
 
   const adminLinks = [

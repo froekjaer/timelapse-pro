@@ -24,6 +24,7 @@ import KeyManagementPage from './pages/KeyManagementPage'
 import { SshTunnelPage } from './pages/SshTunnelPage'
 import { UpdatesPage } from './pages/UpdatesPage'
 import { ChangeTicketsPage } from './pages/ChangeTicketsPage'
+import { CompliancePage } from './pages/CompliancePage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { CMDBPage, CMDBDetailPage } from './pages/CMDBPage'
 import { SIEMPage } from './pages/SIEMPage'
@@ -74,6 +75,7 @@ function AppRoutes() {
                 <Route path="/ssh-tunnel" element={<SshTunnelPage />} />
                 <Route path="/updates" element={<UpdatesPage />} />
                 <Route path="/change-tickets" element={<ChangeTicketsPage />} />
+                <Route path="/compliance" element={<CompliancePage />} />
         <Route path="/cmdb" element={<CMDBPage />} />
         <Route path="/siem" element={<SIEMPage />} />
         <Route path="/import" element={<ImportPage />} />

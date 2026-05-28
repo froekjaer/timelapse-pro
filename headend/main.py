@@ -3188,6 +3188,198 @@ def approve_update(
              u.update_type, u.version, u.environment, u.scope, current_user.username)
     return {"ok": True}
 
+
+def _control_summary_state(controls: list[dict]) -> dict:
+    counts = {"pass": 0, "warning": 0, "fail": 0, "unknown": 0}
+    for control in controls:
+        status = control.get("status", "unknown")
+        counts[status if status in counts else "unknown"] += 1
+    return counts
+
+
+def _approval_targets_for_update(db: Session, update: PendingUpdate) -> list[dict]:
+    targets = []
+    device_map = {d.device_id: d for d in _resolve_update_targets(db, update)}
+    if not device_map and update.scope == "device" and update.scope_id:
+        device = db.query(Device).filter_by(device_id=update.scope_id).first()
+        if device:
+            device_map[device.device_id] = device
+    for device in device_map.values():
+        targets.append({
+            "device_id": device.device_id,
+            "customer_id": device.customer_id,
+            "customer_name": device.customer_name,
+            "site_id": device.site_id,
+            "site_name": device.site_name,
+            "camera_name": device.camera_name,
+        })
+    return targets
+
+
+def _user_can_approve_update(user: User, update: PendingUpdate, targets: list[dict]) -> bool:
+    if user.role in ("super_admin", "admin"):
+        return True
+    if user.role != "operator":
+        return False
+    if not user.customer_id:
+        return False
+    if update.scope == "customer" and update.scope_id == user.customer_id:
+        return True
+    return any(t.get("customer_id") == user.customer_id for t in targets)
+
+
+def _approval_queue(db: Session, user: User) -> list[dict]:
+    updates = (
+        db.query(PendingUpdate)
+        .filter(PendingUpdate.status.in_(["pending", "rejected"]))
+        .order_by(PendingUpdate.created_at.desc())
+        .all()
+    )
+    queue = []
+    for update in updates:
+        targets = _approval_targets_for_update(db, update)
+        if not _user_can_approve_update(user, update, targets):
+            continue
+        ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).first()
+        artifact = _find_artifact_for_update(db, update)
+        risk = _risk_assessment(update.update_type, update.severity, None, None, update.status)
+        queue.append({
+            "id": update.id,
+            "update_type": update.update_type,
+            "version": update.version,
+            "description": update.description,
+            "severity": update.severity,
+            "status": update.status,
+            "environment": update.environment,
+            "scope": update.scope,
+            "scope_id": update.scope_id,
+            "created_at": update.created_at.isoformat() if update.created_at else None,
+            "risk": risk,
+            "targets": targets,
+            "change_ticket": _ticket_to_dict(ticket) if ticket else None,
+            "artifact": _artifact_to_dict(artifact) if artifact else None,
+            "approval_mode": "simple_acceptance",
+        })
+    return queue
+
+
+@app.get("/api/compliance/cockpit")
+def compliance_cockpit(
+    current_user=require_role("operator"),
+    db: Session = Depends(get_db),
+):
+    """Samlet compliance cockpit og enkel approval-kø."""
+    key_data = list_key_management(_user=object(), db=db)
+    resilience = resilience_assessment(_user=object(), db=db)
+    aiops = _aiops_snapshot(db)
+    controls = []
+    for source, items in [
+        ("key_management", key_data.get("controls", [])),
+        ("resilience", resilience.get("controls", [])),
+    ]:
+        for control in items:
+            controls.append({**control, "source": source})
+    if aiops["sast"]["finding_count"]:
+        controls.append({
+            "source": "ai_ops",
+            "status": "warning",
+            "title": "SAST review backlog",
+            "evidence": f"{aiops['sast']['finding_count']} statiske review-signaler kræver triage.",
+            "domains": ["ISO27000", "CRA"],
+            "recommendation": "Konverter validerede fund til signerede change tickets.",
+        })
+    approvals = _approval_queue(db, current_user)
+    return {
+        "generated_at": now_utc().isoformat(),
+        "mode": "near_realtime_compliance_posture",
+        "user_scope": {
+            "username": current_user.username,
+            "role": current_user.role,
+            "customer_id": current_user.customer_id,
+        },
+        "summary": {
+            "controls": _control_summary_state(controls),
+            "approval_queue": len(approvals),
+            "devices": resilience.get("summary", {}).get("devices", 0),
+            "change_tickets": resilience.get("summary", {}).get("change_tickets", 0),
+            "sast_findings": aiops["sast"]["finding_count"],
+        },
+        "standards": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+        "controls": controls,
+        "approvals": approvals,
+        "evidence_sources": [
+            "CMDB inventory",
+            "SIEM events",
+            "Key credential lifecycle",
+            "Signed artifacts",
+            "Signed change tickets",
+            "Resilience/backup assessment",
+            "AI Ops read-only analysis",
+        ],
+    }
+
+
+@app.post("/api/compliance/updates/{update_id}/accept")
+def compliance_accept_update(
+    update_id: int,
+    payload: ChangeTicketPayload = ChangeTicketPayload(status="ready"),
+    current_user=require_role("operator"),
+    db: Session = Depends(get_db),
+):
+    """Simpel brugeraccept af relevant update med audit/change-ticket binding."""
+    update = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not update:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    targets = _approval_targets_for_update(db, update)
+    if not _user_can_approve_update(current_user, update, targets):
+        raise HTTPException(status_code=403, detail="Du kan ikke godkende denne opdatering")
+    if update.status not in ("pending", "rejected"):
+        raise HTTPException(status_code=400, detail=f"Kan ikke godkende update med status {update.status}")
+
+    ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).first()
+    if not ticket:
+        artifact = _find_artifact_for_update(db, update)
+        ticket = _build_change_ticket(update, payload, current_user, artifact)
+        db.add(ticket)
+        db.flush()
+        _ensure_update_targets(db, update, ticket)
+
+    decided_at = now_utc()
+    signed_payload = {
+        "ticket_id": ticket.ticket_id,
+        "ticket_sha256": ticket.content_sha256,
+        "decision": "approved",
+        "decided_by": current_user.username,
+        "decided_at": decided_at.isoformat(),
+        "approval_surface": "compliance_cockpit_simple_acceptance",
+        "notes": payload.summary,
+    }
+    signed_hash = _sha256_text(_canonical_json(signed_payload))
+    signature, signed_by = _sign_payload(_canonical_json(signed_payload))
+    db.add(ChangeApproval(
+        ticket_id=ticket.ticket_id,
+        decision="approved",
+        decided_by=current_user.username,
+        decided_at=decided_at,
+        approval_context=_canonical_json({
+            "role": current_user.role,
+            "customer_id": current_user.customer_id,
+            "signed_by": signed_by,
+            "targets": targets,
+        }),
+        signature=signature,
+        signed_payload_sha256=signed_hash,
+        notes=payload.summary,
+    ))
+    ticket.status = "approved"
+    ticket.updated_at = decided_at
+    update.status = "approved"
+    update.approved_at = decided_at
+    update.approved_by = current_user.username
+    _ensure_update_targets(db, update, ticket)
+    db.commit()
+    return {"ok": True, "update_id": update.id, "ticket_id": ticket.ticket_id, "signed_payload_sha256": signed_hash}
+
 @app.post("/api/updates/{update_id}/reject")
 def reject_update(
     update_id: int,
