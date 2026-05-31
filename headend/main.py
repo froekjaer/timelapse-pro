@@ -6951,6 +6951,7 @@ def _call_ollama_text(prompt: str, model: str = "llama3.2:latest") -> dict | Non
                 "model": model,
                 "prompt": prompt,
                 "stream": False,
+                "format": "json",
                 "options": {"temperature": 0.1, "num_predict": 1800},
             },
             timeout=90,
@@ -7343,7 +7344,11 @@ def _parse_capture_natural_query(query: str, known_tags: set[str]) -> dict:
 
     limit_match = _re.search(r"\b(\d{1,3})\b", lower)
     limit = int(limit_match.group(1)) if limit_match else 20
-    if "seneste" in lower or "nyeste" in lower:
+    if any(term in lower for term in ("jævnt", "jaevnt", "fordel", "spredt", "timelapse")):
+        sort = "timelapse_even_spacing"
+    elif any(term in lower for term in ("bedste", "skarpeste", "højeste kvalitet", "hoejeste kvalitet")):
+        sort = "quality"
+    elif "seneste" in lower or "nyeste" in lower:
         sort = "newest"
     elif "ældste" in lower or "aeldste" in lower:
         sort = "oldest"
@@ -7394,6 +7399,308 @@ def _filter_captures_by_ai(captures: list[Capture], spec: dict) -> list[Capture]
             continue
         filtered.append(capture)
     return filtered
+
+
+def _normalise_capture_search_spec(spec: dict, fallback: dict, known_tags: set[str]) -> dict:
+    safe = dict(fallback)
+    if isinstance(spec, dict):
+        safe.update({k: v for k, v in spec.items() if v is not None})
+
+    def _tag_list(value) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        stopwords = {
+            "billede", "billeder", "foto", "fotos", "seneste", "nyeste", "ældste", "aeldste",
+            "skarpe", "skarp", "bedste", "gode", "godkendte", "i dag", "idag", "today",
+            "timelapse", "video", "vælg", "vaelg", "find", "søg", "soeg",
+        }
+        cleaned = []
+        for item in value[:20]:
+            tag = str(item).strip().lower().replace("#", "")
+            generic = tag in stopwords or any(part in stopwords for part in _re.split(r"[_\s-]+", tag))
+            if tag and (tag in known_tags or not generic):
+                cleaned.append(tag)
+        return sorted(dict.fromkeys(cleaned))
+
+    safe["include_tags"] = _tag_list(safe.get("include_tags"))
+    safe["exclude_tags"] = _tag_list(safe.get("exclude_tags"))
+    query_lower = str(safe.get("query") or fallback.get("query") or "").lower()
+    fallback_include = set(fallback.get("include_tags") or [])
+    fallback_exclude = set(fallback.get("exclude_tags") or [])
+
+    def _mentioned(tag: str, fallback_tags: set[str]) -> bool:
+        return tag in fallback_tags or tag in query_lower or tag.replace("_", " ") in query_lower
+
+    safe["include_tags"] = [tag for tag in safe["include_tags"] if _mentioned(tag, fallback_include)]
+    safe["exclude_tags"] = [tag for tag in safe["exclude_tags"] if _mentioned(tag, fallback_exclude)]
+    safe["limit"] = max(1, min(int(safe.get("limit") or fallback.get("limit") or 20), 500))
+    safe["sort"] = str(safe.get("sort") or fallback.get("sort") or "newest")
+    if safe["sort"] not in {"newest", "oldest", "quality", "timelapse_even_spacing"}:
+        safe["sort"] = "newest"
+    safe["purpose"] = str(safe.get("purpose") or fallback.get("purpose") or "search")
+    if safe["purpose"] not in {"timeline", "tag_search", "timelapse", "openwebui", "search"}:
+        safe["purpose"] = "search"
+    quality_raw = safe.get("quality_only")
+    safe["quality_only"] = str(quality_raw).strip().lower() in {"1", "true", "yes", "ja"} if isinstance(quality_raw, str) else bool(quality_raw)
+    if safe["quality_only"] and not fallback.get("quality_only"):
+        safe["quality_only"] = False
+    if safe["include_tags"] or safe["exclude_tags"]:
+        safe["known_tag_matches"] = sorted(set(safe["include_tags"] + safe["exclude_tags"]) & known_tags)
+    return safe
+
+
+def _capture_spec_from_ollama(query: str, known_tags: set[str], purpose: str = "search") -> dict:
+    fallback = _parse_capture_natural_query(query, known_tags)
+    fallback["purpose"] = purpose or fallback.get("purpose") or "search"
+    prompt = f"""
+Du er TimeLapse Pro billedsøgnings-parser. Du må kun returnere JSON.
+Fortolk dansk/fritekst til sikre filtre. Brug kun tag-felter når brugeren faktisk efterspørger indhold.
+
+Returner KUN JSON:
+{{
+  "date": "today|yesterday|YYYY-MM-DD|null",
+  "date_from": "YYYY-MM-DD|null",
+  "date_to": "YYYY-MM-DD|null",
+  "include_tags": ["tag"],
+  "exclude_tags": ["tag"],
+  "quality_only": true,
+  "min_confidence": null,
+  "sort": "newest|oldest|quality|timelapse_even_spacing",
+  "limit": 20,
+  "purpose": "timeline|tag_search|timelapse|search",
+  "explanation": "kort dansk forklaring"
+}}
+
+Kendte tags:
+{json.dumps(sorted(list(known_tags))[:250], ensure_ascii=False)}
+
+Formål: {purpose}
+Brugerforespørgsel: {query[:1000]}
+"""
+    parsed = _call_ollama_text(prompt, model=os.getenv("TIMELAPSE_QUERY_MODEL", "llama3.2:latest"))
+    return _normalise_capture_search_spec(parsed or {}, fallback, known_tags)
+
+
+def _parse_capture_range(payload: dict, spec: dict) -> tuple[datetime | None, datetime | None]:
+    from datetime import timedelta as _td
+
+    date_value = payload.get("date") or spec.get("date")
+    if date_value and str(date_value).lower() not in {"null", "none"}:
+        start_iso, end_iso = _capture_date_window(str(date_value))
+        return datetime.fromisoformat(start_iso), datetime.fromisoformat(end_iso)
+
+    start_raw = payload.get("date_from") or spec.get("date_from")
+    end_raw = payload.get("date_to") or spec.get("date_to")
+    start_dt = None
+    end_dt = None
+    if start_raw and str(start_raw).lower() not in {"null", "none"}:
+        try:
+            start_dt = datetime.fromisoformat(str(start_raw)[:10]).replace(tzinfo=timezone.utc)
+        except Exception:
+            start_dt = None
+    if end_raw and str(end_raw).lower() not in {"null", "none"}:
+        try:
+            end_dt = datetime.fromisoformat(str(end_raw)[:10]).replace(tzinfo=timezone.utc) + _td(days=1)
+        except Exception:
+            end_dt = None
+    return start_dt, end_dt
+
+
+def _query_capture_candidates(db: Session, payload: dict, spec: dict) -> list[Capture]:
+    q = db.query(Capture).filter(Capture.captured_at.isnot(None))
+    candidate_ids = payload.get("candidate_ids")
+    if isinstance(candidate_ids, list) and candidate_ids:
+        ids = []
+        for raw_id in candidate_ids[:5000]:
+            try:
+                ids.append(int(raw_id))
+            except Exception:
+                pass
+        if ids:
+            q = q.filter(Capture.id.in_(ids))
+    else:
+        start_dt, end_dt = _parse_capture_range(payload, spec)
+        if start_dt:
+            q = q.filter(Capture.captured_at >= start_dt)
+        if end_dt:
+            q = q.filter(Capture.captured_at < end_dt)
+
+    device_ids = payload.get("device_ids") or payload.get("device_id")
+    if isinstance(device_ids, str):
+        device_ids = [d.strip() for d in device_ids.split(",") if d.strip()]
+    if isinstance(device_ids, list) and device_ids:
+        q = q.filter(Capture.device_id.in_([str(d) for d in device_ids[:100]]))
+
+    sort = spec.get("sort")
+    if sort == "oldest" or spec.get("purpose") == "timelapse":
+        q = q.order_by(Capture.captured_at.asc())
+    else:
+        q = q.order_by(Capture.captured_at.desc())
+    return q.limit(max(100, min(int(payload.get("candidate_limit") or 3000), 5000))).all()
+
+
+def _capture_quality_score(capture: Capture) -> float:
+    score = 0.0
+    if capture.quality_passed is True:
+        score += 40.0
+    if capture.blur_score is not None:
+        score += min(float(capture.blur_score), 100.0) * 0.35
+    if capture.brightness_mean is not None:
+        brightness = float(capture.brightness_mean)
+        score += max(0.0, 30.0 - abs(128.0 - brightness) / 4.5)
+    ai = _json_dict(capture.ai_result)
+    try:
+        score += float(ai.get("confidence") or 0) * 15.0
+    except Exception:
+        pass
+    return score
+
+
+def _select_evenly_spaced(captures: list[Capture], limit: int) -> list[Capture]:
+    if len(captures) <= limit:
+        return captures
+    selected = []
+    for idx in range(limit):
+        source_idx = round(idx * (len(captures) - 1) / max(limit - 1, 1))
+        selected.append(captures[source_idx])
+    return selected
+
+
+def _select_captures_for_spec(captures: list[Capture], spec: dict) -> list[Capture]:
+    filtered = _filter_captures_by_ai(captures, spec)
+    limit = max(1, min(int(spec.get("limit") or 20), 500))
+    sort = spec.get("sort")
+    if sort == "quality":
+        filtered = sorted(filtered, key=_capture_quality_score, reverse=True)
+    elif sort == "timelapse_even_spacing":
+        filtered = _select_evenly_spaced(filtered, limit)
+    elif sort == "oldest" or spec.get("purpose") == "timelapse":
+        filtered = sorted(filtered, key=lambda c: c.captured_at or datetime.min)
+    else:
+        filtered = sorted(filtered, key=lambda c: c.captured_at or datetime.min, reverse=True)
+    return filtered[:limit]
+
+
+@app.post("/api/ai/captures/natural-search")
+def ai_capture_natural_search(
+    payload: dict,
+    _user=require_role("viewer"),
+    db: Session = Depends(get_db),
+):
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="query mangler")
+    purpose = str(payload.get("purpose") or "search")
+    known_tags = _known_capture_tags(db)
+    spec = _capture_spec_from_ollama(query, known_tags, purpose=purpose)
+    if payload.get("limit"):
+        try:
+            spec["limit"] = max(1, min(int(payload.get("limit")), 500))
+        except Exception:
+            pass
+    candidates = _query_capture_candidates(db, payload, spec)
+    selected = _select_captures_for_spec(candidates, spec)
+    images = [_capture_openwebui_payload(c) for c in selected]
+    selected_ids = [c.id for c in selected]
+    candidate_ids = [c.id for c in candidates]
+    return {
+        "mode": "ollama" if spec.get("explanation") else "deterministic_fallback",
+        "query": query,
+        "selection": spec,
+        "total_candidates": len(candidates),
+        "total_matches": len(selected),
+        "results": images,
+        "capture_ids": selected_ids,
+        "selected_ids": selected_ids,
+        "excluded_ids": [cid for cid in candidate_ids if cid not in set(selected_ids)] if purpose == "timelapse" else [],
+        "suggested_ui_filters": {
+            "tag_search_include": spec.get("include_tags") or [],
+            "tag_search_exclude": spec.get("exclude_tags") or [],
+            "date": spec.get("date"),
+            "date_from": spec.get("date_from"),
+            "date_to": spec.get("date_to"),
+            "quality_only": spec.get("quality_only"),
+            "sort": spec.get("sort"),
+        },
+        "answer_hint": "Resultatet er read-only. Brug selected_ids til UI-udvalg, og kræv brugeraccept før ændringer eller render.",
+    }
+
+
+def _aiops_question_fallback(question: str, area: str, snapshot: dict) -> dict:
+    recommendations = _aiops_fallback(snapshot).get("recommendations", [])
+    risk_level = "high" if snapshot.get("siem", {}).get("latest_critical") else "medium"
+    return {
+        "mode": "deterministic_fallback",
+        "answer": "Ollama returnerede ikke gyldigt JSON. Her er en deterministisk read-only vurdering baseret på seneste snapshot.",
+        "risk_level": risk_level,
+        "recommendations": recommendations[:5],
+        "evidence": {
+            "area": area,
+            "question": question,
+            "cmdb_summary": snapshot.get("cmdb"),
+            "siem_summary": snapshot.get("siem"),
+            "updates_summary": snapshot.get("updates"),
+            "keys_summary": snapshot.get("keys"),
+        },
+        "suggested_filters": {},
+    }
+
+
+@app.post("/api/ai/ops/query")
+def aiops_query(
+    payload: dict,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    question = str(payload.get("question") or "").strip()[:1200]
+    if not question:
+        raise HTTPException(status_code=400, detail="question mangler")
+    area = str(payload.get("area") or "overview").strip()[:40] or "overview"
+    snapshot = _aiops_snapshot(db)
+    prompt = f"""
+Du er TimeLapse Pro GRC/AI Ops co-pilot. Du må kun analysere read-only data.
+Du må ikke foreslå shell-kommandoer som allerede udført, og du må ikke bede om hemmeligheder.
+Vurder altid med SABSA, IEC 62443, ISO 27000, NIS2 og CRA i baghovedet.
+Svar praktisk på dansk for en admin.
+
+Returner KUN JSON:
+{{
+  "mode": "ollama",
+  "answer": "kort, konkret svar",
+  "risk_level": "low|medium|high|critical",
+  "recommendations": [
+    {{
+      "title": "kort titel",
+      "severity": "low|medium|high|critical",
+      "domain": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+      "rationale": "hvorfor",
+      "proposed_action": "næste handling",
+      "requires_acceptance": true
+    }}
+  ],
+  "evidence": {{"key": "kort evidens"}},
+  "suggested_filters": {{"severity": "", "device_id": "", "event_type": ""}}
+}}
+
+Område: {area}
+Spørgsmål: {question}
+SNAPSHOT:
+{json.dumps(snapshot, ensure_ascii=False, default=str)[:26000]}
+"""
+    analysis = _call_ollama_text(prompt, model=os.getenv("TIMELAPSE_OPS_MODEL", "llama3.2:latest"))
+    if not isinstance(analysis, dict) or "answer" not in analysis:
+        analysis = _aiops_question_fallback(question, area, snapshot)
+    return {
+        "question": question,
+        "area": area,
+        "analysis": analysis,
+        "snapshot_excerpt": {
+            "cmdb": snapshot.get("cmdb"),
+            "siem": snapshot.get("siem"),
+            "updates": snapshot.get("updates"),
+            "keys": snapshot.get("keys"),
+        },
+    }
 
 
 @app.get("/api/openwebui/tools/openapi.json", include_in_schema=False)

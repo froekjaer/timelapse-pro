@@ -17,7 +17,7 @@ import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Film, Play, Download, RefreshCw, Check, X,
   Sliders, Clock, Zap, Eye, EyeOff, ChevronDown, ChevronUp,
-  AlertTriangle, CheckCircle, Video, Settings2
+  AlertTriangle, CheckCircle, Video, Settings2, Brain, Loader2, Sparkles
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
@@ -25,6 +25,7 @@ import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
 const apiCall = async (path: string, options?: RequestInit) => {
   const base = getApiUrl()
   const res = await fetch(`${base}${path}`, {
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
@@ -139,6 +140,9 @@ export default function TimelapseVideoPage() {
   const [excluded, setExcluded]         = useState<Set<number>>(new Set())
   const [loading, setLoading]           = useState(false)
   const [loadError, setLoadError]       = useState<string | null>(null)
+  const [aiQuery, setAiQuery]           = useState('')
+  const [aiSelecting, setAiSelecting]   = useState(false)
+  const [aiNote, setAiNote]             = useState('')
 
   // Indstillinger
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
@@ -206,6 +210,35 @@ export default function TimelapseVideoPage() {
 
   function includeAll() {
     setExcluded(new Set())
+    setAiNote('')
+  }
+
+  async function applyAiSelection() {
+    if (!aiQuery.trim() || frames.length === 0) return
+    setAiSelecting(true)
+    try {
+      const data = await apiCall('/api/ai/captures/natural-search', {
+        method: 'POST',
+        body: JSON.stringify({
+          query: aiQuery,
+          purpose: 'timelapse',
+          device_id: deviceId,
+          candidate_ids: frames.map(f => f.id),
+          limit: Math.min(frames.length, 500),
+        }),
+      })
+      const selected = new Set<number>((data.selected_ids ?? data.capture_ids ?? []).map((id: any) => Number(id)))
+      if (selected.size === 0) {
+        setAiNote('AI fandt ingen billeder i det aktuelle udvalg. Prøv at gøre søgningen bredere.')
+      } else {
+        setExcluded(new Set(frames.filter(f => !selected.has(f.id)).map(f => f.id)))
+        setAiNote(data.selection?.explanation || `AI valgte ${selected.size} af ${frames.length} billeder`)
+      }
+    } catch (e: any) {
+      setAiNote(`AI-udvalg fejlede: ${e.message ?? 'ukendt fejl'}`)
+    } finally {
+      setAiSelecting(false)
+    }
   }
 
   // ── Beregn statistik ───────────────────────────────────────────────────────
@@ -501,6 +534,29 @@ export default function TimelapseVideoPage() {
           {/* Render knap + status */}
           {frames.length > 0 && (
             <div className="bg-gray-900 rounded-2xl p-4 border border-white/8 space-y-3">
+              <div className="border border-sky-400/20 bg-sky-950/30 rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-sky-200">
+                  <Brain className="w-4 h-4" />
+                  AI-udvalg til timelapse
+                </div>
+                <textarea
+                  className="w-full bg-gray-950/80 border border-white/10 rounded-lg px-3 py-2 text-sm text-white resize-none outline-none focus:border-sky-400/60"
+                  rows={3}
+                  placeholder="f.eks. vælg de bedste skarpe billeder med byggeaktivitet uden regn og fordel dem jævnt"
+                  value={aiQuery}
+                  onChange={e => setAiQuery(e.target.value)}
+                />
+                <button
+                  onClick={applyAiSelection}
+                  disabled={aiSelecting || !aiQuery.trim()}
+                  className="w-full flex items-center justify-center gap-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-40 text-white text-sm rounded-lg py-2 transition-colors"
+                >
+                  {aiSelecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  Anvend AI-udvalg
+                </button>
+                {aiNote && <p className="text-xs text-sky-200/80">{aiNote}</p>}
+              </div>
+
               {/* Sammenfatning */}
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="bg-gray-800/60 rounded-xl py-2.5">

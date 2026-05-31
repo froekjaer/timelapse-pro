@@ -12,7 +12,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   Server, Shield, ChevronRight, RefreshCw, AlertTriangle,
   HardDrive, Cpu, Wifi, Package, Key, Eye, Trash2,
-  Plus, CheckCircle, Clock, ArrowLeft, Edit2, Check, X
+  Plus, CheckCircle, Clock, ArrowLeft, Edit2, Check, X,
+  Brain, Loader2
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 
@@ -144,6 +145,9 @@ function StorageBar({ pct }: { pct: number | null }) {
 export function CMDBPage() {
   const [entries, setEntries] = useState<CMDBEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [aiQuestion, setAiQuestion] = useState('Hvilke enheder har størst drifts- eller compliance-risiko lige nu?')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiAnswer, setAiAnswer] = useState<any | null>(null)
   const navigate = useNavigate()
 
   async function load() {
@@ -156,6 +160,20 @@ export function CMDBPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  async function askAi() {
+    if (!aiQuestion.trim()) return
+    setAiLoading(true)
+    try {
+      const r = await apiPost('/api/ai/ops/query', { area: 'cmdb', question: aiQuestion })
+      const data = await r.json()
+      setAiAnswer(data.analysis)
+    } catch {
+      setAiAnswer({ answer: 'AI-analyse fejlede. Tjek Ollama/headend-log og prøv igen.', risk_level: 'unknown', recommendations: [] })
+    } finally {
+      setAiLoading(false)
+    }
+  }
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -191,6 +209,52 @@ export function CMDBPage() {
           })}
         </div>
       )}
+
+      <div className="bg-white rounded-xl border border-sky-100 p-4 mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <Brain className="w-4 h-4 text-sky-600" />
+          <h2 className="text-sm font-semibold text-gray-800">AI CMDB-analyse</h2>
+          {aiAnswer?.risk_level && (
+            <span className="ml-auto text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+              Risk: {aiAnswer.risk_level}
+            </span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <input
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            value={aiQuestion}
+            onChange={e => setAiQuestion(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') askAi() }}
+          />
+          <button
+            onClick={askAi}
+            disabled={aiLoading || !aiQuestion.trim()}
+            className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white text-sm rounded-lg disabled:opacity-40"
+          >
+            {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+            Spørg
+          </button>
+        </div>
+        {aiAnswer && (
+          <div className="mt-3 text-sm text-gray-700 space-y-2">
+            <p>{aiAnswer.answer}</p>
+            {(aiAnswer.recommendations ?? []).length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {aiAnswer.recommendations.slice(0, 4).map((rec: any, idx: number) => (
+                  <div key={idx} className="border border-gray-100 rounded-lg p-3 bg-gray-50">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-900">{rec.title}</span>
+                      <span className="text-xs text-gray-400">{rec.severity}</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">{rec.proposed_action || rec.rationale}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">

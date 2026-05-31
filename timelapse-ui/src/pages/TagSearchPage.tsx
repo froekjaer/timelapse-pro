@@ -7,7 +7,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, Tag, Search, X, Loader2, CheckSquare, Square,
-         Save, FlaskConical, ChevronDown, ChevronUp } from 'lucide-react'
+         Save, FlaskConical, ChevronDown, ChevronUp, Brain } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { Lightbox } from './DevicePage'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
@@ -152,7 +152,7 @@ const DISPLAY_LIMIT = 200  // Antal billeder der vises — søgningen finder all
 interface DeviceInfo { device_id: string; camera_name?: string; customer_name?: string; site_name?: string }
 
 export function TagSearchPage() {
-  const [mode, setMode] = useState<'tags' | 'qa'>('tags')
+  const [mode, setMode] = useState<'tags' | 'qa' | 'natural'>('tags')
 
   // Tag søgning
   const [searchTags, setSearchTags] = useState<string[]>([])
@@ -164,6 +164,10 @@ export function TagSearchPage() {
   const [qaAnomaly, setQaAnomaly] = useState<string[]>([])
   const [qaAlarm, setQaAlarm]     = useState<string[]>([])
   const [qaMinConf, setQaMinConf] = useState('')
+
+  // Naturlig AI søgning
+  const [naturalQuery, setNaturalQuery] = useState('')
+  const [naturalNote, setNaturalNote] = useState('')
 
   // Fælles filtre
   const [dateFrom, setDateFrom] = useState('')
@@ -227,6 +231,25 @@ export function TagSearchPage() {
   function addTag(t: string) { const tag = t.trim().toLowerCase().replace(/^#/,''); if(tag&&!searchTags.includes(tag)) setSearchTags(p=>[...p,tag]); setTagInput('') }
   function removeTag(t: string) { setSearchTags(p => p.filter(x => x !== t)) }
 
+  function normalizeNaturalResult(item: any) {
+    return {
+      id: item.id,
+      device_id: item.device_id,
+      filename: item.filename,
+      captured_at: item.captured_at,
+      quality_passed: item.quality?.passed ?? item.quality_passed ?? null,
+      quality_flag: item.quality?.flag ?? item.quality_flag ?? null,
+      blur_score: item.quality?.blur_score ?? item.blur_score ?? null,
+      brightness: item.quality?.brightness ?? item.brightness ?? null,
+      filesize_mb: item.filesize_mb ?? null,
+      uploaded: item.uploaded ?? true,
+      ai_result: item.ai_result ?? (item.ai ? JSON.stringify(item.ai) : null),
+      ai_analyzed_at: item.ai?.analyzed_at ?? item.ai_analyzed_at ?? null,
+      ai_tags: item.ai?.tags ?? item.ai_tags ?? item.tags ?? null,
+      tags: item.ai?.tags ?? item.ai_tags ?? item.tags ?? null,
+    }
+  }
+
   async function search() {
     setLoading(true); setSearched(true); setSelectedIds(new Set())
     try {
@@ -234,7 +257,26 @@ export function TagSearchPage() {
       const devParam = effectiveDeviceIds.length > 0 ? `&device_ids=${effectiveDeviceIds.join(',')}` : ''
       const dateParam = `${dateFrom ? `&date_from=${dateFrom}` : ''}${dateTo ? `&date_to=${dateTo}` : ''}`
 
-      if (mode === 'tags') {
+      if (mode === 'natural') {
+        const d: any = await api('/api/ai/captures/natural-search', {
+          method: 'POST',
+          body: JSON.stringify({
+            query: naturalQuery,
+            purpose: 'tag_search',
+            device_ids: effectiveDeviceIds,
+            date_from: dateFrom || undefined,
+            date_to: dateTo || undefined,
+            limit: 500,
+          }),
+        })
+        const results = (d.results ?? []).map(normalizeNaturalResult)
+        setAllResults(results)
+        setTotalMatches(d.total_matches ?? results.length)
+        const spec = d.selection ?? {}
+        setNaturalNote(spec.explanation || `AI-filter: ${[...(spec.include_tags ?? []).map((t: string) => `#${t}`), ...(spec.exclude_tags ?? []).map((t: string) => `uden #${t}`)].join(', ') || 'ingen tagfilter'}`)
+        setLoading(false)
+        return
+      } else if (mode === 'tags') {
         if (searchTags.length === 0) { setLoading(false); return }
         url = `/api/ai/tags/search?tags=${searchTags.join(',')}&limit=5000${devParam}${dateParam}`
       } else {
@@ -302,7 +344,11 @@ export function TagSearchPage() {
 
       {/* Mode tabs */}
       <div className="flex gap-1 mb-4 bg-gray-100 p-1 rounded-xl w-fit">
-        {[{id:'tags',label:'Tag søgning',icon:<Tag className="w-4 h-4"/>},{id:'qa',label:'QA søgning',icon:<FlaskConical className="w-4 h-4"/>}].map(m=>(
+        {[
+          {id:'tags',label:'Tag søgning',icon:<Tag className="w-4 h-4"/>},
+          {id:'qa',label:'QA søgning',icon:<FlaskConical className="w-4 h-4"/>},
+          {id:'natural',label:'AI søgning',icon:<Brain className="w-4 h-4"/>},
+        ].map(m=>(
           <button key={m.id} onClick={()=>setMode(m.id as any)}
             className={`flex items-center gap-2 px-4 py-2 text-sm rounded-lg transition-colors ${mode===m.id?'bg-white shadow text-sky-600 font-medium':'text-gray-500 hover:text-gray-700'}`}>
             {m.icon}{m.label}
@@ -346,6 +392,27 @@ export function TagSearchPage() {
           </div>
         )}
 
+        {/* NATURAL MODE */}
+        {mode === 'natural' && (
+          <div>
+            <label className="text-xs font-medium text-gray-600 block mb-1.5">Spørg med almindeligt sprog</label>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm"
+                placeholder="f.eks. find skarpe billeder med kran uden regn fra i dag"
+                value={naturalQuery}
+                onChange={e => setNaturalQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && naturalQuery.trim()) search() }}
+              />
+            </div>
+            {naturalNote && (
+              <p className="text-xs text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2 mt-2">
+                {naturalNote}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* QA MODE */}
         {mode === 'qa' && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -375,7 +442,7 @@ export function TagSearchPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <button onClick={search} disabled={loading||(mode==='tags'&&searchTags.length===0)}
+          <button onClick={search} disabled={loading||(mode==='tags'&&searchTags.length===0)||(mode==='natural'&&!naturalQuery.trim())}
             className="flex items-center gap-2 px-5 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-40">
             {loading?<Loader2 className="w-4 h-4 animate-spin"/>:<Search className="w-4 h-4"/>}Søg
           </button>

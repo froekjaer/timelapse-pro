@@ -4,7 +4,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   Shield, AlertTriangle, AlertCircle, Info, RefreshCw,
-  Wifi, Terminal, User, Key, Server, Activity, Zap
+  Wifi, Terminal, User, Key, Server, Activity, Zap, Brain, Loader2
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -43,6 +43,15 @@ interface Threat {
 
 function api(path: string) {
   return fetch(`${getApiUrl()}${path}`, { credentials: 'include' })
+}
+
+function apiPost(path: string, body: unknown) {
+  return fetch(`${getApiUrl()}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 }
 
 function fmtDate(iso: string | null) {
@@ -106,6 +115,9 @@ export function SIEMPage() {
   const [filterType,     setFilterType]     = useState('')
   const [filterDevice,   setFilterDevice]   = useState('')
   const [autoRefresh,    setAutoRefresh]    = useState(true)
+  const [aiQuestion, setAiQuestion] = useState('Hvad er mest mistænkeligt i SIEM de sidste 24 timer?')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiAnswer, setAiAnswer] = useState<any | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -138,6 +150,27 @@ export function SIEMPage() {
 
   const critCount = summary?.by_severity['critical'] ?? 0
   const warnCount = summary?.by_severity['warning']  ?? 0
+
+  async function askAi() {
+    if (!aiQuestion.trim()) return
+    setAiLoading(true)
+    try {
+      const r = await apiPost('/api/ai/ops/query', { area: 'siem', question: aiQuestion, hours })
+      const data = await r.json()
+      setAiAnswer(data.analysis)
+    } catch {
+      setAiAnswer({ answer: 'AI SIEM-analyse fejlede. Tjek Ollama/headend-log og prøv igen.', risk_level: 'unknown', recommendations: [] })
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  function applyAiFilters() {
+    const filters = aiAnswer?.suggested_filters ?? {}
+    if (filters.severity) setFilterSeverity(filters.severity)
+    if (filters.event_type) setFilterType(filters.event_type)
+    if (filters.device_id) setFilterDevice(filters.device_id)
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -218,6 +251,57 @@ export function SIEMPage() {
           />
         </div>
       )}
+
+      <div className="bg-white rounded-xl border border-sky-100 p-4 mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <Brain className="w-4 h-4 text-sky-600" />
+          <h2 className="text-sm font-semibold text-gray-800">AI SIEM-analyse</h2>
+          {aiAnswer?.risk_level && (
+            <span className="ml-auto text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+              Risk: {aiAnswer.risk_level}
+            </span>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <input
+            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            value={aiQuestion}
+            onChange={e => setAiQuestion(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') askAi() }}
+          />
+          <button
+            onClick={askAi}
+            disabled={aiLoading || !aiQuestion.trim()}
+            className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white text-sm rounded-lg disabled:opacity-40"
+          >
+            {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+            Spørg
+          </button>
+        </div>
+        {aiAnswer && (
+          <div className="mt-3 text-sm text-gray-700">
+            <p>{aiAnswer.answer}</p>
+            {aiAnswer.suggested_filters && Object.values(aiAnswer.suggested_filters).some(Boolean) && (
+              <button onClick={applyAiFilters} className="mt-2 text-xs px-3 py-1.5 rounded-lg border border-sky-200 text-sky-700 hover:bg-sky-50">
+                Anvend foreslåede filtre
+              </button>
+            )}
+            {(aiAnswer.recommendations ?? []).length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+                {aiAnswer.recommendations.slice(0, 4).map((rec: any, idx: number) => (
+                  <div key={idx} className="border border-gray-100 rounded-lg p-3 bg-gray-50">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-900">{rec.title}</span>
+                      <span className="text-xs text-gray-400">{rec.severity}</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">{rec.proposed_action || rec.rationale}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 

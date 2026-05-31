@@ -1,12 +1,21 @@
 // v5.1
-import { useState, useMemo, useEffect } from 'react'
-import { ChevronLeft, Trash2, CheckSquare, Square, X } from 'lucide-react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { ChevronLeft, Trash2, CheckSquare, Square, X, Brain, Loader2, Search } from 'lucide-react'
 import type { Capture } from '../types'
 import { getApiUrl, deleteCapturesBulk } from '../api/client'
 import { CaptureThumbnailCard } from './CaptureThumbnailCard'
 
 function authFetch(url: string) {
   return fetch(url, { credentials: 'include' })
+}
+
+function authJson(path: string, body: unknown) {
+  return fetch(`${getApiUrl()}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
 }
 
 
@@ -49,6 +58,10 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
   const [deleteMode, setDeleteMode]   = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleting, setDeleting]       = useState(false)
+  const [naturalQuery, setNaturalQuery] = useState('')
+  const [naturalNote, setNaturalNote] = useState('')
+  const [naturalLoading, setNaturalLoading] = useState(false)
+  const skipNextDayLoad = useRef(false)
   const queryDeviceId = encodeURIComponent(deviceId)
 
   useEffect(() => {
@@ -66,12 +79,58 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
 
   useEffect(() => {
     if (!selected.year || !selected.month || !selected.day) return
+    if (skipNextDayLoad.current) {
+      skipNextDayLoad.current = false
+      return
+    }
     setLoading(true)
     authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${queryDeviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
       .then(r => r.json())
       .then((data: Capture[]) => { setDayCaptures(data); setLoading(false) })
       .catch(() => setLoading(false))
   }, [deviceId, selected.year, selected.month, selected.day])
+
+  function normalizeNaturalCapture(item: any): Capture {
+    return {
+      id: item.id,
+      device_id: item.device_id,
+      filename: item.filename,
+      captured_at: item.captured_at,
+      quality_flag: item.quality?.flag ?? item.quality_flag ?? null,
+      quality_passed: item.quality?.passed ?? item.quality_passed ?? null,
+      blur_score: item.quality?.blur_score ?? item.blur_score ?? null,
+      filesize_mb: item.filesize_mb ?? null,
+      uploaded: item.uploaded ?? true,
+      ai_result: item.ai_result ?? (item.ai ? JSON.stringify(item.ai) : null),
+      ai_analyzed_at: item.ai?.analyzed_at ?? item.ai_analyzed_at ?? null,
+      ai_tags: item.ai?.tags ?? item.ai_tags ?? null,
+    }
+  }
+
+  async function handleNaturalSearch() {
+    if (!naturalQuery.trim()) return
+    setNaturalLoading(true)
+    try {
+      const data = await authJson('/api/ai/captures/natural-search', {
+        query: naturalQuery,
+        purpose: 'timeline',
+        device_id: deviceId,
+        limit: 200,
+      })
+      const results = (data.results ?? []).map(normalizeNaturalCapture)
+      setDayCaptures(results)
+      setNaturalNote(data.selection?.explanation || `${results.length} billeder matcher AI-søgningen`)
+      if (results[0]?.captured_at) {
+        const d = new Date(results[0].captured_at)
+        skipNextDayLoad.current = true
+        setSelected({ year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate() })
+      }
+    } catch {
+      setNaturalNote('AI-søgning fejlede. Prøv en bredere formulering eller tjek Ollama-status.')
+    } finally {
+      setNaturalLoading(false)
+    }
+  }
 
   const yearIndex = useMemo(() => {
     const idx: Record<number, Record<number, DayCount[]>> = {}
@@ -166,10 +225,35 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
         </div>
       </div>
 
+      <div className="border border-sky-100 bg-sky-50 rounded-xl p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Brain className="w-4 h-4 text-sky-600" />
+          <span className="text-sm font-medium text-sky-900">AI-søgning i timeline</span>
+        </div>
+        <div className="flex gap-2">
+          <input
+            className="flex-1 bg-white border border-sky-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-sky-200"
+            placeholder="f.eks. seneste skarpe billeder med byggeaktivitet uden regn"
+            value={naturalQuery}
+            onChange={e => setNaturalQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleNaturalSearch() }}
+          />
+          <button
+            onClick={handleNaturalSearch}
+            disabled={naturalLoading || !naturalQuery.trim()}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-600 text-white text-sm rounded-lg disabled:opacity-40"
+          >
+            {naturalLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+            Find
+          </button>
+        </div>
+        {naturalNote && <p className="text-xs text-sky-700 mt-2">{naturalNote}</p>}
+      </div>
+
       {/* År */}
       <div className="flex gap-2 flex-wrap">
         {years.map(y => (
-          <button key={y} onClick={() => setSelected(s => ({ year: y, month: s.year===y ? s.month : undefined }))}
+          <button key={y} onClick={() => { setNaturalNote(''); setSelected(s => ({ year: y, month: s.year===y ? s.month : undefined })) }}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${selected.year===y ? 'bg-sky-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
             {y} <span className={`ml-1 text-xs ${selected.year===y ? 'text-sky-200' : 'text-gray-400'}`}>
               {Object.values(yearIndex[y]??{}).flat().reduce((s,d)=>s+d.count,0)}
@@ -184,7 +268,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
           {months.map(mo => {
             const count = (yearIndex[selected.year!]?.[mo]??[]).reduce((s,d)=>s+d.count,0)
             return (
-              <button key={mo} onClick={() => setSelected(s => ({...s, month: mo, day: undefined}))}
+              <button key={mo} onClick={() => { setNaturalNote(''); setSelected(s => ({...s, month: mo, day: undefined})) }}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${selected.month===mo ? 'bg-sky-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
                 {MONTHS[mo-1]} <span className={`ml-1 text-xs ${selected.month===mo ? 'text-sky-200' : 'text-gray-400'}`}>{count}</span>
               </button>
@@ -211,7 +295,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
               const count = dc?.count ?? 0
               const isSel = selected.day === d
               cells.push(
-                <button key={d} onClick={() => count>0 && setSelected(s=>({...s,day:d}))}
+                <button key={d} onClick={() => { if (count > 0) { setNaturalNote(''); setSelected(s=>({...s,day:d})) } }}
                   disabled={count===0}
                   className={`rounded text-xs font-semibold transition-all flex flex-col items-center justify-center gap-0.5 py-1.5 ${isSel ? 'ring-2 ring-sky-500 ring-offset-1' : ''} ${count>0 ? densityColor(count)+' hover:scale-105 cursor-pointer' : 'bg-transparent text-gray-300 cursor-default'}`}>
                   <span className={count > 0 ? '' : 'text-gray-300'}>{d}</span>
