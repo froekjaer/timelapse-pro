@@ -68,6 +68,7 @@ class UploadManager:
         self._device_id     = device.get("device_id", "unknown")
         self._customer_name = device.get("customer_name", "")
         self._site_name     = device.get("site_name", "")
+        self._camera_name   = device.get("camera_name", "")
         self._targets       = self._build_targets(config)
 
     def _build_targets(self, config: dict) -> list[SFTPTarget]:
@@ -107,6 +108,7 @@ class UploadManager:
         self._device_id     = device.get("device_id", self._device_id)
         self._customer_name = device.get("customer_name", "")
         self._site_name     = device.get("site_name", "")
+        self._camera_name   = device.get("camera_name", "")
         self._targets       = self._build_targets(config)
 
     def upload_capture(
@@ -180,6 +182,13 @@ class UploadManager:
                 else:
                     log.debug("Ingen sidecar fundet for %s", filepath.name)
 
+                thumb_local = self._ensure_thumbnail(filepath)
+                if thumb_local and thumb_local.exists():
+                    thumb_remote_dir = str(PurePosixPath(remote_dir) / ".thumbs")
+                    self._mkdir_p(sftp, thumb_remote_dir)
+                    sftp.put(str(thumb_local), str(PurePosixPath(thumb_remote_dir) / filepath.name))
+                    log.info("Thumbnail uploaded: %s", thumb_local.name)
+
             log.info("Upload complete: %s → %s", filepath.name, target.name)
             self._db.log_event(
                 self._device_id, "INFO", "upload",
@@ -205,7 +214,7 @@ class UploadManager:
     ) -> str:
         """
         Build hierarchical remote directory:
-          remote_base/customer/site/YYYY/MM/DD/
+          remote_base/customer/site/camera-location/YYYY/MM/DD/
         Date extracted from filename: ..._YYYYMMDD_HHMMSS.jpg
         Customer and site from config (stored at init time).
         Falls back to: remote_base/camera_id/YYYY/MM/DD/ if names missing.
@@ -223,12 +232,57 @@ class UploadManager:
         import re as _re
         def _safe(s):
             return _re.sub(r"[^A-Za-z0-9æøåÆØÅ_-]", "_", s).strip("_")
+        camera = _safe(camera_id)
+        # camera_id currently carries the assigned device id in legacy callers.
+        # Prefer camera/location name from config when available so replacements
+        # keep uploading into the same logical camera-location folder.
+        try:
+            camera = _safe(getattr(self, "_camera_name", "") or camera_id)
+        except Exception:
+            camera = _safe(camera_id)
+
         if customer and site:
-            return str(PurePosixPath(remote_base) / _safe(customer) / _safe(site) / yyyy / mm / dd)
+            return str(PurePosixPath(remote_base) / _safe(customer) / _safe(site) / camera / yyyy / mm / dd)
         elif customer:
-            return str(PurePosixPath(remote_base) / _safe(customer) / camera_id / yyyy / mm / dd)
+            return str(PurePosixPath(remote_base) / _safe(customer) / camera / yyyy / mm / dd)
         else:
             return str(PurePosixPath(remote_base) / camera_id / yyyy / mm / dd)
+
+    @staticmethod
+    def _ensure_thumbnail(filepath: Path) -> Optional[Path]:
+        """Create a small JPEG thumbnail next to the image if it does not exist."""
+        thumb_dir = filepath.parent / ".thumbs"
+        thumb_path = thumb_dir / filepath.name
+        if thumb_path.exists():
+            return thumb_path
+        try:
+            import cv2
+            import numpy as np
+
+            img = cv2.imread(str(filepath))
+            if img is None:
+                return None
+            height, width = img.shape[:2]
+            if width <= 0 or height <= 0:
+                return None
+            max_w, max_h = 320, 180
+            scale = min(max_w / width, max_h / height)
+            new_w = max(1, int(width * scale))
+            new_h = max(1, int(height * scale))
+            resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            canvas = np.zeros((max_h, max_w, 3), dtype=np.uint8)
+            x = (max_w - new_w) // 2
+            y = (max_h - new_h) // 2
+            canvas[y:y + new_h, x:x + new_w] = resized
+            thumb_dir.mkdir(parents=True, exist_ok=True)
+            tmp = thumb_dir / f".{filepath.stem}.tmp{filepath.suffix}"
+            if not cv2.imwrite(str(tmp), canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 78]):
+                return None
+            tmp.replace(thumb_path)
+            return thumb_path
+        except Exception as exc:
+            log.warning("Kunne ikke generere thumbnail for %s: %s", filepath.name, exc)
+            return None
 
     @staticmethod
     def _mkdir_p(sftp: paramiko.SFTPClient, remote_dir: str) -> None:

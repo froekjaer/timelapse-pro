@@ -308,13 +308,27 @@ def _get_db_dep():
     raise NotImplementedError
 
 
-def setup_ai_router(get_db_fn, find_image_fn):
+def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_device_ids_fn=None):
     """
     Konfigurér AI-router med de rigtige afhængigheder fra main.py.
     Kald én gang ved startup.
     """
     from ai.ollama_service import OllamaVisionService; get_ollama_service = lambda *a, **kw: OllamaVisionService(*a, **kw)
     from ai.alarm_engine import AlarmEngine, run_alarm_migration
+
+    def _current_user_dep():
+        return None
+
+    auth_dep = current_user_fn or _current_user_dep
+
+    def _allowed_devices(db: Session, user) -> set[str] | None:
+        if allowed_device_ids_fn is None:
+            return None
+        return allowed_device_ids_fn(db, user)
+
+    def _require_authenticated(user) -> None:
+        if user is None:
+            raise HTTPException(status_code=401, detail="Ikke autentificeret")
 
     @ai_router.get("/status")
     def ai_status():
@@ -556,11 +570,13 @@ def setup_ai_router(get_db_fn, find_image_fn):
         date_from:    Optional[str] = None,
         date_to:      Optional[str] = None,
         limit:        int = 500,
+        user = Depends(auth_dep),
         db: Session = Depends(get_db_fn),
     ):
         """Søg billeder efter AI-tags. ?tags=crane,car"""
         from database import Capture
         import json as _json
+        _require_authenticated(user)
 
         tag_list = [t.strip().lower() for t in tags.split(",") if t.strip()]
         if not tag_list:
@@ -568,6 +584,11 @@ def setup_ai_router(get_db_fn, find_image_fn):
 
         from datetime import datetime as _dt, timedelta as _td
         q = db.query(Capture).filter(Capture.ai_tags.isnot(None))
+        allowed_device_ids = _allowed_devices(db, user)
+        if allowed_device_ids is not None:
+            if not allowed_device_ids:
+                return {"query": tag_list, "total": 0, "results": []}
+            q = q.filter(Capture.device_id.in_(allowed_device_ids))
 
         # Multi-device filter
         all_devs = []
@@ -576,6 +597,10 @@ def setup_ai_router(get_db_fn, find_image_fn):
         elif device_id:
             all_devs = [device_id]
         if all_devs:
+            if allowed_device_ids is not None:
+                forbidden = [d for d in all_devs if d not in allowed_device_ids]
+                if forbidden:
+                    raise HTTPException(status_code=403, detail="Ingen adgang til en eller flere enheder")
             q = q.filter(Capture.device_id.in_(all_devs))
 
         # Dato filter i SQL
@@ -612,17 +637,25 @@ def setup_ai_router(get_db_fn, find_image_fn):
         return {"query": tag_list, "total": len(results), "results": results}
 
     @ai_router.get("/tags/all")
-    def all_tags(device_id: Optional[str] = None, db: Session = Depends(get_db_fn)):
+    def all_tags(device_id: Optional[str] = None, user = Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """Returner alle kendte tags med antal — merger gammel ai_tags + ny vocabulary."""
         from database import Capture
         from sqlalchemy import text
         import json as _json
         from collections import Counter
+        _require_authenticated(user)
 
         tag_counter: Counter = Counter()
+        allowed_device_ids = _allowed_devices(db, user)
+        if device_id and allowed_device_ids is not None and device_id not in allowed_device_ids:
+            raise HTTPException(status_code=403, detail="Ingen adgang til denne enhed")
 
         # 1. Gammel ai_tags kolonne
         q = db.query(Capture.ai_tags).filter(Capture.ai_tags.isnot(None))
+        if allowed_device_ids is not None:
+            if not allowed_device_ids:
+                return {"total_tagged": 0, "tags": []}
+            q = q.filter(Capture.device_id.in_(allowed_device_ids))
         if device_id:
             q = q.filter(Capture.device_id == device_id)
         for (tags_json,) in q.all():
@@ -632,8 +665,10 @@ def setup_ai_router(get_db_fn, find_image_fn):
             except Exception:
                 pass
 
-        # 2. Ny capture_tags tabel (Sprint D)
+        # 2. Ny capture_tags tabel (Sprint D) er global; vis kun for uscopede admin-brugere.
         try:
+            if allowed_device_ids is not None:
+                raise RuntimeError("global vocabulary hidden for scoped user")
             vocab_q = """
                 SELECT tv.tag, tv.count
                 FROM ai_tag_vocabulary tv
@@ -647,7 +682,12 @@ def setup_ai_router(get_db_fn, find_image_fn):
         except Exception:
             pass
 
-        total = sum(1 for _ in db.query(Capture.id).filter(Capture.ai_tags.isnot(None)).all())
+        total_q = db.query(Capture.id).filter(Capture.ai_tags.isnot(None))
+        if allowed_device_ids is not None:
+            total_q = total_q.filter(Capture.device_id.in_(allowed_device_ids))
+        if device_id:
+            total_q = total_q.filter(Capture.device_id == device_id)
+        total = total_q.count()
         return {
             "total_tagged": total,
             "tags": [{"tag": t, "count": c} for t, c in tag_counter.most_common(200)],

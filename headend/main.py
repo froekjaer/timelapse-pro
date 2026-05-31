@@ -202,7 +202,7 @@ def startup():
     try:
         run_ai_migration(engine)
         setup_ai(get_db, _find_image)
-        setup_ai_router(get_db, _find_image)
+        setup_ai_router(get_db, _find_image, get_current_user, _allowed_capture_device_ids)
         app.include_router(ai_router)
         log.info("AI integration klar — Ollama: http://localhost:11434")
     except Exception as _ai_err:
@@ -1950,6 +1950,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "password":    _get_setting(db, "sftp_password", os.getenv("SFTP_PASSWORD", "")),
             "key_file":    "",
             "remote_base": _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/incoming")),
+            "layout_version": "customer-site-camera-date-v1",
         },
         "diagnostics": {
             "heartbeat_interval_minutes": 60,
@@ -2000,6 +2001,9 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                     cfg[section] = values
         # Lag 3: site overrides + GPS + timezone
         if site:
+            if getattr(site, "sftp_user", None):
+                cfg["sftp"]["username"] = site.sftp_user
+                cfg["sftp"]["remote_base"] = "/data"
             if site.config_overrides:
                 for section, values in json.loads(site.config_overrides).items():
                     if section in cfg and isinstance(cfg[section], dict):
@@ -5036,9 +5040,10 @@ def _find_image(device_id: str, filename: str) -> Optional[_Path]:
         log.error("SFTP_BASE iterdir fejl: %s", e)
     """
     Find image — håndterer tre strukturer:
-      1. Ny chroot:   SFTP_BASE/{sftp_user}/data/{customer}/{site}/YYYY/MM/DD/filename
-      2. Gammel:      SFTP_BASE/{customer}/{site}/YYYY/MM/DD/filename
-      3. Flad:        SFTP_BASE/{device_id}/filename
+      1. Ny canonical chroot: SFTP_BASE/{sftp_user}/data/{customer}/{site}/{camera}/YYYY/MM/DD/filename
+      2. Legacy chroot:       SFTP_BASE/{sftp_user}/data/{customer}/{site}/YYYY/MM/DD/filename
+      3. Gammel:              SFTP_BASE/{customer}/{site}/YYYY/MM/DD/filename
+      4. Flad:                SFTP_BASE/{device_id}/filename
     """
     m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
     if m:
@@ -5049,21 +5054,27 @@ def _find_image(device_id: str, filename: str) -> Optional[_Path]:
         if p.exists():
             return p
 
-        # Struktur 1 — chroot: sftp_user/data/customer/site/YYYY/MM/DD/
-        chroot_glob = f"*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
+        # Struktur 1 — canonical chroot: sftp_user/data/customer/site/camera/YYYY/MM/DD/
+        chroot_glob = f"*/data/*/*/*/{yyyy}/{mm}/{dd}/{filename}"
         log.info("chroot_glob=%r", chroot_glob)
         matches = list(SFTP_BASE.glob(chroot_glob))
         log.info("chroot matches=%s", matches)
         if matches:
             return matches[0]
 
-        # Struktur 2 — gammel hierarkisk: customer/site/YYYY/MM/DD/
+        # Struktur 2 — legacy chroot: sftp_user/data/customer/site/YYYY/MM/DD/
+        legacy_chroot_glob = f"*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
+        matches = list(SFTP_BASE.glob(legacy_chroot_glob))
+        if matches:
+            return matches[0]
+
+        # Struktur 3 — gammel hierarkisk: customer/site/YYYY/MM/DD/
         old_glob = f"*/*/{yyyy}/{mm}/{dd}/{filename}"
         matches = list(SFTP_BASE.glob(old_glob))
         if matches:
             return matches[0]
 
-        # Struktur 3 — rekursiv fallback (langsommere men sikker)
+        # Struktur 4 — rekursiv fallback (langsommere men sikker)
         matches = list(SFTP_BASE.rglob(filename))
         if matches:
             return matches[0]
@@ -6297,6 +6308,7 @@ def captures_timeline(
     - Uden parametre: returner antal captures per dag (alle tider)
     - Med year+month+day: returner alle captures den dag
     """
+    _ensure_capture_device_access(db, _user, device_id)
     q = db.query(Capture).filter(
         Capture.device_id == device_id,
         Capture.captured_at.isnot(None)
@@ -6357,7 +6369,7 @@ def captures_timeline(
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/captures/bulk-tags")
-def bulk_update_tags(payload: dict, db: Session = Depends(get_db)):
+def bulk_update_tags(payload: dict, _user=require_role("operator"), db: Session = Depends(get_db)):
     """
     Bulk opdater tags på en liste af captures.
     Body: {"capture_ids": [1,2,3], "add_tags": ["tag1"], "remove_tags": ["tag2"]}
@@ -6374,6 +6386,8 @@ def bulk_update_tags(payload: dict, db: Session = Depends(get_db)):
         cap = db.query(_Cap).filter_by(id=cid).first()
         if not cap:
             continue
+        if not _capture_is_allowed(db, _user, cap):
+            raise HTTPException(status_code=403, detail="Ingen adgang til et eller flere billeder")
         tags = _j.loads(cap.ai_tags) if cap.ai_tags else []
         tags = [t for t in tags if t not in remove_tags]
         tags = list(dict.fromkeys(tags + [t for t in add_tags if t not in tags]))
@@ -6383,13 +6397,15 @@ def bulk_update_tags(payload: dict, db: Session = Depends(get_db)):
     return {"updated": updated}
 
 @app.put("/api/captures/{capture_id}/tags")
-def update_capture_tags(capture_id: int, payload: dict, db: Session = Depends(get_db)):
+def update_capture_tags(capture_id: int, payload: dict, _user=require_role("operator"), db: Session = Depends(get_db)):
     """Opdater tags på ét capture. Body: {"tags": ["tag1", "tag2"]}"""
     from database import Capture as _Cap
     import json as _j
     cap = db.query(_Cap).filter_by(id=capture_id).first()
     if not cap:
         raise HTTPException(status_code=404, detail="Capture ikke fundet")
+    if not _capture_is_allowed(db, _user, cap):
+        raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
     tags = [t.lower().strip() for t in payload.get("tags", [])]
     cap.ai_tags = _j.dumps(tags, ensure_ascii=False)
     db.commit()
@@ -6408,6 +6424,7 @@ def qa_search(
     date_from:      Optional[str] = None,
     date_to:        Optional[str] = None,
     limit:          int = 500,
+    _user=require_role("viewer"),
     db: Session = Depends(get_db),
 ):
     """
@@ -6419,6 +6436,11 @@ def qa_search(
 
     from datetime import datetime as _dt2, timedelta as _td2
     q = db.query(_Cap).filter(_Cap.ai_result.isnot(None))
+    allowed_device_ids = _allowed_capture_device_ids(db, _user)
+    if allowed_device_ids is not None:
+        if not allowed_device_ids:
+            return {"total": 0, "results": []}
+        q = q.filter(_Cap.device_id.in_(allowed_device_ids))
 
     # Multi-device filter
     all_dev = []
@@ -6427,6 +6449,10 @@ def qa_search(
     elif device_id:
         all_dev = [device_id]
     if all_dev:
+        if allowed_device_ids is not None:
+            forbidden = [d for d in all_dev if d not in allowed_device_ids]
+            if forbidden:
+                raise HTTPException(status_code=403, detail="Ingen adgang til en eller flere enheder")
         q = q.filter(_Cap.device_id.in_(all_dev))
 
     # Dato filter i SQL
@@ -7407,6 +7433,8 @@ def _parse_capture_natural_query(query: str, known_tags: set[str]) -> dict:
             tail = lower.split(marker, 1)[1][:120]
             exclude_tags.update(tag for tag in known_tags if tag and tag in tail)
             exclude_tags.update(_re.findall(r"#([\wæøåÆØÅ-]+)", tail))
+    if any(term in lower for term in ("solen ikke skinner direkte", "ikke skinner direkte", "direkte ind i linsen", "sol i linsen", "modlys")):
+        exclude_tags.update({"sun_flare", "lens_flare", "glare", "overexposed", "direct_sun"})
 
     limit_match = _re.search(r"\b(\d{1,3})\b", lower)
     limit = int(limit_match.group(1)) if limit_match else 20
@@ -7429,7 +7457,8 @@ def _parse_capture_natural_query(query: str, known_tags: set[str]) -> dict:
         iso_date = _re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", lower)
         date_value = iso_date.group(1) if iso_date else None
 
-    quality_only = any(term in lower for term in ("skarpe", "ikke slør", "ikke sloer", "quality ok", "gode billeder"))
+    quality_only = any(term in lower for term in ("skarpe", "klare billeder", "klart billede", "ikke slør", "ikke sloer", "quality ok", "gode billeder"))
+    daily_sample = any(term in lower for term in ("billede om dagen", "et billede pr dag", "1 billede pr dag", "dagligt billede"))
     purpose = "timelapse" if "timelapse" in lower or "video" in lower else "search"
     return {
         "query": text_value,
@@ -7439,6 +7468,7 @@ def _parse_capture_natural_query(query: str, known_tags: set[str]) -> dict:
         "include_tags": include_tags,
         "exclude_tags": sorted(exclude_tags),
         "quality_only": quality_only,
+        "daily_sample": daily_sample,
         "purpose": purpose,
     }
 
@@ -7510,6 +7540,10 @@ def _normalise_capture_search_spec(spec: dict, fallback: dict, known_tags: set[s
     safe["quality_only"] = str(quality_raw).strip().lower() in {"1", "true", "yes", "ja"} if isinstance(quality_raw, str) else bool(quality_raw)
     if safe["quality_only"] and not fallback.get("quality_only"):
         safe["quality_only"] = False
+    daily_raw = safe.get("daily_sample")
+    safe["daily_sample"] = str(daily_raw).strip().lower() in {"1", "true", "yes", "ja"} if isinstance(daily_raw, str) else bool(daily_raw)
+    if safe["daily_sample"] and not fallback.get("daily_sample"):
+        safe["daily_sample"] = False
     if safe["include_tags"] or safe["exclude_tags"]:
         safe["known_tag_matches"] = sorted(set(safe["include_tags"] + safe["exclude_tags"]) & known_tags)
     return safe
@@ -7530,6 +7564,7 @@ Returner KUN JSON:
   "include_tags": ["tag"],
   "exclude_tags": ["tag"],
   "quality_only": true,
+  "daily_sample": false,
   "min_confidence": null,
   "sort": "newest|oldest|quality|timelapse_even_spacing",
   "limit": 20,
@@ -7605,6 +7640,27 @@ def _query_capture_candidates(db: Session, payload: dict, spec: dict) -> list[Ca
     return q.limit(max(100, min(int(payload.get("candidate_limit") or 3000), 5000))).all()
 
 
+def _allowed_capture_device_ids(db: Session, user: User | None) -> set[str] | None:
+    if not user or user.role in {"super_admin", "admin"} or not getattr(user, "customer_id", None):
+        return None
+    site_ids = [row[0] for row in db.query(Site.id).filter(Site.customer_id == user.customer_id).all()]
+    devices = db.query(Device.device_id).filter(
+        (Device.customer_id == user.customer_id) | (Device.site_id.in_(site_ids))
+    ).all()
+    return {row[0] for row in devices}
+
+
+def _ensure_capture_device_access(db: Session, user: User | None, device_id: str) -> None:
+    allowed = _allowed_capture_device_ids(db, user)
+    if allowed is not None and device_id not in allowed:
+        raise HTTPException(status_code=403, detail="Ingen adgang til denne enhed")
+
+
+def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:
+    allowed = _allowed_capture_device_ids(db, user)
+    return allowed is None or capture.device_id in allowed
+
+
 def _capture_quality_score(capture: Capture) -> float:
     score = 0.0
     if capture.quality_passed is True:
@@ -7636,6 +7692,17 @@ def _select_captures_for_spec(captures: list[Capture], spec: dict) -> list[Captu
     filtered = _filter_captures_by_ai(captures, spec)
     limit = max(1, min(int(spec.get("limit") or 20), 500))
     sort = spec.get("sort")
+    if spec.get("daily_sample"):
+        by_day: dict[str, list[Capture]] = {}
+        for capture in sorted(filtered, key=lambda c: c.captured_at or datetime.min):
+            if not capture.captured_at:
+                continue
+            by_day.setdefault(capture.captured_at.date().isoformat(), []).append(capture)
+        selected = []
+        for day in sorted(by_day):
+            day_captures = by_day[day]
+            selected.append(max(day_captures, key=_capture_quality_score))
+        return selected[:limit]
     if sort == "quality":
         filtered = sorted(filtered, key=_capture_quality_score, reverse=True)
     elif sort == "timelapse_even_spacing":
@@ -7650,9 +7717,11 @@ def _select_captures_for_spec(captures: list[Capture], spec: dict) -> list[Captu
 @app.post("/api/ai/captures/natural-search")
 def ai_capture_natural_search(
     payload: dict,
-    _user=require_role("viewer"),
+    _user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if _user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     query = str(payload.get("query") or "").strip()
     if not query:
         raise HTTPException(status_code=400, detail="query mangler")
@@ -7665,6 +7734,9 @@ def ai_capture_natural_search(
         except Exception:
             pass
     candidates = _query_capture_candidates(db, payload, spec)
+    allowed_device_ids = _allowed_capture_device_ids(db, _user)
+    if allowed_device_ids is not None:
+        candidates = [c for c in candidates if c.device_id in allowed_device_ids]
     selected = _select_captures_for_spec(candidates, spec)
     images = [_capture_openwebui_payload(c) for c in selected]
     selected_ids = [c.id for c in selected]
