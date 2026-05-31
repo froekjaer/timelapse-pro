@@ -55,7 +55,7 @@ export function SitePage() {
   const [sftpUser, setSftpUser] = useState('')
   const [sftpRemoteBase, setSftpRemoteBase] = useState('')
   const [sftpPassword, setSftpPassword] = useState('')
-  const [sftpPort, setSftpPort] = useState('2222')
+  const [sftpPort, setSftpPort] = useState('22222')
   const [address, setAddress] = useState('')
   const [gpsLat, setGpsLat] = useState('')
   const [gpsLon, setGpsLon] = useState('')
@@ -78,7 +78,7 @@ export function SitePage() {
         const sftp = d.config_overrides?.sftp ?? {}
         setSftpUser(sftp.username ?? '')
         setSftpPassword(sftp.password ?? '')
-        setSftpPort(String(sftp.port ?? '2222'))
+        setSftpPort(String(sftp.port ?? '22222'))
         setSftpRemoteBase(sftp.remote_base ?? '')
       })
       .catch(() => setError('Kunne ikke hente site'))
@@ -214,7 +214,7 @@ export function SitePage() {
           <div>
             <label className="text-xs text-gray-400 block mb-1">Port</label>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
-              placeholder="2222"
+              placeholder="22222"
               value={sftpPort} onChange={e => setSftpPort(e.target.value)} />
           </div>
         </div>

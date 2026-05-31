@@ -622,7 +622,7 @@ export function SystemAdminPage() {
         <Field label="SFTP host" description="IP eller hostname på SFTP serveren">
           <Txt value={settings.sftp_host ?? ''} onChange={v => setSettings(s => ({...s, sftp_host: v}))} mono />
         </Field>
-        <Field label="SFTP port" description="Port nummer (standard 22, lab 2222)">
+        <Field label="SFTP port" description="Port nummer (standard 22, TimeLapse Pro lab/prod 22222)">
           <Txt value={settings.sftp_port ?? ''} onChange={v => setSettings(s => ({...s, sftp_port: v}))} mono />
         </Field>
         <Field label="SFTP brugernavn">
