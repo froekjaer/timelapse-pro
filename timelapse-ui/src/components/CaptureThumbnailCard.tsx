@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Image } from 'lucide-react'
 import { getThumbnailUrl } from '../api/client'
 import type { Capture } from '../types'
@@ -63,8 +63,15 @@ export function CaptureThumbnailCard({
   const passed = capture.quality_passed !== false
   const thumbUrl = getThumbnailUrl(capture.device_id, capture.filename)
   const [imgOk, setImgOk] = useState(true)
+  const [retry, setRetry] = useState(0)
   const ai = parseCaptureAI(capture)
   const parts = filenameParts(capture.filename)
+  const imgSrc = retry > 0 ? `${thumbUrl}?retry=${retry}` : thumbUrl
+
+  useEffect(() => {
+    setImgOk(true)
+    setRetry(0)
+  }, [thumbUrl])
 
   return (
     <div
@@ -75,7 +82,19 @@ export function CaptureThumbnailCard({
     >
       <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center">
         {imgOk ? (
-          <img src={thumbUrl} alt={capture.filename} className="w-full h-full object-cover" loading="lazy" onError={() => setImgOk(false)} />
+          <img
+            src={imgSrc}
+            alt={capture.filename}
+            className="w-full h-full object-cover"
+            loading="lazy"
+            onError={() => {
+              if (retry < 2) {
+                window.setTimeout(() => setRetry(r => r + 1), 250 * (retry + 1))
+              } else {
+                setImgOk(false)
+              }
+            }}
+          />
         ) : (
           <Image className="w-8 h-8 text-slate-300" />
         )}

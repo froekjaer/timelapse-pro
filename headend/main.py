@@ -5079,6 +5079,57 @@ def _thumbs_dir_for(image_path: _Path) -> _Path:
     """Return .thumbs directory next to the image."""
     return image_path.parent / ".thumbs"
 
+
+def _generated_thumbs_dir_for(image_path: _Path) -> _Path:
+    """Return headend-owned fallback thumbnail directory."""
+    return image_path.parent / ".headend-thumbs"
+
+
+def _is_valid_jpeg(path: _Path) -> bool:
+    try:
+        if not path.exists() or path.stat().st_size < 256:
+            return False
+        with Image.open(path) as existing:
+            existing.verify()
+        return True
+    except Exception:
+        return False
+
+
+def _thumbnail_candidates_for(image_path: _Path) -> list[_Path]:
+    stem = image_path.stem
+    suffix = image_path.suffix or ".jpg"
+    return [
+        image_path.parent / ".thumbs" / image_path.name,
+        image_path.parent / "thumbs" / image_path.name,
+        image_path.parent / "thumbnails" / image_path.name,
+        image_path.parent / f"thumb_{image_path.name}",
+        image_path.parent / f"thumbnail_{image_path.name}",
+        image_path.parent / f"{stem}_thumb{suffix}",
+        image_path.parent / f"{stem}.thumb{suffix}",
+    ]
+
+
+def _find_existing_thumbnail(image_path: _Path) -> _Path | None:
+    for candidate in _thumbnail_candidates_for(image_path):
+        if _is_valid_jpeg(candidate):
+            return candidate
+    return None
+
+
+def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
+    deleted = False
+    for directory in (_thumbs_dir_for(image_path), _generated_thumbs_dir_for(image_path)):
+        try:
+            thumb = directory / filename
+            if thumb.exists():
+                thumb.unlink(missing_ok=True)
+                deleted = True
+        except Exception as exc:
+            log.warning("Kunne ikke slette thumbnail i %s: %s", directory, exc)
+    return deleted
+
+
 @app.get("/api/images/{device_id}/{filename}")
 def get_image(device_id: str, filename: str):
     from urllib.parse import unquote as _unquote
@@ -5092,25 +5143,46 @@ def get_image(device_id: str, filename: str):
 @app.get("/api/thumbnails/{device_id}/{filename}")
 def get_thumbnail(device_id: str, filename: str):
     from urllib.parse import unquote as _unquote
+    import uuid as _uuid
+    _sanitize_device_id(device_id)
     filename = _unquote(filename)
     src = _find_image(device_id, filename)
     if not src:
         raise HTTPException(status_code=404, detail="Image not found")
-    thumbs_dir = _thumbs_dir_for(src)
+    thumb = _find_existing_thumbnail(src)
+    if thumb:
+        return FileResponse(
+            str(thumb),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    thumbs_dir = _generated_thumbs_dir_for(src)
     thumbs_dir.mkdir(exist_ok=True)
     thumb = thumbs_dir / filename
     if not thumb.exists():
+        tmp_thumb = thumbs_dir / f".{filename}.{_uuid.uuid4().hex}.tmp"
         try:
-            img = Image.open(src).convert("RGB")
-            # Landscape 16:9 thumbnail (320x180)
-            img.thumbnail((320, 180), Image.LANCZOS)
-            canvas = Image.new("RGB", (320, 180), (15, 15, 15))
-            offset = ((320 - img.width) // 2, (180 - img.height) // 2)
-            canvas.paste(img, offset)
-            canvas.save(str(thumb), "JPEG", quality=78)
+            with Image.open(src) as original:
+                img = original.convert("RGB")
+                # Landscape 16:9 thumbnail (320x180)
+                img.thumbnail((320, 180), Image.LANCZOS)
+                canvas = Image.new("RGB", (320, 180), (15, 15, 15))
+                offset = ((320 - img.width) // 2, (180 - img.height) // 2)
+                canvas.paste(img, offset)
+                canvas.save(str(tmp_thumb), "JPEG", quality=78)
+            tmp_thumb.replace(thumb)
         except Exception as e:
+            tmp_thumb.unlink(missing_ok=True)
             raise HTTPException(status_code=500, detail=str(e))
-    return FileResponse(str(thumb), media_type="image/jpeg")
+    if not _is_valid_jpeg(thumb):
+        thumb.unlink(missing_ok=True)
+        raise HTTPException(status_code=503, detail="Thumbnail generation incomplete, retry")
+    return FileResponse(
+        str(thumb),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # ── Kamera-laboratorium endpoints ─────────────────────────────────────────────
@@ -6536,13 +6608,7 @@ def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = D
             log.warning("Kunne ikke slette fil %s: %s", path, exc)
 
         # Slet thumbnail
-        thumb = _thumbs_dir_for(path) / capture.filename
-        if thumb.exists():
-            try:
-                thumb.unlink()
-                deleted["thumbnail"] = True
-            except Exception as exc:
-                log.warning("Kunne ikke slette thumbnail %s: %s", thumb, exc)
+        deleted["thumbnail"] = _unlink_thumbnail_variants(path, capture.filename)
 
         # Slet sidecar JSON
         sidecar = path.with_suffix(".json")
@@ -6578,7 +6644,7 @@ def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session
             path = _find_image(capture.device_id, capture.filename)
             if path and path.exists():
                 path.unlink(missing_ok=True)
-                (_thumbs_dir_for(path) / capture.filename).unlink(missing_ok=True)
+                _unlink_thumbnail_variants(path, capture.filename)
                 path.with_suffix(".json").unlink(missing_ok=True)
             db.delete(capture)
             results.append({"id": cid, "status": "ok"})
@@ -6712,7 +6778,7 @@ def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = D
     path = _find_image(capture.device_id, capture.filename)
     if path and path.exists():
         path.unlink(missing_ok=True)
-        (_thumbs_dir_for(path) / capture.filename).unlink(missing_ok=True)
+        _unlink_thumbnail_variants(path, capture.filename)
         path.with_suffix(".json").unlink(missing_ok=True)
     db.delete(capture)
     db.commit()
@@ -6735,7 +6801,7 @@ def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session
             path = _find_image(c.device_id, c.filename)
             if path and path.exists():
                 path.unlink(missing_ok=True)
-                (_thumbs_dir_for(path) / c.filename).unlink(missing_ok=True)
+                _unlink_thumbnail_variants(path, c.filename)
                 path.with_suffix(".json").unlink(missing_ok=True)
             db.delete(c)
             ok += 1
