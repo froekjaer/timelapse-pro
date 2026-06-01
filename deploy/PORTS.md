@@ -8,8 +8,8 @@ on a production headend.
 | Port | Exposure | Owner / purpose |
 | --- | --- | --- |
 | 22 | Not TimeLapse | Existing admin SSH or customer platform service |
-| 80 | Not TimeLapse directly | Existing reverse proxy / ACME HTTP-01 if available |
-| 443 | Not TimeLapse directly | Existing reverse proxy vhost for `timelapse.froekjaer.dk` |
+| 80 | Not TimeLapse directly | Existing public web entrypoint / ACME HTTP-01 / redirect layer |
+| 443 | Not TimeLapse directly | Existing public HTTPS entrypoint with hostname routing |
 | 2222 | Not TimeLapse | Reserved for other production application use |
 | 22222 | TimeLapse inbound | Dedicated SFTP upload from Edge to Headend |
 | 8000 | Loopback/internal | Headend FastAPI service behind reverse proxy |
@@ -33,3 +33,32 @@ The lab Mac Mini may still have macOS Remote Login on TCP/22 for administration,
 but TimeLapse upload users must be denied on that port. The production headend
 should use the customer's existing reverse proxy for TCP/80 and TCP/443 and keep
 TimeLapse app services bound to loopback/internal ports.
+
+## Hostname routing on shared 80/443
+
+DNS cannot by itself route `ftp.example.net` and `timelapse.example.net` to
+different local applications when they share the same public IP and the same
+TCP ports. DNS only resolves names to addresses.
+
+Use one of these production patterns:
+
+1. Preferred: one edge reverse proxy owns TCP/80 and TCP/443 and routes by
+   hostname/SNI/Host header:
+   - `ftp.hyldager.net` -> existing customer-facing file sharing system
+   - `timelapse.hyldager.net` -> TimeLapse UI / Headend API
+   - optional `openwebui.hyldager.net` -> Open WebUI, protected by TimeLapse MFA
+2. Alternative: assign a separate public IP to TimeLapse and point
+   `timelapse.hyldager.net` to that IP.
+3. Alternative: keep TimeLapse on non-standard public ports. This is not
+   preferred for customer-facing HTTPS and complicates compliance, firewall
+   policy and user experience.
+
+If the existing file sharing system currently binds directly to TCP/80 and
+TCP/443, it should either:
+
+- be moved behind the shared reverse proxy on loopback/internal ports, or
+- remain on its own public IP while TimeLapse uses another public IP.
+
+TimeLapse should not require public TCP/8080. Open WebUI must remain loopback or
+internal and be exposed only through an authenticated TimeLapse/reverse-proxy
+route.
