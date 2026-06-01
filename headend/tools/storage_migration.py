@@ -95,7 +95,14 @@ def target_for(root: Path, capture: Capture, device: Device | None, site: Site |
     customer_name = customer.name if customer else (device.customer_name if device else None) or file_customer
     site_name = site.name if site else (device.site_name if device else None) or file_site
     camera_name = (device.camera_name if device else None) or file_camera or capture.device_id
-    sftp_user = site.sftp_user if site and site.sftp_user else f"sftp_{safe(site_name, 'site').lower()[:32]}"
+    sftp_user = site.sftp_user if site and site.sftp_user else None
+    if not sftp_user and site and site.config_overrides:
+        try:
+            sftp_user = json.loads(site.config_overrides).get("sftp", {}).get("username")
+        except Exception:
+            sftp_user = None
+    if not sftp_user:
+        sftp_user = f"sftp_{safe(site_name, 'site').lower()[:32]}"
     yyyy, mm, dd = capture_date_parts(capture)
     return (
         root
@@ -144,6 +151,8 @@ def main() -> int:
     parser.add_argument("--manifest", default="/private/tmp/timelapse-storage-migration.jsonl")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--device-id", help="Only migrate captures for this device id")
+    parser.add_argument("--filename-contains", help="Only migrate captures where filename contains this text")
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -157,6 +166,10 @@ def main() -> int:
     processed = 0
     try:
         query = db.query(Capture).order_by(Capture.captured_at.asc().nullslast(), Capture.id.asc())
+        if args.device_id:
+            query = query.filter(Capture.device_id == args.device_id)
+        if args.filename_contains:
+            query = query.filter(Capture.filename.contains(args.filename_contains))
         if args.limit:
             query = query.limit(args.limit)
         with manifest.open("w", encoding="utf-8") as fh:

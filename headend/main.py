@@ -57,7 +57,7 @@ from datetime import timezone as _tz
 
 #Peter:
 import re as _re
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 import subprocess as _subprocess
 import threading as _threading
 import json as _json
@@ -398,6 +398,57 @@ def require_role(*roles: str):
             raise HTTPException(status_code=403, detail=f"Kræver rolle: {', '.join(roles)}")
         return user
     return Depends(_check)
+
+
+def _is_platform_admin(user: User | None) -> bool:
+    """Return True for users allowed to see all tenants."""
+    if user is None:
+        return False
+    return user.role == "super_admin" or (user.role == "admin" and not user.customer_id)
+
+
+def _ensure_customer_access(user: User | None, customer_id: str | None) -> None:
+    """Enforce tenant boundary for customer scoped records."""
+    if _is_platform_admin(user):
+        return
+    if not user or not user.customer_id or customer_id != user.customer_id:
+        raise HTTPException(status_code=403, detail="Ingen adgang til denne kunde")
+
+
+def _ensure_site_access(db: Session, user: User | None, site_id: str | None) -> Site:
+    site = db.query(Site).filter_by(id=site_id).first()
+    if not site:
+        raise HTTPException(status_code=404)
+    _ensure_customer_access(user, site.customer_id)
+    return site
+
+
+def _visible_customer_query(db: Session, user: User | None):
+    q = db.query(Customer)
+    if _is_platform_admin(user):
+        return q
+    if not user or not user.customer_id:
+        return q.filter(Customer.id == "__none__")
+    return q.filter(Customer.id == user.customer_id)
+
+
+def _visible_site_query(db: Session, user: User | None):
+    q = db.query(Site)
+    if _is_platform_admin(user):
+        return q
+    if not user or not user.customer_id:
+        return q.filter(Site.id == "__none__")
+    return q.filter(Site.customer_id == user.customer_id)
+
+
+def _visible_device_query(db: Session, user: User | None):
+    q = db.query(Device)
+    if _is_platform_admin(user):
+        return q
+    if not user or not user.customer_id:
+        return q.filter(Device.device_id == "__none__")
+    site_ids = db.query(Site.id).filter(Site.customer_id == user.customer_id)
+    return q.filter(or_(Device.customer_id == user.customer_id, Device.site_id.in_(site_ids)))
 
 
 
@@ -4533,6 +4584,7 @@ def update_device_info(
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    _ensure_capture_device_access(db, _user, device_id)
     for field in ["customer_name", "site_name", "camera_name", "location_name"]:
         if field in info:
             setattr(device, field, info[field])
@@ -4544,7 +4596,7 @@ def update_device_info(
 @app.get("/api/admin/devices")
 def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
     """List all devices with latest status."""
-    devices = db.query(Device).order_by(Device.last_seen.desc()).all()
+    devices = _visible_device_query(db, _user).order_by(Device.last_seen.desc()).all()
     result = []
     for d in devices:
         # Check if device is online (seen within last 90 minutes)
@@ -4578,7 +4630,13 @@ def list_captures(
 ):
     """List recent captures, optionally filtered by device."""
     q = db.query(Capture).order_by(Capture.captured_at.desc())
+    allowed_device_ids = _allowed_capture_device_ids(db, _user)
+    if allowed_device_ids is not None:
+        if not allowed_device_ids:
+            return []
+        q = q.filter(Capture.device_id.in_(allowed_device_ids))
     if device_id:
+        _ensure_capture_device_access(db, _user, device_id)
         q = q.filter_by(device_id=device_id)
     captures = q.limit(limit).all()
     return [
@@ -4612,10 +4670,22 @@ def list_captures(
 @app.get("/api/admin/stats")
 def stats(_user=require_role("viewer"), db: Session = Depends(get_db)):
     """Overall system statistics."""
-    total_devices  = db.query(Device).count()
-    total_captures = db.query(Capture).count()
-    passed         = db.query(Capture).filter_by(quality_passed=True).count()
-    uploaded       = db.query(Capture).filter_by(uploaded=True).count()
+    visible_devices = _visible_device_query(db, _user)
+    total_devices  = visible_devices.count()
+    cq = db.query(Capture)
+    allowed_device_ids = _allowed_capture_device_ids(db, _user)
+    if allowed_device_ids is not None:
+        if not allowed_device_ids:
+            total_captures = passed = uploaded = 0
+        else:
+            cq = cq.filter(Capture.device_id.in_(allowed_device_ids))
+            total_captures = cq.count()
+            passed         = cq.filter(Capture.quality_passed.is_(True)).count()
+            uploaded       = cq.filter(Capture.uploaded.is_(True)).count()
+    else:
+        total_captures = cq.count()
+        passed         = cq.filter(Capture.quality_passed.is_(True)).count()
+        uploaded       = cq.filter(Capture.uploaded.is_(True)).count()
 
     return {
         "total_devices":   total_devices,
@@ -4628,36 +4698,25 @@ def stats(_user=require_role("viewer"), db: Session = Depends(get_db)):
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/sidecar/{device_id}/{filename}")
-def get_sidecar(device_id: str, filename: str):
+def get_sidecar(
+    device_id: str,
+    filename: str,
+    _user=require_role("viewer"),
+    db: Session = Depends(get_db),
+):
     """Returner sidecar JSON metadata for et billede."""
-#Peter    import re as _re
-#Peter    from fastapi.responses import JSONResponse
-    # Find billedet samme sted som thumbnails
-    m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
-    if m:
-        yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
-        json_filename = filename.rsplit(".", 1)[0] + ".json"
-        # Chroot struktur: sftp_user/data/customer/site/yyyy/mm/dd/
-        matches = list(SFTP_BASE.glob(f"*/data/*/*/{yyyy}/{mm}/{dd}/{json_filename}"))
-        # Fallback: gammel struktur
-        if not matches:
-            matches = list(SFTP_BASE.glob(f"*/*/{yyyy}/{mm}/{dd}/{json_filename}"))
-        if matches:
-            sidecar_path = matches[0]
-            if sidecar_path.exists():
-#Peter                import json as _json
-                return JSONResponse(
-                    _json.loads(sidecar_path.read_text(encoding='utf-8')),
-                    headers={"Cache-Control": "no-store"},
-                )
-    # Fallback: flat struktur
-    flat = SFTP_BASE / device_id / filename
-    if flat.exists():
-#Peter        import json as _json
-        return JSONResponse(
-            _json.loads(flat.read_text(encoding='utf-8')),
-            headers={"Cache-Control": "no-store"},
-        )
+    from urllib.parse import unquote as _unquote
+    _sanitize_device_id(device_id)
+    filename = _unquote(filename)
+    _ensure_capture_file_access(db, _user, device_id, filename)
+    image_path = _find_image(device_id, filename)
+    if image_path:
+        sidecar_path = image_path.with_suffix(".json")
+        if sidecar_path.exists():
+            return JSONResponse(
+                _json.loads(sidecar_path.read_text(encoding='utf-8')),
+                headers={"Cache-Control": "no-store"},
+            )
     raise HTTPException(status_code=404, detail="Sidecar ikke fundet")
 
 
@@ -5142,21 +5201,33 @@ def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
 
 
 @app.get("/api/images/{device_id}/{filename}")
-def get_image(device_id: str, filename: str):
+def get_image(
+    device_id: str,
+    filename: str,
+    _user=require_role("viewer"),
+    db: Session = Depends(get_db),
+):
     from urllib.parse import unquote as _unquote
     _sanitize_device_id(device_id)
     filename = _unquote(filename)
+    _ensure_capture_file_access(db, _user, device_id, filename)
     path = _find_image(device_id, filename)
     if not path:
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(str(path), media_type="image/jpeg")
 
 @app.get("/api/thumbnails/{device_id}/{filename}")
-def get_thumbnail(device_id: str, filename: str):
+def get_thumbnail(
+    device_id: str,
+    filename: str,
+    _user=require_role("viewer"),
+    db: Session = Depends(get_db),
+):
     from urllib.parse import unquote as _unquote
     import uuid as _uuid
     _sanitize_device_id(device_id)
     filename = _unquote(filename)
+    _ensure_capture_file_access(db, _user, device_id, filename)
     src = _find_image(device_id, filename)
     if not src:
         raise HTTPException(status_code=404, detail="Image not found")
@@ -5409,7 +5480,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 @app.get("/api/admin/customers")
 def list_customers(_user=require_role("viewer"), db: Session = Depends(get_db)):
-    customers = db.query(Customer).order_by(Customer.name).all()
+    customers = _visible_customer_query(db, _user).order_by(Customer.name).all()
     return [
         {
             "id":            c.id,
@@ -5428,6 +5499,8 @@ def list_customers(_user=require_role("viewer"), db: Session = Depends(get_db)):
 
 @app.post("/api/admin/customers")
 def create_customer(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
+    if not _is_platform_admin(_user):
+        raise HTTPException(status_code=403, detail="Kun platform-admin kan oprette kunder")
     c = Customer(
         id=str(_uuid.uuid4()),
         name=payload.get("name", "Ny kunde"),
@@ -5447,6 +5520,7 @@ def get_customer(customer_id: str, _user=require_role("viewer"), db: Session = D
     c = db.query(Customer).filter_by(id=customer_id).first()
     if not c:
         raise HTTPException(status_code=404)
+    _ensure_customer_access(_user, c.id)
     sites = db.query(Site).filter_by(customer_id=customer_id).all()
     return {
         "id": c.id, "name": c.name,
@@ -5469,6 +5543,7 @@ def update_customer(customer_id: str, payload: dict, _user=require_role("admin")
     c = db.query(Customer).filter_by(id=customer_id).first()
     if not c:
         raise HTTPException(status_code=404)
+    _ensure_customer_access(_user, c.id)
     for f in ["name", "contact_name", "contact_email", "contact_phone", "address", "notes"]:
         if f in payload:
             setattr(c, f, payload[f])
@@ -5491,7 +5566,7 @@ def delete_customer(customer_id: str, _user=require_role("super_admin"), db: Ses
 
 @app.get("/api/admin/sites")
 def list_sites(_user=require_role("viewer"), db: Session = Depends(get_db)):
-    sites = db.query(Site).all()
+    sites = _visible_site_query(db, _user).all()
     return [
         {
             "id":            s.id,
@@ -5510,6 +5585,7 @@ def list_sites(_user=require_role("viewer"), db: Session = Depends(get_db)):
 
 @app.post("/api/admin/sites")
 def create_site(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
+    _ensure_customer_access(_user, payload.get("customer_id"))
     s = Site(
         id=str(_uuid.uuid4()),
         customer_id=payload.get("customer_id"),
@@ -5525,9 +5601,7 @@ def create_site(payload: dict, _user=require_role("admin"), db: Session = Depend
 
 @app.get("/api/admin/sites/{site_id}")
 def get_site(site_id: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
-    s = db.query(Site).filter_by(id=site_id).first()
-    if not s:
-        raise HTTPException(status_code=404)
+    s = _ensure_site_access(db, _user, site_id)
     customer = db.query(Customer).filter_by(id=s.customer_id).first()
     devices  = db.query(Device).filter_by(site_id=site_id).all()
     return {
@@ -5554,9 +5628,7 @@ def get_site(site_id: str, _user=require_role("viewer"), db: Session = Depends(g
 
 @app.put("/api/admin/sites/{site_id}")
 def update_site(site_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
-    s = db.query(Site).filter_by(id=site_id).first()
-    if not s:
-        raise HTTPException(status_code=404)
+    s = _ensure_site_access(db, _user, site_id)
     for f in ["name", "address", "gps_lat", "gps_lon", "timezone", "notes"]:
         if f in payload:
             setattr(s, f, payload[f])
@@ -5586,6 +5658,7 @@ def update_device_overrides(device_id: str, payload: dict, _user=require_role("a
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
+    _ensure_capture_device_access(db, _user, device_id)
     if "camera_index" in payload and hasattr(device, "camera_index"):
         device.camera_index = payload["camera_index"]
     if "relay_gpio_camera" in payload and hasattr(device, "relay_gpio_camera"):
@@ -5603,6 +5676,7 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
+    _ensure_capture_device_access(db, _user, device_id)
     online = device.last_seen and (now_utc() - ensure_utc(device.last_seen)).total_seconds() < 300
     diag   = db.query(Diagnostic).filter_by(device_id=device_id).order_by(Diagnostic.id.desc()).first()
     d_cfg  = json.loads(device.device_config or "{}")
@@ -6594,11 +6668,10 @@ def assign_device(device_id: str, payload: dict, _user=require_role("admin"), db
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
+    _ensure_capture_device_access(db, _user, device_id)
     site_id = payload.get("site_id")
     if site_id:
-        site = db.query(Site).filter_by(id=site_id).first()
-        if not site:
-            raise HTTPException(status_code=404, detail="Site ikke fundet")
+        site = _ensure_site_access(db, _user, site_id)
         customer = db.query(Customer).filter_by(id=site.customer_id).first()
         device.site_id      = site_id
         device.site_name    = site.name
@@ -6609,6 +6682,7 @@ def assign_device(device_id: str, payload: dict, _user=require_role("admin"), db
         device.customer_name = None
     if "camera_name" in payload:
         device.camera_name = payload["camera_name"]
+    device.customer_id = site.customer_id if site_id else None
     db.commit()
     return {"status": "ok"}
 
@@ -6621,6 +6695,8 @@ def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = D
     capture = db.query(Capture).filter(Capture.id == capture_id).first()
     if not capture:
         raise HTTPException(status_code=404, detail="Capture ikke fundet")
+    if not _capture_is_allowed(db, _user, capture):
+        raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
 
     deleted = {"file": False, "thumbnail": False, "sidecar": False, "db": False}
 
@@ -6667,6 +6743,9 @@ def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session
             if not capture:
                 results.append({"id": cid, "status": "not_found"})
                 continue
+            if not _capture_is_allowed(db, _user, capture):
+                results.append({"id": cid, "status": "forbidden"})
+                continue
             path = _find_image(capture.device_id, capture.filename)
             if path and path.exists():
                 path.unlink(missing_ok=True)
@@ -6685,8 +6764,17 @@ def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session
 # ── EXIF fra billedfil ────────────────────────────────────────────────────────
 
 @app.get("/api/exif/{device_id}/{filename}")
-def get_exif(device_id: str, filename: str):
+def get_exif(
+    device_id: str,
+    filename: str,
+    _user=require_role("viewer"),
+    db: Session = Depends(get_db),
+):
     """Læs komplet EXIF metadata fra billedfil via exifread."""
+    from urllib.parse import unquote as _unquote
+    _sanitize_device_id(device_id)
+    filename = _unquote(filename)
+    _ensure_capture_file_access(db, _user, device_id, filename)
     src = _find_image(device_id, filename)
     if not src or not src.exists():
         raise HTTPException(status_code=404, detail="Billede ikke fundet")
@@ -6720,6 +6808,7 @@ def get_diagnostics_history(
     db: Session = Depends(get_db),
 ):
     """Hent diagnostics time-series for en device (seneste N dage)."""
+    _ensure_capture_device_access(db, _user, device_id)
     from datetime import timedelta
     since = now_utc() - timedelta(days=days)
     rows = (
@@ -6761,6 +6850,7 @@ def get_diagnostics_history(
 @app.get("/api/admin/captures/stats/exif")
 def get_exif_stats(device_id: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """EXIF-baseret statistik: ISO, lukkertid, blænde fordeling."""
+    _ensure_capture_device_access(db, _user, device_id)
     rows = (
         db.query(Capture.exif_data)
         .filter(Capture.device_id == device_id, Capture.exif_data.isnot(None))
@@ -7641,8 +7731,10 @@ def _query_capture_candidates(db: Session, payload: dict, spec: dict) -> list[Ca
 
 
 def _allowed_capture_device_ids(db: Session, user: User | None) -> set[str] | None:
-    if not user or user.role in {"super_admin", "admin"} or not getattr(user, "customer_id", None):
+    if _is_platform_admin(user):
         return None
+    if not user or not getattr(user, "customer_id", None):
+        return set()
     site_ids = [row[0] for row in db.query(Site.id).filter(Site.customer_id == user.customer_id).all()]
     devices = db.query(Device.device_id).filter(
         (Device.customer_id == user.customer_id) | (Device.site_id.in_(site_ids))
@@ -7659,6 +7751,17 @@ def _ensure_capture_device_access(db: Session, user: User | None, device_id: str
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:
     allowed = _allowed_capture_device_ids(db, user)
     return allowed is None or capture.device_id in allowed
+
+
+def _ensure_capture_file_access(db: Session, user: User | None, device_id: str, filename: str) -> Capture:
+    """Require a DB capture row and enforce tenant access before serving files."""
+    _ensure_capture_device_access(db, user, device_id)
+    capture = db.query(Capture).filter_by(device_id=device_id, filename=filename).first()
+    if not capture:
+        raise HTTPException(status_code=404, detail="Capture not found")
+    if not _capture_is_allowed(db, user, capture):
+        raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
+    return capture
 
 
 def _capture_quality_score(capture: Capture) -> float:
