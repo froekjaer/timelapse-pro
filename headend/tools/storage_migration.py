@@ -2,7 +2,7 @@
 """Audit and migrate TimeLapse Pro capture storage layout.
 
 Canonical layout:
-  <sftp_base>/<site_sftp_user>/data/<customer>/<site>/<camera>/<YYYY>/<MM>/<DD>/<filename>
+  <storage_root>/<customer>/<site>/<camera>/<YYYY>/<MM>/<DD>/<filename>
 
 The tool is conservative:
   - dry-run by default
@@ -95,19 +95,9 @@ def target_for(root: Path, capture: Capture, device: Device | None, site: Site |
     customer_name = customer.name if customer else (device.customer_name if device else None) or file_customer
     site_name = site.name if site else (device.site_name if device else None) or file_site
     camera_name = (device.camera_name if device else None) or file_camera or capture.device_id
-    sftp_user = site.sftp_user if site and site.sftp_user else None
-    if not sftp_user and site and site.config_overrides:
-        try:
-            sftp_user = json.loads(site.config_overrides).get("sftp", {}).get("username")
-        except Exception:
-            sftp_user = None
-    if not sftp_user:
-        sftp_user = f"sftp_{safe(site_name, 'site').lower()[:32]}"
     yyyy, mm, dd = capture_date_parts(capture)
     return (
         root
-        / safe(sftp_user)
-        / "data"
         / safe(customer_name)
         / safe(site_name)
         / safe(camera_name)
@@ -147,7 +137,7 @@ def companion_moves(src: Path, dst: Path, apply: bool) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", default=os.getenv("SFTP_BASE", "/Volumes/data/timelapse-incoming"))
+    parser.add_argument("--root", default=os.getenv("SFTP_BASE", "/Volumes/data"))
     parser.add_argument("--manifest", default="/private/tmp/timelapse-storage-migration.jsonl")
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--limit", type=int, default=0)

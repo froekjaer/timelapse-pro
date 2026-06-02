@@ -13,7 +13,7 @@ Flow:
      - Læser EXIF fra original (exifread + PIL fallback)
      - Beregner SHA-256
      - Omdøber til standard format: Kunde_Site_Kamera_YYYYMMDD_HHMMSS.jpg
-     - Kopierer til SFTP_BASE/sftp_user/data/Kunde/Site/YYYY/MM/DD/
+     - Kopierer til SFTP_BASE/Kunde/Site/Kamera/YYYY/MM/DD/
      - Kører kvalitetstjek (blur + lysstyrke via PIL)
      - Skriver sidecar JSON
      - Skriver XMP metadata via exiftool (hvis tilgængeligt)
@@ -241,14 +241,17 @@ def _write_xmp(image_path: Path, sha256: str, customer: str, site: str,
 
 
 def _get_dest_dir(sftp_base: Path, sftp_user: str, customer: str,
-                  site: str, timestamp: datetime) -> Path:
-    """Bygger destinationssti: sftp_base/sftp_user/data/customer/site/YYYY/MM/DD/"""
+                  site: str, camera_name: str, timestamp: datetime) -> Path:
+    """Bygger destinationssti: sftp_base/customer/site/camera/YYYY/MM/DD/.
+
+    sftp_user bevares i API'et som adgangs-/site-attribut, men må ikke indgå i
+    canonical datastien.
+    """
     return (
         sftp_base
-        / sftp_user
-        / "data"
         / _sanitize(customer)
         / _sanitize(site)
+        / _sanitize(camera_name)
         / timestamp.strftime("%Y")
         / timestamp.strftime("%m")
         / timestamp.strftime("%d")
@@ -307,7 +310,7 @@ def _run_import(
             # 4. Nyt filnavn
             ts_str    = timestamp.strftime("%Y%m%d_%H%M%S")
             new_name  = f"{cust_san}_{site_san}_{camera_san}_{ts_str}.jpg"
-            dest_dir  = _get_dest_dir(sftp_base, sftp_user, customer, site, timestamp)
+            dest_dir  = _get_dest_dir(sftp_base, sftp_user, customer, site, camera_name, timestamp)
             dest_dir.mkdir(parents=True, exist_ok=True)
             dest_path = dest_dir / new_name
 

@@ -2000,7 +2000,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "username":    _get_setting(db, "sftp_user", os.getenv("SFTP_USER", "")),
             "password":    _get_setting(db, "sftp_password", os.getenv("SFTP_PASSWORD", "")),
             "key_file":    "",
-            "remote_base": _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/incoming")),
+            "remote_base": _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data")),
             "layout_version": "customer-site-camera-date-v1",
         },
         "diagnostics": {
@@ -2054,7 +2054,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         if site:
             if getattr(site, "sftp_user", None):
                 cfg["sftp"]["username"] = site.sftp_user
-                cfg["sftp"]["remote_base"] = "/data"
+                cfg["sftp"]["remote_base"] = _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data"))
             if site.config_overrides:
                 for section, values in json.loads(site.config_overrides).items():
                     if section in cfg and isinstance(cfg[section], dict):
@@ -5082,7 +5082,7 @@ def _init_sftp_base():
     db_gen = get_db()
     db = next(db_gen)
     try:
-        return _Path(_get_setting(db, "sftp_base", os.getenv("SFTP_BASE", "/Users/Shared/timelapse/incoming")))
+        return _Path(_get_setting(db, "sftp_base", os.getenv("SFTP_BASE", "/Volumes/data")))
     finally:
         db_gen.close()
 
@@ -5098,32 +5098,32 @@ def _find_image(device_id: str, filename: str) -> Optional[_Path]:
     except Exception as e:
         log.error("SFTP_BASE iterdir fejl: %s", e)
     """
-    Find image — håndterer tre strukturer:
-      1. Ny canonical chroot: SFTP_BASE/{sftp_user}/data/{customer}/{site}/{camera}/YYYY/MM/DD/filename
-      2. Legacy chroot:       SFTP_BASE/{sftp_user}/data/{customer}/{site}/YYYY/MM/DD/filename
-      3. Gammel:              SFTP_BASE/{customer}/{site}/YYYY/MM/DD/filename
-      4. Flad:                SFTP_BASE/{device_id}/filename
+    Find image — håndterer flere strukturer:
+      1. Canonical data root: SFTP_BASE/{customer}/{site}/{camera}/YYYY/MM/DD/filename
+      2. Legacy chroot:      SFTP_BASE/timelapse-incoming/{sftp_user}/data/{customer}/{site}/{camera}/YYYY/MM/DD/filename
+      3. Legacy site:        SFTP_BASE/{customer}/{site}/YYYY/MM/DD/filename
+      4. Flad/device:        SFTP_BASE/{device_id}/filename eller SFTP_BASE/{device_id}/YYYY/MM/DD/filename
     """
     m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
     if m:
         yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
 
-        # Struktur 0 — device_id/YYYY/MM/DD/ (primær struktur)
-        p = SFTP_BASE / device_id / yyyy / mm / dd / filename
-        if p.exists():
-            return p
-
-        # Struktur 1 — canonical chroot: sftp_user/data/customer/site/camera/YYYY/MM/DD/
-        chroot_glob = f"*/data/*/*/*/{yyyy}/{mm}/{dd}/{filename}"
-        log.info("chroot_glob=%r", chroot_glob)
-        matches = list(SFTP_BASE.glob(chroot_glob))
-        log.info("chroot matches=%s", matches)
+        # Struktur 1 — canonical: customer/site/camera/YYYY/MM/DD/
+        canonical_glob = f"*/*/*/{yyyy}/{mm}/{dd}/{filename}"
+        log.info("canonical_glob=%r", canonical_glob)
+        matches = list(SFTP_BASE.glob(canonical_glob))
+        log.info("canonical matches=%s", matches)
         if matches:
             return matches[0]
 
-        # Struktur 2 — legacy chroot: sftp_user/data/customer/site/YYYY/MM/DD/
-        legacy_chroot_glob = f"*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
+        # Struktur 2 — legacy chroot under timelapse-incoming/sftp_user/data/
+        legacy_chroot_glob = f"timelapse-incoming/*/data/*/*/*/{yyyy}/{mm}/{dd}/{filename}"
         matches = list(SFTP_BASE.glob(legacy_chroot_glob))
+        if matches:
+            return matches[0]
+
+        legacy_site_chroot_glob = f"timelapse-incoming/*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
+        matches = list(SFTP_BASE.glob(legacy_site_chroot_glob))
         if matches:
             return matches[0]
 
@@ -5133,7 +5133,12 @@ def _find_image(device_id: str, filename: str) -> Optional[_Path]:
         if matches:
             return matches[0]
 
-        # Struktur 4 — rekursiv fallback (langsommere men sikker)
+        # Struktur 4 — device_id/YYYY/MM/DD/
+        p = SFTP_BASE / device_id / yyyy / mm / dd / filename
+        if p.exists():
+            return p
+
+        # Struktur 5 — rekursiv fallback (langsommere men sikker)
         matches = list(SFTP_BASE.rglob(filename))
         if matches:
             return matches[0]

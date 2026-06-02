@@ -113,7 +113,7 @@ Opret `/Library/LaunchDaemons/dk.froekjaer.timelapse-headend.plist`:
         <key>BREAK_GLASS_ENC_KEY</key>
         <string>GENERER-MED: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</string>
         <key>SFTP_BASE</key>
-        <string>/Volumes/data/timelapse-incoming</string>
+        <string>/Volumes/data</string>
         <key>FFMPEG_PATH</key>
         <string>/opt/homebrew/bin/ffmpeg</string>
         <key>ALLOWED_ORIGIN</key>
@@ -157,9 +157,9 @@ diskutil info /Volumes/data | grep "Volume UUID"
 # Tilføj til /etc/fstab for konsistent mount-punkt
 echo "UUID=<DIN-UUID> /Volumes/data apfs rw" | sudo tee -a /etc/fstab
 
-# Opret SFTP-mappe
-sudo mkdir -p /Volumes/data/timelapse-incoming
-sudo chown peter:staff /Volumes/data/timelapse-incoming
+# Opret dataroden. Kunde/site/kamera-strukturen ligger direkte herunder.
+sudo mkdir -p /Volumes/data
+sudo chown peter:staff /Volumes/data
 ```
 
 > ⚠️ **Diskskift:** Formatér ny disk med samme volumenavn `data` →
@@ -272,13 +272,13 @@ peter ALL=(ALL) NOPASSWD: /bin/launchctl
 # Opret dedikeret SFTP-bruger
 sudo dscl . -create /Users/sftpuser
 sudo dscl . -create /Users/sftpuser UserShell /usr/bin/false
-sudo dscl . -create /Users/sftpuser NFSHomeDirectory /Volumes/data/timelapse-incoming
+sudo dscl . -create /Users/sftpuser NFSHomeDirectory /Volumes/data
 sudo dscl . -passwd /Users/sftpuser <password>
 
 # Tilføj til sshd_config
 sudo bash -c 'cat >> /etc/ssh/sshd_config << EOF
 Match User sftpuser
-    ChrootDirectory /Volumes/data/timelapse-incoming
+    ChrootDirectory /Volumes/data
     ForceCommand internal-sftp
     AllowTcpForwarding no
 EOF'
@@ -302,7 +302,7 @@ curl -s http://localhost:8000/api/siem/summary | python3 -m json.tool
 sudo launchctl list | grep timelapse-node-agent
 
 # Ekstern disk monteret
-ls /Volumes/data/timelapse-incoming/
+ls /Volumes/data/
 ```
 
 ---
@@ -349,4 +349,3 @@ sudo launchctl start dk.froekjaer.timelapse-headend
 
 > ⚠️ Uden Full Disk Access fejler `glob()` og `iterdir()` på externe diske
 > med `[Errno 1] Operation not permitted` — selv for root-processer.
-
