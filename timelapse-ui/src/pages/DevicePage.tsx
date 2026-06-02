@@ -813,6 +813,15 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Kamera</h3>
         <div className="space-y-3">
           <div>
+            <label className="text-xs text-gray-400 block mb-1">Strømstyring</label>
+            <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              value={camera.power_mode ?? 'relay'}
+              onChange={e => setCfg({ ...cfg, camera: { ...camera, power_mode: e.target.value } })}>
+              <option value="relay">relay</option>
+              <option value="usb_powered">usb_powered</option>
+            </select>
+          </div>
+          <div>
             <label className="text-xs text-gray-400 block mb-1">Opvarmningstid (sekunder)</label>
             <input type="number" min={1} max={60} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={camera.relay_on_seconds_before ?? 10}

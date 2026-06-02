@@ -56,6 +56,7 @@ const CAMERA_PARAMS: ParamRow[] = [
   { key: 'camera.aperture',          label: 'Blænde', section: 'Kamera', type: 'select', options: ['Auto', '3.5', '4', '4.5', '5', '5.6', '6.3', '7.1', '8', '9', '10', '11', '13', '14', '16', '18', '20', '22'], description: 'f-tal — højere = skarpere baggrund' },
   { key: 'camera.whitebalance',      label: 'Hvidbalance', section: 'Kamera', type: 'select', options: ['Auto', 'Daylight', 'Cloudy', 'Tungsten', 'Fluorescent', 'Flash'], description: 'Auto anbefales til varierende vejr' },
   { key: 'camera.serial_number',     label: 'Kamera serienummer', section: 'Hardware', type: 'text', placeholder: 'fx d12b869bf88a4b719094a801bdaa41c7', description: 'gphoto2 serienummer — bruges til stabil USB port identificering ved multi-kamera' },
+  { key: 'camera.power_mode',        label: 'Strømstyring', section: 'Hardware', type: 'select', options: ['relay', 'usb_powered'], description: 'relay = agenten tænder/slukker via GPIO; usb_powered = kameraet har konstant strøm og går selv i standby' },
   { key: 'camera.relay_gpio_pin',    label: 'Relay GPIO (kamera)', section: 'Hardware', type: 'number', placeholder: '356', description: 'GPIO pin til kamera relay' },
   { key: 'camera.relay_on_seconds_before', label: 'Varmetid (sekunder)', section: 'Hardware', type: 'number', placeholder: '10', description: 'Sekunder relay er tændt før capture' },
   { key: 'camera.relay_off_seconds_after', label: 'Nedkølingstid (sekunder)', section: 'Hardware', type: 'number', placeholder: '5', description: 'Sekunder relay er tændt efter capture' },

@@ -119,6 +119,8 @@ class SshTunnelManager:
         """Stop tunnel og overvågningsloop."""
         self._running = False
         self._kill_tunnel()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=10)
         log.info("SSH tunnel manager stoppet")
 
     def request_connect(self):

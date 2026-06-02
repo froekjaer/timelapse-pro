@@ -1966,6 +1966,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         },
         "camera": {
             "device_id":               device_id,
+            "power_mode":              "relay",
             "relay_gpio_pin":          356,
             "relay_on_seconds_before": 10,
             "relay_off_seconds_after": 5,

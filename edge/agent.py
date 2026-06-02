@@ -116,6 +116,7 @@ class EdgeAgent:
         # State
         self._last_heartbeat:  datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._last_config_pull:datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._stop_event = threading.Event()
 
         # Signal handling for graceful shutdown
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -126,6 +127,7 @@ class EdgeAgent:
     def _handle_signal(self, signum, frame):
         log.info("Signal %d received — shutting down gracefully…", signum)
         self._running = False
+        self._stop_event.set()
 
     # ── Public entry points ────────────────────────────────────────────────
 
@@ -151,10 +153,10 @@ class EdgeAgent:
                 else:
                     # Reset lab state if switching back to normal
                     if getattr(self, "_lab_relay_on", False):
-                        log.info("LAB MODE — exiting, relay OFF")
+                        log.info("LAB MODE — exiting, camera release")
                         try: self._driver.disconnect()
                         except: pass
-                        self._relay.camera.force_off()
+                        self._camera_power_off("lab exit", force=True)
                         self._lab_relay_on = False
                     self._tick(mode)
             except Exception as exc:
@@ -163,7 +165,7 @@ class EdgeAgent:
                     self._device_id, "ERROR", "system",
                     f"Unhandled loop error: {exc}"
                 )
-                time.sleep(int(self._cfg.get("system", {}).get("error_recovery_sleep_s", 30)))
+                self._stop_event.wait(int(self._cfg.get("system", {}).get("error_recovery_sleep_s", 30)))
 
         self._shutdown()
 
@@ -290,6 +292,50 @@ class EdgeAgent:
                  len(detected), [c['device_id'] for c in detected])
         return detected
 
+    def _camera_power_mode(self) -> str:
+        mode = str(self._cfg.get("camera", {}).get("power_mode", "relay")).strip().lower()
+        aliases = {
+            "relay_controlled": "relay",
+            "relay-controlled": "relay",
+            "usb": "usb_powered",
+            "usb-powered": "usb_powered",
+            "constant_usb": "usb_powered",
+            "always_on": "usb_powered",
+            "no_relay": "usb_powered",
+            "none": "usb_powered",
+        }
+        return aliases.get(mode, mode)
+
+    def _camera_uses_relay(self) -> bool:
+        return self._camera_power_mode() == "relay"
+
+    def _camera_warmup_seconds(self) -> int:
+        if not self._camera_uses_relay():
+            return 0
+        return int(self._cfg.get("camera", {}).get("relay_on_seconds_before", 10))
+
+    def _camera_settle_seconds(self) -> int:
+        if not self._camera_uses_relay():
+            return 0
+        return int(self._cfg.get("camera", {}).get("relay_off_seconds_after", 5))
+
+    def _camera_power_on(self, reason: str = "") -> None:
+        if self._camera_uses_relay():
+            self._relay.camera.power_on()
+            return
+        detail = f" ({reason})" if reason else ""
+        log.info("Camera power mode=%s — relay power_on skipped%s", self._camera_power_mode(), detail)
+
+    def _camera_power_off(self, reason: str = "", force: bool = False) -> None:
+        if self._camera_uses_relay():
+            if force:
+                self._relay.camera.force_off()
+            else:
+                self._relay.camera.power_off()
+            return
+        detail = f" ({reason})" if reason else ""
+        log.info("Camera power mode=%s — relay power_off skipped%s", self._camera_power_mode(), detail)
+
     def _capture_single_camera(self, cam, dest_dir, results, idx):
         from camera.registry import get_driver as _get_driver
         device_id = cam['device_id']
@@ -355,12 +401,12 @@ class EdgeAgent:
     def _load_camera_features(self) -> None:
         """Detect camera capabilities for this session."""
         try:
-            self._relay.camera.power_on()
+            self._camera_power_on("feature detection")
             self._driver.connect()
             self._has_autofocus = self._driver.supports_autofocus()
             self._has_refocus   = self._driver.supports_remote_focus()
             self._driver.disconnect()
-            self._relay.camera.power_off()
+            self._camera_power_off("feature detection")
             log.info(
                 "Camera features: autofocus=%s remote_focus=%s",
                 self._has_autofocus, self._has_refocus
@@ -423,7 +469,7 @@ class EdgeAgent:
 
         if sleep_s > 60:
             log.info("Sleeping %ds until next capture…", sleep_s)
-        time.sleep(min(sleep_s, 60))   # wake at least every 60s to check signals
+        self._stop_event.wait(min(sleep_s, 60))   # wake at least every 60s to check signals
 
     # ── Capture cycle ───────────────────────────────────────────────────────
 
@@ -440,7 +486,7 @@ class EdgeAgent:
 
         try:
             # 1. Power camera on and connect
-            self._relay.camera.power_on()
+            self._camera_power_on("capture cycle")
             try:
                 self._driver.connect()
             except Exception as exc:
@@ -549,7 +595,7 @@ class EdgeAgent:
             else:
                 self._connectivity.report_failure()
 
-            # Camera diagnostics while relay is still ON
+            # Camera diagnostics while the camera is still awake
             # Disconnect driver first to free gphoto2 USB connection
             try:
                 self._driver.disconnect()
@@ -595,7 +641,7 @@ class EdgeAgent:
                 self._driver.disconnect()
             except Exception:
                 pass
-            self._relay.camera.power_off()
+            self._camera_power_off("capture cycle")
 
         log.info("─── Capture cycle complete (success=%s) ───", success)
         return success
@@ -605,7 +651,7 @@ class EdgeAgent:
     def _should_capture(self, now: datetime, mode: str) -> bool:
         """Return True if relay should power ON now (warmup-adjusted)."""
         schedule = self._cfg.get("schedule", {})
-        warmup_s = int(self._cfg.get("camera", {}).get("relay_on_seconds_before", 10))
+        warmup_s = self._camera_warmup_seconds()
         lead_s   = warmup_s + 3
         active_hours = schedule.get("active_hours")
         if active_hours and len(active_hours) == 2:
@@ -637,7 +683,7 @@ class EdgeAgent:
     def _seconds_until_next_event(self, now: datetime, mode: str) -> int:
         """Calculate seconds until next capture or heartbeat."""
         schedule      = self._cfg.get("schedule", {})
-        warmup_s      = int(self._cfg.get("camera", {}).get("relay_on_seconds_before", 10))
+        warmup_s      = self._camera_warmup_seconds()
         lead_s        = warmup_s + 3
         heartbeat_min = int(self._cfg.get("diagnostics", {}).get("heartbeat_interval_minutes", 60))
         if mode == "interval":
@@ -1143,12 +1189,14 @@ class EdgeAgent:
         """
         poll_s = int(debug_cfg.get("config_poll_s", 1))
 
-        # Ensure relay is ON
+        # Ensure camera is ready
         if not getattr(self, "_lab_relay_on", False):
-            log.info("LAB MODE — relay ON permanent")
-            self._relay.camera.power_on()
+            log.info("LAB MODE — preparing camera (power_mode=%s)", self._camera_power_mode())
+            self._camera_power_on("lab mode")
             self._lab_relay_on = True
-            time.sleep(int(self._cfg.get("camera", {}).get("relay_on_seconds_before", 10)))
+            warmup_s = self._camera_warmup_seconds()
+            if warmup_s:
+                time.sleep(warmup_s)
             try:
                 self._driver.connect()
                 commands = self._build_camera_commands()
@@ -1171,7 +1219,7 @@ class EdgeAgent:
                 log.info("LAB MODE — disabled from headend, exiting lab mode")
                 try: self._driver.disconnect()
                 except: pass
-                self._relay.camera.force_off()
+                self._camera_power_off("lab disabled", force=True)
                 self._lab_relay_on = False
                 # Save updated config
                 self._cfg_mgr.save_config(cfg_data)
@@ -1200,15 +1248,15 @@ class EdgeAgent:
                 self._api.clear_lab_command(self._device_id)
             elif cmd_type == "capture":
                 log.info("LAB — full capture requested — disconnecting before cycle")
-                # Disconnect og sluk relay INDEN _do_capture_cycle kaldes.
+                # Disconnect og frigiv kamera INDEN _do_capture_cycle kaldes.
                 # _do_capture_cycle forventer at kameraet IKKE er forbundet —
-                # den laver selv power_on -> connect -> capture -> disconnect -> power_off.
+                # den laver selv power-mode handling -> connect -> capture -> disconnect.
                 # Dobbelt-connect på et allerede tilsluttet gphoto2-kamera fejler stille.
                 try:
                     self._driver.disconnect()
                 except Exception:
                     pass
-                self._relay.camera.power_off()
+                self._camera_power_off("lab full capture handoff")
                 self._lab_relay_on = False          # tvinger re-init på næste tick
                 self._do_capture_cycle()
                 self._api.clear_lab_command(self._device_id)
@@ -1362,20 +1410,26 @@ class EdgeAgent:
 
     def _shutdown(self) -> None:
         log.info("Shutting down edge agent…")
+        tunnel = getattr(self, "_tunnel", None)
+        if tunnel is not None:
+            try:
+                tunnel.stop()
+            except Exception as exc:
+                log.warning("SSH tunnel manager stop failed: %s", exc)
         # Ensure lab relay is OFF if we were in lab mode
         if getattr(self, "_lab_relay_on", False):
-            log.info("Shutdown: forcing lab relay OFF")
+            log.info("Shutdown: releasing lab camera")
             try:
                 self._driver.disconnect()
             except Exception:
                 pass
             try:
-                self._relay.camera.force_off()
+                self._camera_power_off("shutdown", force=True)
             except Exception:
                 pass
             self._lab_relay_on = False
         try:
-            self._relay.cleanup()
+            self._relay.cleanup(camera=self._camera_uses_relay())
         except Exception:
             pass
         self._send_heartbeat()

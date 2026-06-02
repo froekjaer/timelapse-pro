@@ -82,6 +82,7 @@ export interface DeviceConfig {
     timezone?: string
   }
   camera?: {
+    power_mode?: 'relay' | 'usb_powered'
     relay_gpio_pin?: number
     relay_on_seconds_before?: number
     relay_off_seconds_after?: number

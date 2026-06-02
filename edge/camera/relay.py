@@ -364,14 +364,19 @@ class RelayController:
     def connectivity(self) -> "ConnectivityMonitor":
         return self._connectivity
 
-    def cleanup(self) -> None:
+    def cleanup(self, *, camera: bool = True, modem: bool = True) -> None:
         log.info("RelayController cleanup")
-        self.camera.force_off()
-        self.modem.force_off()
-        pins = [self.camera._pin]
-        if not isinstance(self.modem, _NoModem):
+        if camera:
+            self.camera.force_off()
+        if modem:
+            self.modem.force_off()
+        pins = []
+        if camera:
+            pins.append(self.camera._pin)
+        if modem and not isinstance(self.modem, _NoModem):
             pins.append(self.modem._pin)
-        self._backend.cleanup(pins)
+        if pins:
+            self._backend.cleanup(pins)
 
 
 class ConnectivityMonitor:

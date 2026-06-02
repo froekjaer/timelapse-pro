@@ -229,6 +229,7 @@ export function SystemAdminPage() {
   const [relayGpioCamera, setRelayGpioCamera] = useState('356')
   const [relayGpioModem, setRelayGpioModem]   = useState('361')
   const [relaySimulate, setRelaySimulate]     = useState(false)
+  const [cameraPowerMode, setCameraPowerMode] = useState('relay')
   const [relayOnBefore, setRelayOnBefore]     = useState('10')
   const [relayOffAfter, setRelayOffAfter]     = useState('5')
   const [captureTimeout, setCaptureTimeout]   = useState('60')
@@ -291,6 +292,7 @@ export function SystemAdminPage() {
       setRelayGpioCamera(String(cam.relay_gpio_pin ?? 356))
       setRelayGpioModem(String(mod.modem_relay_gpio_pin ?? 361))
       setRelaySimulate(!!cam.relay_simulate)
+      setCameraPowerMode(String(cam.power_mode ?? 'relay'))
       setRelayOnBefore(String(cam.relay_on_seconds_before ?? 10))
       setRelayOffAfter(String(cam.relay_off_seconds_after ?? 5))
       setCaptureTimeout(String(cam.capture_timeout ?? 60))
@@ -387,6 +389,7 @@ export function SystemAdminPage() {
         body: JSON.stringify({
           config_overrides: {
             camera: {
+              power_mode:            cameraPowerMode,
               relay_gpio_pin:        parseInt(relayGpioCamera),
               relay_simulate:        relaySimulate,
               relay_on_seconds_before: parseInt(relayOnBefore),
@@ -451,6 +454,14 @@ export function SystemAdminPage() {
       <Section title="Relay & GPIO" icon={<Radio className="w-4 h-4" />}
         description="Hardware GPIO pins til relæstyring og simuleringstilstand"
         defaultOpen={true}>
+        <Field label="Kamera strømstyring"
+          description="relay = GPIO styrer kameraforsyning; usb_powered = kameraet har konstant USB/batteri og går selv i standby">
+          <select className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm"
+            value={cameraPowerMode} onChange={e => setCameraPowerMode(e.target.value)}>
+            <option value="relay">relay</option>
+            <option value="usb_powered">usb_powered</option>
+          </select>
+        </Field>
         <Field label="Kamera relay GPIO pin" unit="sysfs"
           description="GPIO nummer i sysfs (fx 356 = physical pin 7 på Orange Pi 4 Pro)">
           <Num value={relayGpioCamera} onChange={setRelayGpioCamera} placeholder="356" />
