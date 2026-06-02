@@ -5630,12 +5630,22 @@ def _run_backup():
         os.makedirs(f"{backup_dir}/configs", exist_ok=True)
 
         _backup_status["progress"].append("Database backup (pg_dump)...")
-        db_url = os.environ.get("DATABASE_URL", "postgresql://timelapse@localhost/timelapse_db")
-        db_name = db_url.rstrip("/").split("/")[-1].split("?")[0]
-        db_user = db_url.split("://")[1].split("@")[0].split(":")[0]
+        from urllib.parse import unquote, urlparse
+        db_url = os.environ.get(
+            "BACKUP_DATABASE_URL",
+            os.environ.get("DATABASE_URL", "postgresql://timelapse@localhost/timelapse_db"),
+        )
+        parsed_db = urlparse(db_url)
+        db_name = (parsed_db.path or "/timelapse_db").lstrip("/") or "timelapse_db"
+        db_user = unquote(parsed_db.username or "timelapse")
+        db_host = parsed_db.hostname or "localhost"
+        db_port = str(parsed_db.port) if parsed_db.port else None
         sql_path = f"{backup_dir}/database/timelapse_db_{date}.sql"
+        pg_dump_cmd = ["/opt/homebrew/bin/pg_dump", "-U", db_user, "-h", db_host, "--no-password", db_name]
+        if db_port:
+            pg_dump_cmd[5:5] = ["-p", db_port]
         r = _subprocess.run(
-            ["/opt/homebrew/bin/pg_dump", "-U", db_user, "-h", "localhost", "--no-password", db_name],
+            pg_dump_cmd,
             capture_output=True, text=True
         )
         if r.returncode == 0:
