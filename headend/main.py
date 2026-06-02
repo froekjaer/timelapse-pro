@@ -1937,6 +1937,17 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     sftp_user = _get_setting(db, "sftp_user", os.getenv("SFTP_USER", "")) if sftp_enabled else ""
     sftp_password = _get_setting(db, "sftp_password", os.getenv("SFTP_PASSWORD", "")) if sftp_enabled else ""
     sftp_remote_base = _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data")) if sftp_enabled else ""
+    upload_slot_cycle_s = int(_get_setting(db, "upload_slot_cycle_seconds", os.getenv("UPLOAD_SLOT_CYCLE_SECONDS", "600")))
+    upload_slot_window_s = int(_get_setting(db, "upload_slot_window_seconds", os.getenv("UPLOAD_SLOT_WINDOW_SECONDS", "90")))
+    upload_slot_span = max(1, upload_slot_cycle_s - upload_slot_window_s)
+    upload_slot_offset_s = int(hashlib.sha256(device_id.encode("utf-8")).hexdigest()[:8], 16) % upload_slot_span
+    upload_slot_max_pending = int(_get_setting(db, "upload_slot_max_pending_per_window", os.getenv("UPLOAD_SLOT_MAX_PENDING_PER_WINDOW", "3")))
+    upload_slot_enforced = (
+        _get_setting(db, "upload_slot_enforced", os.getenv("UPLOAD_SLOT_ENFORCED", "false"))
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "ja", "on"}
+    )
 
     cfg = {
         "device": {
@@ -2015,6 +2026,17 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                 "enabled": True,
                 "endpoint": f"/captures/{device_id}/files",
                 "signed_payload_hash": True,
+                "timeslot": {
+                    "enabled": True,
+                    "enforced": upload_slot_enforced,
+                    "policy": "free_when_capacity_available",
+                    "assigned_by": "headend",
+                    "cycle_seconds": upload_slot_cycle_s,
+                    "window_seconds": upload_slot_window_s,
+                    "start_offset_seconds": upload_slot_offset_s,
+                    "max_pending_per_window": upload_slot_max_pending,
+                    "defer_large_uploads_only": True,
+                },
             },
         },
         "sftp": {

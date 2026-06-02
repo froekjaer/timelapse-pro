@@ -211,12 +211,16 @@ class EdgeAgent:
 
         # 4. Retry any pending uploads from before last reboot
         camera_id = self._cfg.get("device", {}).get("device_id", "unknown")
-        api_retried = self._retry_pending_api_uploads()
-        if api_retried:
-            log.info("Startup API upload retry: %d", api_retried)
-        retry_results = self._uploader.retry_pending(camera_id)
-        if any(v > 0 for v in retry_results.values()):
-            log.info("Startup SFTP upload retry: %s", retry_results)
+        allowed, wait_s, _remaining_s = self._upload_slot_state()
+        if allowed:
+            api_retried = self._retry_pending_api_uploads()
+            if api_retried:
+                log.info("Startup API upload retry: %d", api_retried)
+            retry_results = self._uploader.retry_pending(camera_id)
+            if any(v > 0 for v in retry_results.values()):
+                log.info("Startup SFTP upload retry: %s", retry_results)
+        else:
+            log.info("Startup upload retry deferred by Headend slot: next_slot_in_s=%s", wait_s)
 
         # 5. Sync unsynced capture records to headend
         self._sync_captures()
@@ -388,7 +392,8 @@ class EdgeAgent:
             self._check_update()
 
         # Check capture schedule
-        if self._should_capture(now, mode):
+        capture_due = self._should_capture(now, mode)
+        if capture_due:
             node_cameras = self._cfg.get('node_cameras', [])
             multi_mode   = self._cfg.get('multi_camera_mode', 'single')
             if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
@@ -400,6 +405,10 @@ class EdgeAgent:
                     self._do_capture_cycle()
             else:
                 self._do_capture_cycle()
+
+        # Upload pending large files only inside the Headend-assigned slot.
+        # This runs after capture checks so upload backlog cannot delay capture.
+        self._retry_pending_uploads_if_slot()
 
         # Heartbeat (every 60 minutes)
         heartbeat_interval = timedelta(minutes=int(
@@ -529,7 +538,8 @@ class EdgeAgent:
             # 7. Enforce circular buffer BEFORE upload (free space first)
             self._buffer.enforce(self._db)
 
-            # 8. Upload — report connectivity result
+            # 8. Upload — report connectivity result. Capture timing is not
+            # delayed by upload slots; files are queued locally if outside slot.
             camera_id      = self._cfg.get("device", {}).get("device_id", "unknown")
             upload_results = self._upload_capture_transports(capture_id, result.filepath, camera_id)
             log.info("Upload results: %s", upload_results)
@@ -1046,6 +1056,18 @@ class EdgeAgent:
         results: dict[str, bool] = {}
         row = self._db.get_capture(capture_id) if capture_id else None
         if row:
+            allowed, wait_s, remaining_s = self._upload_slot_state()
+            if not allowed:
+                log.info(
+                    "API upload deferred by Headend slot: capture_id=%s filename=%s next_slot_in_s=%s",
+                    capture_id,
+                    filepath.name,
+                    wait_s,
+                )
+                results["primary"] = False
+                results["api_primary"] = False
+                return results
+            log.info("API upload slot open: remaining_s=%s", remaining_s)
             ok, _ = self._api.upload_capture_files(row, filepath)
             results["primary"] = ok
             results["api_primary"] = ok
@@ -1058,11 +1080,25 @@ class EdgeAgent:
         results.update(sftp_results)
         return results
 
+    def _retry_pending_uploads_if_slot(self) -> None:
+        allowed, wait_s, remaining_s = self._upload_slot_state()
+        if not allowed:
+            return
+        retried = self._retry_pending_api_uploads()
+        if retried:
+            log.info("API upload slot processed pending files: count=%d remaining_s=%s", retried, remaining_s)
+
     def _retry_pending_api_uploads(self) -> int:
         """Retry primary API uploads from the local store-and-forward queue."""
         count = 0
         try:
-            for row in self._db.get_pending_uploads("primary", limit=50):
+            max_pending = int(
+                self._cfg.get("upload", {})
+                .get("api", {})
+                .get("timeslot", {})
+                .get("max_pending_per_window", 3)
+            )
+            for row in self._db.get_pending_uploads("primary", limit=max(1, max_pending)):
                 filepath = Path(row["filepath"])
                 if not filepath.exists():
                     continue
@@ -1073,6 +1109,29 @@ class EdgeAgent:
         except Exception as exc:
             log.warning("API upload retry error: %s", exc)
         return count
+
+    def _upload_slot_state(self, now: datetime | None = None) -> tuple[bool, int, int]:
+        slot = (
+            self._cfg.get("upload", {})
+            .get("api", {})
+            .get("timeslot", {})
+        )
+        if not slot or not slot.get("enabled", False):
+            return True, 0, 999999
+        if not slot.get("enforced", False):
+            return True, 0, 999999
+        cycle_s = max(1, int(slot.get("cycle_seconds", 600)))
+        window_s = max(1, int(slot.get("window_seconds", 90)))
+        offset_s = int(slot.get("start_offset_seconds", 0)) % cycle_s
+        now = now or datetime.now(timezone.utc)
+        phase = int(now.timestamp()) % cycle_s
+        elapsed = (phase - offset_s) % cycle_s
+        if elapsed < window_s:
+            return True, 0, window_s - elapsed
+        wait_s = (cycle_s - elapsed) % cycle_s
+        if wait_s == 0:
+            wait_s = cycle_s
+        return False, wait_s, 0
 
     # ── Lab / debug mode ────────────────────────────────────────────────────
 
