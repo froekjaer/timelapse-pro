@@ -18,8 +18,8 @@
 """
 TimeLapse Pro — gPhoto2 Camera Driver
 ======================================
-Implements CameraBase for Canon EOS DSLR cameras via gphoto2 CLI.
-Tested with: EOS 1300D, EOS 2000D, EOS 800D.
+Implements CameraBase for USB/PTP cameras via gphoto2 CLI.
+Tested with: Canon EOS 1300D, EOS 2000D, EOS 800D, Nikon Z30.
 
 Design decisions:
   - Uses gphoto2 CLI (not the Python binding) for maximum compatibility
@@ -68,6 +68,75 @@ STATUS_TIMEOUT_S     = 10
 HEALTH_TIMEOUT_S     = 5
 MAX_DETECT_RETRIES   = 3
 DETECT_RETRY_DELAY_S = 2
+
+
+CAMERA_PROFILES = {
+    "default": {
+        "capture_settings": {
+            "exposure_time": ["/main/capturesettings/shutterspeed"],
+            "aperture": [
+                "/main/capturesettings/aperture",
+                "/main/capturesettings/f-number",
+            ],
+            "iso": [
+                "/main/capturesettings/iso",
+                "/main/imgsettings/iso",
+            ],
+            "focus_mode": ["/main/capturesettings/focusmode"],
+        },
+        "features": {
+            "autofocus": False,
+            "remote_focus": False,
+            "liveview": True,
+            "movie": False,
+        },
+        "actions": {},
+    },
+    "Canon EOS": {
+        "capture_settings": {
+            "exposure_time": ["/main/capturesettings/shutterspeed"],
+            "aperture": ["/main/capturesettings/aperture"],
+            "iso": [
+                "/main/capturesettings/iso",
+                "/main/imgsettings/iso",
+            ],
+            "focus_mode": ["/main/capturesettings/focusmode"],
+        },
+        "features": {
+            "autofocus": False,
+            "remote_focus": False,
+            "liveview": True,
+            "movie": False,
+        },
+        "actions": {
+            "viewfinder": "/main/actions/viewfinder",
+        },
+    },
+    "Nikon Z30": {
+        "capture_settings": {
+            "exposure_time": [
+                "/main/capturesettings/shutterspeed",
+                "/main/capturesettings/shutterspeed2",
+            ],
+            "aperture": ["/main/capturesettings/f-number"],
+            "iso": ["/main/imgsettings/iso"],
+            "focus_mode": ["/main/capturesettings/focusmode"],
+        },
+        "features": {
+            "autofocus": True,
+            "remote_focus": True,
+            "liveview": True,
+            "movie": True,
+        },
+        "actions": {
+            "autofocus": "/main/actions/autofocusdrive",
+            "manual_focus": "/main/actions/manualfocusdrive",
+            "viewfinder": "/main/actions/viewfinder",
+            "movie": "/main/actions/movie",
+            "control_mode": "/main/actions/controlmode",
+        },
+    },
+}
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
@@ -169,7 +238,7 @@ def _parse_gphoto2_config(output: str) -> list[dict]:
 
 class GPhoto2Driver(CameraBase):
     """
-    gPhoto2-based driver for Canon EOS DSLR cameras.
+    gPhoto2-based driver for USB/PTP cameras.
 
     Config keys (from config.yaml camera section):
         gphoto2_port:          str   e.g. "usb:" or "usb:001,004"
@@ -185,6 +254,7 @@ class GPhoto2Driver(CameraBase):
         "Canon EOS 600D", "Canon EOS 550D", "Canon EOS 100D",
         "Canon EOS 200D", "Canon EOS 250D", "Canon EOS 90D",
         "Canon EOS 80D",  "Canon EOS 77D",  "Canon EOS 760D",
+        "Nikon Z30",
     ]
 
     def __init__(self, config: dict):
@@ -194,6 +264,8 @@ class GPhoto2Driver(CameraBase):
         self._cap_timeout:  int           = config.get("capture_timeout", CAPTURE_TIMEOUT_S)
         self._dl_timeout:   int           = config.get("download_timeout", DOWNLOAD_TIMEOUT_S)
         self._delete_after: bool          = config.get("delete_after_download", True)
+        self._profile:      dict          = CAMERA_PROFILES["default"]
+        self._settings_cache: Optional[tuple[Optional[str], Optional[str], Optional[int], Optional[str]]] = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -219,6 +291,7 @@ class GPhoto2Driver(CameraBase):
                 if not self._model:
                     raise CameraNotFoundError("No camera found by gphoto2 --auto-detect")
 
+                self._profile = self._profile_for_model(self._model)
                 log.info("Camera detected: %s", self._model)
                 self._connected = True
                 return
@@ -239,6 +312,8 @@ class GPhoto2Driver(CameraBase):
         """Release camera. For gphoto2 CLI this is a no-op."""
         self._connected = False
         self._model = None
+        self._profile = CAMERA_PROFILES["default"]
+        self._settings_cache = None
         log.debug("gPhoto2Driver disconnected")
 
     # ── Core operations ────────────────────────────────────────────────────
@@ -251,6 +326,7 @@ class GPhoto2Driver(CameraBase):
         if not self._connected:
             raise CameraError("Not connected — call connect() first")
 
+        self._settings_cache = None
         dest_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc)
 
@@ -591,20 +667,28 @@ class GPhoto2Driver(CameraBase):
     # ── Feature detection ──────────────────────────────────────────────────
 
     def supports_autofocus(self) -> bool:
-        """
-        Canon EOS DSLRs do not reliably support remote AF via gphoto2.
-        PTP protocol exposes autofocusdrive but it is camera-dependent
-        and unreliable for unattended operation.
-        """
-        return False
+        """True if the selected gphoto2 camera profile exposes AF drive."""
+        return bool(self._profile.get("features", {}).get("autofocus"))
 
     def supports_liveview(self) -> bool:
-        """gphoto2 supports liveview capture on many Canon models."""
-        return True
+        """True if the selected gphoto2 camera profile exposes preview/liveview."""
+        return bool(self._profile.get("features", {}).get("liveview"))
 
     def supports_remote_focus(self) -> bool:
-        """Step-motor focus control not available via gphoto2."""
-        return False
+        """True if the selected gphoto2 camera profile exposes focus motor steps."""
+        return bool(self._profile.get("features", {}).get("remote_focus"))
+
+    def run_autofocus(self) -> bool:
+        """Trigger autofocus on cameras that expose an autofocus action."""
+        action = self._profile.get("actions", {}).get("autofocus")
+        if not action:
+            return False
+        result = _run(
+            [GPHOTO2_CMD, "--port", self._port, "--set-config", f"{action}=1"],
+            timeout=STATUS_TIMEOUT_S,
+            check=False,
+        )
+        return result.returncode == 0
 
     # ── Config / settings ──────────────────────────────────────────────────
 
@@ -682,6 +766,36 @@ class GPhoto2Driver(CameraBase):
             # Non-fatal — log and continue
             log.warning("Could not delete camera files: %s", exc)
 
+    def _profile_for_model(self, model: str) -> dict:
+        """Return the first camera profile whose key matches the detected model."""
+        model_l = (model or "").lower()
+        for key, profile in CAMERA_PROFILES.items():
+            if key == "default":
+                continue
+            if key.lower() in model_l:
+                log.info("Using gphoto2 camera profile: %s", key)
+                return profile
+        log.info("Using gphoto2 camera profile: default")
+        return CAMERA_PROFILES["default"]
+
+    def _read_config_current(self, paths: list[str]) -> Optional[str]:
+        """Read Current from the first working gphoto2 config path."""
+        for key in paths:
+            try:
+                result = _run(
+                    [GPHOTO2_CMD, "--port", self._port, "--get-config", key],
+                    timeout=STATUS_TIMEOUT_S,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    continue
+                match = re.search(r"Current:\s*(.+)", result.stdout)
+                if match:
+                    return match.group(1).strip()
+            except Exception:
+                continue
+        return None
+
     def _parse_battery(self, summary_text: str) -> Optional[int]:
         """Extract battery percentage from gphoto2 --summary output."""
         # Typical line: "Battery Level: 75%"
@@ -695,35 +809,19 @@ class GPhoto2Driver(CameraBase):
         Read current shutter speed, aperture, ISO, focus mode from camera.
         Returns (exposure, aperture, iso, focus_mode). Any may be None.
         """
-        settings = {
-            "/main/capturesettings/shutterspeed": None,
-            "/main/capturesettings/aperture":     None,
-            "/main/capturesettings/iso":          None,
-            "/main/capturesettings/focusmode":    None,
-        }
-        for key in settings:
-            try:
-                r = _run(
-                    [GPHOTO2_CMD, "--port", self._port, "--get-config", key],
-                    timeout=STATUS_TIMEOUT_S,
-                    check=False,
-                )
-                if r.returncode == 0:
-                    # Output: "Current: 1/250"
-                    m = re.search(r"Current:\s*(.+)", r.stdout)
-                    if m:
-                        settings[key] = m.group(1).strip()
-            except Exception:
-                pass
+        if self._settings_cache is not None:
+            return self._settings_cache
 
-        exposure   = settings["/main/capturesettings/shutterspeed"]
-        aperture   = settings["/main/capturesettings/aperture"]
-        iso_str    = settings["/main/capturesettings/iso"]
-        focus_mode = settings["/main/capturesettings/focusmode"]
+        paths = self._profile.get("capture_settings", CAMERA_PROFILES["default"]["capture_settings"])
+        exposure   = self._read_config_current(paths.get("exposure_time", []))
+        aperture   = self._read_config_current(paths.get("aperture", []))
+        iso_str    = self._read_config_current(paths.get("iso", []))
+        focus_mode = self._read_config_current(paths.get("focus_mode", []))
 
         try:
             iso = int(iso_str) if iso_str else None
         except ValueError:
             iso = None
 
-        return exposure, aperture, iso, focus_mode
+        self._settings_cache = (exposure, aperture, iso, focus_mode)
+        return self._settings_cache
