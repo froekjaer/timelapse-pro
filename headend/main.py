@@ -6226,6 +6226,24 @@ def _resilience_control(status: str, title: str, evidence: str, domains: list[st
     }
 
 
+def _latest_headend_backup_file(nas_path: str | None) -> str | None:
+    """Find latest persisted Headend backup archive, even after service restart."""
+    candidates: list[Path] = []
+    for base in [nas_path, "/tmp"]:
+        if not base:
+            continue
+        try:
+            root = Path(base)
+            if root.is_dir():
+                candidates.extend(root.glob("timelapse-backup-headend-*.tar.gz"))
+        except Exception as exc:
+            log.warning("Kunne ikke scanne backup-sti %s: %s", base, exc)
+    existing = [p for p in candidates if p.is_file()]
+    if not existing:
+        return None
+    return str(max(existing, key=lambda p: p.stat().st_mtime))
+
+
 @app.get("/api/admin/resilience/assessment")
 def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get_db)):
     """Backup, restore, provisioning and compliance readiness snapshot."""
@@ -6246,11 +6264,23 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
     except Exception:
         settings = {}
 
+    device_by_id = {d.device_id: d for d in devices}
+    restore_inventory = []
+    for inv in inventory:
+        device = device_by_id.get(inv.device_id)
+        device_status = (getattr(device, "status", "") or "").lower() if device else ""
+        is_test = inv.device_id.lower().startswith("test") or inv.device_id.lower() == "test-device"
+        is_import = device_status == "import" or inv.device_id.startswith("TL-IMPORT-")
+        if is_test or is_import:
+            continue
+        if device or inv.hostname or inv.hardware_model:
+            restore_inventory.append(inv)
+
     cmdb_state_rows = [
-        inv for inv in inventory
-        if getattr(inv, "os_packages", None) or inv.venv_packages or getattr(inv, "software_inventory", None)
+        inv for inv in restore_inventory
+        if getattr(inv, "os_packages", None) and inv.venv_packages and getattr(inv, "software_inventory", None)
     ]
-    firmware_rows = [inv for inv in inventory if getattr(inv, "firmware_version", None)]
+    firmware_rows = [inv for inv in restore_inventory if getattr(inv, "firmware_version", None)]
     backup_complete = []
     backup_requested = []
     for device in devices:
@@ -6263,9 +6293,9 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
         if cfg.get("backup_requested"):
             backup_requested.append(device.device_id)
 
-    latest_backup_file = _backup_status.get("file")
-    latest_backup_exists = bool(latest_backup_file and os.path.exists(latest_backup_file))
     nas_path = settings.get("backup_nas_path")
+    latest_backup_file = _backup_status.get("file") or _latest_headend_backup_file(nas_path)
+    latest_backup_exists = bool(latest_backup_file and os.path.exists(latest_backup_file))
     nas_ready = bool(nas_path and os.path.isdir(nas_path))
 
     controls = [
@@ -6284,18 +6314,18 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
             "Configure NAS/off-host target and restore test evidence." if not nas_ready else "",
         ),
         _resilience_control(
-            "pass" if len(cmdb_state_rows) == len(inventory) and inventory else "fail",
+            "pass" if len(cmdb_state_rows) == len(restore_inventory) and restore_inventory else "fail",
             "Installed-state CMDB evidence",
-            f"{len(cmdb_state_rows)}/{len(inventory)} inventory rows include package/software state",
+            f"{len(cmdb_state_rows)}/{len(restore_inventory)} restore node(s) include OS packages, venv and software state",
             ["IEC62443", "CRA", "SABSA"],
-            "All nodes must report hardware, firmware, OS packages, venv and software inventory." if len(cmdb_state_rows) < len(inventory) else "",
+            "All restore-relevant nodes must report hardware, firmware, OS packages, venv and software inventory." if len(cmdb_state_rows) < len(restore_inventory) else "",
         ),
         _resilience_control(
-            "pass" if len(firmware_rows) == len(inventory) and inventory else "warning",
+            "pass" if len(firmware_rows) == len(restore_inventory) and restore_inventory else "warning",
             "Firmware inventory",
-            f"{len(firmware_rows)}/{len(inventory)} inventory rows include firmware state",
+            f"{len(firmware_rows)}/{len(restore_inventory)} restore node(s) include firmware state",
             ["IEC62443", "CRA"],
-            "Firmware/bootloader state is needed for bare-metal restore and vulnerability governance." if len(firmware_rows) < len(inventory) else "",
+            "Firmware/bootloader state is needed for bare-metal restore and vulnerability governance." if len(firmware_rows) < len(restore_inventory) else "",
         ),
         _resilience_control(
             "pass" if artifacts else "fail",
@@ -6336,6 +6366,7 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
         "summary": {
             "devices": len(devices),
             "inventory_rows": len(inventory),
+            "restore_inventory_rows": len(restore_inventory),
             "headend_backup_ready": latest_backup_exists,
             "nas_ready": nas_ready,
             "active_bootstrap_tokens": active_tokens,
@@ -6365,8 +6396,7 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
                 "inventory_reported_at": inv.inventory_reported_at.isoformat() if inv.inventory_reported_at else None,
                 "device_exists": inv.device_id in device_ids,
             }
-            for inv in inventory
-            if inv.device_id.lower() != "test"
+            for inv in restore_inventory
         ],
         "iso_blueprint": {
             "status": "planned",
