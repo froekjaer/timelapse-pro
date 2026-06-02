@@ -1932,6 +1932,12 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     )
     edge_signal_signing_required = _get_setting(db, "edge_signal_signing_required", "false").lower() == "true"
 
+    sftp_enabled = _get_setting(db, "sftp_enabled", os.getenv("SFTP_ENABLED", "false")).lower() == "true"
+    sftp_host = _get_setting(db, "sftp_host", os.getenv("SFTP_HOST", "")) if sftp_enabled else ""
+    sftp_user = _get_setting(db, "sftp_user", os.getenv("SFTP_USER", "")) if sftp_enabled else ""
+    sftp_password = _get_setting(db, "sftp_password", os.getenv("SFTP_PASSWORD", "")) if sftp_enabled else ""
+    sftp_remote_base = _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data")) if sftp_enabled else ""
+
     cfg = {
         "device": {
             "device_id":     device_id,
@@ -2012,12 +2018,13 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             },
         },
         "sftp": {
-            "host":        _get_setting(db, "sftp_host", os.getenv("SFTP_HOST", "")),
+            "enabled":     sftp_enabled,
+            "host":        sftp_host,
             "port":        int(_get_setting(db, "sftp_port", os.getenv("SFTP_PORT", "22"))),
-            "username":    _get_setting(db, "sftp_user", os.getenv("SFTP_USER", "")),
-            "password":    _get_setting(db, "sftp_password", os.getenv("SFTP_PASSWORD", "")),
+            "username":    sftp_user,
+            "password":    sftp_password,
             "key_file":    "",
-            "remote_base": _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data")),
+            "remote_base": sftp_remote_base,
             "role":        "customer_sftp",
             "layout_version": "customer-site-camera-date-v1",
             "backup_sftp": {
@@ -2080,7 +2087,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                     cfg[section] = values
         # Lag 3: site overrides + GPS + timezone
         if site:
-            if getattr(site, "sftp_user", None):
+            if cfg.get("sftp", {}).get("enabled") and getattr(site, "sftp_user", None):
                 cfg["sftp"]["username"] = site.sftp_user
                 cfg["sftp"]["remote_base"] = _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data"))
             if site.config_overrides:
@@ -2118,6 +2125,16 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     except Exception:
         cfg["node_cameras"] = []
         cfg["multi_camera_mode"] = "single"
+
+    if not cfg.get("sftp", {}).get("enabled"):
+        cfg["sftp"].update({
+            "enabled": False,
+            "host": "",
+            "username": "",
+            "password": "",
+            "key_file": "",
+            "remote_base": "",
+        })
 
     # Inkluder config_version så edge kan detektere ændringer
     cfg["config_version"] = device.config_version or ""

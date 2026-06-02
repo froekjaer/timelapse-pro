@@ -74,13 +74,25 @@ DETECT_RETRY_DELAY_S = 2
 
 def _run(args: list[str], timeout: int, check: bool = True) -> subprocess.CompletedProcess:
     """Run gphoto2 subprocess, return CompletedProcess."""
-    log.debug("gphoto2 cmd: %s", " ".join(args))
+    cmd_text = " ".join(args)
+    started = time.monotonic()
+    log.info("gphoto2 exec: %s", cmd_text)
     try:
         result = subprocess.run(
             args,
             capture_output=True,
             text=True,
             timeout=timeout,
+        )
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        stdout = (result.stdout or "").strip().replace("\n", " | ")
+        stderr = (result.stderr or "").strip().replace("\n", " | ")
+        log.info(
+            "gphoto2 result: rc=%s duration_ms=%s stdout=%r stderr=%r",
+            result.returncode,
+            elapsed_ms,
+            stdout[:300],
+            stderr[:300],
         )
         if check and result.returncode != 0:
             raise CameraError(
@@ -103,6 +115,25 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _run_external(args: list[str], timeout: int, label: str) -> subprocess.CompletedProcess:
+    cmd_text = " ".join(str(a) for a in args)
+    started = time.monotonic()
+    log.info("%s exec: %s", label, cmd_text)
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    stdout = (result.stdout or "").strip().replace("\n", " | ")
+    stderr = (result.stderr or "").strip().replace("\n", " | ")
+    log.info(
+        "%s result: rc=%s duration_ms=%s stdout=%r stderr=%r",
+        label,
+        result.returncode,
+        elapsed_ms,
+        stdout[:300],
+        stderr[:300],
+    )
+    return result
 
 
 # ── Driver ────────────────────────────────────────────────────────────────────
@@ -463,9 +494,10 @@ class GPhoto2Driver(CameraBase):
         gps_alt = loc.get("gps_alt")
         if gps_lat and gps_lon:
             # Tjek om kamera allerede har GPS
-            check = subprocess.run(
+            check = _run_external(
                 ["exiftool", "-GPSLatitude", str(filepath)],
-                capture_output=True, text=True, timeout=10
+                timeout=10,
+                label="exiftool",
             )
             if "GPS Latitude" not in check.stdout:
                 lat_ref = "N" if gps_lat >= 0 else "S"
@@ -496,7 +528,7 @@ class GPhoto2Driver(CameraBase):
         ]
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            result = _run_external(cmd, timeout=30, label="exiftool")
             if result.returncode == 0:
                 log.info("XMP skrevet: %s (GPS=%s, azimuth=%s)",
                          filepath.name,

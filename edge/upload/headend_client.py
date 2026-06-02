@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import socket
 import hashlib
+import time
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
@@ -174,6 +175,13 @@ class HeadendClient:
         actual_sha = _file_sha256(path_obj)
         path = f"/captures/{self._device_id}/files"
         url = f"{self._base_url}{path}"
+        log.info(
+            "API upload start: method=POST path=%s filename=%s bytes=%s sha256=%s",
+            path,
+            path_obj.name,
+            path_obj.stat().st_size,
+            actual_sha[:12],
+        )
         manifest = {
             "device_id": self._device_id,
             "filename": capture_row.get("filename") or path_obj.name,
@@ -231,6 +239,7 @@ class HeadendClient:
                         stack.enter_context(open(thumb, "rb")),
                         "image/jpeg",
                     )
+                started = time.monotonic()
                 resp = session.post(
                     url,
                     data={"manifest": manifest_json},
@@ -239,9 +248,23 @@ class HeadendClient:
                     timeout=max(REQUEST_TIMEOUT, 180),
                     verify=True,
                 )
+                elapsed_ms = int((time.monotonic() - started) * 1000)
             if resp.status_code in (200, 201):
+                log.info(
+                    "API upload complete: method=POST path=%s status=%s duration_ms=%s capture_id=%s",
+                    path,
+                    resp.status_code,
+                    elapsed_ms,
+                    (resp.json() or {}).get("capture_id"),
+                )
                 return True, resp.json()
-            log.warning("POST %s multipart → HTTP %d: %s", path, resp.status_code, resp.text[:200])
+            log.warning(
+                "API upload failed: method=POST path=%s status=%s duration_ms=%s response=%s",
+                path,
+                resp.status_code,
+                elapsed_ms,
+                resp.text[:200],
+            )
             return False, None
         except requests.exceptions.ConnectionError:
             log.warning("POST %s multipart: headend unreachable", path)
@@ -283,12 +306,15 @@ class HeadendClient:
     def _get(self, path: str) -> tuple[bool, Optional[dict]]:
         url = f"{self._base_url}{path}"
         try:
+            started = time.monotonic()
             headers = request_signature_headers(self._cfg_mgr.api_token, "GET", path)
             headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "GET", path))
             resp = self._session.get(url, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
             if resp.status_code == 200:
+                log.info("API call complete: method=GET path=%s status=%s duration_ms=%s", path, resp.status_code, elapsed_ms)
                 return True, resp.json()
-            log.warning("GET %s → HTTP %d", path, resp.status_code)
+            log.warning("API call failed: method=GET path=%s status=%s duration_ms=%s", path, resp.status_code, elapsed_ms)
             return False, None
         except Exception as exc:
             log.warning("GET %s failed: %s", path, exc)
@@ -306,13 +332,16 @@ class HeadendClient:
     def _post(self, path: str, payload: dict) -> tuple[bool, Optional[dict]]:
         url = f"{self._base_url}{path}"
         try:
+            started = time.monotonic()
             headers = request_signature_headers(self._cfg_mgr.api_token, "POST", path, payload)
             if not path.startswith("/keys/signing/enroll/"):
                 headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "POST", path, payload))
             resp = self._session.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
             if resp.status_code in (200, 201):
+                log.info("API call complete: method=POST path=%s status=%s duration_ms=%s", path, resp.status_code, elapsed_ms)
                 return True, resp.json()
-            log.warning("POST %s → HTTP %d: %s", path, resp.status_code, resp.text[:200])
+            log.warning("API call failed: method=POST path=%s status=%s duration_ms=%s response=%s", path, resp.status_code, elapsed_ms, resp.text[:200])
             return False, None
         except requests.exceptions.ConnectionError:
             log.warning("POST %s: headend unreachable", path)
