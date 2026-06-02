@@ -29,20 +29,25 @@ def request_signature_headers(
     method: str,
     path: str,
     payload: dict | None = None,
+    payload_hash: str | None = None,
 ) -> dict[str, str]:
     if not token:
         return {}
     timestamp = str(int(time.time()))
     nonce = uuid.uuid4().hex
-    body = canonical_json(payload or {}) if payload else ""
+    body = payload_hash or (canonical_json(payload or {}) if payload else "")
     signed = "\n".join([method.upper(), path, timestamp, nonce, body])
     signature = hmac.new(token.encode("utf-8"), signed.encode("utf-8"), hashlib.sha256).hexdigest()
-    return {
+    headers = {
         "X-TLP-Signature-Alg": "hmac-sha256-v1",
         "X-TLP-Timestamp": timestamp,
         "X-TLP-Nonce": nonce,
         "X-TLP-Signature": signature,
     }
+    if payload_hash:
+        headers["X-TLP-Signature-Scope"] = "payload-sha256"
+        headers["X-TLP-Signature-Payload-SHA256"] = payload_hash
+    return headers
 
 
 def edge_attestation_headers(
@@ -51,6 +56,7 @@ def edge_attestation_headers(
     method: str,
     path: str,
     payload: dict | None = None,
+    payload_hash: str | None = None,
 ) -> dict[str, str]:
     """Sign an Edge signal with the Edge-local Ed25519 key."""
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -62,16 +68,20 @@ def edge_attestation_headers(
         return {}
     timestamp = str(int(time.time()))
     nonce = uuid.uuid4().hex
-    body = canonical_json(payload or {}) if payload else ""
+    body = payload_hash or (canonical_json(payload or {}) if payload else "")
     signed = "\n".join([method.upper(), path, timestamp, nonce, body])
     signature = private_key.sign(signed.encode("utf-8"))
-    return {
+    headers = {
         "X-TLP-Edge-Signature-Alg": "ed25519-v1",
         "X-TLP-Edge-Signature-Key": key_info["fingerprint"],
         "X-TLP-Edge-Signature-Timestamp": timestamp,
         "X-TLP-Edge-Signature-Nonce": nonce,
         "X-TLP-Edge-Signature": base64.b64encode(signature).decode("ascii"),
     }
+    if payload_hash:
+        headers["X-TLP-Edge-Signature-Scope"] = "payload-sha256"
+        headers["X-TLP-Edge-Signature-Payload-SHA256"] = payload_hash
+    return headers
 
 
 def artifact_manifest_sha(manifest: dict | str | None) -> str | None:

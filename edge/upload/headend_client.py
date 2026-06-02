@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import logging
 import socket
+import hashlib
+from contextlib import ExitStack
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from security import edge_attestation_headers, ensure_edge_signing_key, request_signature_headers
+from security import canonical_json, edge_attestation_headers, ensure_edge_signing_key, request_signature_headers
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +48,14 @@ def _build_session(token: Optional[str]) -> requests.Session:
     session.headers["Content-Type"] = "application/json"
     session.headers["User-Agent"]   = "TimeLapsePro-EdgeAgent/1.0"
     return session
+
+
+def _file_sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 class HeadendClient:
@@ -134,10 +145,12 @@ class HeadendClient:
         Post capture metadata to headend for the web dashboard.
         Does not transfer the image — only metadata + quality result.
         """
+        actual_sha = _file_sha256(Path(capture_row["filepath"])) if capture_row.get("filepath") else None
         payload = {
             "device_id":       self._device_id,
             "filename":        capture_row.get("filename"),
-            "sha256":          capture_row.get("sha256"),
+            "sha256":          actual_sha or capture_row.get("sha256"),
+            "sha256_pre_xmp":  capture_row.get("sha256") if actual_sha else None,
             "captured_at":     capture_row.get("captured_at"),
             "filesize":        capture_row.get("filesize"),
             "camera_model":    capture_row.get("camera_model"),
@@ -151,6 +164,91 @@ class HeadendClient:
             "iso":             capture_row.get("iso"),
         }
         return self._post(f"/captures/{self._device_id}", payload)
+
+    def upload_capture_files(self, capture_row: dict, filepath: Path | str) -> tuple[bool, Optional[dict]]:
+        """Upload image, sidecar JSON and thumbnail to Headend as the primary transport."""
+        path_obj = Path(filepath)
+        if not path_obj.exists():
+            log.warning("API upload skipped; file missing: %s", path_obj)
+            return False, None
+        actual_sha = _file_sha256(path_obj)
+        path = f"/captures/{self._device_id}/files"
+        url = f"{self._base_url}{path}"
+        manifest = {
+            "device_id": self._device_id,
+            "filename": capture_row.get("filename") or path_obj.name,
+            "sha256": actual_sha,
+            "sha256_pre_xmp": capture_row.get("sha256"),
+            "captured_at": capture_row.get("captured_at"),
+            "filesize": capture_row.get("filesize"),
+            "camera_model": capture_row.get("camera_model"),
+            "quality_flag": capture_row.get("quality_flag"),
+            "quality_passed": bool(capture_row.get("quality_passed")),
+            "blur_score": capture_row.get("blur_score"),
+            "brightness_mean": capture_row.get("brightness_mean"),
+            "exposure_time": capture_row.get("exposure_time"),
+            "aperture": capture_row.get("aperture"),
+            "iso": capture_row.get("iso"),
+            "transport": "api-primary",
+        }
+        manifest_json = canonical_json(manifest)
+        manifest_hash = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
+        try:
+            headers = request_signature_headers(
+                self._cfg_mgr.api_token,
+                "POST",
+                path,
+                payload_hash=manifest_hash,
+            )
+            headers.update(edge_attestation_headers(
+                self._cfg_mgr.base_dir,
+                self._device_id,
+                "POST",
+                path,
+                payload_hash=manifest_hash,
+            ))
+            session = _build_session(self._cfg_mgr.api_token)
+            session.headers.pop("Content-Type", None)
+            with ExitStack() as stack:
+                files = {
+                    "image": (
+                        path_obj.name,
+                        stack.enter_context(open(path_obj, "rb")),
+                        "image/jpeg",
+                    )
+                }
+                sidecar = path_obj.with_suffix(".json")
+                if sidecar.exists():
+                    files["sidecar"] = (
+                        sidecar.name,
+                        stack.enter_context(open(sidecar, "rb")),
+                        "application/json",
+                    )
+                thumb = path_obj.parent / ".thumbs" / path_obj.name
+                if thumb.exists():
+                    files["thumbnail"] = (
+                        thumb.name,
+                        stack.enter_context(open(thumb, "rb")),
+                        "image/jpeg",
+                    )
+                resp = session.post(
+                    url,
+                    data={"manifest": manifest_json},
+                    files=files,
+                    headers=headers,
+                    timeout=max(REQUEST_TIMEOUT, 180),
+                    verify=True,
+                )
+            if resp.status_code in (200, 201):
+                return True, resp.json()
+            log.warning("POST %s multipart → HTTP %d: %s", path, resp.status_code, resp.text[:200])
+            return False, None
+        except requests.exceptions.ConnectionError:
+            log.warning("POST %s multipart: headend unreachable", path)
+            return False, None
+        except Exception as exc:
+            log.warning("POST %s multipart failed: %s", path, exc)
+            return False, None
 
     # ── Reverse SSH ──────────────────────────────────────────────────────────
 

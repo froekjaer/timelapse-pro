@@ -211,9 +211,12 @@ class EdgeAgent:
 
         # 4. Retry any pending uploads from before last reboot
         camera_id = self._cfg.get("device", {}).get("device_id", "unknown")
+        api_retried = self._retry_pending_api_uploads()
+        if api_retried:
+            log.info("Startup API upload retry: %d", api_retried)
         retry_results = self._uploader.retry_pending(camera_id)
         if any(v > 0 for v in retry_results.values()):
-            log.info("Startup upload retry: %s", retry_results)
+            log.info("Startup SFTP upload retry: %s", retry_results)
 
         # 5. Sync unsynced capture records to headend
         self._sync_captures()
@@ -301,7 +304,7 @@ class EdgeAgent:
             result = driver.capture_image(dest_dir)
             driver.disconnect()
             quality = self._quality.check(result.filepath, result.sha256)
-            self._db.insert_capture(
+            capture_id = self._db.insert_capture(
                 device_id=device_id, filepath=result.filepath,
                 sha256=result.sha256, captured_at=result.timestamp,
                 camera_model=result.camera_model, driver_name=result.driver_name,
@@ -310,7 +313,7 @@ class EdgeAgent:
                 quality_flag=quality.flag.value, quality_passed=quality.passed,
                 blur_score=quality.blur_score, brightness=quality.brightness_mean,
             )
-            upload = self._uploader.upload_capture(None, result.filepath, device_id)
+            upload = self._upload_capture_transports(capture_id, result.filepath, device_id)
             results[idx] = {'success': True, 'device_id': device_id, 'upload': upload}
         except Exception as exc:
             log.error("Thread %s fejl: %s", device_id, exc)
@@ -528,9 +531,7 @@ class EdgeAgent:
 
             # 8. Upload — report connectivity result
             camera_id      = self._cfg.get("device", {}).get("device_id", "unknown")
-            upload_results = self._uploader.upload_capture(
-                capture_id, result.filepath, camera_id
-            )
+            upload_results = self._upload_capture_transports(capture_id, result.filepath, camera_id)
             log.info("Upload results: %s", upload_results)
 
             if upload_results.get("primary"):
@@ -1040,6 +1041,39 @@ class EdgeAgent:
         except Exception as exc:
             log.warning("Capture sync error: %s", exc)
 
+    def _upload_capture_transports(self, capture_id: int, filepath: Path, camera_id: str) -> dict[str, bool]:
+        """Upload a capture through primary API and optional SFTP destinations."""
+        results: dict[str, bool] = {}
+        row = self._db.get_capture(capture_id) if capture_id else None
+        if row:
+            ok, _ = self._api.upload_capture_files(row, filepath)
+            results["primary"] = ok
+            results["api_primary"] = ok
+            if ok:
+                self._db.mark_uploaded(capture_id, "primary")
+        else:
+            results["primary"] = False
+            results["api_primary"] = False
+        sftp_results = self._uploader.upload_capture(capture_id, filepath, camera_id)
+        results.update(sftp_results)
+        return results
+
+    def _retry_pending_api_uploads(self) -> int:
+        """Retry primary API uploads from the local store-and-forward queue."""
+        count = 0
+        try:
+            for row in self._db.get_pending_uploads("primary", limit=50):
+                filepath = Path(row["filepath"])
+                if not filepath.exists():
+                    continue
+                ok, _ = self._api.upload_capture_files(row, filepath)
+                if ok:
+                    self._db.mark_uploaded(row["id"], "primary")
+                    count += 1
+        except Exception as exc:
+            log.warning("API upload retry error: %s", exc)
+        return count
+
     # ── Lab / debug mode ────────────────────────────────────────────────────
 
     def _lab_tick(self, debug_cfg: dict) -> None:
@@ -1083,6 +1117,7 @@ class EdgeAgent:
                 # Save updated config
                 self._cfg_mgr.save_config(cfg_data)
                 self._cfg = self._cfg_mgr.load()
+                self._uploader.update_config(cfg_data)
                 self._last_config_pull = datetime.now(timezone.utc)
                 return
             lab_cmd      = cfg_data.get("lab_command", {})

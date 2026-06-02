@@ -12,8 +12,8 @@
 """
 TimeLapse Pro — SFTP Upload Manager
 =====================================
-Handles upload of captured images to primary and optional secondary
-SFTP servers. Creates remote directory structure automatically.
+Handles optional SFTP copy destinations after the primary Headend API
+upload. Creates remote directory structure automatically.
 Implements a persistent retry queue backed by the local SQLite DB.
 
 SABSA: Availability  — store-and-forward, never loses an image
@@ -40,7 +40,7 @@ TRANSFER_TIMEOUT_S  = 120
 
 @dataclass
 class SFTPTarget:
-    name:        str        # 'primary' or 'secondary'
+    name:        str        # customer_sftp or backup_sftp
     host:        str
     port:        int
     username:    str
@@ -51,14 +51,14 @@ class SFTPTarget:
 
 class UploadManager:
     """
-    Manages SFTP uploads to one or two destinations.
+    Manages optional SFTP uploads to customer and backup destinations.
     Supports both SSH key and password authentication.
 
     Config keys (from config.yaml sftp section):
         host, port, username, remote_base   — required
         password                            — for password auth (test)
         key_file                            — for key auth (production)
-        secondary_sftp:
+        backup_sftp:
           enabled, host, port, username, remote_base, password/key_file
     """
 
@@ -75,9 +75,9 @@ class UploadManager:
         targets = []
         sftp    = config.get("sftp", {})
 
-        if sftp.get("host"):
+        if sftp.get("enabled", True) and sftp.get("host"):
             targets.append(SFTPTarget(
-                name        = "primary",
+                name        = sftp.get("role") or "customer_sftp",
                 host        = sftp["host"],
                 port        = int(sftp.get("port", 22)),
                 username    = sftp["username"],
@@ -89,7 +89,7 @@ class UploadManager:
         secondary = sftp.get("secondary_sftp", {})
         if secondary.get("enabled") and secondary.get("host"):
             targets.append(SFTPTarget(
-                name        = "secondary",
+                name        = secondary.get("role") or "backup_sftp",
                 host        = secondary["host"],
                 port        = int(secondary.get("port", 22)),
                 username    = secondary["username"],
@@ -98,8 +98,20 @@ class UploadManager:
                 password    = secondary.get("password", ""),
             ))
 
+        backup = sftp.get("backup_sftp", {})
+        if backup.get("enabled") and backup.get("host"):
+            targets.append(SFTPTarget(
+                name        = backup.get("role") or "backup_sftp",
+                host        = backup["host"],
+                port        = int(backup.get("port", 22)),
+                username    = backup["username"],
+                remote_base = backup.get("remote_base", "/backup/timelapse"),
+                key_file    = Path(backup.get("key_file", "")),
+                password    = backup.get("password", ""),
+            ))
+
         if not targets:
-            log.warning("No SFTP targets configured — uploads disabled")
+            log.info("No optional SFTP targets configured")
         return targets
 
     def update_config(self, config: dict) -> None:

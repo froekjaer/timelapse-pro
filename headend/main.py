@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -242,6 +242,7 @@ class CaptureRequest(BaseModel):
     device_id:      str
     filename:       Optional[str] = None
     sha256:         Optional[str] = None
+    sha256_pre_xmp: Optional[str] = None
     captured_at:    Optional[str] = None
     filesize:       Optional[int] = None
     camera_model:   Optional[str] = None
@@ -1188,13 +1189,16 @@ async def _verify_edge_request_signature(request: Request, secret: str) -> None:
         raise HTTPException(status_code=401, detail="Ugyldigt Edge signatur-tidspunkt")
     if abs(int(now_utc().timestamp()) - ts) > 300:
         raise HTTPException(status_code=401, detail="Edge signatur er udenfor tidsvindue")
-    body = await request.body()
-    body_text = ""
-    if body:
-        try:
-            body_text = _canonical_json(json.loads(body.decode("utf-8")))
-        except Exception:
-            body_text = body.decode("utf-8", errors="replace")
+    body_text = request.headers.get("X-TLP-Signature-Payload-SHA256", "")
+    if body_text and request.headers.get("X-TLP-Signature-Scope") != "payload-sha256":
+        raise HTTPException(status_code=401, detail="Ugyldig Edge signatur-scope")
+    if not body_text:
+        body = await request.body()
+        if body:
+            try:
+                body_text = _canonical_json(json.loads(body.decode("utf-8")))
+            except Exception:
+                body_text = body.decode("utf-8", errors="replace")
     signed = "\n".join([request.method.upper(), request.url.path.removeprefix("/api"), timestamp, nonce, body_text])
     expected = hmac.new(secret.encode("utf-8"), signed.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected):
@@ -1247,13 +1251,16 @@ async def _verify_edge_attestation_signature(request: Request, device_id: str, d
         public_key = load_ssh_public_key(credential.public_key.encode("utf-8"))
         if not isinstance(public_key, Ed25519PublicKey):
             raise ValueError("not ed25519")
-        body = await request.body()
-        body_text = ""
-        if body:
-            try:
-                body_text = _canonical_json(json.loads(body.decode("utf-8")))
-            except Exception:
-                body_text = body.decode("utf-8", errors="replace")
+        body_text = request.headers.get("X-TLP-Edge-Signature-Payload-SHA256", "")
+        if body_text and request.headers.get("X-TLP-Edge-Signature-Scope") != "payload-sha256":
+            raise HTTPException(status_code=401, detail="Ugyldig Edge attestation-scope")
+        if not body_text:
+            body = await request.body()
+            if body:
+                try:
+                    body_text = _canonical_json(json.loads(body.decode("utf-8")))
+                except Exception:
+                    body_text = body.decode("utf-8", errors="replace")
         signed = "\n".join([request.method.upper(), request.url.path.removeprefix("/api"), timestamp, nonce, body_text])
         public_key.verify(base64.b64decode(signature), signed.encode("utf-8"))
     except HTTPException:
@@ -1994,6 +2001,16 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "gps_source": "manual",  # manual | gpsd
             "address":   None,
         },
+        "upload": {
+            "primary": "api",
+            "secondary": "customer_sftp",
+            "tertiary": "backup_sftp",
+            "api": {
+                "enabled": True,
+                "endpoint": f"/captures/{device_id}/files",
+                "signed_payload_hash": True,
+            },
+        },
         "sftp": {
             "host":        _get_setting(db, "sftp_host", os.getenv("SFTP_HOST", "")),
             "port":        int(_get_setting(db, "sftp_port", os.getenv("SFTP_PORT", "22"))),
@@ -2001,7 +2018,18 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "password":    _get_setting(db, "sftp_password", os.getenv("SFTP_PASSWORD", "")),
             "key_file":    "",
             "remote_base": _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data")),
+            "role":        "customer_sftp",
             "layout_version": "customer-site-camera-date-v1",
+            "backup_sftp": {
+                "enabled": False,
+                "host": "",
+                "port": 22,
+                "username": "",
+                "password": "",
+                "key_file": "",
+                "remote_base": "/backup/timelapse",
+                "role": "backup_sftp",
+            },
         },
         "diagnostics": {
             "heartbeat_interval_minutes": 60,
@@ -2305,23 +2333,24 @@ def receive_capture(
         except ValueError:
             pass
 
-    capture = Capture(
-        device_id       = device_id,
-        filename        = req.filename,
-        sha256          = req.sha256,
-        captured_at     = captured_at,
-        filesize        = req.filesize,
-        camera_model    = req.camera_model,
-        quality_flag    = req.quality_flag,
-        quality_passed  = req.quality_passed,
-        blur_score      = req.blur_score,
-        brightness_mean = req.brightness_mean,
-        uploaded        = req.uploaded_primary or False,
-        exposure_time   = req.exposure_time,
-        aperture        = req.aperture,
-        iso             = req.iso,
+    capture = _upsert_capture_record(
+        db,
+        device_id=device_id,
+        filename=req.filename,
+        sha256=req.sha256,
+        sha256_pre_xmp=req.sha256_pre_xmp,
+        captured_at=captured_at,
+        filesize=req.filesize,
+        camera_model=req.camera_model,
+        quality_flag=req.quality_flag,
+        quality_passed=req.quality_passed,
+        blur_score=req.blur_score,
+        brightness_mean=req.brightness_mean,
+        uploaded=req.uploaded_primary or False,
+        exposure_time=req.exposure_time,
+        aperture=req.aperture,
+        iso=req.iso,
     )
-    db.add(capture)
 
     # Update device last_seen
     device = db.query(Device).filter_by(device_id=device_id).first()
@@ -2378,6 +2407,167 @@ def receive_capture(
     )
 
     return {"status": "ok", "capture_id": capture.id}
+
+
+def _safe_storage_segment(value: str | None, fallback: str) -> str:
+    cleaned = _re.sub(r"[^A-Za-z0-9æøåÆØÅ_-]", "_", str(value or fallback)).strip("_")
+    return cleaned[:120] or fallback
+
+
+def _capture_storage_dir(db: Session, device_id: str, filename: str, captured_at: datetime | None = None) -> _Path:
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    customer = _safe_storage_segment(device.customer_name if device else None, "UnknownCustomer")
+    site = _safe_storage_segment(device.site_name if device else None, "UnknownSite")
+    camera = _safe_storage_segment(device.camera_name if device else None, device_id)
+    when = captured_at
+    if when is None:
+        m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
+        if m:
+            when = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
+    if when is None:
+        when = now_utc()
+    return SFTP_BASE / customer / site / camera / f"{when.year:04d}" / f"{when.month:02d}" / f"{when.day:02d}"
+
+
+def _parse_capture_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _safe_upload_filename(filename: str | None) -> str:
+    name = _Path(filename or "").name
+    if not name or name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Ugyldigt filnavn")
+    if not _re.match(r"^[A-Za-z0-9æøåÆØÅ_.-]{3,220}$", name):
+        raise HTTPException(status_code=400, detail="Ugyldigt filnavn format")
+    if _Path(name).suffix.lower() not in {".jpg", ".jpeg"}:
+        raise HTTPException(status_code=400, detail="Kun JPEG-billeder er tilladt")
+    return name
+
+
+def _upsert_capture_record(db: Session, **values) -> Capture:
+    device_id = values.get("device_id")
+    sha256 = values.get("sha256")
+    filename = values.get("filename")
+    q = db.query(Capture).filter(Capture.device_id == device_id)
+    capture = None
+    if sha256:
+        capture = q.filter(Capture.sha256 == sha256).order_by(Capture.id.desc()).first()
+    if not capture and filename:
+        capture = q.filter(Capture.filename == filename).order_by(Capture.id.desc()).first()
+    if not capture:
+        capture = Capture(device_id=device_id)
+        db.add(capture)
+    for key, value in values.items():
+        if value is not None and hasattr(capture, key):
+            setattr(capture, key, value)
+    return capture
+
+
+@app.post("/api/captures/{device_id}/files")
+async def receive_capture_files(
+    device_id: str,
+    manifest: str = Form(...),
+    image: UploadFile = File(...),
+    sidecar: UploadFile | None = File(default=None),
+    thumbnail: UploadFile | None = File(default=None),
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
+    """Receive image payloads from an Edge over the signed Headend API."""
+    _sanitize_device_id(device_id)
+    try:
+        meta = json.loads(manifest)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ugyldigt upload manifest")
+    if meta.get("device_id") and meta["device_id"] != device_id:
+        raise HTTPException(status_code=400, detail="Manifest device_id matcher ikke URL")
+
+    filename = _safe_upload_filename(meta.get("filename") or image.filename)
+    captured_at = _parse_capture_timestamp(meta.get("captured_at"))
+    dest_dir = _capture_storage_dir(db, device_id, filename, captured_at)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / filename
+    tmp_path = dest_dir / f".{filename}.uploading"
+
+    hasher = hashlib.sha256()
+    size = 0
+    with open(tmp_path, "wb") as out:
+        while True:
+            chunk = await image.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            hasher.update(chunk)
+            out.write(chunk)
+    actual_sha = hasher.hexdigest()
+    expected_sha = meta.get("sha256")
+    if expected_sha and not hmac.compare_digest(str(expected_sha), actual_sha):
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise HTTPException(status_code=400, detail="Billedets SHA-256 matcher ikke manifest")
+    os.replace(tmp_path, dest_path)
+
+    sidecar_path = dest_path.with_suffix(".json")
+    if sidecar:
+        raw_sidecar = await sidecar.read()
+        if raw_sidecar:
+            try:
+                _json.loads(raw_sidecar.decode("utf-8"))
+            except Exception:
+                raise HTTPException(status_code=400, detail="Sidecar JSON er ugyldig")
+            sidecar_path.write_bytes(raw_sidecar)
+    elif meta:
+        sidecar_path.write_text(_json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if thumbnail:
+        thumb_dir = dest_dir / ".thumbs"
+        thumb_dir.mkdir(parents=True, exist_ok=True)
+        raw_thumb = await thumbnail.read()
+        if raw_thumb:
+            (thumb_dir / filename).write_bytes(raw_thumb)
+
+    capture = _upsert_capture_record(
+        db,
+        device_id=device_id,
+        filename=filename,
+        sha256=actual_sha,
+        sha256_pre_xmp=meta.get("sha256_pre_xmp"),
+        captured_at=captured_at,
+        filesize=size,
+        camera_model=meta.get("camera_model"),
+        quality_flag=meta.get("quality_flag"),
+        quality_passed=meta.get("quality_passed"),
+        blur_score=meta.get("blur_score"),
+        brightness_mean=meta.get("brightness_mean"),
+        uploaded=True,
+        exposure_time=meta.get("exposure_time"),
+        aperture=meta.get("aperture"),
+        iso=meta.get("iso"),
+        sidecar_path=str(sidecar_path) if sidecar_path.exists() else None,
+    )
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if device:
+        device.last_seen = now_utc()
+        device.status = "online"
+    db.commit()
+    try:
+        queue_capture_for_analysis(capture.id)
+    except Exception:
+        pass
+    return {
+        "status": "ok",
+        "capture_id": capture.id,
+        "sha256": actual_sha,
+        "bytes": size,
+        "storage": "canonical",
+    }
 
 
 # ── Events ────────────────────────────────────────────────────────────────────

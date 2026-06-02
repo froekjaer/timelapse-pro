@@ -20,7 +20,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-DB_VERSION = 1
+DB_VERSION = 2
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS captures (
     -- Upload tracking
     uploaded_primary   INTEGER DEFAULT 0,   -- 0/1
     uploaded_secondary INTEGER DEFAULT 0,
+    uploaded_tertiary  INTEGER DEFAULT 0,
     uploaded_at        TEXT,
     upload_attempts    INTEGER DEFAULT 0,
 
@@ -144,7 +145,25 @@ class EdgeDatabase:
                     "INSERT INTO schema_version VALUES (?, ?)",
                     (DB_VERSION, _now())
                 )
+            self._migrate(conn, row["version"] if row else 0)
             log.info("Database ready: %s", self._db_path)
+
+    def _migrate(self, conn: sqlite3.Connection, current_version: int) -> None:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(captures)").fetchall()
+        }
+        if "uploaded_tertiary" not in columns:
+            conn.execute("ALTER TABLE captures ADD COLUMN uploaded_tertiary INTEGER DEFAULT 0")
+        conn.execute(
+            "UPDATE captures SET uploaded_secondary=1 "
+            "WHERE uploaded_primary=1 AND uploaded_secondary=0"
+        )
+        if current_version < DB_VERSION:
+            conn.execute(
+                "INSERT OR REPLACE INTO schema_version VALUES (?, ?)",
+                (DB_VERSION, _now()),
+            )
 
     @contextmanager
     def _connect(self):
@@ -203,9 +222,9 @@ class EdgeDatabase:
     def mark_uploaded(
         self,
         capture_id: int,
-        target: str,   # 'primary' or 'secondary'
+        target: str,
     ) -> None:
-        col = "uploaded_primary" if target == "primary" else "uploaded_secondary"
+        col = _upload_column(target)
         with self._connect() as conn:
             conn.execute(
                 f"UPDATE captures SET {col}=1, uploaded_at=? WHERE id=?",
@@ -223,13 +242,18 @@ class EdgeDatabase:
 
     def get_pending_uploads(self, target: str = "primary", limit: int = 50) -> list[dict]:
         """Return captures not yet uploaded to the given target."""
-        col = "uploaded_primary" if target == "primary" else "uploaded_secondary"
+        col = _upload_column(target)
         with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT * FROM captures WHERE {col}=0 ORDER BY captured_at LIMIT ?",
                 (limit,)
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def get_capture(self, capture_id: int) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM captures WHERE id=?", (capture_id,)).fetchone()
+            return dict(row) if row else None
 
     def get_unsynced_captures(self, limit: int = 100) -> list[dict]:
         """Return captures not yet synced to headend API."""
@@ -325,3 +349,15 @@ class EdgeDatabase:
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _upload_column(target: str) -> str:
+    mapping = {
+        "primary": "uploaded_primary",
+        "api_primary": "uploaded_primary",
+        "secondary": "uploaded_secondary",
+        "customer_sftp": "uploaded_secondary",
+        "tertiary": "uploaded_tertiary",
+        "backup_sftp": "uploaded_tertiary",
+    }
+    return mapping.get(target, "uploaded_secondary")
