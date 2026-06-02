@@ -59,6 +59,42 @@ def _file_sha256(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _ensure_thumbnail(filepath: Path) -> Optional[Path]:
+    """Create the Edge thumbnail used by the API and optional SFTP transports."""
+    thumb_dir = filepath.parent / ".thumbs"
+    thumb_path = thumb_dir / filepath.name
+    if thumb_path.exists():
+        return thumb_path
+    try:
+        import cv2
+        import numpy as np
+
+        img = cv2.imread(str(filepath))
+        if img is None:
+            return None
+        height, width = img.shape[:2]
+        if width <= 0 or height <= 0:
+            return None
+        max_w, max_h = 320, 180
+        scale = min(max_w / width, max_h / height)
+        new_w = max(1, int(width * scale))
+        new_h = max(1, int(height * scale))
+        resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        canvas = np.zeros((max_h, max_w, 3), dtype=np.uint8)
+        x = (max_w - new_w) // 2
+        y = (max_h - new_h) // 2
+        canvas[y:y + new_h, x:x + new_w] = resized
+        thumb_dir.mkdir(parents=True, exist_ok=True)
+        tmp = thumb_dir / f".{filepath.stem}.tmp{filepath.suffix}"
+        if not cv2.imwrite(str(tmp), canvas, [int(cv2.IMWRITE_JPEG_QUALITY), 78]):
+            return None
+        tmp.replace(thumb_path)
+        return thumb_path
+    except Exception as exc:
+        log.warning("API upload could not generate thumbnail for %s: %s", filepath.name, exc)
+        return None
+
+
 class HeadendClient:
     """
     REST API client for the TimeLapse Pro headend.
@@ -232,13 +268,19 @@ class HeadendClient:
                         stack.enter_context(open(sidecar, "rb")),
                         "application/json",
                     )
-                thumb = path_obj.parent / ".thumbs" / path_obj.name
-                if thumb.exists():
+                    log.info("API upload includes sidecar: %s bytes=%s", sidecar.name, sidecar.stat().st_size)
+                else:
+                    log.warning("API upload sidecar missing: %s", sidecar.name)
+                thumb = _ensure_thumbnail(path_obj)
+                if thumb and thumb.exists():
                     files["thumbnail"] = (
                         thumb.name,
                         stack.enter_context(open(thumb, "rb")),
                         "image/jpeg",
                     )
+                    log.info("API upload includes thumbnail: %s bytes=%s", thumb.name, thumb.stat().st_size)
+                else:
+                    log.warning("API upload thumbnail missing: %s", path_obj.name)
                 started = time.monotonic()
                 resp = session.post(
                     url,

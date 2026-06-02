@@ -2554,6 +2554,7 @@ async def receive_capture_files(
     os.replace(tmp_path, dest_path)
 
     sidecar_path = dest_path.with_suffix(".json")
+    sidecar_received = False
     if sidecar:
         raw_sidecar = await sidecar.read()
         if raw_sidecar:
@@ -2562,15 +2563,18 @@ async def receive_capture_files(
             except Exception:
                 raise HTTPException(status_code=400, detail="Sidecar JSON er ugyldig")
             sidecar_path.write_bytes(raw_sidecar)
+            sidecar_received = True
     elif meta:
         sidecar_path.write_text(_json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    thumbnail_received = False
     if thumbnail:
         thumb_dir = dest_dir / ".thumbs"
         thumb_dir.mkdir(parents=True, exist_ok=True)
         raw_thumb = await thumbnail.read()
         if raw_thumb:
             (thumb_dir / filename).write_bytes(raw_thumb)
+            thumbnail_received = True
 
     capture = _upsert_capture_record(
         db,
@@ -2600,6 +2604,14 @@ async def receive_capture_files(
         queue_capture_for_analysis(capture.id)
     except Exception:
         pass
+    log.info(
+        "Capture API files received: device=%s filename=%s image_bytes=%s sidecar=%s thumbnail=%s",
+        device_id,
+        filename,
+        size,
+        "uploaded" if sidecar_received else ("manifest_fallback" if sidecar_path.exists() else "missing"),
+        thumbnail_received,
+    )
     return {
         "status": "ok",
         "capture_id": capture.id,
@@ -4937,13 +4949,21 @@ def get_sidecar(
     from urllib.parse import unquote as _unquote
     _sanitize_device_id(device_id)
     filename = _unquote(filename)
-    _ensure_capture_file_access(db, _user, device_id, filename)
-    image_path = _find_image(device_id, filename)
+    image_filename = _re.sub(r"\.json$", ".jpg", filename, flags=_re.IGNORECASE)
+    capture = _ensure_capture_file_access(db, _user, device_id, image_filename)
+    image_path = _find_image(device_id, image_filename)
+    if not image_path and capture.sidecar_path:
+        sidecar_path = _Path(capture.sidecar_path)
+        if sidecar_path.exists():
+            return JSONResponse(
+                _json.loads(sidecar_path.read_text(encoding="utf-8")),
+                headers={"Cache-Control": "no-store"},
+            )
     if image_path:
         sidecar_path = image_path.with_suffix(".json")
         if sidecar_path.exists():
             return JSONResponse(
-                _json.loads(sidecar_path.read_text(encoding='utf-8')),
+                _json.loads(sidecar_path.read_text(encoding="utf-8")),
                 headers={"Cache-Control": "no-store"},
             )
     raise HTTPException(status_code=404, detail="Sidecar ikke fundet")
