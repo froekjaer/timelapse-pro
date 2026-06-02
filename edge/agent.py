@@ -1219,7 +1219,13 @@ class EdgeAgent:
                 log.info("LAB — fetching all camera params")
                 try:
                     params = self._driver.get_all_config()
-                    self._api._post("/lab/" + self._device_id + "/params", {"params": params})
+                    profile = {}
+                    if hasattr(self._driver, "get_profile_summary"):
+                        profile = self._driver.get_profile_summary()
+                    self._api._post("/lab/" + self._device_id + "/params", {
+                        "params": params,
+                        "profile": profile,
+                    })
                     log.info("LAB — sent %d params to headend", len(params))
                 except Exception as exc:
                     log.warning("LAB — get_params failed: %s", exc)

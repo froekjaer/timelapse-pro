@@ -72,6 +72,7 @@ DETECT_RETRY_DELAY_S = 2
 
 CAMERA_PROFILES = {
     "default": {
+        "name": "Generic gPhoto2",
         "capture_settings": {
             "exposure_time": ["/main/capturesettings/shutterspeed"],
             "aperture": [
@@ -93,6 +94,7 @@ CAMERA_PROFILES = {
         "actions": {},
     },
     "Canon EOS": {
+        "name": "Canon EOS",
         "capture_settings": {
             "exposure_time": ["/main/capturesettings/shutterspeed"],
             "aperture": ["/main/capturesettings/aperture"],
@@ -113,6 +115,7 @@ CAMERA_PROFILES = {
         },
     },
     "Nikon Z30": {
+        "name": "Nikon Z30",
         "capture_settings": {
             "exposure_time": [
                 "/main/capturesettings/shutterspeed",
@@ -265,6 +268,7 @@ class GPhoto2Driver(CameraBase):
         self._dl_timeout:   int           = config.get("download_timeout", DOWNLOAD_TIMEOUT_S)
         self._delete_after: bool          = config.get("delete_after_download", True)
         self._profile:      dict          = CAMERA_PROFILES["default"]
+        self._profile_key:  str           = "default"
         self._settings_cache: Optional[tuple[Optional[str], Optional[str], Optional[int], Optional[str]]] = None
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
@@ -291,7 +295,7 @@ class GPhoto2Driver(CameraBase):
                 if not self._model:
                     raise CameraNotFoundError("No camera found by gphoto2 --auto-detect")
 
-                self._profile = self._profile_for_model(self._model)
+                self._profile_key, self._profile = self._profile_for_model(self._model)
                 log.info("Camera detected: %s", self._model)
                 self._connected = True
                 return
@@ -313,6 +317,7 @@ class GPhoto2Driver(CameraBase):
         self._connected = False
         self._model = None
         self._profile = CAMERA_PROFILES["default"]
+        self._profile_key = "default"
         self._settings_cache = None
         log.debug("gPhoto2Driver disconnected")
 
@@ -733,6 +738,19 @@ class GPhoto2Driver(CameraBase):
             return []
         return _parse_gphoto2_config(result.stdout)
 
+    def get_profile_summary(self) -> dict:
+        """Return normalized camera profile/capability information for UI/CMDB."""
+        return {
+            "driver": self.driver_name,
+            "profile_key": self._profile_key,
+            "profile_name": self._profile.get("name", self._profile_key),
+            "detected_model": self._model or "Unknown",
+            "gphoto2_port": self._port,
+            "features": dict(self._profile.get("features", {})),
+            "capture_settings": dict(self._profile.get("capture_settings", {})),
+            "actions": dict(self._profile.get("actions", {})),
+        }
+
     def set_config(self, key: str, value: str) -> None:
         """Set a camera config value via gphoto2 --set-config."""
         log.debug("set_config %s = %s", key, value)
@@ -766,7 +784,7 @@ class GPhoto2Driver(CameraBase):
             # Non-fatal — log and continue
             log.warning("Could not delete camera files: %s", exc)
 
-    def _profile_for_model(self, model: str) -> dict:
+    def _profile_for_model(self, model: str) -> tuple[str, dict]:
         """Return the first camera profile whose key matches the detected model."""
         model_l = (model or "").lower()
         for key, profile in CAMERA_PROFILES.items():
@@ -774,9 +792,9 @@ class GPhoto2Driver(CameraBase):
                 continue
             if key.lower() in model_l:
                 log.info("Using gphoto2 camera profile: %s", key)
-                return profile
+                return key, profile
         log.info("Using gphoto2 camera profile: default")
-        return CAMERA_PROFILES["default"]
+        return "default", CAMERA_PROFILES["default"]
 
     def _read_config_current(self, paths: list[str]) -> Optional[str]:
         """Read Current from the first working gphoto2 config path."""

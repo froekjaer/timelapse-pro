@@ -19,7 +19,7 @@ import {
   setParam, listPreviews, getPreviewUrl, getPreviewThumbUrl,
   getDeviceRawConfig, getDevice, pathSegment
 } from '../api/client'
-import type { LabPreview, CameraParam, DebugMode } from '../types'
+import type { LabPreview, CameraParam, DebugMode, CameraProfile } from '../types'
 
 // ── Kamera-parameter grupper ──────────────────────────────────────────────────
 const PARAM_GROUPS: Record<string, string[]> = {
@@ -188,6 +188,84 @@ function ParamRow({
   )
 }
 
+function CameraProfilePanel({ profile }: { profile: CameraProfile | null }) {
+  if (!profile) {
+    return (
+      <div className="mx-4 mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-400">
+        Hent kamera-parametre for at se den aktive kamera-profil.
+      </div>
+    )
+  }
+
+  const featureLabels: Record<string, string> = {
+    autofocus: 'Autofokus',
+    remote_focus: 'Remote focus',
+    liveview: 'Liveview',
+    movie: 'Video',
+  }
+  const settingLabels: Record<string, string> = {
+    exposure_time: 'Lukker',
+    aperture: 'Blænde',
+    iso: 'ISO',
+    focus_mode: 'Fokus',
+  }
+
+  return (
+    <div className="mx-4 mt-4 rounded-xl border border-purple-100 bg-purple-50/50 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-medium uppercase tracking-wide text-purple-500">Aktiv kamera-profil</div>
+          <div className="mt-1 text-base font-semibold text-gray-900">{profile.profile_name}</div>
+          <div className="mt-0.5 text-xs text-gray-500">
+            {profile.detected_model} · {profile.driver} · {profile.gphoto2_port}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {Object.entries(featureLabels).map(([key, label]) => {
+            const enabled = profile.features?.[key] === true
+            return (
+              <span key={key} className={`rounded-full px-2 py-1 text-xs font-medium ${
+                enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'
+              }`}>
+                {label}
+              </span>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <div>
+          <div className="mb-2 text-xs font-medium text-gray-500">Metadata-stier</div>
+          <div className="space-y-1.5">
+            {Object.entries(settingLabels).map(([key, label]) => (
+              <div key={key} className="grid grid-cols-[5rem,1fr] gap-2 text-xs">
+                <span className="text-gray-500">{label}</span>
+                <span className="break-all font-mono text-gray-700">
+                  {(profile.capture_settings?.[key] ?? []).join(', ') || '–'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-2 text-xs font-medium text-gray-500">Kontrol-actions</div>
+          <div className="space-y-1.5">
+            {Object.entries(profile.actions ?? {}).length === 0 ? (
+              <div className="text-xs text-gray-400">Ingen profil-actions defineret</div>
+            ) : Object.entries(profile.actions).map(([key, path]) => (
+              <div key={key} className="grid grid-cols-[6rem,1fr] gap-2 text-xs">
+                <span className="text-gray-500">{key}</span>
+                <span className="break-all font-mono text-gray-700">{path}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main LabPage ──────────────────────────────────────────────────────────────
 export default function LabPage() {
   const { deviceId: id } = useParams<{ deviceId: string }>()
@@ -199,6 +277,7 @@ export default function LabPage() {
   const [labActive, setLabActive]     = useState(false)
   const [previews, setPreviews]       = useState<LabPreview[]>([])
   const [params, setParams]           = useState<CameraParam[]>([])
+  const [cameraProfile, setCameraProfile] = useState<CameraProfile | null>(null)
   const [selectedPreview, setSelectedPreview] = useState<LabPreview | null>(null)
   const userSelectedRef = useRef(false)
   const selectedPreviewRef = useRef<LabPreview | null>(null)
@@ -346,6 +425,9 @@ export default function LabPage() {
       if (dm) {
         setDebugModeState(dm)
         setLabActive(dm.enabled)
+      }
+      if (cfg?.camera_profile) {
+        setCameraProfile(cfg.camera_profile)
       }
     } catch {}
   }
@@ -513,6 +595,7 @@ export default function LabPage() {
           if (camParams.length > 0) {
             clearInterval(poll)
             setParams(camParams)
+            setCameraProfile(cfg?.camera_profile ?? null)
             setStatusMsg(`✓ ${camParams.length} parametre hentet`)
             setTimeout(() => setStatusMsg(''), 3000)
             setLoadingParams(false)
@@ -794,6 +877,8 @@ export default function LabPage() {
                 )}
               </div>
             </div>
+
+            <CameraProfilePanel profile={cameraProfile} />
 
             {params.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-gray-400 text-sm flex-col gap-2 p-8">

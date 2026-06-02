@@ -6504,6 +6504,8 @@ def lab_store_params(device_id: str, payload: dict, db: Session = Depends(get_db
     if not device: raise HTTPException(status_code=404)
     existing = json.loads(device.device_config or "{}")
     existing["camera_params"] = payload.get("params", [])
+    if "profile" in payload:
+        existing["camera_profile"] = payload.get("profile") or {}
     existing.pop("lab_command", None)
     device.device_config = json.dumps(existing)
     db.commit()

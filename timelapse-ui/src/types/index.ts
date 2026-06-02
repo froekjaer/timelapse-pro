@@ -109,6 +109,17 @@ export interface CameraParam {
   readonly: boolean
 }
 
+export interface CameraProfile {
+  driver: string
+  profile_key: string
+  profile_name: string
+  detected_model: string
+  gphoto2_port: string
+  features: Record<string, boolean>
+  capture_settings: Record<string, string[]>
+  actions: Record<string, string>
+}
+
 export interface DebugMode {
   enabled: boolean
   relay_always_on: boolean
