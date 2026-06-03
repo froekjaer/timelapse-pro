@@ -138,6 +138,38 @@ CAMERA_PROFILES = {
             "movie": "/main/actions/movie",
             "control_mode": "/main/actions/controlmode",
         },
+        "config_commands": {
+            "iso": {
+                "path": "/main/imgsettings/iso",
+                # Z30 often exposes concrete ISO values only; "Auto" is camera-mode
+                # dependent and should not be forced as a drift expectation.
+                "skip_values": ["Auto", "auto", ""],
+            },
+            "shutter_speed": {
+                "path": "/main/capturesettings/shutterspeed",
+                "skip_values": ["Auto", "auto", ""],
+            },
+            "aperture": {
+                "path": "/main/capturesettings/f-number",
+                "skip_values": ["Auto", "auto", ""],
+            },
+            "whitebalance": {
+                "path": "/main/imgsettings/whitebalance",
+                "value_map": {
+                    "Auto": "Automatic",
+                    "AWB White": "Automatic",
+                    "Cloudy": "Cloudy",
+                    "Daylight": "Daylight",
+                    "Tungsten": "Incandescent",
+                    "Fluorescent": "Fluorescent",
+                    "Flash": "Flash",
+                },
+            },
+            "colorspace": {"path": "/main/imgsettings/colorspace"},
+            "imageformat": {"path": "/main/imgsettings/imageformat"},
+            # gphoto2 exposes focus mode as readonly on Z30 in our lab profile.
+            "focusmode": {"skip": True},
+        },
     },
 }
 
@@ -748,8 +780,66 @@ class GPhoto2Driver(CameraBase):
             "gphoto2_port": self._port,
             "features": dict(self._profile.get("features", {})),
             "capture_settings": dict(self._profile.get("capture_settings", {})),
+            "config_commands": dict(self._profile.get("config_commands", {})),
             "actions": dict(self._profile.get("actions", {})),
         }
+
+    def build_config_command(self, cfg_key: str, value: str) -> Optional[str]:
+        """Map a logical TimeLapse camera config key to a profile-specific gphoto2 command."""
+        command_map = self._profile.get("config_commands", {})
+        spec = command_map.get(cfg_key)
+        if not spec:
+            default_map = {
+                "iso": "iso",
+                "shutter_speed": "shutterspeed",
+                "aperture": "aperture",
+                "whitebalance": "whitebalance",
+                "picturestyle": "picturestyle",
+                "colorspace": "colorspace",
+                "imageformat": "imageformat",
+                "meteringmode": "meteringmode",
+                "exposurecompensation": "exposurecompensation",
+            }
+            key = default_map.get(cfg_key)
+            return f"{key}={value}" if key else None
+        if spec.get("skip"):
+            return None
+        raw_value = "" if value is None else str(value)
+        if raw_value in set(spec.get("skip_values", [])):
+            return None
+        mapped_value = spec.get("value_map", {}).get(raw_value, raw_value)
+        path = spec.get("path")
+        if not path:
+            return None
+        return f"{path}={mapped_value}"
+
+    def normalize_initial_commands(self, commands: list[str]) -> list[str]:
+        """Translate legacy short gphoto2 commands through the active camera profile."""
+        normalized: list[str] = []
+        legacy_aliases = {
+            "shutterspeed": "shutter_speed",
+            "whitebalance": "whitebalance",
+            "focusmode": "focusmode",
+            "iso": "iso",
+            "aperture": "aperture",
+            "colorspace": "colorspace",
+            "imageformat": "imageformat",
+        }
+        for cmd in commands:
+            if "=" not in cmd:
+                normalized.append(cmd)
+                continue
+            key, value = cmd.split("=", 1)
+            cfg_key = legacy_aliases.get(key.strip().split("/")[-1].lower())
+            if not cfg_key:
+                normalized.append(cmd)
+                continue
+            mapped = self.build_config_command(cfg_key, value.strip())
+            if mapped:
+                normalized.append(mapped)
+            else:
+                log.info("Profile %s skipped incompatible camera command: %s", self._profile_key, cmd)
+        return normalized
 
     def set_config(self, key: str, value: str) -> None:
         """Set a camera config value via gphoto2 --set-config."""

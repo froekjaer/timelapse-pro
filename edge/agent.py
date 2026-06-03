@@ -117,6 +117,7 @@ class EdgeAgent:
         self._last_heartbeat:  datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._last_config_pull:datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._stop_event = threading.Event()
+        self._last_siem_emit: dict[str, datetime] = {}
 
         # Signal handling for graceful shutdown
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -336,6 +337,59 @@ class EdgeAgent:
         detail = f" ({reason})" if reason else ""
         log.info("Camera power mode=%s — relay power_off skipped%s", self._camera_power_mode(), detail)
 
+    def _emit_siem_event(
+        self,
+        event_type: str,
+        severity: str,
+        message: str,
+        *,
+        source: str = "edge-agent",
+        details: dict | None = None,
+        min_interval_s: int = 3600,
+    ) -> None:
+        """Post a rate-limited SIEM event to Headend; Headend handles email notification."""
+        now = datetime.now(timezone.utc)
+        key = f"{event_type}:{severity}:{message[:120]}"
+        last = self._last_siem_emit.get(key)
+        if last and (now - last).total_seconds() < min_interval_s:
+            return
+        self._last_siem_emit[key] = now
+        raw = message
+        if details:
+            raw = f"{message} | details={details}"
+        try:
+            self._api._post(f"/siem/events/{self._device_id}", {
+                "events": [{
+                    "event_type": event_type,
+                    "severity": severity.upper(),
+                    "username": None,
+                    "source_ip": None,
+                    "raw_message": raw,
+                    "occurred_at": now.isoformat(),
+                    "source": source,
+                }]
+            })
+        except Exception as exc:
+            log.debug("SIEM emit failed for %s: %s", event_type, exc)
+
+    def _check_camera_profile_known(self, context: str) -> None:
+        if not hasattr(self._driver, "get_profile_summary"):
+            return
+        try:
+            profile = self._driver.get_profile_summary()
+        except Exception:
+            return
+        if profile.get("profile_key") == "default":
+            model = profile.get("detected_model", "Unknown")
+            if model and model != "Unknown":
+                self._emit_siem_event(
+                    "camera_profile_missing",
+                    "CRITICAL",
+                    f"Camera '{model}' detected without a specific TimeLapse Pro camera profile",
+                    details={"model": model, "context": context, "profile": profile},
+                    min_interval_s=86400,
+                )
+
     def _capture_single_camera(self, cam, dest_dir, results, idx):
         from camera.registry import get_driver as _get_driver
         device_id = cam['device_id']
@@ -403,6 +457,7 @@ class EdgeAgent:
         try:
             self._camera_power_on("feature detection")
             self._driver.connect()
+            self._check_camera_profile_known("feature_detection")
             self._has_autofocus = self._driver.supports_autofocus()
             self._has_refocus   = self._driver.supports_remote_focus()
             self._driver.disconnect()
@@ -413,6 +468,12 @@ class EdgeAgent:
             )
         except Exception as exc:
             log.warning("Could not detect camera features: %s", exc)
+            self._emit_siem_event(
+                "camera_detection_failed",
+                "ERROR",
+                f"Could not detect camera features: {exc}",
+                details={"context": "feature_detection", "power_mode": self._camera_power_mode()},
+            )
             self._has_autofocus = False
             self._has_refocus   = False
 
@@ -489,8 +550,15 @@ class EdgeAgent:
             self._camera_power_on("capture cycle")
             try:
                 self._driver.connect()
+                self._check_camera_profile_known("capture_cycle")
             except Exception as exc:
                 log.error("Camera connect failed: %s", exc)
+                self._emit_siem_event(
+                    "camera_detection_failed",
+                    "ERROR",
+                    f"Camera connect failed: {exc}",
+                    details={"context": "capture_cycle", "power_mode": self._camera_power_mode()},
+                )
                 self._db.log_event(
                     self._device_id, "ERROR", "camera",
                     f"Camera connect failed: {exc}"
@@ -783,6 +851,8 @@ class EdgeAgent:
         commands: list[str] = list(
             self._cfg.get("camera", {}).get("initial_commands", [])
         )
+        if hasattr(self._driver, "normalize_initial_commands"):
+            commands = self._driver.normalize_initial_commands(commands)
 
         # Mapping: config nøgle → gphoto2 parameter navn
         PARAM_MAP = {
@@ -802,9 +872,16 @@ class EdgeAgent:
             value = cam_cfg.get(cfg_key)
             if value is None:
                 continue
+            if hasattr(self._driver, "build_config_command"):
+                new_cmd = self._driver.build_config_command(cfg_key, str(value))
+                if not new_cmd:
+                    log.info("Config override skipped by camera profile: %s=%s", cfg_key, value)
+                    continue
+                prefix = new_cmd.split("=", 1)[0] + "="
+            else:
+                prefix = f"{gphoto_key}="
+                new_cmd = f"{gphoto_key}={value}"
             # Erstat eksisterende kommando eller tilføj ny
-            prefix = f"{gphoto_key}="
-            new_cmd = f"{gphoto_key}={value}"
             replaced = False
             for i, cmd in enumerate(commands):
                 if cmd.startswith(prefix):
