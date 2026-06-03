@@ -37,9 +37,12 @@ SABSA: Availability  — autonomous operation, survives network outages
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import re
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -118,6 +121,8 @@ class EdgeAgent:
         self._last_config_pull:datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._stop_event = threading.Event()
         self._last_siem_emit: dict[str, datetime] = {}
+        self._last_siem_forward: datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._siem_cursor_path = self._cfg_mgr.base_dir / "siem_journal.cursor"
 
         # Signal handling for graceful shutdown
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -372,6 +377,149 @@ class EdgeAgent:
         except Exception as exc:
             log.debug("SIEM emit failed for %s: %s", event_type, exc)
 
+    def _siem_cfg(self) -> dict:
+        cfg = dict(self._cfg.get("siem", {}))
+        mode = str(cfg.get("mode", "prod")).lower()
+        cfg.setdefault("enabled", True)
+        cfg.setdefault("mode", mode)
+        cfg.setdefault("forward_interval_s", 300)
+        cfg.setdefault("max_events_per_batch", 200 if mode == "lab" else 50)
+        cfg.setdefault("journal_units", ["timelapse-edge.service"])
+        cfg.setdefault("min_severity", "info" if mode == "lab" else "warning")
+        return cfg
+
+    @staticmethod
+    def _severity_rank(level: str) -> int:
+        return {"debug": 0, "info": 1, "warning": 2, "error": 3, "critical": 4}.get(level.lower(), 1)
+
+    @staticmethod
+    def _journal_priority_to_severity(priority: str | int | None) -> str:
+        try:
+            p = int(priority)
+        except Exception:
+            return "info"
+        if p <= 2:
+            return "critical"
+        if p == 3:
+            return "error"
+        if p == 4:
+            return "warning"
+        return "info"
+
+    @staticmethod
+    def _parse_python_log_message(message: str) -> tuple[str | None, str | None]:
+        match = re.match(
+            r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+([A-Z]+)\s+([^\s]+)\s+(.*)$",
+            message or "",
+        )
+        if not match:
+            return None, message
+        return match.group(2), match.group(3)
+
+    def _forward_siem_logs(self, force: bool = False) -> None:
+        """Forward selected systemd journal lines to Headend SIEM according to policy."""
+        cfg = self._siem_cfg()
+        if not cfg.get("enabled", True):
+            return
+        now = datetime.now(timezone.utc)
+        interval_s = int(cfg.get("forward_interval_s", 300))
+        if not force and (now - self._last_siem_forward).total_seconds() < interval_s:
+            return
+        self._last_siem_forward = now
+
+        min_sev = str(cfg.get("min_severity", "warning")).lower()
+        max_events = max(1, int(cfg.get("max_events_per_batch", 100)))
+        units = cfg.get("journal_units") or ["timelapse-edge.service"]
+
+        cmd = ["journalctl", "--no-pager", "-o", "json", "--show-cursor"]
+        cursor = None
+        try:
+            if self._siem_cursor_path.exists():
+                cursor = self._siem_cursor_path.read_text().strip()
+        except Exception:
+            cursor = None
+        if cursor:
+            cmd += ["--after-cursor", cursor]
+        else:
+            since_s = int(cfg.get("initial_since_minutes", 10))
+            cmd += ["--since", f"{since_s} minutes ago"]
+        for unit in units:
+            cmd += ["-u", str(unit)]
+        cmd += ["-n", str(max_events)]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        except Exception as exc:
+            log.debug("SIEM journal read failed: %s", exc)
+            return
+        if result.returncode != 0:
+            log.debug("SIEM journal read rc=%s stderr=%s", result.returncode, result.stderr[:200])
+            return
+
+        events: list[dict] = []
+        latest_cursor = cursor
+        for line in result.stdout.splitlines():
+            if line.startswith("-- cursor:"):
+                latest_cursor = line.split(":", 1)[1].strip()
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            latest_cursor = row.get("__CURSOR") or latest_cursor
+            message = row.get("MESSAGE", "")
+            if not message or "/siem/events/" in message or "SIEM journal" in message:
+                continue
+            severity = self._journal_priority_to_severity(row.get("PRIORITY"))
+            logger_name, clean_message = self._parse_python_log_message(message)
+            if logger_name:
+                level_match = re.match(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+([A-Z]+)", message)
+                if level_match:
+                    severity = level_match.group(1).lower()
+                    if severity == "warn":
+                        severity = "warning"
+            if self._severity_rank(severity) < self._severity_rank(min_sev):
+                continue
+            ts_raw = row.get("__REALTIME_TIMESTAMP")
+            occurred = now
+            try:
+                occurred = datetime.fromtimestamp(int(ts_raw) / 1_000_000, tz=timezone.utc)
+            except Exception:
+                pass
+            events.append({
+                "event_type": "log",
+                "severity": severity,
+                "category": "edge_journal",
+                "source": "edge_journal",
+                "logger": logger_name,
+                "process": row.get("SYSLOG_IDENTIFIER") or row.get("_COMM"),
+                "raw_message": clean_message or message,
+                "occurred_at": occurred.isoformat(),
+            })
+
+        if not events:
+            if latest_cursor and latest_cursor != cursor:
+                try:
+                    self._siem_cursor_path.write_text(latest_cursor)
+                except Exception:
+                    pass
+            return
+        ok, data = self._api.send_siem_events(events)
+        if ok:
+            try:
+                if latest_cursor:
+                    self._siem_cursor_path.write_text(latest_cursor)
+            except Exception:
+                pass
+            log.info(
+                "SIEM journal forward complete: events=%d inserted=%s duplicates=%s min_severity=%s mode=%s",
+                len(events),
+                (data or {}).get("inserted"),
+                (data or {}).get("duplicates"),
+                min_sev,
+                cfg.get("mode"),
+            )
+
     def _check_camera_profile_known(self, context: str) -> None:
         if not hasattr(self._driver, "get_profile_summary"):
             return
@@ -524,6 +672,8 @@ class EdgeAgent:
         if now - self._last_heartbeat > heartbeat_interval:
             self._send_heartbeat()
             self._sync_captures()
+
+        self._forward_siem_logs()
 
         # Calculate sleep until next event
         sleep_s = self._seconds_until_next_event(now, mode)

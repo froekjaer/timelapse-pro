@@ -343,6 +343,12 @@ class HeadendClient:
             "extra":     extra or {},
         })
 
+    def send_siem_events(self, events: list[dict]) -> tuple[bool, Optional[dict]]:
+        """Forward normalized/log-derived SIEM events to Headend."""
+        if not events:
+            return True, {"inserted": 0, "duplicates": 0}
+        return self._post(f"/siem/events/{self._device_id}", {"events": events})
+
     # ── HTTP helpers ──────────────────────────────────────────────────────────
 
     def _get(self, path: str) -> tuple[bool, Optional[dict]]:

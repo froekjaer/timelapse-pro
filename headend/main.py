@@ -86,7 +86,7 @@ def ensure_utc(dt):
 
 from importer import router as import_router
 from ai.settings_api import settings_router
-from siem import router as siem_router
+from siem import router as siem_router, start_headend_log_collector
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from database import (
     BootstrapToken,
@@ -147,6 +147,7 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     create_tables()
+    start_headend_log_collector()
     # DB migration — tilføj nye kolonner hvis de mangler
     try:
 #Peter        from sqlalchemy import text
@@ -2067,6 +2068,15 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                 "cpu_temperature", "cpu_load",
                 "memory_usage", "disk_usage", "connectivity_type"
             ],
+        },
+        "siem": {
+            "enabled": True,
+            "mode": "lab",
+            "min_severity": "info",
+            "forward_interval_s": 300,
+            "max_events_per_batch": 200,
+            "initial_since_minutes": 10,
+            "journal_units": ["timelapse-edge.service"],
         },
     }
 
