@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dk.froekjaer.timelapse-syslog</string>
+
+  <key>UserName</key>
+  <string>peter</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/peter/projects/timelapse-pro/headend</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/peter/projects/timelapse-pro/headend/venv/bin/python</string>
+    <string>syslog_receiver.py</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DATABASE_URL</key>
+    <string>postgresql://timelapse@localhost/timelapse_db</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>TIMELAPSE_ENV</key>
+    <string>lab</string>
+    <key>TIMELAPSE_SYSLOG_HOST</key>
+    <string>127.0.0.1</string>
+    <key>TIMELAPSE_SYSLOG_PORT</key>
+    <string>5514</string>
+    <key>TIMELAPSE_SYSLOG_PROTOCOLS</key>
+    <string>udp,tcp</string>
+    <key>TIMELAPSE_SYSLOG_LAB_ACCEPT_ALL</key>
+    <string>true</string>
+    <key>TIMELAPSE_SYSLOG_RATE_PER_SOURCE_PER_MINUTE</key>
+    <string>600</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/peter/Library/Logs/timelapse-syslog.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/peter/Library/Logs/timelapse-syslog.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+</dict>
+</plist>

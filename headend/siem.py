@@ -22,6 +22,7 @@ import os
 import re
 import threading
 import time
+from collections import defaultdict, deque
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -35,6 +36,7 @@ from database import Base, get_db
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["SIEM"])
 _COLLECTOR_STARTED = False
+_API_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────
@@ -173,6 +175,7 @@ def _normalize_event(ev: dict) -> dict:
             "logger": logger_name or None,
             "process": ev.get("process"),
             "original_event_type": ev.get("event_type"),
+            "syslog": ev.get("syslog"),
         },
     }
 
@@ -236,6 +239,24 @@ def record_events(db: Session, device_id: str, events: list[dict]) -> dict:
 
 def _severity_rank(level: str) -> int:
     return {"debug": 0, "info": 1, "warning": 2, "error": 3, "critical": 4}.get(str(level).lower(), 1)
+
+
+def _check_api_rate_limit(device_id: str, event_count: int) -> None:
+    """Server-side SIEM API guard. Edge may buffer, Headend still enforces limits."""
+    max_batch = int(os.getenv("TIMELAPSE_SIEM_API_MAX_BATCH", "500"))
+    max_events_per_minute = int(os.getenv("TIMELAPSE_SIEM_API_MAX_EVENTS_PER_DEVICE_PER_MINUTE", "2000"))
+    if event_count > max_batch:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=413, detail=f"SIEM batch too large: {event_count}>{max_batch}")
+
+    now = time.monotonic()
+    bucket = _API_RATE_BUCKETS[device_id]
+    while bucket and now - bucket[0] > 60:
+        bucket.popleft()
+    if len(bucket) + event_count > max_events_per_minute:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=429, detail="SIEM rate limit exceeded")
+    bucket.extend([now] * event_count)
 
 
 def _line_to_headend_event(source: str, line: str, min_severity: str) -> Optional[dict]:
@@ -396,6 +417,7 @@ def ingest_events(device_id: str, payload: dict, db: Session = Depends(get_db)):
                            raw_message, occurred_at }, ... ] }
     """
     events = payload.get("events", [])
+    _check_api_rate_limit(device_id, len(events))
     result = record_events(db, device_id, events)
 
     # Notifikation ved kritiske SIEM-events

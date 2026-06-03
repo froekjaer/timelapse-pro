@@ -12,6 +12,7 @@ on a production headend.
 | 443 | Not TimeLapse directly | Existing public HTTPS entrypoint with hostname routing |
 | 2222 | Not TimeLapse | Reserved for other production application use |
 | 22222 | TimeLapse inbound | Dedicated SFTP upload from Edge to Headend |
+| 5514 | TimeLapse internal/lab | Optional local SIEM syslog receiver (UDP/TCP). Production external logs should normally arrive via Edge/site collector API forwarding. |
 | 8000 | Loopback/internal | Headend FastAPI service behind reverse proxy |
 | 8080 | Loopback/internal or changed | Open WebUI only behind authenticated TimeLapse/reverse proxy |
 
@@ -26,6 +27,15 @@ on a production headend.
   application-level RBAC for search, thumbnails, tags, AI/Ollama, CMDB and SIEM.
 - Open WebUI is an internal tool and must not be exposed directly without
   TimeLapse MFA-authenticated access control.
+- External syslog ingress should normally terminate at an Edge/site collector,
+  which forwards normalized events to Headend over the authenticated TimeLapse
+  SIEM API. Headend enforces batch and per-device rate limits.
+- If Headend direct syslog ingress is used for lab or a special deployment, it
+  must be restricted to CMDB-known network devices or explicit source allowlists.
+  Lab may accept broader sources while testing.
+- Prefer UDP/TCP 5514 for TimeLapse syslog ingestion. If a customer requires
+  standard UDP/TCP 514, use firewall/NAT or a local relay to forward to 5514 so
+  the receiver does not need privileged binding.
 
 ## Lab notes
 
