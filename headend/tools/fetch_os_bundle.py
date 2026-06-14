@@ -54,6 +54,90 @@ def _pockets_for_suite(suite: str) -> list[str]:
     return [suite, f"{suite}-security", f"{suite}-updates", f"{suite}-backports"]
 
 
+# ── Third-party repo configuration ───────────────────────────────────────────
+
+# Known third-party APT repos with their package name sets and APT structure.
+# Components are searched in order; later ones override earlier (like Ubuntu pockets).
+KNOWN_EXTRA_REPOS: list[dict[str, Any]] = [
+    {
+        "name": "docker",
+        "base_url": "https://download.docker.com/linux/ubuntu",
+        "components": ["stable"],           # Docker uses component "stable" (not "main")
+        "pockets": ["{suite}"],             # Docker puts everything under the suite directly
+        "package_names": {
+            "docker-ce", "docker-ce-cli", "containerd.io",
+            "docker-buildx-plugin", "docker-ce-rootless-extras",
+            "docker-compose-plugin", "docker-scout-plugin",
+        },
+        "description": "Docker CE official repository (download.docker.com)",
+    },
+]
+
+
+def _detect_extra_repos(packages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """
+    Auto-detect which extra repos are needed based on package names and/or source_repo hints.
+    Returns a list of KNOWN_EXTRA_REPOS entries needed for the given package list.
+    """
+    needed: list[dict[str, Any]] = []
+    pkg_names = {str(p.get("name") or "") for p in packages}
+    pkg_repos = {str(p.get("source_repo") or "") for p in packages}
+
+    for repo_cfg in KNOWN_EXTRA_REPOS:
+        # Match by package name set
+        if pkg_names & repo_cfg.get("package_names", set()):
+            needed.append(repo_cfg)
+            continue
+        # Match by source_repo hint containing the base_url hostname
+        base_host = repo_cfg["base_url"].split("//")[-1].split("/")[0]
+        if any(base_host in r for r in pkg_repos):
+            needed.append(repo_cfg)
+
+    return needed
+
+
+def fetch_extra_repo_index(
+    repo_cfg: dict[str, Any],
+    suite: str,
+    arch: str,
+    verbose: bool = False,
+) -> dict[str, dict]:
+    """
+    Download and parse a third-party APT repo's Packages.gz.
+    Returns a dict keyed by package name → index entry dict.
+    The entry format is identical to Ubuntu's Packages.gz format.
+    """
+    base_url = repo_cfg["base_url"].rstrip("/")
+    components = repo_cfg.get("components", ["stable"])
+    # Pocket template: "{suite}" expands to actual suite name
+    pocket_templates = repo_cfg.get("pockets", ["{suite}"])
+    pockets = [t.replace("{suite}", suite) for t in pocket_templates]
+    index: dict[str, dict] = {}
+
+    for pocket in pockets:
+        for component in components:
+            url = f"{base_url}/dists/{pocket}/{component}/binary-{arch}/Packages.gz"
+            if verbose:
+                print(f"Fetching extra repo index: {url}", file=sys.stderr)
+            try:
+                with urllib.request.urlopen(url, timeout=30) as resp:
+                    raw = gzip.decompress(resp.read())
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    if verbose:
+                        print(f"  404 (skipped): {url}", file=sys.stderr)
+                    continue
+                raise
+            for entry in _parse_packages(raw.decode("utf-8", errors="replace")):
+                name = entry.get("Package", "")
+                if name:
+                    # Tag with repo metadata so we know where to download from
+                    entry["_repo_base_url"] = base_url
+                    index[name] = entry
+
+    return index
+
+
 # ── Package index fetching ────────────────────────────────────────────────────
 
 def fetch_package_index(suite: str, arch: str, verbose: bool = False) -> dict[str, dict]:
@@ -83,6 +167,33 @@ def fetch_package_index(suite: str, arch: str, verbose: bool = False) -> dict[st
                     continue
                 # Prefer security/updates pockets (they come later in our loop)
                 index[name] = entry
+
+    return index
+
+
+def fetch_all_indices(
+    suite: str,
+    arch: str,
+    packages: list[dict[str, Any]],
+    verbose: bool = False,
+) -> dict[str, dict]:
+    """
+    Fetch Ubuntu index plus any extra repos detected from the package list.
+    Packages found in extra repos override Ubuntu entries (third-party beats official).
+    """
+    # Start with Ubuntu
+    print(f"Fetching Ubuntu {suite} {arch} package index…", file=sys.stderr)
+    index = fetch_package_index(suite, arch, verbose=verbose)
+    print(f"  {len(index)} packages indexed from Ubuntu", file=sys.stderr)
+
+    # Add extra repos (Docker, etc.) as needed
+    extra_repos = _detect_extra_repos(packages)
+    for repo_cfg in extra_repos:
+        print(f"Fetching extra repo: {repo_cfg['name']} ({repo_cfg['base_url']})…", file=sys.stderr)
+        extra_index = fetch_extra_repo_index(repo_cfg, suite, arch, verbose=verbose)
+        print(f"  {len(extra_index)} packages indexed from {repo_cfg['name']}", file=sys.stderr)
+        # Extra repo entries override Ubuntu (those packages are NOT in Ubuntu's mirrors)
+        index.update(extra_index)
 
     return index
 
@@ -287,6 +398,120 @@ def bundle_summary(root: Path) -> dict[str, Any]:
     }
 
 
+# ── Python callable API ──────────────────────────────────────────────────────
+
+def build_bundle(
+    packages: list[dict[str, Any]],
+    output: Path,
+    device_id: str,
+    suite: str = "noble",
+    arch: str = "arm64",
+    target_os: str = "debian/orangepi",
+    source_ref: str = "ubuntu-http",
+    verbose: bool = False,
+) -> dict[str, Any]:
+    """
+    High-level Python API: download .deb files and write a bundle directory.
+
+    Each item in `packages` must have at least:
+        {"name": "docker-ce", "available_version": "5:29.5.2-1~ubuntu.24.04~noble"}
+    Optionally also: installed_version, source_repo, architecture, category.
+
+    Returns a dict with keys:
+        ok, bundle (Path), packages_requested, deb_files, not_found
+    Raises on fatal errors (e.g. no packages downloaded).
+    """
+    output = Path(output).expanduser().resolve()
+    packages_dir = output / "packages"
+
+    if output.exists():
+        shutil.rmtree(output)
+    packages_dir.mkdir(parents=True)
+
+    # Build unified index (Ubuntu + auto-detected extra repos)
+    index = fetch_all_indices(suite, arch, packages, verbose=verbose)
+    mirror = _mirror(arch)
+
+    package_file_entries: list[dict[str, Any]] = []
+    not_found: list[str] = []
+
+    for pkg in packages:
+        name = str(pkg.get("name") or "").strip()
+        wanted_version = str(pkg.get("available_version") or "").strip()
+        if not name or not wanted_version:
+            continue
+
+        entry = index.get(name)
+        if not entry:
+            print(f"  WARNING: {name} not found in any index", file=sys.stderr)
+            not_found.append(name)
+            continue
+
+        index_version = entry.get("Version", "")
+        if index_version != wanted_version:
+            print(
+                f"  WARNING: {name} wanted {wanted_version}, "
+                f"index has {index_version} — using index version",
+                file=sys.stderr,
+            )
+
+        # Use repo base URL from entry if it came from an extra repo
+        effective_mirror = entry.get("_repo_base_url") or mirror
+
+        try:
+            deb_path = download_deb(entry, packages_dir, effective_mirror, verbose=verbose)
+            package_file_entries.append(deb_metadata_from_index(entry, deb_path))
+            print(f"  ✓ {name}={index_version}", file=sys.stderr)
+        except Exception as exc:
+            print(f"  ERROR downloading {name}: {exc}", file=sys.stderr)
+            not_found.append(name)
+
+    if not_found:
+        print(f"\nWARNING: {len(not_found)} package(s) could not be resolved:", file=sys.stderr)
+        for n in not_found:
+            print(f"  - {n}", file=sys.stderr)
+
+    if not package_file_entries:
+        raise RuntimeError(f"No .deb files downloaded — aborting bundle creation for {output}")
+
+    # Write bundle files
+    package_manifest = {
+        "schema": "timelapse.os_package_manifest.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "device_id": device_id,
+        "target_os": target_os,
+        "architecture": arch,
+        "suite": suite,
+        "source_ref": source_ref,
+        "mirror": mirror,
+        "packages_requested": packages,
+        "package_files": package_file_entries,
+        "install_model": "offline dpkg; apt-get --no-download -f install only",
+        "fetch_tool": "fetch_os_bundle.py",
+    }
+    write_json(output / "package-manifest.json", package_manifest)
+
+    install_sh = output / "install-offline.sh"
+    install_sh.write_text(install_script())
+    install_sh.chmod(0o755)
+
+    verify_sh = output / "verify-installed.sh"
+    verify_sh.write_text(verify_script(packages))
+    verify_sh.chmod(0o755)
+
+    write_json(output / "bundle-summary.json", bundle_summary(output))
+
+    return {
+        "ok": True,
+        "bundle": output,
+        "suite": suite,
+        "architecture": arch,
+        "packages_requested": len(packages),
+        "deb_files": len(package_file_entries),
+        "not_found": not_found,
+    }
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -349,10 +574,9 @@ def main() -> int:
         shutil.rmtree(output)
     packages_dir.mkdir(parents=True)
 
-    # Fetch package index
-    print(f"Fetching Ubuntu {args.suite} {args.architecture} package index…", file=sys.stderr)
-    index = fetch_package_index(args.suite, args.architecture, verbose=args.verbose)
-    print(f"  {len(index)} packages indexed", file=sys.stderr)
+    # Fetch package index (Ubuntu + auto-detected extra repos like Docker)
+    index = fetch_all_indices(args.suite, args.architecture, packages, verbose=args.verbose)
+    print(f"  {len(index)} packages indexed in total", file=sys.stderr)
 
     mirror = _mirror(args.architecture)
     package_file_entries: list[dict[str, Any]] = []
@@ -364,7 +588,7 @@ def main() -> int:
         entry = index.get(name)
 
         if not entry:
-            print(f"  WARNING: {name} not found in index", file=sys.stderr)
+            print(f"  WARNING: {name} not found in any index", file=sys.stderr)
             not_found.append(name)
             continue
 
@@ -376,8 +600,11 @@ def main() -> int:
                 file=sys.stderr,
             )
 
+        # Use repo base URL from entry if it came from an extra repo
+        effective_mirror = entry.get("_repo_base_url") or mirror
+
         if args.dry_run:
-            print(f"  dry-run: would download {name}={index_version}", file=sys.stderr)
+            print(f"  dry-run: would download {name}={index_version} from {effective_mirror}", file=sys.stderr)
             package_file_entries.append({
                 "path": f"packages/{name}_{index_version}_{args.architecture}.deb (dry-run)",
                 "filename": f"{name}_{index_version}_{args.architecture}.deb",
@@ -389,7 +616,7 @@ def main() -> int:
             })
         else:
             try:
-                deb_path = download_deb(entry, packages_dir, mirror, verbose=args.verbose)
+                deb_path = download_deb(entry, packages_dir, effective_mirror, verbose=args.verbose)
                 package_file_entries.append(deb_metadata_from_index(entry, deb_path))
                 print(f"  ✓ {name}={index_version}", file=sys.stderr)
             except Exception as exc:

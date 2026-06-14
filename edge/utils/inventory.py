@@ -419,9 +419,30 @@ def _apt_updates_available() -> dict:
     """
     Returnerer dict med tilgængelige apt-opdateringer.
     Bruger cached apt-data (apt-get -s upgrade) — kræver ikke netværk.
+
+    Eksempel apt-get -s upgrade output:
+        Inst docker-ce [5:29.2.1-1~ubuntu.24.04~noble] (5:29.5.2-1~ubuntu.24.04~noble download.docker.com:443 [arm64])
+        Inst curl [7.81.0-1ubuntu1.16] (7.81.0-1ubuntu1.17 Ubuntu:22.04/jammy-security [amd64])
+
+    Felter i hvert pakke-element:
+        name        - pakkens navn
+        old_ver     - installeret version (fra [...])
+        new_ver     - ny version (første token efter '(')
+        source_repo - repo-base-URL (andet token efter '(', uden port)
+        security    - True hvis "security" optræder i linjen
     """
     updates: list[dict] = []
     security_count = 0
+    # Regex: Inst <name> [<old_ver>] (<new_ver> <repo>[:port] [<arch>])
+    # Alle felter undtagen name er valgfrie
+    _re_inst = re.compile(
+        r"^Inst\s+(\S+)"                    # 1: pakkenavn
+        r"(?:\s+\[([^\]]*)\])?"             # 2: gammel version (valgfri)
+        r"(?:\s+\((\S+)"                    # 3: ny version (valgfri)
+        r"\s+(\S+?)(?::\d+)?"              # 4: repo-URL uden port (valgfri)
+        r")?",
+        re.IGNORECASE
+    )
     try:
         result = subprocess.run(
             ["apt-get", "-s", "--just-print", "upgrade"],
@@ -429,22 +450,29 @@ def _apt_updates_available() -> dict:
         )
         if result.returncode == 0:
             for line in result.stdout.splitlines():
-                if line.startswith("Inst "):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        name = parts[1]
-                        is_sec = "security" in line.lower()
-                        new_ver = ""
-                        if "(" in line:
-                            seg = line.split("(", 1)[1]
-                            new_ver = seg.split()[0]
-                        updates.append({
-                            "name":      name,
-                            "new_ver":   new_ver,
-                            "security":  is_sec,
-                        })
-                        if is_sec:
-                            security_count += 1
+                if not line.startswith("Inst "):
+                    continue
+                m = _re_inst.match(line)
+                if not m:
+                    continue
+                name    = m.group(1)
+                old_ver = m.group(2) or ""
+                new_ver = m.group(3) or ""
+                repo    = m.group(4) or ""
+                is_sec  = "security" in line.lower()
+                # Rens repo: behold kun base-URL (fjern eventuelle ekstra tokens)
+                # "download.docker.com" eller "http://ports.ubuntu.com/ubuntu-ports"
+                if repo and not repo.startswith("http"):
+                    repo = f"https://{repo}"
+                updates.append({
+                    "name":        name,
+                    "old_ver":     old_ver,
+                    "new_ver":     new_ver,
+                    "source_repo": repo,
+                    "security":    is_sec,
+                })
+                if is_sec:
+                    security_count += 1
     except Exception as exc:
         log.debug("apt_updates_available fejl: %s", exc)
     return {

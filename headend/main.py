@@ -250,6 +250,20 @@ def startup():
     except Exception as _gtp_err:
         log.warning("Kunne ikke starte GitHub tag poller: %s", _gtp_err)
 
+    # ── Auto OS bundle poller ───────────────────────────────────────────────
+    try:
+        interval_m = float(os.getenv("TIMELAPSE_OS_BUNDLE_AUTO_POLL_MINUTES", "10"))
+        t_os = _threading.Thread(
+            target=_os_bundle_auto_poller_loop,
+            args=(interval_m,),
+            name="os-bundle-auto-poller",
+            daemon=True,
+        )
+        t_os.start()
+        log.info("OS bundle auto-poller startet (interval=%.0fm)", interval_m)
+    except Exception as _obp_err:
+        log.warning("Kunne ikke starte OS bundle auto-poller: %s", _obp_err)
+
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
@@ -5977,6 +5991,238 @@ def _git_tag_poller_loop(interval_hours: float = 1.0) -> None:
             log.warning("Git tag poller fejl: %s", _poll_err)
 
         _time.sleep(interval_s)
+
+
+# ── Automatisk OS bundle builder ──────────────────────────────────────────────
+
+def _os_bundle_auto_poller_loop(interval_minutes: float = 10.0) -> None:
+    """
+    Baggrunds-tråd: finder pending OS updates uden artifact og bygger dem automatisk
+    via fetch_os_bundle.py (rent Python, ingen Docker-afhængighed).
+
+    Triggeres automatisk når edge rapporterer nye apt-opdateringer via inventory.
+    Dette sikrer at godkendelsesflowet ikke blokeres af manglende artifacts.
+    """
+    import time as _time
+
+    interval_s = max(60, interval_minutes * 60)
+
+    # Giv serveren tid til at starte fuldt op
+    _time.sleep(30)
+
+    while True:
+        try:
+            _os_bundle_auto_build_pending()
+        except Exception as _poll_err:
+            log.warning("OS bundle auto-poller fejl: %s", _poll_err)
+        _time.sleep(interval_s)
+
+
+def _os_bundle_auto_build_pending() -> None:
+    """
+    Finder alle pending OS-updates uden artifact og bygger et offline .deb bundle
+    via fetch_os_bundle.py (Python-mode, kræver ikke Docker).
+
+    Bruger første super_admin som systembruger til artifact-signering.
+    """
+    import sys as _sys
+
+    db = SessionLocal()
+    try:
+        # Find pending OS-updates uden artifact
+        pending = (
+            db.query(PendingUpdate)
+            .filter(
+                PendingUpdate.update_type.in_(["os_security", "os_updates"]),
+                PendingUpdate.status.in_(["pending"]),
+            )
+            .order_by(PendingUpdate.created_at)
+            .all()
+        )
+        if not pending:
+            return
+
+        # System-bruger til auto-signering
+        system_user = (
+            db.query(User)
+            .filter(User.role == "super_admin")
+            .order_by(User.id)
+            .first()
+        )
+        if not system_user:
+            log.warning("OS bundle auto-poller: ingen super_admin fundet — springer over")
+            return
+
+        for update in pending:
+            # Tjek om artifact allerede er bundet
+            existing_artifact = _find_artifact_for_update(db, update)
+            if existing_artifact:
+                continue
+
+            device_id = (update.scope_id or "").strip()
+            if not device_id:
+                log.debug("OS bundle auto-poller: update #%d har ingen scope_id — springer over", update.id)
+                continue
+
+            log.info(
+                "OS bundle auto-poller: bygger artifact for update #%d (%s, enhed %s)",
+                update.id, update.update_type, device_id,
+            )
+            try:
+                _auto_build_and_bind_os_bundle(db, update, device_id, system_user)
+            except Exception as exc:
+                log.warning(
+                    "OS bundle auto-poller: fejl ved build af update #%d: %s",
+                    update.id, exc,
+                )
+    finally:
+        db.close()
+
+
+def _auto_build_and_bind_os_bundle(
+    db: Session,
+    update: PendingUpdate,
+    device_id: str,
+    system_user: User,
+) -> None:
+    """
+    Bygger offline OS bundle for én PendingUpdate via fetch_os_bundle.build_bundle().
+    Registrerer og binder artifactet til opdateringen.
+    Kræver ikke Docker — henter .deb filer direkte fra Ubuntu/Docker mirrors.
+    """
+    import importlib.util as _importlib_util
+    import sys as _sys
+
+    # Dynamisk import af fetch_os_bundle (ligger i tools/ ikke i Python-path)
+    _fb_path = _Path(__file__).parent / "tools" / "fetch_os_bundle.py"
+    _spec = _importlib_util.spec_from_file_location("fetch_os_bundle", str(_fb_path))
+    _fb = _importlib_util.loader_from_spec(_spec) if _spec else None  # type: ignore[assignment]
+    if _spec and hasattr(_spec, "loader") and _spec.loader:
+        _fb_mod = _importlib_util.module_from_spec(_spec)
+        _spec.loader.exec_module(_fb_mod)  # type: ignore[union-attr]
+    else:
+        raise RuntimeError(f"Kan ikke importere fetch_os_bundle fra {_fb_path}")
+
+    # Hent pakkeliste fra inventory (soft_inventory JSON i DB)
+    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    packages_raw: list[dict] = []
+    if inv and inv.software_inventory:
+        try:
+            sw = json.loads(inv.software_inventory) if isinstance(inv.software_inventory, str) else inv.software_inventory
+            apt_data = sw.get("_os_updates_available") or {}
+            packages_raw = apt_data.get("packages") or []
+        except Exception:
+            pass
+
+    if not packages_raw:
+        raise RuntimeError(
+            f"Ingen pakker i inventory for {device_id} — "
+            "kan ikke bygge OS bundle uden pakkeliste"
+        )
+
+    # Konverter inventory-format (name + new_ver) til fetch_os_bundle-format (name + available_version)
+    # Filtrer til den relevante update_type (security vs. non-security)
+    want_security = (update.update_type == "os_security")
+    packages = [
+        {
+            "name":               p["name"],
+            "available_version":  p.get("new_ver") or p.get("available_version") or "",
+            "installed_version":  p.get("old_ver") or p.get("installed_version") or "",
+            "source_repo":        p.get("source_repo") or "",
+            "category":           update.update_type,
+        }
+        for p in packages_raw
+        if bool(p.get("security")) == want_security
+        and (p.get("new_ver") or p.get("available_version"))
+    ]
+
+    if not packages:
+        # Prøv alle pakker hvis ingen matchede det specifikke filter
+        packages = [
+            {
+                "name":               p["name"],
+                "available_version":  p.get("new_ver") or p.get("available_version") or "",
+                "installed_version":  p.get("old_ver") or p.get("installed_version") or "",
+                "source_repo":        p.get("source_repo") or "",
+                "category":           update.update_type,
+            }
+            for p in packages_raw
+            if p.get("new_ver") or p.get("available_version")
+        ]
+
+    if not packages:
+        raise RuntimeError(f"Ingen gyldige pakker at downloade for update #{update.id}")
+
+    # Output-sti i OS bundle store
+    created_at = now_utc()
+    safe_type = _re.sub(r"[^a-zA-Z0-9_.-]+", "-", update.update_type)
+    output_root = _os_bundle_store_root().expanduser().resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    output_path = output_root / f"auto-{update.id}-{safe_type}-{created_at:%Y%m%d-%H%M%S}"
+
+    # Byg bundlet
+    result = _fb_mod.build_bundle(
+        packages=packages,
+        output=output_path,
+        device_id=device_id,
+        suite="noble",
+        arch="arm64",
+        target_os="ubuntu-24.04/orangepi",
+        source_ref=f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
+        verbose=True,
+    )
+
+    log.info(
+        "OS bundle auto-poller: bundle bygget — %d debs, %d ikke fundet, sti: %s",
+        result["deb_files"], len(result["not_found"]), output_path,
+    )
+
+    if not result.get("ok") or result["deb_files"] == 0:
+        raise RuntimeError(
+            f"OS bundle build fejlede: ingen .deb filer downloadet "
+            f"(not_found={result['not_found']})"
+        )
+
+    # Registrer artifact i DB
+    artifact_dict = catalog_os_update_artifact(
+        {
+            "storage_path": str(output_path),
+            "version": f"{device_id}-{update.update_type}-{created_at:%Y%m%d-%H%M%S}",
+            "architecture": "arm64",
+            "target_os": "ubuntu-24.04/orangepi",
+            "source_ref": f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
+            "lab_evidence": {
+                "builder": "fetch_os_bundle.py (headend-auto)",
+                "packages_requested": result["packages_requested"],
+                "deb_files": result["deb_files"],
+                "not_found": result["not_found"],
+                "triggered_from": "os_bundle_auto_poller",
+            },
+        },
+        system_user,
+        db,
+    )
+    log.info("OS bundle auto-poller: artifact registreret: %s", artifact_dict.get("artifact_id"))
+
+    # Bind artifact til PendingUpdate
+    bind_artifact_to_update(
+        update.id,
+        {
+            "artifact_id": artifact_dict["artifact_id"],
+            "summary": (
+                f"OS bundle automatisk bygget af Headend auto-poller "
+                f"({result['deb_files']} pakker downloadet fra Ubuntu/Docker mirrors). "
+                f"Ingen Docker eller internet på edge krævet."
+            ),
+            "test_evidence_ref": f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
+        },
+        system_user,
+        db,
+    )
+    log.info(
+        "OS bundle auto-poller: artifact %s bundet til update #%d ✓",
+        artifact_dict["artifact_id"], update.id,
+    )
 
 
 @app.post("/api/updates/artifacts/catalog-from-git-tag")
