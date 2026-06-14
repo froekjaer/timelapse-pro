@@ -436,10 +436,10 @@ def _apt_updates_available() -> dict:
     # Regex: Inst <name> [<old_ver>] (<new_ver> <repo>[:port] [<arch>])
     # Alle felter undtagen name er valgfrie
     _re_inst = re.compile(
-        r"^Inst\s+(\S+)"                    # 1: pakkenavn
-        r"(?:\s+\[([^\]]*)\])?"             # 2: gammel version (valgfri)
-        r"(?:\s+\((\S+)"                    # 3: ny version (valgfri)
-        r"\s+(\S+?)(?::\d+)?"              # 4: repo-URL uden port (valgfri)
+        r"^Inst\s+(\S+)"         # 1: pakkenavn
+        r"(?:\s+\[([^\]]*)\])?"  # 2: gammel version (valgfri)
+        r"(?:\s+\((\S+)"         # 3: ny version (valgfri)
+        r"\s+(\S+)"              # 4: repo-URL inkl. evt. :port (trimmes nedenfor)
         r")?",
         re.IGNORECASE
     )
@@ -460,8 +460,9 @@ def _apt_updates_available() -> dict:
                 new_ver = m.group(3) or ""
                 repo    = m.group(4) or ""
                 is_sec  = "security" in line.lower()
-                # Rens repo: behold kun base-URL (fjern eventuelle ekstra tokens)
-                # "download.docker.com" eller "http://ports.ubuntu.com/ubuntu-ports"
+                # Rens repo: strip port (":443", ":80") fra slutningen
+                repo = re.sub(r":\d+$", "", repo)
+                # Tilføj https:// hvis det er et tomt hostname-format
                 if repo and not repo.startswith("http"):
                     repo = f"https://{repo}"
                 updates.append({
