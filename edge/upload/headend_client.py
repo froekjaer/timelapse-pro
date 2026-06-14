@@ -15,6 +15,7 @@ import logging
 import socket
 import hashlib
 import time
+from urllib.parse import quote
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
@@ -251,7 +252,9 @@ class HeadendClient:
                 path,
                 payload_hash=manifest_hash,
             ))
-            session = _build_session(self._cfg_mgr.api_token)
+            session = requests.Session()
+            session.headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
+            session.headers["User-Agent"] = "TimeLapsePro-EdgeAgent/1.0"
             session.headers.pop("Content-Type", None)
             with ExitStack() as stack:
                 files = {
@@ -313,6 +316,108 @@ class HeadendClient:
             return False, None
         except Exception as exc:
             log.warning("POST %s multipart failed: %s", path, exc)
+            return False, None
+
+    def upload_lab_preview(self, filepath: Path | str) -> tuple[bool, Optional[dict]]:
+        """Upload a lab preview frame to Headend without registering a production capture."""
+        path_obj = Path(filepath)
+        if not path_obj.exists():
+            log.warning("LAB preview API upload skipped; file missing: %s", path_obj)
+            return False, None
+        path = f"/lab/{self._device_id}/preview-file"
+        url = f"{self._base_url}{path}"
+        manifest = {
+            "device_id": self._device_id,
+            "filename": path_obj.name,
+            "sha256": _file_sha256(path_obj),
+            "filesize": path_obj.stat().st_size,
+            "transport": "api-lab-preview",
+        }
+        manifest_json = canonical_json(manifest)
+        manifest_hash = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
+        try:
+            headers = request_signature_headers(
+                self._cfg_mgr.api_token,
+                "POST",
+                path,
+                payload_hash=manifest_hash,
+            )
+            headers.update(edge_attestation_headers(
+                self._cfg_mgr.base_dir,
+                self._device_id,
+                "POST",
+                path,
+                payload_hash=manifest_hash,
+            ))
+            session = requests.Session()
+            session.headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
+            session.headers["User-Agent"] = "TimeLapsePro-EdgeAgent/1.0"
+            session.headers.pop("Content-Type", None)
+            with open(path_obj, "rb") as fh:
+                started = time.monotonic()
+                resp = session.post(
+                    url,
+                    data={"manifest": manifest_json},
+                    files={"preview": (path_obj.name, fh, "image/jpeg")},
+                    headers=headers,
+                    timeout=max(REQUEST_TIMEOUT, 60),
+                    verify=True,
+                )
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+            if resp.status_code in (200, 201):
+                log.info("LAB preview API upload complete: path=%s status=%s duration_ms=%s", path, resp.status_code, elapsed_ms)
+                return True, resp.json()
+            log.warning("LAB preview API upload failed: path=%s status=%s response=%s", path, resp.status_code, resp.text[:200])
+            return False, None
+        except requests.exceptions.ConnectionError:
+            log.warning("POST %s multipart: headend unreachable", path)
+            return False, None
+        except Exception as exc:
+            log.warning("POST %s multipart failed: %s", path, exc)
+            return False, None
+
+    def upload_edge_backup(self, archive_path: Path | str, sha256: str) -> tuple[bool, Optional[dict]]:
+        """Upload an Edge backup archive to Headend."""
+        path_obj = Path(archive_path)
+        if not path_obj.exists():
+            log.warning("Edge backup upload skipped; file missing: %s", path_obj)
+            return False, None
+        path = f"/admin/backup/edge-upload/{self._device_id}"
+        url = f"{self._base_url}{path}"
+        try:
+            headers = request_signature_headers(
+                self._cfg_mgr.api_token,
+                "POST",
+                path,
+                payload_hash=sha256,
+            )
+            headers.update(edge_attestation_headers(
+                self._cfg_mgr.base_dir,
+                self._device_id,
+                "POST",
+                path,
+                payload_hash=sha256,
+            ))
+            session = requests.Session()
+            session.headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
+            session.headers["User-Agent"] = "TimeLapsePro-EdgeAgent/1.0"
+            session.headers.pop("Content-Type", None)
+            with open(path_obj, "rb") as fh:
+                resp = session.post(
+                    url,
+                    data={"sha256": sha256},
+                    files={"backup": (path_obj.name, fh, "application/gzip")},
+                    headers=headers,
+                    timeout=max(REQUEST_TIMEOUT, 300),
+                    verify=True,
+                )
+            if resp.status_code in (200, 201):
+                log.info("Edge backup upload complete: %s", path_obj.name)
+                return True, resp.json()
+            log.warning("Edge backup upload failed: HTTP %s %s", resp.status_code, resp.text[:300])
+            return False, None
+        except Exception as exc:
+            log.warning("Edge backup upload failed: %s", exc)
             return False, None
 
     # ── Reverse SSH ──────────────────────────────────────────────────────────
@@ -399,11 +504,13 @@ class HeadendClient:
             return False, None
 
     def download_artifact_file(self, artifact_id: str, file_path: str) -> tuple[bool, bytes | None]:
-        path = f"/updates/artifacts/{artifact_id}/files/{file_path}"
+        safe_file_path = quote(file_path, safe="/")
+        path = f"/updates/artifacts/{artifact_id}/files/{safe_file_path}"
+        signature_path = f"/updates/artifacts/{artifact_id}/files/{file_path}"
         url = f"{self._base_url}{path}"
         try:
-            headers = request_signature_headers(self._cfg_mgr.api_token, "GET", path)
-            headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "GET", path))
+            headers = request_signature_headers(self._cfg_mgr.api_token, "GET", signature_path)
+            headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "GET", signature_path))
             resp = self._session.get(
                 url,
                 params={"device_id": self._device_id},
