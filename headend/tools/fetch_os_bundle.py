@@ -350,7 +350,16 @@ def install_script() -> str:
     return """#!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-dpkg -i packages/*.deb || apt-get --no-download -f install -y
+# Trin 1: Installer alle .deb-filer. dpkg kan returnere rc=1 ved dependency-
+# konflikter i batch-install (packages/*.deb er usorteret), men pakkerne
+# extraheres alligevel. apt-get -f retter op på manglende afhængigheder
+# offline (--no-download). Vi ignorerer exit-koden fra begge trin og lader
+# verify-installed.sh afgøre om installationen reelt lykkedes.
+dpkg -i packages/*.deb 2>&1 || true
+apt-get --no-download -f install -y 2>&1 || true
+# Trin 2: Verificer at alle pakker er installeret med de forventede versioner.
+# verify-installed.sh afslutter med rc!=0 hvis noget mangler — det er den
+# eneste authoritative fejlkilde.
 ./verify-installed.sh
 """
 
