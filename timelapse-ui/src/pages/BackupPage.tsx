@@ -69,6 +69,15 @@ interface ResilienceAssessment {
     call_home: string
     ready_to_accept_new_edge?: boolean
     active_bootstrap_tokens?: number
+    latest_image?: {
+      artifact_id: string
+      version: string
+      sha256: string
+      signed_by: string | null
+      signed_at: string | null
+      created_at: string | null
+      sbom_ref: string | null
+    } | null
     hardening: string[]
     required_outputs: string[]
   }
@@ -141,6 +150,8 @@ export function BackupPage() {
   const [edgeBusy, setEdgeBusy] = useState<string | null>(null)
   const [provisioningBusy, setProvisioningBusy] = useState(false)
   const [provisioningResult, setProvisioningResult] = useState<EdgeProvisioningResult | null>(null)
+  const [buildImageBusy, setBuildImageBusy] = useState(false)
+  const [buildImageError, setBuildImageError] = useState<string | null>(null)
   const [provisioningForm, setProvisioningForm] = useState<EdgeProvisioningForm>({
     device_id: '',
     customer_name: '',
@@ -230,6 +241,20 @@ export function BackupPage() {
       if (r.ok) await loadAssessment()
     } finally {
       setEdgeBusy(null)
+    }
+  }
+
+  async function buildEdgeImage() {
+    setBuildImageBusy(true)
+    setBuildImageError(null)
+    try {
+      const r = await api('/admin/edge-provisioning/build-image', { method: 'POST' })
+      if (!r.ok) throw new Error(await r.text())
+      await loadAssessment()
+    } catch (e: unknown) {
+      setBuildImageError(e instanceof Error ? e.message : 'Fejl ved bygning af image manifest')
+    } finally {
+      setBuildImageBusy(false)
     }
   }
 
@@ -325,6 +350,9 @@ export function BackupPage() {
           result={provisioningResult}
           busy={provisioningBusy}
           prepareEdge={prepareEdgeProvisioning}
+          buildImageBusy={buildImageBusy}
+          buildImageError={buildImageError}
+          buildImage={buildEdgeImage}
         />
       )}
       {tab === 'compliance' && <ComplianceTab assessment={assessment} />}
@@ -523,6 +551,9 @@ function IsoTab({
   result,
   busy,
   prepareEdge,
+  buildImageBusy,
+  buildImageError,
+  buildImage,
 }: {
   assessment: ResilienceAssessment | null
   form: EdgeProvisioningForm
@@ -530,10 +561,15 @@ function IsoTab({
   result: EdgeProvisioningResult | null
   busy: boolean
   prepareEdge: () => void
+  buildImageBusy: boolean
+  buildImageError: string | null
+  buildImage: () => void
 }) {
   const blueprint = assessment?.iso_blueprint
   const canPrepare = form.device_id.trim().length >= 3 && !busy
   const edges = assessment?.edge_restore ?? []
+  const latestImage = blueprint?.latest_image
+  const hasImage = !!latestImage
 
   const pipelineSteps: { label: string; done: boolean; note: string }[] = [
     {
@@ -552,14 +588,16 @@ function IsoTab({
       note: `${assessment?.summary.update_artifacts ?? 0} artifact(s) registreret`,
     },
     {
-      label: 'ISO image build & sign pipeline',
-      done: false,
-      note: 'GPG-signeret image med hardening-profil – pending',
+      label: 'Signed Edge image manifest og SBOM',
+      done: hasImage,
+      note: hasImage
+        ? `${latestImage!.artifact_id} · ${latestImage!.signed_by ?? 'system-hash'} · ${fmt(latestImage!.signed_at)}`
+        : 'GPG-signeret manifest med SBOM – ikke genereret endnu',
     },
     {
-      label: 'Signed ISO manifest og SBOM',
+      label: 'Fysisk arm64 disk image build',
       done: false,
-      note: 'SHA-256 + signeret manifest i artifact catalog – pending',
+      note: 'SD-kort/eMMC image build sker via ekstern arm64 CI pipeline (næste trin)',
     },
   ]
 
@@ -606,7 +644,7 @@ function IsoTab({
           <div>
             <h2 className="text-sm font-semibold text-gray-800 mb-1">ISO pipeline status</h2>
             <p className="text-xs text-gray-400 mb-3">Call-home: <span className="font-mono">{blueprint?.call_home ?? '-'}</span></p>
-            <div className="space-y-2">
+            <div className="space-y-2 mb-4">
               {pipelineSteps.map(step => (
                 <div key={step.label} className="flex items-start gap-2.5 text-xs">
                   {step.done
@@ -619,6 +657,33 @@ function IsoTab({
                 </div>
               ))}
             </div>
+
+            <button
+              onClick={buildImage}
+              disabled={buildImageBusy}
+              className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white text-sm rounded-lg hover:bg-sky-700 disabled:opacity-50"
+            >
+              {buildImageBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileCheck className="w-4 h-4" />}
+              {buildImageBusy ? 'Bygger...' : hasImage ? 'Generer nyt image manifest' : 'Byg og signér Edge image manifest'}
+            </button>
+
+            {buildImageError && (
+              <div className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {buildImageError}
+              </div>
+            )}
+
+            {latestImage && (
+              <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs space-y-1">
+                <div className="flex items-center gap-1.5 font-medium text-emerald-800">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  {latestImage.artifact_id}
+                </div>
+                <div className="text-emerald-700">Signeret: {fmt(latestImage.signed_at)} · {latestImage.signed_by ?? 'system-hash'}</div>
+                <div className="font-mono text-emerald-600 truncate">sha256: {latestImage.sha256}</div>
+                {latestImage.sbom_ref && <div className="text-emerald-600">SBOM: {latestImage.sbom_ref}</div>}
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <Checklist title="Hardening krav" items={blueprint?.hardening ?? []} />

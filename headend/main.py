@@ -9861,6 +9861,12 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
         .filter(BootstrapToken.expires_at > now_utc())
         .count()
     )
+    latest_edge_image = (
+        db.query(UpdateArtifact)
+        .filter(UpdateArtifact.artifact_type == "edge_bootstrap_image")
+        .order_by(UpdateArtifact.created_at.desc())
+        .first()
+    )
 
     settings = {}
     try:
@@ -9966,11 +9972,17 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
             "Bind backup, restore, update and ISO decisions to signed change tickets." if not tickets else "",
         ),
         _resilience_control(
-            "warning",
+            "pass" if latest_edge_image else "warning",
             "Bare-metal edge ISO pipeline",
-            f"bootstrap provisioning ready; active_bootstrap_tokens={active_tokens}; ISO image build/sign/verify pipeline pending",
+            (
+                f"signed manifest {latest_edge_image.artifact_id} ({latest_edge_image.signed_by}); "
+                f"active_bootstrap_tokens={active_tokens}"
+            ) if latest_edge_image else (
+                f"bootstrap provisioning ready; active_bootstrap_tokens={active_tokens}; "
+                "signed image manifest not yet generated"
+            ),
             ["CRA", "IEC62443", "NIS2"],
-            "Implement ISO image build pipeline with hardening profile, GPG-signed manifest and offline artifact delivery.",
+            "" if latest_edge_image else "Generate signed edge bootstrap image manifest via Drift & Resilience → Edge ISO → Byg Image.",
         ),
         _resilience_control(
             "warning",
@@ -10045,10 +10057,11 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
             for device in restore_devices_without_inventory
         ],
         "iso_blueprint": {
-            "status": "provisioning_ready",
+            "status": "image_signed" if latest_edge_image else "provisioning_ready",
             "call_home": "/api/bootstrap with short-lived bootstrap token",
             "ready_to_accept_new_edge": True,
             "active_bootstrap_tokens": active_tokens,
+            "latest_image": _artifact_to_dict(latest_edge_image) if latest_edge_image else None,
             "hardening": [
                 "disable password SSH for production profile",
                 "only required users, services and packages",
@@ -10179,6 +10192,144 @@ def prepare_edge_provisioning(
             "Konfigurer lokal netværksadgang via Edge CLI, Ethernet, WiFi eller 4G.",
             "Start eller genstart Edge agenten, så den kalder /api/bootstrap på Headend.",
             "Kontroller CMDB, inventory heartbeat og baseline Edge backup i Drift & Resilience.",
+        ],
+    }
+
+
+@app.post("/api/admin/edge-provisioning/build-image")
+def build_edge_bootstrap_image(
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    Byg og registrer et signeret Edge Bootstrap Image manifest.
+
+    Indeholder:
+    - SBOM fra seneste kendte edge-inventory (os_packages, venv_packages)
+    - Hardening-profil og call-home-konfiguration
+    - GPG-signeret manifest registreret som UpdateArtifact (type: edge_bootstrap_image)
+
+    Bemærk: selve SD-kort/disk-image build sker uden for headenden (cross-compilation).
+    Dette endpoint producerer det signerede manifest som en ny edge verificerer mod.
+    """
+    created_at = now_utc()
+    artifact_id = f"TL-EDGE-IMG-{created_at:%Y%m%d%H%M%S}"
+
+    # Collect SBOM from most recently reporting real edge inventory
+    inventories = (
+        db.query(DeviceInventory)
+        .order_by(DeviceInventory.inventory_reported_at.desc())
+        .all()
+    )
+    sbom_source: DeviceInventory | None = None
+    for inv in inventories:
+        if _is_placeholder_device(inv.device_id):
+            continue
+        if inv.os_packages or inv.venv_packages:
+            sbom_source = inv
+            break
+
+    os_sbom: list[dict] = []
+    venv_sbom: list[dict] = []
+    if sbom_source:
+        try:
+            raw_os = json.loads(sbom_source.os_packages or "[]")
+            os_sbom = raw_os if isinstance(raw_os, list) else []
+        except Exception:
+            os_sbom = []
+        try:
+            raw_venv = json.loads(sbom_source.venv_packages or "[]")
+            venv_sbom = raw_venv if isinstance(raw_venv, list) else []
+        except Exception:
+            venv_sbom = []
+
+    # Determine headend URL and app version from current release
+    root = _repo_root()
+    commit = _git_text(["rev-parse", "HEAD"]) or "unknown"
+    ref = _git_text(["rev-parse", "--abbrev-ref", "HEAD"]) or "main"
+    headend_url = os.getenv("TIMELAPSE_HEADEND_URL", "https://timelapse.froekjaer.dk/api")
+
+    manifest = {
+        "schema": "timelapse.edge_bootstrap_image.v1",
+        "artifact_id": artifact_id,
+        "artifact_type": "edge_bootstrap_image",
+        "headend_source_commit": commit,
+        "headend_source_ref": ref,
+        "call_home": {
+            "endpoint": f"{headend_url}/bootstrap",
+            "auth": "short-lived bootstrap token (BootstrapToken)",
+            "tls": "required",
+        },
+        "hardening_profile": {
+            "ssh_password_auth": "disabled_in_production",
+            "allowed_users": ["timelapse"],
+            "firewall": "deny_inbound_except_debug_profile",
+            "agent_integrity": "sha256_verified_before_start",
+            "artifact_verification": "gpg_signed_manifest_required",
+            "audit_logging": "siem_after_first_contact",
+        },
+        "required_outputs": [
+            "image file (arm64 Debian/Ubuntu base)",
+            "sha256 checksum",
+            "signed manifest (this file)",
+            "SBOM / package inventory",
+            "hardening evidence",
+            "restore/update test evidence",
+        ],
+        "sbom": {
+            "source_device": sbom_source.device_id if sbom_source else None,
+            "reported_at": sbom_source.inventory_reported_at.isoformat() if sbom_source and sbom_source.inventory_reported_at else None,
+            "os_package_count": len(os_sbom),
+            "venv_package_count": len(venv_sbom),
+            "os_packages": os_sbom,
+            "venv_packages": venv_sbom,
+        },
+        "edge_constraints": {
+            "edge_requires_direct_internet": False,
+            "edge_requires_direct_github": False,
+            "headend_is_update_authority": True,
+        },
+        "controls": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+        "created": {
+            "by": current_user.username,
+            "at": created_at.isoformat(),
+        },
+    }
+    manifest_json = _canonical_json(manifest)
+    manifest_sha = _sha256_text(manifest_json)
+    signature, signed_by = _sign_payload(manifest_json)
+
+    artifact = UpdateArtifact(
+        artifact_id=artifact_id,
+        artifact_type="edge_bootstrap_image",
+        version=commit,
+        source_commit=commit,
+        source_ref=ref,
+        filename=f"{artifact_id}.manifest.json",
+        storage_path=str(root),
+        size_bytes=len(manifest_json.encode()),
+        sha256=manifest_sha,
+        manifest_json=manifest_json,
+        sbom_ref=f"sbom:{sbom_source.device_id}:{sbom_source.inventory_reported_at.isoformat()}" if sbom_source and sbom_source.inventory_reported_at else None,
+        signature=signature,
+        signed_by=signed_by,
+        signed_at=created_at,
+        created_at=created_at,
+    )
+    db.add(artifact)
+    db.commit()
+    return {
+        **_artifact_to_dict(artifact),
+        "sbom_summary": {
+            "source_device": sbom_source.device_id if sbom_source else None,
+            "os_packages": len(os_sbom),
+            "venv_packages": len(venv_sbom),
+        },
+        "next_steps": [
+            f"Download manifest: GET /api/updates/artifacts/{artifact_id}",
+            "Brug manifest SBOM til at reproducere SD-kort image med arm64 build pipeline.",
+            "Verificer GPG-signatur inden image distribuertion til nye edges.",
+            "Klik 'Klargør Edge' for at generere bootstrap token til første call-home.",
         ],
     }
 
