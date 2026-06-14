@@ -4208,6 +4208,15 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _git_env() -> dict:
+    """Git-miljø der tillader root at læse repos ejet af anden bruger (samme fix som på edge)."""
+    env = os.environ.copy()
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = "safe.directory"
+    env["GIT_CONFIG_VALUE_0"] = "*"
+    return env
+
+
 def _git_text(args: list[str]) -> str | None:
     try:
         result = _subprocess.run(
@@ -4216,6 +4225,7 @@ def _git_text(args: list[str]) -> str | None:
             capture_output=True,
             text=True,
             timeout=10,
+            env=_git_env(),
         )
         if result.returncode == 0:
             return result.stdout.strip()
