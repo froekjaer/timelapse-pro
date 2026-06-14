@@ -660,21 +660,29 @@ export function CMDBDetailPage() {
             <Row label="Sidst set" value={fmtDate(detail.last_seen)} />
             <Row label="Inv. rapporteret" value={fmtDate(detail.inventory_reported_at)} />
           </div>
-          {Object.keys(detail.software_inventory ?? {}).length > 0 && (
-            <details className="mt-3" open>
-              <summary className="text-xs text-sky-600 cursor-pointer hover:text-sky-700">
-                Softwareinventar
-              </summary>
-              <div className="mt-2 max-h-56 overflow-y-auto">
-                {Object.entries(detail.software_inventory).sort().map(([name, value]) => (
-                  <div key={name} className="flex justify-between gap-3 text-xs py-0.5 border-b border-gray-50">
-                    <span className="text-gray-700">{name}</span>
-                    <span className="text-gray-400 font-mono text-right break-all">{compactValue(value)}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+          {Object.keys(detail.software_inventory ?? {}).length > 0 && (() => {
+            // Skjul nøgler der allerede vises i dedikerede sektioner
+            const skipKeys = new Set(['available_software_updates', '_os_updates_available'])
+            const invEntries = Object.entries(detail.software_inventory)
+              .filter(([k]) => !skipKeys.has(k))
+              .sort(([a], [b]) => a.localeCompare(b))
+            if (invEntries.length === 0) return null
+            return (
+              <details className="mt-3">
+                <summary className="text-xs text-sky-600 cursor-pointer hover:text-sky-700">
+                  Softwareinventar ({invEntries.length} nøgler)
+                </summary>
+                <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-100">
+                  {invEntries.map(([name, value]) => (
+                    <div key={name} className="flex justify-between gap-3 text-xs py-1 px-2 border-b border-gray-50 last:border-0">
+                      <span className="text-gray-600 font-medium shrink-0">{name}</span>
+                      <span className="text-gray-400 font-mono text-right break-all">{compactValue(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )
+          })()}
           {Array.isArray(detail.software_inventory?.available_software_updates) && (() => {
             const updates = detail.software_inventory.available_software_updates as Array<Record<string, unknown>>
             const securityUpdates = updates.filter(u => String(u.kind ?? '') === 'security')
@@ -751,48 +759,135 @@ export function CMDBDetailPage() {
               </div>
             </details>
           )}
-          {sbom && (
-            <details className="mt-3" open>
-              <summary className="text-xs text-sky-600 cursor-pointer hover:text-sky-700">
-                SBOM · {sbom.components?.length ?? 0} komponenter
-              </summary>
-              <div className="mt-2 rounded-lg border border-gray-100 overflow-hidden">
-                <div className="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 text-[11px] text-gray-500">
-                  <span className="font-mono truncate">{sbom.serialNumber || `${sbom.bomFormat || 'SBOM'} ${sbom.specVersion || ''}`}</span>
-                  <button onClick={downloadSbom} className="text-sky-600 hover:text-sky-700">Download JSON</button>
-                </div>
-                <div className="max-h-64 overflow-y-auto">
-                  {(sbom.components || []).slice(0, 150).map((component, idx) => (
-                    <div key={`${component.name}-${idx}`} className="grid grid-cols-12 gap-2 px-3 py-1.5 text-xs border-t border-gray-50">
-                      <div className="col-span-5 truncate text-gray-700">{component.name || 'ukendt'}</div>
-                      <div className="col-span-4 truncate font-mono text-gray-400">{component.version || '—'}</div>
-                      <div className="col-span-3 truncate text-right text-gray-400">{component.type || 'component'}</div>
+          {sbom && (() => {
+            // Byg opslag: pakkenavn → tilgængelig version (alle managere)
+            const availUpdates = Array.isArray(detail.software_inventory?.available_software_updates)
+              ? (detail.software_inventory.available_software_updates as Array<Record<string, unknown>>)
+              : []
+            const allUpdateMap: Record<string, { avail: string; kind: string }> = {}
+            availUpdates.forEach(u => {
+              allUpdateMap[String(u.name ?? '').toLowerCase()] = {
+                avail: String(u.available_version ?? ''),
+                kind: String(u.kind ?? ''),
+              }
+            })
+            const components = sbom.components || []
+            const updatableInSbom = components.filter(c => allUpdateMap[(c.name ?? '').toLowerCase()]).length
+            return (
+              <details className="mt-3" open>
+                <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
+                  <span className="text-sky-600">SBOM · {components.length} komponenter</span>
+                  {updatableInSbom > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-semibold">
+                      {updatableInSbom} har nyere version
+                    </span>
+                  )}
+                  <span className="ml-auto text-gray-400 text-[10px]">{sbom.serialNumber?.slice(0, 20) || `${sbom.bomFormat || 'SBOM'} ${sbom.specVersion || ''}`}</span>
+                </summary>
+                <div className="mt-2 rounded-lg border border-gray-100 overflow-hidden">
+                  <div className="flex items-center justify-end gap-3 px-3 py-1.5 bg-gray-50 text-[10px] text-gray-400 border-b border-gray-100">
+                    <button onClick={downloadSbom} className="text-sky-600 hover:text-sky-700">Download JSON</button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+                          <th className="text-left px-2 py-1">Komponent</th>
+                          <th className="text-right px-2 py-1">Version</th>
+                          <th className="text-left px-2 py-1">Tilgængelig</th>
+                          <th className="text-right px-2 py-1">Type</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {components.slice(0, 200).map((component, idx) => {
+                          const upd = allUpdateMap[(component.name ?? '').toLowerCase()]
+                          const isSecurity = upd?.kind === 'security'
+                          return (
+                            <tr key={`${component.name}-${idx}`} className={`border-t border-gray-50 ${isSecurity ? 'bg-red-50/30' : upd ? 'bg-amber-50/30' : ''}`}>
+                              <td className={`px-2 py-0.5 truncate max-w-[120px] ${upd ? 'font-medium text-gray-800' : 'text-gray-600'}`}>{component.name || 'ukendt'}</td>
+                              <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-400'}`}>{component.version || '—'}</td>
+                              <td className="px-2 py-0.5 font-mono">
+                                {upd
+                                  ? <span className={`font-semibold ${isSecurity ? 'text-red-600' : 'text-green-600'}`}>
+                                      {upd.avail}
+                                      {isSecurity && <span className="ml-1 text-[10px] bg-red-100 text-red-600 px-1 rounded">sec</span>}
+                                    </span>
+                                  : <span className="text-gray-300 text-[10px]">✓</span>
+                                }
+                              </td>
+                              <td className="px-2 py-0.5 text-right text-gray-400 text-[10px]">{component.type || 'lib'}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {components.length > 200 && (
+                    <div className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
+                      Viser de første 200 komponenter. Download JSON for fuld SBOM.
                     </div>
-                  ))}
+                  )}
                 </div>
-                {(sbom.components?.length || 0) > 150 && (
-                  <div className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
-                    Viser de første 150 komponenter. Download JSON for fuld SBOM.
-                  </div>
-                )}
-              </div>
-            </details>
-          )}
-          {Object.keys(detail.venv_packages ?? {}).length > 0 && (
-            <details className="mt-3">
-              <summary className="text-xs text-sky-600 cursor-pointer hover:text-sky-700">
-                {Object.keys(detail.venv_packages).length} venv-pakker
-              </summary>
-              <div className="mt-2 max-h-48 overflow-y-auto">
-                {Object.entries(detail.venv_packages).sort().map(([name, ver]) => (
-                  <div key={name} className="flex justify-between text-xs py-0.5 border-b border-gray-50">
-                    <span className="text-gray-700">{name}</span>
-                    <span className="text-gray-400 font-mono">{ver}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
+              </details>
+            )
+          })()}
+          {Object.keys(detail.venv_packages ?? {}).length > 0 && (() => {
+            // Pip-opdateringer fra inventory
+            const availUpdates = Array.isArray(detail.software_inventory?.available_software_updates)
+              ? (detail.software_inventory.available_software_updates as Array<Record<string, unknown>>)
+              : []
+            const pipUpdateMap: Record<string, { avail: string; kind: string }> = {}
+            availUpdates
+              .filter(u => String(u.manager ?? '').toLowerCase() === 'pip' || String(u.manager ?? '').toLowerCase() === 'python')
+              .forEach(u => {
+                pipUpdateMap[String(u.name ?? '').toLowerCase()] = {
+                  avail: String(u.available_version ?? ''),
+                  kind: String(u.kind ?? ''),
+                }
+              })
+            const venvEntries = Object.entries(detail.venv_packages).sort()
+            const updatableCount = venvEntries.filter(([name]) => pipUpdateMap[name.toLowerCase()]).length
+            return (
+              <details className="mt-3">
+                <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
+                  <span className="text-sky-600">{venvEntries.length} venv-pakker</span>
+                  {updatableCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-semibold">
+                      {updatableCount} kan opdateres
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-100">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+                        <th className="text-left px-2 py-1">Pakke</th>
+                        <th className="text-right px-2 py-1">Installeret</th>
+                        <th className="text-left px-2 py-1">Tilgængelig</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {venvEntries.map(([name, ver]) => {
+                        const upd = pipUpdateMap[name.toLowerCase()]
+                        return (
+                          <tr key={name} className={`border-t border-gray-50 ${upd ? 'bg-amber-50/30' : ''}`}>
+                            <td className={`px-2 py-0.5 ${upd ? 'font-medium text-gray-800' : 'text-gray-600'}`}>{name}</td>
+                            <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-400'}`}>{ver}</td>
+                            <td className="px-2 py-0.5 font-mono">
+                              {upd
+                                ? <span className="font-semibold text-green-600">{upd.avail}</span>
+                                : <span className="text-gray-300 text-[10px]">✓</span>
+                              }
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )
+          })()}
           {Object.keys(detail.os_packages ?? {}).length > 0 && (() => {
             // Byg opslag: pakkenavn → tilgængelig version (fra apt-inventory)
             const availUpdates = Array.isArray(detail.software_inventory?.available_software_updates)
