@@ -1,0 +1,71 @@
+####################################################################
+# TimeLapse Pro — Edge node image (arm64 / Ubuntu 22.04)
+# Build: docker buildx build --platform linux/arm64 -f Dockerfile.edge
+#        --build-arg HEADEND_URL=https://timelapse.froekjaer.dk/api
+#        -t timelapse-edge:latest .
+# Export: docker export $(docker create timelapse-edge:latest) | gzip > rootfs.tar.gz
+####################################################################
+FROM arm64v8/ubuntu:22.04
+
+ARG HEADEND_URL=https://timelapse.froekjaer.dk/api
+ARG TIMELAPSE_VERSION=unknown
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Europe/Copenhagen \
+    TIMELAPSE_HEADEND_URL=${HEADEND_URL}
+
+# ── Base packages ───────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv python3-cryptography \
+        ca-certificates curl wget gnupg2 \
+        openssh-server openssh-client \
+        iproute2 iputils-ping dnsutils \
+        systemd systemd-sysv \
+        rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Hardening ───────────────────────────────────────────────────
+# Lock root, disable password auth, disable direct root SSH
+RUN passwd -l root \
+    && sed -i \
+        -e 's/^#\?PermitRootLogin.*/PermitRootLogin no/' \
+        -e 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' \
+        -e 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' \
+        /etc/ssh/sshd_config \
+    && echo "AllowUsers timelapse" >> /etc/ssh/sshd_config
+
+# ── Timelapse service user ───────────────────────────────────────
+RUN useradd -m -s /bin/bash -G sudo timelapse \
+    && passwd -l timelapse
+
+# ── Agent install ────────────────────────────────────────────────
+RUN mkdir -p /opt/timelapse-node-agent /etc/timelapse /opt/timelapse/edge
+
+COPY edge/requirements.txt /opt/timelapse-node-agent/requirements.txt
+RUN python3 -m venv /opt/timelapse-node-agent/venv \
+    && /opt/timelapse-node-agent/venv/bin/pip install --quiet --no-cache-dir \
+        -r /opt/timelapse-node-agent/requirements.txt
+
+COPY edge/ /opt/timelapse-node-agent/
+RUN chown -R timelapse:timelapse /opt/timelapse-node-agent /etc/timelapse /opt/timelapse
+
+# ── Bootstrap template ───────────────────────────────────────────
+RUN cat > /opt/timelapse/edge/bootstrap.yaml.template << 'EOF'
+# TimeLapse Edge bootstrap — fill in token and device_id before first boot
+headend_url: "${HEADEND_URL}"
+device_id: "${DEVICE_ID}"
+bootstrap_token: "${BOOTSTRAP_TOKEN}"
+EOF
+
+# ── Systemd service ──────────────────────────────────────────────
+COPY edge/scripts/timelapse-edge.service /etc/systemd/system/timelapse-edge.service
+RUN systemctl enable timelapse-edge.service || true
+
+# ── Version stamp ────────────────────────────────────────────────
+RUN echo "${TIMELAPSE_VERSION}" > /opt/timelapse/edge/VERSION \
+    && echo "${HEADEND_URL}" > /opt/timelapse/edge/HEADEND_URL
+
+# SSH host keys are generated at first boot via cloud-init / first-run
+# Firewall rules applied by the agent on first contact with headend
+
+EXPOSE 22
+CMD ["/lib/systemd/systemd"]

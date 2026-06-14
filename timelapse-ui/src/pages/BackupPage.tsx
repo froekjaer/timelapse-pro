@@ -1,7 +1,7 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle, CheckCircle, Clock, Database, Download, FileCheck,
-  HardDrive, RefreshCw, Server, ShieldCheck, Wifi, Wrench, XCircle
+  HardDrive, Package, RefreshCw, Server, ShieldCheck, Wifi, Wrench, XCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -152,6 +152,12 @@ export function BackupPage() {
   const [provisioningResult, setProvisioningResult] = useState<EdgeProvisioningResult | null>(null)
   const [buildImageBusy, setBuildImageBusy] = useState(false)
   const [buildImageError, setBuildImageError] = useState<string | null>(null)
+  const [diskBuildStatus, setDiskBuildStatus] = useState<{
+    running: boolean; progress: string[]; error: string | null
+    result: { artifact_id: string; filename: string; sha256: string; signed_by: string; size_bytes: number; sbom_os_count: number; sbom_venv_count: number } | null
+    ready: boolean
+  } | null>(null)
+  const diskBuildPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [provisioningForm, setProvisioningForm] = useState<EdgeProvisioningForm>({
     device_id: '',
     customer_name: '',
@@ -258,6 +264,36 @@ export function BackupPage() {
     }
   }
 
+  function startDiskBuildPolling() {
+    if (diskBuildPollRef.current) return
+    diskBuildPollRef.current = setInterval(async () => {
+      const r = await api('/admin/edge-provisioning/disk-image-status')
+      if (!r.ok) return
+      const d = await r.json()
+      setDiskBuildStatus(d)
+      if (!d.running) {
+        clearInterval(diskBuildPollRef.current!)
+        diskBuildPollRef.current = null
+        if (d.ready) await loadAssessment()
+      }
+    }, 2000)
+  }
+
+  async function buildDiskImage() {
+    setDiskBuildStatus({ running: true, progress: ['Starter build...'], error: null, result: null, ready: false })
+    try {
+      const r = await api('/admin/edge-provisioning/build-disk-image', { method: 'POST' })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }))
+        setDiskBuildStatus(s => s ? { ...s, running: false, error: err?.detail ?? 'Fejl' } : s)
+        return
+      }
+      startDiskBuildPolling()
+    } catch (e: unknown) {
+      setDiskBuildStatus(s => s ? { ...s, running: false, error: e instanceof Error ? e.message : 'Netværksfejl' } : s)
+    }
+  }
+
   async function prepareEdgeProvisioning() {
     setProvisioningBusy(true)
     setProvisioningResult(null)
@@ -353,6 +389,8 @@ export function BackupPage() {
           buildImageBusy={buildImageBusy}
           buildImageError={buildImageError}
           buildImage={buildEdgeImage}
+          diskBuildStatus={diskBuildStatus}
+          buildDiskImage={buildDiskImage}
         />
       )}
       {tab === 'compliance' && <ComplianceTab assessment={assessment} />}
@@ -544,6 +582,14 @@ function Evidence({ label, ok, value }: { label: string; ok: boolean; value: str
   )
 }
 
+type DiskBuildStatus = {
+  running: boolean
+  progress: string[]
+  error: string | null
+  result: { artifact_id: string; filename: string; sha256: string; signed_by: string; size_bytes: number; sbom_os_count: number; sbom_venv_count: number } | null
+  ready: boolean
+} | null
+
 function IsoTab({
   assessment,
   form,
@@ -554,6 +600,8 @@ function IsoTab({
   buildImageBusy,
   buildImageError,
   buildImage,
+  diskBuildStatus,
+  buildDiskImage,
 }: {
   assessment: ResilienceAssessment | null
   form: EdgeProvisioningForm
@@ -564,6 +612,8 @@ function IsoTab({
   buildImageBusy: boolean
   buildImageError: string | null
   buildImage: () => void
+  diskBuildStatus: DiskBuildStatus
+  buildDiskImage: () => void
 }) {
   const blueprint = assessment?.iso_blueprint
   const canPrepare = form.device_id.trim().length >= 3 && !busy
@@ -595,9 +645,13 @@ function IsoTab({
         : 'GPG-signeret manifest med SBOM – ikke genereret endnu',
     },
     {
-      label: 'Fysisk arm64 disk image build',
-      done: false,
-      note: 'SD-kort/eMMC image build sker via ekstern arm64 CI pipeline (næste trin)',
+      label: 'Fysisk arm64 disk image (rootfs)',
+      done: diskBuildStatus?.ready ?? false,
+      note: diskBuildStatus?.ready && diskBuildStatus.result
+        ? `${diskBuildStatus.result.filename} · ${(diskBuildStatus.result.size_bytes / 1024 / 1024).toFixed(0)} MB · ${diskBuildStatus.result.sbom_os_count} OS-pakker`
+        : diskBuildStatus?.running
+          ? 'Bygger via Docker buildx arm64…'
+          : 'ARM64 rootfs tarball (Docker buildx) — ikke bygget endnu',
     },
   ]
 
@@ -688,6 +742,74 @@ function IsoTab({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
             <Checklist title="Hardening krav" items={blueprint?.hardening ?? []} />
             <Checklist title="Build artifacts" items={blueprint?.required_outputs ?? []} />
+          </div>
+
+          {/* Disk image build */}
+          <div className="border-t border-gray-100 pt-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Package className="w-4 h-4 text-sky-500" />
+              <span className="text-sm font-semibold text-gray-800">ARM64 disk image (rootfs)</span>
+            </div>
+            <p className="text-xs text-gray-400 mb-3">
+              Bygger et komplet arm64 Ubuntu rootfs via Docker buildx med timelapse-agent,
+              hardening og call-home config. Outputtet er en <code>.tar.gz</code> der kan
+              flashes på OrangePi SD-kort/eMMC.
+            </p>
+            <button
+              onClick={buildDiskImage}
+              disabled={diskBuildStatus?.running}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800 disabled:opacity-50"
+            >
+              {diskBuildStatus?.running
+                ? <RefreshCw className="w-4 h-4 animate-spin" />
+                : <Package className="w-4 h-4" />}
+              {diskBuildStatus?.running ? 'Bygger (Docker buildx arm64)…' : 'Byg ARM64 disk image'}
+            </button>
+
+            {/* Progress log */}
+            {diskBuildStatus && diskBuildStatus.progress.length > 0 && (
+              <div className="mt-3 rounded-lg bg-gray-950 p-3 max-h-48 overflow-y-auto text-xs font-mono">
+                {diskBuildStatus.progress.map((line, i) => (
+                  <div key={i} className={
+                    line.startsWith('✅') ? 'text-emerald-400' :
+                    line.startsWith('❌') ? 'text-red-400' :
+                    line.startsWith('⚠️') ? 'text-amber-400' :
+                    line.startsWith('🎉') ? 'text-sky-400' :
+                    'text-gray-300'
+                  }>{line}</div>
+                ))}
+              </div>
+            )}
+
+            {diskBuildStatus?.error && (
+              <div className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {diskBuildStatus.error}
+              </div>
+            )}
+
+            {diskBuildStatus?.ready && diskBuildStatus.result && (
+              <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs space-y-1.5">
+                <div className="flex items-center gap-1.5 font-medium text-emerald-800">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  {diskBuildStatus.result.artifact_id}
+                </div>
+                <div className="text-emerald-700">
+                  {diskBuildStatus.result.filename} · {(diskBuildStatus.result.size_bytes / 1024 / 1024).toFixed(0)} MB
+                </div>
+                <div className="text-emerald-700">
+                  SBOM: {diskBuildStatus.result.sbom_os_count} OS-pakker + {diskBuildStatus.result.sbom_venv_count} Python-pakker
+                </div>
+                <div className="font-mono text-emerald-600 truncate">sha256: {diskBuildStatus.result.sha256}</div>
+                <div className="text-emerald-600">Signeret af: {diskBuildStatus.result.signed_by}</div>
+                <a
+                  href={`${getApiUrl()}/api/admin/edge-provisioning/disk-image-download/${diskBuildStatus.result.artifact_id}`}
+                  className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 text-xs"
+                >
+                  <Download className="w-3 h-3" />
+                  Download rootfs.tar.gz
+                </a>
+              </div>
+            )}
           </div>
         </section>
       </div>

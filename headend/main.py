@@ -10196,6 +10196,138 @@ def prepare_edge_provisioning(
     }
 
 
+# ── Edge disk image build pipeline ────────────────────────────────────────────
+
+_edge_disk_build_status: dict = {
+    "running": False, "progress": [], "error": None, "result": None,
+}
+_edge_disk_build_lock = _threading.Lock()
+
+
+def _run_edge_disk_image_build(headend_url: str, gpg_key_id: str | None, output_dir: str, db_factory) -> None:
+    """Background thread: bygger arm64 disk image og registrerer artifact."""
+    global _edge_disk_build_status
+    try:
+        from headend.tools.build_edge_disk_image import build_edge_image
+    except ImportError:
+        import sys
+        sys.path.insert(0, str(_repo_root() / "headend"))
+        from tools.build_edge_disk_image import build_edge_image  # type: ignore
+
+    def progress(msg: str) -> None:
+        _edge_disk_build_status["progress"].append(msg)
+        log.info("[edge-image-build] %s", msg)
+
+    try:
+        result = build_edge_image(
+            headend_url=headend_url,
+            gpg_key_id=gpg_key_id,
+            progress_cb=progress,
+            repo_root=str(_repo_root()),
+            output_dir=output_dir,
+        )
+
+        # Register as UpdateArtifact
+        db = db_factory()
+        try:
+            created_at = now_utc()
+            with open(result["manifest_path"], encoding="utf-8") as f:
+                manifest_json = f.read()
+            artifact = UpdateArtifact(
+                artifact_id=result["artifact_id"],
+                artifact_type="edge_disk_image",
+                version=result.get("created_at", created_at.isoformat()),
+                source_commit=_git_text(["rev-parse", "HEAD"]) or "unknown",
+                source_ref=_git_text(["rev-parse", "--abbrev-ref", "HEAD"]) or "main",
+                filename=result["filename"],
+                storage_path=result["output_path"],
+                size_bytes=result["size_bytes"],
+                sha256=result["sha256"],
+                manifest_json=manifest_json,
+                sbom_ref=f"sbom:os={result['sbom_os_count']},venv={result['sbom_venv_count']}",
+                signature=result["signature"],
+                signed_by=result["signed_by"],
+                signed_at=created_at,
+                created_at=created_at,
+            )
+            db.add(artifact)
+            db.commit()
+            result["db_artifact_id"] = artifact.id
+            progress(f"✅ Artifact registreret i database: {result['artifact_id']}")
+        finally:
+            db.close()
+
+        _edge_disk_build_status["result"] = result
+        _edge_disk_build_status["running"] = False
+    except Exception as exc:
+        _edge_disk_build_status["error"] = str(exc)
+        _edge_disk_build_status["running"] = False
+        _edge_disk_build_status["progress"].append(f"❌ Build fejlede: {exc}")
+        log.error("Edge disk image build fejlede: %s", exc, exc_info=True)
+    finally:
+        _edge_disk_build_lock.release()
+
+
+@app.post("/api/admin/edge-provisioning/build-disk-image")
+def trigger_edge_disk_image_build(
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    Start baggrunds-build af ARM64 edge rootfs image via Docker buildx.
+    Poll GET /api/admin/edge-provisioning/disk-image-status for fremgang.
+    """
+    if not _edge_disk_build_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Et edge disk image build kører allerede")
+
+    global _edge_disk_build_status
+    _edge_disk_build_status = {"running": True, "progress": [], "error": None, "result": None}
+
+    headend_url = os.getenv("TIMELAPSE_HEADEND_URL", "https://timelapse.froekjaer.dk/api")
+    gpg_key_id = os.getenv("CHANGE_TICKET_GPG_KEY") or os.getenv("TIMELAPSE_GPG_KEY")
+    output_dir = os.path.join(tempfile.gettempdir(), "timelapse-edge-images")
+    os.makedirs(output_dir, exist_ok=True)
+
+    from database import SessionLocal as _SessionLocal
+    t = _threading.Thread(
+        target=_run_edge_disk_image_build,
+        args=(headend_url, gpg_key_id, output_dir, _SessionLocal),
+        daemon=True,
+        name="edge-disk-image-build",
+    )
+    t.start()
+    return {"status": "started", "message": "Build startet — poll /api/admin/edge-provisioning/disk-image-status"}
+
+
+@app.get("/api/admin/edge-provisioning/disk-image-status")
+def edge_disk_image_status(_user=require_role("super_admin", "admin")):
+    """Poll build-fremgang for edge disk image."""
+    s = _edge_disk_build_status
+    return {
+        "running": s["running"],
+        "progress": s["progress"],
+        "error": s["error"],
+        "result": s["result"],
+        "ready": not s["running"] and s["result"] is not None,
+    }
+
+
+@app.get("/api/admin/edge-provisioning/disk-image-download/{artifact_id}")
+def download_edge_disk_image(artifact_id: str, _user=require_role("super_admin", "admin"), db: Session = Depends(get_db)):
+    """Download færdigt edge disk image (rootfs tarball)."""
+    from fastapi.responses import FileResponse
+    artifact = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id, artifact_type="edge_disk_image").first()
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact ikke fundet")
+    if not artifact.storage_path or not os.path.exists(artifact.storage_path):
+        raise HTTPException(status_code=410, detail="Image-fil ikke tilgængelig (måske slettet fra disk)")
+    return FileResponse(
+        artifact.storage_path,
+        media_type="application/gzip",
+        filename=artifact.filename or f"{artifact_id}.tar.gz",
+    )
+
+
 @app.post("/api/admin/edge-provisioning/build-image")
 def build_edge_bootstrap_image(
     current_user=require_role("super_admin", "admin"),
