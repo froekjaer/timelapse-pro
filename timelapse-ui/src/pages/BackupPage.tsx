@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle, CheckCircle, Clock, Database, Download, FileCheck,
   HardDrive, RefreshCw, Server, ShieldCheck, Wifi, Wrench, XCircle
@@ -53,10 +53,22 @@ interface ResilienceAssessment {
     has_software_inventory: boolean
     inventory_reported_at: string | null
     device_exists: boolean
+    backup_requested?: boolean
+    backup_requested_at?: string | null
+    backup_complete?: {
+      filename?: string
+      size_kb?: number
+      path?: string
+      sha256?: string
+      transport?: string
+      at?: string
+    } | null
   }>
   iso_blueprint: {
     status: string
     call_home: string
+    ready_to_accept_new_edge?: boolean
+    active_bootstrap_tokens?: number
     hardening: string[]
     required_outputs: string[]
   }
@@ -70,6 +82,26 @@ interface ResilienceAssessment {
 }
 
 type Tab = 'headend' | 'edge' | 'iso' | 'compliance'
+
+interface EdgeProvisioningForm {
+  device_id: string
+  customer_name: string
+  site_name: string
+  camera_name: string
+  note: string
+  expires_hours: number
+  headend_url: string
+}
+
+interface EdgeProvisioningResult {
+  status: string
+  device_id: string
+  headend_url: string
+  token: string
+  expires_at: string
+  bootstrap_yaml: string
+  next_steps: string[]
+}
 
 function fmt(iso: string | null) {
   if (!iso) return '-'
@@ -106,6 +138,18 @@ export function BackupPage() {
   const [autoInterval, setAutoInterval] = useState('manual')
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [triggering, setTriggering] = useState(false)
+  const [edgeBusy, setEdgeBusy] = useState<string | null>(null)
+  const [provisioningBusy, setProvisioningBusy] = useState(false)
+  const [provisioningResult, setProvisioningResult] = useState<EdgeProvisioningResult | null>(null)
+  const [provisioningForm, setProvisioningForm] = useState<EdgeProvisioningForm>({
+    device_id: '',
+    customer_name: '',
+    site_name: '',
+    camera_name: 'Kamera 1',
+    note: '',
+    expires_hours: 48,
+    headend_url: '',
+  })
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -179,6 +223,40 @@ export function BackupPage() {
     a.click()
   }
 
+  async function triggerEdgeBackup(deviceId: string) {
+    setEdgeBusy(deviceId)
+    try {
+      const r = await api(`/admin/backup/trigger-edge/${encodeURIComponent(deviceId)}`, { method: 'POST' })
+      if (r.ok) await loadAssessment()
+    } finally {
+      setEdgeBusy(null)
+    }
+  }
+
+  async function prepareEdgeProvisioning() {
+    setProvisioningBusy(true)
+    setProvisioningResult(null)
+    try {
+      const r = await api('/admin/edge-provisioning/prepare', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...provisioningForm,
+          device_id: provisioningForm.device_id.trim(),
+          customer_name: provisioningForm.customer_name.trim() || undefined,
+          site_name: provisioningForm.site_name.trim() || undefined,
+          camera_name: provisioningForm.camera_name.trim() || undefined,
+          note: provisioningForm.note.trim() || undefined,
+          headend_url: provisioningForm.headend_url.trim() || undefined,
+        }),
+      })
+      if (!r.ok) throw new Error(await r.text())
+      setProvisioningResult(await r.json())
+      await loadAssessment()
+    } finally {
+      setProvisioningBusy(false)
+    }
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="flex items-center gap-3 mb-6">
@@ -232,8 +310,23 @@ export function BackupPage() {
           downloadBackup={downloadBackup}
         />
       )}
-      {tab === 'edge' && <EdgeRestoreTab assessment={assessment} />}
-      {tab === 'iso' && <IsoTab assessment={assessment} />}
+      {tab === 'edge' && (
+        <EdgeRestoreTab
+          assessment={assessment}
+          busyDevice={edgeBusy}
+          triggerEdgeBackup={triggerEdgeBackup}
+        />
+      )}
+      {tab === 'iso' && (
+        <IsoTab
+          assessment={assessment}
+          form={provisioningForm}
+          setForm={setProvisioningForm}
+          result={provisioningResult}
+          busy={provisioningBusy}
+          prepareEdge={prepareEdgeProvisioning}
+        />
+      )}
       {tab === 'compliance' && <ComplianceTab assessment={assessment} />}
     </div>
   )
@@ -327,14 +420,28 @@ function HeadendDrTab(props: {
   )
 }
 
-function EdgeRestoreTab({ assessment }: { assessment: ResilienceAssessment | null }) {
+function EdgeRestoreTab({
+  assessment,
+  busyDevice,
+  triggerEdgeBackup,
+}: {
+  assessment: ResilienceAssessment | null
+  busyDevice: string | null
+  triggerEdgeBackup: (deviceId: string) => void
+}) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div className="px-5 py-4 border-b border-gray-100">
-        <h2 className="text-sm font-semibold text-gray-800">Edge restore readiness</h2>
-        <p className="text-xs text-gray-400 mt-0.5">Lokal restore afhænger af CMDB installed-state og Headend-genereret config.</p>
+        <h2 className="text-sm font-semibold text-gray-800">Edge backup og restore readiness</h2>
+        <p className="text-xs text-gray-400 mt-0.5">Headend kan anmode Edge om restore-backup; Edge kalder hjem og uploader arkivet.</p>
       </div>
       <div className="divide-y divide-gray-100">
+        {(assessment?.edge_restore ?? []).length === 0 && (
+          <div className="px-5 py-10 text-sm text-gray-500">
+            Ingen Edge-enheder med restore-data endnu. Klargør en ny Edge under <span className="font-medium text-gray-700">Edge ISO</span>,
+            og vent på første bootstrap/inventory heartbeat før baseline-backup kan anmodes.
+          </div>
+        )}
         {(assessment?.edge_restore ?? []).map(edge => (
           <div key={edge.device_id} className="px-5 py-4">
             <div className="flex items-start justify-between gap-4">
@@ -344,9 +451,28 @@ function EdgeRestoreTab({ assessment }: { assessment: ResilienceAssessment | nul
                   {[edge.hardware_model, edge.os_name, edge.app_version].filter(Boolean).join(' / ')}
                 </div>
               </div>
-              <span className={`text-xs px-2 py-0.5 rounded border ${edge.device_exists ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                {edge.device_exists ? 'Device linked' : 'CMDB only'}
-              </span>
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {edge.backup_requested && (
+                  <span className="text-xs px-2 py-0.5 rounded border bg-sky-50 text-sky-700 border-sky-200">
+                    Backup anmodet
+                  </span>
+                )}
+                {edge.backup_complete && (
+                  <span className="text-xs px-2 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-200">
+                    Backup OK
+                  </span>
+                )}
+                <span className={`text-xs px-2 py-0.5 rounded border ${edge.device_exists ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                  {edge.device_exists ? 'Device linked' : 'CMDB only'}
+                </span>
+                {edge.device_exists && (
+                  <button onClick={() => triggerEdgeBackup(edge.device_id)} disabled={busyDevice === edge.device_id || edge.backup_requested}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-900 text-white text-xs rounded-lg hover:bg-gray-800 disabled:opacity-50">
+                    {busyDevice === edge.device_id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <HardDrive className="w-3.5 h-3.5" />}
+                    {edge.backup_requested ? 'Afventer Edge' : 'Anmod Edge backup'}
+                  </button>
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3 text-xs">
               <Evidence label="Firmware" ok={!!edge.firmware_version} value={edge.firmware_version || '-'} />
@@ -355,6 +481,22 @@ function EdgeRestoreTab({ assessment }: { assessment: ResilienceAssessment | nul
               <Evidence label="Software" ok={edge.has_software_inventory} value={edge.has_software_inventory ? 'reported' : '-'} />
               <Evidence label="Inventory" ok={!!edge.inventory_reported_at} value={fmt(edge.inventory_reported_at)} />
             </div>
+            {(edge.backup_requested || edge.backup_complete) && (
+              <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600">
+                {edge.backup_requested && (
+                  <div><span className="text-gray-400">Anmodet: </span>{fmt(edge.backup_requested_at ?? null)}</div>
+                )}
+                {edge.backup_complete && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-1">
+                    <div><span className="text-gray-400">Seneste backup: </span>{fmt(edge.backup_complete.at ?? null)}</div>
+                    <div><span className="text-gray-400">Fil: </span>{edge.backup_complete.filename || '-'}</div>
+                    <div><span className="text-gray-400">Størrelse: </span>{edge.backup_complete.size_kb ?? '-'} KB</div>
+                    {edge.backup_complete.path && <div className="md:col-span-3 truncate"><span className="text-gray-400">Sti: </span>{edge.backup_complete.path}</div>}
+                    {edge.backup_complete.sha256 && <div className="md:col-span-3 font-mono truncate"><span className="text-gray-400">SHA-256: </span>{edge.backup_complete.sha256}</div>}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -374,26 +516,192 @@ function Evidence({ label, ok, value }: { label: string; ok: boolean; value: str
   )
 }
 
-function IsoTab({ assessment }: { assessment: ResilienceAssessment | null }) {
+function IsoTab({
+  assessment,
+  form,
+  setForm,
+  result,
+  busy,
+  prepareEdge,
+}: {
+  assessment: ResilienceAssessment | null
+  form: EdgeProvisioningForm
+  setForm: Dispatch<SetStateAction<EdgeProvisioningForm>>
+  result: EdgeProvisioningResult | null
+  busy: boolean
+  prepareEdge: () => void
+}) {
   const blueprint = assessment?.iso_blueprint
+  const canPrepare = form.device_id.trim().length >= 3 && !busy
+  const edges = assessment?.edge_restore ?? []
+
+  const pipelineSteps: { label: string; done: boolean; note: string }[] = [
+    {
+      label: 'Bootstrap provisioning',
+      done: true,
+      note: 'API /admin/edge-provisioning/prepare og call-home /api/bootstrap',
+    },
+    {
+      label: 'Aktive bootstrap tokens',
+      done: (blueprint?.active_bootstrap_tokens ?? 0) > 0,
+      note: `${blueprint?.active_bootstrap_tokens ?? 0} aktive token(s)`,
+    },
+    {
+      label: 'Signed update artifact catalog',
+      done: (assessment?.summary.update_artifacts ?? 0) > 0,
+      note: `${assessment?.summary.update_artifacts ?? 0} artifact(s) registreret`,
+    },
+    {
+      label: 'ISO image build & sign pipeline',
+      done: false,
+      note: 'GPG-signeret image med hardening-profil – pending',
+    },
+    {
+      label: 'Signed ISO manifest og SBOM',
+      done: false,
+      note: 'SHA-256 + signeret manifest i artifact catalog – pending',
+    },
+  ]
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-      <section className="bg-white border border-gray-200 rounded-xl p-6">
-        <h2 className="text-sm font-semibold text-gray-800 mb-1">Edge ISO / bare-metal image</h2>
-        <p className="text-xs text-gray-400 mb-4">Planlagt pipeline for signerede edge images med call-home bootstrap.</p>
-        <div className="text-xs text-gray-500 mb-4">Call-home: <span className="font-mono text-gray-700">{blueprint?.call_home}</span></div>
-        <button disabled className="px-4 py-2 bg-gray-200 text-gray-500 text-sm rounded-lg cursor-not-allowed">
-          Generer ISO kommer i næste trin
-        </button>
-      </section>
-      <section className="bg-white border border-gray-200 rounded-xl p-6">
-        <h2 className="text-sm font-semibold text-gray-800 mb-3">Hardening og outputkrav</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <Checklist title="Hardening" items={blueprint?.hardening ?? []} />
-          <Checklist title="Build artifacts" items={blueprint?.required_outputs ?? []} />
-        </div>
-      </section>
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Provisioning form */}
+        <section className="bg-white border border-gray-200 rounded-xl p-6">
+          <h2 className="text-sm font-semibold text-gray-800 mb-1">Klargør ny Edge</h2>
+          <p className="text-xs text-gray-400 mb-4">Opret CMDB-kladde og engangs-bootstrap, så en ny Edge kan kalde hjem til Headend.</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Device ID" value={form.device_id} onChange={v => setForm(s => ({ ...s, device_id: v }))} placeholder="timelapse0102" mono />
+            <Field label="Token levetid timer" value={String(form.expires_hours)} onChange={v => setForm(s => ({ ...s, expires_hours: Number(v) || 48 }))} type="number" />
+            <Field label="Kunde" value={form.customer_name} onChange={v => setForm(s => ({ ...s, customer_name: v }))} placeholder="Kundenavn" />
+            <Field label="Site" value={form.site_name} onChange={v => setForm(s => ({ ...s, site_name: v }))} placeholder="Byggeplads / lokation" />
+            <Field label="Kamera" value={form.camera_name} onChange={v => setForm(s => ({ ...s, camera_name: v }))} placeholder="Kamera 1" />
+            <Field label="Headend API URL" value={form.headend_url} onChange={v => setForm(s => ({ ...s, headend_url: v }))} placeholder="auto: https://timelapse.froekjaer.dk/api" mono />
+            <div className="md:col-span-2">
+              <Field label="Note" value={form.note} onChange={v => setForm(s => ({ ...s, note: v }))} placeholder="Installationsnote" />
+            </div>
+          </div>
+          <button onClick={prepareEdge} disabled={!canPrepare}
+            className="mt-4 flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800 disabled:opacity-50">
+            {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
+            {busy ? 'Klargør...' : 'Klargør Edge'}
+          </button>
+
+          {result && (
+            <div className="mt-5 rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-emerald-800">
+                <CheckCircle className="w-4 h-4" />
+                {result.device_id} er klar til bootstrap indtil {fmt(result.expires_at)}
+              </div>
+              <pre className="mt-3 max-h-72 overflow-auto rounded-lg bg-white border border-emerald-100 p-3 text-xs text-gray-800">{result.bootstrap_yaml}</pre>
+              <div className="mt-3 space-y-1 text-xs text-emerald-800">
+                {result.next_steps.map(step => <div key={step}>• {step}</div>)}
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Pipeline status + hardening */}
+        <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-800 mb-1">ISO pipeline status</h2>
+            <p className="text-xs text-gray-400 mb-3">Call-home: <span className="font-mono">{blueprint?.call_home ?? '-'}</span></p>
+            <div className="space-y-2">
+              {pipelineSteps.map(step => (
+                <div key={step.label} className="flex items-start gap-2.5 text-xs">
+                  {step.done
+                    ? <CheckCircle className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
+                    : <AlertCircle className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" />}
+                  <div>
+                    <div className={`font-medium ${step.done ? 'text-gray-800' : 'text-amber-700'}`}>{step.label}</div>
+                    <div className="text-gray-400 mt-0.5">{step.note}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <Checklist title="Hardening krav" items={blueprint?.hardening ?? []} />
+            <Checklist title="Build artifacts" items={blueprint?.required_outputs ?? []} />
+          </div>
+        </section>
+      </div>
+
+      {/* Deployed edges */}
+      {edges.length > 0 && (
+        <section className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100">
+            <h2 className="text-sm font-semibold text-gray-800">Aktive edges ({edges.length})</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Nuværende software-versioner på registrerede edges — bruges til at identificere hvad en ny ISO skal matche.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 text-gray-500">
+                <tr>
+                  <th className="px-4 py-2.5 text-left font-medium">Device ID</th>
+                  <th className="px-4 py-2.5 text-left font-medium">Hardware</th>
+                  <th className="px-4 py-2.5 text-left font-medium">OS</th>
+                  <th className="px-4 py-2.5 text-left font-medium">App version</th>
+                  <th className="px-4 py-2.5 text-left font-medium">Kernel</th>
+                  <th className="px-4 py-2.5 text-left font-medium">Inventory</th>
+                  <th className="px-4 py-2.5 text-left font-medium">Backup</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {edges.map(edge => (
+                  <tr key={edge.device_id} className="hover:bg-gray-50">
+                    <td className="px-4 py-2.5 font-mono text-gray-800">{edge.device_id}</td>
+                    <td className="px-4 py-2.5 text-gray-600">{edge.hardware_model ?? '-'}</td>
+                    <td className="px-4 py-2.5 text-gray-600">{edge.os_name ?? '-'}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-700">{edge.app_version ?? '-'}</td>
+                    <td className="px-4 py-2.5 font-mono text-gray-500 truncate max-w-[160px]">{edge.kernel_version ?? '-'}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex gap-1">
+                        {edge.has_os_packages && <span className="px-1.5 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 rounded">OS</span>}
+                        {edge.has_venv_packages && <span className="px-1.5 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 rounded">venv</span>}
+                        {edge.has_software_inventory && <span className="px-1.5 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 rounded">SW</span>}
+                        {!edge.has_os_packages && !edge.has_venv_packages && !edge.has_software_inventory && <span className="text-gray-400">-</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      {edge.backup_complete
+                        ? <span className="flex items-center gap-1 text-emerald-600"><CheckCircle className="w-3 h-3" />{fmt(edge.backup_complete.at ?? null)}</span>
+                        : edge.backup_requested
+                          ? <span className="flex items-center gap-1 text-amber-600"><Clock className="w-3 h-3" />Anmodet</span>
+                          : <span className="text-gray-400">-</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </div>
+  )
+}
+
+function Field({
+  label, value, onChange, placeholder, type = 'text', mono = false,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  type?: string
+  mono?: boolean
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs text-gray-400 block mb-1">{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`w-full border border-gray-200 rounded-lg px-3 py-2 text-sm ${mono ? 'font-mono' : ''}`}
+      />
+    </label>
   )
 }
 

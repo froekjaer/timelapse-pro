@@ -3120,6 +3120,22 @@ UPDATE_TYPE_TO_CATEGORY = {
     for update_type in category["types"]
 }
 
+# Device IDs that are placeholders / test fixtures and must be excluded from GRC, compliance and resilience
+_PLACEHOLDER_DEVICE_IDS: frozenset[str] = frozenset({
+    "TL-MACMINI-HEADEND-TEST-1",
+})
+
+
+def _is_placeholder_device(device_id: str) -> bool:
+    """Return True if device_id is a known placeholder that should be excluded from risk/compliance views."""
+    did = device_id.lower()
+    if device_id in _PLACEHOLDER_DEVICE_IDS:
+        return True
+    # Legacy test naming conventions
+    if did == "test" or did == "test-device" or did.startswith("test-"):
+        return True
+    return False
+
 UPDATE_TYPE_POLICY_KEY = {
     "os_security": "os_security",
     "os_updates": "os_updates",
@@ -3965,7 +3981,7 @@ def grc_dashboard(
         "rolled_back_updates": 0,
     }
     for inv in inventories:
-        if inv.device_id.lower() == "test" and not inv.hostname:
+        if _is_placeholder_device(inv.device_id):
             continue
         device = device_map.get(inv.device_id)
         device_updates = [
@@ -4006,7 +4022,7 @@ def grc_dashboard(
         active_scores = [
             item["risk"]["score"]
             for item in risk_items
-            if item["status"] in {"pending", "approved", "blocked", "rollback_requested", "rolled_back"}
+            if item["status"] in {"pending", "approved", "blocked", "rollback_requested"}
         ]
         max_score = max(active_scores) if active_scores else 0
         totals["devices"] += 1
@@ -9862,7 +9878,7 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
     for inv in inventory:
         device = device_by_id.get(inv.device_id)
         device_status = (getattr(device, "status", "") or "").lower() if device else ""
-        is_test = inv.device_id.lower().startswith("test") or inv.device_id.lower() == "test-device"
+        is_test = _is_placeholder_device(inv.device_id)
         is_import = device_status == "import" or inv.device_id.startswith("TL-IMPORT-")
         if is_test or is_import:
             continue
@@ -9871,7 +9887,7 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
     restore_devices_without_inventory = []
     for device in devices:
         device_status = (device.status or "").lower()
-        is_test = device.device_id.lower().startswith("test") or device.device_id.lower() == "test-device"
+        is_test = _is_placeholder_device(device.device_id)
         is_import = device_status == "import" or device.device_id.startswith("TL-IMPORT-")
         if is_test or is_import or device.device_id in inventory_device_ids:
             continue
@@ -9952,9 +9968,9 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
         _resilience_control(
             "warning",
             "Bare-metal edge ISO pipeline",
-            f"provisioning ready; active_bootstrap_tokens={active_tokens}; image build/sign/verify pipeline not implemented",
+            f"bootstrap provisioning ready; active_bootstrap_tokens={active_tokens}; ISO image build/sign/verify pipeline pending",
             ["CRA", "IEC62443", "NIS2"],
-            "Build ISO/image generator with hardening profile, call-home bootstrap and signed manifest.",
+            "Implement ISO image build pipeline with hardening profile, GPG-signed manifest and offline artifact delivery.",
         ),
         _resilience_control(
             "warning",
