@@ -355,11 +355,14 @@ dpkg -i packages/*.deb || apt-get --no-download -f install -y
 """
 
 
-def verify_script(packages: list[dict[str, Any]]) -> str:
+def verify_script(package_file_entries: list[dict[str, Any]]) -> str:
+    """Generate verify-installed.sh using the ACTUAL downloaded .deb versions,
+    not the originally-requested versions (which may differ if the repo served
+    a newer version than what was recorded in the inventory)."""
     lines = ["#!/bin/bash", "set -euo pipefail"]
-    for package in packages:
-        name = _shell_quote(package["name"])
-        version = _shell_quote(package["available_version"])
+    for entry in package_file_entries:
+        name = _shell_quote(entry["name"])
+        version = _shell_quote(entry["version"])
         lines.extend([
             f"actual=$(dpkg-query -W -f='${{Version}}' {name})",
             f'test "$actual" = {version}',
@@ -496,7 +499,7 @@ def build_bundle(
     install_sh.chmod(0o755)
 
     verify_sh = output / "verify-installed.sh"
-    verify_sh.write_text(verify_script(packages))
+    verify_sh.write_text(verify_script(package_file_entries))
     verify_sh.chmod(0o755)
 
     write_json(output / "bundle-summary.json", bundle_summary(output))
@@ -653,7 +656,7 @@ def main() -> int:
     install_sh.chmod(0o755)
 
     verify_sh = output / "verify-installed.sh"
-    verify_sh.write_text(verify_script(packages))
+    verify_sh.write_text(verify_script(package_file_entries))
     verify_sh.chmod(0o755)
 
     write_json(output / "bundle-summary.json", bundle_summary(output))
