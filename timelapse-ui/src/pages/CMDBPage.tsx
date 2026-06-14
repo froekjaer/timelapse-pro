@@ -26,6 +26,7 @@ interface CMDBEntry {
   soc_model: string | null
   os_name: string | null
   app_version: string | null
+  package_manager: string | null
   hostname: string | null
   location_id: string | null
   inventory_reported_at: string | null
@@ -39,6 +40,7 @@ interface CMDBEntry {
   ip_address: string | null
   last_seen: string | null
   break_glass_count: number
+  update_summary?: UpdateSummary
 }
 
 interface CMDBDetail extends CMDBEntry {
@@ -57,7 +59,30 @@ interface CMDBDetail extends CMDBEntry {
   primary_interface: string | null
   wifi_capable: boolean
   wifi_ssid: string | null
+  os_packages: Record<string, string>
   venv_packages: Record<string, string>
+  software_inventory: Record<string, unknown>
+}
+
+interface UpdateSummaryItem {
+  id: number
+  update_type: string
+  status: string
+  severity: string | null
+  environment: string | null
+  component: string | null
+  current_version: string | null
+  latest_available_version: string | null
+  version_gap_label: string | null
+  package_count: number | null
+}
+
+interface UpdateSummary {
+  active_count: number
+  security_count: number
+  blocked_count: number
+  approved_count: number
+  latest: UpdateSummaryItem[]
 }
 
 interface BreakGlassAccount {
@@ -71,6 +96,26 @@ interface BreakGlassAccount {
   rotated_at: string | null
   expires_at: string | null
   created_at: string | null
+}
+
+interface SbomDocument {
+  bomFormat?: string
+  specVersion?: string
+  serialNumber?: string
+  metadata?: {
+    timestamp?: string
+    component?: {
+      name?: string
+      version?: string
+      type?: string
+    }
+  }
+  components?: Array<{
+    type?: string
+    name?: string
+    version?: string
+    purl?: string
+  }>
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -138,6 +183,25 @@ function StorageBar({ pct }: { pct: number | null }) {
       <span className="text-xs text-gray-500 w-10 text-right">{pct.toFixed(0)}%</span>
     </div>
   )
+}
+
+function statusBadgeClass(status: string) {
+  const map: Record<string, string> = {
+    pending: 'bg-amber-50 text-amber-700 border-amber-200',
+    approved: 'bg-sky-50 text-sky-700 border-sky-200',
+    blocked: 'bg-amber-50 text-amber-700 border-amber-200',
+    deployed: 'bg-green-50 text-green-700 border-green-200',
+    rolled_back: 'bg-purple-50 text-purple-700 border-purple-200',
+  }
+  return map[status] ?? 'bg-gray-50 text-gray-500 border-gray-200'
+}
+
+function compactValue(value: unknown) {
+  if (value == null) return '—'
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return `${value.length} elementer`
+  if (typeof value === 'object') return `${Object.keys(value as Record<string, unknown>).length} elementer`
+  return String(value)
 }
 
 // ── CMDB List (oversigt) ──────────────────────────────────────────────────
@@ -276,6 +340,7 @@ export function CMDBPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Hardware</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Miljø</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">OS / App</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Opdateringer</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Sidst set</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Break-glass</th>
                 <th className="px-4 py-3" />
@@ -312,6 +377,41 @@ export function CMDBPage() {
                   <td className="px-4 py-3">
                     <div className="text-gray-700 text-xs">{e.os_name ?? '—'}</div>
                     <div className="text-gray-400 text-xs font-mono">{e.app_version ?? ''}</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {(e.update_summary?.active_count ?? 0) > 0 ? (
+                      <div className="space-y-1">
+                        <div className="flex gap-1 flex-wrap">
+                          {(e.update_summary?.security_count ?? 0) > 0 ? (
+                            <span className="text-[11px] px-1.5 py-0.5 rounded border bg-red-50 text-red-700 border-red-200 font-semibold flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />
+                              {e.update_summary?.security_count} security
+                            </span>
+                          ) : null}
+                          {(e.update_summary?.blocked_count ?? 0) > 0 && (
+                            <span className="text-[11px] px-1.5 py-0.5 rounded border bg-orange-50 text-orange-700 border-orange-200">
+                              {e.update_summary?.blocked_count} blocked
+                            </span>
+                          )}
+                          {((e.update_summary?.active_count ?? 0) - (e.update_summary?.security_count ?? 0) - (e.update_summary?.blocked_count ?? 0)) > 0 && (
+                            <span className="text-[11px] px-1.5 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200">
+                              {(e.update_summary?.active_count ?? 0) - (e.update_summary?.security_count ?? 0) - (e.update_summary?.blocked_count ?? 0)} øvrige
+                            </span>
+                          )}
+                        </div>
+                        {e.update_summary?.latest?.[0] && (
+                          <div className="text-[11px] text-gray-400 truncate max-w-48">
+                            {e.update_summary.latest[0].component || e.update_summary.latest[0].update_type}
+                            {e.update_summary.latest[0].version_gap_label && `: ${e.update_summary.latest[0].version_gap_label}`}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
+                        Up to date
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-500">
                     {fmtDate(e.last_seen)}
@@ -354,6 +454,8 @@ export function CMDBDetailPage() {
   const [editField, setEditField] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [saving, setSaving] = useState(false)
+  const [sbom, setSbom] = useState<SbomDocument | null>(null)
+  const [sbomLoading, setSbomLoading] = useState(false)
 
   // Break-glass state
   const [bgModal, setBgModal] = useState(false)
@@ -420,6 +522,28 @@ export function CMDBDetailPage() {
     if (!deviceId || !confirm('Slet break-glass konto?')) return
     await apiDelete(`/api/cmdb/${pathSegment(deviceId)}/break-glass/${accountId}`)
     load()
+  }
+
+  async function loadSbom() {
+    if (!deviceId) return
+    setSbomLoading(true)
+    try {
+      const r = await api(`/api/cmdb/${pathSegment(deviceId)}/sbom`)
+      setSbom(await r.json())
+    } finally {
+      setSbomLoading(false)
+    }
+  }
+
+  function downloadSbom() {
+    if (!sbom || !deviceId) return
+    const blob = new Blob([JSON.stringify(sbom, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${deviceId}-sbom.json`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   if (loading) return (
@@ -518,17 +642,142 @@ export function CMDBDetailPage() {
 
         {/* OS / Software */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <Package className="w-4 h-4 text-sky-500" /> OS / Software
-          </h2>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Package className="w-4 h-4 text-sky-500" /> OS / Software
+            </h2>
+            <button onClick={loadSbom} disabled={sbomLoading}
+              className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+              {sbomLoading ? 'Henter…' : 'Vis SBOM'}
+            </button>
+          </div>
           <div className="space-y-0.5">
             <Row label="OS" value={detail.os_name} />
             <Row label="Kernel" value={detail.kernel_version} mono />
             <Row label="Python" value={detail.python_version} />
             <Row label="App-version" value={detail.app_version} mono />
+            <Row label="Package manager" value={detail.package_manager} />
             <Row label="Sidst set" value={fmtDate(detail.last_seen)} />
             <Row label="Inv. rapporteret" value={fmtDate(detail.inventory_reported_at)} />
           </div>
+          {Object.keys(detail.software_inventory ?? {}).length > 0 && (
+            <details className="mt-3" open>
+              <summary className="text-xs text-sky-600 cursor-pointer hover:text-sky-700">
+                Softwareinventar
+              </summary>
+              <div className="mt-2 max-h-56 overflow-y-auto">
+                {Object.entries(detail.software_inventory).sort().map(([name, value]) => (
+                  <div key={name} className="flex justify-between gap-3 text-xs py-0.5 border-b border-gray-50">
+                    <span className="text-gray-700">{name}</span>
+                    <span className="text-gray-400 font-mono text-right break-all">{compactValue(value)}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+          {Array.isArray(detail.software_inventory?.available_software_updates) && (() => {
+            const updates = detail.software_inventory.available_software_updates as Array<Record<string, unknown>>
+            const securityUpdates = updates.filter(u => String(u.kind ?? '') === 'security')
+            const otherUpdates = updates.filter(u => String(u.kind ?? '') !== 'security')
+            return (
+              <details className="mt-3" open>
+                <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
+                  {securityUpdates.length > 0 && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-semibold">
+                      ⚠ {securityUpdates.length} sikkerhed
+                    </span>
+                  )}
+                  {otherUpdates.length > 0 && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                      ↑ {otherUpdates.length} øvrige
+                    </span>
+                  )}
+                  <span className="text-gray-400">tilgængelige opdateringer</span>
+                </summary>
+                <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-100">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+                        <th className="text-left px-2 py-1">Pakke</th>
+                        <th className="text-right px-2 py-1">Installeret</th>
+                        <th className="text-center px-1 py-1"></th>
+                        <th className="text-left px-2 py-1">Tilgængelig</th>
+                        <th className="text-right px-2 py-1">Type</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {updates.map((item, idx) => {
+                        const isSecurity = String(item.kind ?? '') === 'security'
+                        return (
+                          <tr key={`${String(item.name)}-${idx}`} className={`border-t border-gray-50 ${isSecurity ? 'bg-red-50/40' : ''}`}>
+                            <td className="px-2 py-1 font-medium text-gray-700">{String(item.name ?? 'ukendt')}</td>
+                            <td className="px-2 py-1 font-mono text-gray-400 text-right">{String(item.installed_version ?? '?')}</td>
+                            <td className="px-1 py-1 text-gray-300 text-center">→</td>
+                            <td className="px-2 py-1 font-mono font-semibold text-green-700">{String(item.available_version ?? '?')}</td>
+                            <td className="px-2 py-1 text-right">
+                              {isSecurity
+                                ? <span className="px-1 py-0.5 rounded bg-red-100 text-red-600 text-[10px]">security</span>
+                                : <span className="px-1 py-0.5 rounded bg-gray-100 text-gray-400 text-[10px]">{String(item.kind ?? item.manager ?? '')}</span>
+                              }
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )
+          })()}
+          {(detail.update_summary?.latest?.length ?? 0) > 0 && (
+            <details className="mt-3" open>
+              <summary className="text-xs text-amber-600 cursor-pointer hover:text-amber-700">
+                Installeret vs. senest tilgængelig
+              </summary>
+              <div className="mt-2 max-h-64 overflow-y-auto rounded-lg border border-gray-100">
+                {detail.update_summary?.latest.map(item => (
+                  <div key={item.id} className="grid grid-cols-12 gap-2 text-xs px-3 py-2 border-b border-gray-50 last:border-0">
+                    <div className="col-span-3 min-w-0">
+                      <div className="font-medium text-gray-800 truncate">{item.component || item.update_type}</div>
+                      <div className="text-[11px] text-gray-400">#{item.id} · {item.environment || '-'}</div>
+                    </div>
+                    <div className="col-span-3 font-mono text-gray-500 truncate">{item.current_version || '—'}</div>
+                    <div className="col-span-4 font-mono text-gray-800 truncate">{item.latest_available_version || '—'}</div>
+                    <div className="col-span-2 text-right">
+                      <span className={`px-1.5 py-0.5 rounded border text-[11px] ${statusBadgeClass(item.status)}`}>{item.status}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+          {sbom && (
+            <details className="mt-3" open>
+              <summary className="text-xs text-sky-600 cursor-pointer hover:text-sky-700">
+                SBOM · {sbom.components?.length ?? 0} komponenter
+              </summary>
+              <div className="mt-2 rounded-lg border border-gray-100 overflow-hidden">
+                <div className="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 text-[11px] text-gray-500">
+                  <span className="font-mono truncate">{sbom.serialNumber || `${sbom.bomFormat || 'SBOM'} ${sbom.specVersion || ''}`}</span>
+                  <button onClick={downloadSbom} className="text-sky-600 hover:text-sky-700">Download JSON</button>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {(sbom.components || []).slice(0, 150).map((component, idx) => (
+                    <div key={`${component.name}-${idx}`} className="grid grid-cols-12 gap-2 px-3 py-1.5 text-xs border-t border-gray-50">
+                      <div className="col-span-5 truncate text-gray-700">{component.name || 'ukendt'}</div>
+                      <div className="col-span-4 truncate font-mono text-gray-400">{component.version || '—'}</div>
+                      <div className="col-span-3 truncate text-right text-gray-400">{component.type || 'component'}</div>
+                    </div>
+                  ))}
+                </div>
+                {(sbom.components?.length || 0) > 150 && (
+                  <div className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
+                    Viser de første 150 komponenter. Download JSON for fuld SBOM.
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
           {Object.keys(detail.venv_packages ?? {}).length > 0 && (
             <details className="mt-3">
               <summary className="text-xs text-sky-600 cursor-pointer hover:text-sky-700">
@@ -544,6 +793,65 @@ export function CMDBDetailPage() {
               </div>
             </details>
           )}
+          {Object.keys(detail.os_packages ?? {}).length > 0 && (() => {
+            // Byg opslag: pakkenavn → tilgængelig version (fra apt-inventory)
+            const availUpdates = Array.isArray(detail.software_inventory?.available_software_updates)
+              ? (detail.software_inventory.available_software_updates as Array<Record<string, unknown>>)
+              : []
+            const updateMap: Record<string, { avail: string; kind: string }> = {}
+            availUpdates.forEach(u => {
+              updateMap[String(u.name ?? '')] = {
+                avail: String(u.available_version ?? ''),
+                kind: String(u.kind ?? ''),
+              }
+            })
+            const pkgEntries = Object.entries(detail.os_packages).sort()
+            const updatableCount = pkgEntries.filter(([name]) => updateMap[name]).length
+            return (
+              <details className="mt-3">
+                <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
+                  <span className="text-sky-600">{pkgEntries.length} OS-/systempakker</span>
+                  {updatableCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-semibold">
+                      {updatableCount} kan opdateres
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 max-h-64 overflow-y-auto rounded border border-gray-100">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+                        <th className="text-left px-2 py-1">Pakke</th>
+                        <th className="text-right px-2 py-1">Installeret</th>
+                        <th className="text-left px-2 py-1">Tilgængelig</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pkgEntries.map(([name, ver]) => {
+                        const upd = updateMap[name]
+                        const isSecurity = upd?.kind === 'security'
+                        return (
+                          <tr key={name} className={`border-t border-gray-50 ${isSecurity ? 'bg-red-50/30' : upd ? 'bg-amber-50/30' : ''}`}>
+                            <td className={`px-2 py-0.5 ${upd ? 'font-medium text-gray-800' : 'text-gray-600'}`}>{name}</td>
+                            <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-400'}`}>{ver}</td>
+                            <td className="px-2 py-0.5 font-mono">
+                              {upd
+                                ? <span className={`font-semibold ${isSecurity ? 'text-red-600' : 'text-green-600'}`}>
+                                    {upd.avail}
+                                    {isSecurity && <span className="ml-1 text-[10px] bg-red-100 text-red-600 px-1 rounded">security</span>}
+                                  </span>
+                                : <span className="text-gray-300">✓ up to date</span>
+                              }
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )
+          })()}
         </div>
 
         {/* Storage */}
