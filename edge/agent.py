@@ -117,8 +117,10 @@ class EdgeAgent:
         self._connectivity = self._relay.connectivity      # modem auto-cycle monitor
 
         # State
-        self._last_heartbeat:  datetime = datetime.min.replace(tzinfo=timezone.utc)
-        self._last_config_pull:datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_heartbeat:    datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_config_pull:  datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_update_check: datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_inventory:    datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._stop_event = threading.Event()
         self._last_siem_emit: dict[str, datetime] = {}
         self._last_siem_forward: datetime = datetime.min.replace(tzinfo=timezone.utc)
@@ -189,17 +191,14 @@ class EdgeAgent:
 
         # 1. Pull fresh config from headend
         self._pull_config()
+        self._check_backup_request()
 
         # 2. Send startup heartbeat
-        self._send_heartbeat()
+        self._send_heartbeat(check_updates=False)
+        self._check_and_apply_updates()
 
         # CMDB: rapportér hardwareinventar til headend (ikke-blokerende)
-        try:
-            from utils.inventory import report_inventory
-            report_inventory(self._cfg, self._api)
-        except Exception as _inv_exc:
-            import logging as _log
-            _log.getLogger(__name__).warning("Inventar-rapportering fejlede: %s", _inv_exc)
+        self._report_inventory(force=True)
 
                 # SSH tunnel manager (Sprint C)
         self._tunnel = None
@@ -643,8 +642,10 @@ class EdgeAgent:
         ))
         if now - self._last_config_pull > config_interval:
             self._pull_config()
+            self._check_backup_request()
             # Tjek om headend har bedt om en opdatering
             self._check_update()
+            self._check_and_apply_updates_if_due()
 
         # Check capture schedule
         capture_due = self._should_capture(now, mode)
@@ -930,6 +931,19 @@ class EdgeAgent:
         until_heartbeat   = max(1, heartbeat_min * 60 - elapsed_heartbeat)
         return int(min(until_capture, until_heartbeat))
 
+    def _update_poll_interval(self) -> timedelta:
+        minutes = int(
+            self._cfg.get("diagnostics", {}).get("update_poll_interval_minutes", 5)
+        )
+        return timedelta(minutes=max(1, minutes))
+
+    def _check_and_apply_updates_if_due(self) -> None:
+        if not self._running or self._stop_event.is_set():
+            return
+        if datetime.now(timezone.utc) - self._last_update_check < self._update_poll_interval():
+            return
+        self._check_and_apply_updates()
+
     # ── Headend communication ───────────────────────────────────────────────
 
     def _pull_config(self) -> None:
@@ -954,6 +968,117 @@ class EdgeAgent:
         else:
             log.info("Config pull failed — using cached config")
         self._last_config_pull = datetime.now(timezone.utc)
+
+    def _check_backup_request(self) -> None:
+        """Run a Headend-requested Edge backup once."""
+        backup_requested = self._cfg.get("backup_requested") is True
+        requested_at = str(self._cfg.get("backup_requested_at") or "")
+        if not backup_requested:
+            return
+        marker = self._cfg_mgr.base_dir / ".last_backup_request"
+        if requested_at and marker.exists() and marker.read_text().strip() == requested_at:
+            return
+        try:
+            archive, sha256, size_kb = self._create_edge_backup_archive(requested_at)
+            ok, result = self._api.upload_edge_backup(archive, sha256)
+            if ok:
+                log.info("Edge backup upload OK: %s (%d KB)", archive.name, size_kb)
+                if requested_at:
+                    marker.write_text(requested_at)
+            else:
+                log.warning("Edge backup upload fejlede; Headend request bevares til retry")
+        except Exception as exc:
+            log.warning("Edge backup request fejlede: %s", exc, exc_info=True)
+
+    def _create_edge_backup_archive(self, requested_at: str = "") -> tuple[Path, str, int]:
+        """Create a small restore-oriented Edge backup archive without image payloads."""
+        import hashlib as _hashlib
+        import json as _json
+        import os as _os
+        import platform as _platform
+        import shutil as _shutil
+        import subprocess as _sp
+        import tarfile as _tarfile
+        import tempfile as _tempfile
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        device_id = self._device_id
+        staging = Path(_tempfile.mkdtemp(prefix="tlp-edge-backup-"))
+        archive = Path("/tmp") / f"timelapse-edge-backup-{device_id}-{timestamp}.tar.gz"
+        try:
+            (staging / "configs").mkdir(parents=True, exist_ok=True)
+            (staging / "database").mkdir(parents=True, exist_ok=True)
+            (staging / "system").mkdir(parents=True, exist_ok=True)
+
+            copied: list[str] = []
+            for source in [
+                self._cfg_mgr.base_dir / "bootstrap.yaml",
+                self._cfg_mgr.base_dir / "local_network.yaml",
+                self._cfg_mgr.base_dir / "config.yaml",
+                self._cfg_mgr.base_dir / "sftp_cache.yaml",
+                Path("/etc/timelapse/node-agent.conf"),
+                Path("/etc/systemd/system/timelapse-edge.service"),
+                Path("/opt/timelapse/edge/scripts/timelapse-edge.service"),
+            ]:
+                if source.exists() and source.is_file():
+                    dest = staging / "configs" / str(source).lstrip("/").replace("/", "__")
+                    _shutil.copy2(source, dest)
+                    copied.append(str(source))
+
+            db_path = Path(self._cfg.get("storage", {}).get("db_path", "/data/timelapse_edge.db"))
+            if db_path.exists():
+                _shutil.copy2(db_path, staging / "database" / db_path.name)
+                copied.append(str(db_path))
+
+            commands = {
+                "uname": ["uname", "-a"],
+                "df": ["df", "-h"],
+                "systemctl": ["systemctl", "is-active", "timelapse-edge"],
+                "python": ["python3", "--version"],
+            }
+            system_info = {
+                "device_id": device_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "requested_at": requested_at,
+                "platform": _platform.platform(),
+                "sensitive_identity_files_included": False,
+                "note": "api_token.txt and signing keys are intentionally excluded; restore should re-bootstrap identity.",
+                "commands": {},
+            }
+            for name, cmd in commands.items():
+                try:
+                    result = _sp.run(cmd, capture_output=True, text=True, timeout=20)
+                    system_info["commands"][name] = {
+                        "returncode": result.returncode,
+                        "output": ((result.stdout or "") + (result.stderr or ""))[-4000:],
+                    }
+                except Exception as exc:
+                    system_info["commands"][name] = {"returncode": -1, "output": str(exc)}
+
+            manifest = {
+                "device_id": device_id,
+                "created_at": system_info["created_at"],
+                "requested_at": requested_at,
+                "copied": copied,
+                "excluded": [
+                    str(self._cfg_mgr.base_dir / "api_token.txt"),
+                    str(self._cfg_mgr.base_dir / "keys"),
+                    "/data/captures",
+                ],
+            }
+            (staging / "system" / "SYSTEMINFO.json").write_text(_json.dumps(system_info, indent=2), encoding="utf-8")
+            (staging / "MANIFEST.json").write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+
+            with _tarfile.open(archive, "w:gz") as tar:
+                tar.add(staging, arcname=f"timelapse-edge-backup-{device_id}-{timestamp}")
+
+            hasher = _hashlib.sha256()
+            with open(archive, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    hasher.update(chunk)
+            return archive, hasher.hexdigest(), archive.stat().st_size // 1024
+        finally:
+            _shutil.rmtree(staging, ignore_errors=True)
 
     def _apply_config_changes(self, data: dict) -> None:
         """Anvend config-ændringer live uden genstart."""
@@ -1113,7 +1238,10 @@ class EdgeAgent:
 
     def _check_and_apply_updates(self) -> None:
         """Tjek om der er godkendte opdateringer og eksekvér dem."""
+        if not self._running or self._stop_event.is_set():
+            return
         log.info("Update-check: starter...")
+        self._last_update_check = datetime.now(timezone.utc)
         try:
             ok, policy = self._api._get(f"/updates/policy/{self._device_id}")
             if not ok or not policy:
@@ -1136,11 +1264,7 @@ class EdgeAgent:
                     ok, reason = verify_update_artifact(update, self._cfg.get("security", {}))
                     if not ok:
                         log.error("Opdatering %d afvist af Edge trust policy: %s", uid, reason)
-                        self._api._post("/updates/report", {
-                            "update_id": uid,
-                            "status": "rolled_back",
-                            "reason": f"artifact_verification_failed: {reason}",
-                        })
+                        self._report_update(uid, "blocked", f"artifact_verification_failed: {reason}")
                         return
                     log.info("Udfører opdatering %d: %s", uid, utype)
                     self._run_update(uid, utype, update.get("artifact"))
@@ -1154,40 +1278,49 @@ class EdgeAgent:
         import subprocess as _sp, os as _os
 
         if update_type in ("os_security", "os_updates"):
-            # OS opdateringer via apt — kræver sudo
-            log.info("OS opdatering %d: kører apt upgrade (sikker, non-interactive)", update_id)
-            env = {**_os.environ, "DEBIAN_FRONTEND": "noninteractive"}
-            result = _sp.run(
-                ["sudo", "apt-get", "upgrade", "-y", "--only-upgrade",
-                 "-o", "dir::cache=/data/apt-cache",
-                 "-o", "Dpkg::Options::=--force-confdef",
-                 "-o", "Dpkg::Options::=--force-confold"],
-
-                capture_output=True, text=True, timeout=600, env=env
-            )
+            if artifact:
+                self._run_artifact_os_update(update_id, artifact)
+                return
+            log.warning("OS update %d blokeret: mangler Headend-signeret offline artifact", update_id)
+            self._report_update(update_id, "blocked", "os_update_requires_headend_signed_offline_artifact")
+            return
         else:
             if artifact:
                 self._run_artifact_app_update(update_id, artifact)
                 return
-            if _os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") != "1":
-                log.warning("App update %d afvist: legacy git update er slået fra", update_id)
-                self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            legacy_allowed = (
+                _os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") == "1"
+                and _os.getenv("TIMELAPSE_ENV", "").strip().lower() in {"lab", "dev", "development"}
+            )
+            if not legacy_allowed:
+                log.warning("App update %d afvist: Edge updates skal komme fra Headend artifact", update_id)
+                self._report_update(update_id, "blocked", "headend_signed_artifact_required")
                 return
-            # LAB-only app opdateringer via git pull (edge_update.sh)
+            # LAB/dev-only emergency path. Production Edge updates must use Headend artifacts.
             script = Path("/opt/timelapse/deploy/edge_update.sh")
             if not script.exists():
                 log.warning("edge_update.sh ikke fundet")
-                self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+                self._report_update(update_id, "blocked", "edge_update_script_missing")
                 return
             env = {**_os.environ, "UPDATE_TYPE": update_type, "UPDATE_ID": str(update_id)}
             result = _sp.run(["bash", str(script)], capture_output=True, text=True, timeout=300, env=env)
 
         if result.returncode == 0:
             log.info("Opdatering %d gennemført OK", update_id)
-            self._api._post("/updates/report", {"update_id": update_id, "status": "deployed"})
+            self._report_update(update_id, "deployed")
         else:
             log.warning("Opdatering %d fejlede (rc=%d)\n%s", update_id, result.returncode, result.stderr[-300:])
-            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            self._report_update(update_id, "rolled_back", f"legacy_update_failed_rc_{result.returncode}: {result.stderr[-500:]}")
+
+    def _report_update(self, update_id: int, status: str, reason: str | None = None) -> None:
+        payload = {
+            "update_id": update_id,
+            "status": status,
+            "device_id": self._device_id,
+        }
+        if reason:
+            payload["reason"] = reason
+        self._api._post("/updates/report", payload)
 
     def _run_artifact_app_update(self, update_id: int, artifact: dict) -> None:
         """Installér app-opdatering fra Headend-signeret artifact uden GitHub adgang."""
@@ -1205,13 +1338,25 @@ class EdgeAgent:
         ]
         if not artifact_id or not outputs:
             log.warning("App update %d mangler edge artifact outputs", update_id)
-            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            self._report_update(update_id, "blocked", "artifact_missing_edge_outputs")
             return
 
         repo = Path("/opt/timelapse")
         staging = Path(_tempfile.mkdtemp(prefix="tlp-artifact-", dir="/tmp"))
         backup = repo / "prev"
         try:
+            self._report_update(update_id, "backing_up")
+            pre_archive, pre_sha, pre_size_kb = self._create_edge_backup_archive(f"pre-update-{update_id}")
+            pre_ok, pre_result = self._api.upload_edge_backup(pre_archive, pre_sha)
+            if not pre_ok:
+                raise RuntimeError("pre_update_backup_upload_failed")
+            log.info(
+                "App update %d pre-update backup OK: %s (%d KB)",
+                update_id,
+                pre_archive.name,
+                pre_size_kb,
+            )
+            self._report_update(update_id, "downloading")
             log.info("App update %d: henter %d edge-filer fra artifact %s", update_id, len(outputs), artifact_id)
             for item in outputs:
                 rel = str(item["path"])
@@ -1227,6 +1372,7 @@ class EdgeAgent:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(content)
 
+            self._report_update(update_id, "verifying")
             if backup.exists():
                 _shutil.rmtree(backup)
             for item in outputs:
@@ -1237,6 +1383,7 @@ class EdgeAgent:
                     backup_dest.parent.mkdir(parents=True, exist_ok=True)
                     _shutil.copy2(source, backup_dest)
 
+            self._report_update(update_id, "installing")
             for item in outputs:
                 rel = Path(str(item["path"]))
                 source = staging / rel
@@ -1246,7 +1393,7 @@ class EdgeAgent:
                 if dest.suffix == ".sh":
                     dest.chmod(dest.stat().st_mode | 0o111)
 
-            self._api._post("/updates/report", {"update_id": update_id, "status": "deployed"})
+            self._report_update(update_id, "deployed")
             log.info("App update %d installeret fra signeret artifact — genstarter agent", update_id)
             _sp.Popen(["systemctl", "restart", "timelapse-edge"])
         except Exception as exc:
@@ -1261,7 +1408,154 @@ class EdgeAgent:
                             _shutil.copy2(source, dest)
             except Exception as rollback_exc:
                 log.warning("Rollback efter app artifact update fejlede: %s", rollback_exc)
-            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            self._report_update(update_id, "rolled_back", str(exc)[:700])
+        finally:
+            try:
+                _shutil.rmtree(staging)
+            except Exception:
+                pass
+
+    def _run_artifact_os_update(self, update_id: int, artifact: dict) -> None:
+        """Installér OS-opdatering fra Headend-signeret offline artifact."""
+        import hashlib as _hashlib
+        import os as _os
+        import shlex as _shlex
+        import shutil as _shutil
+        import subprocess as _sp
+
+        artifact_id = artifact.get("artifact_id")
+        manifest = artifact.get("manifest") if isinstance(artifact.get("manifest"), dict) else {}
+        outputs = [item for item in manifest.get("outputs", []) if isinstance(item, dict)]
+        commands = [cmd for cmd in manifest.get("commands", []) if isinstance(cmd, dict)]
+        safe_artifact_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(artifact_id or "artifact"))[:80]
+        staging_root = Path("/data/timelapse_update_staging")
+        staging = staging_root / f"update-{update_id}-{safe_artifact_id}"
+        try:
+            if staging.exists():
+                _shutil.rmtree(staging)
+            staging.mkdir(parents=True, mode=0o700)
+            if manifest.get("schema") != "timelapse.os_update_artifact.v1":
+                raise RuntimeError("invalid_os_artifact_schema")
+            if manifest.get("distribution_model") != "headend_signed_offline_os_bundle_edge_pull":
+                raise RuntimeError("invalid_os_distribution_model")
+            if not artifact_id or not outputs:
+                raise RuntimeError("os_artifact_missing_outputs")
+
+            self._report_update(update_id, "backing_up")
+            pre_archive, pre_sha, pre_size_kb = self._create_edge_backup_archive(f"pre-os-update-{update_id}")
+            pre_ok, _pre_result = self._api.upload_edge_backup(pre_archive, pre_sha)
+            if not pre_ok:
+                raise RuntimeError("pre_update_backup_upload_failed")
+            log.info("OS update %d pre-update backup OK: %s (%d KB)", update_id, pre_archive.name, pre_size_kb)
+
+            self._report_update(update_id, "downloading")
+            for item in outputs:
+                rel = str(item.get("path") or "")
+                if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+                    raise RuntimeError(f"unsafe artifact path: {rel}")
+                ok, content = self._api.download_artifact_file(artifact_id, rel)
+                if not ok or content is None:
+                    raise RuntimeError(f"download failed: {rel}")
+                actual = _hashlib.sha256(content).hexdigest()
+                if actual != item.get("sha256"):
+                    raise RuntimeError(f"sha256 mismatch: {rel}")
+                dest = staging / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(content)
+
+            self._report_update(update_id, "verifying")
+            forbidden_script_patterns = [
+                r"\bapt(-get)?\s+update\b",
+                r"\bapt(-get)?\s+(dist-upgrade|full-upgrade|upgrade)\b",
+                r"^\s*(curl|wget|scp|rsync)\b",
+                r"^\s*git\s+(clone|pull|fetch)\b",
+                r"^\s*python3?\s+-m\s+pip\b",
+                r"^\s*pip3?\s+install\b",
+            ]
+            for script_path in staging.rglob("*"):
+                if not script_path.is_file() or script_path.suffix not in {".sh", ".bash", ".conf", ".txt", ".json"}:
+                    continue
+                content = script_path.read_text(errors="ignore")
+                rel_script = str(script_path.relative_to(staging))
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#"):
+                        continue
+                    for pattern in forbidden_script_patterns:
+                        if re.search(pattern, stripped):
+                            raise RuntimeError(f"os bundle contains forbidden online command: {rel_script}")
+                    if "apt-get" in line or " apt " in line:
+                        if "--no-download" not in line:
+                            raise RuntimeError(f"os bundle apt command without --no-download: {rel_script}")
+
+            if not commands:
+                raise RuntimeError("os_artifact_missing_install_commands")
+
+            self._report_update(update_id, "installing")
+            allowed_roots = {str(staging), "/usr/bin", "/bin", "/usr/sbin", "/sbin"}
+            runner_lines = [
+                "#!/bin/bash",
+                "set -euo pipefail",
+                "export DEBIAN_FRONTEND=noninteractive",
+                f"cd {_shlex.quote(str(staging))}",
+            ]
+            for command in commands:
+                argv = command.get("argv")
+                if not isinstance(argv, list) or not argv:
+                    raise RuntimeError("invalid_os_command")
+                argv = [str(a).replace("{bundle}", str(staging)) for a in argv]
+                executable = str(argv[0])
+                if "/" in executable and not any(executable.startswith(root) for root in allowed_roots):
+                    raise RuntimeError(f"os command outside allowed roots: {executable}")
+                joined = " ".join(argv)
+                if any(token in joined for token in (" apt-get update", " apt update", " apt-get upgrade", " apt upgrade", "dist-upgrade", "full-upgrade")):
+                    raise RuntimeError("os artifact command may not run online apt update/upgrade")
+                if "apt-get" in joined or " apt " in joined:
+                    if "--no-download" not in argv and "--no-download" not in joined:
+                        raise RuntimeError("apt command must use --no-download")
+                if executable in {"apt-get", "apt"}:
+                    argv = ["/usr/bin/apt-get", *[str(a) for a in argv[1:]]]
+                    if "upgrade" in argv or "dist-upgrade" in argv or "--no-download" not in argv:
+                        raise RuntimeError("apt command must be explicit install with --no-download")
+                runner_lines.append(" ".join(_shlex.quote(str(a)) for a in argv))
+
+            runner = staging / "run-os-update.sh"
+            runner.write_text("\n".join(runner_lines) + "\n")
+            runner.chmod(0o700)
+            systemd_run = [
+                "/usr/bin/systemd-run",
+                "--wait",
+                "--pipe",
+                "--collect",
+                f"--unit=timelapse-os-update-{update_id}",
+                "-p",
+                "ProtectSystem=false",
+                "-p",
+                "NoNewPrivileges=false",
+                "-p",
+                "PrivateTmp=false",
+                "-p",
+                "ReadWritePaths=/",
+                "/bin/bash",
+                str(runner),
+            ]
+            result = _sp.run(
+                    systemd_run,
+                    capture_output=True,
+                    text=True,
+                    timeout=max(1800, sum(int(command.get("timeout_s") or 1800) for command in commands)),
+                    env={**_os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+                )
+            combined_output = (result.stdout or "") + (result.stderr or "")
+            log.info("OS update %d systemd-run rc=%d\n%s", update_id, result.returncode, combined_output[-2000:])
+            if result.returncode != 0:
+                raise RuntimeError(f"os artifact install failed rc={result.returncode}\n{combined_output[-1600:]}")
+
+            self._report_update(update_id, "deployed")
+            log.info("OS update %d installeret fra offline artifact", update_id)
+        except Exception as exc:
+            log.warning("OS artifact update %d fejlede: %s", update_id, exc)
+            self._report_update(update_id, "blocked", str(exc)[:700])
         finally:
             try:
                 _shutil.rmtree(staging)
@@ -1274,13 +1568,13 @@ class EdgeAgent:
         prev = Path("/opt/timelapse/prev")
         if not prev.exists():
             log.warning("Ingen forrige version til rollback")
-            self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+            self._report_update(update_id, "rolled_back", "rollback_source_missing")
             return
         _sp.run(["bash", "-c", f"cp -r {prev}/* /opt/timelapse/"], timeout=60)
         log.info("Rollback til forrige version gennemført")
-        self._api._post("/updates/report", {"update_id": update_id, "status": "rolled_back"})
+        self._report_update(update_id, "rolled_back")
 
-    def _send_heartbeat(self) -> None:
+    def _send_heartbeat(self, *, check_updates: bool = True) -> None:
         """Collect diagnostics and send heartbeat to headend."""
         try:
             diag_data     = self._diag.collect()
@@ -1291,15 +1585,19 @@ class EdgeAgent:
             if hasattr(self, "_last_cam_diag") and self._last_cam_diag:
                 diag_data["camera"] = self._last_cam_diag
 
-            ok, _ = self._api.send_heartbeat(diag_data, capture_stats)
+            ok, hb_resp = self._api.send_heartbeat(diag_data, capture_stats)
             if ok:
                 log.info("Heartbeat sent OK")
                 self._connectivity.report_success()
+                # NTP: synkroniser systemtid fra headend
+                self._sync_time_from_headend(hb_resp)
                 # Tjek om config er ændret siden sidst
-                hb_version = (_ or {}).get("config_version", "") if isinstance(_, dict) else ""
+                hb_version = (hb_resp or {}).get("config_version", "") if isinstance(hb_resp, dict) else ""
                 if hb_version and hb_version != self._cfg.get("config_version", ""):
                     log.info("Config version ændret via heartbeat — henter ny config")
                     self._pull_config()
+                # Periodisk inventory-rapportering (dagligt)
+                self._report_inventory()
             else:
                 log.warning("Heartbeat failed — headend unreachable")
                 self._connectivity.report_failure()
@@ -1308,7 +1606,52 @@ class EdgeAgent:
             self._connectivity.report_failure()
         finally:
             self._last_heartbeat = datetime.now(timezone.utc)
-            self._check_and_apply_updates()
+            if check_updates and self._running and not self._stop_event.is_set():
+                self._check_and_apply_updates()
+
+    def _sync_time_from_headend(self, hb_resp: dict | None) -> None:
+        """Synkroniser systemtid fra headend server_time. Kræver root."""
+        if not isinstance(hb_resp, dict):
+            return
+        server_time_str = hb_resp.get("server_time")
+        if not server_time_str:
+            return
+        try:
+            from datetime import datetime as _dt
+            import subprocess as _sp
+            server_dt = _dt.fromisoformat(server_time_str.replace("Z", "+00:00"))
+            local_dt  = _dt.now(timezone.utc)
+            drift_s   = abs((server_dt - local_dt).total_seconds())
+            if drift_s < 5:
+                return  # inden for 5 sek — ingen handling
+            # Formater til date-kommando: "YYYY-MM-DD HH:MM:SS"
+            date_str = server_dt.strftime("%Y-%m-%d %H:%M:%S")
+            result = _sp.run(
+                ["date", "-s", date_str],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                log.info("NTP sync fra headend: drift=%.1fs → sat til %s", drift_s, date_str)
+                # Skriv til hardware clock hvis muligt
+                _sp.run(["hwclock", "--systohc"], capture_output=True, timeout=5)
+            else:
+                log.warning("NTP sync fejlede (mangler root?): %s", result.stderr.strip())
+        except Exception as exc:
+            log.warning("NTP sync error: %s", exc)
+
+    def _report_inventory(self, *, force: bool = False) -> None:
+        """Rapportér CMDB hardware-inventar til headend. Dagligt eller ved force=True."""
+        now = datetime.now(timezone.utc)
+        interval_h = float(self._cfg.get("diagnostics", {}).get("inventory_report_interval_hours", 24))
+        if not force and (now - self._last_inventory).total_seconds() < interval_h * 3600:
+            return
+        try:
+            from utils.inventory import report_inventory
+            report_inventory(self._cfg, self._api)
+            self._last_inventory = now
+            log.info("Inventory rapporteret til headend CMDB")
+        except Exception as exc:
+            log.warning("Inventar-rapportering fejlede: %s", exc)
 
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""
@@ -1416,6 +1759,29 @@ class EdgeAgent:
         """
         poll_s = int(debug_cfg.get("config_poll_s", 1))
 
+        ok, cfg_data = self._api.fetch_config()
+        if ok and cfg_data:
+            old_version = self._cfg.get("config_version", "")
+            new_version = cfg_data.get("config_version", "")
+            if new_version and new_version != old_version:
+                old_power_mode = self._camera_power_mode()
+                self._cfg_mgr.save_config(cfg_data)
+                self._cfg = self._cfg_mgr.load()
+                self._uploader.update_config(cfg_data)
+                self._apply_config_changes(cfg_data)
+                self._last_config_pull = datetime.now(timezone.utc)
+                new_power_mode = self._camera_power_mode()
+                log.info(
+                    "LAB MODE — config version changed %s→%s power_mode=%s→%s",
+                    old_version[:8], new_version[:8], old_power_mode, new_power_mode,
+                )
+                if old_power_mode != new_power_mode:
+                    try:
+                        self._driver.disconnect()
+                    except Exception:
+                        pass
+                    self._lab_relay_on = False
+
         # Ensure camera is ready
         if not getattr(self, "_lab_relay_on", False):
             log.info("LAB MODE — preparing camera (power_mode=%s)", self._camera_power_mode())
@@ -1438,8 +1804,6 @@ class EdgeAgent:
             except Exception as exc:
                 log.warning("LAB MODE — camera connect failed: %s", exc)
 
-        # Pull config for pending commands
-        ok, cfg_data = self._api.fetch_config()
         if ok and cfg_data:
             # Check if lab mode has been disabled
             if not cfg_data.get("debug_mode", {}).get("enabled", False):
@@ -1589,7 +1953,11 @@ class EdgeAgent:
             log.info("LAB — preview: %s (%d KB)",
                      preview_path.name, preview_path.stat().st_size // 1024)
 
-            # Upload to headend via SFTP to _lab directory
+            ok, _ = self._api.upload_lab_preview(preview_path)
+            if ok:
+                return
+
+            # Fallback: upload to headend via SFTP to _lab directory.
             sftp_cfg = self._cfg.get("sftp", {})
             if sftp_cfg.get("host"):
                 ssh  = None
@@ -1659,7 +2027,7 @@ class EdgeAgent:
             self._relay.cleanup(camera=self._camera_uses_relay())
         except Exception:
             pass
-        self._send_heartbeat()
+        self._send_heartbeat(check_updates=False)
         log.info("Edge agent stopped.")
 
     # ── Helpers ─────────────────────────────────────────────────────────────

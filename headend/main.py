@@ -43,13 +43,14 @@ import logging
 import base64
 import hashlib
 import hmac
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -62,6 +63,10 @@ import subprocess as _subprocess
 import threading as _threading
 import json as _json
 import os, tempfile
+from collections import defaultdict as _defaultdict
+import gzip as _gzip
+import lzma as _lzma
+import urllib.request as _urlrequest
 # ── Auth imports (Sprint C) ───────────────────────────────────────────────
 from jose import JWTError, jwt as _jwt
 import bcrypt as _bcrypt_lib
@@ -72,7 +77,15 @@ import secrets as _secrets
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
-JWT_SECRET    = os.getenv("JWT_SECRET", _secrets.token_hex(32))
+TIMELAPSE_ENV = os.getenv("TIMELAPSE_ENV", "lab").strip().lower()
+_jwt_secret_from_env = os.getenv("JWT_SECRET")
+if TIMELAPSE_ENV in {"prod", "production"}:
+    if not _jwt_secret_from_env or len(_jwt_secret_from_env) < 32:
+        raise RuntimeError(
+            "JWT_SECRET must be explicitly set to at least 32 characters in production"
+        )
+
+JWT_SECRET    = _jwt_secret_from_env or _secrets.token_hex(32)
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_H  = 12   # access token levetid
 COOKIE_NAME   = "tl_session"
@@ -93,8 +106,8 @@ from database import (
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
     Capture, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
     DeviceInventory, Diagnostic, Event, KeyAuditEvent, KeyCredential,
-    PendingUpdate, Settings, Site, SshTunnelLog, User,
-    create_tables, get_db, now_utc
+    PendingUpdate, Settings, Site, SshTunnelLog, UpdateJobRecord, User,
+    SessionLocal, create_tables, get_db, now_utc
 )
 import uuid as _uuid
 
@@ -124,6 +137,16 @@ def _sanitize_device_id(device_id: str) -> str:
     if '..' in device_id or '/' in device_id or '\\' in device_id:
         raise HTTPException(status_code=400, detail="Ugyldigt device_id")
     return device_id
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Sanitér filnavn til lokal lagring."""
+    import re as _re2
+    name = os.path.basename(filename or "").strip()
+    name = _re2.sub(r"[^A-Za-z0-9._-]", "_", name)
+    if not name or name in {".", ".."} or ".." in name:
+        raise HTTPException(status_code=400, detail="Ugyldigt filnavn")
+    return name[:180]
 
 
 app = FastAPI(
@@ -171,7 +194,8 @@ def startup():
     except Exception as exc:
         log.warning("DB migration fejl (ikke kritisk): %s", exc)
 
-        # Sprint C: MFA + SFTP isolation kolonner (migration)
+    # Sprint C v3: MFA + SFTP isolation kolonner — kører altid (F-01 fix)
+    try:
         new_cols_v3 = [
             # customers
             ("customers", "mfa_required",        "BOOLEAN DEFAULT 0"),
@@ -189,15 +213,17 @@ def startup():
             ("sites", "mfa_documented_by",        "VARCHAR(100)"),
             ("sites", "data_classification",      "VARCHAR(30) DEFAULT 'internal'"),
         ]
-        with engine.connect() as conn:
+        engine_v3 = __import__('database').engine
+        with engine_v3.connect() as conn:
             for table, col, typ in new_cols_v3:
                 try:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typ}"))
                     conn.commit()
-                    log.info("DB migration: %s.%s tilføjet", table, col)
+                    log.info("DB migration v3: %s.%s tilføjet", table, col)
                 except Exception:
                     pass  # Kolonnen findes allerede
-
+    except Exception as exc_v3:
+        log.warning("DB migration v3 fejl (ikke kritisk): %s", exc_v3)
 
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
@@ -209,6 +235,20 @@ def startup():
     except Exception as _ai_err:
         log.warning("AI integration ikke tilgængelig: %s", _ai_err)
     log.info("TimeLapse Pro Headend started — database ready")
+
+    # ── GitHub tag poller ───────────────────────────────────────────────────
+    try:
+        interval_h = float(os.getenv("TIMELAPSE_GIT_TAG_POLL_INTERVAL_HOURS", "1"))
+        t = _threading.Thread(
+            target=_git_tag_poller_loop,
+            args=(interval_h,),
+            name="git-tag-poller",
+            daemon=True,
+        )
+        t.start()
+        log.info("GitHub tag poller startet (interval=%.1fh)", interval_h)
+    except Exception as _gtp_err:
+        log.warning("Kunne ikke starte GitHub tag poller: %s", _gtp_err)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -231,6 +271,18 @@ class BootstrapResponse(BaseModel):
     api_token:  str
     config_url: str
     device_id:  str
+
+class EdgeProvisioningPrepareRequest(BaseModel):
+    device_id: str
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    site_id: Optional[str] = None
+    site_name: Optional[str] = None
+    camera_name: Optional[str] = None
+    location_name: Optional[str] = None
+    note: Optional[str] = None
+    expires_hours: Optional[int] = 48
+    headend_url: Optional[str] = None
 
 class HeartbeatRequest(BaseModel):
     device_id:     str
@@ -506,6 +558,18 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
             if device_id not in targets:
                 continue
         artifact = _find_artifact_for_update(db, u)
+        if _update_requires_headend_artifact(u.update_type) and not artifact:
+            log.warning(
+                "Approved update %s/%s withheld from Edge policy for %s: missing signed artifact",
+                u.id, u.update_type, device_id,
+            )
+            u.status = "blocked"
+            u.description = ((u.description or "").rstrip() + (
+                f"\n\nBlocked {now_utc().isoformat()}: approved update withheld from Edge policy "
+                "because it lacks required Headend-signed artifact."
+            ))[-6000:]
+            db.commit()
+            continue
         filtered.append({
             "id":          u.id,
             "update_type": u.update_type,
@@ -1076,6 +1140,23 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     device.api_token  = api_token
     device.last_seen  = now_utc()
     device.status     = "online"
+    if token_record:
+        device.customer_id = token_record.customer_id or device.customer_id
+        device.site_id = token_record.site_id or device.site_id
+        device.camera_name = token_record.camera_name or device.camera_name
+        device.location_name = token_record.device_label or device.location_name
+        try:
+            cfg = json.loads(device.device_config or "{}")
+        except Exception:
+            cfg = {}
+        provisioning = cfg.get("provisioning") if isinstance(cfg.get("provisioning"), dict) else {}
+        provisioning.update({
+            "status": "bootstrapped",
+            "bootstrapped_at": now_utc().isoformat(),
+            "bootstrap_token_id": token_record.id,
+        })
+        cfg["provisioning"] = provisioning
+        device.device_config = json.dumps(cfg, ensure_ascii=False)
     for old in db.query(KeyCredential).filter_by(
         entity_type="edge",
         entity_id=req.device_id,
@@ -1193,16 +1274,25 @@ async def _verify_edge_request_signature(request: Request, secret: str) -> None:
     body_text = request.headers.get("X-TLP-Signature-Payload-SHA256", "")
     if body_text and request.headers.get("X-TLP-Signature-Scope") != "payload-sha256":
         raise HTTPException(status_code=401, detail="Ugyldig Edge signatur-scope")
+    body_text_candidates = [body_text]
     if not body_text:
         body = await request.body()
         if body:
             try:
-                body_text = _canonical_json(json.loads(body.decode("utf-8")))
+                parsed_body = json.loads(body.decode("utf-8"))
+                body_text = _canonical_json(parsed_body)
+                body_text_candidates = [body_text]
+                if parsed_body == {}:
+                    body_text_candidates.append("")
             except Exception:
                 body_text = body.decode("utf-8", errors="replace")
-    signed = "\n".join([request.method.upper(), request.url.path.removeprefix("/api"), timestamp, nonce, body_text])
-    expected = hmac.new(secret.encode("utf-8"), signed.encode("utf-8"), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(signature, expected):
+                body_text_candidates = [body_text]
+    path = request.url.path.removeprefix("/api")
+    expected_signatures = []
+    for candidate in body_text_candidates:
+        signed = "\n".join([request.method.upper(), path, timestamp, nonce, candidate])
+        expected_signatures.append(hmac.new(secret.encode("utf-8"), signed.encode("utf-8"), hashlib.sha256).hexdigest())
+    if not any(hmac.compare_digest(signature, expected) for expected in expected_signatures):
         raise HTTPException(status_code=401, detail="Edge request signature mismatch")
 
 
@@ -1255,15 +1345,31 @@ async def _verify_edge_attestation_signature(request: Request, device_id: str, d
         body_text = request.headers.get("X-TLP-Edge-Signature-Payload-SHA256", "")
         if body_text and request.headers.get("X-TLP-Edge-Signature-Scope") != "payload-sha256":
             raise HTTPException(status_code=401, detail="Ugyldig Edge attestation-scope")
+        body_text_candidates = [body_text]
         if not body_text:
             body = await request.body()
             if body:
                 try:
-                    body_text = _canonical_json(json.loads(body.decode("utf-8")))
+                    parsed_body = json.loads(body.decode("utf-8"))
+                    body_text = _canonical_json(parsed_body)
+                    body_text_candidates = [body_text]
+                    if parsed_body == {}:
+                        body_text_candidates.append("")
                 except Exception:
                     body_text = body.decode("utf-8", errors="replace")
-        signed = "\n".join([request.method.upper(), request.url.path.removeprefix("/api"), timestamp, nonce, body_text])
-        public_key.verify(base64.b64decode(signature), signed.encode("utf-8"))
+                    body_text_candidates = [body_text]
+        path = request.url.path.removeprefix("/api")
+        last_error = None
+        for candidate in body_text_candidates:
+            signed = "\n".join([request.method.upper(), path, timestamp, nonce, candidate])
+            try:
+                public_key.verify(base64.b64decode(signature), signed.encode("utf-8"))
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
     except HTTPException:
         raise
     except Exception:
@@ -1427,6 +1533,18 @@ def _credential_to_dict(credential: KeyCredential) -> dict:
     except Exception:
         metadata = {}
     status = _credential_state(credential)
+    include_tags = [
+        credential.entity_type,
+        credential.key_type,
+        status,
+    ]
+    if credential.secret_hash:
+        include_tags.append("secret-managed")
+    if metadata.get("migrated_from_legacy_device_api_token"):
+        include_tags.append("legacy-migrated")
+    if metadata.get("gpg_fingerprint"):
+        include_tags.append("release-signer")
+    include_tags = sorted(set(include_tags))
     return {
         "id": credential.id,
         "credential_id": credential.credential_id,
@@ -1452,6 +1570,7 @@ def _credential_to_dict(credential: KeyCredential) -> dict:
         "rotated_from_id": credential.rotated_from_id,
         "metadata": metadata,
         "has_secret": bool(credential.secret_hash),
+        "tags": include_tags,
     }
 
 
@@ -2063,7 +2182,9 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             },
         },
         "diagnostics": {
-            "heartbeat_interval_minutes": 60,
+            "heartbeat_interval_minutes":        60,
+            "update_poll_interval_minutes":       5,
+            "inventory_report_interval_hours":   24,
             "collect": [
                 "cpu_temperature", "cpu_load",
                 "memory_usage", "disk_usage", "connectivity_type"
@@ -2230,7 +2351,12 @@ def update_device_config(
 
 
 def _process_update_report(device_id: str, diag: dict, db) -> None:
-    """Opret PendingUpdate-poster baseret på update-info fra heartbeat."""
+    """Opret app PendingUpdate-poster baseret på heartbeat.
+
+    OS update counts fra Edge er kun telemetry. De maa ikke oprette OS update
+    candidates, fordi Headend skal reconciliere CMDB installed-state mod et
+    Headend-ejet lab/mirror-katalog.
+    """
     from database import PendingUpdate
     updates = diag.get("updates", {})
     if not updates:
@@ -2257,25 +2383,12 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
             scope_id=device_id, status="pending"
         ).first() is not None
 
-    if os_security > 0 and not _has_pending("os_security"):
-        db.add(PendingUpdate(
-            update_type = "os_security",
-            version     = f"{os_security} pakker",
-            description = f"{os_security} sikkerhedsopdatering(er) klar til installation (apt)",
-            severity    = "high" if os_security >= 10 else "medium",
-            scope="device", scope_id=device_id, status="pending",
-        ))
-        log.info("PendingUpdate oprettet: os_security for %s (%d pakker)", device_id, os_security)
-
-    if os_total > 0 and not _has_pending("os_updates"):
-        db.add(PendingUpdate(
-            update_type = "os_updates",
-            version     = f"{os_total} pakker",
-            description = f"{os_total} funktionelle OS-opdatering(er) klar via apt",
-            severity    = "low",
-            scope="device", scope_id=device_id, status="pending",
-        ))
-        log.info("PendingUpdate oprettet: os_updates for %s (%d pakker)", device_id, os_total)
+    if os_security > 0 or os_total > 0:
+        log.info(
+            "Ignorerer Edge OS update counts for %s: security=%d functional=%d; "
+            "Headend CMDB+katalog reconcile er paakraevet",
+            device_id, os_security, os_total,
+        )
 
     if edge_version and headend_version and edge_version != headend_version:
         if not _has_pending("app_updates"):
@@ -2584,7 +2697,9 @@ async def receive_capture_files(
         thumb_dir.mkdir(parents=True, exist_ok=True)
         raw_thumb = await thumbnail.read()
         if raw_thumb:
-            (thumb_dir / filename).write_bytes(raw_thumb)
+            thumb_tmp = thumb_dir / f".{filename}.uploading"
+            thumb_tmp.write_bytes(raw_thumb)
+            os.replace(thumb_tmp, thumb_dir / filename)
             thumbnail_received = True
 
     capture = _upsert_capture_record(
@@ -2910,6 +3025,9 @@ def list_pending_updates(
     else:
         q = q.filter(PendingUpdate.status.in_(["pending", "approved"]))
     updates = q.order_by(PendingUpdate.created_at.desc()).all()
+    production_matches = {}
+    for prod in db.query(PendingUpdate).filter(PendingUpdate.environment == "production").all():
+        production_matches[(prod.update_type, prod.version, prod.scope, prod.scope_id)] = prod
     return [
         {
             "id":          u.id,
@@ -2929,6 +3047,16 @@ def list_pending_updates(
             "approved_by": u.approved_by,
             "deployed_at": u.deployed_at.isoformat() if u.deployed_at else None,
             "rollback_at": u.rollback_at.isoformat() if u.rollback_at else None,
+            "production_promotion_id": (
+                production_matches.get((u.update_type, u.version, u.scope, u.scope_id)).id
+                if u.environment == "test" and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
+                else None
+            ),
+            "production_promotion_status": (
+                production_matches.get((u.update_type, u.version, u.scope, u.scope_id)).status
+                if u.environment == "test" and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
+                else None
+            ),
         }
         for u in updates
     ]
@@ -2978,17 +3106,572 @@ UPDATE_TYPE_TO_CATEGORY = {
     for update_type in category["types"]
 }
 
+UPDATE_TYPE_POLICY_KEY = {
+    "os_security": "os_security",
+    "os_updates": "os_updates",
+    "os_update": "os_updates",
+    "application_security": "application_security",
+    "dependency_security": "application_security",
+    "third_party_security": "application_security",
+    "application_update": "application_updates",
+    "application_updates": "application_updates",
+    "dependency_updates": "application_updates",
+    "third_party_updates": "application_updates",
+    "app_security": "timelapse_security",
+    "timelapse_security": "timelapse_security",
+    "timelapse_pro_security": "timelapse_security",
+    "app_updates": "timelapse_updates",
+    "app_update": "timelapse_updates",
+    "timelapse_update": "timelapse_updates",
+    "timelapse_pro_update": "timelapse_updates",
+}
+
+LEGACY_POLICY_ALIASES = {
+    "app_security": "timelapse_security",
+    "app_updates": "timelapse_updates",
+}
+
+HEADEND_PLATFORM_BREW_ALLOWLIST = {
+    "certbot": {
+        "owner": "peter",
+        "home": "/Users/peter",
+        "runtime_bin": "/opt/homebrew/bin/certbot",
+        "description": "Certbot ACME client",
+        "preflight": [
+            ["/opt/homebrew/bin/certbot", "--version"],
+            ["/opt/homebrew/bin/certbot", "certificates"],
+            ["/bin/launchctl", "print", "system/dk.froekjaer.certbot-renewal"],
+        ],
+        "postflight": [
+            ["/opt/homebrew/bin/certbot", "--version"],
+            ["/opt/homebrew/bin/certbot", "certificates"],
+            ["/bin/launchctl", "print", "system/dk.froekjaer.certbot-renewal"],
+        ],
+        "extra_backup_paths": ["/Library/LaunchDaemons/dk.froekjaer.certbot-renewal.plist"],
+    },
+    "ffmpeg": {
+        "owner": "peter",
+        "home": "/Users/peter",
+        "runtime_bin": "/opt/homebrew/bin/ffmpeg",
+        "description": "FFmpeg timelapse rendering runtime",
+        "preflight": [
+            ["/opt/homebrew/bin/ffmpeg", "-version"],
+        ],
+        "postflight": [
+            ["/opt/homebrew/bin/ffmpeg", "-version"],
+            ["/opt/homebrew/bin/ffmpeg", "-hide_banner", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=1", "-frames:v", "1", "-f", "null", "-"],
+        ],
+    },
+    "nginx": {
+        "service": "nginx",
+        "service_label": "homebrew.mxcl.nginx",
+        "launch_agent": "/Users/peter/Library/LaunchAgents/homebrew.mxcl.nginx.plist",
+        "owner": "peter",
+        "home": "/Users/peter",
+        "runtime_bin": "/opt/homebrew/bin/nginx",
+        "description": "Nginx reverse proxy",
+        "preflight": [
+            ["/opt/homebrew/bin/nginx", "-v"],
+            ["/opt/homebrew/bin/nginx", "-t"],
+        ],
+        "postflight": [
+            ["/opt/homebrew/bin/nginx", "-v"],
+            ["/opt/homebrew/bin/nginx", "-t"],
+            ["/usr/bin/curl", "-fsS", "-I", "http://127.0.0.1:8000/openapi.json"],
+        ],
+        "extra_backup_paths": [
+            "/opt/homebrew/etc/nginx/nginx.conf",
+            "/opt/homebrew/etc/nginx/servers",
+        ],
+    },
+    "node": {
+        "owner": "peter",
+        "home": "/Users/peter",
+        "runtime_bin": "/opt/homebrew/bin/node",
+        "description": "Node.js build/runtime tooling",
+        "preflight": [
+            ["/opt/homebrew/bin/node", "--version"],
+            ["/opt/homebrew/bin/npm", "--version"],
+        ],
+        "postflight": [
+            ["/opt/homebrew/bin/node", "--version"],
+            ["/opt/homebrew/bin/node", "-e", "console.log(process.version)"],
+            ["/opt/homebrew/bin/npm", "--version"],
+        ],
+    },
+    "postgresql@17": {
+        "service": "postgresql@17",
+        "service_label": "homebrew.mxcl.postgresql@17",
+        "launch_agent": "/Users/peter/Library/LaunchAgents/homebrew.mxcl.postgresql@17.plist",
+        "owner": "peter",
+        "home": "/Users/peter",
+        "runtime_bin": "/opt/homebrew/opt/postgresql@17/bin/psql",
+        "description": "PostgreSQL database runtime",
+        "preflight": [
+            ["/opt/homebrew/opt/postgresql@17/bin/psql", "--version"],
+            ["/opt/homebrew/opt/postgresql@17/bin/pg_isready", "-h", "127.0.0.1", "-p", "5432"],
+            ["/opt/homebrew/opt/postgresql@17/bin/psql", "postgresql://timelapse@localhost/timelapse_db", "-c", "select current_database(), current_user, version();"],
+            ["/opt/homebrew/bin/brew", "services", "list"],
+        ],
+        "postflight": [
+            ["/opt/homebrew/opt/postgresql@17/bin/psql", "--version"],
+            ["/opt/homebrew/opt/postgresql@17/bin/pg_isready", "-h", "127.0.0.1", "-p", "5432"],
+            ["/opt/homebrew/opt/postgresql@17/bin/psql", "postgresql://timelapse@localhost/timelapse_db", "-c", "select count(*) from pending_updates;"],
+            ["/opt/homebrew/opt/postgresql@17/bin/psql", "postgresql://timelapse@localhost/timelapse_db", "-c", "select now();"],
+        ],
+        "extra_backup_paths": [
+            "/Users/peter/Library/LaunchAgents/homebrew.mxcl.postgresql@17.plist",
+        ],
+        "requires_db_backup": True,
+    },
+    "ollama": {
+        "service": "ollama",
+        "service_label": "homebrew.mxcl.ollama",
+        "launch_agent": "/Users/peter/Library/LaunchAgents/homebrew.mxcl.ollama.plist",
+        "runtime_bin": "/Applications/Ollama.app/Contents/Resources/ollama",
+        "owner": "peter",
+        "home": "/Users/peter",
+        "description": "Ollama AI runtime",
+    },
+}
+
+HEADEND_PLATFORM_MANUAL_PROFILES = {}
+
+_headend_update_lock = _threading.Lock()
+_headend_update_status: dict[int, dict] = {}
+
+
+def _headend_update_status_for(update_id: int) -> dict:
+    return _headend_update_status.get(update_id, {
+        "update_id": update_id,
+        "running": False,
+        "status": "idle",
+        "started_at": None,
+        "finished_at": None,
+        "message": None,
+        "phase": "idle",
+        "backup_file": None,
+        "preflight": None,
+        "postflight": None,
+        "rollback_performed": False,
+        "rollback_message": None,
+        "stdout_tail": "",
+        "stderr_tail": "",
+    })
+
+
+def _parse_brew_formula_from_update(update: PendingUpdate) -> str | None:
+    version = (update.version or "").strip()
+    if " " not in version:
+        return None
+    formula = version.split(" ", 1)[0].strip()
+    return formula if formula in HEADEND_PLATFORM_BREW_ALLOWLIST else None
+
+
+def _parse_headend_formula_name(update: PendingUpdate) -> str | None:
+    version = (update.version or "").strip()
+    if " " not in version:
+        return None
+    return version.split(" ", 1)[0].strip()
+
+
+def _brew_env_for(owner_home: str) -> dict[str, str]:
+    return {
+        **os.environ,
+        "HOME": owner_home,
+        "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOMEBREW_NO_AUTO_UPDATE": "1",
+        "HOMEBREW_NO_ENV_HINTS": "1",
+    }
+
+
+def _run_brew_as_owner(owner: str, owner_home: str, args: list[str], timeout_s: int = 900) -> _subprocess.CompletedProcess:
+    return _subprocess.run(
+        ["/usr/bin/sudo", "-u", owner, "/usr/bin/env", *[f"{k}={v}" for k, v in {
+            "HOME": owner_home,
+            "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "HOMEBREW_NO_AUTO_UPDATE": "1",
+            "HOMEBREW_NO_ENV_HINTS": "1",
+        }.items()], "/opt/homebrew/bin/brew", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+    )
+
+
+def _uid_for_user(username: str) -> str:
+    result = _subprocess.run(["/usr/bin/id", "-u", username], capture_output=True, text=True, timeout=10)
+    if result.returncode != 0 or not result.stdout.strip():
+        raise RuntimeError(f"Kunne ikke finde uid for {username}: {result.stderr[-300:]}")
+    return result.stdout.strip()
+
+
+def _headend_status_update(update_id: int, **fields) -> None:
+    current = _headend_update_status_for(update_id)
+    current.update(fields)
+    _headend_update_status[update_id] = current
+
+
+def _command_text(result: _subprocess.CompletedProcess) -> str:
+    return (result.stdout or "") + (result.stderr or "")
+
+
+def _copy_launch_agent_for_rollback(meta: dict, update_id: int) -> str | None:
+    plist = meta.get("launch_agent")
+    if not plist or not os.path.exists(plist):
+        return None
+    rollback_dir = Path("/tmp") / "timelapse-update-rollback"
+    rollback_dir.mkdir(parents=True, exist_ok=True)
+    dst = rollback_dir / f"update-{update_id}-{Path(plist).name}"
+    _shutil.copy2(plist, dst)
+    return str(dst)
+
+
+def _restore_launch_agent_from_backup(meta: dict, backup_plist: str | None) -> str:
+    if not backup_plist:
+        return "Ingen LaunchAgent backup at genskabe"
+    target = meta.get("launch_agent")
+    if not target:
+        return "Ingen LaunchAgent target defineret"
+    _shutil.copy2(backup_plist, target)
+    return _restart_launch_agent(meta)
+
+
+def _restart_launch_agent(meta: dict) -> str:
+    uid = _uid_for_user(meta["owner"])
+    label = meta["service_label"]
+    plist = meta["launch_agent"]
+    outputs: list[str] = []
+    launchctl_prefix = []
+    if os.geteuid() == 0 and meta.get("owner"):
+        launchctl_prefix = ["/usr/bin/sudo", "-u", meta["owner"]]
+    for cmd in (
+        ["/bin/launchctl", "bootout", f"gui/{uid}/{label}"],
+        ["/bin/launchctl", "bootstrap", f"gui/{uid}", plist],
+        ["/bin/launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
+    ):
+        run_cmd = [*launchctl_prefix, *cmd]
+        result = _subprocess.run(run_cmd, capture_output=True, text=True, timeout=120)
+        outputs.append(f"$ {' '.join(run_cmd)}\n{result.stdout}{result.stderr}")
+        if cmd[1] != "bootout" and result.returncode != 0:
+            raise RuntimeError(f"launchctl fejlede: {result.stderr[-1000:] or result.stdout[-1000:]}")
+    return "\n".join(outputs)
+
+
+def _ollama_service_snapshot(meta: dict, log_offset: int | None = None) -> dict:
+    runtime_bin = meta.get("runtime_bin") or "/opt/homebrew/bin/ollama"
+    snapshot: dict[str, object] = {"runtime_bin": runtime_bin}
+    for label, cmd, timeout_s in (
+        ("runtime_version", [runtime_bin, "--version"], 30),
+        ("api_version", ["/usr/bin/curl", "-fsS", "http://127.0.0.1:11434/api/version"], 20),
+        ("models", [runtime_bin, "list"], 60),
+    ):
+        try:
+            result = _subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                env=_brew_env_for(meta["home"]),
+            )
+            snapshot[label] = {
+                "ok": result.returncode == 0,
+                "output": _command_text(result)[-1500:],
+            }
+        except Exception as exc:
+            snapshot[label] = {"ok": False, "output": str(exc)}
+    log_path = Path("/opt/homebrew/var/log/ollama.log")
+    if log_path.exists():
+        try:
+            with log_path.open("r", errors="replace") as f:
+                if log_offset is not None:
+                    f.seek(log_offset)
+                snapshot["new_log_tail"] = f.read()[-2500:]
+        except Exception as exc:
+            snapshot["new_log_tail"] = f"log read failed: {exc}"
+    return snapshot
+
+
+def _run_profile_commands(meta: dict, commands: list[list[str]], label: str, timeout_s: int = 180) -> dict:
+    results: dict[str, object] = {}
+    for idx, cmd in enumerate(commands):
+        key = f"{label}_{idx + 1}"
+        try:
+            result = _subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                env=_brew_env_for(meta["home"]),
+            )
+            output = _command_text(result)
+            results[key] = {
+                "cmd": " ".join(cmd),
+                "ok": result.returncode == 0,
+                "output": output[-2500:],
+            }
+            if result.returncode != 0:
+                raise RuntimeError(f"{label} fejlede: {' '.join(cmd)}\n{output[-1200:]}")
+        except Exception as exc:
+            results[key] = {
+                "cmd": " ".join(cmd),
+                "ok": False,
+                "output": str(exc)[-2500:],
+            }
+            raise
+    return results
+
+
+def _headend_profile_snapshot(formula: str, meta: dict, label: str, log_offset: int | None = None) -> dict:
+    if formula == "ollama":
+        return _ollama_service_snapshot(meta, log_offset)
+    commands = meta.get(label, [])
+    return _run_profile_commands(meta, commands, label) if commands else {}
+
+
+def _validate_ollama_runtime(meta: dict) -> str:
+    runtime_bin = meta.get("runtime_bin") or "/opt/homebrew/bin/ollama"
+    version = _subprocess.run(
+        [runtime_bin, "--version"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_brew_env_for(meta["home"]),
+    )
+    if version.returncode != 0:
+        raise RuntimeError(f"Ollama version check fejlede: {version.stderr[-1000:] or version.stdout[-1000:]}")
+    generate = _subprocess.run(
+        [runtime_bin, "run", "llama3.2:latest", "Svar kun OK"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=_brew_env_for(meta["home"]),
+    )
+    if generate.returncode != 0:
+        raise RuntimeError(f"Ollama inference validering fejlede: {generate.stderr[-1500:] or generate.stdout[-1500:]}")
+    api_version = _subprocess.run(
+        ["/usr/bin/curl", "-fsS", "http://127.0.0.1:11434/api/version"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=_brew_env_for(meta["home"]),
+    )
+    if api_version.returncode != 0:
+        raise RuntimeError(f"Ollama API validering fejlede: {api_version.stderr[-1000:] or api_version.stdout[-1000:]}")
+    return f"{version.stdout}{version.stderr}\nAPI OK:\n{api_version.stdout}\nInference OK:\n{generate.stdout[-1000:]}"
+
+
+def _validate_headend_profile(formula: str, meta: dict) -> str:
+    if formula == "ollama":
+        return _validate_ollama_runtime(meta)
+    results = _run_profile_commands(meta, meta.get("postflight", []), "postflight")
+    return _json.dumps(results, indent=2, ensure_ascii=False)[-3000:]
+
+
+def _run_headend_platform_update(update_id: int, requested_by: str) -> None:
+    started = now_utc()
+    _headend_update_status[update_id] = {
+        "update_id": update_id,
+        "running": True,
+        "status": "running",
+        "started_at": started.isoformat(),
+        "finished_at": None,
+        "message": "Installerer Headend platformopdatering",
+        "phase": "starting",
+        "backup_file": None,
+        "preflight": None,
+        "postflight": None,
+        "rollback_performed": False,
+        "rollback_message": None,
+        "stdout_tail": "",
+        "stderr_tail": "",
+    }
+    with _headend_update_lock:
+        db = SessionLocal()
+        rollback_plist = None
+        backup_file = None
+        log_offset = None
+        preflight = None
+        try:
+            update = db.query(PendingUpdate).filter_by(id=update_id).first()
+            if not update:
+                raise RuntimeError("Opdatering ikke fundet")
+            formula = _parse_brew_formula_from_update(update)
+            if not formula:
+                raise RuntimeError("Kun allowlistede Headend Homebrew-opdateringer kan installeres her")
+            meta = HEADEND_PLATFORM_BREW_ALLOWLIST[formula]
+            if update.status != "approved":
+                raise RuntimeError("Opdateringen skal være godkendt før installation")
+            production_validation_only = False
+            if update.environment != "test":
+                if update.environment == "production":
+                    deployed_test = db.query(PendingUpdate).filter(
+                        PendingUpdate.update_type == update.update_type,
+                        PendingUpdate.version == update.version,
+                        PendingUpdate.environment == "test",
+                        PendingUpdate.scope == update.scope,
+                        PendingUpdate.scope_id == update.scope_id,
+                        PendingUpdate.status == "deployed",
+                    ).order_by(PendingUpdate.deployed_at.desc()).first()
+                    if not deployed_test:
+                        raise RuntimeError("Production kræver deployed test/lab-evidens for samme Headend update")
+                    production_validation_only = True
+                else:
+                    raise RuntimeError("Headend UI-installation kræver test/lab eller production promotion fra deployed test")
+            if update.scope != "device" or update.scope_id != "TL-MACMINI-HEADEND-TEST-1":
+                raise RuntimeError("Headend platformopdatering skal være scoped til Headend-enheden")
+
+            log_path = Path("/opt/homebrew/var/log/ollama.log") if formula == "ollama" else None
+            if log_path and log_path.exists():
+                log_offset = log_path.stat().st_size
+
+            _headend_status_update(update_id, phase="preflight", message="Kører preflight før Headend-opdatering")
+            before = _run_brew_as_owner(meta["owner"], meta["home"], ["list", "--versions", formula], timeout_s=60)
+            preflight = _headend_profile_snapshot(formula, meta, "preflight", log_offset)
+            _headend_status_update(update_id, preflight=preflight)
+
+            _headend_status_update(update_id, phase="backup", message="Tager pre-update backup")
+            rollback_plist = _copy_launch_agent_for_rollback(meta, update_id)
+            extra_paths = [p for p in [rollback_plist, meta.get("launch_agent"), *(meta.get("extra_backup_paths") or [])] if p]
+            backup_file = _run_backup_archive(f"pre-update-{update_id}-{formula}", extra_paths=extra_paths)
+            _headend_status_update(update_id, backup_file=backup_file)
+
+            restart_output = ""
+            install = _subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+            if production_validation_only:
+                _headend_status_update(update_id, phase="install", message=f"Aktiverer {formula} i production uden ny installation")
+                restart_output = "Production promotion validation only; package was already deployed in test/lab on this Headend."
+            else:
+                _headend_status_update(update_id, phase="install", message=f"Installerer {formula} via lab-godkendt flow")
+                install = _run_brew_as_owner(meta["owner"], meta["home"], ["upgrade", formula], timeout_s=1800)
+                if install.returncode != 0 and "already installed" not in (install.stdout + install.stderr).lower():
+                    raise RuntimeError(f"brew upgrade fejlede: {install.stderr[-1000:] or install.stdout[-1000:]}")
+
+                if meta.get("service_label") and meta.get("launch_agent"):
+                    _headend_status_update(update_id, phase="restart", message=f"Genindlæser {formula} service")
+                    restart_output = _restart_launch_agent(meta)
+                else:
+                    _headend_status_update(update_id, phase="restart", message=f"{formula} har ingen service der skal genstartes")
+
+            _headend_status_update(update_id, phase="postflight", message="Validerer service, API og inference")
+            validation_output = _validate_headend_profile(formula, meta)
+            postflight = _headend_profile_snapshot(formula, meta, "postflight", log_offset)
+            new_log = str(postflight.get("new_log_tail") or "")
+            if formula == "ollama" and "llama-server binary not found" in new_log:
+                raise RuntimeError("Postflight fandt Ollama runtime-fejl i log: llama-server binary not found")
+            after = _run_brew_as_owner(meta["owner"], meta["home"], ["list", "--versions", formula], timeout_s=60)
+
+            update.status = "deployed"
+            update.deployed_at = now_utc()
+            update.deployed_count = (update.deployed_count or 0) + 1
+            evidence = (
+                f"\n\n{'PROD activation' if production_validation_only else 'LAB evidence'} {now_utc().isoformat()}: "
+                f"pre_update_backup={backup_file}; preflight/runtime={preflight.get('runtime_version') if isinstance(preflight, dict) else 'n/a'}; "
+                f"postflight={postflight if isinstance(postflight, dict) else 'n/a'}; "
+                f"profile validation OK; install_mode={'validation_only_after_deployed_test' if production_validation_only else 'brew_upgrade'}."
+            )
+            update.description = ((update.description or "").rstrip() + evidence)[-6000:]
+            db.commit()
+            _headend_update_status[update_id] = {
+                "update_id": update_id,
+                "running": False,
+                "status": "deployed",
+                "started_at": started.isoformat(),
+                "finished_at": now_utc().isoformat(),
+                "message": f"{formula} {'aktiveret i production' if production_validation_only else 'installeret og service genstartet'}",
+                "phase": "complete",
+                "backup_file": backup_file,
+                "preflight": preflight,
+                "postflight": postflight,
+                "rollback_performed": False,
+                "rollback_message": None,
+                "stdout_tail": "\n".join([before.stdout, install.stdout, restart_output, validation_output, after.stdout])[-3000:],
+                "stderr_tail": "\n".join([before.stderr, install.stderr, after.stderr])[-3000:],
+            }
+            log.info("Headend platform update deployed: update=%s formula=%s by=%s", update_id, formula, requested_by)
+        except Exception as exc:
+            rollback_message = None
+            rollback_performed = False
+            if rollback_plist:
+                try:
+                    rollback_message = _restore_launch_agent_from_backup(meta, rollback_plist)
+                    rollback_performed = True
+                except Exception as rollback_exc:
+                    rollback_message = f"Rollback fejlede: {rollback_exc}"
+            db.rollback()
+            update = db.query(PendingUpdate).filter_by(id=update_id).first()
+            if update:
+                update.failed_count = (update.failed_count or 0) + 1
+                failure_evidence = (
+                    f"\n\nLAB failure {now_utc().isoformat()}: "
+                    f"phase={_headend_update_status_for(update_id).get('phase')}; "
+                    f"pre_update_backup={backup_file}; rollback_performed={rollback_performed}; "
+                    f"error={str(exc)[:700]}"
+                )
+                update.description = ((update.description or "").rstrip() + failure_evidence)[-6000:]
+                db.commit()
+            _headend_update_status[update_id] = {
+                **_headend_update_status_for(update_id),
+                "running": False,
+                "status": "failed",
+                "finished_at": now_utc().isoformat(),
+                "message": str(exc),
+                "backup_file": backup_file,
+                "rollback_performed": rollback_performed,
+                "rollback_message": rollback_message,
+            }
+            log.warning("Headend platform update failed: update=%s error=%s", update_id, exc)
+        finally:
+            db.close()
+
+
+@app.get("/api/updates/{update_id}/headend-deploy/status")
+def headend_platform_update_status(
+    update_id: int,
+    _user=require_role("super_admin", "admin"),
+):
+    return _headend_update_status_for(update_id)
+
+
+@app.post("/api/updates/{update_id}/headend-deploy")
+def start_headend_platform_update(
+    update_id: int,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    update = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not update:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    if update.status != "approved":
+        raise HTTPException(status_code=400, detail="Opdateringen skal være godkendt før installation")
+    if not _parse_brew_formula_from_update(update):
+        raise HTTPException(status_code=400, detail="Denne opdatering kan ikke installeres som Headend Homebrew-opdatering")
+    if _headend_update_lock.locked():
+        raise HTTPException(status_code=409, detail="Der kører allerede en Headend-opdatering")
+    thread = _threading.Thread(
+        target=_run_headend_platform_update,
+        args=(update_id, current_user.username),
+        daemon=True,
+    )
+    thread.start()
+    return {"ok": True, "status": _headend_update_status_for(update_id)}
+
 
 def _status_rank(status: str | None) -> int:
     return {
         "pending": 0,
         "approved": 1,
         "rollback_requested": 2,
-        "failed": 3,
-        "rolled_back": 4,
-        "deployed": 5,
-        "rejected": 6,
+        "blocked": 3,
+        "failed": 4,
+        "rolled_back": 5,
+        "deployed": 6,
+        "rejected": 7,
     }.get(status or "", 7)
+
+
+def _update_is_matrix_candidate(update: PendingUpdate) -> bool:
+    return update.status not in {"rejected", "cancelled"}
 
 
 def _parse_target_device_ids(value: str | None) -> list[str]:
@@ -3030,6 +3713,38 @@ def _installed_value(inv: DeviceInventory, category_key: str) -> str | None:
         except Exception:
             return "Package inventory rapporteret"
     return None
+
+
+def _parse_update_version_gap(update: PendingUpdate | None, installed: str | None = None) -> dict:
+    if not update:
+        return {
+            "current_version": installed,
+            "latest_available_version": None,
+            "package_count": None,
+            "component": None,
+            "version_gap_label": None,
+        }
+    version = (update.version or "").strip()
+    component = None
+    current = installed
+    latest = version or None
+    package_count = None
+    match = _re.match(r"(.+?)\s+(.+?)\s*->\s*(.+)$", version)
+    if match:
+        component, current, latest = [part.strip() for part in match.groups()]
+    else:
+        count_match = _re.match(r"(\d+)\s+pakker", version)
+        if count_match:
+            package_count = int(count_match.group(1))
+            latest = f"{package_count} pakker klar"
+    label = f"{current or '-'} -> {latest or '-'}" if latest else None
+    return {
+        "current_version": current,
+        "latest_available_version": latest,
+        "package_count": package_count,
+        "component": component,
+        "version_gap_label": label,
+    }
 
 
 def _business_impact(inv: DeviceInventory | None, device: Device | None, update_type: str | None = None) -> tuple[int, list[str]]:
@@ -3090,7 +3805,7 @@ def _risk_assessment(
     }.get(category, 45)
     impact_score, factors = _business_impact(inv, device, update_type)
     process_score = 0
-    if status in ("failed", "rolled_back", "rollback_requested"):
+    if status in ("failed", "rolled_back", "rollback_requested", "blocked"):
         process_score = 18
         factors.append(f"tidligere deployment-status: {status}")
     elif status == "approved":
@@ -3136,7 +3851,10 @@ def list_update_device_matrix(
             continue
         device = device_map.get(inv.device_id)
         categories = {}
-        device_updates = [u for u in updates if _update_applies_to_device(u, device, inv)]
+        device_updates = [
+            u for u in updates
+            if _update_is_matrix_candidate(u) and _update_applies_to_device(u, device, inv)
+        ]
         for category in UPDATE_CATEGORIES:
             candidates = [
                 u for u in device_updates
@@ -3153,10 +3871,16 @@ def list_update_device_matrix(
             if update:
                 state = "needs_approval" if update.status == "pending" else update.status
                 risk = _risk_assessment(update.update_type, update.severity, inv, device, update.status)
+                gap = _parse_update_version_gap(update, installed)
                 categories[category["key"]] = {
                     "state": state,
                     "installed": installed,
                     "available": update.version,
+                    "current_version": gap["current_version"],
+                    "latest_available_version": gap["latest_available_version"],
+                    "version_gap_label": gap["version_gap_label"],
+                    "package_count": gap["package_count"],
+                    "component": gap["component"],
                     "missing": update.status in ("pending", "approved", "rollback_requested"),
                     "pending_update_id": update.id,
                     "update_type": update.update_type,
@@ -3171,6 +3895,11 @@ def list_update_device_matrix(
                     "state": "no_update_reported" if installed else "no_inventory",
                     "installed": installed,
                     "available": None,
+                    "current_version": installed,
+                    "latest_available_version": None,
+                    "version_gap_label": None,
+                    "package_count": None,
+                    "component": None,
                     "missing": False,
                     "pending_update_id": None,
                     "update_type": None,
@@ -3201,6 +3930,117 @@ def list_update_device_matrix(
         })
     return {"categories": category_meta, "devices": devices}
 
+
+@app.get("/api/grc/dashboard")
+def grc_dashboard(
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Kvantitativ GRC-risk baseret på CMDB, missing updates, miljø og deployment-proces."""
+    inventories = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    device_map = {d.device_id: d for d in db.query(Device).all()}
+    updates = db.query(PendingUpdate).order_by(PendingUpdate.created_at.desc()).all()
+    device_rows: list[dict] = []
+    totals = {
+        "devices": 0,
+        "security_updates_missing": 0,
+        "functional_updates_missing": 0,
+        "blocked_updates": 0,
+        "approved_updates": 0,
+        "deployed_updates": 0,
+        "rolled_back_updates": 0,
+    }
+    for inv in inventories:
+        if inv.device_id.lower() == "test" and not inv.hostname:
+            continue
+        device = device_map.get(inv.device_id)
+        device_updates = [
+            u for u in updates
+            if _update_is_matrix_candidate(u) and _update_applies_to_device(u, device, inv)
+        ]
+        risk_items: list[dict] = []
+        missing_security = 0
+        missing_functional = 0
+        blocked = 0
+        approved = 0
+        for update in device_updates:
+            category = UPDATE_TYPE_TO_CATEGORY.get(update.update_type or "", update.update_type or "unknown")
+            installed = _installed_value(inv, category if category in {c["key"] for c in UPDATE_CATEGORIES} else "")
+            gap = _parse_update_version_gap(update, installed)
+            risk = _risk_assessment(update.update_type, update.severity, inv, device, update.status)
+            if "security" in (update.update_type or "") and update.status in {"pending", "approved", "blocked", "rollback_requested"}:
+                missing_security += 1
+            elif update.status in {"pending", "approved", "blocked", "rollback_requested"}:
+                missing_functional += 1
+            if update.status == "blocked":
+                blocked += 1
+            if update.status == "approved":
+                approved += 1
+            risk_items.append({
+                "update_id": update.id,
+                "update_type": update.update_type,
+                "category": category,
+                "status": update.status,
+                "severity": update.severity,
+                "environment": update.environment,
+                "current_version": gap["current_version"],
+                "latest_available_version": gap["latest_available_version"],
+                "package_count": gap["package_count"],
+                "component": gap["component"],
+                "risk": risk,
+            })
+        active_scores = [
+            item["risk"]["score"]
+            for item in risk_items
+            if item["status"] in {"pending", "approved", "blocked", "rollback_requested", "rolled_back"}
+        ]
+        max_score = max(active_scores) if active_scores else 0
+        totals["devices"] += 1
+        totals["security_updates_missing"] += missing_security
+        totals["functional_updates_missing"] += missing_functional
+        totals["blocked_updates"] += blocked
+        totals["approved_updates"] += approved
+        totals["deployed_updates"] += sum(1 for u in device_updates if u.status == "deployed")
+        totals["rolled_back_updates"] += sum(1 for u in device_updates if u.status == "rolled_back")
+        device_rows.append({
+            "device_id": inv.device_id,
+            "hostname": inv.hostname,
+            "environment": inv.environment,
+            "customer_name": device.customer_name if device else None,
+            "site_name": device.site_name if device else None,
+            "status": device.status if device else "unknown",
+            "last_seen": device.last_seen.isoformat() if device and device.last_seen else None,
+            "risk_score": max_score,
+            "risk_level": "critical" if max_score >= 85 else "high" if max_score >= 70 else "medium" if max_score >= 45 else "low",
+            "missing_security_updates": missing_security,
+            "missing_functional_updates": missing_functional,
+            "blocked_updates": blocked,
+            "approved_updates": approved,
+            "top_risks": sorted(risk_items, key=lambda item: item["risk"]["score"], reverse=True)[:5],
+        })
+    fleet_scores = [d["risk_score"] for d in device_rows]
+    fleet_score = round(sum(fleet_scores) / len(fleet_scores)) if fleet_scores else 0
+    return {
+        "generated_at": now_utc().isoformat(),
+        "model": "timelapse.grc_quantitative_risk.v1",
+        "summary": {
+            **totals,
+            "fleet_risk_score": fleet_score,
+            "highest_device_risk": max(fleet_scores) if fleet_scores else 0,
+        },
+        "risk_model": {
+            "not_cvss_only": True,
+            "components": [
+                "technical severity",
+                "update category",
+                "business impact from CMDB environment/customer/site/headend role",
+                "deployment process status",
+                "blocked or rollback history",
+            ],
+        },
+        "devices": sorted(device_rows, key=lambda row: row["risk_score"], reverse=True),
+    }
+
 class ApprovePayload(BaseModel):
     environment: Optional[str] = "production"
     scope: Optional[str] = None
@@ -3219,6 +4059,27 @@ class ChangeTicketPayload(BaseModel):
 
 class ChangeDecisionPayload(BaseModel):
     notes: Optional[str] = None
+
+
+class OsCatalogImportPayload(BaseModel):
+    device_id: str
+    apt_list_text: str
+    source: Optional[str] = None
+    environment: Optional[str] = "lab"
+    create_updates: Optional[bool] = True
+
+
+class OsCatalogBuilderPayload(BaseModel):
+    device_id: str
+    environment: Optional[str] = "lab"
+    image: Optional[str] = "ubuntu:24.04"
+    architecture: Optional[str] = "arm64"
+    source: Optional[str] = None
+    create_updates: Optional[bool] = True
+
+
+class PromotePayload(BaseModel):
+    target_environment: Optional[str] = "production"
 
 
 def _canonical_json(data: dict) -> str:
@@ -3413,6 +4274,11 @@ def _collect_release_outputs(root: Path) -> list[dict]:
 
 
 def _find_artifact_for_update(db: Session, update: PendingUpdate) -> UpdateArtifact | None:
+    ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
+    if ticket and ticket.artifact_id:
+        artifact = db.query(UpdateArtifact).filter_by(artifact_id=ticket.artifact_id).first()
+        if artifact:
+            return artifact
     version = (update.version or "").strip()
     if not version:
         return None
@@ -3447,6 +4313,1353 @@ def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> d
         "signed_at": artifact.signed_at.isoformat() if artifact.signed_at else None,
         "signer_fingerprint": signer_fingerprint,
     }
+
+
+def _default_update_policy() -> dict:
+    return {
+        "os_security": "auto",
+        "os_updates": "manual",
+        "application_security": "auto",
+        "application_updates": "manual",
+        "timelapse_security": "auto",
+        "timelapse_updates": "manual",
+        "maintenance_window": "02:00-04:00",
+        "staging_required": False,
+        "customer_acceptance_required": False,
+    }
+
+
+def _normalise_update_policy(raw_policy: dict | None) -> dict:
+    policy = {}
+    for key, value in (raw_policy or {}).items():
+        target_key = LEGACY_POLICY_ALIASES.get(key, key)
+        if target_key in _default_update_policy():
+            policy[target_key] = value
+    return policy
+
+
+def _merge_update_policy(base: dict, override: dict | None) -> dict:
+    merged = dict(base)
+    for key, value in _normalise_update_policy(override).items():
+        if key.endswith("_required"):
+            merged[key] = bool(value)
+            continue
+        if key == "maintenance_window":
+            merged[key] = value
+            continue
+        if key in merged:
+            # Manual is the restrictive override. Auto can only win if no stricter
+            # inherited value already exists.
+            if value == "manual" or merged.get(key) == "auto":
+                merged[key] = value
+    return merged
+
+
+def _resolved_update_policy(db: Session, device: Device | None) -> dict:
+    policy = _default_update_policy()
+    if not device:
+        return policy
+    try:
+        defaults = db.query(ConfigDefaults).first()
+        if defaults and getattr(defaults, "system", None):
+            sys_cfg = _json.loads(defaults.system)
+            policy = _merge_update_policy(policy, sys_cfg.get("update_policy"))
+
+        site = db.query(Site).filter_by(id=device.site_id).first() if device.site_id else None
+        customer = None
+        if site and site.customer_id:
+            customer = db.query(Customer).filter_by(id=site.customer_id).first()
+        elif device.customer_id:
+            customer = db.query(Customer).filter_by(id=device.customer_id).first()
+
+        for obj in [customer, site, device]:
+            if not obj:
+                continue
+            overrides_raw = getattr(obj, "config_overrides", None) or getattr(obj, "device_config", None)
+            if not overrides_raw:
+                continue
+            try:
+                overrides = _json.loads(overrides_raw) if isinstance(overrides_raw, str) else overrides_raw
+                policy = _merge_update_policy(policy, overrides.get("update_policy") if isinstance(overrides, dict) else None)
+            except Exception:
+                continue
+    except Exception as exc:
+        log.warning("Update policy resolution fejl: %s", exc)
+    return policy
+
+
+def _policy_key_for_update(update_type: str | None) -> str:
+    return UPDATE_TYPE_POLICY_KEY.get(update_type or "", update_type or "unknown")
+
+
+def _update_requires_headend_artifact(update_type: str | None) -> bool:
+    return (update_type or "") in {
+        "app_security",
+        "app_updates",
+        "app_update",
+        "timelapse_update",
+        "timelapse_pro_update",
+        "timelapse_security",
+        "timelapse_pro_security",
+        "application_security",
+        "application_update",
+        "application_updates",
+        "dependency_security",
+        "dependency_updates",
+        "third_party_security",
+        "third_party_updates",
+        "os_security",
+        "os_updates",
+    }
+
+
+def _default_os_bundle_commands() -> list[dict]:
+    return [
+        {
+            "name": "offline dpkg install",
+            "argv": [
+                "/bin/bash",
+                "-lc",
+                "dpkg -i {bundle}/packages/*.deb || apt-get --no-download -f install -y",
+            ],
+            "timeout_s": 1800,
+        },
+        {
+            "name": "post install package audit",
+            "argv": ["/bin/bash", "{bundle}/verify-installed.sh"],
+            "timeout_s": 300,
+        },
+    ]
+
+
+def _validate_os_bundle_commands(commands: list[dict]) -> None:
+    allowed_commands = {
+        "/bin/bash",
+        "/usr/bin/bash",
+        "/usr/bin/dpkg",
+        "/usr/bin/apt-get",
+        "/bin/dpkg",
+    }
+    for command in commands:
+        if not isinstance(command, dict) or not isinstance(command.get("argv"), list) or not command.get("argv"):
+            raise HTTPException(status_code=400, detail="commands skal indeholde argv-lister")
+        argv = [str(arg) for arg in command["argv"]]
+        executable = argv[0]
+        if executable not in allowed_commands:
+            raise HTTPException(status_code=400, detail=f"OS command er ikke allowlisted: {executable}")
+        joined = " ".join(argv)
+        if "apt-get" in joined:
+            forbidden = {"upgrade", "dist-upgrade", "full-upgrade", "update"}
+            if any(_re.search(rf"\b{_re.escape(token)}\b", joined) for token in forbidden) or "--no-download" not in joined:
+                raise HTTPException(
+                    status_code=400,
+                    detail="apt-get i OS bundle må kun bruges offline med --no-download, ikke update/upgrade",
+                )
+        if "{bundle}" not in joined:
+            raise HTTPException(status_code=400, detail="OS commands skal bruge {bundle} placeholder")
+
+
+def _validate_os_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> None:
+    forbidden_patterns = [
+        r"\bapt(-get)?\s+update\b",
+        r"\bapt(-get)?\s+(dist-upgrade|full-upgrade|upgrade)\b",
+        r"(^|[;&|]\s*)(curl|wget)\b",
+        r"(^|[;&|]\s*)git\s+(clone|pull|fetch)\b",
+        r"(^|[;&|]\s*)scp\b",
+        r"(^|[;&|]\s*)rsync\b",
+        r"(^|[;&|]\s*)python3?\s+-m\s+pip\b",
+        r"(^|[;&|]\s*)pip3?\s+install\b",
+    ]
+    for item in outputs:
+        rel = str(item.get("path") or "")
+        if not rel.endswith((".sh", ".bash", ".conf", ".txt")):
+            continue
+        path = (storage_path / rel).resolve()
+        try:
+            text_content = path.read_text(errors="ignore")
+        except Exception:
+            continue
+        for pattern in forbidden_patterns:
+            if _re.search(pattern, text_content):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"OS bundle script/config indeholder forbudt online update-kommando: {rel}",
+                )
+        for line in text_content.splitlines():
+            if "apt-get" in line or " apt " in line:
+                if "--no-download" not in line:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"OS bundle apt-brug mangler --no-download: {rel}",
+                    )
+
+
+def _assert_update_has_required_artifact(db: Session, update: PendingUpdate) -> UpdateArtifact:
+    artifact = _find_artifact_for_update(db, update)
+    if (
+        update.update_type in {"application_security", "application_update", "application_updates"}
+        and update.scope == "device"
+        and update.scope_id == "TL-MACMINI-HEADEND-TEST-1"
+        and _parse_brew_formula_from_update(update)
+    ):
+        return artifact
+    if _update_requires_headend_artifact(update.update_type) and not artifact:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Opdateringen mangler Headend-signeret artifact. "
+                "Edge må ikke installere via direkte internet/GitHub/apt."
+            ),
+        )
+    return artifact
+
+
+def _auto_approve_update_for_target(
+    db: Session,
+    update: PendingUpdate,
+    device: Device,
+    requested_by: str = "system:auto-policy",
+) -> tuple[bool, str]:
+    policy = _resolved_update_policy(db, device)
+    policy_key = _policy_key_for_update(update.update_type)
+    if policy.get(policy_key) != "auto":
+        return False, f"policy_{policy_key}_manual"
+    if policy.get("customer_acceptance_required"):
+        return False, "customer_acceptance_required"
+    if update.environment == "production" and policy.get("staging_required"):
+        staged = db.query(PendingUpdate).filter(
+            PendingUpdate.update_type == update.update_type,
+            PendingUpdate.version == update.version,
+            PendingUpdate.environment == "staging",
+            PendingUpdate.status == "deployed",
+        ).first()
+        if not staged:
+            return False, "staging_required"
+    artifact = _find_artifact_for_update(db, update)
+    if _update_requires_headend_artifact(update.update_type) and not artifact:
+        return False, "missing_signed_artifact"
+    ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
+    if not ticket:
+        ticket = _build_change_ticket(
+            update,
+            ChangeTicketPayload(
+                title=f"Auto policy approval: {update.update_type} {update.version}",
+                summary=update.description or "Auto-approved according to resolved update policy.",
+                status="approved",
+            ),
+            User(username=requested_by, role="system", password_hash=""),
+            artifact,
+        )
+        db.add(ticket)
+        db.flush()
+    ticket.status = "approved"
+    ticket.updated_at = now_utc()
+    update.status = "approved"
+    update.approved_at = now_utc()
+    update.approved_by = requested_by
+    update.scope = update.scope or "device"
+    update.scope_id = update.scope_id or device.device_id
+    if not update.target_device_ids and update.scope == "device":
+        update.target_device_ids = json.dumps([device.device_id])
+    _ensure_update_targets(db, update, ticket)
+    return True, "approved"
+
+
+@app.post("/api/updates/auto-deploy/evaluate")
+def evaluate_auto_deploy_updates(
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Evaluer pending updates mod resolved customer/site/device update policy."""
+    updates = db.query(PendingUpdate).filter(PendingUpdate.status == "pending").order_by(PendingUpdate.created_at).all()
+    decisions = []
+    for update in updates:
+        devices = _resolve_update_targets(db, update)
+        if not devices and update.scope == "device" and update.scope_id:
+            device = db.query(Device).filter_by(device_id=update.scope_id).first()
+            if device:
+                devices = [device]
+        if not devices:
+            decisions.append({"update_id": update.id, "decision": "skipped", "reason": "no_targets"})
+            continue
+        approved_any = False
+        reasons = []
+        for device in devices:
+            approved, reason = _auto_approve_update_for_target(db, update, device)
+            approved_any = approved_any or approved
+            reasons.append({"device_id": device.device_id, "approved": approved, "reason": reason})
+        decisions.append({
+            "update_id": update.id,
+            "update_type": update.update_type,
+            "version": update.version,
+            "decision": "approved" if approved_any else "skipped",
+            "targets": reasons,
+        })
+    db.commit()
+    return {"ok": True, "evaluated": len(updates), "decisions": decisions}
+
+
+_APT_UPGRADABLE_RE = _re.compile(
+    r"^(?P<name>[^/]+)/(?P<repos>\S+)\s+"
+    r"(?P<available>\S+)\s+"
+    r"(?P<arch>\S+)\s+"
+    r"\[upgradable from:\s+(?P<installed>[^\]]+)\]"
+)
+
+
+def _parse_lab_apt_catalog(text_value: str) -> list[dict]:
+    packages = []
+    seen = set()
+    for raw_line in (text_value or "").splitlines():
+        line = raw_line.strip()
+        match = _APT_UPGRADABLE_RE.match(line)
+        if not match:
+            continue
+        repos = match.group("repos")
+        category = "os_security" if "security" in repos else "os_updates"
+        key = (match.group("name"), match.group("available"), match.group("arch"))
+        if key in seen:
+            continue
+        seen.add(key)
+        packages.append({
+            "name": match.group("name"),
+            "installed_version": match.group("installed"),
+            "available_version": match.group("available"),
+            "architecture": match.group("arch"),
+            "category": category,
+            "severity": "high" if category == "os_security" else "low",
+            "source_repo": repos,
+        })
+    packages.sort(key=lambda p: (p["category"], p["name"]))
+    return packages
+
+
+def _reconcile_os_catalog(installed: dict, catalog_packages: list[dict]) -> dict:
+    grouped = _defaultdict(list)
+    for package in catalog_packages:
+        name = package.get("name")
+        available = package.get("available_version")
+        if not name or not available:
+            continue
+        installed_version = installed.get(name) or package.get("installed_version")
+        if not installed_version or installed_version == available:
+            continue
+        category = package.get("category") or "os_updates"
+        if category not in {"os_security", "os_updates"}:
+            continue
+        grouped[category].append({
+            "name": name,
+            "installed_version": installed_version,
+            "available_version": available,
+            "architecture": package.get("architecture"),
+            "severity": package.get("severity") or ("high" if category == "os_security" else "low"),
+            "source_repo": package.get("source_repo"),
+            "category": category,
+        })
+
+    decisions = {}
+    for category, packages in grouped.items():
+        severities = {p["severity"] for p in packages}
+        severity = "high" if "high" in severities else "medium" if "medium" in severities else "low"
+        decisions[category] = {
+            "package_count": len(packages),
+            "severity": severity,
+            "packages": packages,
+            "package_preview": packages[:50],
+            "truncated": max(0, len(packages) - 50),
+        }
+    return decisions
+
+
+def _os_bundle_requests(device_id: str, environment: str, decisions: dict, catalog: dict) -> list[dict]:
+    generated_at = now_utc().isoformat()
+    requests = []
+    for category, decision in decisions.items():
+        packages = decision.get("packages") or []
+        if not packages:
+            continue
+        requests.append({
+            "schema": "dk.froekjaer.timelapse.os_bundle_request.v1",
+            "source": "headend-cmdb-reconcile",
+            "generated_at": generated_at,
+            "device_id": device_id,
+            "environment": environment,
+            "category": category,
+            "catalog_source": catalog.get("source"),
+            "package_count": decision.get("package_count"),
+            "severity": decision.get("severity"),
+            "packages": packages,
+            "edge_requires_direct_internet": False,
+            "edge_may_run_apt_get_upgrade": False,
+        })
+    return requests
+
+
+def _write_update_json(folder: str, filename: str, payload: dict) -> str:
+    root = Path(os.getenv("TIMELAPSE_UPDATE_STORE", "/var/lib/timelapse")).expanduser()
+    path = root / folder / filename
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+        return str(path)
+    except PermissionError:
+        fallback = Path("/tmp/timelapse-update-store") / folder / filename
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        fallback.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+        return str(fallback)
+
+
+def _plan_path_for_update(update: PendingUpdate) -> str | None:
+    match = _re.search(r"^Plan:\s*(\S+)", update.description or "", _re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _os_bundle_store_root() -> Path:
+    configured = os.getenv("TIMELAPSE_OS_BUNDLE_STORE")
+    if configured:
+        return Path(configured).expanduser()
+    return Path("/Users/Shared/TimeLapsePro/os-bundles") if sys.platform == "darwin" else Path("/var/lib/timelapse/os-bundles")
+
+
+def _docker_available() -> tuple[bool, str | None]:
+    docker = _shutil.which("docker") if "_shutil" in globals() else None
+    if not docker:
+        return False, "Docker/Colima er ikke installeret på Headend"
+    try:
+        result = _subprocess.run([docker, "version", "--format", "{{.Server.Version}}"], text=True, capture_output=True, timeout=10)
+    except Exception as exc:
+        return False, f"Docker runtime kunne ikke kontaktes: {exc}"
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout or "Docker daemon svarer ikke").strip()
+    return True, None
+
+
+def _build_os_bundle_in_mac_container(
+    *,
+    plan_path: Path,
+    output_path: Path,
+    device_id: str,
+    architecture: str,
+    source_ref: str,
+    image: str,
+    category: str | None = None,
+) -> dict:
+    docker = _shutil.which("docker") if "_shutil" in globals() else None
+    if not docker:
+        raise HTTPException(status_code=409, detail="Docker/Colima er ikke installeret på Headend")
+    build_root = output_path.parent
+    build_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(build_root, 0o777)
+    plan_copy = build_root / f"{output_path.name}.plan.json"
+    plan_copy.write_text(plan_path.read_text())
+    repo = _repo_root()
+    container_output = f"/out/{output_path.name}"
+    cmd = [
+        docker,
+        "run",
+        "--rm",
+        "--platform",
+        "linux/arm64",
+        "-e",
+        "DEBIAN_FRONTEND=noninteractive",
+        "-e",
+        "TZ=UTC",
+        "-v",
+        f"{repo}:/repo:ro",
+        "-v",
+        f"{build_root}:/out",
+        image,
+        "bash",
+        "-lc",
+        (
+            "set -euo pipefail; "
+            "apt-get update; "
+            "apt-get install -y --no-install-recommends python3 ca-certificates; "
+            f"python3 /repo/headend/tools/build_os_bundle.py --device-id {device_id!r} "
+            f"--catalog /out/{plan_copy.name!r} --output {container_output!r} "
+            f"--architecture {architecture!r} --source-ref {source_ref!r} "
+            f"{('--category ' + category) if category else ''} "
+            "--include-dependencies --force"
+        ),
+    ]
+    result = _subprocess.run(cmd, text=True, capture_output=True, timeout=3600)
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "os_bundle_container_build_failed",
+                "message": "Linux-containeren kunne ikke bygge OS-bundlet",
+                "stdout_tail": (result.stdout or "")[-3000:],
+                "stderr_tail": (result.stderr or "")[-3000:],
+            },
+        )
+    return {
+        "builder": "mac_docker_linux_arm64",
+        "image": image,
+        "stdout_tail": (result.stdout or "")[-3000:],
+        "stderr_tail": (result.stderr or "")[-3000:],
+    }
+
+
+_update_job_lock = _threading.Lock()
+_update_jobs: dict[str, dict] = {}
+
+
+def _update_job_to_dict(record: UpdateJobRecord) -> dict:
+    def parse_json(value, default):
+        if not value:
+            return default
+        try:
+            return json.loads(value)
+        except Exception:
+            return default
+
+    return {
+        "job_id": record.job_id,
+        "kind": record.kind,
+        "title": record.title,
+        "running": bool(record.running),
+        "status": record.status,
+        "phase": record.phase,
+        "progress": record.progress or 0,
+        "started_at": record.started_at.isoformat() if record.started_at else None,
+        "finished_at": record.finished_at.isoformat() if record.finished_at else None,
+        "requested_by": record.requested_by,
+        "message": record.message,
+        "payload": parse_json(record.payload_json, {}),
+        "result": parse_json(record.result_json, None),
+        "error": record.error,
+        "stdout_tail": record.stdout_tail or "",
+        "stderr_tail": record.stderr_tail or "",
+    }
+
+
+def _json_or_none(value) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _new_update_job(kind: str, requested_by: str, title: str, payload: dict | None = None) -> str:
+    job_id = f"TL-JOB-{now_utc():%Y%m%d%H%M%S}-{_secrets.token_hex(4)}"
+    db = SessionLocal()
+    try:
+        record = UpdateJobRecord(
+            job_id=job_id,
+            kind=kind,
+            title=title,
+            running=True,
+            status="running",
+            phase="queued",
+            progress=0,
+            started_at=now_utc(),
+            requested_by=requested_by,
+            message="Job sat i kø",
+            payload_json=_json_or_none(payload or {}),
+            stdout_tail="",
+            stderr_tail="",
+            updated_at=now_utc(),
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        with _update_job_lock:
+            _update_jobs[job_id] = _update_job_to_dict(record)
+    finally:
+        db.close()
+    return job_id
+
+
+def _update_job(job_id: str, **fields) -> None:
+    db = SessionLocal()
+    try:
+        record = db.query(UpdateJobRecord).filter_by(job_id=job_id).first()
+        if not record:
+            record = UpdateJobRecord(job_id=job_id, kind=str(fields.get("kind") or "unknown"))
+            db.add(record)
+        scalar_fields = {
+            "kind", "title", "running", "status", "phase", "progress", "requested_by",
+            "message", "error", "stdout_tail", "stderr_tail",
+        }
+        for key, value in fields.items():
+            if key in scalar_fields:
+                setattr(record, key, value)
+            elif key == "payload":
+                record.payload_json = _json_or_none(value)
+            elif key == "result":
+                record.result_json = _json_or_none(value)
+            elif key == "started_at":
+                record.started_at = ensure_utc(datetime.fromisoformat(value)) if isinstance(value, str) else value
+            elif key == "finished_at":
+                record.finished_at = ensure_utc(datetime.fromisoformat(value)) if isinstance(value, str) else value
+        record.updated_at = now_utc()
+        db.commit()
+        db.refresh(record)
+        with _update_job_lock:
+            _update_jobs[job_id] = _update_job_to_dict(record)
+    finally:
+        db.close()
+
+
+def _update_job_snapshot(job_id: str) -> dict:
+    db = SessionLocal()
+    try:
+        record = db.query(UpdateJobRecord).filter_by(job_id=job_id).first()
+        if record:
+            snapshot = _update_job_to_dict(record)
+            with _update_job_lock:
+                _update_jobs[job_id] = snapshot
+            return snapshot
+    finally:
+        db.close()
+    with _update_job_lock:
+        job = _update_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Update job ikke fundet")
+        return dict(job)
+
+
+def _human_update_job_error(detail) -> tuple[str, str, str]:
+    if isinstance(detail, dict):
+        message = str(detail.get("message") or detail.get("code") or "Update job fejlede")
+        stderr_tail = str(detail.get("stderr_tail") or "")
+        stdout_tail = str(detail.get("stdout_tail") or "")
+        if stderr_tail:
+            last_line = next((line.strip() for line in reversed(stderr_tail.splitlines()) if line.strip()), "")
+            if last_line:
+                message = f"{message}: {last_line}"
+        return message[:1200], stdout_tail[-3000:], stderr_tail[-3000:]
+    return str(detail)[:1200], "", ""
+
+
+def _run_refresh_catalog_job(job_id: str, payload_data: dict, username: str) -> None:
+    db = SessionLocal()
+    try:
+        _update_job(job_id, phase="cmdb_inventory", progress=5, message="Læser CMDB package inventory")
+        user = db.query(User).filter_by(username=username).first()
+        if not user:
+            raise RuntimeError("Bruger findes ikke længere")
+        payload = OsCatalogBuilderPayload(**payload_data)
+        device_id = (payload.device_id or "").strip()
+        inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+        if not inv:
+            raise RuntimeError("CMDB inventory ikke fundet for device_id")
+        try:
+            installed = json.loads(inv.os_packages or "{}")
+        except Exception:
+            installed = {}
+        if not isinstance(installed, dict) or not installed:
+            raise RuntimeError("CMDB mangler OS package inventory for device")
+        _update_job(job_id, phase="docker_catalog", progress=20, message=f"Scanner {len(installed)} CMDB-pakker via Mac Docker-builder")
+        generated = _generate_os_update_catalog_candidates(
+            installed=installed,
+            device_id=device_id,
+            architecture=payload.architecture or "arm64",
+            image=payload.image or "ubuntu:24.04",
+        )
+        _update_job(job_id, phase="reconcile", progress=80, message=f"Reconciler {generated['upgradable_lines']} kandidater mod CMDB")
+        result = import_os_catalog_from_lab_apt_list(
+            OsCatalogImportPayload(
+                device_id=device_id,
+                apt_list_text=generated["apt_list_text"],
+                source=payload.source or f"mac-docker-builder:{payload.image or 'ubuntu:24.04'}:{device_id}",
+                environment=payload.environment or "lab",
+                create_updates=payload.create_updates,
+            ),
+            user,
+            db,
+        )
+        result["builder"] = {
+            "builder": generated["builder"],
+            "image": generated.get("image"),
+            "input_packages": generated["input_packages"],
+            "upgradable_lines": generated["upgradable_lines"],
+            "apt_list_output_path": generated["output_path"],
+            "fallback_from": generated.get("fallback_from"),
+            "fallback_reason": generated.get("fallback_reason"),
+        }
+        _update_job(
+            job_id,
+            running=False,
+            status="done",
+            phase="complete",
+            progress=100,
+            finished_at=now_utc().isoformat(),
+            message="OS-katalog opdateret fra CMDB/Mac-builder",
+            result=result,
+        )
+    except HTTPException as exc:
+        message, stdout_tail, stderr_tail = _human_update_job_error(exc.detail)
+        _update_job(
+            job_id,
+            running=False,
+            status="failed",
+            phase="failed",
+            finished_at=now_utc().isoformat(),
+            message=message,
+            error=message,
+            stdout_tail=stdout_tail,
+            stderr_tail=stderr_tail,
+        )
+    except Exception as exc:
+        _update_job(
+            job_id,
+            running=False,
+            status="failed",
+            phase="failed",
+            finished_at=now_utc().isoformat(),
+            message=str(exc),
+            error=str(exc),
+        )
+    finally:
+        db.close()
+
+
+def _run_os_bundle_build_bind_job(job_id: str, update_id: int, payload_data: dict, username: str) -> None:
+    db = SessionLocal()
+    try:
+        _update_job(job_id, phase="plan", progress=5, message="Læser OS update-plan")
+        user = db.query(User).filter_by(username=username).first()
+        if not user:
+            raise RuntimeError("Bruger findes ikke længere")
+        update = db.query(PendingUpdate).filter_by(id=update_id).first()
+        if not update:
+            raise RuntimeError("Opdatering ikke fundet")
+        if update.update_type not in {"os_security", "os_updates"}:
+            raise RuntimeError("Kun OS updates kan få bygget OS bundle")
+        device_id = (update.scope_id or payload_data.get("device_id") or "").strip()
+        plan_path_raw = str(payload_data.get("plan_path") or _plan_path_for_update(update) or "").strip()
+        if not plan_path_raw:
+            raise RuntimeError("Update mangler OS plan. Importér eller refresh OS-katalog fra UI først.")
+        plan_path = Path(plan_path_raw).expanduser().resolve()
+        if not plan_path.is_file():
+            raise RuntimeError(f"OS plan findes ikke på Headend: {plan_path}")
+        docker_ok, docker_error = _docker_available()
+        if not docker_ok:
+            raise RuntimeError(f"Docker/Colima er ikke klar: {docker_error}")
+        created_at = now_utc()
+        safe_type = _re.sub(r"[^a-zA-Z0-9_.-]+", "-", update.update_type)
+        output_root = _os_bundle_store_root().expanduser().resolve()
+        output_path = output_root / f"update-{update.id}-{safe_type}-{created_at:%Y%m%d-%H%M%S}"
+        architecture = str(payload_data.get("architecture") or "arm64")
+        source_ref = str(payload_data.get("source_ref") or f"headend-mac-container:{created_at:%Y%m%dT%H%M%SZ}")
+        image = str(payload_data.get("image") or "ubuntu:24.04")
+        _update_job(job_id, phase="docker_build", progress=20, message="Bygger offline OS bundle i Linux/arm64 Docker-container")
+        build = _build_os_bundle_in_mac_container(
+            plan_path=plan_path,
+            output_path=output_path,
+            device_id=device_id,
+            architecture=architecture,
+            source_ref=source_ref,
+            image=image,
+            category=update.update_type,
+        )
+        _update_job(job_id, phase="catalog_artifact", progress=75, message="Registrerer og signerer OS artifact")
+        artifact = catalog_os_update_artifact(
+            {
+                "storage_path": str(output_path),
+                "version": f"{device_id}-{update.update_type}-{created_at:%Y%m%d-%H%M%S}",
+                "architecture": architecture,
+                "target_os": payload_data.get("target_os") or "ubuntu-24.04/orangepi",
+                "source_ref": source_ref,
+                "lab_evidence": {
+                    "builder": build.get("builder"),
+                    "image": build.get("image"),
+                    "plan_path": str(plan_path),
+                    "triggered_from": "headend_ui_job",
+                },
+            },
+            user,
+            db,
+        )
+        _update_job(job_id, phase="bind_artifact", progress=90, message=f"Binder {artifact['artifact_id']} til update #{update_id}")
+        bind = bind_artifact_to_update(
+            update_id,
+            {
+                "artifact_id": artifact["artifact_id"],
+                "summary": "OS bundle bygget via Headend UI job og Mac container builder.",
+                "test_evidence_ref": source_ref,
+            },
+            user,
+            db,
+        )
+        _update_job(
+            job_id,
+            running=False,
+            status="done",
+            phase="complete",
+            progress=100,
+            finished_at=now_utc().isoformat(),
+            message=f"OS artifact bygget og bundet: {artifact['artifact_id']}",
+            result={"update_id": update_id, "bundle_path": str(output_path), "artifact": artifact, "bind": bind, "build": build},
+        )
+    except HTTPException as exc:
+        message, stdout_tail, stderr_tail = _human_update_job_error(exc.detail)
+        _update_job(
+            job_id,
+            running=False,
+            status="failed",
+            phase="failed",
+            finished_at=now_utc().isoformat(),
+            message=message,
+            error=message,
+            stdout_tail=stdout_tail,
+            stderr_tail=stderr_tail,
+        )
+    except Exception as exc:
+        _update_job(job_id, running=False, status="failed", phase="failed", finished_at=now_utc().isoformat(), message=str(exc), error=str(exc))
+    finally:
+        db.close()
+
+
+def _generate_apt_list_from_mac_builder(
+    *,
+    installed: dict,
+    device_id: str,
+    architecture: str,
+    image: str,
+) -> dict:
+    docker = _shutil.which("docker") if "_shutil" in globals() else None
+    if not docker:
+        raise HTTPException(status_code=409, detail="Docker/Colima er ikke installeret på Headend")
+    docker_ok, docker_error = _docker_available()
+    if not docker_ok:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "builder_runtime_missing",
+                "message": "Headend er Mac og skal bruge Docker/Colima for at generere Linux/arm64 OS-katalog fra CMDB.",
+                "runtime": "docker/colima",
+                "reason": docker_error,
+            },
+        )
+    build_root = (_os_bundle_store_root().expanduser().resolve() / "_catalog-builder")
+    build_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(build_root, 0o777)
+    safe_device = _re.sub(r"[^A-Za-z0-9_.-]+", "-", device_id)
+    input_path = build_root / f"{safe_device}.installed.tsv"
+    output_path = build_root / f"{safe_device}.apt-list.txt"
+    lines = []
+    for name, version in sorted(installed.items()):
+        name_s = str(name).strip()
+        version_s = str(version).strip()
+        if not name_s or not version_s or "\t" in name_s or "\n" in name_s or "\n" in version_s:
+            continue
+        lines.append(f"{name_s}\t{version_s}")
+    input_path.write_text("\n".join(lines) + "\n")
+    output_path.write_text("")
+    os.chmod(input_path, 0o666)
+    os.chmod(output_path, 0o666)
+    shell = (
+        "set -euo pipefail; "
+        "apt-get update >/dev/null; "
+        "while IFS=$'\\t' read -r name installed; do "
+        "[ -n \"$name\" ] || continue; "
+        "candidate=$(apt-cache policy \"$name\" | awk '/Candidate:/ {print $2; exit}'); "
+        "[ -n \"$candidate\" ] && [ \"$candidate\" != '(none)' ] || continue; "
+        "if dpkg --compare-versions \"$candidate\" gt \"$installed\"; then "
+        "repos=$(apt-cache policy \"$name\" | awk -v cand=\"$candidate\" '$1 == cand {getline; print $3; exit}'); "
+        "[ -n \"$repos\" ] || repos=ubuntu-builder; "
+        "case \"$repos\" in *security*) repo_label=noble-security ;; *updates*) repo_label=noble-updates ;; *) repo_label=\"$repos\" ;; esac; "
+        f"printf '%s/%s %s {architecture} [upgradable from: %s]\\n' \"$name\" \"$repo_label\" \"$candidate\" \"$installed\"; "
+        "fi; "
+        "done < /out/" + input_path.name + " > /out/" + output_path.name
+    )
+    result = _subprocess.run(
+        [
+            docker,
+            "run",
+            "--rm",
+            "--platform",
+            "linux/arm64",
+            "-e",
+            "DEBIAN_FRONTEND=noninteractive",
+            "-v",
+            f"{build_root}:/out",
+            image,
+            "bash",
+            "-lc",
+            shell,
+        ],
+        text=True,
+        capture_output=True,
+        timeout=3600,
+    )
+    if result.returncode != 0:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "os_catalog_builder_failed",
+                "message": "Linux-containeren kunne ikke generere OS-katalog fra CMDB",
+                "stdout_tail": (result.stdout or "")[-3000:],
+                "stderr_tail": (result.stderr or "")[-3000:],
+            },
+        )
+    apt_text = output_path.read_text()
+    return {
+        "apt_list_text": apt_text,
+        "input_packages": len(lines),
+        "upgradable_lines": len([line for line in apt_text.splitlines() if line.strip()]),
+        "builder": "mac_docker_linux_arm64",
+        "image": image,
+        "output_path": str(output_path),
+    }
+
+
+def _debian_version_order(ch: str) -> int:
+    if not ch:
+        return 0
+    if ch == "~":
+        return -1
+    if ch.isalpha():
+        return ord(ch)
+    return ord(ch) + 256
+
+
+def _debian_split_epoch(version: str) -> tuple[int, str]:
+    if ":" not in version:
+        return 0, version
+    epoch, rest = version.split(":", 1)
+    try:
+        return int(epoch), rest
+    except ValueError:
+        return 0, version
+
+
+def _debian_split_revision(version: str) -> tuple[str, str]:
+    if "-" not in version:
+        return version, ""
+    upstream, revision = version.rsplit("-", 1)
+    return upstream, revision
+
+
+def _debian_compare_part(left: str, right: str) -> int:
+    li = ri = 0
+    while li < len(left) or ri < len(right):
+        while (li < len(left) and not left[li].isdigit()) or (ri < len(right) and not right[ri].isdigit()):
+            lc = left[li] if li < len(left) and not left[li].isdigit() else ""
+            rc = right[ri] if ri < len(right) and not right[ri].isdigit() else ""
+            lo = _debian_version_order(lc)
+            ro = _debian_version_order(rc)
+            if lo != ro:
+                return -1 if lo < ro else 1
+            if lc:
+                li += 1
+            if rc:
+                ri += 1
+        lstart = li
+        while li < len(left) and left[li].isdigit():
+            li += 1
+        rstart = ri
+        while ri < len(right) and right[ri].isdigit():
+            ri += 1
+        lnum = left[lstart:li].lstrip("0")
+        rnum = right[rstart:ri].lstrip("0")
+        if len(lnum) != len(rnum):
+            return -1 if len(lnum) < len(rnum) else 1
+        if lnum != rnum:
+            return -1 if lnum < rnum else 1
+    return 0
+
+
+def _debian_compare_versions(left: str, right: str) -> int:
+    left_epoch, left_rest = _debian_split_epoch(str(left or "0"))
+    right_epoch, right_rest = _debian_split_epoch(str(right or "0"))
+    if left_epoch != right_epoch:
+        return -1 if left_epoch < right_epoch else 1
+    left_upstream, left_revision = _debian_split_revision(left_rest)
+    right_upstream, right_revision = _debian_split_revision(right_rest)
+    upstream_cmp = _debian_compare_part(left_upstream, right_upstream)
+    if upstream_cmp:
+        return upstream_cmp
+    return _debian_compare_part(left_revision, right_revision)
+
+
+def _parse_debian_packages_index(text_value: str, *, suite: str, component: str, architecture: str, base_url: str) -> list[dict]:
+    packages = []
+    current: dict[str, str] = {}
+    last_key = None
+    for raw_line in (text_value or "").splitlines() + [""]:
+        if not raw_line.strip():
+            if current.get("Package") and current.get("Version"):
+                packages.append({
+                    "name": current.get("Package"),
+                    "available_version": current.get("Version"),
+                    "architecture": current.get("Architecture") or architecture,
+                    "category": "os_security" if "security" in suite else "os_updates",
+                    "severity": "high" if "security" in suite else "low",
+                    "source_repo": f"{suite}/{component}",
+                    "filename": current.get("Filename"),
+                    "sha256": current.get("SHA256"),
+                    "size": current.get("Size"),
+                    "url": f"{base_url.rstrip('/')}/{current.get('Filename')}" if current.get("Filename") else None,
+                })
+            current = {}
+            last_key = None
+            continue
+        if raw_line.startswith((" ", "\t")) and last_key:
+            current[last_key] = current.get(last_key, "") + "\n" + raw_line.strip()
+            continue
+        key, sep, value = raw_line.partition(":")
+        if sep:
+            current[key] = value.strip()
+            last_key = key
+    return packages
+
+
+def _fetch_ubuntu_packages_index(base_url: str, suite: str, component: str, architecture: str) -> str:
+    rel = f"dists/{suite}/{component}/binary-{architecture}/Packages"
+    errors = []
+    for suffix, decoder in [
+        (".xz", lambda data: _lzma.decompress(data).decode("utf-8", errors="replace")),
+        (".gz", lambda data: _gzip.decompress(data).decode("utf-8", errors="replace")),
+        ("", lambda data: data.decode("utf-8", errors="replace")),
+    ]:
+        url = f"{base_url.rstrip('/')}/{rel}{suffix}"
+        try:
+            with _urlrequest.urlopen(url, timeout=45) as response:
+                return decoder(response.read())
+        except Exception as exc:
+            errors.append(f"{url}: {exc}")
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "ubuntu_package_index_fetch_failed",
+            "message": f"Kunne ikke hente Ubuntu package metadata for {suite}/{component}/{architecture}",
+            "errors": errors[-3:],
+        },
+    )
+
+
+def _generate_apt_list_from_ubuntu_metadata(
+    *,
+    installed: dict,
+    device_id: str,
+    architecture: str,
+    suite: str = "noble",
+    base_url: str | None = None,
+    components: list[str] | None = None,
+) -> dict:
+    repo_base = base_url or os.getenv("TIMELAPSE_UBUNTU_PORTS_BASE_URL", "http://ports.ubuntu.com/ubuntu-ports")
+    component_list = components or [
+        item.strip()
+        for item in os.getenv("TIMELAPSE_UBUNTU_COMPONENTS", "main,universe,restricted,multiverse").split(",")
+        if item.strip()
+    ]
+    suites = [
+        item.strip()
+        for item in os.getenv("TIMELAPSE_UBUNTU_SUITES", f"{suite},{suite}-updates,{suite}-security").split(",")
+        if item.strip()
+    ]
+    candidates: dict[str, dict] = {}
+    indexes = 0
+    for suite_name in suites:
+        for component in component_list:
+            index_text = _fetch_ubuntu_packages_index(repo_base, suite_name, component, architecture)
+            indexes += 1
+            for package in _parse_debian_packages_index(
+                index_text,
+                suite=suite_name,
+                component=component,
+                architecture=architecture,
+                base_url=repo_base,
+            ):
+                name = package.get("name")
+                version = package.get("available_version")
+                if not name or not version or name not in installed:
+                    continue
+                current = candidates.get(name)
+                if not current or _debian_compare_versions(version, current["available_version"]) > 0:
+                    candidates[name] = package
+                elif current and version == current["available_version"] and package.get("category") == "os_security":
+                    candidates[name] = package
+
+    lines = []
+    for name, package in sorted(candidates.items()):
+        installed_version = str(installed.get(name) or "").strip()
+        available_version = str(package.get("available_version") or "").strip()
+        if not installed_version or not available_version:
+            continue
+        if _debian_compare_versions(available_version, installed_version) <= 0:
+            continue
+        source_repo = package.get("source_repo") or "ubuntu-metadata"
+        lines.append(
+            f"{name}/{source_repo} {available_version} {package.get('architecture') or architecture} "
+            f"[upgradable from: {installed_version}]"
+        )
+
+    build_root = (_os_bundle_store_root().expanduser().resolve() / "_catalog-builder")
+    build_root.mkdir(parents=True, exist_ok=True)
+    safe_device = _re.sub(r"[^A-Za-z0-9_.-]+", "-", device_id)
+    output_path = build_root / f"{safe_device}.ubuntu-metadata.apt-list.txt"
+    output_path.write_text("\n".join(lines) + ("\n" if lines else ""))
+    return {
+        "apt_list_text": output_path.read_text(),
+        "input_packages": len(installed),
+        "upgradable_lines": len(lines),
+        "builder": "headend_ubuntu_ports_metadata",
+        "image": None,
+        "output_path": str(output_path),
+        "repo_base": repo_base,
+        "suites": suites,
+        "components": component_list,
+        "indexes": indexes,
+    }
+
+
+def _generate_os_update_catalog_candidates(
+    *,
+    installed: dict,
+    device_id: str,
+    architecture: str,
+    image: str,
+) -> dict:
+    try:
+        return _generate_apt_list_from_mac_builder(
+            installed=installed,
+            device_id=device_id,
+            architecture=architecture,
+            image=image,
+        )
+    except HTTPException as exc:
+        log.warning("Mac Docker OS-katalog builder fejlede; bruger Ubuntu metadata fallback: %s", exc.detail)
+        generated = _generate_apt_list_from_ubuntu_metadata(
+            installed=installed,
+            device_id=device_id,
+            architecture=architecture,
+        )
+        generated["fallback_from"] = "mac_docker_linux_arm64"
+        generated["fallback_reason"] = exc.detail
+        return generated
+
+
+def _upsert_blocked_os_updates_from_plan(
+    db: Session,
+    device_id: str,
+    environment: str,
+    decisions: dict,
+    catalog_source: str | None,
+    plan_path: str,
+) -> list[dict]:
+    changes = []
+    for update_type, decision in decisions.items():
+        if update_type not in {"os_security", "os_updates"}:
+            continue
+        count = int(decision.get("package_count") or 0)
+        if count <= 0:
+            continue
+        severity = decision.get("severity") or ("high" if update_type == "os_security" else "low")
+        label = "sikkerhedsopdatering(er)" if update_type == "os_security" else "funktionelle OS-opdatering(er)"
+        version = f"{count} pakker"
+        existing = (
+            db.query(PendingUpdate)
+            .filter(
+                PendingUpdate.update_type == update_type,
+                PendingUpdate.scope == "device",
+                PendingUpdate.scope_id == device_id,
+                PendingUpdate.status.in_(["pending", "approved", "blocked"]),
+            )
+            .order_by(PendingUpdate.created_at.desc())
+            .first()
+        )
+        description = (
+            f"{count} {label} klar via Headend lab-katalog ({catalog_source or 'unknown source'}).\n"
+            f"Plan: {plan_path}\n"
+            "Blocked: afventer lab-bygget, testet og Headend-signeret offline OS artifact. "
+            "Edge må ikke bruge direkte apt/internet."
+        )
+        if existing:
+            existing.version = version
+            existing.description = description
+            existing.severity = severity
+            existing.environment = environment
+            if existing.status != "approved":
+                existing.status = "blocked"
+            changes.append({"update_type": update_type, "status": "updated", "id": existing.id})
+            continue
+        update = PendingUpdate(
+            update_type=update_type,
+            version=version,
+            description=description,
+            severity=severity,
+            scope="device",
+            scope_id=device_id,
+            status="blocked",
+            environment=environment,
+        )
+        db.add(update)
+        db.flush()
+        changes.append({"update_type": update_type, "status": "created", "id": update.id})
+    return changes
+
+
+@app.post("/api/updates/os-catalog/import-apt-list")
+def import_os_catalog_from_lab_apt_list(
+    payload: OsCatalogImportPayload,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Importer lab/mirror apt output, reconcile mod CMDB og opret blokerede OS update-poster."""
+    device_id = (payload.device_id or "").strip()
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id er påkrævet")
+    environment = (payload.environment or "lab").strip().lower()
+    if environment not in {"lab", "staging", "production"}:
+        raise HTTPException(status_code=400, detail="environment skal være lab, staging eller production")
+    packages = _parse_lab_apt_catalog(payload.apt_list_text)
+    if not packages:
+        raise HTTPException(status_code=400, detail="Ingen apt upgradable-linjer fundet i input")
+    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="CMDB inventory ikke fundet for device_id")
+    try:
+        installed = json.loads(inv.os_packages or "{}")
+    except Exception:
+        installed = {}
+    if not isinstance(installed, dict):
+        installed = {}
+
+    created_at = now_utc()
+    catalog = {
+        "schema": "dk.froekjaer.timelapse.os_update_catalog.v1",
+        "source": payload.source or f"lab-import:apt-list:{device_id}:{created_at:%Y%m%dT%H%M%SZ}",
+        "generated_at": created_at.isoformat(),
+        "imported_by": current_user.username,
+        "device_id": device_id,
+        "edge_requires_direct_internet": False,
+        "edge_may_run_apt_get_upgrade": False,
+        "packages": packages,
+        "summary": {
+            "total": len(packages),
+            "os_security": sum(1 for p in packages if p["category"] == "os_security"),
+            "os_updates": sum(1 for p in packages if p["category"] == "os_updates"),
+        },
+    }
+    decisions = _reconcile_os_catalog(installed, packages)
+    plan = {
+        "schema": "dk.froekjaer.timelapse.os_update_plan.v1",
+        "source": "headend-cmdb-reconcile",
+        "generated_at": created_at.isoformat(),
+        "device_id": device_id,
+        "environment": environment,
+        "catalog_source": catalog["source"],
+        "inventory_reported_at": inv.inventory_reported_at.isoformat() if inv.inventory_reported_at else None,
+        "decisions": decisions,
+        "bundle_requests": _os_bundle_requests(device_id, environment, decisions, catalog),
+    }
+    stamp = f"{device_id}-{created_at:%Y%m%d-%H%M%S}"
+    catalog_path = _write_update_json("update-catalogs", f"{stamp}.json", catalog)
+    plan_path = _write_update_json("update-plans", f"{stamp}.json", plan)
+    changes = []
+    if payload.create_updates:
+        changes = _upsert_blocked_os_updates_from_plan(db, device_id, environment, decisions, catalog["source"], plan_path)
+        db.commit()
+    return {
+        "ok": True,
+        "catalog_path": catalog_path,
+        "plan_path": plan_path,
+        "summary": catalog["summary"],
+        "decisions": {
+            key: {
+                "package_count": value.get("package_count"),
+                "severity": value.get("severity"),
+                "package_preview": value.get("package_preview"),
+                "truncated": value.get("truncated"),
+            }
+            for key, value in decisions.items()
+        },
+        "bundle_requests": [
+            {
+                "category": request["category"],
+                "package_count": request["package_count"],
+                "severity": request["severity"],
+            }
+            for request in plan["bundle_requests"]
+        ],
+        "updates": changes,
+        "next": (
+            "Byg offline OS bundle i lab med headend/tools/build_os_bundle.py --catalog "
+            f"{plan_path}; kopiér bundlet til Headend; registrer OS artifact; bind artifact; godkend."
+        ),
+    }
+
+
+@app.post("/api/updates/os-catalog/refresh-from-builder")
+def refresh_os_catalog_from_mac_builder(
+    payload: OsCatalogBuilderPayload,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Generér OS update-katalog fra CMDB inventory via Mac Headend Docker/arm64 builder."""
+    device_id = (payload.device_id or "").strip()
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id er påkrævet")
+    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="CMDB inventory ikke fundet for device_id")
+    try:
+        installed = json.loads(inv.os_packages or "{}")
+    except Exception:
+        installed = {}
+    if not isinstance(installed, dict) or not installed:
+        raise HTTPException(status_code=409, detail="CMDB mangler OS package inventory for device")
+    generated = _generate_os_update_catalog_candidates(
+        installed=installed,
+        device_id=device_id,
+        architecture=payload.architecture or "arm64",
+        image=payload.image or "ubuntu:24.04",
+    )
+    result = import_os_catalog_from_lab_apt_list(
+        OsCatalogImportPayload(
+            device_id=device_id,
+            apt_list_text=generated["apt_list_text"],
+            source=payload.source or f"mac-docker-builder:{payload.image or 'ubuntu:24.04'}:{device_id}",
+            environment=payload.environment or "lab",
+            create_updates=payload.create_updates,
+        ),
+        current_user,
+        db,
+    )
+    result["builder"] = {
+        "builder": generated["builder"],
+        "image": generated.get("image"),
+        "input_packages": generated["input_packages"],
+        "upgradable_lines": generated["upgradable_lines"],
+        "apt_list_output_path": generated["output_path"],
+        "fallback_from": generated.get("fallback_from"),
+        "fallback_reason": generated.get("fallback_reason"),
+    }
+    return result
+
+
+@app.post("/api/updates/os-catalog/refresh-from-builder-job")
+def start_refresh_os_catalog_from_mac_builder_job(
+    payload: OsCatalogBuilderPayload,
+    current_user=require_role("super_admin", "admin"),
+):
+    """Start asynkront job der genererer OS update-katalog fra CMDB via Mac Docker-builder."""
+    payload_data = payload.dict()
+    job_id = _new_update_job(
+        "os_catalog_refresh",
+        current_user.username,
+        f"Refresh OS-katalog for {payload.device_id}",
+        payload_data,
+    )
+    thread = _threading.Thread(
+        target=_run_refresh_catalog_job,
+        args=(job_id, payload_data, current_user.username),
+        daemon=True,
+    )
+    thread.start()
+    return {"ok": True, "job_id": job_id, "status": _update_job_snapshot(job_id)}
+
+
+@app.get("/api/updates/jobs/{job_id}")
+def get_update_job_status(
+    job_id: str,
+    _user=require_role("super_admin", "admin"),
+):
+    return _update_job_snapshot(job_id)
 
 
 @app.get("/api/updates/artifacts/{artifact_id}/files/{file_path:path}")
@@ -3572,6 +5785,526 @@ def catalog_current_release_artifact(
     db.add(artifact)
     db.commit()
     return _artifact_to_dict(artifact)
+
+
+# ── GitHub tag poller + artifact builder ──────────────────────────────────────
+
+# Track which tags we've already catalogued (survives restart via DB query on start)
+_git_tag_poller_seen: set[str] = set()
+_git_tag_poller_lock = _threading.Lock()
+
+
+def _build_artifact_from_git_tag(
+    tag: str,
+    triggered_by: str,
+    db: Session,
+) -> dict:
+    """
+    Byg og registrer et signeret release-artifact fra et GPG-signeret git-tag.
+    Bruger `git archive` til at eksportere filerne uden at ændre working tree.
+    """
+    import tempfile as _tempfile
+
+    root = _repo_root()
+
+    # Verificer GPG-signatur på tagget
+    verify = _subprocess.run(
+        ["git", "tag", "-v", tag],
+        cwd=str(root), capture_output=True, text=True, timeout=30,
+    )
+    if verify.returncode != 0:
+        raise ValueError(
+            f"GPG-verifikation fejlede for tag '{tag}': {verify.stderr.strip()}"
+        )
+    log.info("GPG-verifikation OK for tag %s", tag)
+
+    # Hent commit-SHA for tagget
+    commit = _git_text(["rev-list", "-n", "1", tag]) or ""
+    if not commit:
+        raise ValueError(f"Kunne ikke fastslå commit for tag '{tag}'")
+
+    # Tjek om vi allerede har et artifact for dette commit
+    existing = db.query(UpdateArtifact).filter_by(source_commit=commit, source_ref=tag).first()
+    if existing:
+        log.info("Artifact for tag %s / commit %s findes allerede: %s", tag, commit[:12], existing.artifact_id)
+        return _artifact_to_dict(existing)
+
+    # Eksporter git-arkiv til tempdir
+    with _tempfile.TemporaryDirectory(prefix="tl-tag-") as tmpdir:
+        archive_result = _subprocess.run(
+            ["git", "archive", "--format=tar", f"--prefix=", tag],
+            cwd=str(root), capture_output=True, timeout=120,
+        )
+        if archive_result.returncode != 0:
+            raise ValueError(f"git archive fejlede: {archive_result.stderr.decode().strip()}")
+
+        # Pak ud i tmpdir
+        import tarfile as _tarfile
+        import io as _io
+        with _tarfile.open(fileobj=_io.BytesIO(archive_result.stdout)) as tar:
+            tar.extractall(tmpdir)
+
+        tmp_path = Path(tmpdir)
+        outputs = _collect_release_outputs(tmp_path)
+        if not outputs:
+            raise ValueError(f"Ingen release-outputs fundet for tag {tag}")
+
+        created_at = now_utc()
+        artifact_id = f"TL-ART-{created_at:%Y%m%d}-{commit[:12]}"
+
+        # Tjek endnu en gang med artifact_id (race guard)
+        existing2 = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
+        if existing2:
+            return _artifact_to_dict(existing2)
+
+        manifest = {
+            "schema": "timelapse.update_artifact.v1",
+            "artifact_id": artifact_id,
+            "artifact_type": "app",
+            "version": tag,
+            "source": {
+                "commit": commit,
+                "ref": tag,
+                "dirty_worktree": False,
+                "build_method": "git_archive_tag",
+            },
+            "distribution_model": "headend_signed_artifact_catalog_edge_pull",
+            "edge_constraints": {
+                "edge_requires_direct_internet": False,
+                "edge_requires_direct_github": False,
+                "headend_is_update_authority": True,
+            },
+            "rollback": {
+                "required": True,
+                "strategy": "keep previous known-good artifact and rollback automatically on failed healthcheck",
+            },
+            "controls": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+            "outputs": outputs,
+            "created": {
+                "by": triggered_by,
+                "at": created_at.isoformat(),
+            },
+        }
+        manifest_json = _canonical_json(manifest)
+        manifest_sha = _sha256_text(manifest_json)
+        signature, signed_by = _sign_payload(manifest_json)
+        artifact = UpdateArtifact(
+            artifact_id=artifact_id,
+            artifact_type="app",
+            version=tag,
+            source_commit=commit,
+            source_ref=tag,
+            filename=f"{artifact_id}.manifest.json",
+            storage_path=str(root),
+            size_bytes=sum(int(o.get("size_bytes") or 0) for o in outputs),
+            sha256=manifest_sha,
+            manifest_json=manifest_json,
+            sbom_ref=None,
+            signature=signature,
+            signed_by=signed_by,
+            signed_at=created_at,
+            created_at=created_at,
+        )
+        db.add(artifact)
+        db.commit()
+        log.info("Artifact %s bygget og registreret for tag %s", artifact_id, tag)
+        return _artifact_to_dict(artifact)
+
+
+def _git_tag_poller_loop(interval_hours: float = 1.0) -> None:
+    """
+    Baggrunds-tråd: poller GitHub for nye GPG-signerede tags og bygger artifacts automatisk.
+    Kører kun hvis TIMELAPSE_REPO_DIR er sat (dvs. lab-headend med internet-adgang).
+    """
+    import time as _time
+    interval_s = max(60, interval_hours * 3600)
+
+    # Seed _git_tag_poller_seen med allerede kendte tags fra DB
+    try:
+        _seed_db = SessionLocal()
+        existing_refs = {
+            row[0]
+            for row in _seed_db.execute(
+                text("SELECT source_ref FROM update_artifacts WHERE source_ref IS NOT NULL")
+            ).fetchall()
+        }
+        _seed_db.close()
+        with _git_tag_poller_lock:
+            _git_tag_poller_seen.update(existing_refs)
+    except Exception as _seed_err:
+        log.warning("Git tag poller: kunne ikke seed seen-set fra DB: %s", _seed_err)
+
+    while True:
+        try:
+            root = _repo_root()
+            # Hent seneste tags fra GitHub (kun hvis remote er tilgængeligt)
+            fetch = _subprocess.run(
+                ["git", "fetch", "--tags", "--force"],
+                cwd=str(root), capture_output=True, text=True, timeout=60,
+            )
+            if fetch.returncode != 0:
+                log.debug("git fetch --tags: %s", fetch.stderr.strip())
+            else:
+                # Find alle tags med en GPG-signatur (annotated tags med signatur)
+                tags_raw = _git_text(["tag", "--list", "v*", "--sort=-version:refname"]) or ""
+                tags = [t.strip() for t in tags_raw.splitlines() if t.strip()]
+                with _git_tag_poller_lock:
+                    new_tags = [t for t in tags if t not in _git_tag_poller_seen]
+
+                for tag in new_tags:
+                    # Kun GPG-signerede annotated tags
+                    verify = _subprocess.run(
+                        ["git", "tag", "-v", tag],
+                        cwd=str(root), capture_output=True, text=True, timeout=15,
+                    )
+                    if verify.returncode != 0:
+                        log.info("Git tag poller: tag '%s' er ikke GPG-signeret — springer over", tag)
+                        with _git_tag_poller_lock:
+                            _git_tag_poller_seen.add(tag)
+                        continue
+
+                    try:
+                        _tag_db = SessionLocal()
+                        result = _build_artifact_from_git_tag(tag, "git-tag-poller", _tag_db)
+                        _tag_db.close()
+                        log.info("Git tag poller: artifact bygget for tag %s → %s", tag, result.get("artifact_id"))
+                    except Exception as _tag_err:
+                        log.warning("Git tag poller: fejl ved build af tag '%s': %s", tag, _tag_err)
+                    finally:
+                        with _git_tag_poller_lock:
+                            _git_tag_poller_seen.add(tag)
+        except Exception as _poll_err:
+            log.warning("Git tag poller fejl: %s", _poll_err)
+
+        _time.sleep(interval_s)
+
+
+@app.post("/api/updates/artifacts/catalog-from-git-tag")
+def catalog_artifact_from_git_tag(
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    Registrer et signeret release-artifact fra et GPG-signeret git-tag.
+    Hvis tag er tomt/udeladt bruges det seneste signerede tag automatisk.
+    """
+    tag = str(payload.get("tag") or "").strip()
+
+    root = _repo_root()
+
+    # Hent seneste tags
+    fetch = _subprocess.run(
+        ["git", "fetch", "--tags", "--force"],
+        cwd=str(root), capture_output=True, text=True, timeout=60,
+    )
+    if fetch.returncode != 0:
+        log.warning("git fetch --tags fejlede: %s", fetch.stderr.strip())
+
+    if not tag:
+        # Find seneste tag
+        tag = _git_text(["describe", "--tags", "--abbrev=0"]) or ""
+        if not tag:
+            raise HTTPException(status_code=409, detail="Ingen git-tags fundet i repository")
+
+    # Verificer tagget eksisterer
+    check = _subprocess.run(
+        ["git", "rev-list", "-n", "1", tag],
+        cwd=str(root), capture_output=True, text=True, timeout=10,
+    )
+    if check.returncode != 0:
+        raise HTTPException(status_code=404, detail=f"Git-tag '{tag}' ikke fundet")
+
+    try:
+        result = _build_artifact_from_git_tag(tag, current_user.username, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    with _git_tag_poller_lock:
+        _git_tag_poller_seen.add(tag)
+
+    return result
+
+
+@app.post("/api/updates/artifacts/catalog-os-bundle")
+def catalog_os_update_artifact(
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Registrer en lab-bygget offline OS update bundle som signeret artifact."""
+    storage_path = Path(str(payload.get("storage_path") or "")).expanduser().resolve()
+    if not storage_path.is_dir():
+        raise HTTPException(status_code=400, detail="storage_path skal være en eksisterende mappe")
+    version = str(payload.get("version") or storage_path.name).strip()
+    if not version:
+        raise HTTPException(status_code=400, detail="version er påkrævet")
+    commands = payload.get("commands")
+    if commands is None:
+        commands = _default_os_bundle_commands()
+    if not isinstance(commands, list) or not commands:
+        raise HTTPException(status_code=400, detail="commands skal være en ikke-tom liste")
+    _validate_os_bundle_commands(commands)
+
+    outputs = []
+    for file_path in sorted(p for p in storage_path.rglob("*") if p.is_file()):
+        rel = str(file_path.relative_to(storage_path))
+        if rel.startswith("../") or "/../" in rel or file_path.name in {".DS_Store", "Icon\r"}:
+            continue
+        outputs.append({
+            "path": rel,
+            "size_bytes": file_path.stat().st_size,
+            "sha256": _file_sha256(file_path),
+        })
+    if not outputs:
+        raise HTTPException(status_code=400, detail="OS bundle indeholder ingen filer")
+    output_paths = {item["path"] for item in outputs}
+    deb_outputs = [p for p in output_paths if p.startswith("packages/") and p.endswith(".deb")]
+    if not deb_outputs:
+        raise HTTPException(status_code=400, detail="OS bundle skal indeholde packages/*.deb")
+    if "package-manifest.json" not in output_paths:
+        raise HTTPException(status_code=400, detail="OS bundle mangler package-manifest.json fra lab builder")
+    if "verify-installed.sh" not in output_paths:
+        raise HTTPException(status_code=400, detail="OS bundle mangler verify-installed.sh fra lab builder")
+    _validate_os_bundle_file_policy(storage_path, outputs)
+
+    created_at = now_utc()
+    bundle_hash = _sha256_text(_canonical_json({
+        "version": version,
+        "outputs": outputs,
+        "commands": commands,
+    }))[:12]
+    artifact_id = f"TL-OS-{created_at:%Y%m%d}-{bundle_hash}"
+    existing = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
+    if existing:
+        return _artifact_to_dict(existing)
+
+    manifest = {
+        "schema": "timelapse.os_update_artifact.v1",
+        "artifact_id": artifact_id,
+        "artifact_type": "os",
+        "version": version,
+        "target": {
+            "os": payload.get("target_os") or "debian/orangepi",
+            "architecture": payload.get("architecture") or "arm64",
+            "device_scope": payload.get("device_scope") or "edge",
+        },
+        "distribution_model": "headend_signed_offline_os_bundle_edge_pull",
+        "edge_constraints": {
+            "edge_requires_direct_internet": False,
+            "edge_may_run_apt_get_upgrade": False,
+            "install_commands_must_use_offline_bundle": True,
+        },
+        "commands": commands,
+        "rollback": {
+            "required": True,
+            "strategy": payload.get("rollback_strategy") or "pre-update Edge backup; dpkg/apt rollback requires lab-defined package downgrade bundle if needed",
+        },
+        "controls": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+        "outputs": outputs,
+        "created": {
+            "by": current_user.username,
+            "at": created_at.isoformat(),
+            "lab_evidence": payload.get("lab_evidence"),
+        },
+    }
+    manifest_json = _canonical_json(manifest)
+    manifest_sha = _sha256_text(manifest_json)
+    signature, signed_by = _sign_payload(manifest_json)
+    artifact = UpdateArtifact(
+        artifact_id=artifact_id,
+        artifact_type="os",
+        version=version,
+        source_commit=None,
+        source_ref=str(payload.get("source_ref") or "lab-os-bundle"),
+        filename=f"{artifact_id}.manifest.json",
+        storage_path=str(storage_path),
+        size_bytes=sum(int(o.get("size_bytes") or 0) for o in outputs),
+        sha256=manifest_sha,
+        manifest_json=manifest_json,
+        sbom_ref=payload.get("sbom_ref"),
+        signature=signature,
+        signed_by=signed_by,
+        signed_at=created_at,
+        created_at=created_at,
+    )
+    db.add(artifact)
+    db.commit()
+    return _artifact_to_dict(artifact)
+
+
+@app.post("/api/updates/{update_id}/os-bundle/build-bind")
+def build_catalog_and_bind_os_bundle(
+    update_id: int,
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Byg et offline OS bundle via Headend-styret builder, registrér artifact og bind til update."""
+    update = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not update:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    if update.update_type not in {"os_security", "os_updates"}:
+        raise HTTPException(status_code=400, detail="Kun OS updates kan få bygget OS bundle")
+    device_id = (update.scope_id or payload.get("device_id") or "").strip()
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id kunne ikke fastslås for update")
+    plan_path_raw = str(payload.get("plan_path") or _plan_path_for_update(update) or "").strip()
+    if not plan_path_raw:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "os_plan_missing",
+                "message": "Update mangler OS plan. Importér lab-katalog fra UI først, så Headend har pakkelisten.",
+            },
+        )
+    plan_path = Path(plan_path_raw).expanduser().resolve()
+    if not plan_path.is_file():
+        raise HTTPException(status_code=409, detail=f"OS plan findes ikke på Headend: {plan_path}")
+
+    mode = str(payload.get("builder_mode") or "auto").strip().lower()
+    if mode not in {"auto", "mac_container"}:
+        raise HTTPException(status_code=400, detail="builder_mode skal være auto eller mac_container")
+    docker_ok, docker_error = _docker_available()
+    if not docker_ok:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "builder_runtime_missing",
+                "message": "Headend er Mac og skal bruge Docker/Colima eller en lab-builder runtime for at bygge Linux/arm64 OS-bundles fra UI.",
+                "runtime": "docker/colima",
+                "reason": docker_error,
+            },
+        )
+
+    created_at = now_utc()
+    safe_type = _re.sub(r"[^a-zA-Z0-9_.-]+", "-", update.update_type)
+    output_root = _os_bundle_store_root().expanduser().resolve()
+    output_path = output_root / f"update-{update.id}-{safe_type}-{created_at:%Y%m%d-%H%M%S}"
+    architecture = str(payload.get("architecture") or "arm64")
+    source_ref = str(payload.get("source_ref") or f"headend-mac-container:{created_at:%Y%m%dT%H%M%SZ}")
+    image = str(payload.get("image") or "ubuntu:24.04")
+
+    build = _build_os_bundle_in_mac_container(
+        plan_path=plan_path,
+        output_path=output_path,
+        device_id=device_id,
+        architecture=architecture,
+        source_ref=source_ref,
+        image=image,
+        category=update.update_type,
+    )
+    artifact = catalog_os_update_artifact(
+        {
+            "storage_path": str(output_path),
+            "version": f"{device_id}-{update.update_type}-{created_at:%Y%m%d-%H%M%S}",
+            "architecture": architecture,
+            "target_os": payload.get("target_os") or "ubuntu-24.04/orangepi",
+            "source_ref": source_ref,
+            "lab_evidence": {
+                "builder": build.get("builder"),
+                "image": build.get("image"),
+                "plan_path": str(plan_path),
+                "triggered_from": "headend_ui",
+            },
+        },
+        current_user,
+        db,
+    )
+    bind = bind_artifact_to_update(
+        update_id,
+        {
+            "artifact_id": artifact["artifact_id"],
+            "summary": "OS bundle bygget via Headend UI og Mac container builder.",
+            "test_evidence_ref": source_ref,
+        },
+        current_user,
+        db,
+    )
+    return {
+        "ok": True,
+        "update_id": update_id,
+        "bundle_path": str(output_path),
+        "artifact": artifact,
+        "bind": bind,
+        "build": build,
+    }
+
+
+@app.post("/api/updates/{update_id}/os-bundle/build-bind-job")
+def start_build_catalog_and_bind_os_bundle_job(
+    update_id: int,
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Start asynkront job der bygger offline OS bundle, registrerer artifact og binder det til update."""
+    update = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not update:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    if update.update_type not in {"os_security", "os_updates"}:
+        raise HTTPException(status_code=400, detail="Kun OS updates kan få bygget OS bundle")
+    payload_data = dict(payload or {})
+    job_id = _new_update_job(
+        "os_bundle_build_bind",
+        current_user.username,
+        f"Byg og bind OS artifact for update #{update_id}",
+        {"update_id": update_id, **payload_data},
+    )
+    thread = _threading.Thread(
+        target=_run_os_bundle_build_bind_job,
+        args=(job_id, update_id, payload_data, current_user.username),
+        daemon=True,
+    )
+    thread.start()
+    return {"ok": True, "job_id": job_id, "status": _update_job_snapshot(job_id)}
+
+
+@app.post("/api/updates/{update_id}/bind-artifact")
+def bind_artifact_to_update(
+    update_id: int,
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Bind et signeret artifact til en konkret update og gør den klar til godkendelse."""
+    update = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not update:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    artifact_id = str(payload.get("artifact_id") or "").strip()
+    artifact = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact ikke fundet")
+    if update.update_type in {"os_security", "os_updates"} and artifact.artifact_type != "os":
+        raise HTTPException(status_code=400, detail="OS updates kræver OS artifact")
+    if update.update_type not in {"os_security", "os_updates"} and artifact.artifact_type == "os":
+        raise HTTPException(status_code=400, detail="OS artifact kan kun bindes til OS updates")
+
+    ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
+    if not ticket:
+        ticket = _build_change_ticket(
+            update,
+            ChangeTicketPayload(
+                title=f"Bind artifact {artifact.artifact_id} til {update.update_type}",
+                summary=payload.get("summary") or update.description or "",
+                rollback_plan=payload.get("rollback_plan") or "Pre-update Edge backup; rollback requires lab-defined downgrade bundle if OS packages must be reverted.",
+                status="ready",
+            ),
+            current_user,
+            artifact,
+        )
+        db.add(ticket)
+    else:
+        ticket.artifact_id = artifact.artifact_id
+        ticket.sbom_ref = artifact.sbom_ref
+        ticket.test_evidence_ref = payload.get("test_evidence_ref") or ticket.test_evidence_ref
+        ticket.updated_at = now_utc()
+
+    if update.status == "blocked":
+        update.status = "pending"
+    update.description = ((update.description or "").rstrip() + f"\n\nArtifact bound {now_utc().isoformat()}: {artifact.artifact_id}")[-6000:]
+    db.commit()
+    return {"ok": True, "update_id": update.id, "artifact_id": artifact.artifact_id, "status": update.status}
 
 
 def _build_change_ticket(
@@ -3722,6 +6455,16 @@ def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTic
             device_id=device.device_id,
         ).first()
         if existing:
+            if ticket and ticket.ticket_id and not existing.ticket_id:
+                existing.ticket_id = ticket.ticket_id
+            if ticket and ticket.artifact_id and existing.artifact_id != ticket.artifact_id:
+                existing.artifact_id = ticket.artifact_id
+            if update.status == "approved" and existing.status in {"pending", "failed"}:
+                existing.status = "queued"
+                existing.last_error = None
+            existing.customer_id = existing.customer_id or device.customer_id
+            existing.site_id = existing.site_id or device.site_id
+            existing.target_version = existing.target_version or update.version
             continue
         db.add(UpdateTarget(
             pending_update_id=update.id,
@@ -3737,6 +6480,131 @@ def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTic
         ))
         created += 1
     return created
+
+
+def _update_flow_stage(update: PendingUpdate, artifact: UpdateArtifact | None, targets: list[dict]) -> dict:
+    if update.status == "pending":
+        return {"key": "pending_approval", "label": "Afventer godkendelse"}
+    if update.status == "blocked" and update.update_type in {"os_security", "os_updates"} and not artifact:
+        return {"key": "waiting_for_lab_os_bundle", "label": "Afventer lab-bygget offline OS bundle"}
+    if update.status == "blocked":
+        return {"key": "blocked", "label": "Blokeret"}
+    if update.status == "approved" and not artifact and _update_requires_headend_artifact(update.update_type):
+        return {"key": "missing_artifact", "label": "Mangler signeret artifact"}
+    if update.status == "approved":
+        active = {str(t.get("status") or "") for t in targets}
+        if active & {"downloading", "verifying", "backing_up", "installing"}:
+            return {"key": sorted(active & {"downloading", "verifying", "backing_up", "installing"})[0], "label": "Edge arbejder"}
+        if active & {"failed"}:
+            return {"key": "target_failed", "label": "Edge blokeret/fejlet"}
+        return {"key": "waiting_for_edge_poll", "label": "Afventer Edge heartbeat/policy-pull"}
+    if update.status == "deployed":
+        return {"key": "deployed", "label": "Installeret"}
+    if update.status == "rolled_back":
+        return {"key": "rolled_back", "label": "Rollback udført"}
+    if update.status == "rejected":
+        return {"key": "rejected", "label": "Afvist"}
+    if update.status == "cancelled":
+        return {"key": "cancelled", "label": "Annulleret"}
+    return {"key": update.status or "unknown", "label": STATUS_LABELS.get(update.status, update.status or "Ukendt") if "STATUS_LABELS" in globals() else (update.status or "Ukendt")}
+
+
+@app.get("/api/updates/{update_id}/flow-status")
+def get_update_flow_status(
+    update_id: int,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Detaljeret update-flow pr. target, inkl. hvad Edge/Headend venter på."""
+    update = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not update:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    artifact = _find_artifact_for_update(db, update)
+    ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
+    devices = _resolve_update_targets(db, update)
+    target_rows = (
+        db.query(UpdateTarget)
+        .filter_by(pending_update_id=update.id)
+        .order_by(UpdateTarget.device_id, UpdateTarget.id.desc())
+        .all()
+    )
+    latest_target_by_device: dict[str, UpdateTarget] = {}
+    for target in target_rows:
+        latest_target_by_device.setdefault(target.device_id, target)
+    device_ids = [device.device_id for device in devices]
+    inventory_by_device = {
+        inv.device_id: inv
+        for inv in db.query(DeviceInventory).filter(DeviceInventory.device_id.in_(device_ids)).all()
+    } if device_ids else {}
+    now = now_utc()
+    target_payloads: list[dict] = []
+    for device in devices:
+        inventory = inventory_by_device.get(device.device_id)
+        target = latest_target_by_device.get(device.device_id)
+        last_seen = ensure_utc(device.last_seen) if device and device.last_seen else None
+        age_s = max(0, int((now - last_seen).total_seconds())) if last_seen else None
+        status = target.status if target else ("queued" if update.status == "approved" else update.status)
+        blocked_for_missing_os_artifact = update.status == "blocked" and update.update_type in {"os_security", "os_updates"} and not artifact
+        if blocked_for_missing_os_artifact:
+            status = "blocked"
+            waiting_for = "lab_os_bundle"
+        elif update.status == "approved" and status in {"queued", "pending"}:
+            waiting_for = "edge_policy_pull"
+        elif status in {"downloading", "verifying", "backing_up", "installing"}:
+            waiting_for = status
+        elif update.status == "blocked":
+            waiting_for = "artifact_or_lab_evidence"
+        else:
+            waiting_for = None
+        target_payloads.append({
+            "device_id": device.device_id,
+            "hostname": (inventory.hostname if inventory else None) or device.location_name or device.device_id,
+            "status": status,
+            "waiting_for": waiting_for,
+            "last_seen": last_seen.isoformat() if last_seen else None,
+            "last_seen_age_s": age_s,
+            "last_report_at": target.last_report_at.isoformat() if target and target.last_report_at else None,
+            "started_at": target.started_at.isoformat() if target and target.started_at else None,
+            "completed_at": target.completed_at.isoformat() if target and target.completed_at else None,
+            "attempt_count": target.attempt_count if target else 0,
+            "last_error": (
+                "os_update_requires_headend_signed_offline_artifact"
+                if blocked_for_missing_os_artifact
+                else (target.last_error if target else None)
+            ),
+            "artifact_id": target.artifact_id if target else (artifact.artifact_id if artifact else None),
+            "target_version": update.version if blocked_for_missing_os_artifact else (target.target_version if target else update.version),
+        })
+    if not target_payloads and update.scope_id:
+        target_payloads.append({
+            "device_id": update.scope_id,
+            "hostname": None,
+            "status": "target_not_in_cmdb",
+            "waiting_for": "cmdb_device_record",
+            "last_seen": None,
+            "last_seen_age_s": None,
+            "last_report_at": None,
+            "started_at": None,
+            "completed_at": None,
+            "attempt_count": 0,
+            "last_error": "Update scope peger på en enhed, som ikke findes i CMDB Device-tabellen.",
+            "artifact_id": artifact.artifact_id if artifact else None,
+            "target_version": update.version,
+        })
+    return {
+        "update_id": update.id,
+        "status": update.status,
+        "update_type": update.update_type,
+        "version": update.version,
+        "environment": update.environment,
+        "scope": update.scope,
+        "scope_id": update.scope_id,
+        "artifact": _artifact_for_edge_policy(db, artifact) if artifact else None,
+        "ticket_id": ticket.ticket_id if ticket else None,
+        "targets": target_payloads,
+        "stage": _update_flow_stage(update, artifact, target_payloads),
+        "next_edge_poll": "Edge henter update-policy ved næste agent update-check/heartbeat. Headend pusher ikke normalt til Edge.",
+    }
 
 
 @app.get("/api/change-tickets")
@@ -3845,6 +6713,7 @@ def approve_change_ticket(
     if ticket.pending_update_id:
         update = db.query(PendingUpdate).filter_by(id=ticket.pending_update_id).first()
         if update and update.status in ("pending", "rejected"):
+            _assert_update_has_required_artifact(db, update)
             update.status = "approved"
             update.approved_at = decided_at
             update.approved_by = current_user.username
@@ -3917,6 +6786,7 @@ def approve_update(
         raise HTTPException(status_code=400, detail=f"Kan ikke godkende opdatering med status '{u.status}'")
     if payload.scope == "device" and not payload.scope_id and not payload.target_device_ids:
         raise HTTPException(status_code=400, detail="Device scope kræver scope_id eller target_device_ids")
+    _assert_update_has_required_artifact(db, u)
     u.status            = "approved"
     u.approved_at       = now_utc()
     u.approved_by       = current_user.username
@@ -3928,6 +6798,7 @@ def approve_update(
         u.scope    = u.scope or "device"
     target_ids          = payload.target_device_ids
     u.target_device_ids = json.dumps(target_ids) if target_ids else None
+    _ensure_update_targets(db, u)
     db.commit()
     log.info("Opdatering godkendt: %s v%s → %s/%s af %s",
              u.update_type, u.version, u.environment, u.scope, current_user.username)
@@ -3973,10 +6844,44 @@ def _user_can_approve_update(user: User, update: PendingUpdate, targets: list[di
     return any(t.get("customer_id") == user.customer_id for t in targets)
 
 
+def _compliance_approval_state(db: Session, update: PendingUpdate) -> dict:
+    artifact = _find_artifact_for_update(db, update)
+    artifact_required = _update_requires_headend_artifact(update.update_type)
+    if update.status != "pending":
+        return {
+            "actionable": False,
+            "artifact_required": artifact_required,
+            "artifact_missing": artifact_required and not artifact,
+            "reason": f"status_{update.status}",
+            "message": f"Opdateringen har status {update.status} og kan ikke accepteres fra Compliance.",
+            "next_action": "Opret en ny lab/testet update eller brug Updates-flowet til at genåbne den korrekt.",
+        }
+    if artifact_required and not artifact:
+        return {
+            "actionable": False,
+            "artifact_required": True,
+            "artifact_missing": True,
+            "reason": "missing_headend_signed_artifact",
+            "message": (
+                "Opdateringen mangler Headend-signeret artifact. "
+                "Edge må ikke installere via direkte internet/GitHub/apt."
+            ),
+            "next_action": "Byg og signer artifact i Headendens update-flow, og bind artifact til opdateringen før godkendelse.",
+        }
+    return {
+        "actionable": True,
+        "artifact_required": artifact_required,
+        "artifact_missing": False,
+        "reason": None,
+        "message": "Klar til Compliance-accept.",
+        "next_action": "Acceptér update for at oprette/godkende change ticket.",
+    }
+
+
 def _approval_queue(db: Session, user: User) -> list[dict]:
     updates = (
         db.query(PendingUpdate)
-        .filter(PendingUpdate.status.in_(["pending", "rejected"]))
+        .filter(PendingUpdate.status == "pending")
         .order_by(PendingUpdate.created_at.desc())
         .all()
     )
@@ -3987,6 +6892,7 @@ def _approval_queue(db: Session, user: User) -> list[dict]:
             continue
         ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).first()
         artifact = _find_artifact_for_update(db, update)
+        approval_state = _compliance_approval_state(db, update)
         risk = _risk_assessment(update.update_type, update.severity, None, None, update.status)
         queue.append({
             "id": update.id,
@@ -4003,6 +6909,12 @@ def _approval_queue(db: Session, user: User) -> list[dict]:
             "targets": targets,
             "change_ticket": _ticket_to_dict(ticket) if ticket else None,
             "artifact": _artifact_to_dict(artifact) if artifact else None,
+            "artifact_required": approval_state["artifact_required"],
+            "artifact_missing": approval_state["artifact_missing"],
+            "actionable": approval_state["actionable"],
+            "block_reason": approval_state["reason"],
+            "action_message": approval_state["message"],
+            "next_action": approval_state["next_action"],
             "approval_mode": "simple_acceptance",
         })
     return queue
@@ -4064,6 +6976,70 @@ def compliance_cockpit(
     }
 
 
+@app.get("/api/compliance/reports/{standard}")
+def compliance_standard_report(
+    standard: str,
+    current_user=require_role("operator"),
+    db: Session = Depends(get_db),
+):
+    """Generér en standard-specifik GRC/compliance rapport."""
+    allowed = {"SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"}
+    normalized = standard.upper().replace("IEC62443", "IEC62443").replace("IEC 62443", "IEC62443").replace("ISO27001", "ISO27000")
+    if normalized not in allowed:
+        raise HTTPException(status_code=404, detail="Ukendt standard")
+    cockpit = compliance_cockpit(current_user=current_user, db=db)
+    grc = grc_dashboard(_user=current_user, db=db)
+    controls = [
+        control for control in cockpit.get("controls", [])
+        if normalized in control.get("domains", [])
+    ]
+    counts = _control_summary_state(controls)
+    high_risk_devices = [
+        device for device in grc.get("devices", [])
+        if int(device.get("risk_score") or 0) >= 45
+    ]
+    gaps = [
+        {
+            "title": control.get("title"),
+            "status": control.get("status"),
+            "evidence": control.get("evidence"),
+            "recommendation": control.get("recommendation"),
+            "source": control.get("source"),
+        }
+        for control in controls
+        if control.get("status") in {"warning", "fail"}
+    ]
+    emphasis = {
+        "SABSA": "Business-attributter, risikoejerskab, accountability og arkitekturbeslutninger.",
+        "IEC62443": "Industriel/edge sikkerhed, zones/conduits, identity, patch governance og teknisk hardening.",
+        "ISO27000": "ISMS-kontrol, adgangsstyring, kryptografi, backup, logging og change management.",
+        "NIS2": "Driftskontinuitet, leverancekæde, hændelsesberedskab, patch governance og ledelsesrapportering.",
+        "CRA": "Produkt-sikkerhed, secure update, vulnerability handling, SBOM/artifact integrity og lifecycle evidence.",
+    }
+    return {
+        "standard": normalized,
+        "generated_at": now_utc().isoformat(),
+        "scope": "TimeLapse Pro Headend, Edge devices, CMDB, update flow, key management, backup/resilience and SIEM evidence",
+        "emphasis": emphasis[normalized],
+        "summary": {
+            "controls": counts,
+            "control_count": len(controls),
+            "gap_count": len(gaps),
+            "fleet_risk_score": grc.get("summary", {}).get("fleet_risk_score", 0),
+            "high_risk_devices": len(high_risk_devices),
+            "approval_queue": cockpit.get("summary", {}).get("approval_queue", 0),
+        },
+        "controls": controls,
+        "gaps": gaps,
+        "high_risk_devices": high_risk_devices[:10],
+        "evidence_sources": cockpit.get("evidence_sources", []),
+        "recommended_next_steps": [
+            gap["recommendation"] for gap in gaps[:8]
+            if gap.get("recommendation")
+        ],
+    }
+
+
 @app.post("/api/compliance/updates/{update_id}/accept")
 def compliance_accept_update(
     update_id: int,
@@ -4078,8 +7054,20 @@ def compliance_accept_update(
     targets = _approval_targets_for_update(db, update)
     if not _user_can_approve_update(current_user, update, targets):
         raise HTTPException(status_code=403, detail="Du kan ikke godkende denne opdatering")
-    if update.status not in ("pending", "rejected"):
+    if update.status != "pending":
         raise HTTPException(status_code=400, detail=f"Kan ikke godkende update med status {update.status}")
+    approval_state = _compliance_approval_state(db, update)
+    if not approval_state["actionable"]:
+        status_code = 409 if approval_state["artifact_missing"] else 400
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "message": approval_state["message"],
+                "reason": approval_state["reason"],
+                "next_action": approval_state["next_action"],
+            },
+        )
+    _assert_update_has_required_artifact(db, update)
 
     ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).first()
     if not ticket:
@@ -4146,35 +7134,75 @@ def reject_update(
 @app.post("/api/updates/{update_id}/promote")
 def promote_update(
     update_id: int,
+    payload: PromotePayload = PromotePayload(),
     current_user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db)
 ):
-    """Promovér en test-godkendt opdatering til produktion."""
+    """Promovér en test/lab-godkendt opdatering til staging eller production."""
     from database import PendingUpdate
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404)
-    if u.environment != "test":
-        raise HTTPException(status_code=400, detail="Kan kun promovere test-opdateringer")
-    if u.status not in ("deployed", "approved"):
-        raise HTTPException(status_code=400, detail="Opdatering skal være deployet i test først")
-    # Opret ny PendingUpdate til produktion
+    target_environment = (payload.target_environment or "production").strip().lower()
+    if target_environment not in {"staging", "production"}:
+        raise HTTPException(status_code=400, detail="target_environment skal være staging eller production")
+    if u.environment not in {"lab", "test", "staging"}:
+        raise HTTPException(status_code=400, detail="Kan kun promovere fra lab/test/staging")
+    if target_environment == "staging" and u.environment not in {"lab", "test"}:
+        raise HTTPException(status_code=400, detail="Staging-promotion kræver lab/test som kilde")
+    if target_environment == "production" and u.environment == "staging" and u.status != "deployed":
+        raise HTTPException(status_code=400, detail="Production fra staging kræver deployed staging-evidens")
+    if target_environment == "production" and u.environment in {"lab", "test"} and u.status != "deployed":
+        raise HTTPException(status_code=400, detail="Production kræver deployed lab/test-evidens")
+    if target_environment == "staging" and u.status not in {"approved", "deployed"}:
+        raise HTTPException(status_code=400, detail="Staging kræver godkendt eller deployet test/lab-update")
+    existing_prod = db.query(PendingUpdate).filter(
+        PendingUpdate.update_type == u.update_type,
+        PendingUpdate.version == u.version,
+        PendingUpdate.environment == target_environment,
+        PendingUpdate.scope == u.scope,
+        PendingUpdate.scope_id == u.scope_id,
+        PendingUpdate.status.in_(["pending", "approved", "deployed"]),
+    ).order_by(PendingUpdate.id.desc()).first()
+    if existing_prod:
+        return {"ok": True, "new_id": existing_prod.id, "existing": True}
+    source_ticket = db.query(ChangeTicket).filter_by(pending_update_id=u.id).order_by(ChangeTicket.created_at.desc()).first()
     prod_update = PendingUpdate(
         update_type       = u.update_type,
         version           = u.version,
-        description       = f"[Promoveret fra test] {u.description or ''}",
+        description       = f"[Promoveret fra {u.environment} til {target_environment}] {u.description or ''}",
         severity          = u.severity,
         scope             = u.scope,
         scope_id          = u.scope_id,
-        status            = "approved",
-        approved_at       = now_utc(),
-        approved_by       = current_user.username,
-        environment       = "production",
+        status            = "pending" if target_environment == "production" else "approved",
+        approved_at       = now_utc() if target_environment == "staging" else None,
+        approved_by       = current_user.username if target_environment == "staging" else None,
+        environment       = target_environment,
         target_device_ids = u.target_device_ids,
     )
     db.add(prod_update)
+    db.flush()
+    if source_ticket and source_ticket.artifact_id:
+        artifact = db.query(UpdateArtifact).filter_by(artifact_id=source_ticket.artifact_id).first()
+        if artifact:
+            ticket = _build_change_ticket(
+                prod_update,
+                ChangeTicketPayload(
+                    title=f"Promotion to {target_environment}: {u.update_type} {u.version}",
+                    summary=prod_update.description,
+                    rollback_plan=source_ticket.rollback_plan,
+                    maintenance_window=source_ticket.maintenance_window,
+                    reboot_required=source_ticket.reboot_required,
+                    status="ready" if target_environment == "production" else "approved",
+                ),
+                current_user,
+                artifact,
+            )
+            db.add(ticket)
+            if target_environment == "staging":
+                _ensure_update_targets(db, prod_update, ticket)
     db.commit()
-    log.info("Opdatering %d promoveret til produktion af %s", update_id, current_user.username)
+    log.info("Opdatering %d promoveret til %s af %s", update_id, target_environment, current_user.username)
     return {"ok": True, "new_id": prod_update.id}
 
 @app.post("/api/updates/{update_id}/force-rollback")
@@ -4204,43 +7232,18 @@ def get_update_policy(
     if not device:
         raise HTTPException(status_code=404)
 
-    # Default policy
-    policy = {
-        "app_security":  "auto",
-        "os_security":   "auto",
-        "app_updates":   "manual",
-        "os_updates":    "manual",
-        "maintenance_window": "02:00-04:00",
-    }
+    policy = _resolved_update_policy(db, device)
+    policy["app_security"] = policy.get("timelapse_security", "auto")
+    policy["app_updates"] = policy.get("timelapse_updates", "manual")
 
-    # Merge hierarki (global → customer → site → device)
-    try:
-        site     = db.query(Site).filter_by(id=device.site_id).first() if device.site_id else None
-        customer = db.query(Customer).filter_by(id=site.customer_id).first() if site else None
-        defaults = db.query(ConfigDefaults).first()
-
-        if defaults and getattr(defaults, "system", None):
-            sys_cfg = _json.loads(defaults.system)
-            if "update_policy" in sys_cfg:
-                policy.update(sys_cfg["update_policy"])
-
-        for obj in [customer, site, device]:
-            if not obj:
-                continue
-            overrides_raw = getattr(obj, "config_overrides", None) or getattr(obj, "device_config", None)
-            if overrides_raw:
-                try:
-                    overrides = _json.loads(overrides_raw) if isinstance(overrides_raw, str) else overrides_raw
-                    if "update_policy" in overrides:
-                        # Mest restriktive vinder: manual > auto
-                        for k, v in overrides["update_policy"].items():
-                            if k in policy:
-                                if v == "manual" or policy[k] == "auto":
-                                    policy[k] = v
-                except Exception:
-                    pass
-    except Exception as exc:
-        log.warning("Update policy resolution fejl: %s", exc)
+    pending_candidates = db.query(PendingUpdate).filter(PendingUpdate.status == "pending").all()
+    auto_changed = False
+    for candidate in pending_candidates:
+        if _update_applies_to_device(candidate, device, db.query(DeviceInventory).filter_by(device_id=device_id).first() or DeviceInventory(device_id=device_id)):
+            approved, _reason = _auto_approve_update_for_target(db, candidate, device)
+            auto_changed = auto_changed or approved
+    if auto_changed:
+        db.commit()
 
     # Find godkendte opdateringer til denne enhed
     from database import PendingUpdate as _PU
@@ -4257,6 +7260,18 @@ def get_update_policy(
             if device_id not in targets:
                 continue
         artifact = _find_artifact_for_update(db, u)
+        if _update_requires_headend_artifact(u.update_type) and not artifact:
+            log.warning(
+                "Approved update %s/%s withheld from Edge policy for %s: missing signed artifact",
+                u.id, u.update_type, device_id,
+            )
+            u.status = "blocked"
+            u.description = ((u.description or "").rstrip() + (
+                f"\n\nBlocked {now_utc().isoformat()}: approved update withheld from Edge policy "
+                "because it lacks required Headend-signed artifact."
+            ))[-6000:]
+            db.commit()
+            continue
         filtered.append({
             "id":          u.id,
             "update_type": u.update_type,
@@ -4271,20 +7286,60 @@ def get_update_policy(
 
 @app.post("/api/updates/report")
 def report_update(payload: dict, db: Session = Depends(get_db)):
-    """Edge rapporterer resultat af deployment (deployed/rolled_back)."""
+    """Edge rapporterer resultat af deployment (deployed/rolled_back/blocked)."""
     from database import PendingUpdate
     update_id = payload.get("update_id")
-    status    = payload.get("status")  # deployed|rolled_back
-    if not update_id or status not in ("deployed", "rolled_back"):
+    status    = payload.get("status")
+    reason    = str(payload.get("reason") or "").strip()
+    device_id = str(payload.get("device_id") or "").strip()
+    final_statuses = {"deployed", "rolled_back", "blocked"}
+    progress_statuses = {"queued", "downloading", "verifying", "backing_up", "installing"}
+    if not update_id or status not in (final_statuses | progress_statuses):
         raise HTTPException(status_code=400)
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404)
-    u.status = status
-    if status == "deployed":
-        u.deployed_at = now_utc()
-    elif status == "rolled_back":
-        u.rollback_at = now_utc()
+    if status in final_statuses:
+        u.status = status
+        if status == "deployed":
+            u.deployed_at = now_utc()
+        elif status == "rolled_back":
+            u.rollback_at = now_utc()
+            u.failed_count = (u.failed_count or 0) + 1
+        elif status == "blocked":
+            u.failed_count = (u.failed_count or 0) + 1
+    if reason and status in final_statuses:
+        u.description = ((u.description or "").rstrip() + f"\n\nEdge report {now_utc().isoformat()}: {status}; reason={reason[:700]}")[-6000:]
+    if device_id:
+        ticket = db.query(ChangeTicket).filter_by(pending_update_id=u.id).order_by(ChangeTicket.created_at.desc()).first()
+        target = (
+            db.query(UpdateTarget)
+            .filter_by(pending_update_id=u.id, device_id=device_id)
+            .order_by(UpdateTarget.id.desc())
+            .first()
+        )
+        if not target:
+            target = UpdateTarget(
+                pending_update_id=u.id,
+                ticket_id=ticket.ticket_id if ticket else None,
+                artifact_id=ticket.artifact_id if ticket else None,
+                device_id=device_id,
+                target_version=u.version,
+                status="pending",
+                started_at=now_utc(),
+            )
+            db.add(target)
+        target.ticket_id = ticket.ticket_id if ticket and ticket.ticket_id else target.ticket_id
+        target.artifact_id = ticket.artifact_id if ticket and ticket.artifact_id else target.artifact_id
+        target.target_version = u.version
+        target.status = "failed" if status == "blocked" else status
+        target.attempt_count = (target.attempt_count or 0) + (1 if status == "installing" else 0)
+        target.last_error = reason[:1000] if reason else None
+        target.started_at = target.started_at or now_utc()
+        target.completed_at = now_utc() if status in final_statuses else target.completed_at
+        target.rollback_at = now_utc() if status == "rolled_back" else target.rollback_at
+        target.last_report_at = now_utc()
+        target.report_json = json.dumps(payload, ensure_ascii=False)
     db.commit()
     log.info("Update %d rapporteret som %s fra device", update_id, status)
     return {"ok": True}
@@ -4300,7 +7355,12 @@ def report_available_updates(
     payload: dict,
     db: Session = Depends(get_db),
 ):
-    """Edge rapporterer tilgængelige opdateringer — opretter PendingUpdate-poster."""
+    """Edge rapporterer app-update hints.
+
+    OS updates maa ikke oprettes fra Edge-reported "available" counts. Edge er
+    kun installed-state reporter; Headend reconciler OS-mangler fra CMDB mod et
+    Headend-ejet lab/mirror-katalog.
+    """
     from database import PendingUpdate
 
     device_id          = payload.get("device_id", "unknown")
@@ -4312,40 +7372,43 @@ def report_available_updates(
 
     created = []
 
-    def _has_pending(update_type: str) -> bool:
+    def _active_update(update_type: str) -> PendingUpdate | None:
         from sqlalchemy import or_
         return db.query(PendingUpdate).filter(
             PendingUpdate.update_type == update_type,
             PendingUpdate.scope == "device",
             PendingUpdate.scope_id == device_id,
-            or_(PendingUpdate.status == "pending", PendingUpdate.status == "approved"),
-        ).first() is not None
+            PendingUpdate.status.in_(["pending", "approved", "blocked"]),
+        ).order_by(PendingUpdate.created_at.desc()).first()
 
-    if os_security_count > 0 and not _has_pending("os_security"):
-        db.add(PendingUpdate(
-            update_type = "os_security",
-            version     = f"{os_security_count} pakker",
-            description = f"{os_security_count} sikkerhedsopdatering(er) klar til installation via apt",
-            severity    = "high" if os_security_count >= 10 else "medium",
-            scope       = "device",
-            scope_id    = device_id,
-            status      = "pending",
-        ))
-        created.append("os_security")
+    def _refresh_active_update(update: PendingUpdate | None, version: str, description: str, severity: str) -> bool:
+        if not update:
+            return False
+        changed = False
+        if update.version != version:
+            update.version = version
+            changed = True
+        if update.description and "Blocked:" in update.description:
+            base, blocked_note = update.description.split("Blocked:", 1)
+            description = description.rstrip() + "\n\nBlocked:" + blocked_note
+        if update.description != description:
+            update.description = description
+            changed = True
+        if update.severity != severity:
+            update.severity = severity
+            changed = True
+        if changed:
+            db.query(UpdateTarget).filter_by(pending_update_id=update.id).update({
+                "target_version": version,
+            })
+        return changed
 
-    if os_updates_count > 0 and not _has_pending("os_updates"):
-        db.add(PendingUpdate(
-            update_type = "os_updates",
-            version     = f"{os_updates_count} pakker",
-            description = f"{os_updates_count} funktionelle OS-opdatering(er) klar via apt",
-            severity    = "low",
-            scope       = "device",
-            scope_id    = device_id,
-            status      = "pending",
-        ))
-        created.append("os_updates")
+    if os_security_count > 0:
+        created.append("os_security_ignored_cmdb_catalog_required")
+    if os_updates_count > 0:
+        created.append("os_updates_ignored_cmdb_catalog_required")
 
-    if app_security and not _has_pending("app_security"):
+    if app_security and not _active_update("app_security"):
         db.add(PendingUpdate(
             update_type = "app_security",
             version     = app_version or "ukendt",
@@ -4357,7 +7420,7 @@ def report_available_updates(
         ))
         created.append("app_security")
 
-    if app_behind_commits > 0 and not _has_pending("app_updates"):
+    if app_behind_commits > 0 and not _active_update("app_updates"):
         db.add(PendingUpdate(
             update_type = "app_updates",
             version     = app_version or "ukendt",
@@ -4423,6 +7486,21 @@ headend_url: {headend_url}
 bootstrap_token: {token}
 location_name: {location_name}
 """
+
+
+def _headend_api_url(db: Session, explicit_url: str | None = None) -> str:
+    """Return the Edge-facing API URL used in bootstrap.yaml."""
+    raw = (
+        explicit_url
+        or os.getenv("EDGE_PUBLIC_HEADEND_URL")
+        or _get_setting(db, "edge_public_headend_url", "")
+        or _get_setting(db, "base_url", "")
+        or os.getenv("BASE_URL", "")
+        or "https://timelapse.froekjaer.dk/api"
+    ).strip().rstrip("/")
+    if not raw.endswith("/api"):
+        raw = raw + "/api"
+    return raw
 
 
 def _build_install_md(site_name: str, camera_name: str, headend_url: str,
@@ -5336,7 +8414,6 @@ def health():
 
 from pathlib import Path as _Path
 from fastapi.responses import FileResponse
-from PIL import Image
 def _init_sftp_base():
     from sqlalchemy.orm import Session
     db_gen = get_db()
@@ -5351,12 +8428,6 @@ SFTP_BASE = _init_sftp_base()
 #Peter import re as _re
 
 def _find_image(device_id: str, filename: str) -> Optional[_Path]:
-    log.info("_find_image: device=%s filename=%r base=%s", device_id, filename, SFTP_BASE)
-    try:
-        top = list(SFTP_BASE.iterdir())
-        log.info("SFTP_BASE contents: %s", [x.name for x in top])
-    except Exception as e:
-        log.error("SFTP_BASE iterdir fejl: %s", e)
     """
     Find image — håndterer flere strukturer:
       1. Canonical data root: SFTP_BASE/{customer}/{site}/{camera}/YYYY/MM/DD/filename
@@ -5370,9 +8441,7 @@ def _find_image(device_id: str, filename: str) -> Optional[_Path]:
 
         # Struktur 1 — canonical: customer/site/camera/YYYY/MM/DD/
         canonical_glob = f"*/*/*/{yyyy}/{mm}/{dd}/{filename}"
-        log.info("canonical_glob=%r", canonical_glob)
         matches = list(SFTP_BASE.glob(canonical_glob))
-        log.info("canonical matches=%s", matches)
         if matches:
             return matches[0]
 
@@ -5420,12 +8489,18 @@ def _generated_thumbs_dir_for(image_path: _Path) -> _Path:
     return image_path.parent / ".headend-thumbs"
 
 
+_thumbnail_generation_lock = _threading.Lock()
+_thumbnail_generation_active: set[str] = set()
+
+
 def _is_valid_jpeg(path: _Path) -> bool:
     try:
         if not path.exists() or path.stat().st_size < 256:
             return False
-        with Image.open(path) as existing:
-            existing.verify()
+        if os.getenv("TIMELAPSE_STRICT_THUMBNAIL_VERIFY", "0").lower() in {"1", "true", "yes"}:
+            from PIL import Image
+            with Image.open(path) as existing:
+                existing.verify()
         return True
     except Exception:
         return False
@@ -5450,6 +8525,31 @@ def _find_existing_thumbnail(image_path: _Path) -> _Path | None:
         if _is_valid_jpeg(candidate):
             return candidate
     return None
+
+
+def _generate_edge_thumbnail(src: _Path, thumb: _Path) -> None:
+    key = str(thumb)
+    try:
+        from PIL import Image
+        thumb.parent.mkdir(parents=True, exist_ok=True)
+        tmp_thumb = thumb.parent / f".{thumb.name}.{_secrets.token_hex(8)}.tmp"
+        try:
+            with Image.open(src) as original:
+                img = original.convert("RGB")
+                img.thumbnail((320, 180), Image.LANCZOS)
+                canvas = Image.new("RGB", (320, 180), (15, 15, 15))
+                offset = ((320 - img.width) // 2, (180 - img.height) // 2)
+                canvas.paste(img, offset)
+                canvas.save(str(tmp_thumb), "JPEG", quality=78)
+            os.replace(tmp_thumb, thumb)
+            log.info("Thumbnail repair generated: %s", thumb)
+        finally:
+            tmp_thumb.unlink(missing_ok=True)
+    except Exception as exc:
+        log.warning("Thumbnail repair failed for %s: %s", src, exc)
+    finally:
+        with _thumbnail_generation_lock:
+            _thumbnail_generation_active.discard(key)
 
 
 def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
@@ -5489,7 +8589,6 @@ def get_thumbnail(
     db: Session = Depends(get_db),
 ):
     from urllib.parse import unquote as _unquote
-    import uuid as _uuid
     _sanitize_device_id(device_id)
     filename = _unquote(filename)
     _ensure_capture_file_access(db, _user, device_id, filename)
@@ -5501,35 +8600,217 @@ def get_thumbnail(
         return FileResponse(
             str(thumb),
             media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers={
+                "Cache-Control": "public, max-age=604800, immutable",
+                "X-Thumbnail-Source": "edge",
+            },
         )
 
-    thumbs_dir = _generated_thumbs_dir_for(src)
-    thumbs_dir.mkdir(exist_ok=True)
-    thumb = thumbs_dir / filename
-    if not thumb.exists():
-        tmp_thumb = thumbs_dir / f".{filename}.{_uuid.uuid4().hex}.tmp"
-        try:
-            with Image.open(src) as original:
-                img = original.convert("RGB")
-                # Landscape 16:9 thumbnail (320x180)
-                img.thumbnail((320, 180), Image.LANCZOS)
-                canvas = Image.new("RGB", (320, 180), (15, 15, 15))
-                offset = ((320 - img.width) // 2, (180 - img.height) // 2)
-                canvas.paste(img, offset)
-                canvas.save(str(tmp_thumb), "JPEG", quality=78)
-            tmp_thumb.replace(thumb)
-        except Exception as e:
-            tmp_thumb.unlink(missing_ok=True)
-            raise HTTPException(status_code=500, detail=str(e))
-    if not _is_valid_jpeg(thumb):
-        thumb.unlink(missing_ok=True)
-        raise HTTPException(status_code=503, detail="Thumbnail generation incomplete, retry")
-    return FileResponse(
-        str(thumb),
-        media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=86400"},
+    raise HTTPException(
+        status_code=404,
+        detail="Thumbnail missing; Edge/backfill must generate and upload thumbnails",
     )
+
+
+@app.post("/api/thumbnails/{device_id}/{filename}/generate")
+def request_thumbnail_generation(
+    device_id: str,
+    filename: str,
+    _user=require_role("viewer"),
+    db: Session = Depends(get_db),
+):
+    from urllib.parse import unquote as _unquote
+    _sanitize_device_id(device_id)
+    filename = _unquote(filename)
+    _ensure_capture_file_access(db, _user, device_id, filename)
+    src = _find_image(device_id, filename)
+    if not src:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    existing = _find_existing_thumbnail(src)
+    if existing:
+        return {"status": "ready", "source": "edge", "thumbnail": str(existing)}
+
+    thumb = _thumbs_dir_for(src) / src.name
+    key = str(thumb)
+    with _thumbnail_generation_lock:
+        if key in _thumbnail_generation_active:
+            return {"status": "queued", "thumbnail": str(thumb)}
+        _thumbnail_generation_active.add(key)
+
+    _threading.Thread(target=_generate_edge_thumbnail, args=(src, thumb), daemon=True).start()
+    return {"status": "queued", "thumbnail": str(thumb)}
+
+
+_post_processing_lock = _threading.Lock()
+_post_processing_status: dict = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "requested_by": None,
+    "options": {},
+    "total": 0,
+    "processed": 0,
+    "thumbnails_generated": 0,
+    "thumbnails_existing": 0,
+    "ai_queued": 0,
+    "files_missing": 0,
+    "errors": 0,
+    "last_message": "Ingen kørsel startet",
+}
+
+
+def _post_processing_snapshot() -> dict:
+    with _post_processing_lock:
+        return dict(_post_processing_status)
+
+
+def _post_processing_update(**values) -> None:
+    with _post_processing_lock:
+        _post_processing_status.update(values)
+
+
+def _run_post_processing_job(options: dict, allowed_device_ids: list[str] | None, requested_by: str) -> None:
+    from ai.integration import queue_capture_for_analysis
+
+    db = SessionLocal()
+    try:
+        query = db.query(Capture.id).filter(Capture.filename.isnot(None))
+        if allowed_device_ids is not None:
+            if not allowed_device_ids:
+                _post_processing_update(running=False, finished_at=now_utc().isoformat(), last_message="Ingen synlige enheder")
+                return
+            query = query.filter(Capture.device_id.in_(allowed_device_ids))
+        if options.get("device_id"):
+            query = query.filter(Capture.device_id == options["device_id"])
+        query = query.order_by(Capture.captured_at.desc(), Capture.id.desc())
+        if options.get("limit"):
+            query = query.limit(int(options["limit"]))
+        capture_ids = [row[0] for row in query.all()]
+        _post_processing_update(total=len(capture_ids), last_message=f"Starter post-processing af {len(capture_ids)} billeder")
+
+        for index, capture_id in enumerate(capture_ids, start=1):
+            capture = db.query(Capture).filter(Capture.id == capture_id).first()
+            if not capture:
+                continue
+
+            try:
+                image_path = _find_image(capture.device_id, capture.filename)
+                if not image_path:
+                    _post_processing_status["files_missing"] += 1
+                    _post_processing_update(processed=index, last_message=f"Mangler fil: {capture.filename}")
+                    continue
+
+                if options.get("thumbnails"):
+                    thumb = _find_existing_thumbnail(image_path)
+                    if thumb:
+                        _post_processing_status["thumbnails_existing"] += 1
+                    else:
+                        target = _thumbs_dir_for(image_path) / image_path.name
+                        _generate_edge_thumbnail(image_path, target)
+                        if _is_valid_jpeg(target):
+                            _post_processing_status["thumbnails_generated"] += 1
+                        else:
+                            _post_processing_status["errors"] += 1
+
+                if options.get("ai"):
+                    should_queue = options.get("force_ai") or not capture.ai_result or not capture.ai_tags
+                    if should_queue:
+                        if options.get("force_ai"):
+                            capture.ai_result = None
+                            capture.ai_tags = None
+                            capture.ai_analyzed_at = None
+                        queue_capture_for_analysis(capture.id)
+                        _post_processing_status["ai_queued"] += 1
+
+                if index % 25 == 0:
+                    db.commit()
+                _post_processing_update(processed=index, last_message=f"Behandler {index}/{len(capture_ids)}")
+            except Exception as exc:
+                db.rollback()
+                _post_processing_status["errors"] += 1
+                _post_processing_update(processed=index, last_message=f"Fejl ved {capture.filename}: {exc}")
+
+        db.commit()
+        _post_processing_update(
+            running=False,
+            finished_at=now_utc().isoformat(),
+            processed=len(capture_ids),
+            last_message="Post-processing færdig",
+        )
+    except Exception as exc:
+        db.rollback()
+        _post_processing_update(
+            running=False,
+            finished_at=now_utc().isoformat(),
+            errors=_post_processing_status.get("errors", 0) + 1,
+            last_message=f"Post-processing stoppede med fejl: {exc}",
+        )
+    finally:
+        db.close()
+
+
+@app.get("/api/admin/post-processing/status")
+def post_processing_status(_user=require_role("admin")):
+    return _post_processing_snapshot()
+
+
+@app.post("/api/admin/post-processing/start")
+def start_post_processing(payload: dict, current_user=require_role("admin"), db: Session = Depends(get_db)):
+    thumbnails = bool(payload.get("thumbnails", True))
+    ai = bool(payload.get("ai", False))
+    force_ai = bool(payload.get("force_ai", False))
+    limit_raw = payload.get("limit")
+    limit = None
+    if limit_raw not in (None, "", 0, "0"):
+        limit = max(1, min(int(limit_raw), 100000))
+    device_id = str(payload.get("device_id") or "").strip() or None
+    if device_id:
+        _ensure_capture_device_access(db, current_user, device_id)
+
+    if not thumbnails and not ai:
+        raise HTTPException(status_code=400, detail="Vælg thumbnails og/eller AI")
+
+    with _post_processing_lock:
+        if _post_processing_status.get("running"):
+            raise HTTPException(status_code=409, detail="Post-processing kører allerede")
+        _post_processing_status.update({
+            "running": True,
+            "started_at": now_utc().isoformat(),
+            "finished_at": None,
+            "requested_by": current_user.username,
+            "options": {
+                "thumbnails": thumbnails,
+                "ai": ai,
+                "force_ai": force_ai,
+                "limit": limit,
+                "device_id": device_id,
+            },
+            "total": 0,
+            "processed": 0,
+            "thumbnails_generated": 0,
+            "thumbnails_existing": 0,
+            "ai_queued": 0,
+            "files_missing": 0,
+            "errors": 0,
+            "last_message": "Kø starter",
+        })
+
+    allowed_device_ids = _allowed_capture_device_ids(db, current_user)
+    allowed_list = list(allowed_device_ids) if allowed_device_ids is not None else None
+    options = {
+        "thumbnails": thumbnails,
+        "ai": ai,
+        "force_ai": force_ai,
+        "limit": limit,
+        "device_id": device_id,
+    }
+    _threading.Thread(
+        target=_run_post_processing_job,
+        args=(options, allowed_list, current_user.username),
+        daemon=True,
+    ).start()
+    return _post_processing_snapshot()
 
 
 # ── Kamera-laboratorium endpoints ─────────────────────────────────────────────
@@ -5553,7 +8834,8 @@ def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), d
     if enabled:
         existing["lab_camera_ready"] = False
 
-    device.device_config = json.dumps(existing)
+    device.device_config = json.dumps(existing, ensure_ascii=False)
+    device.config_version = hashlib.md5(device.device_config.encode()).hexdigest()
     db.commit()
     log.info("Debug mode %s for %s", "ENABLED" if enabled else "DISABLED", device_id)
     return {"status": "ok", "device_id": device_id, "debug_mode": existing["debug_mode"]}
@@ -5646,11 +8928,15 @@ from ai.integration import (
 
 
 _backup_status = {"running": False, "progress": [], "file": None, "error": None}
+_backup_lock = _threading.Lock()
 
-def _run_backup():
-    """Kør backup i baggrunden."""
+def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = None) -> str:
+    """Kør Headend backup synkront og returner arkivsti."""
     global _backup_status
+    if not _backup_lock.acquire(blocking=False):
+        raise RuntimeError("Der kører allerede en backup")
     _backup_status = {"running": True, "progress": [], "file": None, "error": None}
+    backup_dir = None
     try:
         import datetime, os, json
         date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -5660,6 +8946,7 @@ def _run_backup():
         os.makedirs(f"{backup_dir}/database", exist_ok=True)
         os.makedirs(f"{backup_dir}/configs", exist_ok=True)
 
+        _backup_status["progress"].append(f"Backup reason: {reason}")
         _backup_status["progress"].append("Database backup (pg_dump)...")
         from urllib.parse import unquote, urlparse
         db_url = os.environ.get(
@@ -5675,34 +8962,50 @@ def _run_backup():
         pg_dump_cmd = ["/opt/homebrew/bin/pg_dump", "-U", db_user, "-h", db_host, "--no-password", db_name]
         if db_port:
             pg_dump_cmd[5:5] = ["-p", db_port]
-        r = _subprocess.run(
-            pg_dump_cmd,
-            capture_output=True, text=True
-        )
+        r = _subprocess.run(pg_dump_cmd, capture_output=True, text=True)
+        if r.returncode != 0 and "row-level security policy" in (r.stderr or ""):
+            _backup_status["progress"].append("pg_dump ramte RLS; forsøger med --enable-row-security")
+            r = _subprocess.run([*pg_dump_cmd, "--enable-row-security"], capture_output=True, text=True)
         if r.returncode == 0:
             with open(sql_path, "w") as f:
                 f.write(r.stdout)
             _backup_status["progress"].append(f"Database OK ({len(r.stdout)//1024} KB SQL)")
         else:
             raise Exception(f"pg_dump fejlede: {r.stderr[:300]}")
+
         _backup_status["progress"].append("Config backup...")
+        config_paths = [
+            "/Users/peter/Library/LaunchAgents/homebrew.mxcl.ollama.plist",
+            "/Library/LaunchDaemons/timelapse-headend.plist",
+            "/Library/LaunchDaemons/timelapse-node-agent.plist",
+            "/opt/homebrew/etc/nginx/nginx.conf",
+            "/opt/timelapse/headend/.env",
+            "/opt/timelapse/deploy/headend_poller.sh",
+            "/home/peter/timelapse-pro/deploy/headend_poller.sh",
+        ]
+        config_paths.extend(extra_paths or [])
         for f in ["timelapse-headend.service", "timelapse-deploy.service", "timelapse-deploy.timer"]:
-            src = f"/etc/systemd/system/{f}"
-            if os.path.exists(src):
-                _shutil.copy2(src, f"{backup_dir}/configs/{f}")
+            config_paths.append(f"/etc/systemd/system/{f}")
         for f in ["timelapse-deploy", "timelapse-headend"]:
-            src = f"/etc/sudoers.d/{f}"
+            config_paths.append(f"/etc/sudoers.d/{f}")
+        copied: list[str] = []
+        for src in dict.fromkeys(config_paths):
             if os.path.exists(src):
-                _shutil.copy2(src, f"{backup_dir}/configs/sudoers-{f}")
-        poller = "/home/peter/timelapse-pro/deploy/headend_poller.sh"
-        if os.path.exists(poller):
-            _shutil.copy2(poller, f"{backup_dir}/configs/headend_poller.sh")
-        _backup_status["progress"].append("Config OK")
+                dst = Path(backup_dir) / "configs" / src.lstrip("/").replace("/", "__")
+                if os.path.isdir(src):
+                    _shutil.copytree(src, dst, dirs_exist_ok=True)
+                else:
+                    _shutil.copy2(src, dst)
+                copied.append(src)
+        with open(f"{backup_dir}/configs/MANIFEST.json", "w") as f:
+            json.dump({"reason": reason, "copied": copied}, f, indent=2)
+        _backup_status["progress"].append(f"Config OK ({len(copied)} filer)")
 
         _backup_status["progress"].append("System info...")
         import platform
         with open(f"{backup_dir}/SYSTEMINFO.txt", "w") as f:
             f.write(f"TimeLapse Pro — Headend Backup\nDato: {date}\n")
+            f.write(f"Reason: {reason}\n")
             f.write(f"OS: {platform.platform()}\n")
         _backup_status["progress"].append("System info OK")
 
@@ -5711,16 +9014,27 @@ def _run_backup():
         _subprocess.run(["tar", "czf", archive, "-C", base_dir, f"timelapse-backup-headend-{date}"],
                        check=True, capture_output=True)
         _shutil.rmtree(backup_dir, ignore_errors=True)
+        backup_dir = None
 
         _backup_status["file"] = archive
         _backup_status["running"] = False
         _backup_status["progress"].append(f"✅ Backup komplet: {os.path.getsize(archive)//1024} KB")
         log.info("Backup komplet: %s", archive)
+        return archive
     except Exception as e:
         _backup_status["error"] = str(e)
         _backup_status["running"] = False
         _backup_status["progress"].append(f"❌ Fejl: {e}")
         log.error("Backup fejl: %s", e)
+        raise
+    finally:
+        if backup_dir:
+            _shutil.rmtree(backup_dir, ignore_errors=True)
+        _backup_lock.release()
+
+def _run_backup():
+    """Kør backup i baggrunden."""
+    _run_backup_archive("manual")
 
 def _get_nas_path():
     """Hent NAS sti fra settings i DB."""
@@ -6263,7 +9577,13 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
     device_ids = {d.device_id for d in devices}
     tickets = db.query(ChangeTicket).count()
     artifacts = db.query(UpdateArtifact).count()
-    active_tokens = db.query(BootstrapToken).filter_by(revoked=False).count()
+    active_tokens = (
+        db.query(BootstrapToken)
+        .filter(BootstrapToken.revoked == False)  # noqa: E712
+        .filter(BootstrapToken.used_at == None)  # noqa: E711
+        .filter(BootstrapToken.expires_at > now_utc())
+        .count()
+    )
 
     settings = {}
     try:
@@ -6276,6 +9596,7 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
         settings = {}
 
     device_by_id = {d.device_id: d for d in devices}
+    inventory_device_ids = {inv.device_id for inv in inventory}
     restore_inventory = []
     for inv in inventory:
         device = device_by_id.get(inv.device_id)
@@ -6286,6 +9607,15 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
             continue
         if device or inv.hostname or inv.hardware_model:
             restore_inventory.append(inv)
+    restore_devices_without_inventory = []
+    for device in devices:
+        device_status = (device.status or "").lower()
+        is_test = device.device_id.lower().startswith("test") or device.device_id.lower() == "test-device"
+        is_import = device_status == "import" or device.device_id.startswith("TL-IMPORT-")
+        if is_test or is_import or device.device_id in inventory_device_ids:
+            continue
+        if device_status in {"provisioning", "online", "offline", "unknown"}:
+            restore_devices_without_inventory.append(device)
 
     cmdb_state_rows = [
         inv for inv in restore_inventory
@@ -6294,11 +9624,17 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
     firmware_rows = [inv for inv in restore_inventory if getattr(inv, "firmware_version", None)]
     backup_complete = []
     backup_requested = []
-    for device in devices:
+    def _device_cfg(device: Device | None) -> dict:
+        if not device:
+            return {}
         try:
             cfg = json.loads(device.device_config or "{}")
+            return cfg if isinstance(cfg, dict) else {}
         except Exception:
-            cfg = {}
+            return {}
+
+    for device in devices:
+        cfg = _device_cfg(device)
         if cfg.get("backup_complete"):
             backup_complete.append(device.device_id)
         if cfg.get("backup_requested"):
@@ -6355,7 +9691,7 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
         _resilience_control(
             "warning",
             "Bare-metal edge ISO pipeline",
-            "blueprint defined; image build/sign/verify pipeline not implemented",
+            f"provisioning ready; active_bootstrap_tokens={active_tokens}; image build/sign/verify pipeline not implemented",
             ["CRA", "IEC62443", "NIS2"],
             "Build ISO/image generator with hardening profile, call-home bootstrap and signed manifest.",
         ),
@@ -6406,12 +9742,36 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
                 "has_software_inventory": bool(getattr(inv, "software_inventory", None)),
                 "inventory_reported_at": inv.inventory_reported_at.isoformat() if inv.inventory_reported_at else None,
                 "device_exists": inv.device_id in device_ids,
+                "backup_requested": _device_cfg(device_by_id.get(inv.device_id)).get("backup_requested", False),
+                "backup_requested_at": _device_cfg(device_by_id.get(inv.device_id)).get("backup_requested_at"),
+                "backup_complete": _device_cfg(device_by_id.get(inv.device_id)).get("backup_complete"),
             }
             for inv in restore_inventory
+        ] + [
+            {
+                "device_id": device.device_id,
+                "hardware_model": None,
+                "firmware_version": None,
+                "os_name": None,
+                "kernel_version": None,
+                "app_version": device.app_version,
+                "package_manager": None,
+                "has_os_packages": False,
+                "has_venv_packages": False,
+                "has_software_inventory": False,
+                "inventory_reported_at": None,
+                "device_exists": True,
+                "backup_requested": _device_cfg(device).get("backup_requested", False),
+                "backup_requested_at": _device_cfg(device).get("backup_requested_at"),
+                "backup_complete": _device_cfg(device).get("backup_complete"),
+            }
+            for device in restore_devices_without_inventory
         ],
         "iso_blueprint": {
-            "status": "planned",
+            "status": "provisioning_ready",
             "call_home": "/api/bootstrap with short-lived bootstrap token",
+            "ready_to_accept_new_edge": True,
+            "active_bootstrap_tokens": active_tokens,
             "hardening": [
                 "disable password SSH for production profile",
                 "only required users, services and packages",
@@ -6445,6 +9805,105 @@ def trigger_edge_backup(device_id: str, _user=require_role("admin"), db: Session
     device.device_config = json.dumps(existing)
     db.commit()
     return {"status": "ok", "message": f"Backup anmodet for {device_id}"}
+
+
+@app.post("/api/admin/edge-provisioning/prepare")
+def prepare_edge_provisioning(
+    payload: EdgeProvisioningPrepareRequest,
+    current_user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Prepare Headend to receive a new Edge and return one-time bootstrap config."""
+    import secrets
+    from datetime import timedelta
+
+    device_id = _sanitize_device_id(payload.device_id.strip())
+    expires_hours = max(1, min(int(payload.expires_hours or 48), 24 * 14))
+    headend_url = _headend_api_url(db, payload.headend_url)
+    location_name = (
+        payload.location_name
+        or " / ".join([v for v in [payload.customer_name, payload.site_name, payload.camera_name] if v])
+        or device_id
+    )
+
+    existing_open = (
+        db.query(BootstrapToken)
+        .filter_by(used_at=None, used_by_device=None, revoked=False)
+        .filter(BootstrapToken.device_label == location_name)
+        .order_by(BootstrapToken.created_at.desc())
+        .first()
+    )
+    if existing_open and existing_open.expires_at and now_utc() <= existing_open.expires_at.replace(tzinfo=_tz.utc):
+        existing_open.revoked = True
+
+    token_str = f"tlp-{secrets.token_urlsafe(32)}"
+    expires_at = now_utc() + timedelta(hours=expires_hours)
+    token_rec = BootstrapToken(
+        token=token_str,
+        device_label=location_name,
+        site_id=payload.site_id,
+        customer_id=payload.customer_id,
+        camera_name=payload.camera_name,
+        created_by=current_user.username,
+        expires_at=expires_at,
+    )
+    db.add(token_rec)
+
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        device = Device(device_id=device_id, first_seen=now_utc())
+        db.add(device)
+    device.status = "provisioning"
+    device.customer_id = payload.customer_id or device.customer_id
+    device.customer_name = payload.customer_name or device.customer_name
+    device.site_id = payload.site_id or device.site_id
+    device.site_name = payload.site_name or device.site_name
+    device.camera_name = payload.camera_name or device.camera_name
+    device.location_name = payload.location_name or location_name
+    try:
+        cfg = json.loads(device.device_config or "{}")
+    except Exception:
+        cfg = {}
+    cfg["provisioning"] = {
+        "prepared_at": now_utc().isoformat(),
+        "prepared_by": current_user.username,
+        "expires_at": expires_at.isoformat(),
+        "headend_url": headend_url,
+        "note": payload.note or "",
+        "status": "awaiting_bootstrap",
+    }
+    device.device_config = json.dumps(cfg, ensure_ascii=False)
+
+    db.add(Event(
+        device_id=device_id,
+        level="INFO",
+        category="provision",
+        message="Edge provisioning prepared",
+        extra=json.dumps({
+            "created_by": current_user.username,
+            "expires_at": expires_at.isoformat(),
+            "headend_url": headend_url,
+            "customer_id": payload.customer_id,
+            "site_id": payload.site_id,
+        }, ensure_ascii=False),
+    ))
+    db.commit()
+
+    bootstrap_yaml = _build_bootstrap_yaml(device_id, headend_url, token_str, location_name)
+    return {
+        "status": "prepared",
+        "device_id": device_id,
+        "headend_url": headend_url,
+        "token": token_str,
+        "expires_at": expires_at.isoformat(),
+        "bootstrap_yaml": bootstrap_yaml,
+        "next_steps": [
+            "Kopier bootstrap.yaml til /opt/timelapse/edge/bootstrap.yaml på den nye Edge.",
+            "Konfigurer lokal netværksadgang via Edge CLI, Ethernet, WiFi eller 4G.",
+            "Start eller genstart Edge agenten, så den kalder /api/bootstrap på Headend.",
+            "Kontroller CMDB, inventory heartbeat og baseline Edge backup i Drift & Resilience.",
+        ],
+    }
 
 
 @app.post("/api/admin/backup/edge-complete/{device_id}")
@@ -6484,7 +9943,7 @@ def edge_backup_complete(device_id: str, payload: dict, _user=require_role("oper
         "filename": filename,
         "size_kb":  payload.get("size_kb"),
         "path":     final_path,
-        "sftp_path": sftp_path,
+        "sftp_path": local_sftp_path,
         "at":       now_utc().isoformat(),
     }
     device.device_config = json.dumps(existing)
@@ -6492,6 +9951,61 @@ def edge_backup_complete(device_id: str, payload: dict, _user=require_role("oper
     log.info("Edge backup komplet for %s: %s (%d KB)",
              device_id, filename, payload.get("size_kb", 0))
     return {"status": "ok", "path": final_path}
+
+
+@app.post("/api/admin/backup/edge-upload/{device_id}")
+async def upload_edge_backup(
+    device_id: str,
+    backup: UploadFile = File(...),
+    sha256: str = Form(""),
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
+    """Modtag Edge backup-arkiv via API pull-model."""
+    import os as _os
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    filename = _sanitize_filename(backup.filename or f"{_sanitize_device_id(device_id)}-edge-backup.tar.gz")
+    if not filename.endswith((".tar.gz", ".tgz")):
+        raise HTTPException(status_code=400, detail="Edge backup skal være tar.gz/tgz")
+    nas = _get_nas_path()
+    backup_root = nas if (nas and _os.path.isdir(nas)) else "/tmp"
+    dest_dir = _os.path.join(backup_root, "edge-backups", _sanitize_device_id(device_id))
+    _os.makedirs(dest_dir, exist_ok=True)
+    dest = _os.path.join(dest_dir, filename)
+    hasher = hashlib.sha256()
+    size = 0
+    with open(dest, "wb") as out:
+        while True:
+            chunk = await backup.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            hasher.update(chunk)
+            out.write(chunk)
+    actual_sha = hasher.hexdigest()
+    if sha256 and actual_sha.lower() != sha256.lower():
+        try:
+            _os.unlink(dest)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail="sha256 mismatch")
+
+    existing = json.loads(device.device_config or "{}")
+    existing["backup_requested"] = False
+    existing["backup_complete"] = {
+        "filename": filename,
+        "size_kb": size // 1024,
+        "path": dest,
+        "sha256": actual_sha,
+        "transport": "api",
+        "at": now_utc().isoformat(),
+    }
+    device.device_config = json.dumps(existing)
+    db.commit()
+    log.info("Edge backup upload komplet for %s: %s (%d KB)", device_id, filename, size // 1024)
+    return {"status": "ok", "path": dest, "sha256": actual_sha, "size_kb": size // 1024}
 
 
 @app.get("/api/admin/backup/edge-status/{device_id}")
@@ -6556,6 +10070,34 @@ def list_previews(device_id: str, limit: int = 20):
     return result
 
 
+@app.post("/api/lab/{device_id}/preview-file")
+async def receive_lab_preview_file(
+    device_id: str,
+    preview: UploadFile = File(...),
+    manifest: str = Form(default="{}"),
+    _auth: None = Depends(_verify_device_token),
+):
+    """Receive a lab preview frame from an Edge device without creating a capture row."""
+    filename = Path(preview.filename or "").name
+    if not filename.startswith("preview_") or not filename.lower().endswith((".jpg", ".jpeg")):
+        raise HTTPException(status_code=400, detail="Invalid preview filename")
+    preview_dir = SFTP_BASE / "_lab" / device_id
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    dest = preview_dir / filename
+    with open(dest, "wb") as fh:
+        while True:
+            chunk = await preview.read(1024 * 1024)
+            if not chunk:
+                break
+            fh.write(chunk)
+    try:
+        meta = json.loads(manifest or "{}")
+    except Exception:
+        meta = {}
+    log.info("LAB preview uploaded for %s: %s (%d bytes)", device_id, filename, dest.stat().st_size)
+    return {"status": "ok", "filename": filename, "size": dest.stat().st_size, "manifest": meta}
+
+
 @app.get("/api/lab/{device_id}/preview-image/{filename}")
 def get_preview_image(device_id: str, filename: str):
     """Serve a preview image."""
@@ -6575,13 +10117,18 @@ def get_preview_thumb(device_id: str, filename: str):
     thumbs_dir.mkdir(parents=True, exist_ok=True)
     thumb = thumbs_dir / filename
     if not thumb.exists():
+        from PIL import Image
         img = Image.open(src)
         img.thumbnail((400, 400), Image.LANCZOS)
         img.save(str(thumb), "JPEG", quality=75)
     return FileResponse(str(thumb), media_type="image/jpeg")
 
 @app.post("/api/admin/devices/{device_id}/lab-clear-command")
-def lab_clear_command(device_id: str, _user=require_role("operator"), db: Session = Depends(get_db)):
+def lab_clear_command(
+    device_id: str,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
     cfg = json.loads(device.device_config or "{}")
@@ -6591,7 +10138,11 @@ def lab_clear_command(device_id: str, _user=require_role("operator"), db: Sessio
     return {"status": "ok"}
 
 @app.post("/api/admin/devices/{device_id}/lab-clear-params")
-def lab_clear_params(device_id: str, _user=require_role("operator"), db: Session = Depends(get_db)):
+def lab_clear_params(
+    device_id: str,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
     cfg = json.loads(device.device_config or "{}")
@@ -6635,13 +10186,27 @@ def wifi_connect(device_id: str, payload: dict, db: Session = Depends(get_db)):
     ssid     = payload.get("ssid", "")
     password = payload.get("password", "")
     if not ssid: raise HTTPException(status_code=400, detail="ssid required")
+    allow_plaintext_wifi = os.getenv(
+        "TIMELAPSE_ALLOW_LAB_WIFI_PASSWORDS",
+        "0",
+    ).lower() in {"1", "true", "yes", "on"}
+    if password and (TIMELAPSE_ENV in {"prod", "production"} or not allow_plaintext_wifi):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "WiFi password transfer via lab_command is disabled. "
+                "Use provisioning or set TIMELAPSE_ALLOW_LAB_WIFI_PASSWORDS=1 "
+                "only in LAB/staging."
+            ),
+        )
     existing = json.loads(device.device_config or "{}")
     existing["lab_command"] = {
         "type": "wifi_connect",
         "ssid": ssid,
-        "password": password,
         "requested_at": now_utc().isoformat()
     }
+    if password:
+        existing["lab_command"]["password"] = password
     device.device_config = json.dumps(existing)
     db.commit()
     return {"status": "ok", "command": "wifi_connect", "ssid": ssid}
@@ -7821,7 +11386,16 @@ def _parse_capture_natural_query(query: str, known_tags: set[str]) -> dict:
     lower = text_value.lower()
     explicit_tags = set(_re.findall(r"#([\wæøåÆØÅ-]+)", lower))
     explicit_tags.update(t.lower() for t in _re.findall(r'"([^"]+)"', lower))
-    mentioned_tags = {tag for tag in known_tags if tag and tag in lower}
+    mentioned_tags = set()
+    for tag in known_tags:
+        if not tag:
+            continue
+        tag_text = tag.lower()
+        phrase = tag_text.replace("_", " ")
+        if _re.search(rf"(?<![\wæøå]){_re.escape(tag_text)}(?![\wæøå])", lower):
+            mentioned_tags.add(tag_text)
+        elif phrase != tag_text and _re.search(rf"(?<![\wæøå]){_re.escape(phrase)}(?![\wæøå])", lower):
+            mentioned_tags.add(tag_text)
     include_tags = sorted(explicit_tags | mentioned_tags)
 
     exclude_tags: set[str] = set()
@@ -7830,8 +11404,17 @@ def _parse_capture_natural_query(query: str, known_tags: set[str]) -> dict:
             tail = lower.split(marker, 1)[1][:120]
             exclude_tags.update(tag for tag in known_tags if tag and tag in tail)
             exclude_tags.update(_re.findall(r"#([\wæøåÆØÅ-]+)", tail))
-    if any(term in lower for term in ("solen ikke skinner direkte", "ikke skinner direkte", "direkte ind i linsen", "sol i linsen", "modlys")):
-        exclude_tags.update({"sun_flare", "lens_flare", "glare", "overexposed", "direct_sun"})
+    if any(term in lower for term in ("dagtimerne", "dagtimer", "i dagslys", "dagslys")):
+        include_tags.append("dagslys")
+    if any(term in lower for term in ("klart sollys", "klar sol", "solrig dag", "solskin")):
+        include_tags.extend(["klart_sollys", "solrig_dag"])
+    if any(term in lower for term in ("god timelapse belysning", "god belysning", "uden dårligt lys")):
+        include_tags.append("god_timelapse_belysning")
+    if any(term in lower for term in ("solen ikke skinner direkte", "ikke skinner direkte", "direkte ind i linsen", "sol i linsen", "modlys", "genskin", "refleks")):
+        exclude_tags.update({
+            "sol_i_linsen", "linse_refleks", "genskin", "irriterende_genskin",
+            "flare", "overeksponeret", "udbrændte_højlys", "direkte_sollys", "modlys",
+        })
 
     limit_match = _re.search(r"\b(\d{1,3})\b", lower)
     limit = int(limit_match.group(1)) if limit_match else 20
@@ -7854,7 +11437,7 @@ def _parse_capture_natural_query(query: str, known_tags: set[str]) -> dict:
         iso_date = _re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", lower)
         date_value = iso_date.group(1) if iso_date else None
 
-    quality_only = any(term in lower for term in ("skarpe", "klare billeder", "klart billede", "ikke slør", "ikke sloer", "quality ok", "gode billeder"))
+    quality_only = any(term in lower for term in ("skarpe", "klare billeder", "klart billede", "ikke slør", "ikke sloer", "quality ok", "gode billeder", "godt billede", "dårligt billede", "daarligt billede"))
     daily_sample = any(term in lower for term in ("billede om dagen", "et billede pr dag", "1 billede pr dag", "dagligt billede"))
     purpose = "timelapse" if "timelapse" in lower or "video" in lower else "search"
     return {

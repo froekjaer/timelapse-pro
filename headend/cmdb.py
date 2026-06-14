@@ -38,13 +38,268 @@ from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from database import Device, DeviceInventory, BreakGlassAccount, get_db, now_utc
+from database import Device, DeviceInventory, BreakGlassAccount, PendingUpdate, get_db, now_utc
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["CMDB"])
+
+HEADEND_MANAGED_HOMEBREW_FORMULAE = {
+    "certbot": "TimeLapse TLS/certificate platformkomponent",
+    "ffmpeg": "TimeLapse video/rendering platformkomponent",
+    "nginx": "TimeLapse reverse proxy platformkomponent",
+    "node": "TimeLapse UI build/runtime platformkomponent",
+    "ollama": "TimeLapse AI analyse platformkomponent",
+    "postgresql@17": "TimeLapse database platformkomponent",
+    "python@3.13": "TimeLapse Headend Python runtime",
+}
+
+
+def _parse_version_gap(version: str | None) -> dict:
+    text = (version or "").strip()
+    import re
+    match = re.match(r"(.+?)\s+(.+?)\s*->\s*(.+)$", text)
+    if match:
+        component, current, latest = [part.strip() for part in match.groups()]
+        return {
+            "component": component,
+            "current_version": current,
+            "latest_available_version": latest,
+            "version_gap_label": f"{current} -> {latest}",
+            "package_count": None,
+        }
+    count_match = re.match(r"(\d+)\s+pakker", text)
+    if count_match:
+        count = int(count_match.group(1))
+        return {
+            "component": None,
+            "current_version": None,
+            "latest_available_version": f"{count} pakker klar",
+            "version_gap_label": f"{count} pakker klar",
+            "package_count": count,
+        }
+    return {
+        "component": None,
+        "current_version": None,
+        "latest_available_version": text or None,
+        "version_gap_label": text or None,
+        "package_count": None,
+    }
+
+
+def _update_summary_for_device(db: Session, device_id: str) -> dict:
+    updates = (
+        db.query(PendingUpdate)
+        .filter(PendingUpdate.scope == "device", PendingUpdate.scope_id == device_id)
+        .order_by(PendingUpdate.created_at.desc())
+        .all()
+    )
+    active = [u for u in updates if u.status in {"pending", "approved", "blocked", "rollback_requested"}]
+    latest = []
+    for update in active[:6]:
+        gap = _parse_version_gap(update.version)
+        latest.append({
+            "id": update.id,
+            "update_type": update.update_type,
+            "status": update.status,
+            "severity": update.severity,
+            "environment": update.environment,
+            **gap,
+        })
+    return {
+        "active_count": len(active),
+        "security_count": sum(1 for u in active if "security" in (u.update_type or "")),
+        "blocked_count": sum(1 for u in active if u.status == "blocked"),
+        "approved_count": sum(1 for u in active if u.status == "approved"),
+        "latest": latest,
+    }
+
+
+def _components_from_mapping(mapping: dict, component_type: str, scope: str) -> list[dict]:
+    components = []
+    for name, version in sorted((mapping or {}).items()):
+        if str(name).startswith("_"):
+            continue
+        components.append({
+            "type": component_type,
+            "name": str(name),
+            "version": str(version),
+            "scope": scope,
+        })
+    return components
+
+
+def _sbom_for_inventory(inv: DeviceInventory) -> dict:
+    os_packages = {}
+    venv_packages = {}
+    software_inventory = {}
+    for attr, target in (
+        ("os_packages", os_packages),
+        ("venv_packages", venv_packages),
+        ("software_inventory", software_inventory),
+    ):
+        raw = getattr(inv, attr, None)
+        if not raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                target.update(parsed)
+        except Exception:
+            pass
+    components = []
+    components.extend(_components_from_mapping(os_packages, "library", "os"))
+    components.extend(_components_from_mapping(venv_packages, "library", "python"))
+    components.extend(_components_from_mapping(software_inventory, "application", "managed-software"))
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:timelapse-sbom-{inv.device_id}",
+        "version": 1,
+        "metadata": {
+            "timestamp": now_utc().isoformat(),
+            "component": {
+                "type": "device",
+                "name": inv.device_id,
+                "version": inv.app_version,
+            },
+            "properties": [
+                {"name": "timelapse:device_id", "value": inv.device_id},
+                {"name": "timelapse:environment", "value": inv.environment or ""},
+                {"name": "timelapse:os_name", "value": inv.os_name or ""},
+                {"name": "timelapse:kernel_version", "value": inv.kernel_version or ""},
+                {"name": "timelapse:package_manager", "value": getattr(inv, "package_manager", None) or ""},
+                {"name": "timelapse:inventory_reported_at", "value": inv.inventory_reported_at.isoformat() if inv.inventory_reported_at else ""},
+            ],
+        },
+        "components": components,
+    }
+
+
+def _managed_update_severity(name: str) -> str:
+    if name in {"nginx", "postgresql@17", "certbot"}:
+        return "high"
+    if name in {"ollama", "python@3.13", "node"}:
+        return "medium"
+    return "low"
+
+
+def _pending_environment(inv: DeviceInventory) -> str:
+    return "production" if (inv.environment or "").lower() == "production" else "test"
+
+
+def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceInventory, payload: dict) -> None:
+    software = payload.get("software_inventory") or {}
+    updates = software.get("available_software_updates") or payload.get("available_software_updates") or []
+    if not isinstance(updates, list):
+        return
+
+    for item in updates:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if name not in HEADEND_MANAGED_HOMEBREW_FORMULAE:
+            continue
+        installed = str(item.get("installed_version") or "ukendt")
+        available = str(item.get("available_version") or "ukendt")
+        version = f"{name} {installed} -> {available}"
+        exists = db.query(PendingUpdate).filter(
+            PendingUpdate.update_type == "application_updates",
+            PendingUpdate.scope == "device",
+            PendingUpdate.scope_id == device_id,
+            PendingUpdate.status.in_(["pending", "approved"]),
+            or_(
+                PendingUpdate.version == version,
+                PendingUpdate.description.ilike(f"%{name}%"),
+            ),
+        ).first()
+        if exists:
+            exists.version = version
+            exists.description = (
+                f"{name} kan opdateres via Headend-kontrolleret Homebrew-artifact/lab-flow "
+                f"({installed} -> {available}). {HEADEND_MANAGED_HOMEBREW_FORMULAE[name]}."
+            )
+            exists.severity = _managed_update_severity(name)
+            exists.environment = _pending_environment(inv)
+            continue
+
+        db.add(PendingUpdate(
+            update_type="application_updates",
+            version=version,
+            description=(
+                f"{name} kan opdateres via Headend-kontrolleret Homebrew-artifact/lab-flow "
+                f"({installed} -> {available}). {HEADEND_MANAGED_HOMEBREW_FORMULAE[name]}."
+            ),
+            severity=_managed_update_severity(name),
+            scope="device",
+            scope_id=device_id,
+            status="pending",
+            environment=_pending_environment(inv),
+            target_device_ids=json.dumps([device_id]),
+        ))
+
+
+def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, payload: dict) -> None:
+    """
+    Opret/opdater PendingUpdate-rækker for edge OS-opdateringer rapporteret via inventory.
+    Opretter én os_security og/eller én os_updates PendingUpdate pr. device.
+    """
+    apt = payload.get("os_updates_available")
+    if not isinstance(apt, dict):
+        return
+    total    = int(apt.get("total", 0))
+    security = int(apt.get("security", 0))
+    packages = apt.get("packages", [])
+    if total == 0:
+        return
+
+    env = _pending_environment(inv)
+
+    def _upsert_os_update(update_type: str, count: int, pkg_list: list) -> None:
+        version = f"{count} pakker"
+        names = ", ".join(p["name"] for p in pkg_list[:10])
+        desc  = (
+            f"Edge {device_id}: {count} {'sikkerhedsopdaterin' if 'security' in update_type else 'OS-opdaterin'}"
+            f"g{'er' if count != 1 else ''} tilgænge{'lig' if count == 1 else 'lig'}e via apt. "
+            f"Første pakker: {names}{'…' if len(pkg_list) > 10 else ''}. "
+            f"Installér via Headend-signeret offline OS bundle."
+        )
+        existing = db.query(PendingUpdate).filter(
+            PendingUpdate.update_type == update_type,
+            PendingUpdate.scope == "device",
+            PendingUpdate.scope_id == device_id,
+            PendingUpdate.status.in_(["pending", "approved"]),
+        ).first()
+        if existing:
+            existing.version = version
+            existing.description = desc
+            existing.severity = "high" if "security" in update_type else "medium"
+            existing.environment = env
+        else:
+            db.add(PendingUpdate(
+                update_type=update_type,
+                version=version,
+                description=desc,
+                severity="high" if "security" in update_type else "medium",
+                scope="device",
+                scope_id=device_id,
+                status="pending",
+                environment=env,
+                target_device_ids=json.dumps([device_id]),
+            ))
+            log.info("CMDB: PendingUpdate oprettet: %s for %s (%d pakker)", update_type, device_id, count)
+
+    if security > 0:
+        sec_pkgs = [p for p in packages if p.get("security")]
+        _upsert_os_update("os_security", security, sec_pkgs)
+
+    non_sec = total - security
+    if non_sec > 0:
+        other_pkgs = [p for p in packages if not p.get("security")]
+        _upsert_os_update("os_updates", non_sec, other_pkgs)
 
 
 # ── Kryptering ────────────────────────────────────────────────────────────────
@@ -130,7 +385,26 @@ def report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db
     if "venv_packages" in payload:
         inv.venv_packages       = json.dumps(payload["venv_packages"])
     if hasattr(inv, "software_inventory") and "software_inventory" in payload:
-        inv.software_inventory  = json.dumps(payload["software_inventory"])
+        software_inventory = payload["software_inventory"]
+        if not isinstance(software_inventory, dict):
+            software_inventory = {}
+        software_inventory = dict(software_inventory)
+        # Embed extra fields for SBOM / CMDB dashboard
+        if payload.get("ip_addresses"):
+            software_inventory["_network"] = {"ip_addresses": payload.get("ip_addresses")}
+        if "os_updates_available" in payload:
+            software_inventory["_os_updates_available"] = payload["os_updates_available"]
+        if "services" in payload:
+            software_inventory["_services"] = payload["services"]
+        if "local_users" in payload:
+            software_inventory["_local_users"] = payload["local_users"]
+        if "sudo_users" in payload:
+            software_inventory["_sudo_users"] = payload["sudo_users"]
+        if payload.get("git_commit"):
+            software_inventory["_git_commit"] = payload["git_commit"]
+        if payload.get("git_tag"):
+            software_inventory["_git_tag"] = payload["git_tag"]
+        inv.software_inventory  = json.dumps(software_inventory)
 
     # Storage
     inv.boot_storage_type       = payload.get("boot_storage_type")
@@ -151,13 +425,38 @@ def report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db
     # Tracking
     inv.inventory_reported_at   = now_utc()
 
-    # Sæt app_version på Device-record også
+    # Sæt app_version/IP på Device-record også. Headend/node-agent kan være
+    # inventory-only, så opret en let Device-række når den mangler.
     device = db.query(Device).filter_by(device_id=device_id).first()
-    if device and payload.get("app_version"):
+    if not device:
+        device = Device(
+            device_id=device_id,
+            location_name=payload.get("hostname") or device_id,
+            first_seen=now_utc(),
+            last_seen=now_utc(),
+            app_version=payload.get("app_version"),
+            status="online",
+        )
+        db.add(device)
+        log.info("CMDB: Device-række oprettet fra inventory for %s", device_id)
+    else:
+        device.last_seen = now_utc()
+        device.status = "online"
+    if payload.get("app_version"):
         device.app_version = payload["app_version"]
+    if payload.get("ip_address"):
+        device.ip_address = payload["ip_address"]
+
+    _sync_managed_application_updates(db, device_id, inv, payload)
+    _sync_edge_os_updates(db, device_id, inv, payload)
 
     db.commit()
-    return {"status": "ok", "device_id": device_id}
+    return {
+        "status": "ok",
+        "device_id": device_id,
+        "os_updates_pending": int((payload.get("os_updates_available") or {}).get("total", 0)),
+        "os_security_pending": int((payload.get("os_updates_available") or {}).get("security", 0)),
+    }
 
 
 # ── CMDB list / detail ────────────────────────────────────────────────────────
@@ -195,6 +494,7 @@ def list_cmdb(db: Session = Depends(get_db)):
             "ip_address":           device.ip_address if device else None,
             "last_seen":            device.last_seen.isoformat() if device and device.last_seen else None,
             "break_glass_count":    bg_count,
+            "update_summary":       _update_summary_for_device(db, inv.device_id),
         })
     return result
 
@@ -226,7 +526,7 @@ def get_cmdb(device_id: str, db: Session = Depends(get_db)):
         except Exception:
             pass
 
-    return {
+    result = {
         "device_id":                inv.device_id,
         "environment":              inv.environment,
         # Hardware
@@ -274,6 +574,28 @@ def get_cmdb(device_id: str, db: Session = Depends(get_db)):
         "site_name":                device.site_name if device else None,
         "ip_address":               device.ip_address if device else None,
         "last_seen":                device.last_seen.isoformat() if device and device.last_seen else None,
+    }
+    result["update_summary"] = _update_summary_for_device(db, device_id)
+    return result
+
+
+@router.get("/{device_id}/sbom")
+def get_device_sbom(device_id: str, db: Session = Depends(get_db)):
+    """Generér SBOM fra seneste CMDB inventory for en device/headend node."""
+    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Ingen CMDB-post for denne enhed")
+    return _sbom_for_inventory(inv)
+
+
+@router.get("/sbom/all")
+def get_all_sboms(db: Session = Depends(get_db)):
+    """Generér SBOM pr. kendt CMDB-enhed."""
+    inventories = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    return {
+        "generated_at": now_utc().isoformat(),
+        "count": len(inventories),
+        "sboms": [_sbom_for_inventory(inv) for inv in inventories],
     }
 
 

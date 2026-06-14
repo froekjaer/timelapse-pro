@@ -101,6 +101,37 @@ def _primary_mac(interface: str) -> Optional[str]:
         return None
 
 
+def _primary_ip(interface: str) -> Optional[str]:
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr", "show", "dev", interface],
+            capture_output=True, text=True, timeout=3
+        )
+        m = re.search(r"\binet\s+(\d+\.\d+\.\d+\.\d+)/", result.stdout)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def _ip_addresses() -> dict[str, list[str]]:
+    addresses: dict[str, list[str]] = {}
+    try:
+        result = subprocess.run(
+            ["ip", "-4", "-o", "addr"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[2] == "inet":
+                iface = parts[1]
+                ip = parts[3].split("/", 1)[0]
+                if ip != "127.0.0.1":
+                    addresses.setdefault(iface, []).append(ip)
+    except Exception:
+        pass
+    return addresses
+
+
 def _primary_interface() -> str:
     """Finder primær ethernet-interface (end0 > eth0 > første fund)."""
     net = Path("/sys/class/net")
@@ -274,6 +305,192 @@ def _gpg_fingerprint() -> Optional[str]:
     return None
 
 
+# ── Lokale brugere ────────────────────────────────────────────────────────────
+
+def _local_users() -> list[dict]:
+    """Returnerer liste over lokale, ikke-system brugere (UID >= 1000)."""
+    users = []
+    try:
+        for line in Path("/etc/passwd").read_text().splitlines():
+            parts = line.split(":")
+            if len(parts) < 7:
+                continue
+            username, _, uid_s, gid_s, gecos, home, shell = parts[:7]
+            try:
+                uid = int(uid_s)
+            except ValueError:
+                continue
+            if uid < 1000 or uid == 65534:  # skip system + nobody
+                continue
+            users.append({
+                "username": username,
+                "uid":      uid,
+                "gid":      int(gid_s) if gid_s.isdigit() else None,
+                "home":     home,
+                "shell":    shell,
+                "gecos":    gecos,
+                "has_home": Path(home).exists() if home else False,
+            })
+    except Exception as exc:
+        log.debug("local_users fejl: %s", exc)
+    return users
+
+
+def _sudo_users() -> list[str]:
+    """Returnerer liste over brugere med sudo-rettigheder."""
+    sudoers: list[str] = []
+    try:
+        result = subprocess.run(
+            ["getent", "group", "sudo"], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = result.stdout.strip().split(":")
+            if len(parts) >= 4 and parts[3].strip():
+                sudoers.extend(u.strip() for u in parts[3].split(",") if u.strip())
+    except Exception:
+        pass
+    return sudoers
+
+
+# ── Systemd services ──────────────────────────────────────────────────────────
+
+# Nøgleservices vi altid rapporterer status for
+_TRACKED_SERVICES = [
+    "timelapse-edge.service",
+    "timelapse-edge-watchdog.service",
+    "ssh.service",
+    "sshd.service",
+    "systemd-timesyncd.service",
+    "chrony.service",
+    "NetworkManager.service",
+    "networking.service",
+]
+
+
+def _systemd_services() -> list[dict]:
+    """Returnerer status for relevante systemd-services."""
+    services = []
+    try:
+        # Hent alle units der indeholder "timelapse" + de trackede
+        result = subprocess.run(
+            ["systemctl", "list-units", "--type=service", "--all",
+             "--no-pager", "--no-legend", "--output=json"],
+            capture_output=True, text=True, timeout=15
+        )
+        units: list[dict] = []
+        if result.returncode == 0:
+            try:
+                units = json.loads(result.stdout) or []
+            except Exception:
+                pass
+        # Fallback: parse tekstoutput
+        if not units and result.returncode == 0:
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 4:
+                    units.append({
+                        "unit": parts[0],
+                        "load": parts[1],
+                        "active": parts[2],
+                        "sub": parts[3],
+                        "description": " ".join(parts[4:]),
+                    })
+
+        wanted = {s.lower() for s in _TRACKED_SERVICES}
+        for unit in units:
+            name = str(unit.get("unit", ""))
+            is_wanted = name.lower() in wanted or "timelapse" in name.lower()
+            if is_wanted:
+                services.append({
+                    "name":        name,
+                    "load":        unit.get("load", ""),
+                    "active":      unit.get("active", ""),
+                    "sub":         unit.get("sub", ""),
+                    "description": unit.get("description", ""),
+                })
+    except Exception as exc:
+        log.debug("systemd_services fejl: %s", exc)
+    return services
+
+
+# ── Tilgængelige OS-opdateringer ──────────────────────────────────────────────
+
+def _apt_updates_available() -> dict:
+    """
+    Returnerer dict med tilgængelige apt-opdateringer.
+    Bruger cached apt-data (apt-get -s upgrade) — kræver ikke netværk.
+    """
+    updates: list[dict] = []
+    security_count = 0
+    try:
+        result = subprocess.run(
+            ["apt-get", "-s", "--just-print", "upgrade"],
+            capture_output=True, text=True, timeout=60
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if line.startswith("Inst "):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        name = parts[1]
+                        is_sec = "security" in line.lower()
+                        new_ver = ""
+                        if "(" in line:
+                            seg = line.split("(", 1)[1]
+                            new_ver = seg.split()[0]
+                        updates.append({
+                            "name":      name,
+                            "new_ver":   new_ver,
+                            "security":  is_sec,
+                        })
+                        if is_sec:
+                            security_count += 1
+    except Exception as exc:
+        log.debug("apt_updates_available fejl: %s", exc)
+    return {
+        "total":    len(updates),
+        "security": security_count,
+        "packages": updates[:200],  # max 200 pakker for at holde payloaden lille
+    }
+
+
+def _git_env() -> dict:
+    """Git-miljø der tillader root at læse repos ejet af anden bruger."""
+    env = os.environ.copy()
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = "safe.directory"
+    env["GIT_CONFIG_VALUE_0"] = "*"
+    return env
+
+
+def _git_app_version() -> Optional[str]:
+    """Aktuel git-commit af /opt/timelapse (kort SHA)."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", "/opt/timelapse", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=10, env=_git_env()
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _git_app_tag() -> Optional[str]:
+    """Seneste git-tag på HEAD i /opt/timelapse."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", "/opt/timelapse", "describe", "--tags", "--exact-match", "HEAD"],
+            capture_output=True, text=True, timeout=10, env=_git_env()
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
 # ── Samlet inventar ───────────────────────────────────────────────────────────
 
 def collect_inventory(config: dict) -> dict:
@@ -284,11 +501,43 @@ def collect_inventory(config: dict) -> dict:
     hw_model, soc = _detect_hardware_model()
     iface = _primary_interface()
     mac = _primary_mac(iface)
+    ip = _primary_ip(iface)
     wifi_cap, wifi_ssid = _wifi_info()
     boot_type, boot_gb, boot_pct = _storage_info("/")
     data_path = config.get("storage", {}).get("base_dir", "/data")
     data_type, data_gb, data_pct = _storage_info(data_path) if Path(data_path).exists() else (None, None, None)
     package_manager, os_packages = _os_packages()
+
+    # Git-version (foretrækkes over hardkodet APP_VERSION)
+    git_commit = _git_app_version()
+    git_tag    = _git_app_tag()
+    app_ver    = git_tag or git_commit or APP_VERSION
+
+    # Bruger + services (ikke-blokerende)
+    local_users: list[dict] = []
+    sudo_users:  list[str]  = []
+    services:    list[dict] = []
+    apt_updates: dict       = {}
+    try:
+        local_users = _local_users()
+    except Exception as exc:
+        log.debug("_local_users fejl: %s", exc)
+    try:
+        sudo_users = _sudo_users()
+    except Exception as exc:
+        log.debug("_sudo_users fejl: %s", exc)
+    try:
+        services = _systemd_services()
+    except Exception as exc:
+        log.debug("_systemd_services fejl: %s", exc)
+    try:
+        apt_updates = _apt_updates_available()
+    except Exception as exc:
+        log.debug("_apt_updates_available fejl: %s", exc)
+
+    software = _software_inventory()
+    software["git_commit"] = git_commit
+    software["git_tag"]    = git_tag
 
     return {
         # Hardware
@@ -305,11 +554,23 @@ def collect_inventory(config: dict) -> dict:
         "kernel_version":           platform.release(),
         "firmware_version":         _firmware_version(),
         "python_version":           platform.python_version(),
-        "app_version":              APP_VERSION,
+        "app_version":              app_ver,
+        "git_commit":               git_commit,
+        "git_tag":                  git_tag,
         "package_manager":          package_manager,
         "os_packages":              os_packages,
         "venv_packages":            _venv_packages(),
-        "software_inventory":       _software_inventory(),
+        "software_inventory":       software,
+
+        # Tilgængelige OS-opdateringer (fra apt-cache)
+        "os_updates_available":     apt_updates,
+
+        # Lokale brugere og adgangsrettigheder
+        "local_users":              local_users,
+        "sudo_users":               sudo_users,
+
+        # Systemd services
+        "services":                 services,
 
         # Storage (boot)
         "boot_storage_type":        boot_type,
@@ -323,6 +584,8 @@ def collect_inventory(config: dict) -> dict:
 
         # Netværk
         "primary_interface":        iface,
+        "ip_address":               ip,
+        "ip_addresses":             _ip_addresses(),
         "wifi_capable":             wifi_cap,
         "wifi_ssid":                wifi_ssid,
 
