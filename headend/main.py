@@ -4317,6 +4317,7 @@ def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> d
     if not artifact:
         return None
     signer_fingerprint = None
+    headend_fingerprint = None  # fallback: headend's own signing identity
     for signer in _trusted_release_signers(db):
         if artifact.signed_by and artifact.signed_by in {
             signer.get("credential_id"),
@@ -4324,6 +4325,13 @@ def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> d
         }:
             signer_fingerprint = signer.get("fingerprint")
             break
+        # Gem headend-identitet som fallback for system-hash signerede artifacts
+        if signer.get("entity_id") == "headend" and not headend_fingerprint:
+            headend_fingerprint = signer.get("fingerprint")
+    # system-hash = headend har signeret via hash-binding (ingen GPG-nøgle sat).
+    # Behandles som headend-signeret og får headend-identitetens fingerprint.
+    if signer_fingerprint is None and artifact.signed_by == "system-hash" and headend_fingerprint:
+        signer_fingerprint = headend_fingerprint
     return {
         "artifact_id": artifact.artifact_id,
         "artifact_type": artifact.artifact_type,
