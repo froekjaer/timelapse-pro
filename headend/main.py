@@ -6091,17 +6091,14 @@ def _auto_build_and_bind_os_bundle(
     Kræver ikke Docker — henter .deb filer direkte fra Ubuntu/Docker mirrors.
     """
     import importlib.util as _importlib_util
-    import sys as _sys
 
     # Dynamisk import af fetch_os_bundle (ligger i tools/ ikke i Python-path)
     _fb_path = _Path(__file__).parent / "tools" / "fetch_os_bundle.py"
     _spec = _importlib_util.spec_from_file_location("fetch_os_bundle", str(_fb_path))
-    _fb = _importlib_util.loader_from_spec(_spec) if _spec else None  # type: ignore[assignment]
-    if _spec and hasattr(_spec, "loader") and _spec.loader:
-        _fb_mod = _importlib_util.module_from_spec(_spec)
-        _spec.loader.exec_module(_fb_mod)  # type: ignore[union-attr]
-    else:
+    if not _spec or not _spec.loader:
         raise RuntimeError(f"Kan ikke importere fetch_os_bundle fra {_fb_path}")
+    _fb_mod = _importlib_util.module_from_spec(_spec)
+    _spec.loader.exec_module(_fb_mod)  # type: ignore[union-attr]
 
     # Hent pakkeliste fra inventory (soft_inventory JSON i DB)
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
