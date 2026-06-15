@@ -288,16 +288,24 @@ export function BackupPage() {
   const [diskBuildTarget, setDiskBuildTarget] = useState('orangepi4pro')
   const [diskBuildMode, setDiskBuildMode] = useState<'rootfs' | 'flashable'>('rootfs')
   const [diskBuildToken, setDiskBuildToken] = useState('')
+  const STATIC_TARGETS: Array<{ id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean }> = [
+    { id: 'orangepi4pro',    display_name: 'OrangePi 4 Pro',           arch: 'arm64', flashable: true,  install_script: false },
+    { id: 'orangepi-pc-plus',display_name: 'OrangePi PC Plus',         arch: 'armhf', flashable: true,  install_script: false },
+    { id: 'rpi4',            display_name: 'Raspberry Pi 4 Model B',   arch: 'arm64', flashable: true,  install_script: false },
+    { id: 'rpi5',            display_name: 'Raspberry Pi 5',           arch: 'arm64', flashable: true,  install_script: false },
+    { id: 'jetson-orin-nano',display_name: 'NVIDIA Jetson Orin Nano',  arch: 'arm64', flashable: false, install_script: true  },
+  ]
   const [availableTargets, setAvailableTargets] = useState<Array<{
     id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean
-  }>>([])
+  }>>(STATIC_TARGETS)
 
-  useEffect(() => {
+  const fetchTargets = () => {
     api('/admin/edge-provisioning/targets')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.targets) setAvailableTargets(d.targets) })
+      .then(d => { if (d?.targets?.length) setAvailableTargets(d.targets) })
       .catch(() => {})
-  }, [])
+  }
+  useEffect(() => { fetchTargets() }, [])
   const [provisioningForm, setProvisioningForm] = useState<EdgeProvisioningForm>({
     device_id: '',
     customer_id: '',
@@ -1108,12 +1116,9 @@ function IsoTab({
                   disabled={diskBuildStatus?.running}
                   className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 disabled:opacity-50"
                 >
-                  {availableTargets.length === 0 && (
-                    <option value="orangepi4pro">OrangePi 4 Pro (arm64)</option>
-                  )}
                   {availableTargets.filter(t => !t.install_script).map(t => (
                     <option key={t.id} value={t.id}>
-                      {t.display_name} ({t.arch}){t.flashable ? '' : ' — install script'}
+                      {t.display_name} ({t.arch})
                     </option>
                   ))}
                 </select>

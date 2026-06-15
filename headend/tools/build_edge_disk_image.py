@@ -82,6 +82,53 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def _find_docker() -> str:
+    """Returner fuld sti til docker-binæren.
+
+    launchd-services kører med minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin).
+    Docker Desktop installerer docker i /usr/local/bin — ikke i standard PATH.
+    Vi søger kendte steder, så `docker buildx` virker uanset om processen er
+    startet via launchd, systemd eller fra terminalen.
+    """
+    # 1) Prøv shutil.which (respekterer os.environ["PATH"])
+    found = shutil.which("docker")
+    if found:
+        return found
+    # 2) Kendte faste steder (Docker Desktop på macOS / Linux)
+    for candidate in (
+        "/usr/local/bin/docker",      # Docker Desktop macOS / Homebrew
+        "/opt/homebrew/bin/docker",   # Homebrew Apple-Silicon
+        "/usr/bin/docker",            # Docker via apt/rpm
+        "/snap/bin/docker",           # Snap (Ubuntu)
+    ):
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError(
+        "docker ikke fundet. Tilføj Docker Desktop til PATH, eller installer Docker."
+    )
+
+
+def _docker_build_cmd(docker_bin: str, progress: Callable[[str], None]) -> list[str]:
+    """Returner [docker, buildx, build] hvis buildx er tilgængeligt,
+    ellers [docker, build] med DOCKER_BUILDKIT-env (sættes i _run_docker_build).
+
+    Grunden til at vi tjekker: launchd kan have en ældre docker-wrapper i PATH
+    der ikke kender til buildx-subcommanden.
+    """
+    try:
+        r = subprocess.run(
+            [docker_bin, "buildx", "version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0:
+            progress(f"   docker buildx tilgængeligt: {r.stdout.strip().splitlines()[0]}")
+            return [docker_bin, "buildx", "build"]
+    except Exception as exc:
+        progress(f"   ⚠️  buildx check fejlede ({exc}) — falder tilbage til BuildKit build")
+    progress("   Bruger 'docker build' med DOCKER_BUILDKIT=1 (buildx ikke tilgængeligt)")
+    return [docker_bin, "build"]
+
+
 def _run(cmd: list[str], progress: Callable[[str], None], **kwargs) -> subprocess.CompletedProcess:
     """Kør kommando og stream stdout/stderr til progress callback."""
     proc = subprocess.Popen(
@@ -235,36 +282,45 @@ def build_edge_image(
     progress_cb(f"   Headend:  {headend_url}")
     progress_cb(f"   Output:   {rootfs_path}")
 
-    # ── Step 1: Docker buildx ──────────────────────────────────────────────
-    progress_cb(f"\n📦 Step 1/4: Docker buildx build ({docker_platform})...")
+    # ── Step 1: Docker build ───────────────────────────────────────────────
+    progress_cb(f"\n📦 Step 1/4: Docker image build ({docker_platform})...")
     dockerfile = _dockerfile_for_target(tgt, root, progress_cb)
     if not dockerfile.exists():
         raise FileNotFoundError(f"Dockerfile ikke fundet: {dockerfile}")
 
+    docker_bin = _find_docker()
+    progress_cb(f"   Docker:     {docker_bin}")
     progress_cb(f"   Dockerfile: {dockerfile.name}")
-    _run([
-        "docker", "buildx", "build",
-        "--platform", docker_platform,
-        "--file", str(dockerfile),
-        "--build-arg", f"HEADEND_URL={headend_url}",
-        "--build-arg", f"TIMELAPSE_VERSION={version}",
-        "--tag", image_tag,
-        "--load",
-        str(root),
-    ], progress=progress_cb)
+
+    build_cmd = _docker_build_cmd(docker_bin, progress_cb)
+    build_env = {**os.environ, "DOCKER_BUILDKIT": "1"}
+
+    _run(
+        build_cmd + [
+            "--platform", docker_platform,
+            "--file", str(dockerfile),
+            "--build-arg", f"HEADEND_URL={headend_url}",
+            "--build-arg", f"TIMELAPSE_VERSION={version}",
+            "--tag", image_tag,
+            "--load",
+            str(root),
+        ],
+        progress=progress_cb,
+        env=build_env,
+    )
     progress_cb(f"✅ Docker image bygget: {image_tag}")
 
     # ── Step 2: Export rootfs ──────────────────────────────────────────────
     progress_cb(f"\n📤 Step 2/4: Eksporterer rootfs tarball...")
     container_id = subprocess.check_output(
-        ["docker", "create", "--platform", docker_platform, image_tag],
+        [docker_bin, "create", "--platform", docker_platform, image_tag],
         text=True,
     ).strip()
     progress_cb(f"   Container: {container_id[:12]}")
 
     try:
         export_proc = subprocess.Popen(
-            ["docker", "export", container_id],
+            [docker_bin, "export", container_id],
             stdout=subprocess.PIPE,
         )
         gz_proc = subprocess.Popen(
@@ -278,7 +334,7 @@ def build_edge_image(
         if export_proc.returncode != 0 or gz_proc.returncode != 0:
             raise RuntimeError("docker export / gzip fejlede")
     finally:
-        subprocess.run(["docker", "rm", container_id], capture_output=True)
+        subprocess.run([docker_bin, "rm", container_id], capture_output=True)
 
     size_mb = rootfs_path.stat().st_size // (1024 * 1024)
     progress_cb(f"✅ Rootfs exporteret: {rootfs_name} ({size_mb} MB)")
@@ -288,7 +344,7 @@ def build_edge_image(
     sbom_packages: list[dict] = []
     try:
         dpkg_out = subprocess.check_output(
-            ["docker", "run", "--rm", "--platform", docker_platform, image_tag,
+            [docker_bin, "run", "--rm", "--platform", docker_platform, image_tag,
              "dpkg-query", "-W", "-f=${Package}\\t${Version}\\t${Architecture}\\n"],
             text=True, timeout=60,
         )
@@ -307,7 +363,7 @@ def build_edge_image(
     pip_packages: list[dict] = []
     try:
         pip_out = subprocess.check_output(
-            ["docker", "run", "--rm", "--platform", docker_platform, image_tag,
+            [docker_bin, "run", "--rm", "--platform", docker_platform, image_tag,
              "/opt/timelapse/venv/bin/pip", "list", "--format=json"],
             text=True, timeout=60,
         )
@@ -380,7 +436,7 @@ def build_edge_image(
     progress_cb(f"✅ Manifest skrevet: {manifest_path.name}")
 
     # ── Cleanup Docker image ───────────────────────────────────────────────
-    subprocess.run(["docker", "rmi", image_tag], capture_output=True)
+    subprocess.run([docker_bin, "rmi", image_tag], capture_output=True)
     progress_cb(f"   Docker image {image_tag} fjernet (lokal kopi)")
 
     result = {
