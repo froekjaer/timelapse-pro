@@ -9,5 +9,9 @@ requests>=2.31.0
 paramiko>=3.3.0
 cryptography>=41.0
 
+# cffi 2.0.0 har ingen pre-built armhf wheels og kræver gcc til cross-kompilering.
+# Pin til 1.x som har manylinux armhf wheels klar til brug på arm32v7 og arm64.
+cffi>=1.14,<2.0
+
 # tzdata for zoneinfo support
 tzdata>=2024.1

@@ -17,7 +17,7 @@
 #   Data:   /data/
 #   Config: /etc/timelapse/
 ####################################################################
-FROM arm64v8/ubuntu:22.04
+FROM arm32v7/ubuntu:22.04
 
 ARG HEADEND_URL=https://timelapse.froekjaer.dk/api
 ARG TIMELAPSE_VERSION=unknown
@@ -65,6 +65,8 @@ RUN mkdir -p \
 # ── Python venv ──────────────────────────────────────────────────
 # Brug slank base-requirements (uden opencv — for tungt til image-build).
 # opencv installeres post-flash via headend OS-bundle update.
+# gcc + libffi-dev er midlertidige build-deps — fjernes igen for at holde
+# image-størrelsen nede. cffi 1.x har armhf wheels, men som fallback.
 COPY headend/tools/requirements.edge-base.txt /tmp/requirements.edge-base.txt
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libffi-dev \
