@@ -17,7 +17,7 @@
 #   Data:   /data/
 #   Config: /etc/timelapse/
 ####################################################################
-FROM arm32v7/ubuntu:22.04
+FROM arm32v7/debian:trixie
 
 ARG HEADEND_URL=https://timelapse.froekjaer.dk/api
 ARG TIMELAPSE_VERSION=unknown

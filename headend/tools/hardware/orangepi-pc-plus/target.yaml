@@ -8,15 +8,17 @@ id: orangepi-pc-plus
 display_name: "OrangePi PC Plus"
 arch: armhf
 docker_platform: linux/arm/v7
-docker_base: arm32v7/ubuntu:22.04
+docker_base: arm32v7/debian:trixie
 hal_class: orangepi
 soc: Allwinner_H3
 
 base_image:
-  # Officielt Armbian-image for OrangePi PC Plus
+  # Armbian rolling release for OrangePi PC Plus — Debian 13 Trixie Minimal
   # Download fra: https://www.armbian.com/orange-pi-pc-plus/
+  # URL er rolling (ingen version i URL) — følger redirect til aktuelt image.
+  # Kræver arm32v7/debian:trixie som Docker-base (Python 3.12 match).
   type: armbian
-  url: "https://dl.armbian.com/orangepipcplus/archive/Armbian_23.11.1_Orangepipcplus_jammy_current_6.1.63_minimal.img.xz"
+  url: "https://dl.armbian.com/orangepipcplus/Trixie_current_minimal"
   sha256: null
   extract: xz
   # Armbian Allwinner layout:

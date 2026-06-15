@@ -139,7 +139,23 @@ def _download_base_image(
         raise ValueError(f"Ingen base_image.url i target '{target_id}'")
 
     # Filnavn fra URL
-    url_filename = url.split("/")[-1]
+    url_filename = url.split("/")[-1].split("?")[0]
+
+    # Armbian rolling release URLs har ingen filendelse (fx Trixie_current_minimal).
+    # Følg redirect for at finde det faktiske filnavn (.img.xz).
+    if not any(url_filename.endswith(ext) for ext in (".xz", ".gz", ".img", ".zip")):
+        progress(f"   URL mangler filendelse — følger redirect...")
+        try:
+            req = urllib.request.Request(url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                final_url = resp.url
+            inferred = final_url.split("/")[-1].split("?")[0]
+            if inferred and "." in inferred:
+                progress(f"   Faktisk filnavn: {inferred}")
+                url_filename = inferred
+        except Exception as exc:
+            progress(f"   ⚠️  Redirect-følgning fejlede ({exc}) — bruger URL-stub som filnavn")
+
     cache_subdir = cache_dir / target_id
     cache_subdir.mkdir(parents=True, exist_ok=True)
     cached_compressed = cache_subdir / url_filename
