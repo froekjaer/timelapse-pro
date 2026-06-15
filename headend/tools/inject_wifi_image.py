@@ -196,7 +196,8 @@ def inject_wifi_image(
     """
     gz_path = Path(gz_path)
     if not gz_path.exists():
-        raise FileNotFoundError(f"Input .img.gz ikke fundet: {gz_path}")
+        raise FileNotFoundError(f"Input-fil ikke fundet: {gz_path}")
+    is_compressed = gz_path.suffix in (".gz",) or gz_path.name.endswith(".img.gz")
 
     root = Path(repo_root or _find_repo_root())
 
@@ -222,7 +223,7 @@ def inject_wifi_image(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     stem = gz_path.name
-    for ext in (".img.gz", ".gz"):
+    for ext in (".img.gz", ".img", ".gz"):
         if stem.endswith(ext):
             stem = stem[:-len(ext)]
             break
@@ -240,12 +241,16 @@ def inject_wifi_image(
         tmp = Path(tmpdir)
         tmp_img = tmp / "base.img"
 
-        # ── Step 1: Dekomprimér .img.gz → temp .img ──────────────────────────
-        progress_cb(f"\n📦 Step 1/4: Dekomprimerer {gz_path.name}...")
-        gz_size_mb = gz_path.stat().st_size // (1024 * 1024)
-        progress_cb(f"   Størrelse: {gz_size_mb} MB (komprimeret)")
-        with gzip.open(gz_path, "rb") as f_in, open(tmp_img, "wb") as f_out:
-            shutil.copyfileobj(f_in, f_out)
+        # ── Step 1: Forbered .img ─────────────────────────────────────────────
+        if is_compressed:
+            progress_cb(f"\n📦 Step 1/4: Dekomprimerer {gz_path.name}...")
+            gz_size_mb = gz_path.stat().st_size // (1024 * 1024)
+            progress_cb(f"   Størrelse: {gz_size_mb} MB (komprimeret)")
+            with gzip.open(gz_path, "rb") as f_in, open(tmp_img, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        else:
+            progress_cb(f"\n📦 Step 1/4: Kopierer ukomprimeret {gz_path.name}...")
+            shutil.copy2(gz_path, tmp_img)
         img_size_mb = tmp_img.stat().st_size // (1024 * 1024)
         progress_cb(f"   Ukomprimeret: {img_size_mb} MB")
 
