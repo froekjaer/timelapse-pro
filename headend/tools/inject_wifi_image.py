@@ -132,16 +132,34 @@ def _load_target_yaml(target_id: str, repo_root: Path) -> dict:
         return yaml.safe_load(f)
 
 
-def _read_mbr_partition_offset(img_path: Path, partition_num: int) -> int:
-    """Læs partition-offset fra MBR partition-tabel."""
-    entry_offset = 446 + (partition_num - 1) * 16
+def _read_partition_offset(img_path: Path, part_num: int, log: Callable[[str], None] = lambda _: None) -> int:
+    """Auto-detect MBR vs GPT og returnér byte-offset til partition part_num."""
     with open(img_path, "rb") as f:
-        f.seek(entry_offset)
-        entry = f.read(16)
-    lba_start = int.from_bytes(entry[8:12], "little")
-    offset_bytes = lba_start * 512
+        f.seek(512)
+        is_gpt = f.read(8) == b"EFI PART"
+
+        if is_gpt:
+            log(f"   Partitionstabel: GPT")
+            f.seek(512)
+            hdr = f.read(92)
+            pe_lba   = int.from_bytes(hdr[72:80], "little")
+            pe_size  = int.from_bytes(hdr[84:88], "little")
+            entry_offset = pe_lba * 512 + (part_num - 1) * pe_size
+            f.seek(entry_offset)
+            entry = f.read(pe_size)
+            if entry[:16] == b"\x00" * 16:
+                raise RuntimeError(f"GPT partition {part_num} er tom")
+            first_lba = int.from_bytes(entry[32:40], "little")
+        else:
+            log(f"   Partitionstabel: MBR")
+            f.seek(446 + (part_num - 1) * 16)
+            entry = f.read(16)
+            first_lba = int.from_bytes(entry[8:12], "little")
+
+    offset_bytes = first_lba * 512
     if offset_bytes == 0:
-        raise RuntimeError(f"MBR partition {partition_num} LBA=0 — ikke et gyldigt MBR-image")
+        raise RuntimeError(f"Partition {part_num} LBA=0 — ikke et gyldigt disk-image")
+    log(f"   Partition {part_num} offset: {offset_bytes} bytes (LBA {first_lba})")
     return offset_bytes
 
 
@@ -232,8 +250,8 @@ def inject_wifi_image(
         progress_cb(f"   Ukomprimeret: {img_size_mb} MB")
 
         # ── Step 2: Læs MBR partition-offset ─────────────────────────────────
-        progress_cb(f"\n🔍 Step 2/4: Læser MBR partition-tabel (p{effective_root_partition})...")
-        offset_bytes = _read_mbr_partition_offset(tmp_img, effective_root_partition)
+        progress_cb(f"\n🔍 Step 2/4: Læser partition-tabel (p{effective_root_partition})...")
+        offset_bytes = _read_partition_offset(tmp_img, effective_root_partition, progress_cb)
         progress_cb(f"   Partition {effective_root_partition} offset: {offset_bytes} bytes")
 
         # ── Step 3: Docker WiFi-injektion ─────────────────────────────────────

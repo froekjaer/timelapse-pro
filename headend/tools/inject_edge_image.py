@@ -520,6 +520,75 @@ echo "[inject] INJECTION_OK"
 """
 
 
+def _read_partition_offset(img_path: Path, part_num: int, progress: Callable[[str], None]) -> int:
+    """
+    Returnér byte-offset til partition `part_num` i et disk-image.
+    Understøtter både MBR og GPT (auto-detect via GPT-signatur ved LBA 1).
+
+    GPT layout:
+      LBA 0 (byte 0):    Protective MBR
+      LBA 1 (byte 512):  GPT Header — signatur "EFI PART" i første 8 bytes
+      LBA 2+:            Partition entries (128 bytes/entry, typisk 128 entries)
+
+    GPT partition entry (128 bytes):
+      bytes  0-15:  Type GUID
+      bytes 16-31:  Partition GUID
+      bytes 32-39:  First LBA (little-endian uint64)
+      bytes 40-47:  Last LBA
+      bytes 48-55:  Attributes
+      bytes 56-127: Name (UTF-16LE)
+
+    MBR layout:
+      byte 446:  Partition table (4 entries à 16 bytes)
+      entry[n] bytes 8-11: LBA start (little-endian uint32)
+    """
+    with open(img_path, "rb") as f:
+        # Check for GPT signature at LBA 1
+        f.seek(512)
+        gpt_sig = f.read(8)
+        is_gpt = gpt_sig == b"EFI PART"
+
+        if is_gpt:
+            progress(f"   Partitionstabel: GPT")
+            # GPT header (LBA 1 = byte 512)
+            f.seek(512)
+            hdr = f.read(92)
+            # partition_entry_lba (bytes 72-79)
+            pe_lba   = int.from_bytes(hdr[72:80], "little")
+            pe_count = int.from_bytes(hdr[80:84], "little")
+            pe_size  = int.from_bytes(hdr[84:88], "little")
+
+            if part_num < 1 or part_num > pe_count:
+                raise RuntimeError(f"GPT: partition {part_num} findes ikke (count={pe_count})")
+
+            entry_offset = pe_lba * 512 + (part_num - 1) * pe_size
+            f.seek(entry_offset)
+            entry = f.read(pe_size)
+
+            # Tjek at det ikke er en tom entry (type GUID = alle nuller)
+            if entry[:16] == b"\x00" * 16:
+                raise RuntimeError(f"GPT partition {part_num} er tom (type GUID = 0)")
+
+            first_lba = int.from_bytes(entry[32:40], "little")
+            offset_bytes = first_lba * 512
+            progress(f"   GPT partition {part_num} offset: {offset_bytes} bytes (LBA {first_lba})")
+
+        else:
+            progress(f"   Partitionstabel: MBR")
+            mbr_entry_offset = 446 + (part_num - 1) * 16
+            f.seek(mbr_entry_offset)
+            entry = f.read(16)
+            first_lba = int.from_bytes(entry[8:12], "little")
+            offset_bytes = first_lba * 512
+            progress(f"   MBR partition {part_num} offset: {offset_bytes} bytes (LBA {first_lba})")
+
+    if offset_bytes == 0:
+        raise RuntimeError(
+            f"Partition {part_num} LBA=0 — image er muligvis ikke et gyldigt disk-image"
+        )
+    return offset_bytes
+
+
 def _inject_via_docker(
     base_img: Path,
     rootfs_tar: Path,
@@ -549,19 +618,9 @@ def _inject_via_docker(
     progress(f"   Root partition: {'auto-detect' if root_part == 'auto' else 'p' + root_part}")
     progress(f"   Starter privileged container (ubuntu:22.04)...")
 
-    # ── 0. Læs MBR partition-offset direkte i Python ─────────────────────────
-    # MBR partition table: offset 446, 4 entries à 16 bytes
-    # Bytes 8-11 i hver entry = LBA start (little-endian uint32)
+    # ── 0. Læs partition-offset (MBR eller GPT) direkte i Python ─────────────
     _part_num = int(root_part) if root_part != "auto" else 1
-    _mbr_entry_offset = 446 + (_part_num - 1) * 16
-    with open(base_img, "rb") as _f:
-        _f.seek(_mbr_entry_offset)
-        _entry = _f.read(16)
-    _lba_start = int.from_bytes(_entry[8:12], "little")
-    offset_bytes = _lba_start * 512
-    progress(f"   MBR partition {_part_num} offset: {offset_bytes} bytes (LBA {_lba_start})")
-    if offset_bytes == 0:
-        raise RuntimeError(f"MBR partition {_part_num} LBA=0 — image er muligvis ikke et gyldigt MBR-image")
+    offset_bytes = _read_partition_offset(base_img, _part_num, progress)
 
     # ── 1. Start detached container ──────────────────────────────────────────
     wifi_method = target.get("wifi_method", "wpa_supplicant")
