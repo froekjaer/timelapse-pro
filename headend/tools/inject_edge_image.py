@@ -340,13 +340,30 @@ BOOTSTRAP_YAML="/work/bootstrap.yaml"
 # OFFSET_BYTES sættes af Python (MBR-parsing) og sendes som env-var.
 # Ingen eksterne tools nødvendig i containeren.
 
-echo "[inject] Partition offset (fra MBR): ${OFFSET_BYTES} bytes"
-LOOP=$(losetup -f --show -o "${OFFSET_BYTES}" "$BASE_IMG")
+echo "[inject] Monterer disk-image med partscan..."
+LOOP=$(losetup -f --show --partscan "$BASE_IMG")
 echo "[inject] Loop device: $LOOP"
+sleep 1
 
+# Find root-partition (p2 for GPT/Ubuntu RPi, p1 som fallback)
+ROOT_PART=""
+for CANDIDATE in "${LOOP}p2" "${LOOP}p3" "${LOOP}p1"; do
+    if [ -b "$CANDIDATE" ]; then
+        ROOT_PART="$CANDIDATE"
+        break
+    fi
+done
+
+if [ -z "$ROOT_PART" ]; then
+    echo "[inject] FEJL: Ingen partition fundet på $LOOP"
+    losetup -d "$LOOP"
+    exit 1
+fi
+
+echo "[inject] Root-partition: $ROOT_PART"
 echo "[inject] Mounter root-partition..."
 mkdir -p /mnt/root
-mount "$LOOP" /mnt/root
+mount "$ROOT_PART" /mnt/root
 
 # ── Opret mappestruktur ──────────────────────────────────────────────────────
 echo "[inject] Opretter timelapse mappestruktur..."
