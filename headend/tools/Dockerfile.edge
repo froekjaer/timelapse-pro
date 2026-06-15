@@ -66,12 +66,17 @@ RUN mkdir -p \
 # Brug slank base-requirements (uden opencv — for tungt til image-build).
 # opencv installeres post-flash via headend OS-bundle update.
 COPY headend/tools/requirements.edge-base.txt /tmp/requirements.edge-base.txt
+# Build-deps installeres midlertidigt og fjernes igen i samme RUN-lag.
+# libsodium23 (runtime) beholdes — pynacl linker mod det dynamisk.
+# SODIUM_INSTALL=system: pynacl bruger system-libsodium (sparer kompileringstid).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libffi-dev python3-dev \
+    && apt-get install -y --no-install-recommends \
+        gcc libffi-dev python3-dev make \
+        libsodium23 libsodium-dev \
     && python3 -m venv /opt/timelapse/venv \
-    && /opt/timelapse/venv/bin/pip install --quiet --no-cache-dir \
+    && SODIUM_INSTALL=system /opt/timelapse/venv/bin/pip install --quiet --no-cache-dir \
         -r /tmp/requirements.edge-base.txt \
-    && apt-get remove -y gcc libffi-dev \
+    && apt-get remove -y gcc libffi-dev python3-dev make libsodium-dev \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 

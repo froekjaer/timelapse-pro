@@ -68,12 +68,17 @@ RUN mkdir -p \
 # gcc + libffi-dev er midlertidige build-deps — fjernes igen for at holde
 # image-størrelsen nede. cffi 1.x har armhf wheels, men som fallback.
 COPY headend/tools/requirements.edge-base.txt /tmp/requirements.edge-base.txt
+# Build-deps installeres midlertidigt og fjernes igen i samme RUN-lag.
+# libsodium23 (runtime) beholdes — pynacl linker mod det dynamisk.
+# SODIUM_INSTALL=system: pynacl bruger system-libsodium (sparer ~5 min make).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libffi-dev python3-dev \
+    && apt-get install -y --no-install-recommends \
+        gcc libffi-dev python3-dev make \
+        libsodium23 libsodium-dev \
     && python3 -m venv /opt/timelapse/venv \
-    && /opt/timelapse/venv/bin/pip install --quiet --no-cache-dir \
+    && SODIUM_INSTALL=system /opt/timelapse/venv/bin/pip install --quiet --no-cache-dir \
         -r /tmp/requirements.edge-base.txt \
-    && apt-get remove -y gcc libffi-dev \
+    && apt-get remove -y gcc libffi-dev python3-dev make libsodium-dev \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
