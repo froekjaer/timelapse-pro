@@ -178,7 +178,7 @@ def _download_base_image(
             try:
                 _info = gdown.download(
                     id=_gdrive_id, output=str(cache_subdir) + "/",
-                    quiet=True, fuzzy=False, resume=True,
+                    quiet=True, resume=True,
                 )
                 gdrive_filename = Path(_info).name if _info else None
             except Exception as _e:
@@ -206,7 +206,7 @@ def _download_base_image(
             _dl = gdown.download(
                 id=_gdrive_id,
                 output=str(cached_compressed),
-                quiet=False, fuzzy=False, resume=True,
+                quiet=False, resume=True,
             )
             if not _dl or not Path(_dl).exists():
                 raise RuntimeError(f"gdown download fejlede for Google Drive id={_gdrive_id}")
