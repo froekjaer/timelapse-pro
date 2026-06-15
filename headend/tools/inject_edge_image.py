@@ -40,9 +40,12 @@ Brug fra CLI:
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
+import lzma
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -142,29 +145,45 @@ def _download_base_image(
     url_filename = url.split("/")[-1].split("?")[0]
 
     # Armbian rolling release URLs har ingen filendelse (fx Trixie_current_minimal).
-    # Følg redirect for at finde det faktiske filnavn (.img.xz).
-    if not any(url_filename.endswith(ext) for ext in (".xz", ".gz", ".img", ".zip")):
-        progress(f"   URL mangler filendelse — følger redirect...")
+    # Forsøg HEAD-request: tjek Content-Disposition og/eller redirect-URL for faktisk filnavn.
+    _KNOWN_EXTS = (".xz", ".gz", ".zst", ".img", ".zip")
+    if not any(url_filename.endswith(ext) for ext in _KNOWN_EXTS):
+        progress(f"   URL mangler filendelse — søger faktisk filnavn via HEAD...")
         try:
             req = urllib.request.Request(url, method="HEAD")
             with urllib.request.urlopen(req, timeout=30) as resp:
-                final_url = resp.url
-            inferred = final_url.split("/")[-1].split("?")[0]
-            if inferred and "." in inferred:
-                progress(f"   Faktisk filnavn: {inferred}")
-                url_filename = inferred
+                # 1) Content-Disposition header
+                cd = resp.headers.get("Content-Disposition", "")
+                m = re.search(r'filename=["\']?([^"\';\r\n]+)', cd)
+                if m:
+                    inferred = m.group(1).strip()
+                    progress(f"   Content-Disposition filnavn: {inferred}")
+                    url_filename = inferred
+                else:
+                    # 2) Redirect-URL path component
+                    inferred = resp.url.split("/")[-1].split("?")[0]
+                    if inferred and "." in inferred:
+                        progress(f"   Faktisk filnavn (redirect-URL): {inferred}")
+                        url_filename = inferred
         except Exception as exc:
-            progress(f"   ⚠️  Redirect-følgning fejlede ({exc}) — bruger URL-stub som filnavn")
+            progress(f"   ⚠️  HEAD-request fejlede ({exc}) — bruger URL-stub som filnavn")
 
     cache_subdir = cache_dir / target_id
     cache_subdir.mkdir(parents=True, exist_ok=True)
     cached_compressed = cache_subdir / url_filename
-    # .img filnavn = uden .xz/.gz suffix
+
+    # .img filnavn = uden komprimerings-endelse.
+    # Hvis url_filename stadig mangler endelse (Armbian CDN gav intet nyttigt),
+    # tilføjer vi ".img" så cached_img ALTID er forskellig fra cached_compressed.
     img_name = url_filename
-    for ext in (".xz", ".gz"):
+    ext_stripped = False
+    for ext in (".xz", ".gz", ".zst"):
         if img_name.endswith(ext):
             img_name = img_name[:-len(ext)]
+            ext_stripped = True
             break
+    if not ext_stripped:
+        img_name = img_name + ".img"
     cached_img = cache_subdir / img_name
 
     # Brug cachet .img hvis det allerede er udpakket
@@ -189,17 +208,21 @@ def _download_base_image(
     else:
         progress(f"✅ Komprimeret image cachet: {cached_compressed.name}")
 
-    # Udpak
-    progress(f"📦 Udpakker {cached_compressed.name}...")
+    # Udpak — bruger Python lzma/gzip i stedet for subprocess for at undgå
+    # platform-specifikke exit-kode problemer (macOS xz kræver .xz filendelse).
+    size_compressed = cached_compressed.stat().st_size
+    progress(f"📦 Udpakker {cached_compressed.name} ({size_compressed // (1024*1024)} MB komprimeret) → {cached_img.name}...")
     if extract == "xz":
-        subprocess.run(
-            ["xz", "--decompress", "--keep", "--force", str(cached_compressed)],
-            check=True,
-        )
+        with lzma.open(str(cached_compressed), "rb") as fin, open(cached_img, "wb") as fout:
+            shutil.copyfileobj(fin, fout)
     elif extract == "gz":
+        with gzip.open(str(cached_compressed), "rb") as fin, open(cached_img, "wb") as fout:
+            shutil.copyfileobj(fin, fout)
+    elif extract == "zst":
+        # Python mangler built-in zstd — brug subprocess zstd
         subprocess.run(
-            ["gunzip", "--keep", "--force", str(cached_compressed)],
-            check=True,
+            ["zstd", "--decompress", "--stdout", str(cached_compressed)],
+            stdout=open(cached_img, "wb"), check=True,
         )
     else:
         raise ValueError(f"Ukendt extract-format: {extract}")
