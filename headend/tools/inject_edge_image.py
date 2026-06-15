@@ -398,16 +398,18 @@ def _inject_via_docker(
     progress(f"   Starter privileged container (ubuntu:22.04)...")
 
     # ── 0. Læs MBR partition-offset direkte i Python ─────────────────────────
-    # MBR: offset 446 = første partition-entry, bytes 8-11 = LBA start (LE)
-    # Virker for Armbian (én root-partition startende ved sektor ~16384)
+    # MBR partition table: offset 446, 4 entries à 16 bytes
+    # Bytes 8-11 i hver entry = LBA start (little-endian uint32)
+    _part_num = int(root_part) if root_part != "auto" else 1
+    _mbr_entry_offset = 446 + (_part_num - 1) * 16
     with open(base_img, "rb") as _f:
-        _f.seek(446)
+        _f.seek(_mbr_entry_offset)
         _entry = _f.read(16)
     _lba_start = int.from_bytes(_entry[8:12], "little")
     offset_bytes = _lba_start * 512
-    progress(f"   MBR partition offset: {offset_bytes} bytes (LBA {_lba_start})")
+    progress(f"   MBR partition {_part_num} offset: {offset_bytes} bytes (LBA {_lba_start})")
     if offset_bytes == 0:
-        raise RuntimeError("MBR partition 1 LBA=0 — image er muligvis ikke et gyldigt MBR-image")
+        raise RuntimeError(f"MBR partition {_part_num} LBA=0 — image er muligvis ikke et gyldigt MBR-image")
 
     # ── 1. Start detached container ──────────────────────────────────────────
     start = subprocess.run(
