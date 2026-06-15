@@ -659,6 +659,12 @@ else
     echo "[inject]   tl-debug bruger eksisterer allerede"
 fi
 
+# Fix password-udløb for ubuntu og tl-debug (cloud-init sætter dag 0 = tvungen skift)
+EPOCH_DAYS=$(( $(date +%s) / 86400 ))
+sed -i "s/^ubuntu:\([^:]*\):0:/ubuntu:\1:${EPOCH_DAYS}:/" /mnt/root/etc/shadow 2>/dev/null || true
+sed -i "s/^tl-debug:\([^:]*\):19800:/tl-debug:\1:${EPOCH_DAYS}:/" /mnt/root/etc/shadow 2>/dev/null || true
+echo "[inject]   Password-udløb nulstillet for ubuntu + tl-debug"
+
 # ── SSH hardening ─────────────────────────────────────────────────────────────
 SSHD_CONFIG=/mnt/root/etc/ssh/sshd_config
 if [ -f "$SSHD_CONFIG" ]; then
