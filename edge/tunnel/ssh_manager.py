@@ -294,7 +294,7 @@ class SshTunnelManager:
                 "-R", f"{self._remote_port()}:localhost:{self._local_port()}",
                 "-p", str(ssh_port),
                 "-i", str(key_file),
-                "-o", "StrictHostKeyChecking=yes",
+                "-o", f"StrictHostKeyChecking={self._tunnel_cfg().get('strict_host_checking', 'accept-new')}",
                 "-o", f"ConnectTimeout={CONNECT_TIMEOUT_S}",
                 "-o", f"ServerAliveInterval={KEEPALIVE_INTERVAL_S}",
                 "-o", f"ServerAliveCountMax={KEEPALIVE_COUNT_MAX}",
