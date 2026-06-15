@@ -25,7 +25,7 @@ base_image:
   url: "https://drive.google.com/file/d/1apQbbhY-uUAG8495FMkarRTDK-B6UTbw/view?usp=share_link"
   filename: null   # gdown auto-detekterer filnavn fra Google Drive metadata
   sha256: null
-  extract: xz
+  extract: 7z
   # OrangePi 4 Pro Linux-image har KUN én partition (ext4 rootfs).
   # Ingen separat boot-partition — kernel + dtb ligger i /boot på rootfs.
   # Bekræftet i User Manual v1.4 side 59: /dev/mmcblk0p1 er rootfs.

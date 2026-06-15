@@ -188,12 +188,14 @@ def _download_base_image(
         cached_compressed = cache_subdir / url_filename
 
         img_name = url_filename
-        for ext in (".xz", ".gz", ".zst"):
+        for ext in (".xz", ".gz", ".zst", ".7z"):
             if img_name.endswith(ext):
                 img_name = img_name[:-len(ext)]
                 break
         else:
             img_name = img_name if img_name.endswith(".img") else img_name + ".img"
+        if not img_name.endswith(".img"):
+            img_name = img_name + ".img"
         cached_img = cache_subdir / img_name
 
         if cached_img.exists() and cached_img.stat().st_size > 10 * 1024 * 1024:
@@ -221,7 +223,7 @@ def _download_base_image(
         url_filename = url.split("/")[-1].split("?")[0]
 
         # Armbian rolling release URLs har ingen filendelse (fx Trixie_current_minimal).
-        _KNOWN_EXTS = (".xz", ".gz", ".zst", ".img", ".zip")
+        _KNOWN_EXTS = (".xz", ".gz", ".zst", ".7z", ".img", ".zip")
         if not any(url_filename.endswith(ext) for ext in _KNOWN_EXTS):
             progress(f"   URL mangler filendelse — søger faktisk filnavn via HEAD...")
             try:
@@ -291,6 +293,30 @@ def _download_base_image(
             ["zstd", "--decompress", "--stdout", str(cached_compressed)],
             stdout=open(cached_img, "wb"), check=True,
         )
+    elif extract == "7z":
+        try:
+            import py7zr  # type: ignore
+        except ImportError:
+            progress("   📦 Installerer py7zr...")
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--quiet", "py7zr"],
+                check=True,
+            )
+            import py7zr  # type: ignore
+        progress(f"   Udpakker .7z (kan tage et øjeblik)...")
+        with py7zr.SevenZipFile(str(cached_compressed), mode="r") as zf:
+            names = zf.getnames()
+            # Find .img filen i arkivet
+            img_entries = [n for n in names if n.endswith(".img")]
+            if not img_entries:
+                raise RuntimeError(f"Ingen .img fil fundet i {cached_compressed.name}: {names}")
+            img_entry = img_entries[0]
+            progress(f"   Udpakker: {img_entry}")
+            zf.extract(targets=[img_entry], path=str(cache_subdir))
+        # Flyt til forventet sti hvis nødvendigt
+        extracted = cache_subdir / img_entry
+        if extracted != cached_img:
+            extracted.rename(cached_img)
     else:
         raise ValueError(f"Ukendt extract-format: {extract}")
 
