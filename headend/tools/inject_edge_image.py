@@ -100,11 +100,10 @@ def _sign_manifest(
         result = subprocess.run(
             ["gpg", "--homedir", gpg_home,
              "--batch", "--yes", "--armor",
+             "--no-tty",
              "--pinentry-mode", "loopback",
-             "--passphrase-fd", "0",
              "--local-user", gpg_key_id,
              "--detach-sign", "--output", "-", tmp],
-            input="",  # tom adgangskode via stdin — undgår pinentry/TTY-krav
             capture_output=True, text=True, timeout=20,
             env=gpg_env,
         )
