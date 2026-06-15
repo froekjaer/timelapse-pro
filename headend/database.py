@@ -232,6 +232,11 @@ class Camera(Base):
     config        = Column(Text, default="{}")             # JSON camera-specifikke config overrides
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     retired_at    = Column(DateTime)                       # null = aktiv
+    # Netværkskonfiguration (v7 migration)
+    network_type  = Column(String(20), default="ethernet") # 'ethernet' | 'wifi' | 'usb_modem'
+    wifi_ssid     = Column(String(200))
+    wifi_password = Column(String(200))
+    wifi_country  = Column(String(2), default="DK")
 
 
 class DeviceAssignment(Base):

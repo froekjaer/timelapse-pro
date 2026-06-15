@@ -92,6 +92,8 @@ interface ResilienceAssessment {
 
 type Tab = 'headend' | 'edge' | 'iso' | 'compliance'
 
+type NetworkType = 'ethernet' | 'wifi' | 'usb_modem'
+
 interface EdgeProvisioningForm {
   device_id: string
   customer_id: string
@@ -103,9 +105,18 @@ interface EdgeProvisioningForm {
   note: string
   expires_hours: number
   headend_url: string
+  network_type: NetworkType
+  wifi_ssid: string
+  wifi_password: string
+  wifi_country: string
 }
 
 interface LocOption { id: string; name: string }
+interface CameraOption extends LocOption {
+  network_type?: NetworkType
+  wifi_ssid?: string
+  wifi_country?: string
+}
 
 /** Cascading dropdown: Kunde → Site → Kamera/Lokation med "Tilføj ny..." */
 function LocationPicker({
@@ -117,7 +128,7 @@ function LocationPicker({
 }) {
   const [customers, setCustomers] = useState<LocOption[]>([])
   const [sites, setSites]         = useState<LocOption[]>([])
-  const [cameras, setCameras]     = useState<LocOption[]>([])
+  const [cameras, setCameras]     = useState<CameraOption[]>([])
   const [loading, setLoading]     = useState(false)
 
   // Load customers on mount
@@ -152,7 +163,13 @@ function LocationPicker({
     }
     api(`/admin/cameras?site_id=${encodeURIComponent(form.site_id)}`)
       .then(r => r.ok ? r.json() : [])
-      .then((cs: any[]) => setCameras(cs.map((c: any) => ({ id: c.id, name: c.camera_name }))))
+      .then((cs: any[]) => setCameras(cs.map((c: any) => ({
+        id:           c.id,
+        name:         c.camera_name,
+        network_type: (c.network_type as NetworkType) || 'ethernet',
+        wifi_ssid:    c.wifi_ssid || '',
+        wifi_country: c.wifi_country || 'DK',
+      }))))
       .catch(() => setCameras([]))
     setForm(f => ({ ...f, camera_id: '', camera_name: '' }))
   }, [form.site_id])
@@ -205,8 +222,19 @@ function LocationPicker({
         <select className={selCls} value={form.camera_id} disabled={!form.site_id}
           onChange={e => {
             const id = e.target.value
-            const name = id === '__new__' ? '' : (cameras.find(c => c.id === id)?.name ?? '')
-            setForm(f => ({ ...f, camera_id: id, camera_name: name }))
+            const cam = cameras.find(c => c.id === id)
+            const name = id === '__new__' ? '' : (cam?.name ?? '')
+            // Pre-udfyld netværksfelter fra gemt kamera-config
+            setForm(f => ({
+              ...f,
+              camera_id:    id,
+              camera_name:  name,
+              ...(cam && id !== '__new__' ? {
+                network_type: cam.network_type ?? f.network_type,
+                wifi_ssid:    cam.wifi_ssid   ?? f.wifi_ssid,
+                wifi_country: cam.wifi_country ?? f.wifi_country,
+              } : {}),
+            }))
           }}>
           <option value="">— vælg kamera/lokation —</option>
           {cameras.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -220,6 +248,76 @@ function LocationPicker({
           Kamera-lokationen er den fysiske position. Den overlever udskiftning af Edge-hardware.
         </p>
       </div>
+
+      {/* Netværkstype */}
+      <div>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Netværksforbindelse</p>
+        <div className="grid grid-cols-3 gap-2">
+          {([
+            { value: 'ethernet', label: 'Ethernet', icon: '🔌', desc: 'Fast kabel' },
+            { value: 'wifi',     label: 'WiFi',     icon: '📶', desc: 'Trådløst netværk' },
+            { value: 'usb_modem',label: 'USB modem',icon: '📡', desc: '4G/5G USB dongle' },
+          ] as { value: NetworkType; label: string; icon: string; desc: string }[]).map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setForm(f => ({
+                ...f,
+                network_type: opt.value,
+                // Ryd WiFi-felter hvis der skiftes væk fra WiFi
+                ...(opt.value !== 'wifi' ? { wifi_ssid: '', wifi_password: '' } : {}),
+              }))}
+              className={`flex flex-col items-center gap-1 rounded-lg border px-3 py-2.5 text-xs transition-colors ${
+                form.network_type === opt.value
+                  ? 'border-sky-400 bg-sky-50 text-sky-800 font-medium'
+                  : 'border-gray-200 bg-white text-gray-600 hover:border-sky-200 hover:bg-sky-50'
+              }`}
+            >
+              <span className="text-lg">{opt.icon}</span>
+              <span>{opt.label}</span>
+              <span className="text-gray-400 font-normal">{opt.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* WiFi-felter — kun hvis WiFi er valgt */}
+      {form.network_type === 'wifi' && (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 p-3 space-y-2">
+          <p className="text-xs font-medium text-sky-800">WiFi konfiguration</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-sky-700 mb-1">SSID (netværksnavn)</label>
+              <input
+                value={form.wifi_ssid}
+                onChange={e => setForm(f => ({ ...f, wifi_ssid: e.target.value }))}
+                placeholder="MitWiFi"
+                className={inpCls}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-sky-700 mb-1">Adgangskode</label>
+              <input
+                type="password"
+                value={form.wifi_password}
+                onChange={e => setForm(f => ({ ...f, wifi_password: e.target.value }))}
+                placeholder="••••••••"
+                className={inpCls}
+              />
+            </div>
+          </div>
+          <div className="w-20">
+            <label className="block text-xs text-sky-700 mb-1">Landekode</label>
+            <input
+              value={form.wifi_country}
+              onChange={e => setForm(f => ({ ...f, wifi_country: e.target.value.toUpperCase().slice(0, 2) }))}
+              placeholder="DK"
+              maxLength={2}
+              className={`${inpCls} font-mono uppercase`}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -320,6 +418,10 @@ export function BackupPage() {
     note: '',
     expires_hours: 48,
     headend_url: '',
+    network_type: 'ethernet',
+    wifi_ssid: '',
+    wifi_password: '',
+    wifi_country: 'DK',
   })
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -504,6 +606,10 @@ export function BackupPage() {
           note:          provisioningForm.note.trim() || undefined,
           expires_hours: provisioningForm.expires_hours,
           headend_url:   provisioningForm.headend_url.trim() || undefined,
+          network_type:  provisioningForm.network_type,
+          wifi_ssid:     provisioningForm.network_type === 'wifi' ? provisioningForm.wifi_ssid.trim() : undefined,
+          wifi_password: provisioningForm.network_type === 'wifi' ? provisioningForm.wifi_password : undefined,
+          wifi_country:  provisioningForm.network_type === 'wifi' ? (provisioningForm.wifi_country || 'DK') : undefined,
         }),
       })
       if (!r.ok) throw new Error(await r.text())

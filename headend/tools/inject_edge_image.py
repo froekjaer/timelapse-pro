@@ -795,9 +795,16 @@ def inject_edge_image(
     base_img = _download_base_image(tgt, cache_dir, progress_cb)
 
     # Kopier base-image til output-dir (injection modificerer filen in-place)
+    # VIGTIGT: Tjek at eksisterende work_img har korrekt størrelse — en delvis
+    # kopi fra en tidligere afbrudt build ville ellers blive brugt ukritisk.
     work_img = out_dir / base_img.name
+    base_size = base_img.stat().st_size
+    if work_img.exists() and work_img.stat().st_size != base_size:
+        progress_cb(f"   ⚠️  Eksisterende work_img er {work_img.stat().st_size // (1024*1024)} MB"
+                    f" (forventet {base_size // (1024*1024)} MB) — sletter og kopierer igen...")
+        work_img.unlink()
     if not work_img.exists():
-        progress_cb(f"   Kopierer base-image til output-mappe...")
+        progress_cb(f"   Kopierer base-image til output-mappe ({base_size // (1024*1024)} MB)...")
         shutil.copy2(base_img, work_img)
 
     # ── Step 2: Byg bootstrap.yaml til injection ───────────────────────────

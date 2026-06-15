@@ -298,6 +298,11 @@ class EdgeProvisioningPrepareRequest(BaseModel):
     note: Optional[str] = None
     expires_hours: Optional[int] = 48
     headend_url: Optional[str] = None
+    # Netværkskonfiguration (v7)
+    network_type: Optional[str] = "ethernet"   # 'ethernet' | 'wifi' | 'usb_modem'
+    wifi_ssid: Optional[str] = None
+    wifi_password: Optional[str] = None
+    wifi_country: Optional[str] = "DK"
 
 class HeartbeatRequest(BaseModel):
     device_id:     str
@@ -3183,6 +3188,11 @@ def list_cameras(
             "current_device_id": assignment.device_id if assignment else None,
             "assigned_at":   assignment.assigned_at.isoformat() if assignment and assignment.assigned_at else None,
             "created_at":    cam.created_at.isoformat() if cam.created_at else None,
+            # Netværkskonfiguration (v7)
+            "network_type":  getattr(cam, "network_type", "ethernet") or "ethernet",
+            "wifi_ssid":     getattr(cam, "wifi_ssid", None),
+            "wifi_country":  getattr(cam, "wifi_country", "DK") or "DK",
+            # wifi_password returneres IKKE i list-endpoint af sikkerhedshensyn
         })
     return result
 
@@ -10467,6 +10477,21 @@ def prepare_edge_provisioning(
         db.flush()
         camera_id = new_cam.id
         log.info("Kamera-lokation oprettet: %s (%s) for site %s", payload.camera_name, camera_id, payload.site_id)
+
+    # Gem/opdater netværkskonfiguration på Camera-entiteten (v7)
+    if camera_id and (payload.network_type or payload.wifi_ssid):
+        from database import Camera as _Camera
+        cam_rec = db.query(_Camera).filter_by(id=camera_id).first()
+        if cam_rec:
+            if payload.network_type:
+                cam_rec.network_type = payload.network_type
+            if payload.wifi_ssid is not None:
+                cam_rec.wifi_ssid = payload.wifi_ssid or None
+            if payload.wifi_password is not None:
+                cam_rec.wifi_password = payload.wifi_password or None
+            if payload.wifi_country:
+                cam_rec.wifi_country = payload.wifi_country or "DK"
+            log.info("Netværksconfig opdateret for kamera %s: %s", camera_id, payload.network_type)
 
     token_rec = BootstrapToken(
         token=token_str,
