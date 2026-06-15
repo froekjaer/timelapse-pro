@@ -292,6 +292,7 @@ class EdgeProvisioningPrepareRequest(BaseModel):
     customer_name: Optional[str] = None
     site_id: Optional[str] = None
     site_name: Optional[str] = None
+    camera_id: Optional[str] = None        # UUID til eksisterende Camera (lokation)
     camera_name: Optional[str] = None
     location_name: Optional[str] = None
     note: Optional[str] = None
@@ -1351,6 +1352,39 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
     db.add(credential)
     _audit_key_event(db, credential, "created_by_zero_touch_enroll", "zero_touch_enroll",
                      {"device_id": req.device_id, "hardware_model": req.hardware_model})
+
+    # ── Auto-opret DeviceAssignment hvis token er bundet til en kamera-lokation ──
+    token_camera_id = getattr(token_record, "camera_id", None)
+    if token_camera_id:
+        from database import DeviceAssignment as _DA
+        # Afslut alle aktive assignments for dette device
+        for old_da in (db.query(_DA)
+                       .filter_by(device_id=req.device_id)
+                       .filter(_DA.unassigned_at.is_(None)).all()):
+            old_da.unassigned_at = now_utc()
+        # Afslut alle aktive assignments for denne kamera-lokation (ny enhed overtager)
+        for old_da in (db.query(_DA)
+                       .filter_by(camera_id=token_camera_id)
+                       .filter(_DA.unassigned_at.is_(None)).all()):
+            old_da.unassigned_at = now_utc()
+        # Opret ny assignment
+        new_da = _DA(
+            device_id       = req.device_id,
+            camera_id       = token_camera_id,
+            assigned_by     = "zero_touch_enroll",
+            assignment_type = "auto",
+            notes           = f"Auto-tildelt ved enrollment (token {token_record.id})",
+        )
+        db.add(new_da)
+        # Synkroniser camera_name, site, customer til device
+        from database import Camera as _CamModel
+        cam = db.query(_CamModel).filter_by(id=token_camera_id).first()
+        if cam:
+            device.camera_name = cam.camera_name or device.camera_name
+            device.site_id     = cam.site_id     or device.site_id
+            device.customer_id = cam.customer_id or device.customer_id
+        log.info("Auto DeviceAssignment: %s → kamera %s", req.device_id, token_camera_id)
+
     db.commit()
 
     base_url   = os.environ.get("BASE_URL", "http://192.168.86.132:8000")
@@ -3116,12 +3150,19 @@ def ssh_tunnel_log(
 
 @app.get("/api/admin/cameras")
 def list_cameras(
+    site_id: Optional[str] = None,
+    customer_id: Optional[str] = None,
     _user=require_role("super_admin", "admin", "operator"),
     db: Session = Depends(get_db)
 ):
-    """List alle logiske kameraer."""
+    """List alle logiske kameraer. Filtreres med ?site_id= eller ?customer_id="""
     from database import Camera, DeviceAssignment
-    cameras = db.query(Camera).filter(Camera.retired_at.is_(None)).all()
+    q = db.query(Camera).filter(Camera.retired_at.is_(None))
+    if site_id:
+        q = q.filter(Camera.site_id == site_id)
+    if customer_id:
+        q = q.filter(Camera.customer_id == customer_id)
+    cameras = q.order_by(Camera.camera_name).all()
     result = []
     for cam in cameras:
         # Find aktiv device assignment
@@ -3250,11 +3291,57 @@ def camera_assignment_history(
             "assigned_at":   e.assigned_at.isoformat() if e.assigned_at else None,
             "unassigned_at": e.unassigned_at.isoformat() if e.unassigned_at else None,
             "assigned_by":   e.assigned_by,
+            "assignment_type": getattr(e, "assignment_type", "manual"),
             "notes":         e.notes,
             "active":        e.unassigned_at is None,
         }
         for e in entries
     ]
+
+
+@app.get("/api/admin/devices/{device_id}/camera-location")
+def get_device_camera_location(
+    device_id: str,
+    _user=require_role("super_admin", "admin", "operator"),
+    db: Session = Depends(get_db)
+):
+    """Returnerer den aktive kamera-lokation (Camera) som en device er tildelt."""
+    from database import Camera, DeviceAssignment, Customer, Site
+    assignment = (
+        db.query(DeviceAssignment)
+        .filter_by(device_id=device_id)
+        .filter(DeviceAssignment.unassigned_at.is_(None))
+        .order_by(DeviceAssignment.assigned_at.desc())
+        .first()
+    )
+    if not assignment:
+        return {"assignment": None, "camera": None}
+
+    cam = db.query(Camera).filter_by(id=assignment.camera_id).first()
+    if not cam:
+        return {"assignment": None, "camera": None}
+
+    customer = db.query(Customer).filter_by(id=cam.customer_id).first() if cam.customer_id else None
+    site = db.query(Site).filter_by(id=cam.site_id).first() if cam.site_id else None
+
+    return {
+        "assignment": {
+            "camera_id":    assignment.camera_id,
+            "assigned_at":  assignment.assigned_at.isoformat() if assignment.assigned_at else None,
+            "assigned_by":  assignment.assigned_by,
+            "assignment_type": getattr(assignment, "assignment_type", "manual"),
+        },
+        "camera": {
+            "id":            cam.id,
+            "camera_name":   cam.camera_name,
+            "site_id":       cam.site_id,
+            "site_name":     site.name if site else None,
+            "customer_id":   cam.customer_id,
+            "customer_name": customer.name if customer else None,
+            "model":         cam.model,
+            "notes":         cam.notes,
+        },
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -10364,6 +10451,23 @@ def prepare_edge_provisioning(
 
     token_str = f"tlp-{secrets.token_urlsafe(32)}"
     expires_at = now_utc() + timedelta(hours=expires_hours)
+
+    # Opret Camera-entitet hvis camera_id ikke er angivet men camera_name + site_id er
+    camera_id = payload.camera_id
+    if not camera_id and payload.camera_name and payload.site_id:
+        from database import Camera as _Camera
+        import uuid as _cam_uuid
+        new_cam = _Camera(
+            id=str(_cam_uuid.uuid4()),
+            site_id=payload.site_id,
+            customer_id=payload.customer_id,
+            camera_name=payload.camera_name,
+        )
+        db.add(new_cam)
+        db.flush()
+        camera_id = new_cam.id
+        log.info("Kamera-lokation oprettet: %s (%s) for site %s", payload.camera_name, camera_id, payload.site_id)
+
     token_rec = BootstrapToken(
         token=token_str,
         device_label=location_name,
@@ -10373,6 +10477,9 @@ def prepare_edge_provisioning(
         created_by=current_user.username,
         expires_at=expires_at,
     )
+    # Gem camera_id hvis kolonnen eksisterer (v6 migration)
+    if camera_id and hasattr(token_rec, "camera_id"):
+        token_rec.camera_id = camera_id
     db.add(token_rec)
 
     device = db.query(Device).filter_by(device_id=device_id).first()
@@ -10419,6 +10526,7 @@ def prepare_edge_provisioning(
     return {
         "status": "prepared",
         "device_id": device_id,
+        "camera_id": camera_id,
         "headend_url": headend_url,
         "token": token_str,
         "expires_at": expires_at.isoformat(),

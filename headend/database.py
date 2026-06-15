@@ -238,13 +238,14 @@ class DeviceAssignment(Base):
     """Historik: hvilken Orange Pi kørte hvilket logisk kamera hvornår."""
     __tablename__ = "device_assignments"
 
-    id            = Column(Integer, primary_key=True)
-    device_id     = Column(String(50), nullable=False, index=True)   # MAC-baseret
-    camera_id     = Column(String(36), nullable=False, index=True)   # → Camera.id
-    assigned_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
-    unassigned_at = Column(DateTime)                                 # null = aktiv assignment
-    assigned_by   = Column(String(100))                              # brugernavn
-    notes         = Column(Text)
+    id              = Column(Integer, primary_key=True)
+    device_id       = Column(String(50), nullable=False, index=True)   # MAC-baseret
+    camera_id       = Column(String(36), nullable=False, index=True)   # → Camera.id
+    assigned_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    unassigned_at   = Column(DateTime)                                 # null = aktiv assignment
+    assigned_by     = Column(String(100))                              # brugernavn
+    assignment_type = Column(String(20), default="manual")             # "auto" | "manual"
+    notes           = Column(Text)
 
 
 class SshTunnelLog(Base):
@@ -494,6 +495,8 @@ class BootstrapToken(Base):
     max_uses     = Column(Integer, default=1)   # 1 = single-use, N = batch
     use_count    = Column(Integer, default=0)   # antal gange brugt hidtil
     token_type   = Column(String(20), default="single")  # "single" | "batch"
+    # ── Kamera lokation (Sprint D) ────────────────────────────────────────
+    camera_id    = Column(String(36), index=True)  # → Camera.id
 
 
 class Customer(Base):

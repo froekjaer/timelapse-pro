@@ -94,12 +94,134 @@ type Tab = 'headend' | 'edge' | 'iso' | 'compliance'
 
 interface EdgeProvisioningForm {
   device_id: string
+  customer_id: string
   customer_name: string
+  site_id: string
   site_name: string
+  camera_id: string
   camera_name: string
   note: string
   expires_hours: number
   headend_url: string
+}
+
+interface LocOption { id: string; name: string }
+
+/** Cascading dropdown: Kunde → Site → Kamera/Lokation med "Tilføj ny..." */
+function LocationPicker({
+  form,
+  setForm,
+}: {
+  form: EdgeProvisioningForm
+  setForm: Dispatch<SetStateAction<EdgeProvisioningForm>>
+}) {
+  const [customers, setCustomers] = useState<LocOption[]>([])
+  const [sites, setSites]         = useState<LocOption[]>([])
+  const [cameras, setCameras]     = useState<LocOption[]>([])
+  const [loading, setLoading]     = useState(false)
+
+  // Load customers on mount
+  useEffect(() => {
+    api('/admin/customers')
+      .then(r => r.ok ? r.json() : [])
+      .then((cs: any[]) => setCustomers(cs.map(c => ({ id: c.id, name: c.name }))))
+      .catch(() => {})
+  }, [])
+
+  // Load sites when customer changes
+  useEffect(() => {
+    if (!form.customer_id || form.customer_id === '__new__') {
+      setSites([]); setCameras([])
+      return
+    }
+    api(`/admin/sites?customer_id=${encodeURIComponent(form.customer_id)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then((ss: any[]) => {
+        const filtered = ss.filter((s: any) => s.customer_id === form.customer_id)
+        setSites(filtered.map((s: any) => ({ id: s.id, name: s.name })))
+      })
+      .catch(() => setSites([]))
+    setCameras([])
+    setForm(f => ({ ...f, site_id: '', site_name: '', camera_id: '', camera_name: '' }))
+  }, [form.customer_id])
+
+  // Load cameras when site changes
+  useEffect(() => {
+    if (!form.site_id || form.site_id === '__new__') {
+      setCameras([]); return
+    }
+    api(`/admin/cameras?site_id=${encodeURIComponent(form.site_id)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then((cs: any[]) => setCameras(cs.map((c: any) => ({ id: c.id, name: c.camera_name }))))
+      .catch(() => setCameras([]))
+    setForm(f => ({ ...f, camera_id: '', camera_name: '' }))
+  }, [form.site_id])
+
+  const selCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sky-300"
+  const inpCls = "w-full border border-sky-300 rounded-lg px-3 py-2 text-sm bg-sky-50 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-300"
+
+  return (
+    <div className="md:col-span-2 space-y-3">
+      <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Kamera lokation</p>
+      {/* Kunde */}
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">Kunde</label>
+        <select className={selCls} value={form.customer_id}
+          onChange={e => {
+            const id = e.target.value
+            const name = id === '__new__' ? '' : (customers.find(c => c.id === id)?.name ?? '')
+            setForm(f => ({ ...f, customer_id: id, customer_name: name, site_id: '', site_name: '', camera_id: '', camera_name: '' }))
+          }}>
+          <option value="">— vælg eksisterende —</option>
+          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          <option value="__new__">+ Tilføj ny kunde…</option>
+        </select>
+        {form.customer_id === '__new__' && (
+          <input className={`${inpCls} mt-2`} placeholder="Kundenavn" value={form.customer_name}
+            onChange={e => setForm(f => ({ ...f, customer_name: e.target.value }))} />
+        )}
+      </div>
+      {/* Site */}
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">Site</label>
+        <select className={selCls} value={form.site_id} disabled={!form.customer_id}
+          onChange={e => {
+            const id = e.target.value
+            const name = id === '__new__' ? '' : (sites.find(s => s.id === id)?.name ?? '')
+            setForm(f => ({ ...f, site_id: id, site_name: name, camera_id: '', camera_name: '' }))
+          }}>
+          <option value="">— vælg site —</option>
+          {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {form.customer_id && <option value="__new__">+ Tilføj nyt site…</option>}
+        </select>
+        {form.site_id === '__new__' && (
+          <input className={`${inpCls} mt-2`} placeholder="Site-navn (f.eks. Kontor, Byggeplads NVJ17c)" value={form.site_name}
+            onChange={e => setForm(f => ({ ...f, site_name: e.target.value }))} />
+        )}
+      </div>
+      {/* Kamera / Lokation */}
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">Kamera / lokation</label>
+        <select className={selCls} value={form.camera_id} disabled={!form.site_id}
+          onChange={e => {
+            const id = e.target.value
+            const name = id === '__new__' ? '' : (cameras.find(c => c.id === id)?.name ?? '')
+            setForm(f => ({ ...f, camera_id: id, camera_name: name }))
+          }}>
+          <option value="">— vælg kamera/lokation —</option>
+          {cameras.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {form.site_id && <option value="__new__">+ Tilføj ny lokation…</option>}
+        </select>
+        {form.camera_id === '__new__' && (
+          <input className={`${inpCls} mt-2`} placeholder="Lokationsnavn (f.eks. Kamera 1, Facade Nord)" value={form.camera_name}
+            onChange={e => setForm(f => ({ ...f, camera_name: e.target.value }))} />
+        )}
+        <p className="mt-1 text-xs text-gray-400">
+          Kamera-lokationen er den fysiske position. Den overlever udskiftning af Edge-hardware.
+        </p>
+      </div>
+    </div>
+  )
 }
 
 interface EdgeProvisioningResult {
@@ -178,9 +300,12 @@ export function BackupPage() {
   }, [])
   const [provisioningForm, setProvisioningForm] = useState<EdgeProvisioningForm>({
     device_id: '',
+    customer_id: '',
     customer_name: '',
+    site_id: '',
     site_name: '',
-    camera_name: 'Kamera 1',
+    camera_id: '',
+    camera_name: '',
     note: '',
     expires_hours: 48,
     headend_url: '',
@@ -319,16 +444,48 @@ export function BackupPage() {
     setProvisioningBusy(true)
     setProvisioningResult(null)
     try {
+      let customerId = provisioningForm.customer_id === '__new__' ? null : provisioningForm.customer_id
+      let customerName = provisioningForm.customer_name.trim()
+      let siteId = provisioningForm.site_id === '__new__' ? null : provisioningForm.site_id
+      let siteName = provisioningForm.site_name.trim()
+      const cameraId = provisioningForm.camera_id === '__new__' ? null : (provisioningForm.camera_id || null)
+      const cameraName = provisioningForm.camera_name.trim() || undefined
+
+      // Auto-opret kunde hvis ny
+      if (!customerId && customerName) {
+        const cr = await api('/admin/customers', {
+          method: 'POST',
+          body: JSON.stringify({ name: customerName }),
+        })
+        if (!cr.ok) throw new Error('Kunne ikke oprette kunde')
+        const cd = await cr.json()
+        customerId = cd.id
+      }
+
+      // Auto-opret site hvis nyt
+      if (!siteId && siteName && customerId) {
+        const sr = await api('/admin/sites', {
+          method: 'POST',
+          body: JSON.stringify({ name: siteName, customer_id: customerId }),
+        })
+        if (!sr.ok) throw new Error('Kunne ikke oprette site')
+        const sd = await sr.json()
+        siteId = sd.id
+      }
+
       const r = await api('/admin/edge-provisioning/prepare', {
         method: 'POST',
         body: JSON.stringify({
-          ...provisioningForm,
-          device_id: provisioningForm.device_id.trim(),
-          customer_name: provisioningForm.customer_name.trim() || undefined,
-          site_name: provisioningForm.site_name.trim() || undefined,
-          camera_name: provisioningForm.camera_name.trim() || undefined,
-          note: provisioningForm.note.trim() || undefined,
-          headend_url: provisioningForm.headend_url.trim() || undefined,
+          device_id:     provisioningForm.device_id.trim(),
+          customer_id:   customerId || undefined,
+          customer_name: customerName || undefined,
+          site_id:       siteId || undefined,
+          site_name:     siteName || undefined,
+          camera_id:     cameraId || undefined,
+          camera_name:   cameraName,
+          note:          provisioningForm.note.trim() || undefined,
+          expires_hours: provisioningForm.expires_hours,
+          headend_url:   provisioningForm.headend_url.trim() || undefined,
         }),
       })
       if (!r.ok) throw new Error(await r.text())
@@ -712,9 +869,7 @@ function IsoTab({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Device ID" value={form.device_id} onChange={v => setForm(s => ({ ...s, device_id: v }))} placeholder="timelapse0102" mono />
             <Field label="Token levetid timer" value={String(form.expires_hours)} onChange={v => setForm(s => ({ ...s, expires_hours: Number(v) || 48 }))} type="number" />
-            <Field label="Kunde" value={form.customer_name} onChange={v => setForm(s => ({ ...s, customer_name: v }))} placeholder="Kundenavn" />
-            <Field label="Site" value={form.site_name} onChange={v => setForm(s => ({ ...s, site_name: v }))} placeholder="Byggeplads / lokation" />
-            <Field label="Kamera" value={form.camera_name} onChange={v => setForm(s => ({ ...s, camera_name: v }))} placeholder="Kamera 1" />
+            <LocationPicker form={form} setForm={setForm} />
             <Field label="Headend API URL" value={form.headend_url} onChange={v => setForm(s => ({ ...s, headend_url: v }))} placeholder="auto: https://timelapse.froekjaer.dk/api" mono />
             <div className="md:col-span-2">
               <Field label="Note" value={form.note} onChange={v => setForm(s => ({ ...s, note: v }))} placeholder="Installationsnote" />

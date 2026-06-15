@@ -35,6 +35,19 @@ interface CameraDevice {
   location_name?: string
 }
 
+interface CameraLocation {
+  id: string
+  camera_name: string
+  site_id: string | null
+  site_name: string | null
+  customer_id: string | null
+  customer_name: string | null
+  model: string | null
+  notes: string | null
+}
+
+interface CameraOption { id: string; camera_name: string; site_name?: string; customer_name?: string; customer_id?: string; site_id?: string }
+
 interface ParamRow {
   key: string
   label: string
@@ -120,9 +133,31 @@ export function CameraPage() {
   const [assignSiteId, setAssignSiteId] = useState('')
   const [assigning, setAssigning]     = useState(false)
 
+  // ── Kamera lokation ──────────────────────────────────────────────────────
+  const [cameraLocation, setCameraLocation] = useState<CameraLocation | null>(null)
+  const [allCameras, setAllCameras]         = useState<CameraOption[]>([])
+  const [reassignCamId, setReassignCamId]   = useState('')
+  const [reassigning, setReassigning]       = useState(false)
+  const [locationExpanded, setLocationExpanded] = useState(false)
+
   useEffect(() => {
     fetch(`${getApiUrl()}/api/admin/sites`).then(r=>r.json()).then((ss:any[]) => setSites(ss)).catch(()=>{})
+    // Load all cameras for reassignment picker
+    fetch(`${getApiUrl()}/api/admin/cameras`).then(r=>r.json()).then((cs:any[]) => setAllCameras(cs)).catch(()=>{})
   }, [])
+
+  async function loadCameraLocation() {
+    if (!deviceId) return
+    try {
+      const r = await fetch(`${getApiUrl()}/api/admin/devices/${encodeURIComponent(deviceId)}/camera-location`, {
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (r.ok) {
+        const data = await r.json()
+        setCameraLocation(data.camera ?? null)
+      }
+    } catch { /* silent */ }
+  }
 
   useEffect(() => {
     if (!deviceId) return
@@ -141,6 +176,7 @@ export function CameraPage() {
       })
       .catch(() => setError('Kunne ikke hente enhed'))
       .finally(() => setLoading(false))
+    loadCameraLocation()
   }, [deviceId])
 
   function setParam(path: string, value: string) {
@@ -206,6 +242,22 @@ export function CameraPage() {
     } catch { } finally { setAssigning(false) }
   }
 
+  async function reassignToCamera() {
+    if (!reassignCamId || !deviceId) return
+    setReassigning(true)
+    try {
+      await api(`/api/admin/cameras/${encodeURIComponent(reassignCamId)}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ device_id: deviceId, assigned_by: 'admin-ui' }),
+      })
+      await loadCameraLocation()
+      const d = await api(`/api/admin/devices/${pathSegment(deviceId)}`)
+      setDevice(d.device ?? d)
+      setReassignCamId('')
+    } catch { setError('Omtildeling fejlede') }
+    finally { setReassigning(false) }
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       {/* Breadcrumb */}
@@ -231,46 +283,88 @@ export function CameraPage() {
         <span className="text-gray-700 font-medium">{device.camera_name || device.device_id}</span>
       </div>
 
-      {/* Tildel til site */}
-      {(!device.site_name || !device.customer_name) && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
-          <p className="text-sm font-medium text-amber-800 mb-3">⚠️ Denne enhed er ikke tildelt et site</p>
-          <div className="flex gap-2">
-            <select className="flex-1 border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white"
-              value={assignSiteId} onChange={e => setAssignSiteId(e.target.value)}>
-              <option value="">Vælg site…</option>
-              {sites.map(s => (
-                <option key={s.id} value={s.id}>{s.customer_name} — {s.name}</option>
-              ))}
-            </select>
-            <button onClick={assignToSite} disabled={!assignSiteId || assigning}
-              className="px-4 py-2 bg-amber-500 text-white text-sm rounded-lg hover:bg-amber-600 disabled:opacity-50">
-              {assigning ? 'Tildeler…' : 'Tildel'}
+      {/* ── Kamera lokation ─────────────────────────────────────────────── */}
+      {cameraLocation ? (
+        <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-sm text-gray-700">
+              <Camera className="w-4 h-4 text-sky-500" />
+              <span className="font-medium">{cameraLocation.camera_name}</span>
+              {cameraLocation.site_name && (
+                <span className="text-gray-400">
+                  — {cameraLocation.customer_name && `${cameraLocation.customer_name} / `}{cameraLocation.site_name}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => setLocationExpanded(v => !v)}
+              className="text-xs text-sky-600 hover:underline">
+              {locationExpanded ? 'Luk' : 'Omasiign til anden lokation'}
             </button>
           </div>
+          {locationExpanded && (
+            <div className="mt-3 flex gap-2">
+              <select className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                value={reassignCamId} onChange={e => setReassignCamId(e.target.value)}>
+                <option value="">Vælg kamera-lokation…</option>
+                {allCameras
+                  .filter(c => c.id !== cameraLocation.id)
+                  .map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.customer_name ? `${c.customer_name} / ` : ''}{c.site_name ? `${c.site_name} / ` : ''}{c.camera_name}
+                    </option>
+                  ))}
+              </select>
+              <button onClick={reassignToCamera} disabled={!reassignCamId || reassigning}
+                className="px-3 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
+                {reassigning ? '…' : 'Omasiign'}
+              </button>
+            </div>
+          )}
+          <p className="mt-2 text-xs text-gray-400">
+            Billeder er knyttet til lokationen — overlever udskiftning af Edge-hardware.
+          </p>
         </div>
-      )}
-      {device.site_name && (
-        <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-gray-600">
-            <MapPin className="w-4 h-4 text-sky-500" />
-            <span>{device.customer_name} — {device.site_name}</span>
-          </div>
+      ) : (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
+          <p className="text-sm font-medium text-amber-800 mb-1">⚠️ Ikke tildelt en kamera-lokation</p>
+          <p className="text-xs text-amber-600 mb-3">
+            Vælg en eksisterende lokation eller tildel via site (nedenfor) for at knytte billeder til en stabil lokation.
+          </p>
           <div className="flex gap-2">
-            <select className="border border-gray-200 rounded-lg px-2 py-1 text-xs bg-white"
-              value={assignSiteId} onChange={e => setAssignSiteId(e.target.value)}>
-              <option value="">Flyt til andet site…</option>
-              {sites.map(s => (
-                <option key={s.id} value={s.id}>{s.customer_name} — {s.name}</option>
+            <select className="flex-1 border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white"
+              value={reassignCamId} onChange={e => setReassignCamId(e.target.value)}>
+              <option value="">Vælg kamera-lokation…</option>
+              {allCameras.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.customer_name ? `${c.customer_name} / ` : ''}{c.site_name ? `${c.site_name} / ` : ''}{c.camera_name}
+                </option>
               ))}
             </select>
-            {assignSiteId && (
-              <button onClick={assignToSite} disabled={assigning}
-                className="px-3 py-1 bg-sky-500 text-white text-xs rounded-lg hover:bg-sky-600 disabled:opacity-50">
-                {assigning ? '…' : 'Flyt'}
-              </button>
-            )}
+            <button onClick={reassignToCamera} disabled={!reassignCamId || reassigning}
+              className="px-4 py-2 bg-amber-500 text-white text-sm rounded-lg hover:bg-amber-600 disabled:opacity-50">
+              {reassigning ? 'Tildeler…' : 'Tildel'}
+            </button>
           </div>
+          {/* Fallback: site-baseret tildeling */}
+          {(!device.site_name || !device.customer_name) && (
+            <div className="mt-3 pt-3 border-t border-amber-200">
+              <p className="text-xs text-amber-700 mb-2">Eller tildel direkte til site:</p>
+              <div className="flex gap-2">
+                <select className="flex-1 border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white"
+                  value={assignSiteId} onChange={e => setAssignSiteId(e.target.value)}>
+                  <option value="">Vælg site…</option>
+                  {sites.map(s => (
+                    <option key={s.id} value={s.id}>{s.customer_name} — {s.name}</option>
+                  ))}
+                </select>
+                <button onClick={assignToSite} disabled={!assignSiteId || assigning}
+                  className="px-4 py-2 bg-amber-400 text-white text-sm rounded-lg hover:bg-amber-500 disabled:opacity-50">
+                  {assigning ? 'Tildeler…' : 'Tildel site'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
