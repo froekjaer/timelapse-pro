@@ -10882,23 +10882,33 @@ def _run_wifi_inject(
             sys.path.insert(0, str(_repo_root() / "headend"))
             from tools.inject_wifi_image import inject_wifi_image  # type: ignore
 
-        # Hent artifact-info i kortlivet session — luk FØR lang operation
-        # så PostgreSQL ikke dropper idle-forbindelsen.
-        db_read = db_factory()
-        try:
-            artifact = db_read.query(UpdateArtifact).filter(
-                UpdateArtifact.artifact_id == artifact_id,
-                UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
-            ).first()
-            if not artifact:
-                raise ValueError(f"Artifact ikke fundet: {artifact_id}")
-            if not artifact.storage_path or not os.path.exists(artifact.storage_path):
-                raise FileNotFoundError(f"Image-fil ikke tilgængelig: {artifact.storage_path}")
-            fname = artifact.filename or ""
-            gz_path = artifact.storage_path
+        # artifact_id kan enten være et TL-... ID (DB-opslag) eller en direkte filsti
+        if artifact_id.startswith("/") or artifact_id.startswith("~"):
+            # Direkte filsti — ingen DB-opslag
+            gz_path = os.path.expanduser(artifact_id)
+            if not os.path.exists(gz_path):
+                raise FileNotFoundError(f"Fil ikke fundet: {gz_path}")
+            fname = os.path.basename(gz_path)
             output_dir = os.path.dirname(gz_path)
-        finally:
-            db_read.close()
+            progress(f"   Direkte filsti: {gz_path}")
+        else:
+            # Hent artifact-info i kortlivet session — luk FØR lang operation
+            # så PostgreSQL ikke dropper idle-forbindelsen.
+            db_read = db_factory()
+            try:
+                artifact = db_read.query(UpdateArtifact).filter(
+                    UpdateArtifact.artifact_id == artifact_id,
+                    UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
+                ).first()
+                if not artifact:
+                    raise ValueError(f"Artifact ikke fundet: {artifact_id}")
+                if not artifact.storage_path or not os.path.exists(artifact.storage_path):
+                    raise FileNotFoundError(f"Image-fil ikke tilgængelig: {artifact.storage_path}")
+                fname = artifact.filename or ""
+                gz_path = artifact.storage_path
+                output_dir = os.path.dirname(gz_path)
+            finally:
+                db_read.close()
 
         target_id: str | None = None
         for known in ["orangepi4pro", "orangepi-pc-plus", "rpi4", "rpi5", "jetson-orin-nano"]:
