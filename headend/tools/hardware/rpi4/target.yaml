@@ -1,0 +1,51 @@
+# TimeLapse Pro — Hardware target: Raspberry Pi 4 Model B
+# SoC: Broadcom BCM2711 (4x Cortex-A72 @ 1.8GHz, VideoCore VI GPU)
+# Arch: arm64 (aarch64)
+# Boot: Firmware-baseret (ikke U-Boot) — BCM2711 bootrom + GPU firmware
+# Base OS: Ubuntu Server 22.04 LTS preinstalled (arm64 raspi variant)
+
+id: rpi4
+display_name: "Raspberry Pi 4 Model B"
+arch: arm64
+docker_platform: linux/arm64
+docker_base: arm64v8/ubuntu:22.04
+hal_class: rpi
+soc: BCM2711
+
+base_image:
+  # Ubuntu 22.04 preinstalled server — officiel RPi-variant
+  # Hentes automatisk af build-scriptet
+  type: ubuntu_raspi
+  url: "https://cdimage.ubuntu.com/releases/22.04/release/ubuntu-22.04.5-preinstalled-server-arm64+raspi.img.xz"
+  sha256: null   # sæt til faktisk sha256 ved pin
+  extract: xz
+  # RPi bruger MBR/GPT med to partitioner
+  boot_partition: 1   # FAT32 — firmware + kernel
+  root_partition: 2   # ext4 — rootfs
+
+boot_method: firmware
+# Ingen U-Boot — bootloader sidder i SPI flash og GPU firmware
+# Vores rootfs injiceres i root_partition
+
+extra_packages:
+  - linux-firmware-raspi
+  - linux-modules-extra-raspi
+
+# HAL-detektions-strenge
+device_tree_model_patterns:
+  - "raspberry pi 4"
+  - "raspberrypi,4"
+
+# Agentstier
+agent_install:
+  agent_dir: /opt/timelapse/edge
+  venv_dir:  /opt/timelapse/venv
+  data_dir:  /data
+  config_dir: /etc/timelapse
+  service_name: timelapse-edge
+
+notes: |
+  RPi 4 er den nemmeste platform — Ubuntu Server preinstalled virker out-of-the-box.
+  Boot fra M.2 SSD via USB3-adapter (officiel RPi USB Boot) eller direkte NVME via HAT.
+  CSI-kamera understøttet via libcamera + picamera2.
+  GPIO tilgængeligt via gpiod.

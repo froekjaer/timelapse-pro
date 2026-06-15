@@ -70,6 +70,15 @@ except ImportError:
     _SSH_TUNNEL_AVAILABLE = False
 from utils.database         import EdgeDatabase
 
+# ── HAL (Hardware Abstraction Layer) ──────────────────────────────────────────
+try:
+    from hal import get_adapter as _hal_get_adapter
+    _HAL_ADAPTER = _hal_get_adapter()
+except Exception as _hal_exc:
+    _HAL_ADAPTER = None
+    import logging as _logging
+    _logging.getLogger("agent").warning("HAL ikke tilgængeligt: %s", _hal_exc)
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 def setup_logging(debug: bool) -> None:
@@ -1647,9 +1656,12 @@ class EdgeAgent:
             return
         try:
             from utils.inventory import report_inventory
-            report_inventory(self._cfg, self._api)
+            # Tilføj HAL-capabilities til inventory
+            hal_caps = _HAL_ADAPTER.capabilities() if _HAL_ADAPTER else {}
+            report_inventory(self._cfg, self._api, extra={"hal": hal_caps})
             self._last_inventory = now
-            log.info("Inventory rapporteret til headend CMDB")
+            log.info("Inventory rapporteret til headend CMDB (hal_id=%s)",
+                     hal_caps.get("hal_id", "unknown"))
         except Exception as exc:
             log.warning("Inventar-rapportering fejlede: %s", exc)
 

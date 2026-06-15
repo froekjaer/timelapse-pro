@@ -1211,6 +1211,224 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     )
 
 
+# ── Zero-touch Enrollment ─────────────────────────────────────────────────────
+
+class EnrollRequest(BaseModel):
+    bootstrap_token: str
+    device_id:       str                    # af edge udledt fra MAC: TL-AABBCCDDEEFF
+    hardware_model:  Optional[str] = None   # "rpi4", "orangepi4pro", …
+    ssh_pubkey:      Optional[str] = None   # ed25519 public key
+    mac_address:     Optional[str] = None
+
+class EnrollResponse(BaseModel):
+    device_id:        str
+    api_token:        str
+    config_url:       str
+    enrollment_state: str   # "unassigned" | "active"
+
+@app.post("/api/devices/enroll", response_model=EnrollResponse)
+def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
+    """
+    Zero-touch enrollment endpoint.
+    Kaldet af bootstrap_agent.py ved første boot.
+
+    Forskel fra /api/bootstrap:
+      - device_id er udledt af edge-boardet selv (fra MAC)
+      - Modtager hardware_model og ssh_pubkey
+      - Sætter enrollment_state="unassigned" hvis token ikke har site_id
+      - Eksisterende /api/bootstrap er uændret (bagud-kompatibilitet)
+    """
+    _sanitize_device_id(req.device_id)
+
+    token_record = db.query(BootstrapToken).filter_by(
+        token=req.bootstrap_token, revoked=False
+    ).first()
+    if not token_record:
+        raise HTTPException(status_code=401, detail="Ugyldigt eller ukendt bootstrap token")
+    if token_record.expires_at and now_utc() > token_record.expires_at.replace(tzinfo=_tz.utc):
+        raise HTTPException(status_code=401, detail="Bootstrap token udløbet")
+    if token_record.used_at:
+        raise HTTPException(status_code=401, detail="Bootstrap token allerede brugt")
+
+    # Marker token som brugt
+    token_record.used_at = now_utc()
+    token_record.used_by_device = req.device_id
+
+    # Find eller opret device
+    device = db.query(Device).filter_by(device_id=req.device_id).first()
+    is_new = device is None
+    if is_new:
+        device = Device(device_id=req.device_id)
+        db.add(device)
+        log.info("Zero-touch: ny enhed registreret: %s", req.device_id)
+    else:
+        log.info("Zero-touch: re-enrollment: %s", req.device_id)
+
+    # API-token
+    api_token = f"tk-{req.device_id}-{now_utc().strftime('%Y%m%d%H%M%S')}"
+    device.api_token  = api_token
+    device.last_seen  = now_utc()
+    device.status     = "online"
+
+    # Kopiér feltér fra token
+    device.customer_id   = token_record.customer_id   or device.customer_id
+    device.site_id       = token_record.site_id       or device.site_id
+    device.camera_name   = token_record.camera_name   or device.camera_name
+    device.location_name = token_record.device_label  or device.location_name
+
+    # Sæt hardware-felter fra enrollment-request
+    if req.hardware_model:
+        device.hardware_model = req.hardware_model
+    if req.ssh_pubkey:
+        device.ssh_pubkey = req.ssh_pubkey
+
+    # Enrollment state: "unassigned" hvis ingen site, ellers "active"
+    enrollment_state = "active" if device.site_id else "unassigned"
+    device.enrollment_state = enrollment_state
+
+    # Opdatér provisioning-metadata i device_config
+    try:
+        cfg = json.loads(device.device_config or "{}")
+    except Exception:
+        cfg = {}
+    cfg["provisioning"] = {
+        "status":             "zero_touch_enrolled",
+        "enrolled_at":        now_utc().isoformat(),
+        "bootstrap_token_id": token_record.id,
+        "hardware_model":     req.hardware_model,
+        "mac_address":        req.mac_address,
+        "enrollment_state":   enrollment_state,
+    }
+    device.device_config = json.dumps(cfg, ensure_ascii=False)
+
+    # Roter evt. gamle API-credentials
+    for old in db.query(KeyCredential).filter_by(
+        entity_type="edge", entity_id=req.device_id, key_type="api", status="active"
+    ).all():
+        old.status = "rotated"
+        old.revoked_at = now_utc()
+        old.revoked_by = "zero_touch_enroll"
+        old.revoke_reason = "Device re-enrolled via zero-touch bootstrap"
+
+    credential = KeyCredential(
+        credential_id=f"TL-KEY-{now_utc():%Y%m%d}-{_secrets.token_hex(6)}",
+        entity_type="edge",
+        entity_id=req.device_id,
+        key_type="api",
+        label=f"Zero-touch enrollment credential for {req.device_id}",
+        status="active",
+        scopes_json=_canonical_json(_key_scopes("api")),
+        fingerprint=_fingerprint_material(_secret_hash(api_token)),
+        secret_hash=_secret_hash(api_token),
+        algorithm="sha256-token-hash",
+        compliance_domains="SABSA,IEC62443,ISO27000,NIS2,CRA",
+        created_by="zero_touch_enroll",
+        created_at=now_utc(),
+        metadata_json=_canonical_json({
+            "hardware_model":   req.hardware_model,
+            "mac_address":      req.mac_address,
+            "enrollment_state": enrollment_state,
+        }),
+    )
+    db.add(credential)
+    _audit_key_event(db, credential, "created_by_zero_touch_enroll", "zero_touch_enroll",
+                     {"device_id": req.device_id, "hardware_model": req.hardware_model})
+    db.commit()
+
+    base_url   = os.environ.get("BASE_URL", "http://192.168.86.132:8000")
+    config_url = f"{base_url}/api/config/{req.device_id}"
+
+    log.info("Zero-touch enrollment OK: %s state=%s hw=%s",
+             req.device_id, enrollment_state, req.hardware_model)
+
+    return EnrollResponse(
+        device_id        = req.device_id,
+        api_token        = api_token,
+        config_url       = config_url,
+        enrollment_state = enrollment_state,
+    )
+
+
+@app.get("/api/admin/devices/unassigned")
+def list_unassigned_devices(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Returnerer enheder der er enrollet men endnu ikke tildelt en site."""
+    devices = db.query(Device).filter(
+        Device.enrollment_state == "unassigned"
+    ).order_by(Device.created_at.desc()).all()
+
+    return [
+        {
+            "device_id":       d.device_id,
+            "hardware_model":  d.hardware_model,
+            "enrollment_state": d.enrollment_state,
+            "created_at":      d.created_at.isoformat() if d.created_at else None,
+            "last_seen":       d.last_seen.isoformat() if d.last_seen else None,
+            "location_name":   d.location_name,
+            "customer_id":     d.customer_id,
+        }
+        for d in devices
+    ]
+
+
+@app.put("/api/admin/devices/{device_id}/assign-site")
+def assign_device_to_site(
+    device_id: str,
+    payload: dict,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Tildel en unassigned enhed til en site.
+    Body: { site_id, camera_name?, location_name? }
+    """
+    _sanitize_device_id(device_id)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Enhed ikke fundet")
+
+    site_id = payload.get("site_id")
+    if not site_id:
+        raise HTTPException(status_code=400, detail="site_id er påkrævet")
+
+    site = db.query(Site).filter_by(id=site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site ikke fundet")
+
+    device.site_id          = site_id
+    device.site_name        = site.name
+    device.customer_id      = site.customer_id or device.customer_id
+    device.enrollment_state = "active"
+    if payload.get("camera_name"):
+        device.camera_name = payload["camera_name"]
+    if payload.get("location_name"):
+        device.location_name = payload["location_name"]
+
+    # Opdatér provisioning-metadata
+    try:
+        cfg = json.loads(device.device_config or "{}")
+    except Exception:
+        cfg = {}
+    prov = cfg.get("provisioning", {})
+    prov["site_assigned_at"] = now_utc().isoformat()
+    prov["site_id"] = site_id
+    prov["enrollment_state"] = "active"
+    cfg["provisioning"] = prov
+    device.device_config = json.dumps(cfg, ensure_ascii=False)
+
+    db.commit()
+    log.info("Device %s tildelt site %s (%s)", device_id, site_id, site.name)
+
+    return {
+        "ok":             True,
+        "device_id":      device_id,
+        "site_id":        site_id,
+        "site_name":      site.name,
+        "enrollment_state": "active",
+    }
+
 
 # ── API Token auth ───────────────────────────────────────────────────────────
 

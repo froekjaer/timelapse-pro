@@ -1,0 +1,53 @@
+# TimeLapse Pro — Hardware target: OrangePi 4 Pro
+# SoC: Rockchip RK3399 (2x Cortex-A72 + 4x Cortex-A53, Mali-T864 GPU)
+# Arch: arm64 (aarch64)
+# Boot: U-Boot (SPL) → Armbian kernel
+# Base OS: Armbian Jammy (Ubuntu 22.04, headless minimal)
+
+id: orangepi4pro
+display_name: "OrangePi 4 Pro"
+arch: arm64
+docker_platform: linux/arm64
+docker_base: arm64v8/ubuntu:22.04
+hal_class: orangepi
+soc: RK3399
+
+base_image:
+  # Officielt Armbian-image — opdatér URL ved ny Armbian-release
+  # Download fra: https://www.armbian.com/orange-pi-4-lts/
+  # OrangePi 4 Pro bruger OrangePi 4 LTS board-support
+  type: armbian
+  url: "https://dl.armbian.com/orangepi4-lts/archive/Armbian_23.11.1_Orangepi4-lts_jammy_current_6.1.63_minimal.img.xz"
+  sha256: null   # sæt til faktisk sha256 ved pin til specifik version
+  extract: xz    # "xz" eller "gz"
+  # Partitioner i base-image (lsblk-baseret)
+  boot_partition: 1   # FAT32 — U-Boot + kernel
+  root_partition: 2   # ext4 — rootfs
+
+boot_method: uboot
+# U-Boot SPL sidder allerede i base-image (ikke i partitionerne)
+# Ingen ekstra bootloader-handling nødvendig
+
+extra_packages:
+  - linux-firmware
+  - armbian-firmware
+
+# HAL-detektions-strenge (bruges af hal/__init__.py)
+device_tree_model_patterns:
+  - "rockchip rk3399"
+  - "orangepi 4"
+  - "orange pi 4"
+  - "orangepi4"
+
+# Agentstier (match timelapse-edge.service)
+agent_install:
+  agent_dir: /opt/timelapse/edge
+  venv_dir:  /opt/timelapse/venv
+  data_dir:  /data
+  config_dir: /etc/timelapse
+  service_name: timelapse-edge
+
+notes: |
+  OrangePi 4 Pro bruger samme Armbian board-support som OrangePi 4 LTS.
+  U-Boot og kernel ligger i base-image — vi injicerer kun vores rootfs.
+  CSI-kamera understøttet via MIPI (kræver ekstra driver-opsætning).

@@ -1,0 +1,33 @@
+[Unit]
+Description=TimeLapse Pro — First-boot Enrollment Agent
+Documentation=https://timelapse.froekjaer.dk
+After=network-online.target time-sync.target
+Wants=network-online.target
+# Skal køre FØR edge-agenten starter
+Before=timelapse-edge.service
+# Kun én gang — deaktiveres af bootstrap_agent.py ved success
+ConditionPathExists=!/etc/timelapse/.enrolled
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+User=root
+WorkingDirectory=/opt/timelapse/edge
+
+ExecStart=/opt/timelapse/venv/bin/python /opt/timelapse/edge/scripts/bootstrap_agent.py
+
+# Giv god tid — enrollment kan tage tid hvis headend er midlertidigt utilgængeligt
+TimeoutStartSec=600
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=timelapse-bootstrap
+
+# Ingen netværk = ingen enrollment = ingen edge-agent
+# Hvis bootstrap fejler, prøv igen ved næste boot
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

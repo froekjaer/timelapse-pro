@@ -637,24 +637,37 @@ def _os_name() -> str:
 
 # ── Rapportering til headend ──────────────────────────────────────────────────
 
-def report_inventory(config: dict, api_client) -> None:
+def report_inventory(config: dict, api_client, extra: dict | None = None) -> None:
     """
     Samler inventar og sender det til headend.
     Ikke-blokerende: fejl logges og ignoreres.
 
+    extra: valgfri dict der merges ind i payload (bruges til HAL-capabilities).
+
     Kaldes fra agent._startup():
         from utils.inventory import report_inventory
-        report_inventory(self._cfg, self._api)
+        report_inventory(self._cfg, self._api, extra={"hal": hal_caps})
     """
     device_id = config.get("device", {}).get("device_id", "unknown")
     log.info("Inventar-rapportering starter for %s", device_id)
 
     try:
         payload = collect_inventory(config)
-        log.debug("Inventar samlet: hw=%s soc=%s os=%s",
+
+        # Merge ekstra data (HAL capabilities, etc.)
+        if extra:
+            for k, v in extra.items():
+                payload[k] = v
+
+        # Tilføj hardware_model fra HAL hvis ikke allerede sat af collect_inventory
+        if extra and "hal" in extra and not payload.get("hardware_model"):
+            payload["hardware_model"] = extra["hal"].get("hal_id")
+
+        log.debug("Inventar samlet: hw=%s soc=%s os=%s hal=%s",
                   payload.get("hardware_model"),
                   payload.get("soc_model"),
-                  payload.get("os_name"))
+                  payload.get("os_name"),
+                  payload.get("hal", {}).get("hal_id") if isinstance(payload.get("hal"), dict) else None)
 
         ok, resp = api_client._post(f"/inventory/{device_id}", payload)
         if ok:

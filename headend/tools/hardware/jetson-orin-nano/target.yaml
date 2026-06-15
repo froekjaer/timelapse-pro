@@ -1,0 +1,54 @@
+# TimeLapse Pro — Hardware target: NVIDIA Jetson Orin Nano
+# SoC: NVIDIA Orin (6-core Cortex-A78AE, 1024 CUDA cores, 2x DLA)
+# Arch: arm64 (aarch64)
+# Boot: NVIDIA CBoot/UEFI (JetPack) — IKKE et standard Linux-bootflow
+# Base OS: NVIDIA L4T (Linux for Tegra) / JetPack — KAN IKKE injiceres som rootfs
+#
+# INSTALLATION:
+#   Bruger IKKE build_edge_disk_image.py (inkompatibelt med L4T).
+#   Kør i stedet: install_timelapse_edge.sh PÅ et eksisterende JetPack-system.
+
+id: jetson-orin-nano
+display_name: "NVIDIA Jetson Orin Nano"
+arch: arm64
+docker_platform: linux/arm64
+hal_class: jetson
+soc: NVIDIA_Orin
+
+# Ingen base_image — Jetson bruger JetPack SDK Manager til OS-installation
+# Vores installer kører oven på det eksisterende L4T-system
+base_image:
+  type: install_script   # Marker: bruges ikke af build_edge_disk_image.py
+  url: null
+  notes: |
+    Flash Jetson med JetPack SDK Manager (https://developer.nvidia.com/sdk-manager)
+    Derefter kør: sudo bash install_timelapse_edge.sh
+
+boot_method: jetpack
+
+# HAL-detektions-strenge
+device_tree_model_patterns:
+  - "nvidia jetson orin nano"
+  - "jetson-orin-nano"
+  - "nvidia,p3767"
+
+# Agentstier
+agent_install:
+  agent_dir: /opt/timelapse/edge
+  venv_dir:  /opt/timelapse/venv
+  data_dir:  /data
+  config_dir: /etc/timelapse
+  service_name: timelapse-edge
+
+capabilities:
+  cuda: true
+  dla_cores: 2
+  gpu_cores: 1024
+  hailo_hat: false   # Hailo bruges til RPi 5; Jetson har sin egen DLA
+  csi_lanes: 8       # 2x 4-lane MIPI CSI
+
+notes: |
+  Jetson Orin Nano Super: 8GB RAM, 1024 CUDA cores, 2 DLA cores @ 10 TOPS.
+  Installation via install_timelapse_edge.sh — IKKE via disk image build.
+  JetPack 6.x kræves for Orin Nano support.
+  opencv-python-headless med CUDA kompileres post-install (lang byggetid).

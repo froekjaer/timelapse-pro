@@ -103,6 +103,10 @@ class Device(Base):
     app_version     = Column(String(50))
     status          = Column(String(20), default="unknown")  # online/offline/unknown
     created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # ── Zero-touch provisioning (Sprint D) ───────────────────────────────
+    hardware_model    = Column(String(50))    # "rpi4", "orangepi4pro", "rpi5", "jetson-orin-nano", …
+    enrollment_state  = Column(String(20), default="active")  # "unassigned" | "active"
+    ssh_pubkey        = Column(Text)          # ed25519 public key genereret ved first-boot
 
 
 class Capture(Base):
@@ -357,6 +361,9 @@ class UpdateArtifact(Base):
 class UpdateTarget(Base):
     """Per-device/per-camera deployment status for en update eller change."""
     __tablename__ = "update_targets"
+    __table_args__ = (
+        UniqueConstraint("pending_update_id", "device_id", name="uq_update_targets_update_device"),
+    )
 
     id                 = Column(Integer, primary_key=True)
     pending_update_id  = Column(Integer, index=True)
@@ -378,6 +385,30 @@ class UpdateTarget(Base):
     rollback_at        = Column(DateTime)
     last_report_at     = Column(DateTime)
     report_json        = Column(Text)
+
+
+class UpdateJobRecord(Base):
+    """Persistente background jobs for update-flow, så status overlever Headend restart."""
+    __tablename__ = "update_jobs"
+
+    id            = Column(Integer, primary_key=True)
+    job_id        = Column(String(80), unique=True, nullable=False, index=True)
+    kind          = Column(String(50), nullable=False, index=True)
+    title         = Column(String(200))
+    running       = Column(Boolean, default=False, index=True)
+    status        = Column(String(30), default="queued", index=True)
+    phase         = Column(String(50), default="queued")
+    progress      = Column(Integer, default=0)
+    requested_by  = Column(String(100))
+    message       = Column(Text)
+    payload_json  = Column(Text)
+    result_json   = Column(Text)
+    error         = Column(Text)
+    stdout_tail   = Column(Text)
+    stderr_tail   = Column(Text)
+    started_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    finished_at   = Column(DateTime)
+    updated_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
 class KeyCredential(Base):

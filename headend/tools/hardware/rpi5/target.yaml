@@ -1,0 +1,49 @@
+# TimeLapse Pro — Hardware target: Raspberry Pi 5
+# SoC: Broadcom BCM2712 (4x Cortex-A76 @ 2.4GHz, VideoCore VII GPU, RP1 I/O)
+# Arch: arm64 (aarch64)
+# Boot: Firmware-baseret (EEPROM bootloader) — Raspberry Pi 5 specifik
+# Base OS: Ubuntu Server 24.04 LTS preinstalled (arm64 raspi variant)
+#          RPi 5 kræver 24.04 eller nyere for fuld RP1 I/O-chip-support
+
+id: rpi5
+display_name: "Raspberry Pi 5"
+arch: arm64
+docker_platform: linux/arm64
+docker_base: arm64v8/ubuntu:24.04
+hal_class: rpi
+soc: BCM2712
+
+base_image:
+  type: ubuntu_raspi
+  url: "https://cdimage.ubuntu.com/releases/24.04/release/ubuntu-24.04.1-preinstalled-server-arm64+raspi.img.xz"
+  sha256: null
+  extract: xz
+  boot_partition: 1
+  root_partition: 2
+
+boot_method: firmware
+
+extra_packages:
+  - linux-firmware-raspi
+  - linux-modules-extra-raspi
+  - rpi5-firmware
+
+# HAL-detektions-strenge
+device_tree_model_patterns:
+  - "raspberry pi 5"
+  - "raspberrypi,5"
+
+# Agentstier
+agent_install:
+  agent_dir: /opt/timelapse/edge
+  venv_dir:  /opt/timelapse/venv
+  data_dir:  /data
+  config_dir: /etc/timelapse
+  service_name: timelapse-edge
+
+notes: |
+  RPi 5 kræver Ubuntu 24.04 (Noble) — ikke 22.04 — for korrekt RP1 I/O-chip support.
+  Bemærk: Docker-base er arm64v8/ubuntu:24.04 (afviger fra øvrige targets).
+  Hailo AI HAT understøttet via hailo-platform pakke (installeres post-flash).
+  NVMe SSD direkte via PCIe M.2 HAT (officielt understøttet).
+  CSI-kamera via libcamera (ny picamera2 stack).

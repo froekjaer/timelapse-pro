@@ -1,0 +1,49 @@
+# TimeLapse Pro — Hardware target: OrangePi PC Plus
+# SoC: Allwinner H3 (4x Cortex-A7 @ 1.6GHz, Mali-400 GPU)
+# Arch: armhf (ARM 32-bit hard-float) — VIGTIGT: IKKE arm64!
+# Boot: U-Boot (SPL) → Armbian kernel
+# Base OS: Armbian Jammy (Ubuntu 22.04, headless minimal)
+
+id: orangepi-pc-plus
+display_name: "OrangePi PC Plus"
+arch: armhf
+docker_platform: linux/arm/v7
+docker_base: arm32v7/ubuntu:22.04
+hal_class: orangepi
+soc: Allwinner_H3
+
+base_image:
+  # Officielt Armbian-image
+  # Download fra: https://www.armbian.com/orange-pi-pc-plus/
+  type: armbian
+  url: "https://dl.armbian.com/orangepipcplus/archive/Armbian_23.11.1_Orangepipcplus_jammy_current_6.1.63_minimal.img.xz"
+  sha256: null
+  extract: xz
+  boot_partition: 1
+  root_partition: 2
+
+boot_method: uboot
+
+extra_packages: []
+
+# HAL-detektions-strenge
+device_tree_model_patterns:
+  - "allwinner sun8i"
+  - "orangepi pc plus"
+  - "orange pi pc plus"
+  - "xunlong orange pi pc plus"
+
+# Agentstier
+agent_install:
+  agent_dir: /opt/timelapse/edge
+  venv_dir:  /opt/timelapse/venv
+  data_dir:  /data
+  config_dir: /etc/timelapse
+  service_name: timelapse-edge
+
+notes: |
+  VIGTIGT: OrangePi PC Plus er 32-bit (armhf).
+  Docker-base er arm32v7/ubuntu:22.04 — IKKE arm64v8.
+  opencv-python-headless installeres post-flash via headend OS-bundle.
+  Ingen CSI-support (kun USB-kamera).
+  4GB onboard eMMC kan bruges som boot-medie i stedet for SD-kort.
