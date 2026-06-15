@@ -141,72 +141,139 @@ def _download_base_image(
     if not url:
         raise ValueError(f"Ingen base_image.url i target '{target_id}'")
 
-    # Filnavn fra URL
-    url_filename = url.split("/")[-1].split("?")[0]
-
-    # Armbian rolling release URLs har ingen filendelse (fx Trixie_current_minimal).
-    # Forsøg HEAD-request: tjek Content-Disposition og/eller redirect-URL for faktisk filnavn.
-    _KNOWN_EXTS = (".xz", ".gz", ".zst", ".img", ".zip")
-    if not any(url_filename.endswith(ext) for ext in _KNOWN_EXTS):
-        progress(f"   URL mangler filendelse — søger faktisk filnavn via HEAD...")
-        try:
-            req = urllib.request.Request(url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                # 1) Content-Disposition header
-                cd = resp.headers.get("Content-Disposition", "")
-                m = re.search(r'filename=["\']?([^"\';\r\n]+)', cd)
-                if m:
-                    inferred = m.group(1).strip()
-                    progress(f"   Content-Disposition filnavn: {inferred}")
-                    url_filename = inferred
-                else:
-                    # 2) Redirect-URL path component
-                    inferred = resp.url.split("/")[-1].split("?")[0]
-                    if inferred and "." in inferred:
-                        progress(f"   Faktisk filnavn (redirect-URL): {inferred}")
-                        url_filename = inferred
-        except Exception as exc:
-            progress(f"   ⚠️  HEAD-request fejlede ({exc}) — bruger URL-stub som filnavn")
-
-    cache_subdir = cache_dir / target_id
-    cache_subdir.mkdir(parents=True, exist_ok=True)
-    cached_compressed = cache_subdir / url_filename
-
-    # .img filnavn = uden komprimerings-endelse.
-    # Hvis url_filename stadig mangler endelse (Armbian CDN gav intet nyttigt),
-    # tilføjer vi ".img" så cached_img ALTID er forskellig fra cached_compressed.
-    img_name = url_filename
-    ext_stripped = False
-    for ext in (".xz", ".gz", ".zst"):
-        if img_name.endswith(ext):
-            img_name = img_name[:-len(ext)]
-            ext_stripped = True
+    # ── Google Drive URL-detektion ───────────────────────────────────────────
+    # Google Drive kræver bekræftelsestoken for store filer — brug gdown.
+    _GDRIVE_PATTERNS = [
+        r"drive\.google\.com/file/d/([a-zA-Z0-9_-]+)",
+        r"drive\.google\.com/uc\?.*id=([a-zA-Z0-9_-]+)",
+        r"drive\.usercontent\.google\.com/download\?.*id=([a-zA-Z0-9_-]+)",
+    ]
+    _gdrive_id = None
+    for _pat in _GDRIVE_PATTERNS:
+        _m = re.search(_pat, url)
+        if _m:
+            _gdrive_id = _m.group(1)
             break
-    if not ext_stripped:
-        img_name = img_name + ".img"
-    cached_img = cache_subdir / img_name
 
-    # Brug cachet .img hvis det allerede er udpakket
-    if cached_img.exists() and cached_img.stat().st_size > 10 * 1024 * 1024:
-        progress(f"✅ Base-image cachet: {cached_img.name} ({cached_img.stat().st_size // (1024*1024)} MB)")
-        return cached_img
+    gdrive_filename = base.get("filename")   # kan sættes i target.yaml hvis kendt
 
-    # Download komprimeret image
-    if not cached_compressed.exists():
-        progress(f"⬇️  Downloader base-image: {url_filename}")
-        progress(f"   URL: {url}")
-        progress(f"   Kan tage flere minutter...")
+    if _gdrive_id:
+        # Google Drive download via gdown
+        try:
+            import gdown  # type: ignore
+        except ImportError:
+            progress("   📦 Installerer gdown...")
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--quiet", "gdown"],
+                check=True, capture_output=True,
+            )
+            import gdown  # type: ignore
 
-        def _reporthook(count, block_size, total_size):
-            if total_size > 0 and count % 200 == 0:
-                pct = min(100, int(count * block_size * 100 / total_size))
-                mb  = count * block_size // (1024 * 1024)
-                progress(f"   {pct}% ({mb} MB)...")
+        cache_subdir = cache_dir / target_id
+        cache_subdir.mkdir(parents=True, exist_ok=True)
 
-        urllib.request.urlretrieve(url, cached_compressed, _reporthook)
-        progress(f"✅ Download færdig: {cached_compressed.name}")
+        # Hent filnavn fra Google Drive metadata hvis ikke sat i target.yaml
+        if not gdrive_filename:
+            progress(f"   Henter filnavn fra Google Drive (id={_gdrive_id})...")
+            try:
+                _info = gdown.download(
+                    id=_gdrive_id, output=str(cache_subdir) + "/",
+                    quiet=True, fuzzy=False, resume=True,
+                )
+                gdrive_filename = Path(_info).name if _info else None
+            except Exception as _e:
+                progress(f"   ⚠️  gdown metadata fejlede ({_e})")
+
+        url_filename = gdrive_filename or f"orangepi4pro-image.img.xz"
+        cached_compressed = cache_subdir / url_filename
+
+        img_name = url_filename
+        for ext in (".xz", ".gz", ".zst"):
+            if img_name.endswith(ext):
+                img_name = img_name[:-len(ext)]
+                break
+        else:
+            img_name = img_name if img_name.endswith(".img") else img_name + ".img"
+        cached_img = cache_subdir / img_name
+
+        if cached_img.exists() and cached_img.stat().st_size > 10 * 1024 * 1024:
+            progress(f"✅ Base-image cachet: {cached_img.name} ({cached_img.stat().st_size // (1024*1024)} MB)")
+            return cached_img
+
+        if not cached_compressed.exists():
+            progress(f"⬇️  Downloader fra Google Drive (id={_gdrive_id})...")
+            progress(f"   Kan tage flere minutter ved stor fil...")
+            _dl = gdown.download(
+                id=_gdrive_id,
+                output=str(cached_compressed),
+                quiet=False, fuzzy=False, resume=True,
+            )
+            if not _dl or not Path(_dl).exists():
+                raise RuntimeError(f"gdown download fejlede for Google Drive id={_gdrive_id}")
+            cached_compressed = Path(_dl)
+            progress(f"✅ Download færdig: {cached_compressed.name}")
+        else:
+            progress(f"✅ Komprimeret image cachet: {cached_compressed.name}")
+
     else:
-        progress(f"✅ Komprimeret image cachet: {cached_compressed.name}")
+        # ── Normal HTTP-download ─────────────────────────────────────────────
+        # Filnavn fra URL
+        url_filename = url.split("/")[-1].split("?")[0]
+
+        # Armbian rolling release URLs har ingen filendelse (fx Trixie_current_minimal).
+        _KNOWN_EXTS = (".xz", ".gz", ".zst", ".img", ".zip")
+        if not any(url_filename.endswith(ext) for ext in _KNOWN_EXTS):
+            progress(f"   URL mangler filendelse — søger faktisk filnavn via HEAD...")
+            try:
+                req = urllib.request.Request(url, method="HEAD")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    cd = resp.headers.get("Content-Disposition", "")
+                    m = re.search(r'filename=["\']?([^"\';\r\n]+)', cd)
+                    if m:
+                        url_filename = m.group(1).strip()
+                        progress(f"   Content-Disposition filnavn: {url_filename}")
+                    else:
+                        inferred = resp.url.split("/")[-1].split("?")[0]
+                        if inferred and "." in inferred:
+                            url_filename = inferred
+                            progress(f"   Faktisk filnavn (redirect-URL): {url_filename}")
+            except Exception as exc:
+                progress(f"   ⚠️  HEAD-request fejlede ({exc}) — bruger URL-stub som filnavn")
+
+        cache_subdir = cache_dir / target_id
+        cache_subdir.mkdir(parents=True, exist_ok=True)
+        cached_compressed = cache_subdir / url_filename
+
+        img_name = url_filename
+        ext_stripped = False
+        for ext in (".xz", ".gz", ".zst"):
+            if img_name.endswith(ext):
+                img_name = img_name[:-len(ext)]
+                ext_stripped = True
+                break
+        if not ext_stripped:
+            img_name = img_name + ".img"
+        cached_img = cache_subdir / img_name
+
+        if cached_img.exists() and cached_img.stat().st_size > 10 * 1024 * 1024:
+            progress(f"✅ Base-image cachet: {cached_img.name} ({cached_img.stat().st_size // (1024*1024)} MB)")
+            return cached_img
+
+        if not cached_compressed.exists():
+            progress(f"⬇️  Downloader base-image: {url_filename}")
+            progress(f"   URL: {url}")
+            progress(f"   Kan tage flere minutter...")
+
+            def _reporthook(count, block_size, total_size):
+                if total_size > 0 and count % 200 == 0:
+                    pct = min(100, int(count * block_size * 100 / total_size))
+                    mb  = count * block_size // (1024 * 1024)
+                    progress(f"   {pct}% ({mb} MB)...")
+
+            urllib.request.urlretrieve(url, cached_compressed, _reporthook)
+            progress(f"✅ Download færdig: {cached_compressed.name}")
+        else:
+            progress(f"✅ Komprimeret image cachet: {cached_compressed.name}")
 
     # Udpak — bruger Python lzma/gzip i stedet for subprocess for at undgå
     # platform-specifikke exit-kode problemer (macOS xz kræver .xz filendelse).

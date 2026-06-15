@@ -1,8 +1,13 @@
 # TimeLapse Pro — Hardware target: OrangePi 4 Pro
-# SoC: Rockchip RK3399 (2x Cortex-A72 + 4x Cortex-A53, Mali-T864 GPU)
+# SoC: Allwinner A733 (2x Cortex-A76 + 6x Cortex-A55 @ 2.0GHz, 12nm)
+# GPU: Imagination BXM-4-64
+# NPU: 3 TOPS (VIPLite — kræver vendor BSP-kernel linux5.15-sun60iw2)
 # Arch: arm64 (aarch64)
-# Boot: U-Boot (SPL) → Armbian kernel
-# Base OS: Armbian Jammy (Ubuntu 22.04, headless minimal)
+# Boot: SPI Flash (U-Boot v2018.05) → NVMe SSD
+# Base OS: OrangePi official Ubuntu Jammy Server
+#
+# VIGTIGT: NPU + GPU kræver officielt OrangePi-image med BSP-kernel.
+# Armbian har INGEN stabil support for A733 endnu (juni 2026).
 
 id: orangepi4pro
 display_name: "OrangePi 4 Pro"
@@ -10,36 +15,39 @@ arch: arm64
 docker_platform: linux/arm64
 docker_base: arm64v8/ubuntu:22.04
 hal_class: orangepi
-soc: RK3399
+soc: Allwinner_A733
 
 base_image:
-  # Officielt Armbian-image — opdatér URL ved ny Armbian-release
-  # Download fra: https://www.armbian.com/orange-pi-4-lts/
-  # OrangePi 4 Pro bruger OrangePi 4 LTS board-support
-  type: armbian
-  url: "https://dl.armbian.com/orangepi4-lts/archive/Armbian_23.11.1_Orangepi4-lts_jammy_current_6.1.63_minimal.img.xz"
-  sha256: null   # sæt til faktisk sha256 ved pin til specifik version
-  extract: xz    # "xz" eller "gz"
-  # Partitioner i base-image (lsblk-baseret)
-  boot_partition: 1   # FAT32 — U-Boot + kernel
-  root_partition: 2   # ext4 — rootfs
+  # Officielt OrangePi Ubuntu Server image — kun tilgængeligt via Google Drive.
+  # Fil-ID: 1apQbbhY-uUAG8495FMkarRTDK-B6UTbw
+  # Download-side: https://drive.google.com/drive/folders/1TcFAGTblG_gbDhwFotEWS0y78LwHA-VG
+  type: orangepi
+  url: "https://drive.google.com/file/d/1apQbbhY-uUAG8495FMkarRTDK-B6UTbw/view?usp=share_link"
+  filename: null   # gdown auto-detekterer filnavn fra Google Drive metadata
+  sha256: null
+  extract: xz
+  # OrangePi 4 Pro Linux-image har KUN én partition (ext4 rootfs).
+  # Ingen separat boot-partition — kernel + dtb ligger i /boot på rootfs.
+  # Bekræftet i User Manual v1.4 side 59: /dev/mmcblk0p1 er rootfs.
+  boot_partition: null
+  root_partition: 1
 
-boot_method: uboot
-# U-Boot SPL sidder allerede i base-image (ikke i partitionerne)
-# Ingen ekstra bootloader-handling nødvendig
+boot_method: uboot_spiflash
+# U-Boot i SPI Flash (128Mb onboard). System på NVMe SSD.
+# Flash-workflow:
+#   1. Flash dette image til SD-kort med balenaEtcher
+#   2. Boot fra SD → sudo nand-sata-install → "Boot from SPI - system on NVMe"
+#   3. Bootloader til SPI Flash, rootfs til NVMe
+#   4. Fjern SD, boot fra NVMe
 
-extra_packages:
-  - linux-firmware
-  - armbian-firmware
+extra_packages: []
 
-# HAL-detektions-strenge (bruges af hal/__init__.py)
 device_tree_model_patterns:
-  - "rockchip rk3399"
-  - "orangepi 4"
-  - "orange pi 4"
-  - "orangepi4"
+  - "allwinner a733"
+  - "orangepi 4 pro"
+  - "orange pi 4 pro"
+  - "sun60iw2"
 
-# Agentstier (match timelapse-edge.service)
 agent_install:
   agent_dir: /opt/timelapse/edge
   venv_dir:  /opt/timelapse/venv
@@ -48,6 +56,9 @@ agent_install:
   service_name: timelapse-edge
 
 notes: |
-  OrangePi 4 Pro bruger samme Armbian board-support som OrangePi 4 LTS.
-  U-Boot og kernel ligger i base-image — vi injicerer kun vores rootfs.
-  CSI-kamera understøttet via MIPI (kræver ekstra driver-opsætning).
+  OrangePi 4 Pro (A733) — IKKE det samme board som OrangePi 4 LTS (RK3399).
+  Kernel: linux5.15-sun60iw2 (Allwinner BSP — vendor-specifik).
+  NPU SDK: VIPLite 2.0.3.2-AW — kræver præcis kernel-driver version-match.
+  GPU: Imagination BXM-4-64 — proprietary driver i vendor-kernel.
+  NVMe-kompatibilitet: kun Fanxiang/Guangcun SSDs bekræftet (User Manual v1.4).
+  Image: https://drive.google.com/drive/folders/1TcFAGTblG_gbDhwFotEWS0y78LwHA-VG
