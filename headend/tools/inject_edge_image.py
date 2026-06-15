@@ -488,6 +488,7 @@ def _inject_via_docker(
         result = subprocess.run(
             [
                 "docker", "run", "--rm", "--privileged",
+                "-i",                          # VIGTIGT: videresend stdin så bash -s kan læse scriptet
                 "-e", f"ROOT_PARTITION={root_part}",
                 "-v", f"{work_dir}:/work",
                 "ubuntu:22.04",
