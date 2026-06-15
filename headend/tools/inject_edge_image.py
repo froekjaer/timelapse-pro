@@ -455,7 +455,11 @@ def _inject_via_docker(
     Docker Desktop for Mac kører i en Linux-VM, så losetup og
     partitions-scanning virker inde i --privileged containers.
     """
-    work_dir = Path(tempfile.mkdtemp(prefix="timelapse-inject-"))
+    # Docker Desktop for Mac deler kun /Users, /Volumes osv. — ikke /tmp.
+    # Brug ~/.cache/timelapse-inject som base for temp-mappen.
+    _inject_base = Path.home() / ".cache" / "timelapse-inject"
+    _inject_base.mkdir(parents=True, exist_ok=True)
+    work_dir = Path(tempfile.mkdtemp(prefix="timelapse-inject-", dir=_inject_base))
     try:
         # Arbejdsfiler i work_dir (delt med container via -v)
         work_img  = work_dir / "base.img"
