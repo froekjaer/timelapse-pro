@@ -10875,85 +10875,82 @@ def _run_wifi_inject(
         log.info("[wifi-inject] %s", msg)
 
     try:
-        from headend.tools.inject_wifi_image import inject_wifi_image
-    except ImportError:
-        import sys
-        sys.path.insert(0, str(_repo_root() / "headend"))
-        from tools.inject_wifi_image import inject_wifi_image  # type: ignore
+        try:
+            from headend.tools.inject_wifi_image import inject_wifi_image
+        except ImportError:
+            import sys
+            sys.path.insert(0, str(_repo_root() / "headend"))
+            from tools.inject_wifi_image import inject_wifi_image  # type: ignore
 
-    # Hent artifact-info i en kortlivet session — luk den FØR den lange inject-operation
-    # så PostgreSQL ikke dropper idle-forbindelsen.
-    db_read = db_factory()
-    try:
-        artifact = db_read.query(UpdateArtifact).filter(
-            UpdateArtifact.artifact_id == artifact_id,
-            UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
-        ).first()
-        if not artifact:
-            raise ValueError(f"Artifact ikke fundet: {artifact_id}")
-        if not artifact.storage_path or not os.path.exists(artifact.storage_path):
-            raise FileNotFoundError(f"Image-fil ikke tilgængelig: {artifact.storage_path}")
+        # Hent artifact-info i kortlivet session — luk FØR lang operation
+        # så PostgreSQL ikke dropper idle-forbindelsen.
+        db_read = db_factory()
+        try:
+            artifact = db_read.query(UpdateArtifact).filter(
+                UpdateArtifact.artifact_id == artifact_id,
+                UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
+            ).first()
+            if not artifact:
+                raise ValueError(f"Artifact ikke fundet: {artifact_id}")
+            if not artifact.storage_path or not os.path.exists(artifact.storage_path):
+                raise FileNotFoundError(f"Image-fil ikke tilgængelig: {artifact.storage_path}")
+            fname = artifact.filename or ""
+            gz_path = artifact.storage_path
+            output_dir = os.path.dirname(gz_path)
+        finally:
+            db_read.close()
 
-        # Udled target fra artifact filename (fx timelapse-edge-rpi4-20260615.img.gz)
-        fname = artifact.filename or ""
-        gz_path = artifact.storage_path
-        output_dir = os.path.dirname(gz_path)
-    finally:
-        db_read.close()
+        target_id: str | None = None
+        for known in ["orangepi4pro", "orangepi-pc-plus", "rpi4", "rpi5", "jetson-orin-nano"]:
+            if known in fname:
+                target_id = known
+                break
 
-    target_id: str | None = None
-    for known in ["orangepi4pro", "orangepi-pc-plus", "rpi4", "rpi5", "jetson-orin-nano"]:
-        if known in fname:
-            target_id = known
-            break
-
-    # Lang operation — kør UDEN åben DB-session
-    result = inject_wifi_image(
-        gz_path=gz_path,
-        wifi_ssid=wifi_ssid,
-        wifi_password=wifi_password,
-        wifi_country=wifi_country,
-        wifi_method=wifi_method,
-        target_id=target_id,
-        output_dir=output_dir,
-        progress_cb=progress,
-        repo_root=str(_repo_root()),
-    )
-
-    # Ny session til INSERT — den gamle ville være timed out
-    from datetime import datetime, timezone as _tz
-    db_write = db_factory()
-    try:
-        new_artifact_id = f"TL-FLASH-WIFI-{artifact_id[-8:]}-{datetime.now(_tz.utc).strftime('%Y%m%d%H%M%S')}"
-        new_artifact = UpdateArtifact(
-            artifact_id=new_artifact_id,
-            artifact_type="flashable_disk_image",
-            filename=result["filename"],
-            storage_path=result["output_path"],
-            size_bytes=result["size_bytes"],
-            sha256=result["sha256"],
-            signed_by=None,
-            created_at=datetime.now(_tz.utc),
-            manifest_json=None,
+        # Lang operation — ingen åben DB-session
+        result = inject_wifi_image(
+            gz_path=gz_path,
+            wifi_ssid=wifi_ssid,
+            wifi_password=wifi_password,
+            wifi_country=wifi_country,
+            wifi_method=wifi_method,
+            target_id=target_id,
+            output_dir=output_dir,
+            progress_cb=progress,
+            repo_root=str(_repo_root()),
         )
-        db_write.add(new_artifact)
-        db_write.commit()
-    finally:
-        db_write.close()
-    db = None  # bruges ikke mere
 
-        _wifi_inject_status.update({
-            "running": False,
-            "result": {
-                "artifact_id": new_artifact_id,
-                "filename": result["filename"],
-                "sha256": result["sha256"],
-                "size_bytes": result["size_bytes"],
-                "wifi_ssid": wifi_ssid,
-            },
-            "error": None,
-        })
-        progress(f"✅ WiFi-injiceret artifact registreret: {new_artifact_id}")
+        # Ny DB-session til INSERT (den gamle er timed out)
+        from datetime import datetime, timezone as _tz
+        db_write = db_factory()
+        try:
+            new_artifact_id = f"TL-FLASH-WIFI-{artifact_id[-8:]}-{datetime.now(_tz.utc).strftime('%Y%m%d%H%M%S')}"
+            new_artifact = UpdateArtifact(
+                artifact_id=new_artifact_id,
+                artifact_type="flashable_disk_image",
+                filename=result["filename"],
+                storage_path=result["output_path"],
+                size_bytes=result["size_bytes"],
+                sha256=result["sha256"],
+                signed_by=None,
+                created_at=datetime.now(_tz.utc),
+                manifest_json=None,
+            )
+            db_write.add(new_artifact)
+            db_write.commit()
+            _wifi_inject_status.update({
+                "running": False,
+                "result": {
+                    "artifact_id": new_artifact_id,
+                    "filename": result["filename"],
+                    "sha256": result["sha256"],
+                    "size_bytes": result["size_bytes"],
+                    "wifi_ssid": wifi_ssid,
+                },
+                "error": None,
+            })
+            progress(f"✅ WiFi-injiceret artifact registreret: {new_artifact_id}")
+        finally:
+            db_write.close()
 
     except Exception as exc:
         log.exception("[wifi-inject] Fejl")
