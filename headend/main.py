@@ -10552,6 +10552,9 @@ class DiskImageBuildRequest(BaseModel):
     target: str = "orangepi4pro"
     mode: str = "rootfs"          # "rootfs" | "flashable"
     bootstrap_token: str = ""     # kun til "flashable" mode
+    wifi_ssid: str = ""           # bages ind i image (valgfrit)
+    wifi_password: str = ""       # WiFi adgangskode
+    wifi_country: str = "DK"      # WiFi landekode
 
 
 def _run_edge_disk_image_build(
@@ -10562,6 +10565,9 @@ def _run_edge_disk_image_build(
     target: str = "orangepi4pro",
     mode: str = "rootfs",
     bootstrap_token: str = "",
+    wifi_ssid: str = "",
+    wifi_password: str = "",
+    wifi_country: str = "DK",
 ) -> None:
     """Background thread: bygger edge disk image og registrerer artifact.
 
@@ -10610,6 +10616,9 @@ def _run_edge_disk_image_build(
                 progress_cb=progress,
                 repo_root=str(_repo_root()),
                 output_dir=output_dir,
+                wifi_ssid=wifi_ssid,
+                wifi_password=wifi_password,
+                wifi_country=wifi_country,
             )
             # Merge injection-resultater ind i result
             result.update({
@@ -10709,7 +10718,14 @@ def trigger_edge_disk_image_build(
     t = _threading.Thread(
         target=_run_edge_disk_image_build,
         args=(headend_url, gpg_key_id, output_dir, _SessionLocal),
-        kwargs={"target": body.target, "mode": body.mode, "bootstrap_token": body.bootstrap_token},
+        kwargs={
+            "target": body.target,
+            "mode": body.mode,
+            "bootstrap_token": body.bootstrap_token,
+            "wifi_ssid": body.wifi_ssid,
+            "wifi_password": body.wifi_password,
+            "wifi_country": body.wifi_country or "DK",
+        },
         daemon=True,
         name="edge-disk-image-build",
     )
@@ -10778,6 +10794,151 @@ def download_edge_disk_image(artifact_id: str, _user=require_role("super_admin",
         filename=artifact.filename or f"{artifact_id}.img.gz",
         headers={"Content-Disposition": f"attachment; filename=\"{artifact.filename or artifact_id + '.img.gz'}\""},
     )
+
+
+class InjectWifiRequest(BaseModel):
+    artifact_id: str
+    wifi_ssid: str
+    wifi_password: str
+    wifi_country: str = "DK"
+    wifi_method: str = "auto"   # "auto" | "netplan" | "wpa_supplicant"
+
+
+_wifi_inject_status: dict = {
+    "running": False, "progress": [], "error": None, "result": None,
+}
+_wifi_inject_lock = _threading.Lock()
+
+
+def _run_wifi_inject(
+    artifact_id: str,
+    wifi_ssid: str,
+    wifi_password: str,
+    wifi_country: str,
+    wifi_method: str,
+    db_factory,
+) -> None:
+    """Background thread: injectér WiFi i eksisterende flashbart image."""
+    global _wifi_inject_status
+
+    def progress(msg: str) -> None:
+        _wifi_inject_status["progress"].append(msg)
+        log.info("[wifi-inject] %s", msg)
+
+    try:
+        from headend.tools.inject_wifi_image import inject_wifi_image
+    except ImportError:
+        import sys
+        sys.path.insert(0, str(_repo_root() / "headend"))
+        from tools.inject_wifi_image import inject_wifi_image  # type: ignore
+
+    db = db_factory()
+    try:
+        artifact = db.query(UpdateArtifact).filter(
+            UpdateArtifact.artifact_id == artifact_id,
+            UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
+        ).first()
+        if not artifact:
+            raise ValueError(f"Artifact ikke fundet: {artifact_id}")
+        if not artifact.storage_path or not os.path.exists(artifact.storage_path):
+            raise FileNotFoundError(f"Image-fil ikke tilgængelig: {artifact.storage_path}")
+
+        # Udled target fra artifact filename (fx timelapse-edge-rpi4-20260615.img.gz)
+        fname = artifact.filename or ""
+        target_id: str | None = None
+        for known in ["orangepi4pro", "orangepi-pc-plus", "rpi4", "rpi5", "jetson-orin-nano"]:
+            if known in fname:
+                target_id = known
+                break
+
+        output_dir = os.path.dirname(artifact.storage_path)
+
+        result = inject_wifi_image(
+            gz_path=artifact.storage_path,
+            wifi_ssid=wifi_ssid,
+            wifi_password=wifi_password,
+            wifi_country=wifi_country,
+            wifi_method=wifi_method,
+            target_id=target_id,
+            output_dir=output_dir,
+            progress_cb=progress,
+            repo_root=str(_repo_root()),
+        )
+
+        # Registrér nyt artifact i DB
+        from datetime import datetime, timezone as _tz
+        new_artifact_id = f"TL-FLASH-WIFI-{artifact_id[-8:]}-{datetime.now(_tz.utc).strftime('%Y%m%d%H%M%S')}"
+        new_artifact = UpdateArtifact(
+            artifact_id=new_artifact_id,
+            artifact_type="flashable_disk_image",
+            filename=result["filename"],
+            storage_path=result["output_path"],
+            size_bytes=result["size_bytes"],
+            sha256=result["sha256"],
+            signed_by=None,
+            created_at=datetime.now(_tz.utc),
+            manifest_json=None,
+        )
+        db.add(new_artifact)
+        db.commit()
+
+        _wifi_inject_status.update({
+            "running": False,
+            "result": {
+                "artifact_id": new_artifact_id,
+                "filename": result["filename"],
+                "sha256": result["sha256"],
+                "size_bytes": result["size_bytes"],
+                "wifi_ssid": wifi_ssid,
+            },
+            "error": None,
+        })
+        progress(f"✅ WiFi-injiceret artifact registreret: {new_artifact_id}")
+
+    except Exception as exc:
+        log.exception("[wifi-inject] Fejl")
+        _wifi_inject_status["running"] = False
+        _wifi_inject_status["error"] = str(exc)
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/edge-provisioning/inject-wifi")
+def inject_wifi_endpoint(
+    body: InjectWifiRequest,
+    _user=require_role("super_admin", "admin"),
+):
+    """Injectér WiFi-konfiguration i et eksisterende flashbart image."""
+    with _wifi_inject_lock:
+        if _wifi_inject_status.get("running"):
+            raise HTTPException(status_code=409, detail="En WiFi-injektion kører allerede")
+
+        _wifi_inject_status.update({
+            "running": True, "progress": ["Starter WiFi-injektion..."],
+            "error": None, "result": None,
+            "artifact_id": body.artifact_id, "wifi_ssid": body.wifi_ssid,
+        })
+
+    from database import SessionLocal as _SessionLocal
+    t = _threading.Thread(
+        target=_run_wifi_inject,
+        args=(body.artifact_id, body.wifi_ssid, body.wifi_password,
+              body.wifi_country, body.wifi_method, _SessionLocal),
+        daemon=True,
+        name="wifi-inject",
+    )
+    t.start()
+    return {
+        "status": "started",
+        "artifact_id": body.artifact_id,
+        "message": "WiFi-injektion startet — poll /api/admin/edge-provisioning/wifi-inject-status",
+    }
+
+
+@app.get("/api/admin/edge-provisioning/wifi-inject-status")
+def wifi_inject_status(_user=require_role("super_admin", "admin")):
+    """Hent status for igangværende WiFi-injektion."""
+    return _wifi_inject_status
 
 
 @app.post("/api/admin/edge-provisioning/build-image")

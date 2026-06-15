@@ -288,6 +288,9 @@ export function BackupPage() {
   const [diskBuildTarget, setDiskBuildTarget] = useState('orangepi4pro')
   const [diskBuildMode, setDiskBuildMode] = useState<'rootfs' | 'flashable'>('rootfs')
   const [diskBuildToken, setDiskBuildToken] = useState('')
+  const [diskBuildWifiSsid, setDiskBuildWifiSsid] = useState('')
+  const [diskBuildWifiPassword, setDiskBuildWifiPassword] = useState('')
+  const [diskBuildWifiCountry, setDiskBuildWifiCountry] = useState('DK')
   const STATIC_TARGETS: Array<{ id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean }> = [
     { id: 'orangepi4pro',    display_name: 'OrangePi 4 Pro',           arch: 'arm64', flashable: true,  install_script: false },
     { id: 'orangepi-pc-plus',display_name: 'OrangePi PC Plus',         arch: 'armhf', flashable: true,  install_script: false },
@@ -435,7 +438,14 @@ export function BackupPage() {
     try {
       const r = await api('/admin/edge-provisioning/build-disk-image', {
         method: 'POST',
-        body: JSON.stringify({ target: diskBuildTarget, mode: diskBuildMode, bootstrap_token: diskBuildToken }),
+        body: JSON.stringify({
+          target: diskBuildTarget,
+          mode: diskBuildMode,
+          bootstrap_token: diskBuildToken,
+          wifi_ssid: diskBuildWifiSsid,
+          wifi_password: diskBuildWifiPassword,
+          wifi_country: diskBuildWifiCountry || 'DK',
+        }),
       })
       if (!r.ok) {
         const err = await r.json().catch(() => ({ detail: r.statusText }))
@@ -583,6 +593,12 @@ export function BackupPage() {
           setDiskBuildMode={setDiskBuildMode}
           diskBuildToken={diskBuildToken}
           setDiskBuildToken={setDiskBuildToken}
+          diskBuildWifiSsid={diskBuildWifiSsid}
+          setDiskBuildWifiSsid={setDiskBuildWifiSsid}
+          diskBuildWifiPassword={diskBuildWifiPassword}
+          setDiskBuildWifiPassword={setDiskBuildWifiPassword}
+          diskBuildWifiCountry={diskBuildWifiCountry}
+          setDiskBuildWifiCountry={setDiskBuildWifiCountry}
           availableTargets={availableTargets}
         />
       )}
@@ -946,6 +962,12 @@ function IsoTab({
   setDiskBuildMode,
   diskBuildToken,
   setDiskBuildToken,
+  diskBuildWifiSsid,
+  setDiskBuildWifiSsid,
+  diskBuildWifiPassword,
+  setDiskBuildWifiPassword,
+  diskBuildWifiCountry,
+  setDiskBuildWifiCountry,
   availableTargets,
 }: {
   assessment: ResilienceAssessment | null
@@ -965,6 +987,12 @@ function IsoTab({
   setDiskBuildMode: (m: 'rootfs' | 'flashable') => void
   diskBuildToken: string
   setDiskBuildToken: (t: string) => void
+  diskBuildWifiSsid: string
+  setDiskBuildWifiSsid: (v: string) => void
+  diskBuildWifiPassword: string
+  setDiskBuildWifiPassword: (v: string) => void
+  diskBuildWifiCountry: string
+  setDiskBuildWifiCountry: (v: string) => void
   availableTargets: Array<{ id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean }>
 }) {
   const blueprint = assessment?.iso_blueprint
@@ -972,6 +1000,61 @@ function IsoTab({
   const edges = assessment?.edge_restore ?? []
   const latestImage = blueprint?.latest_image
   const hasImage = !!latestImage
+
+  // WiFi B: post-process inject state (lokal til IsoTab)
+  const [wifiInjectOpen, setWifiInjectOpen] = useState(false)
+  const [wifiInjectArtifactId, setWifiInjectArtifactId] = useState('')
+  const [wifiInjectSsid, setWifiInjectSsid] = useState('')
+  const [wifiInjectPassword, setWifiInjectPassword] = useState('')
+  const [wifiInjectCountry, setWifiInjectCountry] = useState('DK')
+  const [wifiInjectRunning, setWifiInjectRunning] = useState(false)
+  const [wifiInjectResult, setWifiInjectResult] = useState<{artifact_id:string;filename:string;sha256:string;size_bytes:number;wifi_ssid:string} | null>(null)
+  const [wifiInjectError, setWifiInjectError] = useState<string | null>(null)
+  const wifiInjectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  function startWifiInjectPoll() {
+    if (wifiInjectPollRef.current) return
+    wifiInjectPollRef.current = setInterval(async () => {
+      const r = await api('/admin/edge-provisioning/wifi-inject-status')
+      const s = await r.json()
+      if (s.progress) setWifiInjectRunning(s.running)
+      if (!s.running) {
+        clearInterval(wifiInjectPollRef.current!)
+        wifiInjectPollRef.current = null
+        if (s.error) setWifiInjectError(s.error)
+        if (s.result) setWifiInjectResult(s.result)
+      }
+    }, 2000)
+  }
+
+  async function submitWifiInject() {
+    if (!wifiInjectArtifactId || !wifiInjectSsid || !wifiInjectPassword) return
+    setWifiInjectRunning(true)
+    setWifiInjectError(null)
+    setWifiInjectResult(null)
+    try {
+      const r = await api('/admin/edge-provisioning/inject-wifi', {
+        method: 'POST',
+        body: JSON.stringify({
+          artifact_id: wifiInjectArtifactId,
+          wifi_ssid: wifiInjectSsid,
+          wifi_password: wifiInjectPassword,
+          wifi_country: wifiInjectCountry || 'DK',
+          wifi_method: 'auto',
+        }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }))
+        setWifiInjectError(err?.detail ?? 'Fejl')
+        setWifiInjectRunning(false)
+        return
+      }
+      startWifiInjectPoll()
+    } catch (e) {
+      setWifiInjectError(e instanceof Error ? e.message : 'Netværksfejl')
+      setWifiInjectRunning(false)
+    }
+  }
 
   const pipelineSteps: { label: string; done: boolean; note: string }[] = [
     {
@@ -1153,6 +1236,52 @@ function IsoTab({
               </div>
             )}
 
+            {diskBuildMode === 'flashable' && (
+              <div className="mb-4 rounded-lg bg-blue-50 border border-blue-200 p-3">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Wifi className="w-3.5 h-3.5 text-blue-600" />
+                  <p className="text-xs text-blue-800 font-medium">WiFi konfiguration (valgfri)</p>
+                </div>
+                <p className="text-xs text-blue-700 mb-3">
+                  Bages ind i imaget. Lad SSID stå tomt for ingen WiFi — kan tilføjes via "Tilføj WiFi" efterfølgende.
+                </p>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <div>
+                    <label className="block text-xs text-blue-700 mb-1">SSID (netværksnavn)</label>
+                    <input
+                      value={diskBuildWifiSsid}
+                      onChange={e => setDiskBuildWifiSsid(e.target.value)}
+                      placeholder="MitWiFi"
+                      disabled={diskBuildStatus?.running}
+                      className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white placeholder-blue-300 disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-blue-700 mb-1">Adgangskode</label>
+                    <input
+                      type="password"
+                      value={diskBuildWifiPassword}
+                      onChange={e => setDiskBuildWifiPassword(e.target.value)}
+                      placeholder="••••••••"
+                      disabled={diskBuildStatus?.running}
+                      className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white placeholder-blue-300 disabled:opacity-50"
+                    />
+                  </div>
+                </div>
+                <div className="w-24">
+                  <label className="block text-xs text-blue-700 mb-1">Landekode</label>
+                  <input
+                    value={diskBuildWifiCountry}
+                    onChange={e => setDiskBuildWifiCountry(e.target.value.toUpperCase().slice(0, 2))}
+                    placeholder="DK"
+                    maxLength={2}
+                    disabled={diskBuildStatus?.running}
+                    className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-blue-300 disabled:opacity-50 uppercase"
+                  />
+                </div>
+              </div>
+            )}
+
             <p className="text-xs text-gray-400 mb-3">
               {diskBuildMode === 'flashable'
                 ? 'Bygger rootfs via Docker buildx + injicerer i base-image via Docker --privileged. Output: .img.gz der flashes direkte på SSD/SD-kort med dd eller balenaEtcher.'
@@ -1213,13 +1342,119 @@ function IsoTab({
                     <div className="text-emerald-600 font-sans mt-1">Windows: {diskBuildStatus.result.flash_instructions.windows}</div>
                   </div>
                 )}
-                <a
-                  href={`${getApiUrl()}/api/admin/edge-provisioning/disk-image-download/${diskBuildStatus.result.artifact_id}`}
-                  className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 text-xs"
+                <div className="flex flex-wrap gap-2 mt-1">
+                  <a
+                    href={`${getApiUrl()}/api/admin/edge-provisioning/disk-image-download/${diskBuildStatus.result.artifact_id}`}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 text-xs"
+                  >
+                    <Download className="w-3 h-3" />
+                    {diskBuildStatus.result.mode === 'flashable' ? 'Download .img.gz' : 'Download rootfs.tar.gz'}
+                  </a>
+                  {diskBuildStatus.result.mode === 'flashable' && (
+                    <button
+                      onClick={() => {
+                        setWifiInjectArtifactId(diskBuildStatus!.result!.artifact_id)
+                        setWifiInjectOpen(true)
+                        setWifiInjectResult(null)
+                        setWifiInjectError(null)
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs"
+                    >
+                      <Wifi className="w-3 h-3" />
+                      Tilføj WiFi
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* WiFi B — post-process inject panel */}
+            {wifiInjectOpen && (
+              <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-1.5 font-medium text-blue-800">
+                    <Wifi className="w-3.5 h-3.5" />
+                    Tilføj WiFi til eksisterende image
+                  </div>
+                  <button onClick={() => setWifiInjectOpen(false)} className="text-blue-400 hover:text-blue-700 text-xs">✕</button>
+                </div>
+                <p className="text-blue-700 mb-3">
+                  Producerer et nyt .img.gz med WiFi-config bagt ind — originalen bevares urørt.
+                </p>
+                <div className="mb-2">
+                  <label className="block text-blue-700 mb-1">Artifact ID</label>
+                  <input
+                    value={wifiInjectArtifactId}
+                    onChange={e => setWifiInjectArtifactId(e.target.value)}
+                    placeholder="TL-FLASH-IMG-..."
+                    disabled={wifiInjectRunning}
+                    className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-blue-300 disabled:opacity-50"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <div>
+                    <label className="block text-blue-700 mb-1">SSID</label>
+                    <input
+                      value={wifiInjectSsid}
+                      onChange={e => setWifiInjectSsid(e.target.value)}
+                      placeholder="MitWiFi"
+                      disabled={wifiInjectRunning}
+                      className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white placeholder-blue-300 disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-blue-700 mb-1">Adgangskode</label>
+                    <input
+                      type="password"
+                      value={wifiInjectPassword}
+                      onChange={e => setWifiInjectPassword(e.target.value)}
+                      placeholder="••••••••"
+                      disabled={wifiInjectRunning}
+                      className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white placeholder-blue-300 disabled:opacity-50"
+                    />
+                  </div>
+                </div>
+                <div className="w-20 mb-3">
+                  <label className="block text-blue-700 mb-1">Landekode</label>
+                  <input
+                    value={wifiInjectCountry}
+                    onChange={e => setWifiInjectCountry(e.target.value.toUpperCase().slice(0, 2))}
+                    placeholder="DK"
+                    maxLength={2}
+                    disabled={wifiInjectRunning}
+                    className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white font-mono uppercase placeholder-blue-300 disabled:opacity-50"
+                  />
+                </div>
+                <button
+                  onClick={submitWifiInject}
+                  disabled={wifiInjectRunning || !wifiInjectSsid || !wifiInjectPassword || !wifiInjectArtifactId}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-xs rounded-lg hover:bg-blue-800 disabled:opacity-50"
                 >
-                  <Download className="w-3 h-3" />
-                  {diskBuildStatus.result.mode === 'flashable' ? 'Download .img.gz' : 'Download rootfs.tar.gz'}
-                </a>
+                  {wifiInjectRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+                  {wifiInjectRunning ? 'Injecterer WiFi...' : 'Injectér WiFi'}
+                </button>
+                {wifiInjectError && (
+                  <div className="mt-2 text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {wifiInjectError}
+                  </div>
+                )}
+                {wifiInjectResult && (
+                  <div className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 p-3 space-y-1.5">
+                    <div className="flex items-center gap-1.5 font-medium text-emerald-800">
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      WiFi injiceret: {wifiInjectResult.wifi_ssid}
+                    </div>
+                    <div className="text-emerald-700">{wifiInjectResult.filename}</div>
+                    <div className="font-mono text-emerald-600 truncate">sha256: {wifiInjectResult.sha256}</div>
+                    <a
+                      href={`${getApiUrl()}/api/admin/edge-provisioning/disk-image-download/${wifiInjectResult.artifact_id}`}
+                      className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 text-xs"
+                    >
+                      <Download className="w-3 h-3" />
+                      Download WiFi .img.gz
+                    </a>
+                  </div>
+                )}
               </div>
             )}
           </div>

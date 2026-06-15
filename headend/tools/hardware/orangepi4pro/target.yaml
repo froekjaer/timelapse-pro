@@ -32,6 +32,9 @@ base_image:
   boot_partition: null
   root_partition: 1
 
+wifi_method: netplan
+# Ubuntu Jammy (OP4Pro officielt image) bruger netplan + networkd til WiFi
+
 boot_method: uboot_spiflash
 # U-Boot i SPI Flash (128Mb onboard). System på NVMe SSD.
 # Flash-workflow:

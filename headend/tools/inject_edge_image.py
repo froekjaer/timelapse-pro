@@ -434,6 +434,62 @@ EOF
         "$WANTS_DIR/timelapse-bootstrap.service"
 fi
 
+# ── WiFi konfiguration ───────────────────────────────────────────────────────
+# WIFI_METHOD, WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY sættes via env-vars fra Python
+if [ -n "${WIFI_SSID:-}" ] && [ -n "${WIFI_PASSWORD:-}" ]; then
+    WIFI_COUNTRY="${WIFI_COUNTRY:-DK}"
+    echo "[inject] Konfigurerer WiFi (SSID: ${WIFI_SSID}, metode: ${WIFI_METHOD:-wpa_supplicant})..."
+
+    if [ "${WIFI_METHOD:-wpa_supplicant}" = "netplan" ]; then
+        # Ubuntu/netplan metode
+        mkdir -p /mnt/root/etc/netplan
+        cat > /mnt/root/etc/netplan/60-wifi.yaml << NETPLAN_EOF
+network:
+  version: 2
+  renderer: networkd
+  wifis:
+    wlan0:
+      dhcp4: true
+      dhcp6: false
+      regulatory-domain: ${WIFI_COUNTRY}
+      access-points:
+        "${WIFI_SSID}":
+          password: "${WIFI_PASSWORD}"
+NETPLAN_EOF
+        chmod 600 /mnt/root/etc/netplan/60-wifi.yaml
+        echo "[inject]   WiFi netplan skrevet: /etc/netplan/60-wifi.yaml"
+
+    else
+        # wpa_supplicant metode (Debian + Ubuntu fallback)
+        mkdir -p /mnt/root/etc/wpa_supplicant
+        cat > /mnt/root/etc/wpa_supplicant/wpa_supplicant.conf << WPA_EOF
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+country=${WIFI_COUNTRY}
+
+network={
+    ssid="${WIFI_SSID}"
+    psk="${WIFI_PASSWORD}"
+    key_mgmt=WPA-PSK
+    scan_ssid=1
+}
+WPA_EOF
+        chmod 600 /mnt/root/etc/wpa_supplicant/wpa_supplicant.conf
+        echo "[inject]   WiFi wpa_supplicant.conf skrevet"
+
+        # Aktivér wpa_supplicant service hvis systemd er tilgængeligt
+        WANTS_DIR2=/mnt/root/etc/systemd/system/multi-user.target.wants
+        mkdir -p "$WANTS_DIR2"
+        if [ -f /mnt/root/lib/systemd/system/wpa_supplicant@.service ]; then
+            ln -sf /lib/systemd/system/wpa_supplicant@.service \
+                "$WANTS_DIR2/wpa_supplicant@wlan0.service" 2>/dev/null || true
+            echo "[inject]   wpa_supplicant@wlan0.service aktiveret"
+        fi
+    fi
+else
+    echo "[inject] Ingen WiFi konfiguration (WIFI_SSID ikke sat)"
+fi
+
 # ── SSH hardening ─────────────────────────────────────────────────────────────
 SSHD_CONFIG=/mnt/root/etc/ssh/sshd_config
 if [ -f "$SSHD_CONFIG" ]; then
@@ -471,6 +527,9 @@ def _inject_via_docker(
     bootstrap_yaml: str,
     target: dict,
     progress: Callable[[str], None],
+    wifi_ssid: str = "",
+    wifi_password: str = "",
+    wifi_country: str = "DK",
 ) -> None:
     """
     Injectér agent-filer i base-image via Docker --privileged.
@@ -505,10 +564,18 @@ def _inject_via_docker(
         raise RuntimeError(f"MBR partition {_part_num} LBA=0 — image er muligvis ikke et gyldigt MBR-image")
 
     # ── 1. Start detached container ──────────────────────────────────────────
+    wifi_method = target.get("wifi_method", "wpa_supplicant")
+    docker_cmd = [
+        "docker", "run", "-d", "--privileged",
+        "-e", f"OFFSET_BYTES={offset_bytes}",
+        "-e", f"WIFI_METHOD={wifi_method}",
+        "-e", f"WIFI_SSID={wifi_ssid}",
+        "-e", f"WIFI_PASSWORD={wifi_password}",
+        "-e", f"WIFI_COUNTRY={wifi_country or 'DK'}",
+        "ubuntu:22.04", "sleep", "600",
+    ]
     start = subprocess.run(
-        ["docker", "run", "-d", "--privileged",
-         "-e", f"OFFSET_BYTES={offset_bytes}",
-         "ubuntu:22.04", "sleep", "600"],
+        docker_cmd,
         capture_output=True, text=True, check=True,
     )
     container_id = start.stdout.strip()
@@ -608,6 +675,9 @@ def inject_edge_image(
     repo_root: str | None = None,
     output_dir: str | None = None,
     base_image_cache: str | None = None,
+    wifi_ssid: str = "",
+    wifi_password: str = "",
+    wifi_country: str = "DK",
 ) -> dict:
     """
     Injectér edge-agent i base-image og producér flashbart .img.gz.
@@ -622,6 +692,9 @@ def inject_edge_image(
         repo_root:          Git-repo root (None = auto-detect)
         output_dir:         Output-mappe (None = tmp)
         base_image_cache:   Mappe til cache af downloadede base-images
+        wifi_ssid:          WiFi netværksnavn (bages ind hvis sat)
+        wifi_password:      WiFi adgangskode
+        wifi_country:       WiFi landekode (default: DK)
 
     Returnerer dict med stier, sha256, manifest etc.
     """
@@ -688,6 +761,8 @@ def inject_edge_image(
 
     # ── Step 3: Docker injection ───────────────────────────────────────────
     progress_cb(f"\n🔨 Step 3/4: Injecterer agent via Docker --privileged...")
+    if wifi_ssid:
+        progress_cb(f"   WiFi: {wifi_ssid} ({tgt.get('wifi_method', 'wpa_supplicant')} / {wifi_country})")
     _inject_via_docker(
         base_img        = work_img,
         rootfs_tar      = rootfs_path,
@@ -695,6 +770,9 @@ def inject_edge_image(
         bootstrap_yaml  = bootstrap_yaml_content,
         target          = tgt,
         progress        = progress_cb,
+        wifi_ssid       = wifi_ssid,
+        wifi_password   = wifi_password,
+        wifi_country    = wifi_country,
     )
 
     # Ryd midlertidig work_img

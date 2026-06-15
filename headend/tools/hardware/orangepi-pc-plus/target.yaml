@@ -28,6 +28,9 @@ base_image:
   boot_partition: null
   root_partition: 1
 
+wifi_method: wpa_supplicant
+# Armbian Trixie (Debian) bruger wpa_supplicant til WiFi-konfiguration
+
 boot_method: uboot
 
 extra_packages: []

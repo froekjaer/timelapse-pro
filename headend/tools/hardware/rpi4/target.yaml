@@ -23,6 +23,9 @@ base_image:
   boot_partition: 1   # FAT32 — firmware + kernel
   root_partition: 2   # ext4 — rootfs
 
+wifi_method: netplan
+# Ubuntu 22.04 preinstalled bruger netplan til WiFi-konfiguration
+
 boot_method: firmware
 # Ingen U-Boot — bootloader sidder i SPI flash og GPU firmware
 # Vores rootfs injiceres i root_partition
