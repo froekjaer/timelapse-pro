@@ -85,15 +85,26 @@ def _sign_manifest(
         progress("ℹ️  Ingen GPG nøgle — bruger SHA-256 hash-binding")
         return f"sha256:{digest}", "system-hash"
     try:
+        gpg_home = os.environ.get("GNUPGHOME", os.path.expanduser("~/.gnupg"))
+        gpg_env = {**os.environ, "GNUPGHOME": gpg_home, "GPG_TTY": ""}
+
+        # Dræb eksisterende agent så en ny starter med allow-loopback-pinentry fra config
+        subprocess.run(
+            ["gpgconf", "--homedir", gpg_home, "--kill", "gpg-agent"],
+            env=gpg_env, capture_output=True, timeout=5,
+        )
+
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(manifest_json)
             tmp = f.name
         result = subprocess.run(
-            ["gpg", "--batch", "--yes", "--armor",
+            ["gpg", "--homedir", gpg_home,
+             "--batch", "--yes", "--armor",
              "--pinentry-mode", "loopback",
              "--local-user", gpg_key_id,
              "--detach-sign", "--output", "-", tmp],
             capture_output=True, text=True, timeout=20,
+            env=gpg_env,
         )
         os.unlink(tmp)
         if result.returncode == 0 and result.stdout.strip():
