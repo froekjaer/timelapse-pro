@@ -40,7 +40,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./timelapse_headend.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://timelapse@localhost/timelapse_db")
 
 engine_kwargs = {}
 if DATABASE_URL.startswith("sqlite"):
