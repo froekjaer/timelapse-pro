@@ -340,30 +340,46 @@ BOOTSTRAP_YAML="/work/bootstrap.yaml"
 # OFFSET_BYTES sættes af Python (MBR-parsing) og sendes som env-var.
 # Ingen eksterne tools nødvendig i containeren.
 
-echo "[inject] Monterer disk-image med partscan..."
-LOOP=$(losetup -f --show --partscan "$BASE_IMG")
-echo "[inject] Loop device: $LOOP"
-sleep 1
+echo "[inject] Analyserer partitionstabel med sfdisk..."
+SECTOR_SIZE=512
 
-# Find root-partition (p2 for GPT/Ubuntu RPi, p1 som fallback)
-ROOT_PART=""
-for CANDIDATE in "${LOOP}p2" "${LOOP}p3" "${LOOP}p1"; do
-    if [ -b "$CANDIDATE" ]; then
-        ROOT_PART="$CANDIDATE"
-        break
+# Læs partition-start-sektorer direkte fra image (undgår partscan/kernel-problemer)
+OFFSETS=$(sfdisk -J "$BASE_IMG" 2>/dev/null | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+parts = d['partitiontable']['partitions']
+for p in parts:
+    print(p['start'])
+")
+echo "[inject] Partition-sektorer: $(echo $OFFSETS | tr '\n' ' ')"
+
+PARTS_ARRAY=($OFFSETS)
+NUM_PARTS=${#PARTS_ARRAY[@]}
+echo "[inject] Antal partitioner: $NUM_PARTS"
+
+# Prøv root-partition: typisk p2 (index 1) eller p3 (index 2), fallback p1 (index 0)
+mkdir -p /mnt/root
+MOUNT_LOOP=""
+for IDX in 1 2 0; do
+    if [ -n "${PARTS_ARRAY[$IDX]:-}" ]; then
+        TEST_OFFSET=$(( ${PARTS_ARRAY[$IDX]} * SECTOR_SIZE ))
+        echo "[inject] Prøver partition $((IDX+1)) ved offset $TEST_OFFSET bytes..."
+        TEST_LOOP=$(losetup -f --show --offset "$TEST_OFFSET" "$BASE_IMG")
+        if mount -t ext4 "$TEST_LOOP" /mnt/root 2>/dev/null; then
+            echo "[inject] ✓ Root-partition p$((IDX+1)) monteret (offset $TEST_OFFSET bytes)"
+            MOUNT_LOOP="$TEST_LOOP"
+            break
+        else
+            echo "[inject]   Ikke ext4 eller fejl, prøver næste..."
+            losetup -d "$TEST_LOOP" 2>/dev/null || true
+        fi
     fi
 done
 
-if [ -z "$ROOT_PART" ]; then
-    echo "[inject] FEJL: Ingen partition fundet på $LOOP"
-    losetup -d "$LOOP"
+if [ -z "$MOUNT_LOOP" ]; then
+    echo "[inject] FEJL: Kunne ikke mounte nogen partition som ext4"
     exit 1
 fi
-
-echo "[inject] Root-partition: $ROOT_PART"
-echo "[inject] Mounter root-partition..."
-mkdir -p /mnt/root
-mount "$ROOT_PART" /mnt/root
 
 # ── Opret mappestruktur ──────────────────────────────────────────────────────
 echo "[inject] Opretter timelapse mappestruktur..."
@@ -640,7 +656,7 @@ chmod 700 /mnt/root/etc/timelapse/device_keys
 echo "[inject] Unmounter..."
 sync
 umount /mnt/root
-losetup -d "$LOOP"
+losetup -d "$MOUNT_LOOP"
 echo "[inject] INJECTION_OK"
 """
 
@@ -1120,14 +1136,28 @@ def patch_token_in_image(
         # Patch bootstrap.yaml i root-partition via Docker
         patch_script = f"""#!/bin/bash
 set -euo pipefail
-LOOP=$(losetup -f --show --partscan /work/base.img)
-sleep 1
-# Prøv p2, derefter p1
-for PART in ${{LOOP}}p2 ${{LOOP}}p1; do
-    if [ -b "$PART" ]; then break; fi
-done
+SECTOR_SIZE=512
+OFFSETS=$(sfdisk -J /work/base.img 2>/dev/null | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for p in d['partitiontable']['partitions']:
+    print(p['start'])
+")
+PARTS_ARRAY=($OFFSETS)
 mkdir -p /mnt/root
-mount "$PART" /mnt/root
+MOUNT_LOOP=""
+for IDX in 1 2 0; do
+    if [ -n "${{PARTS_ARRAY[$IDX]:-}}" ]; then
+        OFF=$(( ${{PARTS_ARRAY[$IDX]}} * SECTOR_SIZE ))
+        TL=$(losetup -f --show --offset "$OFF" /work/base.img)
+        if mount -t ext4 "$TL" /mnt/root 2>/dev/null; then
+            MOUNT_LOOP="$TL"; break
+        else
+            losetup -d "$TL" 2>/dev/null || true
+        fi
+    fi
+done
+[ -z "$MOUNT_LOOP" ] && {{ echo "FEJL: ingen ext4 partition"; exit 1; }}
 # Erstat token
 if [ -f /mnt/root/etc/timelapse/bootstrap.yaml ]; then
     sed -i 's|bootstrap_token:.*|bootstrap_token: "{new_token}"|' \\
@@ -1140,7 +1170,7 @@ else
 bootstrap_token: "{new_token}"
 BSEOF
 fi
-sync; umount /mnt/root; losetup -d "$LOOP"
+sync; umount /mnt/root; losetup -d "$MOUNT_LOOP"
 echo PATCH_OK
 """
         (work_dir / "patch.sh").write_text(patch_script)
