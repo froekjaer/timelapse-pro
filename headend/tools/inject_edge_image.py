@@ -345,13 +345,8 @@ echo "[inject] Analyserer partitionstabel med sfdisk..."
 SECTOR_SIZE=512
 
 # Læs partition-start-sektorer direkte fra image (undgår partscan/kernel-problemer)
-OFFSETS=$(sfdisk -J "$BASE_IMG" 2>/dev/null | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-parts = d['partitiontable']['partitions']
-for p in parts:
-    print(p['start'])
-")
+# Parser JSON med grep+awk — ingen python3 nødvendig i inject-containeren
+OFFSETS=$(sfdisk -J "$BASE_IMG" 2>/dev/null | grep '"start"' | awk -F': ' '{gsub(/,/,"",$2); print $2}')
 echo "[inject] Partition-sektorer: $(echo $OFFSETS | tr '\n' ' ')"
 
 PARTS_ARRAY=($OFFSETS)
@@ -1138,12 +1133,7 @@ def patch_token_in_image(
         patch_script = f"""#!/bin/bash
 set -euo pipefail
 SECTOR_SIZE=512
-OFFSETS=$(sfdisk -J /work/base.img 2>/dev/null | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-for p in d['partitiontable']['partitions']:
-    print(p['start'])
-")
+OFFSETS=$(sfdisk -J /work/base.img 2>/dev/null | grep '"start"' | awk -F': ' '{gsub(/,/,"",$2); print $2}')
 PARTS_ARRAY=($OFFSETS)
 mkdir -p /mnt/root
 MOUNT_LOOP=""
