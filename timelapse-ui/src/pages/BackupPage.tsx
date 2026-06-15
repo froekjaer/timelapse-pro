@@ -780,6 +780,58 @@ type DiskBuildStatus = {
   ready: boolean; target?: string; mode?: string
 } | null
 
+/** Headend API URL dropdown — henter faktisk base_url fra settings */
+function HeadendUrlPicker({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const [knownUrl, setKnownUrl] = useState<string>('')
+  const [custom, setCustom]     = useState(false)
+
+  useEffect(() => {
+    api('/admin/settings')
+      .then(r => r.ok ? r.json() : {})
+      .then((s: Record<string, string>) => {
+        const url = s['base_url'] ? s['base_url'].replace(/\/$/, '') + '/api' : ''
+        setKnownUrl(url)
+        // Sæt default til den kendte URL hvis ingen er valgt endnu
+        if (!value && url) onChange(url)
+      })
+      .catch(() => {})
+  }, [])
+
+  const selCls = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white font-mono focus:outline-none focus:ring-2 focus:ring-sky-300"
+  const inpCls = "w-full border border-sky-300 rounded-lg px-3 py-2 text-sm bg-sky-50 font-mono placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-300"
+
+  return (
+    <div>
+      <label className="block text-xs text-gray-500 mb-1">Headend API URL</label>
+      <select className={selCls} value={custom ? '__custom__' : (value || knownUrl || '')}
+        onChange={e => {
+          if (e.target.value === '__custom__') {
+            setCustom(true)
+            onChange('')
+          } else {
+            setCustom(false)
+            onChange(e.target.value)
+          }
+        }}>
+        {knownUrl && <option value={knownUrl}>{knownUrl}</option>}
+        <option value="__custom__">Tilpasset URL…</option>
+      </select>
+      {custom && (
+        <input className={`${inpCls} mt-2`}
+          placeholder="https://headend.example.com/api"
+          value={value}
+          onChange={e => onChange(e.target.value)} />
+      )}
+    </div>
+  )
+}
+
 function IsoTab({
   assessment,
   form,
@@ -870,7 +922,7 @@ function IsoTab({
             <Field label="Device ID" value={form.device_id} onChange={v => setForm(s => ({ ...s, device_id: v }))} placeholder="timelapse0102" mono />
             <Field label="Token levetid timer" value={String(form.expires_hours)} onChange={v => setForm(s => ({ ...s, expires_hours: Number(v) || 48 }))} type="number" />
             <LocationPicker form={form} setForm={setForm} />
-            <Field label="Headend API URL" value={form.headend_url} onChange={v => setForm(s => ({ ...s, headend_url: v }))} placeholder="auto: https://timelapse.froekjaer.dk/api" mono />
+            <HeadendUrlPicker value={form.headend_url} onChange={v => setForm(s => ({ ...s, headend_url: v }))} />
             <div className="md:col-span-2">
               <Field label="Note" value={form.note} onChange={v => setForm(s => ({ ...s, note: v }))} placeholder="Installationsnote" />
             </div>
