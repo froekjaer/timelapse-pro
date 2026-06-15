@@ -454,55 +454,72 @@ def _inject_via_docker(
     """
     Injectér agent-filer i base-image via Docker --privileged.
 
-    Docker Desktop for Mac kører i en Linux-VM, så losetup og
-    partitions-scanning virker inde i --privileged containers.
+    Bruger 'docker cp' i stedet for volume-mounts for at undgå macOS
+    VirtioFS/gRPC-FUSE synk-problemer hvor nyskrevne filer ikke er synlige
+    i containeren. Flowet er:
+      1. Start detached privileged container (sleep 600)
+      2. docker cp: base.img + rootfs.tar.gz + bootstrap.yaml → container
+      3. docker exec -i: kør inject-script via stdin
+      4. docker cp: modificeret base.img ← container
+      5. docker stop + rm
     """
-    # Docker Desktop for Mac deler kun /Users, /Volumes osv. — ikke /tmp.
-    # Brug ~/.cache/timelapse-inject som base for temp-mappen.
-    _inject_base = Path.home() / ".cache" / "timelapse-inject"
-    _inject_base.mkdir(parents=True, exist_ok=True)
-    work_dir = Path(tempfile.mkdtemp(prefix="timelapse-inject-", dir=_inject_base))
+    _root_part_cfg = target.get("base_image", {}).get("root_partition")
+    root_part = str(_root_part_cfg) if _root_part_cfg is not None else "auto"
+
+    progress(f"   Root partition: {'auto-detect' if root_part == 'auto' else 'p' + root_part}")
+    progress(f"   Starter privileged container (ubuntu:22.04)...")
+
+    # ── 1. Start detached container ──────────────────────────────────────────
+    start = subprocess.run(
+        ["docker", "run", "-d", "--privileged",
+         "-e", f"ROOT_PARTITION={root_part}",
+         "ubuntu:22.04", "sleep", "600"],
+        capture_output=True, text=True, check=True,
+    )
+    container_id = start.stdout.strip()
+    progress(f"   Container: {container_id[:12]}")
+
     try:
-        # Arbejdsfiler i work_dir (delt med container via -v)
-        work_img  = work_dir / "base.img"
-        work_root = work_dir / "rootfs.tar.gz"
-        work_bstp = work_dir / "bootstrap.yaml"
+        # ── 2. Opret /work og kopier filer ind med docker cp ─────────────────
+        subprocess.run(
+            ["docker", "exec", container_id, "mkdir", "-p", "/work"],
+            check=True, capture_output=True,
+        )
 
-        progress(f"   Kopierer base-image til arbejdsmappe ({base_img.stat().st_size // (1024*1024)} MB)...")
-        shutil.copy2(base_img, work_img)
+        progress(f"   Kopierer base-image til container ({base_img.stat().st_size // (1024*1024)} MB)...")
+        subprocess.run(
+            ["docker", "cp", str(base_img), f"{container_id}:/work/base.img"],
+            check=True, capture_output=True,
+        )
 
-        progress(f"   Kopierer rootfs tarball...")
-        shutil.copy2(rootfs_tar, work_root)
+        progress(f"   Kopierer rootfs tarball til container...")
+        subprocess.run(
+            ["docker", "cp", str(rootfs_tar), f"{container_id}:/work/rootfs.tar.gz"],
+            check=True, capture_output=True,
+        )
 
-        work_bstp.write_text(bootstrap_yaml, encoding="utf-8")
+        # bootstrap.yaml via tempfil → docker cp
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8") as _f:
+            _f.write(bootstrap_yaml)
+            _bstp_tmp = _f.name
+        try:
+            subprocess.run(
+                ["docker", "cp", _bstp_tmp, f"{container_id}:/work/bootstrap.yaml"],
+                check=True, capture_output=True,
+            )
+        finally:
+            os.unlink(_bstp_tmp)
 
-        # Root-partition nummer fra target.yaml
-        # None = auto-detect (Armbian single-partition), default=auto
-        _root_part_cfg = target.get("base_image", {}).get("root_partition")
-        root_part = str(_root_part_cfg) if _root_part_cfg is not None else "auto"
-
-        progress(f"   Starter Docker injection container (--privileged)...")
-        progress(f"   Root partition: {'auto-detect' if root_part == 'auto' else 'p' + root_part}")
-
-        # inject.sh sendes via stdin (bash -s) i stedet for at skrive til
-        # /work/ — undgår macOS VirtioFS-synk-timing der kan gøre filen
-        # usynlig i containeren kort efter skrivning.
+        # ── 3. Kør inject-script via stdin ────────────────────────────────────
+        progress(f"   Kører inject-script...")
         result = subprocess.run(
-            [
-                "docker", "run", "--rm", "--privileged",
-                "-i",                          # VIGTIGT: videresend stdin så bash -s kan læse scriptet
-                "-e", f"ROOT_PARTITION={root_part}",
-                "-v", f"{work_dir}:/work",
-                "ubuntu:22.04",
-                "bash", "-s",
-            ],
+            ["docker", "exec", "-i", container_id, "bash", "-s"],
             input=_INJECT_SCRIPT,
             capture_output=True,
             text=True,
             timeout=600,
         )
 
-        # Stream output til progress
         for line in (result.stdout + result.stderr).splitlines():
             if line.strip():
                 progress(f"   {line}")
@@ -512,11 +529,19 @@ def _inject_via_docker(
         if "INJECTION_OK" not in result.stdout:
             raise RuntimeError("Injection script returnerede ikke INJECTION_OK")
 
+        # ── 4. Kopiér modificeret image ud ───────────────────────────────────
+        progress(f"   Kopierer modificeret image ud af container...")
+        subprocess.run(
+            ["docker", "cp", f"{container_id}:/work/base.img", str(output_img)],
+            check=True, capture_output=True,
+        )
+
         progress(f"✅ Injection OK")
-        shutil.copy2(work_img, output_img)
 
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        # ── 5. Stop + fjern container ─────────────────────────────────────────
+        subprocess.run(["docker", "stop", container_id], capture_output=True)
+        subprocess.run(["docker", "rm",  container_id], capture_output=True)
 
 
 # ── Komprimering ──────────────────────────────────────────────────────────────
