@@ -246,47 +246,43 @@ ROOTFS_TAR="/work/rootfs.tar.gz"
 BOOTSTRAP_YAML="/work/bootstrap.yaml"
 ROOT_PARTITION="${ROOT_PARTITION:-auto}"   # "auto" = detektér selv
 
-echo "[inject] Installerer parted..."
-apt-get install -qq -y parted 2>/dev/null || true
-
-# ── Partition-offset via parted (undgår losetup --partscan som ikke ──────────
-# virker i Docker Desktop's Linux-kernel uden /dev/loop0p1 support).
-# Bruger i stedet 'losetup -o OFFSET' til at mounte partitionen direkte.
+# ── Partition-offset via fdisk (ingen installation nødvendig i ubuntu:22.04) ──
+# Undgår losetup --partscan som ikke opretter /dev/loop0pX i Docker Desktop.
+# Bruger 'losetup -o OFFSET' til at mounte partitionen direkte.
+#
+# fdisk -l output for image:
+#   Device           Boot  Start     End  Sectors  Size Id Type
+#   /work/base.img1        16384 2436295  2419912  1.2G 83 Linux
 
 PART_NUM="${ROOT_PARTITION}"
 if [ "$PART_NUM" = "auto" ]; then PART_NUM=1; fi
 
-echo "[inject] Finder partition $PART_NUM offset med parted..."
-# parted -m giver maskinlæsbart output:
-# BYT;
-# /path/img:SIZE:file:...;
-# 1:START:END:SIZE:ext4::;
-PART_START_BYTES=$(parted -s -m "$BASE_IMG" unit B print 2>/dev/null \
-    | awk -F: -v n="$PART_NUM" '$1 == n { sub(/B$/,"", $2); print $2 }')
+echo "[inject] Finder partition ${PART_NUM} offset med fdisk..."
+echo "[inject] fdisk output:"
+fdisk -l "$BASE_IMG" 2>&1 | head -20 || true
 
-# Fallback: find første ext4 partition
-if [ -z "$PART_START_BYTES" ]; then
-    echo "[inject] Partition $PART_NUM ikke fundet — søger første ext4..."
-    PART_START_BYTES=$(parted -s -m "$BASE_IMG" unit B print 2>/dev/null \
-        | awk -F: '$6 ~ /ext[234]/ { sub(/B$/,"", $2); print $2; exit }')
+# Udtræk start-sektor: tag Nde partition-linje (ignorer Disk-header)
+START_SECTOR=$(fdisk -l "$BASE_IMG" 2>/dev/null \
+    | awk -v n="$PART_NUM" '
+        /^\/dev\/|\.img/ && !/^Disk / && !/Boot/ {
+            count++
+            if (count == n) { print $2; exit }
+        }')
+
+# Fallback: tag første Linux-partition
+if [ -z "$START_SECTOR" ] || [ "$START_SECTOR" = "0" ]; then
+    echo "[inject] Partition $PART_NUM ikke fundet — søger første Linux partition..."
+    START_SECTOR=$(fdisk -l "$BASE_IMG" 2>/dev/null | awk '/Linux/ { print $2; exit }')
 fi
 
-# Andet fallback: brug fdisk til at finde første partition
-if [ -z "$PART_START_BYTES" ]; then
-    echo "[inject] parted fejlede — forsøger fdisk..."
-    START_SECTOR=$(fdisk -l "$BASE_IMG" 2>/dev/null \
-        | awk '/^\/dev\/|\.img[0-9]?[ \t]/ && !/Extended/ { print $2; exit }')
-    PART_START_BYTES=$((START_SECTOR * 512))
-fi
-
-if [ -z "$PART_START_BYTES" ] || [ "$PART_START_BYTES" = "0" ]; then
-    echo "[inject] FEJL: Kunne ikke finde partitionsstart i $BASE_IMG"
-    echo "[inject] parted output:"
-    parted -s -m "$BASE_IMG" unit B print 2>&1 || true
+if [ -z "$START_SECTOR" ] || [ "$START_SECTOR" = "0" ]; then
+    echo "[inject] FEJL: Kunne ikke finde partition i $BASE_IMG"
+    fdisk -l "$BASE_IMG" 2>&1 || true
     exit 1
 fi
 
-echo "[inject] Partition start: ${PART_START_BYTES} bytes"
+PART_START_BYTES=$((START_SECTOR * 512))
+echo "[inject] Partition start: sektor $START_SECTOR = ${PART_START_BYTES} bytes"
 LOOP=$(losetup -f --show -o "$PART_START_BYTES" "$BASE_IMG")
 echo "[inject] Loop device: $LOOP"
 
