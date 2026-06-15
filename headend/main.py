@@ -10881,9 +10881,11 @@ def _run_wifi_inject(
         sys.path.insert(0, str(_repo_root() / "headend"))
         from tools.inject_wifi_image import inject_wifi_image  # type: ignore
 
-    db = db_factory()
+    # Hent artifact-info i en kortlivet session — luk den FØR den lange inject-operation
+    # så PostgreSQL ikke dropper idle-forbindelsen.
+    db_read = db_factory()
     try:
-        artifact = db.query(UpdateArtifact).filter(
+        artifact = db_read.query(UpdateArtifact).filter(
             UpdateArtifact.artifact_id == artifact_id,
             UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
         ).first()
@@ -10894,28 +10896,34 @@ def _run_wifi_inject(
 
         # Udled target fra artifact filename (fx timelapse-edge-rpi4-20260615.img.gz)
         fname = artifact.filename or ""
-        target_id: str | None = None
-        for known in ["orangepi4pro", "orangepi-pc-plus", "rpi4", "rpi5", "jetson-orin-nano"]:
-            if known in fname:
-                target_id = known
-                break
+        gz_path = artifact.storage_path
+        output_dir = os.path.dirname(gz_path)
+    finally:
+        db_read.close()
 
-        output_dir = os.path.dirname(artifact.storage_path)
+    target_id: str | None = None
+    for known in ["orangepi4pro", "orangepi-pc-plus", "rpi4", "rpi5", "jetson-orin-nano"]:
+        if known in fname:
+            target_id = known
+            break
 
-        result = inject_wifi_image(
-            gz_path=artifact.storage_path,
-            wifi_ssid=wifi_ssid,
-            wifi_password=wifi_password,
-            wifi_country=wifi_country,
-            wifi_method=wifi_method,
-            target_id=target_id,
-            output_dir=output_dir,
-            progress_cb=progress,
-            repo_root=str(_repo_root()),
-        )
+    # Lang operation — kør UDEN åben DB-session
+    result = inject_wifi_image(
+        gz_path=gz_path,
+        wifi_ssid=wifi_ssid,
+        wifi_password=wifi_password,
+        wifi_country=wifi_country,
+        wifi_method=wifi_method,
+        target_id=target_id,
+        output_dir=output_dir,
+        progress_cb=progress,
+        repo_root=str(_repo_root()),
+    )
 
-        # Registrér nyt artifact i DB
-        from datetime import datetime, timezone as _tz
+    # Ny session til INSERT — den gamle ville være timed out
+    from datetime import datetime, timezone as _tz
+    db_write = db_factory()
+    try:
         new_artifact_id = f"TL-FLASH-WIFI-{artifact_id[-8:]}-{datetime.now(_tz.utc).strftime('%Y%m%d%H%M%S')}"
         new_artifact = UpdateArtifact(
             artifact_id=new_artifact_id,
@@ -10928,8 +10936,11 @@ def _run_wifi_inject(
             created_at=datetime.now(_tz.utc),
             manifest_json=None,
         )
-        db.add(new_artifact)
-        db.commit()
+        db_write.add(new_artifact)
+        db_write.commit()
+    finally:
+        db_write.close()
+    db = None  # bruges ikke mere
 
         _wifi_inject_status.update({
             "running": False,
@@ -10948,8 +10959,6 @@ def _run_wifi_inject(
         log.exception("[wifi-inject] Fejl")
         _wifi_inject_status["running"] = False
         _wifi_inject_status["error"] = str(exc)
-    finally:
-        db.close()
 
 
 @app.post("/api/admin/edge-provisioning/inject-wifi")
