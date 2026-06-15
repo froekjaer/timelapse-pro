@@ -611,14 +611,38 @@ SSHSVC_EOF
 fi
 
 # ── Debug-bruger (midlertidig adgang via password) ────────────────────────────
-# Opretter 'tl-debug' med password 'TLdebug2026' — kan bruges til fejlsøgning
-# via SSH når pubkey-injection endnu ikke er verificeret.
-# FJERN denne bruger fra produktion ved at sætte DEBUG_USER_ENABLED=0 i target.
-echo "[inject] Opretter tl-debug bruger..."
-chroot /mnt/root /bin/bash -c "
-    id tl-debug &>/dev/null || useradd -m -s /bin/bash -G sudo tl-debug
-    echo 'tl-debug:TLdebug2026' | chpasswd
-" 2>/dev/null || echo "[inject]   ADVARSEL: tl-debug bruger kunne ikke oprettes (chroot fejl)"
+# Opretter 'tl-debug' med password 'TLdebug2026' — kan bruges til fejlsøgning.
+# Ingen chroot — redigerer /etc/passwd, /etc/shadow, /etc/group direkte
+# (chroot virker ikke fra amd64 container mod arm64 image).
+echo "[inject] Opretter tl-debug bruger (direkte fil-redigering, ingen chroot)..."
+if ! grep -q "^tl-debug:" /mnt/root/etc/passwd 2>/dev/null; then
+    # Find ledigt UID (brug 1100 som default — uden for cloud-init's range)
+    TL_UID=1100
+    TL_GID=1100
+    # Tilføj gruppe
+    if ! grep -q "^tl-debug:" /mnt/root/etc/group 2>/dev/null; then
+        echo "tl-debug:x:${TL_GID}:" >> /mnt/root/etc/group
+    fi
+    # Tilføj til sudo-gruppe
+    sed -i "s/^sudo:\(.*\)/sudo:\1,tl-debug/" /mnt/root/etc/group 2>/dev/null || true
+    # Tilføj passwd-entry
+    echo "tl-debug:x:${TL_UID}:${TL_GID}:TimeLapse Debug User,,,:/home/tl-debug:/bin/bash" \
+        >> /mnt/root/etc/passwd
+    # Generer SHA-512 password hash (openssl er tilgængeligt i ubuntu:22.04 containeren)
+    TL_HASH=$(openssl passwd -6 'TLdebug2026' 2>/dev/null || echo '!')
+    # Tilføj shadow-entry
+    echo "tl-debug:${TL_HASH}:19800:0:99999:7:::" >> /mnt/root/etc/shadow
+    # Opret home-mappe fra /etc/skel
+    mkdir -p /mnt/root/home/tl-debug
+    if [ -d /mnt/root/etc/skel ]; then
+        cp -a /mnt/root/etc/skel/. /mnt/root/home/tl-debug/ 2>/dev/null || true
+    fi
+    chown -R ${TL_UID}:${TL_GID} /mnt/root/home/tl-debug
+    chmod 750 /mnt/root/home/tl-debug
+    echo "[inject]   tl-debug bruger oprettet (uid ${TL_UID}, SHA-512 password)"
+else
+    echo "[inject]   tl-debug bruger eksisterer allerede"
+fi
 
 # ── SSH hardening ─────────────────────────────────────────────────────────────
 SSHD_CONFIG=/mnt/root/etc/ssh/sshd_config
