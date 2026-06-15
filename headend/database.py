@@ -469,7 +469,13 @@ class WebAuthnCredential(Base):
 
 
 class BootstrapToken(Base):
-    """Éngangsbrug bootstrap tokens til provisionering af nye edge-enheder."""
+    """Bootstrap tokens til provisionering af nye edge-enheder.
+
+    Understøtter to modes:
+      - Single-use (max_uses=1):  klassisk token til én enhed
+      - Batch/multi-use (max_uses>1):  token bagt ind i et disk-image;
+        kan bruges af op til max_uses enheder (typisk 50-500)
+    """
     __tablename__ = "bootstrap_tokens"
 
     id           = Column(Integer, primary_key=True)
@@ -481,9 +487,13 @@ class BootstrapToken(Base):
     created_by   = Column(String(100))
     created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     expires_at   = Column(DateTime, nullable=False)
-    used_at      = Column(DateTime)        # udfyldes når token bruges
-    used_by_device = Column(String(50))    # device_id der brugte token
+    used_at      = Column(DateTime)        # tidspunkt for FØRSTE brug
+    used_by_device = Column(String(50))    # første device_id der brugte token
     revoked      = Column(Boolean, default=False)
+    # ── Multi-use / batch-tokens (til image-indbagte tokens) ─────────────
+    max_uses     = Column(Integer, default=1)   # 1 = single-use, N = batch
+    use_count    = Column(Integer, default=0)   # antal gange brugt hidtil
+    token_type   = Column(String(20), default="single")  # "single" | "batch"
 
 
 class Customer(Base):

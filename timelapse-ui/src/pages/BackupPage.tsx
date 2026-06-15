@@ -154,10 +154,28 @@ export function BackupPage() {
   const [buildImageError, setBuildImageError] = useState<string | null>(null)
   const [diskBuildStatus, setDiskBuildStatus] = useState<{
     running: boolean; progress: string[]; error: string | null
-    result: { artifact_id: string; filename: string; sha256: string; signed_by: string; size_bytes: number; sbom_os_count: number; sbom_venv_count: number } | null
-    ready: boolean
+    result: {
+      artifact_id: string; filename: string; sha256: string; signed_by: string
+      size_bytes: number; sbom_os_count: number; sbom_venv_count: number
+      mode?: string; token_baked_in?: boolean
+      flash_instructions?: { linux_mac: string; windows: string; note: string }
+    } | null
+    ready: boolean; target?: string; mode?: string
   } | null>(null)
   const diskBuildPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [diskBuildTarget, setDiskBuildTarget] = useState('orangepi4pro')
+  const [diskBuildMode, setDiskBuildMode] = useState<'rootfs' | 'flashable'>('rootfs')
+  const [diskBuildToken, setDiskBuildToken] = useState('')
+  const [availableTargets, setAvailableTargets] = useState<Array<{
+    id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean
+  }>>([])
+
+  useEffect(() => {
+    api('/admin/edge-provisioning/targets')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.targets) setAvailableTargets(d.targets) })
+      .catch(() => {})
+  }, [])
   const [provisioningForm, setProvisioningForm] = useState<EdgeProvisioningForm>({
     device_id: '',
     customer_name: '',
@@ -280,9 +298,12 @@ export function BackupPage() {
   }
 
   async function buildDiskImage() {
-    setDiskBuildStatus({ running: true, progress: ['Starter build...'], error: null, result: null, ready: false })
+    setDiskBuildStatus({ running: true, progress: ['Starter build...'], error: null, result: null, ready: false, target: diskBuildTarget, mode: diskBuildMode })
     try {
-      const r = await api('/admin/edge-provisioning/build-disk-image', { method: 'POST' })
+      const r = await api('/admin/edge-provisioning/build-disk-image', {
+        method: 'POST',
+        body: JSON.stringify({ target: diskBuildTarget, mode: diskBuildMode, bootstrap_token: diskBuildToken }),
+      })
       if (!r.ok) {
         const err = await r.json().catch(() => ({ detail: r.statusText }))
         setDiskBuildStatus(s => s ? { ...s, running: false, error: err?.detail ?? 'Fejl' } : s)
@@ -391,6 +412,13 @@ export function BackupPage() {
           buildImage={buildEdgeImage}
           diskBuildStatus={diskBuildStatus}
           buildDiskImage={buildDiskImage}
+          diskBuildTarget={diskBuildTarget}
+          setDiskBuildTarget={setDiskBuildTarget}
+          diskBuildMode={diskBuildMode}
+          setDiskBuildMode={setDiskBuildMode}
+          diskBuildToken={diskBuildToken}
+          setDiskBuildToken={setDiskBuildToken}
+          availableTargets={availableTargets}
         />
       )}
       {tab === 'compliance' && <ComplianceTab assessment={assessment} />}
@@ -586,8 +614,13 @@ type DiskBuildStatus = {
   running: boolean
   progress: string[]
   error: string | null
-  result: { artifact_id: string; filename: string; sha256: string; signed_by: string; size_bytes: number; sbom_os_count: number; sbom_venv_count: number } | null
-  ready: boolean
+  result: {
+    artifact_id: string; filename: string; sha256: string; signed_by: string
+    size_bytes: number; sbom_os_count: number; sbom_venv_count: number
+    mode?: string; token_baked_in?: boolean
+    flash_instructions?: { linux_mac: string; windows: string; note: string }
+  } | null
+  ready: boolean; target?: string; mode?: string
 } | null
 
 function IsoTab({
@@ -602,6 +635,13 @@ function IsoTab({
   buildImage,
   diskBuildStatus,
   buildDiskImage,
+  diskBuildTarget,
+  setDiskBuildTarget,
+  diskBuildMode,
+  setDiskBuildMode,
+  diskBuildToken,
+  setDiskBuildToken,
+  availableTargets,
 }: {
   assessment: ResilienceAssessment | null
   form: EdgeProvisioningForm
@@ -614,6 +654,13 @@ function IsoTab({
   buildImage: () => void
   diskBuildStatus: DiskBuildStatus
   buildDiskImage: () => void
+  diskBuildTarget: string
+  setDiskBuildTarget: (t: string) => void
+  diskBuildMode: 'rootfs' | 'flashable'
+  setDiskBuildMode: (m: 'rootfs' | 'flashable') => void
+  diskBuildToken: string
+  setDiskBuildToken: (t: string) => void
+  availableTargets: Array<{ id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean }>
 }) {
   const blueprint = assessment?.iso_blueprint
   const canPrepare = form.device_id.trim().length >= 3 && !busy
@@ -748,13 +795,66 @@ function IsoTab({
           <div className="border-t border-gray-100 pt-4">
             <div className="flex items-center gap-2 mb-3">
               <Package className="w-4 h-4 text-sky-500" />
-              <span className="text-sm font-semibold text-gray-800">ARM64 disk image (rootfs)</span>
+              <span className="text-sm font-semibold text-gray-800">Edge disk image</span>
             </div>
+
+            {/* Target + mode selectors */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">Hardware target</label>
+                <select
+                  value={diskBuildTarget}
+                  onChange={e => setDiskBuildTarget(e.target.value)}
+                  disabled={diskBuildStatus?.running}
+                  className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 disabled:opacity-50"
+                >
+                  {availableTargets.length === 0 && (
+                    <option value="orangepi4pro">OrangePi 4 Pro (arm64)</option>
+                  )}
+                  {availableTargets.filter(t => !t.install_script).map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.display_name} ({t.arch}){t.flashable ? '' : ' — install script'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">Output type</label>
+                <select
+                  value={diskBuildMode}
+                  onChange={e => setDiskBuildMode(e.target.value as 'rootfs' | 'flashable')}
+                  disabled={diskBuildStatus?.running}
+                  className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 disabled:opacity-50"
+                >
+                  <option value="rootfs">rootfs.tar.gz — hurtig (~5 min), kræver manuel flash</option>
+                  <option value="flashable">Flashbart .img.gz — klar til dd/balenaEtcher (~20 min)</option>
+                </select>
+              </div>
+            </div>
+
+            {diskBuildMode === 'flashable' && (
+              <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <p className="text-xs text-amber-800 font-medium mb-2">Batch bootstrap token (valgfri)</p>
+                <p className="text-xs text-amber-700 mb-2">
+                  Bages ind i imaget. Lad feltet stå tomt for at bruge placeholder — du kan injicere token efterfølgende.
+                </p>
+                <input
+                  value={diskBuildToken}
+                  onChange={e => setDiskBuildToken(e.target.value)}
+                  placeholder="btk-batch-xxxxx (valgfri)"
+                  disabled={diskBuildStatus?.running}
+                  className="w-full text-xs border border-amber-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-amber-300 disabled:opacity-50"
+                />
+              </div>
+            )}
+
             <p className="text-xs text-gray-400 mb-3">
-              Bygger et komplet arm64 Ubuntu rootfs via Docker buildx med timelapse-agent,
-              hardening og call-home config. Outputtet er en <code>.tar.gz</code> der kan
-              flashes på OrangePi SD-kort/eMMC.
+              {diskBuildMode === 'flashable'
+                ? 'Bygger rootfs via Docker buildx + injicerer i base-image via Docker --privileged. Output: .img.gz der flashes direkte på SSD/SD-kort med dd eller balenaEtcher.'
+                : 'Bygger rootfs via Docker buildx. Output: .tar.gz tarball der kan injiceres manuelt eller bruges som depot til manuel flash.'
+              }
             </p>
+
             <button
               onClick={buildDiskImage}
               disabled={diskBuildStatus?.running}
@@ -763,18 +863,21 @@ function IsoTab({
               {diskBuildStatus?.running
                 ? <RefreshCw className="w-4 h-4 animate-spin" />
                 : <Package className="w-4 h-4" />}
-              {diskBuildStatus?.running ? 'Bygger (Docker buildx arm64)…' : 'Byg ARM64 disk image'}
+              {diskBuildStatus?.running
+                ? `Bygger ${diskBuildStatus.target ?? ''} (${diskBuildStatus.mode ?? 'rootfs'})…`
+                : `Byg ${diskBuildMode === 'flashable' ? 'flashbart image' : 'rootfs'}`}
             </button>
 
             {/* Progress log */}
             {diskBuildStatus && diskBuildStatus.progress.length > 0 && (
-              <div className="mt-3 rounded-lg bg-gray-950 p-3 max-h-48 overflow-y-auto text-xs font-mono">
+              <div className="mt-3 rounded-lg bg-gray-950 p-3 max-h-64 overflow-y-auto text-xs font-mono">
                 {diskBuildStatus.progress.map((line, i) => (
                   <div key={i} className={
                     line.startsWith('✅') ? 'text-emerald-400' :
                     line.startsWith('❌') ? 'text-red-400' :
                     line.startsWith('⚠️') ? 'text-amber-400' :
                     line.startsWith('🎉') ? 'text-sky-400' :
+                    line.startsWith('💉') ? 'text-purple-400' :
                     'text-gray-300'
                   }>{line}</div>
                 ))}
@@ -792,21 +895,36 @@ function IsoTab({
                 <div className="flex items-center gap-1.5 font-medium text-emerald-800">
                   <CheckCircle className="w-3.5 h-3.5" />
                   {diskBuildStatus.result.artifact_id}
+                  {diskBuildStatus.result.mode === 'flashable' && (
+                    <span className="ml-1.5 px-1.5 py-0.5 bg-sky-100 text-sky-700 rounded text-xs">flashbart</span>
+                  )}
+                  {diskBuildStatus.result.token_baked_in && (
+                    <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">token bagt ind</span>
+                  )}
                 </div>
                 <div className="text-emerald-700">
                   {diskBuildStatus.result.filename} · {(diskBuildStatus.result.size_bytes / 1024 / 1024).toFixed(0)} MB
                 </div>
-                <div className="text-emerald-700">
-                  SBOM: {diskBuildStatus.result.sbom_os_count} OS-pakker + {diskBuildStatus.result.sbom_venv_count} Python-pakker
-                </div>
+                {(diskBuildStatus.result.sbom_os_count > 0 || diskBuildStatus.result.sbom_venv_count > 0) && (
+                  <div className="text-emerald-700">
+                    SBOM: {diskBuildStatus.result.sbom_os_count} OS-pakker + {diskBuildStatus.result.sbom_venv_count} Python-pakker
+                  </div>
+                )}
                 <div className="font-mono text-emerald-600 truncate">sha256: {diskBuildStatus.result.sha256}</div>
                 <div className="text-emerald-600">Signeret af: {diskBuildStatus.result.signed_by}</div>
+                {diskBuildStatus.result.flash_instructions && (
+                  <div className="mt-1 p-2 bg-emerald-100 rounded text-emerald-800 font-mono text-xs">
+                    <div className="text-emerald-600 font-sans mb-1 font-medium">Flash kommando:</div>
+                    <div className="truncate">{diskBuildStatus.result.flash_instructions.linux_mac}</div>
+                    <div className="text-emerald-600 font-sans mt-1">Windows: {diskBuildStatus.result.flash_instructions.windows}</div>
+                  </div>
+                )}
                 <a
                   href={`${getApiUrl()}/api/admin/edge-provisioning/disk-image-download/${diskBuildStatus.result.artifact_id}`}
                   className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 text-xs"
                 >
                   <Download className="w-3 h-3" />
-                  Download rootfs.tar.gz
+                  {diskBuildStatus.result.mode === 'flashable' ? 'Download .img.gz' : 'Download rootfs.tar.gz'}
                 </a>
               </div>
             )}

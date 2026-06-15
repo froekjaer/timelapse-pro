@@ -1247,12 +1247,30 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Ugyldigt eller ukendt bootstrap token")
     if token_record.expires_at and now_utc() > token_record.expires_at.replace(tzinfo=_tz.utc):
         raise HTTPException(status_code=401, detail="Bootstrap token udløbet")
-    if token_record.used_at:
-        raise HTTPException(status_code=401, detail="Bootstrap token allerede brugt")
 
-    # Marker token som brugt
-    token_record.used_at = now_utc()
-    token_record.used_by_device = req.device_id
+    # Batch-token: check use_count < max_uses
+    # Single-use: used_at sættes ved første brug og token kan ikke bruges igen
+    max_uses  = token_record.max_uses  or 1
+    use_count = token_record.use_count or 0
+    is_batch  = max_uses > 1
+
+    if is_batch:
+        if use_count >= max_uses:
+            raise HTTPException(
+                status_code=401,
+                detail=f"Batch bootstrap token udtømt ({use_count}/{max_uses} brugt)"
+            )
+    else:
+        if token_record.used_at:
+            raise HTTPException(status_code=401, detail="Bootstrap token allerede brugt")
+
+    # Opdatér token-tæller
+    _now = now_utc()
+    token_record.use_count = use_count + 1
+    if not token_record.used_at:
+        # Sæt used_at og used_by_device første gang
+        token_record.used_at       = _now
+        token_record.used_by_device = req.device_id
 
     # Find eller opret device
     device = db.query(Device).filter_by(device_id=req.device_id).first()
@@ -10422,8 +10440,26 @@ _edge_disk_build_status: dict = {
 _edge_disk_build_lock = _threading.Lock()
 
 
-def _run_edge_disk_image_build(headend_url: str, gpg_key_id: str | None, output_dir: str, db_factory) -> None:
-    """Background thread: bygger arm64 disk image og registrerer artifact."""
+class DiskImageBuildRequest(BaseModel):
+    target: str = "orangepi4pro"
+    mode: str = "rootfs"          # "rootfs" | "flashable"
+    bootstrap_token: str = ""     # kun til "flashable" mode
+
+
+def _run_edge_disk_image_build(
+    headend_url: str,
+    gpg_key_id: str | None,
+    output_dir: str,
+    db_factory,
+    target: str = "orangepi4pro",
+    mode: str = "rootfs",
+    bootstrap_token: str = "",
+) -> None:
+    """Background thread: bygger edge disk image og registrerer artifact.
+
+    mode="rootfs"    → kun Docker buildx → rootfs.tar.gz (eksisterende adfærd)
+    mode="flashable" → rootfs + injection → flashbart .img.gz klar til SD/NVMe
+    """
     global _edge_disk_build_status
     try:
         from headend.tools.build_edge_disk_image import build_edge_image
@@ -10437,7 +10473,9 @@ def _run_edge_disk_image_build(headend_url: str, gpg_key_id: str | None, output_
         log.info("[edge-image-build] %s", msg)
 
     try:
+        # ── Trin 1: Byg rootfs via Docker buildx ──────────────────────────
         result = build_edge_image(
+            target=target,
             headend_url=headend_url,
             gpg_key_id=gpg_key_id,
             progress_cb=progress,
@@ -10445,7 +10483,42 @@ def _run_edge_disk_image_build(headend_url: str, gpg_key_id: str | None, output_
             output_dir=output_dir,
         )
 
-        # Register as UpdateArtifact
+        # ── Trin 2 (valgfri): Injectér i base-image → flashbar .img.gz ───
+        if mode == "flashable":
+            try:
+                from headend.tools.inject_edge_image import inject_edge_image
+            except ImportError:
+                import sys
+                sys.path.insert(0, str(_repo_root() / "headend"))
+                from tools.inject_edge_image import inject_edge_image  # type: ignore
+
+            progress(f"\n💉 Mode=flashable — starter image injection...")
+            inject_result = inject_edge_image(
+                target=target,
+                rootfs_tar=result["output_path"],
+                headend_url=headend_url,
+                bootstrap_token=bootstrap_token,
+                gpg_key_id=gpg_key_id,
+                progress_cb=progress,
+                repo_root=str(_repo_root()),
+                output_dir=output_dir,
+            )
+            # Merge injection-resultater ind i result
+            result.update({
+                "filename":          inject_result["filename"],
+                "output_path":       inject_result["output_path"],
+                "sha256":            inject_result["sha256"],
+                "size_bytes":        inject_result["size_bytes"],
+                "token_baked_in":    inject_result["token_baked_in"],
+                "flash_instructions": inject_result["flash_instructions"],
+                "mode":              "flashable",
+                "artifact_type":     "flashable_disk_image",
+            })
+        else:
+            result["mode"] = "rootfs"
+            result["artifact_type"] = "edge_disk_image"
+
+        # ── Registrér artifact i database ─────────────────────────────────
         db = db_factory()
         try:
             created_at = now_utc()
@@ -10453,7 +10526,7 @@ def _run_edge_disk_image_build(headend_url: str, gpg_key_id: str | None, output_
                 manifest_json = f.read()
             artifact = UpdateArtifact(
                 artifact_id=result["artifact_id"],
-                artifact_type="edge_disk_image",
+                artifact_type=result.get("artifact_type", "edge_disk_image"),
                 version=result.get("created_at", created_at.isoformat()),
                 source_commit=_git_text(["rev-parse", "HEAD"]) or "unknown",
                 source_ref=_git_text(["rev-parse", "--abbrev-ref", "HEAD"]) or "main",
@@ -10462,7 +10535,7 @@ def _run_edge_disk_image_build(headend_url: str, gpg_key_id: str | None, output_
                 size_bytes=result["size_bytes"],
                 sha256=result["sha256"],
                 manifest_json=manifest_json,
-                sbom_ref=f"sbom:os={result['sbom_os_count']},venv={result['sbom_venv_count']}",
+                sbom_ref=f"sbom:os={result.get('sbom_os_count',0)},venv={result.get('sbom_venv_count',0)}",
                 signature=result["signature"],
                 signed_by=result["signed_by"],
                 signed_at=created_at,
@@ -10488,18 +10561,36 @@ def _run_edge_disk_image_build(headend_url: str, gpg_key_id: str | None, output_
 
 @app.post("/api/admin/edge-provisioning/build-disk-image")
 def trigger_edge_disk_image_build(
+    body: DiskImageBuildRequest = DiskImageBuildRequest(),
     current_user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db),
 ):
     """
-    Start baggrunds-build af ARM64 edge rootfs image via Docker buildx.
+    Start baggrunds-build af edge image.
+
+    mode="rootfs"    → Docker buildx arm64/armhf → rootfs.tar.gz (hurtig, ~5 min)
+    mode="flashable" → rootfs + injection → flashbart .img.gz klar til SSD (langsom, ~20 min)
+
+    Angiv target for hardware-specifik build:
+      orangepi4pro, orangepi-pc-plus, rpi4, rpi5
+      (jetson-orin-nano understøttes ikke — brug install_timelapse_edge.sh)
+
     Poll GET /api/admin/edge-provisioning/disk-image-status for fremgang.
     """
+    # Validér target
+    hw_dir = _repo_root() / "headend" / "tools" / "hardware"
+    available_targets = sorted(p.parent.name for p in hw_dir.glob("*/target.yaml"))
+    if body.target not in available_targets:
+        raise HTTPException(status_code=400, detail=f"Ukendt target '{body.target}'. Tilgængelige: {available_targets}")
+
     if not _edge_disk_build_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Et edge disk image build kører allerede")
 
     global _edge_disk_build_status
-    _edge_disk_build_status = {"running": True, "progress": [], "error": None, "result": None}
+    _edge_disk_build_status = {
+        "running": True, "progress": [], "error": None, "result": None,
+        "target": body.target, "mode": body.mode,
+    }
 
     headend_url = os.getenv("TIMELAPSE_HEADEND_URL", "https://timelapse.froekjaer.dk/api")
     gpg_key_id = os.getenv("CHANGE_TICKET_GPG_KEY") or os.getenv("TIMELAPSE_GPG_KEY")
@@ -10510,11 +10601,17 @@ def trigger_edge_disk_image_build(
     t = _threading.Thread(
         target=_run_edge_disk_image_build,
         args=(headend_url, gpg_key_id, output_dir, _SessionLocal),
+        kwargs={"target": body.target, "mode": body.mode, "bootstrap_token": body.bootstrap_token},
         daemon=True,
         name="edge-disk-image-build",
     )
     t.start()
-    return {"status": "started", "message": "Build startet — poll /api/admin/edge-provisioning/disk-image-status"}
+    return {
+        "status": "started",
+        "target": body.target,
+        "mode": body.mode,
+        "message": f"Build startet [{body.target}, mode={body.mode}] — poll /api/admin/edge-provisioning/disk-image-status",
+    }
 
 
 @app.get("/api/admin/edge-provisioning/disk-image-status")
@@ -10522,12 +10619,37 @@ def edge_disk_image_status(_user=require_role("super_admin", "admin")):
     """Poll build-fremgang for edge disk image."""
     s = _edge_disk_build_status
     return {
-        "running": s["running"],
+        "running":  s["running"],
         "progress": s["progress"],
-        "error": s["error"],
-        "result": s["result"],
-        "ready": not s["running"] and s["result"] is not None,
+        "error":    s["error"],
+        "result":   s["result"],
+        "ready":    not s["running"] and s["result"] is not None,
+        "target":   s.get("target"),
+        "mode":     s.get("mode"),
     }
+
+
+@app.get("/api/admin/edge-provisioning/targets")
+def list_edge_targets(_user=require_role("super_admin", "admin")):
+    """List tilgængelige hardware targets til edge image build."""
+    import yaml as _yaml
+    hw_dir = _repo_root() / "headend" / "tools" / "hardware"
+    targets = []
+    for target_yaml in sorted(hw_dir.glob("*/target.yaml")):
+        try:
+            tgt = _yaml.safe_load(target_yaml.read_text()) or {}
+            targets.append({
+                "id":           tgt.get("id", target_yaml.parent.name),
+                "display_name": tgt.get("display_name", target_yaml.parent.name),
+                "arch":         tgt.get("arch", "arm64"),
+                "soc":          tgt.get("soc"),
+                "hal_class":    tgt.get("hal_class"),
+                "flashable":    tgt.get("base_image", {}).get("type") != "install_script",
+                "install_script": tgt.get("base_image", {}).get("type") == "install_script",
+            })
+        except Exception as exc:
+            log.warning("Kunne ikke læse %s: %s", target_yaml, exc)
+    return {"targets": targets}
 
 
 @app.get("/api/admin/edge-provisioning/disk-image-download/{artifact_id}")
