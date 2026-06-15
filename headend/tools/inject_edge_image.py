@@ -465,7 +465,6 @@ def _inject_via_docker(
         work_img  = work_dir / "base.img"
         work_root = work_dir / "rootfs.tar.gz"
         work_bstp = work_dir / "bootstrap.yaml"
-        work_scrp = work_dir / "inject.sh"
 
         progress(f"   Kopierer base-image til arbejdsmappe ({base_img.stat().st_size // (1024*1024)} MB)...")
         shutil.copy2(base_img, work_img)
@@ -474,8 +473,6 @@ def _inject_via_docker(
         shutil.copy2(rootfs_tar, work_root)
 
         work_bstp.write_text(bootstrap_yaml, encoding="utf-8")
-        work_scrp.write_text(_INJECT_SCRIPT)
-        work_scrp.chmod(0o755)
 
         # Root-partition nummer fra target.yaml
         # None = auto-detect (Armbian single-partition), default=auto
@@ -485,14 +482,18 @@ def _inject_via_docker(
         progress(f"   Starter Docker injection container (--privileged)...")
         progress(f"   Root partition: {'auto-detect' if root_part == 'auto' else 'p' + root_part}")
 
+        # inject.sh sendes via stdin (bash -s) i stedet for at skrive til
+        # /work/ — undgår macOS VirtioFS-synk-timing der kan gøre filen
+        # usynlig i containeren kort efter skrivning.
         result = subprocess.run(
             [
                 "docker", "run", "--rm", "--privileged",
                 "-e", f"ROOT_PARTITION={root_part}",
                 "-v", f"{work_dir}:/work",
                 "ubuntu:22.04",
-                "bash", "/work/inject.sh",
+                "bash", "-s",
             ],
+            input=_INJECT_SCRIPT,
             capture_output=True,
             text=True,
             timeout=600,
