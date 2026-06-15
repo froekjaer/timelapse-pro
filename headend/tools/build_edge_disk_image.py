@@ -108,25 +108,69 @@ def _find_docker() -> str:
     )
 
 
-def _docker_build_cmd(docker_bin: str, progress: Callable[[str], None]) -> list[str]:
-    """Returner [docker, buildx, build] hvis buildx er tilgængeligt,
-    ellers [docker, build] med DOCKER_BUILDKIT-env (sættes i _run_docker_build).
+def _docker_config_dir() -> str | None:
+    """Find Docker config-mappe med buildx-plugin.
 
-    Grunden til at vi tjekker: launchd kan have en ældre docker-wrapper i PATH
-    der ikke kender til buildx-subcommanden.
+    Headend kører som root, men Docker Desktop og buildx er installeret for den
+    normale bruger. Vi leder efter ~/.docker/cli-plugins/docker-buildx i kendte
+    home-mapper og returnerer den config-mappe der indeholder pluginnet.
+    Sæt DOCKER_CONFIG til denne værdi, så docker CLI finder buildx uanset
+    hvilken bruger der kører processen.
     """
+    import glob as _glob
+    candidates: list[str] = []
+
+    # Nuværende brugers home
+    candidates.append(os.path.expanduser("~/.docker"))
+    # Kendte macOS-brugere (Docker Desktop installeres per-bruger)
+    for match in _glob.glob("/Users/*/.docker"):
+        if match not in candidates:
+            candidates.append(match)
+    # Linux system-wide plugins
+    candidates += [
+        "/usr/local/lib/docker",
+        "/usr/lib/docker",
+    ]
+
+    for config in candidates:
+        plugin = os.path.join(config, "cli-plugins", "docker-buildx")
+        if os.path.isfile(plugin) and os.access(plugin, os.X_OK):
+            return config
+    return None
+
+
+def _docker_build_cmd(
+    docker_bin: str,
+    progress: Callable[[str], None],
+    build_env: dict,
+) -> list[str]:
+    """Returner [docker, buildx, build] hvis buildx er tilgængeligt.
+
+    Sætter DOCKER_CONFIG i build_env hvis vi finder buildx-plugin'et i en
+    anden brugers home (f.eks. når headend kører som root men Docker Desktop
+    er installeret for bruger peter).
+    """
+    # Sæt DOCKER_CONFIG til den config-mappe der har buildx-plugin'et
+    config_dir = _docker_config_dir()
+    if config_dir:
+        build_env["DOCKER_CONFIG"] = config_dir
+
     try:
         r = subprocess.run(
             [docker_bin, "buildx", "version"],
             capture_output=True, text=True, timeout=10,
+            env=build_env,
         )
         if r.returncode == 0:
             progress(f"   docker buildx tilgængeligt: {r.stdout.strip().splitlines()[0]}")
             return [docker_bin, "buildx", "build"]
     except Exception as exc:
-        progress(f"   ⚠️  buildx check fejlede ({exc}) — falder tilbage til BuildKit build")
-    progress("   Bruger 'docker build' med DOCKER_BUILDKIT=1 (buildx ikke tilgængeligt)")
-    return [docker_bin, "build"]
+        progress(f"   ⚠️  buildx check fejlede ({exc})")
+    progress("   ⚠️  buildx ikke tilgængeligt — kan ikke bygge cross-platform image")
+    raise RuntimeError(
+        "docker buildx er påkrævet for cross-platform builds (linux/arm64, linux/arm/v7).\n"
+        "Installer Docker Desktop og kør: docker buildx create --use"
+    )
 
 
 def _run(cmd: list[str], progress: Callable[[str], None], **kwargs) -> subprocess.CompletedProcess:
@@ -292,8 +336,9 @@ def build_edge_image(
     progress_cb(f"   Docker:     {docker_bin}")
     progress_cb(f"   Dockerfile: {dockerfile.name}")
 
-    build_cmd = _docker_build_cmd(docker_bin, progress_cb)
     build_env = {**os.environ, "DOCKER_BUILDKIT": "1"}
+    build_cmd = _docker_build_cmd(docker_bin, progress_cb, build_env)
+    progress_cb(f"   DOCKER_CONFIG: {build_env.get('DOCKER_CONFIG', '(default)')}")
 
     _run(
         build_cmd + [
