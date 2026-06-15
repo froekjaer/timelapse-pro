@@ -1175,18 +1175,7 @@ function IsoTab({
 
             {/* Progress log */}
             {diskBuildStatus && diskBuildStatus.progress.length > 0 && (
-              <div className="mt-3 rounded-lg bg-gray-950 p-3 max-h-64 overflow-y-auto text-xs font-mono">
-                {diskBuildStatus.progress.map((line, i) => (
-                  <div key={i} className={
-                    line.startsWith('✅') ? 'text-emerald-400' :
-                    line.startsWith('❌') ? 'text-red-400' :
-                    line.startsWith('⚠️') ? 'text-amber-400' :
-                    line.startsWith('🎉') ? 'text-sky-400' :
-                    line.startsWith('💉') ? 'text-purple-400' :
-                    'text-gray-300'
-                  }>{line}</div>
-                ))}
-              </div>
+              <BuildLog lines={diskBuildStatus.progress} running={diskBuildStatus.running} />
             )}
 
             {diskBuildStatus?.error && (
@@ -1287,6 +1276,97 @@ function IsoTab({
           </div>
         </section>
       )}
+    </div>
+  )
+}
+
+/** Auto-scrollende log-viewer med pause/play/reset kontrol */
+function BuildLog({ lines, running }: { lines: string[]; running: boolean }) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [autoScroll, setAutoScroll] = useState(true)
+
+  // Auto-scroll til bunden når nye linjer ankommer
+  useEffect(() => {
+    if (autoScroll && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [lines.length, autoScroll])
+
+  // Detektér manuel scroll op → pauser auto-scroll
+  function handleScroll() {
+    const el = containerRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32
+    if (!atBottom) setAutoScroll(false)
+    else setAutoScroll(true)
+  }
+
+  function scrollToBottom() {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    setAutoScroll(true)
+  }
+
+  function clearLog() {
+    // Vi kan ikke rydde lines udefra — scroll bare til top
+    containerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    setAutoScroll(false)
+  }
+
+  return (
+    <div className="mt-3 rounded-lg bg-gray-950 overflow-hidden">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-3 py-1.5 bg-gray-900 border-b border-gray-800">
+        <div className="flex items-center gap-1.5">
+          <div className={`w-1.5 h-1.5 rounded-full ${running ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`} />
+          <span className="text-[10px] text-gray-400 font-mono">{running ? 'kører…' : 'færdig'} · {lines.length} linjer</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            title={autoScroll ? 'Pause auto-scroll' : 'Genoptag auto-scroll'}
+            onClick={() => autoScroll ? setAutoScroll(false) : scrollToBottom()}
+            className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+              autoScroll
+                ? 'bg-emerald-900 text-emerald-400 hover:bg-emerald-800'
+                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            }`}
+          >
+            {autoScroll ? '⏸ pause' : '▶ følg'}
+          </button>
+          <button
+            title="Scroll til bunden"
+            onClick={scrollToBottom}
+            className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 hover:bg-gray-700"
+          >
+            ↓ bund
+          </button>
+          <button
+            title="Scroll til toppen"
+            onClick={clearLog}
+            className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-800 text-gray-400 hover:bg-gray-700"
+          >
+            ↑ top
+          </button>
+        </div>
+      </div>
+      {/* Log indhold */}
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="p-3 max-h-72 overflow-y-auto text-xs font-mono"
+      >
+        {lines.map((line, i) => (
+          <div key={i} className={
+            line.startsWith('✅') ? 'text-emerald-400' :
+            line.startsWith('❌') ? 'text-red-400' :
+            line.startsWith('⚠️') ? 'text-amber-400' :
+            line.startsWith('🎉') ? 'text-sky-400' :
+            line.startsWith('💉') ? 'text-purple-400' :
+            'text-gray-300'
+          }>{line}</div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
     </div>
   )
 }
