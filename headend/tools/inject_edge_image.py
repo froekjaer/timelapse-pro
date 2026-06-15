@@ -674,6 +674,19 @@ Match User tl-debug
     PasswordAuthentication yes
 SSHDMATCH_EOF
     echo "[inject]   tl-debug: password-login tilladt via Match User"
+
+    # Ubuntu preinstalled image har cloud-img-override der underkender ovenstående.
+    # Fjern eller overskriv den så vores sshd_config faktisk gælder.
+    SSHD_CONF_D=/mnt/root/etc/ssh/sshd_config.d
+    if [ -f "$SSHD_CONF_D/60-cloudimg-settings.conf" ]; then
+        rm -f "$SSHD_CONF_D/60-cloudimg-settings.conf"
+        echo "[inject]   Fjernet cloud-img SSH override (60-cloudimg-settings.conf)"
+    fi
+    # Sørg for ingen anden fil i sshd_config.d sætter PasswordAuthentication
+    for f in "$SSHD_CONF_D"/*.conf; do
+        [ -f "$f" ] || continue
+        sed -i 's/^PasswordAuthentication.*/# &/' "$f" 2>/dev/null || true
+    done
 fi
 
 # ── Rettigheder ───────────────────────────────────────────────────────────────
