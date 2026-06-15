@@ -90,6 +90,7 @@ def _sign_manifest(
             tmp = f.name
         result = subprocess.run(
             ["gpg", "--batch", "--yes", "--armor",
+             "--pinentry-mode", "loopback",
              "--local-user", gpg_key_id,
              "--detach-sign", "--output", "-", tmp],
             capture_output=True, text=True, timeout=20,
