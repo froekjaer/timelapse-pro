@@ -3192,9 +3192,55 @@ def list_cameras(
             "network_type":  getattr(cam, "network_type", "ethernet") or "ethernet",
             "wifi_ssid":     getattr(cam, "wifi_ssid", None),
             "wifi_country":  getattr(cam, "wifi_country", "DK") or "DK",
-            # wifi_password returneres IKKE i list-endpoint af sikkerhedshensyn
+            # wifi_password + ssh_private_key returneres IKKE her af sikkerhedshensyn
+            # SSH / reverse tunnel (v8)
+            "ssh_public_key":      getattr(cam, "ssh_public_key", None),
+            "reverse_tunnel_port": getattr(cam, "reverse_tunnel_port", None),
         })
     return result
+
+
+@app.get("/api/admin/cameras/{camera_id}/ssh-key")
+def download_camera_ssh_key(
+    camera_id: str,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Hent SSH private key til direkte SSH-adgang til edge-enhed (via reverse tunnel).
+    Returnerer PEM-formateret Ed25519 private key som plaintext fil."""
+    from database import Camera as _Camera
+    from fastapi.responses import PlainTextResponse
+    cam = db.query(_Camera).filter_by(id=camera_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+    pk = getattr(cam, "ssh_private_key", None)
+    if not pk:
+        raise HTTPException(status_code=404, detail="Ingen SSH-nøgle genereret for dette kamera endnu")
+    safe_name = (cam.camera_name or camera_id).replace(" ", "_").replace("/", "-")
+    return PlainTextResponse(
+        content=pk,
+        headers={"Content-Disposition": f'attachment; filename="timelapse_{safe_name}.pem"'},
+    )
+
+
+@app.get("/api/admin/headend/ssh-public-key")
+def get_headend_ssh_public_key(
+    _user=require_role("super_admin", "admin"),
+):
+    """Returnerer headendens SSH public key — injectes i edge-images authorized_keys
+    så headenden kan SSH direkte ind i enheden."""
+    import os, subprocess as _sp
+    key_path = os.path.expanduser("~/.ssh/timelapse_headend_ed25519")
+    pub_path  = key_path + ".pub"
+    if not os.path.exists(pub_path):
+        # Generer headend-nøgle første gang
+        _sp.run(
+            ["ssh-keygen", "-t", "ed25519", "-f", key_path, "-N", "", "-C", "timelapse-headend"],
+            check=True, capture_output=True,
+        )
+        log.info("Headend SSH keypair genereret: %s", key_path)
+    return {"public_key": open(pub_path).read().strip()}
+
 
 @app.post("/api/admin/cameras")
 def create_camera(
@@ -10493,6 +10539,34 @@ def prepare_edge_provisioning(
                 cam_rec.wifi_country = payload.wifi_country or "DK"
             log.info("Netværksconfig opdateret for kamera %s: %s", camera_id, payload.network_type)
 
+    # Generér SSH keypair + tildel reverse tunnel port (v8)
+    if camera_id:
+        from database import Camera as _Camera
+        cam_rec = db.query(_Camera).filter_by(id=camera_id).first()
+        if cam_rec and not getattr(cam_rec, "ssh_private_key", None):
+            # Generer unik Ed25519 nøgle til denne enhed
+            import tempfile, subprocess as _sp, os as _os
+            with tempfile.TemporaryDirectory() as _td:
+                _kpath = _os.path.join(_td, "id_ed25519")
+                _sp.run(
+                    ["ssh-keygen", "-t", "ed25519", "-f", _kpath, "-N", "",
+                     "-C", f"timelapse-{camera_id[:8]}"],
+                    check=True, capture_output=True,
+                )
+                cam_rec.ssh_private_key = open(_kpath).read()
+                cam_rec.ssh_public_key  = open(_kpath + ".pub").read().strip()
+            log.info("SSH keypair genereret for kamera %s", camera_id)
+        if cam_rec and not getattr(cam_rec, "reverse_tunnel_port", None):
+            # Tildel næste ledige port fra 2201
+            from database import Camera as _Camera2
+            existing_ports = [
+                r[0] for r in db.query(_Camera2.reverse_tunnel_port)
+                .filter(_Camera2.reverse_tunnel_port.isnot(None)).all()
+            ]
+            cam_rec.reverse_tunnel_port = max(existing_ports, default=2200) + 1
+            log.info("Reverse tunnel port tildelt: %d for kamera %s",
+                     cam_rec.reverse_tunnel_port, camera_id)
+
     token_rec = BootstrapToken(
         token=token_str,
         device_label=location_name,
@@ -10851,6 +10925,7 @@ class InjectWifiRequest(BaseModel):
     wifi_password: str
     wifi_country: str = "DK"
     wifi_method: str = "auto"   # "auto" | "netplan" | "wpa_supplicant"
+    camera_id: Optional[str] = None  # bruges til at hente SSH-nøgler fra DB
 
 
 _wifi_inject_status: dict = {
@@ -10866,6 +10941,7 @@ def _run_wifi_inject(
     wifi_country: str,
     wifi_method: str,
     db_factory,
+    camera_id: str | None = None,
 ) -> None:
     """Background thread: injectér WiFi i eksisterende flashbart image."""
     global _wifi_inject_status
@@ -10916,6 +10992,32 @@ def _run_wifi_inject(
                 target_id = known
                 break
 
+        # Hent SSH-parametre fra Camera hvis camera_id er angivet
+        ssh_private_key: str | None = None
+        headend_ssh_public_key: str | None = None
+        reverse_tunnel_port: int | None = None
+        if camera_id:
+            db_ssh = db_factory()
+            try:
+                from database import Camera as _Camera
+                cam_ssh = db_ssh.query(_Camera).filter_by(id=camera_id).first()
+                if cam_ssh:
+                    ssh_private_key    = getattr(cam_ssh, "ssh_private_key", None)
+                    reverse_tunnel_port = getattr(cam_ssh, "reverse_tunnel_port", None)
+            finally:
+                db_ssh.close()
+            # Hent headend public key
+            try:
+                import os as _os
+                _pub = _os.path.expanduser("~/.ssh/timelapse_headend_ed25519.pub")
+                if _os.path.exists(_pub):
+                    headend_ssh_public_key = open(_pub).read().strip()
+            except Exception:
+                pass
+
+        if ssh_private_key:
+            progress(f"   🔑 SSH inject aktiveret (tunnel port {reverse_tunnel_port})")
+
         # Lang operation — ingen åben DB-session
         result = inject_wifi_image(
             gz_path=gz_path,
@@ -10927,6 +11029,9 @@ def _run_wifi_inject(
             output_dir=output_dir,
             progress_cb=progress,
             repo_root=str(_repo_root()),
+            ssh_private_key=ssh_private_key,
+            headend_ssh_public_key=headend_ssh_public_key,
+            reverse_tunnel_port=reverse_tunnel_port,
         )
 
         # Ny DB-session til INSERT (den gamle er timed out)
@@ -10988,7 +11093,8 @@ def inject_wifi_endpoint(
     t = _threading.Thread(
         target=_run_wifi_inject,
         args=(body.artifact_id, body.wifi_ssid, body.wifi_password,
-              body.wifi_country, body.wifi_method, _SessionLocal),
+              body.wifi_country, body.wifi_method, _SessionLocal,
+              body.camera_id),
         daemon=True,
         name="wifi-inject",
     )

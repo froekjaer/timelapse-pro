@@ -23,6 +23,12 @@ import re
 import threading
 import time
 from collections import defaultdict, deque
+
+# ── Notifikations-cooldown (undgår alert storm) ───────────────────────────────
+# Nøgle: (device_id, event_type) → timestamp for sidst sendte notifikation
+_notify_cooldown: dict[tuple, float] = {}
+_notify_cooldown_lock = threading.Lock()
+NOTIFY_COOLDOWN_SECONDS = 300  # maks 1 email per type per enhed per 5 min
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -431,15 +437,27 @@ def ingest_events(device_id: str, payload: dict, db: Session = Depends(get_db)):
                     norm = _normalize_event(ev)
                     sev = str(norm.get("severity", "")).upper()
                     if sev in ("CRITICAL", "ERROR"):
+                        ev_type = norm.get("event_type", ev.get("category", "event"))
+                        cooldown_key = (device_id, ev_type)
+                        now_ts = time.time()
+                        with _notify_cooldown_lock:
+                            last_sent = _notify_cooldown.get(cooldown_key, 0)
+                            if now_ts - last_sent < NOTIFY_COOLDOWN_SECONDS:
+                                log.debug(
+                                    "SIEM notify suppressed (cooldown): %s / %s",
+                                    device_id, ev_type,
+                                )
+                                continue
+                            _notify_cooldown[cooldown_key] = now_ts
                         notify({
-                            "rule_name":   f"SIEM: {norm.get('event_type', ev.get('category', 'event'))}",
+                            "rule_name":   f"SIEM: {ev_type}",
                             "rule_id":     "siem",
                             "severity":    "critical" if sev == "CRITICAL" else "warning",
                             "device_id":   device_id,
                             "description": norm.get("raw_message") or ev.get("message", ""),
                             "matched_on":  [
                                 f"severity:{sev}",
-                                f"type:{norm.get('event_type', '?')}",
+                                f"type:{ev_type}",
                             ],
                             "confidence":  1.0,
                             "triggered_at": datetime.now(timezone.utc).isoformat(),

@@ -174,7 +174,11 @@ def _enroll(
     Kald POST {headend_url}/api/devices/enroll og returner svaret.
     Forsøger op til `retries` gange med `delay_s` sekunders interval.
     """
-    url = headend_url.rstrip("/") + "/api/devices/enroll"
+    # Strip evt. /api-suffix fra headend_url så vi ikke får /api/api/...
+    _base = headend_url.rstrip("/")
+    if _base.endswith("/api"):
+        _base = _base[:-4]
+    url = _base + "/api/devices/enroll"
     payload = {
         "bootstrap_token": bootstrap_token,
         "device_id":       device_id,

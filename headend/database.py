@@ -237,6 +237,10 @@ class Camera(Base):
     wifi_ssid     = Column(String(200))
     wifi_password = Column(String(200))
     wifi_country  = Column(String(2), default="DK")
+    # SSH keypair + reverse tunnel (v8 migration) — unik per enhed, genereret ved provisioning
+    ssh_private_key     = Column(Text,    default=None)
+    ssh_public_key      = Column(Text,    default=None)
+    reverse_tunnel_port = Column(Integer, default=None)
 
 
 class DeviceAssignment(Base):

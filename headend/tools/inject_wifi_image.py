@@ -107,6 +107,89 @@ losetup -d "$LOOP"
 echo "[wifi-inject] WIFI_INJECT_OK"
 """
 
+_SSH_INJECT_SCRIPT = r"""#!/bin/bash
+set -euo pipefail
+
+BASE_IMG="/work/base.img"
+LOOP=$(losetup -f --show -o "${OFFSET_BYTES}" "$BASE_IMG")
+echo "[ssh-inject] Loop device: $LOOP"
+mkdir -p /mnt/root
+mount "$LOOP" /mnt/root
+
+# ── SSH authorized_keys (headend → edge) ─────────────────────────────────────
+if [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
+    echo "[ssh-inject] Injecterer headend public key..."
+    for USER_HOME in /mnt/root/home/orangepi /mnt/root/home/ubuntu /mnt/root/home/pi /mnt/root/root; do
+        if [ -d "$USER_HOME" ]; then
+            mkdir -p "$USER_HOME/.ssh"
+            grep -qxF "${HEADEND_SSH_PUBLIC_KEY}" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null \
+                || echo "${HEADEND_SSH_PUBLIC_KEY}" >> "$USER_HOME/.ssh/authorized_keys"
+            chmod 700 "$USER_HOME/.ssh"
+            chmod 600 "$USER_HOME/.ssh/authorized_keys"
+            [ "$USER_HOME" = "/mnt/root/root" ] && chown -R 0:0 "$USER_HOME/.ssh" || chown -R 1000:1000 "$USER_HOME/.ssh" || true
+            echo "[ssh-inject]   Key tilføjet: $USER_HOME/.ssh/authorized_keys"
+        fi
+    done
+fi
+
+# ── Device private key + reverse tunnel service ───────────────────────────────
+if [ -n "${SSH_PRIVATE_KEY:-}" ] && [ -n "${TUNNEL_PORT:-}" ]; then
+    echo "[ssh-inject] Injecterer device SSH private key..."
+    mkdir -p /mnt/root/etc/timelapse/ssh
+    printf '%s' "${SSH_PRIVATE_KEY}" > /mnt/root/etc/timelapse/ssh/tunnel_id_ed25519
+    chmod 600 /mnt/root/etc/timelapse/ssh/tunnel_id_ed25519
+
+    HEADEND_HOST="${HEADEND_HOST:-timelapse.froekjaer.dk}"
+    HEADEND_PORT="${HEADEND_PORT:-22}"
+    HEADEND_USER="${HEADEND_USER:-peter}"
+
+    cat > /mnt/root/etc/timelapse/ssh/tunnel.conf << CONF_EOF
+TUNNEL_PORT=${TUNNEL_PORT}
+HEADEND_HOST=${HEADEND_HOST}
+HEADEND_PORT=${HEADEND_PORT}
+HEADEND_USER=${HEADEND_USER}
+CONF_EOF
+
+    cat > /mnt/root/etc/systemd/system/timelapse-tunnel.service << SVC_EOF
+[Unit]
+Description=TimeLapse Pro SSH Reverse Tunnel
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+Environment="AUTOSSH_GATETIME=0"
+ExecStartPre=/bin/bash -c 'which autossh || apt-get install -y -q autossh'
+ExecStart=/usr/bin/autossh -M 0 -N \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o StrictHostKeyChecking=no \
+  -o ExitOnForwardFailure=yes \
+  -o BatchMode=yes \
+  -i /etc/timelapse/ssh/tunnel_id_ed25519 \
+  -R ${TUNNEL_PORT}:localhost:22 \
+  ${HEADEND_USER}@${HEADEND_HOST} -p ${HEADEND_PORT}
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+SVC_EOF
+
+    mkdir -p /mnt/root/etc/systemd/system/multi-user.target.wants
+    ln -sf /etc/systemd/system/timelapse-tunnel.service \
+        /mnt/root/etc/systemd/system/multi-user.target.wants/timelapse-tunnel.service
+    echo "[ssh-inject]   timelapse-tunnel.service aktiveret (port ${TUNNEL_PORT})"
+fi
+
+sync
+umount /mnt/root
+losetup -d "$LOOP"
+echo "[ssh-inject] SSH_INJECT_OK"
+"""
+
 
 def _find_repo_root() -> Path:
     """Find git-repo root fra denne fils placering."""
@@ -174,22 +257,34 @@ def inject_wifi_image(
     output_dir: str | Path | None = None,
     progress_cb: Callable[[str], None] = print,
     repo_root: str | Path | None = None,
+    # SSH inject (v8)
+    ssh_private_key: str | None = None,
+    headend_ssh_public_key: str | None = None,
+    reverse_tunnel_port: int | None = None,
+    headend_host: str = "timelapse.froekjaer.dk",
+    headend_port: int = 22,
+    headend_user: str = "peter",
 ) -> dict:
     """
-    Injectér WiFi-konfiguration i et eksisterende flashbart .img.gz.
+    Injectér WiFi-konfiguration (og valgfrit SSH-nøgler + reverse tunnel) i et eksisterende flashbart image.
 
     Args:
-        gz_path:        Sti til eksisterende .img.gz
-        wifi_ssid:      WiFi SSID
-        wifi_password:  WiFi adgangskode
-        wifi_country:   Landekode (default: DK)
-        wifi_method:    "wpa_supplicant" | "netplan" | "auto"
-                        "auto" aflæser fra target.yaml hvis target_id angives
-        target_id:      Hardware target ID til auto-detect af wifi_method
-        root_partition: Root-partition nummer (default: 1)
-        output_dir:     Output-mappe (None = samme som input)
-        progress_cb:    Callback for statusbeskeder
-        repo_root:      Git-repo root (None = auto-detect)
+        gz_path:                Sti til eksisterende .img.gz eller .img
+        wifi_ssid:              WiFi SSID
+        wifi_password:          WiFi adgangskode
+        wifi_country:           Landekode (default: DK)
+        wifi_method:            "wpa_supplicant" | "netplan" | "auto"
+        target_id:              Hardware target ID til auto-detect af wifi_method
+        root_partition:         Root-partition nummer (default: 1)
+        output_dir:             Output-mappe (None = samme som input)
+        progress_cb:            Callback for statusbeskeder
+        repo_root:              Git-repo root (None = auto-detect)
+        ssh_private_key:        Device Ed25519 private key (PEM) — til reverse tunnel
+        headend_ssh_public_key: Headend public key — tilføjes device's authorized_keys
+        reverse_tunnel_port:    Port på headend til reverse tunnel (fx 2202)
+        headend_host:           Headend hostname (default: timelapse.froekjaer.dk)
+        headend_port:           Headend SSH port (default: 22)
+        headend_user:           Headend SSH bruger (default: peter)
 
     Returnerer dict med:
         output_path, filename, sha256, size_bytes
@@ -259,8 +354,10 @@ def inject_wifi_image(
         offset_bytes = _read_partition_offset(tmp_img, effective_root_partition, progress_cb)
         progress_cb(f"   Partition {effective_root_partition} offset: {offset_bytes} bytes")
 
-        # ── Step 3: Docker WiFi-injektion ─────────────────────────────────────
-        progress_cb(f"\n🔨 Step 3/4: Injecterer WiFi via Docker --privileged...")
+        # Afgør hvad der skal injectes
+        do_ssh = bool(ssh_private_key or headend_ssh_public_key)
+        step_label = "WiFi+SSH" if do_ssh else "WiFi"
+        progress_cb(f"\n🔨 Step 3/4: Injecterer {step_label} via Docker --privileged...")
 
         docker_cmd = [
             "docker", "run", "-d", "--privileged",
@@ -269,6 +366,13 @@ def inject_wifi_image(
             "-e", f"WIFI_SSID={wifi_ssid}",
             "-e", f"WIFI_PASSWORD={wifi_password}",
             "-e", f"WIFI_COUNTRY={wifi_country or 'DK'}",
+            # SSH env vars (tomme strenge hvis ikke angivet)
+            "-e", f"HEADEND_SSH_PUBLIC_KEY={headend_ssh_public_key or ''}",
+            "-e", f"SSH_PRIVATE_KEY={ssh_private_key or ''}",
+            "-e", f"TUNNEL_PORT={reverse_tunnel_port or ''}",
+            "-e", f"HEADEND_HOST={headend_host}",
+            "-e", f"HEADEND_PORT={headend_port}",
+            "-e", f"HEADEND_USER={headend_user}",
             "ubuntu:22.04", "sleep", "300",
         ]
         start = subprocess.run(docker_cmd, capture_output=True, text=True, check=True)
@@ -292,15 +396,29 @@ def inject_wifi_image(
                 input=_WIFI_INJECT_SCRIPT,
                 capture_output=True, text=True, timeout=300,
             )
-
             for line in (result.stdout + result.stderr).splitlines():
                 if line.strip():
                     progress_cb(f"   {line}")
-
             if result.returncode != 0:
                 raise RuntimeError(f"WiFi injection fejlede (rc={result.returncode})")
             if "WIFI_INJECT_OK" not in result.stdout:
                 raise RuntimeError("WiFi injection script returnerede ikke WIFI_INJECT_OK")
+
+            # ── SSH inject (køres i samme container, image allerede mounted) ──
+            if do_ssh:
+                progress_cb(f"   Kører SSH inject-script...")
+                ssh_result = subprocess.run(
+                    ["docker", "exec", "-i", container_id, "bash", "-s"],
+                    input=_SSH_INJECT_SCRIPT,
+                    capture_output=True, text=True, timeout=120,
+                )
+                for line in (ssh_result.stdout + ssh_result.stderr).splitlines():
+                    if line.strip():
+                        progress_cb(f"   {line}")
+                if ssh_result.returncode != 0:
+                    raise RuntimeError(f"SSH injection fejlede (rc={ssh_result.returncode})")
+                if "SSH_INJECT_OK" not in ssh_result.stdout:
+                    raise RuntimeError("SSH injection script returnerede ikke SSH_INJECT_OK")
 
             progress_cb(f"   Kopierer modificeret image fra container...")
             subprocess.run(
