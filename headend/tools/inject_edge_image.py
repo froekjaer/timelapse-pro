@@ -631,7 +631,7 @@ def _inject_via_docker(
         "-e", f"WIFI_SSID={wifi_ssid}",
         "-e", f"WIFI_PASSWORD={wifi_password}",
         "-e", f"WIFI_COUNTRY={wifi_country or 'DK'}",
-        "ubuntu:22.04", "sleep", "600",
+        "ubuntu:22.04", "sleep", "3600",
     ]
     start = subprocess.run(
         docker_cmd,
@@ -691,11 +691,16 @@ def _inject_via_docker(
             raise RuntimeError("Injection script returnerede ikke INJECTION_OK")
 
         # ── 4. Kopiér modificeret image ud ───────────────────────────────────
-        progress(f"   Kopierer modificeret image ud af container...")
-        subprocess.run(
+        progress(f"   Kopierer modificeret image ud af container ({base_img.stat().st_size // (1024*1024)} MB)...")
+        cp_result = subprocess.run(
             ["docker", "cp", f"{container_id}:/work/base.img", str(output_img)],
-            check=True, capture_output=True,
+            capture_output=True, text=True, timeout=1800,
         )
+        if cp_result.returncode != 0:
+            raise RuntimeError(
+                f"docker cp ud fejlede (rc={cp_result.returncode}): "
+                f"{(cp_result.stderr or cp_result.stdout or '').strip()[:500]}"
+            )
 
         progress(f"✅ Injection OK")
 
