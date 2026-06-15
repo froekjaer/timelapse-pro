@@ -10776,6 +10776,30 @@ def list_edge_targets(_user=require_role("super_admin", "admin")):
     return {"targets": targets}
 
 
+@app.get("/api/admin/edge-provisioning/disk-images")
+def list_flashable_disk_images(_user=require_role("super_admin", "admin"), db: Session = Depends(get_db)):
+    """List alle flashable disk images (klar til WiFi-injektion eller download)."""
+    artifacts = (
+        db.query(UpdateArtifact)
+        .filter(UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]))
+        .order_by(UpdateArtifact.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return [
+        {
+            "artifact_id": a.artifact_id,
+            "filename": a.filename,
+            "artifact_type": a.artifact_type,
+            "size_bytes": a.size_bytes,
+            "sha256": a.sha256,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "exists_on_disk": bool(a.storage_path and os.path.exists(a.storage_path)),
+        }
+        for a in artifacts
+    ]
+
+
 @app.get("/api/admin/edge-provisioning/disk-image-download/{artifact_id}")
 def download_edge_disk_image(artifact_id: str, _user=require_role("super_admin", "admin"), db: Session = Depends(get_db)):
     """Download færdigt edge disk image (rootfs tarball)."""

@@ -1012,6 +1012,30 @@ function IsoTab({
   const [wifiInjectError, setWifiInjectError] = useState<string | null>(null)
   const wifiInjectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Liste over eksisterende disk images
+  type DiskImageEntry = { artifact_id: string; filename: string | null; artifact_type: string; size_bytes: number | null; created_at: string | null; exists_on_disk: boolean }
+  const [diskImageList, setDiskImageList] = useState<DiskImageEntry[]>([])
+  const [diskImageListLoading, setDiskImageListLoading] = useState(false)
+
+  async function loadDiskImageList() {
+    setDiskImageListLoading(true)
+    try {
+      const r = await api('/admin/edge-provisioning/disk-images')
+      if (r.ok) setDiskImageList(await r.json())
+    } finally {
+      setDiskImageListLoading(false)
+    }
+  }
+
+  // Indlæs listen når WiFi-panelet åbnes
+  function openWifiInjectPanel(artifactId = '') {
+    setWifiInjectArtifactId(artifactId)
+    setWifiInjectResult(null)
+    setWifiInjectError(null)
+    setWifiInjectOpen(true)
+    loadDiskImageList()
+  }
+
   function startWifiInjectPoll() {
     if (wifiInjectPollRef.current) return
     wifiInjectPollRef.current = setInterval(async () => {
@@ -1352,12 +1376,7 @@ function IsoTab({
                   </a>
                   {diskBuildStatus.result.mode === 'flashable' && (
                     <button
-                      onClick={() => {
-                        setWifiInjectArtifactId(diskBuildStatus!.result!.artifact_id)
-                        setWifiInjectOpen(true)
-                        setWifiInjectResult(null)
-                        setWifiInjectError(null)
-                      }}
+                      onClick={() => openWifiInjectPanel(diskBuildStatus!.result!.artifact_id)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs"
                     >
                       <Wifi className="w-3 h-3" />
@@ -1381,16 +1400,63 @@ function IsoTab({
                 <p className="text-blue-700 mb-3">
                   Producerer et nyt .img.gz med WiFi-config bagt ind — originalen bevares urørt.
                 </p>
-                <div className="mb-2">
-                  <label className="block text-blue-700 mb-1">Artifact ID</label>
-                  <input
-                    value={wifiInjectArtifactId}
-                    onChange={e => setWifiInjectArtifactId(e.target.value)}
-                    placeholder="TL-FLASH-IMG-..."
-                    disabled={wifiInjectRunning}
-                    className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-blue-300 disabled:opacity-50"
-                  />
+
+                {/* Image-vælger */}
+                <div className="mb-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-blue-700 font-medium">Vælg image</label>
+                    <button
+                      onClick={loadDiskImageList}
+                      disabled={diskImageListLoading}
+                      className="flex items-center gap-1 text-blue-500 hover:text-blue-700 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${diskImageListLoading ? 'animate-spin' : ''}`} />
+                      Opdater
+                    </button>
+                  </div>
+                  {diskImageList.length === 0 && !diskImageListLoading && (
+                    <p className="text-blue-400 italic">Ingen images fundet</p>
+                  )}
+                  {diskImageList.length > 0 && (
+                    <div className="space-y-1 max-h-48 overflow-y-auto pr-1">
+                      {diskImageList.map(img => (
+                        <button
+                          key={img.artifact_id}
+                          onClick={() => setWifiInjectArtifactId(img.artifact_id)}
+                          disabled={!img.exists_on_disk || wifiInjectRunning}
+                          className={`w-full text-left rounded-lg border px-2.5 py-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                            wifiInjectArtifactId === img.artifact_id
+                              ? 'border-blue-500 bg-blue-100 text-blue-900'
+                              : 'border-blue-100 bg-white text-blue-800 hover:border-blue-300 hover:bg-blue-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono truncate">{img.filename ?? img.artifact_id}</span>
+                            <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] ${img.exists_on_disk ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'}`}>
+                              {img.exists_on_disk ? `${((img.size_bytes ?? 0) / (1024*1024)).toFixed(0)} MB` : 'slettet'}
+                            </span>
+                          </div>
+                          <div className="text-blue-400 mt-0.5">
+                            {img.created_at ? new Date(img.created_at).toLocaleString('da-DK') : ''} · {img.artifact_type === 'flashable_disk_image' ? 'flashbart' : 'rootfs'}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* Fallback: manuel artifact ID */}
+                  <div className="mt-2">
+                    <label className="text-blue-500 block mb-1">eller skriv artifact ID manuelt</label>
+                    <input
+                      value={wifiInjectArtifactId}
+                      onChange={e => setWifiInjectArtifactId(e.target.value)}
+                      placeholder="TL-FLASH-IMG-..."
+                      disabled={wifiInjectRunning}
+                      className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-blue-300 disabled:opacity-50"
+                    />
+                  </div>
                 </div>
+
+                {/* WiFi-felter */}
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <div>
                     <label className="block text-blue-700 mb-1">SSID</label>
@@ -1458,6 +1524,19 @@ function IsoTab({
               </div>
             )}
           </div>
+
+          {/* WiFi B — standalone sektion: Tilføj WiFi uafhængigt af build */}
+          {!wifiInjectOpen && (
+            <div className="border-t border-gray-100 pt-4">
+              <button
+                onClick={() => openWifiInjectPanel()}
+                className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-800 font-medium"
+              >
+                <Wifi className="w-4 h-4" />
+                Tilføj WiFi til eksisterende image…
+              </button>
+            </div>
+          )}
         </section>
       </div>
 
