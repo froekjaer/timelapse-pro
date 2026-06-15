@@ -1157,7 +1157,7 @@ def patch_token_in_image(
         patch_script = f"""#!/bin/bash
 set -euo pipefail
 SECTOR_SIZE=512
-OFFSETS=$(sfdisk -J /work/base.img 2>/dev/null | grep '"start"' | awk -F': ' '{gsub(/,/,"",$2); print $2}')
+OFFSETS=$(sfdisk -J /work/base.img 2>/dev/null | grep '"start"' | awk -F': ' '{{gsub(/,/,"",$2); print $2}}')
 PARTS_ARRAY=($OFFSETS)
 mkdir -p /mnt/root
 MOUNT_LOOP=""
