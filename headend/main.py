@@ -10764,7 +10764,10 @@ def list_edge_targets(_user=require_role("super_admin", "admin")):
 def download_edge_disk_image(artifact_id: str, _user=require_role("super_admin", "admin"), db: Session = Depends(get_db)):
     """Download færdigt edge disk image (rootfs tarball)."""
     from fastapi.responses import FileResponse
-    artifact = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id, artifact_type="edge_disk_image").first()
+    artifact = db.query(UpdateArtifact).filter(
+        UpdateArtifact.artifact_id == artifact_id,
+        UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
+    ).first()
     if not artifact:
         raise HTTPException(status_code=404, detail="Artifact ikke fundet")
     if not artifact.storage_path or not os.path.exists(artifact.storage_path):
