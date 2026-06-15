@@ -244,46 +244,11 @@ set -euo pipefail
 BASE_IMG="/work/base.img"
 ROOTFS_TAR="/work/rootfs.tar.gz"
 BOOTSTRAP_YAML="/work/bootstrap.yaml"
-ROOT_PARTITION="${ROOT_PARTITION:-auto}"   # "auto" = detektér selv
+# OFFSET_BYTES sættes af Python (MBR-parsing) og sendes som env-var.
+# Ingen eksterne tools nødvendig i containeren.
 
-# ── Partition-offset via fdisk (ingen installation nødvendig i ubuntu:22.04) ──
-# Undgår losetup --partscan som ikke opretter /dev/loop0pX i Docker Desktop.
-# Bruger 'losetup -o OFFSET' til at mounte partitionen direkte.
-#
-# fdisk -l output for image:
-#   Device           Boot  Start     End  Sectors  Size Id Type
-#   /work/base.img1        16384 2436295  2419912  1.2G 83 Linux
-
-PART_NUM="${ROOT_PARTITION}"
-if [ "$PART_NUM" = "auto" ]; then PART_NUM=1; fi
-
-echo "[inject] Finder partition ${PART_NUM} offset med fdisk..."
-echo "[inject] fdisk output:"
-fdisk -l "$BASE_IMG" 2>&1 | head -20 || true
-
-# Udtræk start-sektor: tag Nde partition-linje (ignorer Disk-header)
-START_SECTOR=$(fdisk -l "$BASE_IMG" 2>/dev/null \
-    | awk -v n="$PART_NUM" '
-        /^\/dev\/|\.img/ && !/^Disk / && !/Boot/ {
-            count++
-            if (count == n) { print $2; exit }
-        }')
-
-# Fallback: tag første Linux-partition
-if [ -z "$START_SECTOR" ] || [ "$START_SECTOR" = "0" ]; then
-    echo "[inject] Partition $PART_NUM ikke fundet — søger første Linux partition..."
-    START_SECTOR=$(fdisk -l "$BASE_IMG" 2>/dev/null | awk '/Linux/ { print $2; exit }')
-fi
-
-if [ -z "$START_SECTOR" ] || [ "$START_SECTOR" = "0" ]; then
-    echo "[inject] FEJL: Kunne ikke finde partition i $BASE_IMG"
-    fdisk -l "$BASE_IMG" 2>&1 || true
-    exit 1
-fi
-
-PART_START_BYTES=$((START_SECTOR * 512))
-echo "[inject] Partition start: sektor $START_SECTOR = ${PART_START_BYTES} bytes"
-LOOP=$(losetup -f --show -o "$PART_START_BYTES" "$BASE_IMG")
+echo "[inject] Partition offset (fra MBR): ${OFFSET_BYTES} bytes"
+LOOP=$(losetup -f --show -o "${OFFSET_BYTES}" "$BASE_IMG")
 echo "[inject] Loop device: $LOOP"
 
 echo "[inject] Mounter root-partition..."
@@ -432,10 +397,22 @@ def _inject_via_docker(
     progress(f"   Root partition: {'auto-detect' if root_part == 'auto' else 'p' + root_part}")
     progress(f"   Starter privileged container (ubuntu:22.04)...")
 
+    # ── 0. Læs MBR partition-offset direkte i Python ─────────────────────────
+    # MBR: offset 446 = første partition-entry, bytes 8-11 = LBA start (LE)
+    # Virker for Armbian (én root-partition startende ved sektor ~16384)
+    with open(base_img, "rb") as _f:
+        _f.seek(446)
+        _entry = _f.read(16)
+    _lba_start = int.from_bytes(_entry[8:12], "little")
+    offset_bytes = _lba_start * 512
+    progress(f"   MBR partition offset: {offset_bytes} bytes (LBA {_lba_start})")
+    if offset_bytes == 0:
+        raise RuntimeError("MBR partition 1 LBA=0 — image er muligvis ikke et gyldigt MBR-image")
+
     # ── 1. Start detached container ──────────────────────────────────────────
     start = subprocess.run(
         ["docker", "run", "-d", "--privileged",
-         "-e", f"ROOT_PARTITION={root_part}",
+         "-e", f"OFFSET_BYTES={offset_bytes}",
          "ubuntu:22.04", "sleep", "600"],
         capture_output=True, text=True, check=True,
     )
