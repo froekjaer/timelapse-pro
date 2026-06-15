@@ -13,14 +13,18 @@ hal_class: orangepi
 soc: Allwinner_H3
 
 base_image:
-  # Officielt Armbian-image
+  # Officielt Armbian-image for OrangePi PC Plus
   # Download fra: https://www.armbian.com/orange-pi-pc-plus/
   type: armbian
   url: "https://dl.armbian.com/orangepipcplus/archive/Armbian_23.11.1_Orangepipcplus_jammy_current_6.1.63_minimal.img.xz"
   sha256: null
   extract: xz
-  boot_partition: 1
-  root_partition: 2
+  # Armbian Allwinner layout:
+  #   Sektor 0-2048:  U-Boot SPL (direkte på disk — ingen partition)
+  #   Partition p1:   ext4 rootfs (inkl. /boot med dtb + uImage)
+  # root_partition: 1 (IKKE p2 — Armbian minimal har kun én partition!)
+  boot_partition: null
+  root_partition: 1
 
 boot_method: uboot
 

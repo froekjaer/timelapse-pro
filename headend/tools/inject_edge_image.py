@@ -205,25 +205,81 @@ set -euo pipefail
 BASE_IMG="/work/base.img"
 ROOTFS_TAR="/work/rootfs.tar.gz"
 BOOTSTRAP_YAML="/work/bootstrap.yaml"
-ROOT_PARTITION="${ROOT_PARTITION:-2}"
+ROOT_PARTITION="${ROOT_PARTITION:-auto}"   # "auto" = detektér selv
 
 echo "[inject] Finder loop device..."
+apt-get install -qq -y parted 2>/dev/null || true
 LOOP=$(losetup -f --show --partscan "$BASE_IMG")
 echo "[inject] Loop: $LOOP"
-sleep 1
+sleep 2
 
-# Vent på at partitionerne er synlige
-for i in $(seq 1 10); do
-    if [ -b "${LOOP}p${ROOT_PARTITION}" ]; then break; fi
-    echo "[inject] Venter på ${LOOP}p${ROOT_PARTITION}... ($i/10)"
-    sleep 1
-done
+# ── Partition detection ────────────────────────────────────────────────────
+# Strategi:
+#   1. Brug ROOT_PARTITION hvis eksplicit angivet (og partition eksisterer)
+#   2. Auto-detect: find den største ext4 partition (typisk rootfs)
+#   3. Fallback: forsøg p2, derefter p1
 
-PART="${LOOP}p${ROOT_PARTITION}"
-if [ ! -b "$PART" ]; then
-    echo "[inject] FEJL: partition ${PART} ikke fundet"
-    losetup -d "$LOOP"
-    exit 1
+_find_root_partition() {
+    local loop="$1"
+    # Prøv parted til at finde ext4 partition
+    if command -v parted &>/dev/null; then
+        local parts
+        parts=$(parted -s "$loop" print 2>/dev/null | awk '/ext[234]/ {print $1}' | tail -1)
+        if [ -n "$parts" ] && [ -b "${loop}p${parts}" ]; then
+            echo "${loop}p${parts}"
+            return 0
+        fi
+    fi
+    # Forsøg nummererede partitioner: p2, p1, p3
+    for n in 2 1 3; do
+        if [ -b "${loop}p${n}" ]; then
+            # Tjek at det er ext4 (ikke FAT boot)
+            local fstype
+            fstype=$(blkid -o value -s TYPE "${loop}p${n}" 2>/dev/null || true)
+            if [[ "$fstype" == ext* ]]; then
+                echo "${loop}p${n}"
+                return 0
+            fi
+        fi
+    done
+    # Sidste udvej: tag hvad der er
+    for n in 2 1 3; do
+        if [ -b "${loop}p${n}" ]; then
+            echo "${loop}p${n}"
+            return 0
+        fi
+    done
+    echo ""
+    return 1
+}
+
+if [ "$ROOT_PARTITION" = "auto" ]; then
+    echo "[inject] Auto-detekterer root partition..."
+    PART=$(_find_root_partition "$LOOP")
+    if [ -z "$PART" ]; then
+        echo "[inject] FEJL: kunne ikke detektere root partition"
+        losetup -d "$LOOP"
+        exit 1
+    fi
+    echo "[inject] Auto-detekteret root: $PART"
+else
+    # Vent på at den specificerede partition er synlig
+    for i in $(seq 1 10); do
+        if [ -b "${LOOP}p${ROOT_PARTITION}" ]; then break; fi
+        echo "[inject] Venter på ${LOOP}p${ROOT_PARTITION}... ($i/10)"
+        sleep 1
+    done
+    PART="${LOOP}p${ROOT_PARTITION}"
+    if [ ! -b "$PART" ]; then
+        echo "[inject] p${ROOT_PARTITION} ikke fundet — forsøger auto-detect..."
+        PART=$(_find_root_partition "$LOOP")
+        if [ -z "$PART" ]; then
+            echo "[inject] FEJL: ingen brugbar partition fundet"
+            losetup -d "$LOOP"
+            exit 1
+        fi
+        echo "[inject] Fandt: $PART"
+    fi
 fi
 
 echo "[inject] Mounter root-partition: $PART"
@@ -378,11 +434,13 @@ def _inject_via_docker(
         work_scrp.write_text(_INJECT_SCRIPT)
         work_scrp.chmod(0o755)
 
-        # Root-partition nummer fra target.yaml (default 2)
-        root_part = str(target.get("base_image", {}).get("root_partition", 2))
+        # Root-partition nummer fra target.yaml
+        # None = auto-detect (Armbian single-partition), default=auto
+        _root_part_cfg = target.get("base_image", {}).get("root_partition")
+        root_part = str(_root_part_cfg) if _root_part_cfg is not None else "auto"
 
         progress(f"   Starter Docker injection container (--privileged)...")
-        progress(f"   Root partition: p{root_part}")
+        progress(f"   Root partition: {'auto-detect' if root_part == 'auto' else 'p' + root_part}")
 
         result = subprocess.run(
             [
