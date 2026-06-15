@@ -10774,8 +10774,9 @@ def download_edge_disk_image(artifact_id: str, _user=require_role("super_admin",
         raise HTTPException(status_code=410, detail="Image-fil ikke tilgængelig (måske slettet fra disk)")
     return FileResponse(
         artifact.storage_path,
-        media_type="application/gzip",
-        filename=artifact.filename or f"{artifact_id}.tar.gz",
+        media_type="application/octet-stream",
+        filename=artifact.filename or f"{artifact_id}.img.gz",
+        headers={"Content-Disposition": f"attachment; filename=\"{artifact.filename or artifact_id + '.img.gz'}\""},
     )
 
 
