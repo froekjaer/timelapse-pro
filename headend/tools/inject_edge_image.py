@@ -493,17 +493,46 @@ fi
 # ── SSH authorized_keys (headend → edge) ─────────────────────────────────────
 if [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
     echo "[inject] Injecterer headend public key i authorized_keys..."
-    for USER_HOME in /mnt/root/home/pi /mnt/root/home/ubuntu /mnt/root/home/orangepi /mnt/root/root; do
-        if [ -d "$USER_HOME" ]; then
+
+    # 1) Brugere der allerede eksisterer i /etc/passwd (Armbian, OrangePi, ældre RPi OS)
+    for USER_HOME in /mnt/root/home/pi /mnt/root/home/ubuntu /mnt/root/home/orangepi; do
+        USERNAME=$(basename "$USER_HOME")
+        UID_ENTRY=$(grep -E "^${USERNAME}:" /mnt/root/etc/passwd 2>/dev/null | cut -d: -f3 || true)
+        if [ -n "$UID_ENTRY" ]; then
             mkdir -p "$USER_HOME/.ssh"
             grep -qxF "${HEADEND_SSH_PUBLIC_KEY}" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null \
                 || echo "${HEADEND_SSH_PUBLIC_KEY}" >> "$USER_HOME/.ssh/authorized_keys"
             chmod 700 "$USER_HOME/.ssh"
             chmod 600 "$USER_HOME/.ssh/authorized_keys"
-            [ "$USER_HOME" = "/mnt/root/root" ] && chown -R 0:0 "$USER_HOME/.ssh" || chown -R 1000:1000 "$USER_HOME/.ssh" 2>/dev/null || true
-            echo "[inject]   Key tilføjet: $USER_HOME/.ssh/authorized_keys"
+            chown -R "${UID_ENTRY}:${UID_ENTRY}" "$USER_HOME/.ssh" 2>/dev/null || true
+            echo "[inject]   Key tilføjet for '${USERNAME}' (uid ${UID_ENTRY}): $USER_HOME/.ssh/authorized_keys"
         fi
     done
+
+    # 2) root altid (bruges når PermitRootLogin=prohibit-password)
+    mkdir -p /mnt/root/root/.ssh
+    grep -qxF "${HEADEND_SSH_PUBLIC_KEY}" /mnt/root/root/.ssh/authorized_keys 2>/dev/null \
+        || echo "${HEADEND_SSH_PUBLIC_KEY}" >> /mnt/root/root/.ssh/authorized_keys
+    chmod 700 /mnt/root/root/.ssh
+    chmod 600 /mnt/root/root/.ssh/authorized_keys
+    chown -R 0:0 /mnt/root/root/.ssh
+    echo "[inject]   Key tilføjet for 'root': /mnt/root/root/.ssh/authorized_keys"
+
+    # 3) Cloud-init (Ubuntu preinstalled) — opretter ubuntu-brugeren med nøglen
+    #    ved første boot, selv om /home/ubuntu endnu ikke eksisterer i raw-imaget.
+    if [ -d /mnt/root/etc/cloud ]; then
+        mkdir -p /mnt/root/etc/cloud/cloud.cfg.d
+        cat > /mnt/root/etc/cloud/cloud.cfg.d/99-timelapse-ssh.cfg << CLOUDINIT_EOF
+#cloud-config
+# Tilføjet af TimeLapse Pro inject — giver headend SSH adgang til ubuntu-bruger
+users:
+  - default
+  - name: ubuntu
+    ssh_authorized_keys:
+      - ${HEADEND_SSH_PUBLIC_KEY}
+CLOUDINIT_EOF
+        echo "[inject]   Cloud-init 99-timelapse-ssh.cfg skrevet (ubuntu user vil få headend key ved boot)"
+    fi
 fi
 
 # ── Device SSH private key (edge → headend reverse tunnel) ───────────────────
@@ -552,14 +581,31 @@ SSHSVC_EOF
     echo "[inject]   timelapse-ssh-tunnel.service aktiveret (port ${SSH_TUNNEL_PORT})"
 fi
 
+# ── Debug-bruger (midlertidig adgang via password) ────────────────────────────
+# Opretter 'tl-debug' med password 'TLdebug2026' — kan bruges til fejlsøgning
+# via SSH når pubkey-injection endnu ikke er verificeret.
+# FJERN denne bruger fra produktion ved at sætte DEBUG_USER_ENABLED=0 i target.
+echo "[inject] Opretter tl-debug bruger..."
+chroot /mnt/root /bin/bash -c "
+    id tl-debug &>/dev/null || useradd -m -s /bin/bash -G sudo tl-debug
+    echo 'tl-debug:TLdebug2026' | chpasswd
+" 2>/dev/null || echo "[inject]   ADVARSEL: tl-debug bruger kunne ikke oprettes (chroot fejl)"
+
 # ── SSH hardening ─────────────────────────────────────────────────────────────
 SSHD_CONFIG=/mnt/root/etc/ssh/sshd_config
 if [ -f "$SSHD_CONFIG" ]; then
     echo "[inject] SSH hardening..."
     sed -i \
-        -e 's/^#\?PermitRootLogin.*/PermitRootLogin no/' \
+        -e 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' \
         -e 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' \
         "$SSHD_CONFIG"
+    # Tillad password-login KUN for tl-debug — alt andet kræver pubkey
+    cat >> "$SSHD_CONFIG" << 'SSHDMATCH_EOF'
+
+Match User tl-debug
+    PasswordAuthentication yes
+SSHDMATCH_EOF
+    echo "[inject]   tl-debug: password-login tilladt via Match User"
 fi
 
 # ── Rettigheder ───────────────────────────────────────────────────────────────

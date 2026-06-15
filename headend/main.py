@@ -1207,7 +1207,7 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     _audit_key_event(db, credential, "created_by_bootstrap", "bootstrap", {"device_id": req.device_id})
     db.commit()
 
-    base_url   = os.environ.get("BASE_URL", "http://192.168.86.132:8000")
+    base_url   = _headend_api_url(db).removesuffix("/api")
     config_url = f"{base_url}/api/config/{req.device_id}"
 
     return BootstrapResponse(
@@ -1398,7 +1398,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
 
     db.commit()
 
-    base_url   = os.environ.get("BASE_URL", "http://192.168.86.132:8000")
+    base_url   = _headend_api_url(db).removesuffix("/api")
     config_url = f"{base_url}/api/config/{req.device_id}"
 
     log.info("Zero-touch enrollment OK: %s state=%s hw=%s",
@@ -10706,12 +10706,20 @@ def _run_edge_disk_image_build(
 
         # ── Trin 2 (valgfri): Injectér i base-image → flashbar .img.gz ───
         if mode == "flashable":
+            # Brug importlib.reload for at sikre vi altid henter den nyeste
+            # version af inject_edge_image.py fra disk — ikke en cachet version
+            # fra sys.modules (som kan være gammel hvis headend kører --reload).
+            import importlib
             try:
-                from headend.tools.inject_edge_image import inject_edge_image
-            except ImportError:
+                import headend.tools.inject_edge_image as _inj_mod
+                importlib.reload(_inj_mod)
+                inject_edge_image = _inj_mod.inject_edge_image
+            except (ImportError, ModuleNotFoundError):
                 import sys
                 sys.path.insert(0, str(_repo_root() / "headend"))
-                from tools.inject_edge_image import inject_edge_image  # type: ignore
+                import tools.inject_edge_image as _inj_mod  # type: ignore
+                importlib.reload(_inj_mod)
+                inject_edge_image = _inj_mod.inject_edge_image
 
             progress(f"\n💉 Mode=flashable — starter image injection...")
 
@@ -10739,12 +10747,32 @@ def _run_edge_disk_image_build(
                     progress(f"   ⚠️  Kunne ikke hente kamera SSH keys: {_e}")
 
             # Headend public key fra ~/.ssh/timelapse_headend_ed25519.pub
-            _headend_pubkey_path = Path.home() / ".ssh" / "timelapse_headend_ed25519.pub"
-            if _headend_pubkey_path.exists():
-                _headend_ssh_pubkey = _headend_pubkey_path.read_text().strip()
-                progress(f"   🔑 Headend pubkey hentet: {_headend_pubkey_path.name}")
-            else:
-                progress(f"   ⚠️  Headend pubkey ikke fundet: {_headend_pubkey_path} — SSH adgang til device vil ikke virke")
+            # Auto-generer nøglen hvis den ikke findes — nødvendig for SSH adgang til device.
+            _headend_key_path  = Path.home() / ".ssh" / "timelapse_headend_ed25519"
+            _headend_pubkey_path = _headend_key_path.with_suffix(".pub")
+            if not _headend_pubkey_path.exists():
+                progress(f"   🔑 Headend SSH keypair mangler — genererer...")
+                try:
+                    _headend_key_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    import subprocess as _ssh_sp
+                    _ssh_sp.run(
+                        [
+                            "ssh-keygen", "-t", "ed25519",
+                            "-f", str(_headend_key_path),
+                            "-N", "",
+                            "-C", "timelapse-headend",
+                        ],
+                        check=True, capture_output=True,
+                    )
+                    _headend_key_path.chmod(0o600)
+                    progress(f"   ✅ Headend SSH keypair genereret: {_headend_key_path}")
+                except Exception as _keygen_err:
+                    raise RuntimeError(
+                        f"Kunne ikke generere headend SSH keypair: {_keygen_err}\n"
+                        f"Kør manuelt: ssh-keygen -t ed25519 -f ~/.ssh/timelapse_headend_ed25519 -N '' -C timelapse-headend"
+                    ) from _keygen_err
+            _headend_ssh_pubkey = _headend_pubkey_path.read_text().strip()
+            progress(f"   🔑 Headend pubkey hentet: {_headend_pubkey_path.name}")
 
             inject_result = inject_edge_image(
                 target=target,
