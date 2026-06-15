@@ -344,9 +344,19 @@ BOOTSTRAP_YAML="/work/bootstrap.yaml"
 echo "[inject] Analyserer partitionstabel med sfdisk..."
 SECTOR_SIZE=512
 
-# Læs partition-start-sektorer direkte fra image (undgår partscan/kernel-problemer)
-# Parser JSON med grep+awk — ingen python3 nødvendig i inject-containeren
+# Slå pipefail fra midlertidigt — grep returnerer exit 1 hvis ingen matches
+set +o pipefail
 OFFSETS=$(sfdisk -J "$BASE_IMG" 2>/dev/null | grep '"start"' | awk -F': ' '{gsub(/,/,"",$2); print $2}')
+set -o pipefail
+
+# Fallback: fdisk -l hvis sfdisk fejlede eller gav ingen output
+if [ -z "$OFFSETS" ]; then
+    echo "[inject] sfdisk gav ingen output — prøver fdisk -l..."
+    set +o pipefail
+    OFFSETS=$(fdisk -l "$BASE_IMG" 2>/dev/null | awk '/\.img[0-9]/{print $2}')
+    set -o pipefail
+fi
+
 echo "[inject] Partition-sektorer: $(echo $OFFSETS | tr '\n' ' ')"
 
 PARTS_ARRAY=($OFFSETS)
