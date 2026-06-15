@@ -10660,6 +10660,7 @@ class DiskImageBuildRequest(BaseModel):
     wifi_ssid: str = ""           # bages ind i image (valgfrit)
     wifi_password: str = ""       # WiFi adgangskode
     wifi_country: str = "DK"      # WiFi landekode
+    camera_id: Optional[str] = None  # UUID til Camera → SSH keys + tunnel port hentes fra DB
 
 
 def _run_edge_disk_image_build(
@@ -10673,6 +10674,7 @@ def _run_edge_disk_image_build(
     wifi_ssid: str = "",
     wifi_password: str = "",
     wifi_country: str = "DK",
+    camera_id: Optional[str] = None,
 ) -> None:
     """Background thread: bygger edge disk image og registrerer artifact.
 
@@ -10712,6 +10714,38 @@ def _run_edge_disk_image_build(
                 from tools.inject_edge_image import inject_edge_image  # type: ignore
 
             progress(f"\n💉 Mode=flashable — starter image injection...")
+
+            # ── Hent SSH-nøgler fra kamera-DB ────────────────────────────────
+            _headend_ssh_pubkey = ""
+            _device_ssh_privkey = ""
+            _ssh_tunnel_port    = 0
+            if camera_id:
+                try:
+                    from database import Camera as _Camera
+                    _db_ssh = db_factory()
+                    try:
+                        _cam = _db_ssh.query(_Camera).filter_by(id=camera_id).first()
+                        if _cam:
+                            _device_ssh_privkey = getattr(_cam, "ssh_private_key", "") or ""
+                            _ssh_tunnel_port    = int(getattr(_cam, "reverse_tunnel_port", 0) or 0)
+                            _cam_name = getattr(_cam, "camera_name", camera_id)
+                            if _device_ssh_privkey:
+                                progress(f"   📷 Kamera '{_cam_name}': SSH privkey hentet, tunnel port {_ssh_tunnel_port}")
+                            else:
+                                progress(f"   ⚠️  Kamera '{_cam_name}' har ingen SSH privkey — kald /prepare først")
+                    finally:
+                        _db_ssh.close()
+                except Exception as _e:
+                    progress(f"   ⚠️  Kunne ikke hente kamera SSH keys: {_e}")
+
+            # Headend public key fra ~/.ssh/timelapse_headend_ed25519.pub
+            _headend_pubkey_path = Path.home() / ".ssh" / "timelapse_headend_ed25519.pub"
+            if _headend_pubkey_path.exists():
+                _headend_ssh_pubkey = _headend_pubkey_path.read_text().strip()
+                progress(f"   🔑 Headend pubkey hentet: {_headend_pubkey_path.name}")
+            else:
+                progress(f"   ⚠️  Headend pubkey ikke fundet: {_headend_pubkey_path} — SSH adgang til device vil ikke virke")
+
             inject_result = inject_edge_image(
                 target=target,
                 rootfs_tar=result["output_path"],
@@ -10724,6 +10758,9 @@ def _run_edge_disk_image_build(
                 wifi_ssid=wifi_ssid,
                 wifi_password=wifi_password,
                 wifi_country=wifi_country,
+                headend_ssh_pubkey=_headend_ssh_pubkey,
+                device_ssh_privkey=_device_ssh_privkey,
+                ssh_tunnel_port=_ssh_tunnel_port,
             )
             # Merge injection-resultater ind i result
             result.update({
@@ -10830,6 +10867,7 @@ def trigger_edge_disk_image_build(
             "wifi_ssid": body.wifi_ssid,
             "wifi_password": body.wifi_password,
             "wifi_country": body.wifi_country or "DK",
+            "camera_id": body.camera_id,
         },
         daemon=True,
         name="edge-disk-image-build",

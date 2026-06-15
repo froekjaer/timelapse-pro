@@ -389,6 +389,7 @@ export function BackupPage() {
   const [diskBuildWifiSsid, setDiskBuildWifiSsid] = useState('')
   const [diskBuildWifiPassword, setDiskBuildWifiPassword] = useState('')
   const [diskBuildWifiCountry, setDiskBuildWifiCountry] = useState('DK')
+  const [diskBuildCameraId, setDiskBuildCameraId] = useState('')
   const STATIC_TARGETS: Array<{ id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean }> = [
     { id: 'orangepi4pro',    display_name: 'OrangePi 4 Pro',           arch: 'arm64', flashable: true,  install_script: false },
     { id: 'orangepi-pc-plus',display_name: 'OrangePi PC Plus',         arch: 'armhf', flashable: true,  install_script: false },
@@ -547,6 +548,7 @@ export function BackupPage() {
           wifi_ssid: diskBuildWifiSsid,
           wifi_password: diskBuildWifiPassword,
           wifi_country: diskBuildWifiCountry || 'DK',
+          camera_id: diskBuildCameraId || undefined,
         }),
       })
       if (!r.ok) {
@@ -705,6 +707,8 @@ export function BackupPage() {
           setDiskBuildWifiPassword={setDiskBuildWifiPassword}
           diskBuildWifiCountry={diskBuildWifiCountry}
           setDiskBuildWifiCountry={setDiskBuildWifiCountry}
+          diskBuildCameraId={diskBuildCameraId}
+          setDiskBuildCameraId={setDiskBuildCameraId}
           availableTargets={availableTargets}
         />
       )}
@@ -1074,6 +1078,8 @@ function IsoTab({
   setDiskBuildWifiPassword,
   diskBuildWifiCountry,
   setDiskBuildWifiCountry,
+  diskBuildCameraId,
+  setDiskBuildCameraId,
   availableTargets,
 }: {
   assessment: ResilienceAssessment | null
@@ -1099,6 +1105,8 @@ function IsoTab({
   setDiskBuildWifiPassword: (v: string) => void
   diskBuildWifiCountry: string
   setDiskBuildWifiCountry: (v: string) => void
+  diskBuildCameraId: string
+  setDiskBuildCameraId: (v: string) => void
   availableTargets: Array<{ id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean }>
 }) {
   const blueprint = assessment?.iso_blueprint
@@ -1106,6 +1114,12 @@ function IsoTab({
   const edges = assessment?.edge_restore ?? []
   const latestImage = blueprint?.latest_image
   const hasImage = !!latestImage
+
+  // Kamera-liste til SSH-injection ved disk image build
+  const [allCameras, setAllCameras] = useState<Array<{ id: string; camera_name: string; ssh_public_key: string | null; reverse_tunnel_port: number | null }>>([])
+  useEffect(() => {
+    api('/admin/cameras').then(r => r.ok ? r.json() : []).then(setAllCameras).catch(() => {})
+  }, [])
 
   // WiFi B: post-process inject state (lokal til IsoTab)
   const [wifiInjectOpen, setWifiInjectOpen] = useState(false)
@@ -1409,6 +1423,34 @@ function IsoTab({
                     className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-blue-300 disabled:opacity-50 uppercase"
                   />
                 </div>
+              </div>
+            )}
+
+            {diskBuildMode === 'flashable' && (
+              <div className="mb-4 rounded-lg bg-violet-50 border border-violet-200 p-3">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="text-violet-600 text-xs">🔑</span>
+                  <p className="text-xs text-violet-800 font-medium">SSH + Reverse tunnel (valgfri)</p>
+                </div>
+                <p className="text-xs text-violet-700 mb-2">
+                  Vælg kamera for at bage SSH-nøgler ind — headend kan SSH direkte ind, og enheden åbner omvendt tunnel automatisk.
+                  Kald <span className="font-mono">/prepare</span> på kameraet først for at generere nøgler.
+                </p>
+                <select
+                  value={diskBuildCameraId}
+                  onChange={e => setDiskBuildCameraId(e.target.value)}
+                  disabled={diskBuildStatus?.running}
+                  className="w-full text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 disabled:opacity-50"
+                >
+                  <option value="">— ingen SSH-injection —</option>
+                  {allCameras.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.camera_name}
+                      {c.ssh_public_key ? ` ✓ SSH` : ' ⚠ ingen nøgle'}
+                      {c.reverse_tunnel_port ? ` · port ${c.reverse_tunnel_port}` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
             )}
 

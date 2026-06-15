@@ -490,6 +490,68 @@ else
     echo "[inject] Ingen WiFi konfiguration (WIFI_SSID ikke sat)"
 fi
 
+# ── SSH authorized_keys (headend → edge) ─────────────────────────────────────
+if [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
+    echo "[inject] Injecterer headend public key i authorized_keys..."
+    for USER_HOME in /mnt/root/home/pi /mnt/root/home/ubuntu /mnt/root/home/orangepi /mnt/root/root; do
+        if [ -d "$USER_HOME" ]; then
+            mkdir -p "$USER_HOME/.ssh"
+            grep -qxF "${HEADEND_SSH_PUBLIC_KEY}" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null \
+                || echo "${HEADEND_SSH_PUBLIC_KEY}" >> "$USER_HOME/.ssh/authorized_keys"
+            chmod 700 "$USER_HOME/.ssh"
+            chmod 600 "$USER_HOME/.ssh/authorized_keys"
+            [ "$USER_HOME" = "/mnt/root/root" ] && chown -R 0:0 "$USER_HOME/.ssh" || chown -R 1000:1000 "$USER_HOME/.ssh" 2>/dev/null || true
+            echo "[inject]   Key tilføjet: $USER_HOME/.ssh/authorized_keys"
+        fi
+    done
+fi
+
+# ── Device SSH private key (edge → headend reverse tunnel) ───────────────────
+if [ -n "${DEVICE_SSH_PRIVATE_KEY:-}" ] && [ -n "${SSH_TUNNEL_PORT:-}" ]; then
+    echo "[inject] Injecterer device SSH private key til reverse tunnel..."
+    mkdir -p /mnt/root/etc/timelapse/device_keys
+    printf '%s\n' "${DEVICE_SSH_PRIVATE_KEY}" > /mnt/root/etc/timelapse/device_keys/id_ed25519
+    chmod 600 /mnt/root/etc/timelapse/device_keys/id_ed25519
+
+    HEADEND_HOST="${TUNNEL_HEADEND_HOST:-timelapse.froekjaer.dk}"
+    HEADEND_PORT="${TUNNEL_HEADEND_PORT:-22}"
+    HEADEND_USER="${TUNNEL_HEADEND_USER:-peter}"
+
+    echo "[inject] Skriver timelapse-ssh-tunnel.service (port ${SSH_TUNNEL_PORT} → ${HEADEND_HOST})..."
+    cat > /mnt/root/etc/systemd/system/timelapse-ssh-tunnel.service << SSHSVC_EOF
+[Unit]
+Description=TimeLapse Pro — Reverse SSH Tunnel til Headend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment="AUTOSSH_GATETIME=0"
+ExecStartPre=/bin/bash -c 'which autossh || (apt-get update -qq && apt-get install -y -q autossh)'
+ExecStart=/usr/bin/autossh -M 0 -N \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o StrictHostKeyChecking=accept-new \
+  -o ExitOnForwardFailure=yes \
+  -o BatchMode=yes \
+  -i /etc/timelapse/device_keys/id_ed25519 \
+  -R ${SSH_TUNNEL_PORT}:localhost:22 \
+  ${HEADEND_USER}@${HEADEND_HOST} -p ${HEADEND_PORT}
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+SSHSVC_EOF
+
+    WANTS_DIR3=/mnt/root/etc/systemd/system/multi-user.target.wants
+    mkdir -p "$WANTS_DIR3"
+    ln -sf /etc/systemd/system/timelapse-ssh-tunnel.service \
+        "$WANTS_DIR3/timelapse-ssh-tunnel.service"
+    echo "[inject]   timelapse-ssh-tunnel.service aktiveret (port ${SSH_TUNNEL_PORT})"
+fi
+
 # ── SSH hardening ─────────────────────────────────────────────────────────────
 SSHD_CONFIG=/mnt/root/etc/ssh/sshd_config
 if [ -f "$SSHD_CONFIG" ]; then
@@ -599,6 +661,12 @@ def _inject_via_docker(
     wifi_ssid: str = "",
     wifi_password: str = "",
     wifi_country: str = "DK",
+    headend_ssh_pubkey: str = "",
+    device_ssh_privkey: str = "",
+    ssh_tunnel_port: int = 0,
+    tunnel_headend_host: str = "timelapse.froekjaer.dk",
+    tunnel_headend_port: int = 22,
+    tunnel_headend_user: str = "peter",
 ) -> None:
     """
     Injectér agent-filer i base-image via Docker --privileged.
@@ -631,6 +699,12 @@ def _inject_via_docker(
         "-e", f"WIFI_SSID={wifi_ssid}",
         "-e", f"WIFI_PASSWORD={wifi_password}",
         "-e", f"WIFI_COUNTRY={wifi_country or 'DK'}",
+        "-e", f"HEADEND_SSH_PUBLIC_KEY={headend_ssh_pubkey}",
+        "-e", f"DEVICE_SSH_PRIVATE_KEY={device_ssh_privkey}",
+        "-e", f"SSH_TUNNEL_PORT={ssh_tunnel_port}",
+        "-e", f"TUNNEL_HEADEND_HOST={tunnel_headend_host}",
+        "-e", f"TUNNEL_HEADEND_PORT={tunnel_headend_port}",
+        "-e", f"TUNNEL_HEADEND_USER={tunnel_headend_user}",
         "ubuntu:22.04", "sleep", "3600",
     ]
     start = subprocess.run(
@@ -742,23 +816,35 @@ def inject_edge_image(
     wifi_ssid: str = "",
     wifi_password: str = "",
     wifi_country: str = "DK",
+    headend_ssh_pubkey: str = "",
+    device_ssh_privkey: str = "",
+    ssh_tunnel_port: int = 0,
+    tunnel_headend_host: str = "timelapse.froekjaer.dk",
+    tunnel_headend_port: int = 22,
+    tunnel_headend_user: str = "peter",
 ) -> dict:
     """
     Injectér edge-agent i base-image og producér flashbart .img.gz.
 
     Args:
-        target:             Hardware target ID ("rpi4", "orangepi-pc-plus", …)
-        rootfs_tar:         Sti til rootfs.tar.gz fra build_edge_image()
-        headend_url:        URL til headend API (bages ind i bootstrap.yaml)
-        bootstrap_token:    Bootstrap-token der bages ind (tom = placeholder)
-        gpg_key_id:         GPG-nøgle til manifest-signering
-        progress_cb:        Callback for output
-        repo_root:          Git-repo root (None = auto-detect)
-        output_dir:         Output-mappe (None = tmp)
-        base_image_cache:   Mappe til cache af downloadede base-images
-        wifi_ssid:          WiFi netværksnavn (bages ind hvis sat)
-        wifi_password:      WiFi adgangskode
-        wifi_country:       WiFi landekode (default: DK)
+        target:               Hardware target ID ("rpi4", "orangepi-pc-plus", …)
+        rootfs_tar:           Sti til rootfs.tar.gz fra build_edge_image()
+        headend_url:          URL til headend API (bages ind i bootstrap.yaml)
+        bootstrap_token:      Bootstrap-token der bages ind (tom = placeholder)
+        gpg_key_id:           GPG-nøgle til manifest-signering
+        progress_cb:          Callback for output
+        repo_root:            Git-repo root (None = auto-detect)
+        output_dir:           Output-mappe (None = tmp)
+        base_image_cache:     Mappe til cache af downloadede base-images
+        wifi_ssid:            WiFi netværksnavn (bages ind hvis sat)
+        wifi_password:        WiFi adgangskode
+        wifi_country:         WiFi landekode (default: DK)
+        headend_ssh_pubkey:   Headend Ed25519 public key → device authorized_keys
+        device_ssh_privkey:   Device Ed25519 private key (PEM) → /etc/timelapse/device_keys/id_ed25519
+        ssh_tunnel_port:      Remote port til reverse SSH tunnel (fx 2202)
+        tunnel_headend_host:  Headend hostname til tunnel (default: timelapse.froekjaer.dk)
+        tunnel_headend_port:  Headend SSH port (default: 22)
+        tunnel_headend_user:  Headend SSH bruger (default: peter)
 
     Returnerer dict med stier, sha256, manifest etc.
     """
@@ -834,16 +920,26 @@ def inject_edge_image(
     progress_cb(f"\n🔨 Step 3/4: Injecterer agent via Docker --privileged...")
     if wifi_ssid:
         progress_cb(f"   WiFi: {wifi_ssid} ({tgt.get('wifi_method', 'wpa_supplicant')} / {wifi_country})")
+    if headend_ssh_pubkey:
+        progress_cb(f"   SSH authorized_keys: headend pubkey bages ind")
+    if device_ssh_privkey and ssh_tunnel_port:
+        progress_cb(f"   SSH reverse tunnel: port {ssh_tunnel_port} → {tunnel_headend_host}")
     _inject_via_docker(
-        base_img        = work_img,
-        rootfs_tar      = rootfs_path,
-        output_img      = img_path,
-        bootstrap_yaml  = bootstrap_yaml_content,
-        target          = tgt,
-        progress        = progress_cb,
-        wifi_ssid       = wifi_ssid,
-        wifi_password   = wifi_password,
-        wifi_country    = wifi_country,
+        base_img             = work_img,
+        rootfs_tar           = rootfs_path,
+        output_img           = img_path,
+        bootstrap_yaml       = bootstrap_yaml_content,
+        target               = tgt,
+        progress             = progress_cb,
+        wifi_ssid            = wifi_ssid,
+        wifi_password        = wifi_password,
+        wifi_country         = wifi_country,
+        headend_ssh_pubkey   = headend_ssh_pubkey,
+        device_ssh_privkey   = device_ssh_privkey,
+        ssh_tunnel_port      = ssh_tunnel_port,
+        tunnel_headend_host  = tunnel_headend_host,
+        tunnel_headend_port  = tunnel_headend_port,
+        tunnel_headend_user  = tunnel_headend_user,
     )
 
     # Ryd midlertidig work_img
