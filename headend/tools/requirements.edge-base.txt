@@ -1,0 +1,13 @@
+# TimeLapse Edge — base requirements for Docker image
+# opencv-python-headless installeres IKKE her — det er tungt og device-specifikt.
+# Det installeres post-flash på selve OrangePi hardwaren via:
+#   /opt/timelapse/venv/bin/pip install opencv-python-headless
+# eller via en OS-bundle update fra headend.
+
+pyyaml>=6.0
+requests>=2.31.0
+paramiko>=3.3.0
+cryptography>=41.0
+
+# tzdata for zoneinfo support
+tzdata>=2024.1
