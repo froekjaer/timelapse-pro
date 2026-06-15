@@ -1232,6 +1232,12 @@ class EnrollResponse(BaseModel):
     config_url:       str
     enrollment_state: str   # "unassigned" | "active"
 
+@app.post("/api/api/devices/enroll", response_model=EnrollResponse, include_in_schema=False)
+def enroll_device_compat(req: EnrollRequest, db: Session = Depends(get_db)):
+    """Bagudkompatibelt alias — gamle images kalder /api/api/devices/enroll ved fejl."""
+    return enroll_device(req, db)
+
+
 @app.post("/api/devices/enroll", response_model=EnrollResponse)
 def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
     """
