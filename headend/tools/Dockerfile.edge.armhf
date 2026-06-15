@@ -99,6 +99,8 @@ RUN echo "${TIMELAPSE_VERSION}" > /opt/timelapse/edge/VERSION \
 # Note: systemd won't run inside Docker export, but the unit file
 # is present so it activates correctly when deployed to real hardware.
 COPY edge/scripts/timelapse-edge.service /etc/systemd/system/timelapse-edge.service
+COPY edge/scripts/timelapse-bootstrap.service /etc/systemd/system/timelapse-bootstrap.service
+COPY edge/scripts/bootstrap_agent.py /opt/timelapse/edge/scripts/bootstrap_agent.py
 
 EXPOSE 22
 
