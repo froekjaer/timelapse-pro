@@ -246,6 +246,8 @@ ROOTFS_TAR="/work/rootfs.tar.gz"
 BOOTSTRAP_YAML="/work/bootstrap.yaml"
 ROOT_PARTITION="${ROOT_PARTITION:-auto}"   # "auto" = detektér selv
 
+echo "[inject] /work indhold:"
+ls -lah /work/ 2>&1 || echo "[inject] ls /work fejlede"
 echo "[inject] Finder loop device..."
 apt-get install -qq -y parted 2>/dev/null || true
 LOOP=$(losetup -f --show --partscan "$BASE_IMG")
