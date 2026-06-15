@@ -780,6 +780,94 @@ type DiskBuildStatus = {
   ready: boolean; target?: string; mode?: string
 } | null
 
+/** Slugify til gyldigt device_id format (kun a-z0-9 og bindestreg) */
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')  // fjern accenter
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 24)
+}
+
+function randomSuffix(n = 4): string {
+  return Math.random().toString(36).slice(2, 2 + n)
+}
+
+function suggestDeviceId(cameraName: string, siteName: string): string {
+  const parts = [cameraName, siteName].filter(Boolean).map(slugify).filter(Boolean)
+  const base = parts.length ? parts[0] : 'tl'
+  return `${base}-${randomSuffix(4)}`
+}
+
+/** Device ID felt med auto-forslag og ↺ regenerér knap */
+function DeviceIdPicker({
+  value,
+  onChange,
+  cameraName,
+  siteName,
+}: {
+  value: string
+  onChange: (v: string) => void
+  cameraName: string
+  siteName: string
+}) {
+  const [isAuto, setIsAuto] = useState(true)
+
+  // Generér ved mount
+  useEffect(() => {
+    if (!value) {
+      onChange(suggestDeviceId(cameraName, siteName))
+    }
+  }, [])
+
+  // Opdatér forslag når kamera/site ændres — kun hvis brugeren ikke har redigeret
+  useEffect(() => {
+    if (isAuto) {
+      onChange(suggestDeviceId(cameraName, siteName))
+    }
+  }, [cameraName, siteName])
+
+  function regenerate() {
+    const id = suggestDeviceId(cameraName, siteName)
+    onChange(id)
+    setIsAuto(true)
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-xs text-gray-500">Device ID</label>
+        {isAuto && (
+          <span className="text-xs text-sky-500 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">auto</span>
+        )}
+      </div>
+      <div className="flex gap-1.5">
+        <input
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-sky-300"
+          value={value}
+          placeholder="tl-kamera1-a3f2"
+          onChange={e => {
+            setIsAuto(false)
+            onChange(e.target.value)
+          }}
+        />
+        <button
+          type="button"
+          title="Generér nyt forslag"
+          onClick={regenerate}
+          className="px-2.5 py-2 border border-gray-200 rounded-lg text-gray-400 hover:text-sky-600 hover:border-sky-300 hover:bg-sky-50 transition-colors text-sm"
+        >
+          ↺
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-gray-400">
+        Bruges til CMDB-kladde. Det endelige Device ID sættes automatisk fra MAC-adressen ved enrollment.
+      </p>
+    </div>
+  )
+}
+
 /** Headend API URL dropdown — henter faktisk base_url fra settings */
 function HeadendUrlPicker({
   value,
@@ -919,7 +1007,12 @@ function IsoTab({
           <h2 className="text-sm font-semibold text-gray-800 mb-1">Klargør ny Edge</h2>
           <p className="text-xs text-gray-400 mb-4">Opret CMDB-kladde og engangs-bootstrap, så en ny Edge kan kalde hjem til Headend.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Device ID" value={form.device_id} onChange={v => setForm(s => ({ ...s, device_id: v }))} placeholder="timelapse0102" mono />
+            <DeviceIdPicker
+              value={form.device_id}
+              onChange={v => setForm(s => ({ ...s, device_id: v }))}
+              cameraName={form.camera_name}
+              siteName={form.site_name}
+            />
             <Field label="Token levetid timer" value={String(form.expires_hours)} onChange={v => setForm(s => ({ ...s, expires_hours: Number(v) || 48 }))} type="number" />
             <LocationPicker form={form} setForm={setForm} />
             <HeadendUrlPicker value={form.headend_url} onChange={v => setForm(s => ({ ...s, headend_url: v }))} />
