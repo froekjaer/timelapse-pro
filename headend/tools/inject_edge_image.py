@@ -246,86 +246,53 @@ ROOTFS_TAR="/work/rootfs.tar.gz"
 BOOTSTRAP_YAML="/work/bootstrap.yaml"
 ROOT_PARTITION="${ROOT_PARTITION:-auto}"   # "auto" = detektér selv
 
-echo "[inject] /work indhold:"
-ls -lah /work/ 2>&1 || echo "[inject] ls /work fejlede"
-echo "[inject] Finder loop device..."
+echo "[inject] Installerer parted..."
 apt-get install -qq -y parted 2>/dev/null || true
-LOOP=$(losetup -f --show --partscan "$BASE_IMG")
-echo "[inject] Loop: $LOOP"
-sleep 2
 
-# ── Partition detection ────────────────────────────────────────────────────
-# Strategi:
-#   1. Brug ROOT_PARTITION hvis eksplicit angivet (og partition eksisterer)
-#   2. Auto-detect: find den største ext4 partition (typisk rootfs)
-#   3. Fallback: forsøg p2, derefter p1
+# ── Partition-offset via parted (undgår losetup --partscan som ikke ──────────
+# virker i Docker Desktop's Linux-kernel uden /dev/loop0p1 support).
+# Bruger i stedet 'losetup -o OFFSET' til at mounte partitionen direkte.
 
-_find_root_partition() {
-    local loop="$1"
-    # Prøv parted til at finde ext4 partition
-    if command -v parted &>/dev/null; then
-        local parts
-        parts=$(parted -s "$loop" print 2>/dev/null | awk '/ext[234]/ {print $1}' | tail -1)
-        if [ -n "$parts" ] && [ -b "${loop}p${parts}" ]; then
-            echo "${loop}p${parts}"
-            return 0
-        fi
-    fi
-    # Forsøg nummererede partitioner: p2, p1, p3
-    for n in 2 1 3; do
-        if [ -b "${loop}p${n}" ]; then
-            # Tjek at det er ext4 (ikke FAT boot)
-            local fstype
-            fstype=$(blkid -o value -s TYPE "${loop}p${n}" 2>/dev/null || true)
-            if [[ "$fstype" == ext* ]]; then
-                echo "${loop}p${n}"
-                return 0
-            fi
-        fi
-    done
-    # Sidste udvej: tag hvad der er
-    for n in 2 1 3; do
-        if [ -b "${loop}p${n}" ]; then
-            echo "${loop}p${n}"
-            return 0
-        fi
-    done
-    echo ""
-    return 1
-}
+PART_NUM="${ROOT_PARTITION}"
+if [ "$PART_NUM" = "auto" ]; then PART_NUM=1; fi
 
-if [ "$ROOT_PARTITION" = "auto" ]; then
-    echo "[inject] Auto-detekterer root partition..."
-    PART=$(_find_root_partition "$LOOP")
-    if [ -z "$PART" ]; then
-        echo "[inject] FEJL: kunne ikke detektere root partition"
-        losetup -d "$LOOP"
-        exit 1
-    fi
-    echo "[inject] Auto-detekteret root: $PART"
-else
-    # Vent på at den specificerede partition er synlig
-    for i in $(seq 1 10); do
-        if [ -b "${LOOP}p${ROOT_PARTITION}" ]; then break; fi
-        echo "[inject] Venter på ${LOOP}p${ROOT_PARTITION}... ($i/10)"
-        sleep 1
-    done
-    PART="${LOOP}p${ROOT_PARTITION}"
-    if [ ! -b "$PART" ]; then
-        echo "[inject] p${ROOT_PARTITION} ikke fundet — forsøger auto-detect..."
-        PART=$(_find_root_partition "$LOOP")
-        if [ -z "$PART" ]; then
-            echo "[inject] FEJL: ingen brugbar partition fundet"
-            losetup -d "$LOOP"
-            exit 1
-        fi
-        echo "[inject] Fandt: $PART"
-    fi
+echo "[inject] Finder partition $PART_NUM offset med parted..."
+# parted -m giver maskinlæsbart output:
+# BYT;
+# /path/img:SIZE:file:...;
+# 1:START:END:SIZE:ext4::;
+PART_START_BYTES=$(parted -s -m "$BASE_IMG" unit B print 2>/dev/null \
+    | awk -F: -v n="$PART_NUM" '$1 == n { sub(/B$/,"", $2); print $2 }')
+
+# Fallback: find første ext4 partition
+if [ -z "$PART_START_BYTES" ]; then
+    echo "[inject] Partition $PART_NUM ikke fundet — søger første ext4..."
+    PART_START_BYTES=$(parted -s -m "$BASE_IMG" unit B print 2>/dev/null \
+        | awk -F: '$6 ~ /ext[234]/ { sub(/B$/,"", $2); print $2; exit }')
 fi
 
-echo "[inject] Mounter root-partition: $PART"
+# Andet fallback: brug fdisk til at finde første partition
+if [ -z "$PART_START_BYTES" ]; then
+    echo "[inject] parted fejlede — forsøger fdisk..."
+    START_SECTOR=$(fdisk -l "$BASE_IMG" 2>/dev/null \
+        | awk '/^\/dev\/|\.img[0-9]?[ \t]/ && !/Extended/ { print $2; exit }')
+    PART_START_BYTES=$((START_SECTOR * 512))
+fi
+
+if [ -z "$PART_START_BYTES" ] || [ "$PART_START_BYTES" = "0" ]; then
+    echo "[inject] FEJL: Kunne ikke finde partitionsstart i $BASE_IMG"
+    echo "[inject] parted output:"
+    parted -s -m "$BASE_IMG" unit B print 2>&1 || true
+    exit 1
+fi
+
+echo "[inject] Partition start: ${PART_START_BYTES} bytes"
+LOOP=$(losetup -f --show -o "$PART_START_BYTES" "$BASE_IMG")
+echo "[inject] Loop device: $LOOP"
+
+echo "[inject] Mounter root-partition..."
 mkdir -p /mnt/root
-mount "$PART" /mnt/root
+mount "$LOOP" /mnt/root
 
 # ── Opret mappestruktur ──────────────────────────────────────────────────────
 echo "[inject] Opretter timelapse mappestruktur..."
