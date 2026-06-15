@@ -352,49 +352,42 @@ BOOTSTRAP_YAML="/work/bootstrap.yaml"
 # OFFSET_BYTES sættes af Python (MBR-parsing) og sendes som env-var.
 # Ingen eksterne tools nødvendig i containeren.
 
-echo "[inject] Analyserer partitionstabel med sfdisk..."
-SECTOR_SIZE=512
-
-# Slå pipefail fra midlertidigt — grep returnerer exit 1 hvis ingen matches
-set +o pipefail
-OFFSETS=$(sfdisk -J "$BASE_IMG" 2>/dev/null | grep '"start"' | awk -F': ' '{gsub(/,/,"",$2); print $2}')
-set -o pipefail
-
-# Fallback: fdisk -l hvis sfdisk fejlede eller gav ingen output
-if [ -z "$OFFSETS" ]; then
-    echo "[inject] sfdisk gav ingen output — prøver fdisk -l..."
-    set +o pipefail
-    OFFSETS=$(fdisk -l "$BASE_IMG" 2>/dev/null | awk '/\.img[0-9]/{print $2}')
-    set -o pipefail
-fi
-
-echo "[inject] Partition-sektorer: $(echo $OFFSETS | tr '\n' ' ')"
-
-PARTS_ARRAY=($OFFSETS)
-NUM_PARTS=${#PARTS_ARRAY[@]}
-echo "[inject] Antal partitioner: $NUM_PARTS"
-
-# Prøv root-partition: typisk p2 (index 1) eller p3 (index 2), fallback p1 (index 0)
+echo "[inject] Monterer root-partition..."
+# OFFSET_BYTES er beregnet af Python (_read_partition_offset) og sendt som env-var.
+# Ingen sfdisk/fdisk/partscan nødvendig — vi bruger Python-resultatet direkte.
 mkdir -p /mnt/root
 MOUNT_LOOP=""
-for IDX in 1 2 0; do
-    if [ -n "${PARTS_ARRAY[$IDX]:-}" ]; then
-        TEST_OFFSET=$(( ${PARTS_ARRAY[$IDX]} * SECTOR_SIZE ))
-        echo "[inject] Prøver partition $((IDX+1)) ved offset $TEST_OFFSET bytes..."
-        TEST_LOOP=$(losetup -f --show --offset "$TEST_OFFSET" "$BASE_IMG")
+
+if [ -n "${OFFSET_BYTES:-}" ] && [ "${OFFSET_BYTES:-0}" -gt 0 ] 2>/dev/null; then
+    echo "[inject] Python-beregnet offset: ${OFFSET_BYTES} bytes"
+    TEST_LOOP=$(losetup -f --show --offset "${OFFSET_BYTES}" "$BASE_IMG")
+    if mount -t ext4 "$TEST_LOOP" /mnt/root 2>/dev/null; then
+        echo "[inject] ✓ Monteret ved offset ${OFFSET_BYTES} bytes"
+        MOUNT_LOOP="$TEST_LOOP"
+    else
+        losetup -d "$TEST_LOOP" 2>/dev/null || true
+        echo "[inject]   ADVARSEL: offset-mount fejlede — prøver fallback-offsets..."
+    fi
+fi
+
+# Fallback: kendte offsets for Ubuntu 22.04 RPi4 preinstalled image
+if [ -z "$MOUNT_LOOP" ]; then
+    for FALLBACK_OFFSET in 537919488 538968064 1048576; do
+        echo "[inject] Prøver fallback offset ${FALLBACK_OFFSET} bytes..."
+        TEST_LOOP=$(losetup -f --show --offset "${FALLBACK_OFFSET}" "$BASE_IMG")
         if mount -t ext4 "$TEST_LOOP" /mnt/root 2>/dev/null; then
-            echo "[inject] ✓ Root-partition p$((IDX+1)) monteret (offset $TEST_OFFSET bytes)"
+            echo "[inject] ✓ Monteret ved fallback offset ${FALLBACK_OFFSET} bytes"
             MOUNT_LOOP="$TEST_LOOP"
             break
         else
-            echo "[inject]   Ikke ext4 eller fejl, prøver næste..."
             losetup -d "$TEST_LOOP" 2>/dev/null || true
         fi
-    fi
-done
+    done
+fi
 
 if [ -z "$MOUNT_LOOP" ]; then
-    echo "[inject] FEJL: Kunne ikke mounte nogen partition som ext4"
+    echo "[inject] FEJL: Kunne ikke mounte root-partition som ext4"
+    losetup -l 2>/dev/null || true
     exit 1
 fi
 
@@ -1177,20 +1170,14 @@ def patch_token_in_image(
         # Patch bootstrap.yaml i root-partition via Docker
         patch_script = f"""#!/bin/bash
 set -euo pipefail
-SECTOR_SIZE=512
-OFFSETS=$(sfdisk -J /work/base.img 2>/dev/null | grep '"start"' | awk -F': ' '{{gsub(/,/,"",$2); print $2}}')
-PARTS_ARRAY=($OFFSETS)
 mkdir -p /mnt/root
 MOUNT_LOOP=""
-for IDX in 1 2 0; do
-    if [ -n "${{PARTS_ARRAY[$IDX]:-}}" ]; then
-        OFF=$(( ${{PARTS_ARRAY[$IDX]}} * SECTOR_SIZE ))
-        TL=$(losetup -f --show --offset "$OFF" /work/base.img)
-        if mount -t ext4 "$TL" /mnt/root 2>/dev/null; then
-            MOUNT_LOOP="$TL"; break
-        else
-            losetup -d "$TL" 2>/dev/null || true
-        fi
+for OFFSET in 537919488 538968064 1048576; do
+    TL=$(losetup -f --show --offset "$OFFSET" /work/base.img)
+    if mount -t ext4 "$TL" /mnt/root 2>/dev/null; then
+        MOUNT_LOOP="$TL"; break
+    else
+        losetup -d "$TL" 2>/dev/null || true
     fi
 done
 [ -z "$MOUNT_LOOP" ] && {{ echo "FEJL: ingen ext4 partition"; exit 1; }}
