@@ -256,6 +256,29 @@ def _write_node_agent_conf(
     NODE_AGENT_CONF.chmod(0o600)
     log.info("Wrote %s", NODE_AGENT_CONF)
 
+    # Skriv også de filer som edge/config/manager.py forventer i /opt/timelapse/edge/
+    edge_base = Path("/opt/timelapse/edge")
+    edge_base.mkdir(parents=True, exist_ok=True)
+
+    # bootstrap.yaml til config manager (headend_url + device_id)
+    bootstrap_out = edge_base / "bootstrap.yaml"
+    bootstrap_out.write_text(
+        yaml.dump({
+            "headend_url": headend_url,
+            "device_id":   device_id,
+            "bootstrap_token": "",
+        }, allow_unicode=True, default_flow_style=False),
+        encoding="utf-8",
+    )
+    bootstrap_out.chmod(0o600)
+
+    # api_token.txt til config manager
+    token_out = edge_base / "api_token.txt"
+    token_out.write_text(api_token.strip())
+    token_out.chmod(0o600)
+
+    log.info("Wrote %s + %s", bootstrap_out, token_out)
+
 
 def _activate_edge_service() -> None:
     """Deaktivér bootstrap-service; aktivér og start edge-agent."""

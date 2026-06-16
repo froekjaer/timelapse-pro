@@ -23,7 +23,6 @@ ExecReload=/bin/kill -HUP $MAINPID
 # Restart policy — always restart, even on clean exit
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=300
 StartLimitBurst=5
 
 # Watchdog — agent must call sd_notify WATCHDOG=1 every 120s
@@ -39,6 +38,8 @@ SyslogIdentifier=timelapse-edge
 # Security hardening
 NoNewPrivileges=yes
 PrivateTmp=yes
+RuntimeDirectory=timelapse
+RuntimeDirectoryMode=0755
 ProtectSystem=strict
 ReadWritePaths=/data /opt/timelapse/edge /run/timelapse
 ProtectHome=yes
