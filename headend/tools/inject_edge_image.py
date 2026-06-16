@@ -576,6 +576,32 @@ users:
       - ${HEADEND_SSH_PUBLIC_KEY}
 CLOUDINIT_EOF
         echo "[inject]   Cloud-init 99-timelapse-ssh.cfg skrevet (ubuntu user vil få headend key ved boot)"
+
+        # 4G USB modem support — installer via apt ved første boot
+        cat > /mnt/root/etc/cloud/cloud.cfg.d/98-timelapse-modem.cfg << 'MODEM_CLOUD_EOF'
+#cloud-config
+# TimeLapse Pro — 4G USB modem support (NetworkManager + ModemManager)
+packages:
+  - network-manager
+  - modemmanager
+  - usb-modeswitch
+  - usb-modeswitch-data
+  - libqmi-utils
+  - libmbim-utils
+package_update: false
+runcmd:
+  - systemctl enable ModemManager NetworkManager
+  - systemctl start ModemManager NetworkManager || true
+MODEM_CLOUD_EOF
+        echo "[inject]   Cloud-init 98-timelapse-modem.cfg skrevet (4G modem support)"
+
+        # NetworkManager: styr KUN modem-interfaces — lad netplan håndtere eth0/wlan0
+        mkdir -p /mnt/root/etc/NetworkManager/conf.d
+        cat > /mnt/root/etc/NetworkManager/conf.d/10-timelapse-unmanaged.conf << 'NM_CONF_EOF'
+[keyfile]
+unmanaged-devices=interface-name:eth*,interface-name:wlan*,interface-name:lo
+NM_CONF_EOF
+        echo "[inject]   NetworkManager konfigureret (styrer kun modem, ikke eth/wlan)"
     fi
 fi
 
