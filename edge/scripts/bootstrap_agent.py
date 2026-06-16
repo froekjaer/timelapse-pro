@@ -135,6 +135,18 @@ def _generate_ssh_keypair() -> str:
         log.info("SSH-nøgler eksisterer allerede — genbruger")
         return SSH_ID_KEY_PUB.read_text().strip()
 
+    if SSH_ID_KEY.exists() and not SSH_ID_KEY_PUB.exists():
+        # Privat nøgle injektet fra headend (image-injection), men .pub mangler — ekstraher den
+        log.info("Privat nøgle fundet — ekstraherer public key...")
+        result = subprocess.run(
+            ["ssh-keygen", "-y", "-f", str(SSH_ID_KEY)],
+            check=True, capture_output=True, text=True,
+        )
+        SSH_ID_KEY_PUB.write_text(result.stdout)
+        SSH_ID_KEY_PUB.chmod(0o644)
+        log.info("Public key ekstraheret: %s…", result.stdout.strip()[:40])
+        return result.stdout.strip()
+
     log.info("Genererer ed25519 SSH-nøglepar...")
     subprocess.run(
         ["ssh-keygen", "-t", "ed25519", "-N", "", "-C", "timelapse-edge",
