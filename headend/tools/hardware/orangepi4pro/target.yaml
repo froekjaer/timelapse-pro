@@ -1,13 +1,12 @@
 # TimeLapse Pro — Hardware target: OrangePi 4 Pro
-# SoC: Allwinner A733 (2x Cortex-A76 + 6x Cortex-A55 @ 2.0GHz, 12nm)
-# GPU: Imagination BXM-4-64
-# NPU: 3 TOPS (VIPLite — kræver vendor BSP-kernel linux5.15-sun60iw2)
+# SoC: Rockchip RK3399 (2x Cortex-A72 + 4x Cortex-A53 @ 2.0GHz / 1.5GHz)
+# GPU: Mali-T860MP4
+# NPU: ingen
 # Arch: arm64 (aarch64)
-# Boot: SPI Flash (U-Boot v2018.05) → NVMe SSD
+# Boot: SPI Flash (U-Boot) → NVMe SSD (via nand-sata-install)
 # Base OS: OrangePi official Ubuntu Jammy Server
 #
-# VIGTIGT: NPU + GPU kræver officielt OrangePi-image med BSP-kernel.
-# Armbian har INGEN stabil support for A733 endnu (juni 2026).
+# VIGTIGT: Brug officielt OrangePi-image — Armbian mangler RK3399-NPU-support.
 
 id: orangepi4pro
 display_name: "OrangePi 4 Pro"
@@ -15,7 +14,7 @@ arch: arm64
 docker_platform: linux/arm64
 docker_base: arm64v8/ubuntu:22.04
 hal_class: orangepi
-soc: Allwinner_A733
+soc: RK3399
 
 base_image:
   # Officielt OrangePi Ubuntu Server image — kun tilgængeligt via Google Drive.
@@ -43,13 +42,26 @@ boot_method: uboot_spiflash
 #   3. Bootloader til SPI Flash, rootfs til NVMe
 #   4. Fjern SD, boot fra NVMe
 
-extra_packages: []
+extra_packages:
+  # Kamera (Canon EOS 1300D, Nikon m.fl.) via USB PTP/MTP
+  - gphoto2
+  - libgphoto2-6
+  - libgphoto2-port12
+  # GPS (u-blox og andre NMEA USB-enheder)
+  - gpsd
+  - gpsd-clients
+  - python3-gps
+  # SSH reverse tunnel (edge → headend)
+  - autossh
+  # Bluetooth remote management
+  - bluez
+  - bluez-tools
+  - python3-dbus
 
 device_tree_model_patterns:
-  - "allwinner a733"
   - "orangepi 4 pro"
   - "orange pi 4 pro"
-  - "sun60iw2"
+  - "rk3399"
 
 agent_install:
   agent_dir: /opt/timelapse/edge
@@ -59,9 +71,8 @@ agent_install:
   service_name: timelapse-edge
 
 notes: |
-  OrangePi 4 Pro (A733) — IKKE det samme board som OrangePi 4 LTS (RK3399).
-  Kernel: linux5.15-sun60iw2 (Allwinner BSP — vendor-specifik).
-  NPU SDK: VIPLite 2.0.3.2-AW — kræver præcis kernel-driver version-match.
-  GPU: Imagination BXM-4-64 — proprietary driver i vendor-kernel.
-  NVMe-kompatibilitet: kun Fanxiang/Guangcun SSDs bekræftet (User Manual v1.4).
+  OrangePi 4 Pro (RK3399) — officielt OrangePi Ubuntu Jammy Server image.
+  Kernel: linux5.15.x (RK3399 BSP — vendor-specifik fra OrangePi).
+  GPIO relay pins: sysfs 356 (Kamera), 361 (Modem). Pin 2=VCC, Pin 6=GND.
+  NVMe flash-workflow: flash til SD → boot → sudo nand-sata-install → boot fra NVMe.
   Image: https://drive.google.com/drive/folders/1TcFAGTblG_gbDhwFotEWS0y78LwHA-VG

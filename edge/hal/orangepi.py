@@ -19,6 +19,8 @@ class OrangePiAdapter(HardwareAdapter):
     def model_name(self) -> str:
         if "4 pro" in self._raw or "rk3399" in self._raw:
             return "OrangePi 4 Pro (RK3399, arm64)"
+        if "a733" in self._raw or "sun60iw2" in self._raw:
+            return "OrangePi 4 Pro (Allwinner A733, arm64)"
         if "pc plus" in self._raw or "pcplus" in self._raw:
             return "OrangePi PC Plus (H3, armhf)"
         if "zero3" in self._raw:

@@ -462,6 +462,7 @@ export function CMDBDetailPage() {
   const [bgAdminUser, setBgAdminUser] = useState('')
   const [bgExpiresDays, setBgExpiresDays] = useState(0)
   const [bgCreating, setBgCreating] = useState(false)
+  const [bgError, setBgError] = useState('')
   const [checkoutModal, setCheckoutModal] = useState<number | null>(null)
   const [checkoutReason, setCheckoutReason] = useState('')
   const [checkoutResult, setCheckoutResult] = useState<null | { password: string; ssh_username: string }>(null)
@@ -495,13 +496,27 @@ export function CMDBDetailPage() {
   async function createBreakGlass() {
     if (!deviceId || !bgAdminUser) return
     setBgCreating(true)
-    await apiPost(`/api/cmdb/${pathSegment(deviceId)}/break-glass`, {
-      admin_username: bgAdminUser,
-      expires_days: bgExpiresDays,
-    })
+    setBgError('')
+    try {
+      const r = await apiPost(`/api/cmdb/${pathSegment(deviceId)}/break-glass`, {
+        admin_username: bgAdminUser,
+        expires_days: bgExpiresDays,
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        setBgError(err.detail ?? `Fejl ${r.status}`)
+        setBgCreating(false)
+        return
+      }
+    } catch (e) {
+      setBgError('Netværksfejl — kunne ikke oprette konto')
+      setBgCreating(false)
+      return
+    }
     setBgCreating(false)
     setBgModal(false)
     setBgAdminUser('')
+    setBgError('')
     load()
   }
 
@@ -1058,7 +1073,7 @@ export function CMDBDetailPage() {
             </p>
           </div>
           <button
-            onClick={() => setBgModal(true)}
+            onClick={() => { setBgModal(true); setBgError('') }}
             className="flex items-center gap-1.5 text-xs bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -1142,6 +1157,11 @@ export function CMDBDetailPage() {
               <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-700">
                 Password genereres automatisk. Brug /checkout for at se det — passwordet roteres ved hvert checkout.
               </div>
+              {bgError && (
+                <div className="bg-red-50 border border-red-200 rounded p-3 text-xs text-red-700">
+                  ⚠️ {bgError}
+                </div>
+              )}
             </div>
             <div className="flex gap-3 mt-5">
               <button

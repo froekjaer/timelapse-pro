@@ -605,6 +605,54 @@ NM_CONF_EOF
     fi
 fi
 
+# ── First-boot pakkeinstallation (images uden cloud-init, fx OrangePi) ───────
+# EXTRA_PACKAGES er mellemrum-separeret liste sat af Python fra target.yaml.
+if [ -n "${EXTRA_PACKAGES:-}" ] && [ ! -d /mnt/root/etc/cloud ]; then
+    echo "[inject] Skriver timelapse-firstrun.service (pakker: ${EXTRA_PACKAGES})..."
+    PKGS_APT=$(echo "${EXTRA_PACKAGES}" | tr ' ' '\n' | sed 's/^/  - /' | tr '\n' ' ')
+    cat > /mnt/root/etc/systemd/system/timelapse-firstrun.service << FIRSTRUN_EOF
+[Unit]
+Description=TimeLapse Pro — First-boot package installation
+After=network-online.target
+Wants=network-online.target
+Before=timelapse-bootstrap.service
+ConditionPathExists=!/etc/timelapse/.firstrun-done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/bin/bash -c 'apt-get update -qq && apt-get install -y --no-install-recommends ${EXTRA_PACKAGES} && touch /etc/timelapse/.firstrun-done'
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=timelapse-firstrun
+
+[Install]
+WantedBy=multi-user.target
+FIRSTRUN_EOF
+
+    WANTS_DIR_FR=/mnt/root/etc/systemd/system/multi-user.target.wants
+    mkdir -p "\$WANTS_DIR_FR"
+    ln -sf /etc/systemd/system/timelapse-firstrun.service \
+        "\$WANTS_DIR_FR/timelapse-firstrun.service"
+    echo "[inject]   timelapse-firstrun.service aktiveret (${EXTRA_PACKAGES})"
+
+    # gpsd: sæt standard device til /dev/ttyUSB0 (u-blox USB GPS)
+    if echo "${EXTRA_PACKAGES}" | grep -q gpsd; then
+        mkdir -p /mnt/root/etc/default
+        cat > /mnt/root/etc/default/gpsd << 'GPSD_EOF'
+# TimeLapse Pro — gpsd konfiguration
+START_DAEMON="true"
+GPSD_OPTIONS="-n"
+DEVICES="/dev/ttyUSB0"
+USBAUTO="true"
+GPSD_SOCKET="/var/run/gpsd.sock"
+GPSD_EOF
+        echo "[inject]   gpsd konfigureret (/dev/ttyUSB0)"
+    fi
+fi
+
 # ── Device SSH private key (edge → headend reverse tunnel) ───────────────────
 if [ -n "${DEVICE_SSH_PRIVATE_KEY:-}" ] && [ -n "${SSH_TUNNEL_PORT:-}" ]; then
     echo "[inject] Injecterer device SSH private key til reverse tunnel..."
@@ -851,9 +899,11 @@ def _inject_via_docker(
 
     # ── 1. Start detached container ──────────────────────────────────────────
     wifi_method = target.get("wifi_method", "wpa_supplicant")
+    extra_packages = " ".join(target.get("extra_packages", []))
     docker_cmd = [
         "docker", "run", "-d", "--privileged",
         "-e", f"OFFSET_BYTES={offset_bytes}",
+        "-e", f"EXTRA_PACKAGES={extra_packages}",
         "-e", f"WIFI_METHOD={wifi_method}",
         "-e", f"WIFI_SSID={wifi_ssid}",
         "-e", f"WIFI_PASSWORD={wifi_password}",
