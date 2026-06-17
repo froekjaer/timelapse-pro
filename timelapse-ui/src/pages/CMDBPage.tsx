@@ -1142,6 +1142,9 @@ export function CMDBDetailPage() {
                   onChange={e => setBgAdminUser(e.target.value)}
                   placeholder="peter"
                   autoFocus
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                 />
               </div>
               <div>
