@@ -1,0 +1,17 @@
+[Unit]
+Description=TimeLapse Pro — Bluetooth pairing agent + NAP registration
+After=bluetooth.service timelapse-bt-pan.service
+Wants=bluetooth.service
+Requires=timelapse-bt-pan.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/timelapse/edge/scripts/bt-autoagent.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

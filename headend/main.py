@@ -115,11 +115,29 @@ import uuid as _uuid
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level   = logging.INFO,
-    format  = "%(asctime)s %(levelname)-8s %(name)-20s %(message)s",
-    datefmt = "%Y-%m-%d %H:%M:%S",
+import os as _os
+from logging.handlers import TimedRotatingFileHandler as _TRFHandler
+
+_LOG_DIR = "/Users/peter/Library/Logs/timelapse"
+_os.makedirs(_LOG_DIR, exist_ok=True)
+
+_fmt = logging.Formatter(
+    fmt="%(asctime)s %(levelname)-8s %(name)-20s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+_file_handler = _TRFHandler(
+    filename=f"{_LOG_DIR}/headend.log",
+    when="midnight",
+    backupCount=30,     # 30 dages rotation
+    encoding="utf-8",
+)
+_file_handler.setFormatter(_fmt)
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_fmt)
+
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _console_handler])
 log = logging.getLogger("headend")
 
 # ── App ───────────────────────────────────────────────────────────────────────
