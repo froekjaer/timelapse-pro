@@ -9,7 +9,7 @@ totp:
   secret: "JBSWY3DPEHPK3PXP"
   sid: "factory-default"
   issuer: "TimeLapse Pro"
-  valid_window: 1        # ±1 tidsvindue = ±30 sek tolerance
+  valid_window: 3        # ±3 tidsvinduer = ±90 sek tolerance (GPS giver præcis tid)
 
 management:
   require_mfa: true      # false = åben adgang (kun RFC1918-begrænsning gælder)

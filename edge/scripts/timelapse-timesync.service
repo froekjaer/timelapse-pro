@@ -1,0 +1,15 @@
+[Unit]
+Description=TimeLapse Pro — tidssynkronisering (GPS/headend fallback)
+After=network.target
+Before=timelapse-totp.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=HEADEND_URL=http://192.168.86.125:8000
+ExecStart=/bin/bash /opt/timelapse/edge/scripts/sync-time.sh
+StandardOutput=append:/var/log.hdd/timelapse/time-sync.log
+StandardError=append:/var/log.hdd/timelapse/time-sync.log
+
+[Install]
+WantedBy=multi-user.target

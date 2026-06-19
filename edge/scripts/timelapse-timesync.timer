@@ -1,0 +1,11 @@
+[Unit]
+Description=TimeLapse Pro — periodisk tidssynkronisering
+
+[Timer]
+# Kør hvert 6. minut (hyppigere end standard NTP, håndterer GPS-udfald)
+OnBootSec=30
+OnUnitActiveSec=6min
+Unit=timelapse-timesync.service
+
+[Install]
+WantedBy=timers.target

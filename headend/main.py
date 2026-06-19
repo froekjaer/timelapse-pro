@@ -9092,6 +9092,20 @@ def edge_report_inventory(device_id: str, payload: dict, db: Session = Depends(g
 def health():
     return {"status": "ok", "time": now_utc().isoformat()}
 
+
+@app.get("/api/time")
+def api_time():
+    """Tidssynkronisering for edge-noder uden GPS eller internetadgang.
+    Returnerer headendens UTC-tid — bruges af edge som NTP-fallback.
+    Ingen autentificering krævet (tid er ikke fortrolig).
+    """
+    now = datetime.now(timezone.utc)
+    return {
+        "utc": now.isoformat(),
+        "unix": now.timestamp(),
+        "source": "headend",
+    }
+
 from pathlib import Path as _Path
 from fastapi.responses import FileResponse
 def _init_sftp_base():
