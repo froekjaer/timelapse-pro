@@ -1,0 +1,29 @@
+# TimeLapse Pro — BT/local management konfiguration
+# Hierarki: global → kunde → site → kamera
+# Denne fil er factory default — erstattes ved enrollment fra headend
+
+totp:
+  enabled: true
+  # Base32-encodet secret — QR-kode følger med i kameraæsken
+  # Erstattes af headend-genereret SID-bundet secret ved enrollment
+  secret: "JBSWY3DPEHPK3PXP"
+  sid: "factory-default"
+  issuer: "TimeLapse Pro"
+  valid_window: 1        # ±1 tidsvindue = ±30 sek tolerance
+
+management:
+  require_mfa: true      # false = åben adgang (kun RFC1918-begrænsning gælder)
+  session_timeout: 3600  # sekunder — 0 = ubegrænset
+  https_port: 8443
+  # http_port: port 80+443 redirectes via iptables NAT direkte til https_port
+  cert_file: "/etc/timelapse/tls/server.crt"
+  key_file: "/etc/timelapse/tls/server.key"
+
+network:
+  bt_bridge: "br-bt"
+  bt_ip: "192.168.42.1"
+  # RFC1918 ranges tilladt til WiFi management adgang
+  allowed_ranges:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
