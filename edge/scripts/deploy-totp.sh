@@ -3,48 +3,54 @@
 # Kør fra headend/Mac: bash edge/scripts/deploy-totp.sh
 set -euo pipefail
 
-EDGE="timelapse0101"
+EDGE="${EDGE_HOST:-192.168.86.134}"
+EDGE_USER="${EDGE_USER:-orangepi}"
+REMOTE="${EDGE_USER}@${EDGE}"
 REMOTE_DIR="/opt/timelapse/edge/scripts"
 CONFIG_SRC="edge/config/bt-config.yaml"
 CONFIG_DST="/etc/timelapse/bt-config.yaml"
 
-echo "=== Deploy TOTP captive portal til $EDGE ==="
+ssh_sudo() { ssh "$REMOTE" "sudo $*"; }
+
+echo "=== Deploy TOTP captive portal til $REMOTE ==="
 
 # 1. Sync scripts
 echo "[1/5] Kopierer scripts..."
-ssh "$EDGE" "mkdir -p $REMOTE_DIR"
-scp edge/scripts/totp-service.py    "$EDGE:$REMOTE_DIR/"
-scp edge/scripts/gen-bt-cert.sh     "$EDGE:$REMOTE_DIR/"
-scp edge/scripts/timelapse-captive.sh "$EDGE:$REMOTE_DIR/"
-ssh "$EDGE" "chmod +x $REMOTE_DIR/gen-bt-cert.sh $REMOTE_DIR/timelapse-captive.sh"
+ssh_sudo "mkdir -p $REMOTE_DIR"
+scp edge/scripts/totp-service.py      "$REMOTE:/tmp/totp-service.py"
+scp edge/scripts/gen-bt-cert.sh       "$REMOTE:/tmp/gen-bt-cert.sh"
+scp edge/scripts/timelapse-captive.sh "$REMOTE:/tmp/timelapse-captive.sh"
+ssh_sudo "mv /tmp/totp-service.py /tmp/gen-bt-cert.sh /tmp/timelapse-captive.sh $REMOTE_DIR/"
+ssh_sudo "chmod +x $REMOTE_DIR/gen-bt-cert.sh $REMOTE_DIR/timelapse-captive.sh"
 
 # 2. Deploy config
 echo "[2/5] Kopierer bt-config.yaml..."
-ssh "$EDGE" "mkdir -p /etc/timelapse"
-scp "$CONFIG_SRC" "$EDGE:$CONFIG_DST"
-ssh "$EDGE" "chmod 600 $CONFIG_DST"
+ssh_sudo "mkdir -p /etc/timelapse"
+scp "$CONFIG_SRC" "$REMOTE:/tmp/bt-config.yaml"
+ssh_sudo "mv /tmp/bt-config.yaml $CONFIG_DST && chmod 600 $CONFIG_DST"
 
 # 3. Deploy systemd services
 echo "[3/5] Installerer systemd services..."
-scp edge/scripts/timelapse-captive.service "$EDGE:/etc/systemd/system/"
-scp edge/scripts/timelapse-totp.service    "$EDGE:/etc/systemd/system/"
-ssh "$EDGE" "systemctl daemon-reload"
+scp edge/scripts/timelapse-captive.service "$REMOTE:/tmp/timelapse-captive.service"
+scp edge/scripts/timelapse-totp.service    "$REMOTE:/tmp/timelapse-totp.service"
+ssh_sudo "mv /tmp/timelapse-captive.service /tmp/timelapse-totp.service /etc/systemd/system/"
+ssh_sudo "systemctl daemon-reload"
 
 # 4. Generer TLS cert
 echo "[4/5] Genererer TLS cert..."
-ssh "$EDGE" "bash $REMOTE_DIR/gen-bt-cert.sh"
+ssh_sudo "bash $REMOTE_DIR/gen-bt-cert.sh"
 
 # 5. Aktiver og start services
 echo "[5/5] Aktiverer services..."
-ssh "$EDGE" "systemctl enable timelapse-captive timelapse-totp"
-ssh "$EDGE" "systemctl restart timelapse-captive timelapse-totp"
+ssh_sudo "systemctl enable timelapse-captive timelapse-totp"
+ssh_sudo "systemctl restart timelapse-captive timelapse-totp"
 
 echo ""
 echo "=== Status ==="
-ssh "$EDGE" "systemctl status timelapse-captive timelapse-totp --no-pager -l"
+ssh_sudo "systemctl status timelapse-captive timelapse-totp --no-pager -l"
 echo ""
 echo "=== iptables TL_MGMT chain ==="
-ssh "$EDGE" "bash $REMOTE_DIR/timelapse-captive.sh status"
+ssh_sudo "bash $REMOTE_DIR/timelapse-captive.sh status"
 echo ""
 echo "✓ Deploy fuldført"
 echo "  Test: Forbind telefon via BT PAN → åbn browser → https://192.168.42.1:8443"
