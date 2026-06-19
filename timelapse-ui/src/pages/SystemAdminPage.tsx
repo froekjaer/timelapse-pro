@@ -224,6 +224,8 @@ export function SystemAdminPage() {
   const [multiCameraMode, setMultiCameraMode] = useState('single')
   const [nodeCameras, setNodeCameras] = useState<{camera_index:number, relay_gpio_camera:number, camera_name:string, serial_number:string}[]>([])
   const [savingMultiCam, setSavingMultiCam] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const [restartMsg, setRestartMsg] = useState('')
 
   // Config state
   const [relayGpioCamera, setRelayGpioCamera] = useState('356')
@@ -658,6 +660,32 @@ export function SystemAdminPage() {
             {savedSettings ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
             {savedSettings ? 'Gemt!' : savingSettings ? 'Gemmer…' : 'Gem indstillinger'}
           </button>
+        </div>
+      </Section>
+
+      {/* Headend genstart */}
+      <Section title="Headend genstart" icon={<Power className="w-4 h-4" />}
+        description="Genstart headend-processen via launchd (tager ~5 sekunder)">
+        <div className="flex items-center gap-4 pt-2">
+          <button
+            onClick={async () => {
+              if (!confirm('Genstart headend nu? Forbindelsen afbrydes kortvarigt.')) return
+              setRestarting(true); setRestartMsg('')
+              try {
+                await api('/admin/restart-headend', { method: 'POST' })
+                setRestartMsg('Genstart igangsat — forbind igen om ~10 sekunder')
+              } catch {
+                setRestartMsg('Fejl — headend svarer ikke eller har allerede genstartet')
+              } finally {
+                setRestarting(false)
+              }
+            }}
+            disabled={restarting}
+            className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 disabled:opacity-50">
+            <RefreshCw className={`w-4 h-4 ${restarting ? 'animate-spin' : ''}`} />
+            {restarting ? 'Genstarter…' : 'Genstart headend'}
+          </button>
+          {restartMsg && <p className="text-xs text-gray-500">{restartMsg}</p>}
         </div>
       </Section>
 

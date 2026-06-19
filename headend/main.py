@@ -9114,6 +9114,18 @@ def health():
     return {"status": "ok", "time": now_utc().isoformat()}
 
 
+@app.post("/api/admin/restart-headend")
+def restart_headend(_auth=require_role("admin", "super_admin")):
+    """Genstart headend-processen via launchd. Kræver admin-rolle."""
+    import subprocess, threading
+    def _do_restart():
+        import time; time.sleep(1)
+        subprocess.run(["/bin/launchctl", "kickstart", "-k",
+                        "system/dk.froekjaer.timelapse-headend"], check=False)
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return {"status": "restarting", "message": "Headend genstarter om ~1 sekund"}
+
+
 @app.get("/api/time")
 def api_time():
     """Tidssynkronisering for edge-noder uden GPS eller internetadgang.
