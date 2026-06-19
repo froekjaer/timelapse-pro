@@ -2512,6 +2512,27 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "initial_since_minutes": 10,
             "journal_units": ["timelapse-edge.service"],
         },
+        "time": {
+            # Tidssynkronisering — prioritet: gps → headend → ntp → local
+            "sources": {
+                "gps": {
+                    "enabled": True,
+                    "device": "/dev/ttyS3",
+                    "baud": 9600,
+                },
+                "headend": {
+                    "enabled": True,
+                    "url": base_url,
+                    "interval_minutes": 6,
+                },
+                "ntp": {
+                    "enabled": True,
+                    "servers": ["pool.ntp.org"],
+                },
+            },
+            "totp_valid_window": 3,
+            "timezone": "Europe/Copenhagen",
+        },
     }
 
     # Apply per-device overrides from database
