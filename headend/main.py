@@ -2551,6 +2551,14 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "totp_valid_window": 3,
             "timezone": "Europe/Copenhagen",
         },
+        # BT PAN TOTP — fabriksstandard, kan overrides i hierarkiet:
+        #   config_defaults.bt_totp, customer.config_overrides.bt_totp,
+        #   site.config_overrides.bt_totp, device.config_overrides.bt_totp
+        # Eksempel override: {"bt_totp": {"secret": "NEWBASE32SECRET", "sid": "acme-2026"}}
+        "bt_totp": {
+            "secret": "JBSWY3DPEHPK3PXP",
+            "sid":    "factory-default",
+        },
     }
 
     # Apply per-device overrides from database
@@ -2645,31 +2653,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     # Inkluder config_version så edge kan detektere ændringer
     cfg["config_version"] = device.config_version or ""
 
-    # BT PAN TOTP — device-specifikt secret fra tilknyttet kamera (v9)
-    # Fabriksstandard bruges hvis kameraet ikke er enrolled/har secret
-    try:
-        from database import Camera, DeviceAssignment
-        _da = (
-            db.query(DeviceAssignment)
-            .filter_by(device_id=device_id)
-            .filter(DeviceAssignment.unassigned_at.is_(None))
-            .order_by(DeviceAssignment.assigned_at.desc())
-            .first()
-        )
-        _cam_totp = db.query(Camera).filter_by(id=_da.camera_id).first() if _da else None
-        if _cam_totp and _cam_totp.bt_totp_secret:
-            cfg["bt_totp"] = {
-                "secret": _cam_totp.bt_totp_secret,
-                "sid":    _cam_totp.bt_totp_sid or f"cam-{_da.camera_id[:8]}",
-            }
-        else:
-            cfg["bt_totp"] = {
-                "secret": "JBSWY3DPEHPK3PXP",
-                "sid":    "factory-default",
-            }
-    except Exception as _totp_exc:
-        log.warning("bt_totp config fejl: %s", _totp_exc)
-        cfg["bt_totp"] = {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
+    # bt_totp er sat som base + overrides via hierarkiet — intet ekstra her.
 
     return cfg
 
@@ -3363,18 +3347,55 @@ def get_camera_bt_totp_qr(
     db: Session = Depends(get_db)
 ):
     """Returner QR-kode (data-URI) til BT PAN TOTP for dette kamera.
-    Fabriksstandard vises hvis kameraet ikke har et device-specifikt secret.
+    Beregner det gældende secret ved at gå op i hierarkiet:
+      camera.bt_totp_secret → site.config_overrides.bt_totp
+      → customer.config_overrides.bt_totp → config_defaults.bt_totp
+      → fabriksstandard (JBSWY3DPEHPK3PXP)
     """
     import pyotp as _pyotp, qrcode as _qrcode, io as _io, base64 as _b64
-    from database import Camera
+    from database import Camera, Site, Customer
+
     cam = db.query(Camera).filter_by(id=camera_id).first()
     if not cam:
         raise HTTPException(status_code=404, detail="Kamera ikke fundet")
 
-    secret = cam.bt_totp_secret or "JBSWY3DPEHPK3PXP"
-    sid    = cam.bt_totp_sid    or "factory-default"
-    label  = f"TimeLapse:{cam.camera_name or camera_id}"
-    uri    = _pyotp.TOTP(secret).provisioning_uri(name=label, issuer_name="TimeLapse Pro")
+    # Fabriksstandard som udgangspunkt
+    secret = "JBSWY3DPEHPK3PXP"
+    sid    = "factory-default"
+    source = "factory-default"
+
+    # Lag 1: config_defaults
+    defs = db.query(ConfigDefaults).first()
+    if defs:
+        for attr in ["schedule", "camera", "quality", "storage", "diagnostics", "system"]:
+            pass  # config_defaults har ikke fri JSON — bt_totp sættes via Settings i stedet
+    # Tjek Settings-tabel for global bt_totp override
+    _g_secret = _get_setting(db, "bt_totp_secret", "")
+    _g_sid    = _get_setting(db, "bt_totp_sid", "")
+    if _g_secret:
+        secret, sid, source = _g_secret, _g_sid or "global", "global"
+
+    # Lag 2: customer.config_overrides
+    site = db.query(Site).filter_by(id=cam.site_id).first() if cam.site_id else None
+    customer = db.query(Customer).filter_by(id=site.customer_id).first() if site else None
+    if customer and customer.config_overrides:
+        _co = _json.loads(customer.config_overrides).get("bt_totp", {})
+        if _co.get("secret"):
+            secret, sid, source = _co["secret"], _co.get("sid", "kunde"), "kunde"
+
+    # Lag 3: site.config_overrides
+    if site and site.config_overrides:
+        _so = _json.loads(site.config_overrides).get("bt_totp", {})
+        if _so.get("secret"):
+            secret, sid, source = _so["secret"], _so.get("sid", "site"), "site"
+
+    # Lag 4: camera-specifik override (bt_totp_secret kolonne)
+    if cam.bt_totp_secret:
+        secret, sid, source = cam.bt_totp_secret, cam.bt_totp_sid or "kamera", "kamera"
+
+    issuer = "TimeLapse Pro"
+    label  = f"{issuer}:{cam.camera_name or camera_id}"
+    uri    = _pyotp.TOTP(secret).provisioning_uri(name=label, issuer_name=issuer)
 
     buf = _io.BytesIO()
     _qrcode.make(uri).save(buf, format="PNG")
@@ -3382,32 +3403,11 @@ def get_camera_bt_totp_qr(
     return {
         "secret":   secret,
         "sid":      sid,
+        "source":   source,    # hvilket lag der gælder: factory-default|global|kunde|site|kamera
         "uri":      uri,
         "qr_code":  f"data:image/png;base64,{qr_b64}",
-        "is_factory_default": (cam.bt_totp_secret is None),
+        "is_factory_default": (source == "factory-default"),
     }
-
-
-@app.post("/api/admin/cameras/{camera_id}/bt-totp-regenerate")
-def regenerate_camera_bt_totp(
-    camera_id: str,
-    _user=require_role("super_admin", "admin"),
-    db: Session = Depends(get_db)
-):
-    """Generér nyt BT PAN TOTP secret til kameraet.
-    Det nye secret skal deployes til edge (via bt-config sync).
-    """
-    import pyotp as _pyotp
-    import uuid as _u
-    from database import Camera
-    cam = db.query(Camera).filter_by(id=camera_id).first()
-    if not cam:
-        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
-    cam.bt_totp_secret = _pyotp.random_base32()
-    cam.bt_totp_sid    = f"cam-{str(_u.uuid4())[:8]}"
-    db.commit()
-    log.info("BT TOTP regenereret for kamera %s sid=%s", camera_id, cam.bt_totp_sid)
-    return {"sid": cam.bt_totp_sid, "message": "Nyt TOTP secret genereret — deploy til edge"}
 
 
 @app.post("/api/admin/cameras/{camera_id}/assign")

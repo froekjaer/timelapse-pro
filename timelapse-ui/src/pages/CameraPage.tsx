@@ -141,7 +141,7 @@ export function CameraPage() {
   const [locationExpanded, setLocationExpanded] = useState(false)
 
   // ── BT TOTP QR ───────────────────────────────────────────────────────────
-  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,qr_code:string,is_factory_default:boolean}|null>(null)
+  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,source:string,qr_code:string,is_factory_default:boolean}|null>(null)
   const [btTotpLoading, setBtTotpLoading] = useState(false)
   const [btTotpRegen, setBtTotpRegen]     = useState(false)
 
@@ -517,11 +517,34 @@ export function CameraPage() {
             <div className="flex gap-4 items-start">
               <img src={btTotp.qr_code} alt="TOTP QR" className="w-36 h-36 rounded-lg border border-gray-100" />
               <div className="flex-1 text-xs space-y-2">
-                <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200">
-                  🔑 Fælles QR-kode
-                </div>
-                <p className="text-gray-500">
-                  Scan denne QR med Google Authenticator eller tilsvarende. Koden er ens for alle kameraer — tekniker bruger den fra kameraæsken eller her fra CMDB.
+                {(() => {
+                  const srcLabel: Record<string,string> = {
+                    'factory-default': '🔑 Fabriksstandard',
+                    'global':          '🌐 Global',
+                    'kunde':           '🏢 Kunde',
+                    'site':            '📍 Site',
+                    'kamera':          '📷 Kamera',
+                  }
+                  const srcColor: Record<string,string> = {
+                    'factory-default': 'bg-gray-50 text-gray-600 border-gray-200',
+                    'global':          'bg-purple-50 text-purple-700 border-purple-200',
+                    'kunde':           'bg-blue-50 text-blue-700 border-blue-200',
+                    'site':            'bg-teal-50 text-teal-700 border-teal-200',
+                    'kamera':          'bg-green-50 text-green-700 border-green-200',
+                  }
+                  const src = btTotp!.source
+                  return (
+                    <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium border ${srcColor[src] ?? srcColor['factory-default']}`}>
+                      {srcLabel[src] ?? src}
+                    </div>
+                  )
+                })()}
+                <p className="text-gray-500 mt-1">
+                  Scan med Google Authenticator eller tilsvarende.
+                  {btTotp!.source === 'factory-default' && ' Gælder alle enheder — ændres i config_defaults eller hierarki-overrides.'}
+                  {btTotp!.source === 'kunde' && ' Gælder alle kameraer hos denne kunde.'}
+                  {btTotp!.source === 'site' && ' Gælder alle kameraer på dette site.'}
+                  {btTotp!.source === 'kamera' && ' Specifik for dette kamera.'}
                 </p>
                 <p className="text-gray-400 font-mono">SID: {btTotp.sid}</p>
                 <p className="text-gray-300 text-xs break-all">Secret: {btTotp.secret}</p>

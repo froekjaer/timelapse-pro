@@ -110,8 +110,12 @@ def _login_page(error: str = "") -> str:
         _sid = "factory-default"
     _is_factory = (_sid == "factory-default")
     _badge_color = "#4fc3f7"   # blå/neutral
-    _badge_text  = "🔑 Fælles QR-kode"
-    _badge_hint  = "Brug den medfølgende QR-kode fra kameraæsken eller CMDB"
+    if _is_factory:
+        _badge_text = "🔑 Fabriksstandard QR-kode"
+        _badge_hint = "Brug den medfølgende QR-kode fra kameraæsken eller CMDB"
+    else:
+        _badge_text = f"🔑 QR-kode: {_sid}"
+        _badge_hint = "Brug den QR-kode fra CMDB der svarer til dette kamera/site/kunde"
 
     return f"""<!DOCTYPE html>
 <html lang="da">
@@ -591,8 +595,12 @@ def _sync_totp_from_headend():
 if __name__ == "__main__":
     import threading
     import uvicorn
-    # TOTP-secret ændres IKKE automatisk ved opstart — fabriksstandard er fast.
-    # Secret opdateres kun ved eksplicit admin-handling (fysisk adgang + yaml-redigering).
+    # Sync TOTP fra headend ved opstart.
+    # Headend returnerer det gældende secret i hierarkiet (global→kunde→site→kamera).
+    # Fabriksstandard → fabriksstandard = ingen ændring.
+    # Admin ændrer secret i hierarkiet → alle berørte enheder syncer ved næste boot.
+    # Teknikeren skal have det nye QR inden ændringen træder i kraft.
+    _sync_totp_from_headend()
     cfg = load_config()
     mgmt = cfg["management"]
     https_port = mgmt.get("https_port", 8443)
