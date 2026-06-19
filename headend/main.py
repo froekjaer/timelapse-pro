@@ -243,6 +243,24 @@ def startup():
     except Exception as exc_v3:
         log.warning("DB migration v3 fejl (ikke kritisk): %s", exc_v3)
 
+    # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
+    try:
+        _eng_v9 = __import__('database').engine
+        _v9_cols = [
+            ("cameras", "bt_totp_secret", "VARCHAR(64)"),
+            ("cameras", "bt_totp_sid",    "VARCHAR(100)"),
+        ]
+        with _eng_v9.connect() as _conn_v9:
+            for _tbl, _col, _typ in _v9_cols:
+                try:
+                    _conn_v9.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
+                    _conn_v9.commit()
+                    log.info("DB migration v9: %s.%s tilføjet", _tbl, _col)
+                except Exception:
+                    pass  # allerede der
+    except Exception as _exc_v9:
+        log.warning("DB migration v9 fejl: %s", _exc_v9)
+
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
         run_ai_migration(engine)
@@ -2627,6 +2645,32 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     # Inkluder config_version så edge kan detektere ændringer
     cfg["config_version"] = device.config_version or ""
 
+    # BT PAN TOTP — device-specifikt secret fra tilknyttet kamera (v9)
+    # Fabriksstandard bruges hvis kameraet ikke er enrolled/har secret
+    try:
+        from database import Camera, DeviceAssignment
+        _da = (
+            db.query(DeviceAssignment)
+            .filter_by(device_id=device_id)
+            .filter(DeviceAssignment.unassigned_at.is_(None))
+            .order_by(DeviceAssignment.assigned_at.desc())
+            .first()
+        )
+        _cam_totp = db.query(Camera).filter_by(id=_da.camera_id).first() if _da else None
+        if _cam_totp and _cam_totp.bt_totp_secret:
+            cfg["bt_totp"] = {
+                "secret": _cam_totp.bt_totp_secret,
+                "sid":    _cam_totp.bt_totp_sid or f"cam-{_da.camera_id[:8]}",
+            }
+        else:
+            cfg["bt_totp"] = {
+                "secret": "JBSWY3DPEHPK3PXP",
+                "sid":    "factory-default",
+            }
+    except Exception as _totp_exc:
+        log.warning("bt_totp config fejl: %s", _totp_exc)
+        cfg["bt_totp"] = {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
+
     return cfg
 
 
@@ -3305,10 +3349,66 @@ def create_camera(
         model       = payload.get("model"),
         notes       = payload.get("notes"),
         config      = _json.dumps(payload.get("config", {})),
+        # bt_totp_secret + bt_totp_sid: NULL = fabriksstandard JBSWY3DPEHPK3PXP
     )
     db.add(cam); db.commit()
     log.info("Kamera oprettet: %s (%s)", cam.camera_name, cam.id)
     return {"id": cam.id}
+
+
+@app.get("/api/admin/cameras/{camera_id}/bt-totp-qr")
+def get_camera_bt_totp_qr(
+    camera_id: str,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Returner QR-kode (data-URI) til BT PAN TOTP for dette kamera.
+    Fabriksstandard vises hvis kameraet ikke har et device-specifikt secret.
+    """
+    import pyotp as _pyotp, qrcode as _qrcode, io as _io, base64 as _b64
+    from database import Camera
+    cam = db.query(Camera).filter_by(id=camera_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+
+    secret = cam.bt_totp_secret or "JBSWY3DPEHPK3PXP"
+    sid    = cam.bt_totp_sid    or "factory-default"
+    label  = f"TimeLapse:{cam.camera_name or camera_id}"
+    uri    = _pyotp.TOTP(secret).provisioning_uri(name=label, issuer_name="TimeLapse Pro")
+
+    buf = _io.BytesIO()
+    _qrcode.make(uri).save(buf, format="PNG")
+    qr_b64 = _b64.b64encode(buf.getvalue()).decode()
+    return {
+        "secret":   secret,
+        "sid":      sid,
+        "uri":      uri,
+        "qr_code":  f"data:image/png;base64,{qr_b64}",
+        "is_factory_default": (cam.bt_totp_secret is None),
+    }
+
+
+@app.post("/api/admin/cameras/{camera_id}/bt-totp-regenerate")
+def regenerate_camera_bt_totp(
+    camera_id: str,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Generér nyt BT PAN TOTP secret til kameraet.
+    Det nye secret skal deployes til edge (via bt-config sync).
+    """
+    import pyotp as _pyotp
+    import uuid as _u
+    from database import Camera
+    cam = db.query(Camera).filter_by(id=camera_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+    cam.bt_totp_secret = _pyotp.random_base32()
+    cam.bt_totp_sid    = f"cam-{str(_u.uuid4())[:8]}"
+    db.commit()
+    log.info("BT TOTP regenereret for kamera %s sid=%s", camera_id, cam.bt_totp_sid)
+    return {"sid": cam.bt_totp_sid, "message": "Nyt TOTP secret genereret — deploy til edge"}
+
 
 @app.post("/api/admin/cameras/{camera_id}/assign")
 def assign_camera_to_device(

@@ -102,6 +102,17 @@ def _iptables_remove(ip: str) -> None:
 # ── HTML templates ────────────────────────────────────────────────────────────
 def _login_page(error: str = "") -> str:
     err_html = f'<p class="error">{error}</p>' if error else ""
+    # Vis TOTP-kilde badge — factory-default = gul advarsel, CMDB = grøn
+    try:
+        _cfg = load_config()
+        _sid = _cfg["totp"].get("sid", "factory-default")
+    except Exception:
+        _sid = "factory-default"
+    _is_factory = (_sid == "factory-default")
+    _badge_color = "#4fc3f7"   # blå/neutral
+    _badge_text  = "🔑 Fælles QR-kode"
+    _badge_hint  = "Brug den medfølgende QR-kode fra kameraæsken eller CMDB"
+
     return f"""<!DOCTYPE html>
 <html lang="da">
 <head>
@@ -113,7 +124,11 @@ def _login_page(error: str = "") -> str:
           display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
   .card {{ background: #16213e; border-radius: 12px; padding: 2rem; width: 320px; box-shadow: 0 4px 24px #0008; }}
   h1 {{ font-size: 1.2rem; margin: 0 0 0.3rem; color: #4fc3f7; }}
-  p {{ font-size: 0.85rem; color: #aaa; margin: 0 0 1.5rem; }}
+  p {{ font-size: 0.85rem; color: #aaa; margin: 0 0 1.2rem; }}
+  .badge {{ display: inline-block; padding: 0.25rem 0.6rem; border-radius: 6px;
+            font-size: 0.78rem; font-weight: 600; margin-bottom: 1rem;
+            background: {_badge_color}22; color: {_badge_color}; border: 1px solid {_badge_color}44; }}
+  .badge-hint {{ font-size: 0.72rem; color: #888; margin-top: -0.7rem; margin-bottom: 1rem; }}
   input {{ width: 100%; box-sizing: border-box; padding: 0.75rem; border-radius: 8px;
            border: 1px solid #334; background: #0f3460; color: #fff; font-size: 1.1rem;
            letter-spacing: 0.2em; text-align: center; margin-bottom: 1rem; }}
@@ -128,6 +143,8 @@ def _login_page(error: str = "") -> str:
 <div class="card">
   <h1>TimeLapse Pro</h1>
   <p>Indtast din 6-cifrede TOTP-kode for at få adgang til lokal management</p>
+  <div class="badge">{_badge_text}</div>
+  <p class="badge-hint">{_badge_hint}</p>
   {err_html}
   <form method="post" action="/verify">
     <input type="text" name="code" inputmode="numeric" pattern="[0-9]{{6}}"
@@ -523,9 +540,59 @@ class _RedirectHandler(BaseHTTPRequestHandler):
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
+def _sync_totp_from_headend():
+    """Hent device-specifikt TOTP secret fra headend og opdater bt-config.yaml.
+    Kører ved opstart — er idempotent.
+    Device-id og headend-URL hentes fra /etc/timelapse/config.yaml (edge main config)
+    eller fra env-vars DEVICE_ID / HEADEND_URL.
+    """
+    import urllib.request, json as _json, re as _re
+    try:
+        # Hent device_id + headend_url — prøv main edge config først, derefter env
+        device_id   = os.environ.get("DEVICE_ID", "")
+        headend_url = os.environ.get("HEADEND_URL", "")
+        main_cfg_path = "/etc/timelapse/config.yaml"
+        if os.path.exists(main_cfg_path):
+            try:
+                with open(main_cfg_path) as _f:
+                    _mcfg = yaml.safe_load(_f) or {}
+                device_id   = device_id   or _mcfg.get("device_id", "")
+                headend_url = headend_url or _mcfg.get("headend_url", "")
+            except Exception:
+                pass
+        if not device_id or not headend_url:
+            log.info("TOTP sync: ingen device_id/headend_url — beholder lokal config")
+            return
+        url = f"{headend_url}/api/config/{device_id}"
+        with urllib.request.urlopen(url, timeout=5) as r:
+            hcfg = _json.loads(r.read())
+        bt_totp    = hcfg.get("bt_totp", {})
+        new_secret = bt_totp.get("secret", "")
+        new_sid    = bt_totp.get("sid", "")
+        if not new_secret:
+            log.info("TOTP sync: ingen bt_totp fra headend — beholder lokal config")
+            return
+        cfg = load_config()
+        if cfg["totp"].get("secret") == new_secret and cfg["totp"].get("sid") == new_sid:
+            log.info("TOTP sync: uændret (sid=%s)", new_sid)
+            return
+        # Opdater bt-config.yaml in-place med regex (bevarer kommentarer)
+        with open(CONFIG_FILE) as f:
+            raw = f.read()
+        raw = _re.sub(r'(secret:\s*")[^"]*(")', f'\\g<1>{new_secret}\\2', raw)
+        raw = _re.sub(r'(sid:\s*")[^"]*(")', f'\\g<1>{new_sid}\\2', raw)
+        with open(CONFIG_FILE, "w") as f:
+            f.write(raw)
+        log.info("TOTP sync: opdateret secret/sid → sid=%s", new_sid)
+    except Exception as e:
+        log.warning("TOTP sync fejl (ikke kritisk): %s", e)
+
+
 if __name__ == "__main__":
     import threading
     import uvicorn
+    # TOTP-secret ændres IKKE automatisk ved opstart — fabriksstandard er fast.
+    # Secret opdateres kun ved eksplicit admin-handling (fysisk adgang + yaml-redigering).
     cfg = load_config()
     mgmt = cfg["management"]
     https_port = mgmt.get("https_port", 8443)

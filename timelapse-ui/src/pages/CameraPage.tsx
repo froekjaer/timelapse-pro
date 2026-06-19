@@ -140,6 +140,11 @@ export function CameraPage() {
   const [reassigning, setReassigning]       = useState(false)
   const [locationExpanded, setLocationExpanded] = useState(false)
 
+  // ── BT TOTP QR ───────────────────────────────────────────────────────────
+  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,qr_code:string,is_factory_default:boolean}|null>(null)
+  const [btTotpLoading, setBtTotpLoading] = useState(false)
+  const [btTotpRegen, setBtTotpRegen]     = useState(false)
+
   useEffect(() => {
     fetch(`${getApiUrl()}/api/admin/sites`).then(r=>r.json()).then((ss:any[]) => setSites(ss)).catch(()=>{})
     // Load all cameras for reassignment picker
@@ -240,6 +245,31 @@ export function CameraPage() {
       const d = await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}`)
       setDevice(d)
     } catch { } finally { setAssigning(false) }
+  }
+
+  async function loadBtTotp() {
+    if (!cameraLocation?.id) return
+    setBtTotpLoading(true)
+    try {
+      const r = await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-qr`, {
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (r.ok) setBtTotp(await r.json())
+    } catch { /* silent */ }
+    finally { setBtTotpLoading(false) }
+  }
+
+  async function regenerateBtTotp() {
+    if (!cameraLocation?.id || !confirm('Generér nyt TOTP secret? Det nuværende QR-code bliver ugyldigt.')) return
+    setBtTotpRegen(true)
+    try {
+      await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-regenerate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      await loadBtTotp()
+    } catch { /* silent */ }
+    finally { setBtTotpRegen(false) }
   }
 
   async function reassignToCamera() {
@@ -459,6 +489,47 @@ export function CameraPage() {
           </div>
         </div>
       ))}
+
+      {/* ── BT PAN TOTP QR-kode ──────────────────────────────────────────── */}
+      {cameraLocation && (
+        <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700">BT PAN TOTP</h3>
+              <p className="text-xs text-gray-400">QR-kode til lokal management adgang via Bluetooth</p>
+            </div>
+            <div className="flex gap-2">
+              {!btTotp && (
+                <button onClick={loadBtTotp} disabled={btTotpLoading}
+                  className="px-3 py-1.5 text-xs bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50">
+                  {btTotpLoading ? 'Henter…' : 'Vis QR-kode'}
+                </button>
+              )}
+              {btTotp && (
+                <button onClick={regenerateBtTotp} disabled={btTotpRegen}
+                  className="px-3 py-1.5 text-xs bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50">
+                  {btTotpRegen ? 'Genererer…' : 'Regenerér'}
+                </button>
+              )}
+            </div>
+          </div>
+          {btTotp && (
+            <div className="flex gap-4 items-start">
+              <img src={btTotp.qr_code} alt="TOTP QR" className="w-36 h-36 rounded-lg border border-gray-100" />
+              <div className="flex-1 text-xs space-y-2">
+                <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200">
+                  🔑 Fælles QR-kode
+                </div>
+                <p className="text-gray-500">
+                  Scan denne QR med Google Authenticator eller tilsvarende. Koden er ens for alle kameraer — tekniker bruger den fra kameraæsken eller her fra CMDB.
+                </p>
+                <p className="text-gray-400 font-mono">SID: {btTotp.sid}</p>
+                <p className="text-gray-300 text-xs break-all">Secret: {btTotp.secret}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Hurtige links */}
       <div className="grid grid-cols-2 gap-3 mb-5">

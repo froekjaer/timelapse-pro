@@ -241,6 +241,10 @@ class Camera(Base):
     ssh_private_key     = Column(Text,    default=None)
     ssh_public_key      = Column(Text,    default=None)
     reverse_tunnel_port = Column(Integer, default=None)
+    # BT PAN TOTP (v9 migration) — device-specifikt secret genereret ved enrollment
+    # Factory default bruges indtil enrolled: JBSWY3DPEHPK3PXP / sid=factory-default
+    bt_totp_secret      = Column(String(64), default=None)
+    bt_totp_sid         = Column(String(100), default=None)
 
 
 class DeviceAssignment(Base):
