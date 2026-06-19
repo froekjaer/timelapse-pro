@@ -26,9 +26,11 @@ flush_chain() {
     iptables -X "$CHAIN" 2>/dev/null || true
     # Fjern NAT redirect
     iptables -t nat -D PREROUTING -i "$BT_BRIDGE" -p tcp --dport 80 \
-        -j REDIRECT --to-port "$HTTP_PORT" 2>/dev/null || true
+        -j REDIRECT --to-port 8080 2>/dev/null || true
     iptables -t nat -D PREROUTING -i "$BT_BRIDGE" -p tcp --dport 443 \
         -j REDIRECT --to-port "$HTTPS_PORT" 2>/dev/null || true
+    iptables -t nat -D PREROUTING ! -i "$BT_BRIDGE" -p tcp --dport 80 \
+        -j REDIRECT --to-port 8080 2>/dev/null || true
 }
 
 case "$cmd" in
@@ -64,14 +66,16 @@ start)
     iptables -I INPUT   1 -i "$BT_BRIDGE" -j "$CHAIN"
     iptables -I FORWARD 1 -i "$BT_BRIDGE" -j "$CHAIN"
 
-    # NAT: port 80 → HTTPS TOTP service (direkte, ingen separat HTTP-process)
-    # Browser vil få TLS handshake og kan se cert-advarsel — acceptable for lokal portal
+    # NAT: port 80 → HTTP redirect service (8080), 443 → HTTPS TOTP (8443)
+    HTTP_REDIR_PORT="8080"
     iptables -t nat -A PREROUTING -i "$BT_BRIDGE" -p tcp --dport 80 \
-        -j REDIRECT --to-port "$HTTPS_PORT"
-
-    # NAT: port 443 → lokal HTTPS TOTP service
+        -j REDIRECT --to-port "$HTTP_REDIR_PORT"
     iptables -t nat -A PREROUTING -i "$BT_BRIDGE" -p tcp --dport 443 \
         -j REDIRECT --to-port "$HTTPS_PORT"
+
+    # WiFi: port 80 → HTTP redirect service
+    iptables -t nat -A PREROUTING ! -i "$BT_BRIDGE" -p tcp --dport 80 \
+        -j REDIRECT --to-port "$HTTP_REDIR_PORT"
 
     echo "[captive] Captive portal aktiv — alt blokeret undtagen DHCP/DNS/TOTP"
     ;;

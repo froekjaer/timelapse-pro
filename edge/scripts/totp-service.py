@@ -236,16 +236,51 @@ async def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
 
 
+# ── HTTP → HTTPS redirect (simpel http.server, port 80 + 8080) ───────────────
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class _RedirectHandler(BaseHTTPRequestHandler):
+    https_port = 8443
+
+    def do_GET(self):
+        host = self.headers.get("Host", self.server.server_address[0]).split(":")[0]
+        location = f"https://{host}:{self.https_port}{self.path}"
+        self.send_response(301)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_POST = do_GET
+    do_HEAD = do_GET
+
+    def log_message(self, fmt, *args):
+        log.info(f"[http-redirect] {fmt % args}")
+
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import threading
     import uvicorn
     cfg = load_config()
     mgmt = cfg["management"]
+    https_port = mgmt.get("https_port", 8443)
+    http_port = 8080  # HTTP redirect port (iptables sender port 80 hertil)
+
+    _RedirectHandler.https_port = https_port
+
+    def run_http_redirect(port):
+        srv = HTTPServer(("0.0.0.0", port), _RedirectHandler)
+        log.info(f"HTTP redirect server lytter på port {port} → HTTPS:{https_port}")
+        srv.serve_forever()
+
+    # Port 80 håndteres af iptables NAT redirect → port 8080
+    t = threading.Thread(target=run_http_redirect, args=(http_port,), daemon=True)
+    t.start()
 
     uvicorn.run(
         app,
-        host="192.168.42.1",
-        port=mgmt.get("https_port", 8443),
+        host="0.0.0.0",
+        port=https_port,
         ssl_keyfile=mgmt["key_file"],
         ssl_certfile=mgmt["cert_file"],
         log_level="info",
