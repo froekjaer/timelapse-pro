@@ -459,6 +459,23 @@ def _mgmt_page(section: str = "time", headend_cfg: dict = None, time_status: dic
       <button type="submit">Gem kamera-overrides</button>
     </form>
   </div>
+
+  <div class="card">
+    <h2>TOTP QR-kode</h2>
+    <div class="meta" style="margin-bottom:0.8rem">
+      Aktivt secret: <strong>{cfg["totp"].get("sid", "factory-default")}</strong>
+      <span class="source" style="margin-left:0.5rem">{'fabriksstandard' if cfg["totp"].get("sid","factory-default") == "factory-default" else 'CMDB-synkroniseret'}</span>
+    </div>
+    <p style="font-size:0.82rem;color:#aaa;margin-bottom:1rem">
+      QR-koden ændres kun ved eksplicit opdatering. Teknikeren skal have
+      den nye QR fra CMDB inden opdatering aktiveres.
+    </p>
+    <form method="post" action="/mgmt/totp-sync" onsubmit="return confirm('Hent og opdater TOTP-secret fra CMDB? Service genstarter automatisk.')">
+      <button type="submit" style="background:#f59e0b;color:#000">
+        ↻ Opdater TOTP fra CMDB
+      </button>
+    </form>
+  </div>
 </div>
 </body>
 </html>"""
@@ -522,6 +539,19 @@ document.querySelector('.content').insertAdjacentHTML('afterbegin',
 </script>""")
 
 
+@app.post("/mgmt/totp-sync", response_class=HTMLResponse)
+async def mgmt_totp_sync(request: Request):
+    """Eksplicit TOTP-sync fra headend — kræver aktiv netværksforbindelse.
+    Opdaterer bt-config.yaml og genstarter totp-service hvis secret er ændret.
+    """
+    if not _valid_token(request.cookies.get(SESSION_COOKIE, ""), request.client.host):
+        return RedirectResponse("/", status_code=303)
+    result = _sync_totp_from_headend()
+    msg = result if isinstance(result, str) else "TOTP synkroniseret fra CMDB"
+    hcfg = _fetch_headend_config(load_config())
+    return HTMLResponse(_mgmt_page("system", hcfg, _get_time_status(), msg))
+
+
 # ── HTTP → HTTPS redirect (simpel http.server, port 80 + 8080) ───────────────
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -544,15 +574,13 @@ class _RedirectHandler(BaseHTTPRequestHandler):
 
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
-def _sync_totp_from_headend():
-    """Hent device-specifikt TOTP secret fra headend og opdater bt-config.yaml.
-    Kører ved opstart — er idempotent.
-    Device-id og headend-URL hentes fra /etc/timelapse/config.yaml (edge main config)
-    eller fra env-vars DEVICE_ID / HEADEND_URL.
+def _sync_totp_from_headend() -> str:
+    """Hent TOTP secret fra headend (via config-hierarki) og opdater bt-config.yaml.
+    Kaldes KUN ved eksplicit brugerhandling — aldrig automatisk ved boot.
+    Returnerer statusbesked til management-UI.
     """
     import urllib.request, json as _json, re as _re
     try:
-        # Hent device_id + headend_url — prøv main edge config først, derefter env
         device_id   = os.environ.get("DEVICE_ID", "")
         headend_url = os.environ.get("HEADEND_URL", "")
         main_cfg_path = "/etc/timelapse/config.yaml"
@@ -565,8 +593,9 @@ def _sync_totp_from_headend():
             except Exception:
                 pass
         if not device_id or not headend_url:
-            log.info("TOTP sync: ingen device_id/headend_url — beholder lokal config")
-            return
+            msg = "Ingen forbindelse til CMDB — device_id eller headend_url mangler"
+            log.warning("TOTP sync: %s", msg)
+            return msg
         url = f"{headend_url}/api/config/{device_id}"
         with urllib.request.urlopen(url, timeout=5) as r:
             hcfg = _json.loads(r.read())
@@ -574,33 +603,37 @@ def _sync_totp_from_headend():
         new_secret = bt_totp.get("secret", "")
         new_sid    = bt_totp.get("sid", "")
         if not new_secret:
-            log.info("TOTP sync: ingen bt_totp fra headend — beholder lokal config")
-            return
+            return "CMDB returnerede intet TOTP-secret — ingen ændring"
         cfg = load_config()
         if cfg["totp"].get("secret") == new_secret and cfg["totp"].get("sid") == new_sid:
-            log.info("TOTP sync: uændret (sid=%s)", new_sid)
-            return
-        # Opdater bt-config.yaml in-place med regex (bevarer kommentarer)
+            return f"Allerede opdateret (sid={new_sid}) — ingen ændring nødvendig"
+        # Opdater bt-config.yaml in-place (bevarer kommentarer)
         with open(CONFIG_FILE) as f:
             raw = f.read()
         raw = _re.sub(r'(secret:\s*")[^"]*(")', f'\\g<1>{new_secret}\\2', raw)
         raw = _re.sub(r'(sid:\s*")[^"]*(")', f'\\g<1>{new_sid}\\2', raw)
         with open(CONFIG_FILE, "w") as f:
             f.write(raw)
-        log.info("TOTP sync: opdateret secret/sid → sid=%s", new_sid)
+        log.info("TOTP sync: opdateret → sid=%s", new_sid)
+        # Genstart totp-service så nyt secret træder i kraft (non-blocking)
+        subprocess.Popen(
+            ["sudo", "systemctl", "restart", "timelapse-totp.service"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        return f"✓ TOTP opdateret til sid={new_sid} — service genstarter"
     except Exception as e:
-        log.warning("TOTP sync fejl (ikke kritisk): %s", e)
+        msg = f"Sync fejlede: {e}"
+        log.warning("TOTP sync: %s", msg)
+        return msg
 
 
 if __name__ == "__main__":
     import threading
     import uvicorn
-    # Sync TOTP fra headend ved opstart.
-    # Headend returnerer det gældende secret i hierarkiet (global→kunde→site→kamera).
-    # Fabriksstandard → fabriksstandard = ingen ændring.
-    # Admin ændrer secret i hierarkiet → alle berørte enheder syncer ved næste boot.
-    # Teknikeren skal have det nye QR inden ændringen træder i kraft.
-    _sync_totp_from_headend()
+    # TOTP synces IKKE automatisk ved boot — fabriksstandard forbliver under hele
+    # installationen. Rotation sker KUN ved eksplicit handling:
+    #   • Tekniker trykker "Synkroniser TOTP fra CMDB" i management-UI
+    #   • Admin pusher via headend (fremtidig funktion)
     cfg = load_config()
     mgmt = cfg["management"]
     https_port = mgmt.get("https_port", 8443)

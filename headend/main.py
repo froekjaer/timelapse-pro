@@ -44,7 +44,7 @@ import base64
 import hashlib
 import hmac
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -1237,7 +1237,11 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
         compliance_domains="SABSA,IEC62443,ISO27000,NIS2,CRA",
         created_by="bootstrap",
         created_at=now_utc(),
-        metadata_json=_canonical_json({"bootstrap_token_device_label": token_record.device_label if token_record else None}),
+        metadata_json=_canonical_json({
+            "bootstrap_token_device_label": token_record.device_label if token_record else None,
+            "require_request_signature": True,
+            "request_signature_policy": "required-by-default-for-device-api",
+        }),
     )
     db.add(credential)
     _audit_key_event(db, credential, "created_by_bootstrap", "bootstrap", {"device_id": req.device_id})
@@ -1394,6 +1398,8 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
             "hardware_model":   req.hardware_model,
             "mac_address":      req.mac_address,
             "enrollment_state": enrollment_state,
+            "require_request_signature": True,
+            "request_signature_policy": "required-by-default-for-device-api",
         }),
     )
     db.add(credential)
@@ -1547,7 +1553,12 @@ async def _verify_device_token(
     token_hash = _secret_hash(provided)
     credential = (
         db.query(KeyCredential)
-        .filter_by(entity_type="edge", entity_id=device_id, key_type="api", secret_hash=token_hash)
+        .filter(
+            KeyCredential.entity_type.in_(["edge", "headend", "service"]),
+            KeyCredential.entity_id == device_id,
+            KeyCredential.key_type == "api",
+            KeyCredential.secret_hash == token_hash,
+        )
         .first()
     )
     active_secret = None
@@ -1559,7 +1570,15 @@ async def _verify_device_token(
             db.commit()
             raise HTTPException(status_code=401, detail="API token er udløbet")
         active_secret = provided
-        await _verify_edge_request_signature(request, active_secret)
+        require_signature = False
+        try:
+            credential_meta = json.loads(credential.metadata_json or "{}")
+            require_signature = bool(credential_meta.get("require_request_signature"))
+        except Exception:
+            require_signature = False
+        if credential.entity_type in {"headend", "service"}:
+            require_signature = True
+        await _verify_edge_request_signature(request, active_secret, required=require_signature)
         await _verify_edge_attestation_signature(request, device_id, db)
         credential.last_used_at = now_utc()
         credential.last_used_from = request.client.host if request.client else None
@@ -1581,7 +1600,7 @@ async def _verify_device_token(
         db.commit()
 
 
-async def _verify_edge_request_signature(request: Request, secret: str) -> None:
+async def _verify_edge_request_signature(request: Request, secret: str, *, required: bool = False) -> None:
     """Validate optional Edge request signature.
 
     Legacy devices may omit signatures for now. If signature headers are present,
@@ -1590,6 +1609,8 @@ async def _verify_edge_request_signature(request: Request, secret: str) -> None:
     """
     signature = request.headers.get("X-TLP-Signature")
     if not signature:
+        if required:
+            raise HTTPException(status_code=401, detail="Edge request signature mangler")
         return
     alg = request.headers.get("X-TLP-Signature-Alg", "")
     timestamp = request.headers.get("X-TLP-Timestamp", "")
@@ -1727,6 +1748,17 @@ class KeyRevokePayload(BaseModel):
     reason: Optional[str] = None
 
 
+class KeySignaturePolicyPayload(BaseModel):
+    require_request_signature: bool = True
+    reason: Optional[str] = None
+
+
+class StaleCredentialCleanupPayload(BaseModel):
+    dry_run: bool = True
+    older_than_days: int = 14
+    reason: Optional[str] = None
+
+
 class EdgeSigningEnrollmentPayload(BaseModel):
     public_key: str
     label: Optional[str] = None
@@ -1777,6 +1809,117 @@ def _audit_key_event(
         details_json=_canonical_json(details or {}),
         occurred_at=now_utc(),
     ))
+
+
+def _credential_metadata(credential: KeyCredential) -> dict:
+    try:
+        return json.loads(credential.metadata_json or "{}")
+    except Exception:
+        return {}
+
+
+def _set_credential_metadata(credential: KeyCredential, metadata: dict) -> None:
+    credential.metadata_json = _canonical_json(metadata)
+
+
+def _credential_request_signature_required(credential: KeyCredential) -> bool:
+    metadata = _credential_metadata(credential)
+    if credential.entity_type in {"headend", "service"} and credential.key_type == "api":
+        return True
+    return bool(metadata.get("require_request_signature"))
+
+
+def _credential_sort_timestamp(credential: KeyCredential) -> datetime:
+    value = credential.last_used_at or credential.created_at
+    if value:
+        return ensure_utc(value)
+    return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _primary_credential_ids(db: Session, credentials: list[KeyCredential]) -> set[int]:
+    """Find den credential der bør bevares pr. aktiv entity/key_type gruppe."""
+    grouped: dict[tuple[str, str, str], list[KeyCredential]] = {}
+    for credential in credentials:
+        if _credential_state(credential) != "active":
+            continue
+        grouped.setdefault((credential.entity_type, credential.entity_id, credential.key_type), []).append(credential)
+
+    devices = {d.device_id: d for d in db.query(Device).all()}
+    primary_ids: set[int] = set()
+    for (entity_type, entity_id, key_type), group in grouped.items():
+        primary: KeyCredential | None = None
+        if entity_type == "edge" and key_type == "api":
+            device = devices.get(entity_id)
+            if device and device.api_token:
+                token_hash = _secret_hash(device.api_token)
+                matches = [c for c in group if c.secret_hash == token_hash]
+                if matches:
+                    primary = max(matches, key=_credential_sort_timestamp)
+        if primary is None:
+            primary = max(group, key=_credential_sort_timestamp)
+        if primary.id is not None:
+            primary_ids.add(primary.id)
+    return primary_ids
+
+
+def _credential_cleanup_candidates(
+    db: Session,
+    *,
+    older_than_days: int = 30,
+) -> list[dict]:
+    now = now_utc()
+    cutoff = now - timedelta(days=max(int(older_than_days), 1))
+    credentials = (
+        db.query(KeyCredential)
+        .filter(
+            KeyCredential.entity_type == "edge",
+            KeyCredential.key_type.in_(["api", "signing"]),
+            KeyCredential.status == "active",
+        )
+        .order_by(KeyCredential.entity_id.asc(), KeyCredential.key_type.asc(), KeyCredential.created_at.desc())
+        .all()
+    )
+    primary_ids = _primary_credential_ids(db, credentials)
+    grouped_counts: dict[tuple[str, str, str], int] = {}
+    for credential in credentials:
+        grouped_counts[(credential.entity_type, credential.entity_id, credential.key_type)] = (
+            grouped_counts.get((credential.entity_type, credential.entity_id, credential.key_type), 0) + 1
+        )
+
+    candidates = []
+    for credential in credentials:
+        ref = credential.last_used_at or credential.created_at
+        ref_utc = ensure_utc(ref) if ref else None
+        is_primary = credential.id in primary_ids
+        group_count = grouped_counts.get((credential.entity_type, credential.entity_id, credential.key_type), 0)
+        stale = ref_utc is None or ref_utc < cutoff
+        action = None
+        reason = None
+        auto_revoke = False
+        if group_count > 1 and not is_primary:
+            action = "revoke_secondary"
+            reason = "Sekundær aktiv credential; en anden credential er primær for samme edge/key-type."
+            auto_revoke = True
+        elif is_primary and stale:
+            action = "review_stale_primary"
+            reason = "Primær credential er stale, men revokeres ikke automatisk for ikke at afbryde en mulig aktiv enhed."
+        if not action:
+            continue
+        candidates.append({
+            "credential_id": credential.credential_id,
+            "entity_id": credential.entity_id,
+            "key_type": credential.key_type,
+            "status": _credential_state(credential),
+            "last_used_at": credential.last_used_at.isoformat() if credential.last_used_at else None,
+            "created_at": credential.created_at.isoformat() if credential.created_at else None,
+            "is_primary": is_primary,
+            "group_count": group_count,
+            "stale": stale,
+            "action": action,
+            "auto_revoke": auto_revoke,
+            "reason": reason,
+        })
+    return candidates
 
 
 def _upsert_legacy_device_api_credential(
@@ -1875,6 +2018,9 @@ def _credential_to_dict(credential: KeyCredential) -> dict:
         include_tags.append("legacy-migrated")
     if metadata.get("gpg_fingerprint"):
         include_tags.append("release-signer")
+    request_signature_required = _credential_request_signature_required(credential)
+    if credential.key_type == "api":
+        include_tags.append("hmac-required" if request_signature_required else "hmac-missing")
     include_tags = sorted(set(include_tags))
     return {
         "id": credential.id,
@@ -1900,6 +2046,7 @@ def _credential_to_dict(credential: KeyCredential) -> dict:
         "revoke_reason": credential.revoke_reason,
         "rotated_from_id": credential.rotated_from_id,
         "metadata": metadata,
+        "request_signature_required": request_signature_required,
         "has_secret": bool(credential.secret_hash),
         "tags": include_tags,
     }
@@ -1954,10 +2101,18 @@ def list_key_management(
         "legacy_device_tokens": sum(1 for d in devices if d.api_token),
         "missing_edge_api_key": 0,
         "missing_signing_key": 0,
+        "active_api_credentials": sum(1 for c in rows if c["status"] == "active" and c["key_type"] == "api"),
+        "api_hmac_required": sum(1 for c in rows if c["status"] == "active" and c["key_type"] == "api" and c["request_signature_required"]),
+        "api_hmac_missing": sum(1 for c in rows if c["status"] == "active" and c["key_type"] == "api" and not c["request_signature_required"]),
+        "cleanup_candidates": 0,
+        "auto_revoke_candidates": 0,
         "trusted_release_signers": 0,
     }
     trusted_release_signers = _trusted_release_signers(db)
     counts["trusted_release_signers"] = len(trusted_release_signers)
+    cleanup_candidates = _credential_cleanup_candidates(db, older_than_days=14)
+    counts["cleanup_candidates"] = len(cleanup_candidates)
+    counts["auto_revoke_candidates"] = sum(1 for c in cleanup_candidates if c.get("auto_revoke"))
     active_by_entity_type = {
         (c.entity_type, c.entity_id, c.key_type)
         for c in credentials
@@ -2013,11 +2168,18 @@ def list_key_management(
             "recommendation": "Edge må kun installere artifacts med signatur fra en trusted Headend/release key. Pin root public key i base image og distribuer rotation via signeret trust policy.",
         },
         {
-            "status": "warning" if counts["missing_signing_key"] or counts["missing_edge_api_key"] else "pass",
+            "status": "warning" if counts["api_hmac_missing"] else "pass",
             "title": "Signal mutual authentication",
-            "evidence": "Edge API credentials autentificerer Edge til Headend; signing credentials skal bruges til attestation af Edge-signaler og update-resultater.",
+            "evidence": f"{counts['api_hmac_required']} aktiv(e) API credential(s) kræver HMAC request-signature; {counts['api_hmac_missing']} mangler enforcement.",
             "domains": ["SABSA", "IEC62443", "ISO27000", "NIS2"],
-            "recommendation": "Udvid agenten med request-signatures eller mTLS, så Headend validerer signeret payload og Edge validerer Headend-signeret policy/artifact.",
+            "recommendation": "Kræv HMAC på alle aktive Edge/Headend API credentials og migrer gamle noder, før global enforcement slås til.",
+        },
+        {
+            "status": "warning" if counts["cleanup_candidates"] else "pass",
+            "title": "Stale og sekundære credentials",
+            "evidence": f"{counts['cleanup_candidates']} credential(s) bør gennemgås; {counts['auto_revoke_candidates']} kan revokeres automatisk som sekundære.",
+            "domains": ["ISO27000", "IEC62443", "CRA"],
+            "recommendation": "Revoker sekundære credentials og gennemgå stale primære manuelt, så CMDB kun viser reelle adgangsveje.",
         },
     ]
     return {
@@ -2025,6 +2187,7 @@ def list_key_management(
         "devices": device_rows,
         "summary": counts,
         "controls": controls,
+        "cleanup_candidates": cleanup_candidates,
         "trust_policy": {
             "artifact_verification_required": True,
             "mutual_auth_required": True,
@@ -2135,6 +2298,11 @@ def create_key_credential(
     elif key_type in {"ssh", "signing"} and not public_key:
         raise HTTPException(status_code=400, detail="SSH/signing credential kræver public_key eller generate_keypair")
 
+    metadata = dict(payload.metadata or {})
+    if key_type == "api" and entity_type in {"edge", "headend", "service"}:
+        metadata.setdefault("require_request_signature", True)
+        metadata.setdefault("request_signature_policy", "required-by-default-for-device-api")
+
     fingerprint_source = public_key or secret_hash or credential_id
     credential = KeyCredential(
         credential_id=credential_id,
@@ -2153,7 +2321,7 @@ def create_key_credential(
         created_at=now,
         expires_at=expires_at,
         rotated_from_id=payload.rotated_from_id,
-        metadata_json=_canonical_json(payload.metadata or {}),
+        metadata_json=_canonical_json(metadata),
     )
     db.add(credential)
     _audit_key_event(db, credential, "created", current_user.username, {
@@ -2200,6 +2368,83 @@ def revoke_key_credential(
     _audit_key_event(db, credential, "revoked", current_user.username, {"reason": credential.revoke_reason})
     db.commit()
     return {"ok": True, "credential_id": credential.credential_id}
+
+
+@app.post("/api/admin/key-management/credentials/{credential_id}/request-signature")
+def set_key_credential_request_signature_policy(
+    credential_id: str,
+    payload: KeySignaturePolicyPayload,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    credential = db.query(KeyCredential).filter_by(credential_id=credential_id).first()
+    if not credential:
+        raise HTTPException(status_code=404, detail="Credential ikke fundet")
+    if credential.key_type != "api":
+        raise HTTPException(status_code=400, detail="Request signature policy gælder kun API credentials")
+    if credential.status != "active":
+        raise HTTPException(status_code=400, detail="Kun aktive credentials kan ændre request signature policy")
+    if credential.entity_type in {"headend", "service"} and not payload.require_request_signature:
+        raise HTTPException(status_code=400, detail="Headend/service API credentials skal kræve request signature")
+
+    metadata = _credential_metadata(credential)
+    metadata["require_request_signature"] = bool(payload.require_request_signature)
+    metadata["request_signature_policy_updated_at"] = now_utc().isoformat()
+    metadata["request_signature_policy_updated_by"] = current_user.username
+    if payload.reason:
+        metadata["request_signature_policy_reason"] = payload.reason
+    _set_credential_metadata(credential, metadata)
+    _audit_key_event(db, credential, "request_signature_policy_updated", current_user.username, {
+        "require_request_signature": bool(payload.require_request_signature),
+        "reason": payload.reason,
+    })
+    db.commit()
+    return _credential_to_dict(credential)
+
+
+@app.post("/api/admin/key-management/cleanup-stale-credentials")
+def cleanup_stale_key_credentials(
+    payload: StaleCredentialCleanupPayload,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    older_than_days = max(int(payload.older_than_days or 30), 1)
+    candidates = _credential_cleanup_candidates(db, older_than_days=older_than_days)
+    revoked = []
+    if not payload.dry_run:
+        by_id = {
+            c.credential_id: c
+            for c in db.query(KeyCredential).filter(
+                KeyCredential.credential_id.in_([item["credential_id"] for item in candidates if item.get("auto_revoke")])
+            ).all()
+        }
+        for item in candidates:
+            if not item.get("auto_revoke"):
+                continue
+            credential = by_id.get(item["credential_id"])
+            if not credential or credential.status != "active":
+                continue
+            credential.status = "revoked"
+            credential.revoked_at = now_utc()
+            credential.revoked_by = current_user.username
+            credential.revoke_reason = payload.reason or item.get("reason") or "Sekundær/stale credential cleanup"
+            _audit_key_event(db, credential, "cleanup_revoked", current_user.username, {
+                "cleanup_action": item.get("action"),
+                "reason": credential.revoke_reason,
+                "older_than_days": older_than_days,
+            })
+            revoked.append(credential.credential_id)
+        db.commit()
+        candidates = _credential_cleanup_candidates(db, older_than_days=older_than_days)
+    return {
+        "dry_run": bool(payload.dry_run),
+        "older_than_days": older_than_days,
+        "revoked": revoked,
+        "revoked_count": len(revoked),
+        "candidates": candidates,
+        "auto_revoke_candidates": sum(1 for c in candidates if c.get("auto_revoke")),
+        "review_only_candidates": sum(1 for c in candidates if not c.get("auto_revoke")),
+    }
 
 
 @app.post("/api/keys/signing/enroll/{device_id}")
@@ -2551,14 +2796,14 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "totp_valid_window": 3,
             "timezone": "Europe/Copenhagen",
         },
-        # BT PAN TOTP — fabriksstandard, kan overrides i hierarkiet:
-        #   config_defaults.bt_totp, customer.config_overrides.bt_totp,
-        #   site.config_overrides.bt_totp, device.config_overrides.bt_totp
-        # Eksempel override: {"bt_totp": {"secret": "NEWBASE32SECRET", "sid": "acme-2026"}}
-        "bt_totp": {
-            "secret": "JBSWY3DPEHPK3PXP",
-            "sid":    "factory-default",
-        },
+        # BT PAN TOTP — prioritet: fabriksstandard < global (Settings) <
+        # kunde/site/device (config_overrides, sat i hierarki-merge nedenfor) <
+        # kamera (Camera.bt_totp_secret, sat efter merge — se nedenfor)
+        "bt_totp": (
+            {"secret": _get_setting(db, "bt_totp_secret", ""), "sid": _get_setting(db, "bt_totp_sid", "global")}
+            if _get_setting(db, "bt_totp_secret", "")
+            else {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
+        ),
     }
 
     # Apply per-device overrides from database
@@ -2624,6 +2869,23 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                     cfg[section] = values
     except Exception as exc:
         log.warning("Hierarkisk config merge fejl for %s: %s", device_id, exc)
+
+    # Lag 5: kamera-specifik bt_totp override — højeste prioritet i hierarkiet.
+    # Slår op via aktiv DeviceAssignment (device_id → camera_id).
+    try:
+        from database import Camera as _Camera_btt, DeviceAssignment as _DA_btt
+        _da_btt = (
+            db.query(_DA_btt)
+            .filter_by(device_id=device_id)
+            .filter(_DA_btt.unassigned_at.is_(None))
+            .order_by(_DA_btt.assigned_at.desc())
+            .first()
+        )
+        _cam_btt = db.query(_Camera_btt).filter_by(id=_da_btt.camera_id).first() if _da_btt else None
+        if _cam_btt and _cam_btt.bt_totp_secret:
+            cfg["bt_totp"] = {"secret": _cam_btt.bt_totp_secret, "sid": _cam_btt.bt_totp_sid or "kamera"}
+    except Exception as _exc_btt:
+        log.warning("bt_totp kamera-lag fejl for %s: %s", device_id, _exc_btt)
 
     # Tilføj felter fra device_config til edge-config
     try:
@@ -3348,9 +3610,8 @@ def get_camera_bt_totp_qr(
 ):
     """Returner QR-kode (data-URI) til BT PAN TOTP for dette kamera.
     Beregner det gældende secret ved at gå op i hierarkiet:
-      camera.bt_totp_secret → site.config_overrides.bt_totp
-      → customer.config_overrides.bt_totp → config_defaults.bt_totp
-      → fabriksstandard (JBSWY3DPEHPK3PXP)
+      fabriksstandard → global (Settings) → kunde.config_overrides.bt_totp
+      → site.config_overrides.bt_totp → kamera.bt_totp_secret (højeste prioritet)
     """
     import pyotp as _pyotp, qrcode as _qrcode, io as _io, base64 as _b64
     from database import Camera, Site, Customer
@@ -3364,12 +3625,7 @@ def get_camera_bt_totp_qr(
     sid    = "factory-default"
     source = "factory-default"
 
-    # Lag 1: config_defaults
-    defs = db.query(ConfigDefaults).first()
-    if defs:
-        for attr in ["schedule", "camera", "quality", "storage", "diagnostics", "system"]:
-            pass  # config_defaults har ikke fri JSON — bt_totp sættes via Settings i stedet
-    # Tjek Settings-tabel for global bt_totp override
+    # Lag 1: global override (Settings-tabel)
     _g_secret = _get_setting(db, "bt_totp_secret", "")
     _g_sid    = _get_setting(db, "bt_totp_sid", "")
     if _g_secret:
@@ -3408,6 +3664,30 @@ def get_camera_bt_totp_qr(
         "qr_code":  f"data:image/png;base64,{qr_b64}",
         "is_factory_default": (source == "factory-default"),
     }
+
+
+@app.post("/api/admin/cameras/{camera_id}/bt-totp-regenerate")
+def regenerate_camera_bt_totp(
+    camera_id: str,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db)
+):
+    """Sæt et nyt kamera-specifikt TOTP secret (kamera-laget — højeste prioritet
+    i hierarkiet). Overrider eventuelle global/kunde/site-lag for dette kamera.
+    Edge skal eksplicit synkronisere (knappen 'Opdater TOTP fra CMDB' i mgmt-UI)
+    før det træder i kraft — sker ALDRIG automatisk.
+    """
+    import pyotp as _pyotp
+    import uuid as _u
+    from database import Camera
+    cam = db.query(Camera).filter_by(id=camera_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+    cam.bt_totp_secret = _pyotp.random_base32()
+    cam.bt_totp_sid    = f"cam-{str(_u.uuid4())[:8]}"
+    db.commit()
+    log.info("BT TOTP (kamera-lag) regenereret for kamera %s sid=%s", camera_id, cam.bt_totp_sid)
+    return {"sid": cam.bt_totp_sid, "message": "Nyt kamera-specifikt TOTP secret genereret — kræver eksplicit sync på edge"}
 
 
 @app.post("/api/admin/cameras/{camera_id}/assign")
@@ -5058,8 +5338,11 @@ def _validate_os_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> 
                     detail=f"OS bundle script/config indeholder forbudt online update-kommando: {rel}",
                 )
         for line in text_content.splitlines():
-            if "apt-get" in line or " apt " in line:
-                if "--no-download" not in line:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "apt-get" in stripped or " apt " in stripped:
+                if "--no-download" not in stripped:
                     raise HTTPException(
                         status_code=400,
                         detail=f"OS bundle apt-brug mangler --no-download: {rel}",
@@ -6691,8 +6974,10 @@ def _auto_build_and_bind_os_bundle(
         and (p.get("new_ver") or p.get("available_version"))
     ]
 
-    if not packages:
-        # Prøv alle pakker hvis ingen matchede det specifikke filter
+    if not packages and not any("security" in p for p in packages_raw):
+        # Legacy inventory uden security-flag: brug hele listen som fallback.
+        # Hvis security-flag findes og ingen pakker matcher, må vi ikke bygge et
+        # funktionelt OS-bundle som om det var en security-update.
         packages = [
             {
                 "name":               p["name"],
@@ -6708,6 +6993,10 @@ def _auto_build_and_bind_os_bundle(
     if not packages:
         raise RuntimeError(f"Ingen gyldige pakker at downloade for update #{update.id}")
 
+    suite = _infer_ubuntu_suite_for_os_bundle(inv, packages)
+    architecture = _infer_architecture_for_os_bundle(packages)
+    target_os = f"ubuntu-{_ubuntu_version_label_for_suite(suite)}/orangepi"
+
     # Output-sti i OS bundle store
     created_at = now_utc()
     safe_type = _re.sub(r"[^a-zA-Z0-9_.-]+", "-", update.update_type)
@@ -6720,9 +7009,9 @@ def _auto_build_and_bind_os_bundle(
         packages=packages,
         output=output_path,
         device_id=device_id,
-        suite="noble",
-        arch="arm64",
-        target_os="ubuntu-24.04/orangepi",
+        suite=suite,
+        arch=architecture,
+        target_os=target_os,
         source_ref=f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
         verbose=True,
     )
@@ -6743,14 +7032,16 @@ def _auto_build_and_bind_os_bundle(
         {
             "storage_path": str(output_path),
             "version": f"{device_id}-{update.update_type}-{created_at:%Y%m%d-%H%M%S}",
-            "architecture": "arm64",
-            "target_os": "ubuntu-24.04/orangepi",
+            "architecture": architecture,
+            "target_os": target_os,
             "source_ref": f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
             "lab_evidence": {
                 "builder": "fetch_os_bundle.py (headend-auto)",
                 "packages_requested": result["packages_requested"],
                 "deb_files": result["deb_files"],
                 "not_found": result["not_found"],
+                "ubuntu_suite": suite,
+                "architecture": architecture,
                 "triggered_from": "os_bundle_auto_poller",
             },
         },
@@ -6766,7 +7057,8 @@ def _auto_build_and_bind_os_bundle(
             "artifact_id": artifact_dict["artifact_id"],
             "summary": (
                 f"OS bundle automatisk bygget af Headend auto-poller "
-                f"({result['deb_files']} pakker downloadet fra Ubuntu/Docker mirrors). "
+                f"({result['deb_files']} pakker downloadet fra Ubuntu/Docker mirrors; "
+                f"suite={suite}, arch={architecture}). "
                 f"Ingen Docker eller internet på edge krævet."
             ),
             "test_evidence_ref": f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
@@ -6778,6 +7070,45 @@ def _auto_build_and_bind_os_bundle(
         "OS bundle auto-poller: artifact %s bundet til update #%d ✓",
         artifact_dict["artifact_id"], update.id,
     )
+
+
+def _infer_ubuntu_suite_for_os_bundle(inv: DeviceInventory | None, packages: list[dict]) -> str:
+    """Infer Ubuntu suite from inventory/repo metadata; never upgrade across OS releases."""
+    source_text = " ".join(str(p.get("source_repo") or "") for p in packages).lower()
+    match = _re.search(r"/(jammy|noble|focal|bionic)(?:[-/]|$)", source_text)
+    if match:
+        return match.group(1)
+    match = _re.search(r"ubuntu:(?:18\.04|20\.04|22\.04|24\.04)/(jammy|noble|focal|bionic)", source_text)
+    if match:
+        return match.group(1)
+
+    os_name = str(getattr(inv, "os_name", "") or "").lower()
+    if "24.04" in os_name:
+        return "noble"
+    if "22.04" in os_name:
+        return "jammy"
+    if "20.04" in os_name:
+        return "focal"
+    if "18.04" in os_name:
+        return "bionic"
+    return "noble"
+
+
+def _ubuntu_version_label_for_suite(suite: str) -> str:
+    return {
+        "noble": "24.04",
+        "jammy": "22.04",
+        "focal": "20.04",
+        "bionic": "18.04",
+    }.get(str(suite or "").lower(), suite or "unknown")
+
+
+def _infer_architecture_for_os_bundle(packages: list[dict]) -> str:
+    for pkg in packages:
+        arch = str(pkg.get("architecture") or pkg.get("arch") or "").strip()
+        if arch and arch != "all":
+            return arch
+    return "arm64"
 
 
 @app.post("/api/updates/artifacts/catalog-from-git-tag")
@@ -9205,11 +9536,17 @@ app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(settings_router)
 
 @app.post("/api/inventory/{device_id}")
-def edge_report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def edge_report_inventory(
+    device_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    _auth: None = Depends(_verify_device_token),
+):
     return _cmdb_report_inventory(device_id=device_id, payload=payload, db=db)
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health():
     return {"status": "ok", "time": now_utc().isoformat()}
 
@@ -9963,6 +10300,11 @@ def update_customer(customer_id: str, payload: dict, _user=require_role("admin")
     for f in ["name", "contact_name", "contact_email", "contact_phone", "address", "notes"]:
         if f in payload:
             setattr(c, f, payload[f])
+    if "config_overrides" in payload:
+        # Merge på top-niveau — bevarer øvrige nøgler (bt_totp m.fl.)
+        existing = json.loads(c.config_overrides or "{}")
+        existing.update(payload["config_overrides"])
+        c.config_overrides = json.dumps(existing)
     db.commit()
     return {"status": "ok"}
 
@@ -10051,7 +10393,11 @@ def update_site(site_id: str, payload: dict, _user=require_role("admin"), db: Se
     if hasattr(s, "gps_alt") and "gps_alt" in payload:
         s.gps_alt = payload["gps_alt"]
     if "config_overrides" in payload:
-        s.config_overrides = json.dumps(payload["config_overrides"])
+        # Merge på top-niveau (ikke fuld overskrivning) — bevarer nøgler
+        # sat af andre UI-flows, fx bt_totp sat fra CMDB hierarki-panelet.
+        existing = json.loads(s.config_overrides or "{}")
+        existing.update(payload["config_overrides"])
+        s.config_overrides = json.dumps(existing)
     db.commit()
     return {"status": "ok"}
 

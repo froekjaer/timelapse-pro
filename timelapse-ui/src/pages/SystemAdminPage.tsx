@@ -663,6 +663,28 @@ export function SystemAdminPage() {
         </div>
       </Section>
 
+      {/* BT PAN TOTP — globalt lag (laveste prioritet, lige over fabriksstandard) */}
+      <Section title="BT PAN TOTP — global rotation" icon={<Database className="w-4 h-4" />}
+        description="Gælder ALLE enheder uden mere specifikt kunde/site/kamera-override. Brug ved kompromitteret secret.">
+        <Field label="Global secret (Base32)" description="Tom = brug fabriksstandard JBSWY3DPEHPK3PXP">
+          <Txt value={settings.bt_totp_secret ?? ''} onChange={v => setSettings(s => ({...s, bt_totp_secret: v}))} mono />
+        </Field>
+        <Field label="Global SID" description="Label vist på edge login-side og i CMDB">
+          <Txt value={settings.bt_totp_sid ?? ''} onChange={v => setSettings(s => ({...s, bt_totp_sid: v}))} mono />
+        </Field>
+        <p className="text-xs text-amber-600 mt-1">
+          ⚠ Træder først i kraft når hver enhed eksplicit synkroniserer ("Opdater TOTP fra CMDB" i lokal mgmt-UI).
+          Informér teknikere om nyt QR inden rotation.
+        </p>
+        <div className="flex justify-end mt-3">
+          <button onClick={saveSettings} disabled={savingSettings}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white text-sm rounded-lg hover:bg-amber-600 disabled:opacity-50">
+            {savedSettings ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            {savedSettings ? 'Gemt!' : savingSettings ? 'Gemmer…' : 'Gem global TOTP'}
+          </button>
+        </div>
+      </Section>
+
       {/* Headend genstart */}
       <Section title="Headend genstart" icon={<Power className="w-4 h-4" />}
         description="Genstart headend-processen via launchd (tager ~5 sekunder)">

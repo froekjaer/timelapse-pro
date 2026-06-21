@@ -22,6 +22,7 @@ interface Customer {
   contact_phone?: string
   address?: string
   notes?: string
+  config_overrides?: Record<string, any>
   sites: Site[]
 }
 
@@ -51,6 +52,8 @@ export function CustomerPage() {
   const [contactPhone, setContactPhone] = useState('')
   const [address, setAddress]         = useState('')
   const [notes, setNotes]             = useState('')
+  const [btTotpSecret, setBtTotpSecret] = useState('')
+  const [btTotpSid, setBtTotpSid]       = useState('')
 
   // Nyt site form
   const [showNewSite, setShowNewSite]     = useState(false)
@@ -69,6 +72,9 @@ export function CustomerPage() {
         setContactPhone(d.contact_phone ?? '')
         setAddress(d.address ?? '')
         setNotes(d.notes ?? '')
+        const btTotp = d.config_overrides?.bt_totp ?? {}
+        setBtTotpSecret(btTotp.secret ?? '')
+        setBtTotpSid(btTotp.sid ?? '')
       })
       .catch(() => setError('Kunne ikke hente kunde'))
       .finally(() => setLoading(false))
@@ -79,7 +85,12 @@ export function CustomerPage() {
     try {
       await api(`/api/admin/customers/${customerId}`, {
         method: 'PUT',
-        body: JSON.stringify({ name, contact_name: contactName, contact_email: contactEmail, contact_phone: contactPhone, address, notes })
+        body: JSON.stringify({
+          name, contact_name: contactName, contact_email: contactEmail, contact_phone: contactPhone, address, notes,
+          config_overrides: {
+            bt_totp: btTotpSecret ? { secret: btTotpSecret, sid: btTotpSid || 'kunde' } : {}
+          }
+        })
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
@@ -186,6 +197,28 @@ export function CustomerPage() {
             <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={2}
               placeholder="Interne noter om kunden..."
               value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      {/* BT PAN TOTP — kunde-lag */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
+        <h2 className="text-sm font-semibold text-gray-700 mb-1">BT PAN TOTP — kunde-override</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Gælder alle kameraer hos denne kunde (overstyrer global/fabriksstandard, overstyres af site/kamera-lag).
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Secret (Base32)</label>
+            <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="Tom = ingen kunde-override"
+              value={btTotpSecret} onChange={e => setBtTotpSecret(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">SID</label>
+            <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="kunde-label"
+              value={btTotpSid} onChange={e => setBtTotpSid(e.target.value)} />
           </div>
         </div>
       </div>

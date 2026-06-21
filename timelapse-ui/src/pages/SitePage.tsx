@@ -62,6 +62,8 @@ export function SitePage() {
   const [gpsAlt, setGpsAlt] = useState('')
   const [timezone, setTimezone] = useState('Europe/Copenhagen')
   const [notes, setNotes] = useState('')
+  const [btTotpSecret, setBtTotpSecret] = useState('')
+  const [btTotpSid, setBtTotpSid]       = useState('')
 
   useEffect(() => {
     if (!siteId) return
@@ -80,6 +82,9 @@ export function SitePage() {
         setSftpPassword(sftp.password ?? '')
         setSftpPort(String(sftp.port ?? '22222'))
         setSftpRemoteBase(sftp.remote_base ?? '')
+        const btTotp = d.config_overrides?.bt_totp ?? {}
+        setBtTotpSecret(btTotp.secret ?? '')
+        setBtTotpSid(btTotp.sid ?? '')
       })
       .catch(() => setError('Kunne ikke hente site'))
       .finally(() => setLoading(false))
@@ -102,7 +107,8 @@ export function SitePage() {
               password: sftpPassword,
               port: parseInt(sftpPort),
               remote_base: sftpRemoteBase,
-            }
+            },
+            bt_totp: btTotpSecret ? { secret: btTotpSecret, sid: btTotpSid || 'site' } : {}
           }
         })
       })
@@ -216,6 +222,28 @@ export function SitePage() {
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="22222"
               value={sftpPort} onChange={e => setSftpPort(e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      {/* BT PAN TOTP — site-lag */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
+        <h2 className="text-sm font-semibold text-gray-700 mb-1">BT PAN TOTP — site-override</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Gælder alle kameraer på dette site (overstyrer kunde/global, overstyres af kamera-lag).
+        </p>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Secret (Base32)</label>
+            <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="Tom = ingen site-override"
+              value={btTotpSecret} onChange={e => setBtTotpSecret(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">SID</label>
+            <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="site-label"
+              value={btTotpSid} onChange={e => setBtTotpSid(e.target.value)} />
           </div>
         </div>
       </div>
