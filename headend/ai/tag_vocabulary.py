@@ -594,11 +594,21 @@ class TagVocabulary:
         from sqlalchemy import text
         db = next(self._get_db())
         try:
-            result = db.execute(
-                text("SELECT COUNT(*) FROM ai_tag_vocabulary WHERE predefined=TRUE")
-            ).scalar()
-            if result == 0:
-                log.info("Seeding %d predefined tags...", len(get_all_predefined()))
+            from sqlalchemy import bindparam
+            all_predefined = get_all_predefined()
+            # Tæl hvor mange af de NUVÆRENDE PREDEFINED_TAGS allerede findes som
+            # predefined=TRUE rækker. Et simpelt "COUNT(*) WHERE predefined=TRUE == 0"
+            # tjek (den oprindelige logik) fanger kun en helt tom tabel — det fangede
+            # IKKE scenariet hvor vokabularet udvides/ændres på en allerede seedet
+            # database (juni 2026: dansk → engelsk kanonisk), så ~355 nye tags blev
+            # aldrig indsat. Tjekker derfor mod selve indholdet, ikke kun antallet.
+            existing_stmt = text(
+                "SELECT COUNT(*) FROM ai_tag_vocabulary WHERE predefined=TRUE AND tag IN :tags"
+            ).bindparams(bindparam("tags", expanding=True))
+            existing_count = db.execute(existing_stmt, {"tags": all_predefined}).scalar()
+            if existing_count < len(all_predefined):
+                log.info("Seeding %d predefined tags (%d findes allerede som rækker)...",
+                         len(all_predefined), existing_count)
                 for category, tags in PREDEFINED_TAGS.items():
                     for tag in tags:
                         canonical, label_da, label_en = canonical_metadata(tag)
