@@ -547,10 +547,15 @@ class GeminiVisionService:
         bucket_name = gcs_bucket.replace("gs://", "").split("/")[0]
         job_prefix = f"ai-batch/{display_name}"
 
+        # Vertex kræver at hver linje har en "request"-property — fjernede den
+        # fejlagtigt i en tidligere version (testet og bekræftet ved fejl:
+        # "lines ... must contain the 'request' property"). "key" bevares også
+        # — ufarligt ekstra felt, og giver mulighed for key-baseret matching af
+        # resultater hvis Vertex echoer den tilbage (se _download_batch_results_vertex_gcs).
         lines = []
         for key, image_path in items:
-            req = self.build_batch_request_line(key, image_path, vocabulary_by_cat)["request"]
-            lines.append(json.dumps(req, ensure_ascii=False))
+            line = self.build_batch_request_line(key, image_path, vocabulary_by_cat)
+            lines.append(json.dumps(line, ensure_ascii=False))
         jsonl_content = "\n".join(lines) + "\n"
 
         storage_client = _gcs.Client(project=self.project) if self.project else _gcs.Client()
@@ -656,16 +661,21 @@ class GeminiVisionService:
                 if not line.strip():
                     continue
                 row = json.loads(line)
+                # Vertex echoer evt. "key" tilbage hvis det var i input-linjen —
+                # brug det hvis muligt (mere robust end positionel matching).
+                # Ellers None, og _finalize_ai_batch_job falder tilbage til
+                # positionel matching ud fra rækkefølgen.
+                key = row.get("key") or (row.get("request") or {}).get("key")
                 response = row.get("response")
                 if response:
                     try:
                         parts = response["candidates"][0]["content"]["parts"]
                         text = "".join(p.get("text", "") for p in parts)
-                        results.append({"key": None, "text": text, "error": None})
+                        results.append({"key": key, "text": text, "error": None})
                     except Exception as exc:
-                        results.append({"key": None, "text": None, "error": f"parse-fejl: {exc} (rå: {str(row)[:200]})"})
+                        results.append({"key": key, "text": None, "error": f"parse-fejl: {exc} (rå: {str(row)[:200]})"})
                 else:
-                    results.append({"key": None, "text": None, "error": str(row.get("status") or row.get("error") or f"ukendt struktur: {str(row)[:200]}")})
+                    results.append({"key": key, "text": None, "error": str(row.get("status") or row.get("error") or f"ukendt struktur: {str(row)[:200]}")})
 
         return results
 
