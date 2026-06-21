@@ -271,6 +271,19 @@ def startup():
         log.info("AI integration klar — Ollama: http://localhost:11434")
     except Exception as _ai_err:
         log.warning("AI integration ikke tilgængelig: %s", _ai_err)
+
+    # ── Tag-vokabular: seed/migrér ved OPSTART, ikke kun ved første billede ──
+    # TagVocabulary instantieres normalt først inde i AI-workerens per-billede
+    # loop — det betyder seeding/oprydning af vokabularet (fx dansk→engelsk
+    # migreringen) ikke kører før et billede rent faktisk analyseres. Kald den
+    # derfor eksplicit her, så det altid sker pålideligt ved genstart.
+    try:
+        from ai.tag_vocabulary import TagVocabulary
+        TagVocabulary(get_db)
+        log.info("Tag-vokabular initialiseret ved opstart")
+    except Exception as _vocab_err:
+        log.warning("Kunne ikke initialisere tag-vokabular ved opstart: %s", _vocab_err)
+
     log.info("TimeLapse Pro Headend started — database ready")
 
     # ── GitHub tag poller ───────────────────────────────────────────────────
