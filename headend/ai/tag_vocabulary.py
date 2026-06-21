@@ -524,6 +524,7 @@ class TagVocabulary:
         self._get_db = db_session_factory
         self._ensure_table()
         self._seed_predefined()
+        self._deprecate_legacy_danish_predefined()
 
     def _ensure_table(self):
         from sqlalchemy import text
@@ -627,6 +628,40 @@ class TagVocabulary:
                 log.info("Tag vocabulary seeded.")
         except Exception as e:
             log.error("Seed error: %s", e)
+            db.rollback()
+        finally:
+            db.close()
+
+    def _deprecate_legacy_danish_predefined(self):
+        """Deaktivér gamle danske foruddefinerede tags der ikke er en del af
+        det nye engelske kanoniske vokabular (se PREDEFINED_TAGS ovenfor).
+
+        Kører ved HVER opstart — idempotent: sætter kun approved=FALSE/rejected=TRUE
+        på rækker hvor predefined=TRUE og tag IKKE er i den nuværende engelske liste.
+        Når en række først er rejected, matcher den ikke WHERE-clausen igen, så
+        gentagne kørsler er no-op'er efter første gang.
+
+        BERØRER IKKE: organisk fundne "model_invented" tags (uanset sprog) — kun
+        det statiske startvokabular. Rækkerne slettes ikke, kun deaktiveres, så
+        canonical_metadata() stadig kan korrelere gamle danske tags på allerede
+        analyserede captures.
+        """
+        from sqlalchemy import text
+        db = next(self._get_db())
+        try:
+            current_english = list(get_all_predefined())
+            result = db.execute(text("""
+                UPDATE ai_tag_vocabulary
+                SET approved = FALSE, rejected = TRUE
+                WHERE predefined = TRUE
+                  AND approved = TRUE
+                  AND tag != ALL(:current_tags)
+            """), {"current_tags": current_english})
+            db.commit()
+            if result.rowcount:
+                log.info("Deaktiverede %d gamle danske foruddefinerede tags (ikke i nyt engelsk vokabular)", result.rowcount)
+        except Exception as e:
+            log.warning("Kunne ikke deaktivere legacy dansk vokabular (ikke kritisk): %s", e)
             db.rollback()
         finally:
             db.close()
