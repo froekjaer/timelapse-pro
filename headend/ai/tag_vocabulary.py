@@ -632,7 +632,10 @@ class TagVocabulary:
                                 display_name_da = COALESCE(ai_tag_vocabulary.display_name_da, EXCLUDED.display_name_da),
                                 display_name_en = COALESCE(ai_tag_vocabulary.display_name_en, EXCLUDED.display_name_en),
                                 translation_status = COALESCE(ai_tag_vocabulary.translation_status, EXCLUDED.translation_status),
-                                translation_source = COALESCE(ai_tag_vocabulary.translation_source, EXCLUDED.translation_source)
+                                translation_source = COALESCE(ai_tag_vocabulary.translation_source, EXCLUDED.translation_source),
+                                predefined = TRUE,
+                                approved = TRUE,
+                                rejected = FALSE
                         """), {"tag": tag, "canonical": canonical, "label_da": label_da, "label_en": label_en, "status": status, "cat": category})
                 db.commit()
                 log.info("Tag vocabulary seeded.")
