@@ -711,6 +711,35 @@ class BreakGlassAccount(Base):
     # Årsag til seneste rotation (manuel, checkout, scheduled)
 
 
+class AiBatchJob(Base):
+    """Gemini Batch API job — bulk AI-genanalyse til ~50% af normal pris.
+    Asynkront: submitted → running → succeeded|failed|cancelled|expired.
+    Polles periodisk af baggrundstråd i main.py (se _ai_batch_poller_loop).
+    """
+    __tablename__ = "ai_batch_jobs"
+
+    id              = Column(String(36), primary_key=True)   # UUID
+    gemini_job_name = Column(String(200))    # "batches/xxxxx" fra Google
+    status          = Column(String(30), default="submitting")
+    # submitting | running | succeeded | failed | cancelled | expired
+
+    capture_ids     = Column(Text, default="[]")   # JSON liste — rækkefølge matcher batch-keys
+    cloud_model     = Column(String(100))
+
+    total_count     = Column(Integer, default=0)
+    success_count   = Column(Integer, default=0)
+    error_count     = Column(Integer, default=0)
+
+    requested_by    = Column(String(100))
+    notify_on_complete = Column(Boolean, default=True)
+
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    submitted_at    = Column(DateTime)
+    completed_at    = Column(DateTime)
+
+    error_message   = Column(Text)
+
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
 

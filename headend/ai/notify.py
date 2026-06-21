@@ -387,6 +387,47 @@ def send_teams(alarm: dict, config: dict, image_url: Optional[str] = None) -> bo
         return False
 
 
+# ── Batch-job notifikation ───────────────────────────────────────────────────
+
+def notify_batch_complete(db, summary: dict) -> bool:
+    """Notificér om et færdigt AI batch-job — genbruger eksisterende SIEM
+    email-opsætning (notifications.email i settings), men SPRINGER OVER
+    severity-tærsklen (should_notify) da dette er eksplicit anmodet af
+    en bruger, ikke en automatisk alarm der skal filtreres.
+
+    summary: {
+        "status": "succeeded"|"failed",
+        "total": int, "success": int, "errors": int,
+        "model": str, "requested_by": str, "duration_min": float,
+    }
+    """
+    config = get_notification_config(db)
+    email_cfg = config.get("email", {})
+    if not email_cfg.get("enabled"):
+        log.debug("Batch-notifikation: email ikke aktiveret i SIEM-opsætning")
+        return False
+
+    ok = "succeeded" if summary.get("status") == "succeeded" else "fejlede"
+    fake_alarm = {
+        "rule_name": f"AI batch-analyse {ok}",
+        "severity": "info" if summary.get("status") == "succeeded" else "warning",
+        "device_id": "—",
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
+        "description": (
+            f"Batch-job ({summary.get('model', '?')}) anmodet af {summary.get('requested_by', '?')} "
+            f"er {ok}.\n\n"
+            f"Total: {summary.get('total', 0)} billeder\n"
+            f"Analyseret: {summary.get('success', 0)}\n"
+            f"Fejlet: {summary.get('errors', 0)}\n"
+            f"Varighed: {summary.get('duration_min', 0):.1f} minutter"
+        ),
+        "matched_on": [],
+        "confidence": 1.0,
+        "capture_id": "—",
+    }
+    return send_email(fake_alarm, config)
+
+
 # ── Hoved-dispatcher ──────────────────────────────────────────────────────────
 
 def notify(alarm: dict, db, image_url: Optional[str] = None) -> dict[str, bool]:

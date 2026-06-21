@@ -107,6 +107,7 @@ from database import (
     Capture, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
     DeviceInventory, Diagnostic, Event, KeyAuditEvent, KeyCredential,
     PendingUpdate, Settings, Site, SshTunnelLog, UpdateJobRecord, User,
+    AiBatchJob,
     SessionLocal, create_tables, get_db, now_utc
 )
 import uuid as _uuid
@@ -299,6 +300,19 @@ def startup():
         log.info("OS bundle auto-poller startet (interval=%.0fm)", interval_m)
     except Exception as _obp_err:
         log.warning("Kunne ikke starte OS bundle auto-poller: %s", _obp_err)
+
+    # ── AI batch-job poller (Gemini Batch API) ───────────────────────────────
+    try:
+        interval_m = float(os.getenv("TIMELAPSE_AI_BATCH_POLL_MINUTES", "5"))
+        t_batch = _threading.Thread(
+            target=_ai_batch_poller_loop,
+            args=(interval_m,),
+            name="ai-batch-poller",
+            daemon=True,
+        )
+        t_batch.start()
+    except Exception as _abp_err:
+        log.warning("Kunne ikke starte AI batch-poller: %s", _abp_err)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -10023,6 +10037,299 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
         daemon=True,
     ).start()
     return _post_processing_snapshot()
+
+
+# ── Gemini Batch API — bulk AI-genanalyse til ~50% af normal pris ────────────
+# Asynkront spor, separat fra den synkrone post-processing-kø ovenfor.
+# Bruges KUN ved eksplicit anmodning — aldrig automatisk, og påvirker ikke
+# den løbende live capture-pipeline.
+
+@app.post("/api/admin/ai-batch/start")
+def start_ai_batch_job(
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Start et Gemini Batch-job — vælger captures efter samme kriterier som
+    post-processing (device_id, limit, force_ai), men sender dem som ÉT
+    asynkront batch-job til Google i stedet for den synkrone live-kø.
+    """
+    force_ai = bool(payload.get("force_ai", False))
+    limit_raw = payload.get("limit")
+    limit = max(1, int(limit_raw)) if limit_raw not in (None, "", 0, "0") else None
+    device_id = str(payload.get("device_id") or "").strip() or None
+    notify_on_complete = bool(payload.get("notify_on_complete", True))
+
+    if device_id:
+        _ensure_capture_device_access(db, current_user, device_id)
+
+    from ai.ai_strategy import AIConfigManager
+    cfg = AIConfigManager(db).get_config(customer_id=None, site_id=None)
+    if not cfg.use_cloud:
+        raise HTTPException(
+            status_code=400,
+            detail="Batch-mode kræver cloud_only eller local_then_cloud strategi (Gemini) — nuværende strategi bruger ikke cloud"
+        )
+
+    from ai.integration import _build_gemini_service
+    svc = _build_gemini_service(get_db, cfg.cloud_model)
+    if not svc:
+        raise HTTPException(status_code=400, detail="Ingen Gemini API-nøgle konfigureret (Indstillinger → AI)")
+    if getattr(svc, "is_vertex", False):
+        raise HTTPException(
+            status_code=400,
+            detail="Batch-mode understøtter endnu kun Gemini AI Studio (API-nøgle) — ikke Vertex AI (service account)"
+        )
+
+    allowed_device_ids = _allowed_capture_device_ids(db, current_user)
+    query = db.query(Capture).filter(Capture.filename.isnot(None))
+    if allowed_device_ids is not None:
+        if not allowed_device_ids:
+            raise HTTPException(status_code=400, detail="Ingen synlige enheder")
+        query = query.filter(Capture.device_id.in_(list(allowed_device_ids)))
+    if device_id:
+        query = query.filter(Capture.device_id == device_id)
+    if not force_ai:
+        query = query.filter(or_(Capture.ai_result.is_(None), Capture.ai_tags.is_(None)))
+    query = query.order_by(Capture.captured_at.desc(), Capture.id.desc())
+    if limit:
+        query = query.limit(limit)
+    captures = query.all()
+    if not captures:
+        raise HTTPException(status_code=400, detail="Ingen billeder matcher kriterierne")
+
+    items = []
+    missing = 0
+    for cap in captures:
+        path = _find_image(cap.device_id, cap.filename)
+        if path:
+            items.append((f"cap-{cap.id}", path, cap.id))
+        else:
+            missing += 1
+    if not items:
+        raise HTTPException(status_code=400, detail="Ingen af de matchede billeder findes på disk")
+
+    from ai.tag_vocabulary import TagVocabulary
+    vocab = TagVocabulary(get_db)
+    vocab_by_cat = vocab.get_approved_by_category()
+
+    job_id = str(_uuid.uuid4())
+    try:
+        job_name = svc.submit_batch_job(
+            items=[(key, path) for key, path, _cid in items],
+            vocabulary_by_cat=vocab_by_cat,
+            display_name=f"timelapse-batch-{job_id[:8]}",
+        )
+    except Exception as exc:
+        log.exception("Batch-job submission fejlede")
+        raise HTTPException(status_code=500, detail=f"Kunne ikke oprette batch-job: {exc}")
+
+    job = AiBatchJob(
+        id=job_id,
+        gemini_job_name=job_name,
+        status="submitted",
+        capture_ids=_json.dumps([cid for _k, _p, cid in items]),
+        cloud_model=cfg.cloud_model,
+        total_count=len(items),
+        requested_by=current_user.username,
+        notify_on_complete=notify_on_complete,
+        submitted_at=now_utc(),
+    )
+    db.add(job)
+    db.commit()
+    log.info("AI batch-job startet: %s (%d billeder, %d manglede fil) af %s",
+              job_name, len(items), missing, current_user.username)
+    return {
+        "id": job.id, "gemini_job_name": job_name,
+        "total": len(items), "missing_files": missing,
+        "status": "submitted",
+    }
+
+
+@app.get("/api/admin/ai-batch/jobs")
+def list_ai_batch_jobs(
+    _user=require_role("super_admin", "admin", "operator"),
+    db: Session = Depends(get_db),
+):
+    """List de seneste 50 batch-jobs — til UI-oversigt."""
+    jobs = db.query(AiBatchJob).order_by(AiBatchJob.created_at.desc()).limit(50).all()
+    return [{
+        "id": j.id,
+        "gemini_job_name": j.gemini_job_name,
+        "status": j.status,
+        "total_count": j.total_count,
+        "success_count": j.success_count,
+        "error_count": j.error_count,
+        "requested_by": j.requested_by,
+        "cloud_model": j.cloud_model,
+        "created_at": j.created_at.isoformat() if j.created_at else None,
+        "submitted_at": j.submitted_at.isoformat() if j.submitted_at else None,
+        "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+        "error_message": j.error_message,
+    } for j in jobs]
+
+
+_BATCH_RUNNING_STATES = {"PENDING", "RUNNING", "JOB_STATE_PENDING", "JOB_STATE_RUNNING"}
+_BATCH_SUCCESS_STATES = {"SUCCEEDED", "JOB_STATE_SUCCEEDED"}
+_BATCH_FAILED_STATES  = {"FAILED", "JOB_STATE_FAILED"}
+_BATCH_CANCELLED_STATES = {"CANCELLED", "JOB_STATE_CANCELLED"}
+_BATCH_EXPIRED_STATES = {"EXPIRED", "JOB_STATE_EXPIRED"}
+
+
+def _notify_batch_job(db, job: "AiBatchJob", status: str) -> None:
+    if not job.notify_on_complete:
+        return
+    try:
+        from ai.notify import notify_batch_complete
+        duration_min = 0.0
+        if job.submitted_at and job.completed_at:
+            duration_min = (job.completed_at - job.submitted_at).total_seconds() / 60
+        notify_batch_complete(db, {
+            "status": status,
+            "total": job.total_count,
+            "success": job.success_count,
+            "errors": job.error_count,
+            "model": job.cloud_model,
+            "requested_by": job.requested_by,
+            "duration_min": duration_min,
+        })
+    except Exception as exc:
+        log.debug("Batch notifikation fejl (ikke kritisk): %s", exc)
+
+
+def _finalize_ai_batch_job(db, job: "AiBatchJob", svc, gemini_job) -> None:
+    """Download og skriv resultater fra et succeeded batch-job tilbage til captures."""
+    from ai.tag_vocabulary import TagVocabulary
+    vocab = TagVocabulary(get_db)
+    approved_set = set(vocab.get_approved_tags())
+
+    try:
+        results = svc.download_batch_results(gemini_job)
+    except Exception as exc:
+        job.status = "failed"
+        job.error_message = f"Resultat-download fejlede: {exc}"
+        job.completed_at = now_utc()
+        db.commit()
+        _notify_batch_job(db, job, "failed")
+        log.warning("Batch-job %s: download fejlede: %s", job.gemini_job_name, exc)
+        return
+
+    success_count = 0
+    error_count = 0
+    for r in results:
+        key = r.get("key") or ""
+        if not key.startswith("cap-"):
+            continue
+        try:
+            capture_id = int(key[len("cap-"):])
+        except ValueError:
+            continue
+        capture = db.query(Capture).filter_by(id=capture_id).first()
+        if not capture:
+            continue
+        if r.get("error") or not r.get("text"):
+            error_count += 1
+            continue
+        try:
+            result = svc.parse_batch_result_text(r["text"], approved_set)
+            ai_payload = {
+                "scene_dk": result.scene_dk,
+                "tags": result.approved_tags,
+                "new_tags": result.new_tags,
+                "change_detected": result.change_detected,
+                "change_summary": result.change_summary,
+                "change_tags": result.change_tags,
+                "quality_flag": result.quality_flag,
+                "quality_ok": result.quality_ok,
+                "has_gdpr_data": result.has_gdpr_data,
+                "gdpr_detections": [
+                    {"type": g.detection_type, "detail": g.detail, "bbox": g.bounding_box}
+                    for g in result.gdpr_detections
+                ],
+                "model": job.cloud_model,
+                "duration_ms": result.duration_ms,
+                "raw_response": result.raw_response,
+            }
+            tags = result.approved_tags + result.new_tags
+            capture.ai_result = _json.dumps(ai_payload, ensure_ascii=False)
+            capture.ai_tags = _json.dumps(tags, ensure_ascii=False)
+            capture.ai_analyzed_at = now_utc()
+            success_count += 1
+        except Exception as exc:
+            log.warning("Batch resultat-parse fejl for capture %d: %s", capture_id, exc)
+            error_count += 1
+
+    db.commit()
+    job.status = "succeeded"
+    job.success_count = success_count
+    job.error_count = error_count
+    job.completed_at = now_utc()
+    db.commit()
+    log.info("AI batch-job %s færdig: %d ok, %d fejl", job.gemini_job_name, success_count, error_count)
+    _notify_batch_job(db, job, "succeeded")
+
+
+def _poll_one_ai_batch_job(db, job: "AiBatchJob") -> None:
+    from ai.integration import _build_gemini_service
+    svc = _build_gemini_service(get_db, job.cloud_model or "gemini-2.5-flash")
+    if not svc:
+        return
+    try:
+        status = svc.get_batch_status(job.gemini_job_name)
+    except Exception as exc:
+        log.warning("Kunne ikke hente batch-status %s: %s", job.gemini_job_name, exc)
+        return
+
+    state = status["state"]
+    if state in _BATCH_RUNNING_STATES:
+        if job.status != "running":
+            job.status = "running"
+            db.commit()
+        return
+    if state in _BATCH_SUCCESS_STATES:
+        _finalize_ai_batch_job(db, job, svc, status["job"])
+    elif state in _BATCH_FAILED_STATES:
+        job.status = "failed"
+        job.error_message = str(getattr(status["job"], "error", "ukendt fejl"))
+        job.completed_at = now_utc()
+        db.commit()
+        _notify_batch_job(db, job, "failed")
+    elif state in _BATCH_CANCELLED_STATES:
+        job.status = "cancelled"
+        job.completed_at = now_utc()
+        db.commit()
+    elif state in _BATCH_EXPIRED_STATES:
+        job.status = "expired"
+        job.error_message = "Job udløb efter 48 timer hos Google"
+        job.completed_at = now_utc()
+        db.commit()
+        _notify_batch_job(db, job, "failed")
+
+
+def _ai_batch_poller_loop(interval_minutes: float = 5.0) -> None:
+    """Baggrundstråd — poller alle igangværende batch-jobs periodisk.
+    Et job kan tage op til 24 timer hos Google, så hyppig polling er ufarlig
+    (billig API-kald) men sjælden nok til ikke at spamme.
+    """
+    import time as _time_mod
+    log.info("AI batch-job poller startet (interval=%.0fm)", interval_minutes)
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                pending = db.query(AiBatchJob).filter(
+                    AiBatchJob.status.in_(["submitted", "running"])
+                ).all()
+                for job in pending:
+                    try:
+                        _poll_one_ai_batch_job(db, job)
+                    except Exception as exc:
+                        log.warning("Fejl ved polling af batch-job %s: %s", job.gemini_job_name, exc)
+            finally:
+                db.close()
+        except Exception as exc:
+            log.warning("AI batch poller-loop fejl: %s", exc)
+        _time_mod.sleep(interval_minutes * 60)
 
 
 # ── Kamera-laboratorium endpoints ─────────────────────────────────────────────

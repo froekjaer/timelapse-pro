@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Brain, Image, Play, RefreshCw, Wrench } from 'lucide-react'
+import { Brain, Image, Play, RefreshCw, Wrench, Clock, Mail } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
 interface Device {
@@ -48,6 +48,38 @@ interface AiStatus {
   }
 }
 
+interface BatchJob {
+  id: string
+  gemini_job_name: string
+  status: string   // submitted|running|succeeded|failed|cancelled|expired
+  total_count: number
+  success_count: number
+  error_count: number
+  requested_by: string | null
+  cloud_model: string | null
+  created_at: string | null
+  submitted_at: string | null
+  completed_at: string | null
+  error_message: string | null
+}
+
+const BATCH_STATUS_LABEL: Record<string, string> = {
+  submitted: 'Sendt til Google',
+  running:   'Kører hos Google',
+  succeeded: 'Færdig',
+  failed:    'Fejlet',
+  cancelled: 'Annulleret',
+  expired:   'Udløbet (48t)',
+}
+const BATCH_STATUS_COLOR: Record<string, string> = {
+  submitted: 'bg-blue-50 text-blue-700 border-blue-200',
+  running:   'bg-amber-50 text-amber-700 border-amber-200',
+  succeeded: 'bg-green-50 text-green-700 border-green-200',
+  failed:    'bg-red-50 text-red-700 border-red-200',
+  cancelled: 'bg-gray-50 text-gray-600 border-gray-200',
+  expired:   'bg-red-50 text-red-700 border-red-200',
+}
+
 async function api(path: string, options?: RequestInit) {
   const response = await fetch(`${getApiUrl()}${path}`, {
     credentials: 'include',
@@ -79,6 +111,10 @@ export default function PostProcessingPage() {
   const [thumbnails, setThumbnails] = useState(true)
   const [ai, setAi] = useState(false)
   const [forceAi, setForceAi] = useState(false)
+  const [batchMode, setBatchMode] = useState(false)
+  const [notifyOnComplete, setNotifyOnComplete] = useState(true)
+  const [startingBatch, setStartingBatch] = useState(false)
+  const [batchJobs, setBatchJobs] = useState<BatchJob[]>([])
   const [error, setError] = useState<string | null>(null)
 
   async function loadStatus() {
@@ -93,12 +129,20 @@ export default function PostProcessingPage() {
     } catch { /* AI router kan være utilgængelig — ikke kritisk */ }
   }
 
+  async function loadBatchJobs() {
+    try {
+      const data = await api('/api/admin/ai-batch/jobs')
+      setBatchJobs(data)
+    } catch { /* ikke kritisk */ }
+  }
+
   useEffect(() => {
     api('/api/admin/devices')
       .then((data: any) => setDevices(data.devices ?? data))
       .catch(() => {})
     loadStatus().catch(e => setError(e instanceof Error ? e.message : 'Kunne ikke hente status'))
     loadAiStatus()
+    loadBatchJobs()
   }, [])
 
   useEffect(() => {
@@ -109,6 +153,13 @@ export default function PostProcessingPage() {
     }, 2000)
     return () => window.clearInterval(timer)
   }, [status?.running])
+
+  useEffect(() => {
+    const hasActive = batchJobs.some(j => j.status === 'submitted' || j.status === 'running')
+    if (!hasActive) return
+    const timer = window.setInterval(() => { loadBatchJobs() }, 30000)
+    return () => window.clearInterval(timer)
+  }, [batchJobs])
 
   async function start() {
     setError(null)
@@ -126,6 +177,27 @@ export default function PostProcessingPage() {
       setStatus(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Kunne ikke starte post-processing')
+    }
+  }
+
+  async function startBatch() {
+    setError(null)
+    setStartingBatch(true)
+    try {
+      await api('/api/admin/ai-batch/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          device_id: deviceId || null,
+          limit: limit ? Number(limit) : null,
+          force_ai: forceAi,
+          notify_on_complete: notifyOnComplete,
+        }),
+      })
+      await loadBatchJobs()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Kunne ikke starte batch-job')
+    } finally {
+      setStartingBatch(false)
     }
   }
 
@@ -214,14 +286,50 @@ export default function PostProcessingPage() {
             </label>
           )}
 
-          <button
-            onClick={start}
-            disabled={!!status?.running || (!thumbnails && !ai)}
-            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-slate-900 text-white text-sm font-medium disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-slate-800"
-          >
-            <Play className="w-4 h-4" />
-            {status?.running ? 'Kører...' : 'Start post-processing'}
-          </button>
+          {ai && (
+            <label className="flex items-start gap-3 rounded-lg border border-purple-200 bg-purple-50 p-3 cursor-pointer">
+              <input type="checkbox" checked={batchMode} onChange={e => setBatchMode(e.target.checked)} className="mt-1" />
+              <span>
+                <span className="text-sm font-medium text-purple-900 flex items-center gap-2">
+                  <Clock className="w-4 h-4" /> Batch-mode (Gemini)
+                </span>
+                <span className="block text-xs text-purple-700 mt-1">
+                  ~50% billigere end normal pris. Asynkront — resultater kan tage fra få minutter til op til 24 timer.
+                  Kører ikke i den almindelige kø ovenfor, men som et separat job.
+                </span>
+              </span>
+            </label>
+          )}
+
+          {ai && batchMode && (
+            <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 cursor-pointer">
+              <input type="checkbox" checked={notifyOnComplete} onChange={e => setNotifyOnComplete(e.target.checked)} className="mt-1" />
+              <span>
+                <span className="text-sm font-medium text-slate-900 flex items-center gap-2"><Mail className="w-4 h-4" /> Email når færdig</span>
+                <span className="block text-xs text-slate-500 mt-1">Bruger jeres eksisterende SIEM email-opsætning (Indstillinger → Notifikationer).</span>
+              </span>
+            </label>
+          )}
+
+          {batchMode && ai ? (
+            <button
+              onClick={startBatch}
+              disabled={startingBatch}
+              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-purple-600 text-white text-sm font-medium disabled:bg-purple-300 disabled:cursor-not-allowed hover:bg-purple-700"
+            >
+              <Clock className="w-4 h-4" />
+              {startingBatch ? 'Opretter batch-job…' : 'Start batch-job (Gemini)'}
+            </button>
+          ) : (
+            <button
+              onClick={start}
+              disabled={!!status?.running || (!thumbnails && !ai)}
+              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-slate-900 text-white text-sm font-medium disabled:bg-slate-300 disabled:cursor-not-allowed hover:bg-slate-800"
+            >
+              <Play className="w-4 h-4" />
+              {status?.running ? 'Kører...' : 'Start post-processing'}
+            </button>
+          )}
         </div>
 
         <div className="space-y-4">
@@ -277,6 +385,44 @@ export default function PostProcessingPage() {
               <p className="text-xs text-slate-400 mt-2">
                 "AI køet" ovenfor viser hvor mange billeder jobbet har sat i kø — "Analyseret" her viser hvor mange der reelt er færdigbehandlet (lokalt eller via cloud).
               </p>
+            </div>
+          )}
+
+          {batchJobs.length > 0 && (
+            <div className="border border-slate-200 bg-white rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-purple-600" /> Gemini batch-jobs
+                </h2>
+                <button onClick={() => loadBatchJobs()} className="text-xs text-sky-600 hover:text-sky-800">
+                  Opdater
+                </button>
+              </div>
+              <div className="space-y-2">
+                {batchJobs.map(job => (
+                  <div key={job.id} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${BATCH_STATUS_COLOR[job.status] ?? 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+                          {BATCH_STATUS_LABEL[job.status] ?? job.status}
+                        </span>
+                        <span className="text-xs text-slate-400 font-mono">{job.gemini_job_name}</span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {job.total_count} billeder · {job.cloud_model ?? '–'}
+                        {job.requested_by ? ` · anmodet af ${job.requested_by}` : ''}
+                        {job.error_message ? ` · ${job.error_message}` : ''}
+                      </p>
+                    </div>
+                    {(job.status === 'succeeded' || job.status === 'failed') && (
+                      <div className="text-xs text-right text-slate-500">
+                        <div>{job.success_count} ok</div>
+                        {job.error_count > 0 && <div className="text-red-500">{job.error_count} fejl</div>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

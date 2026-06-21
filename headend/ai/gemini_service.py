@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
 import re
 import time
+import uuid as _uuid
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +29,95 @@ RETRYABLE_ERROR_MARKERS = (
 )
 GEMINI_MAX_IMAGE_EDGE = 1920
 
+# Rå JSON-schema (dict) — bruges til Batch API (JSONL skal være json.dumps'bar,
+# kan ikke indeholde types.Schema-objekter). Skal afspejle samme struktur som
+# de typed Schema-objekter bygget i analyse() — hold dem i sync ved ændringer.
+RESPONSE_SCHEMA_DICT = {
+    "type": "OBJECT",
+    "properties": {
+        "scene":      {"type": "STRING"},
+        "tags":       {"type": "ARRAY", "items": {"type": "STRING"}},
+        "new_tags":   {"type": "ARRAY", "items": {"type": "STRING"}},
+        "confidence": {"type": "NUMBER"},
+        "change": {
+            "type": "OBJECT",
+            "properties": {
+                "detected":     {"type": "BOOLEAN"},
+                "summary":      {"type": "STRING"},
+                "new_items":    {"type": "ARRAY", "items": {"type": "STRING"}},
+                "removed_items": {"type": "ARRAY", "items": {"type": "STRING"}},
+            },
+            "required": ["detected", "summary", "new_items", "removed_items"],
+        },
+        "quality": {
+            "type": "OBJECT",
+            "properties": {
+                "flag": {"type": "STRING"},
+                "ok":   {"type": "BOOLEAN"},
+            },
+            "required": ["flag", "ok"],
+        },
+        "gdpr": {
+            "type": "OBJECT",
+            "properties": {
+                "has_data": {"type": "BOOLEAN"},
+                "detections": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "type":   {"type": "STRING"},
+                            "detail": {"type": "OBJECT"},
+                            "bbox":   {"type": "ARRAY", "items": {"type": "NUMBER"}},
+                        },
+                        "required": ["type"],
+                    },
+                },
+            },
+            "required": ["has_data", "detections"],
+        },
+    },
+    "required": ["scene", "tags", "new_tags", "confidence", "change", "quality", "gdpr"],
+}
+
+
+def build_prompt_text(
+    vocabulary_by_cat: dict[str, list[str]],
+    has_reference: bool = False,
+    prompt_examples: Optional[list[str]] = None,
+) -> str:
+    """Byg analyse-prompten — delt mellem synkron analyse() og batch-requests."""
+    vocab_lines = [f"  [{cat}]: {', '.join(tags)}" for cat, tags in vocabulary_by_cat.items()]
+    examples_txt = ""
+    if prompt_examples:
+        examples_txt = "\n## LAERTE EKSEMPLER\n" + "\n".join(
+            f"  - {example}" for example in prompt_examples[:10]
+        )
+    change_txt = ""
+    if has_reference:
+        change_txt = (
+            "\nDu modtager TO billeder: BILLEDE 1 = reference, "
+            "BILLEDE 2 = aktuelt.\n"
+        )
+    return f"""Du er et praecist dansk AI-system til byggepladser.
+## TAG-VOKABULAR
+{chr(10).join(vocab_lines)}
+{examples_txt}
+## REGLER
+- Match ord fra listen NOEJAGTIGT og laeg dem i "tags".
+- Nye ord laegges i "new_tags". Find mellem 15 og 35 tags i alt.
+{change_txt}
+## RETURNER KUN JSON
+{{
+  "scene": "Beskrivelse",
+  "tags": ["tag1"],
+  "new_tags": [],
+  "confidence": 0.90,
+  "change": {{"detected": false, "summary": null, "new_items": [], "removed_items": []}},
+  "quality": {{"flag": "klart_billede", "ok": true}},
+  "gdpr": {{"has_data": false, "detections": []}}
+}}"""
+
 
 class GeminiVisionService:
     def __init__(
@@ -45,6 +136,7 @@ class GeminiVisionService:
         self.model = model
         self.project = project_id
         self.location = location
+        self.is_vertex = bool(service_account_path and Path(service_account_path).exists())
         self._client = self._build_client(service_account_path, project_id, location, api_key)
 
     def _build_client(self, sa_path: str, project: str, location: str, api_key: str):
@@ -77,38 +169,11 @@ class GeminiVisionService:
 
         start = time.monotonic()
 
-        vocab_lines = [f"  [{cat}]: {', '.join(tags)}" for cat, tags in vocabulary_by_cat.items()]
-        examples_txt = ""
-        if prompt_examples:
-            examples_txt = "\n## LAERTE EKSEMPLER\n" + "\n".join(
-                f"  - {example}" for example in prompt_examples[:10]
-            )
-
-        change_txt = ""
-        if reference_image_path:
-            change_txt = (
-                "\nDu modtager TO billeder: BILLEDE 1 = reference, "
-                "BILLEDE 2 = aktuelt.\n"
-            )
-
-        prompt = f"""Du er et praecist dansk AI-system til byggepladser.
-## TAG-VOKABULAR
-{chr(10).join(vocab_lines)}
-{examples_txt}
-## REGLER
-- Match ord fra listen NOEJAGTIGT og laeg dem i "tags".
-- Nye ord laegges i "new_tags". Find mellem 15 og 35 tags i alt.
-{change_txt}
-## RETURNER KUN JSON
-{{
-  "scene": "Beskrivelse",
-  "tags": ["tag1"],
-  "new_tags": [],
-  "confidence": 0.90,
-  "change": {{"detected": false, "summary": null, "new_items": [], "removed_items": []}},
-  "quality": {{"flag": "klart_billede", "ok": true}},
-  "gdpr": {{"has_data": false, "detections": []}}
-}}"""
+        prompt = build_prompt_text(
+            vocabulary_by_cat,
+            has_reference=bool(reference_image_path),
+            prompt_examples=prompt_examples,
+        )
 
         contents = [prompt]
         if reference_image_path:
@@ -359,3 +424,138 @@ class GeminiVisionService:
             duration_ms=duration_ms,
             raw_response={"response": raw_text},
         )
+
+    # ── Batch API — bulk genanalyse til ~50% af normal pris ────────────────
+    # Asynkront: submit job → poll status → download resultater når succeeded.
+    # SLO 24 timer, ofte hurtigere. Bruges KUN af post-processing bulk-jobs,
+    # ikke af den løbende live capture-pipeline (se ai/integration.py).
+
+    def _encode_image_b64(self, path: Path | str) -> str:
+        """Samme resize-logik som _load_part, men returnerer base64 til JSONL."""
+        data = Path(path).read_bytes()
+        if len(data) > MAX_IMAGE_BYTES or self._should_resize_by_dimensions(data):
+            data = self._resize(data)
+        return base64.b64encode(data).decode("ascii")
+
+    def build_batch_request_line(
+        self,
+        key: str,
+        image_path: Path | str,
+        vocabulary_by_cat: dict[str, list[str]],
+    ) -> dict:
+        """Byg én JSONL-linje (dict) til Batch API — samme prompt/schema som analyse()."""
+        prompt = build_prompt_text(vocabulary_by_cat, has_reference=False)
+        b64 = self._encode_image_b64(image_path)
+        return {
+            "key": key,
+            "request": {
+                "contents": [{
+                    "role": "user",
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "image/jpeg", "data": b64}},
+                    ],
+                }],
+                "generation_config": {
+                    "temperature": 0.1,
+                    "max_output_tokens": 8192,
+                    "response_mime_type": "application/json",
+                    "response_schema": RESPONSE_SCHEMA_DICT,
+                },
+            },
+        }
+
+    def submit_batch_job(
+        self,
+        items: list[tuple[str, Path | str]],
+        vocabulary_by_cat: dict[str, list[str]],
+        display_name: str = "",
+    ) -> str:
+        """Byg JSONL-fil af items=[(key, image_path), ...], upload og opret batch-job.
+        Returnerer Google's job-navn (fx 'batches/123456') til polling/resultater.
+
+        BEMÆRK: Kun testet/understøttet med AI Studio (api_key). Vertex AI
+        (service account) bruger typisk Cloud Storage til batch input/output
+        i stedet for Files API — denne metode er IKKE verificeret til Vertex.
+        """
+        if self.is_vertex:
+            raise NotImplementedError(
+                "Batch-mode er kun implementeret til Gemini AI Studio (API-nøgle). "
+                "Vertex AI (service account) kræver Cloud Storage-baseret batch input — "
+                "ikke understøttet endnu. Brug en AI Studio API-nøgle for batch-jobs."
+            )
+        import tempfile
+
+        display_name = display_name or f"timelapse-batch-{_uuid.uuid4().hex[:8]}"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False, encoding="utf-8") as f:
+            tmp_path = f.name
+            for key, image_path in items:
+                line = self.build_batch_request_line(key, image_path, vocabulary_by_cat)
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+        try:
+            from google.genai import types
+            uploaded = self._client.files.upload(
+                file=tmp_path,
+                config=types.UploadFileConfig(display_name=display_name, mime_type="jsonl"),
+            )
+            job = self._client.batches.create(
+                model=self.model,
+                src=uploaded.name,
+                config={"display_name": display_name},
+            )
+            log.info("Gemini batch job oprettet: %s (%d billeder)", job.name, len(items))
+            return job.name
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def get_batch_status(self, job_name: str) -> dict:
+        """Hent status for et batch-job. State: PENDING|RUNNING|SUCCEEDED|FAILED|CANCELLED|EXPIRED."""
+        job = self._client.batches.get(name=job_name)
+        state = job.state.name if hasattr(job.state, "name") else str(job.state)
+        return {"state": state, "job": job}
+
+    def download_batch_results(self, job) -> list[dict]:
+        """Download og parse resultater fra et succeeded batch-job.
+        Returnerer liste af {"key": str, "text": str|None, "error": str|None}.
+        """
+        results: list[dict] = []
+
+        if getattr(job, "dest", None) and getattr(job.dest, "file_name", None):
+            raw = self._client.files.download(file=job.dest.file_name)
+            content = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            for line in content.splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                key = row.get("key")
+                if row.get("response"):
+                    try:
+                        parts = row["response"]["candidates"][0]["content"]["parts"]
+                        text = "".join(p.get("text", "") for p in parts)
+                        results.append({"key": key, "text": text, "error": None})
+                    except Exception as exc:
+                        results.append({"key": key, "text": None, "error": str(exc)})
+                else:
+                    results.append({"key": key, "text": None, "error": str(row.get("status") or row.get("error") or "ukendt fejl")})
+
+        elif getattr(job, "dest", None) and getattr(job.dest, "inlined_responses", None):
+            for resp in job.dest.inlined_responses:
+                key = getattr(resp, "key", None)
+                if getattr(resp, "response", None):
+                    try:
+                        results.append({"key": key, "text": resp.response.text, "error": None})
+                    except Exception as exc:
+                        results.append({"key": key, "text": None, "error": str(exc)})
+                else:
+                    results.append({"key": key, "text": None, "error": str(getattr(resp, "error", "ukendt fejl"))})
+
+        return results
+
+    def parse_batch_result_text(self, text: str, approved_tag_set: set[str]) -> ImageAnalysisResult:
+        """Parse ét batch-resultats JSON-svar til samme ImageAnalysisResult som analyse()."""
+        parsed = self._parse(text)
+        return self._build(parsed, approved_tag_set, has_ref=False, duration_ms=0, raw_text=text)
