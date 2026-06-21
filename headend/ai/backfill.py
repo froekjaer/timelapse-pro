@@ -303,6 +303,7 @@ def main():
                 capture_id=cap["id"], analysis_id=aid,
                 approved_tags=result.approved_tags + result.change_tags,
                 new_tags=result.new_tags,
+                new_tags_da=getattr(result, "new_tags_da", None),
             )
             payload = {
                 "scene_dk": result.scene_dk,

@@ -38,6 +38,7 @@ RESPONSE_SCHEMA_DICT = {
         "scene":      {"type": "STRING"},
         "tags":       {"type": "ARRAY", "items": {"type": "STRING"}},
         "new_tags":   {"type": "ARRAY", "items": {"type": "STRING"}},
+        "new_tags_da": {"type": "ARRAY", "items": {"type": "STRING"}},
         "confidence": {"type": "NUMBER"},
         "change": {
             "type": "OBJECT",
@@ -77,7 +78,7 @@ RESPONSE_SCHEMA_DICT = {
             "required": ["has_data", "detections"],
         },
     },
-    "required": ["scene", "tags", "new_tags", "confidence", "change", "quality", "gdpr"],
+    "required": ["scene", "tags", "new_tags", "new_tags_da", "confidence", "change", "quality", "gdpr"],
 }
 
 
@@ -99,22 +100,29 @@ def build_prompt_text(
             "\nDu modtager TO billeder: BILLEDE 1 = reference, "
             "BILLEDE 2 = aktuelt.\n"
         )
-    return f"""Du er et praecist dansk AI-system til byggepladser.
-## TAG-VOKABULAR
+    return f"""You are a precise AI system for Danish construction sites.
+## TAG VOCABULARY (canonical — ENGLISH)
 {chr(10).join(vocab_lines)}
 {examples_txt}
-## REGLER
-- Match ord fra listen NOEJAGTIGT og laeg dem i "tags".
-- Nye ord laegges i "new_tags". Find mellem 15 og 35 tags i alt.
+## RULES
+- Match words from the list EXACTLY and put them in "tags". Tags MUST be English.
+- New words you invent go in "new_tags" (also ENGLISH, lowercase, underscore). Find between 15 and 35 tags total.
+- "new_tags_da" MUST be a PARALLEL ARRAY to "new_tags" — same length, same order.
+  For each tag in "new_tags" at position i, put your best short, natural DANISH
+  translation at position i in "new_tags_da". Example:
+  "new_tags": ["loading_ramp", "site_office"], "new_tags_da": ["lastrampe", "byggekontor"]
+  This is just a SUGGESTION a human will review afterwards — do your best, it does not need to be perfect.
+  If "new_tags" is empty, "new_tags_da" must also be an empty array.
 {change_txt}
-## RETURNER KUN JSON
+## RETURN ONLY JSON
 {{
-  "scene": "Beskrivelse",
+  "scene": "Description in Danish (this stays Danish — it's free text, not a tag)",
   "tags": ["tag1"],
   "new_tags": [],
+  "new_tags_da": [],
   "confidence": 0.90,
   "change": {{"detected": false, "summary": null, "new_items": [], "removed_items": []}},
-  "quality": {{"flag": "klart_billede", "ok": true}},
+  "quality": {{"flag": "clear_image", "ok": true}},
   "gdpr": {{"has_data": false, "detections": []}}
 }}"""
 
@@ -240,12 +248,16 @@ class GeminiVisionService:
                     type=types.Type.ARRAY,
                     items=types.Schema(type=types.Type.STRING),
                 ),
+                "new_tags_da": types.Schema(
+                    type=types.Type.ARRAY,
+                    items=types.Schema(type=types.Type.STRING),
+                ),
                 "confidence": types.Schema(type=types.Type.NUMBER),
                 "change": change_schema,
                 "quality": quality_schema,
                 "gdpr": gdpr_schema,
             },
-            required=["scene", "tags", "new_tags", "confidence", "change", "quality", "gdpr"],
+            required=["scene", "tags", "new_tags", "new_tags_da", "confidence", "change", "quality", "gdpr"],
         )
 
         response = self._generate_content_with_retry(
@@ -381,6 +393,11 @@ class GeminiVisionService:
     ) -> ImageAnalysisResult:
         all_tags = [str(tag).lower().strip() for tag in parsed.get("tags", [])]
         raw_new = [str(tag).lower().strip() for tag in parsed.get("new_tags", [])]
+        raw_new_da = [str(t).strip() for t in parsed.get("new_tags_da", [])]
+        # Gemini SKAL levere new_tags_da som parallelt array (samme længde/orden som
+        # new_tags) — zip sammen til en dict. Hvis modellen afviger i længde,
+        # zip() bare matcher det den kan og dropper resten (ingen krash).
+        new_tags_da_map = dict(zip(raw_new, raw_new_da))
         approved = [tag for tag in all_tags if tag in approved_tag_set]
         new = list(dict.fromkeys([tag for tag in all_tags if tag not in approved_tag_set] + raw_new))
 
@@ -423,6 +440,7 @@ class GeminiVisionService:
             model=self.model,
             duration_ms=duration_ms,
             raw_response={"response": raw_text},
+            new_tags_da=new_tags_da_map,
         )
 
     # ── Batch API — bulk genanalyse til ~50% af normal pris ────────────────

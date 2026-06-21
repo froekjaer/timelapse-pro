@@ -190,6 +190,7 @@ def _analysis_payload(result) -> dict:
         "scene_dk": result.scene_dk,
         "tags": result.approved_tags,
         "new_tags": result.new_tags,
+        "new_tags_da": getattr(result, "new_tags_da", {}),
         "change_detected": result.change_detected,
         "change_summary": result.change_summary,
         "change_tags": result.change_tags,
@@ -412,7 +413,7 @@ def _worker(get_db_fn, find_image_fn):
             finally:
                 db_gen.close()
 
-            vocab.record_usage(result.approved_tags, result.new_tags)
+            vocab.record_usage(result.approved_tags, result.new_tags, getattr(result, "new_tags_da", None))
             update_sidecar_with_ai(image_path, payload)
 
             log.info(

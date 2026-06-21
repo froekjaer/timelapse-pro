@@ -10272,6 +10272,7 @@ def _finalize_ai_batch_job(db, job: "AiBatchJob", svc, gemini_job) -> None:
                 "scene_dk": result.scene_dk,
                 "tags": result.approved_tags,
                 "new_tags": result.new_tags,
+                "new_tags_da": getattr(result, "new_tags_da", {}),
                 "change_detected": result.change_detected,
                 "change_summary": result.change_summary,
                 "change_tags": result.change_tags,
@@ -10290,6 +10291,9 @@ def _finalize_ai_batch_job(db, job: "AiBatchJob", svc, gemini_job) -> None:
             capture.ai_result = _json.dumps(ai_payload, ensure_ascii=False)
             capture.ai_tags = _json.dumps(tags, ensure_ascii=False)
             capture.ai_analyzed_at = now_utc()
+            # Registrér brug + nye tags til godkendelse — manglede helt før denne fix,
+            # så batch-opdagede tags forsvandt i stedet for at lande i Tag Review.
+            vocab.record_usage(result.approved_tags, result.new_tags, getattr(result, "new_tags_da", None))
             success_count += 1
         except Exception as exc:
             log.warning("Batch resultat-parse fejl for capture %d: %s", capture_id, exc)

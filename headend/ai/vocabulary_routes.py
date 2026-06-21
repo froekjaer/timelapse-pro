@@ -13,9 +13,19 @@ class MergeTagsPayload(BaseModel):
     canonical_tag: str
     category: str | None = None
 
+class UpdateTranslationPayload(BaseModel):
+    display_name_da: str | None = None
+    display_name_en: str | None = None
+
 @vocab_router.get("/pending")
 def pending(db: Session = Depends(get_db)):
     return TagRepository(db).get_pending_review()
+
+@vocab_router.put("/{tag_id}/translation")
+def update_translation(tag_id: int, payload: UpdateTranslationPayload, db: Session = Depends(get_db)):
+    """Admin retter AI's danske/engelske oversættelsesforslag for et tag."""
+    TagRepository(db).update_translation(tag_id, payload.display_name_da, payload.display_name_en)
+    return {"ok": True}
 
 @vocab_router.post("/{tag_id}/approve")
 def approve(tag_id: int, category: str = None, db: Session = Depends(get_db)):

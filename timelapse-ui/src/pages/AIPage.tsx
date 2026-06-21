@@ -49,6 +49,10 @@ interface PendingTag {
   count: number
   first_seen: string
   last_seen: string
+  canonical_tag?: string | null
+  display_name_da?: string | null
+  display_name_en?: string | null
+  translation_status?: string | null
 }
 
 interface EscalationItem {
@@ -687,6 +691,7 @@ function TagReviewTab() {
   const [tags,    setTags]    = useState<PendingTag[]>([])
   const [loading, setLoading] = useState(true)
   const [busy,    setBusy]    = useState<Set<number>>(new Set())
+  const [daEdits, setDaEdits] = useState<Record<number, string>>({})
 
   const load = () => {
     setLoading(true)
@@ -697,6 +702,11 @@ function TagReviewTab() {
 
   const approve = async (id: number, category?: string) => {
     setBusy(b => new Set(b).add(id))
+    // Hvis admin har rettet det danske forslag, gem det FØRST, så godkendelsen
+    // sker med det korrigerede navn, ikke AI's oprindelige gæt.
+    if (daEdits[id] !== undefined) {
+      await saveTranslation(id, daEdits[id])
+    }
     await api(`/api/ai/vocabulary/${id}/approve${category ? `?category=${category}` : ''}`, { method: 'POST' })
     setTags(t => t.filter(x => x.id !== id))
     setBusy(b => { const s = new Set(b); s.delete(id); return s })
@@ -707,6 +717,14 @@ function TagReviewTab() {
     await api(`/api/ai/vocabulary/${id}/reject`, { method: 'POST' })
     setTags(t => t.filter(x => x.id !== id))
     setBusy(b => { const s = new Set(b); s.delete(id); return s })
+  }
+
+  const saveTranslation = async (id: number, displayNameDa: string) => {
+    await api(`/api/ai/vocabulary/${id}/translation`, {
+      method: 'PUT',
+      body: JSON.stringify({ display_name_da: displayNameDa }),
+    })
+    setTags(t => t.map(x => x.id === id ? { ...x, display_name_da: displayNameDa, translation_status: 'approved' } : x))
   }
 
   return (
@@ -740,11 +758,31 @@ function TagReviewTab() {
             </button>
           </div>
           <div className="divide-y divide-white/5">
-            {tags.map(tag => (
-              <div key={tag.id} className="flex items-center gap-4 px-4 py-3 hover:bg-white/3 transition-colors">
-                <code className="text-sm text-violet-300 font-mono bg-violet-950/50 px-2 py-0.5 rounded-lg flex-1">
+            {tags.map(tag => {
+              const statusBadge: Record<string, { label: string; cls: string }> = {
+                pending:      { label: 'Mangler dansk', cls: 'bg-amber-900/40 text-amber-400' },
+                ai_suggested: { label: 'AI-forslag', cls: 'bg-blue-900/40 text-blue-400' },
+                approved:     { label: 'Bekræftet', cls: 'bg-emerald-900/40 text-emerald-400' },
+              }
+              const badge = statusBadge[tag.translation_status ?? 'pending'] ?? statusBadge.pending
+              const daValue = daEdits[tag.id] ?? tag.display_name_da ?? ''
+              return (
+              <div key={tag.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/3 transition-colors">
+                <code className="text-sm text-violet-300 font-mono bg-violet-950/50 px-2 py-0.5 rounded-lg">
                   #{tag.tag}
                 </code>
+                <span className="text-slate-600 text-xs">→</span>
+                <div className="flex-1 flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={daValue}
+                    onChange={e => setDaEdits(d => ({ ...d, [tag.id]: e.target.value }))}
+                    onBlur={() => { if (daEdits[tag.id] !== undefined && daEdits[tag.id] !== tag.display_name_da) saveTranslation(tag.id, daEdits[tag.id]) }}
+                    placeholder="Dansk oversættelse..."
+                    className="bg-gray-800 border border-white/10 rounded-lg px-2 py-1 text-sm text-slate-200 w-44 focus:outline-none focus:border-violet-500"
+                  />
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
+                </div>
                 <span className="text-xs text-slate-500">set {tag.count}×</span>
                 <span className="text-xs text-slate-600">
                   {new Date(tag.first_seen).toLocaleDateString('da-DK')}
@@ -766,7 +804,8 @@ function TagReviewTab() {
                   </button>
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}

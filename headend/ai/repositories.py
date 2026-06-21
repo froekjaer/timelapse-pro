@@ -25,6 +25,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text, func, and_, or_, desc
 from sqlalchemy.orm import Session
 
+from ai.tag_vocabulary import canonical_metadata
+
 log = logging.getLogger(__name__)
 
 
@@ -119,6 +121,10 @@ class PendingTagDTO(BaseModel):
     count:      int
     first_seen: datetime
     last_seen:  datetime
+    canonical_tag: Optional[str] = None
+    display_name_da: Optional[str] = None
+    display_name_en: Optional[str] = None
+    translation_status: Optional[str] = None
 
 
 # =============================================================================
@@ -251,7 +257,7 @@ class TagRepository:
 
     def get_approved_tags(self) -> list[str]:
         rows = self.db.execute(text("""
-            SELECT tag FROM ai_tag_vocabulary
+            SELECT COALESCE(canonical_tag, tag) FROM ai_tag_vocabulary
             WHERE approved = TRUE AND rejected = FALSE
             ORDER BY count DESC
         """)).fetchall()
@@ -259,7 +265,7 @@ class TagRepository:
 
     def get_approved_by_category(self) -> dict[str, list[str]]:
         rows = self.db.execute(text("""
-            SELECT tag, category FROM ai_tag_vocabulary
+            SELECT COALESCE(canonical_tag, tag), category FROM ai_tag_vocabulary
             WHERE approved = TRUE AND rejected = FALSE
             ORDER BY category, count DESC
         """)).fetchall()
@@ -280,12 +286,30 @@ class TagRepository:
 
     def get_pending_review(self) -> list[PendingTagDTO]:
         rows = self.db.execute(text("""
-            SELECT id, tag, count, first_seen, last_seen
+            SELECT id, tag, count, first_seen, last_seen,
+                   canonical_tag, display_name_da, display_name_en, translation_status
             FROM ai_tag_vocabulary
             WHERE approved = FALSE AND rejected = FALSE
             ORDER BY count DESC, first_seen ASC
         """)).mappings().all()
         return [PendingTagDTO(**dict(r)) for r in rows]
+
+    def update_translation(self, tag_id: int, display_name_da: Optional[str] = None,
+                            display_name_en: Optional[str] = None) -> None:
+        """Admin retter et AI-foreslået (eller manglende) dansk/engelsk visningsnavn.
+        Sætter translation_status='approved' — markerer at et menneske har bekræftet det.
+        """
+        self.db.execute(text("""
+            UPDATE ai_tag_vocabulary
+            SET display_name_da = COALESCE(:da, display_name_da),
+                display_name_en = COALESCE(:en, display_name_en),
+                translation_status = 'approved',
+                translation_source = 'human',
+                translation_updated_at = NOW()
+            WHERE id = :id
+        """), {"id": tag_id, "da": display_name_da, "en": display_name_en})
+        self.db.commit()
+        log.info("Tag %d oversættelse opdateret af admin", tag_id)
 
     def approve_tag(self, tag_id: int, category: Optional[str] = None):
         self.db.execute(text("""
@@ -428,13 +452,16 @@ class TagRepository:
         analysis_id: int,
         approved_tags: list[str],
         new_tags: list[str],
+        new_tags_da: dict[str, str] | None = None,
     ):
         """
         Gem tags for en capture.
         approved_tags: kendte, godkendte tags
-        new_tags:      model-opfundne, gemmes med approved=False
+        new_tags:      model-opfundne (ENGELSK), gemmes med approved=False
+        new_tags_da:   AI-foreslået dansk oversættelse pr. nyt tag (fra backfill.py)
         """
         now = datetime.now(timezone.utc)
+        new_tags_da = new_tags_da or {}
 
         for tag in approved_tags:
             tag_id = self._get_or_create_tag_id(tag, approved=True, now=now)
@@ -444,25 +471,53 @@ class TagRepository:
         for tag in new_tags:
             tag_clean = tag.lower().strip().replace(" ", "_").replace("-", "_")
             if 2 < len(tag_clean) <= 60:
-                tag_id = self._get_or_create_tag_id(tag_clean, approved=False, now=now)
+                da_hint = new_tags_da.get(tag) or new_tags_da.get(tag_clean) or ""
+                tag_id = self._get_or_create_tag_id(tag_clean, approved=False, now=now, da_hint=da_hint)
                 if tag_id:
                     self._upsert_capture_tag(capture_id, tag_id, analysis_id, is_new=True)
 
         self.db.commit()
 
-    def _get_or_create_tag_id(self, tag: str, approved: bool, now: datetime) -> Optional[int]:
+    def _get_or_create_tag_id(self, tag: str, approved: bool, now: datetime, da_hint: str = "") -> Optional[int]:
+        canonical, label_da, label_en = canonical_metadata(tag, da_hint=da_hint)
         row = self.db.execute(
-            text("SELECT id FROM ai_tag_vocabulary WHERE tag = :tag"),
-            {"tag": tag}
+            text("""
+                SELECT id FROM ai_tag_vocabulary
+                WHERE tag = :tag OR canonical_tag = :canonical
+                ORDER BY approved DESC, predefined DESC
+                LIMIT 1
+            """),
+            {"tag": tag, "canonical": canonical}
         ).fetchone()
         if row:
             return row[0]
+        status = "ai_suggested" if da_hint else "pending"
         result = self.db.execute(text("""
-            INSERT INTO ai_tag_vocabulary (tag, category, approved, first_seen, last_seen)
-            VALUES (:tag, 'model_opfundet', :approved, :now, :now)
-            ON CONFLICT (tag) DO UPDATE SET last_seen = :now
+            INSERT INTO ai_tag_vocabulary (
+                tag, canonical_tag, display_name_da, display_name_en,
+                translation_status, translation_source, translation_updated_at,
+                category, approved, first_seen, last_seen
+            )
+            VALUES (
+                :tag, :canonical, :label_da, :label_en,
+                :status, 'gemini', :now,
+                'model_invented', :approved, :now, :now
+            )
+            ON CONFLICT (tag) DO UPDATE SET
+                last_seen = :now,
+                canonical_tag = COALESCE(ai_tag_vocabulary.canonical_tag, EXCLUDED.canonical_tag),
+                display_name_da = COALESCE(ai_tag_vocabulary.display_name_da, EXCLUDED.display_name_da),
+                display_name_en = COALESCE(ai_tag_vocabulary.display_name_en, EXCLUDED.display_name_en)
             RETURNING id
-        """), {"tag": tag, "approved": approved, "now": now}).fetchone()
+        """), {
+            "tag": tag,
+            "canonical": canonical,
+            "label_da": label_da,
+            "label_en": label_en,
+            "status": status,
+            "approved": approved,
+            "now": now,
+        }).fetchone()
         return result[0] if result else None
 
     @staticmethod
@@ -537,9 +592,9 @@ class TagRepository:
                 SELECT ct.capture_id
                 FROM capture_tags ct
                 JOIN ai_tag_vocabulary tv ON tv.id = ct.tag_id
-                WHERE tv.tag = ANY(:tags) AND tv.approved = TRUE
+                WHERE (tv.tag = ANY(:tags) OR tv.canonical_tag = ANY(:tags)) AND tv.approved = TRUE
                 GROUP BY ct.capture_id
-                HAVING COUNT(DISTINCT tv.tag) >= :min_count
+                HAVING COUNT(DISTINCT COALESCE(tv.canonical_tag, tv.tag)) >= :min_count
             )
             ORDER BY captured_at DESC
             LIMIT :limit
@@ -582,12 +637,12 @@ class TagRepository:
     def co_occurring_tags(self, tag: str, limit: int = 20) -> list[dict]:
         """Hvilke andre tags optræder oftest sammen med dette tag?"""
         rows = self.db.execute(text("""
-            SELECT tv2.tag, COUNT(*) AS co_count
+            SELECT COALESCE(tv2.canonical_tag, tv2.tag), COUNT(*) AS co_count
             FROM capture_tags ct1
-            JOIN ai_tag_vocabulary tv1 ON tv1.id = ct1.tag_id AND tv1.tag = :tag
+            JOIN ai_tag_vocabulary tv1 ON tv1.id = ct1.tag_id AND (tv1.tag = :tag OR tv1.canonical_tag = :tag)
             JOIN capture_tags ct2      ON ct2.capture_id = ct1.capture_id
-            JOIN ai_tag_vocabulary tv2 ON tv2.id = ct2.tag_id AND tv2.tag != :tag AND tv2.approved = TRUE
-            GROUP BY tv2.tag
+            JOIN ai_tag_vocabulary tv2 ON tv2.id = ct2.tag_id AND COALESCE(tv2.canonical_tag, tv2.tag) != COALESCE(tv1.canonical_tag, tv1.tag) AND tv2.approved = TRUE
+            GROUP BY COALESCE(tv2.canonical_tag, tv2.tag)
             ORDER BY co_count DESC
             LIMIT :limit
         """), {"tag": tag, "limit": limit}).fetchall()
