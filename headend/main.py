@@ -10075,11 +10075,27 @@ def start_ai_batch_job(
     svc = _build_gemini_service(get_db, cfg.cloud_model)
     if not svc:
         raise HTTPException(status_code=400, detail="Ingen Gemini API-nøgle konfigureret (Indstillinger → AI)")
+
+    gcs_bucket = ""
     if getattr(svc, "is_vertex", False):
-        raise HTTPException(
-            status_code=400,
-            detail="Batch-mode understøtter endnu kun Gemini AI Studio (API-nøgle) — ikke Vertex AI (service account)"
-        )
+        gcs_bucket = _get_setting(db, "gemini_gcs_bucket", "").strip()
+        if not gcs_bucket:
+            raise HTTPException(
+                status_code=400,
+                detail="Vertex AI batch kræver et GCS-bucket — sæt 'gemini_gcs_bucket' i Indstillinger → AI"
+            )
+        # GDPR: bucket SKAL ligge i samme EU-region som Vertex-endpointet, ellers
+        # brydes databehandlings-garantien på data-at-rest under batch-kørslen.
+        bucket_region = _get_setting(db, "gemini_gcs_bucket_region", "").strip().lower()
+        vertex_region = (svc.location or "").lower()
+        if bucket_region and vertex_region and not bucket_region.startswith(vertex_region.split("-")[0]):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"GCS-bucket region ({bucket_region}) matcher ikke Vertex AI region ({vertex_region}) — "
+                    "stoppet for at undgå databehandling uden for EU. Bekræft 'gemini_gcs_bucket_region' i Indstillinger → AI."
+                )
+            )
 
     allowed_device_ids = _allowed_capture_device_ids(db, current_user)
     query = db.query(Capture).filter(Capture.filename.isnot(None))
@@ -10119,6 +10135,7 @@ def start_ai_batch_job(
             items=[(key, path) for key, path, _cid in items],
             vocabulary_by_cat=vocab_by_cat,
             display_name=f"timelapse-batch-{job_id[:8]}",
+            gcs_bucket=gcs_bucket,
         )
     except Exception as exc:
         log.exception("Batch-job submission fejlede")
@@ -10214,16 +10231,35 @@ def _finalize_ai_batch_job(db, job: "AiBatchJob", svc, gemini_job) -> None:
         log.warning("Batch-job %s: download fejlede: %s", job.gemini_job_name, exc)
         return
 
+    # AI Studio-jobs har "key" (fx "cap-123") i hvert resultat — match direkte.
+    # Vertex-jobs har INGEN key (Vertex-konventionen er anderledes) — match i
+    # stedet POSITIONELT mod capture_ids i den rækkefølge de blev submittet i,
+    # da Vertex AI batch garanteret bevarer input-rækkefølgen i output.
+    job_capture_ids = json.loads(job.capture_ids or "[]")
+    uses_positional_matching = bool(results) and all(r.get("key") is None for r in results)
+    if uses_positional_matching and len(results) != len(job_capture_ids):
+        log.warning(
+            "Batch-job %s: antal resultater (%d) matcher ikke antal submittede billeder (%d) — "
+            "positionel matching kan være forskudt. Springer over for at undgå fejlmatch.",
+            job.gemini_job_name, len(results), len(job_capture_ids),
+        )
+
     success_count = 0
     error_count = 0
-    for r in results:
-        key = r.get("key") or ""
-        if not key.startswith("cap-"):
-            continue
-        try:
-            capture_id = int(key[len("cap-"):])
-        except ValueError:
-            continue
+    for index, r in enumerate(results):
+        if uses_positional_matching:
+            if len(results) != len(job_capture_ids) or index >= len(job_capture_ids):
+                error_count += 1
+                continue
+            capture_id = job_capture_ids[index]
+        else:
+            key = r.get("key") or ""
+            if not key.startswith("cap-"):
+                continue
+            try:
+                capture_id = int(key[len("cap-"):])
+            except ValueError:
+                continue
         capture = db.query(Capture).filter_by(id=capture_id).first()
         if not capture:
             continue

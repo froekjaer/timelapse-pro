@@ -9,3 +9,5 @@ bcrypt
 passlib
 psycopg2-binary
 webauthn
+google-genai
+google-cloud-storage

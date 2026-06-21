@@ -470,20 +470,31 @@ class GeminiVisionService:
         items: list[tuple[str, Path | str]],
         vocabulary_by_cat: dict[str, list[str]],
         display_name: str = "",
+        gcs_bucket: str = "",
     ) -> str:
-        """Byg JSONL-fil af items=[(key, image_path), ...], upload og opret batch-job.
-        Returnerer Google's job-navn (fx 'batches/123456') til polling/resultater.
+        """Byg batch-anmodninger af items=[(key, image_path), ...] og opret batch-job.
+        Returnerer Google's job-navn til polling/resultater.
 
-        BEMÆRK: Kun testet/understøttet med AI Studio (api_key). Vertex AI
-        (service account) bruger typisk Cloud Storage til batch input/output
-        i stedet for Files API — denne metode er IKKE verificeret til Vertex.
+        Router automatisk efter auth-metode:
+          - AI Studio (api_key): Files API — upload JSONL direkte til Google.
+          - Vertex AI (service account): kræver gcs_bucket — uploader JSONL til
+            Cloud Storage og peger jobbet derhen (Vertex har ikke Files API
+            til batch). VIGTIGT for GDPR: bucket'en SKAL ligge i samme EU-region
+            som self.location for at databehandlings-garantien holder hele vejen.
         """
         if self.is_vertex:
-            raise NotImplementedError(
-                "Batch-mode er kun implementeret til Gemini AI Studio (API-nøgle). "
-                "Vertex AI (service account) kræver Cloud Storage-baseret batch input — "
-                "ikke understøttet endnu. Brug en AI Studio API-nøgle for batch-jobs."
-            )
+            if not gcs_bucket:
+                raise ValueError("Vertex AI batch kræver et GCS-bucket (gcs_bucket) — ingen er konfigureret")
+            return self._submit_batch_job_vertex_gcs(items, vocabulary_by_cat, gcs_bucket, display_name)
+        return self._submit_batch_job_ai_studio(items, vocabulary_by_cat, display_name)
+
+    def _submit_batch_job_ai_studio(
+        self,
+        items: list[tuple[str, Path | str]],
+        vocabulary_by_cat: dict[str, list[str]],
+        display_name: str = "",
+    ) -> str:
+        """AI Studio (api_key) batch — Files API. Se submit_batch_job() for routing."""
         import tempfile
 
         display_name = display_name or f"timelapse-batch-{_uuid.uuid4().hex[:8]}"
@@ -504,7 +515,7 @@ class GeminiVisionService:
                 src=uploaded.name,
                 config={"display_name": display_name},
             )
-            log.info("Gemini batch job oprettet: %s (%d billeder)", job.name, len(items))
+            log.info("Gemini batch job (AI Studio) oprettet: %s (%d billeder)", job.name, len(items))
             return job.name
         finally:
             try:
@@ -512,16 +523,73 @@ class GeminiVisionService:
             except OSError:
                 pass
 
+    def _submit_batch_job_vertex_gcs(
+        self,
+        items: list[tuple[str, Path | str]],
+        vocabulary_by_cat: dict[str, list[str]],
+        gcs_bucket: str,
+        display_name: str = "",
+    ) -> str:
+        """Vertex AI batch — uploader JSONL til Cloud Storage (Vertex har ikke
+        Files API til batch). JSONL-linjer er BARE request-objekter uden
+        "key"-felt (Vertex-konventionen er anderledes end AI Studio) — derfor
+        matches resultater POSITIONELT (samme rækkefølge ind som ud) i stedet
+        for via key. Se _finalize_ai_batch_job i main.py.
+        """
+        try:
+            from google.cloud import storage as _gcs
+        except ImportError as exc:
+            raise ImportError(
+                "Vertex AI batch kræver google-cloud-storage: pip install google-cloud-storage"
+            ) from exc
+
+        display_name = display_name or f"timelapse-batch-{_uuid.uuid4().hex[:8]}"
+        bucket_name = gcs_bucket.replace("gs://", "").split("/")[0]
+        job_prefix = f"ai-batch/{display_name}"
+
+        lines = []
+        for key, image_path in items:
+            req = self.build_batch_request_line(key, image_path, vocabulary_by_cat)["request"]
+            lines.append(json.dumps(req, ensure_ascii=False))
+        jsonl_content = "\n".join(lines) + "\n"
+
+        storage_client = _gcs.Client(project=self.project) if self.project else _gcs.Client()
+        bucket = storage_client.bucket(bucket_name)
+        input_blob = bucket.blob(f"{job_prefix}/input.jsonl")
+        input_blob.upload_from_string(jsonl_content, content_type="application/jsonl")
+
+        input_uri = f"gs://{bucket_name}/{job_prefix}/input.jsonl"
+        output_uri = f"gs://{bucket_name}/{job_prefix}/output"
+
+        from google.genai.types import CreateBatchJobConfig
+        job = self._client.batches.create(
+            model=self.model,
+            src=input_uri,
+            config=CreateBatchJobConfig(dest=output_uri, display_name=display_name),
+        )
+        log.info("Gemini batch job (Vertex/GCS) oprettet: %s (%d billeder) → %s",
+                  job.name, len(items), output_uri)
+        return job.name
+
     def get_batch_status(self, job_name: str) -> dict:
-        """Hent status for et batch-job. State: PENDING|RUNNING|SUCCEEDED|FAILED|CANCELLED|EXPIRED."""
+        """Hent status for et batch-job.
+        AI Studio state: PENDING|RUNNING|SUCCEEDED|FAILED|CANCELLED|EXPIRED.
+        Vertex state:    PENDING|RUNNING|SUCCEEDED|FAILED|CANCELLED|PAUSED.
+        """
         job = self._client.batches.get(name=job_name)
         state = job.state.name if hasattr(job.state, "name") else str(job.state)
         return {"state": state, "job": job}
 
     def download_batch_results(self, job) -> list[dict]:
         """Download og parse resultater fra et succeeded batch-job.
-        Returnerer liste af {"key": str, "text": str|None, "error": str|None}.
+        Returnerer liste af {"key": str|None, "text": str|None, "error": str|None}.
+        "key" er None for Vertex-jobs — match da POSITIONELT (samme rækkefølge).
         """
+        if self.is_vertex:
+            return self._download_batch_results_vertex_gcs(job)
+        return self._download_batch_results_ai_studio(job)
+
+    def _download_batch_results_ai_studio(self, job) -> list[dict]:
         results: list[dict] = []
 
         if getattr(job, "dest", None) and getattr(job.dest, "file_name", None):
@@ -552,6 +620,52 @@ class GeminiVisionService:
                         results.append({"key": key, "text": None, "error": str(exc)})
                 else:
                     results.append({"key": key, "text": None, "error": str(getattr(resp, "error", "ukendt fejl"))})
+
+        return results
+
+    def _download_batch_results_vertex_gcs(self, job) -> list[dict]:
+        """Læs predictions.jsonl (evt. sharded) fra GCS output-prefix.
+        Vertex AI batch-output følger konventionen {"status":, "request":, "response":}
+        per linje — ÆLDRE Vertex batch-jobs kan i sjældne tilfælde afvige i feltnavne;
+        hvis parsing fejler for alle linjer logges en tydelig fejl med rå-eksempel
+        i stedet for at gætte og risikere forkert matchede resultater.
+        """
+        try:
+            from google.cloud import storage as _gcs
+        except ImportError as exc:
+            raise ImportError(
+                "Vertex AI batch kræver google-cloud-storage: pip install google-cloud-storage"
+            ) from exc
+
+        dest = getattr(job, "dest", None)
+        gcs_uri = getattr(dest, "gcs_uri", None) if dest else None
+        if not gcs_uri:
+            raise ValueError("Batch-job har intet GCS output-prefix (job.dest.gcs_uri mangler)")
+
+        bucket_name, _, prefix = gcs_uri.replace("gs://", "").partition("/")
+        storage_client = _gcs.Client(project=self.project) if self.project else _gcs.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blobs = [b for b in bucket.list_blobs(prefix=prefix) if b.name.endswith(".jsonl")]
+        if not blobs:
+            raise ValueError(f"Ingen .jsonl-resultatfiler fundet under {gcs_uri}")
+
+        results: list[dict] = []
+        for blob in blobs:
+            content = blob.download_as_text()
+            for line in content.splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                response = row.get("response")
+                if response:
+                    try:
+                        parts = response["candidates"][0]["content"]["parts"]
+                        text = "".join(p.get("text", "") for p in parts)
+                        results.append({"key": None, "text": text, "error": None})
+                    except Exception as exc:
+                        results.append({"key": None, "text": None, "error": f"parse-fejl: {exc} (rå: {str(row)[:200]})"})
+                else:
+                    results.append({"key": None, "text": None, "error": str(row.get("status") or row.get("error") or f"ukendt struktur: {str(row)[:200]}")})
 
         return results
 

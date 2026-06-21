@@ -663,6 +663,27 @@ export function SystemAdminPage() {
         </div>
       </Section>
 
+      {/* Gemini Batch (Vertex AI / GCS) — kun relevant ved service-account auth */}
+      <Section title="Gemini Batch — Vertex AI / Cloud Storage" icon={<Database className="w-4 h-4" />}
+        description="Kun nødvendigt hvis I bruger Vertex AI (service account) til Gemini. AI Studio (API-nøgle) bruger Files API i stedet og kræver ikke dette.">
+        <Field label="GCS bucket" description="Navn uden 'gs://', fx 'timelapse-ai-batch'. Bruges til at uploade billeder og hente resultater under batch-jobs.">
+          <Txt value={settings.gemini_gcs_bucket ?? ''} onChange={v => setSettings(s => ({...s, gemini_gcs_bucket: v}))} mono />
+        </Field>
+        <Field label="Bucket-region" description="SKAL matche jeres Vertex AI-region (fx 'europe-west1') — ellers stoppes batch-jobs for at undgå databehandling uden for EU (GDPR).">
+          <Txt value={settings.gemini_gcs_bucket_region ?? ''} onChange={v => setSettings(s => ({...s, gemini_gcs_bucket_region: v}))} mono />
+        </Field>
+        <p className="text-xs text-amber-600 mt-1">
+          ⚠ Bucket skal oprettes manuelt i Google Cloud Console/gcloud, og jeres Vertex AI service account skal have rollen "Storage Object Admin" på den.
+        </p>
+        <div className="flex justify-end mt-3">
+          <button onClick={saveSettings} disabled={savingSettings}
+            className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
+            {savedSettings ? <CheckCircle className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            {savedSettings ? 'Gemt!' : savingSettings ? 'Gemmer…' : 'Gem GCS-indstillinger'}
+          </button>
+        </div>
+      </Section>
+
       {/* BT PAN TOTP — globalt lag (laveste prioritet, lige over fabriksstandard) */}
       <Section title="BT PAN TOTP — global rotation" icon={<Database className="w-4 h-4" />}
         description="Gælder ALLE enheder uden mere specifikt kunde/site/kamera-override. Brug ved kompromitteret secret.">
