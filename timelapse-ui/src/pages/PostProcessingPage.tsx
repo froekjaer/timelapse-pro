@@ -312,14 +312,21 @@ export default function PostProcessingPage() {
           )}
 
           {batchMode && ai ? (
-            <button
-              onClick={startBatch}
-              disabled={startingBatch}
-              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-purple-600 text-white text-sm font-medium disabled:bg-purple-300 disabled:cursor-not-allowed hover:bg-purple-700"
-            >
-              <Clock className="w-4 h-4" />
-              {startingBatch ? 'Opretter batch-job…' : 'Start batch-job (Gemini)'}
-            </button>
+            <>
+              {thumbnails && (
+                <p className="text-xs text-amber-600 -mt-1">
+                  ⚠ Batch-knappen behandler kun AI-tags. Thumbnails skal køres separat (slå batch-mode fra og tryk "Start post-processing").
+                </p>
+              )}
+              <button
+                onClick={startBatch}
+                disabled={startingBatch}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-purple-600 text-white text-sm font-medium disabled:bg-purple-300 disabled:cursor-not-allowed hover:bg-purple-700"
+              >
+                <Clock className="w-4 h-4" />
+                {startingBatch ? 'Opretter batch-job…' : 'Start batch-job (Gemini)'}
+              </button>
+            </>
           ) : (
             <button
               onClick={start}
