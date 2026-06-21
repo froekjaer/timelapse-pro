@@ -110,11 +110,41 @@ def update_sidecar_with_ai(image_path: Path, ai_result: dict) -> bool:
 
 # ── Async analyse-kø ──────────────────────────────────────────────────────────
 
-_analysis_queue: queue.Queue = queue.Queue(maxsize=500)
+# maxsize hævet fra 500 — 1000+ billeders post-processing fyldte køen og
+# resten blev stille droppet (kun en log.warning, intet i UI). 5000 er rigeligt
+# til selv store batch-kørsler uden at risikere ubegrænset hukommelsesforbrug.
+_analysis_queue: queue.Queue = queue.Queue(maxsize=5000)
 _worker_thread:  Optional[threading.Thread] = None
 OLLAMA_PLAY_MODE_KEY = "peter-vil-gerne-lege-med-ollama"
 _last_play_mode_log = 0.0
 _ollama_analysis_lock = threading.Lock()
+
+# Synlige tællere til /api/ai/status — gør det muligt at se om AI-workeren
+# rent faktisk behandler køede billeder, eller bare springer dem over stille.
+_ai_stats_lock = threading.Lock()
+_ai_stats: dict = {
+    "completed":          0,
+    "completed_cloud":    0,
+    "skipped_no_capture": 0,
+    "skipped_no_image":   0,
+    "skipped_disabled":   0,
+    "skipped_technical_only": 0,
+    "skipped_ollama_down": 0,
+    "skipped_no_cloud_credentials": 0,
+    "skipped_already_done": 0,
+    "skipped_queue_full":  0,
+    "failed":             0,
+}
+
+
+def _ai_stat_inc(key: str) -> None:
+    with _ai_stats_lock:
+        _ai_stats[key] = _ai_stats.get(key, 0) + 1
+
+
+def get_ai_stats() -> dict:
+    with _ai_stats_lock:
+        return dict(_ai_stats)
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -142,6 +172,19 @@ def _load_vocabulary(get_db_fn):
     return vocab, vocab.get_approved_by_category(), set(vocab.get_approved_tags())
 
 
+def _limit_vocabulary(vocabulary_by_cat: dict[str, list[str]], limit: int) -> dict[str, list[str]]:
+    limited: dict[str, list[str]] = {}
+    used = 0
+    for category, tags in vocabulary_by_cat.items():
+        if used >= limit:
+            break
+        take = tags[:max(0, limit - used)]
+        if take:
+            limited[category] = take
+            used += len(take)
+    return limited
+
+
 def _analysis_payload(result) -> dict:
     return {
         "scene_dk": result.scene_dk,
@@ -167,10 +210,56 @@ def _analysis_payload(result) -> dict:
     }
 
 
+def _build_gemini_service(get_db_fn, cloud_model: str):
+    """Byg GeminiVisionService fra system_settings — samme nøgler som backfill.py.
+    Returnerer None hvis ingen credentials er konfigureret (ikke en fejl —
+    bare ikke sat op endnu).
+    """
+    from ai.gemini_service import GeminiVisionService
+    from ai.settings_helper import get_setting
+    import os as _os_local
+
+    db_gen = get_db_fn()
+    db = next(db_gen)
+    try:
+        gemini_key = _os_local.getenv("GEMINI_API_KEY", "") or get_setting(db, "gemini_api_key")
+        gemini_sa_path = (
+            _os_local.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+            or get_setting(db, "gemini_service_account_path")
+        )
+        gemini_project_id = (
+            _os_local.getenv("GOOGLE_CLOUD_PROJECT", "")
+            or get_setting(db, "gemini_project_id")
+        )
+        gemini_location = (
+            _os_local.getenv("GOOGLE_CLOUD_LOCATION", "")
+            or get_setting(db, "gemini_location", "europe-west1")
+        )
+    finally:
+        db_gen.close()
+
+    if not gemini_key and not gemini_sa_path:
+        return None  # Ikke konfigureret — ikke en fejl
+
+    return GeminiVisionService(
+        service_account_path=gemini_sa_path,
+        project_id=gemini_project_id,
+        location=gemini_location,
+        api_key=gemini_key,
+        model=cloud_model,
+    )
+
+
 def _worker(get_db_fn, find_image_fn):
     """
     Baggrundstråd der analyserer captures fra køen.
     Kører som daemon — stopper automatisk ved shutdown.
+
+    Respekterer AIConfig.strategy:
+      local_only       → kun Ollama
+      cloud_only       → kun Gemini (Ollama-status er IRRELEVANT her)
+      local_then_cloud → Ollama først, eskalerer til Gemini ved usikkerhed
+      technical_only   → springes over højere oppe i loopet
     """
     from ai.ollama_service import OllamaVisionService; get_ollama_service = lambda *a, **kw: OllamaVisionService(*a, **kw)
     from ai.alarm_engine import AlarmEngine, run_alarm_migration
@@ -192,40 +281,108 @@ def _worker(get_db_fn, find_image_fn):
             continue
 
         try:
-            from database import Capture
+            from database import Capture, Device
+            from ai.ai_strategy import AIConfigManager
 
             db_gen = get_db_fn()
             db = next(db_gen)
             try:
                 capture = db.query(Capture).filter_by(id=capture_id).first()
                 if not capture:
+                    _ai_stat_inc("skipped_no_capture")
                     continue
                 if capture.ai_result:
+                    _ai_stat_inc("skipped_already_done")
                     continue  # Allerede analyseret
                 device_id = capture.device_id
                 filename = capture.filename
                 captured_at = capture.captured_at
+                device = db.query(Device).filter_by(device_id=device_id).first()
+                ai_config = AIConfigManager(db).get_config(
+                    customer_id=device.customer_id if device else None,
+                    site_id=device.site_id if device else None,
+                )
             finally:
                 db_gen.close()
 
             image_path = find_image_fn(device_id, filename)
             if not image_path:
                 log.debug("AI: billede ikke fundet for capture %d", capture_id)
+                _ai_stat_inc("skipped_no_image")
                 continue
 
-            svc = get_ollama_service()
-            if not svc.health_check():
-                log.debug("AI: Ollama ikke tilgængelig — springer over capture %d", capture_id)
+            if not ai_config.enabled:
+                log.debug("AI: analyse slået fra for capture %d", capture_id)
+                _ai_stat_inc("skipped_disabled")
+                continue
+            if ai_config.strategy == "technical_only":
+                log.debug("AI: technical_only konfigureret for capture %d; springer vision-tags over", capture_id)
+                _ai_stat_inc("skipped_technical_only")
                 continue
 
             vocab, vocabulary_by_cat, approved_tag_set = _load_vocabulary(get_db_fn)
-            with _ollama_analysis_lock:
-                result = svc.analyse(
+            vocabulary_by_cat = _limit_vocabulary(vocabulary_by_cat, ai_config.tag_vocabulary_limit or 45)
+            model_used = ai_config.local_model
+            used_cloud = False
+
+            if ai_config.strategy == "cloud_only":
+                # Ollama skal IKKE køre eller være tilgængelig her — kun Gemini.
+                cloud_svc = _build_gemini_service(get_db_fn, ai_config.cloud_model)
+                if not cloud_svc:
+                    log.warning("AI: cloud_only konfigureret men ingen Gemini credentials — springer over capture %d", capture_id)
+                    _ai_stat_inc("skipped_no_cloud_credentials")
+                    continue
+                result = cloud_svc.analyse(
                     image_path=image_path,
                     vocabulary_by_cat=vocabulary_by_cat,
                     approved_tag_set=approved_tag_set,
                 )
+                model_used, used_cloud = ai_config.cloud_model, True
+
+            elif ai_config.strategy == "local_only":
+                svc = get_ollama_service(vision_model=ai_config.local_model)
+                if not svc.health_check():
+                    log.warning("AI: Ollama ikke tilgængelig — springer over capture %d", capture_id)
+                    _ai_stat_inc("skipped_ollama_down")
+                    continue
+                with _ollama_analysis_lock:
+                    result = svc.analyse(
+                        image_path=image_path,
+                        vocabulary_by_cat=vocabulary_by_cat,
+                        approved_tag_set=approved_tag_set,
+                    )
+
+            else:  # local_then_cloud — Ollama først, eskalér til Gemini ved usikkerhed
+                svc = get_ollama_service(vision_model=ai_config.local_model)
+                if not svc.health_check():
+                    log.warning("AI: Ollama ikke tilgængelig (local_then_cloud) — springer over capture %d", capture_id)
+                    _ai_stat_inc("skipped_ollama_down")
+                    continue
+                with _ollama_analysis_lock:
+                    result = svc.analyse(
+                        image_path=image_path,
+                        vocabulary_by_cat=vocabulary_by_cat,
+                        approved_tag_set=approved_tag_set,
+                    )
+                escalate, reasons = ai_config.should_escalate(
+                    confidence=0.75, new_tags=result.new_tags, tags=result.approved_tags,
+                    change_detected=result.change_detected, quality_ok=result.quality_ok,
+                )
+                if escalate:
+                    cloud_svc = _build_gemini_service(get_db_fn, ai_config.cloud_model)
+                    if cloud_svc:
+                        log.info("AI: eskalerer capture %d til Gemini (%s)", capture_id, ",".join(reasons))
+                        result = cloud_svc.analyse(
+                            image_path=image_path,
+                            vocabulary_by_cat=vocabulary_by_cat,
+                            approved_tag_set=approved_tag_set,
+                        )
+                        model_used, used_cloud = ai_config.cloud_model, True
+                    else:
+                        log.debug("AI: eskalering ønsket men ingen Gemini credentials — bruger lokalt resultat for capture %d", capture_id)
+
             payload = _analysis_payload(result)
+            payload["model"] = model_used
             tags = result.approved_tags + result.new_tags
 
             db_gen = get_db_fn()
@@ -259,23 +416,34 @@ def _worker(get_db_fn, find_image_fn):
             update_sidecar_with_ai(image_path, payload)
 
             log.info(
-                "AI: capture=%d %s → %d tags, quality=%s, change=%s, %dms",
-                capture_id, filename, len(tags), result.quality_flag,
+                "AI: capture=%d %s model=%s → %d tags, quality=%s, change=%s, %dms",
+                capture_id, filename, model_used, len(tags), result.quality_flag,
                 result.change_detected, result.duration_ms,
             )
+            _ai_stat_inc("completed")
+            if used_cloud:
+                _ai_stat_inc("completed_cloud")
 
         except Exception as e:
             log.exception("AI worker fejl for capture %d: %s", capture_id, e)
+            _ai_stat_inc("failed")
         finally:
             _analysis_queue.task_done()
 
 
-def queue_capture_for_analysis(capture_id: int) -> None:
-    """Læg et capture i AI-analysekøen. Non-blocking."""
+def queue_capture_for_analysis(capture_id: int) -> bool:
+    """Læg et capture i AI-analysekøen.
+    Forsøger kort blokerende put (op til 10 sek) før der gives op — undgår at
+    store batch-kørsler (post-processing af mange billeder) stille taber
+    captures hvis køen er fuld. Returnerer False hvis det ikke lykkedes.
+    """
     try:
-        _analysis_queue.put_nowait(capture_id)
+        _analysis_queue.put(capture_id, timeout=10)
+        return True
     except queue.Full:
-        log.warning("AI kø fuld — springer over capture %d", capture_id)
+        log.warning("AI kø fuld efter 10 sek ventetid — springer over capture %d", capture_id)
+        _ai_stat_inc("skipped_queue_full")
+        return False
 
 
 def setup_ai(get_db_fn, find_image_fn) -> None:
@@ -332,7 +500,10 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
 
     @ai_router.get("/status")
     def ai_status():
-        """Ollama status og tilgængelige modeller."""
+        """Ollama status, tilgængelige modeller og worker-statistik.
+        worker_stats viser hvad der reelt sker med køede billeder — ikke kun
+        hvor mange der er sat i kø (se /api/admin/post-processing/status).
+        """
         svc = get_ollama_service()
         return {
             "ollama_running": len(svc.list_models()) > 0,
@@ -340,6 +511,7 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
             "models":         svc.list_models(),
             "queue_size":     _analysis_queue.qsize(),
             "open_webui_priority": _open_webui_priority_enabled(get_db_fn),
+            "worker_stats":   get_ai_stats(),
         }
 
     @ai_router.get("/ollama-priority")

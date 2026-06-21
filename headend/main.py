@@ -9821,6 +9821,8 @@ _post_processing_status: dict = {
     "files_missing": 0,
     "errors": 0,
     "last_message": "Ingen kørsel startet",
+    "ollama_warning": None,
+    "ai_strategy": None,
 }
 
 
@@ -9884,8 +9886,19 @@ def _run_post_processing_job(options: dict, allowed_device_ids: list[str] | None
                             capture.ai_result = None
                             capture.ai_tags = None
                             capture.ai_analyzed_at = None
-                        queue_capture_for_analysis(capture.id)
-                        _post_processing_status["ai_queued"] += 1
+                            # Commit ØJEBLIKKELIGT — ikke kun hver 25. — fordi
+                            # AI-workeren bruger en separat DB-forbindelse og
+                            # tjekker "if capture.ai_result: skip" når den
+                            # behandler køen. Uden dette commit her ser workeren
+                            # stadig det GAMLE (ikke-nulstillede) resultat og
+                            # springer billedet over, selvom force_ai er valgt.
+                            db.commit()
+                        queued_ok = queue_capture_for_analysis(capture.id)
+                        if queued_ok:
+                            _post_processing_status["ai_queued"] += 1
+                        else:
+                            _post_processing_status["errors"] += 1
+                            _post_processing_update(last_message=f"AI-kø fuld — {capture.filename} sprunget over")
 
                 if index % 25 == 0:
                     db.commit()
@@ -9935,6 +9948,39 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
     if not thumbnails and not ai:
         raise HTTPException(status_code=400, detail="Vælg thumbnails og/eller AI")
 
+    # Advar synligt hvis AI er valgt, men den konfigurerede strategi reelt ikke
+    # kan analysere noget lige nu — fx Ollama nede (når strategien bruger lokal
+    # model) eller manglende Gemini-credentials (når strategien bruger cloud).
+    # cloud_only kræver IKKE Ollama — kun Open WebUI-prioritet og selve
+    # strategien afgør om Ollama-status er relevant.
+    ollama_warning = None
+    ai_strategy = None
+    if ai:
+        try:
+            from ai.integration import _open_webui_priority_enabled
+            from ai.ai_strategy import AIConfigManager
+            from ai.settings_helper import get_setting as _ai_get_setting
+
+            default_cfg = AIConfigManager(db).get_config(customer_id=None, site_id=None)
+            ai_strategy = default_cfg.strategy
+
+            if _open_webui_priority_enabled(get_db):
+                ollama_warning = "⚠ Open WebUI-prioritet er aktiveret — AI-analyse er PAUSET indtil den slås fra"
+            elif default_cfg.strategy == "local_only":
+                from ai.ollama_service import OllamaVisionService
+                if not OllamaVisionService().health_check():
+                    ollama_warning = "⚠ Ollama svarer ikke (strategi: local_only) — billeder bliver køet, men ikke analyseret"
+            elif default_cfg.strategy == "cloud_only":
+                has_gemini = bool(_ai_get_setting(db, "gemini_api_key") or _ai_get_setting(db, "gemini_service_account_path"))
+                if not has_gemini:
+                    ollama_warning = "⚠ Strategi er cloud_only, men ingen Gemini API-nøgle er konfigureret — billeder bliver køet, men ikke analyseret"
+            elif default_cfg.strategy == "local_then_cloud":
+                from ai.ollama_service import OllamaVisionService
+                if not OllamaVisionService().health_check():
+                    ollama_warning = "⚠ Ollama svarer ikke (strategi: local_then_cloud) — kun cloud-eskalering vil virke"
+        except Exception:
+            pass
+
     with _post_processing_lock:
         if _post_processing_status.get("running"):
             raise HTTPException(status_code=409, detail="Post-processing kører allerede")
@@ -9958,6 +10004,8 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
             "files_missing": 0,
             "errors": 0,
             "last_message": "Kø starter",
+            "ollama_warning": ollama_warning,
+            "ai_strategy": ai_strategy,
         })
 
     allowed_device_ids = _allowed_capture_device_ids(db, current_user)
