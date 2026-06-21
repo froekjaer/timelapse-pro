@@ -176,8 +176,15 @@ export default function PostProcessingPage() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-slate-600">Maks billeder</label>
-            <input type="number" min="1" max="100000" value={limit} onChange={e => setLimit(e.target.value)}
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-slate-600">Maks billeder</label>
+              <button type="button" onClick={() => setLimit('')}
+                className="text-xs text-sky-600 hover:text-sky-800">
+                Alle billeder
+              </button>
+            </div>
+            <input type="number" min="1" value={limit} onChange={e => setLimit(e.target.value)}
+              placeholder="Tom = alle billeder (ingen øvre grænse)"
               className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2 text-sm font-mono" />
           </div>
 

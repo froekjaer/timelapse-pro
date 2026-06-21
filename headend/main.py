@@ -9940,7 +9940,7 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
     limit_raw = payload.get("limit")
     limit = None
     if limit_raw not in (None, "", 0, "0"):
-        limit = max(1, min(int(limit_raw), 100000))
+        limit = max(1, int(limit_raw))  # ingen øvre grænse — "0"/tom = alle billeder
     device_id = str(payload.get("device_id") or "").strip() or None
     if device_id:
         _ensure_capture_device_access(db, current_user, device_id)
