@@ -646,20 +646,29 @@ class TagVocabulary:
         canonical_metadata() stadig kan korrelere gamle danske tags på allerede
         analyserede captures.
         """
-        from sqlalchemy import text
+        from sqlalchemy import text, bindparam
         db = next(self._get_db())
         try:
             current_english = list(get_all_predefined())
-            result = db.execute(text("""
+            before = db.execute(text(
+                "SELECT COUNT(*) FROM ai_tag_vocabulary WHERE predefined=TRUE AND approved=TRUE"
+            )).scalar()
+            stmt = text("""
                 UPDATE ai_tag_vocabulary
                 SET approved = FALSE, rejected = TRUE
                 WHERE predefined = TRUE
                   AND approved = TRUE
-                  AND tag != ALL(:current_tags)
-            """), {"current_tags": current_english})
+                  AND tag NOT IN :current_tags
+            """).bindparams(bindparam("current_tags", expanding=True))
+            result = db.execute(stmt, {"current_tags": current_english})
             db.commit()
-            if result.rowcount:
-                log.info("Deaktiverede %d gamle danske foruddefinerede tags (ikke i nyt engelsk vokabular)", result.rowcount)
+            after = db.execute(text(
+                "SELECT COUNT(*) FROM ai_tag_vocabulary WHERE predefined=TRUE AND approved=TRUE"
+            )).scalar()
+            log.info(
+                "Legacy dansk vokabular-oprydning: %d → %d godkendte foruddefinerede rækker (%d deaktiveret, %d engelske kanoniske tags forventet)",
+                before, after, result.rowcount, len(current_english),
+            )
         except Exception as e:
             log.warning("Kunne ikke deaktivere legacy dansk vokabular (ikke kritisk): %s", e)
             db.rollback()
