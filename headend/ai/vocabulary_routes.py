@@ -21,6 +21,14 @@ class UpdateTranslationPayload(BaseModel):
 def pending(db: Session = Depends(get_db)):
     return TagRepository(db).get_pending_review()
 
+@vocab_router.get("/translations")
+def translations(db: Session = Depends(get_db)):
+    """Tag → dansk visningsnavn — bruges af kundevendt UI til at vise danske
+    tag-labels i stedet for de rå engelske kanoniske nøgler. Cachevenlig — ændrer
+    sig kun når et tag godkendes/rettes, ikke ved hver billedanalyse.
+    """
+    return TagRepository(db).get_tag_translations()
+
 @vocab_router.put("/{tag_id}/translation")
 def update_translation(tag_id: int, payload: UpdateTranslationPayload, db: Session = Depends(get_db)):
     """Admin retter AI's danske/engelske oversættelsesforslag for et tag."""

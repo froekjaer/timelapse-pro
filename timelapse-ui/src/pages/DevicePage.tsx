@@ -20,6 +20,7 @@ import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDev
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaptureThumbnailCard, parseCaptureAI } from '../components/CaptureThumbnailCard'
+import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import type { DeviceDetail, Capture } from '../types'
 
 function authFetch(url: string, opts?: RequestInit) {
@@ -39,6 +40,7 @@ function formatUptime(s: number) {
 // v5.1
 // ── Lightbox ──────────────────────────────────────────────────────────────────
 export function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: number; onClose: () => void }) {
+  const tagLabels = useTagLabels()
   const [cur, setCur]         = useState(index)
   const [zoom, setZoom]       = useState(1)
   const [pan, setPan]         = useState({ x: 0, y: 0 })
@@ -374,7 +376,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {[...(ai.tags ?? []), ...(ai.new_tags ?? []), ...(c.ai_tags ?? [])].filter((tag, idx, arr) => arr.indexOf(tag) === idx).slice(0, 24).map((tag: string) => (
                                 <span key={tag} className="text-[10px] bg-white/10 text-white/60 px-1.5 py-0.5 rounded cursor-pointer hover:bg-white/20" title={`Søg på #${tag}`}>
-                                  #{tag}
+                                  #{tagLabel(tag, tagLabels)}
                                 </span>
                               ))}
                             </div>
@@ -405,7 +407,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {c.ai_tags.map((tag: string) => (
                                 <span key={tag} className="text-[10px] bg-white/10 text-white/60 px-1.5 py-0.5 rounded cursor-pointer hover:bg-white/20" title={`Søg på #${tag}`}>
-                                  #{tag}
+                                  #{tagLabel(tag, tagLabels)}
                                 </span>
                               ))}
                             </div>

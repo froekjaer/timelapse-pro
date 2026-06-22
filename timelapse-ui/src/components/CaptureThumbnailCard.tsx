@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Image } from 'lucide-react'
-import { getThumbnailUrl } from '../api/client'
+import { getThumbnailUrl, requestThumbnailGeneration } from '../api/client'
+import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import type { Capture } from '../types'
 
 const getTz = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
@@ -63,15 +64,46 @@ export function CaptureThumbnailCard({
   const passed = capture.quality_passed !== false
   const thumbUrl = getThumbnailUrl(capture.device_id, capture.filename)
   const [imgOk, setImgOk] = useState(true)
-  const [retry, setRetry] = useState(0)
+  const [repairState, setRepairState] = useState<'idle' | 'queued' | 'failed'>('idle')
+  const [refresh, setRefresh] = useState(0)
   const ai = parseCaptureAI(capture)
   const parts = filenameParts(capture.filename)
-  const imgSrc = retry > 0 ? `${thumbUrl}?retry=${retry}` : thumbUrl
+  const imgSrc = refresh > 0 ? `${thumbUrl}?repair=${refresh}` : thumbUrl
+  const tagLabels = useTagLabels()
 
   useEffect(() => {
     setImgOk(true)
-    setRetry(0)
+    setRepairState('idle')
+    setRefresh(0)
   }, [thumbUrl])
+
+  const requestRepair = async () => {
+    if (repairState !== 'idle') {
+      setImgOk(false)
+      return
+    }
+    setRepairState('queued')
+    setImgOk(false)
+    try {
+      const response = await requestThumbnailGeneration(capture.device_id, capture.filename)
+      if (response?.status === 'ready') {
+        setImgOk(true)
+        setRefresh(r => r + 1)
+        return
+      }
+      for (const delay of [1500, 3000, 6000]) {
+        window.setTimeout(() => {
+          setImgOk(true)
+          setRefresh(r => r + 1)
+        }, delay)
+      }
+      window.setTimeout(() => {
+        setRepairState(current => current === 'queued' ? 'failed' : current)
+      }, 8000)
+    } catch {
+      setRepairState('failed')
+    }
+  }
 
   return (
     <div
@@ -87,16 +119,15 @@ export function CaptureThumbnailCard({
             alt={capture.filename}
             className="w-full h-full object-cover"
             loading="lazy"
-            onError={() => {
-              if (retry < 2) {
-                window.setTimeout(() => setRetry(r => r + 1), 250 * (retry + 1))
-              } else {
-                setImgOk(false)
-              }
-            }}
+            onLoad={() => setRepairState('idle')}
+            onError={requestRepair}
           />
         ) : (
-          <Image className="w-8 h-8 text-slate-300" />
+          <div className="flex flex-col items-center gap-1 text-slate-300">
+            <Image className="w-8 h-8" />
+            {repairState === 'queued' && <span className="text-[10px] text-slate-400">Genererer...</span>}
+            {repairState === 'failed' && <span className="text-[10px] text-slate-400">Mangler thumbnail</span>}
+          </div>
         )}
         <span className="absolute bottom-1.5 right-1.5 text-xs bg-black/50 text-white px-1 py-0.5 rounded">
           {capture.filesize_mb ? `${capture.filesize_mb} MB` : '-'}
@@ -125,7 +156,7 @@ export function CaptureThumbnailCard({
             {capture.ai_tags && capture.ai_tags.length > 0 && (
               <div className="flex flex-wrap gap-0.5 mt-1">
                 {capture.ai_tags.slice(0, 3).map((t: string) => (
-                  <span key={t} className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded-full">#{t}</span>
+                  <span key={t} className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded-full">#{tagLabel(t, tagLabels)}</span>
                 ))}
                 {capture.ai_tags.length > 3 && (
                   <span className="text-[9px] text-gray-400">+{capture.ai_tags.length - 3}</span>

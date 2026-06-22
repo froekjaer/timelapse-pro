@@ -11,6 +11,7 @@ import { ArrowLeft, Tag, Search, X, Loader2, CheckSquare, Square,
 import { getApiUrl } from '../api/client'
 import { Lightbox } from './DevicePage'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
+import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import type { Capture } from '../types'
 
 function api(path: string, opts?: RequestInit) {
@@ -152,6 +153,7 @@ const DISPLAY_LIMIT = 200  // Antal billeder der vises — søgningen finder all
 interface DeviceInfo { device_id: string; camera_name?: string; customer_name?: string; site_name?: string }
 
 export function TagSearchPage() {
+  const tagLabels = useTagLabels()
   const [mode, setMode] = useState<'tags' | 'qa' | 'natural'>('tags')
 
   // Tag søgning
@@ -273,7 +275,7 @@ export function TagSearchPage() {
         setAllResults(results)
         setTotalMatches(d.total_matches ?? results.length)
         const spec = d.selection ?? {}
-        setNaturalNote(spec.explanation || `AI-filter: ${[...(spec.include_tags ?? []).map((t: string) => `#${t}`), ...(spec.exclude_tags ?? []).map((t: string) => `uden #${t}`)].join(', ') || 'ingen tagfilter'}`)
+        setNaturalNote(spec.explanation || `AI-filter: ${[...(spec.include_tags ?? []).map((t: string) => `#${tagLabel(t, tagLabels)}`), ...(spec.exclude_tags ?? []).map((t: string) => `uden #${tagLabel(t, tagLabels)}`)].join(', ') || 'ingen tagfilter'}`)
         setLoading(false)
         return
       } else if (mode === 'tags') {

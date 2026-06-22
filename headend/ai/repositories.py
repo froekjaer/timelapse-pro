@@ -284,6 +284,18 @@ class TagRepository:
         """), {"limit": limit}).mappings().all()
         return [TagStatDTO(**dict(r)) for r in rows]
 
+    def get_tag_translations(self) -> dict[str, str]:
+        """Tag → dansk visningsnavn, til kundevendt UI (thumbnails, capture-visning osv.).
+        Inkluderer ALLE rækker med et sat display_name_da — ikke kun 'approved' —
+        så ÆLDRE captures (tagget før engelsk-omlægningen, eller med siden-afviste
+        tags) stadig viser et fornuftigt dansk navn i stedet for rå nøgle.
+        """
+        rows = self.db.execute(text("""
+            SELECT tag, display_name_da FROM ai_tag_vocabulary
+            WHERE display_name_da IS NOT NULL AND display_name_da != ''
+        """)).fetchall()
+        return {r[0]: r[1] for r in rows}
+
     def get_pending_review(self) -> list[PendingTagDTO]:
         rows = self.db.execute(text("""
             SELECT id, tag, count, first_seen, last_seen,
