@@ -60,6 +60,9 @@ export const getImageUrl = (deviceId: string, filename: string) =>
 export const getThumbnailUrl = (deviceId: string, filename: string) =>
   `${getApiUrl()}/api/thumbnails/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`
 
+export const requestThumbnailGeneration = (deviceId: string, filename: string) =>
+  getClient().post(`/api/thumbnails/${pathSegment(deviceId)}/${pathSegment(filename)}/generate`).then(r => r.data)
+
 export const updateDeviceInfo = (deviceId: string, info: import('../types').DeviceInfo) =>
   getClient().put(`/api/admin/devices/${pathSegment(deviceId)}/info`, info).then(r => r.data)
 
