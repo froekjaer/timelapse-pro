@@ -78,6 +78,16 @@ jobs:
     needs: [ python-check, ui-check ]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
+      - name: Ryd macOS Icon metadata fra lokal repo
+        run: |
+          cd ~/projects/timelapse-pro
+          if [ -x tools/cleanup_macos_icon_files.sh ]; then
+            tools/cleanup_macos_icon_files.sh .
+          else
+            find .git -name $'Icon\r' -type f -exec rm -f {} + 2>/dev/null || true
+            find . -path ./.git -prune -o -name $'Icon\r' -type f -size 0 -exec rm -f {} + 2>/dev/null || true
+            echo "Removed macOS Icon metadata file(s) using inline fallback"
+          fi
       - name: Verificér GPG-signatur på seneste tag
         run: |
           cd ~/projects/timelapse-pro
