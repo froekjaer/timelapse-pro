@@ -1133,7 +1133,7 @@ function IsoTab({
   const wifiInjectPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Liste over eksisterende disk images
-  type DiskImageEntry = { artifact_id: string; filename: string | null; artifact_type: string; size_bytes: number | null; created_at: string | null; exists_on_disk: boolean }
+  type DiskImageEntry = { artifact_id: string; filename: string | null; artifact_type: string; size_bytes: number | null; created_at: string | null; exists_on_disk: boolean; source?: string }
   const [diskImageList, setDiskImageList] = useState<DiskImageEntry[]>([])
   const [diskImageListLoading, setDiskImageListLoading] = useState(false)
 
@@ -1146,6 +1146,10 @@ function IsoTab({
       setDiskImageListLoading(false)
     }
   }
+
+  useEffect(() => {
+    loadDiskImageList()
+  }, [])
 
   // Indlæs listen når WiFi-panelet åbnes
   function openWifiInjectPanel(artifactId = '') {
@@ -1534,6 +1538,74 @@ function IsoTab({
                 </div>
               </div>
             )}
+
+            <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div>
+                  <div className="font-semibold text-gray-800">Færdige images</div>
+                  <div className="text-gray-400">Vælg et image til download eller efterfølgende WiFi-injektion.</div>
+                </div>
+                <button
+                  onClick={loadDiskImageList}
+                  disabled={diskImageListLoading}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:text-gray-900 hover:border-gray-300 disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${diskImageListLoading ? 'animate-spin' : ''}`} />
+                  Opdater
+                </button>
+              </div>
+              {diskImageList.length === 0 && !diskImageListLoading && (
+                <div className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-2 text-gray-400">
+                  Ingen færdige images fundet.
+                </div>
+              )}
+              {diskImageList.length > 0 && (
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {diskImageList.map(img => (
+                    <div key={img.artifact_id} className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-mono text-gray-800 truncate max-w-full">{img.filename ?? img.artifact_id}</span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${img.artifact_type === 'flashable_disk_image' ? 'bg-sky-100 text-sky-700' : 'bg-gray-100 text-gray-600'}`}>
+                              {img.artifact_type === 'flashable_disk_image' ? '.img.gz' : 'rootfs'}
+                            </span>
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] ${img.exists_on_disk ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                              {img.exists_on_disk ? 'klar' : 'mangler fil'}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-gray-400">
+                            {img.created_at ? new Date(img.created_at).toLocaleString('da-DK') : img.artifact_id}
+                            {img.size_bytes ? ` · ${(img.size_bytes / (1024 * 1024)).toFixed(0)} MB` : ''}
+                            {img.source === 'filesystem' ? ' · filsystem' : ''}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2 shrink-0">
+                          <a
+                            href={`${getApiUrl()}/api/admin/edge-provisioning/disk-image-download/${encodeURIComponent(img.artifact_id)}`}
+                            aria-disabled={!img.exists_on_disk}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ${img.exists_on_disk ? 'bg-emerald-700 text-white hover:bg-emerald-800' : 'bg-gray-100 text-gray-400 pointer-events-none'}`}
+                          >
+                            <Download className="w-3 h-3" />
+                            Download
+                          </a>
+                          {img.artifact_type === 'flashable_disk_image' && (
+                            <button
+                              onClick={() => openWifiInjectPanel(img.artifact_id)}
+                              disabled={!img.exists_on_disk}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-xs disabled:opacity-50"
+                            >
+                              <Wifi className="w-3 h-3" />
+                              Tilføj WiFi
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* WiFi B — post-process inject panel */}
             {wifiInjectOpen && (

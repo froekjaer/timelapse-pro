@@ -11582,6 +11582,102 @@ class DiskImageBuildRequest(BaseModel):
     camera_id: Optional[str] = None  # UUID til Camera → SSH keys + tunnel port hentes fra DB
 
 
+def _edge_image_storage_dir() -> Path:
+    configured = os.getenv("TIMELAPSE_EDGE_IMAGE_DIR")
+    candidates = []
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    candidates.extend([
+        Path("/Volumes/data-fast/peter-home/timelapse-artifacts/edge-images"),
+        Path("/Volumes/data-fast/backup/timelapse-artifacts/edge-images"),
+        _repo_root() / "headend" / "exports" / "edge-images",
+    ])
+
+    last_error: Exception | None = None
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / ".write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return candidate
+        except Exception as exc:
+            last_error = exc
+            log.warning("Edge image storage %s er ikke skrivbar: %s", candidate, exc)
+    raise RuntimeError(f"Ingen skrivbar Edge image artifact-mappe fundet: {last_error}")
+
+
+def _edge_image_manifest_index(storage_dir: Path) -> dict[str, dict]:
+    index: dict[str, dict] = {}
+    for manifest_path in storage_dir.glob("*.manifest.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        image = manifest.get("image") if isinstance(manifest, dict) else None
+        filename = image.get("filename") if isinstance(image, dict) else None
+        if filename:
+            index[str(filename)] = manifest
+        artifact_id = manifest.get("artifact_id") if isinstance(manifest, dict) else None
+        if artifact_id:
+            index[str(artifact_id)] = manifest
+    return index
+
+
+def _edge_image_file_entries(storage_dir: Path) -> list[dict]:
+    manifests = _edge_image_manifest_index(storage_dir)
+    entries: list[dict] = []
+    for file_path in sorted(
+        list(storage_dir.glob("*.img.gz")) + list(storage_dir.glob("*.rootfs.tar.gz")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    ):
+        manifest = manifests.get(file_path.name) or {}
+        artifact_id = str(manifest.get("artifact_id") or file_path.name)
+        image_meta = manifest.get("image") if isinstance(manifest.get("image"), dict) else {}
+        created_at = manifest.get("created_at")
+        artifact_type = str(
+            manifest.get("artifact_type")
+            or ("flashable_disk_image" if file_path.name.endswith(".img.gz") else "edge_disk_image")
+        )
+        entries.append({
+            "artifact_id": artifact_id,
+            "filename": file_path.name,
+            "artifact_type": artifact_type,
+            "size_bytes": int(image_meta.get("size_bytes") or file_path.stat().st_size),
+            "sha256": image_meta.get("sha256"),
+            "created_at": created_at,
+            "exists_on_disk": True,
+            "source": "filesystem",
+            "storage_path": str(file_path),
+        })
+    return entries
+
+
+def _resolve_edge_image_path(artifact_id: str, db: Session) -> tuple[Path, str]:
+    artifact = db.query(UpdateArtifact).filter(
+        UpdateArtifact.artifact_id == artifact_id,
+        UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
+    ).first()
+    if artifact:
+        if not artifact.storage_path or not os.path.exists(artifact.storage_path):
+            raise HTTPException(status_code=410, detail="Image-fil ikke tilgængelig (måske slettet fra disk)")
+        return Path(artifact.storage_path), artifact.filename or f"{artifact_id}.img.gz"
+
+    storage_dir = _edge_image_storage_dir()
+    manifests = _edge_image_manifest_index(storage_dir)
+    for entry in _edge_image_file_entries(storage_dir):
+        if artifact_id in {entry["artifact_id"], entry["filename"]}:
+            return Path(entry["storage_path"]), entry["filename"]
+    manifest = manifests.get(artifact_id)
+    if manifest and isinstance(manifest.get("image"), dict):
+        filename = manifest["image"].get("filename")
+        if filename:
+            candidate = storage_dir / str(filename)
+            if candidate.exists():
+                return candidate, str(filename)
+    raise HTTPException(status_code=404, detail="Artifact ikke fundet")
+
 def _run_edge_disk_image_build(
     headend_url: str,
     gpg_key_id: str | None,
@@ -11800,7 +11896,7 @@ def trigger_edge_disk_image_build(
 
     headend_url = os.getenv("TIMELAPSE_HEADEND_URL", "https://timelapse.froekjaer.dk/api")
     gpg_key_id = os.getenv("CHANGE_TICKET_GPG_KEY") or os.getenv("TIMELAPSE_GPG_KEY")
-    output_dir = os.path.join(tempfile.gettempdir(), "timelapse-edge-images")
+    output_dir = str(_edge_image_storage_dir())
     os.makedirs(output_dir, exist_ok=True)
 
     from database import SessionLocal as _SessionLocal
@@ -11876,7 +11972,7 @@ def list_flashable_disk_images(_user=require_role("super_admin", "admin"), db: S
         .limit(50)
         .all()
     )
-    return [
+    entries = [
         {
             "artifact_id": a.artifact_id,
             "filename": a.filename,
@@ -11885,28 +11981,29 @@ def list_flashable_disk_images(_user=require_role("super_admin", "admin"), db: S
             "sha256": a.sha256,
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "exists_on_disk": bool(a.storage_path and os.path.exists(a.storage_path)),
+            "source": "database",
         }
         for a in artifacts
     ]
+    seen = {e["artifact_id"] for e in entries} | {e["filename"] for e in entries if e.get("filename")}
+    for entry in _edge_image_file_entries(_edge_image_storage_dir()):
+        if entry["artifact_id"] not in seen and entry["filename"] not in seen:
+            entries.append({k: v for k, v in entry.items() if k != "storage_path"})
+            seen.add(entry["artifact_id"])
+            seen.add(entry["filename"])
+    return sorted(entries, key=lambda e: e.get("created_at") or "", reverse=True)[:100]
 
 
 @app.get("/api/admin/edge-provisioning/disk-image-download/{artifact_id}")
 def download_edge_disk_image(artifact_id: str, _user=require_role("super_admin", "admin"), db: Session = Depends(get_db)):
     """Download færdigt edge disk image (rootfs tarball)."""
     from fastapi.responses import FileResponse
-    artifact = db.query(UpdateArtifact).filter(
-        UpdateArtifact.artifact_id == artifact_id,
-        UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
-    ).first()
-    if not artifact:
-        raise HTTPException(status_code=404, detail="Artifact ikke fundet")
-    if not artifact.storage_path or not os.path.exists(artifact.storage_path):
-        raise HTTPException(status_code=410, detail="Image-fil ikke tilgængelig (måske slettet fra disk)")
+    image_path, filename = _resolve_edge_image_path(artifact_id, db)
     return FileResponse(
-        artifact.storage_path,
+        str(image_path),
         media_type="application/octet-stream",
-        filename=artifact.filename or f"{artifact_id}.img.gz",
-        headers={"Content-Disposition": f"attachment; filename=\"{artifact.filename or artifact_id + '.img.gz'}\""},
+        filename=filename,
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
     )
 
 
