@@ -42,6 +42,7 @@ import logging
 import os
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -134,6 +135,8 @@ class EdgeAgent:
         self._last_siem_emit: dict[str, datetime] = {}
         self._last_siem_forward: datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._siem_cursor_path = self._cfg_mgr.base_dir / "siem_journal.cursor"
+        self._adaptive_exposure_ev = 0.0
+        self._last_capture_skip_until: datetime | None = None
 
         # Signal handling for graceful shutdown
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -563,15 +566,16 @@ class EdgeAgent:
                 driver.apply_initial_commands(commands)
             result = driver.capture_image(dest_dir)
             driver.disconnect()
-            quality = self._quality.check(result.filepath, result.sha256)
+            quality_report = self._quality_report(result.filepath, result.sha256)
+            self._write_qa_sidecar(result.filepath, quality_report)
             capture_id = self._db.insert_capture(
                 device_id=device_id, filepath=result.filepath,
                 sha256=result.sha256, captured_at=result.timestamp,
                 camera_model=result.camera_model, driver_name=result.driver_name,
                 filesize=result.filesize, exposure_time=result.exposure_time,
                 aperture=result.aperture, iso=result.iso, focus_mode=result.focus_mode,
-                quality_flag=quality.flag.value, quality_passed=quality.passed,
-                blur_score=quality.blur_score, brightness=quality.brightness_mean,
+                quality_flag=quality_report.get("flag"), quality_passed=bool(quality_report.get("passed")),
+                blur_score=quality_report.get("blur_score"), brightness=quality_report.get("brightness_mean"),
             )
             upload = self._upload_capture_transports(capture_id, result.filepath, device_id)
             results[idx] = {'success': True, 'device_id': device_id, 'upload': upload}
@@ -659,17 +663,22 @@ class EdgeAgent:
         # Check capture schedule
         capture_due = self._should_capture(now, mode)
         if capture_due:
-            node_cameras = self._cfg.get('node_cameras', [])
-            multi_mode   = self._cfg.get('multi_camera_mode', 'single')
-            if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
-                cameras = self._discover_cameras()
-                if len(cameras) > 1:
-                    self._do_multi_capture_cycle(cameras)
-                else:
-                    log.info("Kun %d kamera fundet — single mode", len(cameras))
-                    self._do_capture_cycle()
+            suppressed = self._capture_suppressed_by_headend_signal(now)
+            if suppressed:
+                log.info("Capture udsat/sprunget over: %s", suppressed)
+                self._db.log_event(self._device_id, "INFO", "capture", f"Capture suppressed: {suppressed}")
             else:
-                self._do_capture_cycle()
+                node_cameras = self._cfg.get('node_cameras', [])
+                multi_mode   = self._cfg.get('multi_camera_mode', 'single')
+                if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
+                    cameras = self._discover_cameras()
+                    if len(cameras) > 1:
+                        self._do_multi_capture_cycle(cameras)
+                    else:
+                        log.info("Kun %d kamera fundet — single mode", len(cameras))
+                        self._do_capture_cycle()
+                else:
+                    self._do_capture_cycle()
 
         # Upload pending large files only inside the Headend-assigned slot.
         # This runs after capture checks so upload backlog cannot delay capture.
@@ -704,6 +713,7 @@ class EdgeAgent:
         """
         log.info("─── Starting capture cycle ───")
         success = False
+        self._last_capture_result = None
 
         try:
             # 1. Power camera on and connect
@@ -784,11 +794,13 @@ class EdgeAgent:
             )
 
             # 5. Quality check
-            quality = self._quality.check(result.filepath, None)  # sha256 pre-XMP — skip disk re-verify
-            if not quality.passed:
-                log.warning("Quality FAILED: %s — %s", result.filepath.name, quality.message)
+            quality_report = self._quality_report(result.filepath, None)  # sha256 pre-XMP — skip disk re-verify
+            self._write_qa_sidecar(result.filepath, quality_report)
+            if not quality_report.get("passed"):
+                log.warning("Quality FAILED: %s — %s", result.filepath.name, quality_report.get("message"))
             else:
-                log.info("Quality OK: %s", quality.message)
+                log.info("Quality OK: %s", quality_report.get("message"))
+            self._maybe_update_adaptive_exposure(quality_report)
 
             # 6. Store in DB
             capture_id = self._db.insert_capture(
@@ -803,10 +815,10 @@ class EdgeAgent:
                 aperture     = result.aperture,
                 iso          = result.iso,
                 focus_mode   = result.focus_mode,
-                quality_flag = quality.flag.value,
-                quality_passed=quality.passed,
-                blur_score   = quality.blur_score,
-                brightness   = quality.brightness_mean,
+                quality_flag = quality_report.get("flag"),
+                quality_passed=bool(quality_report.get("passed")),
+                blur_score   = quality_report.get("blur_score"),
+                brightness   = quality_report.get("brightness_mean"),
             )
 
             # 7. Enforce circular buffer BEFORE upload (free space first)
@@ -817,6 +829,15 @@ class EdgeAgent:
             camera_id      = self._cfg.get("device", {}).get("device_id", "unknown")
             upload_results = self._upload_capture_transports(capture_id, result.filepath, camera_id)
             log.info("Upload results: %s", upload_results)
+            self._last_capture_result = {
+                "capture_id": capture_id,
+                "filename": result.filepath.name,
+                "filepath": str(result.filepath),
+                "filesize": result.filesize,
+                "sha256": result.sha256,
+                "quality": quality_report,
+                "uploaded": bool(upload_results.get("primary")),
+            }
 
             if upload_results.get("primary"):
                 self._connectivity.report_success()
@@ -907,6 +928,37 @@ class EdgeAgent:
                 except Exception:
                     pass
         return False
+
+    def _capture_suppressed_by_headend_signal(self, now: datetime) -> str | None:
+        """Return a reason if Headend asked Edge to avoid captures right now."""
+        schedule = self._cfg.get("schedule", {})
+        windows = (
+            schedule.get("capture_avoid_windows")
+            or schedule.get("solar_reflection_avoid_windows")
+            or []
+        )
+        if not windows:
+            return None
+        tz_name = schedule.get("timezone", "UTC")
+        local_now = self._to_local(now, tz_name)
+        for window in windows:
+            if not isinstance(window, dict):
+                continue
+            try:
+                start = self._parse_time(str(window.get("start", "")))
+                end = self._parse_time(str(window.get("end", "")))
+            except Exception:
+                continue
+            in_window = start <= local_now.time() <= end if start <= end else (
+                local_now.time() >= start or local_now.time() <= end
+            )
+            if not in_window:
+                continue
+            action = str(window.get("action", "skip")).lower()
+            reason = str(window.get("reason", "headend_avoid_window"))
+            if action in {"skip", "delay", "avoid"}:
+                return f"{reason} ({window.get('start')}–{window.get('end')})"
+        return None
 
     def _seconds_until_next_event(self, now: datetime, mode: str) -> int:
         """Calculate seconds until next capture or heartbeat."""
@@ -1153,7 +1205,7 @@ class EdgeAgent:
 
         cam_cfg = self._cfg.get("camera", {})
         for cfg_key, gphoto_key in PARAM_MAP.items():
-            value = cam_cfg.get(cfg_key)
+            value = self._effective_exposure_compensation() if cfg_key == "exposurecompensation" else cam_cfg.get(cfg_key)
             if value is None:
                 continue
             if hasattr(self._driver, "build_config_command"):
@@ -1179,6 +1231,103 @@ class EdgeAgent:
                 log.info("Config override: %s=%s (ny)", gphoto_key, value)
 
         return commands
+
+    def _quality_report(self, filepath: Path, expected_sha256: str | None = None) -> dict:
+        if hasattr(self._quality, "qa_report"):
+            return self._quality.qa_report(filepath, expected_sha256)
+        return self._quality.check(filepath, expected_sha256).as_dict()
+
+    def _write_qa_sidecar(self, filepath: Path, quality_report: dict) -> None:
+        try:
+            qa_path = filepath.with_suffix(filepath.suffix + ".qa.json")
+            payload = {
+                "schema": "timelapse.edge_qa.v1",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "device_id": self._device_id,
+                "image_file": filepath.name,
+                "quality": quality_report,
+            }
+            qa_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            log.debug("Could not write QA sidecar for %s: %s", filepath.name, exc)
+
+    def _effective_exposure_compensation(self) -> str | None:
+        quality_cfg = self._cfg.get("quality", {})
+        adaptive = quality_cfg.get("adaptive_exposure", {}) or {}
+        cam_cfg = self._cfg.get("camera", {})
+        base = cam_cfg.get("exposurecompensation")
+        if not adaptive.get("enabled", False):
+            return base
+        base_ev = self._parse_ev(base, default=0.0)
+        min_ev = float(adaptive.get("min_ev", -2.0))
+        max_ev = float(adaptive.get("max_ev", 2.0))
+        effective = max(min_ev, min(max_ev, base_ev + self._adaptive_exposure_ev))
+        step = float(adaptive.get("step_ev", 0.3))
+        return self._format_ev(effective, step)
+
+    def _maybe_update_adaptive_exposure(self, quality_report: dict) -> None:
+        adaptive = (self._cfg.get("quality", {}) or {}).get("adaptive_exposure", {}) or {}
+        if not adaptive.get("enabled", False):
+            return
+        step = float(adaptive.get("step_ev", 0.3))
+        min_ev = float(adaptive.get("min_ev", -2.0))
+        max_ev = float(adaptive.get("max_ev", 2.0))
+        optimizer = (quality_report.get("autonomous_optimizer") or {}).get("control_plan") or {}
+        if optimizer and optimizer.get("autonomous_safe_to_apply", False):
+            try:
+                planned_delta = float(optimizer.get("next_capture_ev_delta", 0.0) or 0.0)
+            except Exception:
+                planned_delta = 0.0
+            if abs(planned_delta) >= 0.01:
+                self._adaptive_exposure_ev = max(
+                    min_ev,
+                    min(max_ev, self._adaptive_exposure_ev + planned_delta),
+                )
+                log.info(
+                    "Adaptive exposure EV now %.2f from autonomous optimizer delta=%.2f",
+                    self._adaptive_exposure_ev,
+                    planned_delta,
+                )
+                return
+        cause = str(quality_report.get("probable_cause") or quality_report.get("flag") or "")
+        brightness = quality_report.get("brightness_mean")
+        delta = 0.0
+        if cause in {"overexposed", "direct_sun_reflection"} or quality_report.get("flag") == "overexposed":
+            delta = -step
+        elif cause in {"underexposed", "underexposure_or_camera_blocked"} or quality_report.get("flag") == "underexposed":
+            delta = step
+        elif brightness is not None:
+            target = float(adaptive.get("target_brightness", 118.0))
+            tolerance = float(adaptive.get("brightness_tolerance", 32.0))
+            if float(brightness) > target + tolerance:
+                delta = -step
+            elif float(brightness) < target - tolerance:
+                delta = step
+        if delta == 0.0:
+            self._adaptive_exposure_ev *= 0.5
+        else:
+            self._adaptive_exposure_ev = max(min_ev, min(max_ev, self._adaptive_exposure_ev + delta))
+        log.info("Adaptive exposure EV now %.2f after QA cause=%s brightness=%s", self._adaptive_exposure_ev, cause, brightness)
+
+    @staticmethod
+    def _parse_ev(value, default: float = 0.0) -> float:
+        if value is None or value == "":
+            return default
+        raw = str(value).strip().replace("EV", "").replace("ev", "")
+        raw = raw.replace(",", ".")
+        try:
+            return float(raw)
+        except Exception:
+            return default
+
+    @staticmethod
+    def _format_ev(value: float, step: float = 0.3) -> str:
+        if step > 0:
+            value = round(value / step) * step
+        if abs(value) < 0.05:
+            value = 0.0
+        text = f"{value:+.1f}"
+        return "0" if text in {"+0.0", "-0.0"} else text
 
     def _check_update(self) -> None:
         """Legacy LAB-only git update path.
@@ -1861,7 +2010,26 @@ class EdgeAgent:
                     pass
                 self._camera_power_off("lab full capture handoff")
                 self._lab_relay_on = False          # tvinger re-init på næste tick
-                self._do_capture_cycle()
+                ok = self._do_capture_cycle()
+                result = {
+                    "type": "capture",
+                    "ok": bool(ok),
+                    **(getattr(self, "_last_capture_result", None) or {}),
+                }
+                capture_path = Path(str(result.get("filepath") or ""))
+                if capture_path.is_file() and capture_path.suffix.lower() in {".jpg", ".jpeg"}:
+                    try:
+                        lab_dir = Path("/data/captures/_lab")
+                        lab_dir.mkdir(parents=True, exist_ok=True)
+                        preview_name = f"preview_capture_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}{capture_path.suffix.lower()}"
+                        preview_path = lab_dir / preview_name
+                        shutil.copy2(capture_path, preview_path)
+                        upload_ok, _ = self._api.upload_lab_preview(preview_path)
+                        if upload_ok:
+                            result["preview_filename"] = preview_path.name
+                    except Exception as exc:
+                        result["preview_error"] = str(exc)
+                self._api._post("/lab/" + self._device_id + "/result", result)
                 self._api.clear_lab_command(self._device_id)
                 # _lab_relay_on er allerede False — næste _lab_tick re-initialiserer
                 # relay + connect + camera-ready signal automatisk
@@ -1880,6 +2048,71 @@ class EdgeAgent:
                     log.info("LAB — sent %d params to headend", len(params))
                 except Exception as exc:
                     log.warning("LAB — get_params failed: %s", exc)
+                self._api.clear_lab_command(self._device_id)
+
+            elif cmd_type == "set_param":
+                key = lab_cmd.get("key", "")
+                value = lab_cmd.get("value", "")
+                log.info("LAB — set param: %s = %s", key, value)
+                result = {"type": "set_param", "key": key, "value": value, "ok": False}
+                try:
+                    self._driver.set_config(key, value)
+                    result["ok"] = True
+                    result["param"] = self._driver.get_config_param(key) if hasattr(self._driver, "get_config_param") else None
+                    params = self._driver.get_all_config()
+                    profile = self._driver.get_profile_summary() if hasattr(self._driver, "get_profile_summary") else {}
+                    self._api._post("/lab/" + self._device_id + "/params", {
+                        "params": params,
+                        "profile": profile,
+                    })
+                except Exception as exc:
+                    result["error"] = str(exc)
+                    log.warning("LAB — set_param failed: %s", exc)
+                self._api._post("/lab/" + self._device_id + "/result", result)
+                self._api.clear_lab_command(self._device_id)
+
+            elif cmd_type == "focus_drive":
+                value = lab_cmd.get("value", "")
+                log.info("LAB — focus drive: %s", value)
+                result = {"type": "focus_drive", "value": value, "ok": False}
+                try:
+                    if hasattr(self._driver, "drive_manual_focus"):
+                        result["ok"] = bool(self._driver.drive_manual_focus(value))
+                    if result["ok"]:
+                        preview = self._lab_capture_preview()
+                        if preview:
+                            result["quality"] = self._lab_quality_summary(preview)
+                            result["preview_filename"] = preview.name
+                except Exception as exc:
+                    result["error"] = str(exc)
+                    log.warning("LAB — focus drive failed: %s", exc)
+                self._api._post("/lab/" + self._device_id + "/result", result)
+                self._api.clear_lab_command(self._device_id)
+
+            elif cmd_type == "autofocus":
+                log.info("LAB — autofocus requested")
+                result = {"type": "autofocus", "ok": False}
+                try:
+                    result["ok"] = bool(self._driver.run_autofocus())
+                    preview = self._lab_capture_preview()
+                    if preview:
+                        result["quality"] = self._lab_quality_summary(preview)
+                        result["preview_filename"] = preview.name
+                except Exception as exc:
+                    result["error"] = str(exc)
+                    log.warning("LAB — autofocus failed: %s", exc)
+                self._api._post("/lab/" + self._device_id + "/result", result)
+                self._api.clear_lab_command(self._device_id)
+
+            elif cmd_type in ("focus_slice", "edge_ai_focus_test"):
+                log.info("LAB — %s requested", cmd_type)
+                result = self._lab_focus_slice(
+                    step_value=lab_cmd.get("step_value", ""),
+                    count=int(lab_cmd.get("count", 5)),
+                    run_autofocus_first=bool(lab_cmd.get("run_autofocus_first", True)),
+                    result_type=cmd_type,
+                )
+                self._api._post("/lab/" + self._device_id + "/result", result)
                 self._api.clear_lab_command(self._device_id)
 
             elif cmd_type == "relay_toggle":
@@ -1947,7 +2180,76 @@ class EdgeAgent:
 
         time.sleep(poll_s)
 
-    def _lab_capture_preview(self) -> None:
+    def _lab_quality_summary(self, filepath: Path) -> dict:
+        """Run local deterministic image-quality analysis for LAB focus work."""
+        try:
+            if hasattr(self._quality, "qa_report"):
+                return self._quality.qa_report(filepath)
+            return self._quality.check(filepath).as_dict()
+        except Exception as exc:
+            return {"flag": "error", "passed": False, "message": str(exc)}
+
+    def _lab_focus_slice(
+        self,
+        step_value: str,
+        count: int = 5,
+        run_autofocus_first: bool = True,
+        result_type: str = "focus_slice",
+    ) -> dict:
+        """Capture a small focus slice series and score sharpness locally."""
+        count = max(1, min(12, int(count or 5)))
+        result = {
+            "type": result_type,
+            "step_value": step_value,
+            "count": count,
+            "ok": False,
+            "frames": [],
+            "recommendation": {},
+            "analysis_engine": "opencv_laplacian_brightness",
+        }
+        if not step_value:
+            result["error"] = "step_value missing"
+            return result
+        try:
+            if run_autofocus_first and self._driver.supports_autofocus():
+                result["autofocus_ok"] = bool(self._driver.run_autofocus())
+                time.sleep(0.5)
+
+            best = None
+            for idx in range(count):
+                if idx > 0:
+                    if hasattr(self._driver, "drive_manual_focus"):
+                        self._driver.drive_manual_focus(step_value)
+                    time.sleep(0.35)
+                preview = self._lab_capture_preview()
+                if not preview:
+                    continue
+                quality = self._lab_quality_summary(preview)
+                frame = {
+                    "index": idx,
+                    "step_value": step_value if idx > 0 else "baseline",
+                    "preview_filename": preview.name,
+                    "quality": quality,
+                }
+                result["frames"].append(frame)
+                blur = quality.get("blur_score")
+                if blur is not None and (best is None or blur > best["quality"].get("blur_score", -1)):
+                    best = frame
+
+            result["ok"] = len(result["frames"]) > 0
+            if best:
+                result["recommendation"] = {
+                    "best_index": best["index"],
+                    "best_preview_filename": best["preview_filename"],
+                    "best_blur_score": best["quality"].get("blur_score"),
+                    "message": "Best frame is a recommendation only; focus is not auto-applied.",
+                }
+        except Exception as exc:
+            result["error"] = str(exc)
+            log.warning("LAB — focus slice failed: %s", exc)
+        return result
+
+    def _lab_capture_preview(self):
         """Capture a preview image and upload to _lab directory."""
         try:
             dest_dir = Path("/data/captures/_lab")
@@ -1967,7 +2269,7 @@ class EdgeAgent:
 
             ok, _ = self._api.upload_lab_preview(preview_path)
             if ok:
-                return
+                return preview_path
 
             # Fallback: upload to headend via SFTP to _lab directory.
             sftp_cfg = self._cfg.get("sftp", {})
@@ -2003,6 +2305,7 @@ class EdgeAgent:
                                 pass
                     sftp.put(str(preview_path), remote_dir + "/" + preview_path.name)
                     log.info("LAB — preview uploaded to %s", remote_dir)
+                    return preview_path
                 finally:
                     if sftp:
                         try: sftp.close()
@@ -2012,6 +2315,7 @@ class EdgeAgent:
                         except Exception: pass
         except Exception as exc:
             log.warning("LAB — preview failed: %s", exc)
+        return None
 
     # ── Shutdown ────────────────────────────────────────────────────────────
 

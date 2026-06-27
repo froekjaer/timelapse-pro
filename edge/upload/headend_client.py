@@ -96,6 +96,21 @@ def _ensure_thumbnail(filepath: Path) -> Optional[Path]:
         return None
 
 
+def _read_edge_qa(filepath: Path | str) -> Optional[dict]:
+    path = Path(filepath)
+    qa_path = path.with_suffix(path.suffix + ".qa.json")
+    if not qa_path.exists():
+        return None
+    try:
+        import json
+
+        data = json.loads(qa_path.read_text(encoding="utf-8"))
+        return data.get("quality") if isinstance(data.get("quality"), dict) else data
+    except Exception as exc:
+        log.debug("Could not read Edge QA sidecar %s: %s", qa_path.name, exc)
+        return None
+
+
 class HeadendClient:
     """
     REST API client for the TimeLapse Pro headend.
@@ -201,6 +216,10 @@ class HeadendClient:
             "aperture":        capture_row.get("aperture"),
             "iso":             capture_row.get("iso"),
         }
+        edge_qa = _read_edge_qa(capture_row.get("filepath", ""))
+        if edge_qa:
+            payload["edge_ai_result"] = edge_qa
+            payload["edge_ai_engine"] = edge_qa.get("engine")
         return self._post(f"/captures/{self._device_id}", payload)
 
     def upload_capture_files(self, capture_row: dict, filepath: Path | str) -> tuple[bool, Optional[dict]]:
@@ -236,6 +255,10 @@ class HeadendClient:
             "iso": capture_row.get("iso"),
             "transport": "api-primary",
         }
+        edge_qa = _read_edge_qa(path_obj)
+        if edge_qa:
+            manifest["edge_ai_result"] = edge_qa
+            manifest["edge_ai_engine"] = edge_qa.get("engine")
         manifest_json = canonical_json(manifest)
         manifest_hash = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
         try:
