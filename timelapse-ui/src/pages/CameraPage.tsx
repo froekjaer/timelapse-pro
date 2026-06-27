@@ -102,7 +102,7 @@ const CAMERA_PARAMS: ParamRow[] = [
   { key: 'quality.edge_ai.enabled', label: 'Edge QA AI', section: 'Kvalitet', type: 'boolean', description: 'Aktiver lokal QA for snavs, sne, dug og refleks' },
   { key: 'quality.edge_ai.mode', label: 'AI mode', section: 'Kvalitet', type: 'select', options: ['off', 'monitor', 'assist', 'autonomous', 'npu_first', 'lab'], description: 'Monitor analyserer kun; assist/autonomous kan justere EV; lab er til aktiv kalibrering' },
   { key: 'quality.edge_ai.prefer_npu', label: 'Brug NPU hvis mulig', section: 'Kvalitet', type: 'boolean', description: 'Bruger lokal NPU-runner/model når installeret på Edge' },
-  { key: 'quality.edge_ai.runner', label: 'NPU runner', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/edge/tools/edge_qa_npu_runner.py', description: 'Lokal kommando der returnerer QA JSON' },
+  { key: 'quality.edge_ai.runner', label: 'NPU runner', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py', description: 'Lokal kommando der returnerer QA JSON' },
   { key: 'quality.edge_ai.model_path', label: 'NPU model', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/models/edge_qa.nb', description: 'Vendor/NPU modelsti på Edge' },
   // Diagnostik
   { key: 'diagnostics.heartbeat_interval_minutes', label: 'Heartbeat interval', section: 'Diagnostik', type: 'number', unit: 'min', placeholder: '60', description: 'Minutter mellem diagnostik uploads' },

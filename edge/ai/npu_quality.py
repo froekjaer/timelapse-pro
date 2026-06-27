@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,7 +48,10 @@ class NpuQualityAdapter:
             return False
         if not self._runner:
             return False
-        runner_path = shutil.which(self._runner) if "/" not in self._runner else self._runner
+        runner_cmd = shlex.split(self._runner)
+        if not runner_cmd:
+            return False
+        runner_path = shutil.which(runner_cmd[0]) if "/" not in runner_cmd[0] else runner_cmd[0]
         return bool(runner_path and Path(runner_path).exists())
 
     def status(self) -> dict[str, Any]:
@@ -66,7 +70,7 @@ class NpuQualityAdapter:
         """Run configured NPU model. Runner must print one JSON object to stdout."""
         if not self.available():
             return None
-        cmd = [self._runner, "--model", self._model, "--image", str(image_path), "--json"]
+        cmd = shlex.split(self._runner) + ["--model", self._model, "--image", str(image_path), "--json"]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=self._timeout_s)
         except Exception as exc:

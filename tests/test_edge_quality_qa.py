@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from edge.ai.autonomous_optimizer import AutonomousImageOptimizer
+from edge.ai.npu_quality import NpuQualityAdapter
 from edge.capture.quality import QualityChecker, QualityFlag, QualityResult
 
 
@@ -242,3 +243,26 @@ def test_edge_qa_npu_runner_emits_json_contract(tmp_path):
     assert payload["available"] is False
     assert "runtime" in payload
     assert "optimizer" in payload
+
+
+def test_npu_adapter_accepts_runner_command_with_arguments(tmp_path):
+    img = np.full((120, 180, 3), 220, dtype=np.uint8)
+    path = _write_jpeg(tmp_path / "adapter.jpg", img)
+    runner = f"{sys.executable} edge/tools/edge_qa_npu_runner.py"
+
+    adapter = NpuQualityAdapter({
+        "quality": {
+            "edge_ai": {
+                "enabled": True,
+                "mode": "npu_first",
+                "prefer_npu": True,
+                "runner": runner,
+                "model_path": "",
+            }
+        }
+    })
+
+    assert adapter.available() is True
+    result = adapter.analyse(path)
+    assert result is not None
+    assert result["engine"] == "edge_npu_contract_cpu_fallback"

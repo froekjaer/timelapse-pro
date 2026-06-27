@@ -40,7 +40,7 @@ quality:
     enabled: true
     mode: assist
     prefer_npu: true
-    runner: /opt/timelapse/edge/tools/edge_qa_npu_runner.py
+    runner: /opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py
     model_path: /opt/timelapse/models/edge_qa.nb
 ```
 
@@ -70,7 +70,7 @@ python edge/tools/generate_qa_test_images.py --out /tmp/timelapse-qa-test-images
 Kør runner:
 
 ```bash
-python edge/tools/edge_qa_npu_runner.py \
+/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py \
   --model /opt/timelapse/models/edge_qa.nb \
   --image /tmp/timelapse-qa-test-images/qa_03_direct_sun_reflection.jpg \
   --json
@@ -84,4 +84,3 @@ python edge/tools/edge_qa_npu_runner.py \
 4. Installer vendor SDK/model når tilgængelig.
 5. Sæt `quality.edge_ai.mode=npu_first` på testkamera.
 6. Tag LAB-preview og fuldt capture; kontroller `.qa.json` og `capture.ai_result`.
-
