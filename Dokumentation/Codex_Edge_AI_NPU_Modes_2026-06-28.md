@@ -80,6 +80,22 @@ Runneren søger derfor efter:
 - `TIMELAPSE_AI_SDK_ROOT`
 - VIPLite biblioteker og device hints som `/dev/galcore`, `/dev/npu`, `/dev/vipcore`
 
+Probe boardet direkte:
+
+```bash
+/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/probe_orangepi_npu.py \
+  --ai-sdk-root /opt/timelapse/ai-sdk \
+  --model /opt/timelapse/models/edge_qa.nb \
+  --pretty
+```
+
+Vigtige felter:
+
+- `npu_ready=true`: ai-sdk, runtime/device og model er fundet.
+- `missing=["ai_sdk"]`: installer/pak `ai-sdk.tar.gz` ud på boardet.
+- `missing=["viplite_runtime_or_device"]`: VIPLite runtime/device driver mangler eller er ikke synlig.
+- `missing=["model_path"]`: `.nb` modellen mangler på den konfigurerede sti.
+
 Første produktionsmodel bør sandsynligvis være en lille klassifikationsmodel, ikke en stor vision-LLM:
 
 - input: nedskaleret JPEG/preview
@@ -117,8 +133,9 @@ Kør batchanalyse på en hel mappe og skriv JSONL:
 ## Morgenens hardware-test
 
 1. Verificer at `opencv-python-headless` virker i edge venv.
-2. Kør `edge_qa_npu_runner.py` på Orange Pi og gem JSON-output.
-3. Tjek runtime hints: `/dev/galcore`, `/dev/npu`, VIPLite/libNPU vendor libs.
-4. Installer vendor SDK/model når tilgængelig.
+2. Kør `probe_orangepi_npu.py --pretty` og gem JSON-output.
+3. Installer/ret `ai-sdk`, VIPLite eller `.nb` model indtil `missing` er tom eller kendt accepteret.
+4. Generer testbilleder og kør `analyse_qa_batch.py` i `monitor`, `assist` og `npu_first`.
 5. Sæt `quality.edge_ai.mode=npu_first` på testkamera.
-6. Tag LAB-preview og fuldt capture; kontroller `.qa.json` og `capture.ai_result`.
+6. Kør `edge_qa_npu_runner.py` på mindst normal, sol/refleks og snavs/sne testbillede.
+7. Tag LAB-preview og fuldt capture; kontroller `.qa.json` og `capture.ai_result`.

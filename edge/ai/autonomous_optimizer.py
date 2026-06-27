@@ -190,6 +190,7 @@ class AutonomousImageOptimizer:
         brightness = float(features.get("brightness_mean", quality_report.get("brightness_mean") or 128.0))
         center = float(features.get("center_brightness", brightness))
         highlight_ratio = float(features.get("highlight_ratio", 0.0))
+        bright_ratio = float(features.get("bright_ratio", 0.0))
         clipped_highlights = float(features.get("clipped_highlights", 0.0))
         clipped_shadows = float(features.get("clipped_shadows", 0.0))
         contrast = float(features.get("contrast_std", 0.0))

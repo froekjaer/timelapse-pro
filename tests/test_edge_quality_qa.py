@@ -8,6 +8,7 @@ import numpy as np
 
 from edge.ai.autonomous_optimizer import AutonomousImageOptimizer
 from edge.ai.npu_quality import NpuQualityAdapter
+from edge.ai.npu_runtime import detect_orangepi_npu_runtime
 from edge.capture.quality import QualityChecker, QualityFlag, QualityResult
 
 
@@ -157,6 +158,22 @@ def test_autonomous_optimizer_detects_direct_sun_and_ev_action(tmp_path):
     assert result["control_plan"]["avoid_window_suggestion"]["action"] == "avoid"
 
 
+def test_autonomous_optimizer_uses_bright_ratio_without_name_error(tmp_path):
+    img = np.full((360, 640, 3), 120, dtype=np.uint8)
+    img[:, :180] = 255
+    path = _write_jpeg(tmp_path / "off_center_reflection.jpg", img)
+
+    result = AutonomousImageOptimizer({
+        "quality": {
+            "bright_threshold": 230,
+            "adaptive_exposure": {"target_brightness": 118, "step_ev": 0.3},
+        }
+    }).analyse(path, {"flag": "ok"})
+
+    assert result["features"]["bright_ratio"] > 0.10
+    assert any(r["action"] == "avoid_direct_sun_window" for r in result["recommendations"])
+
+
 def test_autonomous_optimizer_detects_white_balance_cast(tmp_path):
     img = np.zeros((240, 360, 3), dtype=np.uint8)
     img[:, :] = (210, 125, 90)  # BGR: blue-heavy cool cast
@@ -266,3 +283,35 @@ def test_npu_adapter_accepts_runner_command_with_arguments(tmp_path):
     result = adapter.analyse(path)
     assert result is not None
     assert result["engine"] == "edge_npu_contract_cpu_fallback"
+
+
+def test_orangepi_npu_probe_reports_missing_model(tmp_path):
+    payload = detect_orangepi_npu_runtime(
+        ai_sdk_root=str(tmp_path / "missing-ai-sdk"),
+        model_path=str(tmp_path / "missing.nb"),
+    )
+
+    assert payload["engine"] == "orangepi_npu_probe_v1"
+    assert payload["npu_ready"] is False
+    assert "ai_sdk" in payload["missing"]
+    assert "model_path" in payload["missing"]
+    assert payload["manual_contract"]["model_format"] == ".nb"
+
+
+def test_probe_orangepi_npu_cli_emits_json(tmp_path):
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "edge/tools/probe_orangepi_npu.py",
+            "--ai-sdk-root",
+            str(tmp_path / "missing-ai-sdk"),
+            "--model",
+            str(tmp_path / "missing.nb"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(proc.stdout)
+    assert payload["engine"] == "orangepi_npu_probe_v1"
+    assert payload["npu_ready"] is False
