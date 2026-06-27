@@ -59,6 +59,33 @@ Runneren skal skrive præcis ét JSON-objekt til stdout. Minimum:
 
 Den nuværende runner er NPU-klar, men falder tilbage til CPU/OpenCV hvis vendor runtime/model mangler. Den returnerer runtime-detektion, så hardwarestatus kan ses i QA-resultatet.
 
+## Orange Pi 4 Pro/A733 manualnoter
+
+Manualens afsnit 3.34 beskriver NPU-flowet:
+
+- NPU: 3 TOPS.
+- PC-side udviklingsmiljø bruger Allwinner ACUITY Docker image, fx `ubuntu-npu:v2.0.10`.
+- `ai-sdk.tar.gz` pakkes ud i Docker workspace for modelkonvertering.
+- ONNX-eksempler konverteres/kvantiseres med `pegasus_import.sh`, `pegasus_quantize.sh`, `pegasus_inference.sh` og `pegasus_export_ovx.sh`.
+- NPU-modellen eksporteres som `.nb`, fx `network_binary.nb`.
+- Board-side installeres `libopencv-dev` og `cmake`, `ai-sdk.tar.gz` pakkes ud, og eksempler kompileres med `cmake .. && make`.
+- Runtime-output viser VIPLite, fx `VIPLite driver software version 2.0.3.2-AW-2024-08-30`.
+- Manualen viser eksempler for `yolov5`, `resnet50`, `struct2depth`, `transformer_cls`, `yolact`, `deepspeech2` og `chineseocr`.
+
+Runneren søger derfor efter:
+
+- `/opt/timelapse/ai-sdk`
+- `/opt/ai-sdk`
+- `~/ai-sdk`
+- `TIMELAPSE_AI_SDK_ROOT`
+- VIPLite biblioteker og device hints som `/dev/galcore`, `/dev/npu`, `/dev/vipcore`
+
+Første produktionsmodel bør sandsynligvis være en lille klassifikationsmodel, ikke en stor vision-LLM:
+
+- input: nedskaleret JPEG/preview
+- outputklasser: `ok`, `blurry`, `snow_or_dirt_on_lens`, `condensation`, `direct_sun_reflection`, `underexposed`, `overexposed`, `white_balance_cast`
+- output: confidence + class, som runneren mapper til TimeLapse JSON-kontrakten
+
 ## Testbilleder
 
 Generer testpakke:
@@ -74,6 +101,17 @@ Kør runner:
   --model /opt/timelapse/models/edge_qa.nb \
   --image /tmp/timelapse-qa-test-images/qa_03_direct_sun_reflection.jpg \
   --json
+```
+
+Kør batchanalyse på en hel mappe og skriv JSONL:
+
+```bash
+/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/analyse_qa_batch.py \
+  /tmp/timelapse-qa-test-images \
+  --mode npu_first \
+  --runner "/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py" \
+  --model /opt/timelapse/models/edge_qa.nb \
+  --out /tmp/timelapse-qa-test-images/results.jsonl
 ```
 
 ## Morgenens hardware-test

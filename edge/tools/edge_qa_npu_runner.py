@@ -35,11 +35,30 @@ def _import_edge_modules() -> None:
 
 
 def _detect_runtime() -> dict[str, Any]:
+    ai_sdk_roots = [
+        Path(os.getenv("TIMELAPSE_AI_SDK_ROOT", "")) if os.getenv("TIMELAPSE_AI_SDK_ROOT") else None,
+        Path("/opt/timelapse/ai-sdk"),
+        Path("/opt/ai-sdk"),
+        Path.home() / "ai-sdk",
+    ]
+    ai_sdk_roots = [p for p in ai_sdk_roots if p]
+    ai_sdk_hits = [str(p) for p in ai_sdk_roots if p.exists()]
+    example_binaries = {}
+    for root in ai_sdk_roots:
+        if not root.exists():
+            continue
+        for name in ("yolov5", "resnet50", "struct2depth", "transformer_cls", "yolact"):
+            hits = list((root / "examples" / name).glob(f"**/{name}"))
+            if hits:
+                example_binaries[name] = [str(h) for h in hits]
+
     candidates = {
         "allwinner_viplite": [
             "/usr/lib/libVIPLite.so",
             "/usr/lib/aarch64-linux-gnu/libVIPLite.so",
             "/usr/local/lib/libVIPLite.so",
+            "/opt/timelapse/ai-sdk/viplite-tina",
+            "/opt/ai-sdk/viplite-tina",
         ],
         "onnxruntime": ["onnxruntime_test", "python3"],
         "rknn": ["rknn_lite_runtime"],
@@ -59,7 +78,9 @@ def _detect_runtime() -> dict[str, Any]:
         found[name] = hits
     return {
         "detected": found,
-        "preferred": "allwinner_viplite" if found.get("allwinner_viplite") else None,
+        "preferred": "allwinner_viplite" if (found.get("allwinner_viplite") or ai_sdk_hits) else None,
+        "ai_sdk_roots": ai_sdk_hits,
+        "ai_sdk_examples": example_binaries,
         "device_hints": {
             "dev_galcore": Path("/dev/galcore").exists(),
             "dev_vip": any(Path(p).exists() for p in ("/dev/vipcore", "/dev/viplite", "/dev/npu")),

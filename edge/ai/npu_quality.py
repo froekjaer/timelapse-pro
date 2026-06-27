@@ -72,7 +72,9 @@ class NpuQualityAdapter:
             return None
         cmd = shlex.split(self._runner) + ["--model", self._model, "--image", str(image_path), "--json"]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=self._timeout_s)
+            env = os.environ.copy()
+            env["TIMELAPSE_EDGE_AI_MODE"] = self._policy.mode
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=self._timeout_s, env=env)
         except Exception as exc:
             log.warning("Edge NPU QA runner failed: %s", exc)
             return {"engine": "edge_npu", "available": False, "error": str(exc)}
