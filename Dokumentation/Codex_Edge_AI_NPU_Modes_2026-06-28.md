@@ -62,6 +62,11 @@ Den nuværende runner er NPU-klar, men falder tilbage til CPU/OpenCV hvis vendor
 
 `runner` er den stabile TimeLapse Python-kontrakt. `vendor_binary` er valgfri og peger på den board-lokale VIPLite-wrapper, som senere kører den rigtige `.nb` QA-model og returnerer enten `label + confidence`, `class_id + confidence` eller `scores`.
 
+Status 2026-06-28: `vendor_binary`-wrapperen er implementeret, bygget og installeret på
+testboardet som `/opt/timelapse/bin/edge_qa_viplite`. Den bruger Allwinner AWNN/VIPLite og
+emitter ren JSON på stdout. VIPLite runtime-log går til stderr, så Python-runneren kan parse
+outputtet stabilt.
+
 ## QA modelkontrakt
 
 Kontrakten er defineret i `edge/ai/model_contract.py`.
@@ -170,6 +175,21 @@ Kør batchanalyse på en hel mappe og skriv JSONL:
   --out /tmp/timelapse-qa-test-images/results.jsonl
 ```
 
+Kør batchanalyse med installeret VIPLite-wrapper:
+
+```bash
+/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/analyse_qa_batch.py \
+  /tmp/timelapse-qa-test-images \
+  --mode npu_first \
+  --runner "/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py" \
+  --model /opt/timelapse/models/edge_qa.nb \
+  --vendor-binary "/opt/timelapse/bin/edge_qa_viplite --input-layout nchw_bgr" \
+  --out /tmp/timelapse-qa-test-images/viplite-results.jsonl
+```
+
+`--input-layout nchw_bgr` er kun til SDK ResNet-demoen. Den rigtige TimeLapse QA-model bør følge
+kontrakten ovenfor (`nhwc_rgb`) eller dokumentere sit layout eksplicit.
+
 Byg datasætmanifest til træning/evaluering:
 
 ```bash
@@ -208,8 +228,18 @@ Testet på `timelapse0101` (`192.168.86.134`):
 - NPU-run output viste `VIPLite driver software version 2.0.3.2-AW-2024-08-30` og `awnn_run success`.
 - Foreløbig modelsti `/opt/timelapse/models/edge_qa.nb` peger på SDK'ets ResNet50 demo-model for at bevise `.nb`/runtime-kæden.
 - `probe_orangepi_npu.py --model /opt/timelapse/models/edge_qa.nb --pretty` returnerer `npu_ready=true` og `missing=[]`.
+- Bygget og installeret TimeLapse wrapper:
+  - kilde: `/opt/timelapse/edge/npu_viplite`
+  - binær: `/opt/timelapse/bin/edge_qa_viplite`
+  - build helper: `/opt/timelapse/edge/tools/build_edge_qa_viplite.sh`
+- Verificeret fuld kæde:
+  - `edge_qa_viplite` kører ResNet-demo `.nb` via VIPLite og emitter JSON.
+  - `edge_qa_npu_runner.py --vendor-binary "/opt/timelapse/bin/edge_qa_viplite --input-layout nchw_bgr"` normaliserer wrapperens `scores` til `timelapse.edge_qa.v1`.
+  - `analyse_qa_batch.py --vendor-binary ...` skriver batchresultater med `npu.available=true`.
 
-Status: NPU-hardware, VIPLite runtime og `.nb` modelsti er verificeret. TimeLapse-runneren bruger stadig CPU/OpenCV optimizer som produktions-QA og markerer `vendor_runtime_binding_not_installed`, indtil vi har en egentlig TimeLapse QA `.nb` model og binding/eksekverbar wrapper til VIPLite.
+Status: NPU-hardware, VIPLite runtime, `.nb` modelsti og TimeLapse wrapper er verificeret. Den
+nuværende `.nb` er stadig kun ResNet50-demoen, så dens QA-scores er ikke semantisk gyldige. CPU/OpenCV
+optimizer er fortsat produktions-QA, indtil vi har en egentlig TimeLapse QA `.nb` model.
 
 ## Næste modelmilepæl
 
@@ -217,5 +247,5 @@ Status: NPU-hardware, VIPLite runtime og `.nb` modelsti er verificeret. TimeLaps
 2. Byg `manifest.jsonl` med `build_qa_dataset_manifest.py`.
 3. Træn en lille MobileNet/EfficientNet-lignende klassifikationsmodel på PC.
 4. Eksporter ONNX og konverter til `.nb` med Allwinner ACUITY.
-5. Implementer `/opt/timelapse/bin/edge_qa_viplite`, der læser image/model og skriver scores JSON.
-6. Sæt `quality.edge_ai.vendor_binary` i global/kunde/site/kamera-konfigurationen og kør `mode=npu_first` på testkamera.
+5. Eksporter QA-modellen som `.nb` og læg den i `/opt/timelapse/models/edge_qa.nb`.
+6. Sæt `quality.edge_ai.vendor_binary=/opt/timelapse/bin/edge_qa_viplite` i global/kunde/site/kamera-konfigurationen og kør `mode=npu_first` på testkamera.

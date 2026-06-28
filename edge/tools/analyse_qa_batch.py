@@ -21,7 +21,7 @@ def _import_edge() -> None:
             sys.path.insert(0, str(path))
 
 
-def _config(mode: str, runner: str, model: str) -> dict:
+def _config(mode: str, runner: str, model: str, vendor_binary: str) -> dict:
     return {
         "quality": {
             "check_enabled": True,
@@ -42,6 +42,7 @@ def _config(mode: str, runner: str, model: str) -> dict:
                 "prefer_npu": mode == "npu_first",
                 "runner": runner,
                 "model_path": model,
+                "vendor_binary": vendor_binary,
             },
         }
     }
@@ -63,6 +64,7 @@ def main() -> int:
     parser.add_argument("--mode", default="assist", choices=["off", "monitor", "assist", "autonomous", "npu_first", "lab"])
     parser.add_argument("--runner", default="")
     parser.add_argument("--model", default="")
+    parser.add_argument("--vendor-binary", default="")
     parser.add_argument("--out", default="")
     args = parser.parse_args()
 
@@ -72,7 +74,7 @@ def main() -> int:
     except Exception:
         from edge.capture.quality import QualityChecker
 
-    checker = QualityChecker(_config(args.mode, args.runner, args.model))
+    checker = QualityChecker(_config(args.mode, args.runner, args.model, args.vendor_binary))
     output = Path(args.out) if args.out else None
     fh = output.open("w", encoding="utf-8") if output else sys.stdout
     count = 0
@@ -104,4 +106,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
