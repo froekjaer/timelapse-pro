@@ -33,13 +33,13 @@ def _import_edge_modules() -> None:
         sys.path.insert(0, str(repo_root))
 
 
-def _detect_runtime() -> dict[str, Any]:
+def _detect_runtime(model: Path | None = None) -> dict[str, Any]:
     _import_edge_modules()
     try:
         from ai.npu_runtime import detect_orangepi_npu_runtime
     except Exception:
         from edge.ai.npu_runtime import detect_orangepi_npu_runtime
-    return detect_orangepi_npu_runtime()
+    return detect_orangepi_npu_runtime(model_path=str(model) if model else None)
 
 
 def _cpu_fallback(image: Path, model: Path | None, runtime_info: dict[str, Any]) -> dict[str, Any]:
@@ -86,7 +86,7 @@ def _cpu_fallback(image: Path, model: Path | None, runtime_info: dict[str, Any])
 
 
 def analyse(image: Path, model: Path | None) -> dict[str, Any]:
-    runtime_info = _detect_runtime()
+    runtime_info = _detect_runtime(model)
     # The Allwinner A733 NPU integration point belongs here. The surrounding
     # contract is already stable; vendor-specific bindings can replace this
     # fallback without touching QualityChecker or EdgeAgent.

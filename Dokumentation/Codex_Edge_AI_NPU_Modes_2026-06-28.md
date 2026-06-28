@@ -139,3 +139,17 @@ Kør batchanalyse på en hel mappe og skriv JSONL:
 5. Sæt `quality.edge_ai.mode=npu_first` på testkamera.
 6. Kør `edge_qa_npu_runner.py` på mindst normal, sol/refleks og snavs/sne testbillede.
 7. Tag LAB-preview og fuldt capture; kontroller `.qa.json` og `capture.ai_result`.
+
+## Orange Pi 4 Pro teststatus 2026-06-28
+
+Testet på `timelapse0101` (`192.168.86.134`):
+
+- Board viser `/dev/vipcore=true`, `machine=aarch64`, `proc_device_tree_model=sun60iw2`.
+- Installeret afhængigheder: `libopencv-dev`, `cmake`, `make`, `g++`, `pkg-config`, `tree`.
+- Installeret officielt Orange Pi `ai-sdk` fra `NPU Sample Program/ai-sdk.tar` i `/opt/timelapse/ai-sdk`.
+- Bygget og kørt `/opt/timelapse/ai-sdk/examples/resnet50/build/resnet50`.
+- NPU-run output viste `VIPLite driver software version 2.0.3.2-AW-2024-08-30` og `awnn_run success`.
+- Foreløbig modelsti `/opt/timelapse/models/edge_qa.nb` peger på SDK'ets ResNet50 demo-model for at bevise `.nb`/runtime-kæden.
+- `probe_orangepi_npu.py --model /opt/timelapse/models/edge_qa.nb --pretty` returnerer `npu_ready=true` og `missing=[]`.
+
+Status: NPU-hardware, VIPLite runtime og `.nb` modelsti er verificeret. TimeLapse-runneren bruger stadig CPU/OpenCV optimizer som produktions-QA og markerer `vendor_runtime_binding_not_installed`, indtil vi har en egentlig TimeLapse QA `.nb` model og binding/eksekverbar wrapper til VIPLite.
