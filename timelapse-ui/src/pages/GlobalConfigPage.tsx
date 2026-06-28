@@ -129,6 +129,7 @@ const SECTIONS: { key: keyof ConfigDefaults; label: string; description: string;
       { key: 'edge_ai.prefer_npu', label: 'Foretræk NPU', type: 'boolean', default: true },
       { key: 'edge_ai.runner', label: 'NPU runner', type: 'text', placeholder: '/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py' },
       { key: 'edge_ai.model_path', label: 'NPU model', type: 'text', placeholder: '/opt/timelapse/models/edge_qa.nb' },
+      { key: 'edge_ai.vendor_binary', label: 'VIPLite wrapper', type: 'text', placeholder: '/opt/timelapse/bin/edge_qa_viplite' },
     ],
   },
   {
@@ -331,6 +332,7 @@ export function GlobalConfigPage() {
           prefer_npu: true,
           runner: '/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py',
           model_path: '',
+          vendor_binary: '',
         },
       },
       storage: { local_path: '/data/captures', circular_buffer_gb: 50, db_path: '/data/timelapse_edge.db' },

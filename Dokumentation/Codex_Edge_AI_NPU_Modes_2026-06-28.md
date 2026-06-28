@@ -42,6 +42,7 @@ quality:
     prefer_npu: true
     runner: /opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py
     model_path: /opt/timelapse/models/edge_qa.nb
+    vendor_binary: /opt/timelapse/bin/edge_qa_viplite
 ```
 
 Runneren skal skrive præcis ét JSON-objekt til stdout. Minimum:
@@ -58,6 +59,49 @@ Runneren skal skrive præcis ét JSON-objekt til stdout. Minimum:
 ```
 
 Den nuværende runner er NPU-klar, men falder tilbage til CPU/OpenCV hvis vendor runtime/model mangler. Den returnerer runtime-detektion, så hardwarestatus kan ses i QA-resultatet.
+
+`runner` er den stabile TimeLapse Python-kontrakt. `vendor_binary` er valgfri og peger på den board-lokale VIPLite-wrapper, som senere kører den rigtige `.nb` QA-model og returnerer enten `label + confidence`, `class_id + confidence` eller `scores`.
+
+## QA modelkontrakt
+
+Kontrakten er defineret i `edge/ai/model_contract.py`.
+
+Inputkontrakt til første NPU-model:
+
+- 224 x 224
+- RGB
+- NHWC
+- pixel scale `1/255`
+
+Outputklasser:
+
+| id | label | Dimension |
+| --- | --- | --- |
+| 0 | `ok` | overall |
+| 1 | `blurry` | focus |
+| 2 | `depth_of_field_issue` | depth_of_field |
+| 3 | `snow_or_dirt_on_lens` | lens_obstruction |
+| 4 | `condensation` | lens_obstruction |
+| 5 | `direct_sun_reflection` | schedule |
+| 6 | `underexposed` | exposure |
+| 7 | `overexposed` | exposure |
+| 8 | `white_balance_cast` | white_balance |
+
+Wrapper-output kan være en af disse former:
+
+```json
+{"label": "direct_sun_reflection", "confidence": 0.92}
+```
+
+```json
+{"class_id": 5, "confidence": 0.92}
+```
+
+```json
+{"scores": {"ok": 0.02, "direct_sun_reflection": 0.92}}
+```
+
+Runneren normaliserer dette til `timelapse.edge_qa.v1` med `probable_cause`, `quality_dimension`, `recommended_action` og `model_input`.
 
 ## Orange Pi 4 Pro/A733 manualnoter
 
@@ -96,11 +140,7 @@ Vigtige felter:
 - `missing=["viplite_runtime_or_device"]`: VIPLite runtime/device driver mangler eller er ikke synlig.
 - `missing=["model_path"]`: `.nb` modellen mangler på den konfigurerede sti.
 
-Første produktionsmodel bør sandsynligvis være en lille klassifikationsmodel, ikke en stor vision-LLM:
-
-- input: nedskaleret JPEG/preview
-- outputklasser: `ok`, `blurry`, `snow_or_dirt_on_lens`, `condensation`, `direct_sun_reflection`, `underexposed`, `overexposed`, `white_balance_cast`
-- output: confidence + class, som runneren mapper til TimeLapse JSON-kontrakten
+Første produktionsmodel bør sandsynligvis være en lille klassifikationsmodel, ikke en stor vision-LLM. Den bør trænes på ovenstående kontrakt og eksporteres via Allwinner ACUITY til `.nb`.
 
 ## Testbilleder
 
@@ -130,6 +170,23 @@ Kør batchanalyse på en hel mappe og skriv JSONL:
   --out /tmp/timelapse-qa-test-images/results.jsonl
 ```
 
+Byg datasætmanifest til træning/evaluering:
+
+```bash
+/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/build_qa_dataset_manifest.py \
+  /tmp/timelapse-qa-test-images \
+  --out /tmp/timelapse-qa-test-images/manifest.jsonl
+```
+
+Hvis der allerede findes batchanalyse, kan den bruges som pseudo-label-kilde:
+
+```bash
+/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/build_qa_dataset_manifest.py \
+  /data/captures \
+  --from-batch-jsonl /tmp/timelapse-qa-test-images/results.jsonl \
+  --out /tmp/timelapse-edge-qa-manifest.jsonl
+```
+
 ## Morgenens hardware-test
 
 1. Verificer at `opencv-python-headless` virker i edge venv.
@@ -153,3 +210,12 @@ Testet på `timelapse0101` (`192.168.86.134`):
 - `probe_orangepi_npu.py --model /opt/timelapse/models/edge_qa.nb --pretty` returnerer `npu_ready=true` og `missing=[]`.
 
 Status: NPU-hardware, VIPLite runtime og `.nb` modelsti er verificeret. TimeLapse-runneren bruger stadig CPU/OpenCV optimizer som produktions-QA og markerer `vendor_runtime_binding_not_installed`, indtil vi har en egentlig TimeLapse QA `.nb` model og binding/eksekverbar wrapper til VIPLite.
+
+## Næste modelmilepæl
+
+1. Indsaml 200-500 repræsentative billeder pr. klasse fra rigtige installationer og syntetiske testbilleder.
+2. Byg `manifest.jsonl` med `build_qa_dataset_manifest.py`.
+3. Træn en lille MobileNet/EfficientNet-lignende klassifikationsmodel på PC.
+4. Eksporter ONNX og konverter til `.nb` med Allwinner ACUITY.
+5. Implementer `/opt/timelapse/bin/edge_qa_viplite`, der læser image/model og skriver scores JSON.
+6. Sæt `quality.edge_ai.vendor_binary` i global/kunde/site/kamera-konfigurationen og kør `mode=npu_first` på testkamera.

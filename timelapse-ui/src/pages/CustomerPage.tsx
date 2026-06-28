@@ -53,6 +53,7 @@ function buildQualityOverride(
     preferNpu: string
     runner: string
     modelPath: string
+    vendorBinary: string
     adaptiveExposure: string
     evStep: string
   }
@@ -61,7 +62,7 @@ function buildQualityOverride(
   const edgeAi = { ...(quality.edge_ai ?? {}) }
   const adaptive = { ...(quality.adaptive_exposure ?? {}) }
 
-  for (const key of ['enabled', 'mode', 'prefer_npu', 'runner', 'model_path']) delete edgeAi[key]
+  for (const key of ['enabled', 'mode', 'prefer_npu', 'runner', 'model_path', 'vendor_binary']) delete edgeAi[key]
   for (const key of ['enabled', 'step_ev']) delete adaptive[key]
 
   const enabled = triTo(fields.edgeAiEnabled)
@@ -71,6 +72,7 @@ function buildQualityOverride(
   if (preferNpu !== undefined) edgeAi.prefer_npu = preferNpu
   if (fields.runner.trim()) edgeAi.runner = fields.runner.trim()
   if (fields.modelPath.trim()) edgeAi.model_path = fields.modelPath.trim()
+  if (fields.vendorBinary.trim()) edgeAi.vendor_binary = fields.vendorBinary.trim()
 
   const adaptiveEnabled = triTo(fields.adaptiveExposure)
   if (adaptiveEnabled !== undefined) adaptive.enabled = adaptiveEnabled
@@ -107,6 +109,7 @@ export function CustomerPage() {
   const [preferNpu, setPreferNpu]         = useState('')
   const [edgeAiRunner, setEdgeAiRunner]   = useState('')
   const [edgeAiModel, setEdgeAiModel]     = useState('')
+  const [edgeAiVendorBinary, setEdgeAiVendorBinary] = useState('')
   const [adaptiveExposure, setAdaptiveExposure] = useState('')
   const [evStep, setEvStep]               = useState('')
 
@@ -138,6 +141,7 @@ export function CustomerPage() {
         setPreferNpu(triFrom(edgeAi.prefer_npu))
         setEdgeAiRunner(edgeAi.runner ?? '')
         setEdgeAiModel(edgeAi.model_path ?? '')
+        setEdgeAiVendorBinary(edgeAi.vendor_binary ?? '')
         setAdaptiveExposure(triFrom(adaptive.enabled))
         setEvStep(adaptive.step_ev != null ? String(adaptive.step_ev) : '')
       })
@@ -154,6 +158,7 @@ export function CustomerPage() {
         preferNpu,
         runner: edgeAiRunner,
         modelPath: edgeAiModel,
+        vendorBinary: edgeAiVendorBinary,
         adaptiveExposure,
         evStep,
       })
@@ -362,6 +367,12 @@ export function CustomerPage() {
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={edgeAiModel} onChange={e => setEdgeAiModel(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">VIPLite wrapper</label>
+            <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="Arv"
+              value={edgeAiVendorBinary} onChange={e => setEdgeAiVendorBinary(e.target.value)} />
           </div>
         </div>
       </div>

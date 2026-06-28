@@ -7,9 +7,16 @@ import cv2
 import numpy as np
 
 from edge.ai.autonomous_optimizer import AutonomousImageOptimizer
+from edge.ai.model_contract import (
+    classification_to_contract,
+    contract_metadata,
+    label_from_filename,
+    scores_to_contract,
+)
 from edge.ai.npu_quality import NpuQualityAdapter
 from edge.ai.npu_runtime import detect_orangepi_npu_runtime
 from edge.capture.quality import QualityChecker, QualityFlag, QualityResult
+from edge.tools.generate_qa_test_images import generate
 
 
 def make_checker() -> QualityChecker:
@@ -260,6 +267,40 @@ def test_edge_qa_npu_runner_emits_json_contract(tmp_path):
     assert payload["available"] is False
     assert "runtime" in payload
     assert "optimizer" in payload
+    assert payload["schema"] == "timelapse.edge_qa.v1"
+
+
+def test_edge_qa_contract_maps_known_labels():
+    payload = classification_to_contract("depth_of_field_issue", 0.87, engine="test")
+
+    assert payload["schema"] == "timelapse.edge_qa.v1"
+    assert payload["class_id"] == 2
+    assert payload["probable_cause"] == "depth_of_field_issue"
+    assert payload["quality_dimension"] == "depth_of_field"
+    assert payload["is_anomaly"] is True
+
+
+def test_edge_qa_contract_scores_accept_dict_and_list():
+    by_name = scores_to_contract({"ok": 0.1, "direct_sun_reflection": 0.91})
+    by_index = scores_to_contract([0.1, 0.2, 0.3, 0.4, 0.5, 0.95])
+
+    assert by_name["label"] == "direct_sun_reflection"
+    assert by_index["label"] == "direct_sun_reflection"
+    assert any(c["label"] == "white_balance_cast" for c in contract_metadata()["classes"])
+
+
+def test_edge_qa_contract_rejects_unknown_label():
+    try:
+        classification_to_contract("mystery", 0.5)
+    except ValueError as exc:
+        assert "Unknown edge QA label" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_label_from_filename_covers_synthetic_images():
+    assert label_from_filename("qa_06_shallow_depth_of_field.jpg") == "depth_of_field_issue"
+    assert label_from_filename("qa_07_snow_or_dirty_lens.jpg") == "snow_or_dirt_on_lens"
 
 
 def test_npu_adapter_accepts_runner_command_with_arguments(tmp_path):
@@ -283,6 +324,40 @@ def test_npu_adapter_accepts_runner_command_with_arguments(tmp_path):
     result = adapter.analyse(path)
     assert result is not None
     assert result["engine"] == "edge_npu_contract_cpu_fallback"
+
+
+def test_edge_qa_npu_runner_normalises_vendor_binary(tmp_path):
+    img = np.full((120, 180, 3), 220, dtype=np.uint8)
+    image = _write_jpeg(tmp_path / "adapter.jpg", img)
+    model = tmp_path / "edge_qa.nb"
+    model.write_bytes(b"demo")
+    vendor = tmp_path / "vendor.py"
+    vendor.write_text(
+        "import json\n"
+        "print(json.dumps({'scores': {'ok': 0.1, 'direct_sun_reflection': 0.92}}))\n",
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "edge/tools/edge_qa_npu_runner.py",
+            "--model",
+            str(model),
+            "--image",
+            str(image),
+            "--vendor-binary",
+            f"{sys.executable} {vendor}",
+            "--json",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(proc.stdout)
+    assert payload["label"] in {"direct_sun_reflection", "ok"}
+    if payload["engine"] != "edge_npu_contract_pending_vendor_binding":
+        assert payload["probable_cause"] == "direct_sun_reflection"
 
 
 def test_orangepi_npu_probe_reports_missing_model(tmp_path):
@@ -315,3 +390,31 @@ def test_probe_orangepi_npu_cli_emits_json(tmp_path):
     payload = json.loads(proc.stdout)
     assert payload["engine"] == "orangepi_npu_probe_v1"
     assert payload["npu_ready"] is False
+
+
+def test_build_qa_dataset_manifest_from_generated_images(tmp_path):
+    image_dir = tmp_path / "images"
+    generate(image_dir)
+    out = tmp_path / "manifest.jsonl"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "edge/tools/build_qa_dataset_manifest.py",
+            str(image_dir),
+            "--out",
+            str(out),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    summary = json.loads(proc.stdout)
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+
+    assert summary["images"] == 7
+    assert len(rows) == 7
+    labels = {row["label"] for row in rows}
+    assert "direct_sun_reflection" in labels
+    assert "depth_of_field_issue" in labels
+    assert all(row["sha256"] for row in rows)

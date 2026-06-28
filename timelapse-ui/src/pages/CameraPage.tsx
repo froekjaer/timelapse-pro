@@ -104,6 +104,7 @@ const CAMERA_PARAMS: ParamRow[] = [
   { key: 'quality.edge_ai.prefer_npu', label: 'Brug NPU hvis mulig', section: 'Kvalitet', type: 'boolean', description: 'Bruger lokal NPU-runner/model når installeret på Edge' },
   { key: 'quality.edge_ai.runner', label: 'NPU runner', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py', description: 'Lokal kommando der returnerer QA JSON' },
   { key: 'quality.edge_ai.model_path', label: 'NPU model', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/models/edge_qa.nb', description: 'Vendor/NPU modelsti på Edge' },
+  { key: 'quality.edge_ai.vendor_binary', label: 'VIPLite wrapper', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/bin/edge_qa_viplite', description: 'Valgfri board-lokal binary der kører .nb modellen og returnerer scores JSON' },
   // Diagnostik
   { key: 'diagnostics.heartbeat_interval_minutes', label: 'Heartbeat interval', section: 'Diagnostik', type: 'number', unit: 'min', placeholder: '60', description: 'Minutter mellem diagnostik uploads' },
 ]

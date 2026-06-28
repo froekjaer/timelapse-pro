@@ -41,6 +41,10 @@ class NpuQualityAdapter:
             edge_ai.get("model_path")
             or os.getenv("TIMELAPSE_EDGE_AI_MODEL", "")
         ).strip()
+        self._vendor_binary = str(
+            edge_ai.get("vendor_binary")
+            or os.getenv("TIMELAPSE_EDGE_AI_VENDOR_BINARY", "")
+        ).strip()
         self._timeout_s = int(edge_ai.get("timeout_s", 8))
 
     def available(self) -> bool:
@@ -63,6 +67,7 @@ class NpuQualityAdapter:
             "runner": self._runner or None,
             "model_path": self._model or None,
             "model_present": bool(self._model and Path(self._model).exists()),
+            "vendor_binary": self._vendor_binary or None,
             "runtime": "vendor_npu_json_runner",
         }
 
@@ -71,6 +76,8 @@ class NpuQualityAdapter:
         if not self.available():
             return None
         cmd = shlex.split(self._runner) + ["--model", self._model, "--image", str(image_path), "--json"]
+        if self._vendor_binary:
+            cmd.extend(["--vendor-binary", self._vendor_binary])
         try:
             env = os.environ.copy()
             env["TIMELAPSE_EDGE_AI_MODE"] = self._policy.mode
