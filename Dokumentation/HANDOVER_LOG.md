@@ -150,3 +150,149 @@ person vide".
   svag til kvalitet; Gemini er klart bedst. local_only kun hvis privacy er et hårdt krav.
 - Filer rørt: `headend/ai/ollama_service.py` (num_ctx 8192).
 - Risici / pas på: 8192 ctx bruger mere RAM på Mac'en; juster via `TIMELAPSE_VISION_NUM_CTX`.
+
+### Handover 2026-06-28 13:25 — fra Peter/Claude (status)
+- Hvad er gjort: `cv2` var IKKE installeret i venv → installeret `opencv-python-headless 4.13`
+  (+ `numpy 2.5` som dependency). Resize bruger nu cv2; PIL er fallback.
+- Risici / pas på: numpy løftet 1.x → **2.5** (breaking changes). BEKRÆFT at headenden stadig
+  importerer rent FØR næste genstart:
+  `~/.venvs/timelapse-headend/bin/python -c "import numpy,cv2; print(numpy.__version__,cv2.__version__)"`
+  og helst en kort import-test af headend-modulerne. Hvis noget brækker på genstart: pin
+  `numpy<2` + en ældre `opencv-python-headless`.
+- Næste skridt: re-kør compare (cv2 + num_ctx 8192 nu aktivt) for et fairt Ollama-vs-Gemini-tal.
+
+### Handover 2026-06-28 13:40 — fra Claude til Peter/Codex (KONKLUSION: Ollama vs Gemini)
+- Hvad er gjort: Fair sammenligning kørt (cv2-resize 1024px + num_ctx 8192), 6 billeder.
+  Resultat: Ollama (qwen2.5vl:7b) gns. **2,0 tags / 50s**; Gemini gns. **21,3 tags / 15s**.
+  Ollama timeout'ede stadig (157s→llava-fallback), gav 0 tags på 2/6, og hallucinerede forkerte
+  tags på rene scener. Overlap med Gemini: 0-1 tags. Gemini fangede endda en event/anomali på
+  Travbyen (fest med inflatable_arch/gazebo/group_of_people).
+- KONKLUSION: **cloud_only (Gemini) er det klare valg.** local_only er ikke brugbart på denne
+  Mac Mini (10× færre tags, ofte forkerte, 3× langsommere). local_then_cloud sparer intet —
+  Ollama er usikker/tom på næsten alt, så stort set alt ville eskalere til Gemini ALLIGEVEL,
+  blot 50s langsommere. Resultatfiler: `~/Claude/Projects/Timelaps/compare_ollama_vs_gemini.{json,md}`.
+- Hvad mangler / næste skridt: Hylde Ollama indtil (a) privacy bliver et HÅRDT krav, eller
+  (b) kraftigere hardware (Mac Studio / GPU-boks) hvor 7B-vision kører på sekunder, eller
+  (c) edge-NPU-sporet (Codex) til on-device teknisk QA. Strategi sættes til cloud_only.
+- Filer rørt: ingen (read-only sammenligning).
+- Risici / pas på: at køre Ollama på Mac Mini'en konkurrerer om ressourcer med headenden.
+
+### Handover 2026-06-28 14:05 — fra Claude til Peter/Codex (lokal-model status)
+- Hvad er gjort: Testet `qwen3-vl:8b` via compare (--local-model). Resultat: **tomt response-felt
+  på alle billeder (0 tags, 0ms)** — modellen er sandsynligvis for ny til den installerede Ollama
+  (eller kræver /api/chat i stedet for /api/generate). Integrations-/versionsproblem, IKKE en
+  kvalitetsmåling. Vision-kandidater på maskinen: qwen3-vl:8b (tom), qwen2.5vl:7b (langsom+svag),
+  llava-phi3 (svag), gemma4:e4b (uprøvet). gpt-oss/deepseek/llama3.2 er tekst-only.
+- ANBEFALING: Lokal vision er et selvstændigt R&D-spor (Ollama-version/integration + hardware-loft
+  + evt. finetuning). Ship NU med `cloud_only` (Gemini), som er klar og fremragende. Forfølg lokal
+  separat — naturligt sammen med Codex' edge-NPU-spor.
+- Næste skridt hvis lokal skal forfølges: (1) `ollama --version` + opgradér Ollama; (2) rå test
+  af qwen3-vl uden vores kode (curl /api/generate med ét billede) for at se om modellen overhovedet
+  giver tekst i denne Ollama; (3) overvej /api/chat-sti for VL-modeller.
+- Filer rørt: `headend/ai/compare_ollama_gemini.py` (--local-model flag).
+
+### Handover 2026-06-28 14:30 — fra Claude til Peter/Codex (504 på bulk AI-batch)
+- Hvad er gjort: `POST /api/admin/ai-batch/start` byggede for "alle 26.000" hele JSONL'en
+  (base64 af alle billeder) + kontekst pr. billede SYNKRONT i HTTP-kaldet → minutter →
+  nginx 504. RETTET i `headend/main.py`: hele job-prep (query, find filer, kontekst, encode +
+  upload til Google) flyttet til en BAGGRUNDSTRÅD. Endpointet opretter nu job-rækken som
+  `status=submitting` og returnerer straks; tråden opdaterer til `submitted`/`failed` og
+  fylder gemini_job_name + total_count. Kontekst-bygning cacher nu Device pr. enhed.
+- Hvad mangler / næste skridt: KRÆVER headend-genstart for at træde i kraft
+  (`launchctl kickstart -k ...`). Bekræft derefter health=200.
+- Workaround UDEN genstart (hvis bulk skal i gang nu): kør AI-batch i mindre bidder via `limit`
+  (fx 500 ad gangen) ELLER brug post-processing AI-køen (tråder til live-worker, ingen 504,
+  fuld pris) i bølger.
+- AFKLAR: brugte Peter "AI-batch"-knappen eller "Post-processing → AI"? Hvis sidstnævnte gav
+  504, er årsagen en anden (sandsynligvis Ollama health-check der hænger hvis strategi=local) —
+  tjek headend-loggen omkring fejlen.
+- Filer rørt: `headend/main.py` (ai-batch baggrundstråd).
+- Risici / pas på: svaret skifter form (returnerer nu `{id,status:submitting}` i stedet for
+  `total/gemini_job_name`) — UI'et følger jobbet via ai-batch/jobs-listen, som det allerede gør.
+
+### Handover 2026-06-29 11:35 — fra Claude til Peter/Codex (batch: OOM-risiko + streaming-fix)
+- Hvad er gjort: Bekræftet at ai-batch-fixet virker (200, jobs som `submitting`). MEN på Vertex
+  byggede `_submit_batch_job_vertex_gcs` hele JSONL'en (base64 af ALLE billeder) som én streng i
+  RAM → titals GB for 26.000 → ubrugeligt. RETTET: streamer nu til temp-fil på disk + GCS
+  `upload_from_filename` (lavt RAM-forbrug). Peters 4 forsøg på "alle 26.000" blev dræbt af
+  genstart → 4 forældede `submitting`-rækker i `ai_batch_jobs`.
+- Næste skridt:
+  1) Ryd rester: `UPDATE ai_batch_jobs SET status='failed' WHERE status='submitting';`
+  2) Genstart headend (loader streaming-fixet).
+  3) Kør i BIDDER (Maks billeder ~5000 eller pr. kamera), én ad gangen, vent submitting→submitted.
+     ELLER brug AI-KØEN (AI+force, IKKE batch-mode) — fuld pris men robust, i bølger af ~5000.
+- Filer rørt: `headend/ai/gemini_service.py` (Vertex JSONL streaming), `headend/main.py`
+  (ai-batch baggrundstråd, tidligere note).
+- Risici / pas på: tabel `ai_batch_jobs`. Kør IKKE "alle 26.000" i ét batch-job; chunk det.
+  Klik Start én gang pr. bid og vent på status-flip.
+
+### Handover 2026-06-29 11:50 — fra Claude til Peter/Codex (CLI chunked batch-script)
+- Hvad er gjort: Afklaret at de eksisterende CLI-scripts (`backfill.py`, `backfill_tags.py`) kører
+  SYNKRONT pr. billede (fuld pris) — der fandtes IKKE et chunked Gemini-Batch-script. Lavet
+  NYT: `headend/ai/ai_batch_submit.py` — tager alle/filtrerede billeder, deler i bidder
+  (`--chunk-size`, default 2000), og indsender hver bid som sit eget Gemini batch-job (~50% pris).
+  Opretter AiBatchJob-rækker; headendens eksisterende 5-min poller finaliserer og skriver tags
+  tilbage. Kører som frisk proces → bruger streaming-fix + ny prompt fra disk, INGEN genstart nødvendig.
+- Kommandoer: dry-run → `--limit 2000 --force` test → `--all --force [--no-context]`.
+  (`--no-context` = hurtigere; scene/kvalitet/normalisering virker stadig.)
+- Forudsætning: headend oppe (poller), Vertex GCS-bucket sat, `SFTP_BASE` korrekt.
+- Filer rørt: `headend/ai/ai_batch_submit.py` (nyt).
+- Risici / pas på: bruger den nye streamede `submit_batch_job`; hver bid = ét Google-job.
+
+### Handover 2026-06-29 12:10 — fra Claude til Codex (TO settings-tabeller!)
+- Fund: Kodebasen har TO parallelle settings-tabeller der læses forskelligt:
+  headend/UI bruger `settings` (via `main._get_setting`), mens `settings_helper.get_setting`
+  (brugt af backfill, ai_batch_submit, ai_router) læser `system_settings`. Konfig er SPLIT:
+  fx ligger `gemini_gcs_bucket` i `settings`, mens `gemini_api_key`/service_account fandtes i
+  `system_settings`. Det gav "Vertex kræver GCS-bucket" i CLI selvom bucket'et var sat i UI.
+- Fix (midlertidig): `ai_batch_submit.py._setting()` læser nu fra BEGGE tabeller (settings først).
+- Anbefaling til Codex: konsolidér de to tabeller til ÉN kilde (eller lad `settings_helper` læse
+  `settings`), så headend og CLI-scripts deler samme config. Tilføj evt. til "kendte faldgruber"
+  i driftsdokumentet.
+- Filer rørt: `headend/ai/ai_batch_submit.py` (_setting dual-table reader).
+
+### Handover 2026-06-29 12:10 — fra Claude til Peter/Codex (BATCH KØRER ✅)
+- Hvad er gjort: Test-bid (2000 billeder) indsendt OK via `ai_batch_submit.py`:
+  Gemini batch-job `projects/825723674551/.../batchPredictionJobs/705361929266266112`,
+  2000 billeder, 0 manglede. Hele kæden (find→resize/encode→stream til GCS→submit→AiBatchJob-række)
+  virker. `--skip` tilføjet for at fortsætte fra bid 2.
+- Næste skridt: kør bid 2-14: `ai_batch_submit.py --skip 2000 --force --no-context` (gerne nohup).
+  Når alle jobs er `succeeded`, kør `camera_profile.py --all --apply` (baselines på rene tags).
+- Pris: ~$34 / ~250 DKK for alle 26.159 (Gemini 2.5 Flash batch). Resultater: min → 24t.
+- Filer rørt: `headend/ai/ai_batch_submit.py` (--skip).
+- Risici / pas på: build+upload er CPU/IO-tungt (~3 min/2000 billeder); nohup til den store kørsel.
+
+### Handover 2026-06-29 12:25 — fra Claude til Peter/Codex (BULK INDSENDT — alle 14 jobs ✅)
+- Hvad er gjort: ALLE 14 Gemini batch-jobs indsendt (test 2000 + `--skip 2000` gav 13 jobs à 2000/161
+  = 24.161). I alt ~26.161 billeder re-tagges med den nye prompt. Google kører async; headendens
+  poller (5-min) skriver tags tilbage. Bulk re-tag-tråden i §7 kan markeres som I GANG/næsten færdig.
+- Følg: `SELECT status, count(*), sum(total_count) FROM ai_batch_jobs GROUP BY status;` eller UI.
+- Næste/sidste skridt: når alle 14 er `succeeded` → `camera_profile.py --all --apply` (baselines på
+  rene tags). Derefter er hele AI-tagging-opgaven i mål.
+- Pris: ~$34 / ~250 DKK engang.
+- Filer rørt: ingen nye (kørsel).
+
+### Handover 2026-06-29 16:05 — fra Codex til Claude/Peter
+- Hvad er gjort: Påbegyndt produktionsgørelse af Edge QA-modellen: tilføjet mining-værktøj til
+  historiske billeder (`mine_qa_training_candidates.py`), review contact sheets
+  (`render_qa_review_sheet.py`), isoleret PyTorch/ONNX træningsscript og ACUITY export-noter.
+- Hvad mangler / næste skridt: kør mining på 5.000-20.000 historiske billeder, review ark pr.
+  label, og træn første ONNX-model i separat training-venv. Derefter konverteres ONNX til `.nb`.
+- Kommandoer kørt eller skal køres:
+  ```bash
+  python edge/tools/mine_qa_training_candidates.py /Volumes/data-fast/timelapse-incoming/canonical-images \
+    --limit 5000 --per-label 500 --include-review \
+    --out /tmp/edge-qa-dataset/candidates.jsonl \
+    --summary-out /tmp/edge-qa-dataset/summary.json
+  python edge/tools/render_qa_review_sheet.py \
+    --manifest /tmp/edge-qa-dataset/candidates.jsonl \
+    --out-dir /tmp/edge-qa-dataset/review
+  ```
+- Forventet/faktisk output: syntetisk test rammer labels for ok, underexposed, sol/refleks,
+  linse/sne/skidt, hvidbalance og dybdeskarphed. Lille real sample viser især sol/refleks og
+  enkelte sløringskandidater; review er nødvendigt for at adskille sol/refleks fra frontglas.
+- Filer rørt: `edge/tools/mine_qa_training_candidates.py`,
+  `edge/tools/render_qa_review_sheet.py`, `edge/training/*`, `tests/test_edge_quality_qa.py`,
+  `Dokumentation/Codex_Edge_AI_NPU_Modes_2026-06-28.md`.
+- Risici / pas på: træn ikke blindt på CPU-heuristik labels. Brug review CSV/ark og hold training
+  dependencies ude af headend/edge runtime-venv.
