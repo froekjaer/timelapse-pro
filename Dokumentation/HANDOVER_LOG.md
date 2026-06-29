@@ -362,3 +362,26 @@ person vide".
 - Risici / pas på: `depth_of_field_issue`-arket indeholder stadig mange review-cases, som kan være
   vejr/snavs/dug snarere end ægte optisk dybdeskarphed. Brug `needs_human_review` som review-kø, ikke
   som automatisk træningssandhed.
+
+### Handover 2026-06-29 17:35 — fra Codex til Claude/Peter (aftale om driftsovervågning + Edge QA)
+- Hvad er gjort: Opdateret samarbejdsdokumentet med en konkret snitflade mellem Claudes
+  driftsovervågningssystem og Codex' Edge QA/NPU-spor. Claude ejer headend-observability,
+  aggregater, alarmer og UI. Codex ejer Edge QA runtime, NPU, modelkontrakt, sidecar-format og
+  billedkvalitetsdata.
+- Kontrakt til Claude: overvågningen bør bruge `quality_flag`, `quality_passed`,
+  `probable_cause`, `confidence`, `quality_dimension`, `autonomous_optimizer.score`,
+  `autonomous_optimizer.recommendations`, `autonomous_optimizer.control_plan` samt `npu.*`.
+- Vigtig beslutning: Headend-overvågningen skal aggregere/visualisere Edge QA-resultater, ikke
+  genklassificere billeder fra pixels som primær logik. Manglende felter i gamle billeder vises som
+  `unknown`/`not_available`.
+- Samtidig Edge QA-fund: dagslys-scan på 3000 historiske billeder viser, at optimizerens
+  `depth_of_field`-hint er for aggressivt som træningslabel. OK-reglen er justeret, så gode
+  timelapse-billeder med almindelige/svage depth-hints kan være `ok`, mens stærk sol/fokus/
+  vedligehold/hvidbalance/eksponering stadig sorteres fra. Teststatus: `26 passed`.
+- Filer rørt: `Dokumentation/HANDOVER_Claude_Codex_arbejdsdeling.md`,
+  `Dokumentation/SERVICES_OG_DRIFT_kilde_til_sandhed.md`,
+  `Dokumentation/HANDOVER_LOG.md`, `edge/tools/mine_qa_training_candidates.py`,
+  `tests/test_edge_quality_qa.py`.
+- Næste skridt for Codex: lave et lille JSON-schema/eksempel for `edge_qa_signal` og fortsætte
+  målrettet OK-mining + review-manifest. Næste skridt for Claude: bygge driftsovervågning mod
+  kontraktfelterne og markere ukendte gamle værdier som `unknown`.

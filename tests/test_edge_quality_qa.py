@@ -335,6 +335,31 @@ def test_training_miner_keeps_high_quality_scene_as_ok():
     assert label_from_report(report) == "ok"
 
 
+def test_training_miner_allows_noisy_depth_hint_on_good_scene_as_ok():
+    report = {
+        "flag": "ok",
+        "passed": True,
+        "is_anomaly": False,
+        "blur_score": 155.0,
+        "brightness_mean": 142.0,
+        "cv_features": {
+            "dark_ratio": 0.02,
+            "bright_ratio": 0.0,
+            "highlight_ratio": 0.0,
+            "contrast_std": 18.5,
+            "saturation_mean": 34.0,
+        },
+        "autonomous_optimizer": {
+            "score": {"overall": 86.9, "grade": "good"},
+            "recommendations": [
+                {"kind": "depth_of_field", "action": "increase_depth_of_field", "confidence": 0.76}
+            ],
+        },
+    }
+
+    assert label_from_report(report) == "ok"
+
+
 def test_training_miner_rejects_dirty_or_dark_scene_as_ok():
     report = {
         "flag": "ok",

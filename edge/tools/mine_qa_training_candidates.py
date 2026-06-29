@@ -193,18 +193,16 @@ def is_normal_candidate(report: dict[str, Any]) -> bool:
     except Exception:
         return False
 
-    if not (overall >= 72.0 and 85.0 <= brightness <= 190.0 and blur >= 80.0):
+    if not (overall >= 78.0 and 55.0 <= brightness <= 190.0 and blur >= 80.0):
         return False
-    if dark_ratio > 0.22 or bright_ratio > 0.08 or highlight_ratio > 0.03:
+    if dark_ratio > 0.35 or bright_ratio > 0.04 or highlight_ratio > 0.015:
         return False
-    if contrast < 25.0 or saturation < 30.0:
+    if contrast < 12.0 or saturation < 20.0:
         return False
     strong_non_normal = {
         "maintenance",
         "schedule",
         "focus",
-        "framing_or_focus",
-        "depth_of_field",
         "white_balance",
     }
     for rec in recs:
@@ -213,6 +211,10 @@ def is_normal_candidate(report: dict[str, Any]) -> bool:
         except Exception:
             confidence = 0.0
         if str(rec.get("kind") or "") in strong_non_normal and confidence >= 0.70:
+            return False
+        if str(rec.get("kind") or "") == "exposure" and confidence >= 0.80:
+            return False
+        if str(rec.get("kind") or "") in {"depth_of_field", "framing_or_focus"} and confidence >= 0.90:
             return False
     return True
 
