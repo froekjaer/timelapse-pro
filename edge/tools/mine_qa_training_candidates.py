@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
+import re
 import random
 import sys
 from collections import Counter, defaultdict
@@ -49,6 +51,46 @@ def iter_images(paths: Iterable[Path]) -> Iterable[Path]:
             for child in sorted(path.rglob("*")):
                 if child.is_file() and child.suffix.lower() in IMAGE_SUFFIXES and ".thumbs" not in child.parts:
                     yield child
+
+
+def image_bucket(path: Path) -> str:
+    parts = path.parts
+    parent_key = "/".join(parts[-6:-3]) if len(parts) >= 6 else str(path.parent)
+    match = re.search(r"(20\d{6})[_-]?(\d{2})", path.name)
+    if match:
+        day = match.group(1)
+        hour = match.group(2)
+        return f"{parent_key}/{day}/{hour}"
+    return f"{parent_key}/{path.parent.name}"
+
+
+def stratified_sample(images: list[Path], limit: int, seed: int, max_per_bucket: int = 0) -> list[Path]:
+    if not limit or len(images) <= limit:
+        return images
+    rng = random.Random(seed)
+    buckets: dict[str, list[Path]] = defaultdict(list)
+    for image in images:
+        buckets[image_bucket(image)].append(image)
+    for bucket_images in buckets.values():
+        rng.shuffle(bucket_images)
+        if max_per_bucket > 0:
+            del bucket_images[max_per_bucket:]
+    selected: list[Path] = []
+    bucket_keys = list(buckets)
+    rng.shuffle(bucket_keys)
+    while len(selected) < limit and bucket_keys:
+        next_keys: list[str] = []
+        for key in bucket_keys:
+            if buckets[key]:
+                selected.append(buckets[key].pop())
+                if len(selected) >= limit:
+                    break
+            if buckets[key]:
+                next_keys.append(key)
+        bucket_keys = next_keys
+        rng.shuffle(bucket_keys)
+    selected.sort()
+    return selected
 
 
 def sha256_file(path: Path) -> str:
@@ -103,6 +145,17 @@ def image_size(path: Path) -> tuple[int | None, int | None]:
 
 
 def label_from_report(report: dict[str, Any]) -> str:
+    flag = str(report.get("flag") or "")
+    flag_label = {
+        "blurry": "blurry",
+        "underexposed": "underexposed",
+        "overexposed": "overexposed",
+    }.get(flag)
+    if flag_label:
+        return flag_label
+    if is_normal_candidate(report):
+        return "ok"
+
     optimizer = report.get("autonomous_optimizer") or {}
     recs = optimizer.get("recommendations") or []
     if recs:
@@ -114,24 +167,65 @@ def label_from_report(report: dict[str, Any]) -> str:
     label = label_from_probable_cause(cause, default="")
     if label:
         return label
-    flag = str(report.get("flag") or "")
     return {
         "ok": "ok",
-        "blurry": "blurry",
-        "underexposed": "underexposed",
-        "overexposed": "overexposed",
     }.get(flag, "ok")
+
+
+def is_normal_candidate(report: dict[str, Any]) -> bool:
+    if str(report.get("flag") or "") != "ok" or report.get("is_anomaly"):
+        return False
+    quality_report = report.get("quality_report") or report
+    features = quality_report.get("cv_features") or report.get("cv_features") or {}
+    optimizer = report.get("autonomous_optimizer") or {}
+    score = optimizer.get("score") or quality_report.get("score") or {}
+    recs = optimizer.get("recommendations") or quality_report.get("recommendations") or []
+
+    try:
+        overall = float(score.get("overall", 0.0) or 0.0)
+        brightness = float(report.get("brightness_mean", quality_report.get("brightness_mean", 0.0)) or 0.0)
+        blur = float(report.get("blur_score", quality_report.get("blur_score", 0.0)) or 0.0)
+        dark_ratio = float(features.get("dark_ratio", 1.0) or 0.0)
+        bright_ratio = float(features.get("bright_ratio", 1.0) or 0.0)
+        highlight_ratio = float(features.get("highlight_ratio", 1.0) or 0.0)
+        contrast = float(features.get("contrast_std", 0.0) or 0.0)
+        saturation = float(features.get("saturation_mean", 0.0) or 0.0)
+    except Exception:
+        return False
+
+    if not (overall >= 72.0 and 85.0 <= brightness <= 190.0 and blur >= 80.0):
+        return False
+    if dark_ratio > 0.22 or bright_ratio > 0.08 or highlight_ratio > 0.03:
+        return False
+    if contrast < 25.0 or saturation < 30.0:
+        return False
+    strong_non_normal = {
+        "maintenance",
+        "schedule",
+        "focus",
+        "framing_or_focus",
+        "depth_of_field",
+        "white_balance",
+    }
+    for rec in recs:
+        try:
+            confidence = float(rec.get("confidence", 0.0) or 0.0)
+        except Exception:
+            confidence = 0.0
+        if str(rec.get("kind") or "") in strong_non_normal and confidence >= 0.70:
+            return False
+    return True
 
 
 def select_recommendation(recommendations: list[dict[str, Any]]) -> dict[str, Any]:
     priority = {
         "maintenance": 100,
         "schedule": 90,
-        "depth_of_field": 80,
-        "focus": 70,
+        "exposure": 85,
+        "focus": 80,
+        "depth_of_field": 70,
         "white_balance": 60,
         "framing_or_focus": 50,
-        "exposure": 40,
     }
 
     def score(rec: dict[str, Any]) -> tuple[int, float]:
@@ -245,25 +339,43 @@ def main() -> int:
     parser.add_argument("--summary-out", default="", help="Optional summary JSON path")
     parser.add_argument("--source", default="historical_cpu_qa")
     parser.add_argument("--limit", type=int, default=0, help="Max images to inspect before balancing")
+    parser.add_argument("--sample-mode", choices=["stratified", "random", "first"], default="stratified")
+    parser.add_argument("--max-per-bucket", type=int, default=0, help="Max images per camera/day/hour-ish bucket before balancing")
     parser.add_argument("--per-label", type=int, default=500, help="Max selected rows per label")
     parser.add_argument("--min-confidence", type=float, default=0.70)
     parser.add_argument("--include-review", action="store_true", help="Include low-confidence review rows")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-ratio", type=float, default=0.80)
     parser.add_argument("--val-ratio", type=float, default=0.10)
+    parser.add_argument("--progress-every", type=int, default=250, help="Print progress every N inspected images; 0 disables")
+    parser.add_argument("--verbose", action="store_true", help="Keep QualityChecker warnings visible")
     args = parser.parse_args()
 
+    if not args.verbose:
+        logging.basicConfig(level=logging.ERROR)
+        logging.getLogger().setLevel(logging.ERROR)
+        logging.getLogger("capture.quality").setLevel(logging.ERROR)
+        logging.getLogger("edge.capture.quality").setLevel(logging.ERROR)
+
     images = list(iter_images(Path(p) for p in args.paths))
-    rng = random.Random(args.seed)
     if args.limit and len(images) > args.limit:
-        images = rng.sample(images, args.limit)
-        images.sort()
+        if args.sample_mode == "random":
+            rng = random.Random(args.seed)
+            images = rng.sample(images, args.limit)
+            images.sort()
+        elif args.sample_mode == "stratified":
+            images = stratified_sample(images, args.limit, args.seed, args.max_per_bucket)
+        else:
+            images = images[:args.limit]
 
     checker = QualityChecker(qa_config())
     created_at = datetime.now(timezone.utc).isoformat()
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
-    for image in images:
+    total = len(images)
+    for idx, image in enumerate(images, start=1):
+        if args.progress_every and (idx == 1 or idx % args.progress_every == 0 or idx == total):
+            print(f"Inspecting {idx}/{total}: {image.name}", file=sys.stderr, flush=True)
         try:
             rows.append(row_for_image(
                 image,
@@ -290,6 +402,8 @@ def main() -> int:
         "selected": len(selected),
         "errors": len(errors),
         "out": str(out),
+        "sample_mode": args.sample_mode,
+        "max_per_bucket": args.max_per_bucket,
         "labels_inspected": Counter(row["label"] for row in rows),
         "labels_selected": Counter(row["label"] for row in selected),
         "review_priority_selected": Counter(row["review_priority"] for row in selected),

@@ -17,6 +17,7 @@ from edge.ai.npu_quality import NpuQualityAdapter
 from edge.ai.npu_runtime import detect_orangepi_npu_runtime
 from edge.capture.quality import QualityChecker, QualityFlag, QualityResult
 from edge.tools.generate_qa_test_images import generate
+from edge.tools.mine_qa_training_candidates import label_from_report
 
 
 def make_checker() -> QualityChecker:
@@ -278,6 +279,86 @@ def test_edge_qa_contract_maps_known_labels():
     assert payload["probable_cause"] == "depth_of_field_issue"
     assert payload["quality_dimension"] == "depth_of_field"
     assert payload["is_anomaly"] is True
+
+
+def test_training_miner_prefers_primary_quality_flag_over_optimizer():
+    report = {
+        "flag": "underexposed",
+        "probable_cause": "underexposure_or_camera_blocked",
+        "autonomous_optimizer": {
+            "recommendations": [
+                {"kind": "depth_of_field", "action": "increase_depth_of_field", "confidence": 0.82}
+            ]
+        },
+    }
+
+    assert label_from_report(report) == "underexposed"
+
+
+def test_training_miner_prefers_exposure_recommendation_over_depth_of_field():
+    report = {
+        "flag": "ok",
+        "probable_cause": "ok",
+        "autonomous_optimizer": {
+            "recommendations": [
+                {"kind": "depth_of_field", "action": "increase_depth_of_field", "confidence": 0.76},
+                {"kind": "exposure", "action": "increase_ev", "confidence": 0.81},
+            ]
+        },
+    }
+
+    assert label_from_report(report) == "underexposed"
+
+
+def test_training_miner_keeps_high_quality_scene_as_ok():
+    report = {
+        "flag": "ok",
+        "passed": True,
+        "is_anomaly": False,
+        "blur_score": 220.0,
+        "brightness_mean": 125.0,
+        "cv_features": {
+            "dark_ratio": 0.04,
+            "bright_ratio": 0.01,
+            "highlight_ratio": 0.002,
+            "contrast_std": 48.0,
+            "saturation_mean": 62.0,
+        },
+        "autonomous_optimizer": {
+            "score": {"overall": 86.0, "grade": "good"},
+            "recommendations": [
+                {"kind": "exposure", "action": "increase_ev", "confidence": 0.64}
+            ],
+        },
+    }
+
+    assert label_from_report(report) == "ok"
+
+
+def test_training_miner_rejects_dirty_or_dark_scene_as_ok():
+    report = {
+        "flag": "ok",
+        "passed": True,
+        "is_anomaly": False,
+        "blur_score": 210.0,
+        "brightness_mean": 70.0,
+        "cv_features": {
+            "dark_ratio": 0.31,
+            "bright_ratio": 0.001,
+            "highlight_ratio": 0.001,
+            "contrast_std": 54.0,
+            "saturation_mean": 72.0,
+        },
+        "autonomous_optimizer": {
+            "score": {"overall": 79.0, "grade": "good"},
+            "recommendations": [
+                {"kind": "exposure", "action": "increase_ev", "confidence": 0.81},
+                {"kind": "depth_of_field", "action": "increase_depth_of_field", "confidence": 0.76},
+            ],
+        },
+    }
+
+    assert label_from_report(report) == "underexposed"
 
 
 def test_edge_qa_contract_scores_accept_dict_and_list():

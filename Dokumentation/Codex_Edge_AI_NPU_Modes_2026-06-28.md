@@ -243,11 +243,36 @@ optimizer er fortsat produktions-QA, indtil vi har en egentlig TimeLapse QA `.nb
 
 ## Næste modelmilepæl
 
+Status 2026-06-29:
+
+- Mining-værktøjet er gjort mere driftsegnet med `--sample-mode stratified`, `--max-per-bucket`,
+  `--progress-every` og dæmpet QualityChecker-logning.
+- Label-mining prioriterer nu primære QA-flags (`blurry`, `underexposed`, `overexposed`) før
+  optimizer-anbefalinger, så nat/mørke billeder ikke fejllabels som dybdeskarphed.
+- Optimizer-prioritet til træningslabels er justeret, så eksponering vinder over dybdeskarphed,
+  mens vedligeholdelse og direkte sol/schedule stadig prioriteres højt.
+- En konservativ normal-kandidatregel er tilføjet, men den seneste historiske sampling gav stadig
+  ingen sikre `ok`-billeder. Næste datasætrunde skal derfor mine `ok` målrettet i dagslys.
+- Seneste baseline:
+  `/Volumes/data-fast/peter-home/projects/timelapse-pro/artifacts/edge-qa-training/edge-qa-v1-normal-baseline-20260629-164818`
+  - inspiceret: 1500 billeder
+  - valgt: 935 kandidater
+  - errors: 0
+  - labels selected: `direct_sun_reflection=250`, `depth_of_field_issue=250`, `overexposed=239`,
+    `underexposed=141`, `blurry=54`, `white_balance_cast=1`
+  - review-ark: `review/*.jpg`
+  - review-CSV: `review/review.csv`
+
+Beslutning: træn ikke første model blindt på denne baseline. Brug den som review/evidence, men lav
+en separat OK-mining og kurater mindst et lille godkendt manifest, før ONNX-træning.
+
 1. Mine kandidater fra historiske billeder:
    ```bash
    python edge/tools/mine_qa_training_candidates.py \
      /Volumes/data-fast/timelapse-incoming/canonical-images \
      --limit 5000 \
+     --sample-mode stratified \
+     --max-per-bucket 3 \
      --per-label 500 \
      --include-review \
      --out /tmp/edge-qa-dataset/candidates.jsonl \
