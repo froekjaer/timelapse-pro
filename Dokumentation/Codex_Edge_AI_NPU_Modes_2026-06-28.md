@@ -243,9 +243,35 @@ optimizer er fortsat produktions-QA, indtil vi har en egentlig TimeLapse QA `.nb
 
 ## Næste modelmilepæl
 
-1. Indsaml 200-500 repræsentative billeder pr. klasse fra rigtige installationer og syntetiske testbilleder.
-2. Byg `manifest.jsonl` med `build_qa_dataset_manifest.py`.
-3. Træn en lille MobileNet/EfficientNet-lignende klassifikationsmodel på PC.
-4. Eksporter ONNX og konverter til `.nb` med Allwinner ACUITY.
-5. Eksporter QA-modellen som `.nb` og læg den i `/opt/timelapse/models/edge_qa.nb`.
-6. Sæt `quality.edge_ai.vendor_binary=/opt/timelapse/bin/edge_qa_viplite` i global/kunde/site/kamera-konfigurationen og kør `mode=npu_first` på testkamera.
+1. Mine kandidater fra historiske billeder:
+   ```bash
+   python edge/tools/mine_qa_training_candidates.py \
+     /Volumes/data-fast/timelapse-incoming/canonical-images \
+     --limit 5000 \
+     --per-label 500 \
+     --include-review \
+     --out /tmp/edge-qa-dataset/candidates.jsonl \
+     --summary-out /tmp/edge-qa-dataset/summary.json
+   ```
+2. Render review-ark og CSV til human review:
+   ```bash
+   python edge/tools/render_qa_review_sheet.py \
+     --manifest /tmp/edge-qa-dataset/candidates.jsonl \
+     --out-dir /tmp/edge-qa-dataset/review
+   ```
+3. Ret `review.csv` hvor CPU-heuristikken tager fejl, og byg et godkendt manifest til træning.
+4. Træn en lille CNN/MobileNet-lignende klassifikationsmodel i separat training-venv:
+   ```bash
+   python -m venv .venv-edge-qa-train
+   .venv-edge-qa-train/bin/pip install -r edge/training/requirements-edge-qa.txt
+   .venv-edge-qa-train/bin/python edge/training/train_edge_qa_model.py \
+     --manifest /tmp/edge-qa-dataset/candidates.jsonl \
+     --out-dir /tmp/edge-qa-model-v1
+   ```
+5. Eksporter ONNX og konverter til `.nb` med Allwinner ACUITY. Se `edge/training/ACUITY_EXPORT_NOTES.md`.
+6. Læg QA-modellen som `/opt/timelapse/models/edge_qa.nb`.
+7. Sæt `quality.edge_ai.vendor_binary=/opt/timelapse/bin/edge_qa_viplite` i global/kunde/site/kamera-konfigurationen og kør `mode=npu_first` på testkamera.
+
+Praktisk krav før produktionsdrift: valider modellen på mindst `test`-split og en frisk dag fra
+hver kameratype. CPU/OpenCV optimizer skal forblive fallback, indtil NPU-modellen er bedre end
+heuristikken på reelle edge-problemer.

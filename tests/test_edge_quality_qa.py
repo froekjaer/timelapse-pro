@@ -418,3 +418,56 @@ def test_build_qa_dataset_manifest_from_generated_images(tmp_path):
     assert "direct_sun_reflection" in labels
     assert "depth_of_field_issue" in labels
     assert all(row["sha256"] for row in rows)
+
+
+def test_mine_qa_training_candidates_and_render_review_sheet(tmp_path):
+    image_dir = tmp_path / "images"
+    generate(image_dir)
+    manifest = tmp_path / "candidates.jsonl"
+    summary = tmp_path / "summary.json"
+    review_dir = tmp_path / "review"
+
+    mine = subprocess.run(
+        [
+            sys.executable,
+            "edge/tools/mine_qa_training_candidates.py",
+            str(image_dir),
+            "--out",
+            str(manifest),
+            "--summary-out",
+            str(summary),
+            "--per-label",
+            "20",
+            "--include-review",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    mine_summary = json.loads(mine.stdout)
+    rows = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
+    labels = {row["label"] for row in rows}
+
+    assert mine_summary["selected"] == len(rows)
+    assert "ok" in labels
+    assert "depth_of_field_issue" in labels
+    assert "white_balance_cast" in labels
+
+    render = subprocess.run(
+        [
+            sys.executable,
+            "edge/tools/render_qa_review_sheet.py",
+            "--manifest",
+            str(manifest),
+            "--out-dir",
+            str(review_dir),
+            "--max-per-label",
+            "5",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    render_summary = json.loads(render.stdout)
+    assert Path(render_summary["review_csv"]).exists()
+    assert (review_dir / "ok.jpg").exists()
