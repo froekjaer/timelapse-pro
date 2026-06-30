@@ -37,7 +37,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,59 @@ from database import Device, DeviceInventory, BreakGlassAccount, PendingUpdate, 
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["CMDB"])
+
+# ── Break-glass checkout-hærdning (opt-in, default slået FRA) ─────────────────
+# Lukker en del af det dokumenterede SABSA-/compliance-hul i checkout_break_glass.
+# MFA er stadig en opfølgning (kræver auth-integration), men rate-limit + valgfri
+# IP-allowlist kan slås til uden at ændre det normale flow:
+#   TIMELAPSE_BREAKGLASS_CHECKOUT_MAX_PER_HOUR=3   (0 = ingen grænse, default)
+#   TIMELAPSE_BREAKGLASS_IP_ALLOWLIST=10.0.0.0/8,192.168.1.5  (tom = ingen filtrering)
+import threading as _bg_threading
+from collections import deque as _bg_deque
+import ipaddress as _bg_ipaddress
+_bg_checkout_log: dict[tuple, _bg_deque] = {}
+_bg_checkout_lock = _bg_threading.Lock()
+
+
+def _enforce_break_glass_policy(request: "Request | None", device_id: str, admin_username: str) -> None:
+    # IP-allowlist (valgfri)
+    allow_raw = os.getenv("TIMELAPSE_BREAKGLASS_IP_ALLOWLIST", "").strip()
+    if allow_raw and request is not None:
+        client_ip = getattr(getattr(request, "client", None), "host", None)
+        nets = []
+        for item in allow_raw.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                nets.append(_bg_ipaddress.ip_network(item, strict=False))
+            except ValueError:
+                continue
+        ok = False
+        if client_ip:
+            try:
+                ip = _bg_ipaddress.ip_address(client_ip)
+                ok = any(ip in n for n in nets)
+            except ValueError:
+                ok = False
+        if not ok:
+            raise HTTPException(status_code=403, detail="Break-glass checkout ikke tilladt fra denne IP")
+    # Rate-limit (valgfri)
+    try:
+        max_per_hour = int(os.getenv("TIMELAPSE_BREAKGLASS_CHECKOUT_MAX_PER_HOUR", "0"))
+    except ValueError:
+        max_per_hour = 0
+    if max_per_hour > 0:
+        import time as _t
+        key = (device_id, admin_username)
+        now = _t.monotonic()
+        with _bg_checkout_lock:
+            bucket = _bg_checkout_log.setdefault(key, _bg_deque())
+            while bucket and now - bucket[0] > 3600:
+                bucket.popleft()
+            if len(bucket) >= max_per_hour:
+                raise HTTPException(status_code=429, detail="Break-glass checkout rate-limit overskredet (prøv senere)")
+            bucket.append(now)
 
 HEADEND_MANAGED_HOMEBREW_FORMULAE = {
     "certbot": "TimeLapse TLS/certificate platformkomponent",
@@ -708,7 +761,7 @@ def list_break_glass(device_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{device_id}/break-glass/checkout")
-def checkout_break_glass(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def checkout_break_glass(device_id: str, payload: dict, request: Request = None, db: Session = Depends(get_db)):
     """
     Checkout break-glass password.
 
@@ -731,6 +784,9 @@ def checkout_break_glass(device_id: str, payload: dict, db: Session = Depends(ge
 
     if not admin_username:
         raise HTTPException(status_code=400, detail="admin_username påkrævet")
+
+    # Opt-in hærdning (rate-limit + IP-allowlist); no-op når env ikke er sat.
+    _enforce_break_glass_policy(request, device_id, admin_username)
 
     account = db.query(BreakGlassAccount).filter_by(
         device_id=device_id, admin_username=admin_username, is_active=True

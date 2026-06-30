@@ -80,7 +80,7 @@ def _ensure_schema(db: Session) -> None:
     global _SCHEMA_READY
     if _SCHEMA_READY:
         return
-    dialect = db.get_bind().dialect.name if db.get_bind() is not None else ""
+    # Postgres-only (sqlite bruges ikke i TimeLapse Pro — død gren fjernet).
     for column, ddl in [
         ("source",     "ALTER TABLE security_events ADD COLUMN source VARCHAR(50)"),
         ("category",   "ALTER TABLE security_events ADD COLUMN category VARCHAR(80)"),
@@ -88,13 +88,10 @@ def _ensure_schema(db: Session) -> None:
         ("process",    "ALTER TABLE security_events ADD COLUMN process VARCHAR(160)"),
         ("normalized", "ALTER TABLE security_events ADD COLUMN normalized TEXT"),
     ]:
-        if dialect == "sqlite":
-            exists = any(row[1] == column for row in db.execute(text("PRAGMA table_info(security_events)")).fetchall())
-        else:
-            exists = db.execute(text("""
-                SELECT 1 FROM information_schema.columns
-                WHERE table_name='security_events' AND column_name=:column
-            """), {"column": column}).fetchone()
+        exists = db.execute(text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name='security_events' AND column_name=:column
+        """), {"column": column}).fetchone()
         if not exists:
             db.execute(text(ddl))
     db.commit()
@@ -243,6 +240,26 @@ def record_events(db: Session, device_id: str, events: list[dict]) -> dict:
     return {"inserted": inserted, "duplicates": duplicates}
 
 
+def prune_old_events(db: Session) -> int:
+    """Opt-in retention på security_events. DEFAULT SLÅET FRA
+    (TIMELAPSE_SIEM_RETENTION_DAYS=0 → ingen sletning). Sættes >0 for at begrænse
+    ubegrænset vækst. Additiv + flag-styret, så den ikke rører data før den bevidst
+    aktiveres (jf. aftalt forløb: ingen destruktive ændringer før ITIM live-verificeret)."""
+    try:
+        days = int(os.getenv("TIMELAPSE_SIEM_RETENTION_DAYS", "0"))
+    except ValueError:
+        days = 0
+    if days <= 0:
+        return 0
+    cutoff = _now() - timedelta(days=days)
+    res = db.execute(text("DELETE FROM security_events WHERE occurred_at < :c"), {"c": cutoff})
+    db.commit()
+    deleted = res.rowcount or 0
+    if deleted:
+        log.info("SIEM retention: %d events ældre end %d dage slettet", deleted, days)
+    return deleted
+
+
 def _severity_rank(level: str) -> int:
     return {"debug": 0, "info": 1, "warning": 2, "error": 3, "critical": 4}.get(str(level).lower(), 1)
 
@@ -388,6 +405,7 @@ def start_headend_log_collector() -> None:
 
     def loop() -> None:
         log.info("SIEM headend log collector started: min_severity=%s sources=%d", min_severity, len(sources))
+        _last_prune = [0.0]
         while True:
             try:
                 state = load_state()
@@ -406,6 +424,15 @@ def start_headend_log_collector() -> None:
                     finally:
                         db.close()
                 save_state(state)
+                # Opt-in retention, maks én gang i timen (no-op når deaktiveret)
+                if time.time() - _last_prune[0] > 3600:
+                    _last_prune[0] = time.time()
+                    from database import SessionLocal
+                    _pdb = SessionLocal()
+                    try:
+                        prune_old_events(_pdb)
+                    finally:
+                        _pdb.close()
             except Exception as exc:
                 log.debug("SIEM headend log collector failed: %s", exc)
             time.sleep(interval_s)
@@ -559,19 +586,30 @@ def get_threats(
     _ensure_schema(db)
     since = _now() - timedelta(hours=hours)
 
+    # FIX: normaliseringen udsender aldrig 'ssh_failure' — den producerer
+    # 'ssh_tunnel_*', og syslog-ingress producerer 'network_auth_failed'. Den
+    # gamle query ramte derfor reelt ingenting. Matchsættet er nu KONFIGURERBART
+    # (additivt: legacy + de faktiske typer), så detektionen kan udvides uden
+    # kodeændring. Default-værdien er strengt additiv ift. den gamle adfærd.
+    default_types = ("ssh_failure,ssh_tunnel_connect_failed,ssh_tunnel_remote_port_busy,"
+                     "network_auth_failed,ssh_auth_failed,auth_failure")
+    threat_types = [t.strip() for t in
+                    os.getenv("TIMELAPSE_SIEM_THREAT_EVENT_TYPES", default_types).split(",")
+                    if t.strip()]
+
     rows = db.execute(text("""
         SELECT source_ip, device_id, COUNT(*) as attempts,
                MIN(occurred_at) as first_seen,
                MAX(occurred_at) as last_seen
         FROM security_events
-        WHERE event_type = 'ssh_failure'
+        WHERE event_type = ANY(:types)
           AND source_ip IS NOT NULL
           AND occurred_at >= :since
         GROUP BY source_ip, device_id
         HAVING COUNT(*) >= :threshold
         ORDER BY attempts DESC
         LIMIT 100
-    """), {"since": since, "threshold": threshold}).fetchall()
+    """), {"since": since, "threshold": threshold, "types": threat_types}).fetchall()
 
     return [
         {
