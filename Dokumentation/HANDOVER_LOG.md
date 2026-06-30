@@ -670,3 +670,25 @@ person vide".
 - Baggrundsjob kører fortsat:
   `/Volumes/data-fast/peter-home/projects/timelapse-pro/artifacts/edge-qa-training/edge-qa-full-20260630-112714`
   (`screen -r timelapse-edge-qa-full`, `full-mining.log`) for fuld historik-mining.
+
+### Handover 2026-06-30 — fra Codex til Peter/Claude (NPU-afklaring: ONNX er ikke nok)
+- Peters spørgsmål er korrekt: produktion skal køre på NPU'en. ONNX Runtime på Orange Pi er kun
+  integrationstest/fallback; Allwinner/VIPLite kræver `.nb`.
+- A733 SDK siger `NPU_VERSION=v3` (`VIP9000NANODI_PLUS_PID0X1000003B` via
+  `pegasus_setup.sh v3`).
+- Der er bygget ACUITY workspace for MobileNet-smoke:
+  `/Volumes/data-fast/peter-home/projects/timelapse-pro/artifacts/edge-qa-training/edge-qa-v1-20260630-095321/acuity-edge-qa-mobilenet-smoke/edge_qa_model`
+  og bundle:
+  `/Volumes/data-fast/peter-home/projects/timelapse-pro/artifacts/edge-qa-training/edge-qa-v1-20260630-095321/acuity-edge-qa-mobilenet-smoke.tar.gz`.
+- Workspace er kopieret til Orange Pi:
+  `/opt/timelapse/ai-sdk/models/edge_qa_model` med ONNX, ekstern `.onnx.data`,
+  `inputs_outputs.txt`, `channel_mean_value.txt`, `dataset.txt` og 155 kalibreringsbilleder.
+- Importforsøg på Orange Pi stopper på `Need to set environment variable ACUITY_PATH`. Konklusion:
+  boardet har runtime-SDK, VIPLite, scripts og NPU-driver, men ikke selve ACUITY/pegasus compiler.
+  Docker på Mac er nu startet, men der findes kun `ubuntu:22.04`; ingen `ubuntu-npu`/ACUITY image
+  lokalt. Downloads indeholder `ai-sdk.tar`, ikke en synlig ACUITY compiler-image.
+- Nyt værktøj: `edge/tools/prepare_acuity_workspace.py`.
+- Næste konkrete krav før ægte NPU QA: fremskaf/load Allwinner ACUITY toolkit eller Docker image,
+  sæt `ACUITY_PATH`, kør `pegasus_import/quantize/inference/export_ovx_nbg`, installer resultatet
+  som `/opt/timelapse/models/edge_qa.nb`, og test med
+  `/opt/timelapse/bin/edge_qa_viplite --input-layout nchw_rgb`.

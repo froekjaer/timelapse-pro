@@ -381,3 +381,37 @@ Driftsbeslutning: MobileNet-smoke er brugbar til integrationstest og som assist-
 køre autonomt uden confidence-gating og CPU/OpenCV fallback. Produktsikkert første mode er
 `quality.edge_ai.mode=assist`, hvor CPU/OpenCV optimizer forbliver autoritativ og ONNX/NPU kun får
 lov til at styrke høj-konfidens fund.
+
+## NPU-afklaring 2026-06-30
+
+Ja: den endelige edge-model skal køre på NPU'en. Orange Pi/Allwinner-kæden accepterer dog ikke ONNX
+direkte; modellen skal konverteres til `.nb` via ACUITY/pegasus og køres af VIPLite-wrapperen.
+
+Aktuel status:
+
+- Orange Pi har runtime-delen: `/dev/vipcore`, ai-sdk, VIPLite og `/opt/timelapse/bin/edge_qa_viplite`.
+- MobileNet-smoke er kun verificeret som ONNX Runtime CPU fallback på boardet.
+- ACUITY workspace er bygget og kopieret til:
+  `/opt/timelapse/ai-sdk/models/edge_qa_model`
+- Lokalt bundle:
+  `/Volumes/data-fast/peter-home/projects/timelapse-pro/artifacts/edge-qa-training/edge-qa-v1-20260630-095321/acuity-edge-qa-mobilenet-smoke.tar.gz`
+- Import-test stopper på `Need to set environment variable ACUITY_PATH`, hvilket betyder at selve
+  ACUITY compiler/toolkit eller Docker image ikke er installeret/loaded. Mac Docker kører nu, men
+  har kun `ubuntu:22.04` image.
+
+Næste kommando når ACUITY toolkit/image findes:
+
+```bash
+cd /opt/timelapse/ai-sdk/models
+export ACUITY_PATH=/path/to/acuity-toolkit
+export VIV_SDK=/opt/timelapse/ai-sdk/unified-tina
+source ../scripts/pegasus_setup.sh v3
+../scripts/pegasus_import.sh edge_qa_model
+../scripts/pegasus_quantize.sh edge_qa_model uint8
+../scripts/pegasus_inference.sh edge_qa_model uint8
+../scripts/pegasus_export_ovx_nbg.sh edge_qa_model uint8 "$VSIMULATOR_CONFIG" "$VIV_SDK"
+```
+
+Når `.nb` er genereret, installeres den som `/opt/timelapse/models/edge_qa.nb`, og så er
+`quality.edge_ai.model_path=/opt/timelapse/models/edge_qa.nb` + `vendor_binary=/opt/timelapse/bin/edge_qa_viplite --input-layout nchw_rgb`
+den rigtige NPU-konfiguration.
