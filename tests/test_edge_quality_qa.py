@@ -80,6 +80,46 @@ def test_qa_report_keeps_ok_images_non_anomalous(monkeypatch):
     assert report["confidence"] == 0.55
 
 
+def test_npu_merge_ignores_rejected_low_confidence_result():
+    checker = make_checker()
+    report = {
+        "is_anomaly": False,
+        "probable_cause": "ok",
+        "confidence": 0.55,
+        "recommended_action": "Ingen handling",
+    }
+    merged = checker._merge_npu_result(report.copy(), {
+        "accepted": False,
+        "probable_cause": "focus_or_lens_issue",
+        "confidence": 0.99,
+        "recommended_action": "Kør LAB focus slice",
+    })
+
+    assert merged["probable_cause"] == "ok"
+    assert merged["confidence"] == 0.55
+
+
+def test_npu_merge_accepts_high_confidence_result():
+    checker = make_checker()
+    report = {
+        "is_anomaly": False,
+        "probable_cause": "ok",
+        "confidence": 0.55,
+        "recommended_action": "Ingen handling",
+    }
+    merged = checker._merge_npu_result(report.copy(), {
+        "accepted": True,
+        "is_anomaly": True,
+        "probable_cause": "focus_or_lens_issue",
+        "confidence": 0.82,
+        "recommended_action": "Kør LAB focus slice",
+    })
+
+    assert merged["is_anomaly"] is True
+    assert merged["probable_cause"] == "focus_or_lens_issue"
+    assert merged["confidence"] == 0.82
+
+
 def test_qa_report_detects_direct_sun_reflection(monkeypatch):
     checker = make_checker()
 

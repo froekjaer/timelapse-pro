@@ -645,3 +645,28 @@ person vide".
   `TIMELAPSE_THUMBNAIL_LAZY_GENERATE=false`. py_compile grøn.
 - Filer rørt: `headend/main.py` (semaphore + `_lazy_generate_thumbnail` + get_thumbnail + POST-tråd),
   `headend/tools/backfill_thumbnails.py` (ny).
+
+### Handover 2026-06-30 — fra Codex til Peter/Claude (Edge AI MobileNet smoke kører på Orange Pi)
+- Local Edge QA er løftet fra mikro-CNN smoke til `mobilenet_v2` transfer-learning smoke:
+  `best_val_accuracy=0.88`, `test_accuracy≈0.803` på 611-rækkers balanced smoke-manifest.
+- Model-artifacts:
+  `/Volumes/data-fast/peter-home/projects/timelapse-pro/artifacts/edge-qa-training/edge-qa-v1-20260630-095321/model-mobilenet-v1-preload-smoke`
+  (`edge_qa_model.onnx`, `edge_qa_model.onnx.data`, metadata, train.log).
+- Stærke testklasser: `blurry=1.0`, `underexposed=1.0`, `direct_sun_reflection=0.875`.
+  Svage klasser der skal have review/bedre labels før autonom drift: `overexposed`, `depth_of_field_issue`, `ok`.
+- Orange Pi `timelapse0101` er verificeret med ONNX Runtime CPU:
+  - `/opt/timelapse/venv` har nu `onnxruntime`
+  - model ligger som `/opt/timelapse/models/edge_qa_model_v1_mobilenet_smoke.onnx`
+  - ekstern ONNX-datafil ligger i `/opt/timelapse/models/edge_qa_model.onnx.data`
+  - runner/kontraktkode er opdateret under `/opt/timelapse/edge/...`
+  - `edge_qa_npu_runner.py --model ... --image ... --json` returnerer gyldig
+    `timelapse.edge_qa.v1` med `engine=edge_onnxruntime_local`, `available=true`.
+- NPU-status: Orange Pi NPU/VIPLite kæden er stadig OK (`/dev/vipcore`, ai-sdk, ResNet `.nb`
+  demo). MobileNet-modellen er IKKE konverteret til `.nb` endnu; Docker daemon kørte ikke på Mac
+  ved ACUITY-forsøg. Næste tekniske milepæl er ACUITY-konvertering af MobileNet-ONNX til `.nb`.
+- Driftsvalg: brug MobileNet-smoke som integrationstest/assist-signal. CPU/OpenCV optimizer skal
+  stadig være autoritativ fallback. Første sikre mode er `quality.edge_ai.mode=assist`; vent med
+  `npu_first/autonomous` til human-reviewed v2 og `.nb` er verificeret.
+- Baggrundsjob kører fortsat:
+  `/Volumes/data-fast/peter-home/projects/timelapse-pro/artifacts/edge-qa-training/edge-qa-full-20260630-112714`
+  (`screen -r timelapse-edge-qa-full`, `full-mining.log`) for fuld historik-mining.

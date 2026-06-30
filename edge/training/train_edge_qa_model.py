@@ -58,13 +58,17 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def image_to_tensor(path: str, size: int, augment: bool, torch):
+def read_resized_image(path: str, size: int) -> np.ndarray:
     img = cv2.imread(path, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"Could not read image: {path}")
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+    return cv2.resize(img, (size, size), interpolation=cv2.INTER_AREA)
+
+
+def image_array_to_tensor(img: np.ndarray, augment: bool, torch):
     if augment:
+        img = img.copy()
         if random.random() < 0.5:
             img = cv2.flip(img, 1)
         if random.random() < 0.35:
@@ -79,7 +83,74 @@ def image_to_tensor(path: str, size: int, augment: bool, torch):
     return torch.from_numpy(arr)
 
 
-def make_model(nn, num_classes: int):
+def image_to_tensor(path: str, size: int, augment: bool, torch):
+    return image_array_to_tensor(read_resized_image(path, size), augment, torch)
+
+
+def prepare_rows(
+    rows: list[dict[str, Any]],
+    *,
+    input_size: int,
+    preload: bool,
+    skip_unreadable: bool,
+    skipped_out: Path | None,
+) -> list[dict[str, Any]]:
+    usable: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            if preload:
+                prepared = dict(row)
+                prepared["_image_rgb"] = read_resized_image(str(row["image"]), input_size)
+                usable.append(prepared)
+            else:
+                usable.append(row)
+        except Exception as exc:
+            if not skip_unreadable:
+                raise
+            skipped.append({"image": row.get("image"), "label": row.get("label"), "error": str(exc)})
+    if skipped_out:
+        skipped_out.parent.mkdir(parents=True, exist_ok=True)
+        with skipped_out.open("w", encoding="utf-8") as fh:
+            for row in skipped:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    if skip_unreadable and skipped:
+        print(json.dumps({"event": "skipped_unreadable", "count": len(skipped), "out": str(skipped_out) if skipped_out else None}, ensure_ascii=False), flush=True)
+    return usable
+
+
+def make_model(nn, num_classes: int, *, arch: str, pretrained: bool, freeze_backbone: bool):
+    if arch == "mobilenet_v2":
+        try:
+            import torch
+            import torchvision.models as models
+        except Exception as exc:
+            raise SystemExit("torchvision is required for --arch mobilenet_v2") from exc
+
+        weights = None
+        if pretrained:
+            try:
+                weights = models.MobileNet_V2_Weights.DEFAULT
+            except Exception:
+                weights = None
+        backbone = models.mobilenet_v2(weights=weights)
+        if freeze_backbone:
+            for param in backbone.features.parameters():
+                param.requires_grad = False
+        in_features = backbone.classifier[-1].in_features
+        backbone.classifier[-1] = nn.Linear(in_features, num_classes)
+
+        class ImageNetNormalize(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+                self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+            def forward(self, x):
+                return (x - self.mean) / self.std
+
+        return nn.Sequential(ImageNetNormalize(), backbone)
+
     def block(inp, out, stride=1):
         return nn.Sequential(
             nn.Conv2d(inp, out, 3, stride=stride, padding=1, bias=False),
@@ -113,11 +184,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument("--arch", choices=["micro", "mobilenet_v2"], default="micro")
+    parser.add_argument("--pretrained", action="store_true", help="Use pretrained weights when supported")
+    parser.add_argument("--freeze-backbone", action="store_true", help="Freeze feature extractor when supported")
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--preload", action="store_true", help="Read and resize images once before training")
+    parser.add_argument("--skip-unreadable", action="store_true", help="Skip unreadable images and write skipped-images.jsonl")
     args = parser.parse_args()
 
     torch, nn, DataLoader, Dataset = require_torch()
@@ -125,8 +202,14 @@ def main() -> int:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    rows = load_manifest(Path(args.manifest))
     input_size = int(MODEL_INPUT_CONTRACT["width"])
+    rows = prepare_rows(
+        load_manifest(Path(args.manifest)),
+        input_size=input_size,
+        preload=args.preload,
+        skip_unreadable=args.skip_unreadable,
+        skipped_out=Path(args.out_dir) / "skipped-images.jsonl",
+    )
 
     class QaDataset(Dataset):
         def __init__(self, items: list[dict[str, Any]], augment: bool):
@@ -138,7 +221,11 @@ def main() -> int:
 
         def __getitem__(self, idx: int):
             row = self.items[idx]
-            return image_to_tensor(row["image"], input_size, self.augment, torch), int(row["class_id"])
+            if "_image_rgb" in row:
+                tensor = image_array_to_tensor(row["_image_rgb"], self.augment, torch)
+            else:
+                tensor = image_to_tensor(row["image"], input_size, self.augment, torch)
+            return tensor, int(row["class_id"])
 
     train_rows = [r for r in rows if r.get("split") == "train"]
     val_rows = [r for r in rows if r.get("split") == "val"]
@@ -150,7 +237,14 @@ def main() -> int:
     if args.device != "auto":
         device = args.device
 
-    model = make_model(nn, len(LABEL_TO_SPEC)).to(device)
+    print(json.dumps({"event": "training_start", "device": device, "arch": args.arch, "pretrained": args.pretrained, "freeze_backbone": args.freeze_backbone, "rows": len(rows)}, ensure_ascii=False), flush=True)
+    model = make_model(
+        nn,
+        len(LABEL_TO_SPEC),
+        arch=args.arch,
+        pretrained=args.pretrained,
+        freeze_backbone=args.freeze_backbone,
+    ).to(device)
     counts = Counter(int(r["class_id"]) for r in train_rows)
     weights = torch.ones(len(LABEL_TO_SPEC), dtype=torch.float32)
     for class_id in range(len(LABEL_TO_SPEC)):
@@ -159,9 +253,9 @@ def main() -> int:
     loss_fn = nn.CrossEntropyLoss(weight=weights)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
-    train_loader = DataLoader(QaDataset(train_rows, True), batch_size=args.batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(QaDataset(val_rows, False), batch_size=args.batch_size, shuffle=False, num_workers=0)
-    test_loader = DataLoader(QaDataset(test_rows, False), batch_size=args.batch_size, shuffle=False, num_workers=0) if test_rows else None
+    train_loader = DataLoader(QaDataset(train_rows, True), batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+    val_loader = DataLoader(QaDataset(val_rows, False), batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    test_loader = DataLoader(QaDataset(test_rows, False), batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers) if test_rows else None
 
     def evaluate(loader):
         model.eval()
@@ -205,7 +299,7 @@ def main() -> int:
         metrics = evaluate(val_loader)
         metrics["epoch"] = epoch
         history.append(metrics)
-        print(json.dumps(metrics, ensure_ascii=False))
+        print(json.dumps(metrics, ensure_ascii=False), flush=True)
         if metrics["accuracy"] > best_acc:
             best_acc = metrics["accuracy"]
             torch.save(model.state_dict(), best_path)
@@ -232,6 +326,12 @@ def main() -> int:
         "test_rows": len(test_rows),
         "label_counts": Counter(row["label"] for row in rows),
         "split_counts": Counter(row["split"] for row in rows),
+        "arch": args.arch,
+        "pretrained": args.pretrained,
+        "freeze_backbone": args.freeze_backbone,
+        "preload": args.preload,
+        "skip_unreadable": args.skip_unreadable,
+        "input_normalization": "imagenet_inside_onnx" if args.arch == "mobilenet_v2" else "scale_0_1",
         "history": history,
         "test_metrics": test_metrics,
         "best_val_accuracy": best_acc,

@@ -345,3 +345,39 @@ men den er ikke produktionsklar til autonom drift. Drift skal fortsat bruge CPU/
 autoritativ fallback. Næste kvalitetsløft er at lade fuld historik-mining færdiggøre, reviewe især
 `depth_of_field_issue`, `direct_sun_reflection` og `ok`, og træne v2 på safe-core + human-approved
 review-rækker før `.nb` erstatter demo-modellen.
+
+## Edge QA MobileNet smoke 2026-06-30
+
+Der er nu trænet en bedre smoke-kandidat med transfer learning:
+
+- Model: `model-mobilenet-v1-preload-smoke/edge_qa_model.onnx`
+  - arkitektur: `mobilenet_v2`, ImageNet-pretrained, frosset feature-backbone
+  - input: NCHW/RGB 224x224, scale 1/255 med ImageNet-normalisering inde i ONNX-grafen
+  - output: 9 logits i `timelapse.edge_qa.v1` klasseorden
+  - artifacts:
+    `/Volumes/data-fast/peter-home/projects/timelapse-pro/artifacts/edge-qa-training/edge-qa-v1-20260630-095321/model-mobilenet-v1-preload-smoke`
+- Træningsscriptet har fået `--preload`, `--skip-unreadable` og `--num-workers`, så historiske
+  JPEG-fejl isoleres i preload/skipped-fasen i stedet for at gøre træningen langsom og uigennemsigtig.
+- Smoke-metrics:
+  - `best_val_accuracy=0.88`
+  - `test_accuracy=0.8028169014084507`
+  - stærke klasser i test: `blurry=1.0`, `underexposed=1.0`, `direct_sun_reflection=0.875`
+  - svagere klasser: `overexposed=0.429`, `depth_of_field_issue=0.625`, `ok=0.733`
+- Orange Pi `timelapse0101`:
+  - `onnxruntime` installeret i `/opt/timelapse/venv`
+  - model kopieret til `/opt/timelapse/models/edge_qa_model_v1_mobilenet_smoke.onnx`
+  - ekstern vægtfil kopieret til `/opt/timelapse/models/edge_qa_model.onnx.data` og
+    `/opt/timelapse/models/edge_qa_model_v1_mobilenet_smoke.onnx.data`
+  - metadata kopieret til `/opt/timelapse/models/edge_qa_model_v1_mobilenet_smoke_metadata.json`
+  - opdateret runner/kontraktkode kopieret til `/opt/timelapse/edge/...`
+  - board-test OK: runner returnerer `engine=edge_onnxruntime_local`, `available=true` og gyldig
+    `timelapse.edge_qa.v1` kontrakt på et rigtigt historisk billede.
+
+Vigtig begrænsning: dette er stadig ONNX Runtime på CPU på Orange Pi, ikke NPU. NPU-kæden er klar
+til `.nb`, men denne MobileNet-ONNX skal stadig igennem Allwinner ACUITY-konvertering. Docker daemon
+kørte ikke på Mac under seneste forsøg, så ACUITY-konvertering er fortsat næste tekniske milepæl.
+
+Driftsbeslutning: MobileNet-smoke er brugbar til integrationstest og som assist-signal. Den bør ikke
+køre autonomt uden confidence-gating og CPU/OpenCV fallback. Produktsikkert første mode er
+`quality.edge_ai.mode=assist`, hvor CPU/OpenCV optimizer forbliver autoritativ og ONNX/NPU kun får
+lov til at styrke høj-konfidens fund.
