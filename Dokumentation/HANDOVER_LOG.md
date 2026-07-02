@@ -1039,3 +1039,21 @@ person vide".
   - RPi5/headend-historik skal arkiveres/markeres historisk, ikke blandes ind som aktiv sandhed.
   - Canon EOS 1000/1300/2000 og Nikon Z30 bør beskrives som supportmatrix, ikke som gensidigt
     udelukkende spor.
+
+### Codex validering 2026-07-02 — kode/drift før v11
+- Peter bad om kode-/driftsvalidering før dokumenter løftes til v11.
+- Valideringsnotat er skrevet i:
+  `Dokumentation/Codex_Kode_Drift_Validering_for_v11_2026-07-02.md`
+- Live bekræftet:
+  - headend API er sund på `127.0.0.1:8000`.
+  - UI dev server, nginx, PostgreSQL, Ollama, syslog receiver og reverse SSH-forwarding kører.
+  - Orange Pi `timelapse0101` svarer på SSH; `timelapse-edge` er aktiv.
+  - NPU-wrapper og `.nb` modeller findes på Orange Pi.
+  - SFTP DB-settings peger på `/Volumes/data-fast/timelapse-incoming/canonical-images`.
+- Vigtige v11-forbehold:
+  - nginx lytter stadig offentligt på `*:80` og `*:443`; prod-portmodellen må ikke beskrives som aktiv.
+  - 0 brugere har MFA slået til.
+  - Orange Pi `timelapse-node-agent` er inaktiv; kun `timelapse-edge` er aktiv der.
+  - aktiv edge-device mangler `hardware_model` og `camera_model` i `devices`.
+  - UI har stadig hardcoded `Kamera - Canon EOS 1300D` i DevicePage.
+  - NPU-runtime er etableret, men production QA-model er stadig under real-world tuning.
