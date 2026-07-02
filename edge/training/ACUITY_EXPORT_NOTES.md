@@ -242,3 +242,45 @@ Runtime command:
 This model is the first useful NPU-compatible baseline. Keep it in assist/test
 mode until a full-manifest `edge_cnn` model has been trained, exported, installed
 and validated with broader parity.
+
+## Real-world evaluation suites 2026-07-02
+
+Build reproducible eval manifests from the v2 balanced manifest:
+
+```bash
+python edge/tools/build_edge_qa_eval_suites.py \
+  --manifest artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/edge-qa-v2-balanced-manifest.jsonl \
+  --out-dir artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056
+```
+
+Current suite roles:
+
+- Travbyen daylight real-world: primary customer-like daylight/season/solar
+  acceptance suite.
+- Frøkjær 01:00-05:59: night and low-light acceptance suite. Avoid using
+  Frøkjær daylight through-window captures as the primary real-world truth.
+
+Evaluate a model directly from a manifest:
+
+```bash
+python edge/tools/evaluate_edge_qa_npu_parity.py \
+  --manifest artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/edge-qa-v2-travbyen-daylight-realworld-manifest.jsonl \
+  --onnx-model artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/model-edge-cnn-mini-npu-rgb/edge_qa_model.onnx \
+  --remote orangepi@192.168.86.134 \
+  --remote-model /opt/timelapse/models/edge_qa_edge_cnn_mini.nb \
+  --vendor-binary /opt/timelapse/bin/edge_qa_viplite \
+  --input-layout nchw_rgb --input-dtype uint8 \
+  --limit 30
+```
+
+Observed mini-baseline results:
+
+| Suite | Sample | ONNX/NPU top-1 | Mean cosine | Expected-label match |
+| --- | ---: | ---: | ---: | ---: |
+| Travbyen daylight real-world | 30 | 1.0000 | 0.9982 | 0.7667 |
+| Frøkjær night 01:00-05:59 | 30 | 1.0000 | 0.9998 | 0.8667 |
+
+Interpret expected-label match carefully: historical CPU-QA labels are useful
+weak labels, but not always a photographic ground truth. The main NPU gate is
+ONNX/NPU parity; product acceptance should use reviewed Travbyen daylight and
+Frøkjær night examples.

@@ -909,3 +909,46 @@ person vide".
     `model-edge-cnn-full-npu-rgb`.
   - næste trin er ACUITY-export, installation som ny kandidat, bredere parity og derefter
     konfigurationsbinding til global/kunde/site/kamera AI modes.
+
+### Beslutning 2026-07-02 — Real-world eval-suiter
+- Peter præciserede at Travbyen er den mest virkelighedsnære kundecase:
+  - 4-5 års billeder.
+  - alle årstider.
+  - primært dagslys.
+  - ikke taget gennem stuevindue.
+- Frøkjær/Nordre Villavej bruges fremover mere selektivt:
+  - dagslys gennem stuevindue er ikke egnet som primær kundesandhed.
+  - tidsrummet 01:00-05:59 er nyttigt som nat-/underbelysningssuite.
+- Nyt reproducerbart værktøj:
+  - `edge/tools/build_edge_qa_eval_suites.py`
+  - bygger eval-manifester fra v2-manifestet.
+- Aktuelle eval-suiter:
+  - Travbyen dagslys real-world:
+    `artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/edge-qa-v2-travbyen-daylight-realworld-manifest.jsonl`
+    - 1.361 historiske billeder.
+    - labels: `blurry=635`, `direct_sun_reflection=446`, `overexposed=278`, `white_balance_cast=2`.
+  - Frøkjær nat 01:00-05:59:
+    `artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/edge-qa-v2-froekjaer-night-0100-0559-manifest.jsonl`
+    - 1.438 historiske billeder.
+    - labels: `depth_of_field_issue=694`, `underexposed=404`, `blurry=154`, `ok=135`,
+      samt få sol/overeksponering/hvidbalance cases.
+- `edge/tools/evaluate_edge_qa_npu_parity.py` kan nu tage `--manifest` og rapporterer både:
+  - ONNX-vs-NPU parity.
+  - match mod manifestets forventede label, når manifestet har label.
+- Mini `edge_cnn` NPU-baseline på de nye eval-suiter:
+  - Travbyen 30-sample:
+    - summary: `artifacts/edge-qa-npu-parity/edge_qa_npu_parity_20260702-124722_summary.json`
+    - top-1 ONNX-vs-NPU: `1.0000`
+    - mean cosine: `0.9982`
+    - expected-label match: `0.7667`
+  - Frøkjær nat 30-sample:
+    - summary: `artifacts/edge-qa-npu-parity/edge_qa_npu_parity_20260702-125144_summary.json`
+    - top-1 ONNX-vs-NPU: `1.0000`
+    - mean cosine: `0.9998`
+    - expected-label match: `0.8667`
+- Fortolkning:
+  - NPU-runtime er nu stabil på begge relevante suiter.
+  - Expected-label mismatch skyldes især at historiske CPU-QA labels ikke altid er
+    fototeknisk sandhed, fx overeksponering vs direkte solrefleks vs hvidbalance.
+  - Næste modelrunde bør bruge Travbyen som primær real-world accept og Frøkjær 01-05 som
+    nat/low-light accept, plus en manuel reviewliste for label-konflikter.

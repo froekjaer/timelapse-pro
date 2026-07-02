@@ -48,6 +48,22 @@ def _pick_images(root: Path, limit: int, seed: int) -> list[Path]:
     return images
 
 
+def _pick_manifest_rows(manifest: Path, limit: int, seed: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with manifest.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            image = Path(str(row.get("image", "")))
+            if row.get("label") in LABELS and image.exists():
+                rows.append(row)
+    rng = random.Random(seed)
+    if limit and len(rows) > limit:
+        return sorted(rng.sample(rows, limit), key=lambda row: str(row["image"]))
+    return rows
+
+
 def _softmax(logits: np.ndarray) -> np.ndarray:
     logits = logits.astype(np.float32)
     logits = logits - float(np.max(logits))
@@ -134,7 +150,8 @@ def _metrics(cpu_scores: dict[str, float], npu_scores: dict[str, float]) -> dict
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image-root", type=Path, required=True)
+    parser.add_argument("--image-root", type=Path)
+    parser.add_argument("--manifest", type=Path, help="Optional JSONL manifest with image and label fields")
     parser.add_argument("--onnx-model", type=Path, required=True)
     parser.add_argument("--remote", default="orangepi@192.168.86.134")
     parser.add_argument("--remote-model", default="/opt/timelapse/models/edge_qa.nb")
@@ -147,18 +164,25 @@ def main() -> int:
     parser.add_argument("--out-dir", type=Path, default=Path("artifacts/edge-qa-npu-parity"))
     args = parser.parse_args()
 
+    if not args.image_root and not args.manifest:
+        raise SystemExit("Either --image-root or --manifest is required")
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
     run_id = time.strftime("%Y%m%d-%H%M%S")
     jsonl_path = args.out_dir / f"edge_qa_npu_parity_{run_id}.jsonl"
     summary_path = args.out_dir / f"edge_qa_npu_parity_{run_id}_summary.json"
 
-    images = _pick_images(args.image_root, args.limit, args.seed)
+    if args.manifest:
+        manifest_rows = _pick_manifest_rows(args.manifest, args.limit, args.seed)
+        image_items = [(Path(str(row["image"])), row.get("label")) for row in manifest_rows]
+    else:
+        image_items = [(image, None) for image in _pick_images(args.image_root, args.limit, args.seed)]
     session = ort.InferenceSession(str(args.onnx_model), providers=["CPUExecutionProvider"])
 
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
     with jsonl_path.open("w", encoding="utf-8") as fh:
-        for index, image in enumerate(images, 1):
+        for index, (image, expected_label) in enumerate(image_items, 1):
             try:
                 cpu_scores = _onnx_scores(session, image)
                 npu_payload = _remote_npu_scores(
@@ -175,11 +199,14 @@ def main() -> int:
                 npu_top, npu_conf = _top(npu_scores)
                 row = {
                     "image": str(image),
+                    "expected_label": expected_label,
                     "cpu_top": cpu_top,
                     "cpu_confidence": cpu_conf,
                     "npu_top": npu_top,
                     "npu_confidence": npu_conf,
                     "top1_match": cpu_top == npu_top,
+                    "cpu_expected_match": cpu_top == expected_label if expected_label else None,
+                    "npu_expected_match": npu_top == expected_label if expected_label else None,
                     "metrics": _metrics(cpu_scores, npu_scores),
                     "cpu_scores": cpu_scores,
                     "npu_scores": npu_scores,
@@ -187,13 +214,14 @@ def main() -> int:
                 rows.append(row)
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                 fh.flush()
-                print(f"[{index}/{len(images)}] {image.name}: cpu={cpu_top} npu={npu_top} match={row['top1_match']}")
+                suffix = f" expected={expected_label}" if expected_label else ""
+                print(f"[{index}/{len(image_items)}] {image.name}: cpu={cpu_top} npu={npu_top} match={row['top1_match']}{suffix}")
             except Exception as exc:
                 failure = {"image": str(image), "error": str(exc)}
                 failures.append(failure)
                 fh.write(json.dumps({"failure": failure}, ensure_ascii=False) + "\n")
                 fh.flush()
-                print(f"[{index}/{len(images)}] {image.name}: ERROR {exc}")
+                print(f"[{index}/{len(image_items)}] {image.name}: ERROR {exc}")
 
     if rows:
         top1_matches = sum(1 for row in rows if row["top1_match"])
@@ -207,19 +235,34 @@ def main() -> int:
             for name in metric_names
         }
         confusion: dict[str, dict[str, int]] = {}
+        expected_confusion_cpu: dict[str, dict[str, int]] = {}
+        expected_confusion_npu: dict[str, dict[str, int]] = {}
         for row in rows:
             confusion.setdefault(row["cpu_top"], {}).setdefault(row["npu_top"], 0)
             confusion[row["cpu_top"]][row["npu_top"]] += 1
+            expected = row.get("expected_label")
+            if expected:
+                expected_confusion_cpu.setdefault(expected, {}).setdefault(row["cpu_top"], 0)
+                expected_confusion_cpu[expected][row["cpu_top"]] += 1
+                expected_confusion_npu.setdefault(expected, {}).setdefault(row["npu_top"], 0)
+                expected_confusion_npu[expected][row["npu_top"]] += 1
         worst = sorted(rows, key=lambda row: row["metrics"]["mae"], reverse=True)[:20]
     else:
         top1_matches = 0
         aggregates = {}
         confusion = {}
+        expected_confusion_cpu = {}
+        expected_confusion_npu = {}
         worst = []
+
+    expected_rows = [row for row in rows if row.get("expected_label")]
+    cpu_expected_matches = sum(1 for row in expected_rows if row.get("cpu_expected_match"))
+    npu_expected_matches = sum(1 for row in expected_rows if row.get("npu_expected_match"))
 
     summary = {
         "run_id": run_id,
-        "image_root": str(args.image_root),
+        "image_root": str(args.image_root) if args.image_root else None,
+        "manifest": str(args.manifest) if args.manifest else None,
         "onnx_model": str(args.onnx_model),
         "remote": args.remote,
         "remote_model": args.remote_model,
@@ -227,12 +270,17 @@ def main() -> int:
         "input_layout": args.input_layout,
         "input_dtype": args.input_dtype or "vendor_default",
         "input_scale": args.input_scale or "default",
-        "sampled": len(images),
+        "sampled": len(image_items),
         "completed": len(rows),
         "failed": len(failures),
         "top1_match_rate": float(top1_matches / len(rows)) if rows else 0.0,
+        "expected_labeled": len(expected_rows),
+        "cpu_expected_match_rate": float(cpu_expected_matches / len(expected_rows)) if expected_rows else None,
+        "npu_expected_match_rate": float(npu_expected_matches / len(expected_rows)) if expected_rows else None,
         "aggregates": aggregates,
         "confusion_cpu_to_npu": confusion,
+        "confusion_expected_to_cpu": expected_confusion_cpu,
+        "confusion_expected_to_npu": expected_confusion_npu,
         "worst_by_mae": [
             {
                 "image": row["image"],
