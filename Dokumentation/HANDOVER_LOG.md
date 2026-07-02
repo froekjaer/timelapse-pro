@@ -1026,3 +1026,16 @@ person vide".
   - epoch 3 kollapsede til ca. `0.45`, epoch 4 ca. `0.76`.
   - konklusion: genstart med lavere LR og/eller en reduceret klassekontrakt, hvor klasser uden nok
     real-world data ikke trænes som ligeværdige outputklasser.
+
+### Codex review 2026-07-02 — dokumentationsstyring og v11
+- Peter bad Codex give "sidste ord" på Claudes plan om at gøre dokumentationsmappen til et
+  stabilt referencegrundlag for nye sessioner.
+- Codex' anbefaling er skrevet i:
+  `Dokumentation/Codex_Dokumentationsstyring_Review_2026-07-02.md`
+- Kort konklusion:
+  - Ja til `00_START_HER.md` som session-anchor og én seneste `.md` pr. dokument.
+  - Nej til mekanisk v11-bump af alle dokumenter uden kode-/driftsvalidering.
+  - Ja til manifest-styret v11-runde dokument-for-dokument.
+  - RPi5/headend-historik skal arkiveres/markeres historisk, ikke blandes ind som aktiv sandhed.
+  - Canon EOS 1000/1300/2000 og Nikon Z30 bør beskrives som supportmatrix, ikke som gensidigt
+    udelukkende spor.
