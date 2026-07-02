@@ -991,3 +991,38 @@ person vide".
   - lav en reviewliste for Travbyen-konflikter, især:
     `blurry` vs `condensation`, `direct_sun_reflection` vs `overexposed`, og `snow_or_dirt_on_lens`.
   - behold mini `edge_cnn` som NPU parity baseline indtil en real-world model slår Travbyen-suiten.
+
+### Status 2026-07-02 — Real-world-only og små JPEGs tagget
+- Beslutning efter Peters input:
+  - næste QA-modelspor skal være real-world-first.
+  - syntetiske `snow/condensation`-eksempler må ikke dominere, fordi produktmålet er at opdage
+    dårlige billeder og frontglas-/linsecover-problemer på rigtige kundebilleder.
+- `edge/tools/build_edge_qa_eval_suites.py` bygger nu også:
+  - `edge-qa-v2-realworld-only-manifest.jsonl`
+  - aktuelt 6.826 historiske billeder, 0 syntetiske, 0 thumbnail paths.
+- Reelt datagrundlag i real-world-only manifestet:
+  - `depth_of_field_issue=1200`
+  - `ok=1200`
+  - `underexposed=1200`
+  - `overexposed=1199`
+  - `direct_sun_reflection=1167`
+  - `blurry=841`
+  - `white_balance_cast=19`
+  - ingen ægte `snow_or_dirt_on_lens`/`condensation` i dette manifest.
+- 41 små Travbyen originalfiler under 200 KB blev fundet i canonical-strukturen:
+  - ingen er thumbnails.
+  - alle ligger i original/canonical paths.
+  - mange giver `Premature end of JPEG file` warnings og bør reviewes/slettes/repareres.
+- DB tagging udført:
+  - tag: `qa_review_small_or_truncated_original`
+  - tag: `qa_review_possible_bad_jpeg`
+  - 9 unikke `captures` i PostgreSQL blev tagget.
+  - de 41 filer mapper til disse 9 DB-captures plus 1 fil uden DB-match; mange er `_dup...`
+    filsystemdubletter uden egen capture-række.
+  - review-liste:
+    `artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/small-or-truncated-originals-review-20260702.json`
+- Real-world-only træning blev forsøgt med `edge_cnn`, `lr=0.0003`, men stoppet:
+  - epoch 1-2 lå ca. `0.85-0.86` validation accuracy.
+  - epoch 3 kollapsede til ca. `0.45`, epoch 4 ca. `0.76`.
+  - konklusion: genstart med lavere LR og/eller en reduceret klassekontrakt, hvor klasser uden nok
+    real-world data ikke trænes som ligeværdige outputklasser.
