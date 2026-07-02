@@ -185,11 +185,25 @@ def make_model(nn, num_classes: int, *, arch: str, pretrained: bool, freeze_back
             nn.Linear(64, num_classes),
         )
 
-    def block(inp, out, stride=1):
+    if arch == "edge_cnn":
         return nn.Sequential(
-            nn.Conv2d(inp, out, 3, stride=stride, padding=1, bias=False),
-            nn.BatchNorm2d(out),
-            nn.ReLU(inplace=True),
+            block(3, 24, 2),
+            block(24, 24, 1),
+            nn.MaxPool2d(2),
+            block(24, 48, 1),
+            block(48, 48, 1),
+            nn.MaxPool2d(2),
+            block(48, 80, 1),
+            block(80, 80, 1),
+            nn.MaxPool2d(2),
+            block(80, 128, 1),
+            block(128, 128, 1),
+            nn.MaxPool2d(2),
+            block(128, 160, 1),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Dropout(0.20),
+            nn.Linear(160, num_classes),
         )
 
     def ds_block(inp, out, stride=1):
@@ -265,7 +279,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--arch", choices=["micro", "simple_cnn", "mobilenet_v2"], default="micro")
+    parser.add_argument("--arch", choices=["micro", "simple_cnn", "edge_cnn", "mobilenet_v2"], default="micro")
     parser.add_argument("--pretrained", action="store_true", help="Use pretrained weights when supported")
     parser.add_argument("--freeze-backbone", action="store_true", help="Freeze feature extractor when supported")
     parser.add_argument("--epochs", type=int, default=12)

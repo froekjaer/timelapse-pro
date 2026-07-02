@@ -205,3 +205,40 @@ does prove the NPU path is numerically healthy:
 Conclusion: for production NPU QA, prefer an ACUITY-friendly standard-conv
 architecture over MobileNetV2/depthwise-heavy models unless ACUITY calibration
 can be made demonstrably faithful.
+
+## Edge CNN baseline 2026-07-02
+
+`edge_cnn` is the current preferred Orange Pi 4 Pro NPU architecture family. It
+uses only standard ACUITY-friendly operators:
+
+- `Conv`
+- `Relu`
+- `MaxPool`
+- `GlobalAveragePool`
+- `Flatten`
+- `Gemm`
+
+Mini baseline:
+
+- ONNX: `artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/model-edge-cnn-mini-npu-rgb/edge_qa_model.onnx`
+- NBG: `/opt/timelapse/models/edge_qa_edge_cnn_mini.nb`
+- sha256: `d98274bdf7bf36745300cbf8da4ebc2e07a1c95f62b6c0e21b86f247ca8eda24`
+- input: `nchw_rgb`, `uint8`, 224x224
+- mini test accuracy: `0.8370`
+- parity summary: `artifacts/edge-qa-npu-parity/edge_qa_npu_parity_20260702-121903_summary.json`
+- 20-image top-1 match: `1.0000`
+- mean MAE: `0.0053`
+- mean cosine: `0.9985`
+
+Runtime command:
+
+```bash
+/opt/timelapse/bin/edge_qa_viplite \
+  --model /opt/timelapse/models/edge_qa_edge_cnn_mini.nb \
+  --image /tmp/edge-qa-smoke.jpg \
+  --json --input-layout nchw_rgb --input-dtype uint8 --classes 9
+```
+
+This model is the first useful NPU-compatible baseline. Keep it in assist/test
+mode until a full-manifest `edge_cnn` model has been trained, exported, installed
+and validated with broader parity.

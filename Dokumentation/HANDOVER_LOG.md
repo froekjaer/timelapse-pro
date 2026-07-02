@@ -880,3 +880,32 @@ person vide".
   2. Træn en større NPU-venlig standard-conv model på hele v2-manifestet.
   3. Brug `edge_qa_simple_mini.nb` kun til runtime/parity-regression.
   4. Sæt ikke MobileNetV2 `.nb` i autonom drift.
+
+### Status 2026-07-02 — Edge CNN NPU-baseline virker
+- Codex har tilføjet en større, men stadig ACUITY-venlig `edge_cnn`-arkitektur:
+  - kun standard `Conv/ReLU/MaxPool/GlobalAveragePool/Flatten/Gemm`
+  - ingen depthwise convolutions og ingen BatchNorm-subgraf i ONNX-exporten
+  - inputkontrakt: `nchw_rgb`, `uint8`, 224x224, classes=9
+- Mini-træning på v2 mini-manifestet:
+  - ONNX: `artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/model-edge-cnn-mini-npu-rgb/edge_qa_model.onnx`
+  - best val accuracy: `0.8741`
+  - test accuracy: `0.8370`
+- ACUITY/VIPLite-exporten er installeret side-by-side på Orange Pi:
+  - NPU-model: `/opt/timelapse/models/edge_qa_edge_cnn_mini.nb`
+  - sha256: `d98274bdf7bf36745300cbf8da4ebc2e07a1c95f62b6c0e21b86f247ca8eda24`
+  - wrapper: `/opt/timelapse/bin/edge_qa_viplite --input-layout nchw_rgb --input-dtype uint8`
+- ONNX-vs-NPU parity på 20 rigtige historiske billeder:
+  - summary: `artifacts/edge-qa-npu-parity/edge_qa_npu_parity_20260702-121903_summary.json`
+  - JSONL: `artifacts/edge-qa-npu-parity/edge_qa_npu_parity_20260702-121903.jsonl`
+  - top-1 match: `1.0000`
+  - mean MAE: `0.0053`
+  - mean cosine: `0.9985`
+  - failures: `0`
+- Konklusion: NPU-runtime og ACUITY-export er nu bevist med en modeltype, der også har nyttig
+  billedfaglig signalværdi. Mini-modellen bør stadig holdes i `assist`/test, men den er en
+  reel kandidatbase for produktion.
+- Arbejde i gang:
+  - fuld `edge_cnn`-træning på `edge-qa-v2-balanced-manifest.jsonl` er startet i
+    `model-edge-cnn-full-npu-rgb`.
+  - næste trin er ACUITY-export, installation som ny kandidat, bredere parity og derefter
+    konfigurationsbinding til global/kunde/site/kamera AI modes.
