@@ -36,7 +36,7 @@ def _iter_images(root: Path) -> list[Path]:
     return sorted(
         path
         for path in root.rglob("*.jpg")
-        if path.is_file() and ".thumbs" not in path.parts
+        if path.is_file() and not any("thumb" in part.lower() for part in path.parts)
     )
 
 
@@ -56,7 +56,7 @@ def _pick_manifest_rows(manifest: Path, limit: int, seed: int) -> list[dict[str,
                 continue
             row = json.loads(line)
             image = Path(str(row.get("image", "")))
-            if row.get("label") in LABELS and image.exists():
+            if row.get("label") in LABELS and image.exists() and not any("thumb" in part.lower() for part in image.parts):
                 rows.append(row)
     rng = random.Random(seed)
     if limit and len(rows) > limit:

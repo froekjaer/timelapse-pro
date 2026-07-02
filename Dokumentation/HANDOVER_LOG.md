@@ -952,3 +952,42 @@ person vide".
     fototeknisk sandhed, fx overeksponering vs direkte solrefleks vs hvidbalance.
   - Næste modelrunde bør bruge Travbyen som primær real-world accept og Frøkjær 01-05 som
     nat/low-light accept, plus en manuel reviewliste for label-konflikter.
+- Datakvalitetsfund samme runde:
+  - Det oprindelige v2-manifest indeholdt 35 thumbnail-rækker, bl.a. under `.headend-thumbs`.
+  - `edge/training/train_edge_qa_model.py`, `build_edge_qa_eval_suites.py` og
+    `evaluate_edge_qa_npu_parity.py` filtrerer nu alle path parts med `thumb`.
+  - Regenereret holdout-træningsmanifest:
+    - 7.967 rækker.
+    - 0 thumbnail-rækker.
+    - alle 9 klasser stadig repræsenteret.
+- Arbejde i gang:
+  - ny `edge_cnn` holdout-træning:
+    `model-edge-cnn-holdout-lr3e4-npu-rgb`
+  - trænes med `lr=0.0003`, 14 epochs, Travbyen + Frøkjær nat holdt ude.
+
+### Resultat 2026-07-02 — Holdout-model må ikke driftsættes
+- Holdout-træning færdig:
+  - model-dir:
+    `artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/model-edge-cnn-holdout-lr3e4-npu-rgb`
+  - best validation accuracy: `0.9401`
+  - intern test accuracy: `0.9157`
+- Men fuld ONNX-evaluering på Travbyen real-world holdout viser domain gap:
+  - summary:
+    `artifacts/edge-qa-training/edge-qa-v2-npu-20260702-095056/edge-qa-v2-travbyen-daylight-realworld-manifest-onnx-holdout-summary.json`
+  - rows: `1.361`
+  - failed: `0`
+  - expected-label match: `0.1381`
+- Confusion viser tydelig syntetisk bias:
+  - mange Travbyen `blurry` bliver `condensation`.
+  - mange `direct_sun_reflection` bliver `blurry`.
+  - mange `overexposed` bliver `snow_or_dirt_on_lens`.
+- Fortolkning:
+  - Interne metrics på syntetisk/balanceret data er ikke nok.
+  - Holdout-modellen er teknisk god, men ikke fototeknisk god nok på Travbyen.
+  - Den skal ikke eksporteres til `.nb` eller bruges som NPU-kandidat.
+- Næste modelrunde:
+  - reducer syntetiske `condensation`/`snow_or_dirt_on_lens` cases kraftigt eller giv dem lavere vægt.
+  - brug Travbyen som aktiv real-world træningsdomæne, men med review af svage labels.
+  - lav en reviewliste for Travbyen-konflikter, især:
+    `blurry` vs `condensation`, `direct_sun_reflection` vs `overexposed`, og `snow_or_dirt_on_lens`.
+  - behold mini `edge_cnn` som NPU parity baseline indtil en real-world model slår Travbyen-suiten.

@@ -52,7 +52,12 @@ def load_manifest(path: Path) -> list[dict[str, Any]]:
         for line in fh:
             if line.strip():
                 row = json.loads(line)
-                if row.get("label") in LABEL_TO_SPEC and Path(row["image"]).exists():
+                image = Path(row["image"])
+                if (
+                    row.get("label") in LABEL_TO_SPEC
+                    and image.exists()
+                    and not any("thumb" in part.lower() for part in image.parts)
+                ):
                     rows.append(row)
     if not rows:
         raise SystemExit(f"No usable rows in {path}")
@@ -96,11 +101,20 @@ def prepare_rows(
     skip_unreadable: bool,
     skipped_out: Path | None,
     progress_every: int = 0,
+    log_current_every: int = 0,
 ) -> list[dict[str, Any]]:
     usable: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     for idx, row in enumerate(rows, start=1):
         try:
+            if log_current_every > 0 and idx % log_current_every == 0:
+                print(json.dumps({
+                    "event": "preload_current",
+                    "index": idx,
+                    "total": len(rows),
+                    "image": row.get("image"),
+                    "label": row.get("label"),
+                }, ensure_ascii=False), flush=True)
             if preload:
                 prepared = dict(row)
                 prepared["_image_rgb"] = read_resized_image(str(row["image"]), input_size)
@@ -290,6 +304,7 @@ def main() -> int:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--preload", action="store_true", help="Read and resize images once before training")
     parser.add_argument("--preload-progress-every", type=int, default=500, help="Print preload progress every N rows")
+    parser.add_argument("--preload-log-current-every", type=int, default=0, help="Print current image before preload read every N rows")
     parser.add_argument("--skip-unreadable", action="store_true", help="Skip unreadable images and write skipped-images.jsonl")
     parser.add_argument(
         "--export-normalization",
@@ -312,6 +327,7 @@ def main() -> int:
         skip_unreadable=args.skip_unreadable,
         skipped_out=Path(args.out_dir) / "skipped-images.jsonl",
         progress_every=args.preload_progress_every if args.preload else 0,
+        log_current_every=args.preload_log_current_every if args.preload else 0,
     )
 
     class QaDataset(Dataset):

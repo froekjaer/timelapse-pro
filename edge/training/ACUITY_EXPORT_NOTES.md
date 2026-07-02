@@ -284,3 +284,8 @@ Interpret expected-label match carefully: historical CPU-QA labels are useful
 weak labels, but not always a photographic ground truth. The main NPU gate is
 ONNX/NPU parity; product acceptance should use reviewed Travbyen daylight and
 Frøkjær night examples.
+
+Data hygiene note: do not train or evaluate on derived thumbnails. The current
+training and parity loaders filter any path component containing `thumb`
+including `.thumbs` and `.headend-thumbs`. The first v2 balanced manifest had 35
+thumbnail rows; regenerated real-world holdout manifests have 0.
