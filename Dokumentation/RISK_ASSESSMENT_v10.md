@@ -138,10 +138,11 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Residualrisiko:** 🟢 4
 
 ### R02 — Uautoriseret adgang til admin-UI
-- **Status:** ✅ Kontrolleret (opdateret 2026-07-02)
+- **Status:** ✅ Kontrolleret (opdateret 2026-07-02; MFA-dækning korrigeret 2026-07-03)
 - **Implementerede kontroller:** RBAC med 4 roller, JWT 12t, bcrypt, require_role() på endpoints. **MFA er nu policy-drevet og enforced** (Codex): default påkrævet for `super_admin` + `admin` via `mfa_required_by_role`; global override + `mfa_exempt_usernames`; requests uden MFA-verificeret session → `403`. Se `RBAC_Remote_Operational_v10.md` §3.
-- **Åbent:** WebAuthn er separat flag (default off) — TOTP dækker MFA-kravet indtil videre. Claude/Codex-testkonti er fritaget under udvikling.
-- **Residualrisiko:** 🟢 4 (var 🟡 6 før MFA-enforcement)
+- **KORREKTION 2026-07-03 (Claude, frisk kodegennemgang, bekræftet af Codex):** MFA-tjekket var kun implementeret i `main.py::require_role()` — CMDB-routerens og ITIM-routerens egne, uafhængige RBAC-broer (`cmdb.py::_require_cmdb_role`, `itim.py::_require_role`) tjekkede rolle, men ALDRIG MFA. Det betød i praksis, at hele CMDB (inkl. break-glass password-checkout) og ITIM kunne tilgås af en admin/super_admin-session, der aldrig havde gennemført MFA — uanset denne rækkes "✅"-status. **Rettet i kode** på branch `claude/security-hardening-2026-07-03` (VERIFICERET I KODE + lokal testklient: viewer uden MFA → 200, admin uden MFA-verificeret session → 403 "MFA kræves", admin med MFA-verificeret session → 200, på både `/api/cmdb/*` og `/api/itim/*`). **VERIFICERET LIVE:** afventer Codex/Peters commit+genstart af headend. Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.2/§2.3 for fuld analyse.
+- **Åbent:** WebAuthn er separat flag (default off) — TOTP dækker MFA-kravet indtil videre. Claude/Codex-testkonti er fritaget under udvikling. Break-glass rate-limit/IP-allowlist er fortsat opt-in (env-var), men MFA-kravet dækker nu også dette endpoint.
+- **Residualrisiko:** 🟢 4 i kode pr. 2026-07-03 (var reelt 🟡 6-8 for CMDB/ITIM-flader indtil denne rettelse — nedgraderes til 🟢 4 for alle flader først når live-verificeret efter genstart)
 
 ### R03 — Tab af billedhistorik ved hardwarefejl
 - **Status:** ✅ Kontrolleret
@@ -208,6 +209,13 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Status:** 🔴 Åben
 - **Sandsynlighed:** 4, **Konsekvens:** 3, **Score:** 🟠 12
 - **Handling:** Nikon Z30 capabilities-mapping; skeln readonly vs. enforceable; "desired state" + "accepted equivalent labels"
+
+### R15 — `/api/siem/*` uden autentificering (NY, fundet + rettet 2026-07-03)
+- **Status:** ✅ Kontrolleret i kode (Claude, `claude/security-hardening-2026-07-03`) — afventer commit/live-verifikation
+- **Fund:** `GET /api/siem/events|summary|threats` havde ingen `Depends(get_current_user)`/rolletjek — enhver (og med nginx stadig public på `*:80/443`, potentielt enhver på internettet) kunne læse security-events, source-IP'er og brute-force-data uden login. `POST /api/siem/events/{device_id}` kunne modtage fabrikerede events for et vilkårligt device_id uden HMAC/token.
+- **Implementerede kontroller (kode):** GET-endpoints kræver nu `viewer`-rolle + samme MFA-politik som resten af systemet; POST-ingest kræver nu gyldigt device-token via samme `_verify_device_token()`-kæde som øvrige edge-endpoints (HMAC/attestation).
+- **Sandsynlighed før fix:** 4, **Konsekvens:** 3, **Score (før fix):** 🟠 12 → **Residualrisiko efter fix:** 🟢 4 (i kode; live-verifikation udestår)
+- Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.1.
 
 ---
 
@@ -369,8 +377,9 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R12 GDPR-evidens | 🟠 12 | 🆕 Ny |
 | R13 Node-agent nede | 🟡 6 | 🆕 Ny |
 | R14 Nikon Z30 config drift | 🟠 12 | 🆕 Ny |
+| R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 (kode) | 🆕 Ny — fundet og rettet i kode 2026-07-03 |
 
-**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001).
+**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R15 er rettet i kode men kræver commit + genstart + live-verifikation før den kan regnes som lukket.
 
 ---
 

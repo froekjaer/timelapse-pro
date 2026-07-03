@@ -61,7 +61,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | C-01 | JWT_SECRET er stabilt og kryptografisk stærkt (≥256 bit) | ✅ LaunchAgent |
 | C-02 | JWT_SECRET ikke i Git | ✅ |
 | C-03 | Standard super_admin-password er ændret fra default | 🔴 Bekræft manuelt |
-| C-04 | RBAC aktivt på alle `/api/admin/*` endpoints | ✅ require_role() |
+| C-04 | RBAC aktivt på alle `/api/admin/*` endpoints | ✅ require_role() — **NB 2026-07-03:** `/api/siem/*` (uden for `/api/admin/*`) havde slet ingen auth; rettet i kode på `claude/security-hardening-2026-07-03`, afventer commit/genstart |
 | C-05 | Alle CMDB-endpoints kræver viewer-rolle (ingen anonym adgang) | ✅ Rettet 2026-06-21 |
 | C-06 | Rate limiting på `/api/auth/login` (10r/m) | ✅ nginx |
 | C-07 | MFA/WebAuthn til super_admin og admin operationer | ✅ Løst 2026-07-02 — policy-drevet MFA (TOTP) enforced for admin/super_admin (WebAuthn separat/off) |
@@ -70,6 +70,8 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | C-10 | HMAC enforcement aktivt for alle aktive device-tokens | 🟠 Stale credentials skal ryddes |
 
 > **Note C-07 (opdateret 2026-07-02):** MFA er nu implementeret og policy-drevet (Codex) — TOTP enforced som default for `super_admin` + `admin` via `mfa_required_by_role`; global override + `mfa_exempt_usernames` (Claude/Codex-testkonti fritaget under udvikling). Requests uden MFA-verificeret session → `403`. WebAuthn er et separat flag (default off). Se `RBAC_Remote_Operational_v10.md` §3.
+>
+> **KORREKTION 2026-07-03 (Claude):** MFA-tjekket var reelt kun håndhævet i `main.py`'s egen RBAC-funktion — CMDB- og ITIM-routerens separate, lokale RBAC-broer manglede MFA-kaldet helt, så disse to routere (inkl. break-glass password-checkout) omgik MFA-kravet i praksis. Rettet i kode på `claude/security-hardening-2026-07-03`, verificeret lokalt (viewer 200 / admin-uden-MFA 403 / admin-med-MFA 200 på både CMDB og ITIM). Afventer commit + genstart for live-verifikation. Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.2/§2.3.
 
 ---
 
@@ -133,7 +135,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 |---|---|---|
 | H-01 | GitHub Actions CI er grøn på alle builds | ✅ Efter commit 79581ac |
 | H-02 | ESLint-gate i CI — ingen nye fejl | 🟠 Mangler (219 eksisterende fejl) |
-| H-03 | `slowapi` tilføjet til requirements.txt | 🟠 Mangler |
+| H-03 | `slowapi` tilføjet til requirements.txt | ✅ Rettet 2026-07-03 (Claude) — hele `requirements.txt` er samtidig pinnet til konkrete versioner (var 100% upinnet); se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §3.1. Afventer commit |
 | H-04 | deploy/launchd/dk.froekjaer.timelapse-headend.plist opdateret (ikke-secret version) | 🟠 Mangler |
 | H-05 | Python test-suite med edge/headend contract-tests | 🟡 Ønsket |
 | H-06 | README opdateret (ikke Vite-template) | 🟡 Ønsket |

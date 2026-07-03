@@ -486,7 +486,8 @@ Global Config arves i fire lag: `global → kunde → site → kamera` (lavere l
 
 ## 19. Kendte tekniske gældspunkter (governance-backlog)
 
-- `slowapi` importeres i backend men mangler i `headend/requirements.txt`.
+- ~~`slowapi` importeres i backend men mangler i `headend/requirements.txt`~~ — **Rettet 2026-07-03 (Claude):** `requirements.txt` er pinnet til konkrete versioner (var 100% upinnet) og `slowapi` er tilføjet. Branch `claude/security-hardening-2026-07-03`, afventer commit + `pip install -r requirements.txt`-verifikation mod den faktiske prod-venv.
+- **NYT 2026-07-03 (Claude, frisk kodegennemgang):** `/api/siem/*` havde ingen autentificering (læs + skriv), og CMDB/ITIM-routernes lokale RBAC-broer håndhævede rolle men ikke MFA-politikken. Begge rettet i kode på samme branch — se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.1-§2.3 for detaljer og verifikationsresultater. **Afventer:** `git add headend/cmdb.py headend/itim.py headend/siem.py headend/requirements.txt && git commit`, derefter genstart af headend og live-verifikation (`curl` mod `/api/siem/events` uden login skal give 401; admin uden MFA mod `/api/cmdb/` skal give 403).
 - deploy LaunchAgent-template er ikke opdateret til aktiv venv/model.
 - frontend lint-baseline er ikke grøn.
 - Open WebUI skal besluttes som prod-komponent eller lab-only.

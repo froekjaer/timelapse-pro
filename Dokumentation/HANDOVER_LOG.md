@@ -1206,3 +1206,152 @@ person vide".
 - Verifikation:
   - `python -m py_compile edge/capture/quality.py edge/tools/analyse_qa_batch.py tests/test_edge_quality_qa.py` OK.
   - `python -m pytest tests/test_edge_quality_qa.py -q` OK: `32 passed`.
+
+### Handover 2026-07-03 — fra Claude (ny session) til Peter/Codex
+
+- Hvad er gjort: onboardet via `00_START_HER.md` + handover-dokumenter, derefter fuld læsning af
+  alle 17 autoritative v10-dokumenter + levende dokumenter/designnotater, og en målrettet, frisk
+  kodegennemgang (`headend/main.py`, `cmdb.py`, `siem.py`, `itim.py`, `edge/security.py`,
+  `edge/agent.py`, UI auth-lag, CI-workflow, `requirements.txt`, repo-hygiejne). Ingen kodeændringer.
+- Rapport: `Dokumentation/Claude_Kritisk_Statusgennemgang_2026-07-03.md` — læs den for fuld
+  begrundelse og linjehenvisninger.
+- Vigtigste nye fund (verificeret i kode, ikke kun dokumentation):
+  1. **`/api/siem/events|summary|threats` har ingen autentificering** (`headend/siem.py`,
+     monteret uden `dependencies=[...]` i `main.py:10007`). Med nginx stadig public på `*:80/443`
+     er dette reelt eksponeret i dag, ikke kun teoretisk. `POST /events/{device_id}` kan også
+     modtage fabrikerede events uden HMAC/token.
+  2. **MFA håndhæves kun i `main.py::require_role`** — `cmdb.py::_require_cmdb_role` og
+     `itim.py::_require_role` er separate, kopierede RBAC-tjek uden MFA-kald. Det betyder hele
+     CMDB-routeren (inkl. `checkout_break_glass`) og ITIM-routeren reelt omgår MFA-politikken,
+     modsat "✅ Løst"-status i `RISK_ASSESSMENT_v10.md` R02 / `GO_LIVE_CHECKLIST_v10.md` C-07.
+  3. Break-glass-checkout's egne kode-kommentarer kræver MFA/IP-whitelist/rate-limit i produktion,
+     men alle tre er opt-in via env-var og default fra.
+  4. `captures` har ingen `customer_id`-kolonne — tenant-isolation for billeddata er 100%
+     applikations-join-disciplin (`_ensure_capture_device_access`/`_ensure_capture_file_access`).
+     Ingen aktiv lækage påvist, men arkitekturen er skrøbelig; anbefaler systematisk audit +
+     automatiseret cross-tenant-kontrakttest (matcher Codex' egen v11-anbefaling punkt 8/9).
+  5. `headend/requirements.txt` er 100% upinnet og mangler `slowapi`, som `main.py` importerer
+     direkte — en frisk `pip install -r requirements.txt` crasher headend ved opstart. Direkte
+     risiko for restore-testen, der allerede er en P0-blocker.
+  6. CI kører kun syntakstjek + to tynde smoke-tests — ingen lint/SAST/dependency-audit-gate.
+- Positivt bekræftet: path-traversal-forsvar på billed-/thumbnail-endpoints er solidt
+  (`resolve().relative_to(...)` + tenant-tjek), CORS er korrekt scoped (ingen `*`), SQL er
+  konsekvent parametriseret, Ed25519/HMAC edge-signering i `edge/security.py` er velskrevet, og
+  `DOKUMENTPAKKE_OVERSIGT_v10.md`'s note om localStorage-tokens er forældet i positiv retning —
+  `tl_session` er reelt en HttpOnly-cookie, ikke localStorage.
+- Hvad mangler / næste skridt: Peter/Codex bør se rapporten, beslutte rækkefølge (jeg foreslår
+  fund #1-4 først, da #1 og #3 er reelt eksponerede lige nu), og derefter kan jeg starte
+  implementering på en `claude/`-branch.
+- Filer rørt: kun `Dokumentation/Claude_Kritisk_Statusgennemgang_2026-07-03.md` (ny) + denne log.
+- Risici/pas på: fund #1 og #3 er reelle huller i et system der (midlertidigt) er
+  internet-eksponeret via nginx *:80/443 — bør ikke vente på den fulde v11-runde.
+
+### Tilføjelse 2026-07-03 — kamera-lokation/Edge-binding + yderligere lovgivning
+
+- Peter spurgte specifikt ind til, om adskillelsen "kamera-lokation (billeder+konfig) ↔ fysisk
+  Edge (udskiftelig)" reelt er færdigimplementeret. Bekræftet i kode: **kun halvt lavet**.
+  `Camera` + `DeviceAssignment` (med assigned_at/unassigned_at-historik) findes og virker korrekt
+  for **konfiguration** (`config-resolution` joiner rigtigt via `DeviceAssignment`), og
+  `POST /api/admin/cameras/{id}/assign` lukker/åbner assignments korrekt. Men `Capture`
+  (`headend/database.py:112`) har ingen `camera_id`-kolonne, og intet sted i koden joines
+  captures via `DeviceAssignment` — galleri, tag-søgning, timelapse-video og billed-endpoints
+  filtrerer udelukkende på `device_id`. Selv `CameraPage.tsx` er nøglet på `deviceId`, ikke
+  `cameraId`. Konsekvens: udskiftes en defekt Edge (korrekt omtildelt via assign-endpointet),
+  følger konfigurationen med, men billedhistorikken gør ikke — gamle og nye billeder står under
+  to forskellige device_id'er uden samlet visning. Se fuld analyse + forslag til rettelse
+  (tilføj `camera_id` på `Capture`, backfill via `DeviceAssignment`-tidsvinduer, kamera-centreret
+  visning) i §2.5 i `Claude_Kritisk_Statusgennemgang_2026-07-03.md`.
+- Peter bad også om et tjek for anden relevant lovgivning ud over de otte standarder, der allerede
+  er dækket. Tilføjet som §7 i samme rapport: tv-overvågningsloven (DK, ikke nævnt noget sted —
+  mest konkrete gab), databeskyttelsesloven, arbejdsmiljøloven (kameraovervågning af ansatte),
+  radioudstyrsdirektivet/RED + cybersikkerheds-delegeretakt 2022/30 (relevant fordi Edge har
+  WiFi/BT/4G — CE-mærkningsspor uafhængigt af CRA), CER (nævnes i dag kun én gang i forbifarten,
+  bør have samme behandling som NIS2), samt GDPR Art. 22 eksplicit ved siden af AI Act-punktet.
+
+### Handover 2026-07-03 (fortsat) — fra Claude til Codex/Peter: implementering af fase 1-sikkerhedsrettelser
+
+- **Kontekst:** Codex krydstjekkede `Claude_Kritisk_Statusgennemgang_2026-07-03.md` direkte mod
+  koden og bekræftede hovedfundene (SIEM-auth, MFA-gab i CMDB/ITIM, upinnet requirements.txt,
+  `Capture` uden `camera_id`). Anbefalede: gennemfør de første 3-4 isolerede sikkerhedspunkter nu;
+  tag `Capture.camera_id`/`customer_id`-skemaændringen mere kontrolleret (rører galleri, import,
+  tag-søgning og RBAC samtidig). Peter bad Claude tage teten. Al kode nedenfor er ny og ikke rørt
+  af Codex' aktive edge-QA/NPU-arbejde (ingen fil-overlap).
+- **Branch:** `claude/security-hardening-2026-07-03`, oprettet fra `codex/edge-npu-qa`s HEAD
+  (`c038403`) — det aktuelt tjekkede-ud arbejdstræ på Mac'en, IKKE `main` (som viste sig at være
+  10+ dage forældet — se separat fund nedenfor).
+- **Hvad er gjort (alle fire fase 1-punkter fra rapporten):**
+  1. `headend/siem.py`: `GET /events|summary|threats` kræver nu `viewer`-rolle + MFA-politik
+     (ny `_require_siem_role()`, som — modsat cmdb.py/itim.py's ældre broer — også håndhæver MFA
+     fra start). `POST /events/{device_id}` kræver nu gyldigt device-token via samme
+     `main._verify_device_token()`-kæde (HMAC/attestation) som alle andre edge-endpoints.
+  2. `headend/cmdb.py::_require_cmdb_role` og `headend/itim.py::_require_role`: tilføjet manglende
+     MFA-håndhævelse (kalder nu `main._mfa_required_for_user`/`_session_is_mfa_verified`, samme
+     som `main.py::require_role` altid har gjort). Lukker samtidig break-glass-hullet (§2.3), da
+     `checkout_break_glass` bruger `_require_cmdb_role("admin")`.
+  3. `headend/requirements.txt`: alle 14 (nu 15 med `slowapi`) afhængigheder pinnet til konkrete
+     versioner, fundet i en lokal, kørende venv med pakkerne installeret. **Skal krydstjekkes mod
+     den faktiske prod-venv** (`~/.venvs/timelapse-headend/bin/pip freeze`) — pins er et stærkt
+     udgangspunkt, ikke en garanteret kopi af live-miljøet.
+- **Verifikation (VERIFICERET I KODE, ikke live):**
+  - `python -m py_compile` OK på alle fire ændrede filer.
+  - `pip install -r headend/requirements.txt` lykkedes rent i et isoleret testmiljø (Python 3.10).
+  - Eksisterende testsuite: `pytest tests/test_agent_integrity.py tests/test_headend_endpoints.py`
+    → `18 passed` (uændret, ingen regression).
+  - **Ny, reel FastAPI TestClient-verifikation** (sqlite-baseret, ikke kun statisk læsning):
+    - `GET/POST /api/siem/*` uden login → `401` (alle fire endpoints, før: `200`/no-op-accept).
+    - `GET /api/cmdb/`, `GET /api/itim/health` med viewer-rolle (MFA ikke krævet for rollen) →
+      `200`.
+    - Samme to endpoints med admin-rolle, session UDEN `mfa_verified` → `403 "MFA kræves for
+      denne rolle"` (dette var den reelle live-bug — nu lukket).
+    - Samme to endpoints med admin-rolle, session MED `mfa_verified=true` → `200` (ingen
+      regression for korrekt MFA'de sessioner).
+    - `POST /api/siem/events/{device_id}` med forkert device-token → `401`; med korrekt
+      `Device.api_token` → kommer korrekt forbi auth-laget (fejlede kun videre inde i
+      request-flowet på en Postgres-specifik `information_schema`-forespørgsel, som er en kendt,
+      urelateret sqlite-begrænsning i mit testmiljø — ikke en fejl i selve rettelsen).
+- **IKKE gjort endnu — commit blokeret:** `git add`/`git commit` fejlede med
+  `fatal: Unable to create '.git/index.lock': File exists`. Filen kunne heller ikke fjernes
+  manuelt fra Claudes sandbox (`rm: cannot remove '.git/index.lock': Operation not permitted`,
+  selvom `ls -la` viser normal ejer/rettigheder 0600). Dette minder om det kendte
+  data-fast-volumen-I/O-mønster i `SERVICES_OG_DRIFT_kilde_til_sandhed.md` §3, men er ikke
+  bekræftet som samme rodårsag. **Ret ikke selv videre på dette fra Claude-siden** (jf. reglen:
+  OS-/fillås-problemer er Codex/Peter-territorium). **Codex/Peter: tjek venligst**
+  `ls -la /Volumes/data-fast/peter-home/projects/timelapse-pro/.git/index.lock` — hvis ingen
+  levende git-proces kører, fjern filen (`rm .git/index.lock`), og bekræft at
+  `git status` på branch `claude/security-hardening-2026-07-03` viser de fire ændrede filer
+  (`headend/cmdb.py`, `headend/itim.py`, `headend/requirements.txt`, `headend/siem.py`) klar til
+  commit. Alle filændringer ligger allerede korrekt på disk — kun selve `git add`/`commit`
+  mangler.
+- **Kommandoer der skal køres, når lock er ryddet:**
+  ```bash
+  cd ~/projects/timelapse-pro
+  git status --short              # bør vise præcis de 4 filer ovenfor som M, intet andet
+  git add headend/cmdb.py headend/itim.py headend/requirements.txt headend/siem.py
+  git commit -m "Security: require MFA in CMDB/ITIM role checks, auth-gate SIEM router, pin requirements.txt"
+  ~/.venvs/timelapse-headend/bin/pip install -r headend/requirements.txt   # bekræft ingen version-konflikt mod prod-venv
+  sudo launchctl kickstart -k system/dk.froekjaer.timelapse-headend
+  sleep 25
+  curl -s -o /dev/null -w "health: %{http_code}\n" http://127.0.0.1:8000/api/health   # forventet 200
+  curl -i http://127.0.0.1:8000/api/siem/events                                       # forventet 401 (var 200)
+  ```
+- **NYT PROCESFUND — `main` er 10+ dage forældet:** Under branch-arbejdet blev det tydeligt at
+  `main` sidst blev opdateret 2026-06-23 (`feat(edge): persist and list disk image artifacts`),
+  mens mindst 7 andre branches (`codex/edge-npu-qa`, `claude/siem-cmdb-optimizations`,
+  `codex/cmdb-rbac-hardening`, `codex/itim-live-verification`, `codex/shared-handover-docs`,
+  `codex/edge-ai-npu-modes`, `codex/edge-ai-v1-smoke`) er grenet fra samme punkt og aldrig
+  merget tilbage. Det aktuelt udcheckede arbejdstræ (`codex/edge-npu-qa`) er heldigvis det mest
+  komplette — det viste sig allerede at indeholde både `codex/cmdb-rbac-hardening`s rolletjek og
+  `claude/siem-cmdb-optimizations`s break-glass/SIEM-rettelser (formentlig foldet ind via
+  checkpoint-commits `9340aed`/`d7a952d`), så intet arbejde er tabt. Men `main` selv mangler det
+  hele, og hvis nogen nogensinde kører `git pull origin main` som `ADMINISTRATORMANUAL_v10.md`
+  §3.3 foreskriver, ville de få en markant ældre og mere sårbar kodebase end det, der reelt
+  kører. **Anbefaling:** en bevidst branch-oprydning (merge `codex/edge-npu-qa` → `main` når
+  Codex' aktive arbejde er klar, slet de nu-forældede sibling-branches efter bekræftelse af at
+  deres indhold er absorberet) bør på listen som eget punkt.
+- **Filer rørt (denne handover-runde, ud over kode):** `Dokumentation/RISK_ASSESSMENT_v10.md`
+  (R02 korrigeret + nyt R15), `GO_LIVE_CHECKLIST_v10.md` (C-04, C-07, H-03),
+  `KRAVREGISTER_og_STATUS_v10.md` (SEC-004, SEC-008), `ADMINISTRATORMANUAL_v10.md` (§19).
+- **Næste skridt:** (1) Codex/Peter rydder git-lock + committer + genstarter + live-verificerer
+  kommandoerne ovenfor. (2) Claude fortsætter til fase 2 (`Capture.camera_id`/`customer_id`) med
+  et separat design-oplæg til godkendelse, jf. Codex' anbefaling om en mere kontrolleret tilgang
+  dér. (3) Overvej branch-oprydningen (main vs. de 7 divergerende branches) som eget punkt.

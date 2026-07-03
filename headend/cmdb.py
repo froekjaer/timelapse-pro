@@ -102,9 +102,23 @@ def _enforce_break_glass_policy(request: "Request | None", device_id: str, admin
 
 
 def _require_cmdb_role(*roles: str):
-    """Local RBAC bridge for this router without making cmdb.py import main.py at module load."""
+    """Local RBAC bridge for this router without making cmdb.py import main.py at module load.
+
+    2026-07-03: tilføjet MFA-håndhævelse. Denne bro tjekkede tidligere KUN rolle —
+    den kaldte aldrig main._mfa_required_for_user()/_session_is_mfa_verified(), så
+    hele CMDB-routeren (inkl. break-glass password-checkout) reelt omgik MFA-
+    politikken, selvom RISK_ASSESSMENT_v10.md/GO_LIVE_CHECKLIST_v10.md markerer
+    MFA som "løst" for admin/super_admin. Se
+    Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.2/§2.3.
+    """
     def _check(request: Request, db: Session = Depends(get_db)):
-        from main import _ROLE_HIERARCHY, get_current_user
+        from main import (
+            _ROLE_HIERARCHY,
+            _mfa_required_for_user,
+            _session_is_mfa_verified,
+            _session_payload,
+            get_current_user,
+        )
 
         user = get_current_user(request, db)
         if user is None:
@@ -112,6 +126,8 @@ def _require_cmdb_role(*roles: str):
         allowed = _ROLE_HIERARCHY.get(user.role, {user.role})
         if not allowed.intersection(set(roles)):
             raise HTTPException(status_code=403, detail=f"Kræver rolle: {', '.join(roles)}")
+        if _mfa_required_for_user(db, user) and not _session_is_mfa_verified(_session_payload(request)):
+            raise HTTPException(status_code=403, detail="MFA kræves for denne rolle")
         return user
 
     return _check

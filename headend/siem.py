@@ -33,7 +33,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import Column, DateTime, Integer, String, Text, text
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,55 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["SIEM"])
 _COLLECTOR_STARTED = False
 _API_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+
+
+# ── Auth-broer (2026-07-03 hærdning) ──────────────────────────────────────────
+# SIEM-routeren havde tidligere INGEN autentificering på nogen endpoints — hverken
+# på de menneskevendte GET-endpoints (events/summary/threats, som eksponerer
+# source-IP'er, brugernavne og brute-force-data) eller på det maskinvendte
+# POST-ingest-endpoint (som accepterede events for et vilkårligt device_id uden
+# nogen form for token-tjek). Se Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.1.
+#
+# Lazy import af main (samme mønster som cmdb.py::_require_cmdb_role) for at
+# undgå cirkulær import ved modul-indlæsning.
+
+def _require_siem_role(*roles: str):
+    """RBAC-bro til denne router — inkl. MFA-håndhævelse (modsat cmdb.py/itim.py's
+    bro, som IKKE tjekker MFA, jf. §2.2 i statusgennemgangen)."""
+    def _check(request: Request, db: Session = Depends(get_db)):
+        from main import (
+            _ROLE_HIERARCHY,
+            _mfa_required_for_user,
+            _session_is_mfa_verified,
+            _session_payload,
+            get_current_user,
+        )
+
+        user = get_current_user(request, db)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Ikke autentificeret")
+        allowed = _ROLE_HIERARCHY.get(user.role, {user.role})
+        if not allowed.intersection(set(roles)):
+            raise HTTPException(status_code=403, detail=f"Kræver rolle: {', '.join(roles)}")
+        if _mfa_required_for_user(db, user) and not _session_is_mfa_verified(_session_payload(request)):
+            raise HTTPException(status_code=403, detail="MFA kræves for denne rolle")
+        return user
+
+    return Depends(_check)
+
+
+async def _require_device_auth(
+    device_id: str,
+    request: Request,
+    authorization: str = Header(default=""),
+    db: Session = Depends(get_db),
+) -> None:
+    """Genbruger samme device-Bearer-token-verifikation som alle andre
+    edge-vendte endpoints (main._verify_device_token) — samme HMAC/attestation-
+    kæde, ingen ny, separat tillidsmodel for SIEM-ingest."""
+    from main import _verify_device_token
+
+    await _verify_device_token(device_id=device_id, request=request, authorization=authorization, db=db)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────
@@ -443,11 +492,19 @@ def start_headend_log_collector() -> None:
 # ── Endpoints ─────────────────────────────────────────────────────────────
 
 @router.post("/events/{device_id}")
-def ingest_events(device_id: str, payload: dict, db: Session = Depends(get_db)):
+async def ingest_events(
+    device_id: str,
+    payload: dict,
+    _auth: None = Depends(_require_device_auth),
+    db: Session = Depends(get_db),
+):
     """
     Node agent poster security events hertil.
     Body: { "events": [ { event_type, severity, username, source_ip,
                            raw_message, occurred_at }, ... ] }
+
+    Kræver gyldigt device-token (samme verifikation som øvrige edge-endpoints) —
+    tidligere kunne events for et vilkårligt device_id postes uden nogen auth.
     """
     events = payload.get("events", [])
     _check_api_rate_limit(device_id, len(events))
@@ -504,9 +561,10 @@ def get_events(
     source_ip:  Optional[str] = Query(None),
     hours:      int           = Query(24, ge=1, le=8760),
     limit:      int           = Query(500, ge=1, le=2000),
+    _user=_require_siem_role("viewer"),
     db: Session = Depends(get_db)
 ):
-    """Hent security events med filtrering."""
+    """Hent security events med filtrering. Kræver mindst viewer-rolle."""
     _ensure_schema(db)
     since = _now() - timedelta(hours=hours)
     q = db.query(SecurityEvent).filter(SecurityEvent.occurred_at >= since)
@@ -524,9 +582,10 @@ def get_events(
 @router.get("/summary")
 def get_summary(
     hours: int = Query(24, ge=1, le=8760),
+    _user=_require_siem_role("viewer"),
     db: Session = Depends(get_db)
 ):
-    """Tæller pr. device / event_type / severity — til SIEM-dashboard."""
+    """Tæller pr. device / event_type / severity — til SIEM-dashboard. Kræver mindst viewer-rolle."""
     _ensure_schema(db)
     since = _now() - timedelta(hours=hours)
 
@@ -577,11 +636,13 @@ def get_summary(
 def get_threats(
     hours:     int = Query(24, ge=1, le=168),
     threshold: int = Query(5,  ge=1),
+    _user=_require_siem_role("viewer"),
     db: Session = Depends(get_db)
 ):
     """
     Brute force detektion — IPs med mere end `threshold` SSH-fejl.
     Returnerer også geografisk info hvis tilgængeligt (fremtidigt).
+    Kræver mindst viewer-rolle.
     """
     _ensure_schema(db)
     since = _now() - timedelta(hours=hours)
