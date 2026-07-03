@@ -67,10 +67,10 @@ log = logging.getLogger(__name__)
 
 # ── Konfiguration ─────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL   = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-VISION_MODEL      = os.getenv("TIMELAPSE_VISION_MODEL", "qwen2.5vl:7b")
+VISION_MODEL      = os.getenv("TIMELAPSE_VISION_MODEL", "qwen3-vl:8b")
 FALLBACK_MODELS   = [
     m.strip()
-    for m in os.getenv("TIMELAPSE_VISION_FALLBACK_MODELS", "llava-phi3:latest").split(",")
+    for m in os.getenv("TIMELAPSE_VISION_FALLBACK_MODELS", "qwen2.5vl:7b").split(",")
     if m.strip()
 ]
 TEXT_MODEL        = "llama3.2:latest"
@@ -83,12 +83,31 @@ TIMEOUT_TEXT      = 60
 # med (højere = skarpere men langsommere/mere VRAM).
 MAX_IMAGE_BYTES   = int(os.getenv("TIMELAPSE_VISION_MAX_IMAGE_BYTES", str(1_500_000)))
 MAX_IMAGE_EDGE    = int(os.getenv("TIMELAPSE_VISION_MAX_IMAGE_EDGE", "1024"))
-MAX_PROMPT_TAGS   = int(os.getenv("TIMELAPSE_VISION_MAX_PROMPT_TAGS", "45"))
-MAX_PROMPT_TAGS_PER_CATEGORY = int(os.getenv("TIMELAPSE_VISION_MAX_PROMPT_TAGS_PER_CATEGORY", "6"))
+MAX_PROMPT_TAGS   = int(os.getenv("TIMELAPSE_VISION_MAX_PROMPT_TAGS", "100"))
+MAX_PROMPT_TAGS_PER_CATEGORY = int(os.getenv("TIMELAPSE_VISION_MAX_PROMPT_TAGS_PER_CATEGORY", "10"))
 # Hævet fra 4096: billede + den rigere scene-prompt sprængte 4096-konteksten
 # ("exceeds available context size"). qwen2.5-vl klarer langt mere; 8192 giver luft.
 VISION_NUM_CTX     = int(os.getenv("TIMELAPSE_VISION_NUM_CTX", "8192"))
-VISION_NUM_PREDICT = int(os.getenv("TIMELAPSE_VISION_NUM_PREDICT", "448"))
+VISION_NUM_PREDICT = int(os.getenv("TIMELAPSE_VISION_NUM_PREDICT", "768"))
+
+LOCAL_PROMPT_CATEGORY_PRIORITY = (
+    "camera_quality",
+    "weather",
+    "light_and_time",
+    "surroundings",
+    "structures",
+    "building_types",
+    "construction_progress",
+    "heavy_machinery",
+    "equipment_and_tools",
+    "vehicles",
+    "materials_on_site",
+    "site_condition",
+    "safety_and_barriers",
+    "anomalies_and_events",
+    "workers_and_activity",
+    "change_detection",
+)
 
 
 def _db_setting(key: str, default: str) -> str:
@@ -267,9 +286,13 @@ def _build_vision_prompt(vocabulary_by_category: dict[str, list[str]], context_b
     (pris/privacy).
     """
 
+    ordered_categories = list(LOCAL_PROMPT_CATEGORY_PRIORITY) + [
+        cat for cat in vocabulary_by_category.keys() if cat not in LOCAL_PROMPT_CATEGORY_PRIORITY
+    ]
     vocab_lines = []
     used = 0
-    for cat, tags in vocabulary_by_category.items():
+    for cat in ordered_categories:
+        tags = vocabulary_by_category.get(cat, [])
         if used >= MAX_PROMPT_TAGS:
             break
         remaining = max(0, MAX_PROMPT_TAGS - used)
@@ -284,12 +307,18 @@ def _build_vision_prompt(vocabulary_by_category: dict[str, list[str]], context_b
 {context_txt}
 IMPORTANT:
 - Describe what you ACTUALLY see, in your own words. Do NOT assume it is a construction site.
-- Describe the WHOLE scene: structures (roofs, facades, gables, chimneys), building types, vegetation (trees, hedge, grass), vehicles, terrain and surroundings — and on a building site also machinery, materials and the construction stage. THEN weather/light, THEN image quality.
+- Perform a systematic visual scan BEFORE answering:
+  1) camera quality and lens/window problems,
+  2) weather and light,
+  3) buildings/roofs/facades/structures,
+  4) vegetation, roads, terrain and surroundings,
+  5) vehicles, machinery, materials, workers and unusual events.
 - Tag ONLY what is present. NEVER tag the absence of something (no "no_crane", "no_worker", "no_activity"). If it isn't there, don't mention it.
 - Pay attention to anything unusual or worth a second look: fire, smoke, flooding, ambulance, accident, an unknown vehicle, or people/vehicles at night. Use the CONTEXT above to judge what is unusual for THIS camera.
 - Describe weather and lighting when visible (sunshine, overcast, blue_sky, backlight, sun_in_lens, glare, overexposed).
 - Note image quality in "quality.flag": clear_image, overexposed, underexposed, glare, sun_in_lens, dirty_lens, condensation_on_lens, motion_blur, incorrect_focus, night_image_too_dark, camera_moved. Use "unusable_image" ONLY for a truly blank / sensor-error / fully-blocked frame — an overcast or gray but real scene is NOT unusable.
-- Return as many RELEVANT tags as truly fit (often 8-18 for a rich scene; few for a simple one). Reuse a listed word rather than inventing a near-synonym. Never pad with guesses.
+- Return a rich searchable tag set: normally 12-25 tags for an outdoor timelapse frame. Use fewer ONLY if the image is genuinely simple. Reuse a listed word rather than inventing a near-synonym. Never pad with guesses.
+- Prefer concrete visible tags over vague tags. Good examples: roof, pitched_roof, brick_wall, road, grass, trees, car, tower_crane, excavator, muddy_ground, puddles, overcast, daylight, clear_image, glare, dirty_lens.
 
 These ENGLISH words are INSPIRATION — reuse when they fit, invent others as needed:
 {vocab_text}
@@ -466,6 +495,7 @@ class OllamaVisionService:
             "prompt": prompt,
             "images": images,
             "stream": False,
+            "format": "json",
             "options": {
                 "temperature": 0.1,      # lav temperatur → konsistente JSON-svar
                 "top_p": 0.8,
@@ -530,6 +560,8 @@ class OllamaVisionService:
         }
         cleaned = {k: v for k, v in raw.items() if k in keep}
         if "thinking" in raw:
+            if not str(cleaned.get("response", "")).strip() and str(raw.get("thinking", "")).lstrip().startswith("{"):
+                cleaned["response"] = raw.get("thinking", "")
             cleaned["thinking_preview"] = str(raw.get("thinking", ""))[:500]
         return cleaned
 
@@ -702,13 +734,13 @@ class OllamaVisionService:
                 moderation_notes.append(f"interior_tags_removed_for_outdoor_scene: removed={removed}")
 
         work_tags = [t for t in all_tags if t in CONSTRUCTION_WORK_TAGS]
-        if len(all_tags) > 12 or len(work_tags) >= 8:
+        if len(all_tags) > 35 or (len(work_tags) >= 20 and len(work_tags) / max(1, len(all_tags)) > 0.7):
             neutral = [t for t in all_tags if t in NEUTRAL_FALLBACK_TAGS]
             moderation_notes.append(
                 f"tag_spam_rejected: total={len(all_tags)} construction_work={len(work_tags)}"
             )
-            all_tags = neutral[:8]
-            raw_new = []
+            all_tags = (neutral or all_tags)[:18]
+            raw_new = raw_new[:5]
 
         approved_tags = [t for t in all_tags if t in approved_tag_set]
         new_tags      = [t for t in all_tags if t not in approved_tag_set and t in NEUTRAL_FALLBACK_TAGS] + raw_new

@@ -177,6 +177,8 @@ def main():
 
     # Skriv JSON + markdown
     out = args.out
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     Path(out + ".json").write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     md = ["# Ollama vs Gemini — sammenligning\n"]
     for r in results:

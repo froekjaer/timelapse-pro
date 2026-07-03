@@ -40,6 +40,7 @@ from ollama_service import OllamaVisionService, ImageAnalysisResult
 from text_services import SIEMAnalyser, CMDBEnricher, SIEMEvent, CMDBAssessment
 from repositories import CaptureRepository, TagRepository, AnalysisRepository
 from gdpr_manager import GDPRManager
+from database import Capture, Device
 
 log = logging.getLogger(__name__)
 
@@ -164,11 +165,21 @@ class AIRouter:
                 if not image_path or not image_path.exists():
                     raise FileNotFoundError(f"Billede ikke fundet: {image_path}")
 
+            context_block = ""
+            try:
+                from capture_context import build_capture_context, format_context_block
+                capture = db.query(Capture).filter_by(id=capture_id).first()
+                device = db.query(Device).filter_by(device_id=capture.device_id).first() if capture else None
+                context_block = format_context_block(build_capture_context(db, capture, device)) if capture else ""
+            except Exception as exc:
+                log.debug("Kunne ikke bygge capture context for %d: %s", capture_id, exc)
+
             result: ImageAnalysisResult = self._vision.analyse(
                 image_path           = image_path,
                 vocabulary_by_cat    = vocab_by_cat,
                 approved_tag_set     = approved_set,
                 reference_image_path = reference_path,
+                context_block        = context_block,
             )
 
             # Gem analyse
