@@ -20,6 +20,63 @@ person vide".
 
 ## Log
 
+### Handover 2026-07-03 10:35 — fra Codex til ny Claude-session/Peter
+- Hvad er gjort: Læst `Dokumentation/HANDOVER_2026-07-02_Claude_session.md` og
+  `Dokumentation/00_START_HER.md`. Bekræftet at Codex' V11-relaterede commits `260122c` og
+  `99bff9b` allerede ligger på `codex/edge-npu-qa`; de er review-/valideringsnotater, ikke en
+  komplet `*_v11.md` dokumentpakke. Claudes v10-konsolidering ligger stadig som stort uncommitted
+  dokument-spor og skal reconciles bevidst før bredt commit.
+- Deploy udført: `npm run build` i `timelapse-ui` er grøn. Live nginx har fået specifik
+  `location /api/import/` med `client_max_body_size 1024m`, `nginx -t` er grøn, og nginx er
+  kickstartet som system-LaunchDaemon. Headend er kickstartet som
+  `system/dk.froekjaer.timelapse-headend`.
+- Verifikation: `headend 200`, `ui 200`, `nginx 301`; PostgreSQL/nginx/headend/UI kører som
+  systemservices. WiFi-watchdoggen logger fortsat at `en1` har IP og router `192.168.86.1` er
+  reachable.
+- Gemini-backlog: DB-count for captures uden `ai_tags` siden `2026-06-29 12:00` = 22. Dry-run af
+  `ai_batch_submit.py --since "2026-06-29 12:00" --no-context --dry-run` viser 22 billeder,
+  0 manglende filer og 1 batch-job. Intet er indsendt, fordi det koster/kalder Vertex.
+- Filer rørt: `Dokumentation/HANDOVER_2026-07-02_Claude_session.md`,
+  `Dokumentation/00_START_HER.md`, `Dokumentation/HANDOVER_LOG.md`, live
+  `/opt/homebrew/etc/nginx/nginx.conf` (backup taget), samt tidligere Mac/WiFi launchd-artefakter.
+- Risici / pas på: Arbejdstræet er stadig meget beskidt og har 0 staged filer. Brug ikke bredt
+  commit uden først at adskille v10-dokumentkonsolidering, Claudes kodefixes og Codex'
+  drift/launchd-artefakter.
+
+### Handover 2026-07-03 10:15 — fra Codex til Peter/Claude
+- Hvad er gjort: Undersøgt Mac Mini kernel panic. Panicloggen viser `watchdog timeout: no
+  checkins from watchdogd in 90 seconds`, samtidig med `Compressor Info ... 100% of segments
+  limit (BAD) with 32 swapfiles and LOW swap space`. CPU-listen pegede på `kernel_task`,
+  `docker-agent` og `com.apple.Virtualization.Virtual`; senest startede kext var `smbfs`.
+  Mest sandsynlige årsag er system-hang under kraftig memory/swap pressure, muligvis forværret af
+  Docker/Virtualization og/eller SMB/NAS-I/O, ikke en almindelig headend-app-crash.
+- Hvad er gjort: Sat Mac'en mere serveragtigt op: `Restart After Power Failure: On`,
+  `Restart After Freeze: On`, `sleep 0`, `disksleep 0`, WOL/tcpkeepalive aktive. Installeret
+  system-LaunchDaemons for PostgreSQL, nginx, headend og UI, plus
+  `/usr/local/sbin/timelapse-headend-start`, som venter på `/Volumes/data-fast` og PostgreSQL før
+  uvicorn startes. Runtime-env ligger lokalt i `/etc/timelapse/headend.env` og ikke i Git. De
+  gamle bruger-LaunchAgents for headend/UI/nginx/PostgreSQL er omdøbt til `.disabled-20260703-*`,
+  så de ikke starter dobbelt ved næste GUI-login.
+- Hvad er gjort: WiFi er sat som første netværksservice, og
+  `dk.froekjaer.timelapse-wifi-ensure` er installeret som system-LaunchDaemon. Den kører ved boot
+  og hvert minut, tjekker `en1` + router `192.168.86.1`, og forsøger re-join til `p-froekjaer`.
+- Kommandoer kørt eller skal køres: verificeret med
+  `launchctl print system/dk.froekjaer.timelapse-headend`,
+  `launchctl print system/dk.froekjaer.timelapse-postgresql`,
+  `launchctl print system/dk.froekjaer.timelapse-nginx`,
+  `curl http://127.0.0.1:8000/api/health`.
+- Forventet/faktisk output: system-services kører som user `peter`; listeners på `5432`, `80`,
+  `443`, `8000`, `5173`; headend `200`, UI `200`, nginx `301`.
+- Filer rørt: `deploy/macos/timelapse-headend-start.sh`,
+  `deploy/macos/timelapse-wifi-ensure.sh`,
+  `deploy/launchd/macos/dk.froekjaer.timelapse-*.plist`,
+  `Dokumentation/SERVICES_OG_DRIFT_kilde_til_sandhed.md`,
+  `Dokumentation/FAQ_og_fejlsøgning.md`,
+  `Dokumentation/HANDOVER_Claude_Codex_arbejdsdeling.md`.
+- Risici / pas på: FileVault er On. Efter rigtigt strømudfald kan maskinen stadig kræve manuel
+  FileVault-unlock før normal WiFi, volumes og LaunchDaemons bliver tilgængelige. Fuld unattended
+  recovery kræver en bevidst FileVault-beslutning og helst kablet net.
+
 ### Handover 2026-06-28 10:10 — fra Codex til Claude/Peter
 - Hvad er gjort: Edge AI/NPU-sporet er checkpointet på `codex/edge-ai-npu-modes`.
   Orange Pi 4 Pro NPU probe viser `npu_ready=true`; QA-kontrakt, datasetmanifest og
@@ -1057,3 +1114,79 @@ person vide".
   - aktiv edge-device mangler `hardware_model` og `camera_model` i `devices`.
   - UI har stadig hardcoded `Kamera - Canon EOS 1300D` i DevicePage.
   - NPU-runtime er etableret, men production QA-model er stadig under real-world tuning.
+
+### Codex 2026-07-02 — MFA reset og hierarkisk MFA policy
+- Peters halve MFA-state blev fundet og nulstillet:
+  - før: `mfa_enabled=false`, men `totp_secret` var stadig sat.
+  - efter: `mfa_enabled=false`, `totp_secret=null`.
+- Headend MFA-runtime manglede `pyotp` og `qrcode`; de er installeret i live-venv og tilføjet til
+  `headend/requirements.txt`.
+- Kodeændringer:
+  - `ConfigDefaults.session_policy` er nu SQLAlchemy-modelkolonne.
+  - startup-migration sikrer `config_defaults.session_policy`.
+  - default session policy kræver MFA for `super_admin` og `admin`, men ikke for `operator`/`viewer`.
+  - session policy resolves hierarkisk: global → kunde → site → kamera, med `mfa_required_by_role`.
+  - `require_role` afviser admin/super_admin API-adgang uden MFA-verificeret session, når policy kræver det.
+  - password-login for admin/super_admin uden TOTP giver en kort MFA-enrollment-session i stedet for permanent lockout.
+  - `/api/admin/users/{user_id}/mfa/reset` nulstiller hel/halv TOTP-state; valgfri WebAuthn-sletning er understøttet via payload.
+  - Users UI viser `MFA kræves`, `MFA halv state` og har `Nulstil MFA`.
+  - Login UI kan oprette MFA direkte, når policy kræver enrollment.
+- Verifikation:
+  - `/Users/peter/.venvs/timelapse-headend/bin/python -m py_compile headend/main.py headend/database.py` OK.
+  - `npm --prefix timelapse-ui run build` OK.
+  - live headend health OK.
+  - smoke-test: ny super_admin uden MFA → `mfa_setup_required` → QR/secret → TOTP confirm → `/api/admin/users` HTTP 200.
+  - smoke-test: super_admin med MFA nulstiller halv TOTP-state på anden bruger OK.
+
+### Codex 2026-07-02 — MFA-undtagelser i config-hierarki
+- Peter bad om en eksplicit mulighed for at undtage bestemte admin/super_admin-brugere fra MFA,
+  så Codex/Claude testbrugere og evt. kundeønskede service-admins kan logge ind uden TOTP.
+- Implementeret som config, ikke hardcoded:
+  - `session_policy.mfa_exempt_usernames`
+  - virker i samme hierarki som resten af session policy: global → kunde → site → kamera.
+- Global Config UI har nu feltet `MFA-undtagelser` med checkbox/dropdown over admin/super_admin-brugere.
+- Live DB er sat til:
+  - `mfa_exempt_usernames=["claudetest","codex"]`
+- Live policy-test efter headend restart:
+  - `codex required=False`
+  - `claudetest required=False`
+  - `peter required=True`
+- Verifikation:
+  - backend compile OK.
+  - UI build OK.
+  - `/api/health` OK efter restart.
+
+### Codex 2026-07-03 — Travbyen Kamera 2 real-world frontglas-cases
+- Peter importerede nye Travbyen Kamera 2 billeder med ægte frontglas-problemer.
+- Fundet i canonical originalstruktur, ikke thumbnails:
+  - `2026/01/06` — sne/is på frontglas:
+    `Kirkbi_A_S_Travbyen_Kamera_2_20260106_125938.jpg`, capture `28016`
+  - `2026/01/08` — sne/vand på frontglas:
+    `Kirkbi_A_S_Travbyen_Kamera_2_20260108_125936.jpg`, capture `28017`
+  - `2026/01/14` — vand/sne på frontglas + modlys:
+    `Kirkbi_A_S_Travbyen_Kamera_2_20260114_095931.jpg`, capture `28018`
+- DB-tags lagt på de tre captures:
+  - fælles: `qa_review_realworld_front_glass`, `qa_training_candidate`, `travbyen_camera_2_realworld`
+  - `28016`: `snow_or_ice_on_front_glass`, `snow_or_dirt_on_lens`, `very_blurry`, `low_saturation`
+  - `28017`: `snow_or_water_on_front_glass`, `snow_or_dirt_on_lens`, `localized_water_snow_blobs`
+  - `28018`: `front_glass_water`, `direct_sun_reflection`, `snow_or_dirt_on_lens`, `sun_glare`
+- Artefakter:
+  - review sheet:
+    `artifacts/edge-qa-training/travbyen-kamera2-realworld-frontglass-20260703/travbyen-kamera2-frontglass-review-sheet.jpg`
+  - features:
+    `artifacts/edge-qa-training/travbyen-kamera2-realworld-frontglass-20260703/travbyen-kamera2-frontglass-features.json`
+  - labels/manifest:
+    `artifacts/edge-qa-training/travbyen-kamera2-realworld-frontglass-20260703/travbyen-kamera2-frontglass-realworld-labels.jsonl`
+  - current CV report efter tuning:
+    `artifacts/edge-qa-training/travbyen-kamera2-realworld-frontglass-20260703/edge-cv-after-frontglass-tuning.jsonl`
+- Kodejustering:
+  - `edge/tools/analyse_qa_batch.py` ignorerer nu både `.thumbs` og `.headend-thumbs`.
+  - `edge/capture/quality.py` har en forsigtig tile-baseret frontglas-sne/is heuristik.
+- Resultat efter tuning:
+  - 2026-01-06 klassificeres nu som `snow_or_dirt_on_lens` med confidence `0.88`.
+  - 2026-01-14 klassificeres fortsat som `direct_sun_reflection`.
+  - 2026-01-08 klassificeres stadig `ok` af ren CV; den er derfor en vigtig supervised AI/NPU-træningscase
+    for lokale vand/sne-blobs på frontglas.
+- Verifikation:
+  - `python -m py_compile edge/capture/quality.py edge/tools/analyse_qa_batch.py tests/test_edge_quality_qa.py` OK.
+  - `python -m pytest tests/test_edge_quality_qa.py -q` OK: `32 passed`.

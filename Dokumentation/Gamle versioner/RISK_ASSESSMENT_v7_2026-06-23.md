@@ -1,0 +1,414 @@
+# TimeLapse Pro — SABSA/ISO 27001/IEC 62443/CRA/NIS2/GDPR Risikovurdering v7 + Virtuel Penetrationstest
+
+**Version:** 7.0
+**Dato:** 23. juni 2026
+**Forfatter:** Peter Frøkjær / TimeLapse Pro
+**Afløser:** v6 (2026-05-06), QA_Pentest_Risk_Assessment_2026-06-21, QA_SABSA_Reassessment_2026-06-22, VIRTUAL_PENTEST_STATUS_2026-05-28
+**Status:** Gældende — pre-production LAB/R&D
+
+---
+
+## 0. Kildegrundlag og begrænsninger
+
+Denne version er baseret på de lokale dokumenter i `Dokumentation/`, kode-/konfigurationsgennemgang og non-destruktive lokale driftstjek 2026-06-23.
+
+Dokumentkorpus:
+
+- 79 lokale filer fundet i `Dokumentation/`.
+- 54.470 tekstlinjer udtrukket til analyse-korpus.
+- Markdown, konfigurationsfiler og de fleste `.docx`-filer er læst.
+- Google Drive-pointere (`.gdoc`, `.gslides`) er identificeret, men ikke hentet via Drive i denne lokale kørsel.
+- 2 ældre `.docx` timeoutede ved lokal tekstkonvertering.
+- PDF-hardwaremanualer indgår som kendte kilder, men blev ikke tekstudtrukket lokalt.
+
+Nyeste/gældende assessment-, update-, config-, Nikon-, go-live- og portdokumenter er vægtet højest. Ældre dokumenter er primært brugt til historik og konfliktidentifikation.
+
+---
+
+## 1. Scope og formål
+
+Denne vurdering dækker hele TimeLapse Pro-systemet:
+
+- **Edge-lag:** OrangePi 4 Pro (TL-C87FF9587CA0 aktiv, TL-DCA63234D813 stale) med Nikon Z30-kamera
+- **Headend-lag:** Mac Mini (FastAPI/uvicorn, PostgreSQL 17, nginx, Ollama, node-agent)
+- **Transport-lag:** SFTP (port 22222), HTTPS/JWT (API), SSH-tunnel (autossh)
+- **Præsentations-lag:** React/Vite UI
+- **Public URL:** https://timelapse.froekjaer.dk
+
+Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åbent status på hvert fund, og producere et opdateret risikobillede.
+
+---
+
+## 2. Status på tidligere assessments
+
+### Fra RISK_ASSESSMENT_v6 (maj 2026)
+
+| Risk | Åbent punkt fra v6 | Status juni 2026 |
+|---|---|---|
+| R01 — SFTP chroot | SFTP chroot implementeret | ✅ Løst |
+| R02 — UI RBAC | RBAC implementeret, MFA mangler | 🟡 Delvist — MFA stadig åben |
+| R03 — Hardware-historik | Camera/Pi-kobling implementeret | ✅ Løst |
+| R04 — Remote adgang | Reverse SSH tunnel implementeret | ✅ Løst |
+| R05 — Kompromitteret edge | CA/mTLS mangler, disk-kryptering mangler | 🔴 Åben |
+| R06 — Opdateringsfejl | Artifact-model og staged rollout implementeret | ✅ Løst (lab) |
+| R07 — Nøgle-kompromittering | Key Management UI implementeret, HMAC på aktive noder | ✅ Delvist |
+| R08 — Man-in-the-middle | HTTPS, JWT — CA-pinning/mTLS mangler | 🟡 Delvist |
+| R09 — Backup | Off-site backup mangler, restore-test mangler | 🔴 Åben |
+| R10 — SSH tunnel misbrug | Deny-flag og audit-log implementeret | ✅ Løst |
+| PKI/intern CA | Planlagt, ikke implementeret | 🔴 Åben |
+| MFA | Åbent fra v6 | 🔴 Åben |
+
+### Fra VIRTUAL_PENTEST_STATUS_2026-05-28
+
+| Fund | Status |
+|---|---|
+| HLTH-001 Utrackede exports | Delvist — gitignore tilføjet, rotation mangler |
+| HLTH-002 secrets/ utracked | Delvist — gitignore OK, rotation/validering mangler |
+| HLTH-003 Edge direkte GitHub | Opt-in via legacy flag; legacy paths skal fjernes |
+| HLTH-004 GPG tag-check | Delvist — GPG-signering nu i peter's keyring og virker |
+| HLTH-005/006 UI approval | Delvist — endpoint-felter OK, kamera/site-scope mangler |
+| HLTH-007 Update scope | Delvist — API OK, UI har kun global/device |
+| HLTH-008 Per-target deployment | Mangler stadig |
+| HLTH-009 Policy enforcement | Åben — Edge maintenance/reboot enforcement mangler |
+| HLTH-010 Default JWT secret | ✅ Løst — JWT_SECRET sat stabilt i LaunchAgent |
+| HLTH-011 Duplicate filter key | ✅ Løst |
+| HLTH-012 Frontend lint | Åben — 219+ fejl, ikke i CI gate |
+| HLTH-013/014 Python test | Delvist — pytest + 18 passed; mangler edge/headend contract tests |
+| HLTH-015 README er Vite-template | Åben |
+| VPEN-001 Key lifecycle | Delvist — aktiv Edge + headend agent HMAC virker; stale credentials |
+| VPEN-002 Signed change workflow | Delvist — change tickets genereres, men ikke signerede |
+| VPEN-003 Backup/failover | Åben — restore-test mangler |
+| VPEN-004 CMDB coverage | Delvist — node-agent stoppet 2026-06-22 |
+| VPEN-005 Legacy update paths | Delvist — opt-in; bør fjernes fra production |
+| VPEN-006 SAST backlog (73 signals) | Åben — triage ikke udført |
+| VPEN-007 AI resource governance | Åben |
+
+### Fra QA_Pentest_Risk_Assessment_2026-06-21
+
+| Fund | Status |
+|---|---|
+| P1 CMDB anonym | ✅ Løst — /api/cmdb/ returnerer 401 |
+| P1 OS bundle cross-release | ✅ Løst — suite udledes fra os_name |
+| P1 Edge stale vist online | ✅ Delvist — CMDB list/detail rettet; andre UI-flader ikke |
+| P1 Nikon Z30 config drift | 🔴 Åben — focus, ISO, WB drift stadig |
+| P2 Open WebUI nede | 🟡 Åben — skal besluttes prod vs. lab |
+| P2 Frontend lint gæld | 🔴 Åben |
+| GDPR-evidens mangler | 🔴 Åben |
+
+### Fra QA_SABSA_Reassessment_2026-06-22
+
+| Fund | Status |
+|---|---|
+| P1 Storage path /Volumes/data | ✅ Løst — rettet til /Volumes/data-fast i DB |
+| P1 Node-agent stoppet | 🔴 Åben — ikke loaded i launchctl |
+| P1 node-agent root-ejet | 🔴 Åben — /opt/timelapse-node-agent er root-ejet |
+| P1 Update #33 peger på stale Edge | 🟡 Info — skal koordineres |
+| P2 Storage root spredt i kode | 🟡 Delvist — DB rettet, men hardcoded paths kan stadig eksistere |
+| P2 Secrets i LaunchAgent | 🟡 Acceptabelt for nu, ikke moden model |
+
+---
+
+## 3. SABSA Business Attribute Profile (opdateret)
+
+| # | Attribut | Aktuel vurdering | Score |
+|---|---|---|---|
+| 1 | Availability | Headend kører stabilt; capture og upload virker; node-agent nede | 🟡 Gul |
+| 2 | Integrity | Signed artifact-flow for app virker; OS E2E på aktiv Edge mangler | 🟡 Gul |
+| 3 | Confidentiality | RBAC/auth virker; CMDB lukket; secrets i LaunchAgent | 🟡 Gul |
+| 4 | Accountability | Change tickets genereres; audit trail delvist; node-agent nede | 🟡 Gul |
+| 5 | Authenticity | HMAC på aktive noder; stale credentials; CA/mTLS mangler | 🟡 Gul |
+| 6 | Manageability | Remote SSH tunnel; config-resolution UI; Global Config hierarki | 🟢 Grøn |
+| 7 | Continuity | Store-and-forward; circular buffer; rollback ved update-fejl | 🟡 Gul |
+| 8 | Extensibility | Multi-tenant hierarki; driver abstraction; HAL | 🟢 Grøn |
+| 9 | Privacy | SFTP chroot; RBAC customer_id scope; GDPR-evidens mangler | 🟡 Gul |
+| 10 | Auditability | GRC cockpit; rapporter pr. standard; update audit; DPIA mangler | 🟡 Gul |
+| 11 | Resilience | Rollback virker; backup/restore-test mangler | 🟡 Gul |
+
+**Samlet SABSA-posture: LAB-klar, ikke production-klar.**
+
+---
+
+## 4. Opdateret risikoregister
+
+### R01 — Uautoriseret adgang til billeddata via SFTP
+- **Status:** ✅ Kontrolleret
+- **Implementerede kontroller:** SFTP chroot (internal-sftp), per-site brugere, port 22222 med sftp_*-match, afvisning på port 22/2222
+- **Residualrisiko:** 🟢 4
+
+### R02 — Uautoriseret adgang til admin-UI
+- **Status:** 🟡 Delvist kontrolleret
+- **Implementerede kontroller:** RBAC med 4 roller, JWT 12t, bcrypt, require_role() på endpoints
+- **Åbent:** MFA/WebAuthn til high-risk operationer mangler
+- **Residualrisiko:** 🟡 6 (MFA ville bringe til 🟢 4)
+
+### R03 — Tab af billedhistorik ved hardwarefejl
+- **Status:** ✅ Kontrolleret
+- **Implementerede kontroller:** Camera/Pi-kobling, DeviceAssignment-historik, captures knyttet til camera_id
+- **Residualrisiko:** 🟢 3
+
+### R04 — Ingen remote adgang ved netværksfejl
+- **Status:** ✅ Kontrolleret
+- **Implementerede kontroller:** Reverse SSH tunnel (autossh), audit-log, deny-flag pr. customer/site
+- **Residualrisiko:** 🟢 3
+
+### R05 — Kompromitteret edge-enhed (fysisk adgang)
+- **Status:** 🔴 Åben
+- **Implementerede kontroller:** API JWT, HMAC, SFTP key-auth
+- **Åbent:** Disk-kryptering (LUKS/overlayFS), intern CA + client certs, boot-level hardening
+- **Sandsynlighed:** 2, **Konsekvens:** 4, **Score:** 🟠 8
+
+### R06 — Ondsindet eller fejlet opdatering
+- **Status:** ✅ Kontrolleret (lab)
+- **Implementerede kontroller:** Offline artifact-model, change tickets, staged rollout, rollback
+- **Åbent:** OS E2E på aktiv Edge ikke testet; per-target deployment status mangler
+- **Residualrisiko:** 🟢 4
+
+### R07 — Nøgle-kompromittering
+- **Status:** 🟡 Delvist kontrolleret
+- **Implementerede kontroller:** Key Management UI, HMAC enforcement, GPG-signering
+- **Åbent:** Stale/legacy credentials (TL-DCA63234D813); intern CA ikke implementeret
+- **Residualrisiko:** 🟡 6
+
+### R08 — Man-in-the-middle
+- **Status:** 🟡 Delvist kontrolleret
+- **Implementerede kontroller:** HTTPS, TLSv1.2/1.3, JWT, HSTS, nginx security headers
+- **Åbent:** CA-pinning, mTLS (edge client-cert)
+- **Residualrisiko:** 🟡 6
+
+### R09 — Dataredundans og backup
+- **Status:** 🔴 Åben
+- **Implementerede kontroller:** Backup til /Volumes/Backup (sti rettet); edge circular buffer
+- **Åbent:** Off-site backup, restore-test, backup change ticket, RTO/RPO dokumenteret
+- **Sandsynlighed:** 2, **Konsekvens:** 4, **Score:** 🟠 8
+
+### R10 — SSH tunnel misbrug
+- **Status:** ✅ Kontrolleret
+- **Implementerede kontroller:** Deny-flag, SshTunnelLog, restricted shell
+- **Residualrisiko:** 🟢 2
+
+### R11 — CMDB/inventory uautoriseret adgang (NY)
+- **Status:** ✅ Løst
+- **Implementerede kontroller:** /api/cmdb/ kræver viewer-rolle; HMAC kræves for device-tokens
+- **Residualrisiko:** 🟢 3
+
+### R12 — GDPR/billeddata uden compliance-evidens (NY)
+- **Status:** 🔴 Åben
+- **Sandsynlighed:** 3, **Konsekvens:** 4, **Score:** 🟠 12
+- **Mangler:** DPIA pr. kunde/site, retention policy, adgangslog pr. billede, sløring/redaction workflow, databehandleraftale, subprocessor-liste (Gemini/Google Cloud)
+- **Anbefaling:** DPIA-template, retention-policy i DB pr. camera, download-audit log
+
+### R13 — Node-agent nede på Headend (NY)
+- **Status:** 🔴 Åben
+- **Konsekvens:** CMDB inventory for Mac Mini er stale; patch/risk score ufuldstændig
+- **Handling:** Genetabler som user LaunchAgent under peter (ikke root)
+
+### R14 — Nikon Z30 camera config drift (NY)
+- **Status:** 🔴 Åben
+- **Sandsynlighed:** 4, **Konsekvens:** 3, **Score:** 🟠 12
+- **Handling:** Nikon Z30 capabilities-mapping; skeln readonly vs. enforceable; "desired state" + "accepted equivalent labels"
+
+---
+
+## 5. Virtuel penetrationstest — opdatering juni 2026
+
+**Metode:** Ikke-destruktiv. Ingen aggressiv scanning, brute force eller exploit-forsøg. Code review + API-test + konfigurationsanalyse.
+
+### 5.1 Angrebsflader
+
+| Flade | Status |
+|---|---|
+| https://timelapse.froekjaer.dk/ | Oppe, TLS OK, HSTS, security headers OK |
+| /api/health | 200 OK, ingen auth krævet (intentionelt) |
+| /api/cmdb/ | 401 ✅ |
+| /api/admin/* | 401 uden auth ✅ |
+| /api/auth/login | Rate-limited (10r/m) ✅ |
+| 127.0.0.1:8000 | Intern, ikke eksponeret direkte |
+| 127.0.0.1:11434 (Ollama) | Intern, ikke eksponeret |
+| 127.0.0.1:8080 (OpenWebUI) | Intern; OpenWebUI er nede |
+| Port 22222 (SFTP) | Eksponeret; sftp_*-brugere begrænset til internal-sftp |
+| Port 22 (SSH) | System SSH; TimeLapse-brugere blokeret af Match-regler |
+| Port 80 (nginx redirect) | Redirect til HTTPS ✅ |
+| Port 443 (nginx/TLS) | Se port-afsnit — SKAL flyttes |
+
+### 5.2 Nye fund (juni 2026)
+
+#### VPEN-2026-001 — nginx lytter på public 80/443
+**Prioritet:** P1 (blocker for go-live)
+**Beskrivelse:** nginx binder til `*:80` og `*:443`. Med Cloudflare foran er dette acceptabelt i lab, men i production-model uden Cloudflare Tunnel er det en angrebsflade.
+**Anbefaling:** Migrer til Cloudflare Tunnel + nginx på `127.0.0.1:18443`. Se PORT_AUDIT_og_WEBSITE_2026-06-23.md.
+
+#### VPEN-2026-002 — SSH port 22 eksponeret til internet
+**Prioritet:** P1
+**Beskrivelse:** Port 22 er synlig i ældre port-/asset-evidens som macOS/system-SSH. TimeLapse's egne sftp_*-brugere er blokeret via Match-regler, men admin-SSH-adgang må ikke være en uklassificeret public produktionsflade.
+**Anbefaling:** Flyt admin SSH til non-standard administrativ kanal eller bag VPN/Cloudflare Access. Aktiver fail2ban. Brug ikke TCP/22 til TimeLapse SFTP.
+
+#### VPEN-2026-003 — Secrets i LaunchAgent plist-fil
+**Prioritet:** P2
+**Beskrivelse:** JWT_SECRET og BREAK_GLASS_ENC_KEY er sat i LaunchAgent-plist-filen på disk i plaintext. Filen kan læses af root og peter.
+**Anbefaling:** Migrer til macOS Keychain eller krypteret secrets-fil med passphrase. Acceptabelt i lab.
+
+#### VPEN-2026-004 — ESLint-gæld (219 fejl)
+**Prioritet:** P2 (blocker for production release)
+**Beskrivelse:** Frontend-lint fejler med 219 errors. Dette skjuler potentielle regressions og sikkerhedsproblemer.
+**Anbefaling:** Indfør lint-gate i CI. Triage og fix eksisterende fejl i batches.
+
+#### VPEN-2026-005 — Open WebUI uden klar prod/lab-rolle
+**Prioritet:** P2
+**Beskrivelse:** OpenWebUI er ikke kørende. Knap i UI peger på den. Rollestatus er uafklaret.
+**Anbefaling:** Beslut prod vs. lab. Hvis prod: launchd service, health-check, RBAC via nginx auth_request.
+
+#### VPEN-2026-006 — GCP Service Account secret i repo-struktur
+**Prioritet:** P1
+**Beskrivelse:** `secrets/gcp-service-account.json` er utracked af Git (gitignore), men filen eksisterer på disk med private_key.
+**Anbefaling:** Rotér nøglen med jævne mellemrum. Dokumentér hvem der har adgang. Aldrig vis/log private_key.
+
+#### VPEN-2026-007 — Captures AI backlog uden retention-politik
+**Prioritet:** P2/GDPR
+**Beskrivelse:** 25.574 captures, heraf 2.535 uden AI-analyse og 3.033 uden tags. Ingen retention policy implementeret.
+**Anbefaling:** Retention policy i DB pr. camera. Adgangslog pr. billede/download.
+
+---
+
+## 6. IEC 62443 zone-model (opdateret)
+
+```
+Zone 0: Public internet
+  ↕ Conduit: Cloudflare → nginx
+Zone 1: DMZ / Reverse proxy (nginx, Cloudflare Tunnel)
+  ↕ Conduit: nginx → uvicorn 127.0.0.1:8000
+Zone 2: Headend applikation (FastAPI, PostgreSQL)
+  ↕ Conduit: API → Ollama 127.0.0.1:11434
+Zone 3: AI/Tooling services (Ollama, OpenWebUI)
+  ↕ Conduit: HTTPS/JWT → Edge API
+Zone 4: Edge management (Reverse SSH tunnel, update artifacts)
+  ↕ Conduit: SFTP port 22222, gphoto2, GPIO
+Zone 5: Kamera/relay/lokal enhedsgrænseflade
+```
+
+**Implementeringsstatus:**
+- Zone 0→1: ✅ nginx/TLS/Cloudflare
+- Zone 1→2: ✅ reverse proxy
+- Zone 2→3: 🟡 Ollama intern, OpenWebUI nede
+- Zone 2→4: ✅ JWT/HMAC; stale credentials
+- Zone 4→5: ✅ gphoto2/GPIO
+
+---
+
+## 7. CRA-vurdering (Cyber Resilience Act)
+
+| CRA-krav | Status |
+|---|---|
+| Secure by design/default | 🟡 Delvist — RBAC, auth, signed updates; MFA/CA mangler |
+| Vulnerability handling | 🟡 — SAST backlog, ingen formaliseret CVE-process |
+| Security update mechanism | 🟡 — Offline artifact-model virker i lab; prod E2E mangler |
+| SBOM | 🟡 — SBOM-felter i update-model; ikke automatisk genereret |
+| Technical documentation | 🟡 — Dokumentation foreligger; ikke struktureret som CRA-evidenspakke |
+| Lifecycle support commitment | 🔴 — Supportperiode ikke erklæret |
+| Reproducible builds | 🟡 — Artifact-build er reproducerbar for app; OS bundle strikt |
+| No direct internet update from device | ✅ — Edge bruger Headend som update authority |
+
+---
+
+## 8. NIS2-vurdering
+
+NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLapse Pro er ikke NIS2-pligtigt som produkt, men kunder i bygge-, anlægs- og infrastruktursektoren kan have NIS2-forpligtelser, der stiller krav til leverandører.
+
+| NIS2-kontrolområde | Status |
+|---|---|
+| Risk management (Art. 21) | 🟡 — Risikovurdering dokumenteret; behandlingsplan mangler ejere/deadlines |
+| Supply chain security | 🟡 — Signed artifacts; subprocessor-liste mangler |
+| Incident handling & reporting | 🔴 — Incident response procedure ikke dokumenteret |
+| Business continuity | 🔴 — Backup/restore-test mangler |
+| Security in network & systems | 🟡 — Se zonemodel ovenfor |
+| Access control | ✅ — RBAC implementeret |
+| Cryptography | 🟡 — TLS/JWT/GPG OK; intern CA mangler |
+| Human resources security | 🔴 — Ikke formaliseret |
+| Asset management | 🟡 — CMDB virker; node-agent nede |
+
+---
+
+## 9. GDPR-vurdering
+
+| GDPR-artikel | Krav | Status |
+|---|---|---|
+| Art. 25 — Privacy by design | Data protection by default | 🟡 Delvist |
+| Art. 32 — Sikkerhed | Tekniske og organisatoriske foranstaltninger | 🟡 Delvist |
+| Art. 33/34 — Brudnotifikation | Procedure ved databrud | 🔴 Mangler |
+| Art. 35 — DPIA | Billedovervågning med høj risiko | 🔴 Mangler pr. kunde/site |
+| Art. 28 — Databehandleraftale | Aftale med Peter/TimeLapse Pro | 🔴 Mangler |
+| Art. 13/14 — Oplysningspligt | Information til registrerede | 🔴 Ikke dokumenteret |
+| Retention | Opbevaringsbegrænsning | 🔴 Ingen retention policy implementeret |
+| Adgangslog | Log pr. billede/download | 🔴 Mangler |
+| Subprocessorer | Google Cloud/Gemini, evt. andre | 🔴 Subprocessor-liste mangler |
+
+**Anbefaling:** Inden første rigtige produktionssite:
+1. DPIA-template pr. kunde/site
+2. Retention policy konfigureres pr. kamera
+3. Download/adgangslog implementeres
+4. Databehandleraftale-template
+
+---
+
+## 10. Samlet risikooversigt
+
+| Risk | Score | Trend siden v6 |
+|---|---|---|
+| R01 SFTP data-adskillelse | 🟢 4 | ↓↓ Løst |
+| R02 UI adgangskontrol (MFA mangler) | 🟡 6 | ↓ Forbedret |
+| R03 Hardware-historik | 🟢 3 | ↓↓ Løst |
+| R04 Remote adgang | 🟢 3 | ↓↓ Løst |
+| R05 Kompromitteret edge | 🟠 8 | → Uændret |
+| R06 Opdateringsfejl | 🟢 4 | ↓↓ Lab-løst |
+| R07 Nøgle-kompromittering | 🟡 6 | ↓ Forbedret |
+| R08 Man-in-the-middle | 🟡 6 | ↓ Forbedret |
+| R09 Backup | 🟠 8 | → Uændret |
+| R10 SSH tunnel misbrug | 🟢 2 | ↓ Løst |
+| R11 CMDB anonym adgang | 🟢 3 | ✅ Ny/løst |
+| R12 GDPR-evidens | 🟠 12 | 🆕 Ny |
+| R13 Node-agent nede | 🟡 6 | 🆕 Ny |
+| R14 Nikon Z30 config drift | 🟠 12 | 🆕 Ny |
+
+**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001).
+
+---
+
+## 11. Prioriteret risikobehandlingsplan
+
+### 🔴 P0 — Blokkerer production/Internet-eksponering
+1. Migrer nginx væk fra public 80/443 → Cloudflare Tunnel
+2. Backup + restore-test dokumenteret (R09)
+3. DPIA-template + retention policy (R12)
+4. Node-agent genetableret (R13)
+5. HMAC enforcement globalt — stale credentials migreret/afviklet
+
+### 🟠 P1 — Skal lukkes inden første rigtige kunde-site
+1. MFA/WebAuthn til admin-login (R02)
+2. Intern CA + device client certs (R05, R07, R08)
+3. Nikon Z30 config-model — desired state + accepted equivalents (R14)
+4. Per-target deployment status (update-flow)
+5. ESLint-gate i CI
+
+### 🟡 P2 — Production hardening
+1. Disk-kryptering på Edge (R05)
+2. Off-site backup (R09)
+3. GDPR adgangslog pr. billede
+4. SAST backlog triage (73 signaler)
+5. Secrets → macOS Keychain
+6. AI resource governor + Ollama beslutning
+
+---
+
+## 12. Dokumenthistorik
+
+| Version | Dato | Vigtigste ændringer |
+|---|---|---|
+| 1.0–5.0 | apr 2026 | Initial assessments, Sprint A–C |
+| 6.0 | maj 2026 | RBAC, SSH tunnel, Camera/Pi-kobling, intern PKI-plan |
+| Pentest | maj 2026 | 73 SAST signals, key lifecycle gaps, backup gaps |
+| QA | jun 2026 | CMDB lukket, OS bundle fix, HMAC enforced |
+| SABSA reassessment | jun 2026 | Storage path fix, node-agent nede, go/no-go |
+| **7.0** | **jun 2026** | **Konsolideret — alle fund, alle statusser, ny GDPR/NIS2/CRA-sektion, port-gaps** |
+
+---
+
+*Næste review: ved go-live-gate eller ved væsentlige arkitekturændringer*
