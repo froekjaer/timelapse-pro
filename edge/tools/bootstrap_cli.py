@@ -54,6 +54,8 @@ def main() -> int:
     parser.add_argument("--autofocus", action="store_true", help="Trigger gphoto2 autofocus action if supported")
     parser.add_argument("--focus-drive", help="Trigger gphoto2 manual focus drive value, e.g. Near 1 or 500")
     parser.add_argument("--capture-test", nargs="?", const="", metavar="DIR", help="Capture a local test image to DIR")
+    parser.add_argument("--gps-status", action="store_true", help="Print gpsd/gpspipe status")
+    parser.add_argument("--npu-status", action="store_true", help="Print Edge AI/NPU status")
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir)
@@ -88,6 +90,12 @@ def main() -> int:
     if args.capture_test is not None:
         out_dir = Path(args.capture_test or "/tmp/timelapse-tech-captures")
         return 0 if capture_test(out_dir, base_dir) else 1
+    if args.gps_status:
+        print_gps_status()
+        return 0
+    if args.npu_status:
+        print_npu_status(base_dir)
+        return 0
     return menu(base_dir)
 
 

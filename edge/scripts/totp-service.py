@@ -16,6 +16,7 @@ import os
 import ssl
 import time
 import hmac
+import html
 import hashlib
 import logging
 import ipaddress
@@ -24,6 +25,7 @@ import yaml
 import pyotp
 
 from datetime import datetime
+from pathlib import Path
 from fastapi import FastAPI, Request, Form, Response, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from typing import Optional
@@ -40,6 +42,8 @@ log = logging.getLogger("totp")
 CONFIG_FILE = "/etc/timelapse/bt-config.yaml"
 SESSION_COOKIE = "tl_session"
 IPTABLES_CHAIN = "TL_MGMT"
+EDGE_ROOT = Path(os.getenv("TIMELAPSE_EDGE_ROOT", "/opt/timelapse/edge"))
+TECH_CLI = EDGE_ROOT / "tools" / "bootstrap_cli.py"
 
 
 def load_config() -> dict:
@@ -381,6 +385,7 @@ def _mgmt_page(section: str = "time", headend_cfg: dict = None, time_status: dic
 </header>
 <nav>
   <a href="/mgmt/" class="{'active' if section == 'time' else ''}">Tid</a>
+  <a href="/mgmt/technician" class="{'active' if section == 'technician' else ''}">Tekniker</a>
   <a href="/mgmt/system" class="{'active' if section == 'system' else ''}">System</a>
 </nav>
 <div class="content">
@@ -481,12 +486,218 @@ def _mgmt_page(section: str = "time", headend_cfg: dict = None, time_status: dic
 </html>"""
 
 
+def _run_tech_cli(*args: str, timeout: int = 45) -> tuple[bool, str]:
+    """Run the shared edge technician CLI and return safe text output."""
+    if not TECH_CLI.exists():
+        return False, f"Tekniker CLI findes ikke: {TECH_CLI}"
+    cmd = [os.environ.get("PYTHON", "/opt/timelapse/venv/bin/python3"), str(TECH_CLI), *args]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        output = (result.stdout or "") + (("\n" + result.stderr) if result.stderr else "")
+        return result.returncode == 0, output.strip() or "(intet output)"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _technician_snapshot() -> dict:
+    """Use bootstrap_cli's shared status collector when available."""
+    try:
+        import sys
+        tools_dir = str(EDGE_ROOT / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import bootstrap_cli
+        return bootstrap_cli.collect_local_status(EDGE_ROOT)
+    except Exception as exc:
+        return {
+            "generated_at": datetime.utcnow().isoformat(),
+            "error": str(exc),
+            "device": {},
+            "service": {},
+            "system": {},
+            "network": {},
+            "storage": {},
+            "camera": {},
+            "ai": {},
+        }
+
+
+def _kv_table(data: dict) -> str:
+    if not data:
+        return '<p class="empty">Ingen data</p>'
+    rows = []
+    for key, value in data.items():
+        if isinstance(value, (dict, list)):
+            value = yaml.safe_dump(value, allow_unicode=True, default_flow_style=False).strip()
+        rows.append(
+            f"<tr><th>{html.escape(str(key))}</th><td>{html.escape(str(value or ''))}</td></tr>"
+        )
+    return "<table>" + "".join(rows) + "</table>"
+
+
+def _technician_page(msg: str = "", output: str = "") -> str:
+    status = _technician_snapshot()
+    generated = status.get("generated_at", "")
+    msg_html = f'<p class="msg ok">{html.escape(msg)}</p>' if msg else ""
+    output_html = (
+        f'<div class="card wide"><h2>Output</h2><pre>{html.escape(output)}</pre></div>'
+        if output else ""
+    )
+    return f"""<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="45">
+<title>TimeLapse Pro — Tekniker</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #ddd; min-height: 100vh; }}
+  header {{ background: #16213e; padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1rem; border-bottom: 1px solid #234; }}
+  header h1 {{ font-size: 1rem; color: #4fc3f7; flex: 1; }}
+  header .loc {{ font-size: 0.75rem; color: #777; }}
+  nav {{ background: #0f3460; display: flex; border-bottom: 1px solid #234; overflow-x: auto; }}
+  nav a {{ color: #aaa; text-decoration: none; padding: 0.75rem 1.25rem; font-size: 0.85rem; white-space: nowrap; }}
+  nav a.active {{ color: #4fc3f7; border-bottom: 2px solid #4fc3f7; }}
+  .content {{ padding: 1rem; max-width: 1180px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }}
+  .card {{ background: #16213e; border-radius: 10px; padding: 1rem; border: 1px solid #26385a; }}
+  .card.wide {{ grid-column: 1 / -1; }}
+  h2 {{ font-size: 0.82rem; color: #4fc3f7; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; }}
+  th {{ width: 38%; color: #8aa0bf; text-align: left; font-weight: 600; vertical-align: top; }}
+  td, th {{ border-top: 1px solid #26385a; padding: 0.42rem 0.2rem; word-break: break-word; }}
+  .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; }}
+  button, input {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; }}
+  button {{ background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; }}
+  button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
+  input {{ width: 100%; background: #0f3460; color: #fff; margin-bottom: 0.5rem; }}
+  form.inline {{ margin: 0; }}
+  pre {{ white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; background: #0b1220; border-radius: 8px; padding: 0.8rem; color: #d6e4ff; max-height: 420px; overflow: auto; }}
+  .msg.ok {{ color: #66bb6a; font-size: 0.85rem; margin-bottom: 1rem; }}
+  .empty {{ color: #777; font-size: 0.8rem; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>TimeLapse Pro</h1>
+  <span class="loc">{html.escape(os.uname().nodename)} · {html.escape(generated)} UTC</span>
+</header>
+<nav>
+  <a href="/mgmt/">Tid</a>
+  <a href="/mgmt/technician" class="active">Tekniker</a>
+  <a href="/mgmt/system">System</a>
+</nav>
+<div class="content">
+  {msg_html}
+  <div class="grid">
+    <div class="card"><h2>Device</h2>{_kv_table(status.get("device", {}))}</div>
+    <div class="card"><h2>Service</h2>{_kv_table(status.get("service", {}))}</div>
+    <div class="card"><h2>Netvaerk</h2>{_kv_table(status.get("network", {}))}</div>
+    <div class="card"><h2>Storage / upload</h2>{_kv_table(status.get("storage", {}))}</div>
+    <div class="card"><h2>Kamera</h2>{_kv_table(status.get("camera", {}))}</div>
+    <div class="card"><h2>Edge AI / NPU</h2>{_kv_table(status.get("ai", {}))}</div>
+    <div class="card wide">
+      <h2>Handlinger</h2>
+      <div class="actions">
+        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="doctor"><button>Doctor</button></form>
+        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="camera-summary"><button>Kamera status</button></form>
+        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="gps"><button>GPS status</button></form>
+        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="npu"><button>NPU status</button></form>
+        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="logs"><button>Service logs</button></form>
+        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="headend"><button>Headend test</button></form>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Fokus</h2>
+      <form method="post" action="/mgmt/technician/focus">
+        <input name="value" placeholder="Focus drive, fx Near 1, Far 1 eller 500">
+        <button>Koer focus drive</button>
+      </form>
+      <form method="post" action="/mgmt/technician/action" style="margin-top:0.5rem">
+        <input type="hidden" name="action" value="autofocus">
+        <button class="secondary">Autofokus</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Kamera config</h2>
+      <form method="post" action="/mgmt/technician/config">
+        <input name="path" placeholder="/main/capturesettings/exposurecompensation">
+        <input name="value" placeholder="Ny vaerdi">
+        <button>Saet config</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Testbillede</h2>
+      <form method="post" action="/mgmt/technician/capture">
+        <input name="out_dir" value="/tmp/timelapse-tech-captures">
+        <button>Tag testbillede + QA</button>
+      </form>
+    </div>
+    {output_html}
+  </div>
+</div>
+</body>
+</html>"""
+
+
 @app.get("/mgmt/", response_class=HTMLResponse)
 @app.get("/mgmt", response_class=HTMLResponse)
 async def mgmt_index(request: Request):
     cfg = load_config()
     hcfg = _fetch_headend_config(cfg)
     return HTMLResponse(_mgmt_page("time", hcfg, _get_time_status()))
+
+
+@app.get("/mgmt/technician", response_class=HTMLResponse)
+async def mgmt_technician(request: Request):
+    return HTMLResponse(_technician_page())
+
+
+@app.post("/mgmt/technician/action", response_class=HTMLResponse)
+async def mgmt_technician_action(request: Request, action: str = Form(...)):
+    mapping = {
+        "doctor": ["--doctor"],
+        "camera-summary": ["--camera-summary"],
+        "gps": ["--gps-status"],
+        "npu": ["--npu-status"],
+        "logs": [],
+        "headend": ["--test-headend"],
+        "autofocus": ["--autofocus"],
+    }
+    if action == "logs":
+        try:
+            result = subprocess.run(
+                ["journalctl", "--no-pager", "-u", "timelapse-edge", "-n", "160"],
+                capture_output=True, text=True, timeout=15,
+            )
+            output = (result.stdout or result.stderr or "").strip()
+            return HTMLResponse(_technician_page("Service logs hentet", output))
+        except Exception as exc:
+            return HTMLResponse(_technician_page("Service logs fejlede", str(exc)))
+    args = mapping.get(action)
+    if args is None:
+        return HTMLResponse(_technician_page("Ukendt handling", action), status_code=400)
+    ok, output = _run_tech_cli(*args, timeout=90)
+    return HTMLResponse(_technician_page("OK" if ok else "Fejl", output))
+
+
+@app.post("/mgmt/technician/focus", response_class=HTMLResponse)
+async def mgmt_technician_focus(request: Request, value: str = Form(...)):
+    ok, output = _run_tech_cli("--focus-drive", value, timeout=30)
+    return HTMLResponse(_technician_page("Focus drive sendt" if ok else "Focus drive fejlede", output))
+
+
+@app.post("/mgmt/technician/config", response_class=HTMLResponse)
+async def mgmt_technician_config(request: Request, path: str = Form(...), value: str = Form(...)):
+    ok, output = _run_tech_cli("--set-camera-config", path, value, timeout=30)
+    return HTMLResponse(_technician_page("Kamera config sat" if ok else "Kamera config fejlede", output))
+
+
+@app.post("/mgmt/technician/capture", response_class=HTMLResponse)
+async def mgmt_technician_capture(request: Request, out_dir: str = Form("/tmp/timelapse-tech-captures")):
+    ok, output = _run_tech_cli("--capture-test", out_dir, timeout=120)
+    return HTMLResponse(_technician_page("Testbillede taget" if ok else "Testbillede fejlede", output))
 
 
 @app.post("/mgmt/time/save")
