@@ -6,8 +6,14 @@
 
 ## ⚠️ 0. VIGTIGST — uncommittet arbejdstræ + Codex V11
 
-- Der ligger **meget uncommittet** i git-arbejdstræet: hele dokument-konsolideringen (v10-filer, flytninger til `Gamle versioner/`, nye undermapper) vises som mange `D` (slettede originaler) + untracked nye filer, PLUS kodefixene nedenfor. Kør `git status` og `git add -A` for at fange flytninger/omdøbninger + nye filer, før der committes.
-- **Codex har committet "V11 documentation"** (commits `260122c`, `99bff9b`). Min dokument-konsolidering er **v10** og uncommittet. **Reconcilér v10 ↔ V11 med Codex før commit** — koordinér via `HANDOVER_Claude_Codex_arbejdsdeling.md`, så vi ikke laver to spor. Afklar med Peter/Codex om vi lander på v10- eller v11-navngivning.
+- **Codex-opdatering 2026-07-03:** Det relevante arbejdstræ er nu committet før sessionskift:
+  - `9340aed docs: consolidate v10 handover and operations references`
+  - `d7a952d chore: checkpoint code operations and edge work`
+  Lokale caches/secrets/artifacts ligger stadig bevidst ucommittet: `.base_image_cache/`,
+  `.claude_proxy/`, `artifacts/`, `headend/.webui_secret_key`, `dokumentation.tar.gz`,
+  `timelapse-pro-doc.gz` og en LibreOffice lock-fil.
+- Historisk note fra før Codex' commit: der lå **meget uncommittet** i git-arbejdstræet: hele dokument-konsolideringen (v10-filer, flytninger til `Gamle versioner/`, nye undermapper) viste sig som mange `D` (slettede originaler) + untracked nye filer, PLUS kodefixene nedenfor. Det relevante er nu committet i `9340aed` og `d7a952d`.
+- **Codex har committet "V11 documentation"** (commits `260122c`, `99bff9b`). Min dokument-konsolidering var **v10** og er nu committet i `9340aed`. **Reconcilér v10 ↔ V11 med Codex før en egentlig release/merge** — koordinér via `HANDOVER_Claude_Codex_arbejdsdeling.md`, så vi ikke laver to spor. Afklar med Peter/Codex om vi lander på v10- eller v11-navngivning.
 - **Codex-afklaring 2026-07-03:** `260122c` og `99bff9b` er bekræftet committet på `codex/edge-npu-qa`. De er ikke en komplet `*_v11.md` dokumentpakke, men to Codex-review/valideringsnotater til v11-sporet. Derfor bør den nye session fortsat behandle Claudes v10-konsolidering som det store uncommitted dokument-spor og først vælge v10/v11-navngivning bevidst med Peter.
 - Princip: **rør ikke Codex' auth/MFA-kode** (se §4).
 

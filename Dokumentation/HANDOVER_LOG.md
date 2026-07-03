@@ -20,6 +20,22 @@ person vide".
 
 ## Log
 
+### Handover 2026-07-03 10:55 — fra Codex til ny Claude-session/Peter
+- Hvad er gjort: Peter bad om at få alt committet før sessionskift. Det relevante arbejde er nu
+  committet på `codex/edge-npu-qa`.
+- Commits:
+  - `9340aed docs: consolidate v10 handover and operations references`
+  - `d7a952d chore: checkpoint code operations and edge work`
+- Bevidst ucommittet/lokalt: `.base_image_cache/`, `.claude_proxy/`, `artifacts/`,
+  `headend/.webui_secret_key`, `dokumentation.tar.gz`, `timelapse-pro-doc.gz` og
+  `Dokumentation/.~lock.KRAVREGISTER_og_STATUS_v10.md#`. De er caches/artifacts/secrets/lockfiles
+  og skal ikke ind i Git.
+- Verifikation før commit: `npm run build` grøn, `nginx -t` grøn, headend `200`, UI `200`, nginx
+  `301`, WiFi-watchdog logger router reachable.
+- Risici / pas på: De to commits er store checkpoints med blandet Claude/Codex-arbejde. De er
+  lavet for at undgå tab før sessionskift; senere kan vi splitte/PR-reviewe mere fint, hvis det
+  bliver nødvendigt.
+
 ### Handover 2026-07-03 10:35 — fra Codex til ny Claude-session/Peter
 - Hvad er gjort: Læst `Dokumentation/HANDOVER_2026-07-02_Claude_session.md` og
   `Dokumentation/00_START_HER.md`. Bekræftet at Codex' V11-relaterede commits `260122c` og
