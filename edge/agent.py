@@ -694,6 +694,18 @@ class EdgeAgent:
 
         self._forward_siem_logs()
 
+        # 2026-07-04 (Peter): opdater cachet GPS-fix mens kamera-relæet er
+        # slukket -- GPS-modtageren mister fix når relæet tændes, og da
+        # kameraet er fastmonteret og aldrig flytter sig, er det fint at
+        # læse GPS'en her og genbruge fixet ved næste optagelse i stedet
+        # for at forsøge et live-kald midt i optagelsen (se
+        # GPhoto2Driver.refresh_gps_cache() / _write_sidecar()).
+        try:
+            if hasattr(self._driver, "refresh_gps_cache"):
+                self._driver.refresh_gps_cache()
+        except Exception as _gps_exc:
+            log.debug("GPS-cache opdatering sprunget over: %s", _gps_exc)
+
         # Calculate sleep until next event
         sleep_s = self._seconds_until_next_event(now, mode)
 

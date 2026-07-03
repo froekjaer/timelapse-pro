@@ -1699,3 +1699,40 @@ person vide".
   edgen nu ~5-10 forsøg pr. optagelse i stedet for at være dømt til at fejle af en
   regnefejl, men et fix er stadig ikke garanteret ved hver optagelse, hvis modulet reelt
   mister lock i det øjeblik.
+
+### Handover 2026-07-04 — Peters egentlige diagnose: GPS mister fix når kamera-relæet tændes (v3)
+- **Peter satte fingeren på den rigtige forklaring:** live-test (`cgps -s`, `gpspipe`) mens
+  kameraet var i ro gav fix på under 3 sekunder — men alle 3 forsøg under selve
+  optagelsen (kamera-relæ tændt) fejlede. Peters diagnose: GPS-modtageren mister
+  strøm/fix når kamera-relæet (GPIO 356) tændes, formentlig et strømforsyningsfald.
+  Da kamera+edge sidder fastmonteret og aldrig flytter sig, er løsningen at læse GPS
+  FØR relæet tændes, ikke midt i optagelsen hvor GPS'en alligevel er "død".
+- **Bekræftet i koden (via Explore-subagent):** hele optage-cyklussen i `edge/agent.py`
+  `_do_capture_cycle()` (linje 706-896) holder kamera-relæet tændt fra linje 720
+  (`_camera_power_on`) til linje 893 (`_camera_power_off`, i `finally`-blokken) — dvs.
+  under HELE forløbet inkl. `_write_sidecar()`/`_write_xmp_metadata()` (kaldt fra
+  `capture_image()`, linje 541/548/551 i `gphoto2_driver.py`), hvor `_read_gpsd_fix()`
+  hidtil altid blev forsøgt live. Agentens idle-ventetid mellem optagelser (`_tick()`,
+  linje 702) har relæet slukket hele tiden og var uudnyttet til dette formål.
+- **Løsning (v3, additiv oven på v2's line-by-line-læsning):**
+  1. `GPhoto2Driver.__init__`: nyt felt `self._last_gps_fix: dict = {}`.
+  2. Ny metode `refresh_gps_cache()`: kalder `_read_gpsd_fix()` og opdaterer cachen KUN
+     ved et succesfuldt fix — et fejlet forsøg overskriver aldrig en allerede god cache
+     (en gammel god fix er langt bedre end intet, da kameraet ikke flytter sig).
+  3. `agent.py` `_tick()`: kalder `self._driver.refresh_gps_cache()` lige før
+     sleep/idle-ventetiden (linje ~697-702) — dvs. hver gang løkken kører mens relæet er
+     slukket (mindst hvert 60. sekund pga. den eksisterende wait-logik).
+  4. `_write_sidecar()`/`_write_xmp_metadata()`: bruger nu `self._last_gps_fix` i stedet
+     for et live-kald, hvis cachen er fyldt. Falder tilbage til et (formentlig forgæves)
+     live-kald kun ved allerførste optagelse efter opstart, før cachen er nået at blive
+     fyldt via idle-loopet.
+- **Verifikation:** nyt testscript (`test_gps_cache.py`), 5 scenarier: cache opdateres ved
+  godt fix; cache overskrives IKKE af et fejlet forsøg; rører intet når `gps_source` er
+  `manual`; `_write_sidecar()` bruger cachen uden live-kald når fyldt; falder korrekt
+  tilbage til live-kald når cachen er tom. Alle bestod. `py_compile` OK på begge filer.
+- **Deploy:** denne gang som en ren unified diff (`gps_v3_cache.patch`, lagt i
+  workspace-roden) i stedet for et Python-patch-script — verificeret at den applicerer
+  rent (`patch -p1 --dry-run`) mod den nøjagtige commit der allerede er udrullet på
+  edgen (`df26248d`), og at resultatet er byte-identisk med den lokalt redigerede/
+  testede fil. Simplere og mere robust end de tidligere Python-baserede patch-scripts.
+- **IKKE committet/deployet endnu** — afventer Peters kørsel på edgen.

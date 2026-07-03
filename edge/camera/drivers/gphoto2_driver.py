@@ -415,6 +415,23 @@ class GPhoto2Driver(CameraBase):
         self._profile:      dict          = CAMERA_PROFILES["default"]
         self._profile_key:  str           = "default"
         self._settings_cache: Optional[tuple[Optional[str], Optional[str], Optional[int], Optional[str]]] = None
+        # 2026-07-04 (Peter): GPS-modtageren mister fix naar kamera-relaeet
+        # taendes. Kameraet sidder fast monteret og flytter sig aldrig, saa
+        # GPS laeses i stedet mens relaeet er slukket (agentens idle-ventetid
+        # mellem optagelser, se agent.py._tick -> refresh_gps_cache()) og
+        # caches her. En gammel god fix er langt bedre end intet, saa et
+        # mislykket forsog overskriver ALDRIG et allerede cachet fix.
+        self._last_gps_fix: dict = {}
+
+    def refresh_gps_cache(self) -> None:
+        """Forsog at opdatere det cachede GPS-fix. Kaldes af agenten mens
+        kamera-relaeet er slukket. Se kommentar i __init__ for hvorfor."""
+        loc = self._config.get("location", {}) or {}
+        if loc.get("gps_source") != "gpsd":
+            return
+        fix = _read_gpsd_fix()
+        if fix:
+            self._last_gps_fix = fix
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -589,7 +606,16 @@ class GPhoto2Driver(CameraBase):
         device   = cfg.get("device", {})
         schedule = cfg.get("schedule", {})
         if loc.get("gps_source") == "gpsd" and (loc.get("gps_lat") is None or loc.get("gps_lon") is None):
-            loc.update(_read_gpsd_fix())
+            # 2026-07-04: brug det cachede fix (laest mens relaeet var slukket
+            # -- se refresh_gps_cache()) i stedet for et live-kald her, da
+            # GPS-modtageren mister fix naar kamera-relaeet er taendt (hvilket
+            # det altid er paa dette tidspunkt i optagelsen). Foerste optagelse
+            # efter opstart, foer cachen er naaet at blive fyldt, forsoger et
+            # (formentlig forgaeves) live-kald som fallback.
+            if self._last_gps_fix:
+                loc.update(self._last_gps_fix)
+            else:
+                loc.update(_read_gpsd_fix())
         gps_alt = loc.get("gps_alt_m", loc.get("gps_alt"))
 
         # Hent kamera EXIF parametre (allerede læst)
@@ -704,7 +730,11 @@ class GPhoto2Driver(CameraBase):
         cam_cfg = cfg.get("camera", {})
         device  = cfg.get("device", {})
         if loc.get("gps_source") == "gpsd" and (loc.get("gps_lat") is None or loc.get("gps_lon") is None):
-            loc.update(_read_gpsd_fix())
+            # Se kommentar i _write_sidecar() -- brug cachet fix fra idle-tid.
+            if self._last_gps_fix:
+                loc.update(self._last_gps_fix)
+            else:
+                loc.update(_read_gpsd_fix())
 
         cmd = [
             "exiftool",
