@@ -3220,7 +3220,18 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                         cfg[section] = _deep_merge(cfg[section], values)
                     else:
                         cfg[section] = values
-            if site.gps_lat:
+            # Site-GPS er KUN et fallback-defaultpunkt. Hvis edgen selv er
+            # konfigureret (via device_config, laget ovenfor) til at bruge et
+            # tilsluttet GPS-modul ("gpsd") eller allerede har en manuel
+            # lat/lon, skal det ikke overskrives af sitets generelle
+            # koordinat — ellers mister vi den mere præcise, enhedsspecifikke
+            # kilde. Se Peters afklaring 2026-07-03: "hvis der er GPS i
+            # kameraet, må det ikke overskrives."
+            if (
+                site.gps_lat
+                and cfg["location"].get("gps_source", "manual") != "gpsd"
+                and cfg["location"].get("gps_lat") is None
+            ):
                 cfg["location"]["gps_lat"] = site.gps_lat
                 cfg["location"]["gps_lon"] = site.gps_lon
             if site.timezone:
@@ -3701,9 +3712,18 @@ def _upsert_capture_record(db: Session, **values) -> Capture:
     if not capture:
         capture = Capture(device_id=device_id)
         db.add(capture)
+    # GPS-felter er del af den signerede capture-pakke fra optagelsestidspunktet
+    # (se sidecar "location"-blok + integrity.sha256_original). Den først
+    # registrerede aflæsning må ikke overskrives af en senere upload/re-sync —
+    # ellers kan en mere upræcis efterfølgende værdi tavst erstatte en
+    # troværdig live GPS-aflæsning. Peters afklaring 2026-07-03.
+    _gps_locked_fields = {"gps_lat", "gps_lon", "gps_alt_m", "gps_source"}
     for key, value in values.items():
-        if value is not None and hasattr(capture, key):
-            setattr(capture, key, value)
+        if value is None or not hasattr(capture, key):
+            continue
+        if key in _gps_locked_fields and getattr(capture, key, None) is not None:
+            continue
+        setattr(capture, key, value)
     if not capture.camera_id or not capture.customer_id or not capture.site_id:
         try:
             resolved_camera_id, resolved_customer_id, resolved_site_id = _resolve_capture_camera_customer(

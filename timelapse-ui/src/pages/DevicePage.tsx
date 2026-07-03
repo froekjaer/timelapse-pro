@@ -94,6 +94,17 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
   const metaGpsLat = metaLocation.gps_lat ?? c.gps_lat
   const metaGpsLon = metaLocation.gps_lon ?? c.gps_lon
   const metaGpsAlt = metaLocation.gps_alt_m ?? c.gps_alt_m
+  // Tillids-label for GPS-kilde (2026-07-03): rå gps_source ("gpsd"/"manual")
+  // fortæller ikke om der reelt blev opnået et fix. Kombinér med om
+  // koordinater faktisk findes, så brugeren kan se hvor troværdig værdien er.
+  const gpsSourceRaw = metaLocation.gps_source || c.gps_source || null
+  const gpsHasFix = metaGpsLat != null && metaGpsLon != null
+  const gpsSourceLabel =
+    gpsSourceRaw === 'gpsd'
+      ? (gpsHasFix ? '🛰️ Live GPS-fix (tilsluttet modul)' : '⚠️ GPS konfigureret — intet fix ved optagelse')
+      : gpsSourceRaw === 'manual'
+        ? (gpsHasFix ? '✍️ Manuelt indtastet' : 'Ingen GPS data')
+        : '—'
 
   // Hent sidecar JSON når billede skifter
   useEffect(() => {
@@ -506,7 +517,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📍 Lokation</p>
                 <MR l="GPS" v={metaGpsLat != null && metaGpsLon != null ? `${Number(metaGpsLat).toFixed(6)}°, ${Number(metaGpsLon).toFixed(6)}°` : '—'} />
                 <MR l="Højde" v={metaGpsAlt != null ? `${metaGpsAlt} m` : '—'} />
-                <MR l="GPS kilde" v={metaLocation.gps_source || c.gps_source || '—'} />
+                <MR l="GPS kilde" v={gpsSourceLabel} />
                 <MR l="Adresse" v={metaLocation.address || '—'} />
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🧭 Orientering</p>
                 <MR l="Azimut" v={(metaLocation.azimuth_deg ?? c.azimuth_deg) != null ? `${metaLocation.azimuth_deg ?? c.azimuth_deg}°` : '—'} />

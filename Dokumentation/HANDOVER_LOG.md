@@ -1522,3 +1522,80 @@ person vide".
   3. Når I er klar til det: kør backfill-scriptet (nu med site_id) mod produktion,
      `--dry-run` først som altid.
   4. Ingen UI/adfærdsændring at teste udover det — dette er ren tagging.
+
+### Handover 2026-07-03 14:00 — Peter: fase 2-4 committet, deployet og backfill kørt komplet i produktion
+- **Commits:** `bb18421` (fase 3), `e40bd63` (fase 4), begge på
+  `claude/capture-camera-location-2026-07-03`, committet af Peter, pushet til GitHub,
+  headend genstartet, health `200`.
+- **Backfill kørt mod produktion** (`headend/tools/backfill_capture_camera_customer.py --apply`),
+  i to omgange:
+  1. Første kørsel: 27.662 captures behandlet. `site_id` resolvet for alle 27.662.
+     `customer_id` kun resolvet for 22.633 — et enkelt device,
+     `TL-IMPORT-Kirkbi_A_S-Travbyen-Kamera_1` (bulk-importeret, `site_id` sat men aldrig
+     koblet til en `Customer`-record), stod for de resterende 5.029 rækker uden `customer_id`.
+  2. Rettet via `PUT /api/admin/devices/{device_id}/assign` (samme `site_id` sat igen,
+     hvilket får endpointet til selv at udlede og udfylde `customer_id` fra sitet —
+     `customer_id` blev `687de00d-8400-47d0-bab4-f29e17dd38bf` / "Kirkbi A/S").
+  3. Anden kørsel af backfill-scriptet: de resterende 5.029 rækker fik nu `customer_id`
+     sat. **Slutresultat: alle 27.662 captures har `customer_id` og `site_id`.**
+     `camera_id` er (forventet, ikke en fejl) kun sat for 965 captures — det er de eneste
+     rækker, hvis device reelt har været bundet til en logisk kamera-lokation via en
+     `DeviceAssignment`. De resterende ~96,5% forbliver bevidst `NULL`.
+- **Betydning:** R16-lækagen (fase 3, kryds-kunde-lækage ved Edge-gentildeling) er nu
+  fuldt dækket af den frosne `customer_id`-kilde for 100% af de historiske captures —
+  ingen rækker afhænger længere af device-fallback'en for tenant-isolation.
+- **Sidefund undervejs:** en løbsk baggrunds-git-proces (`git hash-object`/`git add` mod
+  `.base_image_cache/`, `.claude_proxy/`, `artifacts/` — se `.gitignore`-tilføjelsen i
+  `e40bd63`) havde skrevet ca. 16 GB "dangling" (ikke-tilgængelige) objekter ind i lokal
+  `.git/objects` på Mac Mini'en. Verificeret grundigt at INGEN af de faktiske commits/branches
+  indeholder disse filer (kun ren lokal diskbloat, intet pushet til GitHub, ingen
+  repo-korruption). Peter kørte `git gc --prune=now --aggressive` for at rydde op.
+- **Status:** Fase 2, 3 og 4 er hermed fuldt udrullet, verificeret og backfillet i
+  produktion. Ingen åbne opfølgningspunkter fra denne omgang, ud over de tidligere nævnte
+  bevidst afgrænsede emner (AI-batch-jobbets device-filter, site-niveau RBAC-håndhævelse,
+  kamera-lokations-UI-side).
+
+### Handover 2026-07-03 — Claude: GPS-data manglede i metadata-UI, end-to-end fundet og rettet
+- **Symptom:** Peter observerede at GPS-koordinater aldrig vises i captures' metadata-UI,
+  selvom flere devices er konfigureret til at bruge et fysisk GPS-modul (`gps_source: "gpsd"`).
+- **Undersøgelse:** sporede hele kæden edge (`gphoto2_driver.py` → sidecar JSON) → upload →
+  headend (`_sidecar_capture_metadata`, `_upsert_capture_record`) → DB → API
+  (`/api/admin/captures`) → frontend (`DevicePage.tsx` Lightbox). Alle led var korrekt
+  koblet felt-for-felt — ingen kæde-brud. Produktions-tal viste dog:
+  `captures_med_gps = 0` på tværs af **11.895** captures med `gps_source='gpsd'` og
+  **9.603** med `'manual'` — dvs. konfigurationen nåede frem, men koordinaterne gjorde aldrig.
+- **Root cause fundet i `edge/camera/drivers/gphoto2_driver.py::_read_gpsd_fix()`:** læste kun
+  `gpspipe -w -n 12` med 4 sekunders timeout, og enhver fejl (intet fix nået, gpsd ikke
+  installeret, timeout) blev svælget tavst (kun `log.debug`, ingen synlighed). Peter
+  bekræftede via `cgps -s` direkte på edgen at GPS-modulet reelt HAR et gyldigt 3D-fix
+  (55.71777073 N, 9.52511777 E, Vejle-området) — så det var en software-timing-/
+  synligheds-bug, ikke en hardwarefejl.
+- **Yderligere 2 relaterede bugs fundet og rettet efter Peters afklaring** ("hvis der er
+  GPS i kameraet, må det ikke overskrives — det er del af den signede pakke"):
+  1. `main.py::get_config()` (linje ~3223): site-niveauets `gps_lat/lon` overskrev
+     *ubetinget* en device der var konfigureret til `gpsd` eller havde egen manuel
+     lat/lon. Rettet til kun at bruge site-GPS som fallback, når enheden intet selv
+     har konfigureret.
+  2. `main.py::_upsert_capture_record()`: GPS-felter havde (i modsætning til
+     `camera_id/customer_id/site_id`) ingen beskyttelse mod at blive overskrevet ved en
+     senere gen-upload/re-sync. Rettet til samme "kun udfyld hvis tomt"-mønster —
+     den først-signerede GPS-aflæsning er nu uforanderlig.
+- **Rettelser i alt (4 filer, additive, ingen skemaændring):**
+  `edge/camera/drivers/gphoto2_driver.py` (`_read_gpsd_fix`: 8 sek/40 linjer i stedet for
+  4 sek/12, `log.warning` i stedet for `log.debug` ved fejl/intet fix),
+  `headend/main.py` (`get_config()` prioritetsfix + `_upsert_capture_record()` GPS-lås),
+  `timelapse-ui/src/pages/DevicePage.tsx` ("GPS kilde" er nu en tillids-label: "🛰️ Live
+  GPS-fix", "✍️ Manuelt indtastet", "⚠️ GPS konfigureret — intet fix ved optagelse", eller
+  "Ingen GPS data" — i stedet for den rå `gpsd`/`manual`-streng).
+- **Verifikation:** nyt testscript med 4 scenarier (gpsd-device beholder `None` frem for
+  sitets GPS; manuel device-GPS overskrives ikke af site; device uden egen config falder
+  korrekt tilbage til site; gen-upload overskriver ikke en allerede-signeret GPS-aflæsning)
+  — alle bestod. Genkørte fase 2/3/4-testsuiterne uændret — ingen regression. `py_compile`
+  på begge Python-filer + `tsc --noEmit` på `DevicePage.tsx` — ingen fejl.
+- **IKKE committet endnu.** Peter/Codex arbejder samtidig på Ollama-tag-optimering på
+  headenden — koordinér git-commit så de to arbejder ikke kolliderer i `main.py`.
+- **Resterende, uafklaret:** hvorfor `_read_gpsd_fix()` reelt ramte 12-linjers-loftet uden
+  at se et brugbart TPV, selvom gpsd har et fix — er ikke root-cause-bekræftet ud over at
+  det nu er langt mere robust og synligt i loggen. Anbefaling: hold øje med edge-loggen
+  efter deploy for at se om `log.warning`-linjen "Intet brugbart GPS-fix..." dukker op igen,
+  eller om det udvidede vindue løser det helt.

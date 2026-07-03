@@ -80,11 +80,21 @@ def _number_or_none(value) -> Optional[float]:
         return None
 
 
-def _read_gpsd_fix(timeout_s: int = 4) -> dict:
-    """Read one usable TPV fix from gpsd via gpspipe when available."""
+def _read_gpsd_fix(timeout_s: int = 8) -> dict:
+    """Read one usable TPV fix from gpsd via gpspipe when available.
+
+    NOTE (2026-07-03, root-cause for "ingen GPS i metadata UI"): gpsd
+    interfolierer ofte VERSION/DEVICES/WATCH-kvittering og SKY-rapporter
+    mellem TPV-beskederne. Det oprindelige vindue (4 sek / 12 linjer) kunne
+    løbe tør før nogensinde at se en TPV med mode>=2 — selvom gpsd i
+    virkeligheden havde et gyldigt 3D-fix (bekræftet via `cgps -s` på
+    fysisk edge, Peter 2026-07-03). Vinduet er derfor udvidet, og fejl/
+    manglende fix logges nu som warning i stedet for debug, så fremtidige
+    udfald er synlige i edge-loggen fremfor at forsvinde tavst.
+    """
     try:
         result = _run_external(
-            ["gpspipe", "-w", "-n", "12"],
+            ["gpspipe", "-w", "-n", "40"],
             timeout=timeout_s,
             label="gpspipe",
         )
@@ -92,11 +102,12 @@ def _read_gpsd_fix(timeout_s: int = 4) -> dict:
         log.debug("gpspipe not installed; live GPS metadata skipped")
         return {}
     except Exception as exc:
-        log.debug("gpsd metadata read skipped: %s", exc)
+        log.warning("gpsd metadata-læsning fejlede: %s", exc)
         return {}
     if result.returncode != 0:
-        log.debug("gpspipe returned %s: %s", result.returncode, result.stderr.strip())
+        log.warning("gpspipe returnerede %s: %s", result.returncode, result.stderr.strip())
         return {}
+    tpv_seen = 0
     for line in result.stdout.splitlines():
         try:
             msg = json.loads(line)
@@ -104,6 +115,7 @@ def _read_gpsd_fix(timeout_s: int = 4) -> dict:
             continue
         if msg.get("class") != "TPV":
             continue
+        tpv_seen += 1
         mode = int(msg.get("mode") or 0)
         lat = _number_or_none(msg.get("lat"))
         lon = _number_or_none(msg.get("lon"))
@@ -118,6 +130,10 @@ def _read_gpsd_fix(timeout_s: int = 4) -> dict:
         if alt is not None:
             fix["gps_alt"] = alt
         return fix
+    log.warning(
+        "Intet brugbart GPS-fix fra gpsd inden for %ss (%d TPV-beskeder modtaget, ingen med mode>=2)",
+        timeout_s, tpv_seen,
+    )
     return {}
 
 
