@@ -56,6 +56,7 @@ def main() -> int:
     parser.add_argument("--capture-test", nargs="?", const="", metavar="DIR", help="Capture a local test image to DIR")
     parser.add_argument("--gps-status", action="store_true", help="Print gpsd/gpspipe status")
     parser.add_argument("--npu-status", action="store_true", help="Print Edge AI/NPU status")
+    parser.add_argument("--maintenance", action="store_true", help="Pause edge service and manage camera relay for camera commands")
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir)
@@ -75,21 +76,21 @@ def main() -> int:
     if args.serve_ui:
         return serve_technician_ui(base_dir, args.port)
     if args.camera_detect:
-        return 0 if camera_detect() else 1
+        return 0 if run_camera_operation(lambda: camera_detect(), base_dir, args.maintenance) else 1
     if args.camera_summary:
-        return 0 if camera_summary(base_dir) else 1
+        return 0 if run_camera_operation(lambda: camera_summary(base_dir), base_dir, args.maintenance) else 1
     if args.camera_config:
-        return 0 if camera_get_config(args.camera_config) else 1
+        return 0 if run_camera_operation(lambda: camera_get_config(args.camera_config), base_dir, args.maintenance) else 1
     if args.set_camera_config:
         path, value = args.set_camera_config
-        return 0 if camera_set_config(path, value) else 1
+        return 0 if run_camera_operation(lambda: camera_set_config(path, value), base_dir, args.maintenance) else 1
     if args.autofocus:
-        return 0 if camera_autofocus() else 1
+        return 0 if run_camera_operation(lambda: camera_autofocus(), base_dir, args.maintenance) else 1
     if args.focus_drive:
-        return 0 if camera_focus_drive(args.focus_drive) else 1
+        return 0 if run_camera_operation(lambda: camera_focus_drive(args.focus_drive), base_dir, args.maintenance) else 1
     if args.capture_test is not None:
         out_dir = Path(args.capture_test or "/tmp/timelapse-tech-captures")
-        return 0 if capture_test(out_dir, base_dir) else 1
+        return 0 if run_camera_operation(lambda: capture_test(out_dir, base_dir), base_dir, True) else 1
     if args.gps_status:
         print_gps_status()
         return 0
@@ -556,6 +557,90 @@ def qa_image(path: Path, base_dir: Path) -> bool:
     return bool(report.get("flag") != "error")
 
 
+def run_camera_operation(operation, base_dir: Path, maintenance: bool = False) -> bool:
+    """Run a direct gphoto2 operation, optionally pausing agent and powering camera."""
+    if not maintenance:
+        return bool(operation())
+
+    was_active = is_service_active(SERVICE_NAME)
+    relay = None
+    print("Vedligeholdelsestilstand: pauser edge-agent og overtager kamera midlertidigt")
+    try:
+        if was_active:
+            systemctl("stop", SERVICE_NAME, timeout=120)
+            wait_for_service_state(SERVICE_NAME, "inactive", timeout_s=20)
+        relay = build_relay(base_dir)
+        if relay is not None:
+            relay.camera.power_on()
+        else:
+            print("Relæ kunne ikke initialiseres; fortsætter uden power-control")
+            time.sleep(3)
+        return bool(operation())
+    finally:
+        if relay is not None:
+            try:
+                relay.camera.force_off()
+            except Exception as exc:
+                print(f"Advarsel: kunne ikke slukke kamerarelæ: {exc}")
+            try:
+                relay.cleanup(camera=True, modem=False)
+            except Exception:
+                pass
+        if was_active:
+            systemctl("start", SERVICE_NAME, timeout=60)
+            wait_for_service_state(SERVICE_NAME, "active", timeout_s=30)
+            print("Edge-agent startet igen")
+
+
+def build_relay(base_dir: Path):
+    try:
+        sys.path.insert(0, str(EDGE_ROOT))
+        from camera.relay import RelayController
+        cfg = read_yaml(base_dir / "config.yaml")
+        return RelayController(cfg or {})
+    except Exception as exc:
+        print(f"Relæ-init fejlede: {exc}")
+        return None
+
+
+def is_service_active(service: str) -> bool:
+    if not command_exists("systemctl"):
+        return False
+    result = run(["systemctl", "is-active", service], check=False, timeout=5)
+    return result.stdout.strip() == "active"
+
+
+def systemctl(action: str, service: str, timeout: int = 30) -> None:
+    if not command_exists("systemctl"):
+        return
+    cmd = ["systemctl", action, service]
+    if os.geteuid() != 0 and command_exists("sudo"):
+        cmd.insert(0, "sudo")
+    try:
+        result = run(cmd, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if action == "stop":
+            print(f"systemctl stop timeout efter {timeout}s; bruger systemctl kill")
+            kill_cmd = ["systemctl", "kill", service]
+            if os.geteuid() != 0 and command_exists("sudo"):
+                kill_cmd.insert(0, "sudo")
+            run(kill_cmd, check=False, timeout=20)
+            return
+        raise
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout or f"systemctl {action} {service} fejlede")
+
+
+def wait_for_service_state(service: str, expected: str, timeout_s: int = 20) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        result = run(["systemctl", "is-active", service], check=False, timeout=5)
+        state = result.stdout.strip()
+        if state == expected or (expected == "inactive" and state in {"inactive", "failed", "unknown"}):
+            return
+        time.sleep(1)
+
+
 def camera_detect() -> bool:
     result = run(["gphoto2", "--auto-detect"], check=False, timeout=20)
     print(result.stdout or result.stderr or "(intet output)")
@@ -652,28 +737,38 @@ def camera_focus_drive(value: str) -> bool:
 
 
 def capture_test(out_dir: Path, base_dir: Path) -> bool:
-    if not command_exists("gphoto2"):
-        print("gphoto2 mangler")
-        return False
     out_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    target = out_dir / f"technician_test_{stamp}.%C"
     print(f"Tager testbillede til {out_dir} ...")
-    result = run([
-        "gphoto2",
-        "--capture-image-and-download",
-        "--filename", str(target),
-        "--force-overwrite",
-    ], check=False, timeout=90)
-    if result.returncode != 0:
-        print(result.stderr or result.stdout)
+    sys.path.insert(0, str(EDGE_ROOT))
+    try:
+        from camera.registry import get_driver
+    except Exception as exc:
+        print(f"Kunne ikke importere kameradriver: {exc}")
         return False
-    print(result.stdout)
-    images = sorted(out_dir.glob(f"technician_test_{stamp}.*"), key=lambda p: p.stat().st_size, reverse=True)
-    if not images:
-        print("gphoto2 meldte OK, men ingen fil blev fundet")
+
+    cfg = read_yaml(base_dir / "config.yaml")
+    if not cfg:
+        cfg = {"device": {"device_id": derive_device_id_fallback()}, "camera": {}, "schedule": {}, "location": {}}
+    driver = get_driver(cfg)
+    try:
+        driver.connect()
+        if not hasattr(driver, "capture_preview"):
+            raise RuntimeError("Driveren understøtter ikke preview-capture")
+        print("Tager preview-capture til fokus/QA ...")
+        image = driver.capture_preview(out_dir)
+    except Exception as exc:
+        print(f"Testcapture fejlede: {exc}")
+        try:
+            driver.disconnect()
+        except Exception:
+            pass
         return False
-    image = images[0]
+    finally:
+        try:
+            driver.disconnect()
+        except Exception:
+            pass
+
     print(f"Testbillede: {image} ({image.stat().st_size / 1_000_000:.1f} MB)")
     if image.suffix.lower() in {".jpg", ".jpeg"}:
         qa_image(image, base_dir)

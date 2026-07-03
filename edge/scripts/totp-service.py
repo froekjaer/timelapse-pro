@@ -599,14 +599,14 @@ def _technician_page(msg: str = "", output: str = "") -> str:
     <div class="card"><h2>Edge AI / NPU</h2>{_kv_table(status.get("ai", {}))}</div>
     <div class="card wide">
       <h2>Handlinger</h2>
-      <div class="actions">
-        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="doctor"><button>Doctor</button></form>
-        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="camera-summary"><button>Kamera status</button></form>
-        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="gps"><button>GPS status</button></form>
-        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="npu"><button>NPU status</button></form>
-        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="logs"><button>Service logs</button></form>
-        <form class="inline" method="post" action="/mgmt/technician/action"><input type="hidden" name="action" value="headend"><button>Headend test</button></form>
-      </div>
+      <form method="post" action="/mgmt/technician/action" class="actions">
+        <button name="action" value="doctor">Doctor</button>
+        <button name="action" value="camera-summary">Kamera status</button>
+        <button name="action" value="gps">GPS status</button>
+        <button name="action" value="npu">NPU status</button>
+        <button name="action" value="logs">Service logs</button>
+        <button name="action" value="headend">Headend test</button>
+      </form>
     </div>
     <div class="card">
       <h2>Fokus</h2>
@@ -615,8 +615,7 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         <button>Koer focus drive</button>
       </form>
       <form method="post" action="/mgmt/technician/action" style="margin-top:0.5rem">
-        <input type="hidden" name="action" value="autofocus">
-        <button class="secondary">Autofokus</button>
+        <button class="secondary" name="action" value="autofocus">Autofokus</button>
       </form>
     </div>
     <div class="card">
@@ -658,12 +657,12 @@ async def mgmt_technician(request: Request):
 async def mgmt_technician_action(request: Request, action: str = Form(...)):
     mapping = {
         "doctor": ["--doctor"],
-        "camera-summary": ["--camera-summary"],
+        "camera-summary": ["--camera-summary", "--maintenance"],
         "gps": ["--gps-status"],
         "npu": ["--npu-status"],
         "logs": [],
         "headend": ["--test-headend"],
-        "autofocus": ["--autofocus"],
+        "autofocus": ["--autofocus", "--maintenance"],
     }
     if action == "logs":
         try:
@@ -683,20 +682,23 @@ async def mgmt_technician_action(request: Request, action: str = Form(...)):
 
 
 @app.post("/mgmt/technician/focus", response_class=HTMLResponse)
-async def mgmt_technician_focus(request: Request, value: str = Form(...)):
-    ok, output = _run_tech_cli("--focus-drive", value, timeout=30)
+async def mgmt_technician_focus(request: Request, value: str = Form("")):
+    value = (value or "").strip()
+    if not value:
+        return HTMLResponse(_technician_page("Focus drive mangler", "Skriv fx Near 1, Far 1 eller 500 i feltet."))
+    ok, output = _run_tech_cli("--focus-drive", value, "--maintenance", timeout=90)
     return HTMLResponse(_technician_page("Focus drive sendt" if ok else "Focus drive fejlede", output))
 
 
 @app.post("/mgmt/technician/config", response_class=HTMLResponse)
 async def mgmt_technician_config(request: Request, path: str = Form(...), value: str = Form(...)):
-    ok, output = _run_tech_cli("--set-camera-config", path, value, timeout=30)
+    ok, output = _run_tech_cli("--set-camera-config", path, value, "--maintenance", timeout=90)
     return HTMLResponse(_technician_page("Kamera config sat" if ok else "Kamera config fejlede", output))
 
 
 @app.post("/mgmt/technician/capture", response_class=HTMLResponse)
 async def mgmt_technician_capture(request: Request, out_dir: str = Form("/tmp/timelapse-tech-captures")):
-    ok, output = _run_tech_cli("--capture-test", out_dir, timeout=120)
+    ok, output = _run_tech_cli("--capture-test", out_dir, "--maintenance", timeout=150)
     return HTMLResponse(_technician_page("Testbillede taget" if ok else "Testbillede fejlede", output))
 
 
