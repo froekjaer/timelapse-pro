@@ -31,6 +31,30 @@ function authFetch(url: string, opts?: RequestInit) {
 
 const getTz = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
 
+function finiteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function optimizerPercent(ai: Record<string, any>): number | null {
+  const direct = finiteNumber(ai.optimizer_score)
+  if (direct != null) return Math.round((direct <= 1 ? direct * 100 : direct))
+  const overall = finiteNumber(ai.autonomous_optimizer?.score?.overall)
+  if (overall != null) return Math.round(overall <= 1 ? overall * 100 : overall)
+  return null
+}
+
+function usefulActionText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed || trimmed === 'Ingen handling' || trimmed === 'none') return null
+  return trimmed
+}
+
 function formatUptime(s: number) {
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
@@ -347,6 +371,9 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                 {/* QA ANALYSE */}
                 {(() => {
                   const ai = parseCaptureQA(c, sidecar)
+                  const optPct = ai ? optimizerPercent(ai) : null
+                  const description = ai ? usefulActionText(ai.description) ?? usefulActionText(ai.recommended_action) ?? usefulActionText(ai.recommendations?.[0]?.reason) : null
+                  const recommendation = ai ? usefulActionText(ai.recommended_action) : null
                   const causeLabels: Record<string, string> = {
                     ok: 'OK', condensation_on_lens: 'Kondens på linse',
                     dirty_lens: 'Snavset linse', focus_drift: 'Fokusdrift',
@@ -410,13 +437,13 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                           <MR l="Konfidence" v={`${Math.round((ai.confidence ?? 0) * 100)}%`} />
                           <MR l="Blur" v={ai.blur_score != null ? `${Math.round(ai.blur_score)}` : '—'} />
                           <MR l="Lys" v={ai.brightness_mean != null ? `${Math.round(ai.brightness_mean)}/255` : '—'} />
-                          {ai.optimizer_score != null && <MR l="Autonom score" v={`${Math.round(ai.optimizer_score * 100)}%`} />}
-                          <MR l="Beskrivelse" v={<span className="text-white/60 text-[10px] leading-tight">{ai.description ?? ai.recommended_action ?? ai.recommendations?.[0]?.reason ?? '—'}</span>} />
+                          {optPct != null && <MR l="Autonom score" v={`${optPct}%`} />}
+                          <MR l="Beskrivelse" v={<span className="text-white/60 text-[10px] leading-tight">{description ?? '—'}</span>} />
                           {ai.action && ai.action !== 'none' && (
                             <MR l="Handling" v={<span className="text-amber-300">{actionLabels[ai.action] ?? ai.action}</span>} />
                           )}
-                          {ai.recommended_action && (
-                            <MR l="Anbefaling" v={<span className="text-amber-300">{ai.recommended_action}</span>} />
+                          {recommendation && recommendation !== description && (
+                            <MR l="Anbefaling" v={<span className="text-amber-300">{recommendation}</span>} />
                           )}
                           {ai.control_plan?.next_capture_ev_delta != null && (
                             <MR l="EV næste" v={`${ai.control_plan.next_capture_ev_delta > 0 ? '+' : ''}${ai.control_plan.next_capture_ev_delta.toFixed(2)}`} />

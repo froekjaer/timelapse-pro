@@ -167,6 +167,19 @@ def _config(mode: str, runner: str, model: str, vendor_binary: str) -> dict[str,
 
 def _edge_payload(report: dict[str, Any], image_path: Path) -> dict[str, Any]:
     opt = report.get("autonomous_optimizer") or {}
+    score = opt.get("score")
+    optimizer_score = None
+    if isinstance(score, dict):
+        try:
+            optimizer_score = float(score.get("overall")) / 100.0
+        except Exception:
+            optimizer_score = None
+    elif score is not None:
+        try:
+            raw_score = float(score)
+            optimizer_score = raw_score if raw_score <= 1.0 else raw_score / 100.0
+        except Exception:
+            optimizer_score = None
     return {
         "schema": "timelapse.edge_qa.backfill.v1",
         "source": "edge",
@@ -187,7 +200,7 @@ def _edge_payload(report: dict[str, Any], image_path: Path) -> dict[str, Any]:
         "cv_features": report.get("cv_features") or {},
         "npu": report.get("npu") or {},
         "autonomous_optimizer": opt,
-        "optimizer_score": opt.get("score"),
+        "optimizer_score": optimizer_score,
         "control_plan": opt.get("control_plan"),
         "recommendations": opt.get("recommendations") or [],
     }
