@@ -13,6 +13,23 @@ export function parseCaptureAI(capture: any, sidecar?: any): Record<string, any>
   try { return JSON.parse(capture.ai_result) } catch { return null }
 }
 
+export function parseEdgeQA(capture: any, sidecar?: any): Record<string, any> | null {
+  if (sidecar?.edge_qa) return sidecar.edge_qa
+  if (!capture.ai_result) return null
+  try {
+    const parsed = JSON.parse(capture.ai_result)
+    if (parsed?.edge_ai) return parsed.edge_ai
+    if (parsed?.source === 'edge') return parsed
+  } catch {
+    return null
+  }
+  return null
+}
+
+export function parseCaptureQA(capture: any, sidecar?: any): Record<string, any> | null {
+  return parseEdgeQA(capture, sidecar) ?? parseCaptureAI(capture, sidecar)
+}
+
 function filenameParts(filename: string) {
   const fn = filename.replace(/\.[^.]+$/, '')
   const parts = fn.split('_')
@@ -72,7 +89,7 @@ export function CaptureThumbnailCard({
   const releaseRef = useRef<null | (() => void)>(null)
   const [inView, setInView] = useState(false)
   const [loadSrc, setLoadSrc] = useState<string | null>(null)
-  const ai = parseCaptureAI(capture)
+  const ai = parseCaptureQA(capture)
   const parts = filenameParts(capture.filename)
   const imgSrc = refresh > 0 ? `${thumbUrl}?repair=${refresh}` : thumbUrl
   const tagLabels = useTagLabels()

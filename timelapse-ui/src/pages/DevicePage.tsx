@@ -19,7 +19,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, 
 import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setParam, pathSegment, getApiUrl } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
-import { CaptureThumbnailCard, parseCaptureAI } from '../components/CaptureThumbnailCard'
+import { CaptureThumbnailCard, parseCaptureQA } from '../components/CaptureThumbnailCard'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import type { DeviceDetail, Capture } from '../types'
 
@@ -346,13 +346,23 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
                 {/* QA ANALYSE */}
                 {(() => {
-                  const ai = parseCaptureAI(c, sidecar)
+                  const ai = parseCaptureQA(c, sidecar)
                   const causeLabels: Record<string, string> = {
                     ok: 'OK', condensation_on_lens: 'Kondens på linse',
                     dirty_lens: 'Snavset linse', focus_drift: 'Fokusdrift',
                     camera_moved: 'Kamera flyttet', obstruction: 'Afskærmning',
                     rain_on_lens: 'Regn på linse', sun_flare: 'Solreflektion',
                     night_capture: 'Natkamera', hardware_failure: 'Hardwarefejl',
+                    focus_or_lens_issue: 'Fokus/linse-problem',
+                    snow_or_dirt_on_lens: 'Sne/skidt på frontglas',
+                    condensation_or_soft_lens_obstruction: 'Dug/kondens/blød linse',
+                    direct_sun_reflection: 'Direkte sol/refleks',
+                    underexposure_or_camera_blocked: 'Undereksponeret/blokeret',
+                    overexposure_or_direct_sun: 'Overeksponeret/sol',
+                    depth_of_field_issue: 'Dybdeskarphed/fokus',
+                    white_balance_cast: 'Hvidbalance-farvestik',
+                    qa_analysis_error: 'QA-analysefejl',
+                    file_integrity_error: 'Filfejl',
                     unknown: 'Ukendt',
                   }
                   const actionLabels: Record<string, string> = {
@@ -371,7 +381,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                           <MR l="Scene" v={<span className="text-white/60 text-[10px] leading-tight">{ai.scene_dk}</span>} />
                           <MR l="Kvalitet" v={<span className={ai.quality_ok === false ? 'text-amber-400' : 'text-emerald-400'}>{ai.quality_flag ?? '—'}</span>} />
                           <MR l="Ændring" v={ai.change_detected ? (ai.change_summary ?? 'Ja') : 'Nej'} />
-                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model ?? ai.engine}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
                           {((ai.tags?.length ?? 0) > 0 || (ai.new_tags?.length ?? 0) > 0 || (c.ai_tags?.length ?? 0) > 0) && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {[...(ai.tags ?? []), ...(ai.new_tags ?? []), ...(c.ai_tags ?? [])].filter((tag, idx, arr) => arr.indexOf(tag) === idx).slice(0, 24).map((tag: string) => (
@@ -398,11 +408,23 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                             </span>
                           } />
                           <MR l="Konfidence" v={`${Math.round((ai.confidence ?? 0) * 100)}%`} />
-                          <MR l="Beskrivelse" v={<span className="text-white/60 text-[10px] leading-tight">{ai.description}</span>} />
+                          <MR l="Blur" v={ai.blur_score != null ? `${Math.round(ai.blur_score)}` : '—'} />
+                          <MR l="Lys" v={ai.brightness_mean != null ? `${Math.round(ai.brightness_mean)}/255` : '—'} />
+                          {ai.optimizer_score != null && <MR l="Autonom score" v={`${Math.round(ai.optimizer_score * 100)}%`} />}
+                          <MR l="Beskrivelse" v={<span className="text-white/60 text-[10px] leading-tight">{ai.description ?? ai.recommended_action ?? ai.recommendations?.[0]?.reason ?? '—'}</span>} />
                           {ai.action && ai.action !== 'none' && (
                             <MR l="Handling" v={<span className="text-amber-300">{actionLabels[ai.action] ?? ai.action}</span>} />
                           )}
-                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          {ai.recommended_action && (
+                            <MR l="Anbefaling" v={<span className="text-amber-300">{ai.recommended_action}</span>} />
+                          )}
+                          {ai.control_plan?.next_capture_ev_delta != null && (
+                            <MR l="EV næste" v={`${ai.control_plan.next_capture_ev_delta > 0 ? '+' : ''}${ai.control_plan.next_capture_ev_delta.toFixed(2)}`} />
+                          )}
+                          {ai.control_plan?.avoid_sun_window && (
+                            <MR l="Solvindue" v={<span className="text-amber-300">Undgå direkte refleks</span>} />
+                          )}
+                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model ?? ai.engine}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
                           {c.ai_tags && c.ai_tags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {c.ai_tags.map((tag: string) => (

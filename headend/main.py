@@ -10942,7 +10942,10 @@ def _finalize_ai_batch_job(db, job: "AiBatchJob", svc, gemini_job) -> None:
             if capture.ai_result and "edge_ai" not in ai_payload:
                 try:
                     _prev = _json.loads(capture.ai_result)
-                    if _prev.get("source") == "edge":
+                    _edge_prev = _prev.get("edge_ai") if isinstance(_prev.get("edge_ai"), dict) else None
+                    if _edge_prev:
+                        ai_payload["edge_ai"] = _edge_prev
+                    elif _prev.get("source") == "edge":
                         ai_payload["edge_ai"] = _prev
                 except Exception:
                     pass
@@ -14088,17 +14091,18 @@ def qa_search(
     for c in q.limit(limit * 3).all():
         try:
             ai = _j.loads(c.ai_result)
-            if all_causes and ai.get("probable_cause") not in all_causes:
+            qa = ai.get("edge_ai") if isinstance(ai.get("edge_ai"), dict) else ai
+            if all_causes and qa.get("probable_cause") not in all_causes:
                 continue
-            if is_anomaly == "true" and not ai.get("is_anomaly"):
+            if is_anomaly == "true" and not qa.get("is_anomaly"):
                 continue
-            if is_anomaly == "false" and ai.get("is_anomaly"):
+            if is_anomaly == "false" and qa.get("is_anomaly"):
                 continue
-            if alarm == "true" and not ai.get("alarm"):
+            if alarm == "true" and not (qa.get("alarm") or qa.get("is_anomaly")):
                 continue
-            if alarm == "false" and ai.get("alarm"):
+            if alarm == "false" and (qa.get("alarm") or qa.get("is_anomaly")):
                 continue
-            if min_confidence is not None and float(ai.get("confidence", 0)) < min_confidence:
+            if min_confidence is not None and float(qa.get("confidence", 0)) < min_confidence:
                 continue
             results.append({
                 "id":             c.id,
@@ -14111,6 +14115,7 @@ def qa_search(
                 "filesize_mb":    round(c.filesize / 1e6, 1) if c.filesize else None,
                 "uploaded":       c.uploaded,
                 "ai_result":      c.ai_result,
+                "edge_qa":        qa,
                 "ai_tags":        _j.loads(c.ai_tags) if c.ai_tags else None,
             })
         except Exception:

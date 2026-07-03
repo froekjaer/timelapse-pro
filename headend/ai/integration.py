@@ -454,7 +454,10 @@ def _worker(get_db_fn, find_image_fn):
                     if capture.ai_result and "edge_ai" not in payload:
                         try:
                             _prev = json.loads(capture.ai_result)
-                            if _prev.get("source") == "edge":
+                            _edge_prev = _prev.get("edge_ai") if isinstance(_prev.get("edge_ai"), dict) else None
+                            if _edge_prev:
+                                payload["edge_ai"] = _edge_prev
+                            elif _prev.get("source") == "edge":
                                 payload["edge_ai"] = _prev
                         except Exception:
                             pass
@@ -648,7 +651,10 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
             if capture.ai_result and "edge_ai" not in payload:
                 try:
                     _prev = json.loads(capture.ai_result)
-                    if _prev.get("source") == "edge":
+                    _edge_prev = _prev.get("edge_ai") if isinstance(_prev.get("edge_ai"), dict) else None
+                    if _edge_prev:
+                        payload["edge_ai"] = _edge_prev
+                    elif _prev.get("source") == "edge":
                         payload["edge_ai"] = _prev
                 except Exception:
                     pass
