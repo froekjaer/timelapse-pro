@@ -1645,3 +1645,57 @@ person vide".
   kamera-config) ind i `main`, så branchen ikke driver længere væk, og så GPS-featuren
   bliver en officiel del af den kode der bygges artifacts fra. Foreslået, afventer
   Peter/Codex' beslutning om omfang og tidspunkt.
+
+### Handover 2026-07-03 (fortsat igen) — v1-GPS-fixet virkede ikke i praksis: fandt og rettede den egentlige regnefejl
+- **Symptom efter deploy af 500-fix:** uploads gik igennem (200 OK), men metadata-UI viste
+  stadig "⚠️ GPS konfigureret — intet fix ved optagelse" for en frisk capture, selvom
+  `Højde 55 m` (manuel/site-konfigureret) var med. Dvs. UI-tillids-labellen (fase 4) virkede
+  korrekt, men selve `_read_gpsd_fix()` fik stadig intet fix.
+- **Root-cause (denne gang den rigtige, verificeret via direkte reproduktion på edgen):**
+  v1 af `_read_gpsd_fix()` brugte `gpspipe -w -n 40` med 8 sekunders timeout. `-n 40`
+  tæller ALLE JSON-beskeder fra gpsd (VERSION/DEVICES/WATCH-kvittering +
+  interfolierede SKY-rapporter), ikke kun TPV. Ved ~2 beskeder/sekund kræver 40 beskeder
+  ~18-19 sekunders strømtid — langt mere end 8 sekunders timeout. Resultat: `gpspipe`
+  blev **altid** dræbt af vores egen timeout, uanset om gpsd havde et gyldigt fix. Dette
+  er en regnefejl jeg selv indførte i v1 (udvidede fra 12→40 linjer for at "give mere plads",
+  uden at indse at et højere linjetal kræver *mere* tid, ikke mindre risiko).
+- **Fejlsporing udelukkede forkerte teorier undervejs, dokumenteret for eftertiden:**
+  1. Første mistanke: rettigheds-/sandboxing-problem, fordi `timelapse-edge.service`
+     kører som `User=root` med `ProtectSystem=strict` — Peters test som `orangepi`
+     (uden samme sandboxing) virkede, hvilket umiddelbart lignede en bekræftelse.
+  2. Modbevist ved at reproducere IDENTISK sandboxing via `sudo systemd-run` med samme
+     `ProtectSystem=strict`/`ReadWritePaths=` som den rigtige service — `gpspipe -w -n 5`
+     virkede fint der. Sandboxing var altså ikke årsagen.
+  3. Fandt den egentlige forskel: den vellykkede test brugte `-n 5` (hurtigt), ikke
+     den faktiske kodes `-n 40`. Reproducerede hængningen præcist ved at køre Python's
+     `subprocess.run(['gpspipe','-w','-n','40'], timeout=8)` i samme sandboxede unit —
+     den fejlede identisk med produktionen. Beviser at det var en ren tids-/linjetal-
+     regnefejl, ikke permissions.
+- **Rettelse:** `_read_gpsd_fix()` omskrevet til at læse `gpspipe`s output linje-for-linje
+  via `subprocess.Popen` + `select.select()` med et wall-clock-deadline (default 10 sek,
+  op fra 8), og stopper med det samme et brugbart TPV (`mode>=2`) ses — venter ikke på et
+  fast antal beskeder. Timer korrekt og gracefully ud efter `timeout_s` hvis intet fix
+  nogensinde dukker op, uanset hvor mange beskeder der er modtaget undervejs.
+- **Verifikation:** nyt testscript (`test_read_gpsd_fix.py`) med en fake `gpspipe` der
+  efterligner den observerede produktions-timing (handshake øjeblikkeligt, derefter
+  TPV+SKY-par ca. 1x/sek, med `mode` der flipper mellem 1 og 3): (1) stopper efter ~3 sek
+  når et brugbart fix dukker op midt i strømmen, uden at vente resten af vinduet, (2)
+  timer korrekt ud efter ~5 sek (ikke ~18 sek) hvis intet fix nogensinde kommer, (3) ingen
+  efterladte gpspipe-processer. Alle øvrige tests (fase 2-4, GPS-fix v1, upload-endpoint)
+  genkørt uden regression.
+- **Deploy:** ny inkrementel patch-script (`apply_gps_patch_v2.py`, lagt i workspace-roden)
+  der finder og erstatter den allerede-udrullede v1-`_read_gpsd_fix()` med v2 via regex på
+  funktionsgrænser (ikke eksakt tekst-match, som viste sig skrøbeligt pga. forskellig
+  Unicode-håndtering af æ/ø/å mellem v1- og v2-scriptet — v2-scriptet bruger derfor bevidst
+  ren ASCII-translitteration i sine kommentarer på selve edge-koden, ingen funktionel
+  forskel). Testet idempotent, `py_compile` OK, funktionelt identisk med den direkte
+  redigerede sandbox-fil.
+- **IKKE committet/deployet endnu** — afventer Peters kørsel på edgen og bekræftelse af at
+  et rigtigt GPS-fix nu dukker op i metadata-UI'en.
+- **Sidegevinst af denne fejlsporing:** vi ved nu med sikkerhed at GPS-modulet (u-blox via
+  `/dev/ttyACM0`) og gpsd fungerer korrekt på edgen (bekræftet flere gange med `gpspipe`
+  direkte), men at fix-status svinger mellem mode 1 (intet fix) og mode 2/3 (2D/3D-fix) —
+  sandsynligvis pga. antenneplacering/himmelsigt. Med det rettede 10-sekunders vindue får
+  edgen nu ~5-10 forsøg pr. optagelse i stedet for at være dømt til at fejle af en
+  regnefejl, men et fix er stadig ikke garanteret ved hver optagelse, hvis modulet reelt
+  mister lock i det øjeblik.

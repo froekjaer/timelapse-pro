@@ -80,55 +80,85 @@ def _number_or_none(value) -> Optional[float]:
         return None
 
 
-def _read_gpsd_fix(timeout_s: int = 8) -> dict:
+def _read_gpsd_fix(timeout_s: int = 10) -> dict:
     """Read one usable TPV fix from gpsd via gpspipe when available.
 
-    NOTE (2026-07-03, root-cause for "ingen GPS i metadata UI"): gpsd
-    interfolierer ofte VERSION/DEVICES/WATCH-kvittering og SKY-rapporter
-    mellem TPV-beskederne. Det oprindelige vindue (4 sek / 12 linjer) kunne
-    løbe tør før nogensinde at se en TPV med mode>=2 — selvom gpsd i
-    virkeligheden havde et gyldigt 3D-fix (bekræftet via `cgps -s` på
-    fysisk edge, Peter 2026-07-03). Vinduet er derfor udvidet, og fejl/
-    manglende fix logges nu som warning i stedet for debug, så fremtidige
-    udfald er synlige i edge-loggen fremfor at forsvinde tavst.
+    NOTE (2026-07-03, RETTET root-cause): den oprindelige implementering brugte
+    `gpspipe -w -n N` og stolede på gpspipes egen linje-tælling for at afgøre
+    hvornår processen selv afslutter. Det tæller ALLE JSON-beskeder (VERSION/
+    DEVICES/WATCH-kvittering + interfolierede SKY-rapporter), ikke kun TPV.
+    Ved ca. 2 beskeder/sekund kræver N=40 op mod 18-19 sekunders strømtid —
+    langt over enhver fornuftig subprocess-timeout, så gpspipe blev ALTID
+    dræbt af vores egen timeout før den nåede at afslutte selv, uanset om
+    gpsd havde et gyldigt fix. Bekræftet reproducerbart via `sudo systemd-run`
+    med identisk sandboxing som selve edge-servicen (udelukker permissions/
+    ProtectSystem som årsag — det var en ren regnefejl i linje-vs-tid).
+    Erstattet med line-by-line-læsning bundet af et wall-clock-deadline:
+    stopper med det samme der ses et brugbart TPV (mode>=2), ellers efter
+    `timeout_s` sekunder uanset hvor mange beskeder der er modtaget.
     """
+    import select as _select
+
     try:
-        result = _run_external(
-            ["gpspipe", "-w", "-n", "40"],
-            timeout=timeout_s,
-            label="gpspipe",
+        proc = subprocess.Popen(
+            ["gpspipe", "-w"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
     except FileNotFoundError:
         log.debug("gpspipe not installed; live GPS metadata skipped")
         return {}
     except Exception as exc:
-        log.warning("gpsd metadata-læsning fejlede: %s", exc)
+        log.warning("gpsd metadata-læsning fejlede (start): %s", exc)
         return {}
-    if result.returncode != 0:
-        log.warning("gpspipe returnerede %s: %s", result.returncode, result.stderr.strip())
-        return {}
+
+    deadline = time.monotonic() + timeout_s
     tpv_seen = 0
-    for line in result.stdout.splitlines():
+    fix: dict = {}
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = _select.select([proc.stdout], [], [], remaining)
+            if not ready:
+                break
+            line = proc.stdout.readline()
+            if not line:
+                break
+            try:
+                msg = json.loads(line)
+            except Exception:
+                continue
+            if msg.get("class") != "TPV":
+                continue
+            tpv_seen += 1
+            mode = int(msg.get("mode") or 0)
+            lat = _number_or_none(msg.get("lat"))
+            lon = _number_or_none(msg.get("lon"))
+            if mode < 2 or lat is None or lon is None:
+                continue
+            fix = {
+                "gps_lat": lat,
+                "gps_lon": lon,
+                "gps_source": "gpsd",
+            }
+            alt = _number_or_none(msg.get("altHAE") if msg.get("altHAE") is not None else msg.get("altMSL"))
+            if alt is not None:
+                fix["gps_alt"] = alt
+            break
+    finally:
         try:
-            msg = json.loads(line)
+            proc.terminate()
+            proc.wait(timeout=2)
         except Exception:
-            continue
-        if msg.get("class") != "TPV":
-            continue
-        tpv_seen += 1
-        mode = int(msg.get("mode") or 0)
-        lat = _number_or_none(msg.get("lat"))
-        lon = _number_or_none(msg.get("lon"))
-        if mode < 2 or lat is None or lon is None:
-            continue
-        fix = {
-            "gps_lat": lat,
-            "gps_lon": lon,
-            "gps_source": "gpsd",
-        }
-        alt = _number_or_none(msg.get("altHAE") if msg.get("altHAE") is not None else msg.get("altMSL"))
-        if alt is not None:
-            fix["gps_alt"] = alt
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    if fix:
         return fix
     log.warning(
         "Intet brugbart GPS-fix fra gpsd inden for %ss (%d TPV-beskeder modtaget, ingen med mode>=2)",
