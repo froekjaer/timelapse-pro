@@ -1735,4 +1735,30 @@ person vide".
   rent (`patch -p1 --dry-run`) mod den nøjagtige commit der allerede er udrullet på
   edgen (`df26248d`), og at resultatet er byte-identisk med den lokalt redigerede/
   testede fil. Simplere og mere robust end de tidligere Python-baserede patch-scripts.
+- **v3 deployet af Peter (commit `79eba56e`), patch applied rent (offset -15 linjer,
+  harmløst — konteksten matchede korrekt et andet sted end den oprindelige linje).**
+
+### Handover 2026-07-04 (fortsat) — v4: præcis timing af GPS-læsning (Peters uddybning)
+- **Peters uddybning efter v3:** "Du skal læse GPS'en 10 sek. før du tænder relæet. Der
+  går lang tid efter du slukker relæet før der er fix." v3's placering (kald
+  `refresh_gps_cache()` ved starten af HVER idle-tick, dvs. lige efter forrige relæ-
+  slukning) ramte dermed det værst tænkelige tidspunkt — mindst mulig tid til at GPS'en
+  kan nå at komme sig, siden det sker umiddelbart efter relæet netop er slukket.
+- **Fandt den rigtige krog i koden:** `_should_capture()` (agent.py) returnerer `True`
+  `lead_s = warmup_s + 3` sekunder (typisk ~13 sek) FØR relæet rent faktisk tænder — det
+  er selve warmup-mekanismen, og `_do_capture_cycle()` tænder relæet stort set med det
+  samme når den kaldes. Det er derfor det ideelle sted at læse GPS: lige inden i
+  `if capture_due:`-grenen, før selve capture-cyklussen dispatches. På det tidspunkt har
+  der været maksimal tid siden SIDSTE relæ-slukning (hele idle-perioden, typisk ~8-9 min
+  ved et 10-minutters interval) til at GPS'en kunne nå at komme sig.
+- **Rettelse (v4):** flyttet `refresh_gps_cache()`-kaldet fra "hver idle-tick" til
+  specifikt inde i `if capture_due:` (efter suppressed-tjekket, før dispatch til
+  `_do_capture_cycle()`/`_do_multi_capture_cycle()`) — kaldes nu præcis én gang pr.
+  optagelse, ~13 sekunder før relæet tænder, i stedet for gentagne gange gennem hele
+  idle-perioden (hvoraf de fleste forsøg ville være spildte/for tidlige alligevel).
+- **Verifikation:** `py_compile` OK, driver-testene (`test_gps_cache.py`) genkørt uden
+  regression (rører ikke selve driver-logikken, kun hvornår agenten kalder den).
+- **Deploy:** ny lille unified diff (`gps_v4_timing.patch`, kun `edge/agent.py`),
+  verificeret at den applicerer rent mod den præcise `79eba56e`-commit der allerede kører
+  på edgen, og at resultatet er byte-identisk med den lokale testede fil.
 - **IKKE committet/deployet endnu** — afventer Peters kørsel på edgen.

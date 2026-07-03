@@ -668,6 +668,22 @@ class EdgeAgent:
                 log.info("Capture udsat/sprunget over: %s", suppressed)
                 self._db.log_event(self._device_id, "INFO", "capture", f"Capture suppressed: {suppressed}")
             else:
+                # 2026-07-04 (Peter): læs GPS HER, lige før relæet tænder --
+                # ikke løbende under idle-ventetiden. Relæet dræber fix'et
+                # med det samme, og der går lang tid efter relæet slukkes
+                # før et fix er tilbage. `_should_capture()` returnerer True
+                # `lead_s` (~13s) sekunder før relæet rent faktisk tænder
+                # (se _camera_warmup_seconds/_do_capture_cycle), så dette er
+                # det sidste og bedste tidspunkt at læse på — maksimal tid
+                # siden sidste relæ-slukning er gået, og GPS'en har haft
+                # bedst mulig chance for at nå et fix, inden relæet dræber
+                # det igen om et øjeblik.
+                try:
+                    if hasattr(self._driver, "refresh_gps_cache"):
+                        self._driver.refresh_gps_cache()
+                except Exception as _gps_exc:
+                    log.debug("GPS-cache opdatering sprunget over: %s", _gps_exc)
+
                 node_cameras = self._cfg.get('node_cameras', [])
                 multi_mode   = self._cfg.get('multi_camera_mode', 'single')
                 if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
@@ -693,18 +709,6 @@ class EdgeAgent:
             self._sync_captures()
 
         self._forward_siem_logs()
-
-        # 2026-07-04 (Peter): opdater cachet GPS-fix mens kamera-relæet er
-        # slukket -- GPS-modtageren mister fix når relæet tændes, og da
-        # kameraet er fastmonteret og aldrig flytter sig, er det fint at
-        # læse GPS'en her og genbruge fixet ved næste optagelse i stedet
-        # for at forsøge et live-kald midt i optagelsen (se
-        # GPhoto2Driver.refresh_gps_cache() / _write_sidecar()).
-        try:
-            if hasattr(self._driver, "refresh_gps_cache"):
-                self._driver.refresh_gps_cache()
-        except Exception as _gps_exc:
-            log.debug("GPS-cache opdatering sprunget over: %s", _gps_exc)
 
         # Calculate sleep until next event
         sleep_s = self._seconds_until_next_event(now, mode)
