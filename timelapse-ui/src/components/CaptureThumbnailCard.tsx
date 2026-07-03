@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Image } from 'lucide-react'
 import { getThumbnailUrl, requestThumbnailGeneration } from '../api/client'
+import { acquireImageSlot, observeInView } from '../lib/imageLoadGate'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import type { Capture } from '../types'
 
@@ -66,6 +67,11 @@ export function CaptureThumbnailCard({
   const [imgOk, setImgOk] = useState(true)
   const [repairState, setRepairState] = useState<'idle' | 'queued' | 'failed'>('idle')
   const [refresh, setRefresh] = useState(0)
+  const retryCount = useRef(0)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const releaseRef = useRef<null | (() => void)>(null)
+  const [inView, setInView] = useState(false)
+  const [loadSrc, setLoadSrc] = useState<string | null>(null)
   const ai = parseCaptureAI(capture)
   const parts = filenameParts(capture.filename)
   const imgSrc = refresh > 0 ? `${thumbUrl}?repair=${refresh}` : thumbUrl
@@ -75,7 +81,51 @@ export function CaptureThumbnailCard({
     setImgOk(true)
     setRepairState('idle')
     setRefresh(0)
+    retryCount.current = 0
+    setLoadSrc(null)
+    if (releaseRef.current) { releaseRef.current(); releaseRef.current = null }
   }, [thumbUrl])
+
+  // Lazy-load via ÉN DELT IntersectionObserver (ikke én pr. kort) — så et grid med
+  // mange tusinde kort (Timelapse Video) ikke vælter browseren.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    return observeInView(el, () => setInView(true))
+  }, [])
+
+  // Når kortet er i syne (og billedet ikke er fejlet): tag en samtidigheds-slot
+  // FØR vi sætter src. Det er det der begrænser belastningen på backenden til
+  // maks N samtidige thumbnail-requests og forhindrer 503-stormen.
+  useEffect(() => {
+    if (!inView || !imgOk) return
+    let cancelled = false
+    acquireImageSlot().then((release) => {
+      if (cancelled) { release(); return }
+      releaseRef.current = release
+      setLoadSrc(imgSrc)
+    })
+    return () => {
+      cancelled = true
+      if (releaseRef.current) { releaseRef.current(); releaseRef.current = null }
+    }
+  }, [inView, imgSrc, imgOk])
+
+  // Ved billed-fejl: et tæt galleri overbelaster backenden → nginx 503. Thumbnailen
+  // FINDES; serveren er bare presset. Prøv derfor den SAMME thumbnail igen med spredt
+  // (jittered) backoff i stedet for straks at fyre en tung /generate — det er præcis
+  // det der ellers forstærker stormen og holder serveren nede. Først efter flere
+  // forgæves forsøg antager vi at den måske faktisk mangler, og beder om generering.
+  const MAX_RETRY = 4
+  const onImgError = () => {
+    if (retryCount.current < MAX_RETRY) {
+      retryCount.current += 1
+      const delay = 700 * retryCount.current + Math.random() * 800
+      window.setTimeout(() => setRefresh(r => r + 1), delay)
+      return
+    }
+    requestRepair()
+  }
 
   const requestRepair = async () => {
     if (repairState !== 'idle') {
@@ -107,27 +157,31 @@ export function CaptureThumbnailCard({
 
   return (
     <div
+      ref={containerRef}
       onClick={onClick}
       className={`rounded-xl border overflow-hidden bg-white cursor-pointer hover:ring-2 hover:ring-sky-300 transition-all ${
         selected ? 'ring-2 ring-red-400 border-red-300' : passed ? 'border-gray-200' : 'border-red-200'
       }`}
     >
       <div className="aspect-video bg-slate-100 relative overflow-hidden flex items-center justify-center">
-        {imgOk ? (
-          <img
-            src={imgSrc}
-            alt={capture.filename}
-            className="w-full h-full object-cover"
-            loading="lazy"
-            onLoad={() => setRepairState('idle')}
-            onError={requestRepair}
-          />
-        ) : (
+        {!imgOk ? (
           <div className="flex flex-col items-center gap-1 text-slate-300">
             <Image className="w-8 h-8" />
             {repairState === 'queued' && <span className="text-[10px] text-slate-400">Genererer...</span>}
             {repairState === 'failed' && <span className="text-[10px] text-slate-400">Mangler thumbnail</span>}
           </div>
+        ) : loadSrc ? (
+          <img
+            src={loadSrc}
+            alt={capture.filename}
+            className="w-full h-full object-cover"
+            onLoad={() => { setRepairState('idle'); retryCount.current = 0; releaseRef.current?.(); releaseRef.current = null }}
+            onError={() => { releaseRef.current?.(); releaseRef.current = null; onImgError() }}
+          />
+        ) : (
+          // Statisk placeholder (INGEN animate-pulse): ved 21.000 kort ville tusindvis
+          // af samtidige CSS-animationer vælte browseren.
+          <div className="w-full h-full bg-slate-100" />
         )}
         <span className="absolute bottom-1.5 right-1.5 text-xs bg-black/50 text-white px-1 py-0.5 rounded">
           {capture.filesize_mb ? `${capture.filesize_mb} MB` : '-'}

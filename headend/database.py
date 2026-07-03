@@ -230,6 +230,22 @@ class Camera(Base):
     model         = Column(String(100))
     notes         = Column(Text)
     config        = Column(Text, default="{}")             # JSON camera-specifikke config overrides
+    # ── AI-kontekst (v10) — fodres til vision-prompten pr. billede ─────────
+    # baseline_description: fritekst om hvad kameraet NORMALT viser (synsfelt,
+    #   faste objekter, hvad der er forventeligt) → modellen kan vurdere afvigelser
+    #   (ny bil i indkørslen, personer i baggård om natten osv.).
+    # context_notes: ekstra driftsnoter til AI (fx "nabogrund under byggeri",
+    #   "vej med trafik i baggrunden") der ikke skal udløse falske anomalier.
+    baseline_description = Column(Text)
+    context_notes        = Column(Text)
+    # ── Selvlærende baseline (v11) — auto-genereret fra kameraets tag-historik ──
+    # auto_baseline: AI-kontekst udledt statistisk af hvad kameraet NORMALT viser
+    #   (persistente tags, dag/nat-mønster, sæson, og for dynamiske sites
+    #   udvikling/fremskridt). Genberegnes løbende → "selvlærende".
+    #   baseline_description (håndskrevet) vinder hvis sat; ellers bruges auto.
+    auto_baseline        = Column(Text)
+    auto_baseline_at     = Column(DateTime)
+    auto_baseline_kind   = Column(String(20))   # 'static' | 'dynamic'
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     retired_at    = Column(DateTime)                       # null = aktiv
     # Netværkskonfiguration (v7 migration)
@@ -562,6 +578,7 @@ class ConfigDefaults(Base):
     storage     = Column(Text)
     diagnostics = Column(Text)
     system      = Column(Text)
+    session_policy = Column(Text)
 
 
 class Settings(Base):

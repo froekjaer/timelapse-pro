@@ -26,6 +26,10 @@ Config-struktur (i device_config):
     fallback: "tunnel@backup.froekjaer.dk:22"
     remote_port: 2201          # unik pr. device
     local_port: 22
+    extra_forwards:
+      - remote_port: 2301
+        local_port: 8090
+        name: lab_video
     key_file: "/opt/timelapse/edge/ssh/tunnel_key"
     auto_on_api_loss: true
     auto_on_api_loss_threshold_s: 300
@@ -164,6 +168,19 @@ class SshTunnelManager:
     def _local_port(self) -> int:
         return int(self._tunnel_cfg().get("local_port", 22))
 
+    def _remote_forwards(self) -> list[tuple[int, int, str]]:
+        forwards = [(self._remote_port(), self._local_port(), "ssh")]
+        for item in self._tunnel_cfg().get("extra_forwards", []) or []:
+            try:
+                remote_port = int(item.get("remote_port"))
+                local_port = int(item.get("local_port"))
+                name = str(item.get("name") or f"{remote_port}->{local_port}")
+                if remote_port > 0 and local_port > 0:
+                    forwards.append((remote_port, local_port, name))
+            except Exception:
+                log.warning("SSH tunnel: ignorerer ugyldig extra_forward: %r", item)
+        return forwards
+
     def _key_file(self) -> Optional[Path]:
         kf = self._tunnel_cfg().get("key_file", "/opt/timelapse/edge/ssh/tunnel_key")
         p = Path(kf)
@@ -291,7 +308,6 @@ class SshTunnelManager:
             cmd = [
                 "ssh",
                 "-N",                                           # ingen kommando
-                "-R", f"{self._remote_port()}:localhost:{self._local_port()}",
                 "-p", str(ssh_port),
                 "-i", str(key_file),
                 "-o", f"StrictHostKeyChecking={self._tunnel_cfg().get('strict_host_checking', 'accept-new')}",
@@ -303,6 +319,9 @@ class SshTunnelManager:
                 "-o", f"UserKnownHostsFile={str(key_file.parent / 'known_hosts')}",
                 f"{user}@{host}",
             ]
+            for remote_port, local_port, name in reversed(self._remote_forwards()):
+                cmd[2:2] = ["-R", f"{remote_port}:localhost:{local_port}"]
+                log.info("SSH tunnel forward: %s remote=%d local=%d", name, remote_port, local_port)
 
             log.info("SSH tunnel: starter %s@%s:%d remote_port=%d",
                      user, host, ssh_port, self._remote_port())

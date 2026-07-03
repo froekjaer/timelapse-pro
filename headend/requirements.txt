@@ -9,5 +9,7 @@ bcrypt
 passlib
 psycopg2-binary
 webauthn
+pyotp
+qrcode[pil]
 google-genai
 google-cloud-storage

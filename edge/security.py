@@ -116,7 +116,7 @@ def verify_update_artifact(update: dict, security_cfg: dict) -> tuple[bool, str]
     code must be bound to a manifest hash and a trusted Headend/release signer.
     """
     update_type = str(update.get("update_type") or "")
-    if update_type not in {"app_security", "app_updates", "app_update", "timelapse_update", "timelapse_pro_update"}:
+    if update_type not in {"app_security", "app_updates", "app_update", "timelapse_update", "timelapse_pro_update", "os_security", "os_updates"}:
         return True, "non-code update"
 
     if not security_cfg.get("artifact_verification_required", True):
@@ -141,6 +141,15 @@ def verify_update_artifact(update: dict, security_cfg: dict) -> tuple[bool, str]
 
     if not artifact.get("signature"):
         return False, "artifact mangler signatur"
+
+    artifact_type = str(artifact.get("artifact_type") or "")
+    if update_type in {"os_security", "os_updates"}:
+        if artifact_type != "os":
+            return False, "OS update kræver artifact_type=os"
+        if not isinstance(manifest, dict) or manifest.get("schema") != "timelapse.os_update_artifact.v1":
+            return False, "OS artifact manifest schema er ugyldigt"
+        if manifest.get("distribution_model") != "headend_signed_offline_os_bundle_edge_pull":
+            return False, "OS artifact skal være offline Headend bundle"
 
     return True, "artifact trust checks OK"
 

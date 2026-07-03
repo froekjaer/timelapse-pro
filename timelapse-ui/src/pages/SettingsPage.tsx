@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Globe, Wifi, Users, Save, Check, AlertCircle, CheckCircle, Terminal, Bell } from 'lucide-react'
+import { Globe, Wifi, Users, Save, Check, Terminal, Bell } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { getApiUrl, API_STORAGE_KEY, DEFAULT_API_URL, testConnection } from '../api/client'
+import { getApiUrl } from '../api/client'
 
 const TIMEZONES = [
   { value: 'Europe/Copenhagen', label: 'Danmark (CET/CEST)' },
@@ -17,35 +17,10 @@ export function SettingsPage() {
   const [tz, setTz]         = useState(() => localStorage.getItem(TZ_KEY) ?? 'Europe/Copenhagen')
   const [tzSaved, setTzSaved] = useState(false)
 
-  const [apiUrl, setApiUrl]     = useState(() => getApiUrl())
-  const [apiSaved, setApiSaved] = useState(false)
-  const [apiStatus, setApiStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
-  const [apiError, setApiError]   = useState('')
-
   const saveTz = () => {
     localStorage.setItem(TZ_KEY, tz)
     setTzSaved(true)
     setTimeout(() => setTzSaved(false), 2000)
-  }
-
-  const testApi = async (url: string) => {
-    setApiStatus('testing')
-    setApiError('')
-    try {
-      localStorage.setItem(API_STORAGE_KEY, url)
-      const res = await testConnection()
-      setApiStatus('ok')
-    } catch (e: any) {
-      setApiStatus('error')
-      setApiError(e?.message ?? 'Forbindelsesfejl')
-      localStorage.setItem(API_STORAGE_KEY, url)
-    }
-  }
-
-  const saveApi = async () => {
-    await testApi(apiUrl)
-    setApiSaved(true)
-    setTimeout(() => setApiSaved(false), 3000)
   }
 
   const now = new Date().toLocaleString('da-DK', {
@@ -68,57 +43,23 @@ export function SettingsPage() {
             <h2 className="text-base font-semibold text-gray-900">Headend API</h2>
           </div>
           <p className="text-sm text-gray-500 mb-4">
-            IP-adresse eller domænenavn til headend-serveren.
+            Browseren bruger deployment/same-origin til API-kald. Edge-facing base URL styres systemisk i databasen.
           </p>
           <div className="space-y-3">
             <div>
-              <label className="text-xs text-gray-500 block mb-1">URL (inkl. port)</label>
-              <input
-                type="text"
-                value={apiUrl}
-                onChange={e => setApiUrl(e.target.value)}
-                placeholder="http://192.168.86.132:8000"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-sky-300"
-              />
-              <p className="text-xs text-gray-400 mt-1">
-                Eksempler: http://192.168.86.132:8000 · https://timelapse.example.com
-              </p>
-            </div>
-
-            {apiStatus === 'ok' && (
-              <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">
-                <CheckCircle className="w-4 h-4 flex-shrink-0" />
-                Forbundet til headend
+              <label className="text-xs text-gray-500 block mb-1">Aktuel browser API</label>
+              <div className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono bg-gray-50 text-gray-700 break-all">
+                {getApiUrl()}
               </div>
-            )}
-            {apiStatus === 'error' && (
-              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                {apiError || 'Kunne ikke forbinde'}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => testApi(apiUrl)}
-                disabled={apiStatus === 'testing'}
-                className="px-3 py-2 rounded-lg text-sm border border-gray-200 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {apiStatus === 'testing' ? 'Tester…' : 'Test forbindelse'}
-              </button>
-              <button
-                onClick={saveApi}
-                disabled={apiStatus === 'testing'}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  apiSaved ? 'bg-emerald-500 text-white' : 'bg-sky-500 hover:bg-sky-600 text-white'
-                } disabled:opacity-50`}
-              >
-                {apiSaved ? <><Check className="w-4 h-4" /> Gemt</> : <><Save className="w-4 h-4" /> Gem</>}
-              </button>
             </div>
             <p className="text-xs text-gray-400">
-              Aktuel: <span className="font-mono">{getApiUrl()}</span>
+              Ret Headend Base URL under System Administration, hvis Edge-enheder skal have en anden offentlig adresse.
             </p>
+            <Link to="/system-admin"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600">
+              <Wifi className="w-4 h-4" />
+              Åbn Headend indstillinger
+            </Link>
           </div>
         </div>
 

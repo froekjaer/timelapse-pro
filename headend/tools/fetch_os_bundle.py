@@ -40,6 +40,7 @@ from typing import Any
 # arm64 uses ports mirror; amd64 uses the regular archive
 MIRROR_ARM64 = "http://ports.ubuntu.com/ubuntu-ports"
 MIRROR_AMD64 = "http://archive.ubuntu.com/ubuntu"
+HTTP_USER_AGENT = "TimeLapsePro-Headend-OSBundle/1.0"
 
 # Components and pockets to search, in priority order
 COMPONENTS = ["main", "restricted", "universe", "multiverse"]
@@ -120,7 +121,8 @@ def fetch_extra_repo_index(
             if verbose:
                 print(f"Fetching extra repo index: {url}", file=sys.stderr)
             try:
-                with urllib.request.urlopen(url, timeout=30) as resp:
+                req = urllib.request.Request(url, headers={"User-Agent": HTTP_USER_AGENT})
+                with urllib.request.urlopen(req, timeout=30) as resp:
                     raw = gzip.decompress(resp.read())
             except urllib.error.HTTPError as exc:
                 if exc.code == 404:
@@ -155,7 +157,8 @@ def fetch_package_index(suite: str, arch: str, verbose: bool = False) -> dict[st
             if verbose:
                 print(f"Fetching index: {url}", file=sys.stderr)
             try:
-                with urllib.request.urlopen(url, timeout=30) as resp:
+                req = urllib.request.Request(url, headers={"User-Agent": HTTP_USER_AGENT})
+                with urllib.request.urlopen(req, timeout=30) as resp:
                     raw = gzip.decompress(resp.read())
             except urllib.error.HTTPError as exc:
                 if exc.code == 404:
@@ -244,7 +247,8 @@ def download_deb(
         size = int(entry.get("Size", 0))
         print(f"  downloading: {dest.name} ({size // 1024} KB)", file=sys.stderr)
 
-    with urllib.request.urlopen(url, timeout=120) as resp:
+    req = urllib.request.Request(url, headers={"User-Agent": HTTP_USER_AGENT})
+    with urllib.request.urlopen(req, timeout=120) as resp:
         data = resp.read()
 
     # Verify SHA256 from index
@@ -421,6 +425,7 @@ def build_bundle(
     target_os: str = "debian/orangepi",
     source_ref: str = "ubuntu-http",
     verbose: bool = False,
+    strict_versions: bool = True,
 ) -> dict[str, Any]:
     """
     High-level Python API: download .deb files and write a bundle directory.
@@ -461,11 +466,12 @@ def build_bundle(
 
         index_version = entry.get("Version", "")
         if index_version != wanted_version:
-            print(
-                f"  WARNING: {name} wanted {wanted_version}, "
-                f"index has {index_version} — using index version",
-                file=sys.stderr,
-            )
+            message = f"{name} wanted {wanted_version}, index has {index_version}"
+            if strict_versions:
+                print(f"  WARNING: {message} — skipping; tested version required", file=sys.stderr)
+                not_found.append(f"{name}={wanted_version}")
+                continue
+            print(f"  WARNING: {message} — using index version", file=sys.stderr)
 
         # Use repo base URL from entry if it came from an extra repo
         effective_mirror = entry.get("_repo_base_url") or mirror
@@ -565,6 +571,11 @@ def main() -> int:
     parser.add_argument("--source-ref", default="ubuntu-http")
     parser.add_argument("--force", action="store_true", help="Replace output dir if it exists")
     parser.add_argument("--dry-run", action="store_true", help="Resolve packages but do not download")
+    parser.add_argument(
+        "--allow-version-drift",
+        action="store_true",
+        help="Allow downloading a newer index version than the catalog requested. Default is strict for lab-tested bundles.",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -606,11 +617,12 @@ def main() -> int:
 
         index_version = entry.get("Version", "")
         if index_version != wanted_version:
-            print(
-                f"  WARNING: {name} wanted {wanted_version}, "
-                f"index has {index_version} — using index version",
-                file=sys.stderr,
-            )
+            message = f"{name} wanted {wanted_version}, index has {index_version}"
+            if not args.allow_version_drift:
+                print(f"  WARNING: {message} — skipping; tested version required", file=sys.stderr)
+                not_found.append(f"{name}={wanted_version}")
+                continue
+            print(f"  WARNING: {message} — using index version", file=sys.stderr)
 
         # Use repo base URL from entry if it came from an extra repo
         effective_mirror = entry.get("_repo_base_url") or mirror

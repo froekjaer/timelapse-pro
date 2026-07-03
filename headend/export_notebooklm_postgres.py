@@ -8,7 +8,7 @@ Bruger DATABASE_URL fra:
 3. fallback: postgresql://timelapse@localhost/timelapse_db
 
 Output:
-  /Users/peter/projects/timelapse-pro/headend/exports/notebooklm_YYYYMMDD_HHMMSS/
+  <repo>/headend/exports/notebooklm_YYYYMMDD_HHMMSS/
 
 Filer:
   - notebooklm_summary.md
@@ -36,7 +36,7 @@ import psycopg2.extras
 
 PLIST_PATH = Path("/Library/LaunchDaemons/dk.froekjaer.timelapse-headend.plist")
 DEFAULT_DATABASE_URL = "postgresql://timelapse@localhost/timelapse_db"
-EXPORT_ROOT = Path("/Users/peter/projects/timelapse-pro/headend/exports")
+EXPORT_ROOT = Path(os.getenv("TIMELAPSE_NOTEBOOKLM_EXPORT_ROOT", Path(__file__).resolve().parent / "exports"))
 
 
 CORE_TABLES = [

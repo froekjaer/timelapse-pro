@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dk.froekjaer.timelapse-ui</string>
+  <key>UserName</key>
+  <string>peter</string>
+  <key>WorkingDirectory</key>
+  <string>/Volumes/data-fast/peter-home/projects/timelapse-pro/timelapse-ui</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/npm</string>
+    <string>run</string>
+    <string>dev</string>
+    <string>--</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/peter</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/peter/Library/Logs/timelapse-ui.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/peter/Library/Logs/timelapse-ui.log</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+</dict>
+</plist>

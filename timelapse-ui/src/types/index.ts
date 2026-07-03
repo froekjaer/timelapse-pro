@@ -106,6 +106,9 @@ export interface CameraParam {
   label: string
   type: string
   current: string
+  bottom?: string
+  top?: string
+  step?: string
   choices: { index: string; label: string }[]
   readonly: boolean
 }
@@ -118,6 +121,8 @@ export interface CameraProfile {
   gphoto2_port: string
   features: Record<string, boolean>
   capture_settings: Record<string, string[]>
+  config_commands?: Record<string, { path?: string; skip?: boolean; value_map?: Record<string, string>; skip_values?: string[] }>
+  focus_controls?: Record<string, any>
   actions: Record<string, string>
 }
 

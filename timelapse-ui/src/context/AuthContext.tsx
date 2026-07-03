@@ -4,7 +4,6 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { getApiUrl } from '../api/client'
-import { startAuthentication } from '@simplewebauthn/browser'
 
 export interface User {
   username:    string
@@ -12,7 +11,14 @@ export interface User {
   customer_id: string | null
 }
 
-interface MfaResult { mfa_required?: boolean; mfa_token?: string }
+interface MfaResult {
+  mfa_required?: boolean
+  mfa_token?: string
+  mfa_setup_required?: boolean
+  username?: string
+  role?: User['role']
+  customer_id?: string | null
+}
 
 interface AuthCtx {
   user: User | null
@@ -20,6 +26,7 @@ interface AuthCtx {
   login:     (username: string, password: string) => Promise<MfaResult | void>
   logout:    () => void
   verifyMfa: (mfa_token: string, code: string) => Promise<void>
+  confirmMfaSetup: (code: string) => Promise<void>
   isAuthenticated: boolean
   loading: boolean
   hasRole: (...roles: User['role'][]) => boolean
@@ -43,38 +50,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then(r => r.ok ? r.json() : null)
       .then(async d => {
         if (d) {
+          if (d.mfa_required_effective && !d.mfa_verified) {
+            localStorage.removeItem('tl_user')
+            setUser(null)
+            return
+          }
           setUser({ username: d.username, role: d.role, customer_id: d.customer_id })
           localStorage.setItem('tl_user', JSON.stringify(d))
         } else {
-          // Cookie mangler — forsøg WebAuthn auto-login hvis bruger er gemt
-          const saved = localStorage.getItem('tl_user')
-          if (saved) {
-            try {
-              const savedUser = JSON.parse(saved)
-              const opts = await fetch(`${getApiUrl()}/api/auth/webauthn/login-begin`, {
-                method: 'POST', credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: savedUser.username })
-              })
-              if (opts.ok) {
-                const optsJson = await opts.json()
-                const result = await startAuthentication({ optionsJSON: optsJson })
-                const loginRes = await fetch(`${getApiUrl()}/api/auth/webauthn/login-complete`, {
-                  method: 'POST', credentials: 'include',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ ...result, username: savedUser.username })
-                })
-                if (loginRes.ok) {
-                  const data = await loginRes.json()
-                  const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
-                  localStorage.setItem('tl_user', JSON.stringify(u))
-                  setUser(u)
-                  return
-                }
-              }
-            } catch { /* WebAuthn ikke tilgængeligt eller afvist */ }
-          }
-          if (!localStorage.getItem('tl_user')) setUser(null)
+          // Cookie mangler/er udløbet. Vis login-siden med det samme.
+          // WebAuthn må kun startes efter brugerklik; ellers kan browseren hænge i auth prompt
+          // og efterlade appen blank, fordi auth loading aldrig bliver færdig.
+          localStorage.removeItem('tl_user')
+          setUser(null)
         }
       })
       .catch(() => {})
@@ -95,6 +83,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json()
     if (data.mfa_required) {
       return { mfa_required: true, mfa_token: data.mfa_token }
+    }
+    if (data.mfa_setup_required) {
+      return {
+        mfa_setup_required: true,
+        username: data.username ?? username,
+        role: data.role ?? 'viewer',
+        customer_id: data.customer_id ?? null,
+      }
     }
     const u: User = { username: data.username ?? username, role: data.role ?? 'viewer', customer_id: data.customer_id ?? null }
     localStorage.setItem('tl_user', JSON.stringify(u))
@@ -119,6 +115,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u)
   }
 
+  async function confirmMfaSetup(code: string) {
+    const res = await fetch(`${getApiUrl()}/api/auth/confirm-mfa`, {
+      method:      'POST',
+      credentials: 'include',
+      headers:     { 'Content-Type': 'application/json' },
+      body:        JSON.stringify({ code }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail ?? 'MFA kunne ikke aktiveres')
+    }
+    const data = await res.json()
+    const u: User = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
+    localStorage.setItem('tl_user', JSON.stringify(u))
+    setUser(u)
+  }
+
   function logout() {
     fetch(`${getApiUrl()}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
     localStorage.removeItem('tl_user')
@@ -129,7 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hasRole = (...roles: User['role'][]) => !!user && roles.includes(user.role)
 
   return (
-    <Ctx.Provider value={{ user, token, login, logout, verifyMfa, isAuthenticated: !!user, hasRole, loading }}>
+    <Ctx.Provider value={{ user, token, login, logout, verifyMfa, confirmMfaSetup, isAuthenticated: !!user, hasRole, loading }}>
       {children}
     </Ctx.Provider>
   )

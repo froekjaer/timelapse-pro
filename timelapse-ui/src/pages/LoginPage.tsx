@@ -1,7 +1,7 @@
 // ───────────────────────────────────────────────────────────────────
 // LoginPage.tsx — RBAC Login til TimeLapse Pro
 // ───────────────────────────────────────────────────────────────────
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
@@ -9,7 +9,7 @@ import { startAuthentication } from '@simplewebauthn/browser'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
-  const { login, verifyMfa } = useAuth()
+  const { login, verifyMfa, confirmMfaSetup } = useAuth()
   const navigate  = useNavigate()
   const location  = useLocation()
   const from = (location.state as any)?.from?.pathname ?? '/'
@@ -20,23 +20,60 @@ export default function LoginPage() {
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState<string | null>(null)
   const [mfaRequired, setMfaRequired] = useState(false)
+  const [mfaSetupRequired, setMfaSetupRequired] = useState(false)
   const [mfaToken,    setMfaToken]    = useState('')
   const [mfaCode,     setMfaCode]     = useState('')
+  const [mfaQr,       setMfaQr]       = useState('')
+  const [mfaSecret,   setMfaSecret]   = useState('')
   const [remember,     setRemember]     = useState(false)
+  const usernameRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
+
+  function currentUsername() {
+    return (usernameRef.current?.value ?? username).trim()
+  }
+
+  function currentPassword() {
+    return passwordRef.current?.value ?? password
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
+    const typedUsername = currentUsername()
+    const typedPassword = currentPassword()
+    if (!mfaRequired && (!typedUsername || !typedPassword)) {
+      setError('Indtast brugernavn og adgangskode')
+      return
+    }
     setLoading(true)
     try {
       if (mfaRequired) {
         await verifyMfa(mfaToken, mfaCode)
         navigate(from, { replace: true })
+      } else if (mfaSetupRequired) {
+        await confirmMfaSetup(mfaCode)
+        navigate(from, { replace: true })
       } else {
-        const result = await login(username.trim(), password)
+        const result = await login(typedUsername, typedPassword)
         if (result?.mfa_required) {
           setMfaRequired(true)
           setMfaToken(result.mfa_token ?? '')
+        } else if (result?.mfa_setup_required) {
+          setMfaSetupRequired(true)
+          const setup = await fetch(`${(await import('../api/client')).getApiUrl()}/api/auth/setup-mfa`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+          }).then(async r => {
+            if (!r.ok) {
+              const err = await r.json().catch(() => ({}))
+              throw new Error(err.detail ?? 'Kunne ikke oprette MFA')
+            }
+            return r.json()
+          })
+          setMfaQr(setup.qr_code)
+          setMfaSecret(setup.secret)
         } else {
           navigate(from, { replace: true })
         }
@@ -49,14 +86,15 @@ export default function LoginPage() {
   }
 
   async function handleWebAuthn() {
-    if (!username.trim()) { setError('Indtast brugernavn først'); return }
+    const typedUsername = currentUsername()
+    if (!typedUsername) { setError('Indtast brugernavn først'); return }
     setError(null); setLoading(true)
     try {
       const opts = await fetch(`${(await import('../api/client')).getApiUrl()}/api/auth/webauthn/login-begin`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim() })
+        body: JSON.stringify({ username: typedUsername })
       }).then(r => { if (!r.ok) throw new Error('Ingen registreret enhed for denne bruger'); return r.json() })
 
       const result = await startAuthentication({ optionsJSON: opts })
@@ -65,7 +103,7 @@ export default function LoginPage() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...result, username: username.trim() })
+        body: JSON.stringify({ ...result, username: typedUsername })
       }).then(r => { if (!r.ok) throw new Error('Autentificering fejlede'); return r.json() })
 
       const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
@@ -106,10 +144,12 @@ export default function LoginPage() {
             <div className="relative">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
+                ref={usernameRef}
                 type="text"
                 autoComplete="username"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
+                onInput={e => setUsername(e.currentTarget.value)}
                 className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm
                            focus:outline-none focus:ring-2 focus:ring-sky-300"
                 placeholder="admin"
@@ -124,10 +164,12 @@ export default function LoginPage() {
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
+                ref={passwordRef}
                 type={showPw ? 'text' : 'password'}
                 autoComplete="current-password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
+                onInput={e => setPassword(e.currentTarget.value)}
                 className="w-full pl-9 pr-10 py-2.5 border border-gray-200 rounded-lg text-sm
                            focus:outline-none focus:ring-2 focus:ring-sky-300"
                 placeholder="••••••••"
@@ -141,11 +183,25 @@ export default function LoginPage() {
           </div>
 
           {/* MFA TOTP felt */}
-          {mfaRequired && (
+          {(mfaRequired || mfaSetupRequired) && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                <span className="flex items-center gap-1.5"><Smartphone className="w-4 h-4" /> Engangskode (Authenticator)</span>
+                <span className="flex items-center gap-1.5">
+                  <Smartphone className="w-4 h-4" />
+                  {mfaSetupRequired ? 'Opret MFA' : 'Engangskode (Authenticator)'}
+                </span>
               </label>
+              {mfaSetupRequired && (
+                <div className="mb-3 flex flex-col items-center gap-2 rounded-xl border border-sky-100 bg-sky-50 p-3">
+                  {mfaQr ? (
+                    <img src={mfaQr} alt="QR kode" className="h-40 w-40 rounded-lg border border-white bg-white" />
+                  ) : (
+                    <p className="text-xs text-sky-700">Henter QR-kode…</p>
+                  )}
+                  {mfaSecret && <p className="rounded bg-white px-2 py-1 font-mono text-xs text-slate-500">{mfaSecret}</p>}
+                  <p className="text-xs text-sky-700">Scan QR-koden i din authenticator app og bekræft med koden.</p>
+                </div>
+              )}
               <input
                 type="text"
                 inputMode="numeric"
@@ -157,12 +213,14 @@ export default function LoginPage() {
                 className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 font-mono text-center text-lg tracking-widest"
                 autoFocus
               />
-              <p className="text-xs text-gray-400 mt-1">Åbn din authenticator app og indtast den 6-cifrede kode</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {mfaSetupRequired ? 'Indtast første kode for at aktivere MFA på kontoen.' : 'Åbn din authenticator app og indtast den 6-cifrede kode'}
+              </p>
             </div>
           )}
 
           {/* Husk denne enhed */}
-          {!mfaRequired && (
+          {!mfaRequired && !mfaSetupRequired && (
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)}
                 className="w-4 h-4 rounded border-gray-300 text-sky-500 focus:ring-sky-400" />
@@ -178,10 +236,10 @@ export default function LoginPage() {
           </button>
 
           {/* Submit */}
-          <button type="submit" disabled={loading || !username || !password}
+          <button type="submit" disabled={loading}
             className="w-full py-2.5 bg-sky-500 hover:bg-sky-600 disabled:bg-sky-300
                        text-white text-sm font-medium rounded-lg transition-colors">
-            {loading ? 'Logger ind…' : 'Log ind'}
+            {loading ? 'Logger ind…' : mfaSetupRequired ? 'Aktiver MFA' : 'Log ind'}
           </button>
         </form>
       </div>

@@ -37,7 +37,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,75 @@ from database import Device, DeviceInventory, BreakGlassAccount, PendingUpdate, 
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["CMDB"])
+
+# ── Break-glass checkout-hærdning (opt-in, default slået FRA) ─────────────────
+# Lukker en del af det dokumenterede SABSA-/compliance-hul i checkout_break_glass.
+# MFA er stadig en opfølgning (kræver auth-integration), men rate-limit + valgfri
+# IP-allowlist kan slås til uden at ændre det normale flow:
+#   TIMELAPSE_BREAKGLASS_CHECKOUT_MAX_PER_HOUR=3   (0 = ingen grænse, default)
+#   TIMELAPSE_BREAKGLASS_IP_ALLOWLIST=10.0.0.0/8,192.168.1.5  (tom = ingen filtrering)
+import threading as _bg_threading
+from collections import deque as _bg_deque
+import ipaddress as _bg_ipaddress
+_bg_checkout_log: dict[tuple, _bg_deque] = {}
+_bg_checkout_lock = _bg_threading.Lock()
+
+
+def _enforce_break_glass_policy(request: "Request | None", device_id: str, admin_username: str) -> None:
+    # IP-allowlist (valgfri)
+    allow_raw = os.getenv("TIMELAPSE_BREAKGLASS_IP_ALLOWLIST", "").strip()
+    if allow_raw and request is not None:
+        client_ip = getattr(getattr(request, "client", None), "host", None)
+        nets = []
+        for item in allow_raw.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                nets.append(_bg_ipaddress.ip_network(item, strict=False))
+            except ValueError:
+                continue
+        ok = False
+        if client_ip:
+            try:
+                ip = _bg_ipaddress.ip_address(client_ip)
+                ok = any(ip in n for n in nets)
+            except ValueError:
+                ok = False
+        if not ok:
+            raise HTTPException(status_code=403, detail="Break-glass checkout ikke tilladt fra denne IP")
+    # Rate-limit (valgfri)
+    try:
+        max_per_hour = int(os.getenv("TIMELAPSE_BREAKGLASS_CHECKOUT_MAX_PER_HOUR", "0"))
+    except ValueError:
+        max_per_hour = 0
+    if max_per_hour > 0:
+        import time as _t
+        key = (device_id, admin_username)
+        now = _t.monotonic()
+        with _bg_checkout_lock:
+            bucket = _bg_checkout_log.setdefault(key, _bg_deque())
+            while bucket and now - bucket[0] > 3600:
+                bucket.popleft()
+            if len(bucket) >= max_per_hour:
+                raise HTTPException(status_code=429, detail="Break-glass checkout rate-limit overskredet (prøv senere)")
+            bucket.append(now)
+
+
+def _require_cmdb_role(*roles: str):
+    """Local RBAC bridge for this router without making cmdb.py import main.py at module load."""
+    def _check(request: Request, db: Session = Depends(get_db)):
+        from main import _ROLE_HIERARCHY, get_current_user
+
+        user = get_current_user(request, db)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Ikke autentificeret")
+        allowed = _ROLE_HIERARCHY.get(user.role, {user.role})
+        if not allowed.intersection(set(roles)):
+            raise HTTPException(status_code=403, detail=f"Kræver rolle: {', '.join(roles)}")
+        return user
+
+    return _check
 
 HEADEND_MANAGED_HOMEBREW_FORMULAE = {
     "certbot": "TimeLapse TLS/certificate platformkomponent",
@@ -189,6 +258,25 @@ def _managed_update_severity(name: str) -> str:
 
 def _pending_environment(inv: DeviceInventory) -> str:
     return "production" if (inv.environment or "").lower() == "production" else "test"
+
+
+def _display_device_status(device: Device | None) -> str:
+    if not device:
+        return "unknown"
+    raw_status = device.status or "unknown"
+    if raw_status in {"provisioning", "import", "unknown"}:
+        return raw_status
+    if not device.last_seen:
+        return "offline"
+    last_seen = device.last_seen
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    age_s = (now_utc() - last_seen).total_seconds()
+    if age_s < 15 * 60:
+        return "online"
+    if age_s < 24 * 3600:
+        return "stale"
+    return "offline"
 
 
 def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceInventory, payload: dict) -> None:
@@ -342,17 +430,13 @@ def _generate_password(length: int = 24) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-# ── Inventar-endpoint (kaldt af edge ved startup) ─────────────────────────────
+# ── Inventar-handler (kaldt af main.py efter device-auth) ─────────────────────
 
-@router.post("/../../inventory/{device_id}", include_in_schema=True)
 def report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db)):
     """
     Edge rapporterer hardwareinventar ved startup.
     Opretter DeviceInventory-post hvis den ikke eksisterer.
     Opdaterer hardware-/software-felter og inventory_reported_at.
-
-    Kræver ikke auth-token i denne version (edge rapporterer under bootstrap).
-    TODO: Kræv edge JWT-token i næste sprint.
     """
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
     if not inv:
@@ -462,7 +546,7 @@ def report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db
 # ── CMDB list / detail ────────────────────────────────────────────────────────
 
 @router.get("/")
-def list_cmdb(db: Session = Depends(get_db)):
+def list_cmdb(_user=Depends(_require_cmdb_role("viewer")), db: Session = Depends(get_db)):
     """Oversigt over alle CMDB-poster — til CMDB-siden i UI."""
     rows = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
     result = []
@@ -488,7 +572,7 @@ def list_cmdb(db: Session = Depends(get_db)):
             "gpg_fingerprint":      inv.gpg_fingerprint,
             "notes":                inv.notes,
             # Fra Device-tabellen
-            "status":               device.status if device else "unknown",
+            "status":               _display_device_status(device),
             "customer_name":        device.customer_name if device else None,
             "site_name":            device.site_name if device else None,
             "ip_address":           device.ip_address if device else None,
@@ -499,8 +583,19 @@ def list_cmdb(db: Session = Depends(get_db)):
     return result
 
 
+@router.get("/sbom/all")
+def get_all_sboms(_user=Depends(_require_cmdb_role("viewer")), db: Session = Depends(get_db)):
+    """Generér SBOM pr. kendt CMDB-enhed."""
+    inventories = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    return {
+        "generated_at": now_utc().isoformat(),
+        "count": len(inventories),
+        "sboms": [_sbom_for_inventory(inv) for inv in inventories],
+    }
+
+
 @router.get("/{device_id}")
-def get_cmdb(device_id: str, db: Session = Depends(get_db)):
+def get_cmdb(device_id: str, _user=Depends(_require_cmdb_role("viewer")), db: Session = Depends(get_db)):
     """Fuld CMDB-post for én enhed."""
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
     if not inv:
@@ -569,7 +664,7 @@ def get_cmdb(device_id: str, db: Session = Depends(get_db)):
         "created_at":               inv.created_at.isoformat() if inv.created_at else None,
         "updated_at":               inv.updated_at.isoformat() if inv.updated_at else None,
         # Fra Device
-        "status":                   device.status if device else "unknown",
+        "status":                   _display_device_status(device),
         "customer_name":            device.customer_name if device else None,
         "site_name":                device.site_name if device else None,
         "ip_address":               device.ip_address if device else None,
@@ -580,7 +675,7 @@ def get_cmdb(device_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{device_id}/sbom")
-def get_device_sbom(device_id: str, db: Session = Depends(get_db)):
+def get_device_sbom(device_id: str, _user=Depends(_require_cmdb_role("viewer")), db: Session = Depends(get_db)):
     """Generér SBOM fra seneste CMDB inventory for en device/headend node."""
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
     if not inv:
@@ -588,19 +683,8 @@ def get_device_sbom(device_id: str, db: Session = Depends(get_db)):
     return _sbom_for_inventory(inv)
 
 
-@router.get("/sbom/all")
-def get_all_sboms(db: Session = Depends(get_db)):
-    """Generér SBOM pr. kendt CMDB-enhed."""
-    inventories = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
-    return {
-        "generated_at": now_utc().isoformat(),
-        "count": len(inventories),
-        "sboms": [_sbom_for_inventory(inv) for inv in inventories],
-    }
-
-
 @router.put("/{device_id}")
-def update_cmdb(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def update_cmdb(device_id: str, payload: dict, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """
     Admin opdaterer editerbare CMDB-felter.
     Hardware-felter opdateres kun af edge — ikke her.
@@ -623,7 +707,7 @@ def update_cmdb(device_id: str, payload: dict, db: Session = Depends(get_db)):
 # ── Break-the-glass ───────────────────────────────────────────────────────────
 
 @router.post("/{device_id}/break-glass")
-def create_break_glass(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """
     Admin opretter en break-glass konto for en enhed.
 
@@ -685,7 +769,7 @@ def create_break_glass(device_id: str, payload: dict, db: Session = Depends(get_
 
 
 @router.get("/{device_id}/break-glass")
-def list_break_glass(device_id: str, db: Session = Depends(get_db)):
+def list_break_glass(device_id: str, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """List alle break-glass konti for en enhed — UDEN passwords."""
     accounts = db.query(BreakGlassAccount).filter_by(
         device_id=device_id, is_active=True
@@ -708,7 +792,7 @@ def list_break_glass(device_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{device_id}/break-glass/checkout")
-def checkout_break_glass(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def checkout_break_glass(device_id: str, payload: dict, request: Request = None, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """
     Checkout break-glass password.
 
@@ -731,6 +815,9 @@ def checkout_break_glass(device_id: str, payload: dict, db: Session = Depends(ge
 
     if not admin_username:
         raise HTTPException(status_code=400, detail="admin_username påkrævet")
+
+    # Opt-in hærdning (rate-limit + IP-allowlist); no-op når env ikke er sat.
+    _enforce_break_glass_policy(request, device_id, admin_username)
 
     account = db.query(BreakGlassAccount).filter_by(
         device_id=device_id, admin_username=admin_username, is_active=True
@@ -780,7 +867,7 @@ def checkout_break_glass(device_id: str, payload: dict, db: Session = Depends(ge
 
 
 @router.delete("/{device_id}/break-glass/{account_id}")
-def delete_break_glass(device_id: str, account_id: int, db: Session = Depends(get_db)):
+def delete_break_glass(device_id: str, account_id: int, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """Deaktiver (soft delete) en break-glass konto."""
     account = db.query(BreakGlassAccount).filter_by(
         id=account_id, device_id=device_id

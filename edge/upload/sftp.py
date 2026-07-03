@@ -326,12 +326,28 @@ class _SFTPContext:
         t = self._target
         self._ssh = paramiko.SSHClient()
 
-        # For test: auto-add host key. For production: use known_hosts file.
-        known_hosts = Path("/opt/timelapse/edge/ssh/known_hosts")
+        known_hosts = Path(os.getenv(
+            "TIMELAPSE_SFTP_KNOWN_HOSTS",
+            "/opt/timelapse/edge/ssh/known_hosts",
+        ))
         if known_hosts.exists():
             self._ssh.load_host_keys(str(known_hosts))
             self._ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
         else:
+            allow_auto_add = os.getenv(
+                "TIMELAPSE_SFTP_ALLOW_AUTO_ADD_HOSTKEY",
+                "0",
+            ).lower() in {"1", "true", "yes", "on"}
+            if not allow_auto_add:
+                raise RuntimeError(
+                    f"SFTP known_hosts file missing: {known_hosts}. "
+                    "Refusing to auto-trust host keys; set "
+                    "TIMELAPSE_SFTP_ALLOW_AUTO_ADD_HOSTKEY=1 only for LAB."
+                )
+            log.warning(
+                "LAB ONLY: auto-adding SFTP host key because "
+                "TIMELAPSE_SFTP_ALLOW_AUTO_ADD_HOSTKEY is enabled"
+            )
             self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
         connect_kwargs = dict(

@@ -34,6 +34,9 @@ interface Credential {
   revoke_reason: string | null
   rotated_from_id: string | null
   has_secret: boolean
+  metadata: Record<string, any>
+  request_signature_required: boolean
+  tags: string[]
 }
 
 interface DeviceKeyState {
@@ -61,12 +64,28 @@ interface KeyManagementData {
   devices: DeviceKeyState[]
   summary: Record<string, number>
   controls: Control[]
+  cleanup_candidates?: CleanupCandidate[]
   trust_policy?: {
     artifact_verification_required: boolean
     mutual_auth_required: boolean
     trusted_release_signers: unknown[]
     edge_acceptance_rule: string
   }
+}
+
+interface CleanupCandidate {
+  credential_id: string
+  entity_id: string
+  key_type: string
+  status: string
+  last_used_at: string | null
+  created_at: string | null
+  is_primary: boolean
+  group_count: number
+  stale: boolean
+  action: string
+  auto_revoke: boolean
+  reason: string
 }
 
 type Tab = 'credentials' | 'devices' | 'compliance'
@@ -213,6 +232,54 @@ export default function KeyManagementPage() {
     }
   }
 
+  async function setSignaturePolicy(credential: Credential, required: boolean) {
+    setBusy(true)
+    setError(null)
+    setOperationMessage(null)
+    try {
+      const reason = required
+        ? 'HMAC request-signature required for production hardening'
+        : 'Manual exception'
+      await api(`/api/admin/key-management/credentials/${credential.credential_id}/request-signature`, {
+        method: 'POST',
+        body: JSON.stringify({ require_request_signature: required, reason }),
+      })
+      setOperationMessage(`${credential.credential_id}: HMAC ${required ? 'kræves' : 'er slået fra'}.`)
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Kunne ikke ændre HMAC policy')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function cleanupStaleCredentials(dryRun: boolean) {
+    if (!dryRun && !confirm('Revoker sekundære edge credentials nu? Primære credentials bliver ikke automatisk revokeret.')) return
+    setBusy(true)
+    setError(null)
+    setOperationMessage(null)
+    try {
+      const result = await api('/api/admin/key-management/cleanup-stale-credentials', {
+        method: 'POST',
+          body: JSON.stringify({
+            dry_run: dryRun,
+          older_than_days: 14,
+            reason: 'Admin cleanup from Key Management UI',
+          }),
+      })
+      if (dryRun) {
+        setOperationMessage(`Oprydnings-preview: ${result.candidates.length} fundet, ${result.auto_revoke_candidates} kan revokeres automatisk.`)
+      } else {
+        setOperationMessage(`Oprydning udført: ${result.revoked_count} credential(s) revokeret.`)
+      }
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Kunne ikke køre credential cleanup')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function rotateFrom(credential: Credential) {
     const nextForm = {
       entity_type: credential.entity_type,
@@ -253,6 +320,16 @@ export default function KeyManagementPage() {
           <ShieldCheck className="w-3.5 h-3.5" />
           Migrer legacy
         </button>
+        <button onClick={() => cleanupStaleCredentials(true)} disabled={busy}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-sky-200 text-sky-700 rounded-lg hover:bg-sky-50 disabled:opacity-50">
+          <RefreshCw className="w-3.5 h-3.5" />
+          Preview oprydning
+        </button>
+        <button onClick={() => cleanupStaleCredentials(false)} disabled={busy}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-red-200 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50">
+          <Trash2 className="w-3.5 h-3.5" />
+          Ryd sekundære
+        </button>
       </div>
 
       {error && (
@@ -277,13 +354,16 @@ export default function KeyManagementPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-10 gap-3 mb-5">
         <Metric label="Aktive" value={summary.active ?? 0} />
         <Metric label="Revoked" value={summary.revoked ?? 0} />
         <Metric label="Expired" value={summary.expired ?? 0} />
         <Metric label="Legacy tokens" value={summary.legacy_device_tokens ?? 0} />
         <Metric label="Mangler API" value={summary.missing_edge_api_key ?? 0} />
         <Metric label="Mangler signing" value={summary.missing_signing_key ?? 0} />
+        <Metric label="HMAC krævet" value={summary.api_hmac_required ?? 0} />
+        <Metric label="HMAC mangler" value={summary.api_hmac_missing ?? 0} />
+        <Metric label="Oprydning" value={summary.cleanup_candidates ?? 0} />
         <Metric label="Release signers" value={summary.trusted_release_signers ?? 0} />
       </div>
 
@@ -374,6 +454,11 @@ export default function KeyManagementPage() {
                         <span className="font-mono text-sm font-semibold text-gray-900">{credential.credential_id}</span>
                         <span className={`text-[11px] px-1.5 py-0.5 rounded border ${statusClass(credential.status)}`}>{credential.status}</span>
                         <span className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-600 border-gray-200">{credential.key_type}</span>
+                        {credential.key_type === 'api' && (
+                          <span className={`text-[11px] px-1.5 py-0.5 rounded border ${credential.request_signature_required ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            {credential.request_signature_required ? 'HMAC required' : 'HMAC missing'}
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-gray-400 mt-1">
                         {credential.entity_type}:{credential.entity_id} / {credential.label || '-'}
@@ -403,10 +488,17 @@ export default function KeyManagementPage() {
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <button onClick={() => rotateFrom(credential)} disabled={busy || credential.status !== 'active'}
-                        className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
-                        title="Roter">
+	                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {credential.key_type === 'api' && credential.status === 'active' && !credential.request_signature_required && (
+                        <button onClick={() => setSignaturePolicy(credential, true)} disabled={busy}
+                          className="p-2 rounded-lg border border-green-200 text-green-700 hover:bg-green-50 disabled:opacity-40"
+                          title="Kræv HMAC request-signature">
+                          <ShieldCheck className="w-4 h-4" />
+                        </button>
+                      )}
+	                      <button onClick={() => rotateFrom(credential)} disabled={busy || credential.status !== 'active'}
+	                        className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+	                        title="Roter">
                         <RotateCw className="w-4 h-4" />
                       </button>
                       <button onClick={() => revoke(credential.credential_id)} disabled={busy || credential.status !== 'active'}
@@ -441,6 +533,27 @@ export default function KeyManagementPage() {
             </div>
           ) : (
             <div className="space-y-3">
+              {(data?.cleanup_candidates ?? []).length > 0 && (
+                <div className="bg-white border border-amber-200 rounded-lg p-4">
+                  <div className="text-sm font-semibold text-amber-900 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600" />
+                    Credential cleanup kandidater
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(data?.cleanup_candidates ?? []).slice(0, 8).map(candidate => (
+                      <div key={candidate.credential_id} className="flex items-start justify-between gap-3 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-amber-950">{candidate.credential_id}</div>
+                          <div className="text-xs text-amber-800 mt-0.5">{candidate.entity_id} / {candidate.key_type} / {candidate.reason}</div>
+                        </div>
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded border ${candidate.auto_revoke ? 'bg-red-50 text-red-700 border-red-200' : 'bg-white text-amber-700 border-amber-200'}`}>
+                          {candidate.auto_revoke ? 'auto revoke' : 'review'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {data?.trust_policy && (
                 <div className="bg-white border border-gray-200 rounded-lg p-4">
                   <div className="text-sm font-semibold text-gray-900 flex items-center gap-2">

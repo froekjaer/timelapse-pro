@@ -18,6 +18,15 @@ function api(path: string) {
   return fetch(`${getApiUrl()}${path}`, { credentials: 'include' })
 }
 
+// Robust svar-parser: nogle fejlsvar (fx nginx 413/502) er HTML, ikke JSON.
+// Kald derfor ALDRIG r.json() direkte — Safari kaster "The string did not match
+// the expected pattern" på ikke-JSON. Læs som tekst og forsøg JSON.parse.
+async function parseResponse(r: Response): Promise<any> {
+  const text = await r.text()
+  if (!text) return null
+  try { return JSON.parse(text) } catch { return { __raw: text } }
+}
+
 export function ImportPage() {
   const [customers, setCustomers]     = useState<Customer[]>([])
   const [sites, setSites]             = useState<Site[]>([])
@@ -101,16 +110,29 @@ export function ImportPage() {
         credentials: 'include',
       })
       if (!r.ok) {
-        const err = await r.json()
-        setError(err.detail || 'Import fejlede')
+        const body = await parseResponse(r)
+        if (r.status === 413) {
+          setError('ZIP-filen er for stor til upload (serveren afviste den — HTTP 413). ' +
+            'Brug "Lokal mappe" og peg på en sti på Mac Mini i stedet, eller bed om at få ' +
+            'hævet nginx client_max_body_size.')
+        } else if (body?.detail) {
+          setError(typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail))
+        } else {
+          const raw = body?.__raw ? `: ${String(body.__raw).replace(/<[^>]+>/g, ' ').trim().slice(0, 200)}` : ''
+          setError(`Import fejlede (HTTP ${r.status})${raw}`)
+        }
         return
       }
-      const data = await r.json()
+      const data = await parseResponse(r)
+      if (!data?.job_id) {
+        setError('Uventet svar fra serveren ved import-start')
+        return
+      }
       // Start polling
       const r2 = await api(`/api/import/status/${data.job_id}`)
-      setActiveJob(await r2.json())
+      setActiveJob(await parseResponse(r2))
     } catch (e: any) {
-      setError(e.message)
+      setError(e?.message || 'Netværksfejl ved import')
     } finally {
       setSubmitting(false)
     }
@@ -237,7 +259,7 @@ export function ImportPage() {
                   type="text"
                   value={localPath}
                   onChange={e => setLocalPath(e.target.value)}
-                  placeholder="/Users/peter/Downloads/archive"
+                  placeholder="/path/to/archive"
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
                 />
                 <p className="text-xs text-gray-400 mt-1">

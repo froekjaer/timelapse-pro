@@ -5,7 +5,7 @@
 # Build:
 #   docker buildx build --platform linux/arm64 \
 #     -f headend/tools/Dockerfile.edge \
-#     --build-arg HEADEND_URL=https://timelapse.froekjaer.dk/api \
+#     --build-arg HEADEND_URL=http://127.0.0.1:8000/api \
 #     -t timelapse-edge:latest --load .
 #
 # Export rootfs:
@@ -19,7 +19,7 @@
 ####################################################################
 FROM arm64v8/ubuntu:22.04
 
-ARG HEADEND_URL=https://timelapse.froekjaer.dk/api
+ARG HEADEND_URL=http://127.0.0.1:8000/api
 ARG TIMELAPSE_VERSION=unknown
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Europe/Copenhagen \

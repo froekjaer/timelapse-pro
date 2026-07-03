@@ -28,7 +28,7 @@ Brug fra Python:
       target="rpi4",
       rootfs_tar="/tmp/timelapse-edge-rpi4-20240614120000.rootfs.tar.gz",
       bootstrap_token="btk-abc123",
-      headend_url="https://timelapse.froekjaer.dk/api",
+      headend_url="http://127.0.0.1:8000/api",
       progress_cb=print,
   )
 
@@ -660,7 +660,7 @@ if [ -n "${DEVICE_SSH_PRIVATE_KEY:-}" ] && [ -n "${SSH_TUNNEL_PORT:-}" ]; then
     printf '%s\n' "${DEVICE_SSH_PRIVATE_KEY}" > /mnt/root/etc/timelapse/device_keys/id_ed25519
     chmod 600 /mnt/root/etc/timelapse/device_keys/id_ed25519
 
-    HEADEND_HOST="${TUNNEL_HEADEND_HOST:-timelapse.froekjaer.dk}"
+    HEADEND_HOST="${TUNNEL_HEADEND_HOST:-}"
     HEADEND_PORT="${TUNNEL_HEADEND_PORT:-22}"
     HEADEND_USER="${TUNNEL_HEADEND_USER:-peter}"
 
@@ -871,9 +871,9 @@ def _inject_via_docker(
     headend_ssh_pubkey: str = "",
     device_ssh_privkey: str = "",
     ssh_tunnel_port: int = 0,
-    tunnel_headend_host: str = "timelapse.froekjaer.dk",
+    tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
     tunnel_headend_port: int = 22,
-    tunnel_headend_user: str = "peter",
+    tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", ""),
 ) -> None:
     """
     Injectér agent-filer i base-image via Docker --privileged.
@@ -1028,9 +1028,9 @@ def inject_edge_image(
     headend_ssh_pubkey: str = "",
     device_ssh_privkey: str = "",
     ssh_tunnel_port: int = 0,
-    tunnel_headend_host: str = "timelapse.froekjaer.dk",
+    tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
     tunnel_headend_port: int = 22,
-    tunnel_headend_user: str = "peter",
+    tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", ""),
 ) -> dict:
     """
     Injectér edge-agent i base-image og producér flashbart .img.gz.
@@ -1051,9 +1051,9 @@ def inject_edge_image(
         headend_ssh_pubkey:   Headend Ed25519 public key → device authorized_keys
         device_ssh_privkey:   Device Ed25519 private key (PEM) → /etc/timelapse/device_keys/id_ed25519
         ssh_tunnel_port:      Remote port til reverse SSH tunnel (fx 2202)
-        tunnel_headend_host:  Headend hostname til tunnel (default: timelapse.froekjaer.dk)
+        tunnel_headend_host:  Headend hostname til tunnel (default: TIMELAPSE_TUNNEL_HOST)
         tunnel_headend_port:  Headend SSH port (default: 22)
-        tunnel_headend_user:  Headend SSH bruger (default: peter)
+        tunnel_headend_user:  Headend SSH bruger (default: TIMELAPSE_TUNNEL_USER)
 
     Returnerer dict med stier, sha256, manifest etc.
     """
@@ -1334,7 +1334,7 @@ if __name__ == "__main__":
     p_inject = sub.add_parser("inject", help="Injicér rootfs i base-image")
     p_inject.add_argument("--target",          required=True, choices=targets)
     p_inject.add_argument("--rootfs",          required=True, help="Sti til rootfs.tar.gz")
-    p_inject.add_argument("--headend-url",     default="https://timelapse.froekjaer.dk/api")
+    p_inject.add_argument("--headend-url",     default=os.environ.get("TIMELAPSE_HEADEND_URL", "http://127.0.0.1:8000/api"))
     p_inject.add_argument("--bootstrap-token", default="", help="Token der bages ind (tom = placeholder)")
     p_inject.add_argument("--gpg-key",         default=os.environ.get("TIMELAPSE_GPG_KEY"))
     p_inject.add_argument("--output-dir",      default=None)

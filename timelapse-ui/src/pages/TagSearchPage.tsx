@@ -4,8 +4,8 @@
 // Viser total matches uanset visningsbegrænsning.
 // Klik på billede åbner fuld Lightbox.
 
-import { useEffect, useState, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useState, useMemo, useRef } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Tag, Search, X, Loader2, CheckSquare, Square,
          Save, FlaskConical, ChevronDown, ChevronUp, Brain } from 'lucide-react'
 import { getApiUrl } from '../api/client'
@@ -189,11 +189,33 @@ export function TagSearchPage() {
   const [selectedIds, setSelectedIds]     = useState<Set<number>>(new Set())
   const [lightboxIdx, setLightboxIdx]     = useState<number | null>(null)
   const [showEditor, setShowEditor]       = useState(false)
+  const [displayLimit, setDisplayLimit]   = useState<number>(DISPLAY_LIMIT)  // 0 = ingen grænse
 
   useEffect(() => {
     api('/api/ai/tags/all').then((d: any) => setAllTags(d.tags ?? [])).catch(() => {})
     api('/api/admin/devices').then((d: any) => setAllDevices(d.devices ?? d ?? [])).catch(() => {})
   }, [])
+
+  // Deep-link fra Drift-siden: ?tags=unusable_image → forudfyld + søg automatisk
+  const [searchParams] = useSearchParams()
+  const _autoSearch = useRef(false)
+  useEffect(() => {
+    if (_autoSearch.current) return
+    const tp = searchParams.get('tags')
+    if (tp) {
+      const tags = tp.split(',').map(t => t.trim().toLowerCase().replace(/^#/, '')).filter(Boolean)
+      if (tags.length) {
+        _autoSearch.current = true
+        setMode('tags')
+        setSearchTags(tags)
+      }
+    }
+  }, [searchParams])
+  useEffect(() => {
+    // kør søgning én gang når deep-link-tags er sat i state
+    if (_autoSearch.current && searchTags.length && !searched) search()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchTags])
 
   // Udled kunder/sites fra device-listen
   const customerOptions = useMemo(() => {
@@ -297,8 +319,8 @@ export function TagSearchPage() {
     setLoading(false)
   }
 
-  // Vis kun første DISPLAY_LIMIT resultater
-  const displayedResults = allResults.slice(0, DISPLAY_LIMIT)
+  // Vis kun de første `displayLimit` resultater (0 = ingen grænse = vis alle)
+  const displayedResults = displayLimit > 0 ? allResults.slice(0, displayLimit) : allResults
 
   function toggleSelect(id: number) {
     setSelectedIds(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -367,7 +389,7 @@ export function TagSearchPage() {
             <div className="flex flex-wrap gap-1.5 p-2 border border-gray-200 rounded-xl min-h-[42px] bg-white">
               {searchTags.map(t=>(
                 <span key={t} className="inline-flex items-center gap-1 bg-sky-100 text-sky-700 text-xs px-2 py-0.5 rounded-full">
-                  #{t}<button onClick={()=>removeTag(t)}><X className="w-3 h-3"/></button>
+                  #{tagLabel(t, tagLabels)}<button onClick={()=>removeTag(t)}><X className="w-3 h-3"/></button>
                 </span>
               ))}
               <div className="relative flex-1 min-w-[140px]">
@@ -377,7 +399,7 @@ export function TagSearchPage() {
                   onKeyDown={e=>{if(e.key==='Enter'&&tagInput){addTag(tagInput);e.preventDefault()}if(e.key==='Backspace'&&!tagInput&&searchTags.length)removeTag(searchTags[searchTags.length-1])}}/>
                 {tagInput&&tagSugg.length>0&&(
                   <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-20 min-w-[200px]">
-                    {tagSugg.map(t=><button key={t.tag} onMouseDown={()=>addTag(t.tag)} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex justify-between"><span>#{t.tag}</span><span className="text-gray-400 text-xs">{t.count}</span></button>)}
+                    {tagSugg.map(t=><button key={t.tag} onMouseDown={()=>addTag(t.tag)} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex justify-between"><span>#{tagLabel(t.tag, tagLabels)}</span><span className="text-gray-400 text-xs">{t.count}</span></button>)}
                   </div>
                 )}
               </div>
@@ -387,7 +409,7 @@ export function TagSearchPage() {
               {allTags.slice(0, 50).map(t=>(
                 <button key={t.tag} onClick={()=>searchTags.includes(t.tag)?removeTag(t.tag):addTag(t.tag)}
                   className={`text-xs px-2 py-0.5 rounded-full transition-colors ${searchTags.includes(t.tag)?'bg-sky-500 text-white':'bg-gray-100 hover:bg-sky-100 hover:text-sky-700 text-gray-600'}`}>
-                  #{t.tag} <span className="opacity-60">{t.count}</span>
+                  #{tagLabel(t.tag, tagLabels)} <span className="opacity-60">{t.count}</span>
                 </button>
               ))}
             </div>
@@ -465,10 +487,19 @@ export function TagSearchPage() {
                 <>
                   <p className="text-sm text-gray-700 font-medium">
                     {totalMatches.toLocaleString('da-DK')} billeder fundet
-                    {totalMatches > DISPLAY_LIMIT && (
-                      <span className="text-gray-400 font-normal"> — viser de første {DISPLAY_LIMIT}</span>
+                    {displayLimit > 0 && totalMatches > displayLimit && (
+                      <span className="text-gray-400 font-normal"> — viser de første {displayLimit}</span>
                     )}
                   </p>
+                  <select value={displayLimit} onChange={e => setDisplayLimit(Number(e.target.value))}
+                    title="Maks antal viste billeder"
+                    className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-600 bg-white">
+                    <option value={50}>Vis 50</option>
+                    <option value={200}>Vis 200</option>
+                    <option value={500}>Vis 500</option>
+                    <option value={1000}>Vis 1000</option>
+                    <option value={0}>Vis alle</option>
+                  </select>
                   {displayedResults.length > 0 && (
                     <button onClick={() => setSelectedIds(s => s.size===displayedResults.length ? new Set() : new Set(displayedResults.map(r=>r.id)))}
                       className="flex items-center gap-1.5 text-xs text-gray-500 border border-gray-200 px-2.5 py-1 rounded-lg hover:bg-gray-50">
@@ -504,9 +535,9 @@ export function TagSearchPage() {
                   </div>
                 ))}
               </div>
-              {totalMatches > DISPLAY_LIMIT && (
+              {displayLimit > 0 && totalMatches > displayLimit && (
                 <p className="text-center text-sm text-gray-400 mt-6 py-4 border-t border-gray-100">
-                  Viser {DISPLAY_LIMIT} af {totalMatches.toLocaleString('da-DK')} billeder — præciser søgningen for at se specifikke resultater
+                  Viser {displayLimit} af {totalMatches.toLocaleString('da-DK')} billeder — vælg "Vis alle" ovenfor eller præciser søgningen
                 </p>
               )}
             </>

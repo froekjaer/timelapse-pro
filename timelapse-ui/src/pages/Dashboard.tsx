@@ -39,10 +39,34 @@ function api(path: string) {
 
 const TZ = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
 
+function formatLastSeen(value?: string | null) {
+  if (!value) return null
+  const normalized = value
+    .replace(' ', 'T')
+    .replace(/(\.\d{3})\d+/, '$1')
+    .replace(/([+-]\d\d:\d\d|Z)$/, '')
+  const date = new Date(`${normalized}Z`)
+  if (Number.isNaN(date.getTime())) return null
+  try {
+    return date.toLocaleString('da-DK', {
+      timeZone: TZ(),
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return date.toLocaleString('da-DK', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+}
+
 function DeviceRow({ device }: { device: Device }) {
-  const lastSeen = device.last_seen
-    ? new Date(device.last_seen + 'Z').toLocaleString('da-DK', { timeZone: TZ(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-    : null
+  const lastSeen = formatLastSeen(device.last_seen)
   return (
     <Link to={`/devices/${pathSegment(device.device_id)}`}
       className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors rounded-lg group">

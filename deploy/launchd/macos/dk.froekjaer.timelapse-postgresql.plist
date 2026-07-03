@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dk.froekjaer.timelapse-postgresql</string>
+  <key>UserName</key>
+  <string>peter</string>
+  <key>WorkingDirectory</key>
+  <string>/opt/homebrew</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/postgresql@17/bin/postgres</string>
+    <string>-D</string>
+    <string>/opt/homebrew/var/postgresql@17</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LC_ALL</key>
+    <string>en_US.UTF-8</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/opt/homebrew/var/log/postgresql@17.log</string>
+  <key>StandardErrorPath</key>
+  <string>/opt/homebrew/var/log/postgresql@17.log</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+</dict>
+</plist>

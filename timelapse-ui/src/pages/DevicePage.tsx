@@ -16,7 +16,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, CartesianGrid, ReferenceLine } from 'recharts'
-import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setParam, pathSegment } from '../api/client'
+import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setParam, pathSegment, getApiUrl } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaptureThumbnailCard, parseCaptureAI } from '../components/CaptureThumbnailCard'
@@ -70,7 +70,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
     let cancelled = false
     setSidecar(null)
     const sidecarName = c.filename.replace(/\.[^.]+$/, '.json')
-    const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
+    const apiUrl = getApiUrl()
     const sidecarUrl = `${apiUrl}/api/sidecar/${encodeURIComponent(c.device_id)}/${encodeURIComponent(sidecarName)}`
     const loadSidecar = (attempt = 0) => {
       authFetch(`${sidecarUrl}?t=${Date.now()}`, { cache: 'no-store' })
@@ -875,7 +875,7 @@ function DriftBadge({ param, expected, actual }: { param: string; expected: stri
 function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; diagnostics: any; deviceId: string }) {
   const [diagHistory, setDiagHistory] = useState<any[]>([])
   useEffect(() => {
-    const apiUrl = (window as any).__TIMELAPSE_API__ || localStorage.getItem('timelapse_api_url') || ''
+    const apiUrl = getApiUrl()
     authFetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}/diagnostics/history?days=7&limit=500`)
       .then(r => r.ok ? r.json() : [])
       .then(d => setDiagHistory(d))

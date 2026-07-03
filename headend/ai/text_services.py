@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -27,9 +28,29 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-OLLAMA_BASE_URL = "http://localhost:11434"
-TEXT_MODEL      = "llama3.2:latest"
-TIMEOUT_TEXT    = 60
+OLLAMA_BASE_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+TEXT_MODEL      = os.getenv("TIMELAPSE_TEXT_MODEL", "llama3.2:latest")
+TIMEOUT_TEXT    = int(os.getenv("TIMELAPSE_TEXT_TIMEOUT", "60"))
+
+
+def _db_setting(key: str, default: str) -> str:
+    try:
+        from sqlalchemy import text
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            for table in ("settings", "system_settings"):
+                try:
+                    row = db.execute(text(f"SELECT value FROM {table} WHERE key = :k"), {"k": key}).fetchone()
+                    if row and row[0]:
+                        return str(row[0])
+                except Exception:
+                    db.rollback()
+            return default
+        finally:
+            db.close()
+    except Exception:
+        return default
 
 
 # =============================================================================
@@ -67,10 +88,14 @@ class CMDBAssessment:
 
 class _OllamaTextBase:
 
-    def __init__(self, base_url: str = OLLAMA_BASE_URL, model: str = TEXT_MODEL):
-        self.base_url = base_url.rstrip("/")
-        self.model    = model
-        self._client  = httpx.Client(timeout=TIMEOUT_TEXT)
+    def __init__(self, base_url: str | None = None, model: str | None = None):
+        self.base_url = (base_url or _db_setting("ollama_url", OLLAMA_BASE_URL)).rstrip("/")
+        self.model    = model or _db_setting("ollama_text_model", TEXT_MODEL)
+        try:
+            self.timeout_text = int(_db_setting("ollama_text_timeout_s", str(TIMEOUT_TEXT)))
+        except Exception:
+            self.timeout_text = TIMEOUT_TEXT
+        self._client  = httpx.Client(timeout=self.timeout_text)
 
     def _call(self, prompt: str, system: str = "") -> str:
         """Kald tekstmodel. Returnerer rå tekst fra modellen."""
@@ -89,7 +114,7 @@ class _OllamaTextBase:
             resp = self._client.post(
                 f"{self.base_url}/api/generate",
                 json=payload,
-                timeout=TIMEOUT_TEXT,
+                timeout=self.timeout_text,
             )
             resp.raise_for_status()
             return resp.json().get("response", "")

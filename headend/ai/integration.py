@@ -172,16 +172,49 @@ def _load_vocabulary(get_db_fn):
     return vocab, vocab.get_approved_by_category(), set(vocab.get_approved_tags())
 
 
+# Kategorier der ALDRIG må trunkeres væk fra prompten — det er netop de
+# sikkerheds-/hændelses-/kvalitets-tags brugeren går mest op i. Den gamle
+# _limit_vocabulary tog bare de N første tags på tværs af kategorier, så disse
+# (alfabetisk/rækkefølge-afhængigt) kunne forsvinde helt. Nu prioriteres de.
+_PRIORITY_CATEGORIES = (
+    "anomalies_and_events",
+    "camera_quality",
+    "change_detection",
+    "vehicles",
+    "workers_and_activity",
+    "weather",
+    "light_and_time",
+    "site_condition",
+)
+
+
 def _limit_vocabulary(vocabulary_by_cat: dict[str, list[str]], limit: int) -> dict[str, list[str]]:
+    """Begræns vokabularets størrelse i prompten (performance/token-loft) UDEN
+    at tabe de vigtige kategorier. Prioriterede kategorier tages først (komplet),
+    derefter fyldes resten op til 'limit'. Med åbent vokabular er listen kun
+    inspiration, så det gør intet at en lav-prioritets-kategori beskæres.
+    """
     limited: dict[str, list[str]] = {}
     used = 0
+
+    # 1) Prioriterede kategorier — medtag komplet (de er ikke ekstremt store).
+    for category in _PRIORITY_CATEGORIES:
+        tags = vocabulary_by_cat.get(category)
+        if tags:
+            limited[category] = list(tags)
+            used += len(tags)
+
+    # 2) Resten fyldes op til limit (men prioriteten har altid plads).
     for category, tags in vocabulary_by_cat.items():
+        if category in limited:
+            continue
         if used >= limit:
             break
         take = tags[:max(0, limit - used)]
         if take:
             limited[category] = take
             used += len(take)
+
     return limited
 
 
@@ -292,9 +325,18 @@ def _worker(get_db_fn, find_image_fn):
                 if not capture:
                     _ai_stat_inc("skipped_no_capture")
                     continue
-                if capture.ai_result:
-                    _ai_stat_inc("skipped_already_done")
-                    continue  # Allerede analyseret
+                # Spring KUN over hvis der allerede er en rigtig AI-analyse (Gemini/
+                # Ollama sætter ai_tags). Edge-QA lagt i ai_result ved upload
+                # (source=="edge") sætter IKKE ai_tags → må ikke blokere Gemini.
+                if capture.ai_result and capture.ai_tags:
+                    _is_edge_only = False
+                    try:
+                        _is_edge_only = (json.loads(capture.ai_result).get("source") == "edge")
+                    except Exception:
+                        _is_edge_only = False
+                    if not _is_edge_only:
+                        _ai_stat_inc("skipped_already_done")
+                        continue  # Allerede rigtigt analyseret
                 device_id = capture.device_id
                 filename = capture.filename
                 captured_at = capture.captured_at
@@ -303,6 +345,13 @@ def _worker(get_db_fn, find_image_fn):
                     customer_id=device.customer_id if device else None,
                     site_id=device.site_id if device else None,
                 )
+                # Byg kontekstblok (kunde/site/kamera/tid/baseline) MENS db er åben.
+                try:
+                    from ai.capture_context import build_capture_context, format_context_block
+                    context_block = format_context_block(build_capture_context(db, capture, device))
+                except Exception as _ctx_exc:
+                    log.debug("AI: kunne ikke bygge kontekst for capture %d: %s", capture_id, _ctx_exc)
+                    context_block = ""
             finally:
                 db_gen.close()
 
@@ -321,8 +370,13 @@ def _worker(get_db_fn, find_image_fn):
                 _ai_stat_inc("skipped_technical_only")
                 continue
 
-            vocab, vocabulary_by_cat, approved_tag_set = _load_vocabulary(get_db_fn)
-            vocabulary_by_cat = _limit_vocabulary(vocabulary_by_cat, ai_config.tag_vocabulary_limit or 45)
+            vocab, vocabulary_full, approved_tag_set = _load_vocabulary(get_db_fn)
+            # Gemini (cloud) får HELE vokabularet — det er stort nok til at rumme
+            # scene-kategorierne (structures/surroundings/building_types), så modellen
+            # ikke kun griber vejr/kvalitet. Den lokale (lille) model får en trimmet
+            # version for at holde prompten kort.
+            vocabulary_by_cat = vocabulary_full
+            vocabulary_local = _limit_vocabulary(vocabulary_full, ai_config.tag_vocabulary_limit or 45)
             model_used = ai_config.local_model
             used_cloud = False
 
@@ -337,6 +391,7 @@ def _worker(get_db_fn, find_image_fn):
                     image_path=image_path,
                     vocabulary_by_cat=vocabulary_by_cat,
                     approved_tag_set=approved_tag_set,
+                    context_block=context_block,
                 )
                 model_used, used_cloud = ai_config.cloud_model, True
 
@@ -349,8 +404,9 @@ def _worker(get_db_fn, find_image_fn):
                 with _ollama_analysis_lock:
                     result = svc.analyse(
                         image_path=image_path,
-                        vocabulary_by_cat=vocabulary_by_cat,
+                        vocabulary_by_cat=vocabulary_local,
                         approved_tag_set=approved_tag_set,
+                        context_block=context_block,
                     )
 
             else:  # local_then_cloud — Ollama først, eskalér til Gemini ved usikkerhed
@@ -362,8 +418,9 @@ def _worker(get_db_fn, find_image_fn):
                 with _ollama_analysis_lock:
                     result = svc.analyse(
                         image_path=image_path,
-                        vocabulary_by_cat=vocabulary_by_cat,
+                        vocabulary_by_cat=vocabulary_local,
                         approved_tag_set=approved_tag_set,
+                        context_block=context_block,
                     )
                 escalate, reasons = ai_config.should_escalate(
                     confidence=0.75, new_tags=result.new_tags, tags=result.approved_tags,
@@ -377,6 +434,7 @@ def _worker(get_db_fn, find_image_fn):
                             image_path=image_path,
                             vocabulary_by_cat=vocabulary_by_cat,
                             approved_tag_set=approved_tag_set,
+                            context_block=context_block,
                         )
                         model_used, used_cloud = ai_config.cloud_model, True
                     else:
@@ -391,6 +449,15 @@ def _worker(get_db_fn, find_image_fn):
             try:
                 capture = db.query(Capture).filter_by(id=capture_id).first()
                 if capture:
+                    # Bevar evt. eksisterende edge-QA under 'edge_ai', så Gemini-
+                    # skrivningen ikke sletter den (data-tab undgået).
+                    if capture.ai_result and "edge_ai" not in payload:
+                        try:
+                            _prev = json.loads(capture.ai_result)
+                            if _prev.get("source") == "edge":
+                                payload["edge_ai"] = _prev
+                        except Exception:
+                            pass
                     capture.ai_result      = json.dumps(payload, ensure_ascii=False)
                     capture.ai_tags        = json.dumps(tags, ensure_ascii=False)
                     capture.ai_analyzed_at = datetime.now(timezone.utc)
@@ -578,6 +645,13 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
 
         capture = db.query(Capture).filter_by(id=capture_id).first()
         if capture:
+            if capture.ai_result and "edge_ai" not in payload:
+                try:
+                    _prev = json.loads(capture.ai_result)
+                    if _prev.get("source") == "edge":
+                        payload["edge_ai"] = _prev
+                except Exception:
+                    pass
             capture.ai_result      = json.dumps(payload, ensure_ascii=False)
             capture.ai_tags        = json.dumps(tags, ensure_ascii=False)
             capture.ai_analyzed_at = datetime.now(timezone.utc)

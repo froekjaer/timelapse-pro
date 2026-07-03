@@ -2,6 +2,7 @@
 // TimeLapse Pro — SIEMPage.tsx
 // ═══════════════════════════════════════════════════════════════════════════
 import { useEffect, useState, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Shield, AlertTriangle, AlertCircle, Info, RefreshCw,
   Wifi, Terminal, User, Key, Server, Activity, Zap, Brain, Loader2,
@@ -137,6 +138,16 @@ export function SIEMPage() {
   const [aiQuestion, setAiQuestion] = useState('Hvad er mest mistænkeligt i SIEM de sidste 24 timer?')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiAnswer, setAiAnswer] = useState<any | null>(null)
+  const [searchParams] = useSearchParams()
+
+  // Deep-link fra Drift-siden: ?device_id=HEADEND-LOCAL / ?severity=warning
+  useEffect(() => {
+    const dev = searchParams.get('device_id')
+    const sev = searchParams.get('severity')
+    if (dev) setFilterDevice(dev)
+    if (sev) setFilterSeverity(sev)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)

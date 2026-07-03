@@ -139,7 +139,7 @@ if [ -n "${SSH_PRIVATE_KEY:-}" ] && [ -n "${TUNNEL_PORT:-}" ]; then
     printf '%s' "${SSH_PRIVATE_KEY}" > /mnt/root/etc/timelapse/ssh/tunnel_id_ed25519
     chmod 600 /mnt/root/etc/timelapse/ssh/tunnel_id_ed25519
 
-    HEADEND_HOST="${HEADEND_HOST:-timelapse.froekjaer.dk}"
+    HEADEND_HOST="${HEADEND_HOST:-}"
     HEADEND_PORT="${HEADEND_PORT:-22}"
     HEADEND_USER="${HEADEND_USER:-peter}"
 
@@ -261,9 +261,9 @@ def inject_wifi_image(
     ssh_private_key: str | None = None,
     headend_ssh_public_key: str | None = None,
     reverse_tunnel_port: int | None = None,
-    headend_host: str = "timelapse.froekjaer.dk",
+    headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
     headend_port: int = 22,
-    headend_user: str = "peter",
+    headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", ""),
 ) -> dict:
     """
     Injectér WiFi-konfiguration (og valgfrit SSH-nøgler + reverse tunnel) i et eksisterende flashbart image.
@@ -282,9 +282,9 @@ def inject_wifi_image(
         ssh_private_key:        Device Ed25519 private key (PEM) — til reverse tunnel
         headend_ssh_public_key: Headend public key — tilføjes device's authorized_keys
         reverse_tunnel_port:    Port på headend til reverse tunnel (fx 2202)
-        headend_host:           Headend hostname (default: timelapse.froekjaer.dk)
+        headend_host:           Headend hostname (default: TIMELAPSE_TUNNEL_HOST)
         headend_port:           Headend SSH port (default: 22)
-        headend_user:           Headend SSH bruger (default: peter)
+        headend_user:           Headend SSH bruger (default: TIMELAPSE_TUNNEL_USER)
 
     Returnerer dict med:
         output_path, filename, sha256, size_bytes

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dk.froekjaer.timelapse-headend</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/peter/projects/timelapse-pro/headend</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/peter/projects/timelapse-pro/headend/venv/bin/uvicorn</string>
+    <string>main:app</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>8000</string>
+    <string>--log-level</string>
+    <string>info</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/var/root</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+    <key>DATABASE_URL</key>
+    <string>postgresql://timelapse@localhost/timelapse_db</string>
+    <key>TIMELAPSE_GPG_KEY</key>
+    <string>EE347E3F8E89F2FFD5EC4A36F8DEEDDDC2A03552</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/peter/Library/Logs/timelapse-headend.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/peter/Library/Logs/timelapse-headend.log</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+</dict>
+</plist>

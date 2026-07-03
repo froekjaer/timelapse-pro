@@ -26,8 +26,8 @@ const ROLE_COLORS: Record<Role, string> = {
   viewer: 'bg-gray-100 text-gray-600',
 }
 const MFA_BY_ROLE: Record<Role, string> = {
-  super_admin: 'MFA anbefalet',
-  admin: 'MFA anbefalet',
+  super_admin: 'MFA kræves som standard',
+  admin: 'MFA kræves som standard',
   operator: 'MFA valgfrit',
   viewer: 'Ingen MFA krav',
 }
@@ -41,6 +41,9 @@ interface Policy {
 
 interface UserRec {
   mfa_enabled?: boolean
+  mfa_required?: boolean
+  mfa_partial?: boolean
+  totp_configured?: boolean
   webauthn_count?: number
   id: number
   username: string
@@ -69,6 +72,10 @@ function api(path: string, opts?: RequestInit) {
     }
     return r.json()
   })
+}
+
+function isMfaRequiredError(message: string | null) {
+  return (message ?? '').toLowerCase().includes('mfa kræves')
 }
 
 // ── Password styrke ────────────────────────────────────────────────────────
@@ -210,15 +217,20 @@ export default function UsersPage() {
 
   const load = () => {
     setLoading(true)
-    Promise.all([
-      api('/api/admin/users'),
-      api('/api/admin/customers').catch(() => []),
-      api('/api/admin/password-policy').catch(() => ({ min_length: 8, require_uppercase: false, require_number: false, require_special: false })),
-    ]).then(([u, c, p]) => {
+    api('/api/admin/users')
+      .then(async u => {
+        const [c, p] = await Promise.all([
+          api('/api/admin/customers').catch(() => []),
+          api('/api/admin/password-policy').catch(() => ({ min_length: 8, require_uppercase: false, require_number: false, require_special: false })),
+        ])
       setUsers(Array.isArray(u) ? u : (u.users ?? []))
       setCustomers(Array.isArray(c) ? c : (c.customers ?? []))
       setPolicy(p)
-    }).catch(e => setError(e.message))
+      })
+      .catch(e => {
+        setError(e.message)
+        setUsers([])
+      })
       .finally(() => setLoading(false))
   }
 
@@ -295,6 +307,19 @@ export default function UsersPage() {
     setMfaSaving(true); setMfaErr(null)
     try {
       await api('/api/auth/disable-mfa', { method: 'POST', body: JSON.stringify({ user_id: id }) })
+      setMfaId(null); load()
+    } catch (e: any) { setMfaErr(e.message) }
+    finally { setMfaSaving(false) }
+  }
+
+  async function resetMfa(u: UserRec) {
+    const msg = u.username === me?.username
+      ? 'Nulstil din MFA? Du skal oprette en ny authenticator-kode bagefter.'
+      : `Nulstil MFA for ${u.username}? Brugeren skal selv oprette MFA igen ved næste login.`
+    if (!confirm(msg)) return
+    setMfaSaving(true); setMfaErr(null)
+    try {
+      await api(`/api/admin/users/${u.id}/mfa/reset`, { method: 'POST', body: JSON.stringify({}) })
       setMfaId(null); load()
     } catch (e: any) { setMfaErr(e.message) }
     finally { setMfaSaving(false) }
@@ -449,7 +474,14 @@ export default function UsersPage() {
       {/* Generel fejl */}
       {error && (
         <div className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-lg mb-4">
-          <AlertTriangle className="w-4 h-4" /> {error}
+          <AlertTriangle className="w-4 h-4" />
+          <span className="flex-1">{error}</span>
+          {isMfaRequiredError(error) && (
+            <button onClick={() => { localStorage.removeItem('tl_user'); window.location.href = '/login' }}
+              className="px-3 py-1.5 bg-red-600 text-white text-xs rounded-lg">
+              Log ind med MFA
+            </button>
+          )}
         </div>
       )}
 
@@ -457,7 +489,7 @@ export default function UsersPage() {
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         {loading ? (
           <div className="py-12 text-center text-gray-400 text-sm">Henter brugere…</div>
-        ) : users.length === 0 ? (
+        ) : users.length === 0 && !error ? (
           <div className="py-12 text-center text-gray-400 text-sm">Ingen brugere fundet</div>
         ) : users.map((u, i) => (
           <div key={u.id}
@@ -484,6 +516,12 @@ export default function UsersPage() {
                   )}
                   {!u.is_active && (
                     <span className="text-xs bg-red-100 text-red-500 px-2 py-0.5 rounded-full">Deaktiveret</span>
+                  )}
+                  {u.mfa_required && (
+                    <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">MFA kræves</span>
+                  )}
+                  {u.mfa_partial && (
+                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">MFA halv state</span>
                   )}
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -568,11 +606,16 @@ export default function UsersPage() {
                   <div className="mt-3 space-y-2 border-t border-gray-50 pt-3">
                     <p className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
                       <Shield className="w-3.5 h-3.5 text-violet-500" />
-                      {u.mfa_enabled ? 'Deaktiver MFA' : 'Aktiver MFA (TOTP)'}
+                      {u.mfa_enabled ? 'Administrer MFA' : u.mfa_partial ? 'Nulstil halv MFA-state' : 'MFA (TOTP)'}
                     </p>
                     {mfaErr && <p className="text-xs text-red-600">{mfaErr}</p>}
-                    {!u.mfa_enabled && !mfaQr && <p className="text-xs text-gray-400">Henter QR-kode…</p>}
-                    {!u.mfa_enabled && mfaQr.length > 0 && (
+                    {u.username !== me?.username && (
+                      <p className="text-xs text-gray-400">
+                        Af sikkerhedsgrunde skal brugeren selv scanne sin nye MFA-kode. Som super_admin kan du nulstille en hel eller halv TOTP-state, så brugeren kan oprette den igen ved næste login.
+                      </p>
+                    )}
+                    {u.username === me?.username && !u.mfa_enabled && !mfaQr && <p className="text-xs text-gray-400">Henter QR-kode…</p>}
+                    {u.username === me?.username && !u.mfa_enabled && mfaQr.length > 0 && (
                       <div className="flex flex-col items-center gap-2">
                         <img src={mfaQr} alt="QR kode" className="w-40 h-40 rounded-lg border border-gray-200" />
                         <p className="text-xs text-gray-400 font-mono bg-gray-50 px-2 py-1 rounded">{mfaSecret}</p>
@@ -580,19 +623,25 @@ export default function UsersPage() {
                       </div>
                     )}
                     <div className="flex items-center gap-2">
-                      {!u.mfa_enabled && (
+                      {u.username === me?.username && !u.mfa_enabled && (
                       <input type="text" inputMode="numeric" maxLength={6}
                         value={mfaCode} onChange={e => setMfaCode(e.target.value.replace(/[^0-9]/g, ''))}
                         placeholder="000000" autoFocus
                         className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono w-28 text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-violet-300" />
                       )}
-                      {!u.mfa_enabled ? (
+                      {u.username === me?.username && !u.mfa_enabled ? (
                         <button onClick={() => confirmMfaSetup(u.id)} disabled={mfaSaving || mfaCode.length < 6}
                           className="px-3 py-1.5 bg-violet-500 text-white text-xs rounded-lg disabled:opacity-50">
                           {mfaSaving ? 'Aktiverer…' : 'Bekræft og aktiver'}
                         </button>
                       ) : null}
-                      {u.mfa_enabled && (
+                      {(u.mfa_enabled || u.mfa_partial || u.username !== me?.username) && (
+                        <button onClick={() => resetMfa(u)} disabled={mfaSaving}
+                          className="px-3 py-1.5 bg-amber-500 text-white text-xs rounded-lg disabled:opacity-50">
+                          {mfaSaving ? 'Nulstiller…' : 'Nulstil MFA'}
+                        </button>
+                      )}
+                      {u.username === me?.username && u.mfa_enabled && (
                         <button onClick={() => disableMfa(u.id)} disabled={mfaSaving}
                           className="px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg disabled:opacity-50">
                           {mfaSaving ? 'Deaktiverer…' : 'Deaktiver MFA'}
@@ -658,9 +707,17 @@ export default function UsersPage() {
                   className={`p-1.5 rounded-lg transition-colors ${(u.webauthn_count ?? 0) > 0 ? 'text-sky-600 hover:bg-sky-50' : 'text-gray-400 hover:text-sky-600 hover:bg-sky-50'}`}>
                   <Fingerprint className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={() => { setMfaId(mfaId === u.id ? null : u.id); if (mfaId !== u.id && !u.mfa_enabled) startMfaSetup(u.id) }}
-                  title={u.mfa_enabled ? 'Administrer MFA' : 'Aktiver MFA'}
-                  className={`p-1.5 rounded-lg transition-colors ${u.mfa_enabled ? 'text-green-500 hover:bg-green-50' : 'text-gray-400 hover:text-violet-600 hover:bg-violet-50'}`}>
+                <button onClick={() => {
+                    setMfaId(mfaId === u.id ? null : u.id)
+                    if (mfaId !== u.id && !u.mfa_enabled && u.username === me?.username) startMfaSetup(u.id)
+                  }}
+                  title={u.mfa_enabled ? 'Administrer MFA' : u.mfa_required ? 'MFA kræves' : 'MFA'}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    u.mfa_partial ? 'text-orange-600 hover:bg-orange-50' :
+                    u.mfa_enabled ? 'text-green-500 hover:bg-green-50' :
+                    u.mfa_required ? 'text-amber-600 hover:bg-amber-50' :
+                    'text-gray-400 hover:text-violet-600 hover:bg-violet-50'
+                  }`}>
                   <Shield className="w-3.5 h-3.5" />
                 </button>
                 <button onClick={() => startEdit(u)}
@@ -706,7 +763,7 @@ export default function UsersPage() {
           ))}
         </div>
         <p className="text-xs text-gray-400 mt-3">
-          MFA-krav kan desuden sættes pr. kunde under Kunder → Sikkerhed.
+          MFA-krav kan overstyres i konfigurationshierarkiet under session_policy på globalt, kunde-, site- og kameralag.
         </p>
       </div>
     </div>

@@ -322,6 +322,17 @@ def _run_import(
             # 5. Kopiér
             shutil.copy2(str(img_path), str(dest_path))
 
+            # 5b. Generér thumbnail med det samme (samme format/placering som
+            #     galleriet forventer: .headend-thumbs/{navn}, 320×180 JPEG q78).
+            #     Ellers skal galleriet generere alle on-demand ved kun 3 ad
+            #     gangen → meget langsomt for store historiske imports.
+            try:
+                from main import _generate_edge_thumbnail, _generated_thumbs_dir_for
+                _generate_edge_thumbnail(
+                    dest_path, _generated_thumbs_dir_for(dest_path) / dest_path.name)
+            except Exception as _te:
+                log.debug("Import-thumbnail fejl for %s: %s", dest_path.name, _te)
+
             # 6. Kvalitetstjek
             quality = _quality_check(dest_path)
 
@@ -436,6 +447,10 @@ async def start_import(
 
         device = Device(
             device_id     = device_id,
+            customer_id   = str(customer_id),   # SKAL sættes — ellers opløser AI-strategien
+                                                # (site→kunde→global) til GLOBAL, så en
+                                                # kunde-/site-specifik Ollama-strategi ikke
+                                                # rammer importerede kameraer.
             customer_name = customer.name,
             site_name     = site.name,
             camera_name   = camera_name,
@@ -455,12 +470,29 @@ async def start_import(
 
     if local_path:
         src = Path(local_path)
-        if not src.exists():
+        # macOS TCC: mapper som ~/Downloads, ~/Desktop og ~/Documents er beskyttede.
+        # Uden Full Disk Access kaster Path.exists() PermissionError (EPERM), som i
+        # Python 3.12 gen-kastes (ikke "findes ikke") → ellers ubehandlet 500.
+        try:
+            exists = src.exists()
+        except OSError as e:
+            raise HTTPException(status_code=403, detail=(
+                f"Ingen adgang til stien ({e.strerror or e}). macOS blokerer sandsynligvis "
+                f"headend-processens adgang til en beskyttet mappe (Downloads/Skrivebord/"
+                f"Dokumenter/eksternt volume). Giv headend-processen 'Fuld diskadgang' i "
+                f"Systemindstillinger → Privatliv & Sikkerhed, eller flyt billederne til en "
+                f"ikke-beskyttet placering, fx /Volumes/data-fast/import/ eller ~/projects/."))
+        if not exists:
             raise HTTPException(status_code=400, detail=f"Sti ikke fundet: {local_path}")
-        for root, _, files in os.walk(src):
-            for f in files:
-                if Path(f).suffix in SUPPORTED_EXTENSIONS:
-                    image_files.append(Path(root) / f)
+        try:
+            for root, _, files in os.walk(src, onerror=lambda err: (_ for _ in ()).throw(err)):
+                for f in files:
+                    if Path(f).suffix in SUPPORTED_EXTENSIONS:
+                        image_files.append(Path(root) / f)
+        except OSError as e:
+            raise HTTPException(status_code=403, detail=(
+                f"Kunne ikke læse mappen ({e.strerror or e}). Tjek at headend-processen har "
+                f"'Fuld diskadgang', eller flyt billederne til fx /Volumes/data-fast/import/."))
 
     elif zip_file:
         tmp_dir = tempfile.mkdtemp(prefix="timelapse_import_")
@@ -481,9 +513,11 @@ async def start_import(
 
     image_files.sort()
 
-    # Hent SFTP_BASE fra DB
-    from main import SFTP_BASE
-    sftp_base = SFTP_BASE
+    # Hent canonical billed-rod. main.py's gamle globale `SFTP_BASE` blev fjernet ved
+    # refaktorering til `_sftp_base_path(db)` (DB-setting vinder, env som fallback);
+    # den gamle `from main import SFTP_BASE` gav ImportError → 500 uanset billedsti.
+    from main import _sftp_base_path
+    sftp_base = _sftp_base_path(db)
 
     # Opret job
     job_id = str(uuid.uuid4())[:8]
@@ -536,7 +570,10 @@ def get_import_status(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job ikke fundet")
     pct = round(job["processed"] / job["total"] * 100) if job["total"] else 0
-    return {**job, "pct": pct}
+    # job_id SKAL med — UI'et poller /status/{activeJob.job_id}, og _jobs-dicten
+    # indeholder ikke selv job_id. Uden dette bliver activeJob.job_id undefined
+    # efter første poll → /status/undefined (404) → progress-baren fryser.
+    return {**job, "job_id": job_id, "pct": pct}
 
 
 @router.get("/jobs")

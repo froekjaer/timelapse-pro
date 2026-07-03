@@ -14,7 +14,7 @@
 # Alle unit tests (ingen netværk kræves)
 pytest tests/test_agent_integrity.py tests/test_headend_endpoints.py -v
 
-# Integration tests (kræver headend på 192.168.86.132)
+# Integration tests (kræver live headend, evt. TIMELAPSE_TEST_BASE_URL)
 pytest tests/test_api_integration.py -v
 
 # Alle tests

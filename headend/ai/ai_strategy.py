@@ -163,6 +163,14 @@ class AIConfigManager:
     def _ensure_table(self):
         from sqlalchemy import text
         try:
+            try:
+                self.db.execute(text("SELECT 1 FROM ai_config LIMIT 1")).fetchone()
+                self._ensure_global_default()
+                self.db.commit()
+                return
+            except Exception:
+                self.db.rollback()
+
             self.db.execute(text(AI_CONFIG_DDL))
             self.db.execute(text("""
                 DELETE FROM ai_config a
@@ -184,6 +192,16 @@ class AIConfigManager:
         except Exception as e:
             log.warning("ai_config DDL: %s", e)
             self.db.rollback()
+
+    def _ensure_global_default(self):
+        from sqlalchemy import text
+        self.db.execute(text("""
+            INSERT INTO ai_config (customer_id, site_id, strategy, notes)
+            SELECT NULL, NULL, 'cloud_only', 'Global default — cloud_only er sikreste start'
+            WHERE NOT EXISTS (
+                SELECT 1 FROM ai_config WHERE customer_id IS NULL AND site_id IS NULL
+            )
+        """))
 
     def get_config(
         self,

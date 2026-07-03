@@ -12,14 +12,41 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Camera, FlaskConical, Power, PowerOff, RefreshCw,
-  Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi
+  Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi, Crosshair, Wand2
 } from 'lucide-react'
 import {
   setDebugMode, requestPreview, requestCapture,
   setParam, listPreviews, getPreviewUrl, getPreviewThumbUrl,
-  getDeviceRawConfig, getDevice, pathSegment
+  getDevice, pathSegment, getApiUrl,
+  requestFocusDrive, requestAutofocus, requestFocusSlice, requestEdgeAiFocusTest
 } from '../api/client'
 import type { LabPreview, CameraParam, DebugMode, CameraProfile } from '../types'
+
+function authFetch(url: string, opts?: RequestInit) {
+  return fetch(url, { ...opts, credentials: 'include' })
+}
+
+function parseDeviceConfig(raw: unknown): Record<string, any> {
+  if (!raw) return {}
+  if (typeof raw !== 'string') return raw as Record<string, any>
+  try { return JSON.parse(raw) } catch { return {} }
+}
+
+async function loadAdminDeviceConfig(deviceId: string): Promise<Record<string, any>> {
+  const data = await getDevice(deviceId)
+  return parseDeviceConfig((data as any)?.device_config ?? (data.device as any)?.device_config)
+}
+
+function readLabState(data: any) {
+  const cfg = parseDeviceConfig(data?.device_config ?? data?.device?.device_config)
+  const debugMode = cfg?.debug_mode ?? data?.debug_mode ?? data?.device?.debug_mode ?? null
+  return {
+    cfg,
+    debugMode,
+    debugEnabled: debugMode?.enabled === true,
+    cameraReady: cfg?.lab_camera_ready === true || data?.lab_camera_ready === true || data?.device?.lab_camera_ready === true,
+  }
+}
 
 // ── Kamera-parameter grupper ──────────────────────────────────────────────────
 const PARAM_GROUPS: Record<string, string[]> = {
@@ -123,12 +150,10 @@ function ParamRow({
   async function save() {
     setSaving(true); setError('')
     try {
-      // Extract path key without /main/ prefix
-      const key = param.path.replace('/main/', '')
-      await setParam(deviceId, key, value)
+      await setParam(deviceId, param.path, value)
       setSaved(true)
       setTimeout(() => { setSaved(false); setEditing(false); }, 800)
-      setTimeout(() => { onChanged() }, 3000)  // Vent til edge har sat parameteren
+      setTimeout(() => { onChanged() }, 1500)
     } catch {
       setError('Fejl')
     } finally {
@@ -137,7 +162,8 @@ function ParamRow({
   }
 
   const isReadonly = param.readonly || param.type === 'TEXT'
-  const hasChoices = param.choices.length > 0
+  const usableChoices = param.choices.filter(c => c.label && !/^unknown$/i.test(c.label.trim()))
+  const hasChoices = usableChoices.length > 0
 
   return (
     <div className={`flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-gray-50 transition-colors ${isReadonly ? 'opacity-60' : ''}`}>
@@ -163,7 +189,7 @@ function ParamRow({
             {hasChoices ? (
               <select value={value} onChange={e => setValue(e.target.value)}
                 className="text-sm border border-sky-300 rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-2 focus:ring-sky-400">
-                {param.choices.map(c => (
+                {usableChoices.map(c => (
                   <option key={c.index} value={c.label}>{c.label}</option>
                 ))}
               </select>
@@ -209,6 +235,15 @@ function CameraProfilePanel({ profile }: { profile: CameraProfile | null }) {
     iso: 'ISO',
     focus_mode: 'Fokus',
   }
+  const genericLabels: Record<string, string> = {
+    iso: 'ISO',
+    shutter_speed: 'Lukker',
+    aperture: 'Blænde',
+    whitebalance: 'Hvidbalance',
+    colorspace: 'Farverum',
+    imageformat: 'Billedformat',
+    focusmode: 'Fokusmetode',
+  }
 
   return (
     <div className="mx-4 mt-4 rounded-xl border border-purple-100 bg-purple-50/50 p-4">
@@ -249,6 +284,20 @@ function CameraProfilePanel({ profile }: { profile: CameraProfile | null }) {
           </div>
         </div>
         <div>
+          <div className="mb-2 text-xs font-medium text-gray-500">Profil-mapping</div>
+          <div className="space-y-1.5 mb-4">
+            {Object.entries(profile.config_commands ?? {}).length === 0 ? (
+              <div className="text-xs text-gray-400">Ingen profil-specifik mapping defineret</div>
+            ) : Object.entries(profile.config_commands ?? {}).map(([key, spec]) => (
+              <div key={key} className="grid grid-cols-[7rem,1fr] gap-2 text-xs">
+                <span className="text-gray-500">{genericLabels[key] ?? key}</span>
+                <span className="break-all font-mono text-gray-700">
+                  <span className="mr-1 rounded bg-white px-1.5 py-0.5 text-[10px] font-sans text-purple-700">{profile.profile_name}</span>
+                  {spec.skip ? 'ikke understøttet/læses kun' : spec.path || '–'}
+                </span>
+              </div>
+            ))}
+          </div>
           <div className="mb-2 text-xs font-medium text-gray-500">Kontrol-actions</div>
           <div className="space-y-1.5">
             {Object.entries(profile.actions ?? {}).length === 0 ? (
@@ -275,6 +324,7 @@ export default function LabPage() {
   const [deviceName, setDeviceName]   = useState('')
   const [debugMode, setDebugModeState] = useState<DebugMode | null>(null)
   const [labActive, setLabActive]     = useState(false)
+  const [labStateChecked, setLabStateChecked] = useState(false)
   const [previews, setPreviews]       = useState<LabPreview[]>([])
   const [params, setParams]           = useState<CameraParam[]>([])
   const [cameraProfile, setCameraProfile] = useState<CameraProfile | null>(null)
@@ -283,7 +333,12 @@ export default function LabPage() {
   const selectedPreviewRef = useRef<LabPreview | null>(null)
   const [loadingPreview, setLoadingPreview]   = useState(false)
   const [loadingCapture, setLoadingCapture]   = useState(false)
+  const [livePreview, setLivePreview] = useState(false)
   const [loadingParams, setLoadingParams]     = useState(false)
+  const [focusBusy, setFocusBusy]             = useState(false)
+  const [focusStepValue, setFocusStepValue]   = useState('')
+  const [focusSliceCount, setFocusSliceCount] = useState(5)
+  const [labResult, setLabResult]             = useState<any>(null)
   const [activeGroup, setActiveGroup] = useState<string>('Eksponering')
   const [wifiData, setWifiData]       = useState<any>(null)
   const [wifiLoading, setWifiLoading] = useState(false)
@@ -322,109 +377,51 @@ export default function LabPage() {
     loadConfig()
   }, [deviceId])
 
-  // ── Genopret LAB-state ved side-refresh ──────────────────────────────────
-  // Hvis headend viser debug_mode.enabled=true og lab_camera_ready=true,
-  // spring "Venter"-fasen over og vis LAB direkte som aktiv og klar.
+  // ── Genopret og hold LAB-state synkroniseret efter refresh ────────────────
   useEffect(() => {
     if (!deviceId) return
     let cancelled = false
 
     async function checkExistingLab() {
       try {
-        const apiUrl = (await import('../api/client')).getApiUrl()
-        const res = await fetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}`)
-        if (!res.ok) return
-        const data = await res.json()
+        const data = await getDevice(deviceId)
         if (cancelled) return
 
-        const raw = data.device?.device_config
-        let cfg: Record<string, any> = {}
-        if (raw) {
-          try {
-            cfg = typeof raw === 'string' ? JSON.parse(raw) : raw
-          } catch { /* ignorer parse-fejl */ }
-        }
-
-        const debugEnabled = cfg?.debug_mode?.enabled === true
-        const cameraReady  = cfg?.lab_camera_ready === true
+        const { debugMode, debugEnabled, cameraReady } = readLabState(data)
+        setDebugModeState(debugMode)
+        setLabStateChecked(true)
 
         if (debugEnabled && cameraReady) {
-          // LAB er aktiv og kamera er klar — vis direkte uden "Venter"
           setLabActive(true)
           setLabConnecting(false)
           setLabConnectSecs(0)
           setLabReady(true)
           listPreviews(deviceId).then(setPreviews).catch(() => {})
         } else if (debugEnabled && !cameraReady) {
-          // LAB er startet men kamera ikke klar endnu — vis "Venter"
-          setLabActive(true)
+          setLabActive(false)
           setLabConnecting(true)
-        }
-        // Hvis debug_mode ikke er enabled: gør ingenting
-      } catch {
-        // Netværksfejl ved mount — ignorer
-      }
-    }
-
-    checkExistingLab()
-    return () => { cancelled = true }
-  }, [deviceId])
-
-  // ── Genopret LAB-state ved side-refresh ──────────────────────────────────
-  // Hvis headend viser debug_mode.enabled=true og lab_camera_ready=true,
-  // spring "Venter"-fasen over og vis LAB direkte som aktiv og klar.
-  useEffect(() => {
-    if (!deviceId) return
-    let cancelled = false
-
-    async function checkExistingLab() {
-      try {
-        const apiUrl = (await import('../api/client')).getApiUrl()
-        const res = await fetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}`)
-        if (!res.ok) return
-        const data = await res.json()
-        if (cancelled) return
-
-        const raw = data.device?.device_config
-        let cfg: Record<string, any> = {}
-        if (raw) {
-          try {
-            cfg = typeof raw === 'string' ? JSON.parse(raw) : raw
-          } catch { /* ignorer parse-fejl */ }
-        }
-
-        const debugEnabled = cfg?.debug_mode?.enabled === true
-        const cameraReady  = cfg?.lab_camera_ready === true
-
-        if (debugEnabled && cameraReady) {
-          // LAB er aktiv og kamera er klar — vis direkte uden "Venter"
-          setLabActive(true)
+          setLabReady(false)
+        } else {
+          setLabActive(false)
           setLabConnecting(false)
-          setLabConnectSecs(0)
-          setLabReady(true)
-          listPreviews(deviceId).then(setPreviews).catch(() => {})
-        } else if (debugEnabled && !cameraReady) {
-          // LAB er startet men kamera ikke klar endnu — vis "Venter"
-          setLabActive(true)
-          setLabConnecting(true)
+          setLabReady(false)
         }
-        // Hvis debug_mode ikke er enabled: gør ingenting
       } catch {
-        // Netværksfejl ved mount — ignorer
+        if (!cancelled) setLabStateChecked(true)
       }
     }
 
     checkExistingLab()
-    return () => { cancelled = true }
+    const iv = window.setInterval(checkExistingLab, 3000)
+    return () => { cancelled = true; window.clearInterval(iv) }
   }, [deviceId])
 
   async function loadConfig() {
     try {
-      const cfg = await getDeviceRawConfig(deviceId)
-      const dm  = cfg?.debug_mode
+      const cfg = await loadAdminDeviceConfig(deviceId)
+      const dm = cfg?.debug_mode
       if (dm) {
         setDebugModeState(dm)
-        setLabActive(dm.enabled)
       }
       if (cfg?.camera_profile) {
         setCameraProfile(cfg.camera_profile)
@@ -451,11 +448,50 @@ export default function LabPage() {
     }
   }, [labActive, deviceId])
 
+  useEffect(() => {
+    if (!livePreview || !labActive || labConnecting) return
+    let cancelled = false
+    let busy = false
+    let lastFilename = selectedPreviewRef.current?.filename ?? ''
+
+    async function requestFrame() {
+      if (busy || cancelled) return
+      busy = true
+      try {
+        await requestPreview(deviceId)
+        for (let attempt = 0; attempt < 8 && !cancelled; attempt++) {
+          await new Promise(resolve => window.setTimeout(resolve, 750))
+          const p = await listPreviews(deviceId)
+          setPreviews(p)
+          if (p.length > 0 && p[0].filename !== lastFilename) {
+            lastFilename = p[0].filename
+            userSelectedRef.current = false
+            setSelectedPreview(p[0])
+            break
+          }
+        }
+      } catch {
+        if (!cancelled) setStatusMsg('Preview loop mistede forbindelsen kort')
+      } finally {
+        busy = false
+      }
+    }
+
+    setStatusMsg('Preview loop kører')
+    requestFrame()
+    const iv = window.setInterval(requestFrame, 4000)
+    return () => {
+      cancelled = true
+      window.clearInterval(iv)
+      setStatusMsg('')
+    }
+  }, [livePreview, labActive, labConnecting, deviceId])
+
   async function toggleLab() {
     const next = !labActive
-    setLabActive(next)
     if (next) {
       setLabConnecting(true)
+      setLabReady(false)
       const warmupS     = 30   // relay 10s + connect + commands
       const configPullS = 60   // edge waker hvert 60s
 
@@ -481,13 +517,14 @@ export default function LabPage() {
         // Det er det præcise signal vi venter på
         const check = setInterval(async () => {
           try {
-            const apiUrl = (await import('../api/client')).getApiUrl()
-            const r = await fetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}`)
+            const apiUrl = getApiUrl()
+            const r = await authFetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}`)
             const data = await r.json()
-            const cfg = data?.device?.device_config ? JSON.parse(data.device.device_config) : {}
-            if (cfg?.lab_camera_ready === true) {
+            const { cameraReady } = readLabState(data)
+            if (cameraReady) {
               clearInterval(check)
               clearInterval(countdown)
+              setLabActive(true)
               setLabConnecting(false)
               setLabConnectSecs(0)
               listPreviews(deviceId).then(setPreviews).catch(() => {})
@@ -504,13 +541,15 @@ export default function LabPage() {
         setStatusMsg('Fejl ved aktivering af lab mode')
       }
     } else {
+      setLabActive(false)
+      setLivePreview(false)
       setLabConnecting(false)
       setLabConnectSecs(0)
       setLabReady(false)
       // Nulstil camera-ready signal på headend
       try {
         const apiUrl = (await import('../api/client')).getApiUrl()
-        await fetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/camera-ready`, {
+        await authFetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/camera-ready`, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({ready: false})
         }).catch(() => {})
@@ -567,7 +606,8 @@ export default function LabPage() {
     setStatusMsg('Anmoder om fuld capture (tæller lukker)…')
     try {
       await requestCapture(deviceId)
-      setStatusMsg('Capture anmodet!')
+      const result = await waitForLabResult(['capture'])
+      setStatusMsg(result?.ok ? 'Fuld capture modtaget' : 'Fuld capture fejlede')
       setTimeout(() => setStatusMsg(''), 3000)
     } catch {
       setStatusMsg('Fejl ved capture')
@@ -582,7 +622,7 @@ export default function LabPage() {
     try {
       // Trin 1: anmod om get_params kommando
       const apiUrl = (await import('../api/client')).getApiUrl()
-      await fetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/get-params`, { method: 'POST' })
+      await authFetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/get-params`, { method: 'POST' })
       setStatusMsg('Venter på kamera-parametre…')
 
       // Trin 2: poll config indtil camera_params er klar
@@ -590,7 +630,7 @@ export default function LabPage() {
       const poll = setInterval(async () => {
         attempts++
         try {
-          const cfg = await getDeviceRawConfig(deviceId)
+          const cfg = await loadAdminDeviceConfig(deviceId)
           const camParams = cfg?.camera_params || []
           if (camParams.length > 0) {
             clearInterval(poll)
@@ -613,17 +653,88 @@ export default function LabPage() {
     }
   }
 
+  async function waitForLabResult(expected: string[]) {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise(resolve => window.setTimeout(resolve, 1500))
+      const cfg = await loadAdminDeviceConfig(deviceId)
+      if (cfg?.lab_result && expected.includes(cfg.lab_result.type)) {
+        setLabResult(cfg.lab_result)
+        if (cfg.lab_result.preview_filename) {
+          const p = await listPreviews(deviceId).catch(() => [])
+          setPreviews(p)
+          const match = p.find((x: LabPreview) => x.filename === cfg.lab_result.preview_filename) ?? p[0]
+          if (match) setSelectedPreview(match)
+        } else {
+          listPreviews(deviceId).then(setPreviews).catch(() => {})
+        }
+        return cfg.lab_result
+      }
+    }
+    throw new Error('Timeout')
+  }
+
+  async function driveFocus(value: string) {
+    if (!value) return
+    setFocusBusy(true)
+    setStatusMsg(`Flytter fokus: ${value}`)
+    try {
+      await requestFocusDrive(deviceId, value)
+      await waitForLabResult(['focus_drive'])
+      setStatusMsg('Fokus flyttet og målt')
+      setTimeout(() => setStatusMsg(''), 3000)
+    } catch {
+      setStatusMsg('Fokuskommando timeout/fejl')
+    } finally {
+      setFocusBusy(false)
+    }
+  }
+
+  async function runAutofocusTest() {
+    setFocusBusy(true)
+    setStatusMsg('Kører autofocus og kvalitetstest…')
+    try {
+      await requestAutofocus(deviceId)
+      await waitForLabResult(['autofocus'])
+      setStatusMsg('Autofocus test færdig')
+      setTimeout(() => setStatusMsg(''), 3000)
+    } catch {
+      setStatusMsg('Autofocus test timeout/fejl')
+    } finally {
+      setFocusBusy(false)
+    }
+  }
+
+  async function runFocusSliceTest(edgeAi = false) {
+    if (!focusStepValue) {
+      setStatusMsg('Vælg en focus step-værdi først')
+      return
+    }
+    setFocusBusy(true)
+    setStatusMsg(edgeAi ? 'Kører Edge AI fokus-test…' : 'Kører focus slice-test…')
+    try {
+      if (edgeAi) await requestEdgeAiFocusTest(deviceId, { step_value: focusStepValue, count: focusSliceCount })
+      else await requestFocusSlice(deviceId, { step_value: focusStepValue, count: focusSliceCount, run_autofocus_first: true })
+      await waitForLabResult(edgeAi ? ['edge_ai_focus_test'] : ['focus_slice'])
+      setStatusMsg('Focus slice analyse færdig')
+      setTimeout(() => setStatusMsg(''), 3000)
+    } catch {
+      setStatusMsg('Focus slice timeout/fejl')
+    } finally {
+      setFocusBusy(false)
+    }
+  }
+
   async function wifiScan() {
     setWifiLoading(true)
     setStatusMsg('Scanner WiFi netværk…')
     try {
       const apiUrl = (await import('../api/client')).getApiUrl()
-      await fetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/wifi/scan`, { method: 'POST' })
+      await authFetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/wifi/scan`, { method: 'POST' })
       // Poll for result
       let attempts = 0
       const poll = setInterval(async () => {
         attempts++
-        const cfg = await getDeviceRawConfig(deviceId)
+        const cfg = await loadAdminDeviceConfig(deviceId)
         const wd  = cfg?.wifi_data
         if (wd?.type === 'scan') {
           setWifiData(wd)
@@ -642,15 +753,19 @@ export default function LabPage() {
     setStatusMsg(`Tilslutter til ${ssid}…`)
     try {
       const apiUrl = (await import('../api/client')).getApiUrl()
-      await fetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/wifi/connect`, {
+      const res = await authFetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/wifi/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ssid, password })
       })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.detail ?? 'WiFi connect blev afvist')
+      }
       let attempts = 0
       const poll = setInterval(async () => {
         attempts++
-        const cfg = await getDeviceRawConfig(deviceId)
+        const cfg = await loadAdminDeviceConfig(deviceId)
         const wd  = cfg?.wifi_data
         if (wd?.type === 'connect') {
           setWifiData((prev: any) => ({ ...prev, current: wd.current }))
@@ -661,7 +776,11 @@ export default function LabPage() {
         }
         if (attempts > 20) { clearInterval(poll); setWifiConnecting('') }
       }, 1500)
-    } catch { setWifiConnecting('') }
+    } catch (err) {
+      setWifiConnecting('')
+      setStatusMsg(err instanceof Error ? err.message : 'WiFi connect fejlede')
+      setTimeout(() => setStatusMsg(''), 5000)
+    }
   }
 
   function lockParams() {
@@ -677,7 +796,7 @@ export default function LabPage() {
     if (commands.length === 0) { setStatusMsg('Ingen parametre at låse'); return }
     // Update config via API
     import('../api/client').then(({ getApiUrl }) => {
-      fetch(`${getApiUrl()}/api/admin/devices/${pathSegment(deviceId)}/config`, {
+      authFetch(`${getApiUrl()}/api/admin/devices/${pathSegment(deviceId)}/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ camera: { initial_commands: commands } })
@@ -700,6 +819,21 @@ export default function LabPage() {
   const displayParams = activeGroup === 'Alle'
     ? params
     : (groupedParams[activeGroup] || [])
+  const manualFocusParam = params.find(p => p.path === cameraProfile?.actions?.manual_focus || p.path.endsWith('/manualfocusdrive'))
+  const manualFocusChoices = (manualFocusParam?.choices ?? []).filter(c => c.label && !/^unknown$/i.test(c.label.trim()))
+  const manualFocusIsRange = manualFocusParam?.type?.toUpperCase?.() === 'RANGE'
+  const canRemoteFocus = cameraProfile?.features?.remote_focus === true && (manualFocusChoices.length > 0 || manualFocusIsRange)
+  useEffect(() => {
+    if (focusStepValue) return
+    if (manualFocusChoices.length > 0) {
+      const defaultChoice = manualFocusChoices.find(c => /near|far/i.test(c.label)) ?? manualFocusChoices[0]
+      setFocusStepValue(defaultChoice.label)
+      return
+    }
+    if (manualFocusIsRange) {
+      setFocusStepValue(String(cameraProfile?.focus_controls?.manual_focus_default_step ?? manualFocusParam?.step ?? '500'))
+    }
+  }, [focusStepValue, manualFocusIsRange, manualFocusParam?.step, manualFocusChoices.map(c => c.label).join('|'), cameraProfile?.focus_controls?.manual_focus_default_step])
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -756,7 +890,15 @@ export default function LabPage() {
       </div>
 
       {/* Lab inactive notice */}
-      {!labActive && (
+      {!labActive && (!labStateChecked || labConnecting) && (
+        <div className="max-w-2xl mx-auto mt-12 text-center">
+          <RefreshCw className="w-12 h-12 text-purple-300 mx-auto mb-4 animate-spin" />
+          <h2 className="text-xl font-semibold text-gray-700 mb-2">{labConnecting ? 'Venter på kamera' : 'Kontrollerer lab-status'}</h2>
+          <p className="text-gray-400">{labConnecting ? 'Relay er aktiveret. LAB-panelet åbner først når Edge melder camera-ready.' : 'Henter aktuel status fra headend.'}</p>
+        </div>
+      )}
+
+      {!labActive && labStateChecked && !labConnecting && (
         <div className="max-w-2xl mx-auto mt-12 text-center">
           <FlaskConical className="w-16 h-16 text-gray-200 mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-700 mb-2">Lab mode er ikke aktiv</h2>
@@ -827,6 +969,13 @@ export default function LabPage() {
 
             {/* Preview actions */}
             <div className="p-4 flex gap-3">
+              <button onClick={() => setLivePreview(v => !v)} disabled={labConnecting}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors ${
+                  livePreview ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-sky-600 hover:bg-sky-700'
+                }`}>
+                {livePreview ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                {livePreview ? 'Stop preview loop' : 'Preview loop'}
+              </button>
               <button onClick={takePreview} disabled={loadingPreview}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors">
                 {loadingPreview ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
@@ -879,6 +1028,84 @@ export default function LabPage() {
             </div>
 
             <CameraProfilePanel profile={cameraProfile} />
+
+            <div className="mx-4 mt-4 rounded-xl border border-sky-100 bg-sky-50/60 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                    <Crosshair className="w-4 h-4 text-sky-600" /> Nikon/fokus LAB
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Remote focus og focus slice bruger kameraets egne profilvalg. Resultatet scores lokalt på Edge.
+                  </p>
+                </div>
+                <span className={`rounded-full px-2 py-1 text-xs font-medium ${
+                  canRemoteFocus ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-400'
+                }`}>
+                  {canRemoteFocus ? 'Remote focus klar' : 'Hent parametre / ikke understøttet'}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-[1fr,auto,auto]">
+                {manualFocusIsRange ? (
+                  <input type="number"
+                    value={focusStepValue}
+                    min={Number(manualFocusParam?.bottom ?? cameraProfile?.focus_controls?.manual_focus_min ?? -32767)}
+                    max={Number(manualFocusParam?.top ?? cameraProfile?.focus_controls?.manual_focus_max ?? 32767)}
+                    step={Number(manualFocusParam?.step ?? 1)}
+                    onChange={e => setFocusStepValue(e.target.value)}
+                    disabled={!canRemoteFocus || focusBusy}
+                    className="border border-sky-200 rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-50"
+                    title={`Manual focus range ${manualFocusParam?.bottom ?? '-32767'}..${manualFocusParam?.top ?? '32767'}`} />
+                ) : (
+                  <select value={focusStepValue} onChange={e => setFocusStepValue(e.target.value)}
+                    disabled={!canRemoteFocus || focusBusy}
+                    className="border border-sky-200 rounded-lg px-3 py-2 text-sm bg-white disabled:opacity-50">
+                    <option value="">Vælg focus step fra kamera-profil…</option>
+                    {manualFocusChoices.map(c => <option key={c.index} value={c.label}>{c.label}</option>)}
+                  </select>
+                )}
+                <input type="number" min={1} max={12} value={focusSliceCount}
+                  onChange={e => setFocusSliceCount(Math.max(1, Math.min(12, parseInt(e.target.value) || 1)))}
+                  className="border border-sky-200 rounded-lg px-3 py-2 text-sm w-24 bg-white"
+                  title="Antal slices" />
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => driveFocus(focusStepValue)} disabled={!canRemoteFocus || focusBusy}
+                    className="px-3 py-2 rounded-lg bg-sky-600 text-white text-xs font-medium disabled:opacity-50">
+                    {focusBusy ? 'Arbejder…' : 'Step focus'}
+                  </button>
+                  <button onClick={runAutofocusTest} disabled={focusBusy || cameraProfile?.features?.autofocus !== true}
+                    className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-medium disabled:opacity-50">
+                    Autofocus test
+                  </button>
+                  <button onClick={() => runFocusSliceTest(false)} disabled={!canRemoteFocus || focusBusy}
+                    className="px-3 py-2 rounded-lg bg-gray-800 text-white text-xs font-medium disabled:opacity-50">
+                    Focus slice
+                  </button>
+                  <button onClick={() => runFocusSliceTest(true)} disabled={!canRemoteFocus || focusBusy}
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium disabled:opacity-50">
+                    <Wand2 className="w-3 h-3" /> Edge test
+                  </button>
+                </div>
+              </div>
+              {labResult && (
+                <div className="mt-3 rounded-lg border border-white bg-white/80 p-3 text-xs text-gray-700">
+                  <div className="font-medium text-gray-800">
+                    Seneste resultat: {labResult.type} · {labResult.ok ? 'OK' : 'Fejl'}
+                  </div>
+                  {labResult.quality && (
+                    <div className="mt-1">
+                      Blur {labResult.quality.blur_score?.toFixed?.(1) ?? '–'} · Lys {labResult.quality.brightness_mean?.toFixed?.(1) ?? '–'} · {labResult.quality.flag}
+                    </div>
+                  )}
+                  {labResult.recommendation?.best_preview_filename && (
+                    <div className="mt-1">
+                      Bedste slice: {labResult.recommendation.best_preview_filename} · blur {labResult.recommendation.best_blur_score?.toFixed?.(1) ?? '–'}
+                    </div>
+                  )}
+                  {labResult.error && <div className="mt-1 text-red-600">{labResult.error}</div>}
+                </div>
+              )}
+            </div>
 
             {params.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-gray-400 text-sm flex-col gap-2 p-8">

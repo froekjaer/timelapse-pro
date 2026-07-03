@@ -15,7 +15,23 @@ function api(path: string, opts?: RequestInit) {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(opts?.headers ?? {}) },
     ...opts
-  }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
+  }).then(async r => {
+    if (r.status === 401) {
+      window.location.href = '/login'
+      throw new Error('401')
+    }
+    if (!r.ok) {
+      let detail = `${r.status}`
+      try {
+        const payload = await r.json()
+        detail = typeof payload.detail === 'string'
+          ? payload.detail
+          : payload.detail?.message || JSON.stringify(payload.detail || payload)
+      } catch { /* ignore */ }
+      throw new Error(detail)
+    }
+    return r.json()
+  })
 }
 
 interface Update {
@@ -33,6 +49,71 @@ interface Update {
   created_at:        string | null
   approved_at:       string | null
   approved_by:       string | null
+  deployed_at:       string | null
+  production_promotion_id?: number | null
+  production_promotion_status?: string | null
+  promotion_source_environment?: string | null
+  prod_ready?: boolean
+}
+
+interface HeadendDeployStatus {
+  update_id: number
+  running: boolean
+  status: string
+  started_at: string | null
+  finished_at: string | null
+  message: string | null
+  phase?: string | null
+  backup_file?: string | null
+  rollback_performed?: boolean
+  rollback_message?: string | null
+  stdout_tail: string
+  stderr_tail: string
+}
+
+interface UpdateJobStatus {
+  job_id: string
+  kind: string
+  title: string
+  running: boolean
+  status: string
+  phase: string
+  progress: number
+  started_at: string | null
+  finished_at: string | null
+  message: string | null
+  result?: any
+  error?: string | null
+}
+
+interface UpdateFlowTarget {
+  device_id: string
+  hostname: string | null
+  status: string
+  waiting_for: string | null
+  last_seen: string | null
+  last_seen_age_s: number | null
+  last_report_at: string | null
+  started_at: string | null
+  completed_at: string | null
+  attempt_count: number
+  last_error: string | null
+  artifact_id: string | null
+  target_version: string | null
+}
+
+interface UpdateFlowStatus {
+  update_id: number
+  status: string
+  stage: {
+    key: string
+    label: string
+  }
+  artifact: UpdateArtifact | null
+  ticket_id: string | null
+  targets: UpdateFlowTarget[]
+  next_edge_poll: string
+  error?: string
 }
 
 interface RiskInfo {
@@ -51,6 +132,11 @@ interface DeviceUpdateCategory {
   state: string
   installed: string | null
   available: string | null
+  current_version?: string | null
+  latest_available_version?: string | null
+  version_gap_label?: string | null
+  package_count?: number | null
+  component?: string | null
   missing: boolean
   pending_update_id: number | null
   update_type: string | null
@@ -113,7 +199,24 @@ interface ApproveOptions {
   scope_id:         string
 }
 
-type Filter = 'pending' | 'approved' | 'deployed' | 'rejected' | 'rolled_back' | 'all'
+type Filter = 'pending' | 'approved' | 'blocked' | 'deployed' | 'rejected' | 'rolled_back' | 'all'
+
+const ACTIVE_FLOW_KEYS = new Set([
+  'waiting_for_edge_poll',
+  'queued',
+  'backing_up',
+  'downloading',
+  'verifying',
+  'installing',
+])
+
+function isActiveFlow(flowStatus: UpdateFlowStatus | undefined) {
+  if (!flowStatus) return false
+  if (ACTIVE_FLOW_KEYS.has(flowStatus.stage?.key || '')) return true
+  return flowStatus.targets.some(target =>
+    ['pending', 'queued', 'backing_up', 'downloading', 'verifying', 'installing'].includes(target.status)
+  )
+}
 
 function fmt(iso: string | null) {
   if (!iso) return '—'
@@ -137,7 +240,14 @@ function statusBadge(s: string) {
   const map: Record<string, string> = {
     pending:     'bg-amber-50 text-amber-700 border-amber-200',
     approved:    'bg-sky-50 text-sky-700 border-sky-200',
+    queued:      'bg-sky-50 text-sky-700 border-sky-200',
+    downloading: 'bg-sky-50 text-sky-700 border-sky-200',
+    verifying:   'bg-sky-50 text-sky-700 border-sky-200',
+    backing_up:  'bg-sky-50 text-sky-700 border-sky-200',
+    installing:  'bg-sky-50 text-sky-700 border-sky-200',
     deployed:    'bg-green-50 text-green-700 border-green-200',
+    blocked:     'bg-amber-50 text-amber-700 border-amber-200',
+    failed:      'bg-red-50 text-red-500 border-red-200',
     rejected:    'bg-red-50 text-red-500 border-red-200',
     rolled_back: 'bg-purple-50 text-purple-700 border-purple-200',
   }
@@ -160,9 +270,19 @@ function shortHash(value: string | null | undefined) {
   return value.length > 18 ? `${value.slice(0, 12)}...${value.slice(-6)}` : value
 }
 
+function isProdReadyUpdate(u: Update) {
+  return Boolean(u.prod_ready) || (
+    u.environment === 'production' &&
+    u.status === 'pending' &&
+    Boolean(u.promotion_source_environment)
+  )
+}
+
 const STATUS_LABELS: Record<string, string> = {
   pending:     'Afventer',
+  prod_ready:  'Prod-klar',
   approved:    'Godkendt',
+  blocked:     'Blokeret',
   deployed:    'Deployet',
   rejected:    'Afvist',
   rolled_back: 'Rullet tilbage',
@@ -171,6 +291,7 @@ const STATUS_LABELS: Record<string, string> = {
 const STATE_LABELS: Record<string, string> = {
   needs_approval: 'Mangler godkendelse',
   approved: 'Godkendt',
+  blocked: 'Blokeret',
   deployed: 'Installeret',
   rolled_back: 'Rollback',
   rollback_requested: 'Rollback anmodet',
@@ -178,23 +299,333 @@ const STATE_LABELS: Record<string, string> = {
   no_inventory: 'Mangler inventory',
 }
 
+const TARGET_STATUS_LABELS: Record<string, string> = {
+  pending: 'Afventer',
+  queued: 'Klar til Edge pull',
+  downloading: 'Henter artifact',
+  verifying: 'Verificerer',
+  backing_up: 'Tager backup',
+  installing: 'Installerer',
+  deployed: 'Installeret',
+  failed: 'Blokeret/fejlet',
+  rejected: 'Afvist',
+  rolled_back: 'Rollback',
+  target_not_in_cmdb: 'Mangler CMDB',
+}
+
+const WAITING_LABELS: Record<string, string> = {
+  edge_policy_pull: 'Afventer Edge policy-pull/heartbeat',
+  downloading: 'Edge henter filer fra Headend',
+  verifying: 'Edge verifierer signatur og hashes',
+  backing_up: 'Edge tager pre-update backup',
+  installing: 'Edge installerer offline',
+  lab_os_bundle: 'Afventer lab-bygget offline OS bundle',
+  artifact_or_lab_evidence: 'Afventer artifact/lab-evidens',
+  cmdb_device_record: 'Afventer CMDB-enhed',
+}
+
 const TYPE_LABELS: Record<string, string> = {
   app_security: 'App sikkerhed',
   os_security:  'OS sikkerhed',
   app_updates:  'App opdatering',
   os_updates:   'OS opdatering',
+  application_updates: 'Platform/app opdatering',
+  application_update:  'Platform/app opdatering',
+  third_party_updates: 'Platform/app opdatering',
 }
 
-function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, busy }: {
+function canDeployOnHeadend(u: Update) {
+  const formula = headendFormula(u)
+  return (
+    u.status === 'approved' &&
+    u.update_type === 'application_updates' &&
+    u.scope === 'device' &&
+    u.scope_id === 'TL-MACMINI-HEADEND-TEST-1' &&
+    ['certbot', 'ffmpeg', 'nginx', 'node', 'ollama', 'postgresql@17'].includes(formula)
+  )
+}
+
+function isHeadendScoped(u: Update) {
+  return u.scope === 'device' && u.scope_id === 'TL-MACMINI-HEADEND-TEST-1'
+}
+
+function headendFormula(u: Update) {
+  return (u.version || '').trim().split(/\s+/, 1)[0] || ''
+}
+
+type WorkflowStepState = 'done' | 'current' | 'waiting' | 'blocked' | 'failed'
+
+interface WorkflowStep {
+  title: string
+  detail: string
+  state: WorkflowStepState
+}
+
+function stepStyle(state: WorkflowStepState) {
+  const map: Record<WorkflowStepState, string> = {
+    done: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    current: 'border-sky-200 bg-sky-50 text-sky-700',
+    waiting: 'border-gray-200 bg-white text-gray-500',
+    blocked: 'border-amber-200 bg-amber-50 text-amber-700',
+    failed: 'border-red-200 bg-red-50 text-red-700',
+  }
+  return map[state]
+}
+
+function stepDotStyle(state: WorkflowStepState) {
+  const map: Record<WorkflowStepState, string> = {
+    done: 'bg-emerald-500',
+    current: 'bg-sky-500 animate-pulse',
+    waiting: 'bg-gray-300',
+    blocked: 'bg-amber-500',
+    failed: 'bg-red-500',
+  }
+  return map[state]
+}
+
+function workflowForUpdate(u: Update, deployStatus?: HeadendDeployStatus): { title: string; nextAction: string; steps: WorkflowStep[] } {
+  const headendScoped = isHeadendScoped(u)
+  const headendDeployable = canDeployOnHeadend(u)
+  const deployFailed = deployStatus?.status === 'failed'
+  const deployDone = u.status === 'deployed' || deployStatus?.status === 'deployed'
+  const deployRunning = deployStatus?.running === true
+  const phase = deployStatus?.phase || ''
+
+  if (u.status === 'pending') {
+    const prodReady = isProdReadyUpdate(u)
+    return {
+      title: prodReady ? 'Production readiness-flow' : 'Approval-flow',
+      nextAction: prodReady
+        ? `Test-evidens fra ${u.promotion_source_environment || 'test'} er klar. Production kræver separat godkendelse før deployment.`
+        : 'Godkend eller afvis opdateringen. Godkendelse flytter den videre til installationsflowet.',
+      steps: [
+        { title: prodReady ? 'Test-evidens' : 'Registreret', detail: prodReady ? `Pakken er deployet og testet på ${u.promotion_source_environment || 'test'}-miljø.` : 'Headend har oprettet update-kandidat fra CMDB/inventory.', state: 'done' },
+        { title: prodReady ? 'Prod-klar' : 'Godkendelse', detail: prodReady ? 'Afventer separat production-godkendelse.' : 'Afventer admin-beslutning og scope/miljø.', state: 'current' },
+        { title: 'Installation', detail: prodReady ? 'Production deployment starter først efter production-godkendelse.' : 'Starter først efter godkendelse.', state: 'waiting' },
+      ],
+    }
+  }
+
+  if (headendScoped) {
+    const installerState: WorkflowStepState = headendDeployable
+      ? (deployDone ? 'done' : deployRunning ? 'current' : deployFailed ? 'failed' : 'current')
+      : (u.status === 'approved' ? 'blocked' : deployDone ? 'done' : 'waiting')
+    const preflightState: WorkflowStepState = deployDone || phase === 'backup' || phase === 'install' || phase === 'restart' || phase === 'postflight' || phase === 'complete'
+      ? 'done'
+      : phase === 'preflight'
+        ? 'current'
+        : installerState === 'failed'
+          ? 'failed'
+          : headendDeployable
+            ? 'waiting'
+            : 'blocked'
+    const backupState: WorkflowStepState = deployDone || phase === 'install' || phase === 'restart' || phase === 'postflight' || phase === 'complete'
+      ? 'done'
+      : phase === 'backup'
+        ? 'current'
+        : headendDeployable
+          ? 'waiting'
+          : 'blocked'
+    const installState: WorkflowStepState = deployDone || phase === 'postflight' || phase === 'complete'
+      ? 'done'
+      : phase === 'install' || phase === 'restart'
+        ? 'current'
+        : deployFailed
+          ? 'failed'
+          : headendDeployable
+            ? 'waiting'
+            : 'blocked'
+    const postflightState: WorkflowStepState = deployDone
+      ? 'done'
+      : phase === 'postflight'
+        ? 'current'
+        : deployFailed
+          ? 'failed'
+          : headendDeployable
+            ? 'waiting'
+            : 'blocked'
+
+    return {
+      title: 'Headend installationsflow',
+      nextAction: deployDone
+        ? (u.environment === 'test' && u.production_promotion_id
+          ? `Test-deploy er færdig og promoveret til production som #${u.production_promotion_id}.`
+          : u.environment === 'test'
+            ? 'Test-deploy er færdig. Næste governance-trin er promovering til production.'
+            : 'Production aktivering er færdig og postflight-valideret.')
+        : headendDeployable
+        ? 'Tryk “Installer på Headend”. Flowet tager backup, installerer og funktionstester før status ændres.'
+        : 'Der mangler et implementeret Headend-installer-flow for denne applikation. Den må ikke installeres manuelt uden lab-flow, backup og postflight-test.',
+      steps: [
+        { title: 'Godkendt', detail: `${u.approved_by || 'Admin'} godkendte til ${u.environment || 'ukendt miljø'}.`, state: 'done' },
+        { title: 'Installer-flow', detail: deployDone ? 'Headend flow er gennemført og dokumenteret.' : headendFormula(u) === 'postgresql@17' ? 'DB-maintenance profil er implementeret med ekstra database-checks.' : headendDeployable ? 'UI-installation er implementeret for denne Headend update.' : 'Installer-flow skal bygges og testes i lab før installation.', state: installerState },
+        { title: 'Preflight', detail: headendFormula(u) === 'postgresql@17' ? 'Tjek PostgreSQL version, pg_isready, DB-login og service-state.' : 'Tjek nuværende version, service, API og relevante logs.', state: preflightState },
+        { title: 'Pre-update backup', detail: headendFormula(u) === 'postgresql@17' ? 'Tag pg_dump/database backup og LaunchAgent rollback-evidence.' : 'Tag Headend config/database backup og rollback-evidence.', state: backupState },
+        { title: 'Install/reload', detail: u.environment === 'production' ? 'Production aktivering validerer deployed test-version uden ny brew upgrade på samme Headend.' : 'Installer pakken og reload relevant LaunchAgent/service.', state: installState },
+        { title: 'Postflight', detail: 'Valider version, API, funktionstest og fejl i logs.', state: postflightState },
+      ],
+    }
+  }
+
+  if (u.status === 'approved') {
+    return {
+      title: 'Edge pull-flow',
+      nextAction: 'Edge henter selv opdateringen ved næste policy-poll. Den skal have et signeret artifact og lave pre-update backup før installation.',
+      steps: [
+        { title: 'Godkendt', detail: `${u.approved_by || 'Admin'} godkendte update til ${u.environment || 'ukendt miljø'}.`, state: 'done' },
+        { title: 'Afventer Edge poll', detail: 'Edge kalder Headend og henter update-policy.', state: 'current' },
+        { title: 'Artifact trust check', detail: 'Edge validerer signatur, sha256 og signer-scope.', state: 'waiting' },
+        { title: 'Pre-update backup', detail: 'Edge laver lokal restore-backup og uploader til Headend.', state: 'waiting' },
+        { title: 'Install/rollback', detail: 'Edge installerer eller ruller tilbage og rapporterer resultat.', state: 'waiting' },
+      ],
+    }
+  }
+
+  if (u.status === 'blocked' && (u.update_type === 'os_security' || u.update_type === 'os_updates')) {
+    return {
+      title: 'Edge OS offline update-flow',
+      nextAction: 'Denne Edge OS update er blokeret, indtil lab har bygget og registreret et Headend-signeret offline OS artifact.',
+      steps: [
+        { title: 'Rapporteret', detail: 'Edge/CMDB har rapporteret manglende OS-pakker.', state: 'done' },
+        { title: 'Blokeret', detail: 'Edge må ikke køre apt-get upgrade eller hente direkte fra internet.', state: 'blocked' },
+        { title: 'Lab bundle', detail: 'Byg offline apt/dpkg bundle i lab med præcis pakkeliste og test-evidence.', state: 'current' },
+        { title: 'Signer artifact', detail: 'Registrer bundle i Headend artifact-kataloget med manifest, sha256 og signatur.', state: 'waiting' },
+        { title: 'Godkend', detail: 'Bind artifact til update og godkend deployment.', state: 'waiting' },
+        { title: 'Edge pull', detail: 'Edge henter bundle, tager backup, installerer offline og rapporterer resultat.', state: 'waiting' },
+      ],
+    }
+  }
+
+  if (u.status === 'deployed') {
+    return {
+      title: 'Deploy-flow',
+      nextAction: u.environment === 'test' ? 'Test-deploy er færdig. Næste governance-trin er at markere pakken Prod-klar efter testaccept.' : 'Deploy er færdig. Overvåg drift og behold rollback-evidence.',
+      steps: [
+        { title: 'Godkendt', detail: 'Update blev godkendt.', state: 'done' },
+        { title: 'Installeret', detail: `Deployet ${fmt(u.deployed_at)}.`, state: 'done' },
+        { title: 'Næste trin', detail: u.environment === 'test' ? 'Kan markeres Prod-klar efter testaccept.' : 'Drift/monitorering.', state: u.environment === 'test' ? 'current' : 'done' },
+      ],
+    }
+  }
+
+  return {
+    title: 'Update-flow',
+    nextAction: `Aktuel status er ${STATUS_LABELS[u.status] ?? u.status}.`,
+    steps: [
+      { title: STATUS_LABELS[u.status] ?? u.status, detail: u.status === 'blocked' ? 'Kræver artifact/profil før installation kan fortsætte.' : 'Se beskrivelse og auditfelter ovenfor.', state: u.status === 'rolled_back' ? 'failed' : u.status === 'blocked' ? 'blocked' : 'current' },
+    ],
+  }
+}
+
+function WorkflowStatusPanel({ update, deployStatus }: { update: Update; deployStatus?: HeadendDeployStatus }) {
+  const workflow = workflowForUpdate(update, deployStatus)
+  const prodReady = isProdReadyUpdate(update)
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold text-gray-800">{workflow.title}</div>
+          <div className="text-[11px] text-gray-500 mt-0.5">{workflow.nextAction}</div>
+        </div>
+        <span className={`text-[11px] px-1.5 py-0.5 rounded border ${prodReady ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
+          {prodReady ? 'prod-klar' : (update.environment || 'ukendt miljø')}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-2">
+        {workflow.steps.map((step, index) => (
+          <div key={`${step.title}-${index}`} className={`rounded-lg border p-3 min-h-[92px] ${stepStyle(step.state)}`}>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${stepDotStyle(step.state)}`} />
+              <span className="text-[11px] font-semibold">{index + 1}. {step.title}</span>
+            </div>
+            <div className="mt-1 text-[11px] leading-4 opacity-90">{step.detail}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function FlowTargetsPanel({ flowStatus }: { flowStatus?: UpdateFlowStatus }) {
+  if (!flowStatus) {
+    return (
+      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+        Edge flow-status er ikke hentet endnu. Opdatér siden eller fold rækken ud igen.
+      </div>
+    )
+  }
+  if (flowStatus.error) {
+    return (
+      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+        Edge flow-status kunne ikke hentes: {flowStatus.error}
+      </div>
+    )
+  }
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-semibold text-gray-800">Edge flow-status</div>
+          <div className="mt-0.5 text-gray-500">{flowStatus.stage.label}</div>
+        </div>
+        <div className="text-right text-[11px] text-gray-400">
+          {flowStatus.ticket_id ? `Ticket ${flowStatus.ticket_id}` : 'Ingen ticket'}
+          <br />
+          {flowStatus.artifact?.artifact_id ? `Artifact ${flowStatus.artifact.artifact_id}` : 'Ingen artifact'}
+        </div>
+      </div>
+      <div className="mt-3 divide-y divide-gray-100">
+        {flowStatus.targets.length === 0 ? (
+          <div className="py-2 text-gray-400">Ingen target-enheder fundet for denne update.</div>
+        ) : flowStatus.targets.map(target => (
+          <div key={target.device_id} className="py-2 first:pt-0 last:pb-0">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-mono text-[11px] text-gray-800 truncate">{target.device_id}</div>
+                <div className="text-[11px] text-gray-400 truncate">{target.hostname || 'hostname ukendt'}</div>
+              </div>
+              <span className={`px-2 py-1 rounded border text-[11px] font-medium ${statusBadge(target.status === 'failed' ? 'blocked' : target.status)}`}>
+                {TARGET_STATUS_LABELS[target.status] ?? target.status}
+              </span>
+            </div>
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1 text-[11px] text-gray-500">
+              <div><span className="text-gray-400">Venter på: </span>{target.waiting_for ? (WAITING_LABELS[target.waiting_for] ?? target.waiting_for) : '—'}</div>
+              <div><span className="text-gray-400">Sidst set: </span>{fmt(target.last_seen)}</div>
+              <div><span className="text-gray-400">Sidste rapport: </span>{fmt(target.last_report_at)}</div>
+            </div>
+            {target.last_error && (
+              <div className="mt-2 rounded bg-red-50 p-2 text-[11px] text-red-700">{target.last_error}</div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 border-t border-gray-100 pt-2 text-[11px] text-gray-400">
+        {flowStatus.next_edge_poll}
+      </div>
+    </div>
+  )
+}
+
+function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDeploy, onBindArtifact, onBuildOsBundle, busy, deployStatus, flowStatus }: {
   u: Update
   onApprove:  (id: number) => void
   onReject:   (id: number) => void
-  onPromote:  (id: number) => void
+  onPromote:  (id: number, target: 'staging' | 'production') => void
   onRollback: (id: number) => void
+  onHeadendDeploy: (id: number) => void
+  onBindArtifact: (id: number, artifactId: string) => void
+  onBuildOsBundle: (id: number) => void
   busy: number | null
+  deployStatus?: HeadendDeployStatus
+  flowStatus?: UpdateFlowStatus
 }) {
   const [open, setOpen] = useState(false)
+  const [artifactId, setArtifactId] = useState('')
   const isBusy = busy === u.id
+  const prodReady = isProdReadyUpdate(u)
+  const headendDeployable = canDeployOnHeadend(u)
+  const headendScoped = isHeadendScoped(u)
+  const deployRunning = deployStatus?.running === true
 
   return (
     <div className="border-b border-gray-50 last:border-0">
@@ -210,11 +641,11 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, busy }: {
               {u.severity}
             </span>
             <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${statusBadge(u.status)}`}>
-              {STATUS_LABELS[u.status] ?? u.status}
+              {prodReady ? 'Prod-klar' : (STATUS_LABELS[u.status] ?? u.status)}
             </span>
             {u.environment && (
-              <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${u.environment === 'test' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                {u.environment === 'test' ? '🧪 test' : '🚀 prod'}
+              <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${u.environment === 'test' ? 'bg-purple-50 text-purple-700 border-purple-200' : prodReady ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
+                {u.environment === 'test' ? 'test' : prodReady ? 'prod-klar' : 'prod'}
               </span>
             )}
             {u.scope !== 'global' && (
@@ -231,7 +662,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, busy }: {
               disabled={isBusy}
               className="flex items-center gap-1 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white text-xs rounded-lg disabled:opacity-50 transition-colors">
               <CheckCircle className="w-3.5 h-3.5" />
-              Godkend
+              {prodReady ? 'Godkend prod' : 'Godkend'}
             </button>
             <button onClick={() => onReject(u.id)} disabled={isBusy}
               className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg border border-red-200 disabled:opacity-50 transition-colors">
@@ -242,10 +673,22 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, busy }: {
         )}
         {u.status === 'deployed' && u.environment === 'test' && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
-            <button onClick={() => onPromote(u.id)} disabled={isBusy}
-              className="flex items-center gap-1 px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white text-xs rounded-lg disabled:opacity-50">
-              🚀 Promovér til prod
-            </button>
+            {u.production_promotion_id ? (
+              <span className="px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs">
+                Prod #{u.production_promotion_id} · {u.production_promotion_status === 'pending' ? 'Prod-klar' : (STATUS_LABELS[u.production_promotion_status || ''] ?? u.production_promotion_status)}
+              </span>
+            ) : (
+              <>
+                <button onClick={() => onPromote(u.id, 'staging')} disabled={isBusy}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 text-xs rounded-lg border border-gray-200 disabled:opacity-50">
+                  Promovér til staging
+                </button>
+                <button onClick={() => onPromote(u.id, 'production')} disabled={isBusy}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white text-xs rounded-lg disabled:opacity-50">
+                  Markér prod-klar
+                </button>
+              </>
+            )}
           </div>
         )}
         {u.status === 'deployed' && (
@@ -257,10 +700,20 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, busy }: {
           </div>
         )}
         {u.status === 'approved' && (
-          <div className="flex items-center gap-1.5 mr-3 text-xs text-sky-500 flex-shrink-0">
-            <Clock className="w-3.5 h-3.5 animate-pulse" />
-            Afventer edge
-          </div>
+          headendDeployable ? (
+            <div className="flex items-center gap-1.5 mr-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+              <button onClick={() => onHeadendDeploy(u.id)} disabled={isBusy || deployRunning}
+                className="flex items-center gap-1 px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-white text-xs rounded-lg disabled:opacity-50">
+                <Package className="w-3.5 h-3.5" />
+                {deployRunning ? 'Kører...' : u.environment === 'production' ? 'Aktivér prod' : 'Installer på Headend'}
+              </button>
+            </div>
+          ) : (
+            <div className={`flex items-center gap-1.5 mr-3 text-xs flex-shrink-0 ${headendScoped ? 'text-amber-600' : 'text-sky-500'}`}>
+              <Clock className="w-3.5 h-3.5 animate-pulse" />
+              {headendScoped ? 'Afventer Headend-flow' : 'Afventer edge'}
+            </div>
+          )
         )}
         {open ? <ChevronDown className="w-4 h-4 text-gray-300 flex-shrink-0" />
                : <ChevronRight className="w-4 h-4 text-gray-300 flex-shrink-0" />}
@@ -278,8 +731,52 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, busy }: {
             <div><span className="text-gray-400">Scope: </span><span className="text-gray-700">{u.scope}{u.scope_id ? ` / ${u.scope_id}` : ''}</span></div>
             <div><span className="text-gray-400">Oprettet: </span><span className="text-gray-700">{fmt(u.created_at)}</span></div>
             {u.approved_at && <div><span className="text-gray-400">Behandlet: </span><span className="text-gray-700">{fmt(u.approved_at)} af {u.approved_by}</span></div>}
+            {u.deployed_at && <div><span className="text-gray-400">Deployet: </span><span className="text-gray-700">{fmt(u.deployed_at)}</span></div>}
             <div><span className="text-gray-400">ID: </span><span className="text-gray-500 font-mono">#{u.id}</span></div>
           </div>
+          <WorkflowStatusPanel update={u} deployStatus={deployStatus} />
+          {!headendScoped && <FlowTargetsPanel flowStatus={flowStatus} />}
+          {u.status === 'blocked' && (u.update_type === 'os_security' || u.update_type === 'os_updates') && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
+              <div className="font-medium text-amber-800">Bind signeret OS artifact</div>
+              <div className="mt-1 text-amber-700">
+                Headend bygger via Mac-container/lab-builder, registrerer artifactet og binder det til denne update. Manuel artifact-binding er kun til fejlsøgning.
+              </div>
+              <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                <button onClick={() => onBuildOsBundle(u.id)} disabled={isBusy}
+                  className="px-3 py-2 rounded-lg bg-gray-900 text-white text-xs disabled:opacity-50">
+                  Byg artifact og bind
+                </button>
+                <input value={artifactId} onChange={e => setArtifactId(e.target.value)}
+                  placeholder="TL-OS-YYYYMMDD-..."
+                  className="flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-[11px] text-gray-800" />
+                <button onClick={() => onBindArtifact(u.id, artifactId.trim())} disabled={!artifactId.trim() || isBusy}
+                  className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs disabled:opacity-50">
+                  Bind artifact
+                </button>
+              </div>
+            </div>
+          )}
+          {deployStatus && (
+            <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${deployStatus.running ? 'bg-sky-500 animate-pulse' : deployStatus.status === 'failed' ? 'bg-red-500' : deployStatus.status === 'deployed' ? 'bg-green-500' : 'bg-gray-300'}`} />
+                <span className="font-medium text-gray-700">{deployStatus.message || deployStatus.status}</span>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-x-5 gap-y-1 text-[11px] text-gray-500">
+                {deployStatus.phase && <div><span className="text-gray-400">Fase: </span>{deployStatus.phase}</div>}
+                {deployStatus.backup_file && <div className="truncate"><span className="text-gray-400">Backup: </span>{deployStatus.backup_file}</div>}
+                {deployStatus.rollback_performed && <div><span className="text-gray-400">Rollback: </span>udført</div>}
+                {deployStatus.rollback_message && <div className="col-span-2"><span className="text-gray-400">Rollback note: </span>{deployStatus.rollback_message}</div>}
+              </div>
+              {deployStatus.stderr_tail && (
+                <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-red-50 p-2 text-[11px] text-red-700">{deployStatus.stderr_tail}</pre>
+              )}
+              {deployStatus.stdout_tail && (
+                <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-[11px] text-gray-600">{deployStatus.stdout_tail}</pre>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -354,15 +851,21 @@ function DeviceUpdateMatrix({ matrix }: { matrix: UpdateMatrix | null }) {
                       </div>
                       <div className="mt-2 space-y-1 text-[11px]">
                         <div className="flex justify-between gap-2">
-                          <span className="text-gray-400">Installeret</span>
-                          <span className="text-gray-700 truncate text-right">{cell.installed || '-'}</span>
+                          <span className="text-gray-400">Aktuel version</span>
+                          <span className="text-gray-700 truncate text-right">{cell.current_version || cell.installed || '-'}</span>
                         </div>
                         <div className="flex justify-between gap-2">
-                          <span className="text-gray-400">Tilgængelig</span>
+                          <span className="text-gray-400">Senest tilgængelig</span>
                           <span className={cell.available ? 'text-gray-800 font-medium truncate text-right' : 'text-gray-300'}>
-                            {cell.available || 'Ingen'}
+                            {cell.latest_available_version || cell.available || 'Ingen'}
                           </span>
                         </div>
+                        {cell.package_count != null && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-gray-400">Pakker</span>
+                            <span className="text-gray-600">{cell.package_count}</span>
+                          </div>
+                        )}
                         {cell.pending_update_id && (
                           <div className="flex justify-between gap-2">
                             <span className="text-gray-400">Update ID</span>
@@ -390,12 +893,18 @@ function DeviceUpdateMatrix({ matrix }: { matrix: UpdateMatrix | null }) {
 function ArtifactCatalog({
   artifacts,
   onCatalogCurrent,
+  onCatalogOsBundle,
   busy,
 }: {
   artifacts: UpdateArtifact[]
   onCatalogCurrent: () => void
+  onCatalogOsBundle: (payload: Record<string, unknown>) => void
   busy: boolean
 }) {
+  const [osOpen, setOsOpen] = useState(false)
+  const [osPath, setOsPath] = useState('/tmp/timelapse-os-bundle')
+  const [osVersion, setOsVersion] = useState('edge-os-security-bundle')
+  const [osCommands, setOsCommands] = useState('[{"name":"offline dpkg install","argv":["/bin/bash","{bundle}/install-offline.sh"],"timeout_s":1800}]')
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-5">
       <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
@@ -405,15 +914,55 @@ function ArtifactCatalog({
             Signeret artifact-katalog
           </h2>
           <p className="text-xs text-gray-400 mt-0.5">
-            Release-manifester som Headend kan binde til change tickets og stille klar til Edge pull-flow.
+            Release- og OS-manifester som Headend kan binde til change tickets og stille klar til Edge pull-flow.
           </p>
         </div>
-        <button onClick={onCatalogCurrent} disabled={busy}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
-          <Fingerprint className="w-3.5 h-3.5" />
-          Registrer aktuel release
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setOsOpen(o => !o)} disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white text-gray-700 border border-gray-200 rounded-lg disabled:opacity-50">
+            <Package className="w-3.5 h-3.5" />
+            OS bundle
+          </button>
+          <button onClick={onCatalogCurrent} disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
+            <Fingerprint className="w-3.5 h-3.5" />
+            Registrer aktuel release
+          </button>
+        </div>
       </div>
+      {osOpen && (
+        <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <div>
+              <label className="block text-gray-500 mb-1">Bundle-sti på Headend</label>
+              <input value={osPath} onChange={e => setOsPath(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono" />
+            </div>
+            <div>
+              <label className="block text-gray-500 mb-1">Version</label>
+              <input value={osVersion} onChange={e => setOsVersion(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono" />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-gray-500 mb-1">Install commands JSON</label>
+              <textarea value={osCommands} onChange={e => setOsCommands(e.target.value)}
+                className="w-full min-h-20 border border-gray-200 rounded-lg px-3 py-2 font-mono" />
+              <p className="mt-1 text-[11px] text-gray-400">
+                Bundlet skal være bygget i lab og indeholde packages/*.deb, package-manifest.json og verify-installed.sh.
+              </p>
+            </div>
+          </div>
+          <button onClick={() => onCatalogOsBundle({
+            storage_path: osPath,
+            version: osVersion,
+            commands_json: osCommands,
+          })} disabled={busy}
+            className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
+            <FileCheck className="w-3.5 h-3.5" />
+            Registrer signeret OS artifact
+          </button>
+        </div>
+      )}
       {artifacts.length === 0 ? (
         <div className="px-5 py-8 text-center text-sm text-gray-400">
           Ingen artifacts registreret endnu.
@@ -466,9 +1015,137 @@ function ArtifactCatalog({
   )
 }
 
+function LabCatalogImport({
+  onImport,
+  onRefreshBuilder,
+  busy,
+}: {
+  onImport: (payload: Record<string, unknown>) => void
+  onRefreshBuilder: (payload: Record<string, unknown>) => void
+  busy: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [deviceId, setDeviceId] = useState('TL-C87FF9587CA0')
+  const [environment, setEnvironment] = useState('lab')
+  const [source, setSource] = useState('lab-import:ubuntu-24.04-arm64')
+  const [aptText, setAptText] = useState('')
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-5">
+      <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+            <Shield className="w-4 h-4 text-gray-500" />
+            Lab-katalog til Edge OS updates
+          </h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Importerer lab/mirror apt-output, reconciler mod CMDB og opretter blokerede update-poster indtil der findes signeret OS bundle.
+          </p>
+        </div>
+        <button onClick={() => setOpen(o => !o)} disabled={busy}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white text-gray-700 border border-gray-200 rounded-lg disabled:opacity-50">
+          <Package className="w-3.5 h-3.5" />
+          Importér katalog
+        </button>
+      </div>
+      {open && (
+        <div className="px-5 py-4 bg-gray-50">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div>
+              <label className="block text-gray-500 mb-1">Device ID</label>
+              <input value={deviceId} onChange={e => setDeviceId(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono" />
+            </div>
+            <div>
+              <label className="block text-gray-500 mb-1">Miljø</label>
+              <select value={environment} onChange={e => setEnvironment(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2">
+                <option value="lab">Lab</option>
+                <option value="staging">Staging</option>
+                <option value="production">Production</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-gray-500 mb-1">Kilde</label>
+              <input value={source} onChange={e => setSource(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono" />
+            </div>
+            <div className="md:col-span-3">
+              <label className="block text-gray-500 mb-1">Lab-output fra apt list --upgradable</label>
+              <textarea value={aptText} onChange={e => setAptText(e.target.value)}
+                placeholder={'Listing...\\nlibssl3/noble-security 3.0.13-0ubuntu3.5 arm64 [upgradable from: 3.0.13-0ubuntu3.4]'}
+                className="w-full min-h-36 border border-gray-200 rounded-lg px-3 py-2 font-mono text-[11px]" />
+              <p className="mt-1 text-[11px] text-gray-400">
+                Listen må komme fra lab/mirror-hosten. Edge bruger den ikke som beslutningskilde og må stadig ikke køre online apt upgrade.
+              </p>
+            </div>
+          </div>
+          <button onClick={() => onImport({
+            device_id: deviceId.trim(),
+            environment,
+            source: source.trim() || undefined,
+            apt_list_text: aptText,
+            create_updates: true,
+          })} disabled={busy || !deviceId.trim() || !aptText.trim()}
+            className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
+            <FileCheck className="w-3.5 h-3.5" />
+            Reconcile og opret blokerede updates
+          </button>
+          <button onClick={() => onRefreshBuilder({
+            device_id: deviceId.trim(),
+            environment,
+            source: `mac-docker-builder:${deviceId.trim()}`,
+            image: 'ubuntu:24.04',
+            architecture: 'arm64',
+            create_updates: true,
+          })} disabled={busy || !deviceId.trim()}
+            className="mt-3 ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white text-gray-700 border border-gray-200 rounded-lg disabled:opacity-50">
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh fra CMDB/Mac-builder
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function UpdateJobsPanel({ jobs }: { jobs: Record<string, UpdateJobStatus> }) {
+  const items = Object.values(jobs).sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || ''))).slice(0, 5)
+  if (items.length === 0) return null
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-5">
+      <div className="px-5 py-4 border-b border-gray-100">
+        <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+          <Clock className="w-4 h-4 text-gray-500" />
+          Update jobs
+        </h2>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {items.map(job => (
+          <div key={job.job_id} className="px-5 py-3 text-xs">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-gray-800 truncate">{job.title}</div>
+                <div className="mt-0.5 text-gray-400 font-mono truncate">{job.job_id} · {job.phase}</div>
+              </div>
+              <span className={`px-2 py-0.5 rounded border ${job.status === 'done' ? 'bg-green-50 text-green-700 border-green-200' : job.status === 'failed' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-sky-50 text-sky-700 border-sky-200'}`}>
+                {job.running ? 'Kører' : job.status}
+              </span>
+            </div>
+            <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div className={`h-full ${job.status === 'failed' ? 'bg-red-500' : job.status === 'done' ? 'bg-green-500' : 'bg-sky-500'}`} style={{ width: `${Math.max(0, Math.min(100, job.progress || 0))}%` }} />
+            </div>
+            {job.message && <div className="mt-2 text-gray-500">{job.message}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'pending',  label: 'Afventer' },
   { key: 'approved', label: 'Godkendt' },
+  { key: 'blocked', label: 'Blokeret' },
   { key: 'deployed', label: 'Deployet' },
   { key: 'rejected',     label: 'Afvist' },
   { key: 'rolled_back',  label: 'Rullet tilbage' },
@@ -485,24 +1162,54 @@ export function UpdatesPage() {
   const [lastRefresh, setLast]      = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError]           = useState<string | null>(null)
+  const [notice, setNotice]         = useState<string | null>(null)
   const [approveId, setApproveId]   = useState<number | null>(null)
+  const [headendDeployStatus, setHeadendDeployStatus] = useState<Record<number, HeadendDeployStatus>>({})
+  const [flowStatuses, setFlowStatuses] = useState<Record<number, UpdateFlowStatus>>({})
+  const [updateJobs, setUpdateJobs] = useState<Record<string, UpdateJobStatus>>({})
+  const [watchedUpdateIds, setWatchedUpdateIds] = useState<number[]>([])
   const [approveOpts, setApproveOpts] = useState<ApproveOptions>({
     environment: 'production', scope: 'device', scope_id: ''
   })
 
-  const load = useCallback(async (spin = false) => {
+  const load = useCallback(async (spin = false, filterOverride?: Filter) => {
     if (spin) setRefreshing(true)
     setError(null)
     try {
-      const params = filter === 'all' ? '' : `?status=${filter}`
+      const activeFilter = filterOverride ?? filter
+      const params = activeFilter === 'all' ? '' : `?status=${activeFilter}`
       const [data, matrixData, artifactData] = await Promise.all([
         api(`/api/updates/pending${params}`),
         api('/api/updates/device-matrix'),
         api('/api/updates/artifacts'),
       ])
-      setUpdates(Array.isArray(data) ? data : [])
+      const updateList = Array.isArray(data) ? data as Update[] : []
+      setUpdates(updateList)
       setMatrix(matrixData && Array.isArray(matrixData.devices) ? matrixData : null)
       setArtifacts(Array.isArray(artifactData) ? artifactData : [])
+      const flowPairs = await Promise.all(updateList.map(async u => {
+        try {
+          const status = await api(`/api/updates/${u.id}/flow-status`)
+          return [u.id, status as UpdateFlowStatus] as const
+        } catch (e: any) {
+          return [u.id, {
+            update_id: u.id,
+            status: u.status,
+            stage: { key: 'unavailable', label: 'Flow-status utilgængelig' },
+            artifact: null,
+            ticket_id: null,
+            targets: [],
+            next_edge_poll: '',
+            error: e?.message || 'ukendt fejl',
+          } as UpdateFlowStatus] as const
+        }
+      }))
+      const nextFlowStatuses: Record<number, UpdateFlowStatus> = {}
+      for (const [id, value] of flowPairs) {
+        if (value) nextFlowStatuses[id] = value
+      }
+      setFlowStatuses(nextFlowStatuses)
+      setWatchedUpdateIds(ids => ids.filter(id => isActiveFlow(nextFlowStatuses[id])))
       setLast(new Date())
     } catch (e: any) {
       setError(`Kunne ikke hente opdateringer (${e.message})`)
@@ -513,6 +1220,18 @@ export function UpdatesPage() {
   }, [filter])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    const shouldPoll =
+      watchedUpdateIds.length > 0 ||
+      updates.some(u => u.status === 'approved') ||
+      Object.values(flowStatuses).some(isActiveFlow)
+    if (!shouldPoll || loading || refreshing) return
+    const timer = window.setInterval(() => {
+      load(false)
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [watchedUpdateIds, updates, flowStatuses, loading, refreshing, load])
 
   async function approve(id: number) {
     if (approveOpts.scope === 'device' && !approveOpts.scope_id.trim()) {
@@ -528,7 +1247,9 @@ export function UpdatesPage() {
     try {
       await api(`/api/updates/${id}/approve`, { method: 'POST', body: JSON.stringify(payload) })
       setApproveId(null)
-      load()
+      setWatchedUpdateIds(ids => ids.includes(id) ? ids : [...ids, id])
+      setFilter('all')
+      await load(false, 'all')
     }
     catch (e: any) { setError(e.message) }
     finally { setBusy(null) }
@@ -541,9 +1262,22 @@ export function UpdatesPage() {
     finally { setBusy(null) }
   }
 
-  async function promote(id: number) {
+  async function promote(id: number, target: 'staging' | 'production' = 'production') {
     setBusy(id)
-    try { await api(`/api/updates/${id}/promote`, { method: 'POST' }); load() }
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await api(`/api/updates/${id}/promote`, {
+        method: 'POST',
+        body: JSON.stringify({ target_environment: target }),
+      })
+      setFilter(target === 'staging' ? 'approved' : 'pending')
+      setNotice(result.existing
+        ? `${target === 'staging' ? 'Staging' : 'Prod-klar'} opdatering findes allerede som #${result.new_id}`
+        : `${target === 'staging' ? 'Staging' : 'Prod-klar'} opdatering oprettet som #${result.new_id}`
+      )
+      await load(false, target === 'staging' ? 'approved' : 'pending')
+    }
     catch (e: any) { setError(e.message) }
     finally { setBusy(null) }
   }
@@ -554,6 +1288,97 @@ export function UpdatesPage() {
     try { await api(`/api/updates/${id}/force-rollback`, { method: 'POST' }); load() }
     catch (e: any) { setError(e.message) }
     finally { setBusy(null) }
+  }
+
+  async function bindArtifact(id: number, artifactId: string) {
+    setBusy(id)
+    setError(null)
+    try {
+      await api(`/api/updates/${id}/bind-artifact`, {
+        method: 'POST',
+        body: JSON.stringify({ artifact_id: artifactId }),
+      })
+      setFilter('pending')
+      setNotice(`Artifact ${artifactId} er bundet til update #${id}. Den ligger nu i Afventer til godkendelse.`)
+      await load(false, 'pending')
+    } catch (e: any) {
+      setError(`Kunne ikke binde artifact (${e.message})`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function pollUpdateJob(jobId: string, reloadFilter?: Filter) {
+    for (let i = 0; i < 360; i++) {
+      const status = await api(`/api/updates/jobs/${jobId}`) as UpdateJobStatus
+      setUpdateJobs(jobs => ({ ...jobs, [jobId]: status }))
+      if (!status.running) {
+        if (status.status === 'done') {
+          setNotice(status.message || 'Job færdigt')
+          await load(false, reloadFilter)
+        } else {
+          setError(status.error || status.message || 'Update job fejlede')
+        }
+        return status
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000))
+    }
+    throw new Error('Job timeout')
+  }
+
+  async function buildOsBundle(id: number) {
+    if (!confirm('Byg OS artifact via Headend Mac-builder og bind det til denne update?')) return
+    setBusy(id)
+    setError(null)
+    setNotice(null)
+    try {
+      const started = await api(`/api/updates/${id}/os-bundle/build-bind-job`, {
+        method: 'POST',
+        body: JSON.stringify({
+          builder_mode: 'auto',
+          architecture: 'arm64',
+          image: 'ubuntu:24.04',
+        }),
+      })
+      setUpdateJobs(jobs => ({ ...jobs, [started.job_id]: started.status }))
+      setNotice(`OS artifact job startet: ${started.job_id}`)
+      await pollUpdateJob(started.job_id, 'pending')
+      setFilter('pending')
+    } catch (e: any) {
+      setError(`Kunne ikke bygge OS artifact (${e.message})`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function refreshHeadendDeployStatus(id: number) {
+    const status = await api(`/api/updates/${id}/headend-deploy/status`)
+    setHeadendDeployStatus(s => ({ ...s, [id]: status }))
+    return status as HeadendDeployStatus
+  }
+
+  async function headendDeploy(id: number) {
+    const update = updates.find(u => u.id === id)
+    const actionLabel = update?.environment === 'production'
+      ? 'Aktivér den godkendte Headend-opdatering i production? Der køres postflight-validering uden ny brew upgrade på samme Headend.'
+      : 'Installer den godkendte Headend-opdatering i test/lab? Relevante services kan være kortvarigt utilgængelige.'
+    if (!confirm(actionLabel)) return
+    setBusy(id)
+    setError(null)
+    try {
+      const started = await api(`/api/updates/${id}/headend-deploy`, { method: 'POST' })
+      setHeadendDeployStatus(s => ({ ...s, [id]: started.status }))
+      for (let i = 0; i < 180; i++) {
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        const status = await refreshHeadendDeployStatus(id)
+        if (!status.running) break
+      }
+      await load()
+    } catch (e: any) {
+      setError(`Headend-installation fejlede (${e.message})`)
+    } finally {
+      setBusy(null)
+    }
   }
 
   async function catalogCurrentRelease() {
@@ -569,7 +1394,74 @@ export function UpdatesPage() {
     }
   }
 
+  async function catalogOsBundle(payload: Record<string, unknown>) {
+    setRefreshing(true)
+    setError(null)
+    try {
+      const commandsJson = String(payload.commands_json || '[]')
+      const commands = JSON.parse(commandsJson)
+      await api('/api/updates/artifacts/catalog-os-bundle', {
+        method: 'POST',
+        body: JSON.stringify({
+          storage_path: payload.storage_path,
+          version: payload.version,
+          commands,
+        }),
+      })
+      await load()
+    } catch (e: any) {
+      setError(`Kunne ikke registrere OS artifact (${e.message})`)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  async function importLabCatalog(payload: Record<string, unknown>) {
+    setRefreshing(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await api('/api/updates/os-catalog/import-apt-list', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      const summary = result.summary || {}
+      setFilter('blocked')
+      setNotice(`Lab-katalog importeret: ${summary.os_security || 0} security og ${summary.os_updates || 0} funktionelle pakker. Plan: ${result.plan_path}`)
+      await load(false, 'blocked')
+    } catch (e: any) {
+      setError(`Kunne ikke importere lab-katalog (${e.message})`)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  async function refreshCatalogFromBuilder(payload: Record<string, unknown>) {
+    if (!confirm('Generér OS-katalog fra CMDB via Mac Docker-builder? Det kan tage nogle minutter.')) return
+    setRefreshing(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const started = await api('/api/updates/os-catalog/refresh-from-builder-job', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      setUpdateJobs(jobs => ({ ...jobs, [started.job_id]: started.status }))
+      setNotice(`Mac-builder katalogjob startet: ${started.job_id}`)
+      await pollUpdateJob(started.job_id, 'blocked')
+      setFilter('blocked')
+    } catch (e: any) {
+      setError(`Kunne ikke refreshe OS-katalog fra Mac-builder (${e.message})`)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   const pending = updates.filter(u => u.status === 'pending').length
+  const autoPolling =
+    watchedUpdateIds.length > 0 ||
+    updates.some(u => u.status === 'approved') ||
+    Object.values(flowStatuses).some(isActiveFlow)
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -596,6 +1488,12 @@ export function UpdatesPage() {
               {lastRefresh.toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
+          {autoPolling && (
+            <span className="text-xs text-sky-600 flex items-center gap-1">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              Auto-opdaterer flow
+            </span>
+          )}
           <button onClick={() => load(true)} disabled={refreshing}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50">
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
@@ -607,6 +1505,11 @@ export function UpdatesPage() {
       {error && (
         <div className="flex items-center gap-2 bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-lg mb-4">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {error}
+        </div>
+      )}
+      {notice && (
+        <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm px-4 py-3 rounded-lg mb-4">
+          <CheckCircle className="w-4 h-4 flex-shrink-0" /> {notice}
         </div>
       )}
 
@@ -628,9 +1531,22 @@ export function UpdatesPage() {
         ))}
       </div>
 
+      <UpdateJobsPanel jobs={updateJobs} />
+
       <DeviceUpdateMatrix matrix={matrix} />
 
-      <ArtifactCatalog artifacts={artifacts} onCatalogCurrent={catalogCurrentRelease} busy={refreshing} />
+      <LabCatalogImport
+        onImport={importLabCatalog}
+        onRefreshBuilder={refreshCatalogFromBuilder}
+        busy={refreshing}
+      />
+
+      <ArtifactCatalog
+        artifacts={artifacts}
+        onCatalogCurrent={catalogCurrentRelease}
+        onCatalogOsBundle={catalogOsBundle}
+        busy={refreshing}
+      />
 
       {approveId !== null && (
         <div className="bg-white rounded-xl border border-green-200 p-4 mb-4 shadow-sm">
@@ -641,8 +1557,8 @@ export function UpdatesPage() {
               <select value={approveOpts.environment}
                 onChange={e => setApproveOpts(o => ({...o, environment: e.target.value as any}))}
                 className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
-                <option value="test">🧪 Test (deploy til testmiljø først)</option>
-                <option value="production">🚀 Produktion</option>
+                <option value="test">Test (deploy til testmiljø først)</option>
+                <option value="production">Produktion</option>
               </select>
             </div>
             <div>
@@ -692,7 +1608,25 @@ export function UpdatesPage() {
           </div>
         ) : (
           updates.map(u => (
-            <UpdateRow key={u.id} u={u} onApprove={id => { setApproveId(id); setApproveOpts({environment:'production',scope:'device',scope_id:u.scope_id||''}) }} onReject={reject} onPromote={id => promote(id)} onRollback={id => forceRollback(id)} busy={busy} />
+            <UpdateRow key={u.id} u={u}
+              onApprove={id => {
+                setApproveId(id)
+                setApproveOpts({
+                  environment: (u.environment === 'test' || u.environment === 'production') ? u.environment : 'production',
+                  scope: 'device',
+                  scope_id: u.scope_id || ''
+                })
+              }}
+              onReject={reject}
+              onPromote={(id, target) => promote(id, target)}
+              onRollback={id => forceRollback(id)}
+              onHeadendDeploy={headendDeploy}
+              onBindArtifact={bindArtifact}
+              onBuildOsBundle={buildOsBundle}
+              busy={busy}
+              deployStatus={headendDeployStatus[u.id]}
+              flowStatus={flowStatuses[u.id]}
+            />
           ))
         )}
       </div>

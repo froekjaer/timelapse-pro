@@ -53,6 +53,21 @@ FLEET_DEFAULTS = {
     "metering_mode": "Evaluative",
 }
 
+VALUE_ALIASES = {
+    "white_balance": {
+        "automatic": "auto",
+        "awb white": "auto",
+        "awb": "auto",
+    },
+    "iso": {
+        "auto iso": "auto",
+    },
+    "focus_mode": {
+        "mf": "manual",
+        "manual focus": "manual",
+    },
+}
+
 # Shutter life ratings per camera model (conservative estimate)
 SHUTTER_RATINGS = {
     "Canon EOS 1300D": 100_000,
@@ -77,6 +92,11 @@ def _read_gphoto2_param(param_path: str, timeout: int = 5) -> Optional[str]:
     except Exception as exc:
         log.debug("gphoto2 read failed for %s: %s", param_path, exc)
     return None
+
+
+def _normalise_config_value(key: str, value: object) -> str:
+    text = str(value).strip().lower()
+    return VALUE_ALIASES.get(key, {}).get(text, text)
 
 
 def collect_camera_diagnostics(
@@ -137,15 +157,17 @@ def collect_camera_diagnostics(
         if val is not None:
             result["camera_config"][key] = val
 
-    # Check for config drift against expected values
-    expected = dict(FLEET_DEFAULTS)
-    if expected_overrides:
-        expected.update(expected_overrides)
+    # Check for config drift against expected values. If the caller provides an
+    # expected map, treat it as authoritative; otherwise use legacy fleet defaults.
+    expected = dict(FLEET_DEFAULTS) if expected_overrides is None else dict(expected_overrides)
 
     drift = []
     for key, expected_val in expected.items():
         actual_val = result["camera_config"].get(key)
-        if actual_val is not None and str(actual_val) != str(expected_val):
+        if (
+            actual_val is not None
+            and _normalise_config_value(key, actual_val) != _normalise_config_value(key, expected_val)
+        ):
             drift.append({
                 "param":    key,
                 "expected": expected_val,

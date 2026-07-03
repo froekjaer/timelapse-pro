@@ -18,7 +18,7 @@ Brug (fra Python):
   from headend.tools.build_edge_disk_image import build_edge_image
   result = build_edge_image(
       target="rpi4",
-      headend_url="https://timelapse.froekjaer.dk/api",
+      headend_url="http://127.0.0.1:8000/api",
       gpg_key_id="EE347E3F8E89F2FFD5EC4A36F8DEEDDDC2A03552",
       progress_cb=print,
   )
@@ -266,7 +266,7 @@ def _dockerfile_for_target(target: dict, repo_root: Path, progress: Callable[[st
 
 def build_edge_image(
     target: str = "orangepi4pro",
-    headend_url: str = "https://timelapse.froekjaer.dk/api",
+    headend_url: str | None = None,
     gpg_key_id: str | None = None,
     progress_cb: Callable[[str], None] = print,
     repo_root: str | None = None,
@@ -277,7 +277,7 @@ def build_edge_image(
 
     Args:
         target:      Hardware target ID (se hardware/ directory)
-        headend_url: URL til headend API
+        headend_url: URL til headend API (None = TIMELAPSE_HEADEND_URL eller lokal bootstrap)
         gpg_key_id:  GPG-nøgle til signering (None = hash-binding)
         progress_cb: Callback for build-output (stream til UI/log)
         repo_root:   Sti til git-repo root (None = auto-detect)
@@ -285,6 +285,7 @@ def build_edge_image(
 
     Returnerer dict med artifact_id, paths, sha256, manifest, SBOM etc.
     """
+    headend_url = (headend_url or os.environ.get("TIMELAPSE_HEADEND_URL") or "http://127.0.0.1:8000/api").rstrip("/")
     root = Path(repo_root or _find_repo_root())
     out_dir = Path(output_dir or tempfile.mkdtemp(prefix=f"timelapse-edge-{target}-"))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -535,7 +536,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--headend-url",
-        default="https://timelapse.froekjaer.dk/api",
+        default=os.environ.get("TIMELAPSE_HEADEND_URL", "http://127.0.0.1:8000/api"),
     )
     parser.add_argument(
         "--gpg-key",

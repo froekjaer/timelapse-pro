@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
+import { VirtualImageGrid } from '../components/VirtualImageGrid'
 
 const apiCall = async (path: string, options?: RequestInit) => {
   const base = getApiUrl()
@@ -680,14 +681,17 @@ export default function TimelapseVideoPage() {
                 )}
               </div>
 
-              {/* Grid */}
-              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-8 2xl:grid-cols-12 gap-1.5">
-                {frames.map((frame, idx) => {
+              {/* Virtuel grid — renderer KUN synlige frames, så 21.000+ ikke vælter browseren */}
+              <VirtualImageGrid
+                count={frames.length}
+                minColWidth={96}
+                gap={6}
+                renderItem={(idx) => {
+                  const frame = frames[idx]
                   const isExcluded = excluded.has(frame.id)
                   return (
                     <div
-                      key={frame.id}
-                      className={isExcluded ? 'opacity-30 scale-95 transition-all' : 'transition-all'}
+                      className={`w-full h-full ${isExcluded ? 'opacity-30 scale-95 transition-all' : 'transition-all'}`}
                       title={`${fmtDate(frame.captured_at)}\nFrame ${idx + 1}`}
                     >
                       <CaptureThumbnailCard
@@ -697,14 +701,14 @@ export default function TimelapseVideoPage() {
                         onClick={() => toggleFrame(frame.id)}
                         overlay={isExcluded ? (
                           <div className="absolute inset-0 flex items-center justify-center bg-red-400/15">
-                          <X className="w-6 h-6 text-red-400" />
+                            <X className="w-6 h-6 text-red-400" />
                           </div>
                         ) : null}
                       />
                     </div>
                   )
-                })}
-              </div>
+                }}
+              />
 
               <p className="text-xs text-white/30 text-center">
                 Klik på et billede for at inkludere/ekskludere det fra videoen

@@ -11,11 +11,13 @@ from pathlib import Path
 from typing import Optional
 
 try:
-    from .ollama_service import GDPRFlag, MAX_IMAGE_BYTES, ImageAnalysisResult
+    from .ollama_service import GDPRFlag, MAX_IMAGE_BYTES, ImageAnalysisResult, _resize_with_pil
+    from .tag_vocabulary import normalize_tag
 except ImportError:
     if __package__:
         raise
-    from ollama_service import GDPRFlag, MAX_IMAGE_BYTES, ImageAnalysisResult
+    from ollama_service import GDPRFlag, MAX_IMAGE_BYTES, ImageAnalysisResult, _resize_with_pil
+    from tag_vocabulary import normalize_tag
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +29,12 @@ RETRYABLE_ERROR_MARKERS = (
     "temporarily",
     "high demand",
 )
-GEMINI_MAX_IMAGE_EDGE = 1920
+# Billedbudget til Gemini (cloud). Det DELTE MAX_IMAGE_BYTES=900KB var tænkt til
+# den lille lokale Ollama — for Gemini krympede det 6-7 MB fotos til ~890 px, så
+# fjerne detaljer (tegltage, kirketårn, arbejdere) forsvandt. Gemini 2.5 håndterer
+# store billeder fint, så vi giver den et meget større budget → langt rigere tags.
+GEMINI_MAX_IMAGE_EDGE  = int(os.getenv("TIMELAPSE_GEMINI_MAX_IMAGE_EDGE", "3072"))
+GEMINI_MAX_IMAGE_BYTES = int(os.getenv("TIMELAPSE_GEMINI_MAX_IMAGE_BYTES", str(4_000_000)))
 
 # Rå JSON-schema (dict) — bruges til Batch API (JSONL skal være json.dumps'bar,
 # kan ikke indeholde types.Schema-objekter). Skal afspejle samme struktur som
@@ -86,38 +93,78 @@ def build_prompt_text(
     vocabulary_by_cat: dict[str, list[str]],
     has_reference: bool = False,
     prompt_examples: Optional[list[str]] = None,
+    context_block: str = "",
 ) -> str:
-    """Byg analyse-prompten — delt mellem synkron analyse() og batch-requests."""
+    """Byg analyse-prompten — delt mellem synkron analyse() og batch-requests.
+
+    HYBRID, ÅBENT vokabular (v4): modellen tagger FRIT hvad den faktisk ser.
+    Listen herunder er INSPIRATION og hjælp til ensartede ord — IKKE en
+    afkrydsningsliste. Tidligere blev hele vokabularet rakt frem med "match
+    EXACTLY", hvilket fik modellen til at rapportere fravær (no_crane,
+    no_worker). Den adfærd er nu eksplicit forbudt.
+
+    context_block: valgfri kontekstblok (kunde/site/kamera/tid/baseline) fra
+                   capture_context.format_context_block().
+    """
+    # Vokabularet vises kompakt som inspiration. Vi viser kategori + ord, men
+    # rammer det som "almindelige ord", ikke som en lukket liste.
     vocab_lines = [f"  [{cat}]: {', '.join(tags)}" for cat, tags in vocabulary_by_cat.items()]
     examples_txt = ""
     if prompt_examples:
-        examples_txt = "\n## LAERTE EKSEMPLER\n" + "\n".join(
+        examples_txt = "\n## LÆRTE EKSEMPLER (tidligere godkendte tags — til inspiration)\n" + "\n".join(
             f"  - {example}" for example in prompt_examples[:10]
         )
     change_txt = ""
     if has_reference:
         change_txt = (
-            "\nDu modtager TO billeder: BILLEDE 1 = reference, "
-            "BILLEDE 2 = aktuelt.\n"
+            "\n## ÆNDRING SIDEN SIDST\n"
+            "Du modtager TO billeder: BILLEDE 1 = referencebillede (tidligere), "
+            "BILLEDE 2 = det aktuelle billede du skal analysere. Beskriv i "
+            '"change" hvad der konkret er nyt, fjernet eller flyttet. Ignorer '
+            "rene lys-/vejrforskelle som 'ændring'.\n"
         )
-    return f"""You are a precise AI system for Danish construction sites.
-## TAG VOCABULARY (canonical — ENGLISH)
+    context_txt = f"\n{context_block}\n" if context_block else ""
+
+    return f"""You are an expert AI observer for outdoor time-lapse cameras (typically Danish construction sites, but NOT always — it may be landscape, a street, a yard or a roof).
+
+Your job is to look at the image like an attentive human guard would and describe what is ACTUALLY there — freely and in your own words — with special attention to anything unusual, new or worth a second look.
+{context_txt}
+## HOW TO TAG (open vocabulary)
+- Describe the WHOLE scene, not just the weather. Name the actual content: structures (roofs, roof type, facades, gables, chimneys, windows), building types (house, apartment block, etc.), vegetation (trees, forest, hedge, grass, garden), vehicles, terrain and surroundings (road, city view, hills, water) — and on a building site also the machinery, materials and construction stage. THEN add light/weather and finally image quality.
+- There is NO rigid quota, but a content-rich image deserves a THOROUGH set — typically 12–25 tags. Only return few tags when the image is genuinely simple (e.g. nothing but sky). Never pad with things that aren't there.
+- Tags MUST be English, lowercase, underscore_separated (e.g. "tower_crane", "roof_tiles", "car_in_driveway").
+- Tag ONLY what is genuinely visible. NEVER tag the ABSENCE of something. Do not output tags like "no_crane", "no_worker", "no_activity", "nothing_unusual" — if it isn't there, simply don't mention it.
+- The vocabulary below is INSPIRATION and helps keep wording consistent — it is NOT a checklist. If a word fits exactly, reuse it (put it in "tags"). If you need a word that isn't listed, invent it and put it in "new_tags".
+- CONSISTENCY: if a listed word already covers the concept, REUSE it instead of inventing a near-synonym — use "city_view" (not "view_over_town"/"landscape_view"), "residential_area" (not "residential_housing"). One concept = one tag.
+- Tags MUST be English even for Danish-specific things: "danish_flag" (not "dannebrog"), "construction_site" (not "byggeplads").
+- Do not assume construction. If the scene is mainly landscape, rooftops, a street or a yard, tag THAT richly (roofs, trees, buildings, city view, vehicles …).
+
+## TAG VOCABULARY (inspiration — reuse when it fits)
 {chr(10).join(vocab_lines)}
 {examples_txt}
-## RULES
-- Match words from the list EXACTLY and put them in "tags". Tags MUST be English.
-- New words you invent go in "new_tags" (also ENGLISH, lowercase, underscore). Find between 15 and 35 tags total.
-- "new_tags_da" MUST be a PARALLEL ARRAY to "new_tags" — same length, same order.
-  For each tag in "new_tags" at position i, put your best short, natural DANISH
-  translation at position i in "new_tags_da". Example:
-  "new_tags": ["loading_ramp", "site_office"], "new_tags_da": ["lastrampe", "byggekontor"]
-  This is just a SUGGESTION a human will review afterwards — do your best, it does not need to be perfect.
-  If "new_tags" is empty, "new_tags_da" must also be an empty array.
+## EVENTS & ANOMALIES (look actively for these — tag them when present)
+- Safety/emergency: fire, smoke, flames, flooding, water_damage, structural_damage, crack, collapse_risk, accident.
+- Emergency vehicles: ambulance, fire_truck, police_car.
+- Security/novelty: unauthorized_person, unknown_vehicle, person_at_night, vehicle_at_night, people_in_normally_empty_area, abandoned_equipment, vandalism, theft_risk, animal_on_site.
+- Use the KONTEXT above to judge what is UNUSUAL for THIS camera (e.g. a vehicle in a driveway that the baseline doesn't describe, or people present at night).
+- When you tag something from this group, mention it briefly in "scene" so a human knows why.
+
+## IMAGE QUALITY (judge independently of the scene)
+- Set "quality.flag" to the single most relevant of: clear_image, overexposed, underexposed, blown_highlights, glare, sun_in_lens, lens_flare, low_contrast, dirty_lens, condensation_on_lens, foggy_image, motion_blur, incorrect_focus, obstruction_in_front_of_camera, night_image_ok, night_image_too_dark, camera_moved.
+- "quality.ok" = false if the image is hard to use for documentation (heavy glare/overexposure, blur, dirty lens, too dark, obstruction). Otherwise true.
+- You may ALSO add relevant quality words to "tags" (e.g. "glare", "overexposed", "dirty_lens") so they are searchable.
+- DEAD FRAMES — use VERY sparingly: tag "unusable_image" (quality.ok=false) ONLY when the frame has NO discernible content at all — a uniform blank/black/gray sensor error, a total whiteout, or the lens fully blocked. If you can make out ANY real content — ground, a wall, a roof, structures, vegetation, sky, vehicles — even in dull, flat, overcast or low-contrast light, or even if a large part of the frame is a single gray surface, it is NOT unusable: describe what you see normally. An overcast or gray scene is a REAL scene, not a dead frame. When you do use "unusable_image", use that ONE tag only — never invent synonyms (gray_image, blank_image, image_error …) and add no scene/weather tags.
+
+## DANISH TRANSLATIONS FOR NEW TAGS
+- "new_tags_da" MUST be a PARALLEL ARRAY to "new_tags" — same length, same order. For each new tag, give a short natural Danish translation (e.g. "new_tags": ["loading_ramp"], "new_tags_da": ["lastrampe"]). It's a suggestion a human reviews later. If "new_tags" is empty, "new_tags_da" is also empty.
+
+## GDPR
+- Report ONLY presence/count of persons, faces and license plates in "gdpr". NEVER read or transcribe names or plate text.
 {change_txt}
 ## RETURN ONLY JSON
 {{
-  "scene": "Description in Danish (this stays Danish — it's free text, not a tag)",
-  "tags": ["tag1"],
+  "scene": "Kort dansk beskrivelse af hvad billedet viser — nævn særligt det usædvanlige (fri tekst, ikke et tag)",
+  "tags": ["tag1", "tag2"],
   "new_tags": [],
   "new_tags_da": [],
   "confidence": 0.90,
@@ -172,6 +219,7 @@ class GeminiVisionService:
         approved_tag_set: set[str],
         reference_image_path: Optional[Path | str] = None,
         prompt_examples: Optional[list[str]] = None,
+        context_block: str = "",
     ) -> ImageAnalysisResult:
         from google.genai import types
 
@@ -181,6 +229,7 @@ class GeminiVisionService:
             vocabulary_by_cat,
             has_reference=bool(reference_image_path),
             prompt_examples=prompt_examples,
+            context_block=context_block,
         )
 
         contents = [prompt]
@@ -263,7 +312,9 @@ class GeminiVisionService:
         response = self._generate_content_with_retry(
             contents=contents,
             config=types.GenerateContentConfig(
-                temperature=0.1,
+                # Hævet fra 0.1: åbent vokabular kræver lidt mere frihed til at
+                # finde dækkende, naturlige ord — stadig lavt nok til konsistens.
+                temperature=0.35,
                 max_output_tokens=8192,
                 response_mime_type="application/json",
                 response_schema=response_schema,
@@ -316,7 +367,7 @@ class GeminiVisionService:
         from google.genai import types
 
         data = Path(path).read_bytes()
-        if len(data) > MAX_IMAGE_BYTES or self._should_resize_by_dimensions(data):
+        if len(data) > GEMINI_MAX_IMAGE_BYTES or self._should_resize_by_dimensions(data):
             data = self._resize(data)
         return types.Part.from_bytes(data=data, mime_type="image/jpeg")
 
@@ -345,15 +396,17 @@ class GeminiVisionService:
                 return data[:MAX_IMAGE_BYTES]
             h, w = img.shape[:2]
             dimension_scale = min(1.0, GEMINI_MAX_IMAGE_EDGE / max(w, h))
-            byte_scale = min(1.0, (MAX_IMAGE_BYTES / len(data)) ** 0.5 * 0.9)
+            byte_scale = min(1.0, (GEMINI_MAX_IMAGE_BYTES / len(data)) ** 0.5 * 0.9)
             scale = min(dimension_scale, byte_scale)
             if scale >= 1.0:
                 return data
             img = cv2.resize(img, (int(w * scale), int(h * scale)))
-            _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
             return buf.tobytes()
         except Exception:
-            return data[:MAX_IMAGE_BYTES]
+            # cv2 mangler/fejler (fx venv på flaky volumen) — prøv PIL, så vi stadig
+            # nedskalerer. ALDRIG trunker bytes (det giver et korrupt JPEG til Gemini).
+            return _resize_with_pil(data, GEMINI_MAX_IMAGE_EDGE, GEMINI_MAX_IMAGE_BYTES)
 
     def _is_retryable_error(self, exc: Exception) -> bool:
         text = str(exc)
@@ -391,15 +444,21 @@ class GeminiVisionService:
         duration_ms: int,
         raw_text: str,
     ) -> ImageAnalysisResult:
-        all_tags = [str(tag).lower().strip() for tag in parsed.get("tags", [])]
-        raw_new = [str(tag).lower().strip() for tag in parsed.get("new_tags", [])]
+        # normalize_tag bringer tags på kanonisk form og kollapser synonymer/danske
+        # leaks, så søgning bliver ensartet (city_view i stedet for 10 varianter).
+        # dedup (dict.fromkeys bevarer rækkefølge) — undgår dubletter som "trees","trees"
+        all_tags = list(dict.fromkeys(t for t in (normalize_tag(tag) for tag in parsed.get("tags", [])) if t))
+        raw_new = list(dict.fromkeys(t for t in (normalize_tag(tag) for tag in parsed.get("new_tags", [])) if t))
         raw_new_da = [str(t).strip() for t in parsed.get("new_tags_da", [])]
         # Gemini SKAL levere new_tags_da som parallelt array (samme længde/orden som
         # new_tags) — zip sammen til en dict. Hvis modellen afviger i længde,
         # zip() bare matcher det den kan og dropper resten (ingen krash).
         new_tags_da_map = dict(zip(raw_new, raw_new_da))
         approved = [tag for tag in all_tags if tag in approved_tag_set]
-        new = list(dict.fromkeys([tag for tag in all_tags if tag not in approved_tag_set] + raw_new))
+        # new: deduppet OG disjunkt fra approved (et ord modellen lagde i både
+        # tags og new_tags må ikke ende begge steder → ellers kryds-dublet i ai_tags)
+        new = [t for t in dict.fromkeys([tag for tag in all_tags if tag not in approved_tag_set] + raw_new)
+               if t not in approved_tag_set]
 
         change = parsed.get("change", {}) if has_ref else {}
         change_detected = bool(change.get("detected", False))
@@ -451,7 +510,7 @@ class GeminiVisionService:
     def _encode_image_b64(self, path: Path | str) -> str:
         """Samme resize-logik som _load_part, men returnerer base64 til JSONL."""
         data = Path(path).read_bytes()
-        if len(data) > MAX_IMAGE_BYTES or self._should_resize_by_dimensions(data):
+        if len(data) > GEMINI_MAX_IMAGE_BYTES or self._should_resize_by_dimensions(data):
             data = self._resize(data)
         return base64.b64encode(data).decode("ascii")
 
@@ -460,9 +519,10 @@ class GeminiVisionService:
         key: str,
         image_path: Path | str,
         vocabulary_by_cat: dict[str, list[str]],
+        context_block: str = "",
     ) -> dict:
         """Byg én JSONL-linje (dict) til Batch API — samme prompt/schema som analyse()."""
-        prompt = build_prompt_text(vocabulary_by_cat, has_reference=False)
+        prompt = build_prompt_text(vocabulary_by_cat, has_reference=False, context_block=context_block)
         b64 = self._encode_image_b64(image_path)
         return {
             "key": key,
@@ -475,7 +535,7 @@ class GeminiVisionService:
                     ],
                 }],
                 "generation_config": {
-                    "temperature": 0.1,
+                    "temperature": 0.35,
                     "max_output_tokens": 8192,
                     "response_mime_type": "application/json",
                     "response_schema": RESPONSE_SCHEMA_DICT,
@@ -489,6 +549,7 @@ class GeminiVisionService:
         vocabulary_by_cat: dict[str, list[str]],
         display_name: str = "",
         gcs_bucket: str = "",
+        context_by_key: Optional[dict[str, str]] = None,
     ) -> str:
         """Byg batch-anmodninger af items=[(key, image_path), ...] og opret batch-job.
         Returnerer Google's job-navn til polling/resultater.
@@ -500,26 +561,29 @@ class GeminiVisionService:
             til batch). VIGTIGT for GDPR: bucket'en SKAL ligge i samme EU-region
             som self.location for at databehandlings-garantien holder hele vejen.
         """
+        context_by_key = context_by_key or {}
         if self.is_vertex:
             if not gcs_bucket:
                 raise ValueError("Vertex AI batch kræver et GCS-bucket (gcs_bucket) — ingen er konfigureret")
-            return self._submit_batch_job_vertex_gcs(items, vocabulary_by_cat, gcs_bucket, display_name)
-        return self._submit_batch_job_ai_studio(items, vocabulary_by_cat, display_name)
+            return self._submit_batch_job_vertex_gcs(items, vocabulary_by_cat, gcs_bucket, display_name, context_by_key)
+        return self._submit_batch_job_ai_studio(items, vocabulary_by_cat, display_name, context_by_key)
 
     def _submit_batch_job_ai_studio(
         self,
         items: list[tuple[str, Path | str]],
         vocabulary_by_cat: dict[str, list[str]],
         display_name: str = "",
+        context_by_key: Optional[dict[str, str]] = None,
     ) -> str:
         """AI Studio (api_key) batch — Files API. Se submit_batch_job() for routing."""
         import tempfile
 
+        context_by_key = context_by_key or {}
         display_name = display_name or f"timelapse-batch-{_uuid.uuid4().hex[:8]}"
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False, encoding="utf-8") as f:
             tmp_path = f.name
             for key, image_path in items:
-                line = self.build_batch_request_line(key, image_path, vocabulary_by_cat)
+                line = self.build_batch_request_line(key, image_path, vocabulary_by_cat, context_by_key.get(key, ""))
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
         try:
@@ -547,6 +611,7 @@ class GeminiVisionService:
         vocabulary_by_cat: dict[str, list[str]],
         gcs_bucket: str,
         display_name: str = "",
+        context_by_key: Optional[dict[str, str]] = None,
     ) -> str:
         """Vertex AI batch — uploader JSONL til Cloud Storage (Vertex har ikke
         Files API til batch). JSONL-linjer er BARE request-objekter uden
@@ -570,16 +635,28 @@ class GeminiVisionService:
         # "lines ... must contain the 'request' property"). "key" bevares også
         # — ufarligt ekstra felt, og giver mulighed for key-baseret matching af
         # resultater hvis Vertex echoer den tilbage (se _download_batch_results_vertex_gcs).
-        lines = []
-        for key, image_path in items:
-            line = self.build_batch_request_line(key, image_path, vocabulary_by_cat)
-            lines.append(json.dumps(line, ensure_ascii=False))
-        jsonl_content = "\n".join(lines) + "\n"
+        # Stream JSONL'en til en TEMP-FIL på disken (én base64-billede ad gangen) i
+        # stedet for at bygge hele strengen i hukommelsen — ellers sprænger store
+        # batches (tusinder af billeder = titals GB) RAM'en på Mac'en. Upload
+        # derefter filen til GCS.
+        import tempfile, os as _os_local
+        context_by_key = context_by_key or {}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False, encoding="utf-8") as _jf:
+            tmp_path = _jf.name
+            for key, image_path in items:
+                line = self.build_batch_request_line(key, image_path, vocabulary_by_cat, context_by_key.get(key, ""))
+                _jf.write(json.dumps(line, ensure_ascii=False) + "\n")
 
-        storage_client = _gcs.Client(project=self.project) if self.project else _gcs.Client()
-        bucket = storage_client.bucket(bucket_name)
-        input_blob = bucket.blob(f"{job_prefix}/input.jsonl")
-        input_blob.upload_from_string(jsonl_content, content_type="application/jsonl")
+        try:
+            storage_client = _gcs.Client(project=self.project) if self.project else _gcs.Client()
+            bucket = storage_client.bucket(bucket_name)
+            input_blob = bucket.blob(f"{job_prefix}/input.jsonl")
+            input_blob.upload_from_filename(tmp_path, content_type="application/jsonl")
+        finally:
+            try:
+                _os_local.unlink(tmp_path)
+            except OSError:
+                pass
 
         input_uri = f"gs://{bucket_name}/{job_prefix}/input.jsonl"
         output_uri = f"gs://{bucket_name}/{job_prefix}/output"
@@ -601,7 +678,33 @@ class GeminiVisionService:
         """
         job = self._client.batches.get(name=job_name)
         state = job.state.name if hasattr(job.state, "name") else str(job.state)
-        return {"state": state, "job": job}
+        # Løbende fremdrift (successful/failed/incomplete) til UI'en. google.genai's
+        # BatchJob (Vertex-backend) kan eksponere det under forskellige feltnavne
+        # afhængigt af SDK-version — prøv defensivt; None hvis intet findes (så
+        # falder UI'en tilbage til kun total_count, ingen regression).
+        progress = None
+        for _attr in ("completion_stats", "completionStats"):
+            cs = getattr(job, _attr, None)
+            if not cs:
+                continue
+            def _stat(*names):
+                for n in names:
+                    v = getattr(cs, n, None)
+                    if v is None and isinstance(cs, dict):
+                        v = cs.get(n)
+                    if v is not None:
+                        try:
+                            return int(v)
+                        except (TypeError, ValueError):
+                            return None
+                return None
+            succ = _stat("successful_count", "successfulCount")
+            fail = _stat("failed_count", "failedCount")
+            inc  = _stat("incomplete_count", "incompleteCount")
+            if succ is not None or fail is not None:
+                progress = {"success": succ or 0, "error": fail or 0, "incomplete": inc}
+                break
+        return {"state": state, "job": job, "progress": progress}
 
     def download_batch_results(self, job) -> list[dict]:
         """Download og parse resultater fra et succeeded batch-job.

@@ -67,6 +67,7 @@ from collections import defaultdict as _defaultdict
 import gzip as _gzip
 import lzma as _lzma
 import urllib.request as _urlrequest
+import functools as _functools
 # ── Auth imports (Sprint C) ───────────────────────────────────────────────
 from jose import JWTError, jwt as _jwt
 import bcrypt as _bcrypt_lib
@@ -90,8 +91,8 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_H  = 12   # access token levetid
 COOKIE_NAME   = "tl_session"
 OPENWEBUI_COOKIE_NAME = "tl_openwebui_access"
-OPENWEBUI_COOKIE_DOMAIN = os.getenv("OPENWEBUI_COOKIE_DOMAIN", ".froekjaer.dk")
-OPENWEBUI_PUBLIC_URL = os.getenv("OPENWEBUI_PUBLIC_URL", "https://openwebui.froekjaer.dk/")
+OPENWEBUI_COOKIE_DOMAIN = os.getenv("OPENWEBUI_COOKIE_DOMAIN", "")
+OPENWEBUI_PUBLIC_URL = os.getenv("OPENWEBUI_PUBLIC_URL", "http://127.0.0.1:8080/")
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"
 def ensure_utc(dt):
     if dt is None: return None
@@ -101,6 +102,7 @@ from importer import router as import_router
 from ai.settings_api import settings_router
 from siem import router as siem_router, start_headend_log_collector
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
+from itim import router as itim_router, start_itim_collector
 from database import (
     BootstrapToken,
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
@@ -119,7 +121,7 @@ import uuid as _uuid
 import os as _os
 from logging.handlers import TimedRotatingFileHandler as _TRFHandler
 
-_LOG_DIR = "/Users/peter/Library/Logs/timelapse"
+_LOG_DIR = os.getenv("TIMELAPSE_LOG_DIR", str(Path.home() / "Library" / "Logs" / "timelapse"))
 _os.makedirs(_LOG_DIR, exist_ok=True)
 
 _fmt = logging.Formatter(
@@ -176,7 +178,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "https://timelapse.froekjaer.dk")
+ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", os.getenv("BASE_URL", "http://127.0.0.1:5173"))
 
 app.add_middleware(
     CORSMiddleware,
@@ -185,6 +187,32 @@ app.add_middleware(
     allow_headers      = ["*"],
     allow_credentials  = True,
 )
+
+def _baseline_recompute_loop(run_hour: int = 3) -> None:
+    """Natlig genberegning af selvlærende kamera-baselines på de rene tags.
+    Kører én gang i døgnet ved run_hour (lokal tid). Robust: tjekker hver 30. min
+    og kører kun hvis dagens kørsel mangler. Idempotent."""
+    import time as _t
+    from datetime import datetime as _dt
+    last_date = None
+    _t.sleep(120)  # lille forsinkelse efter opstart
+    while True:
+        try:
+            now = _dt.now()
+            if now.hour >= run_hour and last_date != now.date():
+                last_date = now.date()
+                from database import SessionLocal as _SL
+                from ai.camera_profile import recompute_all_baselines
+                _db = _SL()
+                try:
+                    res = recompute_all_baselines(_db, apply=True)
+                    log.info("Natlig baseline-genberegning: %s", res)
+                finally:
+                    _db.close()
+        except Exception as _bl_exc:
+            log.warning("Natlig baseline-genberegning fejl: %s", _bl_exc)
+        _t.sleep(1800)
+
 
 @app.on_event("startup")
 def startup():
@@ -244,6 +272,24 @@ def startup():
     except Exception as exc_v3:
         log.warning("DB migration v3 fejl (ikke kritisk): %s", exc_v3)
 
+    # Auth/session policy kolonner — eksisterende installationer kan mangle dem.
+    try:
+        _eng_auth = __import__('database').engine
+        _auth_cols = [
+            ("config_defaults", "session_policy", "TEXT"),
+            ("config_defaults", "system",         "TEXT"),
+        ]
+        with _eng_auth.connect() as _conn_auth:
+            for _tbl, _col, _typ in _auth_cols:
+                try:
+                    _conn_auth.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
+                    _conn_auth.commit()
+                    log.info("DB migration auth: %s.%s tilføjet", _tbl, _col)
+                except Exception:
+                    pass
+    except Exception as _exc_auth:
+        log.warning("DB migration auth fejl: %s", _exc_auth)
+
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:
         _eng_v9 = __import__('database').engine
@@ -261,6 +307,43 @@ def startup():
                     pass  # allerede der
     except Exception as _exc_v9:
         log.warning("DB migration v9 fejl: %s", _exc_v9)
+
+    # ── DB migration v10: AI-kontekst/baseline per kamera ────────────────
+    try:
+        _eng_v10 = __import__('database').engine
+        _v10_cols = [
+            ("cameras", "baseline_description", "TEXT"),
+            ("cameras", "context_notes",        "TEXT"),
+        ]
+        with _eng_v10.connect() as _conn_v10:
+            for _tbl, _col, _typ in _v10_cols:
+                try:
+                    _conn_v10.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
+                    _conn_v10.commit()
+                    log.info("DB migration v10: %s.%s tilføjet", _tbl, _col)
+                except Exception:
+                    pass  # allerede der
+    except Exception as _exc_v10:
+        log.warning("DB migration v10 fejl: %s", _exc_v10)
+
+    # ── DB migration v11: selvlærende baseline per kamera ────────────────
+    try:
+        _eng_v11 = __import__('database').engine
+        _v11_cols = [
+            ("cameras", "auto_baseline",      "TEXT"),
+            ("cameras", "auto_baseline_at",   "TIMESTAMP"),
+            ("cameras", "auto_baseline_kind", "VARCHAR(20)"),
+        ]
+        with _eng_v11.connect() as _conn_v11:
+            for _tbl, _col, _typ in _v11_cols:
+                try:
+                    _conn_v11.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
+                    _conn_v11.commit()
+                    log.info("DB migration v11: %s.%s tilføjet", _tbl, _col)
+                except Exception:
+                    pass
+    except Exception as _exc_v11:
+        log.warning("DB migration v11 fejl: %s", _exc_v11)
 
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
@@ -327,6 +410,22 @@ def startup():
     except Exception as _abp_err:
         log.warning("Kunne ikke starte AI batch-poller: %s", _abp_err)
 
+    # ── ITIM / Observability collector ───────────────────────────────────────
+    try:
+        start_itim_collector()
+    except Exception as _itim_err:
+        log.warning("Kunne ikke starte ITIM collector: %s", _itim_err)
+
+    # ── Natlig baseline-genberegning (selvlærende kamera-baselines) ──────────
+    try:
+        if os.getenv("TIMELAPSE_BASELINE_RECOMPUTE_ENABLED", "true").lower() in ("1", "true", "yes", "on"):
+            bl_hour = int(os.getenv("TIMELAPSE_BASELINE_RECOMPUTE_HOUR", "3"))
+            _threading.Thread(target=_baseline_recompute_loop, args=(bl_hour,),
+                              name="baseline-recompute", daemon=True).start()
+            log.info("Natlig baseline-genberegning aktiv (kl. %02d lokal tid)", bl_hour)
+    except Exception as _bl_err:
+        log.warning("Kunne ikke starte natlig baseline-genberegning: %s", _bl_err)
+
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
@@ -390,6 +489,8 @@ class CaptureRequest(BaseModel):
     exposure_time:  Optional[str] = None
     aperture:       Optional[str] = None
     iso:            Optional[int] = None
+    edge_ai_result: Optional[dict] = None
+    edge_ai_engine: Optional[str] = None
     # Lokation og orientering
     gps_lat:             Optional[float] = None
     gps_lon:             Optional[float] = None
@@ -486,6 +587,130 @@ def _session_is_mfa_verified(payload: dict | None) -> bool:
         amr = [amr]
     return bool({"totp", "webauthn", "passkey", "fido2"}.intersection(set(amr)))
 
+
+_SESSION_POLICY_DEFAULTS = {
+    "session_duration_hours": 12,
+    "remember_me_days":       30,
+    "absolute_max_days":      90,
+    "rolling_enabled":        True,
+    "remember_me_allowed":    True,
+    "mfa_required":           False,
+    "webauthn_required":      False,
+    "mfa_required_by_role": {
+        "super_admin": True,
+        "admin":       True,
+        "operator":    False,
+        "viewer":      False,
+    },
+    "mfa_exempt_usernames": [],
+}
+
+
+def _normalise_session_policy(policy: dict | None) -> dict:
+    merged = _deep_merge(_SESSION_POLICY_DEFAULTS, policy or {}) if "_deep_merge" in globals() else {
+        **_SESSION_POLICY_DEFAULTS,
+        **(policy or {}),
+    }
+    role_defaults = dict(_SESSION_POLICY_DEFAULTS["mfa_required_by_role"])
+    role_defaults.update((merged.get("mfa_required_by_role") or {}))
+    merged["mfa_required_by_role"] = role_defaults
+    exemptions = merged.get("mfa_exempt_usernames") or []
+    if isinstance(exemptions, str):
+        exemptions = [v.strip() for v in exemptions.split(",") if v.strip()]
+    if not isinstance(exemptions, list):
+        exemptions = []
+    merged["mfa_exempt_usernames"] = sorted({str(v).strip() for v in exemptions if str(v).strip()})
+    return merged
+
+
+def _policy_from_json(raw: object) -> dict:
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _merge_session_policy(policy: dict, overrides_raw: object) -> dict:
+    overrides = _policy_from_json(overrides_raw)
+    session_policy = overrides.get("session_policy") if isinstance(overrides, dict) else None
+    if isinstance(session_policy, dict):
+        return _normalise_session_policy(_deep_merge(policy, session_policy))
+    return _normalise_session_policy(policy)
+
+
+def _resolve_session_policy(
+    db: Session,
+    user: User | None = None,
+    *,
+    customer_id: str | None = None,
+    site_id: str | None = None,
+    camera_id: str | None = None,
+) -> dict:
+    policy = _normalise_session_policy({})
+    try:
+        defaults = db.query(ConfigDefaults).first()
+        if defaults and getattr(defaults, "session_policy", None):
+            policy = _normalise_session_policy(_deep_merge(policy, _policy_from_json(defaults.session_policy)))
+    except Exception as exc:
+        log.warning("session_policy global resolver fejl: %s", exc)
+
+    effective_customer_id = customer_id or getattr(user, "customer_id", None)
+    site = None
+    camera = None
+
+    try:
+        if camera_id:
+            camera = db.query(Camera).filter_by(id=camera_id).first()
+            if camera:
+                site_id = site_id or camera.site_id
+                effective_customer_id = effective_customer_id or camera.customer_id
+        if site_id:
+            site = db.query(Site).filter_by(id=site_id).first()
+            if site:
+                effective_customer_id = effective_customer_id or site.customer_id
+        if effective_customer_id:
+            customer = db.query(Customer).filter_by(id=effective_customer_id).first()
+            if customer:
+                policy = _merge_session_policy(policy, customer.config_overrides)
+        if site:
+            policy = _merge_session_policy(policy, site.config_overrides)
+        if camera and camera.config:
+            cam_cfg = _policy_from_json(camera.config)
+            if isinstance(cam_cfg.get("session_policy"), dict):
+                policy = _normalise_session_policy(_deep_merge(policy, cam_cfg["session_policy"]))
+    except Exception as exc:
+        log.warning("session_policy hierarki resolver fejl: %s", exc)
+    return _normalise_session_policy(policy)
+
+
+def _mfa_required_for_role(policy: dict, role: str | None) -> bool:
+    if bool(policy.get("mfa_required")):
+        return True
+    return bool((policy.get("mfa_required_by_role") or {}).get(role or "", False))
+
+
+def _mfa_required_for_user(db: Session, user: User | None, **scope) -> bool:
+    if not user:
+        return False
+    policy = _resolve_session_policy(db, user, **scope)
+    exempt = {str(v).strip().lower() for v in (policy.get("mfa_exempt_usernames") or [])}
+    if user.username.strip().lower() in exempt:
+        return False
+    return _mfa_required_for_role(policy, user.role)
+
+
+def _user_has_totp(user: User | None) -> bool:
+    return bool(user and user.mfa_enabled and user.totp_secret)
+
+
+def _user_has_partial_mfa(user: User | None) -> bool:
+    return bool(user and (user.mfa_enabled or user.totp_secret) and not _user_has_totp(user))
+
 def _ensure_super_admin(db):
     """Opretter standard super_admin hvis ingen brugere findes."""
     from database import User
@@ -527,12 +752,14 @@ def require_role(*roles: str):
     """FastAPI dependency factory — kræver en af de angivne roller.
     Rollehierarki: super_admin > admin > operator > viewer.
     """
-    def _check(user=Depends(get_current_user)):
+    def _check(request: Request, user=Depends(get_current_user), db: Session = Depends(get_db)):
         if user is None:
             raise HTTPException(status_code=401, detail="Ikke autentificeret")
         allowed = _ROLE_HIERARCHY.get(user.role, {user.role})
         if not allowed.intersection(set(roles)):
             raise HTTPException(status_code=403, detail=f"Kræver rolle: {', '.join(roles)}")
+        if _mfa_required_for_user(db, user) and not _session_is_mfa_verified(_session_payload(request)):
+            raise HTTPException(status_code=403, detail="MFA kræves for denne rolle")
         return user
     return Depends(_check)
 
@@ -596,80 +823,25 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
     """Returnerer resolved session policy for den indloggede bruger."""
     if current_user is None:
         raise HTTPException(status_code=401)
-
-    policy = {
-        "session_duration_hours": 12,
-        "remember_me_days":       30,
-        "absolute_max_days":      90,
-        "rolling_enabled":        True,
-        "remember_me_allowed":    True,
-        "mfa_required":           False,
-        "webauthn_required":      False,
+    policy = _resolve_session_policy(db, current_user)
+    return {
+        **policy,
+        "mfa_required_effective": _mfa_required_for_role(policy, current_user.role),
+        "mfa_verified": _session_is_mfa_verified(_session_payload(request)),
     }
-
-    try:
-        defaults = db.query(ConfigDefaults).first()
-        if defaults and defaults.session_policy:
-            policy.update(json.loads(defaults.session_policy))
-
-        if current_user.customer_id:
-            customer = db.query(Customer).filter_by(id=current_user.customer_id).first()
-            if customer and customer.config_overrides:
-                overrides = json.loads(customer.config_overrides)
-                if "session_policy" in overrides:
-                    policy.update(overrides["session_policy"])
-    except Exception as e:
-        log.warning("session_policy resolver fejl: %s", e)
-
-    # Find godkendte opdateringer til denne enhed
-    from database import PendingUpdate as _PU
-    from sqlalchemy import or_
-
-    approved = db.query(_PU).filter(
-        _PU.status.in_(["approved", "rollback_requested"]),
-        or_(
-            _PU.scope == "global",
-            _PU.scope_id == device_id,
-        )
-    ).all()
-
-    # Filtrer target_device_ids hvis sat
-    filtered = []
-    for u in approved:
-        if u.target_device_ids:
-            targets = json.loads(u.target_device_ids)
-            if device_id not in targets:
-                continue
-        artifact = _find_artifact_for_update(db, u)
-        if _update_requires_headend_artifact(u.update_type) and not artifact:
-            log.warning(
-                "Approved update %s/%s withheld from Edge policy for %s: missing signed artifact",
-                u.id, u.update_type, device_id,
-            )
-            u.status = "blocked"
-            u.description = ((u.description or "").rstrip() + (
-                f"\n\nBlocked {now_utc().isoformat()}: approved update withheld from Edge policy "
-                "because it lacks required Headend-signed artifact."
-            ))[-6000:]
-            db.commit()
-            continue
-        filtered.append({
-            "id":          u.id,
-            "update_type": u.update_type,
-            "version":     u.version,
-            "status":      u.status,
-            "environment": u.environment,
-            "severity":    u.severity,
-            "artifact":    _artifact_for_edge_policy(db, artifact),
-        })
-
-    return {**policy, "pending_updates": filtered}
 
 # ── WebAuthn / FIDO2 ───────────────────────────────────────────────────────
 
-WEBAUTHN_RP_ID   = os.getenv("WEBAUTHN_RP_ID",   "timelapse.froekjaer.dk")
-WEBAUTHN_RP_NAME = os.getenv("WEBAUTHN_RP_NAME",  "TimeLapse Pro")
-WEBAUTHN_ORIGIN  = os.getenv("WEBAUTHN_ORIGIN",   "https://timelapse.froekjaer.dk")
+def _webauthn_settings(db: Session) -> tuple[str, str, str]:
+    """Return WebAuthn RP settings from DB, then env, then local bootstrap defaults."""
+    from urllib.parse import urlparse
+
+    base_url = _get_setting(db, "base_url", os.getenv("BASE_URL", "http://127.0.0.1:8000")).strip().rstrip("/")
+    origin = _get_setting(db, "webauthn_origin", os.getenv("WEBAUTHN_ORIGIN", base_url)).strip().rstrip("/")
+    host = urlparse(origin).hostname or "localhost"
+    rp_id = _get_setting(db, "webauthn_rp_id", os.getenv("WEBAUTHN_RP_ID", host)).strip() or host
+    rp_name = _get_setting(db, "webauthn_rp_name", os.getenv("WEBAUTHN_RP_NAME", "TimeLapse Pro")).strip() or "TimeLapse Pro"
+    return rp_id, rp_name, origin
 
 @app.post("/api/auth/webauthn/register-begin")
 def webauthn_register_begin(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -689,9 +861,10 @@ def webauthn_register_begin(payload: dict, current_user=Depends(get_current_user
         for c in existing
     ]
 
+    rp_id, rp_name, _origin = _webauthn_settings(db)
     options = webauthn.generate_registration_options(
-        rp_id                    = WEBAUTHN_RP_ID,
-        rp_name                  = WEBAUTHN_RP_NAME,
+        rp_id                    = rp_id,
+        rp_name                  = rp_name,
         user_id                  = str(current_user.id).encode(),
         user_name                = current_user.username,
         user_display_name        = current_user.username,
@@ -726,11 +899,12 @@ def webauthn_register_complete(payload: dict, current_user=Depends(get_current_u
     challenge = webauthn.base64url_to_bytes(opts["challenge"])
 
     try:
+        rp_id, _rp_name, origin = _webauthn_settings(db)
         verification = webauthn.verify_registration_response(
             credential          = payload,
             expected_challenge  = challenge,
-            expected_rp_id      = WEBAUTHN_RP_ID,
-            expected_origin     = WEBAUTHN_ORIGIN,
+            expected_rp_id      = rp_id,
+            expected_origin     = origin,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Verifikation fejlede: {e}")
@@ -766,8 +940,9 @@ def webauthn_login_begin(payload: dict, db: Session = Depends(get_db)):
         webauthn.helpers.structs.PublicKeyCredentialDescriptor(id=c.credential_id)
         for c in creds
     ]
+    rp_id, _rp_name, _origin = _webauthn_settings(db)
     options = webauthn.generate_authentication_options(
-        rp_id             = WEBAUTHN_RP_ID,
+        rp_id             = rp_id,
         allow_credentials = allow_creds,
     )
     opts_json = webauthn.options_to_json(options)
@@ -801,11 +976,12 @@ def webauthn_login_complete(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Credential ikke fundet")
 
     try:
+        rp_id, _rp_name, origin = _webauthn_settings(db)
         verification = webauthn.verify_authentication_response(
             credential          = payload,
             expected_challenge  = challenge,
-            expected_rp_id      = WEBAUTHN_RP_ID,
-            expected_origin     = WEBAUTHN_ORIGIN,
+            expected_rp_id      = rp_id,
+            expected_origin     = origin,
             credential_public_key = cred.public_key,
             credential_current_sign_count = cred.sign_count,
         )
@@ -895,7 +1071,22 @@ def confirm_mfa(payload: dict, current_user=Depends(get_current_user), db: Sessi
     current_user.mfa_enabled = True
     db.commit()
     log.info("MFA aktiveret for %s", current_user.username)
-    return {"ok": True}
+    session_token = _create_token({
+        "sub": current_user.username,
+        "role": current_user.role,
+        "cid": current_user.customer_id,
+        "amr": ["password", "totp"],
+        "mfa_verified": True,
+    })
+    from fastapi.responses import JSONResponse as _JR
+    _resp = _JR(content={
+        "ok": True,
+        "role": current_user.role,
+        "username": current_user.username,
+        "customer_id": current_user.customer_id,
+    })
+    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, JWT_EXPIRE_H * 3600))
+    return _resp
 
 @app.post("/api/auth/disable-mfa")
 def disable_mfa(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -993,11 +1184,35 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Forkert brugernavn eller adgangskode")
     user.last_login = now_utc()
     db.commit()
-    # MFA check
-    if user.mfa_enabled:
+    policy = _resolve_session_policy(db, user)
+    mfa_required = _mfa_required_for_role(policy, user.role)
+    # MFA check: eksisterende TOTP kræves altid; policy kan også kræve enrollment.
+    if _user_has_totp(user):
         mfa_token = _create_token({"sub": user.username, "type": "mfa_pending"}, expire_hours=5/60)
         log.info("Login MFA påkrævet: %s", user.username)
         return {"mfa_required": True, "mfa_token": mfa_token}
+    if mfa_required:
+        setup_max_age = 15 * 60
+        setup_token = _create_token({
+            "sub": user.username,
+            "role": user.role,
+            "cid": user.customer_id,
+            "max_age": setup_max_age,
+            "amr": ["password"],
+            "mfa_verified": False,
+            "mfa_enrollment_required": True,
+        }, expire_hours=setup_max_age / 3600)
+        from fastapi.responses import JSONResponse as _JR
+        _resp = _JR(content={
+            "mfa_setup_required": True,
+            "role": user.role,
+            "username": user.username,
+            "customer_id": user.customer_id,
+            "detail": "MFA skal oprettes for denne rolle",
+        })
+        _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, setup_token, setup_max_age))
+        log.info("Login MFA enrollment påkrævet: %s", user.username)
+        return _resp
     log.info("Login: %s (%s)", user.username, user.role)
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={
@@ -1008,8 +1223,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     })
     # Hent session policy
     try:
-        defaults = db.query(ConfigDefaults).first()
-        sp = json.loads(defaults.session_policy or "{}") if defaults and defaults.session_policy else {}
+        sp = policy
     except Exception:
         sp = {}
     remember_me_days      = int(sp.get("remember_me_days",       30))
@@ -1032,12 +1246,12 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     return _resp
 
 @app.post("/api/auth/logout")
-def logout():
+def logout(db: Session = Depends(get_db)):
     """Logout — ryd session cookie."""
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={"ok": True})
     _resp.headers.append("Set-Cookie", _delete_cookie_header(COOKIE_NAME))
-    _resp.headers.append("Set-Cookie", _delete_cookie_header(OPENWEBUI_COOKIE_NAME, domain=OPENWEBUI_COOKIE_DOMAIN))
+    _resp.headers.append("Set-Cookie", _delete_cookie_header(OPENWEBUI_COOKIE_NAME, domain=_openwebui_cookie_domain(db)))
     return _resp
 
 @app.post("/api/auth/change-password")
@@ -1059,22 +1273,25 @@ def change_password(
     return {"ok": True}
 
 @app.get("/api/auth/me")
-def me(request: Request, current_user=Depends(get_current_user)):
+def me(request: Request, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     """Returnerer brugerinfo og fornyr rolling session cookie."""
     if current_user is None:
         raise HTTPException(status_code=401)
     from fastapi.responses import JSONResponse as _JR
+    payload_data = _session_payload(request)
+    policy = _resolve_session_policy(db, current_user)
     data = {
         "username":    current_user.username,
         "email":       current_user.email,
         "role":        current_user.role,
         "customer_id": current_user.customer_id,
+        "mfa_required_effective": _mfa_required_for_role(policy, current_user.role),
+        "mfa_verified": _session_is_mfa_verified(payload_data),
     }
     # Forny rolling session
     existing = request.cookies.get(COOKIE_NAME)
     if existing:
         token = existing
-        payload_data = _decode_token(token)
         max_age = payload_data.get("max_age", JWT_EXPIRE_H * 3600) if payload_data else JWT_EXPIRE_H * 3600
         new_token = _create_token({
             "sub": current_user.username,
@@ -1115,10 +1332,51 @@ def list_users(
             "created_at":  u.created_at.isoformat() if u.created_at else None,
             "last_login":  u.last_login.isoformat() if u.last_login else None,
             "mfa_enabled": bool(u.mfa_enabled),
+            "totp_configured": bool(u.totp_secret),
+            "mfa_partial": _user_has_partial_mfa(u),
+            "mfa_required": _mfa_required_for_user(db, u),
             "webauthn_count": int(cred_counts.get(u.id, 0)),
         }
         for u in users
     ]
+
+
+@app.post("/api/admin/users/{user_id}/mfa/reset")
+def reset_user_mfa(
+    user_id: int,
+    payload: dict | None = None,
+    current_user=require_role("super_admin"),
+    db: Session = Depends(get_db),
+):
+    """Nulstil hel eller halv TOTP MFA-state, så brugeren kan oprette MFA igen."""
+    from database import User, WebAuthnCredential
+    u = db.query(User).filter_by(id=user_id).first()
+    if not u:
+        raise HTTPException(status_code=404)
+    clear_webauthn = bool((payload or {}).get("clear_webauthn", False))
+    u.mfa_enabled = False
+    u.totp_secret = None
+    removed_webauthn = 0
+    if clear_webauthn:
+        removed_webauthn = (
+            db.query(WebAuthnCredential)
+            .filter_by(user_id=u.id)
+            .delete(synchronize_session=False)
+        )
+    db.commit()
+    log.warning(
+        "MFA nulstillet for %s af %s (clear_webauthn=%s, removed_webauthn=%s)",
+        u.username, current_user.username, clear_webauthn, removed_webauthn,
+    )
+    return {
+        "ok": True,
+        "user_id": u.id,
+        "username": u.username,
+        "mfa_enabled": False,
+        "totp_configured": False,
+        "removed_webauthn": removed_webauthn,
+        "mfa_required": _mfa_required_for_user(db, u),
+    }
 
 @app.post("/api/admin/users")
 def create_user(
@@ -1174,6 +1432,8 @@ def delete_user(
     u = db.query(User).filter_by(id=user_id).first()
     if not u:
         raise HTTPException(status_code=404)
+    if u.username == current_user.username:
+        raise HTTPException(status_code=400, detail="Du kan ikke slette dig selv")
     if u.username == "admin" and u.role == "super_admin":
         raise HTTPException(status_code=400, detail="Kan ikke slette primær super_admin")
     db.delete(u); db.commit()
@@ -2640,7 +2900,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     device.last_seen = now_utc()
     db.commit()
 
-    base_url = _get_setting(db, "base_url", os.environ.get("BASE_URL", "http://192.168.86.102:8000"))
+    base_url = _get_setting(db, "base_url", os.environ.get("BASE_URL", "http://127.0.0.1:8000"))
     api_credential = (
         db.query(KeyCredential)
         .filter_by(entity_type="edge", entity_id=device_id, key_type="api", status="active")
@@ -2659,7 +2919,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     sftp_host = _get_setting(db, "sftp_host", os.getenv("SFTP_HOST", "")) if sftp_enabled else ""
     sftp_user = _get_setting(db, "sftp_user", os.getenv("SFTP_USER", "")) if sftp_enabled else ""
     sftp_password = _get_setting(db, "sftp_password", os.getenv("SFTP_PASSWORD", "")) if sftp_enabled else ""
-    sftp_remote_base = _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data")) if sftp_enabled else ""
+    sftp_remote_base = _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "")) if sftp_enabled else ""
     upload_slot_cycle_s = int(_get_setting(db, "upload_slot_cycle_seconds", os.getenv("UPLOAD_SLOT_CYCLE_SECONDS", "600")))
     upload_slot_window_s = int(_get_setting(db, "upload_slot_window_seconds", os.getenv("UPLOAD_SLOT_WINDOW_SECONDS", "90")))
     upload_slot_span = max(1, upload_slot_cycle_s - upload_slot_window_s)
@@ -2686,6 +2946,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "capture_mode":     "interval",
             "interval_minutes": 60,
             "active_hours":     ["06:00", "21:00"],
+            "capture_avoid_windows": [],
         },
         "camera": {
             "device_id":               device_id,
@@ -2729,6 +2990,25 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "blur_threshold":   80,
             "dark_threshold":   25,
             "bright_threshold": 230,
+            "adaptive_exposure": {
+                "enabled": False,
+                "target_brightness": 118,
+                "brightness_tolerance": 32,
+                "step_ev": 0.3,
+                "min_ev": -2.0,
+                "max_ev": 2.0,
+            },
+            "edge_ai": {
+                "enabled": True,
+                "mode": "assist",
+                "prefer_npu": True,
+                "runner": "/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py",
+                "model_path": "",
+                "vendor_binary": "",
+                "timeout_s": 8,
+                "lens_obstruction_enabled": True,
+                "direct_sun_detection_enabled": True,
+            },
         },
         "storage": {
             "local_path":         "/data/captures",
@@ -2875,7 +3155,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         if site:
             if cfg.get("sftp", {}).get("enabled") and getattr(site, "sftp_user", None):
                 cfg["sftp"]["username"] = site.sftp_user
-                cfg["sftp"]["remote_base"] = _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", "/Volumes/data"))
+                cfg["sftp"]["remote_base"] = _get_setting(db, "sftp_remote_base", os.getenv("SFTP_REMOTE_BASE", ""))
             if site.config_overrides:
                 for section, values in json.loads(site.config_overrides).items():
                     if section in cfg and isinstance(cfg[section], dict):
@@ -2887,7 +3167,16 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                 cfg["location"]["gps_lon"] = site.gps_lon
             if site.timezone:
                 cfg["schedule"]["timezone"] = site.timezone
-        # Lag 4: device config_overrides
+        # Lag 4: logisk kamera-lokation config (Camera.config) — følger kameraet,
+        # ikke den fysiske Edge. Dette er det normale laveste override-lag.
+        active_camera = _active_camera_for_device(db, device_id)
+        if active_camera and active_camera.config:
+            for section, values in json.loads(active_camera.config or "{}").items():
+                if section in cfg and isinstance(cfg[section], dict):
+                    cfg[section] = _deep_merge(cfg[section], values)
+                else:
+                    cfg[section] = values
+        # Legacy: device config_overrides, hvis en ældre database har kolonnen.
         if hasattr(device, "config_overrides") and device.config_overrides:
             for section, values in json.loads(device.config_overrides).items():
                 if section in cfg and isinstance(cfg[section], dict):
@@ -2939,8 +3228,13 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "remote_base": "",
         })
 
-    # Inkluder config_version så edge kan detektere ændringer
-    cfg["config_version"] = device.config_version or ""
+    # Versioner den effektive config, så Edge også opdager globale DB-ændringer
+    # som fx NAS/SFTP roots, upload-politik eller kamera/site defaults.
+    try:
+        version_payload = json.dumps(cfg, sort_keys=True, ensure_ascii=False, default=str)
+        cfg["config_version"] = hashlib.md5(version_payload.encode("utf-8")).hexdigest()
+    except Exception:
+        cfg["config_version"] = device.config_version or ""
 
     # bt_totp er sat som base + overrides via hierarkiet — intet ekstra her.
 
@@ -3020,7 +3314,7 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
     # Headend's egen git-commit som reference
     try:
         import subprocess as _sp
-        repo_dir = _os.getenv("TIMELAPSE_REPO_DIR", "/Users/peter/projects/timelapse-pro")
+        repo_dir = _os.getenv("TIMELAPSE_REPO_DIR", str(_repo_root()))
         headend_version = _sp.run(
             ["git", "-C", repo_dir, "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=5
@@ -3165,6 +3459,12 @@ def receive_capture(
         aperture=req.aperture,
         iso=req.iso,
     )
+    if req.edge_ai_result and not capture.ai_result:
+        capture.ai_result = json.dumps({
+            **req.edge_ai_result,
+            "source": "edge",
+            "edge_ai_engine": req.edge_ai_engine or req.edge_ai_result.get("engine"),
+        }, ensure_ascii=False)
 
     # Update device last_seen
     device = db.query(Device).filter_by(device_id=device_id).first()
@@ -3240,7 +3540,7 @@ def _capture_storage_dir(db: Session, device_id: str, filename: str, captured_at
             when = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
     if when is None:
         when = now_utc()
-    return SFTP_BASE / customer / site / camera / f"{when.year:04d}" / f"{when.month:02d}" / f"{when.day:02d}"
+    return _sftp_base_path(db) / customer / site / camera / f"{when.year:04d}" / f"{when.month:02d}" / f"{when.day:02d}"
 
 
 def _parse_capture_timestamp(value: str | None) -> datetime | None:
@@ -3372,6 +3672,13 @@ async def receive_capture_files(
         iso=meta.get("iso"),
         sidecar_path=str(sidecar_path) if sidecar_path.exists() else None,
     )
+    if meta.get("edge_ai_result") and not capture.ai_result:
+        edge_ai = meta.get("edge_ai_result")
+        capture.ai_result = json.dumps({
+            **edge_ai,
+            "source": "edge",
+            "edge_ai_engine": meta.get("edge_ai_engine") or edge_ai.get("engine"),
+        }, ensure_ascii=False)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if device:
         device.last_seen = now_utc()
@@ -3532,6 +3839,8 @@ def list_cameras(
     cameras = q.order_by(Camera.camera_name).all()
     result = []
     for cam in cameras:
+        site = db.query(Site).filter_by(id=cam.site_id).first() if cam.site_id else None
+        customer = db.query(Customer).filter_by(id=cam.customer_id or (site.customer_id if site else None)).first() if (cam.customer_id or site) else None
         # Find aktiv device assignment
         assignment = (
             db.query(DeviceAssignment)
@@ -3543,10 +3852,14 @@ def list_cameras(
             "id":            cam.id,
             "site_id":       cam.site_id,
             "customer_id":   cam.customer_id,
+            "site_name":     site.name if site else None,
+            "customer_name": customer.name if customer else None,
             "camera_name":   cam.camera_name,
             "serial_number": cam.serial_number,
             "model":         cam.model,
             "notes":         cam.notes,
+            "baseline_description": getattr(cam, "baseline_description", None),
+            "context_notes":        getattr(cam, "context_notes", None),
             "current_device_id": assignment.device_id if assignment else None,
             "assigned_at":   assignment.assigned_at.isoformat() if assignment and assignment.assigned_at else None,
             "created_at":    cam.created_at.isoformat() if cam.created_at else None,
@@ -3613,10 +3926,16 @@ def create_camera(
     """Opret et nyt logisk kamera."""
     from database import Camera
     import uuid as _u
+    site = db.query(Site).filter_by(id=payload.get("site_id")).first() if payload.get("site_id") else None
+    customer_id = payload.get("customer_id") or (site.customer_id if site else None)
+    if site:
+        _ensure_site_access(db, _user, site.id)
+    elif customer_id:
+        _ensure_customer_access(_user, customer_id)
     cam = Camera(
         id          = str(_u.uuid4()),
-        site_id     = payload.get("site_id"),
-        customer_id = payload.get("customer_id"),
+        site_id     = site.id if site else payload.get("site_id"),
+        customer_id = customer_id,
         camera_name = payload.get("camera_name", "Nyt kamera"),
         serial_number = payload.get("serial_number"),
         model       = payload.get("model"),
@@ -3627,6 +3946,63 @@ def create_camera(
     db.add(cam); db.commit()
     log.info("Kamera oprettet: %s (%s)", cam.camera_name, cam.id)
     return {"id": cam.id}
+
+
+@app.put("/api/admin/cameras/{camera_id}")
+def update_camera(
+    camera_id: str,
+    payload: dict,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Opdater metadata på et logisk kamera uden at ændre device-binding."""
+    from database import Camera, Device, DeviceAssignment
+    cam = db.query(Camera).filter_by(id=camera_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+    if cam.site_id:
+        _ensure_site_access(db, _user, cam.site_id)
+    elif cam.customer_id:
+        _ensure_customer_access(_user, cam.customer_id)
+
+    if "site_id" in payload:
+        new_site = _ensure_site_access(db, _user, payload.get("site_id")) if payload.get("site_id") else None
+        cam.site_id = new_site.id if new_site else None
+        cam.customer_id = payload.get("customer_id") or (new_site.customer_id if new_site else cam.customer_id)
+    elif "customer_id" in payload:
+        _ensure_customer_access(_user, payload.get("customer_id"))
+        cam.customer_id = payload.get("customer_id")
+
+    for field in ["camera_name", "serial_number", "model", "notes", "baseline_description", "context_notes", "network_type", "wifi_ssid", "wifi_country"]:
+        if field in payload:
+            setattr(cam, field, payload[field])
+    if "wifi_password" in payload and payload.get("wifi_password"):
+        cam.wifi_password = payload["wifi_password"]
+    if "config" in payload and isinstance(payload["config"], dict):
+        cam.config = _json.dumps(payload["config"], ensure_ascii=False)
+
+    # Hold aktiv device metadata læsbar for gamle views og captures.
+    active = (
+        db.query(DeviceAssignment)
+        .filter_by(camera_id=cam.id)
+        .filter(DeviceAssignment.unassigned_at.is_(None))
+        .first()
+    )
+    if active:
+        dev = db.query(Device).filter_by(device_id=active.device_id).first()
+        if dev:
+            dev.camera_name = cam.camera_name
+            dev.site_id = cam.site_id
+            dev.customer_id = cam.customer_id
+            site = db.query(Site).filter_by(id=cam.site_id).first() if cam.site_id else None
+            customer = db.query(Customer).filter_by(id=cam.customer_id).first() if cam.customer_id else None
+            if site:
+                dev.site_name = site.name
+            if customer:
+                dev.customer_name = customer.name
+
+    db.commit()
+    return {"status": "ok", "id": cam.id}
 
 
 @app.get("/api/admin/cameras/{camera_id}/bt-totp-qr")
@@ -3848,6 +4224,8 @@ def get_device_camera_location(
             "customer_name": customer.name if customer else None,
             "model":         cam.model,
             "notes":         cam.notes,
+            "baseline_description": getattr(cam, "baseline_description", None),
+            "context_notes":        getattr(cam, "context_notes", None),
         },
     }
 
@@ -3873,6 +4251,14 @@ def list_pending_updates(
     production_matches = {}
     for prod in db.query(PendingUpdate).filter(PendingUpdate.environment == "production").all():
         production_matches[(prod.update_type, prod.version, prod.scope, prod.scope_id)] = prod
+
+    def _promotion_source(update: PendingUpdate) -> str | None:
+        description = update.description or ""
+        match = _re.match(r"^\[Promoveret fra ([^\]]+) til ([^\]]+)\]", description)
+        if not match:
+            return None
+        return match.group(1)
+
     return [
         {
             "id":          u.id,
@@ -3901,6 +4287,12 @@ def list_pending_updates(
                 production_matches.get((u.update_type, u.version, u.scope, u.scope_id)).status
                 if u.environment == "test" and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
                 else None
+            ),
+            "promotion_source_environment": _promotion_source(u),
+            "prod_ready": (
+                u.environment == "production"
+                and u.status == "pending"
+                and _promotion_source(u) in {"lab", "test", "staging"}
             ),
         }
         for u in updates
@@ -3992,10 +4384,14 @@ LEGACY_POLICY_ALIASES = {
     "app_updates": "timelapse_updates",
 }
 
+HEADEND_LOCAL_OWNER = os.getenv("TIMELAPSE_HEADEND_OWNER", Path.home().name)
+HEADEND_LOCAL_HOME = os.getenv("TIMELAPSE_HEADEND_HOME", str(Path.home()))
+HEADEND_LAUNCH_AGENTS = str(Path(HEADEND_LOCAL_HOME) / "Library" / "LaunchAgents")
+
 HEADEND_PLATFORM_BREW_ALLOWLIST = {
     "certbot": {
-        "owner": "peter",
-        "home": "/Users/peter",
+        "owner": HEADEND_LOCAL_OWNER,
+        "home": HEADEND_LOCAL_HOME,
         "runtime_bin": "/opt/homebrew/bin/certbot",
         "description": "Certbot ACME client",
         "preflight": [
@@ -4011,8 +4407,8 @@ HEADEND_PLATFORM_BREW_ALLOWLIST = {
         "extra_backup_paths": ["/Library/LaunchDaemons/dk.froekjaer.certbot-renewal.plist"],
     },
     "ffmpeg": {
-        "owner": "peter",
-        "home": "/Users/peter",
+        "owner": HEADEND_LOCAL_OWNER,
+        "home": HEADEND_LOCAL_HOME,
         "runtime_bin": "/opt/homebrew/bin/ffmpeg",
         "description": "FFmpeg timelapse rendering runtime",
         "preflight": [
@@ -4026,9 +4422,9 @@ HEADEND_PLATFORM_BREW_ALLOWLIST = {
     "nginx": {
         "service": "nginx",
         "service_label": "homebrew.mxcl.nginx",
-        "launch_agent": "/Users/peter/Library/LaunchAgents/homebrew.mxcl.nginx.plist",
-        "owner": "peter",
-        "home": "/Users/peter",
+        "launch_agent": str(Path(HEADEND_LAUNCH_AGENTS) / "homebrew.mxcl.nginx.plist"),
+        "owner": HEADEND_LOCAL_OWNER,
+        "home": HEADEND_LOCAL_HOME,
         "runtime_bin": "/opt/homebrew/bin/nginx",
         "description": "Nginx reverse proxy",
         "preflight": [
@@ -4046,8 +4442,8 @@ HEADEND_PLATFORM_BREW_ALLOWLIST = {
         ],
     },
     "node": {
-        "owner": "peter",
-        "home": "/Users/peter",
+        "owner": HEADEND_LOCAL_OWNER,
+        "home": HEADEND_LOCAL_HOME,
         "runtime_bin": "/opt/homebrew/bin/node",
         "description": "Node.js build/runtime tooling",
         "preflight": [
@@ -4063,9 +4459,9 @@ HEADEND_PLATFORM_BREW_ALLOWLIST = {
     "postgresql@17": {
         "service": "postgresql@17",
         "service_label": "homebrew.mxcl.postgresql@17",
-        "launch_agent": "/Users/peter/Library/LaunchAgents/homebrew.mxcl.postgresql@17.plist",
-        "owner": "peter",
-        "home": "/Users/peter",
+        "launch_agent": str(Path(HEADEND_LAUNCH_AGENTS) / "homebrew.mxcl.postgresql@17.plist"),
+        "owner": HEADEND_LOCAL_OWNER,
+        "home": HEADEND_LOCAL_HOME,
         "runtime_bin": "/opt/homebrew/opt/postgresql@17/bin/psql",
         "description": "PostgreSQL database runtime",
         "preflight": [
@@ -4081,17 +4477,17 @@ HEADEND_PLATFORM_BREW_ALLOWLIST = {
             ["/opt/homebrew/opt/postgresql@17/bin/psql", "postgresql://timelapse@localhost/timelapse_db", "-c", "select now();"],
         ],
         "extra_backup_paths": [
-            "/Users/peter/Library/LaunchAgents/homebrew.mxcl.postgresql@17.plist",
+            str(Path(HEADEND_LAUNCH_AGENTS) / "homebrew.mxcl.postgresql@17.plist"),
         ],
         "requires_db_backup": True,
     },
     "ollama": {
         "service": "ollama",
         "service_label": "homebrew.mxcl.ollama",
-        "launch_agent": "/Users/peter/Library/LaunchAgents/homebrew.mxcl.ollama.plist",
+        "launch_agent": str(Path(HEADEND_LAUNCH_AGENTS) / "homebrew.mxcl.ollama.plist"),
         "runtime_bin": "/Applications/Ollama.app/Contents/Resources/ollama",
-        "owner": "peter",
-        "home": "/Users/peter",
+        "owner": HEADEND_LOCAL_OWNER,
+        "home": HEADEND_LOCAL_HOME,
         "description": "Ollama AI runtime",
     },
 }
@@ -5106,7 +5502,11 @@ def _collect_release_outputs(root: Path) -> list[dict]:
         root / "edge" / "agent.py",
         root / "edge" / "security.py",
         root / "edge" / "requirements.txt",
+        root / "edge" / "camera",
+        root / "edge" / "capture",
         root / "edge" / "config",
+        root / "edge" / "diagnostics",
+        root / "edge" / "tunnel",
         root / "edge" / "upload",
         root / "edge" / "update",
         root / "timelapse-ui" / "dist",
@@ -7946,8 +8346,53 @@ def approve_update(
     if payload.scope == "device" and not payload.scope_id and not payload.target_device_ids:
         raise HTTPException(status_code=400, detail="Device scope kræver scope_id eller target_device_ids")
     _assert_update_has_required_artifact(db, u)
+
+    artifact = _find_artifact_for_update(db, u)
+    ticket = db.query(ChangeTicket).filter_by(pending_update_id=u.id).order_by(ChangeTicket.created_at.desc()).first()
+    if not ticket:
+        ticket = _build_change_ticket(
+            u,
+            ChangeTicketPayload(
+                title=f"{u.update_type} {u.version}",
+                summary=u.description or "",
+                status="ready",
+            ),
+            current_user,
+            artifact,
+        )
+        db.add(ticket)
+        db.flush()
+
+    decided_at = now_utc()
+    signed_payload = {
+        "ticket_id": ticket.ticket_id,
+        "ticket_sha256": ticket.content_sha256,
+        "decision": "approved",
+        "decided_by": current_user.username,
+        "decided_at": decided_at.isoformat(),
+        "approval_surface": "updates_page_approve",
+        "pending_update_id": u.id,
+    }
+    signed_hash = _sha256_text(_canonical_json(signed_payload))
+    signature, signed_by = _sign_payload(_canonical_json(signed_payload))
+    db.add(ChangeApproval(
+        ticket_id=ticket.ticket_id,
+        decision="approved",
+        decided_by=current_user.username,
+        decided_at=decided_at,
+        approval_context=_canonical_json({
+            "role": current_user.role,
+            "customer_id": current_user.customer_id,
+            "signed_by": signed_by,
+        }),
+        signature=signature,
+        signed_payload_sha256=signed_hash,
+    ))
+
+    ticket.status       = "approved"
+    ticket.updated_at   = decided_at
     u.status            = "approved"
-    u.approved_at       = now_utc()
+    u.approved_at       = decided_at
     u.approved_by       = current_user.username
     u.environment       = payload.environment or "production"
     if payload.scope:
@@ -7955,13 +8400,14 @@ def approve_update(
         u.scope_id = None if payload.scope == "global" else payload.scope_id
     else:
         u.scope    = u.scope or "device"
-    target_ids          = payload.target_device_ids
-    u.target_device_ids = json.dumps(target_ids) if target_ids else None
-    _ensure_update_targets(db, u)
+    target_ids = payload.target_device_ids
+    if target_ids is not None:
+        u.target_device_ids = json.dumps(target_ids) if target_ids else None
+    _ensure_update_targets(db, u, ticket)
     db.commit()
     log.info("Opdatering godkendt: %s v%s → %s/%s af %s",
              u.update_type, u.version, u.environment, u.scope, current_user.username)
-    return {"ok": True}
+    return {"ok": True, "ticket_id": ticket.ticket_id, "signed_payload_sha256": signed_hash}
 
 
 def _control_summary_state(controls: list[dict]) -> dict:
@@ -8655,7 +9101,7 @@ def _headend_api_url(db: Session, explicit_url: str | None = None) -> str:
         or _get_setting(db, "edge_public_headend_url", "")
         or _get_setting(db, "base_url", "")
         or os.getenv("BASE_URL", "")
-        or "https://timelapse.froekjaer.dk/api"
+        or "http://127.0.0.1:8000/api"
     ).strip().rstrip("/")
     if not raw.endswith("/api"):
         raw = raw + "/api"
@@ -8952,7 +9398,7 @@ def create_provision_package(
     device_id_hint = device_id or f"TL-PROV-{_uuid.uuid4().hex[:8].upper()}"
 
     # Headend URL fra settings
-    headend_url = _get_setting(db, "base_url", os.getenv("BASE_URL", "http://timelapse.froekjaer.dk:8000"))
+    headend_url = _get_setting(db, "base_url", os.getenv("BASE_URL", "http://127.0.0.1:8000"))
 
     # Generer bootstrap token
     import secrets
@@ -9560,6 +10006,7 @@ def list_timelapse_jobs():
 app.include_router(import_router, prefix="/api/import")
 app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
+app.include_router(itim_router, prefix="/api/itim")
 app.include_router(settings_router)
 
 @app.post("/api/inventory/{device_id}")
@@ -9605,20 +10052,47 @@ def api_time():
 
 from pathlib import Path as _Path
 from fastapi.responses import FileResponse
-def _init_sftp_base():
-    from sqlalchemy.orm import Session
-    db_gen = get_db()
-    db = next(db_gen)
+def _sftp_base_path(db: Session | None = None) -> _Path:
+    """Canonical image root. DB setting wins, so NAS mount changes do not require restart."""
+    fallback = os.getenv("SFTP_BASE", "/Volumes/data-fast")
+    if db is not None:
+        return _Path(_get_setting(db, "sftp_base", fallback)).expanduser()
+    local_db = SessionLocal()
     try:
-        return _Path(_get_setting(db, "sftp_base", os.getenv("SFTP_BASE", "/Volumes/data")))
+        return _Path(_get_setting(local_db, "sftp_base", fallback)).expanduser()
     finally:
-        db_gen.close()
+        local_db.close()
 
-SFTP_BASE = _init_sftp_base()
+
+def _configured_storage_roots(db: Session | None = None) -> list[_Path]:
+    """Primary image root plus optional legacy/search roots for NAS migrations."""
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    try:
+        roots = [_sftp_base_path(db)]
+        raw = _get_setting(db, "sftp_legacy_roots", os.getenv("SFTP_LEGACY_ROOTS", ""))
+        for item in _re.split(r"[\n,]+", raw or ""):
+            item = item.strip()
+            if item:
+                roots.append(_Path(item).expanduser())
+        deduped: list[_Path] = []
+        seen: set[str] = set()
+        for root in roots:
+            key = str(root)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(root)
+        return deduped
+    finally:
+        if close_db:
+            db.close()
 
 #Peter import re as _re
 
-def _find_image(device_id: str, filename: str) -> Optional[_Path]:
+@_functools.lru_cache(maxsize=100_000)
+def _find_image_cached(device_id: str, filename: str, roots_key: tuple[str, ...]) -> str:
     """
     Find image — håndterer flere strukturer:
       1. Canonical data root: SFTP_BASE/{customer}/{site}/{camera}/YYYY/MM/DD/filename
@@ -9627,48 +10101,72 @@ def _find_image(device_id: str, filename: str) -> Optional[_Path]:
       4. Flad/device:        SFTP_BASE/{device_id}/filename eller SFTP_BASE/{device_id}/YYYY/MM/DD/filename
     """
     m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
-    if m:
-        yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
+    for root in roots_key:
+        sftp_base = _Path(root)
+        if m:
+            yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
+            date_parts = [(yyyy, mm, dd)]
+            try:
+                filename_day = datetime(int(yyyy), int(mm), int(dd))
+                for delta_days in (-1, 1):
+                    adjacent = filename_day + timedelta(days=delta_days)
+                    adjacent_parts = (f"{adjacent.year:04d}", f"{adjacent.month:02d}", f"{adjacent.day:02d}")
+                    if adjacent_parts not in date_parts:
+                        date_parts.append(adjacent_parts)
+            except Exception:
+                pass
 
-        # Struktur 1 — canonical: customer/site/camera/YYYY/MM/DD/
-        canonical_glob = f"*/*/*/{yyyy}/{mm}/{dd}/{filename}"
-        matches = list(SFTP_BASE.glob(canonical_glob))
-        if matches:
-            return matches[0]
+            for yyyy, mm, dd in date_parts:
 
-        # Struktur 2 — legacy chroot under timelapse-incoming/sftp_user/data/
-        legacy_chroot_glob = f"timelapse-incoming/*/data/*/*/*/{yyyy}/{mm}/{dd}/{filename}"
-        matches = list(SFTP_BASE.glob(legacy_chroot_glob))
-        if matches:
-            return matches[0]
+                # Struktur 1 — canonical: customer/site/camera/YYYY/MM/DD/
+                canonical_glob = f"*/*/*/{yyyy}/{mm}/{dd}/{filename}"
+                matches = list(sftp_base.glob(canonical_glob))
+                if matches:
+                    return str(matches[0])
 
-        legacy_site_chroot_glob = f"timelapse-incoming/*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
-        matches = list(SFTP_BASE.glob(legacy_site_chroot_glob))
-        if matches:
-            return matches[0]
+                # Struktur 2 — legacy chroot under timelapse-incoming/sftp_user/data/
+                legacy_chroot_glob = f"timelapse-incoming/*/data/*/*/*/{yyyy}/{mm}/{dd}/{filename}"
+                matches = list(sftp_base.glob(legacy_chroot_glob))
+                if matches:
+                    return str(matches[0])
 
-        # Struktur 3 — gammel hierarkisk: customer/site/YYYY/MM/DD/
-        old_glob = f"*/*/{yyyy}/{mm}/{dd}/{filename}"
-        matches = list(SFTP_BASE.glob(old_glob))
-        if matches:
-            return matches[0]
+                legacy_site_chroot_glob = f"timelapse-incoming/*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
+                matches = list(sftp_base.glob(legacy_site_chroot_glob))
+                if matches:
+                    return str(matches[0])
 
-        # Struktur 4 — device_id/YYYY/MM/DD/
-        p = SFTP_BASE / device_id / yyyy / mm / dd / filename
-        if p.exists():
-            return p
+                # Struktur 3 — gammel hierarkisk: customer/site/YYYY/MM/DD/
+                old_glob = f"*/*/{yyyy}/{mm}/{dd}/{filename}"
+                matches = list(sftp_base.glob(old_glob))
+                if matches:
+                    return str(matches[0])
 
-        # Struktur 5 — rekursiv fallback (langsommere men sikker)
-        matches = list(SFTP_BASE.rglob(filename))
-        if matches:
-            return matches[0]
+                # Struktur 4 — device_id/YYYY/MM/DD/
+                p = sftp_base / device_id / yyyy / mm / dd / filename
+                if p.exists():
+                    return str(p)
 
-    # Flad struktur SFTP_BASE/device_id/filename
-    flat = SFTP_BASE / device_id / filename
-    if flat.exists():
-        return flat
+        # Flad struktur sftp_base/device_id/filename
+        flat = sftp_base / device_id / filename
+        if flat.exists():
+            return str(flat)
 
-    return None
+    # Sidste udvej. Rekursiv søgning på NAS-roots er dyr og kan gøre
+    # thumbnail-grids meget langsomme, så den er opt-in når strukturerne ovenfor
+    # ikke dækker en særlig import.
+    if os.getenv("TIMELAPSE_IMAGE_R_GLOB_FALLBACK", "false").lower() in {"1", "true", "yes", "on"}:
+        for root in roots_key:
+            matches = list(_Path(root).rglob(filename))
+            if matches:
+                return str(matches[0])
+
+    return ""
+
+
+def _find_image(device_id: str, filename: str) -> Optional[_Path]:
+    roots_key = tuple(str(root) for root in _configured_storage_roots())
+    found = _find_image_cached(device_id, filename, roots_key)
+    return _Path(found) if found else None
 
 def _thumbs_dir_for(image_path: _Path) -> _Path:
     """Return .thumbs directory next to the image."""
@@ -9702,6 +10200,7 @@ def _thumbnail_candidates_for(image_path: _Path) -> list[_Path]:
     suffix = image_path.suffix or ".jpg"
     return [
         image_path.parent / ".thumbs" / image_path.name,
+        image_path.parent / ".headend-thumbs" / image_path.name,
         image_path.parent / "thumbs" / image_path.name,
         image_path.parent / "thumbnails" / image_path.name,
         image_path.parent / f"thumb_{image_path.name}",
@@ -9718,10 +10217,11 @@ def _find_existing_thumbnail(image_path: _Path) -> _Path | None:
     return None
 
 
-def _generate_edge_thumbnail(src: _Path, thumb: _Path) -> None:
+def _generate_edge_thumbnail(src: _Path, thumb: _Path) -> tuple[bool, str | None]:
     key = str(thumb)
     try:
-        from PIL import Image
+        from PIL import Image, ImageFile
+        ImageFile.LOAD_TRUNCATED_IMAGES = os.getenv("TIMELAPSE_THUMBNAIL_ALLOW_TRUNCATED", "true").lower() in {"1", "true", "yes", "on"}
         thumb.parent.mkdir(parents=True, exist_ok=True)
         tmp_thumb = thumb.parent / f".{thumb.name}.{_secrets.token_hex(8)}.tmp"
         try:
@@ -9734,13 +10234,49 @@ def _generate_edge_thumbnail(src: _Path, thumb: _Path) -> None:
                 canvas.save(str(tmp_thumb), "JPEG", quality=78)
             os.replace(tmp_thumb, thumb)
             log.info("Thumbnail repair generated: %s", thumb)
+            return True, None
         finally:
             tmp_thumb.unlink(missing_ok=True)
     except Exception as exc:
-        log.warning("Thumbnail repair failed for %s: %s", src, exc)
+        error = str(exc)
+        log.warning("Thumbnail repair failed for %s: %s", src, error)
+        return False, error
     finally:
         with _thumbnail_generation_lock:
             _thumbnail_generation_active.discard(key)
+
+
+# Global samtidigheds-grænse for thumbnail-generering. Beskytter data-fast mod
+# "thundering herd": et galleri med mange manglende thumbnails fyrede før 100+
+# samtidige genereringer (hver læser et fuldopløst billede) → volumenet druknede
+# og de fleste timeout'ede. Nu serialiseres de til N ad gangen.
+_thumb_gen_semaphore = _threading.BoundedSemaphore(
+    int(os.getenv("TIMELAPSE_THUMBNAIL_GEN_CONCURRENCY", "3")))
+
+
+def _bounded_generate_thumbnail(src: _Path, thumb: _Path) -> tuple[bool, str | None]:
+    """_generate_edge_thumbnail med global samtidigheds-grænse."""
+    acquired = _thumb_gen_semaphore.acquire(
+        timeout=float(os.getenv("TIMELAPSE_THUMBNAIL_GEN_TIMEOUT_S", "20")))
+    if not acquired:
+        with _thumbnail_generation_lock:
+            _thumbnail_generation_active.discard(str(thumb))
+        return False, "concurrency_limit"
+    try:
+        return _generate_edge_thumbnail(src, thumb)
+    finally:
+        _thumb_gen_semaphore.release()
+
+
+def _lazy_generate_thumbnail(src: _Path) -> _Path | None:
+    """Generér en manglende thumbnail synkront (cachet i .headend-thumbs/) når
+    galleriet beder om den — så `get_thumbnail` kan returnere 200 i stedet for 404.
+    Samtidigheds-begrænset, så en stor side ikke presser data-fast."""
+    target = _generated_thumbs_dir_for(src) / src.name
+    if _is_valid_jpeg(target):
+        return target
+    ok, _err = _bounded_generate_thumbnail(src, target)
+    return target if (ok and _is_valid_jpeg(target)) else None
 
 
 def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
@@ -9754,6 +10290,39 @@ def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
         except Exception as exc:
             log.warning("Kunne ikke slette thumbnail i %s: %s", directory, exc)
     return deleted
+
+
+def _xaccel_redirect(path: _Path, media_type: str, cache_control: str = ""):
+    """X-Accel-Redirect: lad NGINX selv sende filen, så uvicorn-workeren frigøres
+    straks (fjerner thumbnail-serverings-loftet — billeder streames ikke længere
+    gennem Python pr. request). Auth + sti-resolution bliver i Python; kun selve
+    fil-leveringen flyttes til nginx.
+
+    DEFAULT SLÅET FRA. Aktiveres kun når BÅDE:
+      - nginx har en intern location der matcher TIMELAPSE_XACCEL_PREFIX → alias mod
+        TIMELAPSE_XACCEL_ROOT (se Codex_Thumbnail_503_Analyse_2026-06-30.md), OG
+      - TIMELAPSE_THUMBNAIL_XACCEL=on
+    Returnerer None hvis ikke konfigureret/anvendelig → kalderen falder tilbage til
+    FileResponse (uændret adfærd), så Python-koden kan deployes FØR nginx er klar."""
+    if os.getenv("TIMELAPSE_THUMBNAIL_XACCEL", "false").lower() not in {"1", "true", "yes", "on"}:
+        return None
+    root = os.getenv("TIMELAPSE_XACCEL_ROOT", "").rstrip("/")
+    if not root:
+        return None
+    prefix = os.getenv("TIMELAPSE_XACCEL_PREFIX", "/_protected_media").rstrip("/")
+    try:
+        rel = path.resolve().relative_to(_Path(root).resolve())
+    except (ValueError, OSError):
+        return None
+    from urllib.parse import quote
+    from starlette.responses import Response as _Resp
+    headers = {
+        "X-Accel-Redirect": f"{prefix}/{quote(str(rel))}",
+        "Content-Type": media_type,
+    }
+    if cache_control:
+        headers["Cache-Control"] = cache_control
+    return _Resp(status_code=200, headers=headers)
 
 
 @app.get("/api/images/{device_id}/{filename}")
@@ -9770,6 +10339,9 @@ def get_image(
     path = _find_image(device_id, filename)
     if not path:
         raise HTTPException(status_code=404, detail="Image not found")
+    xr = _xaccel_redirect(path, "image/jpeg")
+    if xr is not None:
+        return xr
     return FileResponse(str(path), media_type="image/jpeg")
 
 @app.get("/api/thumbnails/{device_id}/{filename}")
@@ -9786,16 +10358,37 @@ def get_thumbnail(
     src = _find_image(device_id, filename)
     if not src:
         raise HTTPException(status_code=404, detail="Image not found")
+    _thumb_cache = "public, max-age=604800, immutable"
     thumb = _find_existing_thumbnail(src)
     if thumb:
+        xr = _xaccel_redirect(thumb, "image/jpeg", _thumb_cache)
+        if xr is not None:
+            return xr
         return FileResponse(
             str(thumb),
             media_type="image/jpeg",
             headers={
-                "Cache-Control": "public, max-age=604800, immutable",
+                "Cache-Control": _thumb_cache,
                 "X-Thumbnail-Source": "edge",
             },
         )
+
+    # Generér-ved-miss (selvhelende, samtidigheds-begrænset). Gated by flag, så
+    # den kan slås fra hvis den nogensinde presser data-fast for hårdt.
+    if os.getenv("TIMELAPSE_THUMBNAIL_LAZY_GENERATE", "true").lower() in {"1", "true", "yes", "on"}:
+        generated = _lazy_generate_thumbnail(src)
+        if generated:
+            xr = _xaccel_redirect(generated, "image/jpeg", _thumb_cache)
+            if xr is not None:
+                return xr
+            return FileResponse(
+                str(generated),
+                media_type="image/jpeg",
+                headers={
+                    "Cache-Control": _thumb_cache,
+                    "X-Thumbnail-Source": "headend-lazy",
+                },
+            )
 
     raise HTTPException(
         status_code=404,
@@ -9829,7 +10422,7 @@ def request_thumbnail_generation(
             return {"status": "queued", "thumbnail": str(thumb)}
         _thumbnail_generation_active.add(key)
 
-    _threading.Thread(target=_generate_edge_thumbnail, args=(src, thumb), daemon=True).start()
+    _threading.Thread(target=_bounded_generate_thumbnail, args=(src, thumb), daemon=True).start()
     return {"status": "queued", "thumbnail": str(thumb)}
 
 
@@ -9847,6 +10440,7 @@ _post_processing_status: dict = {
     "ai_queued": 0,
     "files_missing": 0,
     "errors": 0,
+    "error_samples": [],
     "last_message": "Ingen kørsel startet",
     "ollama_warning": None,
     "ai_strategy": None,
@@ -9861,6 +10455,15 @@ def _post_processing_snapshot() -> dict:
 def _post_processing_update(**values) -> None:
     with _post_processing_lock:
         _post_processing_status.update(values)
+
+
+def _post_processing_error(message: str) -> None:
+    with _post_processing_lock:
+        _post_processing_status["errors"] = int(_post_processing_status.get("errors") or 0) + 1
+        samples = list(_post_processing_status.get("error_samples") or [])
+        if len(samples) < 25:
+            samples.append(message)
+        _post_processing_status["error_samples"] = samples
 
 
 def _run_post_processing_job(options: dict, allowed_device_ids: list[str] | None, requested_by: str) -> None:
@@ -9900,11 +10503,11 @@ def _run_post_processing_job(options: dict, allowed_device_ids: list[str] | None
                         _post_processing_status["thumbnails_existing"] += 1
                     else:
                         target = _thumbs_dir_for(image_path) / image_path.name
-                        _generate_edge_thumbnail(image_path, target)
-                        if _is_valid_jpeg(target):
+                        ok, error = _generate_edge_thumbnail(image_path, target)
+                        if ok and _is_valid_jpeg(target):
                             _post_processing_status["thumbnails_generated"] += 1
                         else:
-                            _post_processing_status["errors"] += 1
+                            _post_processing_error(f"Thumbnail fejlede for {capture.filename}: {error or 'ukendt fejl'}")
 
                 if options.get("ai"):
                     should_queue = options.get("force_ai") or not capture.ai_result or not capture.ai_tags
@@ -9924,7 +10527,7 @@ def _run_post_processing_job(options: dict, allowed_device_ids: list[str] | None
                         if queued_ok:
                             _post_processing_status["ai_queued"] += 1
                         else:
-                            _post_processing_status["errors"] += 1
+                            _post_processing_error(f"AI-kø fuld: {capture.filename}")
                             _post_processing_update(last_message=f"AI-kø fuld — {capture.filename} sprunget over")
 
                 if index % 25 == 0:
@@ -9932,7 +10535,7 @@ def _run_post_processing_job(options: dict, allowed_device_ids: list[str] | None
                 _post_processing_update(processed=index, last_message=f"Behandler {index}/{len(capture_ids)}")
             except Exception as exc:
                 db.rollback()
-                _post_processing_status["errors"] += 1
+                _post_processing_error(f"Fejl ved {capture.filename}: {exc}")
                 _post_processing_update(processed=index, last_message=f"Fejl ved {capture.filename}: {exc}")
 
         db.commit()
@@ -10030,6 +10633,7 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
             "ai_queued": 0,
             "files_missing": 0,
             "errors": 0,
+            "error_samples": [],
             "last_message": "Kø starter",
             "ollama_warning": ollama_warning,
             "ai_strategy": ai_strategy,
@@ -10111,68 +10715,101 @@ def start_ai_batch_job(
             )
 
     allowed_device_ids = _allowed_capture_device_ids(db, current_user)
-    query = db.query(Capture).filter(Capture.filename.isnot(None))
-    if allowed_device_ids is not None:
-        if not allowed_device_ids:
-            raise HTTPException(status_code=400, detail="Ingen synlige enheder")
-        query = query.filter(Capture.device_id.in_(list(allowed_device_ids)))
-    if device_id:
-        query = query.filter(Capture.device_id == device_id)
-    if not force_ai:
-        query = query.filter(or_(Capture.ai_result.is_(None), Capture.ai_tags.is_(None)))
-    query = query.order_by(Capture.captured_at.desc(), Capture.id.desc())
-    if limit:
-        query = query.limit(limit)
-    captures = query.all()
-    if not captures:
-        raise HTTPException(status_code=400, detail="Ingen billeder matcher kriterierne")
+    if allowed_device_ids is not None and not allowed_device_ids:
+        raise HTTPException(status_code=400, detail="Ingen synlige enheder")
+    allowed_list = list(allowed_device_ids) if allowed_device_ids is not None else None
 
-    items = []
-    missing = 0
-    for cap in captures:
-        path = _find_image(cap.device_id, cap.filename)
-        if path:
-            items.append((f"cap-{cap.id}", path, cap.id))
-        else:
-            missing += 1
-    if not items:
-        raise HTTPException(status_code=400, detail="Ingen af de matchede billeder findes på disk")
-
-    from ai.tag_vocabulary import TagVocabulary
-    vocab = TagVocabulary(get_db)
-    vocab_by_cat = vocab.get_approved_by_category()
-
+    # Opret job-rækken med det samme (status=submitting) og returnér STRAKS.
+    # Det tunge arbejde — find filer, byg kontekst pr. billede, base64-encode og
+    # upload hele JSONL'en til Google — kan tage minutter for 26.000 billeder og
+    # ville ellers ramme nginx' 60s timeout (504). Det kører nu i en baggrundstråd,
+    # og UI'et følger status via /api/admin/ai-batch/jobs.
     job_id = str(_uuid.uuid4())
-    try:
-        job_name = svc.submit_batch_job(
-            items=[(key, path) for key, path, _cid in items],
-            vocabulary_by_cat=vocab_by_cat,
-            display_name=f"timelapse-batch-{job_id[:8]}",
-            gcs_bucket=gcs_bucket,
-        )
-    except Exception as exc:
-        log.exception("Batch-job submission fejlede")
-        raise HTTPException(status_code=500, detail=f"Kunne ikke oprette batch-job: {exc}")
-
-    job = AiBatchJob(
-        id=job_id,
-        gemini_job_name=job_name,
-        status="submitted",
-        capture_ids=_json.dumps([cid for _k, _p, cid in items]),
-        cloud_model=cfg.cloud_model,
-        total_count=len(items),
-        requested_by=current_user.username,
-        notify_on_complete=notify_on_complete,
+    db.add(AiBatchJob(
+        id=job_id, gemini_job_name=None, status="submitting",
+        capture_ids="[]", cloud_model=cfg.cloud_model, total_count=0,
+        requested_by=current_user.username, notify_on_complete=notify_on_complete,
         submitted_at=now_utc(),
-    )
-    db.add(job)
+    ))
     db.commit()
-    log.info("AI batch-job startet: %s (%d billeder, %d manglede fil) af %s",
-              job_name, len(items), missing, current_user.username)
+
+    _cloud_model = cfg.cloud_model
+    _username = current_user.username
+
+    def _submit_ai_batch_bg():
+        from database import Capture as _Cap, Device as _Dev
+        from ai.capture_context import build_capture_context, format_context_block
+        from ai.tag_vocabulary import TagVocabulary
+        bg_gen = get_db(); bg = next(bg_gen)
+        try:
+            svc2 = _build_gemini_service(get_db, _cloud_model)
+            if not svc2:
+                raise RuntimeError("Ingen Gemini-credentials")
+            q = bg.query(_Cap).filter(_Cap.filename.isnot(None))
+            if allowed_list is not None:
+                q = q.filter(_Cap.device_id.in_(allowed_list))
+            if device_id:
+                q = q.filter(_Cap.device_id == device_id)
+            if not force_ai:
+                q = q.filter(or_(_Cap.ai_result.is_(None), _Cap.ai_tags.is_(None)))
+            q = q.order_by(_Cap.captured_at.desc(), _Cap.id.desc())
+            if limit:
+                q = q.limit(limit)
+            caps = q.all()
+
+            items = []; missing = 0; ctx_by_key = {}; dev_cache = {}
+            for cap in caps:
+                path = _find_image(cap.device_id, cap.filename)
+                if not path:
+                    missing += 1; continue
+                key = f"cap-{cap.id}"
+                items.append((key, path, cap.id))
+                try:
+                    dev = dev_cache.get(cap.device_id)
+                    if dev is None:
+                        dev = bg.query(_Dev).filter_by(device_id=cap.device_id).first()
+                        dev_cache[cap.device_id] = dev
+                    ctx_by_key[key] = format_context_block(build_capture_context(bg, cap, dev))
+                except Exception:
+                    ctx_by_key[key] = ""
+
+            if not items:
+                bg.query(AiBatchJob).filter_by(id=job_id).update(
+                    {"status": "failed", "error_message": "Ingen af billederne findes på disk"})
+                bg.commit(); return
+
+            vocab_by_cat = TagVocabulary(get_db).get_approved_by_category()
+            job_name = svc2.submit_batch_job(
+                items=[(k, p) for k, p, _c in items],
+                vocabulary_by_cat=vocab_by_cat,
+                display_name=f"timelapse-batch-{job_id[:8]}",
+                gcs_bucket=gcs_bucket,
+                context_by_key=ctx_by_key,
+            )
+            bg.query(AiBatchJob).filter_by(id=job_id).update({
+                "gemini_job_name": job_name, "status": "submitted",
+                "capture_ids": _json.dumps([c for _k, _p, c in items]),
+                "total_count": len(items),
+            })
+            bg.commit()
+            log.info("AI batch-job startet (baggrund): %s (%d billeder, %d manglede) af %s",
+                     job_name, len(items), missing, _username)
+        except Exception as exc:
+            log.exception("AI batch-job (baggrund) fejlede")
+            try:
+                bg.query(AiBatchJob).filter_by(id=job_id).update(
+                    {"status": "failed", "error_message": str(exc)[:500]})
+                bg.commit()
+            except Exception:
+                pass
+        finally:
+            bg_gen.close()
+
+    _threading.Thread(target=_submit_ai_batch_bg, daemon=True,
+                      name=f"ai-batch-submit-{job_id[:8]}").start()
     return {
-        "id": job.id, "gemini_job_name": job_name,
-        "total": len(items), "missing_files": missing,
-        "status": "submitted",
+        "id": job_id, "status": "submitting",
+        "message": "Batch-job oprettes i baggrunden — følg status under AI-batch jobs.",
     }
 
 
@@ -10300,6 +10937,15 @@ def _finalize_ai_batch_job(db, job: "AiBatchJob", svc, gemini_job) -> None:
                 "duration_ms": result.duration_ms,
                 "raw_response": result.raw_response,
             }
+            # Bevar evt. eksisterende edge-QA under 'edge_ai', så batch-Gemini ikke
+            # sletter den (samme som live-workeren gør).
+            if capture.ai_result and "edge_ai" not in ai_payload:
+                try:
+                    _prev = _json.loads(capture.ai_result)
+                    if _prev.get("source") == "edge":
+                        ai_payload["edge_ai"] = _prev
+                except Exception:
+                    pass
             tags = result.approved_tags + result.new_tags
             capture.ai_result = _json.dumps(ai_payload, ensure_ascii=False)
             capture.ai_tags = _json.dumps(tags, ensure_ascii=False)
@@ -10335,8 +10981,20 @@ def _poll_one_ai_batch_job(db, job: "AiBatchJob") -> None:
 
     state = status["state"]
     if state in _BATCH_RUNNING_STATES:
+        changed = False
         if job.status != "running":
             job.status = "running"
+            changed = True
+        # Skriv løbende fremdrift hjem (Vertex completion_stats) → UI viser X/total %.
+        prog = status.get("progress") or {}
+        if prog:
+            s = int(prog.get("success") or 0)
+            e = int(prog.get("error") or 0)
+            if job.success_count != s:
+                job.success_count = s; changed = True
+            if job.error_count != e:
+                job.error_count = e; changed = True
+        if changed:
             db.commit()
         return
     if state in _BATCH_SUCCESS_STATES:
@@ -10390,6 +11048,7 @@ def _ai_batch_poller_loop(interval_minutes: float = 5.0) -> None:
 @app.put("/api/admin/devices/{device_id}/debug")
 def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Enable or disable debug/lab mode for a device."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -10414,8 +11073,9 @@ def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), d
 
 
 @app.post("/api/lab/{device_id}/relay")
-def toggle_relay(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def toggle_relay(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Toggle relay TIL/FRA — bruges af SystemAdminPage til test."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
@@ -10434,35 +11094,40 @@ def toggle_relay(device_id: str, payload: dict, db: Session = Depends(get_db)):
 
 
 @app.post("/api/lab/{device_id}/preview")
-def request_preview(device_id: str, db: Session = Depends(get_db)):
+def request_preview(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request a preview capture from the device (no shutter count)."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     # Set a pending_preview flag in device_config
     existing = json.loads(device.device_config or "{}")
     existing["lab_command"] = {"type": "preview", "requested_at": now_utc().isoformat()}
+    existing.pop("lab_result", None)
     device.device_config = json.dumps(existing)
     db.commit()
     return {"status": "ok", "command": "preview"}
 
 
 @app.post("/api/lab/{device_id}/capture")
-def request_capture(device_id: str, db: Session = Depends(get_db)):
+def request_capture(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request a full-resolution capture from the device."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     existing = json.loads(device.device_config or "{}")
     existing["lab_command"] = {"type": "capture", "requested_at": now_utc().isoformat()}
+    existing.pop("lab_result", None)
     device.device_config = json.dumps(existing)
     db.commit()
     return {"status": "ok", "command": "capture"}
 
 
 @app.post("/api/lab/{device_id}/set-param")
-def set_camera_param(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def set_camera_param(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Set a camera parameter on the device (queued for next poll)."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -10471,14 +11136,122 @@ def set_camera_param(device_id: str, payload: dict, db: Session = Depends(get_db
     if not key or value is None:
         raise HTTPException(status_code=400, detail="key and value required")
     existing = json.loads(device.device_config or "{}")
-    pending  = existing.get("pending_params", [])
-    # Remove existing entry for same key
-    pending  = [p for p in pending if p["key"] != key]
-    pending.append({"key": key, "value": str(value)})
-    existing["pending_params"] = pending
-    device.device_config = json.dumps(existing)
+    existing["lab_command"] = {
+        "type": "set_param",
+        "key": str(key),
+        "value": str(value),
+        "requested_at": now_utc().isoformat(),
+    }
+    existing.pop("lab_result", None)
+    device.device_config = json.dumps(existing, ensure_ascii=False)
     db.commit()
     return {"status": "ok", "key": key, "value": value}
+
+
+def _queue_lab_command(device_id: str, command: dict, db: Session) -> dict:
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    existing = json.loads(device.device_config or "{}")
+    existing["lab_command"] = {
+        **command,
+        "requested_at": now_utc().isoformat(),
+    }
+    existing.pop("lab_result", None)
+    device.device_config = json.dumps(existing, ensure_ascii=False)
+    db.commit()
+    return {"status": "ok", "command": existing["lab_command"]}
+
+
+@app.post("/api/lab/{device_id}/focus-drive")
+def lab_focus_drive(
+    device_id: str,
+    payload: dict,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Queue exact remote-focus motor command from camera choices."""
+    _ensure_capture_device_access(db, _user, device_id)
+    value = str(payload.get("value") or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="value required")
+    return _queue_lab_command(device_id, {"type": "focus_drive", "value": value}, db)
+
+
+@app.post("/api/lab/{device_id}/autofocus")
+def lab_autofocus(
+    device_id: str,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Queue autofocus and quality verification preview."""
+    _ensure_capture_device_access(db, _user, device_id)
+    return _queue_lab_command(device_id, {"type": "autofocus"}, db)
+
+
+@app.post("/api/lab/{device_id}/focus-slice")
+def lab_focus_slice(
+    device_id: str,
+    payload: dict,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Queue focus slicing test with local edge quality scoring."""
+    _ensure_capture_device_access(db, _user, device_id)
+    step_value = str(payload.get("step_value") or "").strip()
+    count = max(1, min(12, int(payload.get("count", 5))))
+    if not step_value:
+        raise HTTPException(status_code=400, detail="step_value required")
+    return _queue_lab_command(device_id, {
+        "type": "focus_slice",
+        "step_value": step_value,
+        "count": count,
+        "run_autofocus_first": bool(payload.get("run_autofocus_first", True)),
+    }, db)
+
+
+@app.post("/api/lab/{device_id}/edge-ai-focus-test")
+def lab_edge_ai_focus_test(
+    device_id: str,
+    payload: dict,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Queue daily-style edge focus quality test. Uses local deterministic vision metrics first."""
+    _ensure_capture_device_access(db, _user, device_id)
+    step_value = str(payload.get("step_value") or "").strip()
+    count = max(1, min(12, int(payload.get("count", 3))))
+    if not step_value:
+        raise HTTPException(status_code=400, detail="step_value required")
+    return _queue_lab_command(device_id, {
+        "type": "edge_ai_focus_test",
+        "step_value": step_value,
+        "count": count,
+        "run_autofocus_first": True,
+    }, db)
+
+
+@app.post("/api/lab/{device_id}/result")
+def lab_store_result(
+    device_id: str,
+    payload: dict,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
+    """Edge poster LAB command result to headend."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404)
+    existing = json.loads(device.device_config or "{}")
+    existing["lab_result"] = {
+        **payload,
+        "received_at": now_utc().isoformat(),
+    }
+    existing.pop("lab_command", None)
+    device.device_config = json.dumps(existing, ensure_ascii=False)
+    device.last_seen = now_utc()
+    db.commit()
+    return {"status": "ok"}
 
 
 # ── Backup ────────────────────────────────────────────────────────────────────
@@ -10547,7 +11320,7 @@ def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = 
 
         _backup_status["progress"].append("Config backup...")
         config_paths = [
-            "/Users/peter/Library/LaunchAgents/homebrew.mxcl.ollama.plist",
+            str(Path(HEADEND_LAUNCH_AGENTS) / "homebrew.mxcl.ollama.plist"),
             "/Library/LaunchDaemons/timelapse-headend.plist",
             "/Library/LaunchDaemons/timelapse-node-agent.plist",
             "/opt/homebrew/etc/nginx/nginx.conf",
@@ -10621,6 +11394,63 @@ def _get_nas_path():
         return None
 
 
+def _path_status(path_value: str | None, *, label: str, required: bool = False, create_probe: bool = False) -> dict:
+    path = _Path(path_value or "").expanduser() if path_value else None
+    info = {
+        "label": label,
+        "path": str(path) if path else "",
+        "configured": bool(path_value),
+        "required": required,
+        "exists": False,
+        "is_dir": False,
+        "writable": False,
+        "free_bytes": None,
+        "total_bytes": None,
+        "error": "",
+    }
+    if not path:
+        info["error"] = "not_configured" if required else ""
+        return info
+    try:
+        info["exists"] = path.exists()
+        info["is_dir"] = path.is_dir()
+        if create_probe and not info["exists"]:
+            path.mkdir(parents=True, exist_ok=True)
+            info["exists"] = path.exists()
+            info["is_dir"] = path.is_dir()
+        if info["is_dir"]:
+            usage = _shutil.disk_usage(path)
+            info["free_bytes"] = usage.free
+            info["total_bytes"] = usage.total
+            probe = path / ".timelapse-write-test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            info["writable"] = True
+    except Exception as exc:
+        info["error"] = str(exc)
+    return info
+
+
+@app.get("/api/admin/storage/status")
+def storage_status(_user=require_role("admin"), db: Session = Depends(get_db)):
+    """Runtime status for mapped disks/NAS roots used by Headend."""
+    settings = {r[0]: r[1] for r in db.execute(text(
+        "SELECT key, value FROM settings WHERE key IN "
+        "('sftp_base','sftp_legacy_roots','sftp_remote_base','backup_nas_path','edge_image_artifact_dir')"
+    )).fetchall()}
+    sftp_base = _sftp_base_path(db)
+    edge_image_root = _edge_image_storage_dir(create=False)
+    roots = [
+        _path_status(str(sftp_base), label="Canonical image root", required=True),
+        _path_status(settings.get("sftp_remote_base"), label="SFTP remote base", required=False),
+        _path_status(settings.get("backup_nas_path"), label="Backup NAS", required=False),
+        _path_status(str(edge_image_root), label="Edge image artifacts", required=True),
+    ]
+    for root in _configured_storage_roots(db)[1:]:
+        roots.append(_path_status(str(root), label="Legacy/search image root", required=False))
+    return {"roots": roots}
+
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Sprint A — Customer / Site / Device CRUD
@@ -10635,6 +11465,197 @@ def _deep_merge(base: dict, override: dict) -> dict:
         else:
             result[k] = v
     return result
+
+
+def _deep_merge_delete(base: dict, override: dict) -> dict:
+    """Merge hvor None betyder 'fjern override og arv igen'."""
+    result = dict(base or {})
+    for key, value in (override or {}).items():
+        if value is None:
+            result.pop(key, None)
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
+            merged = _deep_merge_delete(result[key], value)
+            if merged:
+                result[key] = merged
+            else:
+                result.pop(key, None)
+        elif isinstance(value, dict):
+            cleaned = _deep_merge_delete({}, value)
+            if cleaned:
+                result[key] = cleaned
+            else:
+                result.pop(key, None)
+        else:
+            result[key] = value
+    return result
+
+
+def _json_dict(raw: str | dict | None) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _flatten_config(data: dict, prefix: str = "") -> dict[str, object]:
+    rows: dict[str, object] = {}
+    for key, value in (data or {}).items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            rows.update(_flatten_config(value, path))
+        else:
+            rows[path] = value
+    return rows
+
+
+def _get_path(data: dict, path: str) -> object:
+    current: object = data
+    for part in path.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return current
+
+
+def _defaults_dict(db: Session) -> dict:
+    defaults = _get_or_create_defaults(db)
+    result = {}
+    for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
+        if hasattr(defaults, section):
+            result[section] = _json_dict(getattr(defaults, section, None))
+    return result
+
+
+def _active_camera_for_device(db: Session, device_id: str) -> Camera | None:
+    assignment = (
+        db.query(DeviceAssignment)
+        .filter_by(device_id=device_id)
+        .filter(DeviceAssignment.unassigned_at.is_(None))
+        .order_by(DeviceAssignment.assigned_at.desc())
+        .first()
+    )
+    return db.query(Camera).filter_by(id=assignment.camera_id).first() if assignment else None
+
+
+def _resolve_config_hierarchy(
+    db: Session,
+    *,
+    customer_id: str | None = None,
+    site_id: str | None = None,
+    camera_id: str | None = None,
+    device_id: str | None = None,
+) -> dict:
+    """Resolve global -> customer -> site -> camera config with per-field provenance."""
+    device = db.query(Device).filter_by(device_id=device_id).first() if device_id else None
+    camera = db.query(Camera).filter_by(id=camera_id).first() if camera_id else None
+    if device and not camera:
+        camera = _active_camera_for_device(db, device.device_id)
+    if camera:
+        camera_id = camera.id
+        site_id = site_id or camera.site_id
+        customer_id = customer_id or camera.customer_id
+    if device:
+        site_id = site_id or getattr(device, "site_id", None)
+        customer_id = customer_id or getattr(device, "customer_id", None)
+
+    site = db.query(Site).filter_by(id=site_id).first() if site_id else None
+    if site:
+        customer_id = customer_id or site.customer_id
+    customer = db.query(Customer).filter_by(id=customer_id).first() if customer_id else None
+
+    layers = [
+        {"key": "global", "label": "Global", "entity_id": None, "entity_name": "Globale defaults", "config": _defaults_dict(db)},
+        {
+            "key": "customer",
+            "label": "Kunde",
+            "entity_id": customer.id if customer else None,
+            "entity_name": customer.name if customer else None,
+            "config": _json_dict(customer.config_overrides if customer else None),
+        },
+        {
+            "key": "site",
+            "label": "Site",
+            "entity_id": site.id if site else None,
+            "entity_name": site.name if site else None,
+            "config": _json_dict(site.config_overrides if site else None),
+        },
+        {
+            "key": "camera",
+            "label": "Kamera",
+            "entity_id": camera.id if camera else None,
+            "entity_name": camera.camera_name if camera else None,
+            "config": _json_dict(camera.config if camera else None),
+        },
+    ]
+
+    effective: dict = {}
+    field_sources: dict[str, str] = {}
+    inherited_before_source: dict[str, object] = {}
+    global_flat: dict[str, object] = {}
+
+    for layer in layers:
+        flat_before = _flatten_config(effective)
+        layer_config = layer["config"]
+        if layer["key"] == "global":
+            global_flat = _flatten_config(layer_config)
+        for path, value in _flatten_config(layer_config).items():
+            if value is not None:
+                field_sources[path] = layer["key"]
+                inherited_before_source[path] = flat_before.get(path)
+        effective = _deep_merge(effective, layer_config)
+
+    all_paths = sorted({
+        *global_flat.keys(),
+        *field_sources.keys(),
+        *_flatten_config(effective).keys(),
+    })
+    fields = []
+    for path in all_paths:
+        layer_values = {layer["key"]: _get_path(layer["config"], path) for layer in layers}
+        effective_value = _get_path(effective, path)
+        global_value = layer_values.get("global")
+        source = field_sources.get(path, "global" if global_value is not None else "factory")
+        fields.append({
+            "path": path,
+            "section": path.split(".", 1)[0],
+            "key": path.split(".")[-1],
+            "values": layer_values,
+            "effective_value": effective_value,
+            "source": source,
+            "inherited_value": inherited_before_source.get(path),
+            "changed_from_global": effective_value != global_value,
+            "overridden": source != "global",
+        })
+
+    return {
+        "context": {
+            "device_id": device.device_id if device else device_id,
+            "customer_id": customer.id if customer else customer_id,
+            "customer_name": customer.name if customer else None,
+            "site_id": site.id if site else site_id,
+            "site_name": site.name if site else None,
+            "camera_id": camera.id if camera else camera_id,
+            "camera_name": camera.camera_name if camera else None,
+        },
+        "layers": [
+            {
+                "key": layer["key"],
+                "label": layer["label"],
+                "entity_id": layer["entity_id"],
+                "entity_name": layer["entity_name"],
+                "config": layer["config"],
+            }
+            for layer in layers
+        ],
+        "effective_config": effective,
+        "fields": fields,
+    }
 
 
 # ── Customers ─────────────────────────────────────────────────────────────
@@ -10905,19 +11926,96 @@ def clear_update_flag(device_id: str, _auth: None = Depends(_verify_device_token
 
 # ── Config defaults ───────────────────────────────────────────────────────
 
+_FACTORY_CONFIG_DEFAULTS = {
+    "schedule": {"timezone": "Europe/Copenhagen", "capture_mode": "interval", "interval_minutes": 60, "active_hours": ["06:00", "21:00"], "capture_avoid_windows": []},
+    "camera": {
+        "power_mode": "relay",
+        "relay_gpio_pin": 356,
+        "relay_on_seconds_before": 10,
+        "relay_off_seconds_after": 5,
+        "delete_after_download": True,
+        "gphoto2_port": "usb:",
+    },
+    "quality": {
+        "check_enabled": True,
+        "blur_threshold": 80,
+        "dark_threshold": 25,
+        "bright_threshold": 230,
+        "adaptive_exposure": {
+            "enabled": False,
+            "target_brightness": 118,
+            "brightness_tolerance": 32,
+            "step_ev": 0.3,
+            "min_ev": -2.0,
+            "max_ev": 2.0,
+        },
+        "edge_ai": {
+            "enabled": True,
+            "mode": "assist",
+            "prefer_npu": True,
+            "runner": "/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py",
+            "model_path": "",
+            "vendor_binary": "",
+            "timeout_s": 8,
+            "lens_obstruction_enabled": True,
+            "direct_sun_detection_enabled": True,
+        },
+    },
+    "storage": {"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"},
+    "diagnostics": {"heartbeat_interval_minutes": 60, "config_poll_interval_minutes": 5, "update_poll_interval_minutes": 5, "inventory_report_interval_hours": 24},
+    "system": {"error_recovery_sleep_s": 30, "min_sleep_s": 60, "api_timeout_s": 15},
+    "session_policy": {
+        "session_duration_hours": 12,
+        "remember_me_days": 30,
+        "absolute_max_days": 90,
+        "rolling_enabled": True,
+        "remember_me_allowed": True,
+        "mfa_required": False,
+        "webauthn_required": False,
+        "mfa_required_by_role": {
+            "super_admin": True,
+            "admin": True,
+            "operator": False,
+            "viewer": False,
+        },
+        "mfa_exempt_usernames": [],
+    },
+}
+
+
+def _merge_missing_defaults(existing: dict, defaults: dict) -> dict:
+    result = dict(existing or {})
+    for key, value in (defaults or {}).items():
+        if key not in result:
+            result[key] = value
+        elif isinstance(result.get(key), dict) and isinstance(value, dict):
+            result[key] = _merge_missing_defaults(result[key], value)
+    return result
+
 def _get_or_create_defaults(db: Session) -> ConfigDefaults:
     d = db.query(ConfigDefaults).first()
     if not d:
         d = ConfigDefaults(
-            schedule    = json.dumps({"timezone": "Europe/Copenhagen", "capture_mode": "interval", "interval_minutes": 60, "active_hours": ["06:00", "21:00"]}),
-            camera      = json.dumps({"relay_on_seconds_before": 10, "relay_off_seconds_after": 5, "delete_after_download": True, "gphoto2_port": "usb:"}),
-            quality     = json.dumps({"check_enabled": True, "blur_threshold": 80, "dark_threshold": 25, "bright_threshold": 230}),
-            storage     = json.dumps({"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"}),
-            diagnostics = json.dumps({"heartbeat_interval_minutes": 60, "config_poll_interval_minutes": 5}),
-            system      = json.dumps({"error_recovery_sleep_s": 30, "min_sleep_s": 60, "api_timeout_s": 15}),
-            session_policy = json.dumps({"session_duration_hours": 12, "remember_me_days": 30, "absolute_max_days": 90, "rolling_enabled": True, "remember_me_allowed": True, "mfa_required": False, "webauthn_required": False}),
+            schedule    = json.dumps(_FACTORY_CONFIG_DEFAULTS["schedule"]),
+            camera      = json.dumps(_FACTORY_CONFIG_DEFAULTS["camera"]),
+            quality     = json.dumps(_FACTORY_CONFIG_DEFAULTS["quality"]),
+            storage     = json.dumps(_FACTORY_CONFIG_DEFAULTS["storage"]),
+            diagnostics = json.dumps(_FACTORY_CONFIG_DEFAULTS["diagnostics"]),
+            system      = json.dumps(_FACTORY_CONFIG_DEFAULTS["system"]),
+            session_policy = json.dumps(_FACTORY_CONFIG_DEFAULTS["session_policy"]),
         )
         db.add(d); db.commit(); db.refresh(d)
+    changed = False
+    for section, defaults in _FACTORY_CONFIG_DEFAULTS.items():
+        if not hasattr(d, section):
+            continue
+        current = _json_dict(getattr(d, section, None))
+        merged = _merge_missing_defaults(current, defaults)
+        if merged != current:
+            setattr(d, section, json.dumps(merged, ensure_ascii=False))
+            changed = True
+    if changed:
+        db.commit(); db.refresh(d)
     return d
 
 
@@ -10943,6 +12041,108 @@ def update_config_defaults(payload: dict, _user=require_role("super_admin"), db:
             setattr(d, section, json.dumps(payload[section]))
     db.commit()
     return {"status": "ok"}
+
+
+@app.get("/api/admin/config-resolution")
+def get_config_resolution(
+    customer_id: Optional[str] = None,
+    site_id: Optional[str] = None,
+    camera_id: Optional[str] = None,
+    device_id: Optional[str] = None,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Returnerer effektiv config og provenance for global/kunde/site/kamera."""
+    if customer_id:
+        _ensure_customer_access(_user, customer_id)
+    if site_id:
+        _ensure_site_access(db, _user, site_id)
+    if device_id:
+        _ensure_capture_device_access(db, _user, device_id)
+    if camera_id:
+        cam = db.query(Camera).filter_by(id=camera_id).first()
+        if not cam:
+            raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+        if cam.site_id:
+            _ensure_site_access(db, _user, cam.site_id)
+        elif cam.customer_id:
+            _ensure_customer_access(_user, cam.customer_id)
+    return _resolve_config_hierarchy(
+        db,
+        customer_id=customer_id,
+        site_id=site_id,
+        camera_id=camera_id,
+        device_id=device_id,
+    )
+
+
+@app.put("/api/admin/config-overrides/{layer}/{entity_id}")
+def update_config_layer_override(
+    layer: str,
+    entity_id: str,
+    payload: dict,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Gem config på et bestemt lag. `null` i merge-mode fjerner et override."""
+    config_payload = payload.get("config_overrides", payload.get("config", {}))
+    if not isinstance(config_payload, dict):
+        raise HTTPException(status_code=400, detail="config_overrides skal være et JSON object")
+    mode = str(payload.get("mode") or "merge").lower()
+    replace = mode == "replace"
+
+    if layer == "global":
+        if not _is_platform_admin(_user):
+            raise HTTPException(status_code=403, detail="Kun platform-admin kan ændre globale defaults")
+        defaults = _get_or_create_defaults(db)
+        existing = _defaults_dict(db)
+        new_config = config_payload if replace else _deep_merge_delete(existing, config_payload)
+        for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
+            if section in new_config and hasattr(defaults, section):
+                setattr(defaults, section, json.dumps(new_config[section], ensure_ascii=False))
+        db.commit()
+        return {"status": "ok", "layer": "global"}
+
+    if layer == "customer":
+        customer = db.query(Customer).filter_by(id=entity_id).first()
+        if not customer:
+            raise HTTPException(status_code=404, detail="Kunde ikke fundet")
+        _ensure_customer_access(_user, customer.id)
+        existing = _json_dict(customer.config_overrides)
+        customer.config_overrides = json.dumps(
+            config_payload if replace else _deep_merge_delete(existing, config_payload),
+            ensure_ascii=False,
+        )
+        db.commit()
+        return {"status": "ok", "layer": "customer", "entity_id": customer.id}
+
+    if layer == "site":
+        site = _ensure_site_access(db, _user, entity_id)
+        existing = _json_dict(site.config_overrides)
+        site.config_overrides = json.dumps(
+            config_payload if replace else _deep_merge_delete(existing, config_payload),
+            ensure_ascii=False,
+        )
+        db.commit()
+        return {"status": "ok", "layer": "site", "entity_id": site.id}
+
+    if layer == "camera":
+        camera = db.query(Camera).filter_by(id=entity_id).first()
+        if not camera:
+            raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+        if camera.site_id:
+            _ensure_site_access(db, _user, camera.site_id)
+        elif camera.customer_id:
+            _ensure_customer_access(_user, camera.customer_id)
+        existing = _json_dict(camera.config)
+        camera.config = json.dumps(
+            config_payload if replace else _deep_merge_delete(existing, config_payload),
+            ensure_ascii=False,
+        )
+        db.commit()
+        return {"status": "ok", "layer": "camera", "entity_id": camera.id}
+
+    raise HTTPException(status_code=400, detail="layer skal være global, customer, site eller camera")
 
 
 
@@ -11582,8 +12782,14 @@ class DiskImageBuildRequest(BaseModel):
     camera_id: Optional[str] = None  # UUID til Camera → SSH keys + tunnel port hentes fra DB
 
 
-def _edge_image_storage_dir() -> Path:
+def _edge_image_storage_dir(*, create: bool = True) -> Path:
     configured = os.getenv("TIMELAPSE_EDGE_IMAGE_DIR")
+    if not configured:
+        db = SessionLocal()
+        try:
+            configured = _get_setting(db, "edge_image_artifact_dir", "")
+        finally:
+            db.close()
     candidates = []
     if configured:
         candidates.append(Path(configured).expanduser())
@@ -11596,6 +12802,8 @@ def _edge_image_storage_dir() -> Path:
     last_error: Exception | None = None
     for candidate in candidates:
         try:
+            if not create:
+                return candidate
             candidate.mkdir(parents=True, exist_ok=True)
             probe = candidate / ".write-test"
             probe.write_text("ok", encoding="utf-8")
@@ -11677,6 +12885,7 @@ def _resolve_edge_image_path(artifact_id: str, db: Session) -> tuple[Path, str]:
             if candidate.exists():
                 return candidate, str(filename)
     raise HTTPException(status_code=404, detail="Artifact ikke fundet")
+
 
 def _run_edge_disk_image_build(
     headend_url: str,
@@ -11894,7 +13103,7 @@ def trigger_edge_disk_image_build(
         "target": body.target, "mode": body.mode,
     }
 
-    headend_url = os.getenv("TIMELAPSE_HEADEND_URL", "https://timelapse.froekjaer.dk/api")
+    headend_url = _headend_api_url(db, os.getenv("TIMELAPSE_HEADEND_URL"))
     gpg_key_id = os.getenv("CHANGE_TICKET_GPG_KEY") or os.getenv("TIMELAPSE_GPG_KEY")
     output_dir = str(_edge_image_storage_dir())
     os.makedirs(output_dir, exist_ok=True)
@@ -12251,7 +13460,7 @@ def build_edge_bootstrap_image(
     root = _repo_root()
     commit = _git_text(["rev-parse", "HEAD"]) or "unknown"
     ref = _git_text(["rev-parse", "--abbrev-ref", "HEAD"]) or "main"
-    headend_url = os.getenv("TIMELAPSE_HEADEND_URL", "https://timelapse.froekjaer.dk/api")
+    headend_url = _headend_api_url(db, os.getenv("TIMELAPSE_HEADEND_URL"))
 
     manifest = {
         "schema": "timelapse.edge_bootstrap_image.v1",
@@ -12443,6 +13652,7 @@ async def upload_edge_backup(
 @app.get("/api/admin/backup/edge-status/{device_id}")
 def edge_backup_status(device_id: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """Hent backup status for en edge enhed."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
@@ -12455,7 +13665,12 @@ def edge_backup_status(device_id: str, _user=require_role("viewer"), db: Session
 
 
 @app.post("/api/lab/{device_id}/params")
-def lab_store_params(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def lab_store_params(
+    device_id: str,
+    payload: dict,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
     """Edge poster live kamera-parametre til headend efter get_params kommando."""
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
@@ -12471,12 +13686,14 @@ def lab_store_params(device_id: str, payload: dict, db: Session = Depends(get_db
 
 
 @app.post("/api/lab/{device_id}/get-params")
-def lab_get_params(device_id: str, db: Session = Depends(get_db)):
+def lab_get_params(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Queue get-params kommando til edge."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
     existing = json.loads(device.device_config or "{}")
     existing["lab_command"] = {"type": "get_params"}
+    existing.pop("lab_result", None)
     device.device_config = json.dumps(existing)
     db.commit()
     log.info("LAB get-params queued for %s", device_id)
@@ -12484,10 +13701,11 @@ def lab_get_params(device_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/api/lab/{device_id}/previews")
-def list_previews(device_id: str, limit: int = 20):
+def list_previews(device_id: str, limit: int = 20, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """List recent preview images for a device."""
+    _ensure_capture_device_access(db, _user, device_id)
 #Peter     import re as _re
-    preview_dir = SFTP_BASE / "_lab" / device_id
+    preview_dir = _sftp_base_path() / "_lab" / device_id
     if not preview_dir.exists():
         return []
     files = sorted(preview_dir.glob("preview_*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -12513,7 +13731,7 @@ async def receive_lab_preview_file(
     filename = Path(preview.filename or "").name
     if not filename.startswith("preview_") or not filename.lower().endswith((".jpg", ".jpeg")):
         raise HTTPException(status_code=400, detail="Invalid preview filename")
-    preview_dir = SFTP_BASE / "_lab" / device_id
+    preview_dir = _sftp_base_path() / "_lab" / device_id
     preview_dir.mkdir(parents=True, exist_ok=True)
     dest = preview_dir / filename
     with open(dest, "wb") as fh:
@@ -12531,21 +13749,24 @@ async def receive_lab_preview_file(
 
 
 @app.get("/api/lab/{device_id}/preview-image/{filename}")
-def get_preview_image(device_id: str, filename: str):
+def get_preview_image(device_id: str, filename: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """Serve a preview image."""
-    path = SFTP_BASE / "_lab" / device_id / filename
+    _ensure_capture_device_access(db, _user, device_id)
+    path = _sftp_base_path() / "_lab" / device_id / filename
     if not path.exists():
         raise HTTPException(status_code=404, detail="Preview not found")
     return FileResponse(str(path), media_type="image/jpeg")
 
 
 @app.get("/api/lab/{device_id}/preview-thumb/{filename}")
-def get_preview_thumb(device_id: str, filename: str):
+def get_preview_thumb(device_id: str, filename: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """Serve a thumbnail of a preview image."""
-    src = SFTP_BASE / "_lab" / device_id / filename
+    _ensure_capture_device_access(db, _user, device_id)
+    sftp_base = _sftp_base_path()
+    src = sftp_base / "_lab" / device_id / filename
     if not src.exists():
         raise HTTPException(status_code=404, detail="Preview not found")
-    thumbs_dir = SFTP_BASE / "_lab" / device_id / ".thumbs"
+    thumbs_dir = sftp_base / "_lab" / device_id / ".thumbs"
     thumbs_dir.mkdir(parents=True, exist_ok=True)
     thumb = thumbs_dir / filename
     if not thumb.exists():
@@ -12585,7 +13806,12 @@ def lab_clear_params(
 
 
 @app.post("/api/lab/{device_id}/camera-ready")
-def lab_camera_ready(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def lab_camera_ready(
+    device_id: str,
+    payload: dict,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
     """Edge melder at kameraet er forbundet og klar i LAB mode."""
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
@@ -12600,8 +13826,9 @@ def lab_camera_ready(device_id: str, payload: dict, db: Session = Depends(get_db
 # ── WiFi konfiguration endpoints ─────────────────────────────────────────────
 
 @app.post("/api/lab/{device_id}/wifi/scan")
-def wifi_scan(device_id: str, db: Session = Depends(get_db)):
+def wifi_scan(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request WiFi scan from device."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
     existing = json.loads(device.device_config or "{}")
@@ -12611,8 +13838,9 @@ def wifi_scan(device_id: str, db: Session = Depends(get_db)):
     return {"status": "ok", "command": "wifi_scan"}
 
 @app.post("/api/lab/{device_id}/wifi/connect")
-def wifi_connect(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def wifi_connect(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request WiFi connection on device."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
     ssid     = payload.get("ssid", "")
@@ -12644,8 +13872,9 @@ def wifi_connect(device_id: str, payload: dict, db: Session = Depends(get_db)):
     return {"status": "ok", "command": "wifi_connect", "ssid": ssid}
 
 @app.post("/api/lab/{device_id}/wifi/forget")
-def wifi_forget(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def wifi_forget(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request removal of saved WiFi network."""
+    _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
     ssid = payload.get("ssid", "")
@@ -12661,7 +13890,12 @@ def wifi_forget(device_id: str, payload: dict, db: Session = Depends(get_db)):
     return {"status": "ok", "command": "wifi_forget", "ssid": ssid}
 
 @app.post("/api/lab/{device_id}/wifi/result")
-def wifi_result(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def wifi_result(
+    device_id: str,
+    payload: dict,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
     """Receive WiFi operation result from edge agent."""
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device: raise HTTPException(status_code=404)
@@ -12887,7 +14121,7 @@ def qa_search(
     return {"total": len(results), "results": results}
 
 @app.get("/api/admin/notifications")
-def get_notifications(db: Session = Depends(get_db)):
+def get_notifications(_user=require_role("admin"), db: Session = Depends(get_db)):
     try:
         from sqlalchemy import text as _t
         row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
@@ -12903,7 +14137,7 @@ def get_notifications(db: Session = Depends(get_db)):
         return {}
 
 @app.put("/api/admin/notifications")
-def update_notifications(payload: dict, db: Session = Depends(get_db)):
+def update_notifications(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
     try:
         from sqlalchemy import text as _t
         row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
@@ -12923,7 +14157,7 @@ def update_notifications(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/admin/notifications/test")
-def test_notification(payload: dict, db: Session = Depends(get_db)):
+def test_notification(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     channel = payload.get("channel", "email")
     from sqlalchemy import text as _t
     row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
@@ -13187,51 +14421,6 @@ def get_exif_stats(device_id: str, _user=require_role("viewer"), db: Session = D
     }
 
 
-# ── Slet captures ─────────────────────────────────────────────────────────────
-
-@app.delete("/api/admin/captures/{capture_id}")
-def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = Depends(get_db)):
-    """Slet et billede: fil, thumbnail, sidecar og DB-record."""
-    capture = db.query(Capture).filter(Capture.id == capture_id).first()
-    if not capture:
-        raise HTTPException(status_code=404, detail="Capture ikke fundet")
-    path = _find_image(capture.device_id, capture.filename)
-    if path and path.exists():
-        path.unlink(missing_ok=True)
-        _unlink_thumbnail_variants(path, capture.filename)
-        path.with_suffix(".json").unlink(missing_ok=True)
-    db.delete(capture)
-    db.commit()
-    log.info("Capture %d slettet: %s", capture_id, capture.filename)
-    return {"status": "ok", "capture_id": capture_id}
-
-
-@app.post("/api/admin/captures/bulk-delete")
-def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
-    """Bulk-slet captures. Body: {ids: [int]}"""
-    ids = payload.get("ids", [])
-    if not ids:
-        raise HTTPException(status_code=400, detail="Ingen ids")
-    ok = 0
-    for cid in ids:
-        try:
-            c = db.query(Capture).filter(Capture.id == cid).first()
-            if not c:
-                continue
-            path = _find_image(c.device_id, c.filename)
-            if path and path.exists():
-                path.unlink(missing_ok=True)
-                _unlink_thumbnail_variants(path, c.filename)
-                path.with_suffix(".json").unlink(missing_ok=True)
-            db.delete(c)
-            ok += 1
-        except Exception as exc:
-            log.warning("Bulk slet fejl id=%d: %s", cid, exc)
-    db.commit()
-    log.info("Bulk slettet %d captures", ok)
-    return {"status": "ok", "deleted": ok}
-
-
 @app.put("/api/admin/users/{user_id}/password")
 def change_user_password(
     user_id: int,
@@ -13251,21 +14440,6 @@ def change_user_password(
     db.commit()
     return {"ok": True}
 
-
-@app.delete("/api/admin/users/{user_id}")
-def delete_user(
-    user_id: int,
-    current_user=require_role("super_admin"),
-    db: Session = Depends(get_db)
-):
-    u = db.query(User).filter_by(id=user_id).first()
-    if not u:
-        raise HTTPException(status_code=404, detail="Bruger ikke fundet")
-    if u.username == current_user.username:
-        raise HTTPException(status_code=400, detail="Du kan ikke slette dig selv")
-    db.delete(u)
-    db.commit()
-    return {"ok": True}
 
 from ai.vocabulary_routes import vocab_router; app.include_router(vocab_router)
 
@@ -13540,12 +14714,13 @@ def _openwebui_user_role(user: User) -> str:
 def openwebui_access_status(
     request: Request,
     current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
 ):
     payload = _session_payload(request)
     mfa_verified = _session_is_mfa_verified(payload)
     return {
         "enabled": True,
-        "url": OPENWEBUI_PUBLIC_URL,
+        "url": _openwebui_public_url(db),
         "allowed": bool(mfa_verified),
         "mfa_verified": bool(mfa_verified),
         "required_role": ["super_admin", "admin"],
@@ -13558,6 +14733,7 @@ def openwebui_access_status(
 def issue_openwebui_access(
     request: Request,
     current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
 ):
     payload = _session_payload(request)
     if not _session_is_mfa_verified(payload):
@@ -13573,12 +14749,13 @@ def issue_openwebui_access(
     }, expire_hours=0.5)
     resp = JSONResponse(content={
         "ok": True,
-        "url": OPENWEBUI_PUBLIC_URL,
+        "url": _openwebui_public_url(db),
         "expires_seconds": max_age,
     })
+    cookie_domain = _openwebui_cookie_domain(db)
     resp.headers.append(
         "Set-Cookie",
-        _cookie_header(OPENWEBUI_COOKIE_NAME, access_token, max_age, domain=OPENWEBUI_COOKIE_DOMAIN),
+        _cookie_header(OPENWEBUI_COOKIE_NAME, access_token, max_age, domain=cookie_domain),
     )
     log.info("Open WebUI access issued to %s (%s) via MFA-authenticated TimeLapse session", current_user.username, current_user.role)
     return resp
@@ -13693,12 +14870,41 @@ def _openwebui_context(db: Session, area: str = "overview") -> dict:
     }
 
 
+def _openwebui_public_url(db: Session | None = None) -> str:
+    fallback = (
+        os.getenv("OPENWEBUI_PUBLIC_URL")
+        or os.getenv("TIMELAPSE_PUBLIC_URL")
+        or os.getenv("BASE_URL")
+        or "http://127.0.0.1:8080"
+    )
+    if db is not None:
+        return _get_setting(db, "openwebui_public_url", fallback).rstrip("/")
+    local_db = SessionLocal()
+    try:
+        return _get_setting(local_db, "openwebui_public_url", fallback).rstrip("/")
+    finally:
+        local_db.close()
+
+
+def _openwebui_cookie_domain(db: Session | None = None) -> str | None:
+    fallback = os.getenv("OPENWEBUI_COOKIE_DOMAIN", "")
+    if db is not None:
+        value = _get_setting(db, "openwebui_cookie_domain", fallback).strip()
+    else:
+        local_db = SessionLocal()
+        try:
+            value = _get_setting(local_db, "openwebui_cookie_domain", fallback).strip()
+        finally:
+            local_db.close()
+    return value or None
+
+
 def _openwebui_public_base_url() -> str:
     return (
         os.getenv("TIMELAPSE_PUBLIC_URL")
         or os.getenv("BASE_URL")
-        or ALLOWED_ORIGIN
-        or "https://timelapse.froekjaer.dk"
+        or _openwebui_public_url()
+        or "http://127.0.0.1:8000"
     ).rstrip("/")
 
 

@@ -4,6 +4,7 @@ import {
   Brain, Camera, Settings, Database, Globe, LogOut,
   Shield, Users, Key, Terminal, Package, Server,
   ChevronDown, ClipboardCheck, Upload, Bot, Tag,
+  Wrench, Activity,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -42,9 +43,11 @@ export function Navbar() {
     { to: '/ssh-tunnel',    label: 'SSH Tunnels',   icon: Terminal },
     { to: '/updates',       label: 'Opdateringer',  icon: Package },
     { to: '/change-tickets',label: 'Change tickets',icon: ClipboardCheck },
+    { to: '/post-processing',label: 'Post-processing',icon: Wrench },
     { to: '/cmdb',          label: 'CMDB',          icon: Server },
     { to: '/import',        label: 'Import',        icon: Upload },
     { to: '/siem',          label: 'SIEM',          icon: Shield },
+    { to: '/observability', label: 'Drift',         icon: Activity },
   ]
 
   const isAdmin = hasRole('super_admin', 'admin')

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Building2, MapPin, Camera, Save, Trash2, ChevronRight,
-         CheckCircle, Beaker, Image, Settings } from 'lucide-react'
+         CheckCircle, Beaker, Image, PlusCircle } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
@@ -44,9 +44,21 @@ interface CameraLocation {
   customer_name: string | null
   model: string | null
   notes: string | null
+  baseline_description: string | null
+  context_notes: string | null
 }
 
 interface CameraOption { id: string; camera_name: string; site_name?: string; customer_name?: string; customer_id?: string; site_id?: string }
+
+interface ConfigResolutionLayer {
+  key: 'global' | 'customer' | 'site' | 'camera'
+  config: Record<string, unknown>
+}
+
+interface ConfigResolution {
+  layers: ConfigResolutionLayer[]
+  effective_config: Record<string, unknown>
+}
 
 interface ParamRow {
   key: string
@@ -67,6 +79,7 @@ const CAMERA_PARAMS: ParamRow[] = [
   { key: 'camera.iso',               label: 'ISO', section: 'Kamera', type: 'select', options: ['Auto', '100', '200', '400', '800', '1600', '3200', '6400'], description: 'Lysfølsomhed — Auto anbefales til varierende lys' },
   { key: 'camera.shutter_speed',     label: 'Lukkerhastiged', section: 'Kamera', type: 'select', options: ['Auto', '1/4000', '1/2000', '1/1000', '1/500', '1/250', '1/125', '1/60', '1/30', '1/15', '1/8', '1/4', '1/2', '1'], description: 'Eksponeringstid i sekunder' },
   { key: 'camera.aperture',          label: 'Blænde', section: 'Kamera', type: 'select', options: ['Auto', '3.5', '4', '4.5', '5', '5.6', '6.3', '7.1', '8', '9', '10', '11', '13', '14', '16', '18', '20', '22'], description: 'f-tal — højere = skarpere baggrund' },
+  { key: 'camera.exposurecompensation', label: 'Eksponeringskompensation', section: 'Kamera', type: 'select', options: ['-2.0', '-1.7', '-1.3', '-1.0', '-0.7', '-0.3', '0', '+0.3', '+0.7', '+1.0', '+1.3', '+1.7', '+2.0'], description: 'EV justering. Negativ dæmper direkte sol/refleks, positiv hjælper mørke billeder' },
   { key: 'camera.whitebalance',      label: 'Hvidbalance', section: 'Kamera', type: 'select', options: ['Auto', 'Daylight', 'Cloudy', 'Tungsten', 'Fluorescent', 'Flash'], description: 'Auto anbefales til varierende vejr' },
   { key: 'camera.serial_number',     label: 'Kamera serienummer', section: 'Hardware', type: 'text', placeholder: 'fx d12b869bf88a4b719094a801bdaa41c7', description: 'gphoto2 serienummer — bruges til stabil USB port identificering ved multi-kamera' },
   { key: 'camera.power_mode',        label: 'Strømstyring', section: 'Hardware', type: 'select', options: ['relay', 'usb_powered'], description: 'relay = agenten tænder/slukker via GPIO; usb_powered = kameraet har konstant strøm og går selv i standby' },
@@ -84,6 +97,14 @@ const CAMERA_PARAMS: ParamRow[] = [
   { key: 'quality.blur_threshold',   label: 'Skarphed minimum', section: 'Kvalitet', type: 'number', placeholder: '80', description: 'Billeder under denne score markeres som fejl' },
   { key: 'quality.dark_threshold',   label: 'Mørk grænse', section: 'Kvalitet', type: 'number', placeholder: '25', description: 'Gennemsnitlig lysstyrke under denne = for mørkt' },
   { key: 'quality.bright_threshold', label: 'Lys grænse', section: 'Kvalitet', type: 'number', placeholder: '230', description: 'Gennemsnitlig lysstyrke over denne = overbelyst' },
+  { key: 'quality.adaptive_exposure.enabled', label: 'Adaptiv EV', section: 'Kvalitet', type: 'boolean', description: 'Edge justerer næste billede +/- efter lys/refleks QA' },
+  { key: 'quality.adaptive_exposure.step_ev', label: 'EV trin', section: 'Kvalitet', type: 'number', placeholder: '0.3', description: 'Hvor meget kompensation ændres per QA-signal' },
+  { key: 'quality.edge_ai.enabled', label: 'Edge QA AI', section: 'Kvalitet', type: 'boolean', description: 'Aktiver lokal QA for snavs, sne, dug og refleks' },
+  { key: 'quality.edge_ai.mode', label: 'AI mode', section: 'Kvalitet', type: 'select', options: ['off', 'monitor', 'assist', 'autonomous', 'npu_first', 'lab'], description: 'Monitor analyserer kun; assist/autonomous kan justere EV; lab er til aktiv kalibrering' },
+  { key: 'quality.edge_ai.prefer_npu', label: 'Brug NPU hvis mulig', section: 'Kvalitet', type: 'boolean', description: 'Bruger lokal NPU-runner/model når installeret på Edge' },
+  { key: 'quality.edge_ai.runner', label: 'NPU runner', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py', description: 'Lokal kommando der returnerer QA JSON' },
+  { key: 'quality.edge_ai.model_path', label: 'NPU model', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/models/edge_qa.nb', description: 'Vendor/NPU modelsti på Edge' },
+  { key: 'quality.edge_ai.vendor_binary', label: 'VIPLite wrapper', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/bin/edge_qa_viplite', description: 'Valgfri board-lokal binary der kører .nb modellen og returnerer scores JSON' },
   // Diagnostik
   { key: 'diagnostics.heartbeat_interval_minutes', label: 'Heartbeat interval', section: 'Diagnostik', type: 'number', unit: 'min', placeholder: '60', description: 'Minutter mellem diagnostik uploads' },
 ]
@@ -125,6 +146,8 @@ export function CameraPage() {
 
   // Editable fields
   const [cameraName, setCameraName]   = useState('')
+  const [baselineDescription, setBaselineDescription] = useState('')
+  const [contextNotes, setContextNotes]               = useState('')
   const [cameraIndex, setCameraIndex] = useState(0)
   const [relayCamera, setRelayCamera] = useState(356)
   const [relayModem, setRelayModem]   = useState(361)
@@ -138,6 +161,7 @@ export function CameraPage() {
   const [allCameras, setAllCameras]         = useState<CameraOption[]>([])
   const [reassignCamId, setReassignCamId]   = useState('')
   const [reassigning, setReassigning]       = useState(false)
+  const [creatingLocation, setCreatingLocation] = useState(false)
   const [locationExpanded, setLocationExpanded] = useState(false)
 
   // ── BT TOTP QR ───────────────────────────────────────────────────────────
@@ -151,33 +175,53 @@ export function CameraPage() {
     fetch(`${getApiUrl()}/api/admin/cameras`).then(r=>r.json()).then((cs:any[]) => setAllCameras(cs)).catch(()=>{})
   }, [])
 
-  async function loadCameraLocation() {
-    if (!deviceId) return
+  async function loadCameraLocation(): Promise<CameraLocation | null> {
+    if (!deviceId) return null
     try {
       const r = await fetch(`${getApiUrl()}/api/admin/devices/${encodeURIComponent(deviceId)}/camera-location`, {
         headers: { 'Content-Type': 'application/json' },
       })
       if (r.ok) {
         const data = await r.json()
-        setCameraLocation(data.camera ?? null)
+        const cam = data.camera ?? null
+        setCameraLocation(cam)
+        if (cam) {
+          setBaselineDescription(cam.baseline_description ?? '')
+          setContextNotes(cam.context_notes ?? '')
+        }
+        return cam
       }
     } catch { /* silent */ }
+    return null
+  }
+
+  async function loadResolvedConfig() {
+    if (!deviceId) return
+    try {
+      const data: ConfigResolution = await api(`/api/admin/config-resolution?device_id=${encodeURIComponent(deviceId)}`)
+      const cameraLayer = data.layers?.find(layer => layer.key === 'camera')
+      setOverrides(cameraLayer?.config ?? {})
+      const cameraConfig = (data.effective_config?.camera ?? {}) as Record<string, unknown>
+      if (cameraConfig.relay_gpio_pin != null) setRelayCamera(Number(cameraConfig.relay_gpio_pin) || 356)
+      const modemConfig = (data.effective_config?.modem ?? {}) as Record<string, unknown>
+      if (modemConfig.modem_relay_gpio_pin != null) setRelayModem(Number(modemConfig.modem_relay_gpio_pin) || 361)
+    } catch {
+      setOverrides({})
+    }
   }
 
   useEffect(() => {
     if (!deviceId) return
     api(`/api/admin/devices/${pathSegment(deviceId)}`)
-      .then((d: any) => {
+      .then(async (d: any) => {
         const dev = d.device ?? d
         setDevice(dev)
         setCameraName(dev.camera_name ?? '')
         setCameraIndex(dev.camera_index ?? 0)
         setRelayCamera(dev.relay_gpio_camera ?? 356)
         setRelayModem(dev.relay_gpio_modem ?? 361)
-        try {
-          setOverrides(JSON.parse(typeof dev.config_overrides === 'string'
-            ? dev.config_overrides : JSON.stringify(dev.config_overrides || {})))
-        } catch { setOverrides({}) }
+        await loadCameraLocation()
+        await loadResolvedConfig()
       })
       .catch(() => setError('Kunne ikke hente enhed'))
       .finally(() => setLoading(false))
@@ -191,21 +235,32 @@ export function CameraPage() {
   async function save() {
     setSaving(true)
     try {
-      // Gem kamera info
-      await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}/info`, {
-        method: 'PUT',
-        body: JSON.stringify({ camera_name: cameraName })
-      })
-      // Gem config_overrides (kamera-laget)
-      await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}/overrides`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          camera_index:      cameraIndex,
-          relay_gpio_camera: relayCamera,
-          relay_gpio_modem:  relayModem,
-          config_overrides:  overrides,
+      const nextOverrides = setNestedValue(
+        setNestedValue(overrides, 'camera.relay_gpio_pin', relayCamera),
+        'modem.modem_relay_gpio_pin',
+        relayModem,
+      )
+      if (cameraLocation?.id) {
+        await api(`/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            camera_name: cameraName,
+            baseline_description: baselineDescription,
+            context_notes: contextNotes,
+          }),
         })
-      })
+        await api(`/api/admin/config-overrides/camera/${encodeURIComponent(cameraLocation.id)}`, {
+          method: 'PUT',
+          body: JSON.stringify({ mode: 'merge', config_overrides: nextOverrides }),
+        })
+        setOverrides(nextOverrides)
+        await loadCameraLocation()
+      } else {
+        await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}/info`, {
+          method: 'PUT',
+          body: JSON.stringify({ camera_name: cameraName }),
+        })
+      }
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch {
@@ -288,6 +343,38 @@ export function CameraPage() {
     finally { setReassigning(false) }
   }
 
+  async function createAndAssignLocation() {
+    if (!deviceId || !device?.site_id) {
+      setError('Enheden skal først være tildelt et site')
+      return
+    }
+    setCreatingLocation(true)
+    try {
+      const created = await api('/api/admin/cameras', {
+        method: 'POST',
+        body: JSON.stringify({
+          site_id: device.site_id,
+          camera_name: cameraName || device.camera_name || 'Kamera 1',
+          model: device.camera_model || undefined,
+          config: overrides,
+        }),
+      })
+      await api(`/api/admin/cameras/${encodeURIComponent(created.id)}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ device_id: deviceId, assigned_by: 'admin-ui', assignment_type: 'manual' }),
+      })
+      await loadCameraLocation()
+      await loadResolvedConfig()
+      const d = await api(`/api/admin/devices/${pathSegment(deviceId)}`)
+      setDevice(d.device ?? d)
+      setAllCameras(await api('/api/admin/cameras'))
+    } catch {
+      setError('Kunne ikke oprette og binde kamera-lokation')
+    } finally {
+      setCreatingLocation(false)
+    }
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
       {/* Breadcrumb */}
@@ -329,7 +416,7 @@ export function CameraPage() {
             <button
               onClick={() => setLocationExpanded(v => !v)}
               className="text-xs text-sky-600 hover:underline">
-              {locationExpanded ? 'Luk' : 'Omasiign til anden lokation'}
+              {locationExpanded ? 'Luk' : 'Omassign til anden lokation'}
             </button>
           </div>
           {locationExpanded && (
@@ -347,7 +434,7 @@ export function CameraPage() {
               </select>
               <button onClick={reassignToCamera} disabled={!reassignCamId || reassigning}
                 className="px-3 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
-                {reassigning ? '…' : 'Omasiign'}
+                {reassigning ? '…' : 'Omassign'}
               </button>
             </div>
           )}
@@ -374,6 +461,11 @@ export function CameraPage() {
             <button onClick={reassignToCamera} disabled={!reassignCamId || reassigning}
               className="px-4 py-2 bg-amber-500 text-white text-sm rounded-lg hover:bg-amber-600 disabled:opacity-50">
               {reassigning ? 'Tildeler…' : 'Tildel'}
+            </button>
+            <button onClick={createAndAssignLocation} disabled={creatingLocation || !device.site_id}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
+              <PlusCircle className="w-4 h-4" />
+              {creatingLocation ? 'Opretter…' : 'Opret og bind'}
             </button>
           </div>
           {/* Fallback: site-baseret tildeling */}
@@ -437,7 +529,7 @@ export function CameraPage() {
             <label className="text-xs text-gray-400 block mb-1">Kamera index</label>
             <input type="number" min={0} max={7} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={cameraIndex} onChange={e => setCameraIndex(parseInt(e.target.value) || 0)} />
-            <p className="text-xs text-gray-300 mt-1">0 = første kamera på enheden</p>
+            <p className="text-xs text-gray-300 mt-1">Fysisk node-index. Kamera-config gemmes på lokationen.</p>
           </div>
           <div>
             <label className="text-xs text-gray-400 block mb-1">Relay GPIO (kamera)</label>
@@ -448,6 +540,28 @@ export function CameraPage() {
             <label className="text-xs text-gray-400 block mb-1">Relay GPIO (modem)</label>
             <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               value={relayModem} onChange={e => setRelayModem(parseInt(e.target.value) || 361)} />
+          </div>
+        </div>
+      </div>
+
+      {/* AI-kontekst / baseline — fodres til vision-prompten pr. billede */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
+        <h2 className="text-sm font-semibold text-gray-700 mb-1">AI-kontekst</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Hjælper AI'en med at vurdere afvigelser (ny bil, personer om natten, røg osv.). Fodres til hver billedanalyse — indeholder aldrig persondata.
+        </p>
+        <div className="grid grid-cols-1 gap-4">
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Normalbillede — hvad viser kameraet normalt?</label>
+            <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={3}
+              placeholder="fx: Udsigt over byggegrund med ét kranfundament. Indkørsel til venstre er normalt tom. Ingen aktivitet om natten."
+              value={baselineDescription} onChange={e => setBaselineDescription(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Driftsnoter (hvad skal IKKE udløse falsk anomali)</label>
+            <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={2}
+              placeholder="fx: Nabogrund til højre er under byggeri — kran dér er normal. Vej med trafik i baggrunden."
+              value={contextNotes} onChange={e => setContextNotes(e.target.value)} />
           </div>
         </div>
       </div>

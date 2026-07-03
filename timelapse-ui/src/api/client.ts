@@ -1,8 +1,7 @@
 import axios from 'axios'
 import type { Device, DeviceDetail, Stats, Capture, DeviceConfig } from '../types'
 
-export const API_STORAGE_KEY = 'timelapse_api_url'
-export const DEFAULT_API_URL = typeof window !== 'undefined' ? window.location.origin : 'http://192.168.86.102:8000'
+export const DEFAULT_API_URL = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000'
 
 const isProductionHttpsOrigin = () =>
   typeof window !== 'undefined' &&
@@ -10,8 +9,15 @@ const isProductionHttpsOrigin = () =>
   !['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
 
 export const getApiUrl = () => {
+  if (typeof window !== 'undefined') {
+    const runtimeApi = (window as any).__TIMELAPSE_API__
+    if (runtimeApi) return String(runtimeApi).replace(/\/$/, '')
+  }
   if (isProductionHttpsOrigin()) return window.location.origin
-  return localStorage.getItem(API_STORAGE_KEY) ?? import.meta.env.VITE_API_URL ?? DEFAULT_API_URL
+  if (typeof window !== 'undefined' && window.location.port === '5173') {
+    return window.location.origin
+  }
+  return import.meta.env.VITE_API_URL ?? DEFAULT_API_URL
 }
 
 export const bootstrapToken = async () => {
@@ -67,7 +73,7 @@ export const updateDeviceInfo = (deviceId: string, info: import('../types').Devi
   getClient().put(`/api/admin/devices/${pathSegment(deviceId)}/info`, info).then(r => r.data)
 
 export const testConnection = () =>
-  getClient().get('/health').then(r => r.data)
+  getClient().get('/api/health').then(r => r.data)
 
 // ── Lab / Kamera-laboratorium ─────────────────────────────────────────────────
 
@@ -84,6 +90,18 @@ export const requestCapture = (deviceId: string) =>
 
 export const setParam = (deviceId: string, key: string, value: string) =>
   getClient().post(`/api/lab/${pathSegment(deviceId)}/set-param`, { key, value }).then(r => r.data)
+
+export const requestFocusDrive = (deviceId: string, value: string) =>
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/focus-drive`, { value }).then(r => r.data)
+
+export const requestAutofocus = (deviceId: string) =>
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/autofocus`).then(r => r.data)
+
+export const requestFocusSlice = (deviceId: string, payload: { step_value: string; count: number; run_autofocus_first?: boolean }) =>
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/focus-slice`, payload).then(r => r.data)
+
+export const requestEdgeAiFocusTest = (deviceId: string, payload: { step_value: string; count: number }) =>
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/edge-ai-focus-test`, payload).then(r => r.data)
 
 export const listPreviews = (deviceId: string) =>
   getClient().get(`/api/lab/${pathSegment(deviceId)}/previews`).then(r => r.data)

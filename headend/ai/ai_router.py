@@ -89,7 +89,7 @@ class AIRouter:
         db_factory:      Callable,
         gdpr_db_factory: Callable,
         image_base_path: Path = Path("/data/timelapse"),
-        ollama_url:      str  = "http://localhost:11434",
+        ollama_url:      str | None = None,
     ):
         self._db_factory      = db_factory
         self._gdpr_db_factory = gdpr_db_factory
@@ -445,7 +445,7 @@ def init_ai_router(
     db_factory:      Callable,
     gdpr_db_factory: Callable,
     image_base_path: Path = Path("/data/timelapse"),
-    ollama_url:      str  = "http://localhost:11434",
+    ollama_url:      str | None = None,
 ) -> AIRouter:
     """Kald én gang ved applikationsopstart (i main.py lifespan)."""
     global _router_instance

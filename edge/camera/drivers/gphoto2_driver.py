@@ -138,6 +138,15 @@ CAMERA_PROFILES = {
             "movie": "/main/actions/movie",
             "control_mode": "/main/actions/controlmode",
         },
+        "focus_controls": {
+            "manual_focus_default_step": "500",
+            "manual_focus_min": "-32767",
+            "manual_focus_max": "32767",
+            "manual_focus_context": {
+                "/main/capturesettings/liveviewaffocus": "Manual Focus (selection)",
+                "/main/actions/viewfinder": "1",
+            },
+        },
         "config_commands": {
             "iso": {
                 "path": "/main/imgsettings/iso",
@@ -167,6 +176,7 @@ CAMERA_PROFILES = {
             },
             "colorspace": {"path": "/main/imgsettings/colorspace"},
             "imageformat": {"path": "/main/imgsettings/imageformat"},
+            "exposurecompensation": {"path": "/main/capturesettings/exposurecompensation"},
             # gphoto2 exposes focus mode as readonly on Z30 in our lab profile.
             "focusmode": {"skip": True},
         },
@@ -261,6 +271,12 @@ def _parse_gphoto2_config(output: str) -> list[dict]:
             current["readonly"] = line.split(":", 1)[1].strip() == "1"
         elif line.startswith("Current:"):
             current["current"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Bottom:"):
+            current["bottom"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Top:"):
+            current["top"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Step:"):
+            current["step"] = line.split(":", 1)[1].strip()
         elif line.startswith("Choice:"):
             parts = line.split(" ", 2)
             if len(parts) >= 3:
@@ -727,6 +743,38 @@ class GPhoto2Driver(CameraBase):
         )
         return result.returncode == 0
 
+    def drive_manual_focus(self, value: str) -> bool:
+        """Move focus motor using the camera's own manualfocusdrive choice label."""
+        action = self._profile.get("actions", {}).get("manual_focus")
+        if not action or not value:
+            return False
+        for key, context_value in self._profile.get("focus_controls", {}).get("manual_focus_context", {}).items():
+            _run(
+                [GPHOTO2_CMD, "--port", self._port, "--set-config", f"{key}={context_value}"],
+                timeout=STATUS_TIMEOUT_S,
+                check=False,
+            )
+        result = _run(
+            [GPHOTO2_CMD, "--port", self._port, "--set-config", f"{action}={value}"],
+            timeout=STATUS_TIMEOUT_S,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def get_config_param(self, path: str) -> Optional[dict]:
+        """Read and parse one gphoto2 config parameter."""
+        if not path:
+            return None
+        result = _run(
+            [GPHOTO2_CMD, "--port", self._port, "--get-config", path],
+            timeout=STATUS_TIMEOUT_S,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        parsed = _parse_gphoto2_config(f"{path}\n{result.stdout}\nEND\n")
+        return parsed[0] if parsed else None
+
     # ── Config / settings ──────────────────────────────────────────────────
 
     def capture_preview(self, dest_dir: Path) -> Path:
@@ -742,7 +790,8 @@ class GPhoto2Driver(CameraBase):
         tmp_path = dest_dir / f"thumb_{filename}"
         target   = dest_dir / filename
         _run(
-            [GPHOTO2_CMD, "--capture-preview",
+            [GPHOTO2_CMD, "--port", self._port,
+             "--capture-preview",
              "--filename", str(dest_dir / filename)],
             timeout=15,
         )
@@ -781,6 +830,7 @@ class GPhoto2Driver(CameraBase):
             "features": dict(self._profile.get("features", {})),
             "capture_settings": dict(self._profile.get("capture_settings", {})),
             "config_commands": dict(self._profile.get("config_commands", {})),
+            "focus_controls": dict(self._profile.get("focus_controls", {})),
             "actions": dict(self._profile.get("actions", {})),
         }
 
@@ -818,9 +868,10 @@ class GPhoto2Driver(CameraBase):
         normalized: list[str] = []
         legacy_aliases = {
             "shutterspeed": "shutter_speed",
-            "whitebalance": "whitebalance",
-            "focusmode": "focusmode",
-            "iso": "iso",
+                "whitebalance": "whitebalance",
+                "focusmode": "focusmode",
+                "exposurecompensation": "exposurecompensation",
+                "iso": "iso",
             "aperture": "aperture",
             "colorspace": "colorspace",
             "imageformat": "imageformat",
@@ -843,12 +894,15 @@ class GPhoto2Driver(CameraBase):
 
     def set_config(self, key: str, value: str) -> None:
         """Set a camera config value via gphoto2 --set-config."""
+        if key and not key.startswith("/"):
+            key = f"/main/{key}"
         log.debug("set_config %s = %s", key, value)
         _run(
             [GPHOTO2_CMD, "--port", self._port,
              "--set-config", f"{key}={value}"],
             timeout=STATUS_TIMEOUT_S,
         )
+        self._settings_cache = None
 
     # ── Driver metadata ────────────────────────────────────────────────────
 

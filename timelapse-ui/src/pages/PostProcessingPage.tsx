@@ -22,6 +22,7 @@ interface JobStatus {
   ai_queued: number
   files_missing: number
   errors: number
+  error_samples?: string[]
   last_message: string
   ollama_warning?: string | null
   ai_strategy?: string | null
@@ -107,7 +108,7 @@ export default function PostProcessingPage() {
   const [status, setStatus] = useState<JobStatus | null>(null)
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null)
   const [deviceId, setDeviceId] = useState('')
-  const [limit, setLimit] = useState('1000')
+  const [limit, setLimit] = useState('')
   const [thumbnails, setThumbnails] = useState(true)
   const [ai, setAi] = useState(false)
   const [forceAi, setForceAi] = useState(false)
@@ -363,6 +364,17 @@ export default function PostProcessingPage() {
             <Stat label="Status" value={status?.running ? 'Kører' : 'Idle'} />
           </div>
 
+          {(status?.error_samples?.length ?? 0) > 0 && (
+            <div className="border border-amber-200 bg-amber-50 rounded-lg p-3">
+              <p className="text-xs font-semibold text-amber-900 mb-2">Seneste fejleksempler</p>
+              <div className="space-y-1 max-h-40 overflow-auto">
+                {status?.error_samples?.map((sample, idx) => (
+                  <p key={`${idx}-${sample}`} className="text-xs text-amber-800 font-mono break-all">{sample}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
           {ai && aiStatus && (
             <div className="border border-slate-200 bg-white rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
@@ -420,7 +432,24 @@ export default function PostProcessingPage() {
                         {job.requested_by ? ` · anmodet af ${job.requested_by}` : ''}
                         {job.error_message ? ` · ${job.error_message}` : ''}
                       </p>
+                      {job.status === 'running' && job.total_count > 0 && (
+                        <div className="mt-2 w-48 max-w-full">
+                          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-sky-500 transition-all"
+                              style={{ width: `${Math.min(100, Math.round(((job.success_count + job.error_count) / job.total_count) * 100))}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
+                    {job.status === 'running' && job.total_count > 0 && (
+                      <div className="text-xs text-right text-slate-500">
+                        <div>{job.success_count + job.error_count} / {job.total_count}</div>
+                        <div className="text-slate-400">{Math.min(100, Math.round(((job.success_count + job.error_count) / job.total_count) * 100))}%</div>
+                        {job.error_count > 0 && <div className="text-red-500">{job.error_count} fejl</div>}
+                      </div>
+                    )}
                     {(job.status === 'succeeded' || job.status === 'failed') && (
                       <div className="text-xs text-right text-slate-500">
                         <div>{job.success_count} ok</div>

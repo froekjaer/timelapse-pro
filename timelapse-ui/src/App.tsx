@@ -31,12 +31,21 @@ import { SIEMPage } from './pages/SIEMPage'
 import { ImportPage } from './pages/ImportPage'
 import AIPage from './pages/AIPage'
 import OpenWebUIPage from './pages/OpenWebUIPage'
+import PostProcessingPage from './pages/PostProcessingPage'
+import DriftPage from './pages/DriftPage'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { isAuthenticated, loading } = useAuth()
   const location = useLocation()
-  if (loading) return null
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center text-sm text-gray-500">
+        Indlæser TimeLapse Pro...
+      </div>
+    )
+  }
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
@@ -81,9 +90,11 @@ function AppRoutes() {
         <Route path="/siem" element={<SIEMPage />} />
         <Route path="/import" element={<ImportPage />} />
         <Route path="/cmdb/:deviceId" element={<CMDBDetailPage />} />
-        <Route path="/ai" element={<AIPage />} />
-        <Route path="/openwebui" element={<OpenWebUIPage />} />
-              </Routes>
+	        <Route path="/ai" element={<AIPage />} />
+	        <Route path="/openwebui" element={<OpenWebUIPage />} />
+	        <Route path="/post-processing" element={<PostProcessingPage />} />
+	        <Route path="/observability" element={<DriftPage />} />
+	              </Routes>
             </main>
           </div>
         </RequireAuth>
@@ -94,10 +105,12 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   )
 }

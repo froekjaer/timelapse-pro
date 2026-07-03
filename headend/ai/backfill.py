@@ -68,6 +68,10 @@ def get_captures(db, args):
         {where}
     """
     p = {}
+    if getattr(args, "ids", None):
+        id_list = [int(x) for x in str(args.ids).split(",") if x.strip().isdigit()]
+        if id_list:
+            q += " AND c.id = ANY(:ids)"; p["ids"] = id_list
     if args.date:
         q += " AND DATE(c.captured_at) = :dt"; p["dt"] = args.date
     if args.customer:
@@ -75,16 +79,19 @@ def get_captures(db, args):
     if args.site:
         q += " AND s.name ILIKE :s"; p["s"] = f"%{args.site}%"
 
-    if args.random:
+    spread = getattr(args, "spread", False)
+    if spread:
+        q += " ORDER BY c.captured_at ASC"      # ingen LIMIT — vi sampler jævnt i Python
+    elif args.random:
         q += " ORDER BY RANDOM()"
     else:
         q += " ORDER BY c.captured_at DESC"
 
-    if args.limit:
+    if args.limit and not spread:
         q += f" LIMIT {args.limit}"
 
     try:
-        return [dict(r) for r in db.execute(text(q), p).mappings().all()]
+        rows = [dict(r) for r in db.execute(text(q), p).mappings().all()]
     except Exception:
         # Fallback uden sites/customers join
         q2 = "SELECT c.id, c.filename, c.device_id, c.captured_at, NULL::text AS customer_name, NULL::text AS customer_id, NULL::text AS site_name FROM captures c"
@@ -93,33 +100,59 @@ def get_captures(db, args):
         else:
             q2 += " WHERE TRUE"
         if args.date: q2 += " AND DATE(c.captured_at)=:dt"
-        q2 += " ORDER BY RANDOM()" if args.random else " ORDER BY c.captured_at DESC"
-        if args.limit: q2 += f" LIMIT {args.limit}"
-        return [dict(r) for r in db.execute(text(q2), p).mappings().all()]
+        q2 += " ORDER BY c.captured_at ASC" if spread else (" ORDER BY RANDOM()" if args.random else " ORDER BY c.captured_at DESC")
+        if args.limit and not spread: q2 += f" LIMIT {args.limit}"
+        rows = [dict(r) for r in db.execute(text(q2), p).mappings().all()]
+
+    # Jævn spredning over hele perioden: pluk 'limit' billeder med lige store spring.
+    if spread and args.limit and len(rows) > args.limit:
+        n = len(rows); step = n / float(args.limit)
+        rows = [rows[int(i * step)] for i in range(args.limit)]
+    return rows
 
 
-def run_analysis(img, config, vocab_by_cat, approved_set, local_svc, cloud_svc):
-    limit = config.tag_vocabulary_limit or 80
+# Kategorier der aldrig må trunkeres væk fra prompten (jf. integration._PRIORITY_CATEGORIES).
+_PRIORITY_CATEGORIES = (
+    "anomalies_and_events", "camera_quality", "change_detection", "vehicles",
+    "workers_and_activity", "weather", "light_and_time", "site_condition",
+)
+
+
+def _limited_vocab(vocab_by_cat, limit):
+    """Begræns vokabular men bevar prioriterede kategorier (samme princip som worker)."""
     vocab = {}; count = 0
+    for cat in _PRIORITY_CATEGORIES:
+        tags = vocab_by_cat.get(cat)
+        if tags:
+            vocab[cat] = list(tags); count += len(tags)
     for cat, tags in vocab_by_cat.items():
-        if count >= limit: break
+        if cat in vocab or count >= limit:
+            continue
         take = tags[:max(3, limit - count)]
-        vocab[cat] = take; count += len(take)
+        if take:
+            vocab[cat] = take; count += len(take)
+    return vocab
+
+
+def run_analysis(img, config, vocab_by_cat, approved_set, local_svc, cloud_svc, context_block=""):
+    limit = config.tag_vocabulary_limit or 80
+    vocab_local = _limited_vocab(vocab_by_cat, limit)   # trimmet til den lille lokale model
+    vocab_cloud = vocab_by_cat                          # HELE vokabularet til Gemini
 
     if config.strategy == "cloud_only":
-        return cloud_svc.analyse(img, vocab, approved_set), config.cloud_model
+        return cloud_svc.analyse(img, vocab_cloud, approved_set, context_block=context_block), config.cloud_model
 
     if config.strategy == "local_only":
-        return local_svc.analyse(img, vocab, approved_set), config.local_model
+        return local_svc.analyse(img, vocab_local, approved_set, context_block=context_block), config.local_model
 
     if config.strategy == "local_then_cloud":
-        result = local_svc.analyse(img, vocab, approved_set)
+        result = local_svc.analyse(img, vocab_local, approved_set, context_block=context_block)
         esc, reasons = config.should_escalate(
             confidence=0.75, new_tags=result.new_tags, tags=result.approved_tags,
             change_detected=result.change_detected, quality_ok=result.quality_ok,
         )
         if esc and cloud_svc:
-            r2 = cloud_svc.analyse(img, vocab, approved_set)
+            r2 = cloud_svc.analyse(img, vocab_cloud, approved_set, context_block=context_block)
             return r2, f"{config.cloud_model}(esc)"
         return result, config.local_model
 
@@ -134,6 +167,9 @@ def run_analysis(img, config, vocab_by_cat, approved_set, local_svc, cloud_svc):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--ids",      type=str,                default=None, help="Kommasepareret liste af capture-id'er, fx --ids 26406,26410")
+    parser.add_argument("--spread",   action="store_true",     help="Spred udvalget jævnt over HELE optagelsesperioden (i stedet for nyeste)")
+    parser.add_argument("--out",      type=str,                default=None, help="Skriv resultater (filnavn+tags) til denne JSON-fil")
     parser.add_argument("--limit",    type=int,                default=None)
     parser.add_argument("--all",      action="store_true")
     parser.add_argument("--force",    action="store_true")
@@ -143,9 +179,11 @@ def main():
     parser.add_argument("--random",   action="store_true",     help="Vælg tilfældige billeder fremfor nyeste")
     parser.add_argument("--dry-run",  action="store_true")
     parser.add_argument("--strategy", type=str,                default=None, choices=list(VALID_STRATEGIES))
-    parser.add_argument("--model",    type=str,                default=None)
+    parser.add_argument("--model",    type=str,                default=None, help="Lokal Ollama-model override")
+    parser.add_argument("--cloud-model", dest="cloud_model", type=str, default=None,
+                        help="Gemini-model override, fx gemini-2.5-pro (optimal kvalitet)")
     args = parser.parse_args()
-    if not args.all and not args.limit and not args.date:
+    if not args.all and not args.limit and not args.date and not args.ids:
         args.limit = 10
 
     print(f"\n{'='*60}\n  TimeLapse Pro — AI Backfill\n{'='*60}")
@@ -220,7 +258,7 @@ def main():
         if gemini_sa_path or gemini_key:
             try:
                 from gemini_service import GeminiVisionService
-                cloud_model = get_setting(db, "gemini_model", "gemini-2.5-flash")
+                cloud_model = args.cloud_model or get_setting(db, "gemini_model", "gemini-2.5-flash")
                 cloud_svc = GeminiVisionService(
                     service_account_path=gemini_sa_path,
                     project_id=gemini_project_id,
@@ -257,6 +295,7 @@ def main():
     last_cid = "___"
     cur_cfg  = None
     stats    = dict(ok=0, fejl=0, mangler=0, sky=0, lokal=0, ms=0)
+    results_out = []
 
     for i, cap in enumerate(captures, 1):
         name = Path(cap["filename"]).name
@@ -267,7 +306,7 @@ def main():
             if args.strategy:
                 cur_cfg = AIConfig(
                     strategy=args.strategy, local_model=args.model or GD["local_model"],
-                    cloud_model=GD["cloud_model"],
+                    cloud_model=args.cloud_model or GD["cloud_model"],
                     escalation_threshold=GD["escalation_threshold"],
                     escalation_new_tags=GD["escalation_new_tags"],
                     always_escalate_tags=GD["always_escalate_tags"],
@@ -286,11 +325,27 @@ def main():
         print(f"  [{i:3}/{len(captures)}] {name[:48]}", end="", flush=True)
         img = find_image(cap["filename"])
         if not img:
-            print(f"\r  [{i:3}/{len(captures)}] {name[:48]} ❌ ikke fundet")
+            print(f"\r  [{i:3}/{len(captures)}] {name} ❌ ikke fundet")
             stats["mangler"] += 1; continue
 
+        # Byg kontekstblok (kunde/site/kamera/tid/baseline) for dette capture.
+        context_block = ""
         try:
-            result, model_used = run_analysis(img, cur_cfg, vocab_by_cat, approved_set, local_svc, cloud_svc)
+            from types import SimpleNamespace
+            from capture_context import build_capture_context, format_context_block
+            _cap_obj = SimpleNamespace(
+                device_id=cap.get("device_id"), captured_at=cap.get("captured_at"), perspective=None,
+            )
+            _dev_obj = SimpleNamespace(
+                device_id=cap.get("device_id"), customer_name=cap.get("customer_name"),
+                site_name=cap.get("site_name"), camera_name=None,
+            )
+            context_block = format_context_block(build_capture_context(db, _cap_obj, _dev_obj))
+        except Exception as _ctx_e:
+            pass
+
+        try:
+            result, model_used = run_analysis(img, cur_cfg, vocab_by_cat, approved_set, local_svc, cloud_svc, context_block=context_block)
             aid = analysis_repo.save_analysis(
                 capture_id=cap["id"], location_id=None, model_vision=model_used,
                 scene_dk=result.scene_dk, change_detected=result.change_detected,
@@ -344,7 +399,15 @@ def main():
             is_cloud = any(x in model_used for x in ["gemini","gpt","claude"])
             stats["sky" if is_cloud else "lokal"] += 1
             flags = ("☁️ " if is_cloud else "") + (f"+{len(result.new_tags)}ny " if result.new_tags else "")
-            print(f"\r  [{i:3}/{len(captures)}] {name[:44]:<44} ✅ {len(result.approved_tags):2}tags {result.duration_ms:4}ms {flags}")
+            all_tags = list(dict.fromkeys(tags))
+            print(f"\r  [{i:3}/{len(captures)}] {name:<62} ✅ {len(all_tags):2} tags {result.duration_ms:4}ms {flags}")
+            print(f"        → {', '.join(all_tags)}")
+            results_out.append({
+                "id": cap["id"], "filename": name,
+                "captured_at": str(cap.get("captured_at")),
+                "site": site, "model": model_used,
+                "scene_dk": result.scene_dk, "tags": all_tags,
+            })
             stats["ok"] += 1; stats["ms"] += result.duration_ms
         except KeyboardInterrupt:
             print("\n\n  ⏸️  Afbrudt"); break
@@ -353,6 +416,11 @@ def main():
             stats["fejl"] += 1
             try: db.rollback()
             except: pass
+
+    if args.out and results_out:
+        with open(args.out, "w", encoding="utf-8") as _f:
+            json.dump(results_out, _f, ensure_ascii=False, indent=2)
+        print(f"\n  💾 Skrev {len(results_out)} resultater til {args.out}")
 
     db.close()
     print(f"\n{'─'*60}")

@@ -20,6 +20,18 @@ function api(path: string, opts?: RequestInit) {
 }
 
 interface Device { device_id: string; camera_name?: string; location_name?: string; status: string }
+interface StorageRootStatus {
+  label: string
+  path: string
+  configured: boolean
+  required: boolean
+  exists: boolean
+  is_dir: boolean
+  writable: boolean
+  free_bytes?: number | null
+  total_bytes?: number | null
+  error?: string
+}
 
 interface SectionProps { title: string; icon: React.ReactNode; description: string; children: React.ReactNode; defaultOpen?: boolean }
 
@@ -208,6 +220,7 @@ export function SystemAdminPage() {
   const [devices, setDevices]   = useState<Device[]>([])
   const [selectedDevice, setSelectedDevice] = useState('')
   const [settings, setSettings] = useState<Record<string,string>>({})
+  const [storageRoots, setStorageRoots] = useState<StorageRootStatus[]>([])
   const [savingSettings, setSavingSettings] = useState(false)
   const [savedSettings, setSavedSettings] = useState(false)
   const [saving, setSaving]     = useState(false)
@@ -215,10 +228,12 @@ export function SystemAdminPage() {
   const [cfg, setCfg]           = useState<any>(null)
   const [labActive, setLabActive] = useState(false)
   const [tunnelEnabled, setTunnelEnabled] = useState(false)
-  const [tunnelPrimary, setTunnelPrimary] = useState('peter@timelapse.froekjaer.dk:22')
+  const [tunnelPrimary, setTunnelPrimary] = useState('')
   const [tunnelRemotePort, setTunnelRemotePort] = useState('2201')
-  const [tunnelKeyFile, setTunnelKeyFile] = useState('/opt/timelapse/edge/ssh/tunnel_key')
+  const [tunnelLocalPort, setTunnelLocalPort] = useState('22')
+  const [tunnelKeyFile, setTunnelKeyFile] = useState('')
   const [tunnelAutoOnApiLoss, setTunnelAutoOnApiLoss] = useState(true)
+  const [tunnelAutoOnApiLossThresholdS, setTunnelAutoOnApiLossThresholdS] = useState('300')
   const [tunnelDeny, setTunnelDeny] = useState(false)
   const [tunnelSaved, setTunnelSaved] = useState(false)
   const [multiCameraMode, setMultiCameraMode] = useState('single')
@@ -250,12 +265,15 @@ export function SystemAdminPage() {
 
   useEffect(() => {
     api('/api/admin/settings').then((s: any) => setSettings(s)).catch(() => {})
+    api('/api/admin/storage/status').then((s: any) => setStorageRoots(s.roots ?? [])).catch(() => {})
   }, [])
 
   async function saveSettings() {
     setSavingSettings(true)
     try {
       await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(settings) })
+      const storage = await api('/api/admin/storage/status').catch(() => null)
+      if (storage?.roots) setStorageRoots(storage.roots)
       setSavedSettings(true)
       setTimeout(() => setSavedSettings(false), 2000)
     } catch { } finally { setSavingSettings(false) }
@@ -277,10 +295,12 @@ export function SystemAdminPage() {
       setMultiCameraMode(dc.multi_camera_mode ?? 'single')
       const tun = dc.ssh_tunnel ?? {}
       setTunnelEnabled(!!tun.enabled)
-      setTunnelPrimary(tun.primary ?? 'peter@timelapse.froekjaer.dk:22')
+      setTunnelPrimary(tun.primary ?? '')
       setTunnelRemotePort(String(tun.remote_port ?? '2201'))
-      setTunnelKeyFile(tun.key_file ?? '/opt/timelapse/edge/ssh/tunnel_key')
+      setTunnelLocalPort(String(tun.local_port ?? '22'))
+      setTunnelKeyFile(tun.key_file ?? '')
       setTunnelAutoOnApiLoss(tun.auto_on_api_loss !== false)
+      setTunnelAutoOnApiLossThresholdS(String(tun.auto_on_api_loss_threshold_s ?? '300'))
       setTunnelDeny(!!tun.deny)
       setNodeCameras(dc.node_cameras ?? [])
     }).catch(() => {})
@@ -357,6 +377,18 @@ export function SystemAdminPage() {
     setNodeCameras(prev => prev.filter((_, i) => i !== idx))
   }
 
+  const fmtBytes = (value?: number | null) => {
+    if (!value || value < 0) return '—'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    let n = value
+    let u = 0
+    while (n >= 1024 && u < units.length - 1) {
+      n /= 1024
+      u += 1
+    }
+    return `${n.toFixed(u < 2 ? 0 : 1)} ${units[u]}`
+  }
+
   async function saveTunnel() {
     if (!selectedDevice) return
     const apiUrl = (await import('../api/client')).getApiUrl()
@@ -368,10 +400,10 @@ export function SystemAdminPage() {
       enabled: tunnelEnabled,
       primary: tunnelPrimary,
       remote_port: parseInt(tunnelRemotePort),
-      local_port: 22,
+      local_port: parseInt(tunnelLocalPort),
       key_file: tunnelKeyFile,
       auto_on_api_loss: tunnelAutoOnApiLoss,
-      auto_on_api_loss_threshold_s: 300,
+      auto_on_api_loss_threshold_s: parseInt(tunnelAutoOnApiLossThresholdS),
       deny: tunnelDeny,
     }
     await fetch(`${apiUrl}/api/admin/devices/${pathSegment(selectedDevice)}/config`, {
@@ -632,6 +664,12 @@ export function SystemAdminPage() {
       {/* Headend Settings */}
       <Section title="Headend indstillinger" icon={<Database className="w-4 h-4" />}
         description="SFTP, ffmpeg og system URLs — gemmes i databasen">
+        <Field label="SFTP upload aktiv" description="Aktiverer sekundær upload til kundens/NAS'ens SFTP-indløbsmappe">
+          <Toggle
+            value={(settings.sftp_enabled ?? 'false').toLowerCase() === 'true'}
+            onChange={v => setSettings(s => ({...s, sftp_enabled: v ? 'true' : 'false'}))}
+          />
+        </Field>
         <Field label="SFTP host" description="IP eller hostname på SFTP serveren">
           <Txt value={settings.sftp_host ?? ''} onChange={v => setSettings(s => ({...s, sftp_host: v}))} mono />
         </Field>
@@ -648,12 +686,75 @@ export function SystemAdminPage() {
         <Field label="SFTP remote base" description="Sti på serveren hvor billeder uploades til">
           <Txt value={settings.sftp_remote_base ?? ''} onChange={v => setSettings(s => ({...s, sftp_remote_base: v}))} mono />
         </Field>
+        <Field label="Canonical image root" description="Headendens aktive root til visning, thumbnails, imports og LAB-preview">
+          <Txt value={settings.sftp_base ?? ''} onChange={v => setSettings(s => ({...s, sftp_base: v}))} mono />
+        </Field>
+        <Field label="Legacy/search image roots" description="Komma- eller linjeskiftseparerede gamle roots som stadig skal kunne læses">
+          <Txt value={settings.sftp_legacy_roots ?? ''} onChange={v => setSettings(s => ({...s, sftp_legacy_roots: v}))} mono />
+        </Field>
+        <Field label="Backup NAS path" description="Off-host/NAS root til headend- og edge-backups">
+          <Txt value={settings.backup_nas_path ?? ''} onChange={v => setSettings(s => ({...s, backup_nas_path: v}))} mono />
+        </Field>
+        <Field label="Edge image artifact dir" description="Mappe til byggede rootfs/disk images og manifester">
+          <Txt value={settings.edge_image_artifact_dir ?? ''} onChange={v => setSettings(s => ({...s, edge_image_artifact_dir: v}))} mono />
+        </Field>
         <Field label="FFmpeg sti" description="Fuld sti til ffmpeg binary">
           <Txt value={settings.ffmpeg_path ?? ''} onChange={v => setSettings(s => ({...s, ffmpeg_path: v}))} mono />
         </Field>
         <Field label="Base URL" description="Headend URL som vises i edge config">
           <Txt value={settings.base_url ?? ''} onChange={v => setSettings(s => ({...s, base_url: v}))} mono />
         </Field>
+        <Field label="Upload backlog pr. retry" description="Hvor mange ventende billedfiler Edge må uploade pr. retry-loop">
+          <Txt value={settings.upload_slot_max_pending_per_window ?? ''} onChange={v => setSettings(s => ({...s, upload_slot_max_pending_per_window: v}))} mono />
+        </Field>
+        <Field label="Upload slot enforcement" description="true begrænser uploads til tildelte tidsvinduer; false uploader når Edge er online">
+          <Txt value={settings.upload_slot_enforced ?? ''} onChange={v => setSettings(s => ({...s, upload_slot_enforced: v}))} mono />
+        </Field>
+        <Field label="WebAuthn RP ID" description="Domæne for passkeys/FIDO2, fx headendens hostname uden protokol">
+          <Txt value={settings.webauthn_rp_id ?? ''} onChange={v => setSettings(s => ({...s, webauthn_rp_id: v}))} mono />
+        </Field>
+        <Field label="WebAuthn origin" description="Eksakt browser-origin for passkeys, inkl. protokol og evt. port">
+          <Txt value={settings.webauthn_origin ?? ''} onChange={v => setSettings(s => ({...s, webauthn_origin: v}))} mono />
+        </Field>
+        <Field label="Open WebUI URL" description="Offentlig URL der åbnes fra TimeLapse Pro">
+          <Txt value={settings.openwebui_public_url ?? ''} onChange={v => setSettings(s => ({...s, openwebui_public_url: v}))} mono />
+        </Field>
+        <Field label="Open WebUI cookie domain" description="Tom = host-only cookie; udfyld kun ved delt domæne">
+          <Txt value={settings.openwebui_cookie_domain ?? ''} onChange={v => setSettings(s => ({...s, openwebui_cookie_domain: v}))} mono />
+        </Field>
+        <Field label="Ollama URL" description="Lokal modelserver til billed- og tekst-AI">
+          <Txt value={settings.ollama_url ?? ''} onChange={v => setSettings(s => ({...s, ollama_url: v}))} mono />
+        </Field>
+        <Field label="Ollama vision model" description="Standard lokal vision-model">
+          <Txt value={settings.ollama_vision_model ?? ''} onChange={v => setSettings(s => ({...s, ollama_vision_model: v}))} mono />
+        </Field>
+        <Field label="Ollama tekstmodel" description="Standard lokal tekstmodel til SIEM/CMDB">
+          <Txt value={settings.ollama_text_model ?? ''} onChange={v => setSettings(s => ({...s, ollama_text_model: v}))} mono />
+        </Field>
+        <Field label="Ollama vision timeout" unit="sekunder">
+          <Txt value={settings.ollama_vision_timeout_s ?? ''} onChange={v => setSettings(s => ({...s, ollama_vision_timeout_s: v}))} mono />
+        </Field>
+        {storageRoots.length > 0 && (
+          <div className="mt-4 rounded-lg border border-gray-100 overflow-hidden">
+            {storageRoots.map(root => {
+              const readOnlyOk = root.label.toLowerCase().includes('legacy')
+              const ok = (!root.required || root.configured) && root.exists && root.is_dir && (readOnlyOk || root.writable)
+              return (
+                <div key={root.label} className="flex items-start gap-3 px-3 py-2 border-b border-gray-100 last:border-0">
+                  <span className={`mt-1 w-2 h-2 rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs font-medium text-gray-700">{root.label}</p>
+                      <p className="text-xs text-gray-400">{fmtBytes(root.free_bytes)} fri</p>
+                    </div>
+                    <p className="text-xs font-mono text-gray-500 truncate">{root.path || 'Ikke konfigureret'}</p>
+                    {!ok && <p className="text-xs text-amber-600">{root.error || (readOnlyOk ? 'Mappen mangler eller kan ikke læses' : 'Mappen mangler eller er ikke skrivbar')}</p>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
         <div className="flex justify-end mt-3">
           <button onClick={saveSettings} disabled={savingSettings}
             className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
@@ -741,19 +842,27 @@ export function SystemAdminPage() {
         </Field>
         <Field label="Primær endpoint"
           description="Bruger og host som edge forbinder til (user@host:port)">
-          <Txt value={tunnelPrimary} onChange={setTunnelPrimary} mono placeholder="peter@timelapse.froekjaer.dk:22" />
+          <Txt value={tunnelPrimary} onChange={setTunnelPrimary} mono placeholder="user@headend.example:22" />
         </Field>
         <Field label="Remote port"
           description="Port der åbnes på headend — unik pr. device">
           <Num value={tunnelRemotePort} onChange={setTunnelRemotePort} placeholder="2201" />
         </Field>
+        <Field label="Lokal port på Edge"
+          description="Port på Edge som tunnelen videresender til">
+          <Num value={tunnelLocalPort} onChange={setTunnelLocalPort} placeholder="22" />
+        </Field>
         <Field label="Nøglefil (edge)"
           description="Sti til SSH privat nøgle på edge-enheden">
-          <Txt value={tunnelKeyFile} onChange={setTunnelKeyFile} mono placeholder="/opt/timelapse/edge/ssh/tunnel_key" />
+          <Txt value={tunnelKeyFile} onChange={setTunnelKeyFile} mono placeholder="/path/to/tunnel_key" />
         </Field>
         <Field label="Auto-start ved API-tab"
-          description="Start tunnel automatisk hvis headend API er utilgængeligt i 5 min">
+          description="Start tunnel automatisk hvis headend API er utilgængeligt">
           <Toggle value={tunnelAutoOnApiLoss} onChange={setTunnelAutoOnApiLoss} />
+        </Field>
+        <Field label="Auto-start tærskel" unit="sekunder"
+          description="Hvor længe API skal være utilgængelig før tunnel startes">
+          <Num value={tunnelAutoOnApiLossThresholdS} onChange={setTunnelAutoOnApiLossThresholdS} placeholder="300" />
         </Field>
         <Field label="Forbyd tunnel"
           description="Denne enhed må aldrig oprette SSH tunnel (tilsidesætter enabled)">

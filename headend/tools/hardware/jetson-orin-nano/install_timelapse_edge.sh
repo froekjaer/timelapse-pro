@@ -12,7 +12,7 @@
 #
 # Brug:
 #   sudo bash install_timelapse_edge.sh \
-#       --headend-url https://timelapse.froekjaer.dk/api \
+#       --headend-url http://127.0.0.1:8000/api \
 #       --bootstrap-token <token>
 #
 # ============================================================================

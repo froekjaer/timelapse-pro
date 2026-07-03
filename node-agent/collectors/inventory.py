@@ -37,8 +37,11 @@ APP_VERSION = "2.8.0"    # Opdateres ved release (TODO: læs fra VERSION-fil)
 GPG_KEY_UID = "timelapse@froekjaer.dk"  # Til fingerprint-opslag
 
 
-def _run(cmd: list[str], timeout: int = 5) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def _run(cmd: list[str], timeout: int = 5, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    runtime_env = os.environ.copy()
+    if env:
+        runtime_env.update(env)
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=runtime_env)
 
 
 def _cfg_value(config, key: str, default=None):
@@ -149,6 +152,56 @@ def _primary_mac(interface: str) -> Optional[str]:
         return (Path("/sys/class/net") / interface / "address").read_text().strip()
     except OSError:
         return None
+
+
+def _primary_ip(interface: str) -> Optional[str]:
+    if platform.system() == "Darwin":
+        try:
+            out = _run(["ipconfig", "getifaddr", interface], timeout=3).stdout.strip()
+            if out:
+                return out
+        except Exception:
+            pass
+        try:
+            out = _run(["ifconfig", interface], timeout=3).stdout
+            m = re.search(r"\binet\s+(\d+\.\d+\.\d+\.\d+)\b", out)
+            return m.group(1) if m else None
+        except Exception:
+            return None
+
+    try:
+        result = _run(["ip", "-4", "-o", "addr", "show", "dev", interface], timeout=3)
+        m = re.search(r"\binet\s+(\d+\.\d+\.\d+\.\d+)/", result.stdout)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def _ip_addresses() -> dict[str, list[str]]:
+    addresses: dict[str, list[str]] = {}
+    try:
+        if platform.system() == "Darwin":
+            current_iface: str | None = None
+            for line in _run(["ifconfig"], timeout=5).stdout.splitlines():
+                if line and not line.startswith(("\t", " ")):
+                    current_iface = line.split(":", 1)[0]
+                elif current_iface and "\tinet " in line:
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1] != "127.0.0.1":
+                        addresses.setdefault(current_iface, []).append(parts[1])
+            return addresses
+
+        result = _run(["ip", "-4", "-o", "addr"], timeout=5)
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[2] == "inet":
+                iface = parts[1]
+                ip = parts[3].split("/", 1)[0]
+                if ip != "127.0.0.1":
+                    addresses.setdefault(iface, []).append(ip)
+    except Exception:
+        pass
+    return addresses
 
 
 def _primary_interface() -> str:
@@ -349,19 +402,86 @@ def _os_packages() -> tuple[Optional[str], dict[str, str]]:
         return "apt/dpkg", {}
 
 
-def _software_inventory(config=None) -> dict[str, str]:
+def _brew_env() -> dict[str, str]:
+    home = os.environ.get("HOME") or "/Users/peter"
+    return {
+        "HOME": home,
+        "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOMEBREW_NO_AUTO_UPDATE": "1",
+        "HOMEBREW_NO_ENV_HINTS": "1",
+    }
+
+
+def _homebrew_formulae() -> dict[str, str]:
+    brew = Path("/opt/homebrew/bin/brew")
+    if not brew.exists():
+        return {}
+    result = _run([str(brew), "list", "--versions"], timeout=25, env=_brew_env())
+    if result.returncode != 0:
+        log.debug("brew list fejlede: %s", result.stderr[-300:])
+        return {}
+    formulae: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            formulae[parts[0]] = " ".join(parts[1:])
+    return formulae
+
+
+def _homebrew_outdated() -> list[dict[str, str]]:
+    brew = Path("/opt/homebrew/bin/brew")
+    if not brew.exists():
+        return []
+    result = _run([str(brew), "outdated", "--json=v2"], timeout=35, env=_brew_env())
+    if result.returncode not in (0, 1):
+        log.debug("brew outdated fejlede: %s", result.stderr[-300:])
+        return []
+    try:
+        data = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return []
+    updates: list[dict[str, str]] = []
+    for item in data.get("formulae", []):
+        installed = item.get("installed_versions") or []
+        updates.append({
+            "name": str(item.get("name") or ""),
+            "installed_version": ", ".join(str(v) for v in installed),
+            "available_version": str(item.get("current_version") or ""),
+            "manager": "homebrew",
+            "kind": "formula",
+            "pinned": str(bool(item.get("pinned", False))).lower(),
+        })
+    for item in data.get("casks", []):
+        updates.append({
+            "name": str(item.get("name") or item.get("token") or ""),
+            "installed_version": str(item.get("installed_versions") or ""),
+            "available_version": str(item.get("current_version") or ""),
+            "manager": "homebrew",
+            "kind": "cask",
+            "pinned": "false",
+        })
+    return [u for u in updates if u["name"]]
+
+
+def _software_inventory(config=None) -> dict[str, object]:
     inventory = {
         "timelapse_pro": APP_VERSION,
         "python": platform.python_version(),
     }
     if platform.system() == "Darwin":
+        formulae = _homebrew_formulae()
+        if formulae:
+            inventory["homebrew_formulae"] = formulae
+        outdated = _homebrew_outdated()
+        if outdated:
+            inventory["available_software_updates"] = outdated
         for name, cmd in {
             "nginx": ["/opt/homebrew/sbin/nginx", "-v"],
-            "ollama": ["/usr/local/bin/ollama", "--version"],
+            "ollama": ["/opt/homebrew/bin/ollama", "--version"],
             "brew": ["/opt/homebrew/bin/brew", "--version"],
         }.items():
             try:
-                result = _run(cmd, timeout=5)
+                result = _run(cmd, timeout=5, env=_brew_env())
                 text = (result.stdout or result.stderr).strip().splitlines()
                 if text:
                     inventory[name] = text[0]
@@ -394,9 +514,16 @@ def collect_inventory(config: dict) -> dict:
     hw_model, soc = _detect_hardware_model()
     iface = _primary_interface()
     mac = _primary_mac(iface)
+    ip = _primary_ip(iface)
     wifi_cap, wifi_ssid = _wifi_info()
     boot_type, boot_gb, boot_pct = _storage_info("/")
-    data_path = "/Volumes/data" if platform.system() == "Darwin" and Path("/Volumes/data").exists() else "/data"
+    if platform.system() == "Darwin":
+        data_path = next(
+            (path for path in ("/Volumes/data-fast", "/Volumes/data") if Path(path).exists()),
+            "/data",
+        )
+    else:
+        data_path = "/data"
     data_type, data_gb, data_pct = _storage_info(data_path) if Path(data_path).exists() else (None, None, None)
     package_manager, os_packages = _os_packages()
 
@@ -433,6 +560,8 @@ def collect_inventory(config: dict) -> dict:
 
         # Netværk
         "primary_interface":        iface,
+        "ip_address":               ip,
+        "ip_addresses":             _ip_addresses(),
         "wifi_capable":             wifi_cap,
         "wifi_ssid":                wifi_ssid,
 

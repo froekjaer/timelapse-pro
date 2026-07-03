@@ -2,14 +2,15 @@
 TimeLapse Pro — API Integration Tests
 =======================================
 Tester live API endpoints mod staging headend.
-Kræver at headend kører på 192.168.86.132:8000
+Kræver at headend kører på TIMELAPSE_TEST_BASE_URL.
 
 Kør: pytest tests/test_api_integration.py -v
 """
 import pytest
 import requests
+import os
 
-BASE_URL = "http://192.168.86.132:8000"
+BASE_URL = os.getenv("TIMELAPSE_TEST_BASE_URL", "http://127.0.0.1:8000")
 DEVICE_ID = "TL-C87FF9587CA0"
 
 def api(path, method="GET", **kwargs):
@@ -126,4 +127,3 @@ def test_thumbnail_endpoint_exists():
         if r2.status_code == 200:
             assert len(r2.content) > 1000, \
                 f"FEJL: Thumbnail er for lille ({len(r2.content)} bytes) — sandsynligvis fejl!"
-

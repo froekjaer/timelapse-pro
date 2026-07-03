@@ -179,7 +179,7 @@ PREDEFINED_TAGS: dict[str, list[str]] = {
         "overexposed", "underexposed", "correct_exposure",
         "motion_blur", "incorrect_focus", "night_image_ok",
         "night_image_too_dark", "camera_moved", "blown_highlights",
-        "flare", "low_contrast",
+        "flare", "low_contrast", "unusable_image",
     ],
 
     "change_detection": [
@@ -361,6 +361,7 @@ PREDEFINED_DA_LABELS: dict[str, str] = {
     "incorrect_focus": "forkert fokus", "night_image_ok": "natbillede ok",
     "night_image_too_dark": "natbillede for mørkt", "camera_moved": "kamera bevæget",
     "blown_highlights": "udbrændte højlys", "flare": "flare", "low_contrast": "lav kontrast",
+    "unusable_image": "ubrugeligt billede",
     # change_detection
     "new_construction_since_last": "ny konstruktion siden sidst",
     "progress_since_last": "fremskridt siden sidst", "new_vehicle": "nyt køretøj",
@@ -431,11 +432,98 @@ CANONICAL_TAG_OVERRIDES: dict[str, tuple[str, str]] = {
 }
 
 
+# ── Synonym-konsolidering ─────────────────────────────────────────────────────
+# Åbent vokabular giver rige tags, men også nær-synonymer for samme begreb
+# (city_view / view_over_town / landscape_view …) der fragmenterer søgning.
+# Denne map kollapser kendte varianter (og danske leaks) til ÉT kanonisk
+# ENGELSK tag. Kun ægte synonymer — meningsfulde forskelle (bare_trees vs
+# green_trees som sæsonsignal, hustyper) bevares. Udvid listen ud fra data via
+# Tag Review-UI'et. Nøgler er lowercase_underscore som modellen emitter dem.
+TAG_SYNONYMS: dict[str, str] = {
+    # "udsigt over by" → city_view
+    "view_over_town": "city_view", "view_of_town": "city_view",
+    "landscape_view": "city_view", "residential_view": "city_view",
+    "panoramic_view": "city_view", "panorama": "city_view",
+    "scenic_view": "city_view", "scenic_overview": "city_view",
+    "residential_area_view": "city_view", "town_view": "city_view",
+    "townscape": "city_view", "cityscape": "city_view",
+    "city_skyline": "city_view", "skyline": "city_view",
+    "construction_area_overview": "city_view", "distant_view": "city_view",
+    "view_of_city": "city_view",
+    # bolig → residential_area (hustyper bevares: single_family_house, apartment_building, townhouse)
+    "residential_housing": "residential_area", "residential_development": "residential_area",
+    "residential_neighborhood": "residential_area", "residential_neighbourhood": "residential_area",
+    "residential_zone": "residential_area", "housing_area": "residential_area",
+    # tage
+    "rooftops": "roof", "residential_rooftops": "roof", "house_roofs": "roof",
+    # træer — let konsolidering, sæson/type bevares
+    "tree": "trees", "green_trees": "trees", "leafy_trees": "trees",
+    "tree_canopy": "trees", "dense_tree_canopy": "trees", "treetops": "trees",
+    "leafless_trees": "bare_trees",
+    # byggeplads / danske leaks → engelsk kanonisk
+    "byggeplads": "construction_site", "byggeplads_oversigt": "construction_site",
+    "byggeplads_overblik": "construction_site", "byggeri": "construction_site",
+    "byggeprojekt": "construction_site", "byggeplads_vej": "construction_site_road",
+    "byggeplads_forberedelse": "site_preparation", "byggeplads_materialer": "stacked_materials",
+    "byggeproces": "construction_in_progress", "nybyggeri": "new_construction",
+    "dannebrog": "danish_flag", "udviklingsområde": "development_area",
+    "bygninger_i_baggrunden": "distant_buildings", "buildings_in_background": "distant_buildings",
+    "åbent_område": "open_area", "åben_grund": "empty_lot",
+    "industriområde_i_baggrunden": "industrial_area", "industriområde": "industrial_area",
+    "grus": "gravel", "grusvej": "gravel_road", "grussti": "gravel_path",
+    "grøn_vegetation": "vegetation", "groen_vegetation": "vegetation",
+    "læskur": "shelter", "laeskur": "shelter",
+    "dræningsproblemer": "drainage_issue", "draeningsproblemer": "drainage_issue",
+    "vej_anlæg": "road_construction", "vej_anlaeg": "road_construction", "vejanlæg": "road_construction",
+    "delvist_færdige_bygninger": "buildings_under_construction",
+    "delvist_faerdige_bygninger": "buildings_under_construction",
+    "byggeplads_område": "construction_site", "byggeplads_omraade": "construction_site",
+    "udendørs": "outdoor", "udendoers": "outdoor",
+    # nedløb / tagrende
+    "downspout": "downpipe", "down_spout": "downpipe", "gutter": "downpipe",
+    "rain_gutter": "downpipe", "roof_gutter": "downpipe",
+    # fjerne bygninger
+    "buildings_in_the_distance": "distant_buildings", "buildings_in_distance": "distant_buildings",
+    "distant_building": "distant_buildings", "far_buildings": "distant_buildings",
+    # vegetation
+    "green_vegetation": "vegetation", "lush_vegetation": "vegetation", "green_landscape": "vegetation",
+    # tage (varianter)
+    "residential_roofs": "roof", "house_roof": "roof", "tiled_roof": "roof_tiles",
+    # murværk-farve-varianter → brick_wall
+    "yellow_brick_wall": "brick_wall", "red_brick_wall": "brick_wall", "brick_building": "brick_wall",
+}
+
+
 def _canonical_slug(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.lower())
     ascii_value = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     ascii_value = ascii_value.replace("æ", "ae").replace("ø", "oe").replace("å", "aa")
     return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", ascii_value)).strip("_")
+
+
+def normalize_tag(tag: str) -> str:
+    """Bring et model-genereret tag på kanonisk form: lowercase_underscore +
+    kollaps kendte synonymer/legacy-danske varianter til ÉT engelsk tag.
+
+    Anvendes dér hvor tags gemmes (capture.ai_tags + vokabular), så søgning
+    bliver ensartet. Returnerer '' for tomme/ugyldige tags (kalderen filtrerer).
+    """
+    if not tag:
+        return ""
+    clean = str(tag).lower().strip().replace(" ", "_").replace("-", "_")
+    clean = re.sub(r"_+", "_", clean).strip("_")
+    if not clean:
+        return ""
+    # 1) Legacy dansk → engelsk kanonisk (bevarer gamle captures' gruppering)
+    if clean in CANONICAL_TAG_OVERRIDES:
+        clean = CANONICAL_TAG_OVERRIDES[clean][0]
+    # 2) Synonym-merge — prøv både rå form (med æøå) og ascii-slug
+    if clean in TAG_SYNONYMS:
+        return TAG_SYNONYMS[clean]
+    slug = _canonical_slug(clean)
+    if slug in TAG_SYNONYMS:
+        return TAG_SYNONYMS[slug]
+    return clean
 
 
 def canonical_metadata(tag: str, da_hint: str = "") -> tuple[str, str, str]:

@@ -28,10 +28,45 @@ from typing import Optional
 
 import httpx
 
+try:
+    from .tag_vocabulary import normalize_tag as _vocab_normalize
+except ImportError:
+    try:
+        from tag_vocabulary import normalize_tag as _vocab_normalize
+    except ImportError:
+        _vocab_normalize = lambda t: t  # fallback hvis vokabular-modulet ikke kan importeres
+
+
+def _resize_with_pil(data: bytes, max_edge: int, max_bytes: int) -> bytes:
+    """Fallback-resize UDEN cv2 (bruger Pillow). Bruges når cv2 ikke kan importeres
+    (fx venv på et flaky volumen). Returnerer originalen hvis PIL også fejler —
+    ALDRIG en trunkeret/korrupt JPEG.
+    """
+    try:
+        from io import BytesIO
+        from PIL import Image
+        im = Image.open(BytesIO(data))
+        if im.mode != "RGB":
+            im = im.convert("RGB")
+        w, h = im.size
+        scale = min(1.0, max_edge / max(w, h))
+        if len(data) > max_bytes:
+            scale = min(scale, (max_bytes / len(data)) ** 0.5 * 0.9)
+        if scale < 1.0:
+            im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+        q = 85
+        buf = BytesIO(); im.save(buf, format="JPEG", quality=q); out = buf.getvalue()
+        while len(out) > max_bytes and q > 55:
+            q -= 7
+            buf = BytesIO(); im.save(buf, format="JPEG", quality=q); out = buf.getvalue()
+        return out or data
+    except Exception:
+        return data
+
 log = logging.getLogger(__name__)
 
 # ── Konfiguration ─────────────────────────────────────────────────────────────
-OLLAMA_BASE_URL   = "http://localhost:11434"
+OLLAMA_BASE_URL   = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
 VISION_MODEL      = os.getenv("TIMELAPSE_VISION_MODEL", "qwen2.5vl:7b")
 FALLBACK_MODELS   = [
     m.strip()
@@ -41,12 +76,46 @@ FALLBACK_MODELS   = [
 TEXT_MODEL        = "llama3.2:latest"
 TIMEOUT_VISION    = int(os.getenv("TIMELAPSE_VISION_TIMEOUT", "120"))
 TIMEOUT_TEXT      = 60
-MAX_IMAGE_BYTES   = int(os.getenv("TIMELAPSE_VISION_MAX_IMAGE_BYTES", str(900_000)))
-MAX_IMAGE_EDGE    = int(os.getenv("TIMELAPSE_VISION_MAX_IMAGE_EDGE", "768"))
+# Billedbudget til den lokale model. Hævet fra 768/900KB: qwen2.5-vl bruger
+# faktisk høj opløsning (dynamisk resolution), så 768px efterlod detaljer på
+# bordet. 1024px/1.5MB er et fornuftigt udgangspunkt — kan skrues op til
+# ~1280-1536 via DB-settings (ollama_max_image_edge/-bytes) hvis Mac'en kan følge
+# med (højere = skarpere men langsommere/mere VRAM).
+MAX_IMAGE_BYTES   = int(os.getenv("TIMELAPSE_VISION_MAX_IMAGE_BYTES", str(1_500_000)))
+MAX_IMAGE_EDGE    = int(os.getenv("TIMELAPSE_VISION_MAX_IMAGE_EDGE", "1024"))
 MAX_PROMPT_TAGS   = int(os.getenv("TIMELAPSE_VISION_MAX_PROMPT_TAGS", "45"))
 MAX_PROMPT_TAGS_PER_CATEGORY = int(os.getenv("TIMELAPSE_VISION_MAX_PROMPT_TAGS_PER_CATEGORY", "6"))
-VISION_NUM_CTX     = int(os.getenv("TIMELAPSE_VISION_NUM_CTX", "4096"))
-VISION_NUM_PREDICT = int(os.getenv("TIMELAPSE_VISION_NUM_PREDICT", "320"))
+# Hævet fra 4096: billede + den rigere scene-prompt sprængte 4096-konteksten
+# ("exceeds available context size"). qwen2.5-vl klarer langt mere; 8192 giver luft.
+VISION_NUM_CTX     = int(os.getenv("TIMELAPSE_VISION_NUM_CTX", "8192"))
+VISION_NUM_PREDICT = int(os.getenv("TIMELAPSE_VISION_NUM_PREDICT", "448"))
+
+
+def _db_setting(key: str, default: str) -> str:
+    try:
+        from sqlalchemy import text
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            for table in ("settings", "system_settings"):
+                try:
+                    row = db.execute(text(f"SELECT value FROM {table} WHERE key = :k"), {"k": key}).fetchone()
+                    if row and row[0]:
+                        return str(row[0])
+                except Exception:
+                    db.rollback()
+            return default
+        finally:
+            db.close()
+    except Exception:
+        return default
+
+
+def _db_int(key: str, default: int) -> int:
+    try:
+        return int(_db_setting(key, str(default)))
+    except Exception:
+        return default
 
 CONSTRUCTION_WORK_TAGS = {
     "byggefremskridt", "tom_grund", "udgravning", "jordarbejde", "pilotering",
@@ -188,8 +257,15 @@ class ImageAnalysisResult:
 # PROMPTS
 # =============================================================================
 
-def _build_vision_prompt(vocabulary_by_category: dict[str, list[str]]) -> str:
-    """Byg kompakt enkelt-billed prompt med begrænset vokabular."""
+def _build_vision_prompt(vocabulary_by_category: dict[str, list[str]], context_block: str = "") -> str:
+    """Byg kompakt enkelt-billed prompt til den LOKALE model.
+
+    Samme filosofi som Gemini-prompten (åbent vokabular, ingen fraværs-tags,
+    kontekst, scene-rigdom), men lidt slankere. Default-modellen er qwen2.5-vl:7b,
+    der er kapabel nok til et rigt output; mindre lokale modeller klarer det også,
+    bare med færre tags. Bruges når strategien er local_only/local_then_cloud
+    (pris/privacy).
+    """
 
     vocab_lines = []
     used = 0
@@ -202,31 +278,27 @@ def _build_vision_prompt(vocabulary_by_category: dict[str, list[str]]) -> str:
             vocab_lines.append(f"{cat}: {', '.join(selected)}")
             used += len(selected)
     vocab_text = "\n".join(vocab_lines)
+    context_txt = f"\nCONTEXT (background — still only describe what you actually see):\n{context_block}\n" if context_block else ""
 
-    return f"""Analyze this timelapse image. Respond only with valid JSON. No markdown, no explanation.
-
+    return f"""Analyze this outdoor time-lapse image. Respond only with valid JSON. No markdown, no explanation.
+{context_txt}
 IMPORTANT:
-- Do NOT assume the image shows a construction site.
-- Only use construction tags if construction activity, materials, machines, scaffolding or new construction is clearly visible.
-- If the image mainly shows landscape, weather, trees, roofs or a city view, use only neutral tags like weather/surroundings/light/camera_quality.
-- Describe weather and lighting when visible: daylight, sunshine, overcast, blue_sky, diffuse_light, clear_sunlight, backlight, direct_sunlight, sun_in_lens, glare, lens_flare, overexposed.
-- Use good_timelapse_lighting when the image has usable daylight without clear backlight, sun_in_lens, distracting_glare or overexposure.
-- Prefer fewer correct tags over more incorrect tags.
-- Return 0-8 tags. Never a long list.
-- Indoor tags like bathroom_installation, kitchen_installation, flooring and interior_painting may only be used if indoor work is actually visible.
+- Describe what you ACTUALLY see, in your own words. Do NOT assume it is a construction site.
+- Describe the WHOLE scene: structures (roofs, facades, gables, chimneys), building types, vegetation (trees, hedge, grass), vehicles, terrain and surroundings — and on a building site also machinery, materials and the construction stage. THEN weather/light, THEN image quality.
+- Tag ONLY what is present. NEVER tag the absence of something (no "no_crane", "no_worker", "no_activity"). If it isn't there, don't mention it.
+- Pay attention to anything unusual or worth a second look: fire, smoke, flooding, ambulance, accident, an unknown vehicle, or people/vehicles at night. Use the CONTEXT above to judge what is unusual for THIS camera.
+- Describe weather and lighting when visible (sunshine, overcast, blue_sky, backlight, sun_in_lens, glare, overexposed).
+- Note image quality in "quality.flag": clear_image, overexposed, underexposed, glare, sun_in_lens, dirty_lens, condensation_on_lens, motion_blur, incorrect_focus, night_image_too_dark, camera_moved. Use "unusable_image" ONLY for a truly blank / sensor-error / fully-blocked frame — an overcast or gray but real scene is NOT unusable.
+- Return as many RELEVANT tags as truly fit (often 8-18 for a rich scene; few for a simple one). Reuse a listed word rather than inventing a near-synonym. Never pad with guesses.
 
-Prefer these ENGLISH tags, but only when they visually fit:
+These ENGLISH words are INSPIRATION — reuse when they fit, invent others as needed:
 {vocab_text}
 
 Rules:
 - Tags MUST be English, lowercase, underscore-separated.
-- New words you invent also go in "new_tags" (ENGLISH). For each one, suggest a short
-  natural DANISH translation at the SAME position in "new_tags_da" (parallel array,
-  same length/order as "new_tags"). Example:
-  "new_tags": ["loading_ramp"], "new_tags_da": ["lastrampe"]
-- "scene" stays in Danish — it is free text shown to Danish users, not a tag.
-- Describe only what can be seen.
-- Never identify people or license plates.
+- Words not in the list go in "new_tags" (ENGLISH). For each, give a short Danish translation at the SAME position in "new_tags_da" (parallel array). Example: "new_tags": ["loading_ramp"], "new_tags_da": ["lastrampe"].
+- "scene" stays in Danish — free text for Danish users, not a tag. Mention anything unusual.
+- Never identify people or read license plates.
 
 JSON format:
 {{
@@ -299,14 +371,20 @@ class OllamaVisionService:
 
     def __init__(
         self,
-        base_url:     str = OLLAMA_BASE_URL,
-        vision_model: str = VISION_MODEL,
+        base_url:     str | None = None,
+        vision_model: str | None = None,
         fallback_models: Optional[list[str]] = None,
     ):
-        self.base_url        = base_url.rstrip("/")
-        self.vision_model    = vision_model
-        self.fallback_models = fallback_models if fallback_models is not None else FALLBACK_MODELS
-        self._client         = httpx.Client(timeout=TIMEOUT_VISION)
+        self.base_url        = (base_url or _db_setting("ollama_url", OLLAMA_BASE_URL)).rstrip("/")
+        self.vision_model    = vision_model or _db_setting("ollama_vision_model", VISION_MODEL)
+        fallback_raw = _db_setting("ollama_fallback_models", ",".join(FALLBACK_MODELS))
+        self.fallback_models = fallback_models if fallback_models is not None else [m.strip() for m in fallback_raw.split(",") if m.strip()]
+        self.timeout_vision  = _db_int("ollama_vision_timeout_s", TIMEOUT_VISION)
+        self.max_image_bytes = _db_int("ollama_max_image_bytes", MAX_IMAGE_BYTES)
+        self.max_image_edge  = _db_int("ollama_max_image_edge", MAX_IMAGE_EDGE)
+        self.vision_num_ctx = _db_int("ollama_vision_num_ctx", VISION_NUM_CTX)
+        self.vision_num_predict = _db_int("ollama_vision_num_predict", VISION_NUM_PREDICT)
+        self._client         = httpx.Client(timeout=self.timeout_vision)
 
     # ── Offentlig API ─────────────────────────────────────────────────────────
 
@@ -316,6 +394,7 @@ class OllamaVisionService:
         vocabulary_by_cat:   dict[str, list[str]],
         approved_tag_set:    set[str],
         reference_image_path: Optional[Path | str] = None,
+        context_block:       str = "",
     ) -> ImageAnalysisResult:
         """
         Analysér et billede (med optional reference til change detection).
@@ -323,6 +402,7 @@ class OllamaVisionService:
         vocabulary_by_cat:  {kategori: [tags]} — fra TagVocabulary.get_approved_by_category()
         approved_tag_set:   set af godkendte tags — til opdeling approved/new
         reference_image_path: referencebillede fra ~24 timer før
+        context_block:      valgfri kontekstblok (kunde/site/kamera/tid/baseline)
         """
         start = time.monotonic()
 
@@ -333,7 +413,7 @@ class OllamaVisionService:
             images = [self._encode_image(reference_image_path), images[0]]
             prompt = _build_change_prompt(vocabulary_by_cat)
         else:
-            prompt = _build_vision_prompt(vocabulary_by_cat)
+            prompt = _build_vision_prompt(vocabulary_by_cat, context_block=context_block)
 
         raw, model_used = self._call_ollama_with_fallback(prompt=prompt, images=images)
 
@@ -390,20 +470,20 @@ class OllamaVisionService:
                 "temperature": 0.1,      # lav temperatur → konsistente JSON-svar
                 "top_p": 0.8,
                 "repeat_penalty": 1.18,
-                "num_ctx": VISION_NUM_CTX,
-                "num_predict": VISION_NUM_PREDICT,
+                "num_ctx": self.vision_num_ctx,
+                "num_predict": self.vision_num_predict,
             },
         }
         try:
             resp = self._client.post(
                 f"{self.base_url}/api/generate",
                 json=payload,
-                timeout=TIMEOUT_VISION,
+                timeout=self.timeout_vision,
             )
             resp.raise_for_status()
             return resp.json()
         except httpx.TimeoutException:
-            log.error("Ollama timeout efter %ds for model %s", TIMEOUT_VISION, model)
+            log.error("Ollama timeout efter %ds for model %s", self.timeout_vision, model)
             raise
         except httpx.HTTPStatusError as e:
             log.error("Ollama HTTP-fejl %d: %s", e.response.status_code, e.response.text[:200])
@@ -470,7 +550,8 @@ class OllamaVisionService:
     def _normalize_tag(self, value: object) -> str:
         tag = str(value).lower().strip().replace(" ", "_").replace("-", "_").replace("/", "_")
         tag = re.sub(r"[^a-z0-9_æøå]", "", tag)
-        tag = TAG_SYNONYMS.get(tag, tag)
+        tag = TAG_SYNONYMS.get(tag, tag)      # lokale danske synonymer
+        tag = _vocab_normalize(tag)           # delt: legacy-overrides + rige synonymer
         return tag if tag and tag not in VOCABULARY_CATEGORY_NAMES else ""
 
     def _normalize_scene_text(self, value: object) -> str:
@@ -488,14 +569,14 @@ class OllamaVisionService:
             if img is None:
                 return data
             h, w = img.shape[:2]
-            scale = min(1.0, MAX_IMAGE_EDGE / max(h, w))
-            if len(data) > MAX_IMAGE_BYTES:
-                scale = min(scale, (MAX_IMAGE_BYTES / len(data)) ** 0.5 * 0.9)
+            scale = min(1.0, self.max_image_edge / max(h, w))
+            if len(data) > self.max_image_bytes:
+                scale = min(scale, (self.max_image_bytes / len(data)) ** 0.5 * 0.9)
             if scale < 1.0:
                 img = cv2.resize(img, (max(1, int(w * scale)), max(1, int(h * scale))))
             quality = 82
             ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
-            while ok and len(buf) > MAX_IMAGE_BYTES and quality > 55:
+            while ok and len(buf) > self.max_image_bytes and quality > 55:
                 quality -= 7
                 ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
             if not ok:
@@ -504,8 +585,8 @@ class OllamaVisionService:
                       len(data) // 1024, w, h, len(buf) // 1024, img.shape[1], img.shape[0])
             return buf.tobytes()
         except Exception as e:
-            log.warning("Resize fejlede, bruger original: %s", e)
-            return data
+            log.warning("Resize via cv2 fejlede (%s) — prøver PIL-fallback", e)
+            return _resize_with_pil(data, self.max_image_edge, self.max_image_bytes)
 
     # ── Intern: JSON-parsing ──────────────────────────────────────────────────
 
@@ -631,7 +712,8 @@ class OllamaVisionService:
 
         approved_tags = [t for t in all_tags if t in approved_tag_set]
         new_tags      = [t for t in all_tags if t not in approved_tag_set and t in NEUTRAL_FALLBACK_TAGS] + raw_new
-        new_tags      = list(dict.fromkeys(new_tags))   # deduplicate
+        # dedup OG disjunkt fra approved → ingen kryds-dubletter i den kombinerede ai_tags
+        new_tags      = [t for t in dict.fromkeys(new_tags) if t not in approved_tag_set]
 
         # Change detection
         change_block   = parsed.get("change", {}) if has_reference else {}
