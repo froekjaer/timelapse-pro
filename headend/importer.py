@@ -421,18 +421,20 @@ def _run_import(
                         uploaded        = True,
                         xmp_written     = xmp_ok,
                     )
-                    # camera_id/customer_id (2026-07-03, additivt) — se
-                    # Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.4/§2.5.
+                    # camera_id/customer_id/site_id (2026-07-03, additivt) — se
+                    # Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.4/§2.5 (fase 4
+                    # tilføjede site_id, 2026-07-03).
                     # Bulk-importerede devices er sjældent bundet til en logisk
-                    # kamera-lokation, så camera_id forbliver ofte NULL her —
+                    # kamera-lokation, så camera_id/site_id forbliver ofte NULL her —
                     # customer_id dækker bredere via Device.customer_id.
                     try:
                         from main import _resolve_capture_camera_customer
-                        cam_id, cust_id = _resolve_capture_camera_customer(db, device_id, timestamp)
+                        cam_id, cust_id, site_id = _resolve_capture_camera_customer(db, device_id, timestamp)
                         capture.camera_id = cam_id
                         capture.customer_id = cust_id
+                        capture.site_id = site_id
                     except Exception as _res_exc:
-                        log.debug("Import camera/customer-resolution sprunget over: %s", _res_exc)
+                        log.debug("Import camera/customer/site-resolution sprunget over: %s", _res_exc)
                     db.add(capture)
                     db.commit()
                     try:

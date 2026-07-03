@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
 """
-TimeLapse Pro — Backfill af captures.camera_id / captures.customer_id
+TimeLapse Pro — Backfill af captures.camera_id / captures.customer_id / captures.site_id
 
 Baggrund: Capture var hidtil kun nøglet på device_id (fysisk Edge). Det betød
 at billedhistorik ikke fulgte en logisk kamera-lokation ved Edge-udskiftning,
 og at tenant-isolation for billeddata udelukkende hvilede på applikations-joins
 mod device_id (se Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.4/§2.5).
 
-DB-migration v12 (headend/main.py, startup) tilføjer de to nye, nullable
-kolonner. Nye captures får dem sat automatisk ved skrivning
+DB-migration v12 (headend/main.py, startup) tilføjede camera_id/customer_id.
+DB-migration v13 (fase 4, 2026-07-03) tilføjede site_id efter samme mønster —
+Peter påpegede at hele kunde/site/kamera-lokations-hierarkiet bør tagges på
+billedet, så en senere, mere restriktiv RBAC-granularitet end "hele kunden"
+kan indføres uden at skulle genudlede historikken via et live join (samme
+lektie som R16 i RISK_ASSESSMENT_v10.md).
+
+Nye captures får alle tre felter sat automatisk ved skrivning
 (main._resolve_capture_camera_customer, kaldt fra _upsert_capture_record og
 fra importer.py). Dette script backfilder EKSISTERENDE rækker.
 
 Kilder:
   - customer_id: primært Device.customer_id (bred dækning — sat for alle
     devices, inkl. bulk-importerede, uanset kamera-lokations-binding).
-  - camera_id:   den DeviceAssignment, der var aktiv på capture-tidspunktet
-    (assigned_at <= captured_at < unassigned_at). Devices, der aldrig er
-    bundet til en kamera-lokation, forbliver bevidst NULL her — IKKE gættet.
+  - camera_id / site_id: den DeviceAssignment, der var aktiv på
+    capture-tidspunktet (assigned_at <= captured_at < unassigned_at). Devices,
+    der aldrig er bundet til en kamera-lokation, forbliver bevidst NULL her —
+    IKKE gættet. site_id falder tilbage til Device.site_id, hvis der ikke er
+    nogen kamera-binding (bredere dækning, ligesom customer_id).
 
 Sikkerhed: default er --dry-run (ingen DB-skrivning). Kør med --apply for
 faktisk at skrive. Idempotent — kan køres igen uden effekt på allerede
@@ -44,9 +52,12 @@ def _resolve(db, device_id: str, captured_at, assignments_by_device: dict, devic
     assignments én gang og slå op i hukommelsen i stedet)."""
     camera_id = None
     customer_id = None
+    site_id = None
     device = devices_by_id.get(device_id)
     if device and device.customer_id:
         customer_id = device.customer_id
+    if device and device.site_id:
+        site_id = device.site_id
     for assignment in assignments_by_device.get(device_id, []):
         if assignment.assigned_at is None or captured_at is None:
             continue
@@ -55,12 +66,12 @@ def _resolve(db, device_id: str, captured_at, assignments_by_device: dict, devic
         ):
             camera_id = assignment.camera_id
             break
-    return camera_id, customer_id
+    return camera_id, customer_id, site_id
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Backfill captures.camera_id / captures.customer_id fra Device/DeviceAssignment"
+        description="Backfill captures.camera_id / captures.customer_id / captures.site_id fra Device/DeviceAssignment"
     )
     parser.add_argument(
         "--apply", action="store_true",
@@ -68,7 +79,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--force", action="store_true",
-        help="Genberegn og overskriv også rækker, der allerede har camera_id/customer_id sat.",
+        help="Genberegn og overskriv også rækker, der allerede har camera_id/customer_id/site_id sat.",
     )
     parser.add_argument(
         "--device-id", default=None,
@@ -83,11 +94,15 @@ def main() -> int:
         assignments_by_device: dict[str, list] = {}
         for a in db.query(DeviceAssignment).order_by(DeviceAssignment.assigned_at.desc()).all():
             assignments_by_device.setdefault(a.device_id, []).append(a)
-        camera_customer_by_id = {c.id: c.customer_id for c in db.query(Camera).all()}
+        cameras_by_id = {c.id: c for c in db.query(Camera).all()}
 
         q = db.query(Capture)
         if not args.force:
-            q = q.filter(or_(Capture.camera_id.is_(None), Capture.customer_id.is_(None)))
+            q = q.filter(or_(
+                Capture.camera_id.is_(None),
+                Capture.customer_id.is_(None),
+                Capture.site_id.is_(None),
+            ))
         if args.device_id:
             q = q.filter(Capture.device_id == args.device_id)
         if args.limit:
@@ -97,23 +112,29 @@ def main() -> int:
         updated = 0
         camera_found = 0
         customer_found = 0
+        site_found = 0
         unresolved_devices: Counter = Counter()
 
         for capture in q.all():
             total += 1
-            camera_id, customer_id = _resolve(
+            camera_id, customer_id, site_id = _resolve(
                 db, capture.device_id, capture.captured_at, assignments_by_device, devices_by_id
             )
-            # Camera.customer_id vinder over Device.customer_id, hvis kamera-binding findes
-            # (matcher main._resolve_capture_camera_customer).
-            if camera_id and camera_customer_by_id.get(camera_id):
-                customer_id = camera_customer_by_id[camera_id]
+            # Camera.customer_id/site_id vinder over Device.customer_id/site_id, hvis
+            # kamera-binding findes (matcher main._resolve_capture_camera_customer).
+            camera = cameras_by_id.get(camera_id) if camera_id else None
+            if camera and camera.customer_id:
+                customer_id = camera.customer_id
+            if camera and camera.site_id:
+                site_id = camera.site_id
 
             if camera_id:
                 camera_found += 1
             if customer_id:
                 customer_found += 1
-            if not camera_id and not customer_id:
+            if site_id:
+                site_found += 1
+            if not camera_id and not customer_id and not site_id:
                 unresolved_devices[capture.device_id] += 1
 
             changed = False
@@ -125,6 +146,10 @@ def main() -> int:
                 if capture.customer_id != customer_id:
                     capture.customer_id = customer_id
                     changed = True
+            if args.force or not capture.site_id:
+                if capture.site_id != site_id:
+                    capture.site_id = site_id
+                    changed = True
             if changed:
                 updated += 1
                 if args.apply:
@@ -133,9 +158,10 @@ def main() -> int:
         print(f"Captures behandlet:        {total}")
         print(f"  camera_id resolvet:      {camera_found}")
         print(f"  customer_id resolvet:    {customer_found}")
+        print(f"  site_id resolvet:        {site_found}")
         print(f"  ville blive opdateret:   {updated}")
         if unresolved_devices:
-            print("Devices uden nogen resolution (hverken camera_id eller customer_id):")
+            print("Devices uden nogen resolution (hverken camera_id, customer_id eller site_id):")
             for device_id, count in unresolved_devices.most_common(20):
                 print(f"  {device_id}: {count} captures")
 

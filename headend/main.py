@@ -377,6 +377,32 @@ def startup():
     except Exception as _exc_v12:
         log.warning("DB migration v12 fejl: %s", _exc_v12)
 
+    # ── DB migration v13: site_id direkte på captures (fase 4) ──────────
+    # Additiv/nullable — samme mønster som v12. Fuldender kunde/site/kamera-
+    # lokations-hierarkiet på Capture-niveau, så en fremtidig, mere restriktiv
+    # RBAC-granularitet end "hele kunden" kan indføres uden at skulle
+    # genudlede historikken via et live join (se R16 i RISK_ASSESSMENT_v10.md
+    # for hvorfor det er vigtigt at fryse dette ved capture-tidspunktet).
+    # Bevidst KUN tagging i denne omgang — bruges endnu ikke til håndhævelse.
+    try:
+        _eng_v13 = __import__('database').engine
+        with _eng_v13.connect() as _conn_v13:
+            try:
+                _conn_v13.execute(text("ALTER TABLE captures ADD COLUMN site_id VARCHAR(36)"))
+                _conn_v13.commit()
+                log.info("DB migration v13: captures.site_id tilføjet")
+            except Exception:
+                pass  # allerede der
+            try:
+                _conn_v13.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_captures_site_id ON captures (site_id)"
+                ))
+                _conn_v13.commit()
+            except Exception:
+                pass
+    except Exception as _exc_v13:
+        log.warning("DB migration v13 fejl: %s", _exc_v13)
+
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
         run_ai_migration(engine)
@@ -3608,26 +3634,38 @@ def _safe_upload_filename(filename: str | None) -> str:
 
 def _resolve_capture_camera_customer(
     db: Session, device_id: str | None, captured_at: "datetime | None" = None
-) -> tuple[str | None, str | None]:
-    """Slår (camera_id, customer_id) op for et device_id på et givet tidspunkt.
+) -> tuple[str | None, str | None, str | None]:
+    """Slår (camera_id, customer_id, site_id) op for et device_id på et givet tidspunkt.
 
     Tilføjet 2026-07-03 — se Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.4/§2.5.
+    Udvidet 2026-07-03 (fase 4) med site_id, så hele kunde/site/kamera-lokations-
+    hierarkiet er tagget på captureren ved optagelsestidspunktet — ikke kun kunde og
+    kamera-lokation. Det giver mulighed for en senere, mere restriktiv RBAC-
+    granularitet end "hele kunden" uden at skulle genudlede historikken via et live
+    join (samme lektie som R16 i RISK_ASSESSMENT_v10.md: frys hierarkiet ved
+    optagelsestidspunktet, følg ikke et device, der senere flyttes/omtildeles).
+    Bevidst KUN tagging indtil videre — site_id bruges endnu ikke til håndhævelse.
+
     customer_id kommer primært fra Device.customer_id (bred dækning — sat for
     alle devices, inkl. bulk-importerede, uanset om de er bundet til en logisk
-    kamera-lokation). camera_id kommer fra den DeviceAssignment, der var aktiv
-    på capture-tidspunktet (kun devices, der reelt er bundet til en kamera-
+    kamera-lokation). camera_id og site_id kommer fra den DeviceAssignment, der var
+    aktiv på capture-tidspunktet (kun devices, der reelt er bundet til en kamera-
     lokation, har dette — resten forbliver bevidst NULL, ikke gættet).
-    Camera.customer_id foretrækkes over Device.customer_id, hvis en binding
-    findes, da kamera-lokationen er den mere autoritative kilde.
+    Camera.customer_id/Camera.site_id foretrækkes over Device.customer_id/
+    Device.site_id, hvis en binding findes, da kamera-lokationen er den mere
+    autoritative kilde.
     """
     if not device_id:
-        return None, None
+        return None, None, None
     camera_id: str | None = None
     customer_id: str | None = None
+    site_id: str | None = None
     try:
         device = db.query(Device).filter_by(device_id=device_id).first()
         if device and device.customer_id:
             customer_id = device.customer_id
+        if device and device.site_id:
+            site_id = device.site_id
     except Exception:
         pass
     try:
@@ -3643,9 +3681,11 @@ def _resolve_capture_camera_customer(
             camera = db.query(Camera).filter_by(id=camera_id).first()
             if camera and camera.customer_id:
                 customer_id = camera.customer_id
+            if camera and camera.site_id:
+                site_id = camera.site_id
     except Exception as exc:
-        log.debug("Kunne ikke resolve camera/customer for device %s: %s", device_id, exc)
-    return camera_id, customer_id
+        log.debug("Kunne ikke resolve camera/customer/site for device %s: %s", device_id, exc)
+    return camera_id, customer_id, site_id
 
 
 def _upsert_capture_record(db: Session, **values) -> Capture:
@@ -3664,17 +3704,19 @@ def _upsert_capture_record(db: Session, **values) -> Capture:
     for key, value in values.items():
         if value is not None and hasattr(capture, key):
             setattr(capture, key, value)
-    if not capture.camera_id or not capture.customer_id:
+    if not capture.camera_id or not capture.customer_id or not capture.site_id:
         try:
-            resolved_camera_id, resolved_customer_id = _resolve_capture_camera_customer(
+            resolved_camera_id, resolved_customer_id, resolved_site_id = _resolve_capture_camera_customer(
                 db, device_id, capture.captured_at
             )
             if not capture.camera_id and resolved_camera_id:
                 capture.camera_id = resolved_camera_id
             if not capture.customer_id and resolved_customer_id:
                 capture.customer_id = resolved_customer_id
+            if not capture.site_id and resolved_site_id:
+                capture.site_id = resolved_site_id
         except Exception as _exc_resolve:
-            log.debug("camera/customer-resolution sprunget over: %s", _exc_resolve)
+            log.debug("camera/customer/site-resolution sprunget over: %s", _exc_resolve)
     return capture
 
 
@@ -9760,6 +9802,7 @@ def list_captures(
             "device_id":     c.device_id,
             "camera_id":     c.camera_id if hasattr(c, 'camera_id') else None,
             "customer_id":   c.customer_id if hasattr(c, 'customer_id') else None,
+            "site_id":       c.site_id if hasattr(c, 'site_id') else None,
             "filename":      c.filename,
             "captured_at":   c.captured_at.isoformat() if c.captured_at else None,
             "quality_flag":  c.quality_flag,

@@ -162,6 +162,13 @@ class Capture(Base):
     #              dækning end camera_id, da den ikke kræver en Camera-binding.
     camera_id           = Column(String(36), index=True)
     customer_id         = Column(String(36), index=True)
+    # site_id (v13, 2026-07-03): frosset ved capture-tidspunkt ligesom camera_id/
+    # customer_id ovenfor — Peter påpegede at hele hierarkiet (kunde/site/kamera-
+    # lokation) bør tagges på billedet, så en senere, mere restriktiv RBAC-
+    # granularitet end "hele kunden" kan indføres uden at skulle genberegne
+    # historikken via et live join (samme lektie som R16, se RISK_ASSESSMENT_v10.md).
+    # Bevidst KUN tagging indtil videre — bruges endnu ikke til håndhævelse.
+    site_id             = Column(String(36), index=True)
 
 
 class Diagnostic(Base):

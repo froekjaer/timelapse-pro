@@ -55,3 +55,17 @@ Icon
 headend/timelapse_headend.db*
 Icon?
 Icon
+
+# Tunge cache-/build-/scratch-mapper (2026-07-03, Claude) — disse har tidligere
+# forårsaget en løbsk `git add` mod flere GB diskimages/venvs/logfiler, som
+# blokerede .git/index.lock. Se HANDOVER_LOG.md 2026-07-03.
+.base_image_cache/
+.claude_proxy/
+artifacts/
+dokumentation.tar.gz
+timelapse-pro-doc.gz
+headend/.webui_secret_key
+
+# LibreOffice/OpenOffice lock-filer (opstår mens et Dokumentation/*.md eller
+# *.xlsx er åbent i en editor) — må aldrig committes, uanset placering.
+.~lock.*#

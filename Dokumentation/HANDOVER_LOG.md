@@ -1483,3 +1483,42 @@ person vide".
   3. Overvej som opfølgning: skal post-processing/AI-batch-jobbets device-filter også opdateres
      til samme `customer_id`-først-logik (punkt 5 ovenfor)? Vurderet lav risiko, men ikke rettet.
 - **Næste skridt:** commit + genstart + live-verifikation (Peter/Codex, som med fase 1).
+
+### Handover 2026-07-03 13:35 — fra Claude til Peter/Codex: fase 4 (site_id-tagging)
+- **Baggrund:** Peter spurgte om ikke alle billeder bør tagges med HELE hierarkiet
+  (kunde/site/kamera-lokation), ikke kun kunde og kamera-lokation, så en senere, mere
+  restriktiv RBAC-granularitet end "hele kunden" kan indføres uden at skulle genudlede
+  historikken via et live join — præcis samme lektie som R16 (fase 3): frys hierarkiet ved
+  optagelsestidspunktet, følg ikke et device/kamera, der senere flyttes/omtildeles.
+- **Implementeret (godkendt af Peter — "Du må gerne gå videre"):**
+  1. `headend/database.py`: ny nullable, indekseret `Capture.site_id` (String(36)).
+  2. `headend/main.py`: DB-migration v13 (samme idempotente mønster som v12).
+     `_resolve_capture_camera_customer()` udvidet fra 2-tuple til 3-tuple
+     `(camera_id, customer_id, site_id)` — alle 3 kaldsteder opdateret (main.py's
+     `_upsert_capture_record`, `importer.py`, backfill-scriptet). site_id følger samme
+     kilde-prioritet som customer_id: `Camera.site_id` foretrækkes over `Device.site_id`,
+     hvis en kamera-binding findes (testet eksplicit — se nedenfor).
+  3. `headend/tools/backfill_capture_camera_customer.py` udvidet til også at backfille
+     `site_id` på historiske rækker (samme dry-run/apply/idempotens-mønster).
+  4. `/api/admin/captures`-response inkluderer nu `site_id` (rent oplysende, additivt —
+     ingen nyt filter-parameter denne gang, kun tagging).
+- **Bevidst IKKE gjort:** `site_id` bruges IKKE til selve adgangskontrollen endnu — kun
+  `customer_id` er sikkerhedsbærende (fase 3). At bygge site-niveau RBAC-håndhævelse kræver
+  desuden en udvidelse af `User`-modellen (den har i dag kun `customer_id`, intet begreb om
+  en bruger bundet til ét site) — det er en separat, større beslutning, som bevidst er
+  afventet til der er et konkret behov. Denne omgang handler kun om at gøre dataene klar.
+- **Verifikation (TestClient):** scenarie med et device uden kamera-binding (site_id fra
+  `Device.site_id`) og et device MED kamera-binding til et andet site end devicets eget
+  (bekræfter at `Camera.site_id` korrekt vinder). Testet: resolver, `_upsert_capture_record`,
+  `/api/admin/captures`-response, og backfill af en historisk "legacy"-række. Alle 4
+  testgrupper bestod. Genkørte desuden fase 2- og fase 3-testsuiterne uændret — ingen
+  regression (resolverens signaturændring 2→3-tuple var eneste breaking change, opdateret
+  konsistent alle 3 steder).
+- **Filer rørt:** `headend/database.py`, `headend/main.py`, `headend/importer.py`,
+  `headend/tools/backfill_capture_camera_customer.py`. IKKE committet endnu.
+- **Hvad Peter/Codex bør gøre:**
+  1. Commit + push (se separat kommando-liste i chatten til Peter).
+  2. Genstart headend, bekræft health 200.
+  3. Når I er klar til det: kør backfill-scriptet (nu med site_id) mod produktion,
+     `--dry-run` først som altid.
+  4. Ingen UI/adfærdsændring at teste udover det — dette er ren tagging.
