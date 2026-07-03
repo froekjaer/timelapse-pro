@@ -35,6 +35,7 @@ Design decisions:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import shutil
@@ -68,6 +69,56 @@ STATUS_TIMEOUT_S     = 10
 HEALTH_TIMEOUT_S     = 5
 MAX_DETECT_RETRIES   = 3
 DETECT_RETRY_DELAY_S = 2
+
+
+def _number_or_none(value) -> Optional[float]:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_gpsd_fix(timeout_s: int = 4) -> dict:
+    """Read one usable TPV fix from gpsd via gpspipe when available."""
+    try:
+        result = _run_external(
+            ["gpspipe", "-w", "-n", "12"],
+            timeout=timeout_s,
+            label="gpspipe",
+        )
+    except FileNotFoundError:
+        log.debug("gpspipe not installed; live GPS metadata skipped")
+        return {}
+    except Exception as exc:
+        log.debug("gpsd metadata read skipped: %s", exc)
+        return {}
+    if result.returncode != 0:
+        log.debug("gpspipe returned %s: %s", result.returncode, result.stderr.strip())
+        return {}
+    for line in result.stdout.splitlines():
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get("class") != "TPV":
+            continue
+        mode = int(msg.get("mode") or 0)
+        lat = _number_or_none(msg.get("lat"))
+        lon = _number_or_none(msg.get("lon"))
+        if mode < 2 or lat is None or lon is None:
+            continue
+        fix = {
+            "gps_lat": lat,
+            "gps_lon": lon,
+            "gps_source": "gpsd",
+        }
+        alt = _number_or_none(msg.get("altHAE") if msg.get("altHAE") is not None else msg.get("altMSL"))
+        if alt is not None:
+            fix["gps_alt"] = alt
+        return fix
+    return {}
 
 
 CAMERA_PROFILES = {
@@ -487,10 +538,13 @@ class GPhoto2Driver(CameraBase):
         from pathlib import Path as _Path
 
         cfg      = self._config
-        loc      = cfg.get("location", {})
+        loc      = dict(cfg.get("location", {}) or {})
         cam_cfg  = cfg.get("camera", {})
         device   = cfg.get("device", {})
         schedule = cfg.get("schedule", {})
+        if loc.get("gps_source") == "gpsd" and (loc.get("gps_lat") is None or loc.get("gps_lon") is None):
+            loc.update(_read_gpsd_fix())
+        gps_alt = loc.get("gps_alt_m", loc.get("gps_alt"))
 
         # Hent kamera EXIF parametre (allerede læst)
         exposure, aperture, iso, focus_mode = self._read_capture_settings()
@@ -525,7 +579,7 @@ class GPhoto2Driver(CameraBase):
             "location": {
                 "gps_lat":              loc.get("gps_lat"),
                 "gps_lon":              loc.get("gps_lon"),
-                "gps_alt_m":            loc.get("gps_alt"),
+                "gps_alt_m":            gps_alt,
                 "gps_source":           loc.get("gps_source", "manual"),
                 "address":              loc.get("address"),
                 "azimuth_deg":          cam_cfg.get("azimuth_deg"),
@@ -563,7 +617,7 @@ class GPhoto2Driver(CameraBase):
             added.append("gps_lat")
         if loc.get("gps_lon"):
             added.append("gps_lon")
-        if loc.get("gps_alt"):
+        if gps_alt is not None:
             added.append("gps_alt_m")
         if cam_cfg.get("azimuth_deg") is not None:
             added.append("azimuth_deg")
@@ -600,9 +654,11 @@ class GPhoto2Driver(CameraBase):
         """
         import subprocess
         cfg     = self._config
-        loc     = cfg.get("location", {})
+        loc     = dict(cfg.get("location", {}) or {})
         cam_cfg = cfg.get("camera", {})
         device  = cfg.get("device", {})
+        if loc.get("gps_source") == "gpsd" and (loc.get("gps_lat") is None or loc.get("gps_lon") is None):
+            loc.update(_read_gpsd_fix())
 
         cmd = [
             "exiftool",
@@ -620,7 +676,7 @@ class GPhoto2Driver(CameraBase):
         # GPS (hvis konfigureret og kamera ikke har GPS)
         gps_lat = loc.get("gps_lat")
         gps_lon = loc.get("gps_lon")
-        gps_alt = loc.get("gps_alt")
+        gps_alt = loc.get("gps_alt_m", loc.get("gps_alt"))
         if gps_lat and gps_lon:
             # Tjek om kamera allerede har GPS
             check = _run_external(

@@ -88,6 +88,12 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
     </div>
   )
   const c = captures[cur]
+  const metaCamera = sidecar?.camera ?? {}
+  const metaLocation = sidecar?.location ?? {}
+  const metaProject = sidecar?.project ?? {}
+  const metaGpsLat = metaLocation.gps_lat ?? c.gps_lat
+  const metaGpsLon = metaLocation.gps_lon ?? c.gps_lon
+  const metaGpsAlt = metaLocation.gps_alt_m ?? c.gps_alt_m
 
   // Hent sidecar JSON når billede skifter
   useEffect(() => {
@@ -479,36 +485,36 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
               {/* Kolonne 2: Kamera EXIF */}
               <div className="space-y-0.5">
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📷 Kamera EXIF</p>
-                <MR l="Model" v={sidecar.camera?.model} />
-                <MR l="ISO" v={sidecar.camera?.iso} />
-                <MR l="Lukker" v={sidecar.camera?.shutter_speed} />
-                <MR l="Blænde" v={sidecar.camera?.aperture} />
-                <MR l="Fokustilstand" v={sidecar.camera?.focus_mode} />
-                <MR l="USB port" v={sidecar.camera?.gphoto2_port} />
-                <MR l="Relay GPIO" v={sidecar.camera?.relay_gpio_pin} />
+                <MR l="Model" v={metaCamera.model ?? c.camera_model} />
+                <MR l="ISO" v={metaCamera.iso ?? c.iso} />
+                <MR l="Lukker" v={metaCamera.shutter_speed ?? c.shutter_speed ?? c.exposure_time} />
+                <MR l="Blænde" v={metaCamera.aperture ?? c.aperture} />
+                <MR l="Fokustilstand" v={metaCamera.focus_mode} />
+                <MR l="USB port" v={metaCamera.gphoto2_port} />
+                <MR l="Relay GPIO" v={metaCamera.relay_gpio_pin} />
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🏗️ Projekt</p>
-                <MR l="Kunde" v={sidecar.project?.customer || '—'} />
-                <MR l="Site" v={sidecar.project?.site || '—'} />
-                <MR l="Kamera" v={sidecar.project?.camera_name || '—'} />
-                <MR l="Device ID" v={<span className="font-mono text-[10px]">{sidecar.project?.device_id}</span>} />
-                <MR l="Kamera index" v={sidecar.project?.camera_index ?? '—'} />
+                <MR l="Kunde" v={metaProject.customer || '—'} />
+                <MR l="Site" v={metaProject.site || '—'} />
+                <MR l="Kamera" v={metaProject.camera_name || '—'} />
+                <MR l="Device ID" v={<span className="font-mono text-[10px]">{metaProject.device_id || c.device_id}</span>} />
+                <MR l="Kamera index" v={metaProject.camera_index ?? '—'} />
                 <MR l="TLP version" v={sidecar.timelapse_pro?.version} />
               </div>
 
               {/* Kolonne 3: Lokation + Orientering */}
               <div className="space-y-0.5">
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📍 Lokation</p>
-                <MR l="GPS" v={sidecar.location?.gps_lat != null ? `${sidecar.location.gps_lat.toFixed(6)}°, ${sidecar.location.gps_lon?.toFixed(6)}°` : '—'} />
-                <MR l="Højde" v={sidecar.location?.gps_alt_m != null ? `${sidecar.location.gps_alt_m} m` : '—'} />
-                <MR l="GPS kilde" v={sidecar.location?.gps_source || '—'} />
-                <MR l="Adresse" v={sidecar.location?.address || '—'} />
+                <MR l="GPS" v={metaGpsLat != null && metaGpsLon != null ? `${Number(metaGpsLat).toFixed(6)}°, ${Number(metaGpsLon).toFixed(6)}°` : '—'} />
+                <MR l="Højde" v={metaGpsAlt != null ? `${metaGpsAlt} m` : '—'} />
+                <MR l="GPS kilde" v={metaLocation.gps_source || c.gps_source || '—'} />
+                <MR l="Adresse" v={metaLocation.address || '—'} />
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🧭 Orientering</p>
-                <MR l="Azimut" v={sidecar.location?.azimuth_deg != null ? `${sidecar.location.azimuth_deg}°` : '—'} />
-                <MR l="Tilt" v={sidecar.location?.tilt_deg != null ? `${sidecar.location.tilt_deg}°` : '—'} />
-                <MR l="Montagehøjde" v={sidecar.location?.mount_height_m != null ? `${sidecar.location.mount_height_m} m` : '—'} />
-                <MR l="Horis. FOV" v={sidecar.location?.fov_horizontal_deg != null ? `${sidecar.location.fov_horizontal_deg}°` : '—'} />
-                <MR l="Vert. FOV" v={sidecar.location?.fov_vertical_deg != null ? `${sidecar.location.fov_vertical_deg}°` : '—'} />
-                <MR l="Perspektiv" v={sidecar.location?.perspective || '—'} />
+                <MR l="Azimut" v={(metaLocation.azimuth_deg ?? c.azimuth_deg) != null ? `${metaLocation.azimuth_deg ?? c.azimuth_deg}°` : '—'} />
+                <MR l="Tilt" v={(metaLocation.tilt_deg ?? c.tilt_deg) != null ? `${metaLocation.tilt_deg ?? c.tilt_deg}°` : '—'} />
+                <MR l="Montagehøjde" v={(metaLocation.mount_height_m ?? c.mount_height_m) != null ? `${metaLocation.mount_height_m ?? c.mount_height_m} m` : '—'} />
+                <MR l="Horis. FOV" v={(metaLocation.fov_horizontal_deg ?? c.fov_horizontal_deg) != null ? `${metaLocation.fov_horizontal_deg ?? c.fov_horizontal_deg}°` : '—'} />
+                <MR l="Vert. FOV" v={(metaLocation.fov_vertical_deg ?? c.fov_vertical_deg) != null ? `${metaLocation.fov_vertical_deg ?? c.fov_vertical_deg}°` : '—'} />
+                <MR l="Perspektiv" v={metaLocation.perspective || c.perspective || '—'} />
               </div>
 
               {/* Raw EXIF */}

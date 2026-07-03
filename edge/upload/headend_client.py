@@ -215,6 +215,17 @@ class HeadendClient:
             "exposure_time":   capture_row.get("exposure_time"),
             "aperture":        capture_row.get("aperture"),
             "iso":             capture_row.get("iso"),
+            "gps_lat":         capture_row.get("gps_lat"),
+            "gps_lon":         capture_row.get("gps_lon"),
+            "gps_alt_m":       capture_row.get("gps_alt_m"),
+            "gps_source":      capture_row.get("gps_source"),
+            "azimuth_deg":     capture_row.get("azimuth_deg"),
+            "tilt_deg":        capture_row.get("tilt_deg"),
+            "mount_height_m":  capture_row.get("mount_height_m"),
+            "fov_horizontal_deg": capture_row.get("fov_horizontal_deg"),
+            "fov_vertical_deg":   capture_row.get("fov_vertical_deg"),
+            "perspective":     capture_row.get("perspective"),
+            "xmp_written":     capture_row.get("xmp_written"),
         }
         edge_qa = _read_edge_qa(capture_row.get("filepath", ""))
         if edge_qa:
@@ -253,6 +264,17 @@ class HeadendClient:
             "exposure_time": capture_row.get("exposure_time"),
             "aperture": capture_row.get("aperture"),
             "iso": capture_row.get("iso"),
+            "gps_lat": capture_row.get("gps_lat"),
+            "gps_lon": capture_row.get("gps_lon"),
+            "gps_alt_m": capture_row.get("gps_alt_m"),
+            "gps_source": capture_row.get("gps_source"),
+            "azimuth_deg": capture_row.get("azimuth_deg"),
+            "tilt_deg": capture_row.get("tilt_deg"),
+            "mount_height_m": capture_row.get("mount_height_m"),
+            "fov_horizontal_deg": capture_row.get("fov_horizontal_deg"),
+            "fov_vertical_deg": capture_row.get("fov_vertical_deg"),
+            "perspective": capture_row.get("perspective"),
+            "xmp_written": capture_row.get("xmp_written"),
             "transport": "api-primary",
         }
         edge_qa = _read_edge_qa(path_obj)

@@ -345,6 +345,38 @@ def startup():
     except Exception as _exc_v11:
         log.warning("DB migration v11 fejl: %s", _exc_v11)
 
+    # ── DB migration v12: kamera-lokation + tenant direkte på captures ───
+    # Additiv/nullable — ingen eksisterende adfærd ændres. Se
+    # Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.4/§2.5. Backfill af
+    # historiske rækker sker IKKE her (kan være mange tusind rækker) — se
+    # headend/tools/backfill_capture_camera_customer.py, som køres separat
+    # og eksplicit (matcher projektets øvrige backfill-værktøjer).
+    try:
+        _eng_v12 = __import__('database').engine
+        _v12_cols = [
+            ("captures", "camera_id",   "VARCHAR(36)"),
+            ("captures", "customer_id", "VARCHAR(36)"),
+        ]
+        with _eng_v12.connect() as _conn_v12:
+            for _tbl, _col, _typ in _v12_cols:
+                try:
+                    _conn_v12.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
+                    _conn_v12.commit()
+                    log.info("DB migration v12: %s.%s tilføjet", _tbl, _col)
+                except Exception:
+                    pass  # allerede der
+            for _idx_name, _idx_sql in [
+                ("ix_captures_camera_id",   "CREATE INDEX IF NOT EXISTS ix_captures_camera_id ON captures (camera_id)"),
+                ("ix_captures_customer_id", "CREATE INDEX IF NOT EXISTS ix_captures_customer_id ON captures (customer_id)"),
+            ]:
+                try:
+                    _conn_v12.execute(text(_idx_sql))
+                    _conn_v12.commit()
+                except Exception:
+                    pass
+    except Exception as _exc_v12:
+        log.warning("DB migration v12 fejl: %s", _exc_v12)
+
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
         run_ai_migration(engine)
@@ -3458,6 +3490,17 @@ def receive_capture(
         exposure_time=req.exposure_time,
         aperture=req.aperture,
         iso=req.iso,
+        gps_lat=req.gps_lat,
+        gps_lon=req.gps_lon,
+        gps_alt_m=req.gps_alt_m,
+        gps_source=req.gps_source,
+        azimuth_deg=req.azimuth_deg,
+        tilt_deg=req.tilt_deg,
+        mount_height_m=req.mount_height_m,
+        fov_horizontal_deg=req.fov_horizontal_deg,
+        fov_vertical_deg=req.fov_vertical_deg,
+        perspective=req.perspective,
+        xmp_written=req.xmp_written,
     )
     if req.edge_ai_result and not capture.ai_result:
         capture.ai_result = json.dumps({
@@ -3563,6 +3606,48 @@ def _safe_upload_filename(filename: str | None) -> str:
     return name
 
 
+def _resolve_capture_camera_customer(
+    db: Session, device_id: str | None, captured_at: "datetime | None" = None
+) -> tuple[str | None, str | None]:
+    """Slår (camera_id, customer_id) op for et device_id på et givet tidspunkt.
+
+    Tilføjet 2026-07-03 — se Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.4/§2.5.
+    customer_id kommer primært fra Device.customer_id (bred dækning — sat for
+    alle devices, inkl. bulk-importerede, uanset om de er bundet til en logisk
+    kamera-lokation). camera_id kommer fra den DeviceAssignment, der var aktiv
+    på capture-tidspunktet (kun devices, der reelt er bundet til en kamera-
+    lokation, har dette — resten forbliver bevidst NULL, ikke gættet).
+    Camera.customer_id foretrækkes over Device.customer_id, hvis en binding
+    findes, da kamera-lokationen er den mere autoritative kilde.
+    """
+    if not device_id:
+        return None, None
+    camera_id: str | None = None
+    customer_id: str | None = None
+    try:
+        device = db.query(Device).filter_by(device_id=device_id).first()
+        if device and device.customer_id:
+            customer_id = device.customer_id
+    except Exception:
+        pass
+    try:
+        ts = captured_at or now_utc()
+        q = db.query(DeviceAssignment).filter(DeviceAssignment.device_id == device_id)
+        q = q.filter(DeviceAssignment.assigned_at <= ts)
+        q = q.filter(
+            or_(DeviceAssignment.unassigned_at.is_(None), DeviceAssignment.unassigned_at > ts)
+        )
+        assignment = q.order_by(DeviceAssignment.assigned_at.desc()).first()
+        if assignment:
+            camera_id = assignment.camera_id
+            camera = db.query(Camera).filter_by(id=camera_id).first()
+            if camera and camera.customer_id:
+                customer_id = camera.customer_id
+    except Exception as exc:
+        log.debug("Kunne ikke resolve camera/customer for device %s: %s", device_id, exc)
+    return camera_id, customer_id
+
+
 def _upsert_capture_record(db: Session, **values) -> Capture:
     device_id = values.get("device_id")
     sha256 = values.get("sha256")
@@ -3579,7 +3664,62 @@ def _upsert_capture_record(db: Session, **values) -> Capture:
     for key, value in values.items():
         if value is not None and hasattr(capture, key):
             setattr(capture, key, value)
+    if not capture.camera_id or not capture.customer_id:
+        try:
+            resolved_camera_id, resolved_customer_id = _resolve_capture_camera_customer(
+                db, device_id, capture.captured_at
+            )
+            if not capture.camera_id and resolved_camera_id:
+                capture.camera_id = resolved_camera_id
+            if not capture.customer_id and resolved_customer_id:
+                capture.customer_id = resolved_customer_id
+        except Exception as _exc_resolve:
+            log.debug("camera/customer-resolution sprunget over: %s", _exc_resolve)
     return capture
+
+
+def _coerce_float(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_int(value) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _sidecar_capture_metadata(sidecar_data: dict | None) -> dict:
+    """Normalize metadata from an Edge/import sidecar into Capture columns."""
+    if not isinstance(sidecar_data, dict):
+        return {}
+    camera = sidecar_data.get("camera") if isinstance(sidecar_data.get("camera"), dict) else {}
+    loc = sidecar_data.get("location") if isinstance(sidecar_data.get("location"), dict) else {}
+    integrity = sidecar_data.get("integrity") if isinstance(sidecar_data.get("integrity"), dict) else {}
+    return {
+        "camera_model": camera.get("model"),
+        "iso": _coerce_int(camera.get("iso")),
+        "aperture": camera.get("aperture"),
+        "exposure_time": camera.get("shutter_speed") or camera.get("exposure_time"),
+        "gps_lat": _coerce_float(loc.get("gps_lat")),
+        "gps_lon": _coerce_float(loc.get("gps_lon")),
+        "gps_alt_m": _coerce_float(loc.get("gps_alt_m") if loc.get("gps_alt_m") is not None else loc.get("gps_alt")),
+        "gps_source": loc.get("gps_source"),
+        "azimuth_deg": _coerce_float(loc.get("azimuth_deg")),
+        "tilt_deg": _coerce_float(loc.get("tilt_deg")),
+        "mount_height_m": _coerce_float(loc.get("mount_height_m")),
+        "fov_horizontal_deg": _coerce_float(loc.get("fov_horizontal_deg")),
+        "fov_vertical_deg": _coerce_float(loc.get("fov_vertical_deg")),
+        "perspective": loc.get("perspective"),
+        "xmp_written": integrity.get("xmp_written"),
+    }
 
 
 @app.post("/api/captures/{device_id}/files")
@@ -3630,16 +3770,18 @@ async def receive_capture_files(
 
     sidecar_path = dest_path.with_suffix(".json")
     sidecar_received = False
+    sidecar_data = None
     if sidecar:
         raw_sidecar = await sidecar.read()
         if raw_sidecar:
             try:
-                _json.loads(raw_sidecar.decode("utf-8"))
+                sidecar_data = _json.loads(raw_sidecar.decode("utf-8"))
             except Exception:
                 raise HTTPException(status_code=400, detail="Sidecar JSON er ugyldig")
             sidecar_path.write_bytes(raw_sidecar)
             sidecar_received = True
     elif meta:
+        sidecar_data = meta if isinstance(meta, dict) else None
         sidecar_path.write_text(_json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
     thumbnail_received = False
@@ -3653,6 +3795,25 @@ async def receive_capture_files(
             os.replace(thumb_tmp, thumb_dir / filename)
             thumbnail_received = True
 
+    sidecar_meta = _sidecar_capture_metadata(sidecar_data)
+    capture_values = {
+        **sidecar_meta,
+        "camera_model": meta.get("camera_model") or sidecar_meta.get("camera_model"),
+        "exposure_time": meta.get("exposure_time") or sidecar_meta.get("exposure_time"),
+        "aperture": meta.get("aperture") or sidecar_meta.get("aperture"),
+        "iso": _coerce_int(meta.get("iso")) if meta.get("iso") is not None else sidecar_meta.get("iso"),
+        "gps_lat": _coerce_float(meta.get("gps_lat")) if meta.get("gps_lat") is not None else sidecar_meta.get("gps_lat"),
+        "gps_lon": _coerce_float(meta.get("gps_lon")) if meta.get("gps_lon") is not None else sidecar_meta.get("gps_lon"),
+        "gps_alt_m": _coerce_float(meta.get("gps_alt_m")) if meta.get("gps_alt_m") is not None else sidecar_meta.get("gps_alt_m"),
+        "gps_source": meta.get("gps_source") or sidecar_meta.get("gps_source"),
+        "azimuth_deg": _coerce_float(meta.get("azimuth_deg")) if meta.get("azimuth_deg") is not None else sidecar_meta.get("azimuth_deg"),
+        "tilt_deg": _coerce_float(meta.get("tilt_deg")) if meta.get("tilt_deg") is not None else sidecar_meta.get("tilt_deg"),
+        "mount_height_m": _coerce_float(meta.get("mount_height_m")) if meta.get("mount_height_m") is not None else sidecar_meta.get("mount_height_m"),
+        "fov_horizontal_deg": _coerce_float(meta.get("fov_horizontal_deg")) if meta.get("fov_horizontal_deg") is not None else sidecar_meta.get("fov_horizontal_deg"),
+        "fov_vertical_deg": _coerce_float(meta.get("fov_vertical_deg")) if meta.get("fov_vertical_deg") is not None else sidecar_meta.get("fov_vertical_deg"),
+        "perspective": meta.get("perspective") or sidecar_meta.get("perspective"),
+        "xmp_written": meta.get("xmp_written") if meta.get("xmp_written") is not None else sidecar_meta.get("xmp_written"),
+    }
     capture = _upsert_capture_record(
         db,
         device_id=device_id,
@@ -3667,10 +3828,8 @@ async def receive_capture_files(
         blur_score=meta.get("blur_score"),
         brightness_mean=meta.get("brightness_mean"),
         uploaded=True,
-        exposure_time=meta.get("exposure_time"),
-        aperture=meta.get("aperture"),
-        iso=meta.get("iso"),
         sidecar_path=str(sidecar_path) if sidecar_path.exists() else None,
+        **capture_values,
     )
     if meta.get("edge_ai_result") and not capture.ai_result:
         edge_ai = meta.get("edge_ai_result")
@@ -9559,11 +9718,19 @@ def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
 @app.get("/api/admin/captures")
 def list_captures(
     device_id: Optional[str] = None,
+    camera_id: Optional[str] = None,
     limit: int = 50,
     _user=require_role("viewer"),
     db: Session = Depends(get_db),
 ):
-    """List recent captures, optionally filtered by device."""
+    """List recent captures, optionally filtered by device og/eller kamera-lokation.
+
+    camera_id (2026-07-03, additivt, se Claude_Kritisk_Statusgennemgang_2026-07-03.md
+    §2.4/§2.5): filtrerer på den logiske kamera-lokation frem for det fysiske
+    device. Nyttigt til at se fuld billedhistorik på tværs af Edge-udskiftninger.
+    Kun captures skrevet efter v12-migrationen (eller backfillet, se
+    tools/backfill_capture_camera_customer.py) har camera_id sat.
+    """
     q = db.query(Capture).order_by(Capture.captured_at.desc())
     allowed_device_ids = _allowed_capture_device_ids(db, _user)
     if allowed_device_ids is not None:
@@ -9573,11 +9740,22 @@ def list_captures(
     if device_id:
         _ensure_capture_device_access(db, _user, device_id)
         q = q.filter_by(device_id=device_id)
+    if camera_id:
+        cam = db.query(Camera).filter_by(id=camera_id).first()
+        if not cam:
+            raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+        if cam.site_id:
+            _ensure_site_access(db, _user, cam.site_id)
+        elif cam.customer_id:
+            _ensure_customer_access(_user, cam.customer_id)
+        q = q.filter(Capture.camera_id == camera_id)
     captures = q.limit(limit).all()
     return [
         {
             "id":            c.id,
             "device_id":     c.device_id,
+            "camera_id":     c.camera_id if hasattr(c, 'camera_id') else None,
+            "customer_id":   c.customer_id if hasattr(c, 'customer_id') else None,
             "filename":      c.filename,
             "captured_at":   c.captured_at.isoformat() if c.captured_at else None,
             "quality_flag":  c.quality_flag,
@@ -9586,13 +9764,21 @@ def list_captures(
             "brightness":    round(c.brightness_mean, 1) if c.brightness_mean else None,
             "filesize_mb":   round(c.filesize / 1e6, 1) if c.filesize else None,
             "uploaded":      c.uploaded,
+            "camera_model":  c.camera_model,
             "iso":           c.iso,
             "aperture":      c.aperture,
-            "shutter_speed": c.shutter_speed if hasattr(c, 'shutter_speed') else None,
+            "shutter_speed": c.exposure_time,
+            "exposure_time": c.exposure_time,
             "gps_lat":       c.gps_lat if hasattr(c, 'gps_lat') else None,
             "gps_lon":       c.gps_lon if hasattr(c, 'gps_lon') else None,
+            "gps_alt_m":     c.gps_alt_m if hasattr(c, 'gps_alt_m') else None,
+            "gps_source":    c.gps_source if hasattr(c, 'gps_source') else None,
             "azimuth_deg":   c.azimuth_deg if hasattr(c, 'azimuth_deg') else None,
             "tilt_deg":      c.tilt_deg if hasattr(c, 'tilt_deg') else None,
+            "mount_height_m": c.mount_height_m if hasattr(c, 'mount_height_m') else None,
+            "fov_horizontal_deg": c.fov_horizontal_deg if hasattr(c, 'fov_horizontal_deg') else None,
+            "fov_vertical_deg": c.fov_vertical_deg if hasattr(c, 'fov_vertical_deg') else None,
+            "perspective":   c.perspective if hasattr(c, 'perspective') else None,
             "xmp_written":   c.xmp_written if hasattr(c, 'xmp_written') else None,
             "ai_result":      c.ai_result if hasattr(c, 'ai_result') else None,
             "ai_analyzed_at": c.ai_analyzed_at.isoformat() if hasattr(c, 'ai_analyzed_at') and c.ai_analyzed_at else None,

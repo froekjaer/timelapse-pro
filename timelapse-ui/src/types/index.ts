@@ -33,6 +33,22 @@ export interface Capture {
   filesize_mb: number | null
   uploaded: boolean
   brightness?: number
+  camera_model?: string | null
+  iso?: number | null
+  aperture?: string | null
+  shutter_speed?: string | null
+  exposure_time?: string | null
+  gps_lat?: number | null
+  gps_lon?: number | null
+  gps_alt_m?: number | null
+  gps_source?: string | null
+  azimuth_deg?: number | null
+  tilt_deg?: number | null
+  mount_height_m?: number | null
+  fov_horizontal_deg?: number | null
+  fov_vertical_deg?: number | null
+  perspective?: string | null
+  xmp_written?: boolean | null
   ai_result?:      string | null
   ai_analyzed_at?: string | null
   ai_tags?:        string[] | null

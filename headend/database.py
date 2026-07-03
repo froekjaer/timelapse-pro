@@ -149,6 +149,20 @@ class Capture(Base):
     ai_analyzed_at      = Column(DateTime)
     ai_tags             = Column(Text)
 
+    # ── Kamera-lokation og tenant (v12, 2026-07-03) ────────────────────────
+    # Nullable/additiv: captures var hidtil KUN nøglet på device_id (fysisk
+    # Edge). Det betød at billedhistorik ikke fulgte kamera-lokationen ved
+    # Edge-udskiftning, og at tenant-isolation udelukkende hvilede på
+    # applikations-joins mod device_id. Se
+    # Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.4/§2.5.
+    # camera_id:   logisk kamera-lokation på capture-tidspunktet, resolvet via
+    #              DeviceAssignment (kan være NULL for captures fra devices,
+    #              der aldrig er bundet til en kamera-lokation, fx bulk-imports).
+    # customer_id: primært fra Device.customer_id ved capture-tid — bredere
+    #              dækning end camera_id, da den ikke kræver en Camera-binding.
+    camera_id           = Column(String(36), index=True)
+    customer_id         = Column(String(36), index=True)
+
 
 class Diagnostic(Base):
     __tablename__ = "diagnostics"

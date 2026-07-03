@@ -108,6 +108,48 @@ def _read_exif(path: Path) -> dict:
                 pass
     except Exception as e:
         log.debug("EXIF læsning fejlede for %s: %s", path.name, e)
+    if not exif.get("model") or not exif.get("iso") or not exif.get("aperture") or not exif.get("shutter"):
+        try:
+            from PIL import Image, ExifTags
+
+            def _rat(value):
+                if value is None:
+                    return None
+                try:
+                    if isinstance(value, tuple) and len(value) == 2 and value[1]:
+                        return float(value[0]) / float(value[1])
+                    return float(value)
+                except Exception:
+                    return None
+
+            with Image.open(path) as img:
+                raw = img.getexif() or {}
+                named = {ExifTags.TAGS.get(k, k): v for k, v in raw.items()}
+                model = named.get("Model")
+                make = named.get("Make")
+                if model and not exif.get("model"):
+                    exif["model"] = f"{make} {model}".strip() if make and str(make) not in str(model) else str(model)
+                if named.get("ISOSpeedRatings") is not None and not exif.get("iso"):
+                    exif["iso"] = str(named.get("ISOSpeedRatings"))
+                fnum = _rat(named.get("FNumber"))
+                if fnum is not None and not exif.get("aperture"):
+                    exif["aperture"] = f"f/{fnum:.1f}".replace(".0", "")
+                shutter = _rat(named.get("ExposureTime"))
+                if shutter is not None and not exif.get("shutter"):
+                    exif["shutter"] = f"{shutter:.4f}s" if shutter < 1 else f"{shutter:.1f}s"
+                focal = _rat(named.get("FocalLength"))
+                if focal is not None and not exif.get("focal_length"):
+                    exif["focal_length"] = f"{focal:.1f} mm".replace(".0 mm", " mm")
+                dt_str = named.get("DateTimeOriginal") or named.get("DateTime")
+                if dt_str and not exif.get("datetime_obj"):
+                    try:
+                        dt = datetime.strptime(str(dt_str), "%Y:%m:%d %H:%M:%S")
+                        exif["datetime_utc"] = dt.replace(tzinfo=timezone.utc).isoformat()
+                        exif["datetime_obj"] = dt.replace(tzinfo=timezone.utc)
+                    except ValueError:
+                        pass
+        except Exception as e:
+            log.debug("PIL EXIF fallback fejlede for %s: %s", path.name, e)
     return exif
 
 
@@ -372,11 +414,25 @@ def _run_import(
                         quality_passed  = quality["passed"],
                         blur_score      = quality["blur_score"],
                         brightness_mean = quality["brightness_mean"],
+                        camera_model    = exif.get("model"),
+                        exposure_time   = exif.get("shutter"),
                         iso             = int(exif["iso"]) if exif.get("iso") and str(exif.get("iso","")).isdigit() else None,
                         aperture        = exif.get("aperture"),
                         uploaded        = True,
                         xmp_written     = xmp_ok,
                     )
+                    # camera_id/customer_id (2026-07-03, additivt) — se
+                    # Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.4/§2.5.
+                    # Bulk-importerede devices er sjældent bundet til en logisk
+                    # kamera-lokation, så camera_id forbliver ofte NULL her —
+                    # customer_id dækker bredere via Device.customer_id.
+                    try:
+                        from main import _resolve_capture_camera_customer
+                        cam_id, cust_id = _resolve_capture_camera_customer(db, device_id, timestamp)
+                        capture.camera_id = cam_id
+                        capture.customer_id = cust_id
+                    except Exception as _res_exc:
+                        log.debug("Import camera/customer-resolution sprunget over: %s", _res_exc)
                     db.add(capture)
                     db.commit()
                     try:
