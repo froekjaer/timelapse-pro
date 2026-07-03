@@ -1599,3 +1599,49 @@ person vide".
   det nu er langt mere robust og synligt i loggen. Anbefaling: hold øje med edge-loggen
   efter deploy for at se om `log.warning`-linjen "Intet brugbart GPS-fix..." dukker op igen,
   eller om det udvidede vindue løser det helt.
+
+### Handover 2026-07-03 (fortsat) — GPS-featuren var aldrig merget til main + akut 500-bug fundet under test
+- **Stort fund ved test på edge (192.168.86.134):** `_read_gpsd_fix()` og resten af
+  GPS-sidecar-flowet findes overhovedet ikke i `origin/main` — kun på
+  `claude/capture-camera-location-2026-07-03` (introduceret i et tidligere commit,
+  "Backfill capture metadata and GPS sidecar flow", aldrig merget). Edgen tracker `main`,
+  så den kode der faktisk kører i produktion, har aldrig kunnet lave et live GPS-fix.
+  Min oprindelige "timeout for stram"-diagnose er stadig en reel forbedring, men den fulde
+  forklaring er: featuren blev aldrig sendt i produktion.
+- **`git checkout origin/<branch> -- fil` var for groft:** et forsøg på at hente hele
+  `gphoto2_driver.py` fra feature-branchen til edgen ville have trukket ubeslægtede
+  ændringer med (kamera-config `focus_controls`/`exposurecompensation`, gphoto2-parsing
+  af Bottom/Top/Step) — hele branchen indeholder desuden edge AI/NPU-sporet og
+  CMDB/diagnostik/tunnel/upload-ændringer (bekræftet uafhængigt af Codex via SSH på
+  edgen). Rullet tilbage til ren `main`-HEAD, og i stedet lavet et isoleret
+  find/erstat-patch-script (`apply_gps_patch.py`, lagt i workspace-roden) der KUN
+  tilføjer `_read_gpsd_fix`/`_number_or_none` + de tre linjer i `_write_sidecar`/
+  `_write_xmp_metadata`. Testet mod den faktiske `origin/main`-fil (73 linjer
+  tilføjet, 3 ændret, `py_compile` OK, idempotent), og verificeret at diffen på selve
+  edgen matchede testresultatet 1:1 før genstart.
+- **Akut produktionsbug fundet ved første rigtige upload efter edge-genstart:**
+  `POST /api/captures/{device_id}/files` fejlede med `TypeError:
+  _upsert_capture_record() got multiple values for keyword argument 'camera_model'` —
+  100% fejlrate på alle uploads fra edgen umiddelbart efter genstart (set i
+  `~/Library/Logs/timelapse-headend.log`). Root cause: `receive_capture_files()`
+  (main.py, nu linje ~3879) sendte `camera_model=meta.get("camera_model")` som eksplicit
+  keyword-argument OG som del af `**capture_values`-spread (som selv indeholder en bedre
+  fallback: `meta.get("camera_model") or sidecar_meta.get("camera_model")`) — en
+  pre-eksisterende bug, IKKE relateret til GPS-rettelserne (mine ændringer rørte kun
+  `get_config()` og løkken i `_upsert_capture_record()`, ikke dette kaldested). Ukendt
+  hvornår bugget blev indført, og hvorfor det ikke er ramt tidligere — mistanke om at
+  denne specifikke multipart-upload-vej (`manifest+image+sidecar+thumbnail`) er relativt
+  ny/sjældent testet sammenlignet med den ældre Pydantic-baserede upload-endpoint.
+  **Rettelse:** fjernet den overflødige eksplicitte `camera_model=`-linje (1 linje).
+  Verificeret med nyt regressionstestscript (`test_upload_endpoint.py`) der simulerer en
+  fuld multipart-upload som en rigtig edge — fejlede reproducerbart før rettelsen (samme
+  TypeError), bestod efter. Alle øvrige tests (GPS-fix, fase 2/3/4) genkørt uden
+  regression.
+- **IKKE committet endnu.** Denne ene linje mangler i den seneste `main.py`-commit
+  (`8a044a8f`) og skal med i en opfølgende commit, før produktions-uploads virker igen —
+  edgen står lige nu og fejler alle uploads indtil headend genstartes med rettelsen.
+- **Opfølgning, ikke løst nu:** en ordentlig merge-plan for hele
+  `claude/capture-camera-location-2026-07-03` (fase 1-4 + GPS-sidecar + edge AI/NPU +
+  kamera-config) ind i `main`, så branchen ikke driver længere væk, og så GPS-featuren
+  bliver en officiel del af den kode der bygges artifacts fra. Foreslået, afventer
+  Peter/Codex' beslutning om omfang og tidspunkt.

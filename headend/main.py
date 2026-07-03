@@ -3884,7 +3884,6 @@ async def receive_capture_files(
         sha256_pre_xmp=meta.get("sha256_pre_xmp"),
         captured_at=captured_at,
         filesize=size,
-        camera_model=meta.get("camera_model"),
         quality_flag=meta.get("quality_flag"),
         quality_passed=meta.get("quality_passed"),
         blur_score=meta.get("blur_score"),
