@@ -145,9 +145,21 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Residualrisiko:** 🟢 4 i kode pr. 2026-07-03 (var reelt 🟡 6-8 for CMDB/ITIM-flader indtil denne rettelse — nedgraderes til 🟢 4 for alle flader først når live-verificeret efter genstart)
 
 ### R03 — Tab af billedhistorik ved hardwarefejl
-- **Status:** ✅ Kontrolleret
+- **Status:** ✅ Kontrolleret (korrigeret 2026-07-03 — se note)
 - **Implementerede kontroller:** Camera/Pi-kobling, DeviceAssignment-historik, captures knyttet til camera_id
-- **Residualrisiko:** 🟢 3
+- **KORREKTION 2026-07-03 (Claude, frisk kodegennemgang):** Linjen "captures knyttet til
+  camera_id" var reelt IKKE sand før denne dato — `Capture` havde kun `device_id` (fysisk
+  Edge), ikke `camera_id` (logisk kamera-lokation). Det betød at det ønskede
+  Global/kunde/site/kamera-lokation → Edge-hierarki manglede sit sidste led: en defekt Edge
+  kunne ikke udskiftes eller genbruges et andet sted uden reelt at miste den logiske
+  sammenhæng mellem billedhistorik og lokation (kun `DeviceAssignment`-historikken fandtes,
+  men blev ikke brugt til at berige `Capture`-rækker). **Nu rettet i kode og verificeret**
+  (schema-migration v12 + `_resolve_capture_camera_customer()` + additivt
+  `camera_id`-filter på `/api/admin/captures` + `headend/tools/backfill_capture_camera_customer.py`
+  til historiske rækker) — se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5 og
+  `HANDOVER_LOG.md` 2026-07-03 12:20. Backfill af historiske produktionsdata afventer Peter/Codex'
+  gennemgang af dry-run-output.
+- **Residualrisiko:** 🟢 3 (i kode; nedgraderes fuldt ud efter live-backfill af produktionsdata)
 
 ### R04 — Ingen remote adgang ved netværksfejl
 - **Status:** ✅ Kontrolleret
@@ -211,11 +223,18 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Handling:** Nikon Z30 capabilities-mapping; skeln readonly vs. enforceable; "desired state" + "accepted equivalent labels"
 
 ### R15 — `/api/siem/*` uden autentificering (NY, fundet + rettet 2026-07-03)
-- **Status:** ✅ Kontrolleret i kode (Claude, `claude/security-hardening-2026-07-03`) — afventer commit/live-verifikation
+- **Status:** ✅ Kontrolleret i kode og **live-verificeret** (Peter, 2026-07-03: health `200`, `GET /api/siem/events` uden auth → `401`)
 - **Fund:** `GET /api/siem/events|summary|threats` havde ingen `Depends(get_current_user)`/rolletjek — enhver (og med nginx stadig public på `*:80/443`, potentielt enhver på internettet) kunne læse security-events, source-IP'er og brute-force-data uden login. `POST /api/siem/events/{device_id}` kunne modtage fabrikerede events for et vilkårligt device_id uden HMAC/token.
 - **Implementerede kontroller (kode):** GET-endpoints kræver nu `viewer`-rolle + samme MFA-politik som resten af systemet; POST-ingest kræver nu gyldigt device-token via samme `_verify_device_token()`-kæde som øvrige edge-endpoints (HMAC/attestation).
-- **Sandsynlighed før fix:** 4, **Konsekvens:** 3, **Score (før fix):** 🟠 12 → **Residualrisiko efter fix:** 🟢 4 (i kode; live-verifikation udestår)
+- **Sandsynlighed før fix:** 4, **Konsekvens:** 3, **Score (før fix):** 🟠 12 → **Residualrisiko efter fix:** 🟢 4
 - Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.1.
+
+### R16 — Kryds-kunde-lækage af billeddata ved Edge-gentildeling (NY, fundet + rettet 2026-07-03)
+- **Status:** ✅ Rettet i kode, afventer commit/live-verifikation
+- **Fund (Claude, under implementering af fase 3):** Tenant-isolation på `Capture`-rækker var udelukkende baseret på et LIVE opslag: "hvilke devices tilhører denne kunde LIGE NU" (`Device.customer_id`). Hvis en fysisk Edge-enhed går i stykker, genbruges og fysisk tildeles en ANDEN kunde (almindeligt scenarie — det er netop derfor kamera-lokation/Edge-binding-hierarkiet findes, jf. R03), fik den NYE kunde automatisk adgang — via galleri-liste, EXIF, sletning og filservering — til ALLE billeder taget mens enheden tilhørte den FORRIGE kunde. Dette er en konkret, udnyttelig instans af det generelle §2.4-fund (tenant-isolation kun applikationsdisciplin), ikke blot en teoretisk risiko.
+- **Implementerede kontroller (kode):** Adgangskontrol på Capture-niveau bruger nu primært `Capture.customer_id` (frosset på optagelsestidspunktet, v12-feltet fra fase 2) i stedet for det live device-opslag — en historisk rækkes ejerskab ændrer sig ikke længere, når det fysiske device sidenhen omfordeles. Fallback til det gamle device-opslag bevares kun for rækker, der endnu ikke er backfillet. Centraliseret i `_capture_is_allowed()`/`_capture_tenant_clause()` (main.py), dækker liste, statistik, søgning, sletning, EXIF og filservering (52 kaldsteder, 4 kernefunktioner ændret).
+- **Sandsynlighed før fix:** 3 (kræver at en enhed reelt genbruges på tværs af kunder — forventeligt over enhedens levetid), **Konsekvens:** 4 (eksponering af en anden kundes overvågningsbilleder — GDPR-relevant), **Score (før fix):** 🟠 12 → **Residualrisiko efter fix:** 🟢 4 (i kode; falder yderligere når historisk backfill af `customer_id` er kørt komplet i produktion)
+- Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5/§6 og `HANDOVER_LOG.md` 2026-07-03 13:15.
 
 ---
 
@@ -377,9 +396,10 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R12 GDPR-evidens | 🟠 12 | 🆕 Ny |
 | R13 Node-agent nede | 🟡 6 | 🆕 Ny |
 | R14 Nikon Z30 config drift | 🟠 12 | 🆕 Ny |
-| R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 (kode) | 🆕 Ny — fundet og rettet i kode 2026-07-03 |
+| R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 | ✅ Ny/løst — fundet og rettet, live-verificeret 2026-07-03 |
+| R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 (kode) | 🆕 Ny — fundet og rettet i kode 2026-07-03 |
 
-**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R15 er rettet i kode men kræver commit + genstart + live-verifikation før den kan regnes som lukket.
+**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R16 er rettet i kode men kræver commit + genstart + live-verifikation før den kan regnes som lukket.
 
 ---
 

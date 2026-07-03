@@ -58,7 +58,7 @@ from datetime import timezone as _tz
 
 #Peter:
 import re as _re
-from sqlalchemy import func, or_, text
+from sqlalchemy import and_, false as _sql_false, func, or_, text
 import subprocess as _subprocess
 import threading as _threading
 import json as _json
@@ -9734,9 +9734,13 @@ def list_captures(
     q = db.query(Capture).order_by(Capture.captured_at.desc())
     allowed_device_ids = _allowed_capture_device_ids(db, _user)
     if allowed_device_ids is not None:
-        if not allowed_device_ids:
-            return []
-        q = q.filter(Capture.device_id.in_(allowed_device_ids))
+        # NB (Fase 3, 2026-07-03): ingen "tomt device-sæt -> return []"-genvej her
+        # længere — en kunde skal fortsat kunne se sine EGNE historiske billeder
+        # (via Capture.customer_id) selvom det device, der tog dem, sidenhen er
+        # blevet omtildelt væk fra kunden og derfor ikke længere er i det aktuelle
+        # device-sæt. _capture_tenant_clause() matcher korrekt "ingenting" i sig selv,
+        # hvis brugeren hverken har customer_id-match eller device-match.
+        q = q.filter(_capture_tenant_clause(_user, allowed_device_ids))
     if device_id:
         _ensure_capture_device_access(db, _user, device_id)
         q = q.filter_by(device_id=device_id)
@@ -9796,13 +9800,13 @@ def stats(_user=require_role("viewer"), db: Session = Depends(get_db)):
     cq = db.query(Capture)
     allowed_device_ids = _allowed_capture_device_ids(db, _user)
     if allowed_device_ids is not None:
-        if not allowed_device_ids:
-            total_captures = passed = uploaded = 0
-        else:
-            cq = cq.filter(Capture.device_id.in_(allowed_device_ids))
-            total_captures = cq.count()
-            passed         = cq.filter(Capture.quality_passed.is_(True)).count()
-            uploaded       = cq.filter(Capture.uploaded.is_(True)).count()
+        # NB (Fase 3, 2026-07-03): se tilsvarende note i list_captures() — ingen
+        # "tomt device-sæt" genvej, da egne historiske billeder skal tælles med
+        # via Capture.customer_id selv efter en device-omtildeling.
+        cq = cq.filter(_capture_tenant_clause(_user, allowed_device_ids))
+        total_captures = cq.count()
+        passed         = cq.filter(Capture.quality_passed.is_(True)).count()
+        uploaded       = cq.filter(Capture.uploaded.is_(True)).count()
     else:
         total_captures = cq.count()
         passed         = cq.filter(Capture.quality_passed.is_(True)).count()
@@ -10825,6 +10829,13 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
             "ai_strategy": ai_strategy,
         })
 
+    # NB (Fase 3, 2026-07-03): denne liste bruges kun til at afgrænse HVILKE devices
+    # baggrundsjobbet må behandle (postprocessing/AI-kø), ikke til at eksponere
+    # billeddata direkte til brugeren. customer_id-først-tenant-filtret fra
+    # _capture_tenant_clause()/_capture_is_allowed() er bevidst IKKE rullet ind i selve
+    # baggrundsjobbet i denne omgang — se Claude_Kritisk_Statusgennemgang_2026-07-03.md
+    # §6 for scope-begrundelse (lav konfidentialitetsrisiko: jobbet skriver kun
+    # afledte metadata/tags tilbage på egne synlige devices, eksponerer intet billede).
     allowed_device_ids = _allowed_capture_device_ids(db, current_user)
     allowed_list = list(allowed_device_ids) if allowed_device_ids is not None else None
     options = {
@@ -10900,6 +10911,8 @@ def start_ai_batch_job(
                 )
             )
 
+    # NB (Fase 3, 2026-07-03): samme scope-afgrænsning som post-processing-jobbet
+    # ovenfor — se den note for begrundelse.
     allowed_device_ids = _allowed_capture_device_ids(db, current_user)
     if allowed_device_ids is not None and not allowed_device_ids:
         raise HTTPException(status_code=400, detail="Ingen synlige enheder")
@@ -14239,9 +14252,9 @@ def qa_search(
     q = db.query(_Cap).filter(_Cap.ai_result.isnot(None))
     allowed_device_ids = _allowed_capture_device_ids(db, _user)
     if allowed_device_ids is not None:
-        if not allowed_device_ids:
-            return {"total": 0, "results": []}
-        q = q.filter(_Cap.device_id.in_(allowed_device_ids))
+        # NB (Fase 3, 2026-07-03): se tilsvarende note i list_captures() — ingen
+        # "tomt device-sæt" genvej her heller.
+        q = q.filter(_capture_tenant_clause(_user, allowed_device_ids))
 
     # Multi-device filter
     all_dev = []
@@ -15461,6 +15474,40 @@ def _allowed_capture_device_ids(db: Session, user: User | None) -> set[str] | No
     return {row[0] for row in devices}
 
 
+def _capture_tenant_clause(user: User | None, allowed_device_ids: set[str]):
+    """SQL-betingelse til brug i stedet for et rent `Capture.device_id.in_(...)`-filter,
+    når man skal håndhæve tenant-isolation på Capture-rækker.
+
+    Fase 3 (2026-07-03, Claude) — se Claude_Kritisk_Statusgennemgang_2026-07-03.md
+    §2.4/§2.5: et rent device_id-baseret tjek er et LIVE opslag på "hvilke devices
+    tilhører denne kunde LIGE NU". Hvis en fysisk Edge-enhed sidenhen genbruges og
+    tildeles en ANDEN kunde, ville et rent device_id-filter fejlagtigt give den nye
+    kunde adgang til alle gamle billeder taget mens enheden tilhørte den forrige kunde
+    — en reel, konkret lækage på tværs af kunder over tid.
+
+    Denne funktion foretrækker i stedet `Capture.customer_id`, som fryses på
+    optagelsestidspunktet (v12-migration, `_resolve_capture_camera_customer()`), og
+    falder kun tilbage til det gamle device-baserede opslag for rækker der endnu ikke
+    er backfillet (`customer_id IS NULL`) — se
+    `headend/tools/backfill_capture_camera_customer.py`. Denne fallback fjernes ikke
+    aktivt, men bliver effektivt dødt, når backfillen er kørt komplet i produktion.
+
+    Kald kun denne funktion når `allowed_device_ids` ikke er `None` (dvs. brugeren IKKE
+    er platform-admin) — platform-admins skal fortsat se alt, uden filter.
+
+    VIGTIGT: håndhæver eksplicit "ingen adgang" (`false()`) hvis brugeren mangler
+    `customer_id` — ellers ville `Capture.customer_id == None` blive oversat til
+    `IS NULL` af SQLAlchemy og fejlagtigt matche alle endnu ubackfillede rækker på
+    tværs af ALLE kunder for sådan en bruger.
+    """
+    if not user or not getattr(user, "customer_id", None):
+        return _sql_false()
+    return or_(
+        Capture.customer_id == user.customer_id,
+        and_(Capture.customer_id.is_(None), Capture.device_id.in_(allowed_device_ids)),
+    )
+
+
 def _ensure_capture_device_access(db: Session, user: User | None, device_id: str) -> None:
     allowed = _allowed_capture_device_ids(db, user)
     if allowed is not None and device_id not in allowed:
@@ -15468,6 +15515,17 @@ def _ensure_capture_device_access(db: Session, user: User | None, device_id: str
 
 
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:
+    if _is_platform_admin(user):
+        return True
+    if not user or not getattr(user, "customer_id", None):
+        return False
+    # Fase 3 (2026-07-03): foretræk capture.customer_id (frosset ved optagelsestidspunkt)
+    # frem for et live device→kunde-opslag — se _capture_tenant_clause() ovenfor for
+    # den fulde begrundelse (gen-tildelte Edge-enheder må ikke "tage billedhistorikken
+    # med sig" til en ny kunde).
+    capture_customer_id = getattr(capture, "customer_id", None)
+    if capture_customer_id:
+        return capture_customer_id == user.customer_id
     allowed = _allowed_capture_device_ids(db, user)
     return allowed is None or capture.device_id in allowed
 
@@ -15556,9 +15614,11 @@ def ai_capture_natural_search(
         except Exception:
             pass
     candidates = _query_capture_candidates(db, payload, spec)
-    allowed_device_ids = _allowed_capture_device_ids(db, _user)
-    if allowed_device_ids is not None:
-        candidates = [c for c in candidates if c.device_id in allowed_device_ids]
+    if not _is_platform_admin(_user):
+        # Fase 3 (2026-07-03): genbrug _capture_is_allowed() i stedet for et rent
+        # device_id-filter, så tenant-isolation her følger samme customer_id-først-logik
+        # (med device-fallback for ubackfillede rækker) som resten af Capture-fladen.
+        candidates = [c for c in candidates if _capture_is_allowed(db, _user, c)]
     selected = _select_captures_for_spec(candidates, spec)
     images = [_capture_openwebui_payload(c) for c in selected]
     selected_ids = [c.id for c in selected]

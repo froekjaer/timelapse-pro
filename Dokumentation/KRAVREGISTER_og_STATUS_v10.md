@@ -65,6 +65,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | ADM-007 | Post-processing admin-job | ✅ Delvist | Trigger OK; progress mangler |
 | ADM-008 | Backup-UI | ✅ Implementeret | Til /Volumes/Backup |
 | ADM-009 | Edge image build (disk image) | ✅ Implementeret | inject_edge_image.py, WiFi-inject |
+| ADM-010 | Billedhistorik følger kamera-lokation ved Edge-udskiftning (sidste led af ADM-005-hierarkiet) | ✅ Implementeret 2026-07-03 | Var reelt IKKE implementeret før 2026-07-03 (fundet ved frisk kodegennemgang, Claude) — `Capture` havde kun `device_id`, ikke `camera_id`. Rettet: schema-migration v12, resolver, additivt `camera_id`-filter på `/api/admin/captures`, backfill-script; committet+pushet (`3a2c0a8`). Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5 |
 | ADM-010 | DPIA-template pr. kunde/site | 🔴 Mangler | GDPR Art. 35 |
 | ADM-011 | Rapporter pr. compliance-standard | 🟡 Delvist | GRC cockpit har rapport-skeleton |
 | ADM-012 | Revision per billede/download | 🔴 Mangler | |
@@ -110,11 +111,11 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | SEC-001 | ISO 27001/NIS2/CRA/IEC 62443 compliance-targets | 🟡 Delvist | Dokumenteret; ikke fuldt operationaliseret |
 | SEC-002 | Secrets ikke i Git | ✅ Implementeret | .gitignore dækker secrets/ |
 | SEC-003 | Test-gate før deploy (CI) | ✅ Delvist | Python + UI build OK; edge/headend contract-tests mangler |
-| SEC-004 | RBAC med 4 roller | ✅ Implementeret | **NB 2026-07-03:** `/api/siem/*` manglede helt RBAC (fundet ved frisk kodegennemgang); rettet i kode på `claude/security-hardening-2026-07-03`, afventer commit |
+| SEC-004 | RBAC med 4 roller | ✅ Implementeret | **NB 2026-07-03:** `/api/siem/*` manglede helt RBAC (fundet ved frisk kodegennemgang); rettet i kode, committet+pushet (`b0e224c`) og live-verificeret af Peter (401 uden auth) |
 | SEC-005 | JWT med kort levetid | ✅ Implementeret | 12 timer |
 | SEC-006 | HMAC request-signatur for device-tokens | ✅ Implementeret | Aktive noder + headend-agent |
 | SEC-007 | SFTP chroot-isolation | ✅ Implementeret | per-site brugere |
-| SEC-008 | MFA/WebAuthn | ✅ Delvist (2026-07-02; MFA-dækning korrigeret 2026-07-03) | MFA (TOTP) policy-drevet + enforced for admin/super_admin; WebAuthn stadig separat/off. **NB:** enforcement dækkede kun `main.py`-endpoints — CMDB/ITIM omgik reelt MFA indtil rettelse 2026-07-03 (kode klar, afventer commit) |
+| SEC-008 | MFA/WebAuthn | ✅ Delvist (2026-07-02; MFA-dækning korrigeret 2026-07-03) | MFA (TOTP) policy-drevet + enforced for admin/super_admin; WebAuthn stadig separat/off. **NB:** enforcement dækkede kun `main.py`-endpoints — CMDB/ITIM omgik reelt MFA indtil rettelse 2026-07-03, nu committet+pushet (`b0e224c`) og live-verificeret af Peter |
 | SEC-009 | Intern CA + client-certs | 🔴 Mangler | |
 | SEC-010 | Disk-kryptering på Edge | 🔴 Mangler | |
 | SEC-011 | fail2ban | 🟡 Delvist | Konfigurationsfiler i Dokumentation/; drift-status ukendt |

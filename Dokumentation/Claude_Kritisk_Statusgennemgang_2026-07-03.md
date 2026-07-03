@@ -154,11 +154,11 @@ Jeres egen uoverensstemmelsestabel siger: *"Ældre docs siger ingen localStorage
 
 | # | Fund | Prioritet | Status | Ejer (forslag) |
 |---|---|---|---|---|
-| 1 | `/api/siem/*` uden auth (§2.1) | 🔴 P0 | ✅ Rettet i kode 2026-07-03, branch `claude/security-hardening-2026-07-03` — afventer commit (git-lock, se HANDOVER_LOG) + genstart + live-verifikation | Claude (kode gjort), Codex/Peter (commit + verificér live) |
-| 2 | MFA ikke håndhævet i cmdb.py/itim.py (§2.2) | 🔴 P0 | ✅ Rettet i kode 2026-07-03, samme branch — verificeret lokalt (viewer 200, admin-uden-MFA 403, admin-med-MFA 200) | Claude (kode gjort), Codex/Peter (commit + verificér live) |
-| 3 | Break-glass mangler hård MFA/rate-limit default (§2.3) | 🔴 P0 | ✅ MFA-delen lukket via fund #2 (samme `_require_cmdb_role`). Rate-limit/IP-allowlist forbliver bevidst opt-in (env-var) | Claude (kode gjort) |
-| 4 | Tenant-isolation kun applikationsdisciplin på captures (§2.4) | 🔴 P0/P1 | Åben — se §2.5/fase 2-plan | Claude (audit + test), Peter (beslutning om skemaændring) |
-| 5 | requirements.txt upinnet + mangler slowapi (§3.1) | 🟠 P1 | ✅ Rettet i kode 2026-07-03 — pinnet mod en lokal, kørende venv; **skal krydstjekkes mod prod-venv** (`~/.venvs/timelapse-headend`) | Claude (kode gjort), Codex/Peter (krydstjek + commit) |
+| 1 | `/api/siem/*` uden auth (§2.1) | 🔴 P0 | ✅ Rettet, committet (`b0e224c`) og **live-verificeret** 2026-07-03 (Peter): health `200`, `GET /api/siem/events` uden auth → `401` | Claude (kode), Peter (deploy + verifikation) |
+| 2 | MFA ikke håndhævet i cmdb.py/itim.py (§2.2) | 🔴 P0 | ✅ Rettet, committet (`b0e224c`) og **live-verificeret** 2026-07-03 (Peter) — forinden lokalt bekræftet: viewer 200, admin-uden-MFA 403, admin-med-MFA 200 | Claude (kode), Peter (deploy + verifikation) |
+| 3 | Break-glass mangler hård MFA/rate-limit default (§2.3) | 🔴 P0 | ✅ MFA-delen lukket via fund #2 (samme `_require_cmdb_role`), live med samme commit. Rate-limit/IP-allowlist forbliver bevidst opt-in (env-var) | Claude (kode gjort) |
+| 4 | Tenant-isolation kun applikationsdisciplin på captures (§2.4) | 🔴 P0/P1 | ✅ **Fuldt lukket 2026-07-03 (fase 3), godkendt af Peter.** `camera_id`/`customer_id` tilføjet til `Capture` (v12, fase 2), og adgangskontrol (`_capture_is_allowed`/`_capture_tenant_clause`) bruger nu `customer_id` (frosset ved optagelsestidspunkt) som primær kilde i stedet for et live device-opslag — se R16 i `RISK_ASSESSMENT_v10.md` for det konkrete lækage-scenarie dette lukker (Edge-enhed gentildelt til ny kunde). Verificeret med TestClient (7 tests + 1 kant-tilfælde). **Åbent:** post-processing/AI-batch-jobbets device-filter er bevidst ikke opdateret (lav konfidentialitetsrisiko, se §6 nedenfor) | Claude (kode+test gjort), Peter (deploy + live-verifikation) |
+| 5 | requirements.txt upinnet + mangler slowapi (§3.1) | 🟠 P1 | ✅ Rettet, committet (`b0e224c`) og **installeret i prod-venv** af Peter | Claude (kode), Peter (deploy) |
 | 6 | CI uden lint/SAST/dependency-audit (§3.2) | 🟠 P1 | Claude + Codex |
 | 7 | main.py monolit — udtræk auth/RBAC/MFA-modul (§3.3) | 🟠 P1 | Claude |
 | 8 | Secure-by-default afhænger af TIMELAPSE_ENV-streng (§3.4) | 🟠 P1 | Claude |
@@ -167,8 +167,9 @@ Jeres egen uoverensstemmelsestabel siger: *"Ældre docs siger ingen localStorage
 | 11 | Repo-hygiejne / dump-filer (§4.3) | 🟡 P2 | Claude (.gitignore + gitleaks-forslag) |
 | 12 | Dødt `bootstrapToken()`-kode (§4.4) | 🟢 P3 | Claude |
 | 13 | Opdatér `DOKUMENTPAKKE_OVERSIGT_v10.md` localStorage-status (§4.5) | 🟢 P3 | Claude |
-| 14 | `Capture` mangler `camera_id` — billedhistorik følger ikke kamera-lokation ved Edge-udskiftning (§2.5) | 🟠 P1 | Claude (skema+backfill), Peter (beslutning) |
+| 14 | `Capture` mangler `camera_id` — billedhistorik følger ikke kamera-lokation ved Edge-udskiftning (§2.5) | 🟠 P1 | ✅ Rettet: skema v12 + resolver + additivt `camera_id`-filter på `/api/admin/captures` + `headend/tools/backfill_capture_camera_customer.py`, committet (`3a2c0a8`), verificeret (TestClient). **NB:** backfillen Peter kørte 2026-07-03 (Travbyen/Nordre Villavej) var Codex' `backfill_capture_metadata.py` (EXIF/GPS) — IKKE `backfill_capture_camera_customer.py`. Sidstnævnte afventer stadig en `--dry-run`-kørsel mod produktion. **Åbent:** dedikeret kamera-lokations-UI-side (fuld historik på tværs af Edge-udskiftninger) er ikke bygget — se §2.5 forslag #3 | Claude (skema+backfill gjort), Peter (dry-run + backfill mangler stadig) |
 | 15 | Tv-overvågningsloven/Databeskyttelsesloven/Arbejdsmiljøloven/RED/CER mangler i DEL 9 (§7) | 🟡 P2 | Claude (udkast), Peter (beslutning) |
+| 16 | Kryds-kunde-lækage af billeddata ved Edge-gentildeling (R16, fundet under fase 3-implementering) | 🔴 P0 | ✅ Rettet i kode 2026-07-03, se fund #4 ovenfor og `RISK_ASSESSMENT_v10.md` R16. Konkret, udnyttelig lækage — ikke kun teoretisk — da en fysisk Edge-enhed reelt kan genbruges på tværs af kunder. Afventer commit + live-verifikation | Claude (kode+test gjort), Peter (deploy) |
 
 Ingen af disse er rettet endnu — dette er bevidst kun observation og rapportering, som aftalt. Jeg foreslår vi tager punkt 1-4 først, da de er små, isolerede rettelser med stor effekt, og fordi 1 og 3 er reelt eksponerede lige nu givet at nginx stadig er public.
 

@@ -1355,3 +1355,131 @@ person vide".
   kommandoerne ovenfor. (2) Claude fortsætter til fase 2 (`Capture.camera_id`/`customer_id`) med
   et separat design-oplæg til godkendelse, jf. Codex' anbefaling om en mere kontrolleret tilgang
   dér. (3) Overvej branch-oprydningen (main vs. de 7 divergerende branches) som eget punkt.
+
+### Handover 2026-07-03 12:20 — fra Claude til Peter/Codex: fase 2 færdig (Capture.camera_id/customer_id)
+- **Hvad er gjort:** Fase 2 (§2.4/§2.5 i `Claude_Kritisk_Statusgennemgang_2026-07-03.md`) er
+  implementeret, verificeret og allerede committet — se "Bemærkning om commit" nedenfor.
+  1. `headend/database.py`: `Capture` har fået to nye nullable, indekserede kolonner:
+     `camera_id` (String(36), → `Camera.id`) og `customer_id` (String(36), → `Customer.id`).
+  2. `headend/main.py`: DB-migration v12 (idempotent `ALTER TABLE`/`CREATE INDEX IF NOT EXISTS`
+     i startup-eventet, samme mønster som v9/v10/v11). Ny helper
+     `_resolve_capture_camera_customer(db, device_id, captured_at=None)`: `customer_id` findes
+     primært via `Device.customer_id` (bred dækning, også bulk-importerede devices uden
+     kamera-binding); `camera_id` findes via den `DeviceAssignment`, der var aktiv på
+     capture-tidspunktet (kun devices reelt bundet til en logisk kamera-lokation — resten
+     forbliver bevidst `NULL`, ikke gættet). `Camera.customer_id` vinder over
+     `Device.customer_id`, når en binding findes. Wired ind i `_upsert_capture_record()`, så
+     nye/opdaterede captures får felterne udfyldt automatisk uden at ændre eksisterende adfærd.
+  3. `headend/importer.py`: samme resolver kaldt fra bulk-import-stien (bemærk: bulk-importerede
+     devices er sjældent bundet til en kamera-lokation, så `camera_id` er ofte `NULL` her —
+     `customer_id` dækker bredere).
+  4. `headend/tools/backfill_capture_camera_customer.py` (nyt script): backfilder
+     `camera_id`/`customer_id` på eksisterende captures. Default er `--dry-run` (rapporterer
+     antal resolvet/opdateret uden at skrive). `--apply` skriver faktisk. `--force` genberegner
+     også allerede udfyldte rækker. `--device-id`/`--limit` til afgrænset testkørsel. Idempotent.
+  5. `headend/main.py` `/api/admin/captures`: nyt **additivt** query-parameter `camera_id` —
+     filtrerer på logisk kamera-lokation på tværs af Edge-udskiftninger (løser det oprindelige
+     "udskift defekt Edge, bevar billedhistorik"-problem fra Peters oprindelige spørgsmål).
+     Tenant-isolation håndhæves identisk med det eksisterende mønster fra
+     `/api/admin/config-resolution` (`_ensure_site_access`/`_ensure_customer_access` på kameraets
+     site/customer). Response-objektet inkluderer nu også `camera_id`/`customer_id` pr. capture.
+     `device_id`-baseret filtrering er uændret (bagudkompatibelt).
+- **Verifikation (reel TestClient + sqlite, ikke kun `py_compile`):** byggede et scenarie med
+  2 kunder, 3 devices, 1 kamera-lokation, en Edge-udskiftning (device 1 → device 2 på samme
+  kamera-lokation) og et ubundet bulk-device (device 3, kunde B). Alle 4 testgrupper bestod:
+  1. Resolver returnerer korrekt `camera_id`/`customer_id` for både det gamle og det nye device
+     bag udskiftningen, og korrekt `customer_id`/`camera_id=None` for det ubundne device.
+  2. `_upsert_capture_record` udfylder felterne automatisk ved skrivning.
+  3. `/api/admin/captures?camera_id=...` samler billeder på tværs af Edge-udskiftning, respekterer
+     tenant-grænser (403 for bruger fra anden kunde, 200 for `super_admin`, 404 for ukendt
+     `camera_id`), og de nye felter er med i JSON-responsen.
+  4. Backfill-scriptet: dry-run rapporterer korrekt antal uden at skrive, apply skriver kun de
+     manglende rækker, og en gen-kørsel er idempotent (0 opdateringer).
+- **Bemærkning om commit:** Mens jeg arbejdede, blev `.git/index.lock` igen låst med samme
+  "Operation not permitted" som i sidste handover-runde — men denne gang viste det sig at Peter
+  (formentlig via Codex' aktive arbejde på samme filsystem) allerede havde committet mit
+  arbejdstræ i `3a2c0a8 "Backfill capture metadata and GPS sidecar flow"` (12:15:59), sammen med
+  Codex' parallelle arbejde (`edge/camera/drivers/gphoto2_driver.py`,
+  `edge/upload/headend_client.py` — GPS-sidecar, `headend/tools/backfill_capture_metadata.py` —
+  EXIF-metadata-backfill, `timelapse-ui/src/pages/DevicePage.tsx` og `types/index.ts`). Jeg har
+  efterfølgende: (a) `py_compile`-verificeret alle rørte Python-filer inkl. Codex' tilføjelser —
+  ingen konflikt, (b) genkørt hele testsuiten mod det faktisk committede `HEAD` — alle 4 grupper
+  bestod stadig. Intet manuelt commit-arbejde var altså nødvendigt fra min side denne gang.
+- **Filer rørt (denne runde):** `headend/database.py`, `headend/main.py`, `headend/importer.py`,
+  `headend/tools/backfill_capture_camera_customer.py` (nyt) — alle allerede i commit `3a2c0a8`.
+- **Hvad Peter/Codex bør teste/beslutte, før backfill køres i produktion:**
+  1. Kør `python3 headend/tools/backfill_capture_camera_customer.py --dry-run` mod
+     prod-databasen og gennemgå tallene (antal resolvet vs. uresolveret, og listen over devices
+     uden nogen resolution) — særligt vigtigt at bekræfte at "uden resolution"-devices reelt
+     forventes at være ubundne/ukendte, før `--apply` køres.
+  2. Overvej at køre med `--device-id <et enkelt device>` først som stikprøve.
+  3. Efter backfill: test `/api/admin/captures?camera_id=<uuid>` i UI/Postman på et kamera, der
+     har haft en Edge-udskiftning, og bekræft at billeder fra begge devices vises samlet.
+  4. ~~`camera_id`/`customer_id` bruges endnu ikke til selve tenant-isolationen~~ — **Peter
+     godkendte 2026-07-03 13:00** at gå videre med dette, og det er nu implementeret. Se ny
+     handover-note nedenfor ("Fase 3").
+  5. **Ikke gjort endnu:** en decideret kamera-lokations-UI-side (`/cameras/:id`) der viser fuld
+     billedhistorik på tværs af Edge-udskiftninger for slutbrugeren — pt. kun tilgængeligt via
+     API-parameteren. Forslag #3 i rapportens §2.5, bevidst afgrænset fra denne omgang.
+- **Risici / pas på:** samme delte-filsystem-forsigtighed som sidst — Codex arbejder aktivt i
+  `headend/importer.py`/`headend/main.py` samtidig med mig, så genlæs altid umiddelbart før edit.
+  `.git/index.lock`-problemet er stadig uløst i sig selv (samme mount-niveau-begrænsning som
+  tidligere dokumenteret) — denne gang generede det bare ikke arbejdet, fordi committet skete
+  fra host-siden. Fortsat OS-/fillås-territorium for Codex/Peter, hvis det driller igen.
+
+### Handover 2026-07-03 13:15 — fra Claude til Peter/Codex: fase 3 (tenant-isolation via customer_id)
+- **Baggrund:** Peter bekræftede 2026-07-03, at tenant-isolation af billeddata bør følge
+  kunde/site/kamera-lokations-hierarkiet og være afkoblet fra `device_id`, netop fordi en fysisk
+  Edge-enhed kan udskiftes/genbruges. Under planlægningen fandt jeg et **konkret, aktivt
+  lækage-scenarie** i den daværende kode (ikke kun det generelle §2.4-fund): det gamle
+  adgangstjek (`_allowed_capture_device_ids`) er et LIVE opslag på "hvilke devices tilhører denne
+  kunde LIGE NU" (via `Device.customer_id`). Hvis en fysisk Edge-enhed senere genbruges og
+  tildeles en ANDEN kunde, giver det tjek automatisk den nye kunde adgang til ALLE gamle billeder
+  taget mens enheden tilhørte den forrige kunde — en reel, udnyttelig kundedatalækage over tid.
+- **Rettelse (godkendt af Peter, se spørgsmål/svar 2026-07-03 13:00):**
+  1. `_capture_is_allowed()` foretrækker nu `Capture.customer_id` (frosset ved
+     optagelsestidspunkt, v12-feltet fra fase 2) frem for det live device-opslag. Kun for
+     rækker, der endnu ikke er backfillet (`customer_id IS NULL`), falder den tilbage til den
+     gamle device-baserede logik — ingen breaking change.
+  2. Ny helper `_capture_tenant_clause(user, allowed_device_ids)` — samme logik udtrykt som et
+     SQL-filter, brugt i `list_captures`, `/api/admin/stats` og QA/AI-søgeendpointet, så listning
+     og optælling også er lukket, ikke kun enkelt-opslag (delete/exif/sidecar/fil-servering, som
+     alle går via `_capture_is_allowed()`).
+  3. **Fejl fundet og rettet UNDER egen test:** min første version beholdt den gamle
+     "tomt device-sæt → returnér straks intet"-genvej. Det betød, at en kunde, hvis eneste device
+     var blevet omtildelt væk, pludselig ikke længere kunne se SINE EGNE gamle billeder (falsk
+     negativ/regression, ikke en lækage, men en reel fejl). Rettet ved at fjerne genvejen —
+     `_capture_tenant_clause()` matcher korrekt "ingenting" i sig selv, når det er relevant.
+  4. **Endnu en risiko fundet og rettet:** `_capture_tenant_clause()` sammenligner
+     `Capture.customer_id == user.customer_id`. For en bruger UDEN `customer_id` (fejlkonfigureret
+     konto, ikke platform-admin) ville SQLAlchemy oversætte det til `IS NULL` og fejlagtigt matche
+     ALLE endnu ubackfillede rækker på tværs af alle kunder. Tilføjet eksplicit `false()`-guard for
+     dette tilfælde, testet separat.
+  5. Bevidst UDENFOR scope denne omgang: baggrundsjob til post-processing/AI-batch-kø (to steder i
+     `main.py`, markeret med "NB (Fase 3)"-kommentarer) bruger fortsat kun det gamle
+     device-baserede filter til at afgrænse HVILKE devices et job må behandle — vurderet lav
+     konfidentialitetsrisiko, da jobbet kun skriver afledte metadata/tags tilbage, ikke eksponerer
+     billeder. Kan tages op som en separat, mindre opgave.
+- **Verifikation (reel TestClient, ikke kun `py_compile`):** nyt scenarie — device X tilhører
+  Kunde A, tager et billede, X gen-tildeles derefter til Kunde B, X tager et nyt billede. 7 tests:
+  Kunde B kan IKKE se/liste/slette det gamle Kunde A-billede (hverken via almindelig liste eller
+  eksplicit `device_id`-filter), Kunde B KAN se sit eget nye billede, Kunde A beholder adgang til
+  sit eget gamle billede (ingen falsk positiv/regression), en ubackfillet "forældreløs" række
+  følger stadig den midlertidige device-fallback som forventet, og `super_admin` ser alt. Plus en
+  separat kant-test for "bruger uden customer_id"-guarden (punkt 4 ovenfor).
+- **Filer rørt:** `headend/main.py` (`_capture_is_allowed`, ny `_capture_tenant_clause`, samt
+  opdateret filtrering i `list_captures`, `/api/admin/stats`, QA/AI-søgeendpointet, OpenWebUI
+  candidate-filtrering — alle centraliseret, kun 4 kernefunktioner ændret trods 52 kald-steder).
+  IKKE committet endnu — afventer normal commit-proces (ingen `.git/index.lock`-problem denne
+  gang). Dokumentation opdateret: `RISK_ASSESSMENT_v10.md`, `GO_LIVE_CHECKLIST_v10.md`,
+  `KRAVREGISTER_og_STATUS_v10.md`, `ADMINISTRATORMANUAL_v10.md`,
+  `Claude_Kritisk_Statusgennemgang_2026-07-03.md`.
+- **Hvad Peter/Codex bør teste live, når det er deployet:**
+  1. Bekræft at eksisterende galleri/søgning/sletning stadig virker normalt for almindelige
+     brugere (ingen regression) — særligt for kunder hvor et device er blevet omtildelt.
+  2. Kør backfill-scriptet fra fase 2 (`--dry-run` først) i produktion, hvis det ikke allerede er
+     sket — jo flere rækker der er backfillet, jo mindre afhænger sikkerheden af
+     device-fallback'en.
+  3. Overvej som opfølgning: skal post-processing/AI-batch-jobbets device-filter også opdateres
+     til samme `customer_id`-først-logik (punkt 5 ovenfor)? Vurderet lav risiko, men ikke rettet.
+- **Næste skridt:** commit + genstart + live-verifikation (Peter/Codex, som med fase 1).
