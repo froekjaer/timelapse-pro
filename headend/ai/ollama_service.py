@@ -234,6 +234,59 @@ TAG_SYNONYMS = {
     "direct_sun": "direct_sunlight",
 }
 
+SCENE_TAG_HINTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    (("vanddråber", "vindue"), ("condensation_on_lens", "dirty_lens")),
+    (("vanddråber", "linse"), ("condensation_on_lens", "dirty_lens")),
+    (("kondens",), ("condensation_on_lens", "foggy_image")),
+    (("snavs", "linse"), ("dirty_lens",)),
+    (("beskidt", "linse"), ("dirty_lens",)),
+    (("sløret",), ("foggy_image", "low_contrast")),
+    (("lav kontrast",), ("low_contrast",)),
+    (("tårnkran",), ("tower_crane",)),
+    (("byggekran",), ("tower_crane",)),
+    (("gravemaskine",), ("excavator",)),
+    (("læssemaskine",), ("loader",)),
+    (("vejhøvl",), ("road_grader",)),
+    (("jordhøje",), ("dirt_piles", "earthworks")),
+    (("jordarbejde",), ("earthworks",)),
+    (("udgravning",), ("excavation",)),
+    (("sandbunke",), ("sand_piles", "sand")),
+    (("sandbunker",), ("sand_piles", "sand")),
+    (("materialer",), ("materials_on_site",)),
+    (("byggematerialer",), ("materials_on_site", "stacked_materials")),
+    (("stillads",), ("scaffolding",)),
+    (("stilladser",), ("scaffolding",)),
+    (("afdækning",), ("protective_sheeting",)),
+    (("beskyttelsesafdækning",), ("protective_sheeting",)),
+    (("telte",), ("tent", "temporary_structures")),
+    (("telt",), ("tent", "temporary_structures")),
+    (("en scene",), ("stage", "event_area")),
+    (("eventområde",), ("event_area", "temporary_structures")),
+    (("arrangement",), ("event_area",)),
+    (("barriere",), ("barrier",)),
+    (("barrieresystem",), ("barrier",)),
+    (("hegn",), ("fence",)),
+    (("kegler",), ("traffic_cones",)),
+    (("trafikkegler",), ("traffic_cones",)),
+    (("pavillon",), ("pavilion",)),
+    (("legeplads",), ("play_structure",)),
+    (("skur",), ("shed",)),
+    (("container",), ("storage_container",)),
+    (("sne",), ("snow_on_ground", "winter")),
+    (("isdækket",), ("ice", "ice_covered")),
+    (("is på jorden",), ("ice", "ice_covered")),
+    (("pytter",), ("puddles", "wet_ground")),
+    (("regnvand",), ("puddles", "wet_ground")),
+    (("mudder",), ("muddy_ground",)),
+    (("mudret",), ("muddy_ground",)),
+    (("støvet",), ("dusty",)),
+    (("støv",), ("dusty",)),
+    (("solnedgang",), ("low_sun", "golden_light")),
+    (("tidlig morgenlys",), ("low_sun", "golden_light")),
+    (("kraftigt", "sol"), ("direct_sunlight", "glare")),
+    (("lens flare",), ("lens_flare", "glare")),
+)
+
 
 # =============================================================================
 # DATAKLASSER — intern repræsentation af analyse-resultat
@@ -591,6 +644,20 @@ class OllamaVisionService:
         text = re.sub(r"\bskyet vær\b", "skyet vejr", text, flags=re.IGNORECASE)
         return text or "Ingen beskrivelse"
 
+    def _scene_hint_tags(self, scene_text: str) -> list[str]:
+        """Udtræk sikre tags fra modelens egen scene-beskrivelse.
+
+        Qwen3-VL beskriver ofte visuelle fund i fritekst, men glemmer dem i
+        tag-arrayet. Denne liste er bevidst konservativ: den tilføjer kun tags
+        for konkrete ord, som modellen allerede selv har skrevet.
+        """
+        text = scene_text.lower()
+        found: list[str] = []
+        for needles, tags in SCENE_TAG_HINTS:
+            if all(re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", text) for needle in needles):
+                found.extend(tags)
+        return list(dict.fromkeys(self._normalize_tag(tag) for tag in found if tag))
+
     def _resize_image(self, data: bytes) -> bytes:
         """Reducer billedstørrelse og pixel-dimensioner til vision-modeller."""
         try:
@@ -725,6 +792,11 @@ class OllamaVisionService:
 
         moderation_notes: list[str] = []
         scene_text = str(parsed.get("scene", "")).lower()
+        scene_hint_tags = self._scene_hint_tags(scene_text)
+        if scene_hint_tags:
+            all_tags = list(dict.fromkeys(all_tags + scene_hint_tags))[:60]
+            moderation_notes.append(f"scene_hint_tags_added: {','.join(scene_hint_tags)}")
+
         outdoor_scene = any(word in scene_text for word in OUTDOOR_SCENE_WORDS)
         if outdoor_scene:
             before = len(all_tags)
@@ -743,7 +815,8 @@ class OllamaVisionService:
             raw_new = raw_new[:5]
 
         approved_tags = [t for t in all_tags if t in approved_tag_set]
-        new_tags      = [t for t in all_tags if t not in approved_tag_set and t in NEUTRAL_FALLBACK_TAGS] + raw_new
+        scene_hint_new = [t for t in scene_hint_tags if t not in approved_tag_set]
+        new_tags      = [t for t in all_tags if t not in approved_tag_set and t in NEUTRAL_FALLBACK_TAGS] + raw_new + scene_hint_new
         # dedup OG disjunkt fra approved → ingen kryds-dubletter i den kombinerede ai_tags
         new_tags      = [t for t in dict.fromkeys(new_tags) if t not in approved_tag_set]
 
