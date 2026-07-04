@@ -11195,6 +11195,9 @@ def _finalize_ai_batch_job(db, job: "AiBatchJob", svc, gemini_job) -> None:
                     for g in result.gdpr_detections
                 ],
                 "model": job.cloud_model,
+                # 2026-07-04 (Claude, proveniens-UI task #28): batch-jobs kører altid
+                # via Gemini/Vertex AI Batch API — aldrig lokal Ollama.
+                "engine": "cloud",
                 "duration_ms": result.duration_ms,
                 "raw_response": result.raw_response,
             }

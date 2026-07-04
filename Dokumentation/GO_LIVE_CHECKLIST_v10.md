@@ -112,6 +112,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | F-03 | Node-agent kørende og opdaterer Mac Mini inventory | 🟠 Mangler |
 | F-04 | Headend-health monitoreret automatisk (fx cron/launchd watchdog) | 🟡 Ønsket |
 | F-05 | Alert ved Headend-nedbrud (email/notification) | 🟡 Ønsket |
+| F-06 | Dashboard/alarm for enheder i debug/lab mode (`debug_mode.enabled`) | 🟡 Ønsket — se `RISK_ASSESSMENT_v10.md` R17 (fundet 2026-07-04, efterladt aktiveret på TL-C87FF9587CA0) |
 
 ---
 
@@ -126,6 +127,8 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | G-05 | Download/adgangslog pr. billede implementeret | 🟠 Anbefalet |
 | G-06 | Procedure for databrud (Art. 33/34, 72t) dokumenteret | 🟠 Anbefalet |
 | G-07 | Oplysningspligt til registrerede (Art. 13/14) | 🟠 Anbefalet |
+
+> **Note G (2026-07-04, Claude):** GPS/lokationsmetadata er nu implementeret og verificeret i produktion (kilde/tillid vises i UI). DPIA-template (G-01) og retention policy (G-02) skal eksplicit dække dette felt, ikke kun selve billedet — se `RISK_ASSESSMENT_v10.md` R12.
 
 ---
 

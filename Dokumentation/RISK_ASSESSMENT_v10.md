@@ -159,7 +159,7 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   til historiske rækker) — se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5 og
   `HANDOVER_LOG.md` 2026-07-03 12:20. Backfill af historiske produktionsdata afventer Peter/Codex'
   gennemgang af dry-run-output.
-- **Residualrisiko:** 🟢 3 (i kode; nedgraderes fuldt ud efter live-backfill af produktionsdata)
+- **Residualrisiko:** 🟢 3 — backfill af produktionsdata kørt komplet 2026-07-03 (alle 27.662 captures har `camera_id`/`customer_id`/`site_id` udfyldt hvor muligt, se R16)
 
 ### R04 — Ingen remote adgang ved netværksfejl
 - **Status:** ✅ Kontrolleret
@@ -211,6 +211,14 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Sandsynlighed:** 3, **Konsekvens:** 4, **Score:** 🟠 12
 - **Mangler:** DPIA pr. kunde/site, retention policy, adgangslog pr. billede, sløring/redaction workflow, databehandleraftale, subprocessor-liste (Gemini/Google Cloud)
 - **Anbefaling:** DPIA-template, retention-policy i DB pr. camera, download-audit log
+- **TILFØJELSE 2026-07-04 (Claude):** GPS/lokationsmetadata (breddegrad/længdegrad/højde pr. optagelse) er nu reelt implementeret og verificeret i produktion (kildeprioritet enhed/kamera > site, signeret GPS-fix fra kameraet kan ikke overskrives, kilde vises i UI). Dette er personoplysning i GDPR-forstand (præcis geografisk placering af overvågningsudstyr, potentielt private adresser) og falder ind under nærværende risiko — DPIA/retention-arbejdet (se §11 P0) skal eksplicit dække GPS-feltet, ikke kun selve billedet. Ingen kodeændring nødvendig, men scope for DPIA-template bør nævne det eksplicit.
+
+### R17 — Debug/lab mode kan efterlades aktiveret uden overvågning (NY, fundet 2026-07-04)
+- **Status:** 🟡 Delvist kontrolleret
+- **Fund (Claude, ifm. GPS-fejlsøgning):** `debug_mode.enabled` er en flad, per-enhed config-nøgle (ingen DB-kolonne, ingen udløb/TTL), sat udelukkende via `PUT /api/admin/devices/{id}/debug` (kræver admin-rolle — ingen adgangskontrol-svaghed). Mens aktiv holder edge-agenten kamera-relæet konstant tændt og springer den normale optagelsesplan over (interaktiv "lab"-tilstand til kamera-tuning). Fundet aktiveret på et produktionskamera (TL-C87FF9587CA0), tilsyneladende en efterladt flag fra en tidligere test-session — opdaget udelukkende ved manuel log-gennemgang, ikke via noget dashboard/alarm.
+- **Konsekvens:** Ingen adgangskompromittering, men operationel/tilgængelighedsrisiko: uventet konstant relæ-belastning, optagelsesplan brydes uden varsel, og (jf. GPS-fixet 2026-07-04) reduceret GPS-pålidelighed pga. relæets effekt på GPS-modtagerens strømforsyning. Ingen automatisk måde at opdage "enhed X har kørt i lab mode i N dage" på.
+- **Sandsynlighed:** 3, **Konsekvens:** 2, **Score:** 🟡 6
+- **Anbefaling:** CMDB/dashboard-indikator for `debug_mode.enabled=true` pr. enhed; overvej auto-timeout (fx maks. 4-8 timer, kræver eksplicit forlængelse); log aktivering/deaktivering (hvem/hvornår) til audit/SIEM.
 
 ### R13 — Node-agent nede på Headend (NY)
 - **Status:** 🔴 Åben
@@ -230,11 +238,12 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.1.
 
 ### R16 — Kryds-kunde-lækage af billeddata ved Edge-gentildeling (NY, fundet + rettet 2026-07-03)
-- **Status:** ✅ Rettet i kode, afventer commit/live-verifikation
+- **Status:** ✅ Rettet, committet (`bb18421`), deployet og **backfillet komplet i produktion**
 - **Fund (Claude, under implementering af fase 3):** Tenant-isolation på `Capture`-rækker var udelukkende baseret på et LIVE opslag: "hvilke devices tilhører denne kunde LIGE NU" (`Device.customer_id`). Hvis en fysisk Edge-enhed går i stykker, genbruges og fysisk tildeles en ANDEN kunde (almindeligt scenarie — det er netop derfor kamera-lokation/Edge-binding-hierarkiet findes, jf. R03), fik den NYE kunde automatisk adgang — via galleri-liste, EXIF, sletning og filservering — til ALLE billeder taget mens enheden tilhørte den FORRIGE kunde. Dette er en konkret, udnyttelig instans af det generelle §2.4-fund (tenant-isolation kun applikationsdisciplin), ikke blot en teoretisk risiko.
 - **Implementerede kontroller (kode):** Adgangskontrol på Capture-niveau bruger nu primært `Capture.customer_id` (frosset på optagelsestidspunktet, v12-feltet fra fase 2) i stedet for det live device-opslag — en historisk rækkes ejerskab ændrer sig ikke længere, når det fysiske device sidenhen omfordeles. Fallback til det gamle device-opslag bevares kun for rækker, der endnu ikke er backfillet. Centraliseret i `_capture_is_allowed()`/`_capture_tenant_clause()` (main.py), dækker liste, statistik, søgning, sletning, EXIF og filservering (52 kaldsteder, 4 kernefunktioner ændret).
-- **Sandsynlighed før fix:** 3 (kræver at en enhed reelt genbruges på tværs af kunder — forventeligt over enhedens levetid), **Konsekvens:** 4 (eksponering af en anden kundes overvågningsbilleder — GDPR-relevant), **Score (før fix):** 🟠 12 → **Residualrisiko efter fix:** 🟢 4 (i kode; falder yderligere når historisk backfill af `customer_id` er kørt komplet i produktion)
-- Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5/§6 og `HANDOVER_LOG.md` 2026-07-03 13:15.
+- **Backfill 2026-07-03 (Peter):** Alle 27.662 produktions-captures har nu `customer_id`. Undervejs fandtes ét device (`TL-IMPORT-Kirkbi_A_S-Travbyen-Kamera_1`, bulk-importeret) uden kunde-kobling i CMDB — rettet via `assign`-endpointet, hvorefter backfillen dækkede de sidste 5.029 rækker. Ingen rækker afhænger længere af device-fallback'en.
+- **Sandsynlighed før fix:** 3 (kræver at en enhed reelt genbruges på tværs af kunder — forventeligt over enhedens levetid), **Konsekvens:** 4 (eksponering af en anden kundes overvågningsbilleder — GDPR-relevant), **Score (før fix):** 🟠 12 → **Residualrisiko efter fix:** 🟢 4
+- Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5/§6 og `HANDOVER_LOG.md` 2026-07-03 13:15 + 14:00.
 
 ---
 
@@ -397,9 +406,10 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R13 Node-agent nede | 🟡 6 | 🆕 Ny |
 | R14 Nikon Z30 config drift | 🟠 12 | 🆕 Ny |
 | R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 | ✅ Ny/løst — fundet og rettet, live-verificeret 2026-07-03 |
-| R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 (kode) | 🆕 Ny — fundet og rettet i kode 2026-07-03 |
+| R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 | ✅ Ny/løst — fundet, rettet og backfillet komplet i produktion 2026-07-03 |
+| R17 Debug/lab mode uden overvågning | 🟡 6 | 🆕 Ny — fundet 2026-07-04, ingen adgangskompromittering |
 
-**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R16 er rettet i kode men kræver commit + genstart + live-verifikation før den kan regnes som lukket.
+**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R16 er fuldt lukket (kode + deploy + backfill).
 
 ---
 
@@ -426,6 +436,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 4. SAST backlog triage (73 signaler)
 5. Secrets → macOS Keychain
 6. AI resource governor + Ollama beslutning
+7. CMDB-indikator/auto-timeout for debug/lab mode pr. enhed (R17)
 
 ---
 
@@ -439,6 +450,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | QA | jun 2026 | CMDB lukket, OS bundle fix, HMAC enforced |
 | SABSA reassessment | jun 2026 | Storage path fix, node-agent nede, go/no-go |
 | **7.0** | **jun 2026** | **Konsolideret — alle fund, alle statusser, ny GDPR/NIS2/CRA-sektion, port-gaps** |
+| 10 (tilføjelse) | 2026-07-04 | Claude: R17 (debug/lab mode uden overvågning, fundet ifm. GPS-fejlsøgning) tilføjet; R12 udvidet med GPS/lokationsmetadata-note |
 
 ---
 

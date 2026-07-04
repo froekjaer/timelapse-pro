@@ -442,6 +442,9 @@ def _worker(get_db_fn, find_image_fn):
 
             payload = _analysis_payload(result)
             payload["model"] = model_used
+            # 2026-07-04 (Claude, proveniens-UI task #28): eksplicit lokal/cloud-flag,
+            # så UI'en kan vise en tydelig kilde-label uden at gætte ud fra modelnavnet.
+            payload["engine"] = "cloud" if used_cloud else "local"
             tags = result.approved_tags + result.new_tags
 
             db_gen = get_db_fn()

@@ -379,7 +379,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                 {sidecar.added_metadata?.fields_added?.length > 0 && (
                   <MR l="Tilføjede felter" v={<span className="text-amber-300/80">{sidecar.added_metadata.fields_added.join(', ')}</span>} />
                 )}
-                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">📊 Kvalitet</p>
+                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">📊 Kvalitet <span className="normal-case font-normal text-white/20">(🔧 Edge/OpenCV)</span></p>
                 <MR l="Blur score" v={c.blur_score != null ? `${Math.round(c.blur_score)} ${c.blur_score > 100 ? '✅' : '⚠️ lav'}` : '—'} />
                 <MR l="Lysstyrke" v={c.brightness != null ? `${Math.round(c.brightness)}/255` : '—'} />
                 <MR l="Kvalitetsflag" v={<span className={c.quality_passed ? 'text-emerald-400' : 'text-red-400'}>{c.quality_flag ?? '—'}</span>} />
@@ -415,6 +415,18 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                     reposition_camera: 'Juster kamera',
                     wait_for_conditions: 'Afvent vejr', replace_camera: 'Udskift kamera',
                   }
+                  // 2026-07-04 (Claude, proveniens-UI task #28): tydelig kilde-label
+                  // for hvilken motor der producerede AI-resultatet, så man ikke skal
+                  // gætte ud fra modelnavnet. ai.engine er kun sat på analyser lavet
+                  // efter denne dato — ældre rækker falder tilbage til '—'.
+                  const engineLabel: string | null =
+                    ai.source === 'edge'
+                      ? `🔧 Edge${ai.edge_ai_engine ? ` (${ai.edge_ai_engine})` : ''}`
+                      : ai.engine === 'cloud'
+                        ? '☁️ Cloud'
+                        : ai.engine === 'local'
+                          ? '🖥️ Lokal'
+                          : null
                   return (
                     <div className="mt-2">
                       <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">🔬 QA</p>
@@ -425,7 +437,8 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                           <MR l="Scene" v={<span className="text-white/60 text-[10px] leading-tight">{ai.scene_dk}</span>} />
                           <MR l="Kvalitet" v={<span className={ai.quality_ok === false ? 'text-amber-400' : 'text-emerald-400'}>{ai.quality_flag ?? '—'}</span>} />
                           <MR l="Ændring" v={ai.change_detected ? (ai.change_summary ?? 'Ja') : 'Nej'} />
-                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model ?? ai.engine}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model ?? '—'}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          <MR l="Motor" v={<span className="text-white/40 text-[10px]">{engineLabel ?? '— (før 2026-07-04)'}</span>} />
                           {((ai.tags?.length ?? 0) > 0 || (ai.new_tags?.length ?? 0) > 0 || (c.ai_tags?.length ?? 0) > 0) && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {[...(ai.tags ?? []), ...(ai.new_tags ?? []), ...(c.ai_tags ?? [])].filter((tag, idx, arr) => arr.indexOf(tag) === idx).slice(0, 24).map((tag: string) => (
@@ -468,7 +481,8 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                           {ai.control_plan?.avoid_sun_window && (
                             <MR l="Solvindue" v={<span className="text-amber-300">Undgå direkte refleks</span>} />
                           )}
-                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model ?? ai.engine}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model ?? '—'}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          <MR l="Motor" v={<span className="text-white/40 text-[10px]">{engineLabel ?? '— (før 2026-07-04)'}</span>} />
                           {c.ai_tags && c.ai_tags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {c.ai_tags.map((tag: string) => (

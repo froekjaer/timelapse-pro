@@ -1762,3 +1762,88 @@ person vide".
   verificeret at den applicerer rent mod den præcise `79eba56e`-commit der allerede kører
   på edgen, og at resultatet er byte-identisk med den lokale testede fil.
 - **IKKE committet/deployet endnu** — afventer Peters kørsel på edgen.
+
+### Handover 2026-07-04 (fortsat) — v4 bekræftet virkende af Peter
+- **Peter bekræftede:** "GPS virker nu. Tak." — v4 (præcis GPS-læsning ~13 sek. før
+  relæet tænder, jf. ovenstående) er deployet og løser problemet i produktion. GPS-sagen
+  betragtes som lukket (fix 1-4 alle bekræftet).
+- **Sideløbende afklaret:** Peter spurgte hvorfor lab mode blev aktiveret på
+  TL-C87FF9587CA0. Konklusion: `debug_mode.enabled` er en ren per-enhed config-nøgle
+  (ingen arv fra Site/Customer/ConfigDefaults), sat udelukkende via
+  `PUT /api/admin/devices/{id}/debug` — typisk fra Kamera-laboratorium-siden i UI'en.
+  Ingen automatik fandtes der kunne forklare aktiveringen; mest sandsynligt en efterladt
+  flag fra en tidligere test-session, der ikke blev slået fra igen. Ingen kodeændring
+  foretaget, kun undersøgt og forklaret.
+- **Åbne punkter:** Task #28 (proveniens-UI for alle metadata-kilder) afventer stadig.
+  Merge-plan for `claude/capture-camera-location-2026-07-03` ind i `main` afventer fælles
+  scoping med Codex.
+
+### Handover 2026-07-04 (fortsat) — Risiko + go-live opdateret med GPS/lab-mode-fund
+- **Peter bad om:** arbejd videre "som det passer bedst", med fokus på at risikodokument og
+  go-live-checkliste sandsynligvis mangler at afspejle GPS- og lab-mode-arbejdet.
+- **Gennemgået:** `RISK_ASSESSMENT_v10.md` og `GO_LIVE_CHECKLIST_v10.md` havde ingen
+  eksplicit linje for GPS/lokationsdata eller debug/lab mode — begge dokumenter var
+  uændrede siden 2026-06-23/07-02.
+- **Rettet i `RISK_ASSESSMENT_v10.md`:**
+  1. R12 (GDPR) udvidet med note om at GPS/lokationsmetadata nu er implementeret og
+     verificeret i produktion — DPIA/retention-arbejdet skal eksplicit dække feltet.
+  2. Ny **R17 — Debug/lab mode kan efterlades aktiveret uden overvågning**: fundet
+     aktiveret på TL-C87FF9587CA0 under GPS-fejlsøgningen, formentlig en efterladt
+     test-flag. Ingen adgangskompromittering (kræver admin-rolle at sætte), men
+     operationel risiko (relæ konstant tændt, plan brydes, reduceret GPS-pålidelighed).
+     Score 🟡 6. Anbefaling: CMDB-indikator, auto-timeout, audit-log ved til/frakobling.
+  3. Risikooversigt (§10) og P2-behandlingsplan (§11) opdateret; dokumenthistorik-linje
+     tilføjet.
+- **Rettet i `GO_LIVE_CHECKLIST_v10.md`:**
+  1. Note under sektion G: DPIA (G-01)/retention (G-02) skal eksplicit dække
+     GPS-feltet, ikke kun billedet.
+  2. Ny linje F-06: dashboard/alarm for enheder i debug/lab mode — henviser til R17.
+- **Ingen kodeændringer** — kun dokumentation. Ingen go/no-go-status ændret (R17 er ikke
+  blokerende, kun tilføjet til P2/ønsket-lag).
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`,
+  `Dokumentation/HANDOVER_LOG.md`.
+- **Næste skridt:** Task #28 (proveniens-UI, alle metadata-kilder) tages op nu.
+
+### Handover 2026-07-04 — Codex starter QA/fokusklassificering Nordre Villavej
+- **Starter:** Undersøger hvorfor billeder fra `Nordre Villavej 17c` tilsyneladende
+  alle/for mange bliver markeret som `Dybdeskarphed/fokus`.
+- **Scope:** Edge QA/optimizer og headend backfill/visning af QA-sidecar. Undgår at røre
+  Claudes aktive dokument-/proveniens-UI-spor ud over denne lille handover-note.
+- **Første hypoteser:** Edge optimizerens `depth_of_field_issue`-regel er muligvis for
+  aggressiv for faste, skråt fotograferede by-/tag-scener, hvor kanter naturligt er
+  blødere end center; alternativt er historiske QA-sidecars/backfill skrevet med en
+  gammel regel og skal reprocesses efter fix.
+
+### Handover 2026-07-04 (fortsat) — Task #28: kortlægning + første proveniens-UI-tilføjelse
+- **Kortlægning (subagent, read-only):** alle metadata-kilder til en Capture kortlagt —
+  sidecar JSON (`_write_sidecar()`, edge), edge OpenCV-kvalitet (`edge/capture/quality.py`,
+  i main), edge NPU/AI-QA-pakke (`edge/ai/*`, KUN på feature-brancher, IKKE i main/prod),
+  headend Ollama/Gemini-analyse (`headend/ai/integration.py` + `ai_router.py`), Gemini
+  batch-jobs (`AiBatchJob`, main.py), og hele `Capture`-skemaets kolonner. Konklusion: UI'en
+  (`DevicePage.tsx`) viste allerede model-navn og de fleste felter, men **ingen eksplicit
+  lokal/cloud-label** — kun modelnavnet (fx "qwen3-vl:8b" vs. "gemini-2.5-flash"), som
+  kræver at brugeren kender navnekonventionen for at vide om analysen kørte lokalt eller i
+  skyen.
+- **Rettelse (additiv, lille scope, samme mønster som GPS-kilde-labelen):**
+  1. `headend/ai/integration.py`: `payload["engine"] = "cloud" if used_cloud else "local"`
+     tilføjet til live-analyse-flowet (Ollama/eskalering til Gemini).
+  2. `headend/main.py` (Gemini batch-resultat-parsing): `"engine": "cloud"` tilføjet —
+     batch-jobs kører altid via Gemini/Vertex AI Batch API, aldrig lokal Ollama.
+  3. `timelapse-ui/src/pages/DevicePage.tsx`: ny "Motor"-linje i QA-panelet, viser
+     "🖥️ Lokal" / "☁️ Cloud" / "🔧 Edge (…)" ud fra `ai.engine`/`ai.source`. Ældre
+     analyser (før denne dato) viser "— (før 2026-07-04)" i stedet for at gætte.
+     "Model"-linjen viser nu kun selve modelnavnet (fjernet `?? ai.engine`-fallback, som
+     ville have vist "local"/"cloud" som om det var et modelnavn). Kvalitet-sektionens
+     overskrift mærket "(🔧 Edge/OpenCV)" for at gøre kilden eksplicit også der.
+  4. Edge-siden (`edge_ai`/NPU) rørt IKKE — den er stadig kun på feature-brancher, ikke i
+     produktion, så "🔧 Edge"-grenen af koden er forberedt men ikke aktivt brugt endnu.
+- **Verifikation:** `py_compile` OK på `headend/main.py` + `headend/ai/integration.py`;
+  `tsc --noEmit` OK på hele `timelapse-ui` (ingen nye fejl).
+- **Ikke rørt (bevidst, ikke mit):** `Dokumentation/Claude_Kritisk_Statusgennemgang_2026-07-03.md`
+  havde allerede en uncommittet, verificeret statusopdatering liggende fra tidligere i
+  sessionen (fase 3/4 backfill-bekræftelse) — committes separat, uændret indhold.
+  `claude_proxy.py` (untracked, ukendt oprindelse) er IKKE rørt eller committet.
+- **Filer rørt (denne commit):** `headend/ai/integration.py`, `headend/main.py`,
+  `timelapse-ui/src/pages/DevicePage.tsx`.
+- **Afventer:** Peters commit+deploy (kommandoer givet separat), derefter en ny produktions-
+  analyse for at bekræfte Motor-labelen viser korrekt i UI'en.
