@@ -129,7 +129,6 @@ function LocationPicker({
   const [customers, setCustomers] = useState<LocOption[]>([])
   const [sites, setSites]         = useState<LocOption[]>([])
   const [cameras, setCameras]     = useState<CameraOption[]>([])
-  const [loading, setLoading]     = useState(false)
 
   // Load customers on mount
   useEffect(() => {

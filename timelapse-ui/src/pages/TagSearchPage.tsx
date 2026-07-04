@@ -323,7 +323,7 @@ export function TagSearchPage() {
   const displayedResults = displayLimit > 0 ? allResults.slice(0, displayLimit) : allResults
 
   function toggleSelect(id: number) {
-    setSelectedIds(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+    setSelectedIds(p => { const n = new Set(p); if (n.has(id)) { n.delete(id) } else { n.add(id) }; return n })
   }
 
   async function saveTags(addT: string[], removeT: string[]) {

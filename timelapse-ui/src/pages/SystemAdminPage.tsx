@@ -8,9 +8,9 @@
 // ═══════════════════════════════════════════════════════════════
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Terminal, Cpu, Radio, Wifi, Camera, Save, CheckCircle,
-         Power, PowerOff, RefreshCw, AlertTriangle, ChevronDown, ChevronRight, Database,
-         Zap, Shield, Clock, HardDrive, Activity } from 'lucide-react'
+import { ArrowLeft, Terminal, Radio, Wifi, Camera, Save, CheckCircle,
+         Power, PowerOff, RefreshCw, ChevronDown, ChevronRight, Database,
+         Zap, Shield, HardDrive, Activity } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
@@ -225,7 +225,7 @@ export function SystemAdminPage() {
   const [savedSettings, setSavedSettings] = useState(false)
   const [saving, setSaving]     = useState(false)
   const [saved, setSaved]       = useState(false)
-  const [cfg, setCfg]           = useState<any>(null)
+  const [, setCfg]              = useState<any>(null)
   const [labActive, setLabActive] = useState(false)
   const [tunnelEnabled, setTunnelEnabled] = useState(false)
   const [tunnelPrimary, setTunnelPrimary] = useState('')
@@ -276,7 +276,7 @@ export function SystemAdminPage() {
       if (storage?.roots) setStorageRoots(storage.roots)
       setSavedSettings(true)
       setTimeout(() => setSavedSettings(false), 2000)
-    } catch { } finally { setSavingSettings(false) }
+    } catch { /* bevidst ignoreret — finally rydder UI-tilstanden uanset */ } finally { setSavingSettings(false) }
   }
 
   useEffect(() => {
@@ -453,7 +453,7 @@ export function SystemAdminPage() {
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch { } finally {
+    } catch { /* bevidst ignoreret — finally rydder UI-tilstanden uanset */ } finally {
       setSaving(false)
     }
   }

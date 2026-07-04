@@ -1,6 +1,6 @@
 // v5.1
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { ChevronLeft, Trash2, CheckSquare, Square, X, Brain, Loader2, Search } from 'lucide-react'
+import { Trash2, X, Brain, Loader2, Search } from 'lucide-react'
 import type { Capture } from '../types'
 import { getApiUrl, deleteCapturesBulk } from '../api/client'
 import { CaptureThumbnailCard } from './CaptureThumbnailCard'
@@ -30,31 +30,14 @@ interface Props {
   onDeleted?: () => void
 }
 
-const getTz = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
 const MONTHS = ['Jan','Feb','Mar','Apr','Maj','Jun','Jul','Aug','Sep','Okt','Nov','Dec']
-
-function toLocal(iso: string) {
-  // iso er UTC uden timezone suffix — tilføj Z og konverter til lokal tid
-  const utc = new Date(iso.endsWith('Z') ? iso : iso + 'Z')
-  // Returner UTC date — lad getHours/getMinutes bruge lokal browsertime
-  // I stedet formatér direkte med Intl
-  return utc
-}
-
-function fmtLocal(iso: string) {
-  // captured_at er lokal tid gemt uden timezone — behandl som lokal direkte
-  const d = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso.replace('T', 'T'))
-  return d.toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })
-}
 
 export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: Props) {
   const [dayCounts, setDayCounts]     = useState<DayCount[]>([])
   const [dayCaptures, setDayCaptures] = useState<Capture[]>([])
   const [selected, setSelected]       = useState<{ year?: number; month?: number; day?: number }>({})
   const [loading, setLoading]         = useState(false)
-  const [selFilename, setSelFilename] = useState<string | null>(null)
-  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
-  const [lightboxCaptures, setLightboxCaptures] = useState<Capture[]>([])
+  const [, setSelFilename] = useState<string | null>(null)
   const [deleteMode, setDeleteMode]   = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleting, setDeleting]       = useState(false)

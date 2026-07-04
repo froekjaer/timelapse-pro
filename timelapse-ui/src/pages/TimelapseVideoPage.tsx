@@ -15,9 +15,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  ArrowLeft, Film, Play, Download, RefreshCw, Check, X,
-  Sliders, Clock, Zap, Eye, EyeOff, ChevronDown, ChevronUp,
-  AlertTriangle, CheckCircle, Video, Settings2, Brain, Loader2, Sparkles
+  ArrowLeft, Film, Download, RefreshCw, X,
+  Clock, Eye, EyeOff, ChevronDown, ChevronUp,
+  AlertTriangle, Video, Settings2, Brain, Loader2, Sparkles
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
@@ -200,7 +200,7 @@ export default function TimelapseVideoPage() {
   function toggleFrame(id: number) {
     setExcluded(prev => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) { next.delete(id) } else { next.add(id) }
       return next
     })
   }

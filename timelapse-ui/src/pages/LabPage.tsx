@@ -322,7 +322,7 @@ export default function LabPage() {
   const deviceId = id!
 
   const [deviceName, setDeviceName]   = useState('')
-  const [debugMode, setDebugModeState] = useState<DebugMode | null>(null)
+  const [, setDebugModeState] = useState<DebugMode | null>(null)
   const [labActive, setLabActive]     = useState(false)
   const [labStateChecked, setLabStateChecked] = useState(false)
   const [previews, setPreviews]       = useState<LabPreview[]>([])
@@ -426,7 +426,7 @@ export default function LabPage() {
       if (cfg?.camera_profile) {
         setCameraProfile(cfg.camera_profile)
       }
-    } catch {}
+    } catch { /* bevidst ignoreret — config-poll fejler stille, prøver igen næste interval */ }
   }
 
   // Poll for new previews when lab is active

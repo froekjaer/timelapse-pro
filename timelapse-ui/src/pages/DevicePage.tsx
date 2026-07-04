@@ -15,7 +15,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, CartesianGrid, ReferenceLine } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, ReferenceLine } from 'recharts'
 import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setParam, pathSegment, getApiUrl } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
@@ -334,12 +334,6 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
   const time = c.captured_at
     ? new Date(c.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     : '–'
-
-  // Parse kunde/site/kamera fra filnavn: Kunde_Site_Kamera_YYYYMMDD_HHMMSS.jpg
-  const nameParts = c.filename?.replace('.jpg','').split('_') ?? []
-  const kunde    = nameParts[0] ?? '–'
-  const site     = nameParts[1] ?? '–'
-  const kamera   = nameParts[2] ?? '–'
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col" onClick={zoom === 1 ? onClose : undefined}>
@@ -730,7 +724,7 @@ function CameraParamRow({ param, deviceId }: {
   const [value, setValue]             = useState(param.current)
   const [displayValue, setDisplayValue] = useState(param.current)
   const [saving, setSaving]           = useState(false)
-  const [saved, setSaved]             = useState(false)
+  const [, setSaved]                  = useState(false)
 
   async function save() {
     setSaving(true)
@@ -839,7 +833,6 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
 
   const schedule = cfg.schedule ?? {}
   const camera   = cfg.camera   ?? {}
-  const sftp     = cfg.sftp     ?? {}
 
   return (
     <div className="space-y-5 max-w-2xl">

@@ -7,8 +7,8 @@
 import TagCleanupTab from './TagCleanupTab'
 import React, { useEffect, useState, useCallback } from 'react'
 import {
-  Brain, Settings2, Tags, AlertTriangle, CalendarCheck,
-  BarChart3, CheckCircle, XCircle, ChevronDown, ChevronUp,
+  Brain, Tags, AlertTriangle, CalendarCheck,
+  BarChart3, CheckCircle, XCircle,
   Cloud, Cpu, Zap, RefreshCw, Send, Eye, ThumbsUp, ThumbsDown,
   TrendingUp, Layers, SlidersHorizontal, Info, ShieldCheck, Database, Server
 } from 'lucide-react'
@@ -94,23 +94,6 @@ interface TagStat {
   total_count: number
   location_count: number
   approved: boolean
-}
-
-interface SimilarTagItem {
-  id: number
-  tag: string
-  category: string | null
-  count: number
-  approved: boolean
-  rejected: boolean
-}
-
-interface SimilarTagGroup {
-  canonical_tag: string
-  score: number
-  reason: string
-  tags: SimilarTagItem[]
-  total_count: number
 }
 
 function captureFromPath(path: string, overrides: Partial<Capture> = {}): Capture {
@@ -839,7 +822,7 @@ function EscalationTab() {
   useEffect(() => { load() }, [])
 
   const toggle = (id: number) =>
-    setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+    setSelected(s => { const n = new Set(s); if (n.has(id)) { n.delete(id) } else { n.add(id) }; return n })
 
   const approveSelected = async () => {
     if (selected.size === 0) return

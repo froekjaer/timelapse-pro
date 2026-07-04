@@ -44,7 +44,7 @@ export default function TagCleanupTab() {
         selected:  true,
       })))
       setOrphans([])
-    } catch (e) {
+    } catch {
       showToast('Fejl ved hentning af AI-forslag')
     } finally {
       setLoading(false)

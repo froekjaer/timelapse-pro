@@ -299,7 +299,7 @@ export function CameraPage() {
       })
       const d = await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}`)
       setDevice(d)
-    } catch { } finally { setAssigning(false) }
+    } catch { /* bevidst ignoreret — setAssigning(false) i finally rydder UI-tilstanden */ } finally { setAssigning(false) }
   }
 
   async function loadBtTotp() {

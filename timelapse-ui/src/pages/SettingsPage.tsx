@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Globe, Wifi, Users, Save, Check, Terminal, Bell } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { getApiUrl } from '../api/client'

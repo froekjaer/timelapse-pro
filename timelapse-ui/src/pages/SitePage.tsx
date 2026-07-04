@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { ArrowLeft, MapPin, Building2, Camera, Save, Trash2, Plus, ChevronRight, CheckCircle } from 'lucide-react'
+import { ArrowLeft, MapPin, Building2, Camera, Save, Trash2, ChevronRight, CheckCircle } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 
 const AI_MODES = ['off', 'monitor', 'assist', 'autonomous', 'npu_first', 'lab']

@@ -10,9 +10,9 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
-  Server, Shield, ChevronRight, RefreshCw, AlertTriangle,
+  Server, ChevronRight, RefreshCw, AlertTriangle,
   HardDrive, Cpu, Wifi, Package, Key, Eye, Trash2,
-  Plus, CheckCircle, Clock, ArrowLeft, Edit2, Check, X,
+  Plus, ArrowLeft, Edit2, Check, X,
   Brain, Loader2
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
@@ -508,7 +508,7 @@ export function CMDBDetailPage() {
         setBgCreating(false)
         return
       }
-    } catch (e) {
+    } catch {
       setBgError('Netværksfejl — kunne ikke oprette konto')
       setBgCreating(false)
       return

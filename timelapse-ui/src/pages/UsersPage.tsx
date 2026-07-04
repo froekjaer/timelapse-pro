@@ -294,7 +294,7 @@ export default function UsersPage() {
     } catch (e: any) { setMfaErr(e.message) }
   }
 
-  async function confirmMfaSetup(id: number) {
+  async function confirmMfaSetup() {
     setMfaSaving(true); setMfaErr(null)
     try {
       await api('/api/auth/confirm-mfa', { method: 'POST', body: JSON.stringify({ code: mfaCode }) })
@@ -630,7 +630,7 @@ export default function UsersPage() {
                         className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-mono w-28 text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-violet-300" />
                       )}
                       {u.username === me?.username && !u.mfa_enabled ? (
-                        <button onClick={() => confirmMfaSetup(u.id)} disabled={mfaSaving || mfaCode.length < 6}
+                        <button onClick={() => confirmMfaSetup()} disabled={mfaSaving || mfaCode.length < 6}
                           className="px-3 py-1.5 bg-violet-500 text-white text-xs rounded-lg disabled:opacity-50">
                           {mfaSaving ? 'Aktiverer…' : 'Bekræft og aktiver'}
                         </button>
