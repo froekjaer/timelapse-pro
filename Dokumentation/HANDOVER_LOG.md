@@ -2654,3 +2654,60 @@ person vide".
 - **Går videre til:** næste periodiske runde ser på enten SIEMPage.tsx-ikoner for
   `debug_mode_change`/`debug_mode_auto_timeout` (kosmetisk), eller #52 (intern CA/mTLS-design)
   hvis intet nyt er dukket op fra Codex i mellemtiden.
+
+### Handover 2026-07-05 01:06 — fra Claude (periodisk tjek): SIEMPage.tsx-ikoner for debug_mode-events
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste `HANDOVER_LOG.md`-halen — ingen nye
+  Codex-entries siden min 00:47-entry, intet åbent spørgsmål adresseret til mig. `git status
+  --short` viste fortsat kun samme untracked `claude_proxy.py` (ladt urørt, fast konvention).
+  Gennemgik §11/§10 i `RISK_ASSESSMENT_v10.md` og §J i `GO_LIVE_CHECKLIST_v10.md`: alle
+  resterende P0/P1-punkter (nginx→Cloudflare Tunnel, R09 restore-test, R12 DPIA/retention, R13
+  node-agent, HMAC-migrering, MFA/WebAuthn, intern CA/mTLS) kræver enten Mac Mini/Orange
+  Pi-adgang eller en organisatorisk/juridisk beslutning fra Peter — ingen af dem var afgrænselige
+  til denne ene kørsel. Tog derfor det selv-noterede "går videre til"-punkt fra min forrige
+  entry: den kosmetiske SIEMPage.tsx-mangel for R17s to nye event-typer.
+- **Fund ved scoping:** Bekræftede med `grep` at `EVENT_META` i
+  `timelapse-ui/src/pages/SIEMPage.tsx` ikke havde entries for `debug_mode_change` eller
+  `debug_mode_auto_timeout` — de ville derfor vises i events-listen/oversigten med det generiske
+  `Activity`-fallback-ikon og selve event_type-strengen som label i stedet for en dansk label.
+  Rent kosmetisk (ingen funktionel fejl), men gjorde SIEM-siden mindre læsbar for disse to nye
+  R17-eventtyper.
+- **Rettet (kode, `timelapse-ui/src/pages/SIEMPage.tsx`):** Importerede `Bug` og `Timer` fra
+  `lucide-react` (begge findes i den installerede lucide-react v1.7.0) og tilføjede to
+  `EVENT_META`-entries: `debug_mode_change` → `Bug`-ikon, amber (`text-amber-600`), label
+  "Debug/lab mode ændret"; `debug_mode_auto_timeout` → `Timer`-ikon, lilla (`text-purple-500`),
+  label "Debug/lab mode auto-timeout". Ingen ændring af logik, API eller datamodel — ren
+  visuel/labelmæssig tilføjelse, samme mønster som de øvrige `EVENT_META`-entries.
+  `RISK_ASSESSMENT_v10.md` R17-afsnittet fik en kort tilføjelse der noterer denne kosmetiske
+  opfølgning uden at ændre R17s status/score.
+- **Verifikation her:** `npx tsc -b` (typecheck, hele UI) grøn uden fejl efter ændringen —
+  bekræfter at de nye imports/typer er korrekte og intet andet blev brudt. `git status --short`
+  viser kun den forventede ene ændrede fil (`SIEMPage.tsx`) plus dokumentationsopdateringen; ingen
+  andre filer rørt. Fuld `npm run build` ikke forsøgt igen i denne runde (samme kendte
+  rolldown-sandbox-begrænsning som tidligere entries — ikke relateret til denne ændring, og
+  tsc-typecheck dækker at ændringen er syntaktisk/type-korrekt).
+- **IKKE gjort — bevidst:** Ingen ændring af selve R17-statussen/scoren (fortsat 🟢 deployet,
+  manuel smoketest udestår, se tidligere entries). Ingen ændring af backend, database eller
+  event-generering — kun visnings-metadata i frontend.
+- **Bemærket, ikke rettet:** `.git/index.lock` findes fortsat i repoet fra sandbox-siden
+  (samme harmløse, ikke-fjernbare lås som tidligere entries har beskrevet — `git status`/`git
+  diff` virker fint alligevel). Codex/Peter bør som altid tjekke `ps aux | grep -i git` på den
+  rigtige maskine før commit, ikke stole blindt på denne observation.
+- **Codex/Peter: kør venligst** (ingen af disse er kørt af mig):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt) rm -f .git/index.lock
+
+  git add timelapse-ui/src/pages/SIEMPage.tsx Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "feat: SIEM UI-ikoner for debug_mode_change/debug_mode_auto_timeout (R17 kosmetisk opfølgning)"
+  git push
+
+  cd timelapse-ui && npm run build
+  ```
+  Forventet: commit pushet, `npm run build` lykkes (rent frontend-ikon-tillæg, ingen
+  service-genstart nødvendig — ingen backend/API-ændring i denne commit).
+- **Filer rørt:** `timelapse-ui/src/pages/SIEMPage.tsx`, `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** næste periodiske runde tager enten #52 (intern CA/mTLS-design) hvis intet
+  nyt er dukket op fra Codex, eller den udestående R17 manuelle smoketest hvis Codex/Peter i
+  mellemtiden har fået et vindue til at køre den og efterlader spørgsmål om resultatet.

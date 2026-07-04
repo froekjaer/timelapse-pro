@@ -253,6 +253,11 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   bekræfte at auto-timeout-loopet rent faktisk slukker og logger `debug_mode_auto_timeout`, samt
   at `debug_mode_change`-eventet dukker op på SIEM-siden) er bevidst udskudt af Codex, da det
   ændrer live device-state — regnes ikke for 100% lukket før dette er kørt.
+- **Kosmetisk opfølgning (Claude, 2026-07-05 01:06):** `debug_mode_change` og
+  `debug_mode_auto_timeout` manglede ikon/label i `SIEMPage.tsx` (`EVENT_META`) — de ville
+  vises som generisk `Activity`-ikon uden dansk label i events-listen. Tilføjet: `Bug`-ikon
+  (amber) for `debug_mode_change`, `Timer`-ikon (lilla) for `debug_mode_auto_timeout`. Rent
+  UI, ingen skema-/API-ændring. Ændrer intet ved den fortsat udestående manuelle smoketest ovenfor.
 
 ### R13 — Node-agent nede på Headend (NY)
 - **Status:** 🟠 Plan klar (2026-07-04 nat), IKKE eksekveret endnu

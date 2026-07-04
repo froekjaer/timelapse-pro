@@ -6,7 +6,8 @@ import { useSearchParams } from 'react-router-dom'
 import {
   Shield, AlertTriangle, AlertCircle, Info, RefreshCw,
   Wifi, Terminal, User, Key, Server, Activity, Zap, Brain, Loader2,
-  X, Settings, ListFilter, RadioTower, Database, SlidersHorizontal, Eye
+  X, Settings, ListFilter, RadioTower, Database, SlidersHorizontal, Eye,
+  Bug, Timer
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -91,6 +92,8 @@ const EVENT_META: Record<string, { label: string; icon: any; color: string }> = 
   network_link_down: { label: 'Link down', icon: Wifi, color: 'text-amber-500' },
   network_link_up: { label: 'Link up', icon: Wifi, color: 'text-green-500' },
   syslog_event: { label: 'Syslog', icon: RadioTower, color: 'text-sky-500' },
+  debug_mode_change: { label: 'Debug/lab mode ændret', icon: Bug, color: 'text-amber-600' },
+  debug_mode_auto_timeout: { label: 'Debug/lab mode auto-timeout', icon: Timer, color: 'text-purple-500' },
 }
 
 const SEVERITY_CONFIG = {
