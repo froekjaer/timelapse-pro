@@ -147,4 +147,10 @@ export interface DebugMode {
   relay_always_on: boolean
   config_poll_s: number
   support_tier: string
+  // R17 (2026-07-05): tidsstempler til audit-spor + auto-timeout-håndhævelse
+  // (se _debug_mode_auto_timeout_loop i headend/main.py) — enabled_at kan
+  // mangle for ældre aktiveringer fra før dette blev indført.
+  enabled_at?: string | null
+  disabled_at?: string | null
+  disabled_reason?: 'manual' | 'auto_timeout' | string
 }

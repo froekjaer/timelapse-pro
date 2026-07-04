@@ -2506,3 +2506,90 @@ person vide".
   `https://timelapse.froekjaer.dk/api/health` svarede `HTTP/1.1 200 OK`.
 - **Ikke kørt automatisk:** Den tunge UI-backup med `timelapse-images-mirror/` er ikke
   startet fra heartbeat, fordi første billedmirror kan tage lang tid og belaste disk/I/O.
+
+### Handover 2026-07-05 00:33 — fra Claude (periodisk tjek): R17 debug/lab mode — audit-log + auto-timeout
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste `HANDOVER_LOG.md`-halen — intet nyt fra
+  Codex siden sidste entry, ingen åbne spørgsmål adresseret til mig. `git status --short`
+  havde kun samme untracked `claude_proxy.py` som hidtil (lades urørt, per fast konvention).
+  Gennemgik §11/§10 i `RISK_ASSESSMENT_v10.md` og valgte **R17** (Debug/lab mode kan efterlades
+  aktiveret uden overvågning, 🟡 6) — det var eneste stadig-åbne P1 der er rent kode/UI og ikke
+  kræver Mac Mini/Orange Pi-adgang for selve implementeringen (R13 kræver Mac Mini, resten af
+  R14 kræver enten live Z30-verifikation eller er allerede dækket).
+- **Fund ved scoping:** R17s anbefaling var tredelt: (1) CMDB/dashboard-indikator for
+  `debug_mode.enabled=true`, (2) auto-timeout, (3) audit-log af aktivering/deaktivering. Alle
+  tre var reelt uimplementerede — `debug_mode` lever udelukkende i `device.device_config` (JSON,
+  ingen egen DB-kolonne), sat via `PUT /api/admin/devices/{id}/debug`, men uden tidsstempel,
+  uden håndhævet grænse og uden spor nogen andre steder end den lokale servicelog.
+- **Rettet (kode, `headend/main.py`):**
+  1. `set_debug_mode()` sætter nu `enabled_at` ved aktivering og `disabled_at`/`disabled_reason`
+     ved deaktivering (gemt i samme `device_config.debug_mode`-dict, ingen skemaændring nødvendig)
+     — og logger et `debug_mode_change`-SIEM-event (brugernavn, tidspunkt) via `siem.record_events()`
+     (samme funktion den interne log-collector allerede bruger, importeret nu også i `main.py`).
+  2. Ny baggrundstråd `_debug_mode_auto_timeout_loop()` (samme mønster som `_backup_auto_loop`) —
+     tjekker alle devices hvert 15. min, slukker automatisk `debug_mode` hvis `enabled_at` er
+     ældre end `TIMELAPSE_DEBUG_MODE_MAX_HOURS` (env, default 8t), logger `debug_mode_auto_timeout`
+     til SIEM. Ældre aktiveringer uden `enabled_at` (fra før denne rettelse) ignoreres bevidst
+     frem for at blive slukket på gætværk. Startes i `startup()` ved siden af de øvrige loops.
+  3. `list_devices()` (`GET /api/admin/devices`) eksponerer nu `debug_mode_enabled` +
+     `debug_mode_enabled_at` pr. device — fleet-bred synlighed uden at skulle åbne hvert device
+     enkeltvis (dette er selve "CMDB/dashboard-indikator"-delen af anbefalingen).
+- **Frontend (`timelapse-ui/src`):** `types/index.ts` — `DebugMode` udvidet med
+  `enabled_at`/`disabled_at`/`disabled_reason`. `SystemAdminPage.tsx` — enhedsvælgeren viser nu
+  "🧪 LAB AKTIV" på enheder i lab mode, plus en samlet advarselslinje hvis ≥1 enhed er i lab mode.
+  `LabPage.tsx` — den hentede `debug_mode`-tilstand blev tidligere sat i state men ALDRIG læst
+  (`const [, setDebugModeState] = ...` — getter'en blev kasseret); rettet til faktisk at bruges,
+  og der vises nu "Aktiv siden HH:MM" ved siden af Start/Stop lab-knappen når lab mode er aktiv.
+- **Verifikation her:** `py_compile` ren på `headend/main.py` (inkl. den nye SIEM-import og
+  loop). Skrev og kørte et selvstændigt simuleret testscript for auto-timeout-beslutningslogikken
+  (5 cases: deaktiveret enhed ignoreres, ikke-udløbet aktivering ignoreres, udløbet aktivering
+  udløser, aktivering uden `enabled_at` ignoreres bevidst, præcis grænseværdi udløser) — alle 5
+  bestod. Frontend: `npx tsc -b` (typecheck) grøn uden fejl på alle ændrede filer. `npm run build`
+  (fuld Vite-build) kunne IKKE fuldføres i dette sandbox-miljø — fejler på en manglende native
+  `@rolldown/binding-linux-arm64-gnu`-binding, som er et kendt npm optional-dependency-problem
+  for denne CPU-arkitektur i selve sandboxen, ikke relateret til mine ændringer (samme problem
+  ville opstå på en frisk `npm i` uafhængigt af kodeændringerne). Typecheck alene dækker at
+  ændringerne er syntaktisk/type-korrekte, men **fuld build er IKKE bekræftet** — se
+  Codex/Peter-blokken nedenfor.
+- **IKKE gjort — bevidst:** SIEMPage.tsx viser ikke eksplicit et ikon/label for de to nye
+  event-typer (`debug_mode_change`, `debug_mode_auto_timeout`) — de vil dukke op i events-listen
+  som almindelige "security"-kategori-events, blot uden et dedikeret UI-ikon (mindre kosmetisk
+  mangel, ikke funktionel). Ingen ændring af selve 4-8-timers-defaulten — 8 timer valgt som en
+  fornuftig midte af R17s eget forslag ("maks. 4-8 timer"), ikke en Peter-bekræftet værdi.
+  Ingen historisk oprydning af enheder der evt. lige nu står i lab mode uden `enabled_at`
+  (de vil first blive omfattet af auto-timeout næste gang de aktiveres på ny efter denne fix).
+- **Bemærket, ikke rettet:** `.git/index.lock` findes i repoet (ejet af samme sandbox-bruger,
+  ingen kørende git-proces ifølge `ps aux`) — jeg har ikke rettigheder til at fjerne den herfra
+  (`Operation not permitted`, formentlig fordi denne sandbox-mount ikke tillader unlink). `git
+  status`/`git diff` virker fint på trods af den. Samme mønster som tidligere i nat — formentlig
+  en efterladt/harmløs lås, men **Codex/Peter bør tjekke `ps aux | grep -i git` på den rigtige
+  maskine før commit**, ikke bare stole på denne observation fra sandboxen.
+- **Codex/Peter: kør venligst** (ingen af disse er kørt af mig):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  # Tjek først at der ikke er en ægte kørende git-proces, ryd evt. lås:
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt) rm -f .git/index.lock
+
+  git add headend/main.py timelapse-ui/src/pages/LabPage.tsx timelapse-ui/src/pages/SystemAdminPage.tsx timelapse-ui/src/types/index.ts Dokumentation/HANDOVER_LOG.md
+  git commit -m "feat: R17 debug/lab mode — audit-log, auto-timeout, fleet-indikator"
+  git push
+
+  sudo launchctl kickstart -k system/dk.froekjaer.timelapse-headend
+  curl -s https://timelapse.froekjaer.dk/api/health
+
+  cd timelapse-ui && npm run build
+  ```
+  Forventet: commit pushet, health `200 OK`, UI-build lykkes (bekræfter at rolldown-fejlen ovenfor
+  virkelig kun var et sandbox-artefakt). Efter deploy: aktiver lab mode kortvarigt på et
+  test-device og bekræft i UI'en (SystemAdminPage-enhedsvælgeren + LabPage "Aktiv siden") at
+  badge'et og tidsstemplet vises korrekt, samt at et `debug_mode_change`-event dukker op på
+  SIEM-siden. Sæt evt. `TIMELAPSE_DEBUG_MODE_MAX_HOURS` lavt (fx `0.05` ≈ 3 min) midlertidigt for
+  at bekræfte at auto-timeout-loopet rent faktisk slukker og logger `debug_mode_auto_timeout`,
+  før I sætter den permanente værdi (default 8t hvis intet sættes).
+- **Filer rørt:** `headend/main.py`, `timelapse-ui/src/pages/LabPage.tsx`,
+  `timelapse-ui/src/pages/SystemAdminPage.tsx`, `timelapse-ui/src/types/index.ts`,
+  `Dokumentation/RISK_ASSESSMENT_v10.md` (R17 opdateret, se nedenfor).
+- **Går videre til:** næste periodiske runde ser enten på SIEMPage.tsx-ikoner for de to nye
+  event-typer (kosmetisk, lav risiko), eller tager fat på #52 (intern CA/mTLS-design) hvis R17
+  vurderes tilstrækkeligt dækket efter denne omgang.

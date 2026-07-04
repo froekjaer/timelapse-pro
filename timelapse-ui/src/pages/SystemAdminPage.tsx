@@ -19,7 +19,12 @@ function api(path: string, opts?: RequestInit) {
   }).then(r => { if (!r.ok) throw new Error(`${r.status}`); return r.json() })
 }
 
-interface Device { device_id: string; camera_name?: string; location_name?: string; status: string }
+interface Device {
+  device_id: string; camera_name?: string; location_name?: string; status: string
+  // R17 (2026-07-05): fleet-bred lab-mode-indikator, se /api/admin/devices
+  debug_mode_enabled?: boolean
+  debug_mode_enabled_at?: string | null
+}
 interface StorageRootStatus {
   label: string
   path: string
@@ -479,9 +484,17 @@ export function SystemAdminPage() {
           {devices.map(d => (
             <option key={d.device_id} value={d.device_id}>
               {d.camera_name || d.location_name || d.device_id} ({d.device_id})
+              {d.debug_mode_enabled ? ' — \u{1F9EA} LAB AKTIV' : ''}
             </option>
           ))}
         </select>
+        {devices.some(d => d.debug_mode_enabled) && (
+          <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-2">
+            {'⚠️'} {devices.filter(d => d.debug_mode_enabled).length} enhed(er) har LAB mode aktiv lige nu
+            (relæ konstant tændt, normal optagelse springes over). Slukkes automatisk efter et
+            konfigureret antal timer hvis ikke stoppet manuelt.
+          </p>
+        )}
       </div>
 
       {/* Relay GPIO */}

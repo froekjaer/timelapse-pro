@@ -322,7 +322,9 @@ export default function LabPage() {
   const deviceId = id!
 
   const [deviceName, setDeviceName]   = useState('')
-  const [, setDebugModeState] = useState<DebugMode | null>(null)
+  // R17 (2026-07-05): gemmes nu faktisk (var tidligere kun sat, aldrig læst)
+  // så vi kan vise "aktiv siden" — se badge ved siden af Start/Stop lab-knappen.
+  const [debugModeInfo, setDebugModeState] = useState<DebugMode | null>(null)
   const [labActive, setLabActive]     = useState(false)
   const [labStateChecked, setLabStateChecked] = useState(false)
   const [previews, setPreviews]       = useState<LabPreview[]>([])
@@ -860,6 +862,11 @@ export default function LabPage() {
                 <span className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
                   Lab klar!
+                </span>
+              )}
+              {labActive && debugModeInfo?.enabled_at && (
+                <span className="text-xs text-amber-600 bg-amber-50 px-2.5 py-1 rounded-lg" title="R17: lab mode slukkes automatisk efter et konfigureret antal timer hvis den ikke stoppes manuelt">
+                  Aktiv siden {new Date(debugModeInfo.enabled_at).toLocaleString('da-DK', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
                 </span>
               )}
               <button onClick={toggleLab} disabled={labConnecting}

@@ -100,7 +100,7 @@ def ensure_utc(dt):
 
 from importer import router as import_router
 from ai.settings_api import settings_router
-from siem import router as siem_router, start_headend_log_collector
+from siem import router as siem_router, start_headend_log_collector, record_events as _siem_record_events
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from itim import router as itim_router, start_itim_collector
 from database import (
@@ -257,6 +257,80 @@ def _backup_auto_loop() -> None:
         except Exception as _loop_err:
             log.warning("Backup auto-loop fejl: %s", _loop_err)
         _t.sleep(600)
+
+
+def _debug_mode_auto_timeout_loop(interval_minutes: float = 15.0) -> None:
+    """2026-07-05 (Claude, R17 — se RISK_ASSESSMENT_v10.md): debug/lab mode
+    (`device_config.debug_mode.enabled`) havde ingen håndhævet øvre grænse —
+    fundet aktiveret i produktion, formentlig glemt efter en tidligere
+    test-session, kun opdaget ved manuel log-gennemgang. Denne baggrundstråd
+    tjekker periodisk alle devices og slukker automatisk debug_mode, hvis den
+    har været aktiv længere end `TIMELAPSE_DEBUG_MODE_MAX_HOURS` (default 8
+    timer — kræver eksplicit ny aktivering for forlængelse, jf. anbefalingen
+    i risikovurderingen). Auto-sluk logges som SIEM-event
+    (`debug_mode_auto_timeout`) på samme måde som manuel toggle, så det er
+    synligt i audit-sporet hvem/hvornår/hvorfor det blev slukket.
+    """
+    import time as _t
+    from datetime import datetime as _dt, timezone as _timezone
+
+    max_hours = float(os.getenv("TIMELAPSE_DEBUG_MODE_MAX_HOURS", "8"))
+    _t.sleep(120)  # lille forsinkelse efter opstart
+    while True:
+        try:
+            from database import SessionLocal as _SL
+            _db = _SL()
+            try:
+                devices = _db.query(Device).all()
+                for _dev in devices:
+                    try:
+                        cfg = json.loads(_dev.device_config or "{}")
+                        dm = cfg.get("debug_mode") or {}
+                        if not dm.get("enabled"):
+                            continue
+                        enabled_at_raw = dm.get("enabled_at")
+                        if not enabled_at_raw:
+                            continue  # ældre aktivering uden tidsstempel — ikke noget at måle fra
+                        enabled_at = _dt.fromisoformat(enabled_at_raw)
+                        if enabled_at.tzinfo is None:
+                            enabled_at = enabled_at.replace(tzinfo=_timezone.utc)
+                        age_hours = (now_utc() - enabled_at).total_seconds() / 3600.0
+                        if age_hours < max_hours:
+                            continue
+                        dm["enabled"]         = False
+                        dm["disabled_at"]     = now_utc().isoformat()
+                        dm["disabled_reason"] = "auto_timeout"
+                        cfg["debug_mode"] = dm
+                        _dev.device_config = json.dumps(cfg, ensure_ascii=False)
+                        _dev.config_version = hashlib.md5(_dev.device_config.encode()).hexdigest()
+                        _db.commit()
+                        log.warning(
+                            "Debug/lab mode auto-slukket for %s efter %.1f timer (maks=%.1f)",
+                            _dev.device_id, age_hours, max_hours,
+                        )
+                        try:
+                            _siem_record_events(_db, _dev.device_id, [{
+                                "event_type":  "debug_mode_auto_timeout",
+                                "severity":    "warning",
+                                "source":      "debug_mode_auto_timeout_loop",
+                                "raw_message": (
+                                    f"Debug/lab mode auto-slukket for {_dev.device_id} efter "
+                                    f"{age_hours:.1f} timer (maks {max_hours:.1f}t)"
+                                ),
+                                "occurred_at": now_utc().isoformat(),
+                            }])
+                            _db.commit()
+                        except Exception as _siem_exc:
+                            log.warning("Kunne ikke logge debug_mode_auto_timeout til SIEM for %s: %s",
+                                        _dev.device_id, _siem_exc)
+                    except Exception as _dev_err:
+                        log.warning("Debug-mode auto-timeout tjek fejlede for %s: %s",
+                                    getattr(_dev, "device_id", "?"), _dev_err)
+            finally:
+                _db.close()
+        except Exception as _loop_err:
+            log.warning("Debug-mode auto-timeout loop fejl: %s", _loop_err)
+        _t.sleep(interval_minutes * 60)
 
 
 @app.on_event("startup")
@@ -535,6 +609,15 @@ def startup():
         log.info("Backup auto-loop startet (tjekker backup_auto_interval hvert 10. min)")
     except Exception as _bak_loop_err:
         log.warning("Kunne ikke starte backup auto-loop: %s", _bak_loop_err)
+
+    # ── Debug/lab mode auto-timeout (R17 — se RISK_ASSESSMENT_v10.md) ────────
+    try:
+        _threading.Thread(target=_debug_mode_auto_timeout_loop, name="debug-mode-auto-timeout",
+                           daemon=True).start()
+        log.info("Debug/lab mode auto-timeout-loop startet (maks=%sh, tjekker hvert 15. min)",
+                  os.getenv("TIMELAPSE_DEBUG_MODE_MAX_HOURS", "8"))
+    except Exception as _dbg_loop_err:
+        log.warning("Kunne ikke starte debug-mode auto-timeout-loop: %s", _dbg_loop_err)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -9812,6 +9895,19 @@ def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
             delta = (now_utc() - d.last_seen.replace(tzinfo=timezone.utc)).total_seconds()
             online = delta < 5400  # 90 minutes
 
+        # R17 (2026-07-05, Claude): eksponér debug/lab-mode status fleet-bredt,
+        # så et device efterladt i lab mode (konstant relæ, springer optagelse
+        # over) er synligt her uden at skulle åbne hvert device individuelt —
+        # tidligere blev det kun opdaget ved manuel log-gennemgang.
+        debug_mode_enabled    = False
+        debug_mode_enabled_at = None
+        try:
+            _dm = json.loads(d.device_config or "{}").get("debug_mode") or {}
+            debug_mode_enabled    = bool(_dm.get("enabled"))
+            debug_mode_enabled_at = _dm.get("enabled_at")
+        except Exception:
+            pass
+
         result.append({
             "device_id":      d.device_id,
             "location_name":  d.location_name,
@@ -9823,6 +9919,8 @@ def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
             "customer_name":  d.customer_name,
             "site_name":      d.site_name,
             "camera_name":    d.camera_name,
+            "debug_mode_enabled":    debug_mode_enabled,
+            "debug_mode_enabled_at": debug_mode_enabled_at,
                                 })
     return result
 
@@ -11381,7 +11479,20 @@ def _ai_batch_poller_loop(interval_minutes: float = 5.0) -> None:
 
 @app.put("/api/admin/devices/{device_id}/debug")
 def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
-    """Enable or disable debug/lab mode for a device."""
+    """Enable or disable debug/lab mode for a device.
+
+    2026-07-05 (Claude, R17 — se RISK_ASSESSMENT_v10.md): debug_mode.enabled
+    kunne tidligere efterlades aktiveret ubegrænset uden nogen synlig
+    indikator eller audit-spor ("hvem/hvornår") — opdaget aktiveret på et
+    produktionskamera, formentlig glemt fra en tidligere test-session. Denne
+    handler tilføjer nu:
+      1. `enabled_at`/`disabled_at`/`disabled_reason` i debug_mode-configen,
+         så `_debug_mode_auto_timeout_loop()` (se nedenfor) kan håndhæve et
+         maks. tidsrum, og så UI'en kan vise "aktiv siden ...".
+      2. Et SIEM-audit-event (`debug_mode_change`) med brugernavn, så
+         aktivering/deaktivering er sporbart i SIEM/adgangslog, ikke kun i
+         den lokale servicelog.
+    """
     _ensure_capture_device_access(db, _user, device_id)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
@@ -11389,12 +11500,22 @@ def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), d
     enabled = payload.get("enabled", False)
     # Store in device_config
     existing = json.loads(device.device_config or "{}")
-    existing["debug_mode"] = {
+    prev = existing.get("debug_mode") or {}
+    now_iso = now_utc().isoformat()
+    new_debug_mode = {
         "enabled":           enabled,
         "relay_always_on":   payload.get("relay_always_on", True),
         "config_poll_s":     payload.get("config_poll_s", 1),
         "support_tier":      payload.get("support_tier", "standard"),
+        # R17: bevar hvornår tilstanden sidst blev aktiveret, uanset om dette
+        # kald selv aktiverer eller deaktiverer — bruges til auto-timeout og
+        # til at vise "aktiv siden" i UI'en.
+        "enabled_at":        now_iso if enabled else prev.get("enabled_at"),
     }
+    if not enabled:
+        new_debug_mode["disabled_at"]     = now_iso
+        new_debug_mode["disabled_reason"] = "manual"
+    existing["debug_mode"] = new_debug_mode
     # Nulstil lab_camera_ready når debug mode aktiveres
     if enabled:
         existing["lab_camera_ready"] = False
@@ -11402,7 +11523,22 @@ def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), d
     device.device_config = json.dumps(existing, ensure_ascii=False)
     device.config_version = hashlib.md5(device.device_config.encode()).hexdigest()
     db.commit()
-    log.info("Debug mode %s for %s", "ENABLED" if enabled else "DISABLED", device_id)
+    log.info("Debug mode %s for %s (af %s)", "ENABLED" if enabled else "DISABLED", device_id, _user.username)
+
+    # R17 — audit-spor i SIEM (non-fatal: må aldrig blokere selve toggle'et)
+    try:
+        _siem_record_events(db, device_id, [{
+            "event_type":  "debug_mode_change",
+            "severity":    "warning" if enabled else "info",
+            "username":    _user.username,
+            "source":      "admin_api",
+            "raw_message": f"Debug/lab mode {'ENABLED' if enabled else 'DISABLED'} for {device_id} af {_user.username}",
+            "occurred_at": now_iso,
+        }])
+        db.commit()
+    except Exception as _siem_exc:
+        log.warning("Kunne ikke logge debug_mode_change til SIEM for %s: %s", device_id, _siem_exc)
+
     return {"status": "ok", "device_id": device_id, "debug_mode": existing["debug_mode"]}
 
 

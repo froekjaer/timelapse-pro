@@ -220,11 +220,26 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **TILFØJELSE 2026-07-04 (nat, Claude):** DPIA-skabelon, retention-policy-design og subprocessor-liste udarbejdet — se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Dette er tekniske/organisatoriske UDKAST (ikke juridisk godkendt), og retention er kun et design, ikke implementeret kode. Databehandleraftale og brudprocedure er bevidst IKKE dækket (kræver jurist). Fandt undervejs R18 (separat, urelateret produktionsbug — rettet, se nedenfor).
 
 ### R17 — Debug/lab mode kan efterlades aktiveret uden overvågning (NY, fundet 2026-07-04)
-- **Status:** 🟡 Delvist kontrolleret
+- **Status:** 🟢 Rettet i kode (2026-07-05, Claude periodisk tjek) — **IKKE deployet/live-verificeret endnu**
 - **Fund (Claude, ifm. GPS-fejlsøgning):** `debug_mode.enabled` er en flad, per-enhed config-nøgle (ingen DB-kolonne, ingen udløb/TTL), sat udelukkende via `PUT /api/admin/devices/{id}/debug` (kræver admin-rolle — ingen adgangskontrol-svaghed). Mens aktiv holder edge-agenten kamera-relæet konstant tændt og springer den normale optagelsesplan over (interaktiv "lab"-tilstand til kamera-tuning). Fundet aktiveret på et produktionskamera (TL-C87FF9587CA0), tilsyneladende en efterladt flag fra en tidligere test-session — opdaget udelukkende ved manuel log-gennemgang, ikke via noget dashboard/alarm.
 - **Konsekvens:** Ingen adgangskompromittering, men operationel/tilgængelighedsrisiko: uventet konstant relæ-belastning, optagelsesplan brydes uden varsel, og (jf. GPS-fixet 2026-07-04) reduceret GPS-pålidelighed pga. relæets effekt på GPS-modtagerens strømforsyning. Ingen automatisk måde at opdage "enhed X har kørt i lab mode i N dage" på.
-- **Sandsynlighed:** 3, **Konsekvens:** 2, **Score:** 🟡 6
-- **Anbefaling:** CMDB/dashboard-indikator for `debug_mode.enabled=true` pr. enhed; overvej auto-timeout (fx maks. 4-8 timer, kræver eksplicit forlængelse); log aktivering/deaktivering (hvem/hvornår) til audit/SIEM.
+- **Sandsynlighed:** 3, **Konsekvens:** 2, **Score (før fix):** 🟡 6
+- **Anbefaling (oprindelig):** CMDB/dashboard-indikator for `debug_mode.enabled=true` pr. enhed; overvej auto-timeout (fx maks. 4-8 timer, kræver eksplicit forlængelse); log aktivering/deaktivering (hvem/hvornår) til audit/SIEM.
+- **Implementeret (Claude, 2026-07-05, se `HANDOVER_LOG.md` 2026-07-05 00:33):** Alle tre
+  anbefalinger dækket i `headend/main.py`: (1) `GET /api/admin/devices` eksponerer nu
+  `debug_mode_enabled`/`debug_mode_enabled_at` pr. device, med badge i `SystemAdminPage.tsx`
+  og "Aktiv siden"-visning i `LabPage.tsx`; (2) ny baggrundstråd
+  `_debug_mode_auto_timeout_loop()` slukker automatisk debug_mode efter
+  `TIMELAPSE_DEBUG_MODE_MAX_HOURS` (default 8t, konfigurerbar); (3) `set_debug_mode()` logger nu
+  aktivering/deaktivering (bruger, tidspunkt) som SIEM-event (`debug_mode_change`/
+  `debug_mode_auto_timeout`). Ingen DB-skemaændring — alt gemt i eksisterende
+  `device_config`-JSON-kolonne.
+- **Verifikation her:** `py_compile` ren; isoleret simuleret test af auto-timeout-beslutningslogik
+  (5 cases, alle bestod); frontend `tsc -b` (typecheck) grøn. **Fuld `npm run build` kunne ikke
+  køres i sandbox** (manglende native rolldown-binding for sandboxens CPU-arkitektur —
+  sandbox-begrænsning, ikke kode-relateret). Score nedgraderes til 🟢, men regnes IKKE for fuldt
+  lukket før Codex/Peter har kørt `npm run build` på den rigtige maskine, deployet, og bekræftet
+  badge/audit-log/auto-timeout live (se HANDOVER_LOG for konkrete verifikationstrin).
 
 ### R13 — Node-agent nede på Headend (NY)
 - **Status:** 🟠 Plan klar (2026-07-04 nat), IKKE eksekveret endnu
@@ -460,7 +475,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R14 Nikon Z30 config drift | 🟠 12 | ↓ Delvist rettet 2026-07-05 (detektionsmekanisme), ikke live-verificeret |
 | R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 | ✅ Ny/løst — fundet og rettet, live-verificeret 2026-07-03 |
 | R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 | ✅ Ny/løst — fundet, rettet og backfillet komplet i produktion 2026-07-03 |
-| R17 Debug/lab mode uden overvågning | 🟡 6 | 🆕 Ny — fundet 2026-07-04, ingen adgangskompromittering |
+| R17 Debug/lab mode uden overvågning | 🟢 (kode) | ↓ Rettet i kode 2026-07-05 (badge/audit-log/auto-timeout), ikke deployet/live-verificeret |
 | R18 Manglende gdpr_manager.py crashede Gemini-godkendelse | 🟢 3 | ✅ Ny/løst — fundet og rettet 2026-07-04, GDPR-dele af R12 uændret åbne |
 
 **Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R16 er fuldt lukket (kode + deploy + backfill).
