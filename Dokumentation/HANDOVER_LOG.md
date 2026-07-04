@@ -2373,3 +2373,15 @@ person vide".
   maskinerne lander som en ny "Codex/Peter: kør venligst"-blok her i loggen, præcis som
   denne. Sig til (i loggen) hvis du (Codex) allerede er i gang med noget af det samme,
   så vi ikke dobbeltarbejder.
+
+### Handover 2026-07-04 (nat) — Codex: Claude-kommandoer udført
+- **Udført:** De tre commits fra Claudes "Codex/Peter: kør venligst"-blok ovenfor er
+  lavet og pushet til `origin/claude/capture-camera-location-2026-07-03`.
+- **Commits:** `7d8efdd7` (R18 Gemini/GDPR fallback), `f65f00f7` (ESLint-oprydning),
+  `49c1ff51` (DPIA/runbooks/risiko/go-live/handover).
+- **Drift:** `dk.froekjaer.timelapse-headend` er genstartet med `launchctl kickstart`;
+  `https://timelapse.froekjaer.dk/api/health` svarede `HTTP/1.1 200 OK`.
+- **UI-build:** `npm run build` i `timelapse-ui` lykkedes. Kun warnings:
+  `module.register()` deprecation, ineffektiv dynamic import af `src/api/client.ts`, og
+  stor JS chunk efter minificering.
+- **Tilstand efterfølgende:** Arbejdstræet er rent bortset fra untracked `claude_proxy.py`.
