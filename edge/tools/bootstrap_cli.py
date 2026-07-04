@@ -714,7 +714,7 @@ def camera_autofocus() -> bool:
         "/main/actions/autofocus",
     ]
     for path in candidates:
-        if read_gphoto_current(path) is None:
+        if not gphoto_config_exists(path):
             continue
         if camera_set_config(path, "1"):
             return True
@@ -728,7 +728,7 @@ def camera_focus_drive(value: str) -> bool:
         "/main/actions/manualfocusdrive2",
     ]
     for path in candidates:
-        if read_gphoto_current(path) is None:
+        if not gphoto_config_exists(path):
             continue
         if camera_set_config(path, value):
             return True
@@ -785,6 +785,17 @@ def read_gphoto_current(path: str) -> str | None:
         if line.startswith("Current:"):
             return line.split(":", 1)[1].strip()
     return ""
+
+
+def gphoto_config_exists(path: str) -> bool:
+    """Return True when gphoto2 exposes a config/action path.
+
+    Action widgets do not always have a meaningful "Current:" value, so using
+    read_gphoto_current() as an existence probe caused valid autofocus/focus
+    actions to be skipped on some cameras.
+    """
+    result = run(["gphoto2", "--get-config", path], check=False, timeout=8)
+    return result.returncode == 0
 
 
 def print_network_status() -> None:
@@ -1098,23 +1109,45 @@ def summarize_storage(storage: dict[str, Any]) -> str:
 
 
 def test_headend(base_dir: Path) -> bool:
-    bootstrap = read_yaml(base_dir / BOOTSTRAP_FILE)
-    headend_url = (bootstrap.get("headend_url") or "").rstrip("/")
+    headend_url = resolve_headend_url(base_dir)
     if not headend_url:
-        print("Headend URL mangler i bootstrap.yaml")
+        print("Headend URL mangler i bootstrap.yaml/config.yaml")
         return False
-    health_url = headend_url[:-4] + "/health" if headend_url.endswith("/api") else headend_url + "/health"
+    health_urls = [f"{headend_url}/health"]
+    if headend_url.endswith("/api"):
+        health_urls.append(f"{headend_url[:-4]}/health")
     try:
         import requests
 
-        response = requests.get(health_url, timeout=8)
-        print(f"{health_url} -> HTTP {response.status_code}")
-        if response.text:
-            print(response.text[:300])
-        return response.ok
+        last_response = None
+        for health_url in health_urls:
+            response = requests.get(health_url, timeout=8)
+            last_response = response
+            print(f"{health_url} -> HTTP {response.status_code}")
+            if response.text:
+                print(response.text[:300])
+            if response.ok:
+                return True
+        return bool(last_response and last_response.ok)
     except Exception as exc:
         print(f"Headend test fejlede: {exc}")
         return False
+
+
+def resolve_headend_url(base_dir: Path) -> str:
+    bootstrap = read_yaml(base_dir / BOOTSTRAP_FILE)
+    config = read_yaml(base_dir / "config.yaml")
+    candidates = [
+        bootstrap.get("headend_url"),
+        config.get("headend_url"),
+        (config.get("management", {}) or {}).get("headend_url"),
+        os.getenv("HEADEND_URL"),
+    ]
+    for value in candidates:
+        value = str(value or "").strip().rstrip("/")
+        if value:
+            return value
+    return ""
 
 
 def nmcli_devices(device_type: str) -> list[str]:

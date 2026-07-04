@@ -46,9 +46,37 @@ EDGE_ROOT = Path(os.getenv("TIMELAPSE_EDGE_ROOT", "/opt/timelapse/edge"))
 TECH_CLI = EDGE_ROOT / "tools" / "bootstrap_cli.py"
 
 
+def _default_config() -> dict:
+    return {
+        "totp": {
+            "secret": "JBSWY3DPEHPK3PXP",
+            "sid": "factory-default",
+            "valid_window": 3,
+        },
+        "management": {
+            "https_port": 8443,
+            "session_timeout": 3600,
+            "cert_file": "/etc/timelapse/certs/mgmt.crt",
+            "key_file": "/etc/timelapse/certs/mgmt.key",
+            "headend_url": "",
+        },
+    }
+
+
 def load_config() -> dict:
-    with open(CONFIG_FILE) as f:
-        return yaml.safe_load(f)
+    try:
+        with open(CONFIG_FILE) as f:
+            cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        cfg = {}
+    except Exception as exc:
+        log.warning("Kunne ikke læse %s: %s", CONFIG_FILE, exc)
+        cfg = {}
+    defaults = _default_config()
+    merged = defaults | cfg
+    merged["totp"] = defaults["totp"] | (cfg.get("totp") or {})
+    merged["management"] = defaults["management"] | (cfg.get("management") or {})
+    return merged
 
 
 # ── Session store (in-memory) ─────────────────────────────────────────────────
@@ -535,6 +563,119 @@ def _kv_table(data: dict) -> str:
     return "<table>" + "".join(rows) + "</table>"
 
 
+def _system_snapshot() -> dict:
+    status = _technician_snapshot()
+    time_status = _get_time_status()
+    status["time"] = {
+        "synced": time_status.get("synced"),
+        "source": time_status.get("source"),
+        "offset_ms": time_status.get("offset_ms"),
+        "stratum": time_status.get("stratum"),
+        "utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    return status
+
+
+def _run_system_action(action: str) -> tuple[bool, str]:
+    commands = {
+        "status-edge": ["systemctl", "status", "timelapse-edge", "--no-pager", "-l"],
+        "status-totp": ["systemctl", "status", "timelapse-totp", "--no-pager", "-l"],
+        "restart-edge": ["sudo", "systemctl", "restart", "timelapse-edge"],
+        "restart-totp": ["sudo", "systemctl", "restart", "timelapse-totp"],
+        "journal-edge": ["journalctl", "--no-pager", "-u", "timelapse-edge", "-n", "180"],
+        "journal-totp": ["journalctl", "--no-pager", "-u", "timelapse-totp", "-n", "120"],
+        "disk": ["df", "-h", "/", "/data"],
+        "network": ["sh", "-c", "ip -brief addr; printf '\\n'; ip route"],
+    }
+    cmd = commands.get(action)
+    if not cmd:
+        return False, f"Ukendt systemhandling: {action}"
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        output = (result.stdout or "") + (("\n" + result.stderr) if result.stderr else "")
+        return result.returncode == 0, output.strip() or "(intet output)"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _system_page(msg: str = "", output: str = "") -> str:
+    status = _system_snapshot()
+    generated = status.get("generated_at", "")
+    msg_html = f'<p class="msg ok">{html.escape(msg)}</p>' if msg else ""
+    output_html = (
+        f'<div class="card wide"><h2>Output</h2><pre>{html.escape(output)}</pre></div>'
+        if output else ""
+    )
+    return f"""<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="45">
+<title>TimeLapse Pro — System</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #ddd; min-height: 100vh; }}
+  header {{ background: #16213e; padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1rem; border-bottom: 1px solid #234; }}
+  header h1 {{ font-size: 1rem; color: #4fc3f7; flex: 1; }}
+  header .loc {{ font-size: 0.75rem; color: #777; }}
+  nav {{ background: #0f3460; display: flex; border-bottom: 1px solid #234; overflow-x: auto; }}
+  nav a {{ color: #aaa; text-decoration: none; padding: 0.75rem 1.25rem; font-size: 0.85rem; white-space: nowrap; }}
+  nav a.active {{ color: #4fc3f7; border-bottom: 2px solid #4fc3f7; }}
+  .content {{ padding: 1rem; max-width: 1180px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }}
+  .card {{ background: #16213e; border-radius: 10px; padding: 1rem; border: 1px solid #26385a; }}
+  .card.wide {{ grid-column: 1 / -1; }}
+  h2 {{ font-size: 0.82rem; color: #4fc3f7; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; }}
+  th {{ width: 38%; color: #8aa0bf; text-align: left; font-weight: 600; vertical-align: top; }}
+  td, th {{ border-top: 1px solid #26385a; padding: 0.42rem 0.2rem; word-break: break-word; }}
+  .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; }}
+  button {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; }}
+  button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
+  button.warn {{ background: #f59e0b; color: #101010; }}
+  pre {{ white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; background: #0b1220; border-radius: 8px; padding: 0.8rem; color: #d6e4ff; max-height: 420px; overflow: auto; }}
+  .msg.ok {{ color: #66bb6a; font-size: 0.85rem; margin-bottom: 1rem; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>TimeLapse Pro</h1>
+  <span class="loc">{html.escape(os.uname().nodename)} · {html.escape(generated)} UTC</span>
+</header>
+<nav>
+  <a href="/mgmt/">Tid</a>
+  <a href="/mgmt/technician">Tekniker</a>
+  <a href="/mgmt/system" class="active">System</a>
+</nav>
+<div class="content">
+  {msg_html}
+  <div class="grid">
+    <div class="card"><h2>System</h2>{_kv_table(status.get("system", {}))}</div>
+    <div class="card"><h2>Service</h2>{_kv_table(status.get("service", {}))}</div>
+    <div class="card"><h2>Tid</h2>{_kv_table(status.get("time", {}))}</div>
+    <div class="card"><h2>Netvaerk</h2>{_kv_table(status.get("network", {}))}</div>
+    <div class="card"><h2>Storage / upload</h2>{_kv_table(status.get("storage", {}))}</div>
+    <div class="card wide">
+      <h2>Systemhandlinger</h2>
+      <form method="post" action="/mgmt/system/action" class="actions">
+        <button name="action" value="status-edge">Edge status</button>
+        <button name="action" value="status-totp">TOTP status</button>
+        <button name="action" value="journal-edge">Edge logs</button>
+        <button name="action" value="journal-totp">TOTP logs</button>
+        <button name="action" value="disk">Disk</button>
+        <button name="action" value="network">Netvaerk</button>
+        <button class="warn" name="action" value="restart-edge" onclick="return confirm('Genstart timelapse-edge?')">Genstart Edge</button>
+        <button class="warn" name="action" value="restart-totp" onclick="return confirm('Genstart lokal TOTP UI?')">Genstart TOTP UI</button>
+      </form>
+    </div>
+    {output_html}
+  </div>
+</div>
+</body>
+</html>"""
+
+
 def _technician_page(msg: str = "", output: str = "") -> str:
     status = _technician_snapshot()
     generated = status.get("generated_at", "")
@@ -739,17 +880,13 @@ async def mgmt_time_save(request: Request,
 
 @app.get("/mgmt/system", response_class=HTMLResponse)
 async def mgmt_system(request: Request):
-    import subprocess
-    uptime = subprocess.run(["uptime", "-p"], capture_output=True, text=True).stdout.strip()
-    cfg = load_config()
-    hcfg = _fetch_headend_config(cfg)
-    # Simpel system-side — udvides i næste iteration
-    return HTMLResponse(_mgmt_page("system", hcfg, _get_time_status()) + f"""
-<script>
-// Indsæt uptime i DOM — midlertidig løsning
-document.querySelector('.content').insertAdjacentHTML('afterbegin',
-  '<div class="card"><h2>System</h2><div class="meta">Uptime: {uptime}</div></div>');
-</script>""")
+    return HTMLResponse(_system_page())
+
+
+@app.post("/mgmt/system/action", response_class=HTMLResponse)
+async def mgmt_system_action(request: Request, action: str = Form(...)):
+    ok, output = _run_system_action(action)
+    return HTMLResponse(_system_page("OK" if ok else "Fejl", output))
 
 
 @app.post("/mgmt/totp-sync", response_class=HTMLResponse)
@@ -761,8 +898,7 @@ async def mgmt_totp_sync(request: Request):
         return RedirectResponse("/", status_code=303)
     result = _sync_totp_from_headend()
     msg = result if isinstance(result, str) else "TOTP synkroniseret fra CMDB"
-    hcfg = _fetch_headend_config(load_config())
-    return HTMLResponse(_mgmt_page("system", hcfg, _get_time_status(), msg))
+    return HTMLResponse(_system_page(msg))
 
 
 # ── HTTP → HTTPS redirect (simpel http.server, port 80 + 8080) ───────────────
