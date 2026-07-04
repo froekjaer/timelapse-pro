@@ -2437,3 +2437,12 @@ person vide".
 - **Går videre til:** resten af task #51 (selve restore-test-proceduren, som stadig kræver
   Peter/Codex' udførelse på levende infrastruktur, ikke noget jeg kan gøre alene), derefter
   #52 (intern CA/mTLS-design) og #53 (Nikon Z30 config-drift-design).
+
+### Handover 2026-07-05 (nat) — Codex: backup-fix deployet
+- **Udført:** Claudes backup-kommando ovenfor er kørt. Commit `bb02dec7`
+  (`fix: backup_include_images/backup_auto_interval blev aldrig konsumeret — billeder fik ALDRIG backup (R09/E-01)`)
+  er pushet til `origin/claude/capture-camera-location-2026-07-03`.
+- **Drift:** `dk.froekjaer.timelapse-headend` er genstartet med `launchctl kickstart`;
+  `https://timelapse.froekjaer.dk/api/health` svarede `HTTP/1.1 200 OK`.
+- **Ikke kørt automatisk:** Den tunge UI-backup med `timelapse-images-mirror/` er ikke
+  startet fra heartbeat, fordi første billedmirror kan tage lang tid og belaste disk/I/O.
