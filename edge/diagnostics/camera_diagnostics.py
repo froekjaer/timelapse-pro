@@ -68,6 +68,57 @@ VALUE_ALIASES = {
     },
 }
 
+# ── Key canonicalisation ────────────────────────────────────────────────────
+# `expected_overrides` (built by edge/agent.py::_build_camera_commands from
+# camera.* config) is NOT guaranteed to use the canonical CAMERA_CONFIG_PARAMS
+# key names. Depending on the active gphoto2 camera profile
+# (edge/camera/drivers/gphoto2_driver.py CAMERA_PROFILES), the same logical
+# setting can arrive here as:
+#   - a canonical key already ("white_balance")
+#   - a short legacy gphoto2 key ("whitebalance", no underscore)
+#   - a full gphoto2 config path ("/main/imgsettings/whitebalance") — this is
+#     what profile-specific drivers like the Nikon Z30 profile emit, since
+#     build_config_command() there returns "<path>=<value>" directly.
+# Without canonicalising these, drift comparisons silently no-op (actual_val
+# lookup by the wrong key returns None) — found 2026-07-05 while scoping R14
+# (Nikon Z30 config drift): drift detection was effectively inert for any
+# profile-driven camera because none of its override keys ever matched
+# CAMERA_CONFIG_PARAMS. See HANDOVER_LOG.md 2026-07-05 for detail.
+PATH_TO_CANONICAL_KEY = {path: key for key, path in CAMERA_CONFIG_PARAMS.items()}
+
+# Legacy/short gphoto2 key name -> canonical CAMERA_CONFIG_PARAMS key.
+# `None` means "no drift-check target exists for this setting" (e.g. it's a
+# capture setting, not a fleet-policy parameter) — intentionally dropped, not
+# a bug.
+SHORT_KEY_ALIASES = {
+    "iso":                   "iso",
+    "whitebalance":          "white_balance",
+    "picturestyle":          "picture_style",
+    "colorspace":            "color_space",
+    "imageformat":           "image_format",
+    "meteringmode":          "metering_mode",
+    "exposurecompensation":  "exposure_comp",
+    "focusmode":             "focus_mode",
+    "shutterspeed":          None,
+    "shutter_speed":         None,
+    "aperture":              None,
+}
+
+
+def _canonicalize_config_key(raw_key: str) -> Optional[str]:
+    """Map an override/non-enforceable key (canonical, short gphoto2 name, or
+    full gphoto2 path) to its canonical CAMERA_CONFIG_PARAMS key, or None if
+    there is no known drift-check target for it."""
+    key = (raw_key or "").strip()
+    if not key:
+        return None
+    if key in CAMERA_CONFIG_PARAMS:
+        return key
+    if key in PATH_TO_CANONICAL_KEY:
+        return PATH_TO_CANONICAL_KEY[key]
+    short = key.split("/")[-1].lower()
+    return SHORT_KEY_ALIASES.get(short)
+
 # Shutter life ratings per camera model (conservative estimate)
 SHUTTER_RATINGS = {
     "Canon EOS 1300D": 100_000,
@@ -102,13 +153,33 @@ def _normalise_config_value(key: str, value: object) -> str:
 def collect_camera_diagnostics(
     camera_model: Optional[str] = None,
     expected_overrides: Optional[dict] = None,
+    non_enforceable_keys: Optional[set] = None,
 ) -> dict:
     """
     Read camera status and config via gphoto2.
+
+    `expected_overrides` keys may be canonical CAMERA_CONFIG_PARAMS keys,
+    short legacy gphoto2 key names, or full gphoto2 config paths — see
+    `_canonicalize_config_key`. They are MERGED onto FLEET_DEFAULTS (an
+    override wins per-key; a device with no overrides for a given setting
+    still gets checked against the fleet default for it) — previously a
+    non-None `expected_overrides` fully replaced FLEET_DEFAULTS, which meant
+    an empty/partially-mapped overrides dict silently disabled most drift
+    checks.
+
+    `non_enforceable_keys` lists settings the active camera profile cannot or
+    should not enforce (e.g. Nikon Z30 focus mode, which gphoto2 exposes as
+    readonly on that body — see gphoto2_driver.CAMERA_PROFILES["Nikon Z30"]
+    config_commands["focusmode"]["skip"]). These are excluded from drift
+    comparison entirely rather than being flagged as expected-vs-actual
+    mismatches, and are reported back under camera_config_non_enforceable
+    for observability (R14: "skeln readonly vs enforceable").
+
     Returns a dict with:
       - camera_status: battery, shutter, available shots, lens
       - camera_config: current config values
       - camera_config_drift: list of parameters that differ from expected
+      - camera_config_non_enforceable: params intentionally excluded above
       - shutter_pct: percentage of rated shutter life used
       - shutter_alarm: True if > 80% of rated life used
     """
@@ -116,6 +187,7 @@ def collect_camera_diagnostics(
         "camera_status": {},
         "camera_config": {},
         "camera_config_drift": [],
+        "camera_config_non_enforceable": [],
         "shutter_pct": None,
         "shutter_alarm": False,
     }
@@ -157,9 +229,36 @@ def collect_camera_diagnostics(
         if val is not None:
             result["camera_config"][key] = val
 
-    # Check for config drift against expected values. If the caller provides an
-    # expected map, treat it as authoritative; otherwise use legacy fleet defaults.
-    expected = dict(FLEET_DEFAULTS) if expected_overrides is None else dict(expected_overrides)
+    # Check for config drift against expected values. Start from fleet defaults
+    # and layer any device-specific overrides on top (per-key), canonicalising
+    # override keys first since they may arrive as short gphoto2 names or full
+    # gphoto2 paths depending on the active camera profile.
+    expected = dict(FLEET_DEFAULTS)
+    if expected_overrides:
+        dropped = []
+        for raw_key, value in expected_overrides.items():
+            canon_key = _canonicalize_config_key(raw_key)
+            if canon_key is None:
+                dropped.append(raw_key)
+                continue
+            expected[canon_key] = value
+        if dropped:
+            log.debug(
+                "Camera diagnostics: %d override key(s) have no drift-check "
+                "mapping, skipped (not a bug — likely a capture setting, not "
+                "fleet policy): %s", len(dropped), dropped
+            )
+
+    # Remove settings the active profile marks non-enforceable (e.g. readonly
+    # on this body) — never compare, but do report them for observability.
+    non_enforceable_canon = set()
+    for raw_key in (non_enforceable_keys or []):
+        canon_key = _canonicalize_config_key(raw_key)
+        if canon_key:
+            non_enforceable_canon.add(canon_key)
+    for key in non_enforceable_canon:
+        expected.pop(key, None)
+    result["camera_config_non_enforceable"] = sorted(non_enforceable_canon)
 
     drift = []
     for key, expected_val in expected.items():

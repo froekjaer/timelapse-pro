@@ -234,9 +234,44 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   (kommandoer klar til at køre, ikke eksekveret af mig — kræver adgang til Mac Mini'en)
 
 ### R14 — Nikon Z30 camera config drift (NY)
-- **Status:** 🔴 Åben
-- **Sandsynlighed:** 4, **Konsekvens:** 3, **Score:** 🟠 12
+- **Status:** 🟠 Delvist rettet (2026-07-05, Claude periodisk tjek) — selve detektionsmekanismen
+  rettet og verificeret isoleret; IKKE end-to-end verificeret på levende Z30-hardware
+- **Sandsynlighed:** 4, **Konsekvens:** 3, **Score (før fund nedenfor):** 🟠 12
 - **Handling:** Nikon Z30 capabilities-mapping; skeln readonly vs. enforceable; "desired state" + "accepted equivalent labels"
+- **Fund (Claude, ved scoping af denne opgave):** `edge/diagnostics/camera_diagnostics.py::collect_camera_diagnostics`
+  sammenlignede aldrig reelt Z30'ens config mod forventede værdier. To uafhængige bugs:
+  1. `expected_overrides` (bygget i `edge/agent.py` fra `camera.*`-config via
+     `_build_camera_commands()`) **erstattede** `FLEET_DEFAULTS` fuldstændigt i stedet for at
+     merge — en enhed uden egne overrides fik et TOMT forventnings-dict, altså ingen
+     drift-check overhovedet.
+  2. Nøglenavnene matchede aldrig hinanden: den profil-bevidste Z30-driver
+     (`gphoto2_driver.CAMERA_PROFILES["Nikon Z30"]`) bygger overrides som fulde gphoto2-stier
+     (`/main/imgsettings/iso=200`), mens `CAMERA_CONFIG_PARAMS` bruger korte kanoniske navne
+     (`iso`, `white_balance`, …). For Canon (kort-form-nøgler uden underscore, fx
+     `whitebalance`) var mismatchet mindre alvorligt men stadig reelt (`whitebalance` ≠
+     `white_balance` osv.). Praktisk konsekvens: drift-alarmering var reelt inaktiv for stort
+     set alle parametre på begge kameratyper, stille — ingen fejl, ingen log, bare aldrig en
+     alarm.
+- **Rettet (kode):** `edge/diagnostics/camera_diagnostics.py` — nyt `_canonicalize_config_key()`
+  oversætter kanonisk navn/kort gphoto2-navn/fuld gphoto2-sti til samme kanoniske nøgle før
+  sammenligning; `expected_overrides` merges nu pr. nøgle oven på `FLEET_DEFAULTS` i stedet for
+  at erstatte. Nyt `non_enforceable_keys`-parameter udelader parametre som den aktive
+  kameraprofil selv markerer readonly (fx Z30's `focusmode`, som allerede var markeret
+  `"skip": True` i driveren, men blev spurgt om alligevel) — disse rapporteres i nyt felt
+  `camera_config_non_enforceable` i stedet for at kunne fejlalarmere. `edge/agent.py` udleder nu
+  `non_enforceable_keys` direkte fra `driver.get_profile_summary()["config_commands"]` (samme
+  kilde som driveren selv bruger), så der ikke er to steder der skal holdes i sync.
+- **Verifikation her:** `py_compile` ren på begge filer. Simuleret Z30-scenarie (mock af
+  gphoto2-læsning): reelt ISO-drift (200→800) fanges korrekt; hvidbalance-ækvivalente labels
+  ("Automatic" vs. fleet-default "AWB White") fejlalarmerer IKKE; `focus_mode` optræder ALDRIG i
+  drift-listen, kun i `camera_config_non_enforceable`; tomt `expected_overrides`-dict falder nu
+  korrekt tilbage til `FLEET_DEFAULTS` i stedet for at slå drift-check helt fra.
+- **IKKE verificeret / fortsat åbent:** ingen live-test på faktisk Z30-hardware endnu (kræver
+  Orange Pi-adgang, ikke noget jeg kan køre selv); ingen UI/CMDB-visning af det nye
+  `camera_config_non_enforceable`-felt endnu; `aperture`/`shutter_speed` har fortsat ingen
+  drift-check-mål (bevidst — de er capture-settings, ikke fleet-politik, men bør besluttes
+  eksplicit, ikke bare antaget); ingen bredere "desired state"-model på tværs af flere
+  kameratyper end Canon/Z30. Score nedgraderes IKKE til grøn før live-verifikation.
 
 ### R15 — `/api/siem/*` uden autentificering (NY, fundet + rettet 2026-07-03)
 - **Status:** ✅ Kontrolleret i kode og **live-verificeret** (Peter, 2026-07-03: health `200`, `GET /api/siem/events` uden auth → `401`)
@@ -422,7 +457,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R11 CMDB anonym adgang | 🟢 3 | ✅ Ny/løst |
 | R12 GDPR-evidens | 🟠 12 | 🆕 Ny |
 | R13 Node-agent nede | 🟡 6 | 🆕 Ny |
-| R14 Nikon Z30 config drift | 🟠 12 | 🆕 Ny |
+| R14 Nikon Z30 config drift | 🟠 12 | ↓ Delvist rettet 2026-07-05 (detektionsmekanisme), ikke live-verificeret |
 | R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 | ✅ Ny/løst — fundet og rettet, live-verificeret 2026-07-03 |
 | R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 | ✅ Ny/løst — fundet, rettet og backfillet komplet i produktion 2026-07-03 |
 | R17 Debug/lab mode uden overvågning | 🟡 6 | 🆕 Ny — fundet 2026-07-04, ingen adgangskompromittering |
@@ -470,6 +505,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | SABSA reassessment | jun 2026 | Storage path fix, node-agent nede, go/no-go |
 | **7.0** | **jun 2026** | **Konsolideret — alle fund, alle statusser, ny GDPR/NIS2/CRA-sektion, port-gaps** |
 | 10 (tilføjelse) | 2026-07-04 | Claude: R17 (debug/lab mode uden overvågning, fundet ifm. GPS-fejlsøgning) tilføjet; R12 udvidet med GPS/lokationsmetadata-note |
+| 10 (tilføjelse) | 2026-07-05 | Claude (periodisk tjek): R14 — fundet og rettet at config-drift-detektion reelt var inaktiv (key-mismatch + FLEET_DEFAULTS blev erstattet, ikke merged); rettelse verificeret isoleret, IKKE på live hardware |
 
 ---
 

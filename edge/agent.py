@@ -875,7 +875,21 @@ class EdgeAgent:
                     if "=" in cmd:
                         k, v = cmd.split("=", 1)
                         expected[k.strip()] = v.strip()
-                self._last_cam_diag = collect_camera_diagnostics(cam_model, expected)
+                # Settings the active camera profile marks non-enforceable
+                # (e.g. readonly on this body, like Nikon Z30 focus mode) —
+                # never flag these as drift, see R14 / camera_diagnostics.py.
+                non_enforceable: set[str] = set()
+                try:
+                    if hasattr(self._driver, "get_profile_summary"):
+                        profile_summary = self._driver.get_profile_summary()
+                        for cfg_key, spec in (profile_summary.get("config_commands") or {}).items():
+                            if isinstance(spec, dict) and spec.get("skip"):
+                                non_enforceable.add(cfg_key)
+                except Exception:
+                    non_enforceable = set()
+                self._last_cam_diag = collect_camera_diagnostics(
+                    cam_model, expected, non_enforceable_keys=non_enforceable
+                )
                 log.info("Camera diagnostics collected: battery=%s shutter=%s drift=%s",
                     self._last_cam_diag.get("camera_status", {}).get("battery_pct"),
                     self._last_cam_diag.get("camera_status", {}).get("shutter_count"),
