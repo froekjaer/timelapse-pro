@@ -132,6 +132,34 @@ class CaptureTag(Base):
 
 
 # =============================================================================
+# MODEL-SEPAREREDE RESULTATER — Edge/Ollama/Gemini side om side
+# =============================================================================
+
+class CaptureModelResult(Base):
+    __tablename__ = "capture_model_results"
+    __table_args__ = (
+        UniqueConstraint("capture_id", "engine", "model", "result_kind", name="uq_capture_model_result"),
+        Index("idx_capture_model_results_capture", "capture_id"),
+        Index("idx_capture_model_results_engine", "engine", "analysed_at"),
+    )
+
+    id            = Column(Integer, primary_key=True)
+    capture_id    = Column(Integer, ForeignKey("captures.id", ondelete="CASCADE"), nullable=False)
+    engine        = Column(String(80), nullable=False)
+    model         = Column(String(160), nullable=False, default="")
+    model_version = Column(String(80))
+    result_kind   = Column(String(50), nullable=False, default="analysis")
+    scope         = Column(String(120))
+    confidence    = Column(Float)
+    result_json   = Column(JSONB, nullable=False, default=dict)
+    tags_json     = Column(JSONB, nullable=False, default=list)
+    source        = Column(String(80))
+    analysed_at   = Column(DateTime(timezone=True), default=_now, nullable=False)
+    created_at    = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at    = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+# =============================================================================
 # GDPR DETEKTIONER (RESTRICTED)
 # Importeres KUN i gdpr_manager.py — aldrig i normale endpoints
 # =============================================================================

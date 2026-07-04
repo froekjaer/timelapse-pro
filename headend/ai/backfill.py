@@ -35,6 +35,7 @@ SessionLocal = sessionmaker(bind=engine)
 from repositories    import TagRepository, AnalysisRepository
 from ai_strategy     import AIConfigManager, AIConfig, VALID_STRATEGIES, GLOBAL_DEFAULTS as GD
 from settings_helper import get_setting
+from model_results import engine_from_legacy_payload, upsert_capture_model_result
 
 
 def find_image(filename):
@@ -383,6 +384,17 @@ def main():
                 "raw_response": result.raw_response,
             }
             tags = result.approved_tags + result.new_tags + result.change_tags
+            upsert_capture_model_result(
+                db,
+                capture_id=cap["id"],
+                engine=engine_from_legacy_payload(payload, model_used),
+                model=str(model_used or ""),
+                result_kind="analysis",
+                result_json=payload,
+                tags=tags,
+                confidence=float(getattr(result, "confidence", 0.0) or 0.0),
+                source="headend_backfill",
+            )
             db.execute(text("""
                 UPDATE captures
                 SET ai_result = :ai_result,

@@ -73,6 +73,7 @@ class AutonomousImageOptimizer:
             }
         features = self._extract_features(image_path)
         quality_report = quality_report or {}
+        observations = self._observations(features)
         recommendations = self._recommend(features, quality_report)
         control = self._control_plan(features, quality_report, recommendations)
         score = self._score(features, quality_report)
@@ -81,6 +82,8 @@ class AutonomousImageOptimizer:
             "policy": self._policy.as_dict(),
             "score": score,
             "features": features,
+            "observations": observations,
+            "tags": [str(obs["tag"]) for obs in observations if obs.get("tag")],
             "recommendations": [r.as_dict() for r in recommendations],
             "control_plan": control,
         }
@@ -181,6 +184,37 @@ class AutonomousImageOptimizer:
             },
         }
 
+    def _observations(self, features: dict[str, Any]) -> list[dict[str, Any]]:
+        focus = features.get("focus", {}) or {}
+        global_blur = float(focus.get("global_blur", 0.0) or 0.0)
+        center_blur = float(focus.get("center_blur", global_blur) or 0.0)
+        edge_blur = float(focus.get("edge_blur", global_blur) or 0.0)
+        if center_blur <= 0 or edge_blur <= 0:
+            return []
+
+        edge_center_ratio = edge_blur / max(center_blur, 1.0)
+        center_is_very_sharp = center_blur > self._blur_threshold * 6.0
+        image_is_sharp = global_blur > self._blur_threshold * 4.0
+        edges_are_not_failed = edge_blur >= max(self._blur_threshold * 1.75, 140.0)
+        edge_drop_is_visible = edge_center_ratio < 0.35
+        if not (center_is_very_sharp and image_is_sharp and edges_are_not_failed and edge_drop_is_visible):
+            return []
+
+        strength = min(0.95, max(0.55, 1.0 - edge_center_ratio))
+        return [{
+            "tag": "center_sharp_soft_edges",
+            "kind": "optics",
+            "severity": "info",
+            "confidence": round(strength, 2),
+            "description": "Center is very sharp while edges are calmer or lower-texture; track as optics/scene signal, not a QA failure.",
+            "metrics": {
+                "center_blur": round(center_blur, 2),
+                "edge_blur": round(edge_blur, 2),
+                "edge_center_ratio": round(edge_center_ratio, 3),
+                "global_blur": round(global_blur, 2),
+            },
+        }]
+
     def _recommend(
         self,
         features: dict[str, Any],
@@ -256,7 +290,13 @@ class AutonomousImageOptimizer:
                 {"lab_command": "focus_slice", "prefer_preview_validation": True},
             ))
 
-        if center_blur > self._blur_threshold * 1.5 and edge_blur < center_blur * 0.35:
+        # Fixed construction views often have low-detail sky/building edges while
+        # still being objectively sharp. Treat depth-of-field as actionable only
+        # when the edge sharpness is also low in absolute terms.
+        edge_is_absolutely_soft = edge_blur < max(self._blur_threshold * 1.75, 140.0)
+        edge_is_relatively_soft = edge_blur < center_blur * 0.28
+        center_is_clearly_sharp = center_blur > self._blur_threshold * 2.0
+        if center_is_clearly_sharp and edge_is_absolutely_soft and edge_is_relatively_soft:
             recs.append(OptimizerRecommendation(
                 "depth_of_field",
                 "increase_depth_of_field",
@@ -264,7 +304,7 @@ class AutonomousImageOptimizer:
                 "Center is sharp but edges are much softer; depth of field may be too shallow.",
                 {"aperture_hint": "stop_down_one_step", "iso_guard": "avoid_high_iso_if_possible"},
             ))
-        elif uniformity < 0.22 and global_blur >= self._blur_threshold:
+        elif uniformity < 0.22 and global_blur >= self._blur_threshold and edge_is_absolutely_soft:
             recs.append(OptimizerRecommendation(
                 "framing_or_focus",
                 "validate_focus_plane",

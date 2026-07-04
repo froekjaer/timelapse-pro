@@ -35,6 +35,7 @@ for _path in (str(HEADEND_ROOT), str(REPO_ROOT)):
         sys.path.insert(0, _path)
 
 from database import Capture, Device, SessionLocal  # noqa: E402
+from ai.model_results import ENGINE_EDGE_CV, upsert_capture_model_result  # noqa: E402
 
 _TLS = threading.local()
 
@@ -167,6 +168,7 @@ def _config(mode: str, runner: str, model: str, vendor_binary: str) -> dict[str,
 
 def _edge_payload(report: dict[str, Any], image_path: Path) -> dict[str, Any]:
     opt = report.get("autonomous_optimizer") or {}
+    edge_tags = [str(tag).strip().lower() for tag in (opt.get("tags") or []) if str(tag).strip()]
     score = opt.get("score")
     optimizer_score = None
     if isinstance(score, dict):
@@ -200,6 +202,7 @@ def _edge_payload(report: dict[str, Any], image_path: Path) -> dict[str, Any]:
         "cv_features": report.get("cv_features") or {},
         "npu": report.get("npu") or {},
         "autonomous_optimizer": opt,
+        "tags": list(dict.fromkeys(edge_tags)),
         "optimizer_score": optimizer_score,
         "control_plan": opt.get("control_plan"),
         "recommendations": opt.get("recommendations") or [],
@@ -384,6 +387,17 @@ def main() -> int:
                     capture.blur_score = float(report["blur_score"]) if report.get("blur_score") is not None else None
                     capture.brightness_mean = float(report["brightness_mean"]) if report.get("brightness_mean") is not None else None
                     capture.ai_result = _merge_ai_result(capture.ai_result, payload)
+                    upsert_capture_model_result(
+                        db,
+                        capture_id=capture.id,
+                        engine=ENGINE_EDGE_CV,
+                        model=str(payload.get("engine") or "edge_cv_v1"),
+                        result_kind="qa",
+                        result_json=payload,
+                        tags=payload.get("tags") or [],
+                        confidence=float(payload["confidence"]) if payload.get("confidence") is not None else None,
+                        source="edge_backfill",
+                    )
                     capture.ai_analyzed_at = datetime.now(timezone.utc)
                     sidecar = image.with_suffix(".json")
                     _write_sidecar(image, payload)

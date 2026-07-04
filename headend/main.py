@@ -11216,6 +11216,21 @@ def _finalize_ai_batch_job(db, job: "AiBatchJob", svc, gemini_job) -> None:
             tags = result.approved_tags + result.new_tags
             capture.ai_result = _json.dumps(ai_payload, ensure_ascii=False)
             capture.ai_tags = _json.dumps(tags, ensure_ascii=False)
+            try:
+                from ai.model_results import ENGINE_GEMINI_CLOUD, upsert_capture_model_result
+                upsert_capture_model_result(
+                    db,
+                    capture_id=capture.id,
+                    engine=ENGINE_GEMINI_CLOUD,
+                    model=str(job.cloud_model or ai_payload.get("model") or ""),
+                    result_kind="analysis",
+                    result_json=ai_payload,
+                    tags=tags,
+                    confidence=float(ai_payload["confidence"]) if ai_payload.get("confidence") is not None else None,
+                    source="gemini_batch",
+                )
+            except Exception as exc:
+                log.debug("Kunne ikke gemme Gemini batch i capture_model_results for capture %d: %s", capture.id, exc)
             capture.ai_analyzed_at = now_utc()
             # Registrér brug + nye tags til godkendelse — manglede helt før denne fix,
             # så batch-opdagede tags forsvandt i stedet for at lande i Tag Review.

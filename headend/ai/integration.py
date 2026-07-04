@@ -32,6 +32,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from ai.model_results import engine_from_legacy_payload, upsert_capture_model_result
+
 log = logging.getLogger("headend.ai")
 
 # ── DB Migration ──────────────────────────────────────────────────────────────
@@ -168,6 +170,7 @@ def _open_webui_priority_enabled(get_db_fn) -> bool:
 
 def _load_vocabulary(get_db_fn):
     from ai.tag_vocabulary import TagVocabulary
+
     vocab = TagVocabulary(get_db_fn)
     return vocab, vocab.get_approved_by_category(), set(vocab.get_approved_tags())
 
@@ -466,6 +469,17 @@ def _worker(get_db_fn, find_image_fn):
                             pass
                     capture.ai_result      = json.dumps(payload, ensure_ascii=False)
                     capture.ai_tags        = json.dumps(tags, ensure_ascii=False)
+                    upsert_capture_model_result(
+                        db,
+                        capture_id=capture.id,
+                        engine=engine_from_legacy_payload(payload, model_used),
+                        model=str(model_used or payload.get("model") or ""),
+                        result_kind="analysis",
+                        result_json=payload,
+                        tags=tags,
+                        confidence=float(payload["confidence"]) if payload.get("confidence") is not None else None,
+                        source="headend_live",
+                    )
                     capture.ai_analyzed_at = datetime.now(timezone.utc)
                     db.commit()
 
@@ -663,6 +677,17 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
                     pass
             capture.ai_result      = json.dumps(payload, ensure_ascii=False)
             capture.ai_tags        = json.dumps(tags, ensure_ascii=False)
+            upsert_capture_model_result(
+                db,
+                capture_id=capture.id,
+                engine=engine_from_legacy_payload(payload, payload.get("model")),
+                model=str(payload.get("model") or ""),
+                result_kind="analysis",
+                result_json=payload,
+                tags=tags,
+                confidence=float(payload["confidence"]) if payload.get("confidence") is not None else None,
+                source="headend_manual",
+            )
             capture.ai_analyzed_at = datetime.now(timezone.utc)
             db.commit()
         vocab.record_usage(result.approved_tags, result.new_tags)
