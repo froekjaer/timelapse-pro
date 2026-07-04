@@ -2720,3 +2720,51 @@ person vide".
   import af `src/api/client.ts` og stor JS chunk.
 - **Drift:** Ingen service-genstart udført eller nødvendig; ændringen er kun frontend
   event-metadata/ikoner.
+
+### Handover 2026-07-05 01:28 — fra Claude (periodisk tjek): #52 intern CA/mTLS-design
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste `HANDOVER_LOG.md`-halen — ingen nye
+  Codex-entries siden Codex' seneste SIEM-ikon-bekræftelse (`077450be`, efterfølgende docs-commit
+  `72a89e43`), intet åbent spørgsmål adresseret til mig. `git status --short` viste fortsat kun
+  samme untracked `claude_proxy.py` (ladt urørt) plus den kendte harmløse `.git/index.lock`
+  (`git status`/`git log` virker fint alligevel — samme mønster som tidligere nævnt). Gennemgik
+  §11/§10 i `RISK_ASSESSMENT_v10.md` igen: alle P0-punkter (Cloudflare Tunnel-migrering, R09
+  restore-test, DPIA/retention R12, node-agent R13, global HMAC-enforcement) kræver stadig enten
+  Mac Mini/Orange Pi/Cloudflare-adgang eller en juridisk/organisatorisk beslutning fra Peter. Tog
+  derfor mit eget "går videre til"-punkt fra flere tidligere entries: #52 (intern CA/mTLS-design),
+  som hidtil kun har været en overskrift, ikke et faktisk udfoldet forslag.
+- **Udført (rent design/dokumentation, ingen kode rørt):** Læste først den faktiske device-auth-kode
+  for at forankre designet i virkeligheden i stedet for at gætte: bootstrap-flow
+  (`headend/main.py:1640,1765`), bearer-token-sammenligning (`:2071`), HMAC-request-signatur
+  (`:2098-2127`), HMAC-enforcement-tælling fra R15 (`:2503,2585-2655`), og
+  provisioneringspakke-generering (`_build_bootstrap_yaml`, `:9438`). Bekræftede ved `grep` at der
+  **ingen PKI-kode findes i dag** (`cryptography`/`x509`/`generate_private_key` findes ikke i
+  `headend/`/`edge/` — eneste træffere er Fernet-symmetrisk kryptering i `cmdb.py`, urelateret).
+  Skrev derefter `Dokumentation/Claude_Intern_CA_mTLS_Design_2026-07-05.md`: Root CA → ny Issuing
+  CA → device client cert (ECDSA P-256, CN/SAN = `device_id`), mTLS foreslået lagt **ved siden af**
+  det eksisterende HMAC-lag (ikke erstatning, jf. defense-in-depth), CRL fremfor OCSP given
+  fleet-størrelsen, og en udvidelse af det allerede spec'ede Key Mgmt UI (§14) med Issuing
+  CA-status og cert-spærring.
+- **Den konkrete blocker jeg identificerede (§6 i notatet):** valget mellem (A) Cloudflare Access
+  mTLS/service tokens ved tunnel-indgangen, (B) ende-til-ende mTLS direkte til nginx/Headend, eller
+  (C) en hybrid, afhænger af Cloudflare-planniveau/dashboard-konfiguration som jeg ikke har adgang
+  til. Dette er sandsynligvis **hele grunden til** at #52 er blevet skubbet foran mig i flere
+  runder nu — det er ikke en kodeopgave før dette arkitekturvalg er truffet.
+- **Verifikation her:** Ren dokumentation — verificeret ved at genlæse hele det nye notat for intern
+  konsistens (§4 PKI-hierarki matcher §7 nøglelivscyklus matcher §9 implementeringsplan), og ved at
+  genlæse de opdaterede afsnit i `RISK_ASSESSMENT_v10.md` (§13.3, §11 P1.2, §12) for at bekræfte at
+  markdown-tabellernes `|`-struktur stadig er intakt. Ingen kode/kørende systemer rørt.
+- **IKKE gjort — bevidst:** Intet CA-nøglegenereringsscript skrevet, ingen ændring af
+  `headend/main.py`/`edge/agent.py`, ingen ændring af selve R05/R07/R08-scoren (§13 var allerede
+  markeret "ikke implementeret" — det er stadig sandt, nu blot med et konkret forslag klar til
+  godkendelse). Har bevidst IKKE gættet på Cloudflare-planniveau eller truffet §6-valget selv —
+  det er en netværkstopologi-/kontobeslutning, ikke noget kode kan afgøre.
+- **Codex/Peter: ingen kommandoer at køre** (ren dokumentation, ingen deploy/service-genstart
+  nødvendig). Når I har et vindue: læs `Claude_Intern_CA_mTLS_Design_2026-07-05.md` §6 og §10 og
+  afgør (1) hvilken mTLS-model der passer til jeres Cloudflare-plan, (2) om 6-måneders
+  cert-levetid stadig er ønsket, (3) om HMAC-laget skal bevares permanent ved siden af mTLS. Først
+  derefter kan implementeringsplanen (§9 i notatet) sættes i gang.
+- **Filer rørt:** `Dokumentation/Claude_Intern_CA_mTLS_Design_2026-07-05.md` (ny),
+  `Dokumentation/RISK_ASSESSMENT_v10.md` (§13.3, §11 P1.2, §12 opdateret).
+- **Går videre til:** næste periodiske runde ser på #53 (Nikon Z30 config-drift — resten af R14:
+  UI/CMDB-visning af `camera_config_non_enforceable`, jf. entry 2026-07-05 00:12) hvis intet nyt
+  er dukket op fra Codex, eller på Peters §6-beslutning hvis den er lagt i mellemtiden.

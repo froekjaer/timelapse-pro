@@ -511,7 +511,9 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 
 ### 🟠 P1 — Skal lukkes inden første rigtige kunde-site
 1. MFA/WebAuthn til admin-login (R02)
-2. Intern CA + device client certs (R05, R07, R08)
+2. Intern CA + device client certs (R05, R07, R08) — design-notat klar
+   (`Claude_Intern_CA_mTLS_Design_2026-07-05.md`), afventer Peter/Codex' arkitekturvalg
+   (Cloudflare Access mTLS vs. ende-til-ende) før kode
 3. Nikon Z30 config-model — desired state + accepted equivalents (R14)
 4. Per-target deployment status (update-flow)
 5. ESLint-gate i CI
@@ -541,6 +543,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-04 | Claude: R17 (debug/lab mode uden overvågning, fundet ifm. GPS-fejlsøgning) tilføjet; R12 udvidet med GPS/lokationsmetadata-note |
 | 10 (tilføjelse) | 2026-07-05 | Claude (periodisk tjek): R14 — fundet og rettet at config-drift-detektion reelt var inaktiv (key-mismatch + FLEET_DEFAULTS blev erstattet, ikke merged); rettelse verificeret isoleret, IKKE på live hardware |
 | 10 (tilføjelse) | 2026-07-05 (nat) | Claude (periodisk tjek, docs-sync): R17 opdateret fra "rettet i kode, ikke deployet" til "deployet af Codex, health+build OK, kun manuel smoketest udestår" — dokumentet var kommet bagud ift. HANDOVER_LOG efter Codex' deploy-verifikation |
+| 10 (tilføjelse) | 2026-07-05 01:28 | Claude (periodisk tjek): §13.3 og §11 P1.2 opdateret med henvisning til nyt design-notat `Claude_Intern_CA_mTLS_Design_2026-07-05.md` (#52) — intern CA/mTLS-arkitektur, ingen kode rørt, afventer Peters valg mellem Cloudflare Access mTLS og ende-til-ende-model |
 
 ---
 
@@ -573,6 +576,13 @@ TimeLapse Root CA  (Mac Mini — offline privat nøgle)
 ### 13.3 Vurdering: Self-signed vs. intern CA
 
 Self-signed individuelle certifikater frarådes (manuel trust-konfiguration pr. device). Intern mini-CA anbefales: rotation (ny headend-cert signeres af CA → edges opdateres ved næste config-pull), revokering (nyt device kræver CA-signering), skalering O(1) uanset antal devices, implementation ~50 linjer `cryptography` (allerede i venv). Status pr. v10: intern CA/mTLS er stadig **ikke implementeret** (jf. SEC-009/R07).
+
+**Design-notat 2026-07-05 (Claude):** Se `Claude_Intern_CA_mTLS_Design_2026-07-05.md` for et
+udfoldet forslag — Root CA → Issuing CA → device client cert (ECDSA P-256, CN=`device_id`),
+mTLS lagt *ved siden af* eksisterende HMAC-lag (ikke erstatning), CRL fremfor OCSP given
+fleet-størrelsen. **Blocker for kode:** valg mellem Cloudflare Access mTLS og ende-til-ende
+mTLS til nginx/Headend (§6 i notatet) kræver kig i Cloudflare-dashboardet/-planniveau, som
+Claude ikke har adgang til — kræver Peter/Codex' input før implementering kan starte.
 
 ## 14. Key Management UI — funktionskrav (bevaret fra v6)
 
