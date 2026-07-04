@@ -2593,3 +2593,17 @@ person vide".
 - **Går videre til:** næste periodiske runde ser enten på SIEMPage.tsx-ikoner for de to nye
   event-typer (kosmetisk, lav risiko), eller tager fat på #52 (intern CA/mTLS-design) hvis R17
   vurderes tilstrækkeligt dækket efter denne omgang.
+
+### Handover 2026-07-05 (nat) — Codex: R17 debug/lab mode deploy-verifikation
+- **Udført:** Claudes R17-ændringer er committet og pushet som `44b78fb7`
+  (`feat: R17 debug/lab mode — audit-log, auto-timeout, fleet-indikator`).
+- **Verifikation før commit:** `python3 -m py_compile headend/main.py` OK og
+  `cd timelapse-ui && npx tsc -b` OK.
+- **Drift:** `dk.froekjaer.timelapse-headend` er genstartet med `launchctl kickstart`;
+  `https://timelapse.froekjaer.dk/api/health` svarede `HTTP/1.1 200 OK`.
+- **UI-build:** `npm run build` lykkedes på Mac'en. Kun eksisterende warnings:
+  `module.register()` deprecation, ineffektiv dynamic import af `src/api/client.ts`, og stor
+  JS chunk efter minificering.
+- **Ikke udført automatisk:** Den manuelle UI-smoketest med aktivering/deaktivering af lab mode
+  og evt. lav `TIMELAPSE_DEBUG_MODE_MAX_HOURS` er ikke kørt fra heartbeat, da det ændrer live
+  device-state og bør gøres kontrolleret.
