@@ -419,7 +419,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                   // for hvilken motor der producerede AI-resultatet, så man ikke skal
                   // gætte ud fra modelnavnet. ai.engine er kun sat på analyser lavet
                   // efter denne dato — ældre rækker falder tilbage til '—'.
-                  const engineLabel: string | null =
+                  const engineLabel: string | null = !ai ? null :
                     ai.source === 'edge'
                       ? `🔧 Edge${ai.edge_ai_engine ? ` (${ai.edge_ai_engine})` : ''}`
                       : ai.engine === 'cloud'
