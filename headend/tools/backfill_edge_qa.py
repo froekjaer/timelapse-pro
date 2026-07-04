@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import or_, text
+from sqlalchemy import and_, or_, text
 
 HEADEND_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = HEADEND_ROOT.parent
@@ -35,6 +35,7 @@ for _path in (str(HEADEND_ROOT), str(REPO_ROOT)):
         sys.path.insert(0, _path)
 
 from database import Capture, Device, SessionLocal  # noqa: E402
+from ai.ai_models import CaptureModelResult  # noqa: E402
 from ai.model_results import ENGINE_EDGE_CV, upsert_capture_model_result  # noqa: E402
 
 _TLS = threading.local()
@@ -261,7 +262,13 @@ def _query(db, args):
     if args.until:
         q = q.filter(Capture.captured_at < datetime.fromisoformat(args.until))
     if args.only_missing_edge:
-        q = q.filter(or_(Capture.ai_result.is_(None), ~Capture.ai_result.contains('"edge_ai"')))
+        q = q.outerjoin(
+            CaptureModelResult,
+            and_(
+                CaptureModelResult.capture_id == Capture.id,
+                CaptureModelResult.engine == ENGINE_EDGE_CV,
+            ),
+        ).filter(CaptureModelResult.id.is_(None))
     q = q.order_by(Capture.captured_at.asc().nullslast(), Capture.id.asc())
     if args.limit:
         q = q.limit(args.limit)

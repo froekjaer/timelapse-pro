@@ -2004,3 +2004,45 @@ person vide".
 - **Filer rørt:** `headend/ai/model_results.py`, `headend/main.py`,
   `timelapse-ui/src/pages/DevicePage.tsx`.
 - **Afventer:** Peters commit+deploy, derefter live-smoke-test af det nye endpoint.
+
+### Handover 2026-07-04 — Codex starter historisk AI/QA model-result backfill
+- **Peter bad om:** gå alle billeder igennem og afklare om Travbyen er tagget af Gemini.
+- **Første DB-måling:** `capture_model_results` indeholdt kun 3 `edge_cv_v1/qa` rækker
+  og 4 `headend_ollama/analysis` rækker. Travbyen havde 6.158 captures, 5.551 legacy
+  `ai_tags`, 6.158 legacy `ai_result`, men 0 model-separerede rækker.
+- **Travbyen-konkret:** Kamera 1: 5.029/5.029 legacy-tagget; 4.953 med model
+  `gemini-2.5-flash` og 76 med `llava-phi3`. Kamera 2: 522 legacy-tagget med
+  `qwen2.5vl:7b`, 607 med legacy `edge_cv_v1` og ingen `ai_tags`.
+- **Plan:** først migrere historiske legacy `ai_result/ai_tags` additivt ind i
+  `capture_model_results` pr. motor (Gemini/Ollama/Edge CV), uden at ændre
+  `captures.ai_tags`; derefter køre Edge CV backfill mod originalbillederne ind i den
+  nye modeltabel.
+
+### Handover 2026-07-04 — Codex færdiggjorde historisk AI/QA model-result backfill
+- **Legacy-migration udført:** nyt værktøj `headend/tools/backfill_model_results_from_legacy.py`
+  migrerede 27.784 historiske `captures.ai_result` rækker additivt til
+  `capture_model_results`, fordelt på `gemini_cloud` 26.478,
+  `headend_ollama` 677 og `edge_cv_v1` 629. Værktøjet ændrer ikke
+  `captures.ai_tags`, `capture_tags` eller cloud-købte Gemini-data.
+- **Edge CV-backfill udført mod originalbilleder:** `headend/tools/backfill_edge_qa.py`
+  blev kørt mod canonical originals. Første fulde kørsel behandlede 27.784/27.784 uden
+  manglende filer eller exceptions; tre nye Nordre-billeder kom ind imens, og blev
+  efterfølgende taget med via `--only-missing-edge`.
+- **Værktøjsfix:** `--only-missing-edge` i `backfill_edge_qa.py` brugte før legacy
+  `captures.ai_result.edge_ai`; rettet til at kigge i den nye `capture_model_results`
+  tabel (`engine=edge_cv_v1`), så flaget matcher UI'ets nye datamodel.
+- **Slutstatus i DB:** 27.787 captures og 27.787 `edge_cv_v1/qa` model-resultater.
+  `capture_model_results` indeholder samlet `edge_cv_v1/qa` 27.787,
+  `gemini_cloud/analysis` 26.478 og `headend_ollama/analysis` 680.
+- **Site-dækning:** Nordre Villavej 17c: 21.629 captures, 21.629 Edge CV,
+  21.525 Gemini, 82 Ollama, 21.607 legacy tags. Travbyen: 6.158 captures,
+  6.158 Edge CV, 4.953 Gemini, 598 Ollama, 5.551 legacy tags.
+- **Travbyen-konkret:** Kamera 1: 5.029 captures, alle har Edge CV og legacy tags;
+  4.953 Gemini og 76 Ollama/llava. Kamera 2: 1.129 captures, alle har Edge CV;
+  522 Ollama/qwen legacy tags og ingen Gemini-rækker.
+- **Edge CV-årsager efter fuld kørsel:** `ok` 21.372, `direct_sun_reflection` 4.499,
+  `underexposure_or_camera_blocked` 1.527, `focus_or_lens_issue` 306,
+  `snow_or_dirt_on_lens` 78, `condensation_or_soft_lens_obstruction` 5.
+- **Vigtigt:** kontrol viste `edge_tag_pollution = 0`, så Edge CV har ikke skrevet
+  `center_sharp_soft_edges`/`depth_of_field_issue` eller lignende ind i legacy
+  `captures.ai_tags`. Gemini/Ollama-tags er ikke slettet eller overskrevet.
