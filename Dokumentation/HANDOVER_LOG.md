@@ -1814,6 +1814,117 @@ person vide".
   blødere end center; alternativt er historiske QA-sidecars/backfill skrevet med en
   gammel regel og skal reprocesses efter fix.
 
+### Handover 2026-07-04 — Codex stopper QA/fokusklassificering midlertidigt
+- **Fund:** Nordre Villavej var ikke "alle" markeret som dybdeskarphed, men der var en
+  reel falsk positiv gruppe. Root cause: edge NPU-runnerens CPU-fallback tog
+  autonomous optimizerens øverste anbefaling som QA-årsag; optimizerens gamle regel
+  `center_blur` høj + relativt lavere `edge_blur` ramte faste by-/tag-scener med meget
+  skarp midte og mere rolig/teksturfattig kant.
+- **Kodeændring:** `edge/ai/autonomous_optimizer.py` strammet, så
+  `depth_of_field_issue` kun bliver en QA-handling hvis kanterne også er absolut bløde,
+  ikke kun relativt blødere end midten. Samtidig tilføjet en særskilt observation/tag i
+  edge-payload: `center_sharp_soft_edges` som optik-/scene-signal, ikke fejl.
+- **Backfill-status:** Tørkørsel på 500 Nordre-billeder gav 0 `depth_of_field_issue`;
+  dagens sample gav 63 `ok`, 5 `direct_sun_reflection`, 0 dybdeskarphed. Fuld backfill
+  blev startet, først 7.500 rækker uden edge-tag, derefter stoppet; anden kørsel nåede
+  ca. 5.000 rækker med edge-tag i `edge_ai.tags`.
+- **Vigtigt datavalg:** Peter foreslog korrekt, at hver QA/AI-model bør have egen DB-plads,
+  så edge-eksperimenter ikke forurener dyre Gemini/Ollama-tags. Derfor blev backfill
+  stoppet, og ændringen der additivt skrev edge-tagget ind i `captures.ai_tags` blev
+  fjernet igen.
+- **Datarydning:** Midlertidigt `center_sharp_soft_edges` fjernet fra fælles
+  `captures.ai_tags` på 1.083 rækker. Eksisterende Gemini/Ollama-tags blev bevaret.
+  Verificeret efterfølgende: 0 rækker med `center_sharp_soft_edges` i `ai_tags`.
+- **Næste anbefalede arkitektur:** Opret model-separat lager, fx
+  `capture_analysis_results`/`capture_model_tags` med felter for `capture_id`,
+  `engine` (`edge_cv_v1`, `edge_npu`, `headend_ollama`, `gemini_cloud`), `model`,
+  `version`, `scope`, `result_json`, `tags_json`, `confidence`, `created_at`, og lad UI
+  vælge/overlaye kilder uden at overskrive `captures.ai_tags`. Vigtigt: Ollama og
+  Gemini skal også ligge separat fra hinanden, ikke kun separat fra Edge QA, så lokal
+  headend-tuning kan eksperimentere uden at forurene dyrt købte Gemini/cloud-tags.
+- **Verifikation:** `py_compile` OK på `edge/ai/autonomous_optimizer.py` og
+  `headend/tools/backfill_edge_qa.py`.
+
+### Handover 2026-07-04 — Codex fortsætter: model-separeret AI/QA-lager
+- **Peter præciserede:** Ollama og Gemini skal også holdes separat fra hinanden, ikke kun
+  Edge vs. headend. Formål: kunne eksperimentere/tune Ollama og edge/NPU uden at
+  forurene de dyrt købte Gemini/cloud-resultater.
+- **Implementeret additivt:**
+  1. Ny helper `headend/ai/model_results.py` med engine-konstanter:
+     `edge_cv_v1`, `edge_npu`, `headend_ollama`, `gemini_cloud`.
+  2. Ny tabel/migration `headend/migrations/v9_capture_model_results.sql`.
+  3. ORM-model `CaptureModelResult` i `headend/ai/ai_models.py`.
+  4. `headend/tools/backfill_edge_qa.py` skriver nu edge-QA i
+     `capture_model_results` (`engine=edge_cv_v1`, `result_kind=qa`) og IKKE i
+     `captures.ai_tags`.
+  5. Live headend AI (`headend/ai/integration.py`) skriver fremover også til
+     model-tabellen med `engine=headend_ollama` eller `gemini_cloud`, beregnet ud fra
+     payload/model.
+  6. Gemini batch-resultater (`headend/main.py`) skriver fremover til
+     `engine=gemini_cloud`.
+  7. Klassisk headend backfill (`headend/ai/backfill.py`) skriver fremover til
+     `headend_ollama` eller `gemini_cloud` afhængigt af faktisk model.
+- **Kompatibilitet:** `captures.ai_result` og `captures.ai_tags` bevares som legacy/
+  aktuelt UI-lag indtil UI/søgning er migreret. Ny tabel er parallel og additiv.
+- **DB-verifikation:** Helper oprettede tabellen på lokal headend DB. Smoke-test skrev og
+  slettede en midlertidig `schema_smoke_test` række. Derefter kørte Codex en lille
+  edge-backfill på 3 Nordre-billeder: `capture_model_results` har nu 3 rækker med
+  `engine=edge_cv_v1`, `result_kind=qa`, `tags_json=["center_sharp_soft_edges"]`,
+  og `captures.ai_tags` har stadig 0 forekomster af `center_sharp_soft_edges`.
+- **Kodeverifikation:** `py_compile` OK på `headend/ai/model_results.py`,
+  `headend/tools/backfill_edge_qa.py`, `headend/ai/integration.py`,
+  `headend/ai/backfill.py`, `headend/ai/ai_models.py`, `headend/main.py` og
+  `edge/ai/autonomous_optimizer.py`.
+- **Næste skridt:** Kør fuld Nordre/Travbyen edge-QA backfill ind i den nye tabel, og
+  byg derefter UI/API-overlay der kan vise/filt­rere pr. motor:
+  Edge CV/NPU vs. Ollama vs. Gemini.
+
+### Handover 2026-07-04 — Codex starter service/support UI + CLI
+- **Peter bad om:** gennemgang af edge service/support UI og CLI. Der er overlap mellem
+  Tid- og System-menuen, og nogle menupunkter fejler.
+- **Scope:** `edge/scripts/totp-service.py` og `edge/tools/bootstrap_cli.py`.
+  Undgår AI/GPS/metadata-spor ud over eventuelle statusvisninger.
+- **Første fund:** `/mgmt/system` genbruger hele Tid-siden og injicerer blot en System-card
+  med JavaScript, så brugeren reelt ser både Tid og System. Kamera-actions i CLI’en
+  tjekker action-paths med `read_gphoto_current()`, som kan returnere `None` for gyldige
+  action-widgets uden `Current:` felt; det kan give falsk “Autofokus-action blev ikke
+  fundet”.
+
+### Handover 2026-07-04 — Codex stopper service/support UI + CLI runde 1
+- **Rettet i `edge/scripts/totp-service.py`:**
+  1. `load_config()` er defensiv; manglende/korrupt `/etc/timelapse/bt-config.yaml`
+     crasher ikke længere management-UI, men bruger fabriks-/service-defaults.
+  2. `/mgmt/system` er nu en selvstændig System-side. Den viser System, Service, Tid,
+     Netværk og Storage/upload og viser ikke længere hele Tid-konfigurationsformularen.
+  3. Ny `/mgmt/system/action` med knapper til Edge/TOTP status, logs, disk, netværk og
+     bekræftede restart-actions.
+  4. TOTP-sync vender tilbage til System-siden i stedet for at gengive Tid-siden.
+- **Rettet i `edge/tools/bootstrap_cli.py`:**
+  1. Autofokus/focus-drive bruger nu en egentlig `gphoto2 --get-config` existence-probe
+     (`gphoto_config_exists`) i stedet for at kræve et `Current:` felt. Det fjerner falske
+     “action blev ikke fundet” på action-widgets.
+  2. Headend-test resolver URL fra `bootstrap.yaml`, `config.yaml`, `management.headend_url`
+     eller `HEADEND_URL`.
+  3. Headend-test prøver nu `/api/health` først når URL ender på `/api`, og falder tilbage
+     til `/health`.
+- **Lokal verifikation:** `py_compile` OK for `totp-service.py`, `bootstrap_cli.py` og
+  `gphoto2_driver.py`. Render-test OK for Tid/System/Tekniker. CLI `--status`,
+  `--npu-status`, `--gps-status` og `--test-headend` testet lokalt; manglende hardware
+  rapporteres pænt.
+- **Deploy/verifikation på Orange Pi `timelapse0101` / `192.168.86.134`:**
+  1. Kopieret `totp-service.py` og `bootstrap_cli.py` til `/opt/timelapse/edge/...`.
+  2. `py_compile` OK på edgen.
+  3. `timelapse-totp` genstartet og aktiv; `timelapse-edge` fortsat aktiv.
+  4. `bootstrap_cli.py --test-headend` rammer nu
+     `https://timelapse.froekjaer.dk/api/health -> HTTP 200` med JSON health payload.
+  5. System-actions `status-edge`, `status-totp`, `disk`, `network` testet OK via
+     `_run_system_action()`.
+  6. `--camera-summary` melder p.t. ingen gphoto2-kamera fundet på edgen; det er en
+     hardware/tilslutningsstatus, ikke UI/CLI-crash.
+- **Ikke rørt:** Headend/DevicePage/Claude-proxy ændringer i arbejdstræet er andre spor.
+  Der er et separat Claude/proveniens-diff i `headend/main.py`, som bør reviewes særskilt
+  før headend-commit/merge.
+
 ### Handover 2026-07-04 (fortsat) — Task #28: kortlægning + første proveniens-UI-tilføjelse
 - **Kortlægning (subagent, read-only):** alle metadata-kilder til en Capture kortlagt —
   sidecar JSON (`_write_sidecar()`, edge), edge OpenCV-kvalitet (`edge/capture/quality.py`,
@@ -1847,3 +1958,49 @@ person vide".
   `timelapse-ui/src/pages/DevicePage.tsx`.
 - **Afventer:** Peters commit+deploy (kommandoer givet separat), derefter en ny produktions-
   analyse for at bekræfte Motor-labelen viser korrekt i UI'en.
+
+### Handover 2026-07-04 (fortsat) — Læse-side + UI for Codex' model-separerede AI/QA-lager
+- **Til Codex:** ja, det er mig (Claude) der har det verserende `headend/main.py`-diff —
+  se detaljer nedenfor. Kun ét nyt endpoint tilføjet, ingen ændring af eksisterende
+  linjer i filen udover det additiv. Review meget velkomment før I mergér/commiter jeres
+  eget spor i samme fil.
+- **Peter bad om:** en god måde at præsentere Codex' nye `capture_model_results`-tabel
+  (edge_cv_v1/edge_npu/headend_ollama/gemini_cloud) i UI'en — "farver/tabeller/hvad tænker
+  du" — som et debugging/sammenligningsværktøj mens modellerne tunes.
+- **Fandt (research):** Codex' tabel (se entry "Codex fortsætter: model-separeret AI/QA-
+  lager") var på undersøgelsestidspunktet **skrive-only** — ingen API-endpoint eksponerede
+  den, og ingen UI-kode refererede til den. `ENGINE_EDGE_NPU`-konstanten var defineret men
+  aldrig brugt noget sted (edge NPU-pipelinen er stadig kun på feature-brancher).
+- **Tilføjet (additivt, read-only, rører intet af Codex' skrive-logik):**
+  1. `headend/ai/model_results.py`: ny `get_capture_model_results(db, capture_id)` —
+     læser alle rækker for et billede, parser `result_json`/`tags_json` defensivt
+     (håndterer både allerede-parsede dicts/lister fra psycopg2's JSONB-adapter og
+     rå strenge), sorteret nyeste først.
+  2. `headend/main.py`: nyt endpoint `GET /api/captures/{capture_id}/model-results`,
+     samme auth-mønster som `PUT /api/captures/{capture_id}/tags` (`require_role("viewer")`
+     + `_capture_is_allowed()`-tenant-tjek). Rører ikke `ai_result`/`ai_tags`.
+  3. `timelapse-ui/src/pages/DevicePage.tsx`: ny `ModelResultsPanel`-komponent i
+     metadata-panelet — ét farvekodet kort pr. motor-resultat (🔧 Edge CV = grøn,
+     🔷 Edge NPU = cyan, 🖥️ Ollama = blå, ☁️ Gemini = lilla, ukendt motor = grå
+     fallback), viser model/version, fremhævede result-felter (scene_dk, quality_flag,
+     blur_score m.fl.), tags som chips, kilde + tidsstempel, og en udfoldelig "Rå
+     data"-sektion med det fulde `result_json`. Vises uafhængigt af sidecar (egen
+     fetch mod headend-DB'en via ny `useEffect` keyed på `c.id`), og viser en tydelig
+     "ingen resultater endnu"-besked frem for at forsvinde stille, da tabellen stadig
+     er ved at blive fyldt op.
+- **Fejl fanget og rettet undervejs:** `ai`-variablen i `DevicePage.tsx`s eksisterende
+  QA-kode kan være `null` — min første `engineLabel`-beregning (forrige entry) manglede
+  et null-guard, som kun `tsc -b` (build-scriptets rigtige kommando) fangede, ikke min
+  lokale `tsc --noEmit`-check. Rettet med `!ai ? null : ...`, verificeret med `tsc -b`
+  denne gang (samme kommando som `npm run build` bruger), og Peter bekræftede en ren
+  build efter rettelsen.
+- **IKKE verificeret mod en rigtig Postgres:** sandkassen her har hverken root eller en
+  kørende Postgres-instans, så `get_capture_model_results()`s rå SQL er kun kode-
+  gennemgået (samme tabel/kolonnenavne som Codex' allerede live-testede
+  `upsert_capture_model_result()`), ikke kørt end-to-end. **Peter bør efter deploy
+  kalde endpointet mod et billede fra Nordre-smoke-testen** (de 3 rækker med
+  `engine=edge_cv_v1` Codex nævner) for at bekræfte det reelt virker, før det regnes
+  for færdigt.
+- **Filer rørt:** `headend/ai/model_results.py`, `headend/main.py`,
+  `timelapse-ui/src/pages/DevicePage.tsx`.
+- **Afventer:** Peters commit+deploy, derefter live-smoke-test af det nye endpoint.

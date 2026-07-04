@@ -61,6 +61,112 @@ function formatUptime(s: number) {
   return h > 0 ? `${h}t ${m}m` : `${m}m`
 }
 
+// 2026-07-04 (Claude): præsentation af Codex' model-separerede AI/QA-lager
+// (capture_model_results — edge_cv_v1/edge_npu/headend_ollama/gemini_cloud, se
+// HANDOVER_LOG.md "Codex fortsætter: model-separeret AI/QA-lager"). Hver motor
+// gemmer nu sit eget resultat uden at overskrive de andres, så de kan vises
+// side om side her — nyttigt mens Peter/Codex tuner modellerne mod hinanden.
+const ENGINE_STYLE: Record<string, { label: string; icon: string; badge: string; border: string }> = {
+  edge_cv_v1: {
+    label: 'Edge CV',
+    icon: '🔧',
+    badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    border: 'border-l-emerald-500/60',
+  },
+  edge_npu: {
+    label: 'Edge NPU',
+    icon: '🔷',
+    badge: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+    border: 'border-l-cyan-500/60',
+  },
+  headend_ollama: {
+    label: 'Ollama (lokal)',
+    icon: '🖥️',
+    badge: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+    border: 'border-l-blue-500/60',
+  },
+  gemini_cloud: {
+    label: 'Gemini (cloud)',
+    icon: '☁️',
+    badge: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+    border: 'border-l-purple-500/60',
+  },
+}
+const ENGINE_FALLBACK = {
+  label: 'Ukendt motor',
+  icon: '❔',
+  badge: 'bg-white/10 text-white/50 border-white/20',
+  border: 'border-l-white/20',
+}
+
+function ModelResultsPanel({ results }: { results: any[] | null }) {
+  if (results === null) return null // stadig indlæses — undgå flimmer
+  if (results.length === 0) {
+    return (
+      <div className="mt-3 border-t border-white/10 pt-3">
+        <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1">🔬 Model-resultater (side om side)</p>
+        <p className="text-white/25 text-[11px] italic">Ingen model-separerede resultater endnu for dette billede (edge_cv_v1 / edge_npu / headend_ollama / gemini_cloud).</p>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-3 border-t border-white/10 pt-3">
+      <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-2">
+        🔬 Model-resultater (side om side) <span className="normal-case font-normal text-white/20">— {results.length} motor{results.length !== 1 ? 'er' : ''}</span>
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        {results.map((r, idx) => {
+          const style = ENGINE_STYLE[r.engine] ?? { ...ENGINE_FALLBACK, label: r.engine || ENGINE_FALLBACK.label }
+          const highlightKeys = ['scene_dk', 'quality_flag', 'description', 'probable_cause', 'blur_score', 'brightness_mean', 'change_detected']
+          const highlights = highlightKeys
+            .map(k => [k, r.result?.[k]] as const)
+            .filter(([, v]) => v !== undefined && v !== null && v !== '')
+          return (
+            <div key={`${r.engine}-${r.model}-${r.result_kind}-${idx}`} className={`border-l-2 ${style.border} bg-white/[0.03] rounded-r p-2 min-w-0`}>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${style.badge} font-medium`}>{style.icon} {style.label}</span>
+                {r.confidence != null && (
+                  <span className="text-[10px] text-white/40">{Math.round(r.confidence * (r.confidence <= 1 ? 100 : 1))}%</span>
+                )}
+              </div>
+              <div className="text-[10px] text-white/50 mb-1 truncate" title={r.model}>
+                {r.model || '—'}{r.model_version ? ` (${r.model_version})` : ''} · {r.result_kind}
+              </div>
+              {highlights.length > 0 && (
+                <div className="space-y-0.5 mb-1">
+                  {highlights.map(([k, v]) => (
+                    <div key={k} className="flex gap-1 text-[10px] min-w-0">
+                      <span className="text-white/30 shrink-0">{k}:</span>
+                      <span className="text-white/60 truncate">{String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {r.tags?.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-1">
+                  {r.tags.map((tag: string) => (
+                    <span key={tag} className="text-[9px] bg-white/10 text-white/50 px-1 py-0.5 rounded">#{tag}</span>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center justify-between text-[9px] text-white/25">
+                <span className="truncate">{r.source ?? '—'}</span>
+                <span className="shrink-0">{r.analysed_at ? new Date(r.analysed_at).toLocaleString('da-DK', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+              </div>
+              {r.result && Object.keys(r.result).length > 0 && (
+                <details className="mt-1">
+                  <summary className="text-[9px] text-white/25 cursor-pointer select-none">Rå data</summary>
+                  <pre className="text-[9px] text-white/40 whitespace-pre-wrap break-all mt-1 max-h-32 overflow-y-auto">{JSON.stringify(r.result, null, 1)}</pre>
+                </details>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // v5.1
 // ── Lightbox ──────────────────────────────────────────────────────────────────
 export function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: number; onClose: () => void }) {
@@ -75,6 +181,9 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
   const [showMetadata, setShowMetadata]   = useState(false)
   const [sidecar, setSidecar]             = useState<any>(null)
   const [exif, setExif]               = useState<Record<string,string> | null>(null)
+  // 2026-07-04 (Claude): model-separerede AI/QA-resultater (Codex' capture_model_results
+  // — edge_cv_v1/edge_npu/headend_ollama/gemini_cloud side om side, se HANDOVER_LOG.md).
+  const [modelResults, setModelResults] = useState<any[] | null>(null)
   const [overexposed, setOverexposed]     = useState(0)
   const [underexposed, setUnderexposed]   = useState(0)
   const imgRef = useRef<HTMLImageElement>(null)
@@ -132,6 +241,20 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
       .catch(() => {})
     return () => { cancelled = true }
   }, [cur, c.device_id, c.filename])
+
+  // Hent model-separerede AI/QA-resultater (edge_cv_v1/edge_npu/headend_ollama/
+  // gemini_cloud) når billede skifter. Separat fetch fra sidecar, da denne kilde
+  // kommer fra headend-DB'en (capture_model_results), ikke sidecar-JSON'en.
+  useEffect(() => {
+    let cancelled = false
+    setModelResults(null)
+    const apiUrl = getApiUrl()
+    authFetch(`${apiUrl}/api/captures/${c.id}/model-results`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (!cancelled) setModelResults(d?.results ?? []) })
+      .catch(() => { if (!cancelled) setModelResults([]) })
+    return () => { cancelled = true }
+  }, [cur, c.id])
 
   // Compute histogram from image pixels via canvas
   function computeHistogram() {
@@ -562,6 +685,11 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
             </div>
           )}
+
+          {/* Model-separerede AI/QA-resultater (2026-07-04, Claude — Codex' */}
+          {/* capture_model_results, se HANDOVER_LOG.md "model-separeret AI/QA-lager"). */}
+          {/* Vises uafhængigt af sidecar, da data kommer fra headend-DB'en. */}
+          <ModelResultsPanel results={modelResults} />
         </div>
       )}
       {/* Filmstrip

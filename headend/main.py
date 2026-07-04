@@ -14303,6 +14303,24 @@ def update_capture_tags(capture_id: int, payload: dict, _user=require_role("oper
     tags = [t.lower().strip() for t in payload.get("tags", [])]
     cap.ai_tags = _j.dumps(tags, ensure_ascii=False)
     db.commit()
+
+@app.get("/api/captures/{capture_id}/model-results")
+def get_capture_model_results_endpoint(capture_id: int, _user=require_role("viewer"), db: Session = Depends(get_db)):
+    """Læse-side til Codex' model-separerede AI/QA-lager (2026-07-04, Claude, proveniens-UI).
+
+    Returnerer én række pr. (engine, model, result_kind) fra `capture_model_results` —
+    edge_cv_v1 / edge_npu / headend_ollama / gemini_cloud kan nu ses side om side uden
+    at være sammenblandet, jf. HANDOVER_LOG.md "Codex fortsætter: model-separeret
+    AI/QA-lager". Additiv og read-only — rører ikke `captures.ai_result`/`ai_tags`.
+    """
+    from database import Capture as _Cap
+    from ai.model_results import get_capture_model_results
+    cap = db.query(_Cap).filter_by(id=capture_id).first()
+    if not cap:
+        raise HTTPException(status_code=404, detail="Capture ikke fundet")
+    if not _capture_is_allowed(db, _user, cap):
+        raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
+    return {"capture_id": capture_id, "results": get_capture_model_results(db, capture_id)}
     return {"status": "ok", "tags": tags}
 
 @app.get("/api/ai/qa/search")

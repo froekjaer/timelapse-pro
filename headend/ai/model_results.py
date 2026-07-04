@@ -57,6 +57,41 @@ def ensure_capture_model_results_table(db) -> None:
     """))
 
 
+def get_capture_model_results(db, capture_id: int) -> list[dict[str, Any]]:
+    """Read back every per-engine result row for one capture (til proveniens-UI).
+
+    2026-07-04 (Claude): additiv læse-side til Codex' model-separerede lager
+    (se HANDOVER_LOG.md "Codex fortsætter: model-separeret AI/QA-lager").
+    Kalder ensure_capture_model_results_table() først, så et helt frisk
+    headend-checkout uden migrationen stadig svarer [] i stedet for at fejle.
+    """
+    ensure_capture_model_results_table(db)
+    rows = db.execute(text("""
+        SELECT engine, model, model_version, result_kind, scope, confidence,
+               result_json, tags_json, source, analysed_at
+        FROM capture_model_results
+        WHERE capture_id = :capture_id
+        ORDER BY analysed_at DESC
+    """), {"capture_id": int(capture_id)}).fetchall()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        result_json = r.result_json if isinstance(r.result_json, dict) else (json.loads(r.result_json) if r.result_json else {})
+        tags_json = r.tags_json if isinstance(r.tags_json, list) else (json.loads(r.tags_json) if r.tags_json else [])
+        out.append({
+            "engine": r.engine,
+            "model": r.model,
+            "model_version": r.model_version,
+            "result_kind": r.result_kind,
+            "scope": r.scope,
+            "confidence": r.confidence,
+            "result": result_json,
+            "tags": tags_json,
+            "source": r.source,
+            "analysed_at": r.analysed_at.isoformat() if r.analysed_at else None,
+        })
+    return out
+
+
 def engine_from_legacy_payload(payload: dict[str, Any], fallback_model: str | None = None) -> str:
     engine = str(payload.get("engine") or "").strip().lower()
     model = str(payload.get("model") or fallback_model or "").strip().lower()
