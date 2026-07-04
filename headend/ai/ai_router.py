@@ -39,8 +39,21 @@ from typing import Optional, Callable
 from ollama_service import OllamaVisionService, ImageAnalysisResult
 from text_services import SIEMAnalyser, CMDBEnricher, SIEMEvent, CMDBAssessment
 from repositories import CaptureRepository, TagRepository, AnalysisRepository
-from gdpr_manager import GDPRManager
 from database import Capture, Device
+# 2026-07-04 (Claude): gdpr_manager.py findes IKKE i kodebasen (kun importeret,
+# aldrig implementeret — bekræftet via reproducerbar ModuleNotFoundError). Denne
+# import var på modul-niveau, hvilket betød at HELE ai_router.py fejlede med at
+# loade, hvilket i praksis crashede POST /api/review/escalation/approve's
+# baggrundsjob (_run_gemini_for_approved i review_api.py, som lazy-importerer
+# get_ai_router()) — stille, da det er et FastAPI BackgroundTask: admin fik en
+# "godkendt"-besked, men Gemini-analysen af de godkendte eskalerede billeder
+# skete ALDRIG. Gjort lazy + guardet her, så resten af routeren virker uanset
+# om GDPR-detektions-lageret findes. Se HANDOVER_LOG.md 2026-07-04 og
+# RISK_ASSESSMENT_v10.md R12 (retention/GDPR-evidens mangler stadig separat).
+try:
+    from gdpr_manager import GDPRManager  # type: ignore
+except ModuleNotFoundError:
+    GDPRManager = None  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -383,6 +396,14 @@ class AIRouter:
         detections:  list,
     ):
         """Gem GDPR-detektioner via isoleret admin-session."""
+        if GDPRManager is None:
+            log.error(
+                "GDPR-detektion fundet for capture %d, men gdpr_manager.py mangler i "
+                "kodebasen — kunne IKKE gemmes isoleret. %d detektion(er) tabt. "
+                "Se RISK_ASSESSMENT_v10.md R12.",
+                capture_id, len(detections),
+            )
+            return
         gdpr_db = next(self._gdpr_db_factory())
         try:
             manager = GDPRManager(gdpr_db)
