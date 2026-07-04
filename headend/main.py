@@ -214,6 +214,51 @@ def _baseline_recompute_loop(run_hour: int = 3) -> None:
         _t.sleep(1800)
 
 
+def _backup_auto_loop() -> None:
+    """2026-07-04 (Claude, R09/E-01): backup_auto_interval fandtes i UI/DB
+    (BackupPage.tsx, /api/admin/backup/settings) men blev ALDRIG konsumeret —
+    der har aldrig kørt nogen automatisk backup, kun manuelle klik. Denne loop
+    læser indstillingen hvert 10. minut og kører _run_backup_archive() når der
+    er gået mindst `interval` siden sidste (succesfulde) backup. "manual" eller
+    ukendt værdi = auto slået fra (uændret opførsel medmindre man aktivt vælger
+    et interval i UI'en)."""
+    import time as _t
+    from datetime import datetime as _dt, timedelta as _timedelta
+
+    _INTERVAL_MAP = {
+        "hourly": _timedelta(hours=1),
+        "daily": _timedelta(days=1),
+        "weekly": _timedelta(days=7),
+    }
+    last_run: "_dt | None" = None
+    _t.sleep(180)  # lille forsinkelse efter opstart
+    while True:
+        try:
+            from database import SessionLocal as _SL
+            _db = _SL()
+            try:
+                setting = _get_setting(_db, "backup_auto_interval", "manual")
+            finally:
+                _db.close()
+            delta = _INTERVAL_MAP.get((setting or "manual").strip().lower())
+            if delta is not None:
+                now = _dt.now()
+                if last_run is None or (now - last_run) >= delta:
+                    if not _backup_lock.locked():
+                        log.info("Automatisk backup starter (interval=%s)", setting)
+                        try:
+                            _run_backup_archive(f"auto-{setting}")
+                            last_run = now
+                        except Exception as _auto_bak_err:
+                            log.error("Automatisk backup fejlede: %s", _auto_bak_err)
+                            last_run = now  # undgå tæt retry-loop ved vedvarende fejl
+                    else:
+                        log.info("Automatisk backup udsat — en anden backup kører allerede")
+        except Exception as _loop_err:
+            log.warning("Backup auto-loop fejl: %s", _loop_err)
+        _t.sleep(600)
+
+
 @app.on_event("startup")
 def startup():
     create_tables()
@@ -483,6 +528,13 @@ def startup():
             log.info("Natlig baseline-genberegning aktiv (kl. %02d lokal tid)", bl_hour)
     except Exception as _bl_err:
         log.warning("Kunne ikke starte natlig baseline-genberegning: %s", _bl_err)
+
+    # ── Automatisk backup (backup_auto_interval, tidligere aldrig konsumeret) ─
+    try:
+        _threading.Thread(target=_backup_auto_loop, name="backup-auto-loop", daemon=True).start()
+        log.info("Backup auto-loop startet (tjekker backup_auto_interval hvert 10. min)")
+    except Exception as _bak_loop_err:
+        log.warning("Kunne ikke starte backup auto-loop: %s", _bak_loop_err)
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -11628,6 +11680,34 @@ def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = 
             json.dump({"reason": reason, "copied": copied}, f, indent=2)
         _backup_status["progress"].append(f"Config OK ({len(copied)} filer)")
 
+        # 2026-07-04 (Claude, R09/E-01): billed-backup. Lever UDENFOR selve tar.gz'en
+        # som en vedvarende, inkrementel rsync-spejling (ikke en fuld kopi hver gang —
+        # billedtræet kan være mange GB/TB). Fejl her stopper IKKE resten af backup'en,
+        # da DB+config-delen allerede er i hus på dette tidspunkt.
+        if _get_backup_include_images():
+            _backup_status["progress"].append("Billed-arkiv rsync (kan tage lang tid ved første kørsel)...")
+            try:
+                image_src = str(_sftp_base_path()).rstrip("/")
+                image_dst = f"{base_dir}/timelapse-images-mirror"
+                os.makedirs(image_dst, exist_ok=True)
+                rsync_result = _subprocess.run(
+                    ["rsync", "-a", "--stats", f"{image_src}/", f"{image_dst}/"],
+                    capture_output=True, text=True, timeout=6 * 3600,
+                )
+                if rsync_result.returncode == 0:
+                    _backup_status["progress"].append(f"✅ Billed-mirror opdateret: {image_dst}")
+                else:
+                    _backup_status["progress"].append(
+                        f"⚠️ Billed-rsync fejlede (kode {rsync_result.returncode}): "
+                        f"{(rsync_result.stderr or '')[-300:]}"
+                    )
+            except Exception as img_exc:
+                _backup_status["progress"].append(f"⚠️ Billed-backup fejlede: {img_exc}")
+        else:
+            _backup_status["progress"].append(
+                "Billed-backup slået fra (backup_include_images=false) — kun database+config backes op"
+            )
+
         _backup_status["progress"].append("System info...")
         import platform
         with open(f"{backup_dir}/SYSTEMINFO.txt", "w") as f:
@@ -11674,6 +11754,26 @@ def _get_nas_path():
         return result[0] if result else None
     except:
         return None
+
+
+def _get_backup_include_images() -> bool:
+    """Hent backup_include_images-indstillingen fra DB.
+
+    2026-07-04 (Claude, R09/E-01): denne indstilling fandtes allerede i UI'en
+    (BackupPage.tsx) og blev gemt via PUT /api/admin/backup/settings, men blev ALDRIG
+    læst af _run_backup_archive() — billeder blev derfor aldrig backet op, uanset
+    indstillingens værdi. Se HANDOVER_LOG.md 2026-07-04 (nat) for fuld analyse.
+    """
+    try:
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            row = db.execute(text("SELECT value FROM settings WHERE key='backup_include_images'")).fetchone()
+            return bool(row) and str(row[0]).strip().lower() in ("1", "true", "yes", "on")
+        finally:
+            db.close()
+    except Exception:
+        return False
 
 
 def _path_status(path_value: str | None, *, label: str, required: bool = False, create_probe: bool = False) -> dict:

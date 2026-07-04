@@ -2385,3 +2385,55 @@ person vide".
   `module.register()` deprecation, ineffektiv dynamic import af `src/api/client.ts`, og
   stor JS chunk efter minificering.
 - **Tilstand efterfølgende:** Arbejdstræet er rent bortset fra untracked `claude_proxy.py`.
+
+### Handover 2026-07-04 (nat) — fra Claude til Codex/Peter: KRITISK backup-hul lukket (R09/E-01) + svar på "go-live i morgen"
+- **Tak til Codex** for bekræftelsen ovenfor — heartbeat-samarbejdet virker som håbet.
+- **Peter spurgte:** "Du må MEGET gerne tage de vigtige punkter, så vi kan go-live i morgen."
+  Mit ærlige svar (uddybet i `GO_LIVE_CHECKLIST_v10.md` §J): fremgangen i nat er reel, men
+  **fuld Internet-eksponering på timelapse-pro.dk kan ikke forsvarligt nås i morgen** —
+  restore-test, databehandleraftale (jurist), DNS-cutover og per-kunde DPIA kræver tid/tredjepart,
+  ikke bare kode. Se §J i checklisten for et realistisk "i morgen"-tjekpunkt i stedet
+  (lukket lab/pilot-fase er væsentligt tættere på klar end fuld go-live).
+- **KRITISK FUND undervejs i design af restore-test-procedure (task #51):** `backup_include_images`
+  har eksisteret i `BackupPage.tsx`/DB siden UI'en blev bygget, men blev **ALDRIG læst** af
+  `_run_backup_archive()` — de ~27.000+ produktionsbilleder har ALDRIG været omfattet af nogen
+  backup, kun database + en fast config-fil-liste. Samme historie for `backup_auto_interval`:
+  gemt i DB, aldrig konsumeret — ingen automatisk backup har nogensinde kørt, kun manuelle klik.
+- **Rettet (`headend/main.py`):**
+  1. `_get_backup_include_images()` — læser settings-tabellen direkte (samme mønster som
+     `_get_setting`).
+  2. `_run_backup_archive()` udvidet: når `backup_include_images=true`, køres en `rsync -a`
+     billedspejling af `_sftp_base_path()` → `{base_dir}/timelapse-images-mirror/`, HOLDT
+     UDENFOR tar.gz'en (billedtræet kan være mange GB/TB — impraktisk at pakke hver gang).
+     Non-fatal: rsync-fejl stopper ikke DB/config-delen af backup'en.
+  3. `_backup_auto_loop()` (ny baggrundstråd, startet i `startup()` ved siden af de andre
+     poller-tråde) — tjekker `backup_auto_interval` hvert 10. min, kører faktisk automatisk
+     backup ved `daily`/`weekly` (matcher UI'ens faktiske valgmuligheder), respekterer
+     `_backup_lock` så den ikke kolliderer med en manuel backup.
+- **Verifikation her:** `py_compile` ren på hele `main.py`. Logik krydstjekket mod eksisterende
+  `_sftp_base_path`/`_get_setting`/`_baseline_recompute_loop`-mønstre i kodebasen (samme stil,
+  ingen nye afhængigheder).
+- **IKKE verificeret — Codex/Peter: kør venligst, når I har et roligt vindue (kan tage lang tid
+  ved FØRSTE kørsel afhængig af billedmængde/disk-I/O):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro   # (eller jeres sti til repoet)
+
+  git add headend/main.py
+  git commit -m "fix: backup_include_images/backup_auto_interval blev aldrig konsumeret — billeder fik ALDRIG backup (R09/E-01)"
+  git push
+
+  sudo launchctl kickstart -k system/dk.froekjaer.timelapse-headend
+  curl -s https://timelapse.froekjaer.dk/api/health
+  ```
+  Derefter i UI'en (Backup-siden): slå "Inkludér billeder" til, klik **Kør backup nu**, og
+  bekræft i loggen/statusvisningen at et `timelapse-images-mirror/`-mirror rent faktisk
+  oprettes med et fornuftigt antal filer (sammenlign evt. med `find <sftp_base> -type f | wc -l`).
+  Uden denne bekræftelse regner jeg IKKE E-01 for grønt, kun "kode klar".
+- **Fortsat åbent (kan ikke lukkes af kode alene, se GO_LIVE_CHECKLIST_v10.md §J for detaljer):**
+  reel restore-test (E-02), off-site/3-2-1-kopi (E-03, mirroren ligger stadig kun lokalt/NAS),
+  RTO/RPO-dokumentation (E-07).
+- **Filer rørt:** `headend/main.py`, `Dokumentation/RISK_ASSESSMENT_v10.md` (R09 opdateret),
+  `Dokumentation/GO_LIVE_CHECKLIST_v10.md` (E-01/E-02/E-03 + §J-tilføjelse om go-live-tidslinje).
+- **Går videre til:** resten af task #51 (selve restore-test-proceduren, som stadig kræver
+  Peter/Codex' udførelse på levende infrastruktur, ikke noget jeg kan gøre alene), derefter
+  #52 (intern CA/mTLS-design) og #53 (Nikon Z30 config-drift-design).

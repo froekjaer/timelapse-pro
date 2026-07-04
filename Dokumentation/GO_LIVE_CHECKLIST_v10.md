@@ -93,9 +93,9 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 
 | # | Krav | Status |
 |---|---|---|
-| E-01 | Automatisk backup til /Volumes/Backup konfigureret og kørende | 🔴 Blocker |
-| E-02 | Restore-test udført og dokumenteret (dato, scope, RTO) | 🔴 Blocker |
-| E-03 | Off-site backup konfigureret (anden disk/location) | 🟠 Anbefalet |
+| E-01 | Automatisk backup til /Volumes/Backup konfigureret og kørende | 🟠 Kode klar (2026-07-04 nat), IKKE bekræftet kørt i produktion — se R09 i RISK_ASSESSMENT_v10.md. Kritisk fund: billeder blev ALDRIG backet op før i nat (indstilling fandtes i UI men blev ikke læst); nu wired ind + auto-interval-loop tilføjet. Peter/Codex bør trigge en manuel backup og bekræfte billed-mirror + log-output ser rigtigt ud, før dette regnes for grønt. |
+| E-02 | Restore-test udført og dokumenteret (dato, scope, RTO) | 🔴 Blocker — IKKE realistisk at nå til "go-live i morgen"; kræver reel gendannelse til et testmiljø |
+| E-03 | Off-site backup konfigureret (anden disk/location) | 🟠 Anbefalet — billed-mirror ligger stadig kun lokalt/NAS, ingen ekstern kopi endnu |
 | E-04 | Backup-change ticket genereres ved backup | 🟡 Ønsket |
 | E-05 | Headend startup-preflight: verificer /Volumes/data-fast mount + skriveadgang | 🟠 Mangler |
 | E-06 | Node-agent kørende og rapporterer frisk CMDB-inventory | 🟠 Mangler (stoppet 2026-06-22) |
@@ -230,3 +230,7 @@ Forventet ved go-live: ingen TimeLapse-origin på public `*:80/443/21/22/8080`; 
 1. Cloudflare Tunnel konfigureret + nginx port-migration
 2. Backup + restore dokumenteret
 3. DPIA-template + retention policy (før første rigtige kunde-site)
+
+**TILFØJELSE 2026-07-04 (nat, Claude) — svar på "go-live i morgen":** God fremgang i nat (R18-krasch rettet, billed-backup-hul lukket i kode, auto-backup-loop tilføjet, DPIA/retention-udkast, migrationsrunbooks for nginx/Cloudflare og node-agent klar til eksekvering), men konklusionen ovenfor står ved magt — **fuld Internet-eksponering på timelapse-pro.dk kan ikke forsvarligt nås i morgen.** Det skyldes ikke manglende indsats, men at flere blokkere kræver ting kode alene ikke kan levere på under et døgn: en reel restore-test (kræver faktisk gendannelse til et testmiljø og observation af tidsforbrug), databehandleraftale (kræver jurist), DNS-propagering ved Cloudflare Tunnel-cutover, og en per-kunde DPIA-godkendelse (skabelonen er klar, men skal udfyldes og godkendes pr. kunde). At forcere disse ville bryde med "dobbelttjekker før du udfører".
+
+**Realistisk "i morgen"-tjekpunkt i stedet:** (a) bekræft at automatisk backup + billed-mirror rent faktisk kører korrekt på Mac Mini'en (kør en manuel backup, tjek `timelapse-images-mirror/`-mappen og loggen), (b) gennemgå og evt. eksekvér node-agent- og nginx/Cloudflare-runbooks i et kontrolleret vindue (ikke under produktionstrafik), (c) Peter beslutter og bekræfter status på `TL-DCA63234D813` (stale credential-runbook afventer hans svar), (d) hvis "go-live" i stedet betyder en lukket lab/pilot-fase for få kendte enheder (ikke offentlig internet-eksponering), er det væsentligt tættere på klar end den fulde liste ovenfor antyder — kategori B/C/D/F/H er alle ✅.

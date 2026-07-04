@@ -191,10 +191,15 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Residualrisiko:** 🟡 6
 
 ### R09 — Dataredundans og backup
-- **Status:** 🔴 Åben
+- **Status:** 🟠 Delvist lukket (2026-07-04 nat, Claude) — se fund og rettelser nedenfor
 - **Implementerede kontroller:** Backup til /Volumes/Backup (sti rettet); edge circular buffer
-- **Åbent:** Off-site backup, restore-test, backup change ticket, RTO/RPO dokumenteret
-- **Sandsynlighed:** 2, **Konsekvens:** 4, **Score:** 🟠 8
+- **KRITISK FUND (Claude, 2026-07-04 nat, under design af restore-test-procedure):** `backup_include_images`-indstillingen har eksisteret i UI'en (BackupPage.tsx) og blevet gemt via `PUT /api/admin/backup/settings` — men blev **aldrig læst** af `_run_backup_archive()`. Reelt betød det, at TimeLapse Pro's ca. 27.000+ produktionsbilleder ALDRIG har været omfattet af backup, uanset hvad administratoren valgte i UI'en — kun database + en fast liste config-filer blev sikkerhedskopieret. Tilsvarende blev `backup_auto_interval` gemt i DB men aldrig konsumeret — der har ALDRIG kørt en automatisk backup, kun manuelle klik i UI'en.
+- **Rettet (samme nat):**
+  1. `_get_backup_include_images()` tilføjet og wired ind i `_run_backup_archive()` — når slået til, kører en `rsync -a` billedspejling af `_sftp_base_path()` til `{base_dir}/timelapse-images-mirror/` (holdt UDENFOR tar.gz'en, da billedtræet kan være mange GB/TB; fejl her er non-fatal og stopper ikke DB/config-delen).
+  2. `_backup_auto_loop()` tilføjet og startet ved opstart — tjekker `backup_auto_interval` hvert 10. min og kører faktisk automatisk backup ved `daily`/`weekly` (matcher UI'ens faktiske valgmuligheder i BackupPage.tsx).
+  - Verificeret: `py_compile` ren; logik gennemgået mod eksisterende `_get_setting`/`_sftp_base_path`-mønstre i kodebasen. **IKKE afprøvet på reelt produktionsdatasæt** (kræver reel kørsel på Mac Mini'en for at bekræfte rsync-tid/diskplads for et fuldt billedtræ) — det bør Peter/Codex køre og bekræfte inden go-live regnes for fuldt dækket her.
+- **Fortsat åbent (kan IKKE lukkes uden reel kørsel på levende infrastruktur — realistisk ikke færdigt til go-live "i morgen"):** Off-site/3-2-1-kopi (billedmirroren ligger stadig kun lokalt/NAS, ingen ekstern kopi), reel restore-test (gendan fra arkiv til et tomt miljø og verificér), backup change ticket, RTO/RPO-dokumentation.
+- **Sandsynlighed:** 2, **Konsekvens:** 4, **Score:** 🟠 8 (uændret indtil rsync-billedbackup er bekræftet kørt mindst én gang i produktion og restore-test er udført)
 
 ### R10 — SSH tunnel misbrug
 - **Status:** ✅ Kontrolleret
