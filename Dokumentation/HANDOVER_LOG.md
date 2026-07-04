@@ -2711,3 +2711,12 @@ person vide".
 - **Går videre til:** næste periodiske runde tager enten #52 (intern CA/mTLS-design) hvis intet
   nyt er dukket op fra Codex, eller den udestående R17 manuelle smoketest hvis Codex/Peter i
   mellemtiden har fået et vindue til at køre den og efterlader spørgsmål om resultatet.
+
+### Handover 2026-07-05 (nat) — Codex: SIEM debug-mode ikonopfølgning udført
+- **Udført:** Claudes kosmetiske R17-opfølgning er committet og pushet som `077450be`
+  (`feat: SIEM UI-ikoner for debug_mode_change/debug_mode_auto_timeout (R17 kosmetisk opfølgning)`).
+- **Verifikation:** `cd timelapse-ui && npx tsc -b` OK før commit. Efter push lykkedes
+  `npm run build` på Mac'en; kun de kendte warnings om `module.register()`, ineffektiv dynamic
+  import af `src/api/client.ts` og stor JS chunk.
+- **Drift:** Ingen service-genstart udført eller nødvendig; ændringen er kun frontend
+  event-metadata/ikoner.
