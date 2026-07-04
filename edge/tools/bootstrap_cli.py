@@ -880,7 +880,7 @@ def print_npu_status(base_dir: Path, compact: bool = False) -> None:
         print(result.stdout or result.stderr)
 
 
-def collect_local_status(base_dir: Path) -> dict[str, Any]:
+def collect_local_status(base_dir: Path, include_camera: bool = False) -> dict[str, Any]:
     bootstrap = read_yaml(base_dir / BOOTSTRAP_FILE)
     network = read_yaml(base_dir / NETWORK_FILE)
     config = read_yaml(base_dir / "config.yaml")
@@ -909,7 +909,7 @@ def collect_local_status(base_dir: Path) -> dict[str, Any]:
         status["network"]["devices"] = run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"], check=False).stdout.splitlines()
     status["storage"].update(disk_usage(Path(config.get("storage", {}).get("local_path", "/data"))))
     status["storage"]["upload_queue_size"] = upload_queue_size(config)
-    if command_exists("gphoto2"):
+    if include_camera and command_exists("gphoto2"):
         detected = run(["gphoto2", "--auto-detect"], check=False, timeout=15)
         status["camera"]["auto_detect"] = detected.stdout.strip()
         for key, path in {
@@ -921,6 +921,11 @@ def collect_local_status(base_dir: Path) -> dict[str, Any]:
             "white_balance": "/main/imgsettings/whitebalance",
         }.items():
             status["camera"][key] = read_gphoto_current(path)
+    elif command_exists("gphoto2"):
+        status["camera"]["probe"] = "springes over i hurtigt overblik"
+        status["camera"]["hint"] = "Brug 'Kamera status' for aktiv gphoto2-probe."
+    else:
+        status["camera"]["gphoto2"] = "mangler"
     edge_ai = ((config.get("quality", {}) or {}).get("edge_ai", {}) or {})
     status["ai"] = {
         "edge_ai_enabled": edge_ai.get("enabled", False),
@@ -931,7 +936,7 @@ def collect_local_status(base_dir: Path) -> dict[str, Any]:
 
 
 def write_technician_report(base_dir: Path) -> Path:
-    status = collect_local_status(base_dir)
+    status = collect_local_status(base_dir, include_camera=True)
     out_dir = Path(os.getenv("TIMELAPSE_TECH_REPORT_DIR", "/tmp/timelapse-technician"))
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "index.html"

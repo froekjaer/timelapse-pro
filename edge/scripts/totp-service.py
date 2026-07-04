@@ -535,7 +535,7 @@ def _technician_snapshot() -> dict:
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
         import bootstrap_cli
-        return bootstrap_cli.collect_local_status(EDGE_ROOT)
+        return bootstrap_cli.collect_local_status(EDGE_ROOT, include_camera=False)
     except Exception as exc:
         return {
             "generated_at": datetime.utcnow().isoformat(),
@@ -564,16 +564,7 @@ def _kv_table(data: dict) -> str:
 
 
 def _system_snapshot() -> dict:
-    status = _technician_snapshot()
-    time_status = _get_time_status()
-    status["time"] = {
-        "synced": time_status.get("synced"),
-        "source": time_status.get("source"),
-        "offset_ms": time_status.get("offset_ms"),
-        "stratum": time_status.get("stratum"),
-        "utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    return status
+    return _technician_snapshot()
 
 
 def _run_system_action(action: str) -> tuple[bool, str]:
@@ -611,7 +602,7 @@ def _system_page(msg: str = "", output: str = "") -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="45">
+<meta http-equiv="refresh" content="45; url=/mgmt/system">
 <title>TimeLapse Pro — System</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -653,7 +644,6 @@ def _system_page(msg: str = "", output: str = "") -> str:
   <div class="grid">
     <div class="card"><h2>System</h2>{_kv_table(status.get("system", {}))}</div>
     <div class="card"><h2>Service</h2>{_kv_table(status.get("service", {}))}</div>
-    <div class="card"><h2>Tid</h2>{_kv_table(status.get("time", {}))}</div>
     <div class="card"><h2>Netvaerk</h2>{_kv_table(status.get("network", {}))}</div>
     <div class="card"><h2>Storage / upload</h2>{_kv_table(status.get("storage", {}))}</div>
     <div class="card wide">
@@ -689,7 +679,7 @@ def _technician_page(msg: str = "", output: str = "") -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="45">
+<meta http-equiv="refresh" content="45; url=/mgmt/technician">
 <title>TimeLapse Pro — Tekniker</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -794,6 +784,14 @@ async def mgmt_technician(request: Request):
     return HTMLResponse(_technician_page())
 
 
+@app.get("/mgmt/technician/action")
+@app.get("/mgmt/technician/focus")
+@app.get("/mgmt/technician/config")
+@app.get("/mgmt/technician/capture")
+async def mgmt_technician_post_target_get_fallback(request: Request):
+    return RedirectResponse("/mgmt/technician", status_code=303)
+
+
 @app.post("/mgmt/technician/action", response_class=HTMLResponse)
 async def mgmt_technician_action(request: Request, action: str = Form(...)):
     mapping = {
@@ -881,6 +879,11 @@ async def mgmt_time_save(request: Request,
 @app.get("/mgmt/system", response_class=HTMLResponse)
 async def mgmt_system(request: Request):
     return HTMLResponse(_system_page())
+
+
+@app.get("/mgmt/system/action")
+async def mgmt_system_action_get_fallback(request: Request):
+    return RedirectResponse("/mgmt/system", status_code=303)
 
 
 @app.post("/mgmt/system/action", response_class=HTMLResponse)

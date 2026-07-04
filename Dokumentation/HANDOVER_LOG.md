@@ -2046,3 +2046,37 @@ person vide".
 - **Vigtigt:** kontrol viste `edge_tag_pollution = 0`, så Edge CV har ikke skrevet
   `center_sharp_soft_edges`/`depth_of_field_issue` eller lignende ind i legacy
   `captures.ai_tags`. Gemini/Ollama-tags er ikke slettet eller overskrevet.
+
+### Handover 2026-07-04 — Codex starter fix af lokal servicetekniker-UI/CLI
+- **Peter rapporterede:** servicetekniker-menuen på Edge er langsom, og der kommer
+  ind imellem `{"detail":"Method Not Allowed"}`.
+- **Foreløbigt fund:** `edge/scripts/totp-service.py` rendrer POST-resultatsider direkte
+  på `/mgmt/technician/action`, `/mgmt/technician/focus`, `/mgmt/technician/config`,
+  `/mgmt/technician/capture` og `/mgmt/system/action`, mens HTML'en har
+  `<meta http-equiv="refresh" content="45">`. Når browseren auto-refresher efter en
+  POST, bliver det til GET mod POST-only endpointet og giver 405. Derudover kalder hver
+  sidevisning `_technician_snapshot()`, som via `bootstrap_cli.collect_local_status()`
+  kører `gphoto2 --auto-detect` og flere `--get-config` kald; det gør UI langsomt,
+  især når kamera ikke er tilsluttet/ikke vågnet.
+- **Plan:** gør auto-refresh safe mod GET-sider, tilføj GET-fallback/redirects for
+  POST-only action-URLs, og gør status-snapshot hurtigt ved kun at køre kamera-probe
+  ved eksplicit "Kamera status"/rapport/detaljeret CLI.
+
+### Handover 2026-07-04 — Codex færdiggjorde fix af lokal servicetekniker-UI/CLI
+- **Rettet:** tekniker- og system-siderne auto-refresher nu til rene GET-sider
+  (`/mgmt/technician` og `/mgmt/system`) i stedet for den aktuelle POST-action URL.
+  Der er også tilføjet GET-fallback/303-redirect for `/mgmt/technician/action`,
+  `/mgmt/technician/focus`, `/mgmt/technician/config`, `/mgmt/technician/capture`
+  og `/mgmt/system/action`.
+- **Performance:** `_technician_snapshot()` kalder nu
+  `bootstrap_cli.collect_local_status(..., include_camera=False)`, så hver sidevisning
+  ikke længere kører `gphoto2 --auto-detect` og seks `--get-config` kald. Kamera-probe
+  køres fortsat ved eksplicit "Kamera status", detaljeret CLI-status og tekniker-
+  rapport.
+- **Menu-overlap:** System-sidens "Tid"-card er fjernet; Tid-menuen er fortsat stedet
+  for tidskilder, TOTP-vindue og tidsopsætning.
+- **Deploy/verifikation:** deployet til `orangepi@192.168.86.134`
+  (`/opt/timelapse/edge/scripts/totp-service.py` og
+  `/opt/timelapse/edge/tools/bootstrap_cli.py`), `timelapse-totp` genstartet og aktiv.
+  Remote route-inspektion viser både GET og POST for action-URL'erne; remote hurtigt
+  snapshot uden kamera-probe målte ca. 0,79 sek. `py_compile` OK lokalt og på edgen.
