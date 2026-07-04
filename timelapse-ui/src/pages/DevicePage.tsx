@@ -117,7 +117,7 @@ function ModelResultsPanel({ results }: { results: any[] | null }) {
       <div className="grid grid-cols-2 gap-2">
         {results.map((r, idx) => {
           const style = ENGINE_STYLE[r.engine] ?? { ...ENGINE_FALLBACK, label: r.engine || ENGINE_FALLBACK.label }
-          const highlightKeys = ['scene_dk', 'quality_flag', 'description', 'probable_cause', 'blur_score', 'brightness_mean', 'change_detected']
+          const highlightKeys = ['scene_dk', 'quality_flag', 'flag', 'description', 'probable_cause', 'blur_score', 'brightness_mean', 'change_detected']
           const highlights = highlightKeys
             .map(k => [k, r.result?.[k]] as const)
             .filter(([, v]) => v !== undefined && v !== null && v !== '')
