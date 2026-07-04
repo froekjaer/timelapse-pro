@@ -2438,6 +2438,66 @@ person vide".
   Peter/Codex' udførelse på levende infrastruktur, ikke noget jeg kan gøre alene), derefter
   #52 (intern CA/mTLS-design) og #53 (Nikon Z30 config-drift-design).
 
+### Handover 2026-07-05 00:12 — fra Claude (periodisk tjek): R14 config-drift var reelt inaktiv
+- **Kontekst:** Første kørsel af det nye periodiske 20-minutters-tjek. Læste
+  `HANDOVER_LOG.md`-halen (intet nyt fra Codex siden sidste Claude-entry ovenfor, ingen
+  ubesvarede spørgsmål til mig), tjekkede `git status --short` (kun untracked
+  `claude_proxy.py`, ingen ucommittede ændringer fra en tidligere session at lade ligge), og
+  gennemgik §11 i `RISK_ASSESSMENT_v10.md` — valgte R14 (Nikon Z30 config drift, P1), som var
+  næste punkt på min egen liste fra sidste nat (opgave #53).
+- **Fund ved scoping:** Startede med at kortlægge "readonly vs. enforceable", men opdagede at
+  selve drift-detektionsmekanismen (`edge/diagnostics/camera_diagnostics.py`) reelt aldrig har
+  virket for hverken Nikon Z30 eller Canon-profiler — to uafhængige key-mismatch-bugs (se
+  detaljer i `RISK_ASSESSMENT_v10.md` R14): (1) et device uden egne `camera.*`-overrides fik et
+  TOMT forventnings-dict i stedet for at falde tilbage til `FLEET_DEFAULTS`, og (2) Z30-driveren
+  bygger overrides som fulde gphoto2-stier (`/main/imgsettings/iso=200`) mens diagnosemodulet
+  kun kendte korte navne (`iso`, `white_balance`) — de matchede aldrig, så ingen alarm nogensinde,
+  stille, uden fejl i loggen.
+- **Rettet (kode):** `edge/diagnostics/camera_diagnostics.py` (ny `_canonicalize_config_key()` +
+  merge i stedet for replace af `FLEET_DEFAULTS` + nyt `non_enforceable_keys`-parameter/felt
+  `camera_config_non_enforceable`) og `edge/agent.py` (udleder nu non-enforceable nøgler direkte
+  fra `driver.get_profile_summary()["config_commands"]`, samme kilde som driveren selv bruger —
+  ingen duplikeret liste at holde i sync). Ingen ændringer i `gphoto2_driver.py` selv — dets
+  eksisterende `skip`/`value_map`-metadata på Z30-profilen bruges nu faktisk, i stedet for at
+  blive ignoreret af diagnosemodulet.
+- **Verifikation her:** `py_compile` ren på begge filer. Skrev et selvstændigt simuleret
+  Z30-scenarie (mock af gphoto2-læsning, ingen live hardware nødvendig): ægte ISO-drift
+  (200→800) fanges; hvidbalance-ækvivalente labels ("Automatic" vs. fleet-default "AWB White")
+  fejlalarmerer ikke; `focus_mode` optræder aldrig i drift-listen (kun i det nye
+  `camera_config_non_enforceable`-felt); tomt overrides-dict falder nu korrekt tilbage til
+  fleet-defaults i stedet for at slå drift-check helt fra. Se kommentarerne i selve koden for
+  det fulde testscript-mønster.
+- **IKKE gjort — bevidst:** ingen live-test på faktisk Z30-hardware (kræver Orange Pi-adgang, jeg
+  har ingen shell dertil); ingen UI/CMDB-visning af det nye `camera_config_non_enforceable`-felt;
+  ingen eksplicit beslutning om `aperture`/`shutter_speed` skal have egne drift-mål. R14 er derfor
+  IKKE nedgraderet til grønt, kun fra "detektion helt død" til "detektion virker, uverificeret på
+  levende hardware" — se opdateret §11/§10 i `RISK_ASSESSMENT_v10.md`.
+- **Codex/Peter: ingen kommandoer at køre lige nu** — dette er ren edge-Python, ingen
+  service-genstart nødvendig for at ændringen skal virke, den træder i kraft ved næste normale
+  git-pull + agent-genstart på Orange Pi'en. Når I har et roligt vindue: commit + push
+  (`edge/diagnostics/camera_diagnostics.py`, `edge/agent.py`,
+  `Dokumentation/RISK_ASSESSMENT_v10.md`), deploy til Orange Pi som normalt, og hold øje med
+  næste heartbeats loggede `camera_config_drift`/`camera_config_non_enforceable` for at bekræfte
+  at `focus_mode` nu korrekt IKKE optræder som drift på Z30-enheden.
+- **Filer rørt:** `edge/diagnostics/camera_diagnostics.py`, `edge/agent.py`,
+  `Dokumentation/RISK_ASSESSMENT_v10.md` (R14 + §10-oversigt + §12-historik opdateret).
+- **Går videre til:** næste periodiske runde tager enten resten af R14 (UI/CMDB-visning af
+  non-enforceable, live-verifikation når muligt) eller #52 (intern CA/mTLS-design), afhængig af
+  hvad der virker mest afgrænset i den kørsel.
+
+### Handover 2026-07-05 (nat) — Codex: R14 config-drift deployed til Orange Pi
+- **Udført:** Claudes R14 edge-ændringer er committet og pushet som `869b0232`
+  (`fix: camera config drift canonicalization for Z30`).
+- **Deploy:** `edge/agent.py` og `edge/diagnostics/camera_diagnostics.py` er installeret på
+  Orange Pi `192.168.86.134`; `timelapse-edge` er genstartet og verificeret `active`.
+- **Ekstra sync:** Første restart viste `report_inventory() got an unexpected keyword argument
+  'extra'`, fordi edgens `edge/utils/inventory.py` var ældre end agent-koden. `inventory.py` blev
+  derfor også deployet fra repoet, agenten blev genstartet igen, og inventory rapporterede derefter
+  korrekt til headend med `POST /inventory/TL-C87FF9587CA0 status=200`.
+- **Næste observation:** Hold øje med kommende heartbeat/inventory-data for
+  `camera_config_drift` og `camera_config_non_enforceable`; forventningen er at `focus_mode` ikke
+  længere optræder som drift for Nikon Z30.
+
 ### Handover 2026-07-05 (nat) — Codex: backup-fix deployet
 - **Udført:** Claudes backup-kommando ovenfor er kørt. Commit `bb02dec7`
   (`fix: backup_include_images/backup_auto_interval blev aldrig konsumeret — billeder fik ALDRIG backup (R09/E-01)`)
