@@ -35,6 +35,43 @@ BOOTSTRAP_FILE = "bootstrap.yaml"
 NETWORK_FILE = "local_network.yaml"
 SERVICE_NAME = os.getenv("TIMELAPSE_EDGE_SERVICE", "timelapse-edge")
 DEFAULT_UI_PORT = int(os.getenv("TIMELAPSE_TECH_UI_PORT", "8099"))
+PHOTO_SETTINGS = {
+    "exposure_comp": {
+        "label": "Eksponeringskompensation",
+        "path": "/main/capturesettings/exposurecompensation",
+        "hint": "Typisk -2..+2 EV eller kameravalg som -1, 0, +1.",
+    },
+    "iso": {
+        "label": "ISO",
+        "path": "/main/imgsettings/iso",
+        "hint": "Auto eller fast ISO, fx 100/200/400.",
+    },
+    "white_balance": {
+        "label": "Hvidbalance",
+        "path": "/main/imgsettings/whitebalance",
+        "hint": "Auto, Daylight, Cloudy mv. afhænger af kamera.",
+    },
+    "shutter_speed": {
+        "label": "Lukkertid",
+        "path": "/main/capturesettings/shutterspeed",
+        "hint": "Kameravalg, fx 1/125, 1/250.",
+    },
+    "aperture": {
+        "label": "Blaende",
+        "path": "/main/capturesettings/f-number",
+        "hint": "Kameravalg, fx f/5.6, f/8, f/11.",
+    },
+    "focus_mode": {
+        "label": "Fokusmode",
+        "path": "/main/capturesettings/focusmode",
+        "hint": "AF/MF afhænger af kamera og objektiv.",
+    },
+    "image_format": {
+        "label": "Billedformat",
+        "path": "/main/imgsettings/imageformat",
+        "hint": "JPEG anbefales til hurtig onsite QA.",
+    },
+}
 
 
 def main() -> int:
@@ -43,6 +80,10 @@ def main() -> int:
     parser.add_argument("--status", action="store_true", help="Print local network/bootstrap status")
     parser.add_argument("--test-headend", action="store_true", help="Test Headend /api/health")
     parser.add_argument("--doctor", action="store_true", help="Run local commissioning/troubleshooting checks")
+    parser.add_argument("--network-status", action="store_true", help="Print network interfaces, connections, routes and DNS")
+    parser.add_argument("--wifi-connect", metavar="SSID", help="Connect WiFi SSID; password from TIMELAPSE_WIFI_PASSWORD")
+    parser.add_argument("--ipv4-config", nargs=6, metavar=("DEVICE", "MODE", "ADDRESS", "GATEWAY", "DNS", "METRIC"), help="Configure IPv4 via NetworkManager. MODE is dhcp or static; use '-' for blank fields")
+    parser.add_argument("--network-preference", choices=["ethernet", "wifi", "4g"], help="Set preferred TimeLapse connectivity order")
     parser.add_argument("--qa-image", help="Run Edge CV QA against a local JPEG")
     parser.add_argument("--technician-report", action="store_true", help="Write local technician HTML report")
     parser.add_argument("--serve-ui", action="store_true", help="Serve local technician UI on --port")
@@ -51,6 +92,8 @@ def main() -> int:
     parser.add_argument("--camera-summary", action="store_true", help="Print camera status/config summary")
     parser.add_argument("--camera-config", help="Print one gphoto2 config path")
     parser.add_argument("--set-camera-config", nargs=2, metavar=("PATH", "VALUE"), help="Set one gphoto2 config value")
+    parser.add_argument("--photo-setting", nargs=2, metavar=("KEY", "VALUE"), help="Set named photo setting: exposure_comp, iso, white_balance, shutter_speed, aperture, focus_mode, image_format")
+    parser.add_argument("--photo-status", action="store_true", help="Print photo technical camera settings")
     parser.add_argument("--autofocus", action="store_true", help="Trigger gphoto2 autofocus action if supported")
     parser.add_argument("--focus-drive", help="Trigger gphoto2 manual focus drive value, e.g. Near 1 or 500")
     parser.add_argument("--capture-test", nargs="?", const="", metavar="DIR", help="Capture a local test image to DIR")
@@ -67,6 +110,19 @@ def main() -> int:
         return 0 if test_headend(base_dir) else 1
     if args.doctor:
         return 0 if run_doctor(base_dir) else 1
+    if args.network_status:
+        print_network_status(detailed=True)
+        return 0
+    if args.wifi_connect:
+        password = os.getenv("TIMELAPSE_WIFI_PASSWORD", "")
+        return 0 if connect_wifi(args.wifi_connect, password) else 1
+    if args.ipv4_config:
+        device, mode, address, gateway, dns, metric = ["" if v == "-" else v for v in args.ipv4_config]
+        return 0 if configure_ipv4(base_dir, device, mode, address, gateway, dns, metric) else 1
+    if args.network_preference:
+        update_network_preference(base_dir, args.network_preference)
+        print(f"Netvaerksprioritet: {', '.join(read_yaml(base_dir / NETWORK_FILE).get('connectivity', {}).get('preferred_order', []))}")
+        return 0
     if args.qa_image:
         return 0 if qa_image(Path(args.qa_image), base_dir) else 1
     if args.technician_report:
@@ -84,6 +140,11 @@ def main() -> int:
     if args.set_camera_config:
         path, value = args.set_camera_config
         return 0 if run_camera_operation(lambda: camera_set_config(path, value), base_dir, args.maintenance) else 1
+    if args.photo_setting:
+        key, value = args.photo_setting
+        return 0 if run_camera_operation(lambda: camera_set_photo_setting(key, value), base_dir, args.maintenance) else 1
+    if args.photo_status:
+        return 0 if run_camera_operation(lambda: print_photo_status(), base_dir, args.maintenance) else 1
     if args.autofocus:
         return 0 if run_camera_operation(lambda: camera_autofocus(), base_dir, args.maintenance) else 1
     if args.focus_drive:
@@ -106,11 +167,12 @@ def menu(base_dir: Path) -> int:
         print("TimeLapse Pro Edge servicetekniker")
         print("-----------------------------------")
         print("1. Overblik / status")
-        print("2. Installation og netvaerk")
-        print("3. Kamera, fokus og testbilleder")
-        print("4. Fejlsoegning og logs")
-        print("5. Lokal tekniker-UI")
-        print("6. Afslut")
+        print("2. Installation")
+        print("3. Netvaerk og forbindelse")
+        print("4. Fototeknik, kamera og testbilleder")
+        print("5. Fejlsoegning og logs")
+        print("6. Lokal tekniker-UI")
+        print("7. Afslut")
         choice = input("Valg: ").strip()
 
         if choice == "1":
@@ -118,12 +180,14 @@ def menu(base_dir: Path) -> int:
         elif choice == "2":
             installation_menu(base_dir)
         elif choice == "3":
-            camera_menu(base_dir)
+            network_menu(base_dir)
         elif choice == "4":
-            troubleshooting_menu(base_dir)
+            camera_menu(base_dir)
         elif choice == "5":
-            ui_menu(base_dir)
+            troubleshooting_menu(base_dir)
         elif choice == "6":
+            ui_menu(base_dir)
+        elif choice == "7":
             return 0
         else:
             print("Ugyldigt valg")
@@ -132,29 +196,57 @@ def menu(base_dir: Path) -> int:
 def installation_menu(base_dir: Path) -> None:
     while True:
         print()
-        print("Installation og netvaerk")
-        print("------------------------")
+        print("Installation")
+        print("------------")
         print("1. Konfigurer Headend URL / bootstrap token")
-        print("2. Scan og tilslut WiFi")
-        print("3. Konfigurer Ethernet")
-        print("4. Konfigurer 4G USB modem")
-        print("5. Test Headend forbindelse")
-        print("6. Vis netvaerksstatus")
-        print("7. Tilbage")
+        print("2. Test Headend forbindelse")
+        print("3. Koer commissioning doctor")
+        print("4. Generer tekniker-rapport")
+        print("5. Tilbage")
         choice = input("Valg: ").strip()
         if choice == "1":
             configure_bootstrap(base_dir)
         elif choice == "2":
-            configure_wifi()
-        elif choice == "3":
-            configure_ethernet(base_dir)
-        elif choice == "4":
-            configure_gsm(base_dir)
-        elif choice == "5":
             test_headend(base_dir)
+        elif choice == "3":
+            run_doctor(base_dir)
+        elif choice == "4":
+            print(f"Rapport: {write_technician_report(base_dir)}")
+        elif choice == "5":
+            return
+        else:
+            print("Ugyldigt valg")
+
+
+def network_menu(base_dir: Path) -> None:
+    while True:
+        print()
+        print("Netvaerk og forbindelse")
+        print("-----------------------")
+        print("1. Netvaerksstatus, DNS og routing")
+        print("2. Scan og tilslut WiFi")
+        print("3. Konfigurer Ethernet IPv4")
+        print("4. Konfigurer WiFi IPv4")
+        print("5. Konfigurer 4G USB modem")
+        print("6. Saet forbindelsesprioritet")
+        print("7. Test Headend forbindelse")
+        print("8. Tilbage")
+        choice = input("Valg: ").strip()
+        if choice == "1":
+            print_network_status(detailed=True)
+        elif choice == "2":
+            configure_wifi(base_dir)
+        elif choice == "3":
+            configure_interface_ipv4(base_dir, "ethernet")
+        elif choice == "4":
+            configure_interface_ipv4(base_dir, "wifi")
+        elif choice == "5":
+            configure_gsm(base_dir)
         elif choice == "6":
-            print_network_status()
+            configure_network_preference(base_dir)
         elif choice == "7":
+            test_headend(base_dir)
+        elif choice == "8":
             return
         else:
             print("Ugyldigt valg")
@@ -163,48 +255,54 @@ def installation_menu(base_dir: Path) -> None:
 def camera_menu(base_dir: Path) -> None:
     while True:
         print()
-        print("Kamera, fokus og testbilleder")
-        print("-----------------------------")
+        print("Fototeknik, kamera og testbilleder")
+        print("----------------------------------")
         print("1. Detect kamera via gphoto2")
-        print("2. Kamera status og config")
-        print("3. Vis alle kamera config paths")
-        print("4. Laes kamera config path")
-        print("5. Saet kamera config path")
-        print("6. Autofokus")
-        print("7. Manuel focus drive")
-        print("8. Tag testbillede + lokal QA")
-        print("9. QA-test eksisterende JPEG")
-        print("10. Tilbage")
+        print("2. Fototeknisk status")
+        print("3. Saet fototeknisk parameter")
+        print("4. Autofokus")
+        print("5. Manuel focus drive")
+        print("6. Tag testbillede + lokal QA")
+        print("7. QA-test eksisterende JPEG")
+        print("8. Kamera status og config")
+        print("9. Vis alle kamera config paths")
+        print("10. Laes kamera config path")
+        print("11. Saet ra gphoto2 config path")
+        print("12. Tilbage")
         choice = input("Valg: ").strip()
         if choice == "1":
             camera_detect()
         elif choice == "2":
-            camera_summary(base_dir)
+            print_photo_status()
         elif choice == "3":
-            camera_list_config()
+            choose_photo_setting()
         elif choice == "4":
+            camera_autofocus()
+        elif choice == "5":
+            value = input("Focus drive value, fx 'Near 1', 'Far 1' eller '500': ").strip()
+            if value:
+                camera_focus_drive(value)
+        elif choice == "6":
+            raw = input("Output mappe [/tmp/timelapse-tech-captures]: ").strip()
+            capture_test(Path(raw or "/tmp/timelapse-tech-captures"), base_dir)
+        elif choice == "7":
+            raw = input("Sti til JPEG: ").strip()
+            if raw:
+                qa_image(Path(raw), base_dir)
+        elif choice == "8":
+            camera_summary(base_dir)
+        elif choice == "9":
+            camera_list_config()
+        elif choice == "10":
             raw = input("gphoto2 path, fx /main/capturesettings/focusmode: ").strip()
             if raw:
                 camera_get_config(raw)
-        elif choice == "5":
+        elif choice == "11":
             path = input("gphoto2 path: ").strip()
             value = input("Ny vaerdi: ").strip()
             if path and value:
                 camera_set_config(path, value)
-        elif choice == "6":
-            camera_autofocus()
-        elif choice == "7":
-            value = input("Focus drive value, fx 'Near 1', 'Far 1' eller '500': ").strip()
-            if value:
-                camera_focus_drive(value)
-        elif choice == "8":
-            raw = input("Output mappe [/tmp/timelapse-tech-captures]: ").strip()
-            capture_test(Path(raw or "/tmp/timelapse-tech-captures"), base_dir)
-        elif choice == "9":
-            raw = input("Sti til JPEG: ").strip()
-            if raw:
-                qa_image(Path(raw), base_dir)
-        elif choice == "10":
+        elif choice == "12":
             return
         else:
             print("Ugyldigt valg")
@@ -297,7 +395,7 @@ def configure_bootstrap(base_dir: Path) -> None:
     print(f"Gemt: {bootstrap_path}")
 
 
-def configure_wifi() -> None:
+def configure_wifi(base_dir: Path | None = None) -> None:
     if not command_exists("nmcli"):
         print("nmcli findes ikke. Installer/aktiver NetworkManager paa Edge.")
         return
@@ -333,58 +431,125 @@ def configure_wifi() -> None:
     if security and security != "--":
         password = getpass.getpass("WiFi password (gemmes kun i NetworkManager): ")
 
+    if connect_wifi(ssid, password) and base_dir is not None:
+        update_network_preference(base_dir, "wifi")
+
+
+def configure_interface_ipv4(base_dir: Path, device_type: str) -> None:
+    if not command_exists("nmcli"):
+        print("nmcli findes ikke. Installer/aktiver NetworkManager paa Edge.")
+        return
+
+    devices = nmcli_devices(device_type)
+    if not devices:
+        print(f"Ingen {device_type} interface fundet")
+        return
+    device = choose_device(devices)
+    if not device:
+        return
+
+    mode_raw = input("IPv4 mode: [1] DHCP, [2] Static: ").strip() or "1"
+    mode = "dhcp" if mode_raw == "1" else "static" if mode_raw == "2" else mode_raw.lower()
+    address = gateway = dns = metric = ""
+    if mode == "static":
+        address = input("IPv4/CIDR, fx 192.168.1.50/24: ").strip()
+        gateway = input("Gateway: ").strip()
+        dns = input("DNS, komma-separeret [1.1.1.1,8.8.8.8]: ").strip() or "1.1.1.1,8.8.8.8"
+    metric = input("Route metric [tom=auto, lavere prioriteres]: ").strip()
+    configure_ipv4(base_dir, device, mode, address, gateway, dns, metric)
+
+
+def configure_ethernet(base_dir: Path) -> None:
+    configure_interface_ipv4(base_dir, "ethernet")
+
+
+def connect_wifi(ssid: str, password: str = "") -> bool:
+    if not command_exists("nmcli"):
+        print("nmcli findes ikke. Installer/aktiver NetworkManager paa Edge.")
+        return False
+    ssid = (ssid or "").strip()
+    if not ssid:
+        print("SSID mangler")
+        return False
     cmd = ["nmcli", "device", "wifi", "connect", ssid]
     if password:
         cmd.extend(["password", password])
     result = run(cmd, check=False, timeout=45)
     if result.returncode == 0:
         print("WiFi tilsluttet")
-    else:
-        print("WiFi tilslutning fejlede:")
-        print(result.stderr or result.stdout)
+        return True
+    print("WiFi tilslutning fejlede:")
+    print(result.stderr or result.stdout)
+    return False
 
 
-def configure_ethernet(base_dir: Path) -> None:
+def configure_ipv4(base_dir: Path, device: str, mode: str, address: str = "", gateway: str = "", dns: str = "", metric: str = "") -> bool:
     if not command_exists("nmcli"):
-        print("nmcli findes ikke. Ethernet kan stadig virke via OS default DHCP.")
-        return
+        print("nmcli findes ikke. Installer/aktiver NetworkManager paa Edge.")
+        return False
+    device = (device or "").strip()
+    mode = (mode or "").strip().lower()
+    if not device or mode not in {"dhcp", "static"}:
+        print("Brug: DEVICE og MODE=dhcp|static")
+        return False
 
-    devices = nmcli_devices("ethernet")
-    if not devices:
-        print("Ingen Ethernet interface fundet")
-        return
-    device = choose_device(devices)
-    if not device:
-        return
-
-    mode = input("Ethernet mode: [1] DHCP, [2] Static: ").strip() or "1"
-    con_name = f"timelapse-ethernet-{device}"
-    if mode == "1":
-        run(["nmcli", "connection", "delete", con_name], check=False)
-        run([
-            "nmcli", "connection", "add", "type", "ethernet",
-            "ifname", device, "con-name", con_name,
-            "ipv4.method", "auto", "ipv6.method", "ignore",
-        ])
-    elif mode == "2":
-        address = input("IPv4/CIDR, fx 192.168.1.50/24: ").strip()
-        gateway = input("Gateway: ").strip()
-        dns = input("DNS, komma-separeret [1.1.1.1,8.8.8.8]: ").strip() or "1.1.1.1,8.8.8.8"
-        run(["nmcli", "connection", "delete", con_name], check=False)
-        run([
-            "nmcli", "connection", "add", "type", "ethernet",
-            "ifname", device, "con-name", con_name,
-            "ipv4.method", "manual", "ipv4.addresses", address,
-            "ipv4.gateway", gateway, "ipv4.dns", dns,
-            "ipv6.method", "ignore",
-        ])
+    info = nmcli_device_info(device)
+    device_type = info.get("type") or "ethernet"
+    con_name = info.get("connection") or ""
+    if con_name and con_name != "--":
+        cmd = ["nmcli", "connection", "modify", con_name, "ipv6.method", "ignore"]
     else:
+        if device_type == "wifi":
+            print("WiFi har ingen aktiv forbindelse at ændre. Tilslut SSID først.")
+            return False
+        con_name = f"timelapse-{device_type}-{device}"
+        run(["nmcli", "connection", "delete", con_name], check=False)
+        cmd = [
+            "nmcli", "connection", "add", "type", device_type,
+            "ifname", device, "con-name", con_name,
+            "ipv6.method", "ignore",
+        ]
+    if mode == "dhcp":
+        cmd.extend(["ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", ""])
+    else:
+        if not address:
+            print("Statisk IPv4 kraever address i CIDR-format")
+            return False
+        cmd.extend(["ipv4.method", "manual", "ipv4.addresses", address])
+        if gateway:
+            cmd.extend(["ipv4.gateway", gateway])
+        if dns:
+            cmd.extend(["ipv4.dns", dns])
+    if metric:
+        cmd.extend(["ipv4.route-metric", metric])
+
+    result = run(cmd, check=False, timeout=20)
+    if result.returncode != 0:
+        print(result.stderr or result.stdout)
+        return False
+    up = run(["nmcli", "connection", "up", con_name], check=False, timeout=30)
+    if up.returncode != 0:
+        print(up.stderr or up.stdout)
+        return False
+    if device_type in {"ethernet", "wifi", "gsm"}:
+        update_network_preference(base_dir, "4g" if device_type == "gsm" else device_type)
+    print(f"IPv4 {mode} konfigureret for {device} ({con_name})")
+    return True
+
+
+def configure_network_preference(base_dir: Path) -> None:
+    print("Forbindelsesprioritet")
+    print("1. Ethernet foerst")
+    print("2. WiFi foerst")
+    print("3. 4G foerst")
+    raw = input("Valg: ").strip()
+    mapping = {"1": "ethernet", "2": "wifi", "3": "4g"}
+    first = mapping.get(raw, raw.lower())
+    if first not in {"ethernet", "wifi", "4g"}:
         print("Afbrudt")
         return
-
-    run(["nmcli", "connection", "up", con_name], check=False, timeout=20)
-    update_network_preference(base_dir, "ethernet")
-    print(f"Ethernet konfigureret: {device}")
+    update_network_preference(base_dir, first)
+    print(f"Prioritet: {', '.join(read_yaml(base_dir / NETWORK_FILE).get('connectivity', {}).get('preferred_order', []))}")
 
 
 def configure_gsm(base_dir: Path) -> None:
@@ -708,6 +873,46 @@ def camera_set_config(path: str, value: str) -> bool:
     return False
 
 
+def print_photo_status() -> bool:
+    if not command_exists("gphoto2"):
+        print("gphoto2 mangler")
+        return False
+    ok = camera_detect()
+    for key, spec in PHOTO_SETTINGS.items():
+        value = read_gphoto_current(spec["path"])
+        print(f"{key:16} {spec['label']}: {value if value is not None else '(ikke fundet)'}")
+    return ok
+
+
+def choose_photo_setting() -> bool:
+    keys = list(PHOTO_SETTINGS)
+    for idx, key in enumerate(keys, 1):
+        spec = PHOTO_SETTINGS[key]
+        current = read_gphoto_current(spec["path"])
+        print(f"{idx}. {spec['label']} ({key}) = {current if current is not None else 'ikke fundet'}")
+        print(f"   {spec['hint']}")
+    raw = input("Vaelg parameter nummer eller key: ").strip()
+    key = keys[int(raw) - 1] if raw.isdigit() and 1 <= int(raw) <= len(keys) else raw
+    if key not in PHOTO_SETTINGS:
+        print("Ukendt fototeknisk parameter")
+        return False
+    value = input("Ny vaerdi: ").strip()
+    if not value:
+        print("Afbrudt")
+        return False
+    return camera_set_photo_setting(key, value)
+
+
+def camera_set_photo_setting(key: str, value: str) -> bool:
+    spec = PHOTO_SETTINGS.get((key or "").strip())
+    if not spec:
+        print(f"Ukendt fototeknisk parameter: {key}")
+        print("Mulige keys:", ", ".join(PHOTO_SETTINGS))
+        return False
+    print(f"{spec['label']}: {value}")
+    return camera_set_config(spec["path"], value)
+
+
 def camera_autofocus() -> bool:
     candidates = [
         "/main/actions/autofocusdrive",
@@ -798,13 +1003,29 @@ def gphoto_config_exists(path: str) -> bool:
     return result.returncode == 0
 
 
-def print_network_status() -> None:
+def print_network_status(detailed: bool = False) -> None:
     if command_exists("nmcli"):
+        print("NetworkManager devices")
+        print("----------------------")
         print(run(["nmcli", "device", "status"], check=False).stdout)
+        print("Aktive forbindelser")
+        print("-------------------")
         print(run(["nmcli", "connection", "show", "--active"], check=False).stdout)
+        if detailed:
+            print("IPv4 detaljer")
+            print("-------------")
+            print(run(["nmcli", "-f", "GENERAL.DEVICE,GENERAL.TYPE,GENERAL.STATE,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP4.ROUTE", "device", "show"], check=False, timeout=15).stdout)
     if command_exists("ip"):
+        print("Interfaces")
+        print("----------")
         print(run(["ip", "-brief", "addr"], check=False).stdout)
+        print("Routing")
+        print("-------")
         print(run(["ip", "route"], check=False).stdout)
+    if detailed and command_exists("resolvectl"):
+        print("DNS")
+        print("---")
+        print(run(["resolvectl", "status"], check=False, timeout=10).stdout)
 
 
 def print_service_status() -> None:
@@ -1163,6 +1384,20 @@ def nmcli_devices(device_type: str) -> list[str]:
         if len(parts) >= 2 and parts[1] == device_type:
             devices.append(parts[0])
     return devices
+
+
+def nmcli_device_info(device: str) -> dict[str, str]:
+    result = run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"], check=False)
+    for line in result.stdout.splitlines():
+        parts = line.split(":")
+        if parts and parts[0] == device:
+            return {
+                "device": parts[0],
+                "type": parts[1] if len(parts) > 1 else "",
+                "state": parts[2] if len(parts) > 2 else "",
+                "connection": parts[3] if len(parts) > 3 else "",
+            }
+    return {"device": device, "type": "", "state": "", "connection": ""}
 
 
 def choose_device(devices: list[str]) -> str:

@@ -2080,3 +2080,49 @@ person vide".
   `/opt/timelapse/edge/tools/bootstrap_cli.py`), `timelapse-totp` genstartet og aktiv.
   Remote route-inspektion viser både GET og POST for action-URL'erne; remote hurtigt
   snapshot uden kamera-probe målte ca. 0,79 sek. `py_compile` OK lokalt og på edgen.
+
+### Handover 2026-07-04 — Codex starter strukturering af service/support netværksmenu
+- **Peter bad om:** et mere struktureret servicetekniker-menu-system, hvor relevante
+  onsite-parametre kan konfigureres, især WiFi, IP-adresse (DHCP/statisk), routing,
+  DNS og lignende.
+- **Scope:** `edge/tools/bootstrap_cli.py` og `edge/scripts/totp-service.py`. Målet er
+  at bruge NetworkManager/nmcli som single local source of truth for netværk, mens
+  `local_network.yaml` fortsat kun holder TimeLapse-præferenceorden (`ethernet/wifi/4g`).
+- **Plan:** CLI får særskilt "Netværk og forbindelse"-menu + non-interactive flags til
+  UI; TOTP UI får ny Netværk-side med status, WiFi-connect, IPv4 DHCP/statisk,
+  DNS/gateway/route metric og prioritet. Kamera/QA-menuen forbliver separat.
+
+### Handover 2026-07-04 — Codex udvidede service/support UI/CLI med netværk og fototeknik
+- **CLI-struktur:** topmenuen er nu delt i Overblik, Installation, Netværk og
+  forbindelse, Fototeknik/kamera/testbilleder, Fejlsøgning/logs og Lokal tekniker-UI.
+  Netværk har status/DNS/routing, WiFi connect, Ethernet/WiFi IPv4 DHCP/statisk,
+  4G modem, forbindelsesprioritet og Headend-test. Installation er nu bootstrap/
+  headend/doctor/rapport.
+- **Non-interactive CLI flags til UI/drift:** `--network-status`, `--wifi-connect`,
+  `--ipv4-config DEVICE MODE ADDRESS GATEWAY DNS METRIC`, `--network-preference`,
+  `--photo-status` og `--photo-setting KEY VALUE`.
+- **TOTP UI:** ny `/mgmt/network` side med status, WiFi-formular, IPv4 DHCP/statisk
+  formular (adresse/gateway/DNS/route metric), prioritet og Headend-test. POST-targets
+  har GET-fallbacks ligesom tekniker/system.
+- **Fototeknik:** Tekniker-siden har nu dropdown til named camera settings:
+  `exposure_comp`, `iso`, `white_balance`, `shutter_speed`, `aperture`,
+  `focus_mode`, `image_format`, plus "Fotostatus". Disse mapper til kendte gphoto2
+  paths og kører i maintenance mode, så edge-agenten ikke konkurrerer om kameraet.
+- **Sikker netværksadfærd:** IPv4-konfiguration modificerer aktiv NetworkManager-
+  connection når den findes; WiFi statisk IP kræver først aktiv SSID-tilslutning,
+  så vi ikke opretter en invalid WiFi connection uden SSID.
+- **Verifikation før deploy:** `python3 -m py_compile edge/tools/bootstrap_cli.py
+  edge/scripts/totp-service.py` OK; CLI help viser nye flags; `git diff --check` OK.
+
+### Handover 2026-07-04 — Codex tilføjede lokal CLI-konsol i service/support UI
+- **Peter bad om:** mulighed for at komme ud i CLI'en fra UI'en.
+- **Implementeret:** ny `/mgmt/cli` fane i lokal TOTP UI. Den kører
+  `/opt/timelapse/edge/tools/bootstrap_cli.py` og viser stdout/stderr direkte i
+  browseren. Der er hurtigknapper for Overblik, Netværk, Headend, Kamera, Fotostatus,
+  GPS, NPU og Doctor samt et tekstfelt til egne `bootstrap_cli.py` argumenter.
+- **Sikkerhed:** UI'en er ikke en fri shell. Den parser argumenter med `shlex.split`
+  og tillader kun allowlistede `bootstrap_cli.py` flags (`--network-status`,
+  `--photo-status`, `--photo-setting`, `--focus-drive`, `--capture-test`, osv.).
+  Ukendte flags og shell-lignende input afvises før subprocess-kald.
+- **Verifikation:** `py_compile` OK; parser-test godkendte kendte kommandoer og afviste
+  `--bad-flag` samt `--network-status; rm -rf /`.

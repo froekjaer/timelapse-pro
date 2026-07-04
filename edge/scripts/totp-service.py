@@ -21,6 +21,7 @@ import hashlib
 import logging
 import ipaddress
 import subprocess
+import shlex
 import yaml
 import pyotp
 
@@ -44,6 +45,26 @@ SESSION_COOKIE = "tl_session"
 IPTABLES_CHAIN = "TL_MGMT"
 EDGE_ROOT = Path(os.getenv("TIMELAPSE_EDGE_ROOT", "/opt/timelapse/edge"))
 TECH_CLI = EDGE_ROOT / "tools" / "bootstrap_cli.py"
+CLI_ALLOWED_FLAGS = {
+    "--status",
+    "--test-headend",
+    "--doctor",
+    "--network-status",
+    "--network-preference",
+    "--camera-detect",
+    "--camera-summary",
+    "--camera-config",
+    "--set-camera-config",
+    "--photo-status",
+    "--photo-setting",
+    "--autofocus",
+    "--focus-drive",
+    "--capture-test",
+    "--gps-status",
+    "--npu-status",
+    "--qa-image",
+    "--maintenance",
+}
 
 
 def _default_config() -> dict:
@@ -413,7 +434,9 @@ def _mgmt_page(section: str = "time", headend_cfg: dict = None, time_status: dic
 </header>
 <nav>
   <a href="/mgmt/" class="{'active' if section == 'time' else ''}">Tid</a>
+  <a href="/mgmt/network" class="{'active' if section == 'network' else ''}">Netværk</a>
   <a href="/mgmt/technician" class="{'active' if section == 'technician' else ''}">Tekniker</a>
+  <a href="/mgmt/cli" class="{'active' if section == 'cli' else ''}">CLI</a>
   <a href="/mgmt/system" class="{'active' if section == 'system' else ''}">System</a>
 </nav>
 <div class="content">
@@ -514,17 +537,35 @@ def _mgmt_page(section: str = "time", headend_cfg: dict = None, time_status: dic
 </html>"""
 
 
-def _run_tech_cli(*args: str, timeout: int = 45) -> tuple[bool, str]:
+def _run_tech_cli(*args: str, timeout: int = 45, env: dict | None = None) -> tuple[bool, str]:
     """Run the shared edge technician CLI and return safe text output."""
     if not TECH_CLI.exists():
         return False, f"Tekniker CLI findes ikke: {TECH_CLI}"
     cmd = [os.environ.get("PYTHON", "/opt/timelapse/venv/bin/python3"), str(TECH_CLI), *args]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        run_env = os.environ.copy()
+        if env:
+            run_env.update({k: v for k, v in env.items() if v is not None})
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=run_env)
         output = (result.stdout or "") + (("\n" + result.stderr) if result.stderr else "")
         return result.returncode == 0, output.strip() or "(intet output)"
     except Exception as exc:
         return False, str(exc)
+
+
+def _parse_cli_args(raw: str) -> tuple[bool, list[str], str]:
+    try:
+        args = shlex.split(raw or "")
+    except ValueError as exc:
+        return False, [], f"Kunne ikke parse CLI-argumenter: {exc}"
+    if not args:
+        return False, [], "Skriv argumenter til bootstrap_cli.py, fx --network-status"
+    if args[0].endswith("bootstrap_cli.py"):
+        args = args[1:]
+    for arg in args:
+        if arg.startswith("-") and arg not in CLI_ALLOWED_FLAGS:
+            return False, [], f"Flag ikke tilladt i lokal UI: {arg}"
+    return True, args, ""
 
 
 def _technician_snapshot() -> dict:
@@ -636,7 +677,9 @@ def _system_page(msg: str = "", output: str = "") -> str:
 </header>
 <nav>
   <a href="/mgmt/">Tid</a>
+  <a href="/mgmt/network">Netværk</a>
   <a href="/mgmt/technician">Tekniker</a>
+  <a href="/mgmt/cli">CLI</a>
   <a href="/mgmt/system" class="active">System</a>
 </nav>
 <div class="content">
@@ -666,9 +709,220 @@ def _system_page(msg: str = "", output: str = "") -> str:
 </html>"""
 
 
+def _network_page(msg: str = "", output: str = "") -> str:
+    status = _technician_snapshot()
+    generated = status.get("generated_at", "")
+    msg_html = f'<p class="msg ok">{html.escape(msg)}</p>' if msg else ""
+    output_html = (
+        f'<div class="card wide"><h2>Output</h2><pre>{html.escape(output)}</pre></div>'
+        if output else ""
+    )
+    devices = status.get("network", {}).get("devices", []) or []
+    device_options = "".join(
+        f'<option value="{html.escape(str(line).split(":")[0])}">{html.escape(str(line))}</option>'
+        for line in devices
+    )
+    if not device_options:
+        device_options = '<option value="">Ingen nmcli devices fundet</option>'
+    return f"""<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60; url=/mgmt/network">
+<title>TimeLapse Pro — Netværk</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #ddd; min-height: 100vh; }}
+  header {{ background: #16213e; padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1rem; border-bottom: 1px solid #234; }}
+  header h1 {{ font-size: 1rem; color: #4fc3f7; flex: 1; }}
+  header .loc {{ font-size: 0.75rem; color: #777; }}
+  nav {{ background: #0f3460; display: flex; border-bottom: 1px solid #234; overflow-x: auto; }}
+  nav a {{ color: #aaa; text-decoration: none; padding: 0.75rem 1.25rem; font-size: 0.85rem; white-space: nowrap; }}
+  nav a.active {{ color: #4fc3f7; border-bottom: 2px solid #4fc3f7; }}
+  .content {{ padding: 1rem; max-width: 1180px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }}
+  .card {{ background: #16213e; border-radius: 10px; padding: 1rem; border: 1px solid #26385a; }}
+  .card.wide {{ grid-column: 1 / -1; }}
+  h2 {{ font-size: 0.82rem; color: #4fc3f7; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; }}
+  th {{ width: 38%; color: #8aa0bf; text-align: left; font-weight: 600; vertical-align: top; }}
+  td, th {{ border-top: 1px solid #26385a; padding: 0.42rem 0.2rem; word-break: break-word; }}
+  label {{ display: block; color: #8aa0bf; font-size: 0.76rem; margin: 0.55rem 0 0.25rem; }}
+  input, select {{ width: 100%; background: #0f3460; color: #fff; border: 1px solid #334; border-radius: 7px; padding: 0.58rem 0.65rem; font-size: 0.85rem; }}
+  .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; }}
+  button {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; margin-top: 0.7rem; }}
+  button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
+  pre {{ white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; background: #0b1220; border-radius: 8px; padding: 0.8rem; color: #d6e4ff; max-height: 420px; overflow: auto; }}
+  .msg.ok {{ color: #66bb6a; font-size: 0.85rem; margin-bottom: 1rem; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>TimeLapse Pro</h1>
+  <span class="loc">{html.escape(os.uname().nodename)} · {html.escape(generated)} UTC</span>
+</header>
+<nav>
+  <a href="/mgmt/">Tid</a>
+  <a href="/mgmt/network" class="active">Netværk</a>
+  <a href="/mgmt/technician">Tekniker</a>
+  <a href="/mgmt/cli">CLI</a>
+  <a href="/mgmt/system">System</a>
+</nav>
+<div class="content">
+  {msg_html}
+  <div class="grid">
+    <div class="card"><h2>Status</h2>{_kv_table(status.get("network", {}))}</div>
+    <div class="card">
+      <h2>WiFi</h2>
+      <form method="post" action="/mgmt/network/wifi">
+        <label>SSID</label>
+        <input name="ssid" placeholder="Netværksnavn">
+        <label>Password</label>
+        <input name="password" type="password" placeholder="Gemmes i NetworkManager">
+        <button>Tilslut WiFi</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>IPv4</h2>
+      <form method="post" action="/mgmt/network/ipv4">
+        <label>Interface</label>
+        <select name="device">{device_options}</select>
+        <label>Mode</label>
+        <select name="mode"><option value="dhcp">DHCP</option><option value="static">Statisk</option></select>
+        <label>IPv4/CIDR</label>
+        <input name="address" placeholder="192.168.1.50/24">
+        <label>Gateway</label>
+        <input name="gateway" placeholder="192.168.1.1">
+        <label>DNS</label>
+        <input name="dns" placeholder="1.1.1.1,8.8.8.8">
+        <label>Route metric</label>
+        <input name="metric" placeholder="100">
+        <button>Gem IPv4</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Prioritet og test</h2>
+      <form method="post" action="/mgmt/network/preference">
+        <label>Foretrukken forbindelse</label>
+        <select name="first"><option value="ethernet">Ethernet</option><option value="wifi">WiFi</option><option value="4g">4G</option></select>
+        <button>Gem prioritet</button>
+      </form>
+      <form method="post" action="/mgmt/network/action" class="actions">
+        <button class="secondary" name="action" value="status">Detaljeret status</button>
+        <button class="secondary" name="action" value="headend">Headend test</button>
+      </form>
+    </div>
+    {output_html}
+  </div>
+</div>
+</body>
+</html>"""
+
+
+def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
+    status = _technician_snapshot()
+    generated = status.get("generated_at", "")
+    msg_html = f'<p class="msg ok">{html.escape(msg)}</p>' if msg else ""
+    output_html = (
+        f'<div class="card wide"><h2>Output</h2><pre>{html.escape(output)}</pre></div>'
+        if output else ""
+    )
+    buttons = [
+        ("--status", "Overblik"),
+        ("--network-status", "Netværk"),
+        ("--test-headend", "Headend"),
+        ("--camera-summary --maintenance", "Kamera"),
+        ("--photo-status --maintenance", "Fotostatus"),
+        ("--gps-status", "GPS"),
+        ("--npu-status", "NPU"),
+        ("--doctor", "Doctor"),
+    ]
+    quick = "".join(
+        f'<button name="command" value="{html.escape(cmd)}">{html.escape(label)}</button>'
+        for cmd, label in buttons
+    )
+    allowed = " ".join(sorted(CLI_ALLOWED_FLAGS))
+    return f"""<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TimeLapse Pro — CLI</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #ddd; min-height: 100vh; }}
+  header {{ background: #16213e; padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1rem; border-bottom: 1px solid #234; }}
+  header h1 {{ font-size: 1rem; color: #4fc3f7; flex: 1; }}
+  header .loc {{ font-size: 0.75rem; color: #777; }}
+  nav {{ background: #0f3460; display: flex; border-bottom: 1px solid #234; overflow-x: auto; }}
+  nav a {{ color: #aaa; text-decoration: none; padding: 0.75rem 1.25rem; font-size: 0.85rem; white-space: nowrap; }}
+  nav a.active {{ color: #4fc3f7; border-bottom: 2px solid #4fc3f7; }}
+  .content {{ padding: 1rem; max-width: 1180px; }}
+  .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }}
+  .card {{ background: #16213e; border-radius: 10px; padding: 1rem; border: 1px solid #26385a; }}
+  .card.wide {{ grid-column: 1 / -1; }}
+  h2 {{ font-size: 0.82rem; color: #4fc3f7; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  label {{ display: block; color: #8aa0bf; font-size: 0.76rem; margin: 0.55rem 0 0.25rem; }}
+  input {{ width: 100%; background: #0f3460; color: #fff; border: 1px solid #334; border-radius: 7px; padding: 0.58rem 0.65rem; font-size: 0.85rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+  .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 0.5rem; }}
+  button {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; margin-top: 0.7rem; }}
+  button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
+  pre {{ white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; background: #0b1220; border-radius: 8px; padding: 0.8rem; color: #d6e4ff; max-height: 520px; overflow: auto; }}
+  .msg.ok {{ color: #66bb6a; font-size: 0.85rem; margin-bottom: 1rem; }}
+  .hint {{ color: #8aa0bf; font-size: 0.76rem; line-height: 1.35; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>TimeLapse Pro</h1>
+  <span class="loc">{html.escape(os.uname().nodename)} · {html.escape(generated)} UTC</span>
+</header>
+<nav>
+  <a href="/mgmt/">Tid</a>
+  <a href="/mgmt/network">Netværk</a>
+  <a href="/mgmt/technician">Tekniker</a>
+  <a href="/mgmt/cli" class="active">CLI</a>
+  <a href="/mgmt/system">System</a>
+</nav>
+<div class="content">
+  {msg_html}
+  <div class="grid">
+    <div class="card wide">
+      <h2>Hurtigkommandoer</h2>
+      <form method="post" action="/mgmt/cli/run" class="actions">{quick}</form>
+    </div>
+    <div class="card wide">
+      <h2>Bootstrap CLI</h2>
+      <form method="post" action="/mgmt/cli/run">
+        <label>/opt/timelapse/edge/tools/bootstrap_cli.py</label>
+        <input name="command" value="{html.escape(command)}" placeholder="--network-status">
+        <button>Kør kommando</button>
+      </form>
+      <p class="hint">Tilladte flags: {html.escape(allowed)}</p>
+    </div>
+    {output_html}
+  </div>
+</div>
+</body>
+</html>"""
+
+
 def _technician_page(msg: str = "", output: str = "") -> str:
     status = _technician_snapshot()
     generated = status.get("generated_at", "")
+    photo_options = "".join(
+        f'<option value="{key}">{label}</option>'
+        for key, label in [
+            ("exposure_comp", "Eksponeringskompensation"),
+            ("iso", "ISO"),
+            ("white_balance", "Hvidbalance"),
+            ("shutter_speed", "Lukkertid"),
+            ("aperture", "Blænde"),
+            ("focus_mode", "Fokusmode"),
+            ("image_format", "Billedformat"),
+        ]
+    )
     msg_html = f'<p class="msg ok">{html.escape(msg)}</p>' if msg else ""
     output_html = (
         f'<div class="card wide"><h2>Output</h2><pre>{html.escape(output)}</pre></div>'
@@ -699,10 +953,10 @@ def _technician_page(msg: str = "", output: str = "") -> str:
   th {{ width: 38%; color: #8aa0bf; text-align: left; font-weight: 600; vertical-align: top; }}
   td, th {{ border-top: 1px solid #26385a; padding: 0.42rem 0.2rem; word-break: break-word; }}
   .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.5rem; }}
-  button, input {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; }}
+  button, input, select {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; }}
   button {{ background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; }}
   button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
-  input {{ width: 100%; background: #0f3460; color: #fff; margin-bottom: 0.5rem; }}
+  input, select {{ width: 100%; background: #0f3460; color: #fff; margin-bottom: 0.5rem; }}
   form.inline {{ margin: 0; }}
   pre {{ white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; background: #0b1220; border-radius: 8px; padding: 0.8rem; color: #d6e4ff; max-height: 420px; overflow: auto; }}
   .msg.ok {{ color: #66bb6a; font-size: 0.85rem; margin-bottom: 1rem; }}
@@ -716,7 +970,9 @@ def _technician_page(msg: str = "", output: str = "") -> str:
 </header>
 <nav>
   <a href="/mgmt/">Tid</a>
+  <a href="/mgmt/network">Netværk</a>
   <a href="/mgmt/technician" class="active">Tekniker</a>
+  <a href="/mgmt/cli">CLI</a>
   <a href="/mgmt/system">System</a>
 </nav>
 <div class="content">
@@ -737,6 +993,15 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         <button name="action" value="npu">NPU status</button>
         <button name="action" value="logs">Service logs</button>
         <button name="action" value="headend">Headend test</button>
+        <button name="action" value="photo-status">Fotostatus</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Fototeknik</h2>
+      <form method="post" action="/mgmt/technician/photo">
+        <select name="key">{photo_options}</select>
+        <input name="value" placeholder="Ny værdi, fx -0.7, 100, Auto, Daylight, f/8">
+        <button>Sæt fotoparameter</button>
       </form>
     </div>
     <div class="card">
@@ -784,10 +1049,82 @@ async def mgmt_technician(request: Request):
     return HTMLResponse(_technician_page())
 
 
+@app.get("/mgmt/network", response_class=HTMLResponse)
+async def mgmt_network(request: Request):
+    return HTMLResponse(_network_page())
+
+
+@app.get("/mgmt/cli", response_class=HTMLResponse)
+async def mgmt_cli(request: Request):
+    return HTMLResponse(_cli_page())
+
+
+@app.get("/mgmt/cli/run")
+async def mgmt_cli_run_get_fallback(request: Request):
+    return RedirectResponse("/mgmt/cli", status_code=303)
+
+
+@app.post("/mgmt/cli/run", response_class=HTMLResponse)
+async def mgmt_cli_run(request: Request, command: str = Form(...)):
+    ok_parse, args, error = _parse_cli_args(command)
+    if not ok_parse:
+        return HTMLResponse(_cli_page("CLI afvist", error, command), status_code=400)
+    ok, output = _run_tech_cli(*args, timeout=120)
+    rendered = f"$ bootstrap_cli.py {' '.join(args)}\n\n{output}"
+    return HTMLResponse(_cli_page("OK" if ok else "Fejl", rendered, command))
+
+
+@app.get("/mgmt/network/wifi")
+@app.get("/mgmt/network/ipv4")
+@app.get("/mgmt/network/preference")
+@app.get("/mgmt/network/action")
+async def mgmt_network_post_target_get_fallback(request: Request):
+    return RedirectResponse("/mgmt/network", status_code=303)
+
+
+@app.post("/mgmt/network/wifi", response_class=HTMLResponse)
+async def mgmt_network_wifi(request: Request, ssid: str = Form(...), password: str = Form("")):
+    ok, output = _run_tech_cli("--wifi-connect", ssid.strip(), timeout=90, env={"TIMELAPSE_WIFI_PASSWORD": password})
+    return HTMLResponse(_network_page("WiFi opdateret" if ok else "WiFi fejlede", output))
+
+
+@app.post("/mgmt/network/ipv4", response_class=HTMLResponse)
+async def mgmt_network_ipv4(
+    request: Request,
+    device: str = Form(...),
+    mode: str = Form("dhcp"),
+    address: str = Form(""),
+    gateway: str = Form(""),
+    dns: str = Form(""),
+    metric: str = Form(""),
+):
+    values = [device.strip(), mode.strip(), address.strip() or "-", gateway.strip() or "-", dns.strip() or "-", metric.strip() or "-"]
+    ok, output = _run_tech_cli("--ipv4-config", *values, timeout=90)
+    return HTMLResponse(_network_page("IPv4 opdateret" if ok else "IPv4 fejlede", output))
+
+
+@app.post("/mgmt/network/preference", response_class=HTMLResponse)
+async def mgmt_network_preference(request: Request, first: str = Form(...)):
+    ok, output = _run_tech_cli("--network-preference", first.strip(), timeout=30)
+    return HTMLResponse(_network_page("Prioritet gemt" if ok else "Prioritet fejlede", output))
+
+
+@app.post("/mgmt/network/action", response_class=HTMLResponse)
+async def mgmt_network_action(request: Request, action: str = Form(...)):
+    if action == "status":
+        ok, output = _run_tech_cli("--network-status", timeout=45)
+    elif action == "headend":
+        ok, output = _run_tech_cli("--test-headend", timeout=30)
+    else:
+        return HTMLResponse(_network_page("Ukendt handling", action), status_code=400)
+    return HTMLResponse(_network_page("OK" if ok else "Fejl", output))
+
+
 @app.get("/mgmt/technician/action")
 @app.get("/mgmt/technician/focus")
 @app.get("/mgmt/technician/config")
 @app.get("/mgmt/technician/capture")
+@app.get("/mgmt/technician/photo")
 async def mgmt_technician_post_target_get_fallback(request: Request):
     return RedirectResponse("/mgmt/technician", status_code=303)
 
@@ -802,6 +1139,7 @@ async def mgmt_technician_action(request: Request, action: str = Form(...)):
         "logs": [],
         "headend": ["--test-headend"],
         "autofocus": ["--autofocus", "--maintenance"],
+        "photo-status": ["--photo-status", "--maintenance"],
     }
     if action == "logs":
         try:
@@ -827,6 +1165,16 @@ async def mgmt_technician_focus(request: Request, value: str = Form("")):
         return HTMLResponse(_technician_page("Focus drive mangler", "Skriv fx Near 1, Far 1 eller 500 i feltet."))
     ok, output = _run_tech_cli("--focus-drive", value, "--maintenance", timeout=90)
     return HTMLResponse(_technician_page("Focus drive sendt" if ok else "Focus drive fejlede", output))
+
+
+@app.post("/mgmt/technician/photo", response_class=HTMLResponse)
+async def mgmt_technician_photo(request: Request, key: str = Form(...), value: str = Form(...)):
+    key = (key or "").strip()
+    value = (value or "").strip()
+    if not key or not value:
+        return HTMLResponse(_technician_page("Fotoparameter mangler", "Vælg parameter og skriv ny værdi."))
+    ok, output = _run_tech_cli("--photo-setting", key, value, "--maintenance", timeout=90)
+    return HTMLResponse(_technician_page("Fotoparameter sat" if ok else "Fotoparameter fejlede", output))
 
 
 @app.post("/mgmt/technician/config", response_class=HTMLResponse)
