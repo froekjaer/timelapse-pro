@@ -22,13 +22,17 @@ import logging
 import ipaddress
 import subprocess
 import shlex
+import asyncio
+import json
+import pty
+import select
 import yaml
 import pyotp
 
 from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, Request, Form, Response, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Request, Form, Response, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, StreamingResponse
 from typing import Optional
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -45,12 +49,16 @@ SESSION_COOKIE = "tl_session"
 IPTABLES_CHAIN = "TL_MGMT"
 EDGE_ROOT = Path(os.getenv("TIMELAPSE_EDGE_ROOT", "/opt/timelapse/edge"))
 TECH_CLI = EDGE_ROOT / "tools" / "bootstrap_cli.py"
+TECH_CAPTURE_DIR = Path(os.getenv("TIMELAPSE_TECH_CAPTURE_DIR", "/tmp/timelapse-tech-captures"))
+VIDEO_FRAME_DIR = Path(os.getenv("TIMELAPSE_TECH_VIDEO_DIR", "/tmp/timelapse-tech-video"))
+BASH_PATH = os.getenv("TIMELAPSE_TECH_SHELL", "/bin/bash")
 CLI_ALLOWED_FLAGS = {
     "--status",
     "--test-headend",
     "--doctor",
     "--network-status",
     "--network-preference",
+    "--static-routes",
     "--camera-detect",
     "--camera-summary",
     "--camera-config",
@@ -65,6 +73,27 @@ CLI_ALLOWED_FLAGS = {
     "--qa-image",
     "--maintenance",
 }
+PHOTO_VALUE_OPTIONS = {
+    "exposure_comp": ["-2", "-1.7", "-1.3", "-1", "-0.7", "-0.3", "0", "+0.3", "+0.7", "+1", "+1.3", "+1.7", "+2"],
+    "iso": ["Auto", "100", "200", "400", "800", "1600", "3200"],
+    "white_balance": ["Auto", "Daylight", "Cloudy", "Shade", "Tungsten", "Fluorescent", "Flash"],
+    "shutter_speed": ["auto", "1/30", "1/60", "1/125", "1/250", "1/500", "1/1000"],
+    "aperture": ["f/4", "f/5.6", "f/8", "f/11", "f/16"],
+    "focus_mode": ["Manual", "MF", "AF-S", "AF-C", "AF-A", "One Shot", "AI Servo"],
+    "image_format": ["JPEG", "Large Fine JPEG", "RAW", "RAW + JPEG"],
+}
+CAMERA_CONFIG_OPTIONS = [
+    ("/main/capturesettings/exposurecompensation", "Eksponeringskompensation"),
+    ("/main/imgsettings/iso", "ISO"),
+    ("/main/imgsettings/whitebalance", "Hvidbalance"),
+    ("/main/capturesettings/shutterspeed", "Lukkertid"),
+    ("/main/capturesettings/f-number", "Blænde"),
+    ("/main/capturesettings/focusmode", "Fokusmode"),
+    ("/main/imgsettings/imageformat", "Billedformat"),
+    ("/main/actions/autofocusdrive", "Autofokus action"),
+    ("/main/actions/manualfocusdrive", "Manuel focus drive"),
+]
+FOCUS_DRIVE_OPTIONS = ["Near 1", "Near 2", "Near 3", "Far 1", "Far 2", "Far 3", "500", "-500", "1000", "-1000"]
 
 
 def _default_config() -> dict:
@@ -568,6 +597,84 @@ def _parse_cli_args(raw: str) -> tuple[bool, list[str], str]:
     return True, args, ""
 
 
+def _wifi_network_options() -> str:
+    try:
+        result = subprocess.run(
+            ["nmcli", "--escape", "no", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except Exception:
+        return ""
+    seen: set[str] = set()
+    options = []
+    for line in result.stdout.splitlines():
+        parts = line.split(":")
+        if not parts or not parts[0] or parts[0] in seen:
+            continue
+        seen.add(parts[0])
+        label = f"{parts[0]} ({parts[1] if len(parts) > 1 else '?'}%)"
+        if len(parts) > 2 and parts[2]:
+            label += f" {parts[2]}"
+        options.append(f'<option value="{html.escape(parts[0])}">{html.escape(label)}</option>')
+    return "".join(options)
+
+
+def _latest_tech_image() -> Path | None:
+    for root in (TECH_CAPTURE_DIR, VIDEO_FRAME_DIR):
+        try:
+            images = sorted(
+                [p for p in root.glob("*") if p.suffix.lower() in {".jpg", ".jpeg"}],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+        except Exception:
+            images = []
+        if images:
+            return images[0]
+    return None
+
+
+def _tech_image_url(path: Path | None) -> str:
+    if not path:
+        return ""
+    try:
+        if path.resolve().is_relative_to(TECH_CAPTURE_DIR.resolve()):
+            return f"/mgmt/technician/image/{html.escape(path.name)}?t={int(path.stat().st_mtime)}"
+        if path.resolve().is_relative_to(VIDEO_FRAME_DIR.resolve()):
+            return f"/mgmt/technician/video-frame/{html.escape(path.name)}?t={int(path.stat().st_mtime)}"
+    except Exception:
+        return ""
+    return ""
+
+
+def _image_panel(title: str = "Seneste test-/fokusbillede") -> str:
+    image = _latest_tech_image()
+    url = _tech_image_url(image)
+    if not url:
+        return '<p class="empty">Intet testbillede endnu</p>'
+    size = ""
+    try:
+        size = f"{image.stat().st_size / 1_000_000:.1f} MB"
+    except Exception:
+        pass
+    return (
+        f'<div class="preview"><img src="{url}" alt="{html.escape(title)}">'
+        f'<div class="meta">{html.escape(image.name)} {html.escape(size)}</div></div>'
+    )
+
+
+def _safe_image_from(root: Path, name: str) -> Path:
+    path = (root / name).resolve()
+    root_resolved = root.resolve()
+    if not path.is_relative_to(root_resolved) or path.suffix.lower() not in {".jpg", ".jpeg"}:
+        raise HTTPException(status_code=404)
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return path
+
+
 def _technician_snapshot() -> dict:
     """Use bootstrap_cli's shared status collector when available."""
     try:
@@ -724,6 +831,9 @@ def _network_page(msg: str = "", output: str = "") -> str:
     )
     if not device_options:
         device_options = '<option value="">Ingen nmcli devices fundet</option>'
+    wifi_options = _wifi_network_options()
+    if not wifi_options:
+        wifi_options = '<option value="">Ingen SSID fundet - skriv manuelt nedenfor</option>'
     return f"""<!DOCTYPE html>
 <html lang="da">
 <head>
@@ -776,8 +886,10 @@ def _network_page(msg: str = "", output: str = "") -> str:
     <div class="card">
       <h2>WiFi</h2>
       <form method="post" action="/mgmt/network/wifi">
-        <label>SSID</label>
-        <input name="ssid" placeholder="Netværksnavn">
+        <label>SSID fra scan</label>
+        <select name="ssid_select">{wifi_options}</select>
+        <label>SSID manuelt</label>
+        <input name="ssid_manual" placeholder="Netværksnavn hvis det ikke står på listen">
         <label>Password</label>
         <input name="password" type="password" placeholder="Gemmes i NetworkManager">
         <button>Tilslut WiFi</button>
@@ -802,6 +914,16 @@ def _network_page(msg: str = "", output: str = "") -> str:
       </form>
     </div>
     <div class="card">
+      <h2>Statiske routes</h2>
+      <form method="post" action="/mgmt/network/routes">
+        <label>Interface</label>
+        <select name="device">{device_options}</select>
+        <label>Routes</label>
+        <input name="routes" placeholder="10.10.0.0/16 192.168.1.1, 172.16.5.0/24 192.168.1.254">
+        <button>Gem routes</button>
+      </form>
+    </div>
+    <div class="card">
       <h2>Prioritet og test</h2>
       <form method="post" action="/mgmt/network/preference">
         <label>Foretrukken forbindelse</label>
@@ -818,6 +940,13 @@ def _network_page(msg: str = "", output: str = "") -> str:
 </div>
 </body>
 </html>"""
+
+
+def _option_list(values: list[str], selected: str = "") -> str:
+    return "".join(
+        f'<option value="{html.escape(value)}" {"selected" if value == selected else ""}>{html.escape(value)}</option>'
+        for value in values
+    )
 
 
 def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
@@ -865,6 +994,7 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
   h2 {{ font-size: 0.82rem; color: #4fc3f7; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }}
   label {{ display: block; color: #8aa0bf; font-size: 0.76rem; margin: 0.55rem 0 0.25rem; }}
   input {{ width: 100%; background: #0f3460; color: #fff; border: 1px solid #334; border-radius: 7px; padding: 0.58rem 0.65rem; font-size: 0.85rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+  textarea {{ width: 100%; min-height: 360px; background: #050812; color: #d6e4ff; border: 1px solid #26385a; border-radius: 8px; padding: 0.8rem; font-size: 0.82rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
   .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 0.5rem; }}
   button {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; margin-top: 0.7rem; }}
   button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
@@ -901,9 +1031,52 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
       </form>
       <p class="hint">Tilladte flags: {html.escape(allowed)}</p>
     </div>
+    <div class="card wide">
+      <h2>SSH bash</h2>
+      <p class="hint">Interaktiv lokal shell på edgen bag TOTP-sessionen. Luk terminalen når du er færdig.</p>
+      <div class="actions">
+        <button type="button" onclick="openShell()">Åbn bash</button>
+        <button class="secondary" type="button" onclick="closeShell()">Luk bash</button>
+      </div>
+      <textarea id="term" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+    </div>
     {output_html}
   </div>
 </div>
+<script>
+let shellWs = null;
+const term = document.getElementById('term');
+function openShell() {{
+  if (shellWs && shellWs.readyState === WebSocket.OPEN) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  shellWs = new WebSocket(proto + '//' + location.host + '/mgmt/cli/bash/ws');
+  shellWs.onopen = () => {{ term.value += '\\n[connected]\\n'; term.focus(); }};
+  shellWs.onmessage = (event) => {{ term.value += event.data; term.scrollTop = term.scrollHeight; }};
+  shellWs.onclose = () => {{ term.value += '\\n[closed]\\n'; }};
+}}
+function closeShell() {{
+  if (shellWs) shellWs.close();
+}}
+term.addEventListener('keydown', (event) => {{
+  if (!shellWs || shellWs.readyState !== WebSocket.OPEN) return;
+  if (event.key === 'Enter') {{
+    shellWs.send('\\n');
+    event.preventDefault();
+  }} else if (event.key === 'Backspace') {{
+    shellWs.send('\\x7f');
+    event.preventDefault();
+  }} else if (event.key === 'Tab') {{
+    shellWs.send('\\t');
+    event.preventDefault();
+  }} else if (event.ctrlKey && event.key.length === 1) {{
+    shellWs.send(String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64));
+    event.preventDefault();
+  }} else if (!event.metaKey && !event.altKey && event.key.length === 1) {{
+    shellWs.send(event.key);
+    event.preventDefault();
+  }}
+}});
+</script>
 </body>
 </html>"""
 
@@ -923,6 +1096,13 @@ def _technician_page(msg: str = "", output: str = "") -> str:
             ("image_format", "Billedformat"),
         ]
     )
+    focus_options = _option_list(FOCUS_DRIVE_OPTIONS)
+    config_options = "".join(
+        f'<option value="{html.escape(path)}">{html.escape(label)} - {html.escape(path)}</option>'
+        for path, label in CAMERA_CONFIG_OPTIONS
+    )
+    photo_values_json = json.dumps(PHOTO_VALUE_OPTIONS, ensure_ascii=False)
+    latest_panel = _image_panel()
     msg_html = f'<p class="msg ok">{html.escape(msg)}</p>' if msg else ""
     output_html = (
         f'<div class="card wide"><h2>Output</h2><pre>{html.escape(output)}</pre></div>'
@@ -957,7 +1137,11 @@ def _technician_page(msg: str = "", output: str = "") -> str:
   button {{ background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; }}
   button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
   input, select {{ width: 100%; background: #0f3460; color: #fff; margin-bottom: 0.5rem; }}
+  label {{ display: block; color: #8aa0bf; font-size: 0.76rem; margin: 0.45rem 0 0.25rem; }}
   form.inline {{ margin: 0; }}
+  .hint {{ color: #8aa0bf; font-size: 0.76rem; line-height: 1.35; margin-bottom: 0.55rem; }}
+  .preview img {{ width: 100%; max-height: 520px; object-fit: contain; background: #050812; border: 1px solid #26385a; border-radius: 8px; }}
+  .stream {{ width: 100%; min-height: 220px; object-fit: contain; background: #050812; border: 1px solid #26385a; border-radius: 8px; }}
   pre {{ white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; background: #0b1220; border-radius: 8px; padding: 0.8rem; color: #d6e4ff; max-height: 420px; overflow: auto; }}
   .msg.ok {{ color: #66bb6a; font-size: 0.85rem; margin-bottom: 1rem; }}
   .empty {{ color: #777; font-size: 0.8rem; }}
@@ -999,16 +1183,22 @@ def _technician_page(msg: str = "", output: str = "") -> str:
     <div class="card">
       <h2>Fototeknik</h2>
       <form method="post" action="/mgmt/technician/photo">
-        <select name="key">{photo_options}</select>
-        <input name="value" placeholder="Ny værdi, fx -0.7, 100, Auto, Daylight, f/8">
+        <label>Parameter</label>
+        <select name="key" id="photo-key" onchange="updatePhotoValues()">{photo_options}</select>
+        <label>Ny værdi</label>
+        <select name="value" id="photo-value"></select>
+        <label>Manuel værdi</label>
+        <input name="value_manual" placeholder="Skriv manuelt hvis værdien ikke står i listen">
         <button>Sæt fotoparameter</button>
       </form>
     </div>
     <div class="card">
       <h2>Fokus</h2>
+      <p class="hint">Focus drive flytter objektivets fokusmotor i små trin. Brug Near for at flytte fokus tættere på kameraet og Far for længere væk. Tag testbillede efter små ændringer.</p>
       <form method="post" action="/mgmt/technician/focus">
-        <input name="value" placeholder="Focus drive, fx Near 1, Far 1 eller 500">
-        <button>Koer focus drive</button>
+        <label>Focus drive</label>
+        <select name="value">{focus_options}</select>
+        <button>Kør focus drive</button>
       </form>
       <form method="post" action="/mgmt/technician/action" style="margin-top:0.5rem">
         <button class="secondary" name="action" value="autofocus">Autofokus</button>
@@ -1017,9 +1207,14 @@ def _technician_page(msg: str = "", output: str = "") -> str:
     <div class="card">
       <h2>Kamera config</h2>
       <form method="post" action="/mgmt/technician/config">
-        <input name="path" placeholder="/main/capturesettings/exposurecompensation">
-        <input name="value" placeholder="Ny vaerdi">
-        <button>Saet config</button>
+        <label>Config path</label>
+        <select name="path">{config_options}</select>
+        <label>Ny værdi</label>
+        <input name="value" list="camera-config-values" placeholder="Vælg eller skriv værdi">
+        <datalist id="camera-config-values">
+          {_option_list(sorted(set(sum(PHOTO_VALUE_OPTIONS.values(), []))))}
+        </datalist>
+        <button>Sæt config</button>
       </form>
     </div>
     <div class="card">
@@ -1029,9 +1224,35 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         <button>Tag testbillede + QA</button>
       </form>
     </div>
+    <div class="card wide">
+      <h2>Aktuelt fokus-/testbillede</h2>
+      {latest_panel}
+    </div>
+    <div class="card wide">
+      <h2>Video preview</h2>
+      <p class="hint">Preview bruger kameraets preview-capture gentaget som MJPEG. Stop siden eller skift væk når du er færdig, så kameraet frigives.</p>
+      <button class="secondary" type="button" onclick="document.getElementById('preview-stream').src='/mgmt/technician/video.mjpg?t='+Date.now()">Start preview</button>
+      <button class="secondary" type="button" onclick="document.getElementById('preview-stream').removeAttribute('src')">Stop preview</button>
+      <img id="preview-stream" class="stream" alt="Live preview stream">
+    </div>
     {output_html}
   </div>
 </div>
+<script>
+const PHOTO_VALUES = {photo_values_json};
+function updatePhotoValues() {{
+  const key = document.getElementById('photo-key').value;
+  const select = document.getElementById('photo-value');
+  select.innerHTML = '';
+  (PHOTO_VALUES[key] || []).forEach((value) => {{
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  }});
+}}
+updatePhotoValues();
+</script>
 </body>
 </html>"""
 
@@ -1074,8 +1295,103 @@ async def mgmt_cli_run(request: Request, command: str = Form(...)):
     return HTMLResponse(_cli_page("OK" if ok else "Fejl", rendered, command))
 
 
+@app.websocket("/mgmt/cli/bash/ws")
+async def mgmt_cli_bash_ws(websocket: WebSocket):
+    token = websocket.cookies.get(SESSION_COOKIE, "")
+    client_ip = websocket.client.host if websocket.client else ""
+    if not _valid_token(token, client_ip):
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    master_fd, slave_fd = pty.openpty()
+    env = os.environ.copy()
+    env.update({"TERM": "xterm-256color", "TIMELAPSE_EDGE_ROOT": str(EDGE_ROOT)})
+    proc = subprocess.Popen(
+        [BASH_PATH, "-l"],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        cwd=str(EDGE_ROOT),
+        env=env,
+        close_fds=True,
+    )
+    os.close(slave_fd)
+
+    async def pump_shell() -> None:
+        try:
+            while proc.poll() is None:
+                readable, _, _ = select.select([master_fd], [], [], 0.05)
+                if readable:
+                    data = os.read(master_fd, 4096)
+                    if not data:
+                        break
+                    await websocket.send_text(data.decode(errors="replace"))
+                await asyncio.sleep(0.02)
+        except Exception:
+            pass
+
+    pump_task = asyncio.create_task(pump_shell())
+    try:
+        while proc.poll() is None:
+            msg = await websocket.receive_text()
+            os.write(master_fd, msg.encode())
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        pump_task.cancel()
+        try:
+            proc.terminate()
+            await asyncio.sleep(0.2)
+            if proc.poll() is None:
+                proc.kill()
+        except Exception:
+            pass
+        try:
+            os.close(master_fd)
+        except Exception:
+            pass
+
+
+@app.get("/mgmt/technician/image/{name}")
+async def mgmt_technician_image(name: str):
+    return FileResponse(_safe_image_from(TECH_CAPTURE_DIR, name), media_type="image/jpeg")
+
+
+@app.get("/mgmt/technician/video-frame/{name}")
+async def mgmt_technician_video_frame(name: str):
+    return FileResponse(_safe_image_from(VIDEO_FRAME_DIR, name), media_type="image/jpeg")
+
+
+@app.get("/mgmt/technician/video.mjpg")
+async def mgmt_technician_video_stream():
+    async def frames():
+        VIDEO_FRAME_DIR.mkdir(parents=True, exist_ok=True)
+        frame = VIDEO_FRAME_DIR / "preview.jpg"
+        boundary = b"--frame\r\n"
+        while True:
+            result = subprocess.run(
+                ["gphoto2", "--capture-preview", "--filename", str(frame), "--force-overwrite"],
+                capture_output=True,
+                text=True,
+                timeout=12,
+            )
+            if result.returncode != 0 or not frame.exists():
+                error = (result.stderr or result.stdout or "preview failed").encode(errors="replace")[:400]
+                yield boundary + b"Content-Type: text/plain\r\n\r\n" + error + b"\r\n"
+                await asyncio.sleep(2)
+                continue
+            data = frame.read_bytes()
+            yield boundary + b"Content-Type: image/jpeg\r\nContent-Length: " + str(len(data)).encode() + b"\r\n\r\n" + data + b"\r\n"
+            await asyncio.sleep(0.8)
+
+    return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
 @app.get("/mgmt/network/wifi")
 @app.get("/mgmt/network/ipv4")
+@app.get("/mgmt/network/routes")
 @app.get("/mgmt/network/preference")
 @app.get("/mgmt/network/action")
 async def mgmt_network_post_target_get_fallback(request: Request):
@@ -1083,7 +1399,10 @@ async def mgmt_network_post_target_get_fallback(request: Request):
 
 
 @app.post("/mgmt/network/wifi", response_class=HTMLResponse)
-async def mgmt_network_wifi(request: Request, ssid: str = Form(...), password: str = Form("")):
+async def mgmt_network_wifi(request: Request, ssid_select: str = Form(""), ssid_manual: str = Form(""), password: str = Form("")):
+    ssid = (ssid_manual or ssid_select or "").strip()
+    if not ssid:
+        return HTMLResponse(_network_page("SSID mangler", "Vælg et SSID fra listen eller skriv manuelt."), status_code=400)
     ok, output = _run_tech_cli("--wifi-connect", ssid.strip(), timeout=90, env={"TIMELAPSE_WIFI_PASSWORD": password})
     return HTMLResponse(_network_page("WiFi opdateret" if ok else "WiFi fejlede", output))
 
@@ -1101,6 +1420,13 @@ async def mgmt_network_ipv4(
     values = [device.strip(), mode.strip(), address.strip() or "-", gateway.strip() or "-", dns.strip() or "-", metric.strip() or "-"]
     ok, output = _run_tech_cli("--ipv4-config", *values, timeout=90)
     return HTMLResponse(_network_page("IPv4 opdateret" if ok else "IPv4 fejlede", output))
+
+
+@app.post("/mgmt/network/routes", response_class=HTMLResponse)
+async def mgmt_network_routes(request: Request, device: str = Form(...), routes: str = Form("")):
+    values = [device.strip(), routes.strip() or "-"]
+    ok, output = _run_tech_cli("--static-routes", *values, timeout=90)
+    return HTMLResponse(_network_page("Routes opdateret" if ok else "Routes fejlede", output))
 
 
 @app.post("/mgmt/network/preference", response_class=HTMLResponse)
@@ -1168,9 +1494,9 @@ async def mgmt_technician_focus(request: Request, value: str = Form("")):
 
 
 @app.post("/mgmt/technician/photo", response_class=HTMLResponse)
-async def mgmt_technician_photo(request: Request, key: str = Form(...), value: str = Form(...)):
+async def mgmt_technician_photo(request: Request, key: str = Form(...), value: str = Form(""), value_manual: str = Form("")):
     key = (key or "").strip()
-    value = (value or "").strip()
+    value = (value_manual or value or "").strip()
     if not key or not value:
         return HTMLResponse(_technician_page("Fotoparameter mangler", "Vælg parameter og skriv ny værdi."))
     ok, output = _run_tech_cli("--photo-setting", key, value, "--maintenance", timeout=90)

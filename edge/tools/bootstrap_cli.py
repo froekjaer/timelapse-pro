@@ -83,6 +83,7 @@ def main() -> int:
     parser.add_argument("--network-status", action="store_true", help="Print network interfaces, connections, routes and DNS")
     parser.add_argument("--wifi-connect", metavar="SSID", help="Connect WiFi SSID; password from TIMELAPSE_WIFI_PASSWORD")
     parser.add_argument("--ipv4-config", nargs=6, metavar=("DEVICE", "MODE", "ADDRESS", "GATEWAY", "DNS", "METRIC"), help="Configure IPv4 via NetworkManager. MODE is dhcp or static; use '-' for blank fields")
+    parser.add_argument("--static-routes", nargs=2, metavar=("DEVICE", "ROUTES"), help="Set IPv4 static routes on active NetworkManager connection; comma-separated routes or '-' to clear")
     parser.add_argument("--network-preference", choices=["ethernet", "wifi", "4g"], help="Set preferred TimeLapse connectivity order")
     parser.add_argument("--qa-image", help="Run Edge CV QA against a local JPEG")
     parser.add_argument("--technician-report", action="store_true", help="Write local technician HTML report")
@@ -119,6 +120,9 @@ def main() -> int:
     if args.ipv4_config:
         device, mode, address, gateway, dns, metric = ["" if v == "-" else v for v in args.ipv4_config]
         return 0 if configure_ipv4(base_dir, device, mode, address, gateway, dns, metric) else 1
+    if args.static_routes:
+        device, routes = ["" if v == "-" else v for v in args.static_routes]
+        return 0 if configure_static_routes(device, routes) else 1
     if args.network_preference:
         update_network_preference(base_dir, args.network_preference)
         print(f"Netvaerksprioritet: {', '.join(read_yaml(base_dir / NETWORK_FILE).get('connectivity', {}).get('preferred_order', []))}")
@@ -534,6 +538,29 @@ def configure_ipv4(base_dir: Path, device: str, mode: str, address: str = "", ga
     if device_type in {"ethernet", "wifi", "gsm"}:
         update_network_preference(base_dir, "4g" if device_type == "gsm" else device_type)
     print(f"IPv4 {mode} konfigureret for {device} ({con_name})")
+    return True
+
+
+def configure_static_routes(device: str, routes: str) -> bool:
+    if not command_exists("nmcli"):
+        print("nmcli findes ikke. Installer/aktiver NetworkManager paa Edge.")
+        return False
+    info = nmcli_device_info((device or "").strip())
+    con_name = info.get("connection") or ""
+    if not con_name or con_name == "--":
+        print("Ingen aktiv NetworkManager connection fundet for interface")
+        return False
+    normalized = " ".join(part.strip() for part in (routes or "").replace(",", ";").split(";") if part.strip())
+    cmd = ["nmcli", "connection", "modify", con_name, "ipv4.routes", normalized]
+    result = run(cmd, check=False, timeout=15)
+    if result.returncode != 0:
+        print(result.stderr or result.stdout)
+        return False
+    up = run(["nmcli", "connection", "up", con_name], check=False, timeout=30)
+    if up.returncode != 0:
+        print(up.stderr or up.stdout)
+        return False
+    print(f"Statiske IPv4 routes opdateret for {device}: {normalized or '(ryddet)'}")
     return True
 
 
