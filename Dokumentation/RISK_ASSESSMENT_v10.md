@@ -212,6 +212,7 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Mangler:** DPIA pr. kunde/site, retention policy, adgangslog pr. billede, sløring/redaction workflow, databehandleraftale, subprocessor-liste (Gemini/Google Cloud)
 - **Anbefaling:** DPIA-template, retention-policy i DB pr. camera, download-audit log
 - **TILFØJELSE 2026-07-04 (Claude):** GPS/lokationsmetadata (breddegrad/længdegrad/højde pr. optagelse) er nu reelt implementeret og verificeret i produktion (kildeprioritet enhed/kamera > site, signeret GPS-fix fra kameraet kan ikke overskrives, kilde vises i UI). Dette er personoplysning i GDPR-forstand (præcis geografisk placering af overvågningsudstyr, potentielt private adresser) og falder ind under nærværende risiko — DPIA/retention-arbejdet (se §11 P0) skal eksplicit dække GPS-feltet, ikke kun selve billedet. Ingen kodeændring nødvendig, men scope for DPIA-template bør nævne det eksplicit.
+- **TILFØJELSE 2026-07-04 (nat, Claude):** DPIA-skabelon, retention-policy-design og subprocessor-liste udarbejdet — se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Dette er tekniske/organisatoriske UDKAST (ikke juridisk godkendt), og retention er kun et design, ikke implementeret kode. Databehandleraftale og brudprocedure er bevidst IKKE dækket (kræver jurist). Fandt undervejs R18 (separat, urelateret produktionsbug — rettet, se nedenfor).
 
 ### R17 — Debug/lab mode kan efterlades aktiveret uden overvågning (NY, fundet 2026-07-04)
 - **Status:** 🟡 Delvist kontrolleret
@@ -221,9 +222,11 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Anbefaling:** CMDB/dashboard-indikator for `debug_mode.enabled=true` pr. enhed; overvej auto-timeout (fx maks. 4-8 timer, kræver eksplicit forlængelse); log aktivering/deaktivering (hvem/hvornår) til audit/SIEM.
 
 ### R13 — Node-agent nede på Headend (NY)
-- **Status:** 🔴 Åben
+- **Status:** 🟠 Plan klar (2026-07-04 nat), IKKE eksekveret endnu
 - **Konsekvens:** CMDB inventory for Mac Mini er stale; patch/risk score ufuldstændig
-- **Handling:** Genetabler som user LaunchAgent under peter (ikke root)
+- **Handling:** Genetabler som user LaunchAgent under peter (ikke root) — se
+  `NODE_AGENT_USER_LAUNCHAGENT_MIGRATION_v1.md` for konkret, trin-for-trin plan
+  (kommandoer klar til at køre, ikke eksekveret af mig — kræver adgang til Mac Mini'en)
 
 ### R14 — Nikon Z30 camera config drift (NY)
 - **Status:** 🔴 Åben
@@ -244,6 +247,15 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Backfill 2026-07-03 (Peter):** Alle 27.662 produktions-captures har nu `customer_id`. Undervejs fandtes ét device (`TL-IMPORT-Kirkbi_A_S-Travbyen-Kamera_1`, bulk-importeret) uden kunde-kobling i CMDB — rettet via `assign`-endpointet, hvorefter backfillen dækkede de sidste 5.029 rækker. Ingen rækker afhænger længere af device-fallback'en.
 - **Sandsynlighed før fix:** 3 (kræver at en enhed reelt genbruges på tværs af kunder — forventeligt over enhedens levetid), **Konsekvens:** 4 (eksponering af en anden kundes overvågningsbilleder — GDPR-relevant), **Score (før fix):** 🟠 12 → **Residualrisiko efter fix:** 🟢 4
 - Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5/§6 og `HANDOVER_LOG.md` 2026-07-03 13:15 + 14:00.
+
+### R18 — Manglende `gdpr_manager.py` crashede Gemini-eskaleringsgodkendelse stille (NY, fundet + rettet 2026-07-04)
+- **Status:** ✅ Selve integritetsbugget rettet i kode; **GDPR-detektionslageret er stadig ikke implementeret** (se R12)
+- **Fund (Claude, ifm. DPIA-research):** `headend/ai/ai_router.py` importerede `GDPRManager` fra `gdpr_manager.py` på modul-niveau — en fil der reelt ikke findes i kodebasen (kun forventet/dokumenteret, aldrig skrevet). `review_api.py::_run_gemini_for_approved` (kørt som `BackgroundTasks.add_task` fra `POST /api/review/escalation/approve`) lazy-importerer denne router, så hver gang en admin godkendte eskalerede billeder til Gemini-analyse, crashede baggrundsjobbet øjeblikkeligt på importen — stille, da FastAPI's `BackgroundTasks` ikke propagerer exceptions til HTTP-svaret. Admin fik "godkendt"-kvittering; Gemini-analysen skete aldrig. Formentlig gældende siden denne kode blev skrevet.
+- **Konsekvens:** Integritets-/tilgængelighedsrisiko for review-workflowet (ikke en adgangs-/lækagerisiko) — eskalerede billeder, som admin bevidst har prioriteret til grundigere cloud-analyse, er reelt aldrig blevet analyseret. Sekundært en governance-risiko: hvis `has_gdpr_data` nogensinde var blevet sat, ville GDPR-detektioner (ansigt/nummerplade/person) heller ikke kunne gemmes isoleret.
+- **Implementerede kontroller (kode):** Import gjort lazy/guardet (`try/except ModuleNotFoundError`); det eneste brugssted logger nu en tydelig, synlig fejl i stedet for at crashe hele modulet. Reproduceret og verificeret (isoleret Python-import bekræftede fejlen før fix, lykkedes efter).
+- **Åbent:** (1) `gdpr_manager.py` er stadig ikke skrevet — GDPR-detektioner kan fortsat ikke gemmes isoleret, dækket af R12. (2) Ingen historisk genkørsel af tabte Gemini-eskaleringer er foretaget — kræver først en opgørelse af hvilke `analysis_ids` reelt blev "godkendt" uden effekt.
+- **Sandsynlighed:** var 5 (skete ved hver eneste godkendelse), **Konsekvens:** 2 (workflow-fejl, ikke datalækage), **Score:** var 🟡 10 → **Residualrisiko efter fix:** 🟢 3 (workflowet virker igen; GDPR-dele af R12 uændret åbne)
+- Se `HANDOVER_LOG.md` 2026-07-04 (nat).
 
 ---
 
@@ -285,10 +297,11 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 **Beskrivelse:** JWT_SECRET og BREAK_GLASS_ENC_KEY er sat i LaunchAgent-plist-filen på disk i plaintext. Filen kan læses af root og peter.
 **Anbefaling:** Migrer til macOS Keychain eller krypteret secrets-fil med passphrase. Acceptabelt i lab.
 
-#### VPEN-2026-004 — ESLint-gæld (219 fejl)
+#### VPEN-2026-004 — ESLint-gæld (222 fejl/advarsler tilbage, ned fra 271)
 **Prioritet:** P2 (blocker for production release)
-**Beskrivelse:** Frontend-lint fejler med 219 errors. Dette skjuler potentielle regressions og sikkerhedsproblemer.
-**Anbefaling:** Indfør lint-gate i CI. Triage og fix eksisterende fejl i batches.
+**Beskrivelse:** Frontend-lint fejlede med 271 problemer (2026-07-04). Dette skjuler potentielle regressions og sikkerhedsproblemer.
+**Status 2026-07-04 (nat, Claude):** 49 mekaniske/sikre fejl rettet (ubrugte imports/variable, tomme blokke, ternary-som-udtryk) — bevidst IKKE rørt: 154 `no-explicit-any` (kræver typedesign), 34 `react-hooks/static-components` + 18 `exhaustive-deps` + 9 `set-state-in-effect` + 1 `purity` (kræver manuel vurdering pr. sted for at undgå adfærdsændringer/render-loops). Se `HANDOVER_LOG.md` for fuld liste.
+**Anbefaling:** Indfør lint-gate i CI. Triage og fix resten i overvågede batches — IKKE automatisk/uovervåget, da flere kategorier (særligt `exhaustive-deps`) kan introducere regressions hvis rettet blindt.
 
 #### VPEN-2026-005 — Open WebUI uden klar prod/lab-rolle
 **Prioritet:** P2
@@ -408,6 +421,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 | ✅ Ny/løst — fundet og rettet, live-verificeret 2026-07-03 |
 | R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 | ✅ Ny/løst — fundet, rettet og backfillet komplet i produktion 2026-07-03 |
 | R17 Debug/lab mode uden overvågning | 🟡 6 | 🆕 Ny — fundet 2026-07-04, ingen adgangskompromittering |
+| R18 Manglende gdpr_manager.py crashede Gemini-godkendelse | 🟢 3 | ✅ Ny/løst — fundet og rettet 2026-07-04, GDPR-dele af R12 uændret åbne |
 
 **Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R16 er fuldt lukket (kode + deploy + backfill).
 

@@ -2126,3 +2126,250 @@ person vide".
   Ukendte flags og shell-lignende input afvises før subprocess-kald.
 - **Verifikation:** `py_compile` OK; parser-test godkendte kendte kommandoer og afviste
   `--bad-flag` samt `--network-status; rm -rf /`.
+
+### Handover 2026-07-04 (nat) — Claude fortsætter alene: P0/P1-oprydning fra RISK/GO-LIVE
+- **Peter er gået i seng** og bad mig fortsætte selvstændigt med de prioriterede
+  blockers fra `RISK_ASSESSMENT_v10.md` §11 og `GO_LIVE_CHECKLIST_v10.md`. **Vigtig
+  grænse:** jeg har ingen shell-adgang til Mac Mini'en eller Orange Pi'en — kun til
+  git-repoet. Alt der kræver live kommando-eksekvering (nginx-genstart, backup-kørsel,
+  nøgle-rotation) forberedes som færdigtestede diffs/runbooks, IKKE eksekveret. Ren
+  kode/dokumentation, jeg selv kan verificere (py_compile/tsc/tests), laves færdig.
+- **KRITISK FUND (utilsigtet, fundet undervejs i DPIA-research) — rettet:**
+  `headend/ai/ai_router.py:42` importerede `from gdpr_manager import GDPRManager` på
+  MODUL-niveau. `gdpr_manager.py` **findes slet ikke i kodebasen** — kun importeret,
+  aldrig implementeret (bekræftet reproducerbart: `ModuleNotFoundError: No module
+  named 'gdpr_manager'`). Da `review_api.py::_run_gemini_for_approved` (kørt som
+  `BackgroundTasks.add_task` fra `POST /api/review/escalation/approve`) lazy-importerer
+  `ai.ai_router`, betød dette at **hele Gemini-eskalerings-godkendelsesflowet har
+  fejlet stille siden denne kode blev skrevet**: admin får svaret "Gemini analyserer
+  X billeder i baggrunden" (200 OK), men baggrundsjobbet crasher øjeblikkeligt på
+  importen — FastAPI's BackgroundTasks logger exceptionen, men returnerer den aldrig
+  til brugeren. Godkendte eskalerede billeder er derfor formentlig ALDRIG blevet
+  sendt til Gemini, uden at nogen har opdaget det.
+  - **Rettelse:** gjort importen lazy + guardet (`try/except ModuleNotFoundError` →
+    `GDPRManager = None`), og den eneste brugssted (`_save_gdpr_detections`, allerede
+    exception-guardet omkring selve kaldet) logger nu en tydelig fejl i stedet for at
+    lade importfejlen forplante sig til hele modulet. Dette **retter selve
+    eskalerings-bugget** (routeren kan nu importeres og bruges normalt) — det retter
+    IKKE at GDPR-detektioner (ansigt/nummerplade/person) fortsat ikke kan gemmes
+    isoleret, da `gdpr_manager.py` reelt mangler at blive skrevet. Det er en separat,
+    allerede kendt del af R12 (GDPR-evidens mangler) og løses ikke her.
+  - **Verificeret:** reproduceret fejlen først (`ModuleNotFoundError` bekræftet i
+    isoleret Python-kald), rettet, derefter bekræftet at `from ai.ai_router import
+    get_ai_router` (den nøjagtige linje der crashede baggrundsjobbet) nu lykkes, og at
+    `_save_gdpr_detections` logger gracefully i stedet for at kaste en exception ved
+    et simuleret GDPR-fund. `py_compile` OK på begge filer.
+  - **Filer rørt:** `headend/ai/ai_router.py`.
+  - **Ikke gjort:** ingen historisk genkørsel af tabte Gemini-eskaleringer — det kræver
+    at vide hvor mange/hvilke `analysis_ids` reelt blev "godkendt" uden effekt, hvilket
+    bør undersøges særskilt (fx via `EscalationManager`s status-felt) før en eventuel
+    genkørsel, så vi ikke gætter os til at sende ting til Gemini der allerede er OK.
+- **Videre i nat (se opgaveliste):** DPIA-skabelon + retention-policy (P0), ESLint-
+  triage (P1), nginx/Cloudflare-migrationsplan (P0, forberedes ikke eksekveres),
+  node-agent-plan (P0), forældede credentials-kortlægning (P0), Nikon config-drift-
+  design (P1).
+
+### Handover 2026-07-04 (nat, fortsat) — DPIA-skabelon + retention-policy-design (P0)
+- **Ny fil:** `Dokumentation/DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Dækker:
+  1. Rolleafklaring (TimeLapse Pro = databehandler, kunden = dataansvarlig for
+     personoplysninger på deres byggeplads).
+  2. En udfyldelig DPIA-skabelon pr. kunde/site — TLP-felter er forhåndsudfyldt ud fra
+     faktisk kodegennemgang (hvad optages, hvilke afledte data genereres, automatiske
+     afgørelser: nej), KUNDE-felter er bevidst tomme (formål, nødvendighed, endelig
+     risikoaccept — det er reelt kundens/den dataansvarliges beslutning, ikke noget
+     TimeLapse Pro kan udfylde for dem).
+  3. Retention-policy — kun et DESIGN (config-nøgle `retention.days` pr. kamera via
+     samme hierarki som øvrig config, nyt baggrundsjob, papirkurv-periode, undtagelse
+     for aktive GDPR-sager). Ingen kode skrevet — det er en forretningsbeslutning
+     (default-antal dage) og et separat implementeringsarbejde.
+  4. Subprocessor-liste: Ollama (lokal, ingen tredjepart), Gemini/Vertex AI (**EU-
+     region skal bekræftes i det faktiske deployment — IKKE verificeret her, kun at
+     koden understøtter det**), GitHub (ingen persondata), Cloudflare (transport).
+  5. Kort skitse-tekst til skiltning/oplysningspligt (art. 13/14).
+  6. Bevidst UDELADT: databehandleraftale (G-03) og brudprocedure (G-06) — kræver en
+     jurist, ikke noget jeg kan/bør skrive.
+- **Sidefund under research (rettet separat, se ovenfor):** R18 — manglende
+  `gdpr_manager.py` crashede Gemini-eskaleringsgodkendelse stille.
+- **Opdateret:** `RISK_ASSESSMENT_v10.md` R12 (status-note) og `GO_LIVE_CHECKLIST_v10.md`
+  §G (G-01/G-02/G-04/G-07 fra 🔴/blank til "skabelon/design/udkast klar" — STADIG ikke
+  reelt lukkede, kun det tekniske forarbejde er gjort).
+  **VIGTIGT for Peter:** dette er ikke juridisk godkendt. Kræver din (eller en
+  rådgivers) gennemgang før det bruges over for rigtige kunder — se advarslen øverst
+  i selve dokumentet.
+- **Filer rørt:** `Dokumentation/DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` (ny),
+  `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** ESLint-triage (P1).
+
+### Handover 2026-07-04 (nat, fortsat) — ESLint-triage: 271→222 problemer, kun sikre rettelser
+- **Udgangspunkt:** `npm run lint` viste 271 problemer (253 fejl + 18 advarsler) — mere
+  end de 219 der er nævnt i `RISK_ASSESSMENT_v10.md` VPEN-2026-004/`GO_LIVE_CHECKLIST_v10.md`
+  H-02, formentlig fordi ny kode (mit eget arbejde i nat inklusive) har tilføjet et par
+  ekstra. Fordeling pr. regel: 154 `no-explicit-any`, 42 `no-unused-vars`,
+  34 `react-hooks/static-components`, 18 `react-hooks/exhaustive-deps`,
+  9 `react-hooks/set-state-in-effect`, 4 `no-empty`, 3 `no-unused-expressions`,
+  1 `react-hooks/purity`.
+- **Bevidst afgrænsning:** rettede KUN de mekaniske/sikre kategorier
+  (`no-unused-vars`, `no-empty`, `no-unused-expressions` — 49 problemer). Rørte IKKE
+  `no-explicit-any` (154, kræver reel typedesign pr. sted, kan introducere type-fejl),
+  `react-hooks/exhaustive-deps` (18, blind tilføjelse af dependencies kan skabe uendelige
+  render-loops), `react-hooks/static-components` (34, kræver refaktorering + test af
+  render-adfærd), `react-hooks/set-state-in-effect` (9) eller `react-hooks/purity` (1) —
+  disse kræver menneskelig vurdering pr. tilfælde og var uansvarligt at masse-rette uden
+  nogen vågen til at fange en regression i UI'en.
+- **Rettet (15 filer, alle verificeret enkeltvis):**
+  - Ubrugte imports/lokale variable fjernet (fx `ChevronLeft`/`CheckSquare`/`Square` i
+    `TimelineNavigator.tsx`, hele `toLocal()`/`fmtLocal()`/`getTz()`-funktioner der aldrig
+    blev kaldt, ubrugte `useState`-par hvor KUN setteren bruges — rettet til
+    `const [, setX] = useState(...)` i stedet for at fjerne hele state'et, fx `saved` i
+    `DevicePage.tsx`s `CameraParamRow` og `debugMode` i `LabPage.tsx`).
+  - Tomme catch-blokke (`no-empty`) fik en forklarende kommentar i stedet for
+    adfærdsændring (fx `CameraPage.tsx:302`, `SystemAdminPage.tsx` x2, `LabPage.tsx:429`).
+  - Ternary-som-udtryk (`cond ? a() : b()` kun for side-effekt) omskrevet til
+    if/else-statement — samme logik, ingen adfærdsændring (`AIPage.tsx`, `TagSearchPage.tsx`,
+    `TimelapseVideoPage.tsx`).
+  - **Særligt bemærkelsesværdigt fund:** `UsersPage.tsx::confirmMfaSetup(id: number)`
+    havde en ubrugt `id`-parameter. Før jeg fjernede den, tjekkede jeg backend-endpointet
+    `POST /api/auth/confirm-mfa` (`headend/main.py:1117-1138`) for at udelukke at dette var
+    et reelt sikkerhedshul (fx MFA-bekræftelse der burde være scoped til en bestemt bruger,
+    men ikke var det). Bekræftet: endpointet virker udelukkende på `current_user` fra
+    sessionen (selv-betjent MFA-opsætning, ingen admin-på-vegne-af-flow eksisterer i
+    backend) — parameteren var reelt aldrig andet end vestigial kode. Fjernet trygt,
+    inkl. opdatering af kaldestedet.
+  - Én afledt fejl opstod undervejs (`SimilarTagGroup`/`SimilarTagItem` i `AIPage.tsx`
+    blev forældreløse da jeg fjernede den ubrugte type der refererede til dem) — fanget
+    af en re-kørsel af eslint, rettet med det samme.
+- **Verifikation:** `tsc -b` (den faktiske kommando `npm run build` bruger) OK, 0 fejl,
+  efter hver batch af rettelser. `npm run lint` gik fra 271→222 problemer — alle
+  resterende er i de bevidst udeladte kategorier. **`npm run build`s Vite/Rolldown-skridt
+  kunne IKKE testes i denne sandbox** (native binding mismatch: sandkassen er
+  linux-arm64, men `node_modules` er installeret til en anden arkitektur — et
+  miljøproblem, ikke en kodefejl). Peter bør køre `npm run build` fuldt igennem efter
+  deploy for at bekræfte, ligesom med al andet UI-arbejde i nat.
+- **Ikke gjort:** de resterende 222 problemer er IKKE en ny prioritetsliste — samme
+  vurdering som hidtil (`GO_LIVE_CHECKLIST_v10.md` H-02: "🟠 Mangler"). Denne triage viser
+  blot at ca. 18% (49/271) var mekanisk sikre at rette; resten kræver bevidst,
+  overvåget arbejde — hverken en enkelt aften eller en enkelt agent bør forsøge det uden
+  test af faktisk UI-adfærd bagefter.
+- **Filer rørt:** 15 `.tsx`-filer under `timelapse-ui/src/` (se `git diff --stat`),
+  ingen backend-filer.
+- **Går videre til:** nginx/Cloudflare Tunnel-migrationsplan (P0, forberedes ikke
+  eksekveres).
+
+### Handover 2026-07-04 (nat, fortsat) — nginx→Cloudflare Tunnel: konkret plan for lab-domænet
+- **Fandt:** `PORT_AUDIT_og_WEBSITE_v10.md` §4 har allerede en fyldestgørende
+  migrationsplan — men kun for de FREMTIDIGE produktionsdomæner
+  (`timelapse-pro.dk`/`backend.timelapse-pro.dk`). Den nuværende, faktisk eksponerede
+  `timelapse.froekjaer.dk`/`openwebui.froekjaer.dk` (VPEN-2026-001, den faktiske P0-
+  blocker lige nu) havde ikke en tilsvarende konkret plan.
+- **Ny fil:** `Dokumentation/NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md` — bygger direkte
+  oven på §4's opskrift, men anvendt på den FAKTISKE nuværende
+  `deploy/nginx/timelapse.froekjaer.dk.conf` (læst i sin helhed, alle proxy/CSP/rate-
+  limit-direktiver bevaret uændret). Indeholder:
+  1. En komplet, klar-til-brug ny nginx-config (kun `listen`-linjerne ændret fra
+     `80`/`443` til `127.0.0.1:18443`, alt andet byte-identisk med originalen — minimerer
+     risiko for at introducere nye fejl samtidig med portmigrationen).
+  2. `cloudflared`-config til de to lab-domæner.
+  3. En trin-for-trin plan der bevidst holder 80/443 kørende SIDELØBENDE med 18443
+     indtil Tunnel er bekræftet virkende udefra — først til allersidst fjernes de gamle
+     porte, så der aldrig er et nedetids-vindue.
+  4. Rollback-plan (behold original config-fil ved siden af).
+  5. Eksplicit markeret hvilket trin jeg IKKE kan udføre: `cloudflared tunnel login`
+     er en interaktiv browser-OAuth-flow, kræver Peters egen Cloudflare-konto.
+- **Åbent spørgsmål til Peter:** jeg kunne ikke bekræfte om `timelapse.froekjaer.dk` i
+  dag allerede er Cloudflare-proxied (orange-cloud DNS) eller peger direkte på jeres
+  offentlige IP — afgør om dette er et akut hul eller et forbedringsarbejde. Kommando
+  til at tjekke selv er i dokumentets §0/§4 trin 1 (`dig +short timelapse.froekjaer.dk`
+  sammenlignet med jeres kendte offentlige IP).
+- **IKKE testet:** `nginx -t` kunne ikke køres i denne sandbox (ingen nginx installeret,
+  ingen root til at installere). Ændringen er dog minimal (kun listen-direktiver
+  ændret) og runbookens trin 5 inkluderer allerede `nginx -t` som gate før reload.
+- **Filer rørt:** `Dokumentation/NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md` (ny). Ingen
+  ændring af den faktiske `deploy/nginx/timelapse.froekjaer.dk.conf` — den nye config
+  ligger kun i dokumentet, til Peter selv anvender den efter §4's trin.
+- **Går videre til:** node-agent-genetablering (P0) og forældede credentials (P0) —
+  (fortsat nedenfor)
+
+### Handover 2026-07-04 (nat, fortsat) — Node-agent-plan + stale credential-runbook
+- **Ny fil:** `Dokumentation/NODE_AGENT_USER_LAUNCHAGENT_MIGRATION_v1.md` — konkret
+  trin-for-trin plan for at flytte node-agenten fra root-LaunchDaemon til bruger-
+  LaunchAgent under `peter` (R13). Ingen kode ændret — agenten selv kræver ikke root
+  (læser kun systemstatus + POSTer til headend). Flaggede en opfølgningsopgave: selve
+  `node-agent/install/macos.sh` bør opdateres til dette mønster, så en fremtidig
+  geninstallation ikke falder tilbage til root — ikke gjort i nat.
+- **Ny fil:** `Dokumentation/STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md` (R07).
+  Fandt at revoke/rotate-funktionaliteten allerede findes færdigbygget i
+  `KeyManagementPage.tsx` (ikke kun planlagt, som §14 i risikodokumentet antyder) — ingen
+  ny kode nødvendig. **Bevidst IKKE eksekveret:** `TL-DCA63234D813` er kun dokumenteret
+  som "stale" (inaktiv), ALDRIG som formelt udfaset — ingen beslutning om dette findes i
+  HANDOVER_LOG. Systemets egen oprydningslogik nægter selv at auto-revokere en enheds
+  eneste/primære credential af samme grund. At låse en enhed ude, uden at kunne bekræfte
+  den reelt er skrottet, og uden nogen vågen til at opdage en fejl, er præcis den slags
+  irreversible handling jeg ikke gør alene — runbooken kræver Peters bekræftelse først.
+- **Peter er tilbage** ("Jeg er her lidt endnu") — pauser den selvstændige P0/P1-runde
+  her for at give status. Resterende: Nikon Z30 config-drift-design (P1, endnu ikke
+  påbegyndt).
+- **Filer rørt:** `Dokumentation/NODE_AGENT_USER_LAUNCHAGENT_MIGRATION_v1.md` (ny),
+  `Dokumentation/STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md` (ny),
+  `Dokumentation/RISK_ASSESSMENT_v10.md` (R13-status opdateret).
+  begge kortere opgaver.
+
+### Handover 2026-07-04 (sent) — Codex: Edge servicetekniker UI/CLI runde 2
+- **Gjort:** Udvidet lokal Edge service UI i `edge/scripts/totp-service.py` og CLI-backend
+  i `edge/tools/bootstrap_cli.py`:
+  - Test-/fokusbillede vises nu direkte i Teknik-siden fra
+    `/tmp/timelapse-tech-captures` / `/tmp/timelapse-tech-video`.
+  - Fototeknik har parameterstyrede dropdown-værdier + manuelt override.
+  - Focus drive har forklaring, korrekte danske tekster og dropdown med Near/Far/trin.
+  - Kamera Config har dropdown med relevante gphoto2 paths.
+  - Video preview er tilføjet som MJPEG-preview baseret på gentaget
+    `gphoto2 --capture-preview`.
+  - CLI-siden har nu en TOTP-beskyttet lokal bash via WebSocket/PTY.
+  - Netværkssiden scanner SSID'er, tillader manuelt SSID og kan konfigurere statiske
+    IPv4-routes via NetworkManager.
+- **Deploy:** Installeret på Orange Pi `192.168.86.134`; `timelapse-totp` genstartet og
+  verificeret `active`.
+- **Verifikation:** Lokal og remote `py_compile` OK; remote import viste de nye routes;
+  `curl` mod `/mgmt/technician`, `/mgmt/cli` og `/mgmt/network` gav HTTP 200; kameraet
+  auto-detectes aktuelt som `Nikon Z30 usb:002,032`.
+- **Bemærkning:** Handover-filen har samtidige Claude-ændringer. Codex bør kun committe
+  de to edge-filer for denne runde, medmindre dokumentændringer stages hunk-for-hunk.
+
+### Handover 2026-07-04 (nat) — fra Claude til Codex: test af heartbeat-samarbejdet + fælles P0/P1-runde
+- **Peter har bedt om:** at vi (Claude + Codex) arbejder sammen igennem ALLE åbne punkter
+  i `RISK_ASSESSMENT_v10.md` og `GO_LIVE_CHECKLIST_v10.md`, og at Codex som en første test
+  udfører nedenstående kommandoer (mine egne, allerede klargjorte ændringer), så Peter kan
+  se om heartbeat-samarbejdet reelt virker.
+- **Codex/Peter: kør venligst følgende (kun stien til mine filer — rør IKKE
+  `edge/scripts/totp-service.py`/`edge/tools/bootstrap_cli.py`, det er Codex' eget
+  igangværende spor fra runden ovenfor):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro   # (eller jeres sti til repoet)
+
+  git add headend/ai/ai_router.py
+  git commit -m "fix: gdpr_manager.py mangler i kodebasen crashede Gemini-eskaleringsgodkendelse stille (R18)"
+
+  git add timelapse-ui/src/components/TimelineNavigator.tsx timelapse-ui/src/components/VirtualImageGrid.tsx timelapse-ui/src/pages/AIPage.tsx timelapse-ui/src/pages/BackupPage.tsx timelapse-ui/src/pages/CMDBPage.tsx timelapse-ui/src/pages/CameraPage.tsx timelapse-ui/src/pages/DevicePage.tsx timelapse-ui/src/pages/LabPage.tsx timelapse-ui/src/pages/SettingsPage.tsx timelapse-ui/src/pages/SitePage.tsx timelapse-ui/src/pages/SystemAdminPage.tsx timelapse-ui/src/pages/TagCleanupTab.tsx timelapse-ui/src/pages/TagSearchPage.tsx timelapse-ui/src/pages/TimelapseVideoPage.tsx timelapse-ui/src/pages/UsersPage.tsx
+  git commit -m "chore: ESLint-oprydning — ubrugte imports/variable, tomme blokke, ternary-som-udtryk (271→222 problemer)"
+
+  git add Dokumentation/DPIA_SKABELON_OG_RETENTION_POLICY_v1.md Dokumentation/NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md Dokumentation/NODE_AGENT_USER_LAUNCHAGENT_MIGRATION_v1.md Dokumentation/STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "docs: DPIA/retention-udkast, nginx/Cloudflare- og node-agent-runbooks, stale credential-runbook (R12/R13/R07/R18)"
+
+  git push
+
+  sudo launchctl kickstart -k system/dk.froekjaer.timelapse-headend
+  curl -s https://timelapse.froekjaer.dk/api/health
+
+  cd timelapse-ui && npm run build
+  ```
+  Forventet: tre commits pushet, health `200 OK` efter genstart, build lykkes uden fejl
+  (kan tage et par sekunder).
+- **Hvis git-lock igen:** tjek `ps aux | grep -i git | grep -v grep` for en ægte kørende
+  proces først — hvis ingen, er det trygt at fjerne
+  `.git/index.lock` manuelt (skete to gange tidligere i nat, begge gange en efterladt lås
+  fra et crashet kald, ikke en reel konflikt).
+- **Bredere ærinde herfra:** jeg fortsætter med at arbejde igennem resten af de åbne
+  P0/P1-punkter i baggrunden (se listen i tidligere entries i nat) — backup/restore-test,
+  intern CA/mTLS-design, Nikon Z30 config-drift. Alt der kræver liveudførelse på en af
+  maskinerne lander som en ny "Codex/Peter: kør venligst"-blok her i loggen, præcis som
+  denne. Sig til (i loggen) hvis du (Codex) allerede er i gang med noget af det samme,
+  så vi ikke dobbeltarbejder.

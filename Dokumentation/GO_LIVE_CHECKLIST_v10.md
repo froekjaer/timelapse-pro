@@ -120,15 +120,17 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 
 | # | Krav | Status |
 |---|---|---|
-| G-01 | DPIA udfyldt for hvert aktiv kunde-site | 🔴 Blocker for kunde-aktivering |
-| G-02 | Retention policy konfigureret pr. kamera | 🔴 Blocker for kunde-aktivering |
-| G-03 | Databehandleraftale med kunden | 🔴 Blocker for første kunde |
-| G-04 | Subprocessor-liste (Google Cloud/Gemini) offentliggjort | 🟠 Anbefalet |
+| G-01 | DPIA udfyldt for hvert aktiv kunde-site | 🟠 Skabelon klar (2026-07-04) — mangler udfyldelse pr. site + juridisk godkendelse |
+| G-02 | Retention policy konfigureret pr. kamera | 🔴 Design klar (2026-07-04) — IKKE implementeret i kode endnu |
+| G-03 | Databehandleraftale med kunden | 🔴 Blocker for første kunde — kræver jurist, ikke startet |
+| G-04 | Subprocessor-liste (Google Cloud/Gemini) offentliggjort | 🟠 Udkast klar (2026-07-04) — Gemini/Vertex EU-region skal bekræftes i faktisk deployment |
 | G-05 | Download/adgangslog pr. billede implementeret | 🟠 Anbefalet |
 | G-06 | Procedure for databrud (Art. 33/34, 72t) dokumenteret | 🟠 Anbefalet |
-| G-07 | Oplysningspligt til registrerede (Art. 13/14) | 🟠 Anbefalet |
+| G-07 | Oplysningspligt til registrerede (Art. 13/14) | 🟠 Skitse-tekst klar (2026-07-04) — kræver juridisk godkendelse |
 
 > **Note G (2026-07-04, Claude):** GPS/lokationsmetadata er nu implementeret og verificeret i produktion (kilde/tillid vises i UI). DPIA-template (G-01) og retention policy (G-02) skal eksplicit dække dette felt, ikke kun selve billedet — se `RISK_ASSESSMENT_v10.md` R12.
+>
+> **Note G (2026-07-04 nat, Claude):** Se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` — DPIA-skabelon, retention-policy-design, subprocessor-liste og oplysningspligt-udkast er nu skrevet. Dette er tekniske/organisatoriske UDKAST, ikke juridisk godkendte dokumenter, og retention er kun et design — ingen kode er skrevet endnu. G-03 og G-06 er bevidst IKKE dækket (kræver jurist). Fandt undervejs et separat, urelateret produktionsbug (R18 i RISK_ASSESSMENT_v10.md) — rettet.
 
 ---
 
@@ -137,7 +139,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | # | Krav | Status |
 |---|---|---|
 | H-01 | GitHub Actions CI er grøn på alle builds | ✅ Efter commit 79581ac |
-| H-02 | ESLint-gate i CI — ingen nye fejl | 🟠 Mangler (219 eksisterende fejl) |
+| H-02 | ESLint-gate i CI — ingen nye fejl | 🟠 Mangler (222 tilbage, ned fra 271 — 49 mekaniske fejl rettet 2026-07-04 nat, resten kræver manuel gennemgang, se `HANDOVER_LOG.md`) |
 | H-03 | `slowapi` tilføjet til requirements.txt | ✅ Rettet 2026-07-03 (Claude) — hele `requirements.txt` er samtidig pinnet til konkrete versioner (var 100% upinnet); se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §3.1. Committet (`b0e224c`) og installeret i live-venv af Peter |
 | H-04 | deploy/launchd/dk.froekjaer.timelapse-headend.plist opdateret (ikke-secret version) | 🟠 Mangler |
 | H-05 | Python test-suite med edge/headend contract-tests | 🟡 Ønsket |
