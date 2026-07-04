@@ -2607,3 +2607,50 @@ person vide".
 - **Ikke udført automatisk:** Den manuelle UI-smoketest med aktivering/deaktivering af lab mode
   og evt. lav `TIMELAPSE_DEBUG_MODE_MAX_HOURS` er ikke kørt fra heartbeat, da det ændrer live
   device-state og bør gøres kontrolleret.
+
+### Handover 2026-07-05 00:47 — fra Claude (periodisk tjek): docs-sync R17/F-06 (ingen kodeændring)
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste `HANDOVER_LOG.md`-halen — Codex' seneste to
+  entries (R14-deploy og R17-deploy-verifikation) var ikke reflekteret i selve
+  `RISK_ASSESSMENT_v10.md`/`GO_LIVE_CHECKLIST_v10.md` endnu: begge dokumenter sagde stadig at
+  R17 var "rettet i kode, IKKE deployet/live-verificeret", mens Codex faktisk havde committet
+  (`44b78fb7`), deployet, genstartet servicen (health 200 OK) og kørt `npm run build` med succes
+  på den rigtige maskine. `git status --short` viste fortsat kun samme untracked `claude_proxy.py`
+  som hidtil (ladt urørt).
+- **Vurdering:** Ingen af de resterende P0/P1-punkter i §11 (nginx→Cloudflare Tunnel, R09
+  restore-test, R12 DPIA/retention-kode, R13 node-agent, HMAC-migrering, MFA/WebAuthn, intern
+  CA/mTLS) er rent kode/dokumentation jeg kan gøre færdigt alene i denne kørsel uden enten
+  Mac Mini/Orange Pi-adgang eller en juridisk/organisatorisk beslutning fra Peter. I stedet for at
+  tvinge et nyt kodeindgreb valgte jeg denne runde en ren dokumentations-synkronisering, som var
+  reelt ukorrekt/bagud og kunne have fået Peter/Codex til at undervurdere hvor langt R17 faktisk
+  er kommet.
+- **Rettet (kun dokumentation, ingen kode rørt):**
+  1. `RISK_ASSESSMENT_v10.md` §10 (samlet risikooversigt): R17-rækken opdateret fra
+     "🟢 (kode) … ikke deployet" til "🟢 (deployet) … health 200 + npm run build OK; manuel
+     UI-smoketest fortsat ikke kørt".
+  2. `RISK_ASSESSMENT_v10.md` R17-detaljeafsnittet: status- og verifikationstekst opdateret med
+     Codex' deploy-entry (commit, health-check, build), og det er nu eksplicit at KUN den
+     manuelle funktionelle smoketest (aktiver/deaktiver + kortvarig lav
+     `TIMELAPSE_DEBUG_MODE_MAX_HOURS`) resterer — ikke build/deploy generelt.
+  3. `RISK_ASSESSMENT_v10.md` §11 P2-listen: punkt 7 (CMDB-indikator/auto-timeout for debug/lab
+     mode) markeret gennemstreget med note om at koden er deployet, kun smoketest udestår.
+  4. `RISK_ASSESSMENT_v10.md` §12 (dokumenthistorik): ny linje for denne opdatering.
+  5. `GO_LIVE_CHECKLIST_v10.md` F-06: opdateret fra "🟡 Ønsket" til "🟢 Deployet 2026-07-05 …
+     kun manuel smoketest på live device udestår".
+- **Verifikation her:** Ren tekst-/tabelredigering, ingen kode rørt — verificeret ved at
+  genlæse de ændrede afsnit og bekræfte at markdown-tabellernes `|`-struktur stadig er intakt
+  (ingen ekstra/manglende pipes), og at intet i teksten nu modsiger HANDOVER_LOG's faktiske
+  hændelsesforløb. `git status --short` uændret bortset fra de to redigerede
+  Dokumentation-filer.
+- **IKKE gjort — bevidst:** Har ikke sat R17/F-06 til fuldt grønt/lukket — den manuelle
+  live-smoketest (badge, "Aktiv siden", SIEM-event, faktisk auto-timeout-udløsning) er stadig
+  ikke kørt af nogen, så begge dokumenter fastholder eksplicit at dette udestår. Har ikke rørt
+  R13/R14/R09/R12 eller andre P0/P1-punkter denne runde.
+- **Codex/Peter: ingen kommandoer nødvendige for selve denne ændring** (ren dokumentation) —
+  men når I har et vindue til den udestående R17-smoketest (aktiver lab mode på et testdevice,
+  bekræft badge + "Aktiv siden" + SIEM-event `debug_mode_change`, sæt evt.
+  `TIMELAPSE_DEBUG_MODE_MAX_HOURS` lavt midlertidigt og bekræft `debug_mode_auto_timeout`), så
+  markér venligst R17/F-06 fuldt grønt i begge dokumenter bagefter.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** næste periodiske runde ser på enten SIEMPage.tsx-ikoner for
+  `debug_mode_change`/`debug_mode_auto_timeout` (kosmetisk), eller #52 (intern CA/mTLS-design)
+  hvis intet nyt er dukket op fra Codex i mellemtiden.

@@ -220,7 +220,12 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **TILFØJELSE 2026-07-04 (nat, Claude):** DPIA-skabelon, retention-policy-design og subprocessor-liste udarbejdet — se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Dette er tekniske/organisatoriske UDKAST (ikke juridisk godkendt), og retention er kun et design, ikke implementeret kode. Databehandleraftale og brudprocedure er bevidst IKKE dækket (kræver jurist). Fandt undervejs R18 (separat, urelateret produktionsbug — rettet, se nedenfor).
 
 ### R17 — Debug/lab mode kan efterlades aktiveret uden overvågning (NY, fundet 2026-07-04)
-- **Status:** 🟢 Rettet i kode (2026-07-05, Claude periodisk tjek) — **IKKE deployet/live-verificeret endnu**
+- **Status:** 🟢 Rettet og deployet (2026-07-05, Claude periodisk tjek + Codex-deploy) — kode
+  committet (`44b78fb7`), deployet på Headend, service genstartet (health 200 OK), `npm run build`
+  lykkedes på Mac'en. **Manuel UI-smoketest (aktivering/deaktivering af lab mode + kortvarig lav
+  `TIMELAPSE_DEBUG_MODE_MAX_HOURS` for at bekræfte auto-timeout) er bevidst IKKE kørt endnu**, da
+  det ændrer live device-state og bør gøres kontrolleret af Peter/Codex — se
+  `HANDOVER_LOG.md` 2026-07-05 (nat) "Codex: R17 debug/lab mode deploy-verifikation".
 - **Fund (Claude, ifm. GPS-fejlsøgning):** `debug_mode.enabled` er en flad, per-enhed config-nøgle (ingen DB-kolonne, ingen udløb/TTL), sat udelukkende via `PUT /api/admin/devices/{id}/debug` (kræver admin-rolle — ingen adgangskontrol-svaghed). Mens aktiv holder edge-agenten kamera-relæet konstant tændt og springer den normale optagelsesplan over (interaktiv "lab"-tilstand til kamera-tuning). Fundet aktiveret på et produktionskamera (TL-C87FF9587CA0), tilsyneladende en efterladt flag fra en tidligere test-session — opdaget udelukkende ved manuel log-gennemgang, ikke via noget dashboard/alarm.
 - **Konsekvens:** Ingen adgangskompromittering, men operationel/tilgængelighedsrisiko: uventet konstant relæ-belastning, optagelsesplan brydes uden varsel, og (jf. GPS-fixet 2026-07-04) reduceret GPS-pålidelighed pga. relæets effekt på GPS-modtagerens strømforsyning. Ingen automatisk måde at opdage "enhed X har kørt i lab mode i N dage" på.
 - **Sandsynlighed:** 3, **Konsekvens:** 2, **Score (før fix):** 🟡 6
@@ -234,12 +239,20 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   aktivering/deaktivering (bruger, tidspunkt) som SIEM-event (`debug_mode_change`/
   `debug_mode_auto_timeout`). Ingen DB-skemaændring — alt gemt i eksisterende
   `device_config`-JSON-kolonne.
-- **Verifikation her:** `py_compile` ren; isoleret simuleret test af auto-timeout-beslutningslogik
-  (5 cases, alle bestod); frontend `tsc -b` (typecheck) grøn. **Fuld `npm run build` kunne ikke
-  køres i sandbox** (manglende native rolldown-binding for sandboxens CPU-arkitektur —
-  sandbox-begrænsning, ikke kode-relateret). Score nedgraderes til 🟢, men regnes IKKE for fuldt
-  lukket før Codex/Peter har kørt `npm run build` på den rigtige maskine, deployet, og bekræftet
-  badge/audit-log/auto-timeout live (se HANDOVER_LOG for konkrete verifikationstrin).
+- **Verifikation her (Claude, sandbox):** `py_compile` ren; isoleret simuleret test af
+  auto-timeout-beslutningslogik (5 cases, alle bestod); frontend `tsc -b` (typecheck) grøn. Fuld
+  `npm run build` kunne ikke køres i sandbox (manglende native rolldown-binding for sandboxens
+  CPU-arkitektur — sandbox-begrænsning, ikke kode-relateret).
+- **Verifikation efter deploy (Codex, 2026-07-05 nat):** commit `44b78fb7` pushet;
+  `dk.froekjaer.timelapse-headend` genstartet med `launchctl kickstart`,
+  `https://timelapse.froekjaer.dk/api/health` svarede 200 OK; `npm run build` lykkedes på den
+  rigtige maskine (kun eksisterende, urelaterede warnings — bekræfter at rolldown-fejlen i
+  sandbox var et sandbox-artefakt, ikke en reel byggefejl). Score nedgraderet til 🟢. **Fortsat
+  åbent:** den manuelle funktionelle smoketest (aktiver/deaktiver lab mode på et testdevice og se
+  badge + "Aktiv siden" i UI'en, midlertidigt sænke `TIMELAPSE_DEBUG_MODE_MAX_HOURS` for at
+  bekræfte at auto-timeout-loopet rent faktisk slukker og logger `debug_mode_auto_timeout`, samt
+  at `debug_mode_change`-eventet dukker op på SIEM-siden) er bevidst udskudt af Codex, da det
+  ændrer live device-state — regnes ikke for 100% lukket før dette er kørt.
 
 ### R13 — Node-agent nede på Headend (NY)
 - **Status:** 🟠 Plan klar (2026-07-04 nat), IKKE eksekveret endnu
@@ -475,7 +488,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R14 Nikon Z30 config drift | 🟠 12 | ↓ Delvist rettet 2026-07-05 (detektionsmekanisme), ikke live-verificeret |
 | R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 | ✅ Ny/løst — fundet og rettet, live-verificeret 2026-07-03 |
 | R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 | ✅ Ny/løst — fundet, rettet og backfillet komplet i produktion 2026-07-03 |
-| R17 Debug/lab mode uden overvågning | 🟢 (kode) | ↓ Rettet i kode 2026-07-05 (badge/audit-log/auto-timeout), ikke deployet/live-verificeret |
+| R17 Debug/lab mode uden overvågning | 🟢 (deployet) | ↓ Rettet 2026-07-05, committet (`44b78fb7`) og deployet af Codex, health 200 + `npm run build` OK; manuel UI-smoketest (aktiver/deaktiver + auto-timeout) fortsat ikke kørt |
 | R18 Manglende gdpr_manager.py crashede Gemini-godkendelse | 🟢 3 | ✅ Ny/løst — fundet og rettet 2026-07-04, GDPR-dele af R12 uændret åbne |
 
 **Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R16 er fuldt lukket (kode + deploy + backfill).
@@ -505,7 +518,8 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 4. SAST backlog triage (73 signaler)
 5. Secrets → macOS Keychain
 6. AI resource governor + Ollama beslutning
-7. CMDB-indikator/auto-timeout for debug/lab mode pr. enhed (R17)
+7. ~~CMDB-indikator/auto-timeout for debug/lab mode pr. enhed (R17)~~ — kode deployet
+   2026-07-05, kun manuel smoketest udestår (se R17 ovenfor)
 
 ---
 
@@ -521,6 +535,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | **7.0** | **jun 2026** | **Konsolideret — alle fund, alle statusser, ny GDPR/NIS2/CRA-sektion, port-gaps** |
 | 10 (tilføjelse) | 2026-07-04 | Claude: R17 (debug/lab mode uden overvågning, fundet ifm. GPS-fejlsøgning) tilføjet; R12 udvidet med GPS/lokationsmetadata-note |
 | 10 (tilføjelse) | 2026-07-05 | Claude (periodisk tjek): R14 — fundet og rettet at config-drift-detektion reelt var inaktiv (key-mismatch + FLEET_DEFAULTS blev erstattet, ikke merged); rettelse verificeret isoleret, IKKE på live hardware |
+| 10 (tilføjelse) | 2026-07-05 (nat) | Claude (periodisk tjek, docs-sync): R17 opdateret fra "rettet i kode, ikke deployet" til "deployet af Codex, health+build OK, kun manuel smoketest udestår" — dokumentet var kommet bagud ift. HANDOVER_LOG efter Codex' deploy-verifikation |
 
 ---
 

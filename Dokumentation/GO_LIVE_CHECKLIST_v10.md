@@ -112,7 +112,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | F-03 | Node-agent kørende og opdaterer Mac Mini inventory | 🟠 Mangler |
 | F-04 | Headend-health monitoreret automatisk (fx cron/launchd watchdog) | 🟡 Ønsket |
 | F-05 | Alert ved Headend-nedbrud (email/notification) | 🟡 Ønsket |
-| F-06 | Dashboard/alarm for enheder i debug/lab mode (`debug_mode.enabled`) | 🟡 Ønsket — se `RISK_ASSESSMENT_v10.md` R17 (fundet 2026-07-04, efterladt aktiveret på TL-C87FF9587CA0) |
+| F-06 | Dashboard/alarm for enheder i debug/lab mode (`debug_mode.enabled`) | 🟢 Deployet 2026-07-05 (badge i SystemAdminPage/LabPage, auto-timeout, SIEM-audit-log, commit `44b78fb7`) — kun manuel smoketest på live device udestår, se `RISK_ASSESSMENT_v10.md` R17 |
 
 ---
 
