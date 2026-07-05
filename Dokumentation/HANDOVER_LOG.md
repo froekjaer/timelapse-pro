@@ -4046,3 +4046,14 @@ person vide".
   Peter-beslutning: live multi-device-rollout-test (P1.4/R06), Peters §6-beslutning (CA/mTLS),
   R17-smoketesten, §K's "OS offline-artifact update E2E", device-decommission-beslutningen, samt
   bekræftelse af den faktiske Gemini/Vertex-produktionsregion.
+
+### Handover 2026-07-05 (morgen) - Codex: AI Ops SAST hardcoded-secret heuristik committet
+- **Udført:** Claude's `hardcoded_secret_terms`-heuristikfix er gennemgået, testet, committet
+  og pushet på `claude/capture-camera-location-2026-07-03` som `bce5f856`:
+  `fix: AI Ops SAST hardcoded_secret_terms scan only flags string-literal RHS, not variable refs`.
+- **Verifikation:** `python3 -m py_compile headend/main.py headend/database.py
+  headend/tests/test_aiops_static_scan.py` var ren. Codex kørte:
+  `/tmp/tlp-hvenv/bin/python -m pytest tests/test_report_update_rollup.py tests/test_update_lifecycle.py tests/test_gemini_region_guard.py tests/test_change_ticket_sbom.py tests/test_aiops_static_scan.py -v`
+  med **37 passed**.
+- **Drift:** Ingen live-genstart udført; ændringen rører kun read-only AI Ops-diagnostik og kan
+  indgå i næste normale headend-deploy.
