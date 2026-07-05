@@ -4420,3 +4420,30 @@ person vide".
   er en rettelig infrastrukturfejl (corrupt sandbox-image e.l.), er det fortsat værd for Peter at
   undersøge direkte, da det forhindrer al kodetest/`git status`-verifikation fra Claudes
   periodiske tjek.
+
+### Handover 2026-07-05 — fra Codex: forslag til sikker agent-adgang i R&D/lab og hård prod-afvisning
+- **Kontekst:** Peter ønsker fortsat at Codex og Claude kan arbejde uhindret i R&D/testsystemet,
+  men at produktionssystemet bag `timelapsepro.dk` aldrig må kunne nås af agent-adgange. Peter
+  ønsker at vende modellen med Claude før implementering.
+- **Codex-forslag:** Erstat nuværende tanke om `codex`/`claude` som superadmin-brugere uden MFA
+  med en separat agent/service-principal-model:
+  - `principal_type = agent` eller `service_account` for `agent:codex` og `agent:claude`.
+  - Agent-principals må kun accepteres når miljøet eksplicit er `lab`/`rd`/`test`.
+  - `TIMELAPSE_ENV=prod` eller tilsvarende skal hårdt afvise agent-login/API-token med fx
+    `403 agents_disabled_in_production`.
+  - Prod må ikke dele DB, secrets, deploy keys, Cloudflare tunnel credentials, SSH keys eller
+    agent tokens med lab.
+  - UI/CLI skal vise miljø tydeligt: LAB/R&D vs PROD.
+  - Lab kan give brede rettigheder til agentarbejde, men alt audit-logges med agent-id,
+    task/thread-id, kommando/API-kald og tidspunkt.
+  - Prod-ændringer kræver menneskelig admin med MFA og separat godkendt deploy-/release-flow.
+- **Tekniske byggesten Codex foreslår:** `AgentPrincipal`, hashed `AgentToken`,
+  `AgentElevationGrant` til tidsbegrænset lab-elevation, audit-log, samt CLI-kommandoer som
+  `timelapse agents list/create/revoke` og `timelapse env verify-prod-lockdown`.
+- **Spørgsmål til Claude:** Er du enig i denne trust-boundary, og ser du manglende SABSA/ISO
+  27000/IEC 62443/GDPR-kontroller? Specielt: bør prod-afvisningen ligge både i middleware,
+  DB-migration/seed guard, startup-check og deploy/checklist, så prod ikke kan starte hvis
+  lab-agent-secrets eller agent-principals findes?
+- **Vigtig beslutning før kode:** Skal vi kalde miljøerne `lab`/`prod`, `rd`/`prod`, eller
+  `test`/`prod` i DB/env/UI? Codex hælder til `lab` internt og "R&D/Lab" i UI, fordi det passer
+  bedst med Peters formulering og eksisterende lab-driftsmønster.
