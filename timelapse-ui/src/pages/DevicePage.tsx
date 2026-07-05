@@ -1055,16 +1055,19 @@ function ProgressBar({ pct, color }: { pct: number; color: string }) {
   )
 }
 
+// Delt label-mapping for kamera-config-nøgler — bruges både af drift-visning
+// (DriftBadge) og af den non-enforceable-info-liste (R14, 2026-07-05).
+const CAM_PARAM_LABELS: Record<string, string> = {
+  focus_mode: 'Fokus', image_format: 'Format', iso: 'ISO',
+  white_balance: 'Hvidbalance', color_space: 'Farverum',
+  exposure_comp: 'Eksponering', ae_mode: 'AE-tilstand',
+  picture_style: 'Billedstil', metering_mode: 'Måling',
+}
+
 function DriftBadge({ param, expected, actual }: { param: string; expected: string; actual: string }) {
-  const labels: Record<string, string> = {
-    focus_mode: 'Fokus', image_format: 'Format', iso: 'ISO',
-    white_balance: 'Hvidbalance', color_space: 'Farverum',
-    exposure_comp: 'Eksponering', ae_mode: 'AE-tilstand',
-    picture_style: 'Billedstil', metering_mode: 'Måling',
-  }
   return (
     <div className="flex items-center justify-between py-1.5 border-b border-gray-100 last:border-0 text-xs">
-      <span className="text-gray-500">{labels[param] ?? param}</span>
+      <span className="text-gray-500">{CAM_PARAM_LABELS[param] ?? param}</span>
       <div className="flex items-center gap-2">
         <span className="text-gray-300 line-through">{expected}</span>
         <span className="text-red-600 font-medium">{actual}</span>
@@ -1109,6 +1112,12 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
   const camConfig: any = (() => {
     try { return diagnostics?.cam_config_json ? JSON.parse(diagnostics.cam_config_json) : null }
     catch { return null }
+  })()
+  // R14 (2026-07-05): parametre kameraprofilen selv markerer non-enforceable
+  // (fx focus_mode på Nikon Z30) — informativt, ikke en alarm/afvigelse.
+  const camNonEnforceable: string[] = (() => {
+    try { return diagnostics?.cam_non_enforceable_json ? JSON.parse(diagnostics.cam_non_enforceable_json) : [] }
+    catch { return [] }
   })()
 
   const shutterPct   = diagnostics?.cam_shutter_pct
@@ -1266,6 +1275,22 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
               <p className="text-xs font-semibold text-emerald-700">Kamera-konfiguration OK — ingen afvigelser</p>
             </div>
           ) : null}
+
+          {/* Non-enforceable parametre (R14) — informativt, ikke en alarm */}
+          {camNonEnforceable.length > 0 && (
+            <div className="border border-gray-200 rounded-lg p-3 bg-gray-50 mt-3">
+              <p className="text-xs font-semibold text-gray-500 mb-1.5">
+                Ikke overvåget for drift ({camNonEnforceable.length}) — styret af kameraprofilen
+              </p>
+              <p className="text-xs text-gray-400 flex flex-wrap gap-1.5">
+                {camNonEnforceable.map((key: string) => (
+                  <span key={key} className="px-1.5 py-0.5 bg-white border border-gray-200 rounded text-gray-500">
+                    {CAM_PARAM_LABELS[key] ?? key}
+                  </span>
+                ))}
+              </p>
+            </div>
+          )}
         </div>
       )}
 

@@ -522,6 +522,24 @@ def startup():
     except Exception as _exc_v13:
         log.warning("DB migration v13 fejl: %s", _exc_v13)
 
+    # ── DB migration v14: kamera-parametre markeret non-enforceable (R14) ──
+    # Additiv/nullable, samme mønster som v9-v13. Se
+    # edge/diagnostics/camera_diagnostics.py camera_config_non_enforceable og
+    # RISK_ASSESSMENT_v10.md R14 for baggrund (Nikon Z30 focus_mode-sag).
+    try:
+        _eng_v14 = __import__('database').engine
+        with _eng_v14.connect() as _conn_v14:
+            try:
+                _conn_v14.execute(text(
+                    "ALTER TABLE diagnostics ADD COLUMN cam_non_enforceable_json TEXT"
+                ))
+                _conn_v14.commit()
+                log.info("DB migration v14: diagnostics.cam_non_enforceable_json tilføjet")
+            except Exception:
+                pass  # allerede der
+    except Exception as _exc_v14:
+        log.warning("DB migration v14 fejl (ikke kritisk): %s", _exc_v14)
+
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
         run_ai_migration(engine)
@@ -3609,6 +3627,7 @@ def heartbeat(
         cam_lens_name   = cam_status.get("lens_name"),
         cam_config_json = json.dumps(cam_config) if cam_config else None,
         cam_drift_json  = json.dumps(cam.get("camera_config_drift", [])),
+        cam_non_enforceable_json = json.dumps(cam.get("camera_config_non_enforceable", [])),
     ))
     db.commit()
 
@@ -12389,6 +12408,38 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
     online = device.last_seen and (now_utc() - ensure_utc(device.last_seen)).total_seconds() < 300
     diag   = db.query(Diagnostic).filter_by(device_id=device_id).order_by(Diagnostic.id.desc()).first()
     d_cfg  = json.loads(device.device_config or "{}")
+    # NB (2026-07-05, Claude periodisk tjek): `diag` blev hentet men aldrig
+    # serialiseret i responsen — hele Hardware/Kamera-diagnostik-panelet i
+    # frontend (DevicePage.tsx StatsTab) har derfor stille vist tomt siden
+    # denne route sidst blev omskrevet (~15. april). Ingen fejl i loggen, da
+    # frontend defensivt tjekker `diagnostics &&`/`diagnostics?.` overalt.
+    # Rettet her ved faktisk at bygge og returnere "diagnostics"-nøglen.
+    diagnostics = None
+    if diag:
+        diagnostics = {
+            "cpu_temp_c":          diag.cpu_temp_c,
+            "cpu_load_pct":        diag.cpu_load_pct,
+            "disk_used_gb":        diag.disk_used_gb,
+            "connectivity":        diag.connectivity,
+            "uptime_s":            diag.uptime_s,
+            "ntp_offset_s":        diag.ntp_offset_s,
+            "ssd_used_pct":        diag.ssd_used_pct,
+            "ssd_free_gb":         diag.ssd_free_gb,
+            "service_restarts":    diag.service_restarts,
+            "upload_queue":        diag.upload_queue,
+            "cam_battery_pct":     diag.cam_battery_pct,
+            "cam_shutter_cnt":     diag.cam_shutter_cnt,
+            "cam_shutter_pct":     diag.cam_shutter_pct,
+            "cam_shutter_alarm":   diag.cam_shutter_alarm,
+            "cam_available_shots": diag.cam_available_shots,
+            "cam_lens_name":       diag.cam_lens_name,
+            "cam_config_json":     diag.cam_config_json,
+            "cam_drift_json":      diag.cam_drift_json,
+            "cam_non_enforceable_json": getattr(diag, "cam_non_enforceable_json", None),
+            "capture_total":       diag.capture_total,
+            "capture_passed":      diag.capture_passed,
+            "capture_uploaded":    diag.capture_uploaded,
+        }
     return {
         "device": {
             "device_id":        device.device_id,
@@ -12408,6 +12459,7 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
             "config_overrides": json.loads(device.config_overrides or "{}") if hasattr(device, "config_overrides") else {},
             "site_id":          device.site_id if hasattr(device, "site_id") else None,
         },
+        "diagnostics": diagnostics,
         "device_config": d_cfg,
         "update_requested": d_cfg.get("update_requested", False),
         "update_version":   d_cfg.get("update_version"),

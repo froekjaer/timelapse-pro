@@ -299,12 +299,47 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   ("Automatic" vs. fleet-default "AWB White") fejlalarmerer IKKE; `focus_mode` optræder ALDRIG i
   drift-listen, kun i `camera_config_non_enforceable`; tomt `expected_overrides`-dict falder nu
   korrekt tilbage til `FLEET_DEFAULTS` i stedet for at slå drift-check helt fra.
-- **IKKE verificeret / fortsat åbent:** ingen live-test på faktisk Z30-hardware endnu (kræver
-  Orange Pi-adgang, ikke noget jeg kan køre selv); ingen UI/CMDB-visning af det nye
-  `camera_config_non_enforceable`-felt endnu; `aperture`/`shutter_speed` har fortsat ingen
-  drift-check-mål (bevidst — de er capture-settings, ikke fleet-politik, men bør besluttes
+- **IKKE verificeret / fortsat åbent (før i dag):** ingen live-test på faktisk Z30-hardware endnu
+  (kræver Orange Pi-adgang, ikke noget jeg kan køre selv); `aperture`/`shutter_speed` har fortsat
+  ingen drift-check-mål (bevidst — de er capture-settings, ikke fleet-politik, men bør besluttes
   eksplicit, ikke bare antaget); ingen bredere "desired state"-model på tværs af flere
   kameratyper end Canon/Z30. Score nedgraderes IKKE til grøn før live-verifikation.
+- **Opfølgning 2026-07-05 (Claude, periodisk tjek): UI/CMDB-visning af `camera_config_non_enforceable`
+  implementeret + en uafhængig, reel bug fundet og rettet undervejs.**
+  - **Fund undervejs (utilsigtet, opdaget ved scoping af UI-opgaven):**
+    `GET /api/admin/devices/{device_id}` (`headend/main.py::get_device_detail`) hentede
+    `Diagnostic`-rækken (`diag = db.query(Diagnostic)...first()`) men **serialiserede den aldrig i
+    responsen** — ingen `"diagnostics"`-nøgle i det returnerede JSON overhovedet. `git log -L` viser
+    dette har været sådan siden ca. 15. april 2026. Konsekvens: HELE "Hardware diagnostik" og
+    "Kamera diagnostik"-panelet på enhedssiden (`DevicePage.tsx` → `StatsTab`) har vist tomt for
+    enhver enhed i produktion i månedsvis — CPU-temp, SSD, NTP-offset, batteri, lukkertæller,
+    config-drift, alt sammen. Stille fejl: frontend tjekker defensivt `diagnostics &&`/`diagnostics?.`
+    overalt, så der opstod hverken en JS-fejl eller en synlig fejlbesked — panelet forsvandt bare
+    fuldstændig fra siden.
+  - **Rettet (kode, ikke rørt live services):**
+    1. `headend/main.py::get_device_detail` bygger nu en `"diagnostics"`-dict fra `diag`
+       (alle felter frontendens `Diagnostic`-type forventer: cpu/ram/ssd/ntp/netværk/kamera/capture-
+       felter) og returnerer den. Ren tilføjelse — ingen eksisterende nøgler i responsen ændret.
+    2. Ny kolonne `Diagnostic.cam_non_enforceable_json` (`headend/database.py`), skrevet ved hvert
+       heartbeat (`headend/main.py` ~linje 3628) fra `cam.get("camera_config_non_enforceable", [])`,
+       og inkluderet i den nye diagnostics-serialisering.
+    3. Selvhelende, idempotent DB-migration **v14** tilføjet i `startup()`
+       (samme mønster som v9-v13): `ALTER TABLE diagnostics ADD COLUMN cam_non_enforceable_json TEXT`
+       — kører automatisk ved næste headend-genstart, ingen manuel SQL-kommando nødvendig.
+    4. Frontend (`timelapse-ui/src/types/index.ts`, `DevicePage.tsx`): nyt felt i `Diagnostic`-typen;
+       ny informativ (ikke-alarm) boks under drift-sektionen der lister non-enforceable parametre
+       med samme danske labels som drift-visningen (delt `CAM_PARAM_LABELS`-konstant).
+  - **Verifikation her:** `py_compile` ren på `headend/main.py` + `headend/database.py`. `npx tsc -b`
+    (hele UI) grøn uden fejl. Selvstændig Python-simulering af hele kæden (edge-payload →
+    heartbeat-lagring → device-detail-serialisering → frontend-parsing) bekræfter at
+    `camera_config_drift` og `camera_config_non_enforceable` round-tripper korrekt, og at et tomt
+    non-enforceable-array ikke fejler/ikke viser en tom boks. `git status --short` viser kun de 4
+    forventede ændrede filer.
+  - **IKKE gjort — bevidst:** ingen live-test mod faktisk Postgres/Orange Pi (kræver Mac
+    Mini-adgang); ingen ændring af selve R14-scoren udover at markere UI-delen løst — den
+    grundlæggende "IKKE verificeret på levende hardware"-status fra tidligere står stadig ved magt.
+    DB-migrationen er additiv/nullable og selvhelende ved opstart, så intet manuelt SQL-skridt er
+    nødvendigt fra Codex/Peter — kun almindelig git pull + headend-genstart.
 
 ### R15 — `/api/siem/*` uden autentificering (NY, fundet + rettet 2026-07-03)
 - **Status:** ✅ Kontrolleret i kode og **live-verificeret** (Peter, 2026-07-03: health `200`, `GET /api/siem/events` uden auth → `401`)
@@ -490,7 +525,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R11 CMDB anonym adgang | 🟢 3 | ✅ Ny/løst |
 | R12 GDPR-evidens | 🟠 12 | 🆕 Ny |
 | R13 Node-agent nede | 🟡 6 | 🆕 Ny |
-| R14 Nikon Z30 config drift | 🟠 12 | ↓ Delvist rettet 2026-07-05 (detektionsmekanisme), ikke live-verificeret |
+| R14 Nikon Z30 config drift | 🟠 12 | ↓ Delvist rettet 2026-07-05 (detektionsmekanisme + UI-visning + en uafhængig diagnostics-bug rettet), ikke live-verificeret på hardware |
 | R15 SIEM uden auth + MFA-gab CMDB/ITIM | 🟢 4 | ✅ Ny/løst — fundet og rettet, live-verificeret 2026-07-03 |
 | R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 | ✅ Ny/løst — fundet, rettet og backfillet komplet i produktion 2026-07-03 |
 | R17 Debug/lab mode uden overvågning | 🟢 (deployet) | ↓ Rettet 2026-07-05, committet (`44b78fb7`) og deployet af Codex, health 200 + `npm run build` OK; manuel UI-smoketest (aktiver/deaktiver + auto-timeout) fortsat ikke kørt |
@@ -514,7 +549,9 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 2. Intern CA + device client certs (R05, R07, R08) — design-notat klar
    (`Claude_Intern_CA_mTLS_Design_2026-07-05.md`), afventer Peter/Codex' arkitekturvalg
    (Cloudflare Access mTLS vs. ende-til-ende) før kode
-3. Nikon Z30 config-model — desired state + accepted equivalents (R14)
+3. Nikon Z30 config-model — desired state + accepted equivalents (R14); detektion + UI-visning
+   af non-enforceable parametre er nu på plads (2026-07-05), resterer kun live-verifikation på
+   hardware og en eksplicit beslutning om aperture/shutter_speed-drift-mål
 4. Per-target deployment status (update-flow)
 5. ESLint-gate i CI
 
@@ -544,6 +581,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-05 | Claude (periodisk tjek): R14 — fundet og rettet at config-drift-detektion reelt var inaktiv (key-mismatch + FLEET_DEFAULTS blev erstattet, ikke merged); rettelse verificeret isoleret, IKKE på live hardware |
 | 10 (tilføjelse) | 2026-07-05 (nat) | Claude (periodisk tjek, docs-sync): R17 opdateret fra "rettet i kode, ikke deployet" til "deployet af Codex, health+build OK, kun manuel smoketest udestår" — dokumentet var kommet bagud ift. HANDOVER_LOG efter Codex' deploy-verifikation |
 | 10 (tilføjelse) | 2026-07-05 01:28 | Claude (periodisk tjek): §13.3 og §11 P1.2 opdateret med henvisning til nyt design-notat `Claude_Intern_CA_mTLS_Design_2026-07-05.md` (#52) — intern CA/mTLS-arkitektur, ingen kode rørt, afventer Peters valg mellem Cloudflare Access mTLS og ende-til-ende-model |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #4) | Claude: R14 UI/CMDB-visning af `camera_config_non_enforceable` implementeret (ny DB-kolonne + selvhelende v14-migration + frontend-info-boks); undervejs fundet og rettet en uafhængig, reel bug — `get_device_detail` returnerede aldrig "diagnostics"-nøglen, så hele Hardware/Kamera-diagnostik-panelet har vist tomt for alle enheder siden ~15. april |
 
 ---
 

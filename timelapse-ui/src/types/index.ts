@@ -73,6 +73,7 @@ export interface Diagnostic {
   cam_lens_name: string | null
   cam_config_json: string | null
   cam_drift_json: string | null
+  cam_non_enforceable_json: string | null
   capture_total: number | null
   capture_passed: number | null
   capture_uploaded: number | null

@@ -2768,3 +2768,78 @@ person vide".
 - **Går videre til:** næste periodiske runde ser på #53 (Nikon Z30 config-drift — resten af R14:
   UI/CMDB-visning af `camera_config_non_enforceable`, jf. entry 2026-07-05 00:12) hvis intet nyt
   er dukket op fra Codex, eller på Peters §6-beslutning hvis den er lagt i mellemtiden.
+
+### Handover 2026-07-05 01:55 — fra Claude (periodisk tjek): R14 UI-visning + fundet uafhængig diagnostics-bug
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste `HANDOVER_LOG.md`-halen — ingen nye
+  Codex-entries siden mit eget #52-notat, intet åbent spørgsmål adresseret til mig. `git status
+  --short` viste fortsat kun samme untracked `claude_proxy.py` (ladt urørt) plus den kendte
+  harmløse `.git/index.lock`. Tog mit eget "går videre til"-punkt: #53/resten af R14 —
+  UI/CMDB-visning af `camera_config_non_enforceable` (feltet edge-siden allerede udstiller siden
+  entry 00:12, men aldrig vist noget sted).
+- **Fund ved scoping (utilsigtet, en reel, uafhængig bug):** Da jeg sporede hvordan
+  `camera_config_drift`/`camera_config_non_enforceable` faktisk når frem til UI'en, opdagede jeg
+  at `GET /api/admin/devices/{device_id}` (`headend/main.py::get_device_detail`) henter den
+  seneste `Diagnostic`-række (`diag = db.query(Diagnostic)...first()`) men **ALDRIG serialiserer
+  den i responsen** — ingen `"diagnostics"`-nøgle i JSON-svaret overhovedet. `git log -L
+  12390,12390:headend/main.py` viser dette har været sådan siden commit `c7cb285b` (~15. april
+  2026). Konsekvens: HELE "Hardware diagnostik"/"Kamera diagnostik"-panelet på enhedssiden
+  (`DevicePage.tsx` → `StatsTab`) har vist tomt for enhver enhed i produktion i månedsvis — CPU-
+  temp, SSD, NTP-offset, batteri, lukkertæller, config-drift, alt sammen. Stille fejl: frontend
+  tjekker defensivt `diagnostics &&`/`diagnostics?.` overalt, så hverken en JS-fejl eller en
+  synlig fejlbesked opstod — panelet forsvandt bare fuldstændig fra siden, uden at nogen (mig
+  inklusive, i tidligere runder) opdagede det før nu.
+- **Rettet (kode, ingen live services rørt):**
+  1. `headend/main.py::get_device_detail` bygger nu en `"diagnostics"`-dict fra `diag` med alle
+     felter frontendens `Diagnostic`-type forventer, og returnerer den. Ren tilføjelse — ingen
+     eksisterende nøgler i responsen ændret eller fjernet.
+  2. Ny kolonne `Diagnostic.cam_non_enforceable_json` (`headend/database.py`), skrevet ved hvert
+     heartbeat (`headend/main.py` ~linje 3628) fra edge-feltet
+     `camera_config_non_enforceable`, og inkluderet i den nye diagnostics-serialisering.
+  3. Selvhelende, idempotent DB-migration **v14** tilføjet i `startup()` (samme mønster som
+     v9–v13 i samme funktion): `ALTER TABLE diagnostics ADD COLUMN cam_non_enforceable_json TEXT`
+     — kører automatisk ved næste headend-genstart. **Ingen manuel SQL-kommando nødvendig.**
+  4. Frontend: `timelapse-ui/src/types/index.ts` (nyt felt i `Diagnostic`-typen),
+     `timelapse-ui/src/pages/DevicePage.tsx` (ny grå info-boks under drift-sektionen der lister
+     non-enforceable parametre med samme danske labels som drift-visningen — delt
+     `CAM_PARAM_LABELS`-konstant, udtrukket fra `DriftBadge` for at undgå duplikering).
+  5. `RISK_ASSESSMENT_v10.md`: R14-afsnittet, §10-oversigten, §11 P1.2 og §12-historikken
+     opdateret med både UI-fixet og diagnostics-bugfundet.
+- **Verifikation her:** `python3 -m py_compile headend/main.py headend/database.py` ren.
+  `npx tsc -b` (hele UI) grøn uden fejl. Selvstændig Python-simulering af hele kæden (edge-payload
+  → heartbeat-lagring → device-detail-serialisering → frontend-JSON-parsing) i et isoleret script
+  bekræfter at `camera_config_drift` og `camera_config_non_enforceable` round-tripper korrekt
+  gennem alle lag, og at et tomt non-enforceable-array håndteres uden fejl. `git status --short`
+  viser præcis de 4 forventede ændrede filer (`headend/database.py`, `headend/main.py`,
+  `timelapse-ui/src/types/index.ts`, `timelapse-ui/src/pages/DevicePage.tsx`) — ingen andre filer
+  rørt.
+- **IKKE gjort — bevidst:** ingen live-test mod faktisk Postgres-instans eller Orange Pi (kræver
+  Mac Mini-adgang, har jeg ikke); R14-scoren nedgraderes IKKE til grøn — den grundlæggende "ikke
+  verificeret på levende Z30-hardware"-status fra tidligere runder står fortsat ved magt, dette
+  lukker kun UI-delen. Ingen ændring af selve drift-detektionslogikken fra entry 00:12.
+- **Codex/Peter: kør venligst når I har et vindue** (ingen af disse er kørt af mig):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt) rm -f .git/index.lock
+
+  git add headend/database.py headend/main.py timelapse-ui/src/types/index.ts \
+          timelapse-ui/src/pages/DevicePage.tsx Dokumentation/RISK_ASSESSMENT_v10.md \
+          Dokumentation/HANDOVER_LOG.md
+  git commit -m "fix: serialize diagnostics in device detail response + R14 non-enforceable UI"
+  git push
+
+  cd timelapse-ui && npm run build
+  ```
+  Deploy: pull + genstart `headend`-servicen på Mac Mini'en som normalt (v14-migrationen kører
+  automatisk ved opstart, ingen manuel `ALTER TABLE` nødvendig), samt normal frontend-deploy.
+  **Forventet effekt efter deploy:** enhedssidens "Statistik"-fane viser nu faktisk
+  Hardware/Kamera-diagnostik-panelerne igen (har været tomme siden ~15. april) — værd at
+  stikprøvetjekke på et par enheder efter deploy for at bekræfte at CPU-temp/SSD/batteri m.v.
+  rent faktisk vises.
+- **Filer rørt:** `headend/database.py`, `headend/main.py`, `timelapse-ui/src/types/index.ts`,
+  `timelapse-ui/src/pages/DevicePage.tsx`, `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** næste periodiske runde stikprøvetjekker om Codex/Peter har fået deployet
+  denne rettelse og om diagnostics-panelet rent faktisk viser data igen; ellers næste punkt er
+  Peters §6-beslutning (intern CA/mTLS) hvis den er truffet, eller den udestående R17
+  live-smoketest.

@@ -204,6 +204,11 @@ class Diagnostic(Base):
     cam_lens_name   = Column(String(100))
     cam_config_json = Column(Text)
     cam_drift_json  = Column(Text)
+    # R14 (2026-07-05, Claude periodisk tjek): parametre kameraprofilen selv
+    # markerer non-enforceable (fx focus_mode på Nikon Z30) — se
+    # edge/diagnostics/camera_diagnostics.py camera_config_non_enforceable.
+    # Additiv/nullable, samme migrationsmønster som cam_drift_json ovenfor.
+    cam_non_enforceable_json = Column(Text)
 
 
 class Event(Base):
