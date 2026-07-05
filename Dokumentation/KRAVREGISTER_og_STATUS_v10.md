@@ -50,7 +50,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | UI-008 | Kundelogin med RBAC | ✅ Implementeret | JWT, 4 roller |
 | UI-009 | MFA/WebAuthn til admin-login | ✅ Implementeret (2026-07-02) | Policy-drevet TOTP, enforced for admin/super_admin; WebAuthn separat flag (off) |
 | UI-010 | Sløring/redaction workflow | 🔴 Mangler | GDPR |
-| UI-011 | Downloadbar timelapse-video | 🔴 Mangler | |
+| UI-011 | Downloadbar timelapse-video | ✅ Implementeret | Fuldt end-to-end: `POST /api/timelapse/create` (FFmpeg-render, fps/opløsning/codec/deflicker/fade/Ken Burns/crop/timestamp-overlay), `GET /api/timelapse/status/{job_id}` (progress-polling), `GET /api/timelapse/download/{job_id}` (streamer `.mp4` som attachment). Frontend: `TimelapseVideoPage.tsx` — "Render video"-knap, progress-visning, "Download MP4"-link. Se også `TimeLapse_Configuration_Guide_v10.md` §5. Rettet 2026-07-05 (periodisk tjek #27) — dette register viste stadig "🔴 Mangler" uden kommentar |
 
 ### Kategori: Admin UI
 
@@ -145,17 +145,19 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | Kategori | Implementeret | Delvist | Mangler | Total |
 |---|---:|---:|---:|---:|
 | Capture | 8 | 2 | 1 | 11 |
-| Kundevendt UI | 8 | 0 | 3 | 11 |
+| Kundevendt UI | 10 | 0 | 1 | 11 |
 | Admin UI | 8 | 3 | 1 | 12 |
 | Update/Edge | 6 | 7 | 2 | 15 |
 | Provisioning | 5 | 3 | 2 | 10 |
 | Sikkerhed | 7 | 3 | 6 | 16 |
 | Konfiguration | 6 | 2 | 3 | 11 |
-| **Total** | **48** | **20** | **18** | **86** |
+| **Total** | **50** | **20** | **16** | **86** |
 
-**Samlet implementeringsgrad:** 56% fuldt implementeret, 23% delvist, 21% mangler.
+**Samlet implementeringsgrad:** 58% fuldt implementeret, 23% delvist, 19% mangler.
 
 *(Opdateret 2026-07-05, Claude periodisk tjek #25: CAP-008/ADM-012 rettet fra "🔴 Mangler" til "✅ Implementeret" — GDPR download-/adgangslog pr. billede blev implementeret og testverificeret 2026-07-05 (`CaptureAccessLog`, se `GO_LIVE_CHECKLIST_v10.md` §G-05), men dette register var ikke opdateret siden 2026-07-02 og viste stadig det gamle "mangler"-billede. Øvrige rækker i dette dokument er IKKE fuldt krydstjekket denne runde — kun disse to konkrete, verificerbare punkter.)*
+
+*(Opdateret 2026-07-05, Claude periodisk tjek #27: UI-011 rettet fra "🔴 Mangler" til "✅ Implementeret" — fuldt end-to-end downloadbar timelapse-video (FFmpeg-render + download-endpoint + frontend-UI) fandtes allerede, men var aldrig registreret her. Samtidig rettet en separat, ældre regnefejl i "Kundevendt UI"-rækken: UI-009 (MFA/WebAuthn) blev markeret ✅ Implementeret allerede 2026-07-02 (samme dag registret blev skrevet), men oversigtstabellen var aldrig opdateret til at tælle den med — rækken viste 8/0/3 selvom de faktiske ID-statusser altid har summeret til 9/0/2 (nu 10/0/1 efter UI-011). Total-linjen og procentsatserne er justeret tilsvarende (48→50 implementeret, 18→16 mangler). SEC-012 (DPIA og GDPR-evidens) blev IKKE krydstjekket denne runde — stadig udestående fra tjek #26's opfølgningsliste.)*
 
 ---
 

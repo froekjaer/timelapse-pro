@@ -4319,3 +4319,56 @@ person vide".
   "🟡 Delvist"-emoji-brug i Admin UI-kategorien (og muligvis andre kategorier) bør ensrettes,
   men kræver først en beslutning om hvilken konvention der skal vinde, så en fremtidig runde bør
   tage en fuld gennemgang af alle status-emojis i dokumentet, ikke kun punktvise rettelser.
+
+### Handover 2026-07-05 (periodisk tjek #27) — fra Claude: UI-011 "downloadbar timelapse-video" var reelt allerede implementeret — KRAVREGISTER viste stadig 🔴, plus en separat, ældre optællingsfejl rettet
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md —
+  seneste entry er tjek #26 (Claude selv), ingen nye Codex-entries siden da, og C-03-spørgsmålet
+  (super_admin-password-bekræftelse, rejst i tjek #24) står fortsat ubesvaret — ikke noget Claude
+  kan afklare uden Peter. `mcp__workspace__bash` fejlede igen ved forsøg (samme `useradd failed:
+  fork/exec /usr/sbin/useradd: input/output error` som i tjek #21–#26, nu 7. sammenhængende
+  runde uden sandbox-adgang) — kunne derfor hverken køre `git status`, teste eller køre andet
+  denne runde. Gennemgik `RISK_ASSESSMENT_v10.md` §11 og `GO_LIVE_CHECKLIST_v10.md` §J: ingen
+  ændringer siden tjek #26, og alle resterende P0/P1-punkter kræver enten live-adgang eller en
+  Peter-beslutning — intet nyt Claude kan rykke sikkert der denne runde.
+- **Fundet:** Fulgte tjek #26's eget opfølgningspunkt op: krydstjekkede UI-011 ("Downloadbar
+  timelapse-video", stod som 🔴 Mangler uden kommentar) i `KRAVREGISTER_og_STATUS_v10.md`. Fandt
+  ved kodegennemgang (`headend/main.py`) et fuldt, allerede fungerende end-to-end-flow:
+  `POST /api/timelapse/create` starter en baggrunds-FFmpeg-rendering (fps, opløsning, codec,
+  deflicker, fade, Ken Burns, crop, timestamp-overlay — alt sammen implementeret), `GET
+  /api/timelapse/status/{job_id}` til progress-polling, og `GET /api/timelapse/download/{job_id}`
+  som streamer den færdige `.mp4` som attachment. Bekræftede at frontend rent faktisk kalder disse
+  endpoints: `timelapse-ui/src/pages/TimelapseVideoPage.tsx` har en "Render video"-knap, live
+  progress-visning og et "Download MP4 (X MB)"-link. `TimeLapse_Configuration_Guide_v10.md` §5
+  dokumenterer allerede samme endpoint under "Timelapse Video-generator" — så featuren var kendt
+  og dokumenteret ét sted, bare ikke i selve kravregistret. Samme docs-lag-mønster som
+  CAP-008/ADM-012 (tjek #25) og ADM-010-kollisionen (tjek #26): reelt arbejde udført/deployet
+  (denne gang tilsyneladende for et stykke tid siden — ingen HANDOVER_LOG-entry nævner
+  `/api/timelapse/create` overhovedet), men aldrig registreret i `KRAVREGISTER_og_STATUS_v10.md`.
+  Fandt desuden en separat, ældre optællingsfejl i samme dokuments §3-oversigtstabel: rækken
+  "Kundevendt UI" viste 8 implementeret/3 mangler, men de faktiske ID-statusser (UI-001 til
+  UI-011) har allerede summeret til 9 implementeret/2 mangler siden UI-009 (MFA/WebAuthn) blev
+  markeret ✅ 2026-07-02 (samme dato dokumentet i øvrigt er dateret) — tabellen blev tilsyneladende
+  aldrig opdateret efter den ændring. Ikke relateret til UI-011-fundet, men opdaget undervejs ved
+  manuel optælling af rækkerne.
+- **Udført:** Rettet UI-011 i `KRAVREGISTER_og_STATUS_v10.md` til "✅ Implementeret" med henvisning
+  til de tre endpoints, frontend-komponenten og konfigurationsguiden. Rettet §3-oversigtstabellens
+  "Kundevendt UI"-række fra 8/0/3 til 10/0/1 (9→10 pga. UI-011, samt den uafhængige UI-009-rettelse
+  fra 8→9 der aldrig var lavet). Opdaterede total-linjen (48→50 implementeret, 18→16 mangler,
+  20 delvist uændret, 86 total) og procentsatserne (56%→58% implementeret, 21%→19% mangler).
+  Tilføjede en dateret fodnote der forklarer begge rettelser adskilt. Ren tekstændring, ingen kode
+  rørt; ingen test nødvendig ud over kodelæsning af `main.py`/`TimelapseVideoPage.tsx` (som ikke
+  kræver sandbox-adgang) og krydslæsning mod `TimeLapse_Configuration_Guide_v10.md` §5.
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`.
+- **Går videre til:** Samme udestående liste som tjek #26 (live multi-device-rollout-test, Peters
+  §6-beslutning om CA/mTLS, R17-smoketest, §K OS offline-artifact E2E, device-decommission-
+  beslutning, Gemini/Vertex-region-bekræftelse, C-03-bekræftelse, P0 #5 HMAC/stale credentials).
+  Nye/uændrede opmærksomhedspunkter: (1) SEC-012 ("DPIA og GDPR-evidens") er stadig ikke
+  krydstjekket — bør sammenholdes med `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` og G-01/G-02 i
+  `GO_LIVE_CHECKLIST_v10.md` i en kommende runde, samme metode som denne; (2) den inkonsekvente
+  "✅ Delvist"- vs. "🟡 Delvist"-emoji-brug fra tjek #26 er stadig urørt og kræver en
+  Peter-beslutning om konvention før den rettes; (3) `mcp__workspace__bash` har nu fejlet 7
+  runder i træk (samme `useradd`-fejl) — hvis dette er en infrastrukturfejl der kan rettes
+  (fx en corrupt sandbox-image eller manglende OS-brugerressource), er det formentlig værd for
+  Peter at undersøge direkte, da det forhindrer enhver kodetest/`git status`/`py_compile`-
+  verifikation fra Claudes periodiske tjek — ikke noget Claude kan diagnosticere eller rette
+  uden selv at have en fungerende sandbox.
