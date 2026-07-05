@@ -106,7 +106,7 @@ from itim import router as itim_router, start_itim_collector
 from database import (
     BootstrapToken,
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
-    Capture, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
+    Capture, CaptureAccessLog, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
     DeviceInventory, Diagnostic, Event, KeyAuditEvent, KeyCredential,
     PendingUpdate, Settings, Site, SshTunnelLog, UpdateJobRecord, User,
     AiBatchJob,
@@ -2307,6 +2307,37 @@ def _audit_key_event(
         details_json=_canonical_json(details or {}),
         occurred_at=now_utc(),
     ))
+
+
+def _log_capture_access(db: Session, user: User, capture: Capture, action: str = "download") -> None:
+    """GDPR-adgangslog pr. billede (GO_LIVE_CHECKLIST_v10.md §G-05).
+
+    Skal kaldes EFTER _ensure_capture_file_access(), så kun faktisk
+    autoriseret adgang logges (403/404 stopper allerede før dette kald).
+    Bevidst fejltolerant: en log-skrivningsfejl må aldrig forhindre en
+    autoriseret bruger i at se sit eget billede, så alt er wrappet i
+    try/except med rollback — samme "additiv, ingen ny risiko for
+    kerneflowet"-tilgang som _audit_key_event() ovenfor.
+    """
+    try:
+        db.add(CaptureAccessLog(
+            capture_id=capture.id,
+            device_id=capture.device_id,
+            filename=capture.filename,
+            action=action,
+            user_id=user.id,
+            username=user.username,
+            role=user.role,
+            customer_id=user.customer_id,
+            accessed_at=now_utc(),
+        ))
+        db.commit()
+    except Exception:
+        log.exception(
+            "Kunne ikke skrive adgangslog (CaptureAccessLog) for %s/%s",
+            capture.device_id, capture.filename,
+        )
+        db.rollback()
 
 
 def _credential_metadata(credential: KeyCredential) -> dict:
@@ -10896,10 +10927,11 @@ def get_image(
     from urllib.parse import unquote as _unquote
     _sanitize_device_id(device_id)
     filename = _unquote(filename)
-    _ensure_capture_file_access(db, _user, device_id, filename)
+    capture = _ensure_capture_file_access(db, _user, device_id, filename)
     path = _find_image(device_id, filename)
     if not path:
         raise HTTPException(status_code=404, detail="Image not found")
+    _log_capture_access(db, _user, capture, action="download")
     xr = _xaccel_redirect(path, "image/jpeg")
     if xr is not None:
         return xr

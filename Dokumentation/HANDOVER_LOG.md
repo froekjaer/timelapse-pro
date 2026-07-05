@@ -4057,3 +4057,82 @@ person vide".
   med **37 passed**.
 - **Drift:** Ingen live-genstart udført; ændringen rører kun read-only AI Ops-diagnostik og kan
   indgå i næste normale headend-deploy.
+
+### Handover 2026-07-05 (periodisk tjek #21) — fra Claude: GDPR-adgangslog pr. billede (§G-05) implementeret — MEN ikke testverificeret pga. sandbox-infrastrukturfejl
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -5` bekræftede `2a274d13` (docs: mark AI
+  Ops hardcoded-secret scanner fix committed) er seneste commit — Codex' morgen-entry bekræfter
+  `bce5f856` er committet/pushet/testverificeret (37/37 bestået). `git status --short` viste kun
+  den kendte untracked `claude_proxy.py`. Ingen ny Codex-entry med spørgsmål til Claude siden
+  sidst. VPEN-006/SAST-sporet er nu fuldt afsluttet (bekræftet af #18-#20 + Codex' to
+  morgen-commits). Gennemgik §11 i RISK_ASSESSMENT_v10.md og §J/§K i GO_LIVE_CHECKLIST_v10.md —
+  de tidligere noterede "går videre til"-punkter (live multi-device-rollout-test, Peters
+  CA/mTLS-beslutning, R17-smoketest, OS offline-artifact E2E, device-decommission-beslutning,
+  Gemini/Vertex-produktionsregion-bekræftelse) kræver alle enten live-adgang eller en
+  Peter-beslutning, og kunne derfor ikke gennemføres FÆRDIGT denne runde. I stedet valgt §G-05
+  ("Download/adgangslog pr. billede implementeret", stod som 🟠 "Anbefalet", ingen kode) — et
+  selvstændigt, afgrænset punkt der ikke kræver live-adgang eller en produktbeslutning.
+- **Udført:** Ny tabel `CaptureAccessLog` i `headend/database.py` (samme mønster som
+  `KeyAuditEvent` — ingen FK-constraints, kun indekserede kolonner; oprettes automatisk af
+  `Base.metadata.create_all()` ved næste opstart, ingen manuel migration nødvendig). Ny
+  hjælpefunktion `_log_capture_access(db, user, capture, action)` i `headend/main.py` (placeret
+  ved siden af `_audit_key_event()`), fejltolerant (try/except + rollback, kan aldrig forhindre
+  en autoriseret billedvisning). Kaldt fra `GET /api/images/{device_id}/{filename}`
+  (`get_image()`) EFTER `_ensure_capture_file_access()`, så kun faktisk tilladt adgang logges.
+  Bevidst IKKE koblet på `/api/thumbnails/...` — ville give alt for stor log-volumen fra almindelig
+  grid-browsing; kun selve fuldopløsningsbilledet (det reelle "se/download dette billede"-øjeblik)
+  logges. 4 nye kontrakt-tests i `headend/tests/test_capture_access_log.py`: (1) korrekte felter
+  skrives, (2) en simuleret DB-fejl i loggeren kaster IKKE videre til kalderen, (3) end-to-end via
+  `main.get_image()` med en monkeypatchet `_find_image()` og en rigtig midlertidig fil — bekræfter
+  både at billedet leveres OG at én logrække skrives, (4) et 403 (forkert tenant/device) efterlader
+  IKKE en logrække.
+- **VIGTIGT — IKKE fuldt verificeret denne runde:** `python3 -m py_compile main.py database.py
+  tests/test_capture_access_log.py` blev kørt og var ren, FØR sandbox-shell-værktøjet holdt op
+  med at virke midt i runden (gentagne `useradd failed: fork/exec /usr/sbin/useradd: input/output
+  error`-fejl ved ethvert efterfølgende bash-kald — en infrastrukturfejl i selve kørselsmiljøet,
+  ikke i koden). Det betød at den midlertidige venv-opsætning (samme mønster som tidligere runder,
+  `/tmp/tlp_venv2` + `pip install -r requirements.txt pytest`) og den faktiske `pytest`-kørsel af
+  de 4 nye tests ALDRIG blev gennemført. Testene er selv-gennemgået grundigt linje for linje
+  (inkl. at et `Device`-opslag er nødvendigt for at en almindelig viewer-bruger overhovedet får
+  adgang, ikke kun et `Capture.customer_id`-match — bekræftet ved læsning af
+  `_allowed_capture_device_ids()`/`_ensure_capture_device_access()`), men "selv-gennemgået" er
+  ikke det samme som "kørt og bestået". **Dette er bevidst IKKE markeret som færdigt/verificeret
+  i `GO_LIVE_CHECKLIST_v10.md` §G-05** — status sat til "kode skrevet, ikke testverificeret".
+- **Codex/Peter: kør venligst testsuiten før noget committes (dette er IKKE en færdig,
+  verificeret ændring som tidligere runders — kør venligst testene først, og commit KUN hvis
+  grønt):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  python3 -m venv /tmp/tlp_captureacc_venv
+  /tmp/tlp_captureacc_venv/bin/pip install fastapi==0.136.1 sqlalchemy==2.0.49 \
+      "python-jose[cryptography]==3.5.0" bcrypt==5.0.0 passlib==1.7.4 \
+      slowapi==0.1.9 python-multipart==0.0.27 python-dotenv pytest
+  cd headend
+  /tmp/tlp_captureacc_venv/bin/python3 -m pytest tests/test_capture_access_log.py -v
+  # Kør også hele suiten for at udelukke regressioner:
+  /tmp/tlp_captureacc_venv/bin/python3 -m pytest tests/ -v
+  ```
+  Hvis grønt: `git diff headend/main.py headend/database.py headend/tests/test_capture_access_log.py Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/HANDOVER_LOG.md`, herefter almindelig
+  `git add`/commit/push som vanligt. Hvis IKKE grønt: ret fejlen eller rul ændringen tilbage —
+  den er additiv og uden andre afhængigheder, så en revert er ufarlig.
+- **Filer rørt:** `headend/database.py`, `headend/main.py`, `headend/tests/test_capture_access_log.py`,
+  `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** Hvis testene bekræftes grønt af Codex/Peter — opdatér §G-05-status til
+  "implementeret + testverificeret" og overvej om §G-05 også bør dække GDPR-indsigtsanmodninger
+  (kan denne log bruges til at svare "hvem har set mine billeder"-forespørgsler direkte, eller
+  kræver det en UI/API-visning?). Uændret liste i øvrigt: live multi-device-rollout-test
+  (P1.4/R06), Peters §6-beslutning (CA/mTLS), R17-smoketesten, §K's "OS offline-artifact update
+  E2E", device-decommission-beslutningen, Gemini/Vertex-produktionsregion-bekræftelse.
+
+### Handover 2026-07-05 (morgen) - Codex: GDPR CaptureAccessLog testet, checklistestatus opdateret
+- **Udført:** Claude's GDPR-adgangslog pr. fuldopløsningsbillede (§G-05) er gennemgået,
+  testverificeret, committet og pushet på `claude/capture-camera-location-2026-07-03`.
+- **Verifikation:** `python3 -m py_compile headend/main.py headend/database.py
+  headend/tests/test_capture_access_log.py` var ren. Codex kørte:
+  `/tmp/tlp-hvenv/bin/python -m pytest tests/test_capture_access_log.py -v` med **4 passed**,
+  og derefter `/tmp/tlp-hvenv/bin/python -m pytest tests/ -v` med **41 passed**.
+- **Dokumentation:** `GO_LIVE_CHECKLIST_v10.md` §G-05 er opdateret fra "kode skrevet, ikke
+  testverificeret" til **implementeret og testverificeret**.
+- **Drift:** Ingen live-genstart udført; tabel oprettes ved næste normale Headend-start via
+  `Base.metadata.create_all()`. Ændringen er additiv og logger kun autoriseret adgang til
+  fuldopløsningsbilleder, ikke thumbnails.

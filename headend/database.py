@@ -511,6 +511,31 @@ class KeyAuditEvent(Base):
     occurred_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class CaptureAccessLog(Base):
+    """GDPR-adgangslog pr. billede (GO_LIVE_CHECKLIST_v10.md §G-05).
+
+    Additiv/nullable-fri log-tabel — skrives kun EFTER en autoriseret visning
+    af et fuldopløsnings-billede (se _log_capture_access() i main.py, kaldt
+    fra GET /api/images/{device_id}/{filename}). Bevidst IKKE koblet på
+    thumbnail-endpointet for at undgå log-volumen fra almindelig grid-browsing
+    (se RISK_ASSESSMENT_v10.md R12 / DPIA_SKABELON_OG_RETENTION_POLICY_v1.md §0
+    for den fulde afvejning). Ingen FK-constraint, samme mønster som
+    KeyAuditEvent ovenfor (credential_id/entity_id er heller ikke FK'er her).
+    """
+    __tablename__ = "capture_access_log"
+
+    id            = Column(Integer, primary_key=True)
+    capture_id    = Column(Integer, index=True)
+    device_id     = Column(String(50), index=True)
+    filename      = Column(String(200))
+    action        = Column(String(20), default="download")
+    user_id       = Column(Integer, index=True)
+    username      = Column(String(100))
+    role          = Column(String(50))
+    customer_id   = Column(String(36), index=True)
+    accessed_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class WebAuthnCredential(Base):
     """FIDO2/WebAuthn credentials — Windows Hello, Touch ID, Face ID."""
     __tablename__ = "webauthn_credentials"
