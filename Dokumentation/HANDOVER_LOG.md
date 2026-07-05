@@ -3325,3 +3325,72 @@ person vide".
   (`docs: replace stale create-vite README with real project README (H-06)`).
 - **Ikke udført automatisk:** Live multi-device rollout-test er stadig ikke kørt fra heartbeat,
   da den ændrer update-state for rigtige enheder. Bør testes kontrolleret med 2+ test-enheder.
+
+### Handover 2026-07-05 04:1x — fra Claude (periodisk tjek): docs-sync — statusfelter var kommet bagud efter Codex' commit/deploy
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste HANDOVER_LOG-halen — seneste entry er Codex'
+  egen ("HLTH-008 regression + H-05 tests + H-06 README udført"), som bekræfter at flush-fixet
+  (`1e3c3321`) og README-oprydningen (`9dda9923`) BEGGE er committet, pushet, og at headend er
+  genstartet med `/api/health` 200 OK, samt at 13/13 tests bestod i Codex' eget venv. `git status
+  --short` viste kun den kendte untracked `claude_proxy.py` — dvs. intet uncommittet fra tidligere
+  runder længere; alt er nu i git. Bekræftede selv i git-historikken (`git show 1e3c3321 --stat`,
+  `git log -5 --oneline`) at commits `1e3c3321`, `9dda9923` og `a1c6cfbf` (docs-only, tilføjede kun
+  selve HANDOVER_LOG-teksten) rent faktisk er på nuværende `HEAD`, og at `db.flush()` er til stede
+  i den committede `headend/main.py`.
+- **Fund:** `a1c6cfbf` tilføjede kun Codex' HANDOVER_LOG-tekst, men opdaterede IKKE de øvrige
+  statusdokumenter — `GO_LIVE_CHECKLIST_v10.md` (H-05, H-06, §K), `RISK_ASSESSMENT_v10.md` (§11
+  P1.4, R06, §12), `SYSTEM_HEALTH_REGISTER.md` (HLTH-008, HLTH-015) og
+  `KRAVREGISTER_og_STATUS_v10.md` (UPD-012) sagde alle stadig "IKKE committet/deployet endnu" —
+  dokumenterne var dermed inkonsistente med den faktiske, allerede bekræftede git/deploy-tilstand.
+  Fandt desuden at HLTH-015 ("README er stadig Vite-template") stadig stod som "Åben" i
+  `SYSTEM_HEALTH_REGISTER.md`, selvom H-06-rettelsen (samme sag) er committet.
+- **Rettet (kun tekst, ingen kode rørt):**
+  1. `GO_LIVE_CHECKLIST_v10.md` — H-05 og H-06 opdateret fra "IKKE committet endnu" til
+     committet/verificeret status (🟢/✅); §K "Per-target update status" nedjusteret fra P0/🟠
+     til P1/🟡 med commit-hash og deploy-bekræftelse.
+  2. `RISK_ASSESSMENT_v10.md` — §11 P1.4 og R06 opdateret til at reflektere at flush-rettelsen er
+     committet/deployet; residualrisiko for R06 nedjusteret fra 🟠 8 til 🟡 6 (ikke 🟢, da live
+     multi-device-test stadig udestår); ny §12-historik-linje tilføjet.
+  3. `SYSTEM_HEALTH_REGISTER.md` — HLTH-008 nedjusteret fra P0/🟠 til P1/🟡 med commit/deploy-info;
+     HLTH-015 (README) lukket til ✅ med henvisning til `9dda9923`.
+  4. `KRAVREGISTER_og_STATUS_v10.md` — UPD-012 nedjusteret fra 🟠 til 🟡 med samme begrundelse.
+  Alle fire filer holder fast i at ÉN ting stadig er reelt åben og ikke må lukkes helt: en faktisk
+  live multi-device-rollout-test (2+ enheder, `scope=site`) der bekræfter at update rent faktisk
+  flipper til "Deployet"/"Rullet tilbage" i produktion — dette er bevidst IKKE nedskaleret til
+  🟢 noget sted, kun fra P0 til P1, da kun kode+unit/contract-tests er verificeret, ikke
+  live-adfærd.
+- **Verifikation:** Ren dokumentationsændring — ingen `.py`/`.ts`-filer rørt, så ingen
+  `py_compile`/`pytest`/`tsc` relevant. Læste hver ændret sektion igennem efter redigering og
+  krydstjekkede tal/commit-hashes mod `git log`/`git show` (ikke gættet). Kontrollerede at
+  markdown-tabellernes kolonneantal er uændret (ingen tabelstruktur brudt af `|`-tegn i den nye
+  tekst).
+- **Bemærkning (ikke handlingskrævende):** `git diff --stat` i denne mappe gav en advarsel
+  ("unable to unlink .git/index.lock: Operation not permitted") — `.git/index.lock` findes
+  (0 byte), men ingen git-proces kørte (`ps aux | grep git` var tom). Rørte ikke selv `.git/`
+  internals (uden for scope, og jeg har ingen Mac Mini-adgang til at bekræfte at det er trygt).
+  Codex/Peter bør lige tjekke ved lejlighed at intet reelt git-lock blokerer næste commit — hvis
+  `git status`/`git add` fejler med en lock-fejl, er det formentlig bare en stale lock fra denne
+  sandkasses læse-only diff-forsøg og kan fjernes med `rm -f .git/index.lock` når ingen git-proces
+  kører.
+- **Ikke gjort — bevidst:** Ingen kodeændringer denne runde (ren docs-sync). Ingen commit/push
+  (samme konvention som hidtil — Peter/Codex committer selv nedenfor).
+- **Codex/Peter: kør venligst når I har et vindue** (ren docs-sync, ingen kodeadfærd ændret):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt, og kun hvis git faktisk fejler med en lock-fejl) rm -f .git/index.lock
+
+  git add Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/RISK_ASSESSMENT_v10.md \
+          Dokumentation/SYSTEM_HEALTH_REGISTER.md Dokumentation/KRAVREGISTER_og_STATUS_v10.md \
+          Dokumentation/HANDOVER_LOG.md
+  git commit -m "docs: sync HLTH-008/H-05/H-06/UPD-012 status with already-deployed flush fix + README"
+  git push
+  ```
+- **Filer rørt:** `Dokumentation/GO_LIVE_CHECKLIST_v10.md`, `Dokumentation/RISK_ASSESSMENT_v10.md`,
+  `Dokumentation/SYSTEM_HEALTH_REGISTER.md`, `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`.
+- **Går videre til:** næste periodiske runde bekræfter om denne docs-sync-commit er
+  committet/pushet; ellers ser den på den fortsat udestående live multi-device-rollout-test
+  (kræver Peter/Codex, live-adgang), device-decommission-gap'et fra en tidligere runde (kræver
+  Peters produktbeslutning), H-04 (`deploy/launchd/...plist` ikke-secret version, 🟠 Mangler),
+  eller Peters §6-beslutning (CA/mTLS) / R17-smoketesten hvis en af dem er besvaret i mellemtiden.

@@ -152,9 +152,9 @@
 
 ### HLTH-008 - Per-target deployment state mangler
 
-**Prioritet:** P0 (genåbnet — se REGRESSION nedenfor; var midlertidigt 🟢)
+**Prioritet:** P1 (nedjusteret fra P0 2026-07-05 — flush-regressionen er nu committet/deployet, se nedenfor; forbliver P1 og ikke ✅ Løst indtil live multi-device-test er kørt)
 **Område:** Rollout, rollback, audit
-**Status:** 🟠 Regression fundet i den DEPLOYEDE fix 2026-07-05 (Claude, periodisk tjek) — ny rettelse klar i kode og testet, afventer commit/push/deploy af Codex/Peter
+**Status:** 🟡 Flush-rettelse committet (`1e3c3321`, af Codex), deployet og health-checket 2026-07-05 nat — resterer kun live multi-device-rollout-verifikation (se nedenfor)
 
 **Oprindelig observation (forældet pr. 2026-07-05):** `PendingUpdate.status` er global for hele update-posten. En enkelt Edge-report sætter hele update-status til `deployed` eller `rolled_back`.
 
@@ -164,11 +164,14 @@
 
 **REGRESSION fundet 2026-07-05 (Claude, periodisk tjek, denne runde):** Byggede en rigtig kontrakttest (`headend/tests/test_report_update_rollup.py`, kører den faktiske `report_update()`-funktion mod en midlertidig SQLite-DB — IKKE en simulering) for endelig at få den "resterende live-verifikation" nedenfor dækket uden Mac Mini-adgang. Testen afslørede at den deployede `61802951`-fix ALDRIG flipper global status til `deployed`/`rolled_back` for multi-target scopes, heller ikke når alle devices reelt har rapporteret terminal — rollout'en sidder fast på "approved" for evigt. Rodårsag: `SessionLocal` er konfigureret med `autoflush=False` (`headend/database.py` linje 73), så den lige tilføjede/ændrede `target`-række for DETTE device (sidste rapportør i rollout'en) er usynlig for `db.query(UpdateTarget).filter_by(pending_update_id=u.id)...all()` få linjer nedenfor — den mangler simpelthen en `db.flush()` inden rollup-forespørgslen. Konsekvens i produktion: enhver multi-target rollout (scope global/customer/site) hvor alle devices ender i en terminal-status vil ALDRIG blive markeret "Deployet"/"Rullet tilbage" i UI — det er reelt værre end den oprindelige risiko (som var en for-tidlig flip; den nye bug er en flip der aldrig sker).
 
-**Ny rettelse (2026-07-05, Claude, ikke committet endnu):** Tilføjet `db.flush()` i `headend/main.py::report_update` lige før rollup-forespørgslen (samme sted som ovenfor). 1-linjes ændring, ingen anden logik rørt. Alle 4 tests i `headend/tests/test_report_update_rollup.py` fejlede FØR flush-rettelsen (2 af 4 — de to der afhænger af at SIDSTE device i rollout'en flipper status) og passerer nu EFTER (4/4).
+**Rettelse (2026-07-05, Claude):** Tilføjet `db.flush()` i `headend/main.py::report_update` lige før rollup-forespørgslen (samme sted som ovenfor). 1-linjes ændring, ingen anden logik rørt. Alle 4 tests i `headend/tests/test_report_update_rollup.py` fejlede FØR flush-rettelsen (2 af 4 — de to der afhænger af at SIDSTE device i rollout'en flipper status) og passerer nu EFTER (4/4).
 
-**Verifikation:** `python3 -m py_compile headend/main.py headend/database.py` ren. `pytest headend/tests/test_report_update_rollup.py -v` → 4 passed (kører den faktiske kode, ikke en model af den — se testfilens docstring for opsætning). IKKE endnu testet mod en faktisk multi-device rollout i produktion (kræver Mac Mini-adgang).
+**Verifikation:** `python3 -m py_compile headend/main.py headend/database.py` ren. `pytest headend/tests/test_report_update_rollup.py -v` → 4 passed (kører den faktiske kode, ikke en model af den — se testfilens docstring for opsætning).
 
-**Resterende risiko:** (1) Denne nye 1-linjes rettelse skal committes/pushes/deployes (se HANDOVER_LOG for kommandoer). (2) Live-verifikation på en faktisk multi-device rollout (2+ test-enheder, `scope=site`) udestår fortsat, og bør nu prioriteres højere, da den DEPLOYEDE kode reelt er i en "stuck"-tilstand for multi-target rollouts indtil denne rettelse er live.
+**OPDATERING 2026-07-05 (Claude, periodisk tjek, docs-sync):** Rettelsen er committet/pushet af Codex som `1e3c3321` (samme commit som `headend/tests/test_update_lifecycle.py`, 9 yderligere tests) og deployet: `dk.froekjaer.timelapse-headend` genstartet (`launchctl kickstart`), `/api/health` bekræftet 200 OK. Codex kørte desuden det fulde testsæt i et midlertidigt venv (`/tmp/tlp-hvenv`) →
+`pytest tests/test_report_update_rollup.py tests/test_update_lifecycle.py -v` → 13 passed. Bekræftet her at `db.flush()` er til stede i den committede `headend/main.py` på nuværende `HEAD` (`git show 1e3c3321 -- headend/main.py`).
+
+**Resterende risiko:** Live-verifikation på en faktisk multi-device rollout (2+ test-enheder, `scope=site`, bekræfte reel flip til "Deployet"/"Rullet tilbage") udestår fortsat — bevidst ikke kørt fra periodisk heartbeat, da det ændrer update-state for rigtige enheder. Dette er nu den eneste resterende del af HLTH-008/R06/P1.4.
 
 ### HLTH-009 - Policy evalueres, men enforcement er ufuldstændig
 
@@ -256,13 +259,11 @@
 
 **Prioritet:** P3  
 **Område:** Dokumentation, onboarding  
-**Status:** Åben
+**Status:** ✅ Løst 2026-07-05 (Claude, periodisk tjek) — committet/pushet af Codex som `9dda9923`
 
-**Observation:** `README.md` beskriver React + TypeScript + Vite-template og ikke TimeLapse Pro.
+**Oprindelig observation:** `README.md` beskrev React + TypeScript + Vite-template og ikke TimeLapse Pro.
 
-**Risiko:** Nye udviklere, revisorer eller kunder får ikke korrekt build/run/security-overblik.
-
-**Foreslået rettelse:** Erstat med projekt-README: arkitektur, lokale services, testkommandoer, Edge/Headend setup, secret handling, signing og compliance-dokumentlink.
+**Rettelse:** Repo-rod `README.md` erstattet med reelt projekt-README (formål/status, mappestruktur, lokal opsætning for headend/UI/edge, test-kommandoer, pointer til `Dokumentation/00_START_HER.md`, kort SABSA/ISO 27001/IEC 62443/CRA/GDPR/NIS2/AI Act-afsnit). Se GO_LIVE_CHECKLIST_v10.md H-06.
 
 ## Foreslået første rettelsespakke
 
