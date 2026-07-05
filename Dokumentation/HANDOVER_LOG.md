@@ -4372,3 +4372,51 @@ person vide".
   Peter at undersøge direkte, da det forhindrer enhver kodetest/`git status`/`py_compile`-
   verifikation fra Claudes periodiske tjek — ikke noget Claude kan diagnosticere eller rette
   uden selv at have en fungerende sandbox.
+
+### Handover 2026-07-05 (periodisk tjek #28) — fra Claude: SEC-012 (DPIA/GDPR-evidens) krydstjekket og rettet + systemisk fejl i §3-optællingstabellen opdaget (ikke rettet)
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md —
+  seneste entry er tjek #27 (Claude selv), ingen nye Codex-entries siden da, og C-03-spørgsmålet
+  (super_admin-password-bekræftelse, rejst i tjek #24) står fortsat ubesvaret — ikke noget Claude
+  kan afklare uden Peter. `mcp__workspace__bash` fejlede igen ved gentagne forsøg (samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som i tjek #21–#27, nu 8.
+  sammenhængende runde uden sandbox-adgang) — kunne derfor hverken køre `git status`, teste eller
+  køre andet denne runde. Gennemgik `RISK_ASSESSMENT_v10.md` §11 og `GO_LIVE_CHECKLIST_v10.md` §J:
+  ingen ændringer siden tjek #27, og alle resterende P0/P1-punkter kræver enten live-adgang eller
+  en Peter-beslutning — intet nyt Claude kan rykke sikkert der denne runde.
+- **Fundet:** Fulgte tjek #26/#27's opfølgningspunkt op: krydstjekkede SEC-012 ("DPIA og
+  GDPR-evidens", stod som 🔴 Mangler uden kommentar) i `KRAVREGISTER_og_STATUS_v10.md` mod
+  `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` (skrevet 2026-07-04 nat) og `GO_LIVE_CHECKLIST_v10.md`
+  §G-01/G-02/G-04. Fandt at et konkret DPIA-skabelon, retention-policy-design, subprocessor-liste
+  og oplysningspligt-udkast faktisk eksisterer siden 2026-07-04 — men intet af det er juridisk
+  godkendt, retention er kun designet (ikke kodet), og databehandleraftale (G-03)/brudprocedure
+  (G-06)/sløring-workflow (UI-010) er slet ikke startet. En blank "🔴 Mangler" gav altså et
+  vildledende billede (som om intet arbejde var lavet) — samme docs-lag-mønster som CAP-008/
+  ADM-012 (tjek #25), ADM-010-kollisionen (tjek #26) og UI-011 (tjek #27). Ved samme lejlighed
+  talte jeg de faktiske ID-rækker i flere kategorier efter og fandt en ældre, systemisk fejl i
+  §3-oversigtstabellen: Capture har 10 fysiske CAP-rækker, men Total-kolonnen siger 11; Admin UI
+  har 13 fysiske ADM-rækker (uændret siden tjek #26), men Total-kolonnen siger 12; Sikkerhed har
+  14 fysiske SEC-rækker, men Total-kolonnen siger 16. Fejlen ser ud til at stamme fra dokumentets
+  oprindelse (2026-07-02), ikke fra nogen af de efterfølgende punktrettelser, og hænger sammen med
+  tjek #26's uafklarede "✅ Delvist" vs. "🟡 Delvist"-konvention.
+- **Udført:** Rettet SEC-012 til "🟡 Delvist" med udførlig kommentar (henviser til DPIA-dokumentet,
+  G-01/G-02/G-03/G-06, R12, UI-010). Justerede Sikkerheds-rækken i §3 (Delvist 3→4, Mangler 6→5)
+  og Total-linjen/procentsatserne (Delvist 20→21, Mangler 16→15, 23%/19%→24%/17%). Tilføjede en
+  dateret fodnote der både dokumenterer denne rettelse OG eksplicit flagger den nyopdagede,
+  bredere §3-optællingsfejl (Capture/Admin UI/Sikkerhed) som en UDESTÅENDE, IKKE rettet
+  observation — besluttede bevidst IKKE at "rette" de øvrige kategorirækker denne runde, da en
+  korrekt optælling kræver Peters beslutning om "✅ Delvist" vs. "🟡 Delvist"-konventionen først,
+  og en punktvis gæt-rettelse uden den beslutning risikerer at gøre tabellen mere, ikke mindre,
+  forkert. Ren tekstændring, ingen kode rørt; ingen test nødvendig ud over kildelæsning af
+  `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`/`GO_LIVE_CHECKLIST_v10.md` §G og manuel optælling af
+  ID-rækker.
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`.
+- **Går videre til:** Samme udestående liste som tjek #27 (live multi-device-rollout-test, Peters
+  §6-beslutning om CA/mTLS, R17-smoketest, §K OS offline-artifact E2E, device-decommission-
+  beslutning, Gemini/Vertex-region-bekræftelse, C-03-bekræftelse, P0 #5 HMAC/stale credentials).
+  Nye/opdaterede opmærksomhedspunkter: (1) §3-oversigtstabellens systemiske rækkeoptællingsfejl
+  (Capture, Admin UI, Sikkerhed — se ovenfor) bør løses i én samlet, dedikeret runde efter Peter
+  har besluttet "✅ Delvist" vs. "🟡 Delvist"-konventionen (tjek #26's punkt), ikke punktvist;
+  (2) `mcp__workspace__bash` har nu fejlet 8 runder i træk med samme `useradd`-fejl — hvis dette
+  er en rettelig infrastrukturfejl (corrupt sandbox-image e.l.), er det fortsat værd for Peter at
+  undersøge direkte, da det forhindrer al kodetest/`git status`-verifikation fra Claudes
+  periodiske tjek.

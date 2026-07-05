@@ -119,7 +119,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | SEC-009 | Intern CA + client-certs | 🔴 Mangler | |
 | SEC-010 | Disk-kryptering på Edge | 🔴 Mangler | |
 | SEC-011 | fail2ban | 🟡 Delvist | Konfigurationsfiler i Dokumentation/; drift-status ukendt |
-| SEC-012 | DPIA og GDPR-evidens | 🔴 Mangler | |
+| SEC-012 | DPIA og GDPR-evidens | 🟡 Delvist (2026-07-05, periodisk tjek #28) | DPIA-skabelon, retention-policy-design, subprocessor-liste og oplysningspligt-udkast skrevet 2026-07-04 nat (se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`) — men alt sammen teknisk/organisatorisk UDKAST, ikke juridisk godkendt; retention er kun designet, IKKE implementeret i kode (G-02 fortsat 🔴); databehandleraftale (G-03) og brudprocedure (G-06) kræver jurist og er slet ikke startet; sløring/redaction-workflow (UI-010) mangler helt. Se `RISK_ASSESSMENT_v10.md` R12 (fortsat 🔴 Åben) og `GO_LIVE_CHECKLIST_v10.md` §G. |
 | SEC-013 | Incident response procedure | 🔴 Mangler | |
 | SEC-014 | Vulnerability handling og CVE-process | 🔴 Mangler | |
 
@@ -149,15 +149,17 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | Admin UI | 8 | 3 | 1 | 12 |
 | Update/Edge | 6 | 7 | 2 | 15 |
 | Provisioning | 5 | 3 | 2 | 10 |
-| Sikkerhed | 7 | 3 | 6 | 16 |
+| Sikkerhed | 7 | 4 | 5 | 16 |
 | Konfiguration | 6 | 2 | 3 | 11 |
-| **Total** | **50** | **20** | **16** | **86** |
+| **Total** | **50** | **21** | **15** | **86** |
 
-**Samlet implementeringsgrad:** 58% fuldt implementeret, 23% delvist, 19% mangler.
+**Samlet implementeringsgrad:** 58% fuldt implementeret, 24% delvist, 17% mangler.
 
 *(Opdateret 2026-07-05, Claude periodisk tjek #25: CAP-008/ADM-012 rettet fra "🔴 Mangler" til "✅ Implementeret" — GDPR download-/adgangslog pr. billede blev implementeret og testverificeret 2026-07-05 (`CaptureAccessLog`, se `GO_LIVE_CHECKLIST_v10.md` §G-05), men dette register var ikke opdateret siden 2026-07-02 og viste stadig det gamle "mangler"-billede. Øvrige rækker i dette dokument er IKKE fuldt krydstjekket denne runde — kun disse to konkrete, verificerbare punkter.)*
 
 *(Opdateret 2026-07-05, Claude periodisk tjek #27: UI-011 rettet fra "🔴 Mangler" til "✅ Implementeret" — fuldt end-to-end downloadbar timelapse-video (FFmpeg-render + download-endpoint + frontend-UI) fandtes allerede, men var aldrig registreret her. Samtidig rettet en separat, ældre regnefejl i "Kundevendt UI"-rækken: UI-009 (MFA/WebAuthn) blev markeret ✅ Implementeret allerede 2026-07-02 (samme dag registret blev skrevet), men oversigtstabellen var aldrig opdateret til at tælle den med — rækken viste 8/0/3 selvom de faktiske ID-statusser altid har summeret til 9/0/2 (nu 10/0/1 efter UI-011). Total-linjen og procentsatserne er justeret tilsvarende (48→50 implementeret, 18→16 mangler). SEC-012 (DPIA og GDPR-evidens) blev IKKE krydstjekket denne runde — stadig udestående fra tjek #26's opfølgningsliste.)*
+
+*(Opdateret 2026-07-05, Claude periodisk tjek #28: SEC-012 (DPIA og GDPR-evidens) krydstjekket mod `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` og rettet fra "🔴 Mangler" (uden kommentar) til "🟡 Delvist" — skabelon/design/udkast for DPIA, retention-policy, subprocessor-liste og oplysningspligt blev skrevet 2026-07-04 nat, men intet er juridisk godkendt, retention er ikke kodet, og databehandleraftale/brudprocedure/redaction-workflow mangler stadig helt (se ny kommentar på SEC-012-rækken samt `RISK_ASSESSMENT_v10.md` R12, fortsat 🔴 Åben). Sikkerheds-rækken justeret tilsvarende (Delvist 3→4, Mangler 6→5); Total-linjen og procentsatserne opdateret (Delvist 20→21, Mangler 16→15, 23%/19%→24%/17%). **Ny, IKKE rettet observation denne runde:** ved optælling af de faktiske ID-rækker fandt jeg at flere kategori-rækkers "Total"-kolonne ikke matcher det reelle antal ID'er i kategorien — Capture har 10 fysiske CAP-*-rækker, men Total-kolonnen siger 11; Admin UI har 13 fysiske ADM-*-rækker (bekræftet uændret siden tjek #26), men Total-kolonnen siger 12; Sikkerhed har 14 fysiske SEC-*-rækker (SEC-001–014), men Total-kolonnen siger 16 — også efter denne rundes rettelse (7+4+5=16), dvs. den samme type fejl findes her og er IKKE løst af min rettelse ovenfor, blot forskudt internt i rækken (Implementeret-tallet 7 er sandsynligvis også for højt). Disse tre mismatch ser ud til at være en ældre, systemisk unøjagtighed i §3-tabellen (formentlig fra dokumentets oprindelse 2026-07-02, forud for alle efterfølgende punktvise rettelser) og hænger sammen med den uafklarede "✅ Delvist" vs. "🟡 Delvist"-konvention fra tjek #26 — en fuld, korrekt optælling kræver først en Peter-beslutning om konvention, derefter én sammenhængende gennemgang af alle ~86 rækker på én gang (punktvise rettelser risikerer at gøre tabellen internt inkonsistent, som det fremgår her). Foreslås som en dedikeret fremtidig runde, ikke endnu en punktrettelse.)*
 
 ---
 
