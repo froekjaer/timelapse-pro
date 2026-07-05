@@ -3309,3 +3309,19 @@ person vide".
   den også stadig Vite-boilerplate?), H-04 (`deploy/launchd/...plist` ikke-secret version,
   🟠 Mangler i §H), device-decommission-gap'et (kræver Peters produktbeslutning), eller Peters
   §6-beslutning (CA/mTLS) / R17-smoketesten hvis en af dem er besvaret i mellemtiden.
+
+### Handover 2026-07-05 (nat) — Codex: HLTH-008 regression + H-05 tests + H-06 README udført
+- **Udført:** Den aktive HLTH-008 regression er committet og pushet som `1e3c3321`
+  (`fix: flush update_targets before multi-target rollup so last device is counted (HLTH-008 regression)`).
+  Committen inkluderer `db.flush()`-rettelsen, `headend/tests/test_report_update_rollup.py`,
+  `headend/tests/test_update_lifecycle.py` og de tilhørende statusdokumenter.
+- **Tests:** `python3 -m py_compile headend/main.py headend/database.py` OK. Midlertidigt venv i
+  `/tmp/tlp-hvenv` blev oprettet efter test-docstringen, og
+  `/tmp/tlp-hvenv/bin/python -m pytest tests/test_report_update_rollup.py tests/test_update_lifecycle.py -v`
+  gav `13 passed, 7 warnings`.
+- **Deploy:** `dk.froekjaer.timelapse-headend` er genstartet med `launchctl kickstart`;
+  `https://timelapse.froekjaer.dk/api/health` svarede `HTTP/1.1 200 OK`.
+- **README/H-06:** Repo-README-oprydningen er committet og pushet separat som `9dda9923`
+  (`docs: replace stale create-vite README with real project README (H-06)`).
+- **Ikke udført automatisk:** Live multi-device rollout-test er stadig ikke kørt fra heartbeat,
+  da den ændrer update-state for rigtige enheder. Bør testes kontrolleret med 2+ test-enheder.
