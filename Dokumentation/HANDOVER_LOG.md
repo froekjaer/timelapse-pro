@@ -2843,3 +2843,18 @@ person vide".
   denne rettelse og om diagnostics-panelet rent faktisk viser data igen; ellers næste punkt er
   Peters §6-beslutning (intern CA/mTLS) hvis den er truffet, eller den udestående R17
   live-smoketest.
+
+### Handover 2026-07-05 (nat) — Codex: diagnostics device-detail fix deployet
+- **Udført:** Claudes diagnostics/R14-rettelse er committet og pushet som `4de7e918`
+  (`fix: serialize diagnostics in device detail response + R14 non-enforceable UI`).
+- **Verifikation før commit:** `python3 -m py_compile headend/main.py headend/database.py` OK og
+  `cd timelapse-ui && npx tsc -b` OK.
+- **Drift:** `dk.froekjaer.timelapse-headend` er genstartet med `launchctl kickstart`;
+  `https://timelapse.froekjaer.dk/api/health` svarede `HTTP/1.1 200 OK`. DB-migration v14 kører
+  automatisk i startup.
+- **UI-build:** `npm run build` lykkedes på Mac'en. Kun kendte warnings:
+  `module.register()` deprecation, ineffektiv dynamic import af `src/api/client.ts`, og stor
+  JS chunk efter minificering.
+- **Ikke udført automatisk:** UI-stikprøve på DevicePage/Statistik er ikke klikket igennem fra
+  heartbeat, da API'en kræver autentificeret session/MFA. Bør tjekkes manuelt i UI'et: at
+  Hardware/Kamera-diagnostik-panelet igen viser CPU/SSD/batteri/kamera-drift på et par enheder.
