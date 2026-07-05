@@ -174,6 +174,40 @@ Your job is to look at the image like an attentive human guard would and describ
 }}"""
 
 
+def validate_batch_bucket_region(vertex_region: str, bucket_region: str) -> None:
+    """GDPR-guard (R12/DPIA, se Dokumentation/DPIA_SKABELON_OG_RETENTION_POLICY_v1.md §4):
+    et GCS-bucket brugt til Vertex AI batch-jobs SKAL ligge i samme region-familie som
+    selve Vertex-endpointet, ellers brydes databehandlings-garantien på data-at-rest
+    under batch-kørslen (data kunne ende uden for EU selvom Vertex-kaldet selv går til
+    en EU-region).
+
+    Delt mellem to kaldesteder der ELLERS nemt kunne drifte fra hinanden:
+    `headend/main.py` (API-endepunktet bag "Kør AI-batch nu" i UI'et) og
+    `headend/ai/ai_batch_submit.py` (CLI-scriptet til manuel bulk re-tag). Før dette
+    blev delt ud (2026-07-05, Claude periodisk tjek) havde kun API-stien tjekket dette
+    — CLI-scriptet kunne sende et helt bulk-batch-job til et forkert-region bucket uden
+    nogen advarsel.
+
+    Bevidst IKKE fail-closed hvis `bucket_region` er tom (ikke konfigureret) — se
+    RISK_ASSESSMENT_v10.md R12: dette er et no-op i det tilfælde, ikke en fejl, for at
+    undgå at et hidtil fungerende, korrekt opsat batch-job pludselig stopper, fordi
+    nogen aldrig har udfyldt det valgfrie 'gemini_gcs_bucket_region'-felt. Tjekker kun
+    at de to regioner er i samme "familie" (fx begge 'europe-*'), IKKE at de faktisk er
+    i EU — det er stadig operatørens ansvar at selve Vertex-regionen (`GOOGLE_CLOUD_LOCATION`
+    / 'gemini_location') er sat til en EU-region i første omgang.
+
+    Rejser ValueError (med samme, danske fejltekst begge steder) hvis begge er sat og
+    ikke matcher. Ellers intet (ingen returværdi).
+    """
+    vertex_region = (vertex_region or "").strip().lower()
+    bucket_region = (bucket_region or "").strip().lower()
+    if bucket_region and vertex_region and not bucket_region.startswith(vertex_region.split("-")[0]):
+        raise ValueError(
+            f"GCS-bucket region ({bucket_region}) matcher ikke Vertex AI region ({vertex_region}) — "
+            "stoppet for at undgå databehandling uden for EU. Bekræft 'gemini_gcs_bucket_region' i Indstillinger → AI."
+        )
+
+
 class GeminiVisionService:
     def __init__(
         self,

@@ -11183,16 +11183,14 @@ def start_ai_batch_job(
             )
         # GDPR: bucket SKAL ligge i samme EU-region som Vertex-endpointet, ellers
         # brydes databehandlings-garantien på data-at-rest under batch-kørslen.
-        bucket_region = _get_setting(db, "gemini_gcs_bucket_region", "").strip().lower()
-        vertex_region = (svc.location or "").lower()
-        if bucket_region and vertex_region and not bucket_region.startswith(vertex_region.split("-")[0]):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"GCS-bucket region ({bucket_region}) matcher ikke Vertex AI region ({vertex_region}) — "
-                    "stoppet for at undgå databehandling uden for EU. Bekræft 'gemini_gcs_bucket_region' i Indstillinger → AI."
-                )
-            )
+        # Delt guard (også brugt af ai_batch_submit.py CLI) — se
+        # ai/gemini_service.validate_batch_bucket_region() for begrundelse/historik.
+        from ai.gemini_service import validate_batch_bucket_region
+        bucket_region = _get_setting(db, "gemini_gcs_bucket_region", "").strip()
+        try:
+            validate_batch_bucket_region(svc.location, bucket_region)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     # NB (Fase 3, 2026-07-03): samme scope-afgrænsning som post-processing-jobbet
     # ovenfor — se den note for begrundelse.

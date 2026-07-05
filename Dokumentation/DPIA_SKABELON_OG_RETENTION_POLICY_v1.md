@@ -171,6 +171,15 @@ hvordan det lukkes:
 skridt — hvis den IKKE er sat til en EU-region, er dette et selvstændigt, akut punkt
 der skal rettes (potentiel tredjelandsoverførsel uden gyldigt overførselsgrundlag).
 
+**Opdatering 2026-07-05 (Claude, periodisk tjek):** Kodetjek fandt at Vertex-region
+defaulter til `europe-west1` hvis ikke sat, og at et match-tjek mellem GCS-bucket-region
+og Vertex-region allerede fandtes i UI-API'en — men IKKE i `ai_batch_submit.py`
+(CLI-bulk-script). Logikken er nu delt og håndhæves ens begge steder (se
+`RISK_ASSESSMENT_v10.md` R12 for detaljer, 6 nye tests i
+`headend/tests/test_gemini_region_guard.py`). Dette lukker kun den tekniske
+konsistens mellem de to kodestier — selve anbefalingen ovenfor (bekræft den FAKTISKE
+produktions-værdi) er fortsat åben og kræver live-adgang, som Claude ikke har.
+
 ---
 
 ## 5. Udkast til oplysningspligt (GDPR art. 13/14) [KUNDE, skabelon-tekst]

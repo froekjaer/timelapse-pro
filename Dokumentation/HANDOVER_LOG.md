@@ -3465,3 +3465,135 @@ person vide".
   (CA/mTLS) / R17-smoketesten, eller K-linjen "OS offline-artifact update E2E" / "Change ticket
   med artifact/SBOM/rollback" i §K (begge stadig "Åben"/"Delvist" og uundersøgt af Claude indtil
   videre).
+
+### Handover 2026-07-05 04:4x — fra Claude (periodisk tjek): H-02 ESLint-gate funktionelt verificeret i sandbox (begge veje)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -3` bekræftede at forrige rundes H-04-
+  docs-sync er committet (`775031b1`, af Peter/Codex). `git status --short` viste kun den kendte
+  untracked `claude_proxy.py`. Ingen ny Codex-entry siden sidst.
+- **Fund/valg:** Gennemgik §11 og §J/§K igen. De fleste resterende P0/P1-punkter kræver enten
+  live-adgang (multi-device-rollout-test, node-agent, R14-hardware) eller en produktbeslutning
+  (device-decommission, §6 CA/mTLS). H-02 (ESLint ratchet-gate) står med "Resterer: bekræfte
+  grønt ESLint-gate-step i en faktisk GitHub Actions-kørsel" — jeg har ikke GitHub-adgang
+  (`curl https://api.github.com/repos/froekjaer/timelapse-pro/actions/runs` → `404`, privat
+  repo, ingen token i sandboxen), så selve CI-kørslen kan jeg fortsat ikke bekræfte. Jeg kunne
+  til gengæld verificere gate-*mekanismen* selv, da `timelapse-ui/node_modules` allerede findes
+  i sandboxen — noget ingen tidligere runde har gjort.
+- **Udført (kun test/verifikation, ingen kode/config rørt):**
+  1. Kørte `npm run lint:gate` i `timelapse-ui/` med den committede baseline (222): output
+     `204 fejl, 18 advarsler (222 i alt)` → `✅ Uændret — ingen nye ESLint-problemer`, exit 0.
+     Bekræfter at det faktiske, aktuelle ESLint-problemtal i koden er PRÆCIS det tal der står i
+     `GO_LIVE_CHECKLIST_v10.md` H-02 og `.eslint-baseline.json` — ingen drift siden 2026-07-05.
+  2. For at bekræfte at gaten reelt kan FEJLE (ikke kun altid returnere 0): lavede en midlertidig
+     lokal kopi af `.eslint-baseline.json` med `total` sænket til 100, kørte scriptet direkte
+     (`node scripts/eslint-gate.mjs`) → korrekt `❌ ESLint-gate fejlede: 222 problemer > baseline
+     100`, exit code 1. Gendannede øjeblikkeligt den oprindelige fil fra en backup-kopi
+     (`cp /tmp/.eslint-baseline.json.bak .eslint-baseline.json`) og bekræftede med
+     `git status --short`/`git diff --stat` at filen er byte-for-byte uændret (tom diff) — ingen
+     spor efterladt i working tree.
+  3. Læste `.github/workflows/ci.yml` igennem: `ui-check`-jobbet har `working-directory:
+     timelapse-ui`, kører `npm ci` → `npx tsc --noEmit` → `npm run lint:gate` → `npm run build` i
+     den rækkefølge — wiringen matcher det scriptet forventer (relative stier via `__dirname`),
+     ingen mismatch fundet.
+- **Konklusion:** Selve H-02-mekanismen (script + baseline + CI-wiring) er nu verificeret
+  fungerende i begge retninger (pass ved uændret/forbedret tal, fail ved forværring), og det
+  dokumenterede baseline-tal er bekræftet korrekt mod den faktiske kodebase. Det eneste der
+  reelt resterer for H-02 er at se en RIGTIG grøn kørsel i GitHub Actions selv (kræver GH-adgang,
+  som kun Peter/Codex har) — ingen ændring af status i `GO_LIVE_CHECKLIST_v10.md`, da denne
+  runde ikke tilføjer ny information om selve GH Actions-kørslen, kun om at koden bag den er
+  korrekt. Ingen dokumentopdatering skrevet denne runde for at undgå at overdrive hvad der reelt
+  er bekræftet.
+- **Verifikation:** Ingen `.py`/`.ts`/config-filer ændret varigt (baseline-testen blev udført og
+  fuldt reverteret inden for samme kommando-sekvens, verificeret med tom `git diff`). Ingen
+  commit/push (samme konvention).
+- **Går videre til:** næste periodiske runde kan enten spørge Peter/Codex direkte om GH Actions-
+  status for H-02/H-05 (den eneste resterende blocker for begge), eller kigge på den fortsat
+  udestående live multi-device-rollout-test, device-decommission-gap'et, Peters §6-beslutning
+  (CA/mTLS) / R17-smoketesten, eller §K-linjerne "OS offline-artifact update E2E" og "Change
+  ticket med artifact/SBOM/rollback" (begge stadig uundersøgt af Claude).
+
+### Handover 2026-07-05 05:1x — fra Claude (periodisk tjek): lukkede et reelt GDPR-inkonsistens-hul i Gemini/Vertex batch-region-tjek (R12/DPIA §4)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -3` bekræftede at forrige rundes H-04-
+  docs-sync (`775031b1`) stadig er seneste commit — ingen ny Codex-entry siden sidst.
+  `git status --short` viste kun den kendte untracked `claude_proxy.py`. Gennemgik §11 igen;
+  de fleste P0/P1-punkter kræver stadig enten live-adgang eller en produktbeslutning. Valgte i
+  stedet at følge op på DPIA-dokumentets (`DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` §4)
+  eksplicitte anbefaling: "Bekræft Gemini/Vertex AI's faktiske region-indstilling som
+  allerførste skridt" — en tidligere periodisk runde havde flagget den som ubesvaret.
+- **Fund:** Kunne ikke bekræfte selve den LIVE produktionsværdi (ingen adgang til Mac Mini'ens
+  miljøvariabler), men fandt ved kodegennemgang en reel, selvstændig inkonsistens: Vertex-region
+  defaulter til `europe-west1` i `GeminiVisionService.__init__` (`headend/ai/gemini_service.py`),
+  og `POST /api/admin/ai-batch/...`-endepunktet i `headend/main.py` (bag "Kør AI-batch nu" i
+  UI'et) havde allerede et tjek der stopper batch-jobbet, hvis det (valgfrit) konfigurerede
+  `gemini_gcs_bucket_region` ikke matcher Vertex-regionen — men `headend/ai/ai_batch_submit.py`
+  (CLI-scriptet til manuel bulk re-tag, som kører direkte på Mac Mini'en og udfører PRÆCIS samme
+  Vertex-batch-upload til samme GCS-bucket) havde INGEN tilsvarende kontrol. En operatør der
+  brugte CLI-scriptet i stedet for UI-knappen (fx til en stor bagudrettet re-tag-kørsel, som
+  scriptets egen docstring lægger op til) kunne dermed have sendt et helt batch-job til et
+  forkert-region GCS-bucket uden nogen advarsel — samme GDPR-risiko som UI-stien allerede var
+  beskyttet imod.
+- **Rettet (kode + tests, ikke kun docs denne gang):**
+  1. Udtrak den delte logik til `validate_batch_bucket_region(vertex_region, bucket_region)` i
+     `headend/ai/gemini_service.py` — samme adfærd/fejltekst som det oprindelige tjek, nu med
+     udførlig docstring om hvorfor (no-op hvis `bucket_region` er tom — bevidst ikke fail-closed,
+     se `RISK_ASSESSMENT_v10.md` R12).
+  2. `headend/main.py`: erstattede det inline tjek med et kald til den delte funktion (adfærd
+     uændret — samme HTTPException 400, samme dansk fejltekst).
+  3. `headend/ai/ai_batch_submit.py`: tilføjede det manglende tjek i `build_gemini()` + fangede
+     `ValueError` pænt i `main()` (udskriver `❌ <fejl>` og stopper, ligesom scriptets øvrige
+     fejlhåndtering — ingen uhåndteret traceback).
+  4. Ny testfil `headend/tests/test_gemini_region_guard.py` — 6 kontrakt-tests: matchende
+     region-familie passerer, mismatch (begge retninger) rejser `ValueError`, tom
+     bucket-/vertex-region er no-op (ikke fail-closed), case/whitespace-ufølsomhed.
+- **Dokumentation opdateret (samme runde):** `RISK_ASSESSMENT_v10.md` R12 (ny
+  TILFØJELSE 2026-07-05), `GO_LIVE_CHECKLIST_v10.md` G-04, og
+  `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` §4 — alle tre gjort eksplicit om at kun den
+  KODE-mæssige konsistens mellem UI-API og CLI er lukket denne runde, IKKE selve den
+  underliggende anbefaling (bekræfte den faktiske produktions-region), som fortsat kræver
+  live-adgang og er efterladt åben.
+- **Verifikation:** Oprettede en frisk, midlertidig venv i sandboxen (repoets egen
+  `headend/venv` er macOS-kompileret og kan ikke køre i denne Linux-sandbox — `Exec format
+  error`), installerede `httpx` + samme pinnede test-deps som H-05-testene bruger
+  (`fastapi==0.136.1`, `sqlalchemy==2.0.49`, `python-jose[cryptography]==3.5.0`, `bcrypt==5.0.0`,
+  `passlib==1.7.4`, `slowapi==0.1.9`, `python-multipart==0.0.27`, `python-dotenv`, `pytest`).
+  Kørte `python3 -m py_compile` på alle fire rørte `.py`-filer (ren) og HELE test-suiten i
+  `headend/tests/` — **19/19 bestået** (13 eksisterende H-05-tests uændrede/upåvirkede + 6 nye).
+  Ingen live-kald til Google/Vertex/GCS foretaget noget sted i denne verifikation (ren
+  funktionstest af region-streng-sammenligningen, ingen netværksadgang).
+- **Ikke gjort — bevidst:** Ingen commit/push (samme konvention — Peter/Codex committer selv
+  nedenfor). Ingen tilføjelse af en egentlig EU-region-allowliste (fx eksplicit liste over
+  `europe-west1/west2/west3/...`) — det nuværende tjek verificerer kun at bucket- og
+  Vertex-region er i samme "familie" (matcher hinanden), ikke at de faktisk ER i EU; at stramme
+  dette yderligere er en selvstændig, lidt større ændring og efterlades som forslag nedenfor,
+  da den kunne ændre adfærd for en korrekt konfigureret, ikke-EU testopsætning uden forudgående
+  aftale med Peter.
+- **Codex/Peter: kør venligst når I har et vindue** (kode + tests, ikke kun docs — læs
+  diff'en igennem inden merge, da dette rører `headend/main.py`s AI-batch-endepunkt):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git diff headend/main.py headend/ai/gemini_service.py headend/ai/ai_batch_submit.py
+  git add headend/ai/gemini_service.py headend/ai/ai_batch_submit.py headend/main.py \
+          headend/tests/test_gemini_region_guard.py \
+          Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/GO_LIVE_CHECKLIST_v10.md \
+          Dokumentation/DPIA_SKABELON_OG_RETENTION_POLICY_v1.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "fix: enforce GDPR bucket-region guard in ai_batch_submit.py CLI (was API-only)"
+  git push
+  # Efter deploy: genstart headend som normalt og bekræft /api/health 200 (ren refaktorering
+  # af main.py's eksisterende tjek, men rører kritisk AI-batch-kode — værd at dobbelttjekke).
+  ```
+  **Separat, ikke-hastende opfølgning (kræver Peters beslutning, ikke kode i dag):** confirm
+  den faktiske `GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region`-værdi i produktion rent
+  faktisk er en EU-region (`grep -i GOOGLE_CLOUD_LOCATION /etc/timelapse/headend.env` eller
+  tilsvarende på Mac Mini'en) — dette er den del af DPIA §4-anbefalingen som stadig kræver
+  live-adgang og ikke er dækket af denne rundes kodeændring.
+- **Filer rørt:** `headend/ai/gemini_service.py`, `headend/ai/ai_batch_submit.py`,
+  `headend/main.py`, `headend/tests/test_gemini_region_guard.py` (ny),
+  `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`,
+  `Dokumentation/DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`.
+- **Går videre til:** næste periodiske runde bekræfter om denne commit er committet/pushet og
+  om headend blev genstartet/health-tjekket efter deploy; ellers kan den se på den fortsat
+  udestående live multi-device-rollout-test, device-decommission-gap'et, Peters §6-beslutning
+  (CA/mTLS) / R17-smoketesten, §K's "OS offline-artifact update E2E"/"Change ticket"-linjer,
+  eller den separate opfølgning ovenfor om at bekræfte den faktiske Gemini/Vertex-region i
+  produktion.

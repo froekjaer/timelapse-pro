@@ -123,7 +123,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | G-01 | DPIA udfyldt for hvert aktiv kunde-site | 🟠 Skabelon klar (2026-07-04) — mangler udfyldelse pr. site + juridisk godkendelse |
 | G-02 | Retention policy konfigureret pr. kamera | 🔴 Design klar (2026-07-04) — IKKE implementeret i kode endnu |
 | G-03 | Databehandleraftale med kunden | 🔴 Blocker for første kunde — kræver jurist, ikke startet |
-| G-04 | Subprocessor-liste (Google Cloud/Gemini) offentliggjort | 🟠 Udkast klar (2026-07-04) — Gemini/Vertex EU-region skal bekræftes i faktisk deployment |
+| G-04 | Subprocessor-liste (Google Cloud/Gemini) offentliggjort | 🟠 Udkast klar (2026-07-04). 2026-07-05 (Claude): kode håndhæver nu at GCS-bucket-region matcher Vertex-region i BEGGE indgange (UI-API + CLI-bulk-script, se `RISK_ASSESSMENT_v10.md` R12) — men den faktiske PRODUKTIONS-værdi af `GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region` er stadig ikke bekræftet at være EU (kræver live-adgang, ikke gjort af Claude) |
 | G-05 | Download/adgangslog pr. billede implementeret | 🟠 Anbefalet |
 | G-06 | Procedure for databrud (Art. 33/34, 72t) dokumenteret | 🟠 Anbefalet |
 | G-07 | Oplysningspligt til registrerede (Art. 13/14) | 🟠 Skitse-tekst klar (2026-07-04) — kræver juridisk godkendelse |

@@ -36,7 +36,7 @@ from sqlalchemy.orm import sessionmaker
 from settings_helper import get_setting
 from repositories    import TagRepository
 from capture_context import build_capture_context, format_context_block
-from gemini_service  import GeminiVisionService
+from gemini_service  import GeminiVisionService, validate_batch_bucket_region
 from database        import AiBatchJob
 
 engine = create_engine(DATABASE_URL)
@@ -123,6 +123,12 @@ def build_gemini(db, model_override=None):
     gcs_bucket = ""
     if getattr(svc, "is_vertex", False):
         gcs_bucket = (_setting(db, "gemini_gcs_bucket", "") or "").strip()
+        # GDPR-guard (samme som API-stien i headend/main.py — se
+        # gemini_service.validate_batch_bucket_region() for begrundelse). Denne CLI
+        # havde IKKE dette tjek før 2026-07-05 (Claude, periodisk tjek), selvom den
+        # udfører præcis samme Vertex-batch-upload som API-endepunktet.
+        bucket_region = (_setting(db, "gemini_gcs_bucket_region", "") or "").strip()
+        validate_batch_bucket_region(svc.location, bucket_region)  # rejser ValueError ved mismatch
     return svc, model, gcs_bucket
 
 
@@ -161,7 +167,10 @@ def main():
     print(f"\n{'='*64}\n  Bulk AI re-tag via Gemini Batch (auto-chunked)\n{'='*64}")
     print(f"  DB: {DATABASE_URL}\n  SFTP: {SFTP_BASE}\n  Chunk: {args.chunk_size}  Force: {args.force}  Kontekst: {not args.no_context}\n")
 
-    svc, model, gcs_bucket = build_gemini(db, args.model)
+    try:
+        svc, model, gcs_bucket = build_gemini(db, args.model)
+    except ValueError as exc:
+        print(f"  ❌ {exc}"); db.close(); return
     if not svc:
         print("  ❌ Ingen Gemini-credentials (Indstillinger → AI)."); db.close(); return
     if getattr(svc, "is_vertex", False) and not gcs_bucket:
