@@ -3684,3 +3684,64 @@ person vide".
   med **23 passed**.
 - **Drift:** Ingen live-genstart udført i denne runde, da ændringen kun rører oprettelse/binding
   af change tickets og Claude eksplicit noterede at den kan indgå i næste normale headend-deploy.
+
+### Handover 2026-07-05 (periodisk tjek #16) — fra Claude: formaliserede device-decommission-gap i RISK_ASSESSMENT/GO_LIVE (ren dokumentation, ingen kode)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -3` bekræftede `4b454b85` (docs: mark
+  change ticket SBOM re-sign fix committed) stadig er seneste commit — begge Claude-fixes fra de
+  seneste runder (Gemini/Vertex-region-guard, change ticket SBOM re-sign) er nu bekræftet
+  committet, pushet OG deployet af Codex (se de to "nat"-entries lige ovenfor: `78a4ab93`+
+  headend genstartet/health 200 OK kl. 03:18:48Z, samt `ff0797c9`). `git status --short` viste
+  kun den kendte untracked `claude_proxy.py` (uændret siden tidligere runder — ikke rørt, egen
+  fil, ikke en del af nogen Claude-arbejdsgang i denne runde). Ingen ny Codex-entry med et
+  spørgsmål til Claude siden sidst.
+- **Fund:** Gennemgik §11 (RISK_ASSESSMENT) og §J/§K (GO_LIVE_CHECKLIST) igen for stadig-åbne
+  P0/P1-punkter. De fleste kræver nu enten live-adgang (multi-device-rollout-test, OS offline
+  E2E, bekræftelse af faktisk Gemini/Vertex-produktionsregion) eller en produktbeslutning af
+  Peter (device-decommission-gap, §6 CA/mTLS Cloudflare-valg, stale credential
+  `TL-DCA63234D813`). Bemærkede at device-decommission-gap'et — fundet og testdokumenteret
+  allerede i periodisk tjek #9 (`headend/tests/test_update_lifecycle.py::test_device_removed_from_cmdb_mid_rollout_does_not_prematurely_flip`,
+  committet i `1e3c3321`) — var blevet nævnt som "næste skridt" i mindst 8 efterfølgende
+  handover-entries, men ALDRIG faktisk tilføjet til selve `RISK_ASSESSMENT_v10.md` (R06) eller
+  `GO_LIVE_CHECKLIST_v10.md` (§K) — kun til denne log. Et reelt, om end lille, dokumentationshul:
+  nogen der kun læser risikodokumentet (ikke hele HANDOVER_LOG) ville ikke vide gap'et findes.
+- **Rettet (kun dokumentation, ingen kode rørt):**
+  1. `RISK_ASSESSMENT_v10.md` R06 — ny afsnit der beskriver gap'et (device slettet fra CMDB midt
+     i en ikke-terminal rollout-status tælles ikke længere med i `_resolve_update_targets()`s
+     `total`, så rollup'en kan flippe til "deployed" selvom det fjernede device reelt aldrig
+     afsluttede), henviser til den eksisterende, committede kontrakttest, og lister de tre
+     løsningsmuligheder Peter skal vælge imellem (permanent blokering / nuværende adfærd /
+     "delvist bekræftet"-markering) — ingen af de tre implementeret endnu, bevidst, kræver hans
+     beslutning først (jf. tidligere runders "Ikke gjort — bevidst"). Residualrisiko-noten
+     opdateret til også at nævne dette gap som en betingelse for 🟢.
+  2. `GO_LIVE_CHECKLIST_v10.md` §K — "Per-target update status"-rækken udvidet med samme
+     information i kort form, med henvisning til R06 for detaljerne.
+  3. §12 dokumenthistorik-tabel i RISK_ASSESSMENT_v10.md fik en ny linje for denne runde.
+- **Verifikation:** Ren dokumentationsændring — ingen `.py`-filer rørt, så ingen
+  `py_compile`/pytest nødvendig denne gang. Kørte `git diff --stat` bagefter: kun de to
+  `.md`-filer ændret (21 linjer i RISK_ASSESSMENT, 1 linje i GO_LIVE_CHECKLIST), ingen
+  utilsigtede ændringer andre steder. Læste begge ændrede afsnit igennem én gang til efter
+  redigering for at bekræfte at de nye tekster ikke modsiger den eksisterende "Åbent"/
+  "Residualrisiko"-formulering.
+- **Ikke gjort — bevidst:** Ingen kodeændring til selve decommission-adfærden (kræver Peters
+  valg mellem de tre muligheder, se ovenfor — antages ikke). Ingen commit/push (samme konvention
+  — Peter/Codex committer selv, se nedenfor).
+- **Codex/Peter: kør venligst når I har et vindue (ren dokumentation, ufarlig at merge når som
+  helst):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git diff Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/GO_LIVE_CHECKLIST_v10.md
+  git add Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "docs: formalize device-decommission-mid-rollout gap in R06/GO_LIVE §K"
+  git push
+  # Ingen deploy/genstart nødvendig — ren dokumentation.
+  ```
+  **Kræver Peters beslutning (ikke hastende, men bør besvares før device-udskiftning bliver
+  hyppig i drift):** vælg én af de tre adfærdsmuligheder for device-decommission midt i en
+  rollout (se R06 i RISK_ASSESSMENT_v10.md) — så kan Claude/Codex implementere den i en
+  efterfølgende runde.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** næste periodiske runde bekræfter om denne docs-commit samt Peters
+  decommission-beslutning er kommet igennem; ellers samme liste som hidtil — live
+  multi-device-rollout-test, Peters §6-beslutning (CA/mTLS), R17-smoketesten, §K's "OS
+  offline-artifact update E2E", eller at bekræfte den faktiske Gemini/Vertex-produktionsregion.

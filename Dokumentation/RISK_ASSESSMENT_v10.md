@@ -210,9 +210,27 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   reelt flipper til "Deployet"/"Rullet tilbage" og ikke kun forbliver "Godkendt") er stadig IKKE
   kørt — bevidst ikke gjort fra periodisk heartbeat, da det ændrer update-state for rigtige
   enheder (kræver Peter/Codex, kontrolleret). OS E2E på aktiv Edge også stadig ikke testet.
+- **NYT, separat gap — device-decommission midt i rollout (fundet 2026-07-05, Claude, periodisk
+  tjek #9; formaliseret her 2026-07-05, periodisk tjek):** `_resolve_update_targets()` opgør
+  `total` ud fra devices der p.t. findes i CMDB. Hvis et device slettes fra CMDB (fx udskiftet/
+  decommissioned hardware, jf. R16-mønsteret) MENS det har en igangværende, ikke-terminal
+  rollout-status (fx `downloading`), forsvinder det fra `total`-optællingen — så snart de
+  RESTERENDE devices i rollout'en er terminale, flipper global status til `deployed`, selvom det
+  fjernede device reelt aldrig afsluttede sin installation. Dette er en anden mekanisme end
+  HLTH-008-flush-bugget (som nu er rettet) og opstår kun i det snævrere tilfælde at et device
+  fysisk forsvinder fra CMDB midt i en rollout — dokumenteret som en kontrakttest, der bekræfter
+  den faktiske (ikke hypotetiske) nuværende opførsel:
+  `headend/tests/test_update_lifecycle.py::test_device_removed_from_cmdb_mid_rollout_does_not_prematurely_flip`
+  (committet i `1e3c3321`). **Ikke rettet i kode** — kræver først en produktbeslutning af Peter,
+  da alle tre løsninger har reelle afvejninger: (a) tæl fjernede devices som permanent
+  "ikke-terminal" → kan blokere en rollout for evigt hvis decommission er hyppig, (b) udelad
+  fjernede devices fra `total` som nu (nuværende adfærd) → kan skjule at et device aldrig nåede at
+  fuldføre før det blev udskiftet, (c) log/marker rollup'en som "delvist bekræftet" når et device
+  forsvinder midt i en ikke-terminal status, uden at blokere den. Ingen af de tre er rettet endnu.
 - **Residualrisiko:** 🟡 6 (nedjusteret fra 🟠 8 2026-07-05 — kodefix + unit/contract-tests er nu
   committet, deployet og health-checket, så "stuck forever"-bugget er reelt lukket i produktion;
-  holdes på 🟡 og ikke 🟢 indtil en faktisk multi-device rollout er live-verificeret end-to-end)
+  holdes på 🟡 og ikke 🟢 indtil en faktisk multi-device rollout er live-verificeret end-to-end, og
+  indtil ovenstående decommission-gap er besluttet/lukket)
 
 ### R07 — Nøgle-kompromittering
 - **Status:** 🟡 Delvist kontrolleret
@@ -637,6 +655,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #8) | Claude: skrev en rigtig kontrakttest (`headend/tests/test_report_update_rollup.py`) mod den faktiske `report_update()`-kode (SQLite, ikke simulering) — startpunkt for GO_LIVE_CHECKLIST H-05. Testen afslørede en REGRESSION i den allerede deployede `61802951`-fix: manglende `db.flush()` betød at multi-target rollouts aldrig flippede til deployed/rolled_back, selv når alle devices var terminale (P1.4/R06/HLTH-008 genåbnet til P0). 1-linjes rettelse lavet og testverificeret (4/4 passed), IKKE committet/deployet endnu |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #11, docs-sync) | Claude: R06/§11 P1.4, `SYSTEM_HEALTH_REGISTER.md` HLTH-008/HLTH-015, `GO_LIVE_CHECKLIST_v10.md` H-05/H-06/§K og `KRAVREGISTER_og_STATUS_v10.md` UPD-012 opdateret — Codex har siden committet/pushet/deployet flush-rettelsen (`1e3c3321`, inkl. H-05-testene, 13/13 bestået) og README-oprydningen (`9dda9923`, H-06), samt genstartet headend og bekræftet health 200 OK (se HANDOVER_LOG "nat"-entry). Dokumenterne sagde stadig "IKKE committet endnu" og var dermed kommet bagud. R06/HLTH-008/UPD-012 nedjusteret fra P0/🟠 til P1/🟡 (kode er live, kun live multi-device-rollout-test resterer nu); HLTH-015 lukket ✅ |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #12) | Claude: bekræftede at forrige rundes docs-sync (P1.4/HLTH-008/H-05/H-06/UPD-012) er committet af Peter/Codex som `c7d409cb` — ingen uncommittede docs-ændringer længere. Fandt derefter et separat, uafhængigt stale-doc-fund i `GO_LIVE_CHECKLIST_v10.md` H-04 (ikke i denne fil): repo-plisten for headend var allerede omlagt til en secret-fri system-LaunchDaemon-version (`deploy/launchd/macos/dk.froekjaer.timelapse-headend.plist`, committet 2026-07-03 af Codex i `d7a952db`), men checklisten sagde stadig "🟠 Mangler". Rettet — se GO_LIVE_CHECKLIST_v10.md. Ingen ændring nødvendig i denne fil (RISK_ASSESSMENT), da VPEN-2026-003 (P2, plaintext secrets i `/etc/timelapse/headend.env` på disk, Keychain-migration) er en separat, fortsat reelt åben risiko, adskilt fra H-04s Git-hygiejne-scope |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #16) | Claude: formaliserede device-decommission-midt-i-rollout-gap'et i R06 (først fundet/testdokumenteret 2026-07-05 periodisk tjek #9, men aldrig tilføjet til selve risikodokumentet — flere efterfølgende runder havde flagget dette som udestående). Ingen kodeændring; ren dokumentation af en allerede committet, eksisterende kontrakttest samt de tre løsningsmuligheder Peter skal vælge imellem, før kode kan skrives |
 
 ---
 
