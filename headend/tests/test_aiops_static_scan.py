@@ -40,7 +40,11 @@ sys.path.insert(0, str(HERE))
 _TMP_DB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMP_DB.name}")
 
-from main import _aiops_scan_should_skip_path  # noqa: E402
+from main import (  # noqa: E402
+    _aiops_scan_should_skip_line,
+    _aiops_scan_should_skip_path,
+    _aiops_static_scan,
+)
 
 
 class TestAiopsScanShouldSkipPath:
@@ -79,3 +83,39 @@ class TestAiopsScanShouldSkipPath:
         bare TILFÆLDIGVIS indeholder 'venv' i navnet (uden at være en dotfile-venv) skal IKKE
         blive fejlagtigt sprunget over."""
         assert _aiops_scan_should_skip_path(("my_venvironments_helper.py",)) is False
+
+
+class TestAiopsScanShouldSkipLine:
+    """Baggrund (2026-07-05, periodisk tjek #18 — første reelle triage-runde af VPEN-006's
+    SAST-signaler efter VPEN-2026-008's scanner-fix): `_aiops_static_scan()`'s egen
+    `patterns`-dict indeholder nødvendigvis needle-strengene som bogstavelig tekst (fx
+    "token=", "subprocess.run", "unlink(", "git pull"). Uden denne markør ville scanneren
+    derfor matche sin EGEN pattern-definition som 4 garanterede selvreferentielle falske
+    positive ved hver eneste kørsel — ét pr. kategori — helt uafhængigt af resten af repoet."""
+
+    def test_marker_line_is_skipped(self):
+        assert _aiops_scan_should_skip_line(
+            '        "hardcoded_secret_terms": ["password=", "token="],  # AIOPS-SCAN-IGNORE-SELF'
+        ) is True
+
+    def test_ordinary_code_line_is_not_skipped(self):
+        assert _aiops_scan_should_skip_line("    token_record = db.query(BootstrapToken)") is False
+        assert _aiops_scan_should_skip_line("result = subprocess.run(cmd)") is False
+
+
+class TestAiopsStaticScanSelfReferenceRegression:
+    """Kører den fulde `_aiops_static_scan()` mod det virkelige repo (samme mønster som
+    VPEN-2026-008's before/after-reproduktion) og bekræfter at ingen af de 4 garanterede
+    selvreferentielle fund fra scannerens egen pattern-definition i `headend/main.py` længere
+    optræder i resultatet."""
+
+    def test_own_pattern_definition_lines_are_not_reported_as_findings(self):
+        result = _aiops_static_scan()
+        self_referential = [
+            f for f in result["findings"]
+            if any(
+                marker in f["snippet"]
+                for marker in ('"hardcoded_secret_terms":', '"shell_execution":', '"dangerous_file_ops":', '"legacy_update_paths":')
+            )
+        ]
+        assert self_referential == []

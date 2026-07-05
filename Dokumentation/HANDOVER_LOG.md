@@ -3836,3 +3836,80 @@ person vide".
   med **29 passed**.
 - **Drift:** Ingen live-genstart udført i denne runde; ændringen rører kun read-only AI
   Ops-diagnostik og kan indgå i næste normale headend-deploy.
+
+### Handover 2026-07-05 (periodisk tjek #18) — fra Claude: VPEN-2026-009 (NY) — endnu en scanner-selvreference rettet + første triage-batch af VPEN-006's SAST-signaler (56/80)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -3` bekræftede `225da3bf` (docs: mark AI
+  Ops SAST scanner fix committed) stadig er seneste commit — Codex' morgen-entry bekræfter
+  `981c5802` (VPEN-2026-008-fixet) er committet, pushet og testverificeret (29/29 bestået).
+  `git status --short` viste kun den kendte untracked `claude_proxy.py` (uændret). Ingen ny
+  Codex-entry med spørgsmål til Claude siden sidst. Forrige rundes "Går videre til" pegede på
+  to muligheder: (a) begynde den faktiske triage af SAST-signalerne, eller (b) tage fat på den
+  øvrige liste (live-tests, Peter-beslutninger). Valgte (a), da det er det eneste punkt der kan
+  gennemføres FÆRDIGT uden live-adgang eller en beslutning fra Peter.
+- **Fund 1 — endnu en scanner-selvreference:** Reproducerede `_aiops_static_scan()` for at
+  starte triagen og opdagede at scannerens egen `patterns`-opslagstabel i `headend/main.py`
+  uundgåeligt indeholder sine egne søgeord som bogstavelig tekst — den matchede derfor sig selv
+  som 4 garanterede falske positive ved hver kørsel (samme grundmønster som VPEN-2026-008, men
+  en anden årsag: opslagstabellen selv, ikke en sti). **Rettet:** ny `_aiops_scan_should_skip_line()`
+  + markøren `AIOPS-SCAN-IGNORE-SELF` på de 4 pattern-linjer.
+- **Fund 2 — anden-ordens variant af samme problem, i selve rettelsens dokumentation:** Under
+  verifikation viste en ny reproduktion at fixets EGNE forklarende kommentarer/docstring (som i
+  første udkast gengav søgeordene ordret i prosa, fx nævnte dem direkte som eksempler) selv blev
+  flaget som 3 nye selvreferentielle fund. Et konkret eksempel på hvor let denne klasse af fejl
+  gentager sig selv, hvis man ikke er opmærksom. Rettet ved at omskrive kommentarerne til at
+  beskrive mønsteret uden at gengive søgeordene — samt en advarsel til fremtidige vedligeholdere
+  i docstringen om præcis denne faldgrube.
+- **Ny test:** `headend/tests/test_aiops_static_scan.py` +3 tests (2 rene funktionstests af
+  `_aiops_scan_should_skip_line()`, 1 regressionstest der kører hele `_aiops_static_scan()` mod
+  det virkelige repo og bekræfter ingen fund indeholder opslagstabellens kategori-nøgler).
+- **Triage-batch (56 af 80 aktuelle signaler, efter fixet ovenfor):**
+  - `hardcoded_secret_terms` (10) — **alle false positive.** Alle er variabel-/kwarg-referencer
+    (`token=req.bootstrap_token`, `wifi_password=wifi_password` osv.), ingen bogstavelige
+    hemmelige værdier. Forbedringsforslag (lav prioritet, ikke udført): kun flage når
+    højresiden ligner en streng-literal.
+  - `shell_execution` (40) — **1 reelt opmærksomhedspunkt.** 39/40 bruger argv-liste-formen
+    (strukturelt immun over for shell-injektion). Nøjagtig ét sted i hele repoet bruger
+    `shell=True` med fuldt dynamisk indhold: `claude_proxy.py` (lokalt, ikke Git-sporet,
+    netværksfrit fil-baseret kommando-eksekveringsværktøj — bevidst design, ikke en bug, men
+    reelt "kør vilkårlig kommando" hvis noget andet kan skrive til `.claude_proxy/cmd_in.json`).
+    Anbefaling til Peter (ikke hastende): bekræft restriktive filrettigheder på `.claude_proxy/`.
+  - `legacy_update_paths` (5) — **alle kendte/accepterede mønstre.** `edge_update.sh` er
+    gated bag `TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE` (kendt, VPEN-005); `headend_poller.sh`s
+    `git pull` ER selve produktions-deploy-mekanismen (ikke en sårbarhed); `e2e_test.sh` er
+    dev/test-tooling. Ingen nye fund.
+  - `dangerous_file_ops` (24) — **IKKE triageret denne runde,** bevidst overladt til
+    næste periodiske runde (for stort til at forceres igennem overfladisk nu).
+- **Verifikation:** `python3 -m py_compile main.py database.py tests/test_aiops_static_scan.py`
+  ren. Hele `headend/tests/`-suiten: **32/32 bestået** (29 eksisterende + 3 nye). Kørte
+  `_aiops_static_scan()` direkte før/efter fixet for at bekræfte ingen fund længere refererer
+  scannerens egen opslagstabel-definition (`files_scanned` steg fra 39 til 40; de 4 pladser der
+  tidligere gik til scannerens egen kode går nu til reelle findings, `finding_count` stadig 80
+  pga. det uændrede hårde loft). `git diff --stat`: kun `headend/main.py` (+32/-5) og
+  `headend/tests/test_aiops_static_scan.py` (+42/-1) ændret.
+- **Dokumentation opdateret (samme runde):** `RISK_ASSESSMENT_v10.md` — ny §5.2-post
+  VPEN-2026-009 med fuld beskrivelse; §2's VPEN-006-linje og §11 P2.4 opdateret med
+  triage-fremdrift; §12 dokumenthistorik fik en ny linje.
+- **Ikke gjort — bevidst:** `dangerous_file_ops`-triage (se ovenfor, næste runde). Ingen
+  ændring af det hårde 80-fund-loft. Ingen commit/push (Peter/Codex committer selv).
+- **Codex/Peter: kør venligst når I har et vindue (kodefix + ny test, ufarlig at merge — rører
+  kun en read-only AI Ops-diagnostikfunktion, ingen deploy/genstart kræves for selve denne
+  ændring, men indgår i næste normale headend-deploy som vanligt):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git diff headend/main.py headend/tests/test_aiops_static_scan.py Dokumentation/RISK_ASSESSMENT_v10.md
+  git add headend/main.py headend/tests/test_aiops_static_scan.py \
+          Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "fix: AI Ops SAST scan no longer flags its own pattern table as findings; triage batch 1/2 (VPEN-2026-009)"
+  git push
+  ```
+  **Til Peter (ikke hastende):** bekræft filrettigheder på `.claude_proxy/` (se
+  `shell_execution`-fundet ovenfor) — det er et lokalt "kør vilkårlig kommando"-værktøj, og
+  risikoen afhænger fuldt ud af at kun du selv kan skrive til `cmd_in.json`.
+- **Filer rørt:** `headend/main.py`, `headend/tests/test_aiops_static_scan.py`,
+  `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** næste periodiske runde kan fortsætte triagen med `dangerous_file_ops`
+  (24 signaler, sidste kategori af VPEN-006's nuværende 80), eller tage fat på den øvrige,
+  fortsat uændrede liste — live multi-device-rollout-test, Peters §6-beslutning (CA/mTLS),
+  R17-smoketesten, §K's "OS offline-artifact update E2E", device-decommission-beslutningen,
+  eller bekræftelse af den faktiske Gemini/Vertex-produktionsregion.

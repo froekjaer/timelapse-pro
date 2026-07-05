@@ -15202,6 +15202,25 @@ def _aiops_scan_should_skip_path(path_parts: tuple[str, ...]) -> bool:
     return False
 
 
+_AIOPS_SCAN_SELF_IGNORE_MARKER = "AIOPS-SCAN-IGNORE-SELF"
+
+
+def _aiops_scan_should_skip_line(line: str) -> bool:
+    """Ren, sideeffektfri hjælpefunktion — testbar uden filsystem/DB. Se
+    `headend/tests/test_aiops_static_scan.py`.
+
+    Springer linjer over der bærer `_AIOPS_SCAN_SELF_IGNORE_MARKER`-markøren. Bruges til at
+    forhindre at scannerens egen pattern-opslagstabel (som pr. nødvendighed gentager sine egne
+    søgeord ordret) tælles med som garanterede selvreferentielle falske positive ved hver
+    kørsel — én pr. kategori, uafhængigt af resten af repoet.
+
+    OBS til vedligeholdere: undgå at gengive de faktiske søgeord (se opslagstabellen i
+    `_aiops_static_scan()`) i kommentarer/docstrings i nærheden af denne funktion uden
+    `_AIOPS_SCAN_SELF_IGNORE_MARKER` — ellers opstår præcis samme selvreference igen, blot i
+    dokumentationsteksten i stedet for i selve opslagstabellen."""
+    return _AIOPS_SCAN_SELF_IGNORE_MARKER in line
+
+
 def _aiops_static_scan() -> dict:
     """Lightweight read-only SAST snapshot for AI Ops.
 
@@ -15210,11 +15229,14 @@ def _aiops_static_scan() -> dict:
     values.
     """
     root = _repo_root()
+    # Hver liste nedenfor gentager sine egne søgeord ordret, så uden markøren ville scanneren
+    # matche sin egen opslagstabel som 4 garanterede falske positive ved HVER kørsel — se
+    # `_aiops_scan_should_skip_line()`.
     patterns = {
-        "hardcoded_secret_terms": ["password=", "api_key=", "secret=", "token="],
-        "shell_execution": ["subprocess.run", "subprocess.check_output", "os.system", "shell=True"],
-        "dangerous_file_ops": ["unlink(", "rmtree(", "chmod 777", "chown "],
-        "legacy_update_paths": ["git pull", "legacy_git_update", "TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE"],
+        "hardcoded_secret_terms": ["password=", "api_key=", "secret=", "token="],  # AIOPS-SCAN-IGNORE-SELF
+        "shell_execution": ["subprocess.run", "subprocess.check_output", "os.system", "shell=True"],  # AIOPS-SCAN-IGNORE-SELF
+        "dangerous_file_ops": ["unlink(", "rmtree(", "chmod 777", "chown "],  # AIOPS-SCAN-IGNORE-SELF
+        "legacy_update_paths": ["git pull", "legacy_git_update", "TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE"],  # AIOPS-SCAN-IGNORE-SELF
     }
     findings: list[dict] = []
     scanned = 0
@@ -15232,6 +15254,8 @@ def _aiops_static_scan() -> dict:
             continue
         scanned += 1
         for idx, line in enumerate(text_value.splitlines(), start=1):
+            if _aiops_scan_should_skip_line(line):
+                continue
             lower = line.lower()
             for category, needles in patterns.items():
                 if any(n.lower() in lower for n in needles):
