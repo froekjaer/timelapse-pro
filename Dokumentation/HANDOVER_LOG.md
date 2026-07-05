@@ -4136,3 +4136,29 @@ person vide".
 - **Drift:** Ingen live-genstart udført; tabel oprettes ved næste normale Headend-start via
   `Base.metadata.create_all()`. Ændringen er additiv og logger kun autoriseret adgang til
   fuldopløsningsbilleder, ikke thumbnails.
+
+### Handover 2026-07-05 (periodisk tjek #22) — fra Claude: docs-sync — RISK_ASSESSMENT §11 P2 var kommet bagud efter Codex' G-05-bekræftelse
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md:
+  seneste entry er Codex' bekræftelse af at GDPR-adgangsloggen (§G-05, fra periodisk tjek #21)
+  er gennemgået, testverificeret (4/4 + 41/41 bestået), committet og pushet på
+  `claude/capture-camera-location-2026-07-03`. Ingen nyt spørgsmål til Claude i loggen. Kunne
+  IKKE køre `git status`/`py_compile` denne runde — sandbox-shell-værktøjet fejlede på hvert
+  kald med samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som nævnt i
+  tjek #21 (infrastrukturfejl i selve kørselsmiljøet, ikke i koden). Valgte derfor bevidst KUN
+  en ren dokumentationsopgave denne runde, ingen kode.
+- **Fundet:** `GO_LIVE_CHECKLIST_v10.md` §G-05 var korrekt opdateret til ✅ af Codex, men
+  `RISK_ASSESSMENT_v10.md` §11 (Prioriteret risikobehandlingsplan), P2-listens punkt 3 "GDPR
+  adgangslog pr. billede" stod stadig som åbent/uafkrydset — samme mønster som tidligere
+  docs-sync-gaps (tjek #14/#15/#18 osv.), hvor Codex' commit i koden ikke automatisk propagerer
+  til risikodokumentets prioriteringsliste.
+- **Udført:** `RISK_ASSESSMENT_v10.md` §11 P2 punkt 3 er nu streget over med henvisning til
+  `GO_LIVE_CHECKLIST_v10.md` §G-05 og en kort opsummering af hvad der er testet, samme stil som
+  de øvrige gennemførte P1/P2-punkter i samme liste (ESLint-gate, SAST-triage,
+  debug/lab-mode-CMDB). Ren tekstændring, ingen kode rørt, intet at teste/verificere ud over
+  visuel gennemlæsning.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** Uændret liste af punkter der kræver live-adgang eller en Peter-beslutning:
+  live multi-device-rollout-test (P1.4/R06), Peters §6-beslutning (CA/mTLS), R17-smoketesten,
+  §K's "OS offline-artifact update E2E", device-decommission-beslutningen,
+  Gemini/Vertex-produktionsregion-bekræftelse. Ingen af disse kunne rykkes denne runde uden
+  live-adgang, som Claude ikke har.

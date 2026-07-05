@@ -651,7 +651,11 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 ### 🟡 P2 — Production hardening
 1. Disk-kryptering på Edge (R05)
 2. Off-site backup (R09)
-3. GDPR adgangslog pr. billede
+3. ~~GDPR adgangslog pr. billede~~ — implementeret og testverificeret 2026-07-05 (ny
+   `CaptureAccessLog`-tabel + `_log_capture_access()`, kaldt fra
+   `GET /api/images/{device_id}/{filename}`, kun fuldopløsningsbilledet, ikke thumbnails);
+   Codex kørte 4/4 + 41/41 tests grønt og har committet/pushet. Se `GO_LIVE_CHECKLIST_v10.md`
+   §G-05.
 4. ~~SAST backlog triage (73 signaler)~~ — **Triage afsluttet 2026-07-05 (periodisk tjek #19).**
    Selve tallet "73" var oprindeligt upålideligt (scanneren talte vendored tredjeparts-
    bibliotekskode og sin egen pattern-opslagstabel med som egne signaler, se VPEN-2026-008/-009);
