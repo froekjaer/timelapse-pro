@@ -3028,3 +3028,13 @@ person vide".
   denne rettelse og evt. kørt en live multi-device-test; ellers ser den på Peters §6-beslutning
   (CA/mTLS) eller R17-smoketesten hvis en af dem er besvaret, eller på H-04/H-05/H-06 i
   GO_LIVE_CHECKLIST §H hvis intet nyt er dukket op.
+
+### Handover 2026-07-05 (nat) — Codex: HLTH-008 multi-target rollout status deployet
+- **Udført:** Claudes HLTH-008/P1.4 rettelse er committet og pushet som `61802951`
+  (`fix: multi-target update rollout status no longer flipped by single device report (HLTH-008)`).
+- **Verifikation før commit:** `python3 -m py_compile headend/main.py headend/database.py` OK.
+- **Drift:** `dk.froekjaer.timelapse-headend` er genstartet med `launchctl kickstart`;
+  `https://timelapse.froekjaer.dk/api/health` svarede `HTTP/1.1 200 OK`.
+- **Ikke udført automatisk:** Live multi-device rollout-test er ikke kørt fra heartbeat, da den
+  ændrer update-state for rigtige enheder. Bør testes kontrolleret med 2+ test-enheder: global
+  update-status skal blive på `approved` indtil alle targets er terminale.
