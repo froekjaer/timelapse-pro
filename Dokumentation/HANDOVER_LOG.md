@@ -4636,3 +4636,45 @@ person vide".
   dokumentationslag. Ingen kode er ændret endnu, og det er korrekt at agent/service-principal-
   implementeringen afventer Peters beslutninger om staging-kapacitet, prod-credential-
   bekræftelse, staging-agentadgang, DPA-dækning og implementeringsrækkefølge.
+
+### Handover 2026-07-05 (periodisk tjek #31) — fra Claude: §9 GDPR-vurderingstabel i RISK_ASSESSMENT var kommet bagud ift. G-01–G-07/DPIA-dokumentet
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md —
+  seneste entries er Codex' accept af `rd`/`staging`/`prod`-terminologien og bekræftelse af at
+  dokumentændringerne (miljøarkitektur, R19, §M) ser rigtige ud; ingen nyt spørgsmål adresseret
+  til Claude, og C-03 (super_admin-password-bekræftelse, rejst tjek #24) står fortsat ubesvaret.
+  `mcp__workspace__bash` fejlede igen ved tre gentagne forsøg (samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` som i alle tidligere runder siden tjek #21) — kunne
+  derfor hverken køre `git status`, teste kode eller køre `py_compile` denne runde; al verifikation
+  denne gang er ren kildelæsning på tværs af dokumenter.
+- **Fundet:** `RISK_ASSESSMENT_v10.md` §11 og `GO_LIVE_CHECKLIST_v10.md` §J er uændrede siden
+  sidste tjek — ingen nye P0/P1-punkter, og agent/service-principal-sporet afventer stadig Peters
+  5 åbne beslutninger i `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §5 (ingen af dem besvaret endnu).
+  Krydstjekkede i stedet `RISK_ASSESSMENT_v10.md` §9 "GDPR-vurdering" mod
+  `GO_LIVE_CHECKLIST_v10.md` §G (G-01 til G-07) og `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`.
+  Fandt at §9-tabellen var kommet markant bagud: 6 af 9 rækker viste stadig blankt "🔴 Mangler"/
+  "Ikke dokumenteret", selvom DPIA-skabelon (G-01), retention-design (G-02), oplysningspligt-
+  skitse (G-07) og subprocessor-udkast (G-04) alle blev skrevet 2026-07-04 (nat), og Art. 28-
+  rækken ("Databehandleraftale") slet ikke nævnte Kirkbi A/S-aftalen fra Peters miljøafklaring.
+  Værst: "Adgangslog"-rækken viste stadig "🔴 Mangler", selvom G-05 (download-/adgangslog) blev
+  implementeret OG testverificeret (4/4 + 41/41 tests) 2026-07-05 — samme dag som dette tjek.
+  Samme docs-lag-mønster som tidligere runders fund (CAP-008/ADM-012, ADM-010, UI-011, SEC-012):
+  reelt arbejde eksisterer og er dokumenteret ét sted (G-checklisten/DPIA-dokumentet), men en
+  parallel oversigtstabel i et andet dokument var ikke opdateret til at afspejle det.
+- **Udført:** Rettet alle 6 stale rækker i §9 til deres reelle, allerede daterede status med
+  henvisning til G-01/G-02/G-04/G-05/G-06/G-07: Brudnotifikation → 🟠 Anbefalet, DPIA → 🟠
+  Skabelon klar, Databehandleraftale → 🟠 Delvist (Kirkbi-note), Oplysningspligt → 🟠 Skitse klar,
+  Retention → 🔴 men med "design klar"-præcisering, Adgangslog → ✅ Implementeret, Subprocessorer
+  → 🟡 Udkast-liste klar. Opdaterede "Anbefaling"-listen til at afspejle at skabeloner/design
+  allerede findes (mangler udfyldelse/implementering/godkendelse, ikke selve skabelonen) og
+  strøg adgangslog-punktet som løst. Tilføjede en dateret fodnote samt en §12-changelog-linje.
+  Ren tekst-sammenkøring af allerede eksisterende, dateret status — ingen ny vurdering foretaget,
+  ingen kode rørt, ingen test nødvendig ud over kildelæsning.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** Uændret liste (live multi-device-rollout-test, Peters §6 CA/mTLS-
+  arkitekturvalg, R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning,
+  C-03-bekræftelse, P0 #5 HMAC/stale credentials, Peters 5 åbne miljø-/agent-adgangsbeslutninger),
+  plus: overvej et tilsvarende krydstjek af `KRAVREGISTER_og_STATUS_v10.md`'s SEC-/UI-/ADM-rækker
+  mod §9-opdateringen ovenfor, da de to dokumenter historisk har haft samme type drift (se tjek
+  #25–#28). `mcp__workspace__bash` fejler fortsat konsekvent ved hver eneste periodiske runde
+  siden tjek #21 — dette er nu et meget længerevarende mønster og fortsat værd for Peter at
+  undersøge direkte, da det forhindrer al kodetest/`git status`-verifikation fra denne kanal.

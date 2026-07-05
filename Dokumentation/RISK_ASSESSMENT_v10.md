@@ -593,19 +593,27 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 |---|---|---|
 | Art. 25 — Privacy by design | Data protection by default | 🟡 Delvist |
 | Art. 32 — Sikkerhed | Tekniske og organisatoriske foranstaltninger | 🟡 Delvist |
-| Art. 33/34 — Brudnotifikation | Procedure ved databrud | 🔴 Mangler |
-| Art. 35 — DPIA | Billedovervågning med høj risiko | 🔴 Mangler pr. kunde/site |
-| Art. 28 — Databehandleraftale | Aftale med Peter/TimeLapse Pro | 🔴 Mangler |
-| Art. 13/14 — Oplysningspligt | Information til registrerede | 🔴 Ikke dokumenteret |
-| Retention | Opbevaringsbegrænsning | 🔴 Ingen retention policy implementeret |
-| Adgangslog | Log pr. billede/download | 🔴 Mangler |
-| Subprocessorer | Google Cloud/Gemini, evt. andre | 🔴 Subprocessor-liste mangler |
+| Art. 33/34 — Brudnotifikation | Procedure ved databrud | 🟠 Anbefalet (G-06) — udkast/anbefaling foreligger, ikke en fuld, godkendt procedure |
+| Art. 35 — DPIA | Billedovervågning med høj risiko | 🟠 Skabelon klar (G-01, 2026-07-04) — mangler udfyldelse pr. kunde/site + juridisk godkendelse |
+| Art. 28 — Databehandleraftale | Aftale med Peter/TimeLapse Pro | 🟠 Delvist (G-03) — Kirkbi A/S (Site Travbyen) har en eksisterende aftale, dækning mod faktisk nuværende behandling (AI/Gemini, GPS) og agent-adgang er ikke verificeret; fortsat 🔴 for nye kunder |
+| Art. 13/14 — Oplysningspligt | Information til registrerede | 🟠 Skitse-tekst klar (G-07, 2026-07-04) — kræver juridisk godkendelse |
+| Retention | Opbevaringsbegrænsning | 🔴 Design klar (G-02, 2026-07-04) — IKKE implementeret i kode endnu |
+| Adgangslog | Log pr. billede/download | ✅ Implementeret og testverificeret 2026-07-05 (G-05) — `CaptureAccessLog` + `_log_capture_access()`, 4/4 + 41/41 tests bestået |
+| Subprocessorer | Google Cloud/Gemini, evt. andre | 🟡 Udkast-liste klar (G-04, 2026-07-04 nat) — ikke juridisk bekræftet/offentliggjort |
 
 **Anbefaling:** Inden første rigtige produktionssite:
-1. DPIA-template pr. kunde/site
-2. Retention policy konfigureres pr. kamera
-3. Download/adgangslog implementeres
-4. Databehandleraftale-template
+1. DPIA-template udfyldes pr. kunde/site + juridisk godkendes (skabelon findes, se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`)
+2. Retention policy implementeres i kode pr. kamera (design findes)
+3. ~~Download/adgangslog implementeres~~ — implementeret 2026-07-05
+4. Databehandleraftale-template færdiggøres og bruges til nye kunder (Kirkbi A/S er allerede dækket)
+
+**TILFØJELSE 2026-07-05 (Claude, periodisk tjek #31, docs-sync):** Tabellen ovenfor var kommet
+bagud ift. `GO_LIVE_CHECKLIST_v10.md` §G (G-01 til G-07) og `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`
+— 6 af 9 rækker viste stadig blankt "🔴 Mangler"/"Ikke dokumenteret", selvom skabeloner/udkast er
+skrevet siden 2026-07-04, og Adgangslog-rækken var slet ikke opdateret efter G-05 blev
+implementeret og testverificeret 2026-07-05. Ingen NY information tilføjet her — ren
+sammenkøring med allerede eksisterende, dateret status fra §11 P0 #3, G-01–G-07 og
+`DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Ingen kode rørt.
 
 ---
 
@@ -735,6 +743,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #19) | Claude: afsluttede VPEN-006's SAST-triage — gennemgik den resterende `dangerous_file_ops`-kategori (24 signaler) enkeltvis mod faktisk kildekode. Ingen reelle sårbarheder: temp-fil-oprydning bag `try/except`/`missing_ok=True`, admin-gated capture-sletning via saniteret filnavn-opslag (`_sanitize_filename`/`_sanitize_device_id` afviser path traversal), offline admin-CLI-værktøjer (`argparse`, ikke web-eksponeret), og ét `chown`/`chmod`-fund der reelt STRAMMER rettigheder (700/600) på `.ssh` inde i et loop-mountet OS-image. Alle 4 kategorier (80/80 signaler) er nu triageret på tværs af tjek #18+#19 — §11 P2.4 og §2 opdateret til "triage afsluttet". Ingen kodeændring (ingen fund krævede det); ingen commit/push nødvendig |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #20) | Claude: implementerede den i #18/#19 noterede men ikke-udførte `hardcoded_secret_terms`-heuristik-forbedring — ny `_aiops_scan_is_secret_value_literal()` kræver en bogstavelig streng-literal på højresiden før en linje flages, så variabel-/kwarg-referencer (mønsteret bag alle 10 tidligere false positives i denne kategori) ikke længere tælles med. 5 nye tests (`headend/tests/test_aiops_static_scan.py`, 14/14 i filen, 37/37 i hele `headend/tests/`-suiten). Reproduktion bekræfter `hardcoded_secret_terms` nu bidrager 0 fund (var 10); §11 P2.4 opdateret. Ingen commit/push (Peter/Codex committer selv) |
 | 10 (tilføjelse) | 2026-07-05 (Peters miljøafklaring) | Claude: R19 (NY) tilføjet — agent-adgang til det fremtidige prod-fysiske-system (`timelapsepro.dk`, kører allerede CrushFTP+legacy med live kundedata) er ikke formelt udelukket. R12 udvidet med Travbyen-databehandleraftale-note (delvis, ikke fuld, lempelse). §6 zone-model udvidet med et miljø-lag (`rd`/`staging`/`prod`), ortogonalt på de eksisterende netværkszoner. Nyt dokument `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` oprettet som kanonisk topologi-kilde. Ingen kode ændret — ren dokumentation af Peters arkitekturbeslutning, som svar på Codex' agent/service-principal-forslag (se `HANDOVER_LOG.md`) |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #31) | Claude: §9 GDPR-vurderingstabellen var kommet bagud ift. `GO_LIVE_CHECKLIST_v10.md` §G (G-01–G-07) og `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` — 6 af 9 rækker rettet fra blankt "🔴 Mangler" til deres reelle, allerede daterede status (skabeloner/udkast fra 2026-07-04, Adgangslog ✅ implementeret 2026-07-05). Ren sammenkøring af eksisterende status, ingen ny vurdering, ingen kode rørt |
 
 ---
 
