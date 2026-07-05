@@ -4162,3 +4162,34 @@ person vide".
   §K's "OS offline-artifact update E2E", device-decommission-beslutningen,
   Gemini/Vertex-produktionsregion-bekræftelse. Ingen af disse kunne rykkes denne runde uden
   live-adgang, som Claude ikke har.
+
+### Handover 2026-07-05 (periodisk tjek #23) — fra Claude: docs-sync — §10-risikooversigt viste R06 som 🟢/"Lab-løst", i modstrid med R06-detaljeafsnittets egen 🟡 6-vurdering
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md —
+  seneste entry er tjek #22 (Claude selv), ingen nye Codex-entries og intet åbent spørgsmål til
+  Claude siden da. `mcp__workspace__bash` fejlede på hvert forsøg (samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som i tjek #21/#22) — kunne
+  derfor hverken køre `git status`, `py_compile` eller nogen anden kommando denne runde. Valgte
+  derfor bevidst, som sidst, en ren dokumentationsopgave uden kodeændring.
+- **Fundet:** Gennemgik `RISK_ASSESSMENT_v10.md` §11 (P0/P1/P2) og `GO_LIVE_CHECKLIST_v10.md` §J
+  for stadig-åbne punkter — ingen ændringer siden tjek #22. Ved krydstjek af §10 "Samlet
+  risikooversigt" mod de enkelte risiko-detaljeafsnit fandt jeg en reel inkonsistens: §10-tabellens
+  række for R06 stod som `🟢 4 | ↓↓ Lab-løst`, men selve R06-afsnittet (opdateret tidligere samme
+  dag, 2026-07-05) konkluderer eksplicit "**Residualrisiko:** 🟡 6 (nedjusteret fra 🟠 8 ... holdes
+  på 🟡 og ikke 🟢 indtil en faktisk multi-device rollout er live-verificeret end-to-end, og indtil
+  ovenstående decommission-gap er besluttet/lukket)". En læser der kun skimmer oversigtstabellen
+  ville altså fejlagtigt tro R06 var fuldt grønt/løst — samme mønster som tidligere docs-sync-gaps
+  (tjek #14/#15/#18/#22), blot denne gang internt i RISK_ASSESSMENT_v10.md selv, ikke mellem de to
+  dokumenter.
+- **Udført:** Rettet §10-tabellens R06-række til `🟡 6 | ↓ Forbedret, IKKE 🟢 — flush-regression
+  rettet/deployet 2026-07-05, men holdes på 🟡 indtil live multi-device-rollout er verificeret OG
+  device-decommission-midt-i-rollout-gap'et er besluttet (se R06-detaljer)`, så tabellen nu matcher
+  detaljeafsnittets konklusion. Kontrollerede samtidig de øvrige rækker (R09, R14, R17) mod deres
+  respektive detaljeafsnit — ingen yderligere mismatch fundet. Ren tekstændring i
+  `RISK_ASSESSMENT_v10.md`, ingen kode rørt, intet at teste ud over visuel krydslæsning af tabel vs.
+  brødtekst.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** Uændret liste af punkter der kræver live-adgang eller en Peter-beslutning:
+  live multi-device-rollout-test (P1.4/R06), Peters §6-beslutning (CA/mTLS), R17-smoketesten,
+  §K's "OS offline-artifact update E2E", device-decommission-beslutningen,
+  Gemini/Vertex-produktionsregion-bekræftelse. Ingen af disse kunne rykkes denne runde uden
+  live-adgang, som Claude ikke har.

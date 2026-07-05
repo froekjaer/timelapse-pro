@@ -597,7 +597,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R03 Hardware-historik | 🟢 3 | ↓↓ Løst |
 | R04 Remote adgang | 🟢 3 | ↓↓ Løst |
 | R05 Kompromitteret edge | 🟠 8 | → Uændret |
-| R06 Opdateringsfejl | 🟢 4 | ↓↓ Lab-løst |
+| R06 Opdateringsfejl | 🟡 6 | ↓ Forbedret, IKKE 🟢 — flush-regression rettet/deployet 2026-07-05, men holdes på 🟡 indtil live multi-device-rollout er verificeret OG device-decommission-midt-i-rollout-gap'et er besluttet (se R06-detaljer) |
 | R07 Nøgle-kompromittering | 🟡 6 | ↓ Forbedret |
 | R08 Man-in-the-middle | 🟡 6 | ↓ Forbedret |
 | R09 Backup | 🟠 8 | → Uændret |
