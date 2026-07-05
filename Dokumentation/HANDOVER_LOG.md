@@ -4447,3 +4447,57 @@ person vide".
 - **Vigtig beslutning før kode:** Skal vi kalde miljøerne `lab`/`prod`, `rd`/`prod`, eller
   `test`/`prod` i DB/env/UI? Codex hælder til `lab` internt og "R&D/Lab" i UI, fordi det passer
   bedst med Peters formulering og eksisterende lab-driftsmønster.
+
+### Handover 2026-07-05 — fra Claude til Codex/Peter: svar på agent/service-principal-forslaget
+- **Kort svar:** Enig i retningen (agent-principals, hård prod-afvisning, audit på agent-id) —
+  men jeg har verificeret kodebasen først (dobbelttjekker før du udfører), og der er en mere
+  grundlæggende forudsætning, der skal besluttes FØR nogen af byggestenene giver mening.
+- **Grundlæggende fund (verificeret i kode, ikke kun i denne logs tekst):** Der findes i dag
+  **ingen** miljø-adskillelse overhovedet — intet `TIMELAPSE_ENV`/`ENVIRONMENT`, ingen separat
+  lab-DB, ingen separat host. Der er ÉT system, ÉN Postgres-instans. "Frøkjær er testsystem" betyder
+  test-DATA i samme instans som rigtige kunders sites (Travbyen m.fl.) — ikke et separat miljø.
+  `AgentPrincipal`/`AgentToken`/`AgentElevationGrant`/`agents`-CLI findes ingen steder i koden —
+  forslaget er 100% på papir, intet er bygget endnu. Godt at vide, før vi taler implementering.
+- **SABSA/IEC 62443-punkt (det vigtigste jeg vil tilføje):** En trust-boundary mellem lab og prod
+  bør være en **infrastruktur-zone** (IEC 62443 zone/conduit-tænkning: separat DB-instans, separate
+  secrets/deploy-keys/SSH/Cloudflare-credentials — præcis Codex' liste, som jeg er enig i), IKKE
+  kun en applikations-env-flag. Et `TIMELAPSE_ENV=prod`-tjek i middleware er en god *ekstra*
+  kontrol, men hvis det er den ENESTE ting der står mellem en agent og prod, er det et single point
+  of failure (fejlkonfigureret/manglende env-var = åben dør). Konkret: agent-tokens bør ikke bare
+  "afvises af kode" i prod — de bør slet ikke kunne RUTE til prod-DB/host på netværksniveau. Det
+  betyder i praksis, at trin 1 ikke er kode, men en beslutning om at bygge en reelt separat
+  lab-instans (ny DB som minimum, ideelt separat host/VM/netværkszone).
+- **GDPR-punkt (bør afklares uafhængigt af resten, og hurtigt):** Har Codex/Claude i dag adgang
+  til RIGTIGE kunders billeddata/personoplysninger (ikke kun Frøkjær-testdata)? Hvis ja, er det et
+  eksisterende databehandler-spørgsmål der hænger direkte sammen med DPIA-arbejdet (R12,
+  `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`) og bør nok lukkes NU (fjern/begræns agent-adgang til
+  ægte kundedata), uanset hvor lang tid AgentPrincipal-modellen tager at bygge. Dette er efter min
+  vurdering vigtigere end selve datamodellen.
+- **Navngivnings-advarsel:** Pas på `lab` som miljønavn — ordet er allerede optaget i kodebasen til
+  noget andet: `debug_mode.enabled`/"lab mode" er en PER-KAMERA tuning-tilstand (R17 i
+  `RISK_ASSESSMENT_v10.md`, `main.py` ~linje 263/11673). At kalde hele systemmiljøet `lab` samtidig
+  risikerer forveksling ("er kameraet i lab mode, eller er hele systemet i lab-miljøet?").
+  Anbefaling: brug `rd` eller `sandbox`/`nonprod` til miljøbegrebet, og reservér "lab mode" til den
+  eksisterende kamera-feature. UI kan stadig vise "R&D" i teksten, det er kun DB/env-nøglen jeg vil
+  undgå kollision på.
+- **MFA-udvidelse:** Bekræftet i kode — `_mfa_required_for_role`/`mfa_exempt_usernames`
+  (`main.py` ~linje 816-912) er allerede rolle- + brugernavns-baseret. En udvidelse med
+  agent-principals er en naturlig, lille tilføjelse, ikke et stort indgreb. Bemærk dog: default
+  `mfa_exempt_usernames` er en TOM liste i koden — hvis "Claude/Codex er MFA-exempt" er en aktiv
+  indstilling i dag, ligger den kun i DB'en, ikke i kodens default. Værd at slå op og bekræfte
+  hvad den faktiske DB-værdi er, i stedet for at gå ud fra det.
+- **Audit:** `siem.py`/`security_events`-tabellen er allerede solid og direkte genbrugelig til
+  agent-id/task-id/kommando-logning — ingen ny tabel nødvendig, kun nye felter/kategori.
+- **Om CI/CD-gate:** Der findes i dag ingen pipeline (kun `timelapse-deploy.service`, en poller på
+  selve Mac Mini'en) — "deploy/checklist"-gaten Codex nævner bør derfor i første omgang være en
+  manuel linje i `GO_LIVE_CHECKLIST_v10.md` ("prod kan ikke starte hvis lab-agent-secrets findes"),
+  ikke en automatiseret CI-check, indtil I evt. bygger en pipeline.
+- **Foreslået rækkefølge:** (1) Peter beslutter om der skal være en reelt separat lab-instans
+  (ny DB minimum) — det er den dyre/langsomme del; (2) miljøflag + hård afvisning i
+  middleware+startup-check (Codex' forslag, godt som lag 2, ikke lag 1); (3)
+  AgentPrincipal/AgentToken/AgentElevationGrant; (4) audit-udvidelse; (5) CLI. Uden trin 1 er
+  2-5 en lås på en dør, der stadig deler væg med nabolejligheden.
+- **Til Peter:** afklar GDPR-punktet og navngivningen, og tag stilling til om I vil investere i en
+  reelt separat lab-DB/host nu, eller acceptere env-flag-tilgangen som et interimslag mens I
+  planlægger den fysiske adskillelse. Jeg koder ikke noget på dette før du har svaret, jf.
+  "dobbelttjekker før du udfører".
