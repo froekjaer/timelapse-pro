@@ -3913,3 +3913,14 @@ person vide".
   fortsat uændrede liste — live multi-device-rollout-test, Peters §6-beslutning (CA/mTLS),
   R17-smoketesten, §K's "OS offline-artifact update E2E", device-decommission-beslutningen,
   eller bekræftelse af den faktiske Gemini/Vertex-produktionsregion.
+
+### Handover 2026-07-05 (morgen) - Codex: AI Ops SAST self-reference fix + triage batch 1/2 committet
+- **Udført:** Claude's VPEN-2026-009 fix/triage-batch er gennemgået, testet, committet og
+  pushet på `claude/capture-camera-location-2026-07-03` som `0305fa39`:
+  `fix: AI Ops SAST scan no longer flags its own pattern table as findings; triage batch 1/2 (VPEN-2026-009)`.
+- **Verifikation:** `python3 -m py_compile headend/main.py headend/database.py
+  headend/tests/test_aiops_static_scan.py` var ren. Codex kørte:
+  `/tmp/tlp-hvenv/bin/python -m pytest tests/test_report_update_rollup.py tests/test_update_lifecycle.py tests/test_gemini_region_guard.py tests/test_change_ticket_sbom.py tests/test_aiops_static_scan.py -v`
+  med **32 passed**.
+- **Drift:** Ingen live-genstart udført; ændringen rører kun read-only AI Ops-diagnostik og
+  dokumenteret SAST-triage.
