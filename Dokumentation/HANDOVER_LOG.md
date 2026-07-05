@@ -4193,3 +4193,43 @@ person vide".
   §K's "OS offline-artifact update E2E", device-decommission-beslutningen,
   Gemini/Vertex-produktionsregion-bekræftelse. Ingen af disse kunne rykkes denne runde uden
   live-adgang, som Claude ikke har.
+
+### Handover 2026-07-05 (periodisk tjek #24) — fra Claude: §J Go/No-go-tabellen i GO_LIVE_CHECKLIST_v10.md var kommet ud af trit med de faktiske A–H-detaljetabeller (blokerings-tal forkerte, og C. Auth var fejlagtigt markeret ✅ Klar)
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md —
+  seneste entry er tjek #23 (Claude selv), ingen nye Codex-entries og intet åbent spørgsmål til
+  Claude siden da. `mcp__workspace__bash` fejlede igen på hvert forsøg (samme `useradd failed:
+  fork/exec /usr/sbin/useradd: input/output error` som i tjek #21–#23) — kunne derfor hverken
+  køre `git status`, `py_compile` eller noget andet denne runde. Valgte derfor, som de seneste
+  runder, bevidst en ren dokumentationsopgave uden kodeændring.
+- **Fundet:** Krydstjekkede `GO_LIVE_CHECKLIST_v10.md` §J "Go/No-go vurdering"-tabellen (de
+  aggregerede blokerings-tal pr. kategori) mod de faktiske detaljetabeller §A–§H række for række:
+  - §A viste "8 blokkere", men optælling af faktiske 🔴-rækker i §A gav kun 7 (A-01, 02, 03, 04,
+    05, 07, 09 — A-06/08/10/11/12 er 🟠, ikke 🔴).
+  - §E viste "2 blokkere", men kun E-02 (restore-test) er 🔴 nu; E-01 (backup) blev nedjusteret
+    til 🟠 efter R09-fixet 2026-07-04 nat uden at §J's tal blev opdateret — samme mønster som
+    tidligere docs-sync-gaps (tjek #14/#15/#18/#22/#23).
+  - §G viste "3 blokkere (per-kunde)", men efter G-05 (GDPR-adgangslog) blev lukket 2026-07-05
+    er kun G-02 (retention-kode) og G-03 (databehandleraftale) tilbage som 🔴 — dvs. 2, ikke 3.
+  - **Vigtigst:** §J's C-række viste "0 blokkere (MFA løst 2026-07-02) | ✅ Klar" — men §C's egen
+    detaljetabel har C-03 som 🔴 ("Standard super_admin-password er ændret fra default — Bekræft
+    manuelt", dvs. ubekræftet, ikke gjort) OG C-10 som 🟠 ("HMAC enforcement aktivt for alle
+    aktive device-tokens — Stale credentials skal ryddes"), som er direkte det samme punkt som
+    `RISK_ASSESSMENT_v10.md` §11 P0-punkt 5 ("HMAC enforcement globalt — stale credentials
+    migreret/afviklet") — et P0-punkt der IKKE er streget over/løst nogen steder i dokumentet.
+    At MFA (C-07) blev løst 2026-07-02 gør ikke kategorien blokkerings-fri; §J's konklusion for
+    Auth var derfor reelt forkert, ikke bare et unøjagtigt tal.
+- **Udført:** Rettet §J-tabellens fire rækker (A, C, E, G) så de matcher deres respektive
+  detaljetabeller: A "8"→"7 blokkere (A-01,02,03,04,05,07,09)"; E "2"→"1 blokker (E-02
+  restore-test)"; G "3"→"2 blokkere (per-kunde) (G-02, G-03) — G-05 er lukket 2026-07-05"; C fra
+  "0 blokkere ✅ Klar" til "🔴 Ikke klar" med eksplicit henvisning til C-03 (ubekræftet) og C-10/P0
+  #5 (HMAC/stale credentials, stadig åben). B, D, F, H blev også krydstjekket — ingen mismatch
+  fundet der (alle reelt 0 🔴-rækker). Ren tekstændring i `GO_LIVE_CHECKLIST_v10.md`, ingen kode
+  rørt, intet at teste ud over visuel krydslæsning af §J vs. §A–§H.
+- **Filer rørt:** `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** Uændret liste af punkter der kræver live-adgang eller en Peter-beslutning:
+  live multi-device-rollout-test (P1.4/R06), Peters §6-beslutning (CA/mTLS), R17-smoketesten,
+  §K's "OS offline-artifact update E2E", device-decommission-beslutningen, Gemini/Vertex-
+  produktionsregion-bekræftelse. Derudover et nyt, konkret opmærksomhedspunkt til Peter/Codex
+  (ingen livehandling krævet af Claude her, blot en bekræftelse): **C-03** — er standard
+  super_admin-passwordet faktisk ændret fra default? Dette står stadig som ubekræftet 🔴 i §C og
+  var maskeret af §J's forkerte "✅ Klar"-konklusion for Auth-kategorien.

@@ -217,13 +217,13 @@ Forventet ved go-live: ingen TimeLapse-origin på public `*:80/443/21/22/8080`; 
 
 | Kategori | Blokerende | Status |
 |---|---|---|
-| A. Netværk/porte | 8 blokkere | 🔴 Ikke klar |
+| A. Netværk/porte | 7 blokkere (A-01,02,03,04,05,07,09) | 🔴 Ikke klar |
 | B. TLS | 0 blokkere | ✅ Klar |
-| C. Auth | 0 blokkere (MFA løst 2026-07-02) | ✅ Klar |
+| C. Auth | 1 blokker uafklaret (C-03: bekræft super_admin-password er ændret fra default) + P0 #5 (HMAC-enforcement/stale credentials, C-10) stadig åben — MFA (C-07) er løst 2026-07-02, men det er ikke det samme som "ingen blokkere" | 🔴 Ikke klar |
 | D. Secrets | 0 blokkere | ✅ Klar |
-| E. Backup | 2 blokkere | 🔴 Ikke klar |
+| E. Backup | 1 blokker (E-02 restore-test) | 🔴 Ikke klar |
 | F. CMDB | 0 blokkere | ✅ Klar |
-| G. GDPR | 3 blokkere (per-kunde) | 🔴 Ikke klar |
+| G. GDPR | 2 blokkere (per-kunde) (G-02 retention-kode, G-03 databehandleraftale) — G-05 er lukket 2026-07-05 | 🔴 Ikke klar |
 | H. Code quality | 0 blokkere | ✅ Klar |
 
 **Konklusion:** Systemet er IKKE klar til Internet-eksponering og domæneskift til timelapse-pro.dk. Estimeret tid til go-live gate: **4–6 uger** med fokusindsats.
