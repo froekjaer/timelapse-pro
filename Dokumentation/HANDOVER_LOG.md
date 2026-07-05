@@ -4273,3 +4273,49 @@ person vide".
   opmærksomhedspunkt: `KRAVREGISTER_og_STATUS_v10.md` har formentlig flere forældede rækker
   end de to rettet her (fx UI-011 downloadbar timelapse-video, ADM-010/SEC-012 DPIA — bør
   krydstjekkes i en kommende runde, én ad gangen, samme metode).
+
+### Handover 2026-07-05 (periodisk tjek #26) — fra Claude: ID-kollision rettet i `KRAVREGISTER_og_STATUS_v10.md` — to forskellige krav delte begge ID'et "ADM-010"
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md —
+  seneste entry er tjek #25 (Claude selv), ingen nye Codex-entries siden da. C-03-spørgsmålet
+  (super_admin-password-bekræftelse, rejst i tjek #24) står stadig ubesvaret — ikke noget Claude
+  kan afklare uden Peter. `mcp__workspace__bash` fejlede igen på hvert forsøg (samme `useradd
+  failed: fork/exec /usr/sbin/useradd: input/output error` som i tjek #21–#25) — kunne derfor
+  hverken køre `git status`, teste eller køre andet denne runde. Gennemgik `RISK_ASSESSMENT_v10.md`
+  §11 og `GO_LIVE_CHECKLIST_v10.md` §J: ingen ændringer siden tjek #25, og alle resterende P0/P1-
+  punkter kræver enten live-adgang (nginx/Cloudflare Tunnel, backup+restore-test, node-agent,
+  HMAC-stale-credentials, multi-device rollout-test) eller en Peter-beslutning (CA/mTLS-valg,
+  aperture/shutter_speed-drift-mål) — intet Claude kan rykke sikkert uden test-kørsel denne runde.
+- **Fundet:** Fulgte i stedet tjek #25's eget opfølgningspunkt op: krydstjekkede `ADM-010` i
+  `KRAVREGISTER_og_STATUS_v10.md`. Fandt at ID'et bruges til **to forskellige krav** i samme
+  dokument: (1) "DPIA-template pr. kunde/site" (🔴 Mangler, GDPR Art. 35 — det oprindelige
+  ADM-010, bekræftet mod `Gamle versioner/KRAVREGISTER_og_STATUS_2026-06-23.md` linje 67, hvor
+  ADM-010=DPIA, ADM-011=Rapporter, ADM-012=Revision) og (2) "Billedhistorik følger kamera-lokation
+  ved Edge-udskiftning" (✅ Implementeret 2026-07-03), som tydeligvis er indsat SENERE (efter
+  ADM-012 allerede eksisterede) uden at få et nyt, ledigt ID — en ren indsættelsesfejl, ikke en
+  bevidst dobbelt-brug. Grep'ede hele `Dokumentation/`-mappen for "ADM-010": kun
+  `KRAVREGISTER_og_STATUS_v10.md` selv og `HANDOVER_LOG.md` (i prosa, ikke som formelt krydsref)
+  refererer ID'et — ingen andre dokumenter (fx `GO_LIVE_CHECKLIST_v10.md`,
+  `RISK_ASSESSMENT_v10.md`, `Claude_Kritisk_Statusgennemgang_2026-07-03.md`) peger på "ADM-010"
+  specifikt for kamera-lokations-kravet, så en omdøbning var sikker uden at knække andre
+  krydsreferencer. `ADM-013` var ubrugt i hele mappen — valgt som næste ledige ID.
+- **Udført:** Omdøbte det senere-indsatte "Billedhistorik følger kamera-lokation"-krav fra
+  `ADM-010` til `ADM-013` (ny sidste række i Admin UI-kategorien) og beholdt den oprindelige
+  DPIA-række som `ADM-010` uændret. Tilføjede en kort note i selve ADM-013-rækken om
+  omdøbningen og henvisning til denne log-entry. Rørte IKKE §3 "Implementeringsoverblik"-
+  totalerne — antal rækker/status i Admin UI-kategorien er uændret (samme 13 rækker, kun ét
+  ID skiftet), så optællingen forbliver korrekt uanset dette. Bemærkede undervejs at Admin UI-
+  sektionen bruger "✅ Delvist" (grøn hak + ordet "Delvist") for flere rækker (ADM-002, ADM-004,
+  ADM-006, ADM-007) — inkonsistent emoji-brug ift. resten af dokumentets 🟡-konvention for
+  Delvist, men det er en separat, ældre stil-uoverensstemmelse (ikke noget jeg indførte eller
+  rettede denne runde) og kræver en bevidst beslutning om hvilken retning der er "rigtig" før
+  det ændres — efterlades til en fremtidig runde. Ren tekstændring, ingen kode rørt.
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`.
+- **Går videre til:** Samme udestående liste som tjek #25 (live multi-device-rollout-test, Peters
+  §6-beslutning om CA/mTLS, R17-smoketest, §K OS offline-artifact E2E,
+  device-decommission-beslutning, Gemini/Vertex-region-bekræftelse, C-03-bekræftelse,
+  P0 #5 HMAC/stale credentials). Nye, ikke-hastende opmærksomhedspunkter til en kommende runde:
+  (1) UI-011/SEC-012 DPIA-rækkerne i `KRAVREGISTER_og_STATUS_v10.md` er stadig ikke krydstjekket
+  (kun ADM-010-kollisionen blev håndteret denne runde); (2) den inkonsekvente "✅ Delvist"- vs.
+  "🟡 Delvist"-emoji-brug i Admin UI-kategorien (og muligvis andre kategorier) bør ensrettes,
+  men kræver først en beslutning om hvilken konvention der skal vinde, så en fremtidig runde bør
+  tage en fuld gennemgang af alle status-emojis i dokumentet, ikke kun punktvise rettelser.
