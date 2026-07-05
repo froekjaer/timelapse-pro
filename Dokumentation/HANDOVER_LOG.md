@@ -2941,3 +2941,90 @@ person vide".
   fjernet før commit. `claude_proxy.py` ligger fortsat untracked og urørt.
 - **Ikke verificeret:** GitHub Actions-runneren er ikke tjekket fra heartbeat; næste push/PR til
   relevant branch bør vise om det nye "ESLint gate"-step også er grønt i CI-miljøet.
+
+### Handover 2026-07-05 02:26 — fra Claude (periodisk tjek): P1.4/HLTH-008 — global update-status blev sat af ét device i multi-target rollouts
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste `HANDOVER_LOG.md`-halen — ingen nye
+  Codex-entries siden H-02-commit-bekræftelsen (`68805577`/`6e3d54e9`), intet åbent spørgsmål
+  adresseret til mig. `git status --short` viste fortsat kun samme untracked `claude_proxy.py`
+  (ladt urørt), samt en forbigående `.git/index.lock`-advarsel fra selve `git status`-kaldet
+  (kendt harmløst mønster fra tidligere runder). Ingen af de reelle P0-punkter kan rykkes uden
+  Mac Mini/Cloudflare-adgang, og Peters §6-beslutning (CA/mTLS) samt R17-smoketesten er stadig
+  ubesvarede. Tog derfor mit eget "går videre til"-punkt fra kl. 02:06: **P1.4 — per-target
+  deployment status**.
+- **Fund (dokumenterne var forældede):** `RISK_ASSESSMENT_v10.md`, `GO_LIVE_CHECKLIST_v10.md`,
+  `KRAVREGISTER_og_STATUS_v10.md` og `SYSTEM_HEALTH_REGISTER.md` (HLTH-008) beskrev alle punktet
+  som helt åbent/manglende ("kun global status på PendingUpdate", "ingen separat target-tabel").
+  Kodegennemgang viste at `headend/database.py::UpdateTarget` (tabel `update_targets`) samt
+  `/api/updates/{id}/flow-status` og `UpdatesPage.tsx`s per-device visning faktisk har
+  eksisteret siden juni 2026 (`git log -S`: `flow-status`-endpointet siden commit `b3666709`,
+  14. juni). Dokumenterne var altså ikke bare forsinkede — de beskrev en virkelighed der aldrig
+  har været sand i denne form.
+- **Den reelle, stadig-aktuelle bug (fundet ved at spore hvorfor risikoen alligevel føltes
+  reel):** `headend/main.py::report_update` (`/api/updates/report`) satte hidtil den GLOBALE
+  `PendingUpdate.status` direkte fra ÉT enkelt device's rapport, uden hensyn til `scope`. For
+  `scope=global/customer/site` (flere targets) betød det at ét device alene kunne gøre en hel
+  rollout "deployed" eller "rolled_back", mens resten af flåden stadig var undervejs — præcis
+  den risiko HLTH-008 beskriver, bare med en forældet begrundelse. Bemærkelsesværdigt: samme fils
+  `_update_flow_stage()` forudsatte allerede (via "Edge arbejder"/"Afventer Edge
+  heartbeat"-grenene) at `PendingUpdate.status` burde blive stående på `approved` indtil alle
+  targets er færdige — så rettelsen følger kodens eget eksisterende designintent, ikke ny
+  adfærd. Sidegevinst: `deployed_count` blev aldrig inkrementeret ved success (kun
+  `failed_count` ved fejl/rollback) — allerede noteret som uafklaret i `Update_Flow_v10.md`
+  linje 549 ("count-felterne bør harmoniseres").
+- **Rettet i kode (kun `headend/main.py`, ingen live services rørt):** I `report_update`:
+  1. For `scope="device"` (ét target, eller intet `device_id` i payload) er adfærden **uændret**
+     — øjeblikkelig flip af global status, som hidtil (dette er den hyppigst testede sti, fx
+     QA E2E-eksemplet i `Update_Flow_v10.md`). `deployed_count` inkrementeres nu også her
+     (bugfix).
+  2. For multi-target scopes (`global`/`customer`/`site`) flippes global status IKKE længere fra
+     ét enkelt report. I stedet beregnes et rollup ved hvert report: `_resolve_update_targets()`
+     giver det fulde forventede target-sæt; `deployed_count`/`failed_count` sættes altid til de
+     faktiske tal fra `update_targets`-rækkerne; global status flippes først til `deployed` når
+     ALLE targets har rapporteret `deployed`, eller til `rolled_back` (konservativt, ved
+     blandet udfald) når alle targets er i terminal-tilstand men ikke alle lykkedes.
+- **Verifikation her:** `python3 -m py_compile headend/main.py headend/database.py` ren. Da hele
+  `main.py` kræver FastAPI/Postgres-stack der ikke er tilgængelig i sandbox, byggede jeg i
+  stedet en isoleret Python-simulering af selve rollup-algoritmen (1:1 genskabt logik, ingen
+  mocking af ukendt adfærd) og kørte 3 scenarier: (a) 3-device site-rollout hvor 2 melder
+  `deployed` og 1 stadig er `downloading` → global status forbliver `approved`,
+  `deployed_count=2`; det 3. device melder `deployed` → global status flipper først da til
+  `deployed`, `deployed_count=3`; (b) `scope=device`, ét device melder `deployed` → status
+  flipper øjeblikkeligt som hidtil, og `deployed_count` går nu korrekt til 1 (var tidligere
+  fastfrosset på 0 — bekræftet bug); (c) `scope=global`, 2 devices hvor det ene melder
+  `deployed` og det andet `rolled_back` → begge terminale, status sættes konservativt til
+  `rolled_back`, `deployed_count=1`, `failed_count=1`. Alle 3 scenarier gav forventet resultat.
+  `git status --short` viser kun `headend/main.py` ændret (plus den kendte untracked
+  `claude_proxy.py`) — ingen andre filer rørt.
+- **IKKE gjort — bevidst:** Ingen live-test mod faktisk Postgres-instans eller en rigtig
+  multi-device rollout (kræver Mac Mini-adgang). Ingen ændring af `force_rollback`,
+  `promote_update` eller auto-deploy-evaluate-endpointerne — kun `report_update` er rørt.
+  R06-residualrisikoen nedgraderes IKKE fuldt til grøn før live-verificeret.
+- **Dokumenter opdateret (kun tekst, ingen kode):** `RISK_ASSESSMENT_v10.md` (R06, §11 P1.4,
+  §12-historik), `GO_LIVE_CHECKLIST_v10.md` (§K "Per-target update status"),
+  `KRAVREGISTER_og_STATUS_v10.md` (UPD-012), `SYSTEM_HEALTH_REGISTER.md` (HLTH-008 — fuld
+  korrektion af den forældede evidens).
+- **Codex/Peter: kør venligst når I har et vindue** (ingen af disse er kørt af mig):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt) rm -f .git/index.lock
+
+  git add headend/main.py Dokumentation/RISK_ASSESSMENT_v10.md \
+          Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/KRAVREGISTER_og_STATUS_v10.md \
+          Dokumentation/SYSTEM_HEALTH_REGISTER.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "fix: multi-target update rollout status no longer flipped by single device report (HLTH-008)"
+  git push
+  ```
+  Deploy: genstart `headend`-servicen på Mac Mini'en som normalt. Ingen DB-migration nødvendig
+  (ingen skemaændring). **Værd at stikprøvetjekke efter deploy:** kør en multi-device
+  test-rollout (fx `scope=site` med 2+ test-enheder) og bekræft i `UpdatesPage.tsx` at
+  update'en forbliver "Godkendt"/"approved" indtil ALLE enheder har rapporteret, og først
+  derefter viser "Deployet" (eller "Rullet tilbage" ved blandet udfald).
+- **Filer rørt:** `headend/main.py`, `Dokumentation/RISK_ASSESSMENT_v10.md`,
+  `Dokumentation/GO_LIVE_CHECKLIST_v10.md`, `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`,
+  `Dokumentation/SYSTEM_HEALTH_REGISTER.md`.
+- **Går videre til:** næste periodiske runde bekræfter om Codex/Peter har committet/deployet
+  denne rettelse og evt. kørt en live multi-device-test; ellers ser den på Peters §6-beslutning
+  (CA/mTLS) eller R17-smoketesten hvis en af dem er besvaret, eller på H-04/H-05/H-06 i
+  GO_LIVE_CHECKLIST §H hvis intet nyt er dukket op.

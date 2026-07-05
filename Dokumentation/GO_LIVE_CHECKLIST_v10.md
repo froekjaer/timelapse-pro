@@ -157,7 +157,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | App-artifact update E2E på aktiv Edge | Løst i lab | P0 |
 | OS offline-artifact update E2E på aktiv Edge (`apt-get --no-download`, manifest/signatur/hash) | Åben | P1 |
 | Change ticket med artifact/SBOM/rollback | Delvist | P1 |
-| Per-target update status | Åben | P1 |
+| Per-target update status | 🟢 Data + UI var faktisk allerede på plads (`update_targets`-tabel, `/api/updates/{id}/flow-status`, `UpdatesPage.tsx` per-device visning, siden juni 2026) — men den GLOBALE `PendingUpdate.status` blev sat direkte fra ét enkelt device-report, så ét device kunne gøre en hel multi-target rollout (global/customer/site) "deployed"/"rolled_back" mens andre devices stadig var i gang (HLTH-008). Rettet i kode 2026-07-05 (Claude, periodisk tjek): global status for multi-target scopes venter nu på at ALLE targets har rapporteret terminal-status; `deployed_count`/`failed_count` beregnes nu korrekt fra faktiske per-target rækker (var også en bug — `deployed_count` blev aldrig inkrementeret). Verificeret isoleret (se HANDOVER_LOG), afventer commit/push + Codex/Peter-review, ikke live-testet med rigtige multi-device rollouts. | P1 |
 
 ---
 

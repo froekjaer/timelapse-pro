@@ -174,9 +174,22 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 
 ### R06 — Ondsindet eller fejlet opdatering
 - **Status:** ✅ Kontrolleret (lab)
-- **Implementerede kontroller:** Offline artifact-model, change tickets, staged rollout, rollback
-- **Åbent:** OS E2E på aktiv Edge ikke testet; per-target deployment status mangler
-- **Residualrisiko:** 🟢 4
+- **Implementerede kontroller:** Offline artifact-model, change tickets, staged rollout, rollback,
+  `update_targets`-tabel med per-device status eksponeret via `/api/updates/{id}/flow-status` og
+  vist i UI (siden juni 2026)
+- **KORREKTION 2026-07-05 (Claude, periodisk tjek):** "Per-target deployment status mangler" var
+  delvist forældet — data/API/UI fandtes allerede. Den reelle, resterende del af risikoen var at
+  `/api/updates/report` satte den globale `PendingUpdate.status` fra ét enkelt device-report,
+  så én enhed kunne gøre en hel multi-target rollout (global/customer/site) "deployed"/
+  "rolled_back" mens andre devices stadig var i gang. **Rettet i kode** (afventer commit/push):
+  global status for multi-target scopes venter nu på at alle kendte targets har rapporteret
+  terminal-status; `deployed_count`/`failed_count` beregnes nu korrekt (var også en bug — se
+  `Update_Flow_v10.md` linje 549). Se `SYSTEM_HEALTH_REGISTER.md` HLTH-008 for fuld analyse.
+  Verificeret isoleret (py_compile + Python-simulering), IKKE live-testet.
+- **Åbent:** OS E2E på aktiv Edge ikke testet; live-verifikation af multi-target-rollup på en
+  faktisk multi-device rollout udestår
+- **Residualrisiko:** 🟢 4 i kode pr. 2026-07-05 (var reelt 🟡 6 for multi-target rollouts —
+  se korrektion ovenfor; nedgraderes fuldt til 🟢 4 først når live-verificeret)
 
 ### R07 — Nøgle-kompromittering
 - **Status:** 🟡 Delvist kontrolleret
@@ -552,7 +565,10 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 3. Nikon Z30 config-model — desired state + accepted equivalents (R14); detektion + UI-visning
    af non-enforceable parametre er nu på plads (2026-07-05), resterer kun live-verifikation på
    hardware og en eksplicit beslutning om aperture/shutter_speed-drift-mål
-4. Per-target deployment status (update-flow)
+4. ~~Per-target deployment status (update-flow)~~ — data/API/UI fandtes allerede; den reelle
+   rest-bug (global status flippet af ét device-report i multi-target rollouts) rettet i kode
+   2026-07-05 (Claude), afventer commit/push + live-verifikation af en faktisk multi-device
+   rollout (se R06, `SYSTEM_HEALTH_REGISTER.md` HLTH-008)
 5. ~~ESLint-gate i CI~~ — ratchet-gate implementeret 2026-07-05 (fejler kun ved FLERE
    problemer end baseline 222, kræver ikke oprydning af eksisterende problemer først), afventer
    commit/push + første grønne CI-kørsel som live-bekræftelse
@@ -584,6 +600,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-05 (nat) | Claude (periodisk tjek, docs-sync): R17 opdateret fra "rettet i kode, ikke deployet" til "deployet af Codex, health+build OK, kun manuel smoketest udestår" — dokumentet var kommet bagud ift. HANDOVER_LOG efter Codex' deploy-verifikation |
 | 10 (tilføjelse) | 2026-07-05 01:28 | Claude (periodisk tjek): §13.3 og §11 P1.2 opdateret med henvisning til nyt design-notat `Claude_Intern_CA_mTLS_Design_2026-07-05.md` (#52) — intern CA/mTLS-arkitektur, ingen kode rørt, afventer Peters valg mellem Cloudflare Access mTLS og ende-til-ende-model |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #4) | Claude: R14 UI/CMDB-visning af `camera_config_non_enforceable` implementeret (ny DB-kolonne + selvhelende v14-migration + frontend-info-boks); undervejs fundet og rettet en uafhængig, reel bug — `get_device_detail` returnerede aldrig "diagnostics"-nøglen, så hele Hardware/Kamera-diagnostik-panelet har vist tomt for alle enheder siden ~15. april |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #6) | Claude: R06/HLTH-008/UPD-012 "per-target deployment status" — fandt at data/API/UI faktisk allerede fandtes siden juni 2026 (dokumenterne var forældede); rettede den reelle rest-bug: global `PendingUpdate.status` blev sat af ét device-report i multi-target rollouts. Rettet i kode, verificeret isoleret, afventer commit/push + live-test |
 
 ---
 

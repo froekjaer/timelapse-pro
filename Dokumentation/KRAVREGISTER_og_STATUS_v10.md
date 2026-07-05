@@ -85,7 +85,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | UPD-009 | Automatisk rollback ved fejlet update | 🟡 Delvist | Rollback-mekanisme eksisterer; ticket-binding mangler |
 | UPD-010 | Maintenance window og reboot-policy | 🟡 Delvist | Policy returneres; enforcement mangler |
 | UPD-011 | OS security og functional updates separat | ✅ Implementeret | os_security/os_updates typificeret |
-| UPD-012 | Per-target deployment status | 🔴 Mangler | Kun global status på PendingUpdate |
+| UPD-012 | Per-target deployment status | 🟡 Delvist → rettet 2026-07-05 | `update_targets`-tabel + `/api/updates/{id}/flow-status` + UI fandtes allerede (siden juni); reelt gap var at global `PendingUpdate.status` blev sat fra ét device-report — rettet i kode (afventer commit/push), se GO_LIVE_CHECKLIST §K |
 | UPD-013 | Komplet update audit trail | 🟡 Delvist | approved_by/at OK; fuld chain mangler |
 | UPD-014 | SBOM pr. release | 🟡 Delvist | SBOM-felter i model; ikke auto-genereret |
 | UPD-015 | Edge bevarer drift under update | ✅ Delvist | Circular buffer + rollback; atomisk staging mangler |

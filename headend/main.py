@@ -9278,17 +9278,25 @@ def report_update(payload: dict, db: Session = Depends(get_db)):
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404)
-    if status in final_statuses:
+    if reason and status in final_statuses:
+        u.description = ((u.description or "").rstrip() + f"\n\nEdge report {now_utc().isoformat()}: {status}; reason={reason[:700]}")[-6000:]
+    # HLTH-008 / R06 / KRAVREGISTER UPD-012: for scope="device" (ét target) afspejler denne
+    # ene rapport hele update'ens skæbne, som hidtil. For multi-target scopes
+    # (global/customer/site) må ét device IKKE alene kunne sætte hele update'ens globale
+    # status til deployed/rolled_back, mens andre targets stadig er i gang — det er præcis
+    # den risiko HLTH-008 beskriver. Rollup for multi-target sker længere nede, når alle
+    # kendte targets har rapporteret en terminal-status.
+    single_target_scope = (u.scope or "device") == "device" or not device_id
+    if single_target_scope and status in final_statuses:
         u.status = status
         if status == "deployed":
-            u.deployed_at = now_utc()
+            u.deployed_at = u.deployed_at or now_utc()
+            u.deployed_count = (u.deployed_count or 0) + 1
         elif status == "rolled_back":
-            u.rollback_at = now_utc()
+            u.rollback_at = u.rollback_at or now_utc()
             u.failed_count = (u.failed_count or 0) + 1
         elif status == "blocked":
             u.failed_count = (u.failed_count or 0) + 1
-    if reason and status in final_statuses:
-        u.description = ((u.description or "").rstrip() + f"\n\nEdge report {now_utc().isoformat()}: {status}; reason={reason[:700]}")[-6000:]
     if device_id:
         ticket = db.query(ChangeTicket).filter_by(pending_update_id=u.id).order_by(ChangeTicket.created_at.desc()).first()
         target = (
@@ -9319,6 +9327,43 @@ def report_update(payload: dict, db: Session = Depends(get_db)):
         target.rollback_at = now_utc() if status == "rolled_back" else target.rollback_at
         target.last_report_at = now_utc()
         target.report_json = json.dumps(payload, ensure_ascii=False)
+
+        if not single_target_scope:
+            # Rollup for multi-target rollouts: tæl altid tællerne op fra de faktiske
+            # per-target rækker (rettelse af at deployed_count/failed_count aldrig fulgte
+            # virkeligheden korrekt for multi-target updates), og flip kun den globale
+            # status til deployed/rolled_back når ALLE kendte targets har rapporteret en
+            # terminal-status. Så længe rollout er i gang forbliver u.status "approved",
+            # hvilket allerede er det _update_flow_stage()/flow-status-UI'en forventer.
+            resolved_devices = _resolve_update_targets(db, u)
+            total = len(resolved_devices)
+            if total:
+                target_rows = (
+                    db.query(UpdateTarget)
+                    .filter_by(pending_update_id=u.id)
+                    .order_by(UpdateTarget.device_id, UpdateTarget.id.desc())
+                    .all()
+                )
+                latest_by_device: dict[str, UpdateTarget] = {}
+                for row in target_rows:
+                    latest_by_device.setdefault(row.device_id, row)
+                statuses = [
+                    latest_by_device[d.device_id].status
+                    for d in resolved_devices
+                    if d.device_id in latest_by_device
+                ]
+                terminal = {"deployed", "rolled_back", "failed"}
+                deployed_n = sum(1 for s in statuses if s == "deployed")
+                terminal_n = sum(1 for s in statuses if s in terminal)
+                u.deployed_count = deployed_n
+                u.failed_count = sum(1 for s in statuses if s in {"rolled_back", "failed"})
+                if len(statuses) == total and terminal_n == total:
+                    if deployed_n == total:
+                        u.status = "deployed"
+                        u.deployed_at = u.deployed_at or now_utc()
+                    else:
+                        u.status = "rolled_back"
+                        u.rollback_at = u.rollback_at or now_utc()
     db.commit()
     log.info("Update %d rapporteret som %s fra device", update_id, status)
     return {"ok": True}

@@ -152,17 +152,19 @@
 
 ### HLTH-008 - Per-target deployment state mangler
 
-**Prioritet:** P1  
-**Område:** Rollout, rollback, audit  
-**Status:** Åben
+**Prioritet:** P1
+**Område:** Rollout, rollback, audit
+**Status:** 🟡 Delvist rettet 2026-07-05 (Claude, periodisk tjek) — se opdatering nedenfor
 
-**Observation:** `PendingUpdate.status` er global for hele update-posten. En enkelt Edge-report sætter hele update-status til `deployed` eller `rolled_back`.
+**Oprindelig observation (forældet pr. 2026-07-05):** `PendingUpdate.status` er global for hele update-posten. En enkelt Edge-report sætter hele update-status til `deployed` eller `rolled_back`.
 
-**Evidens:** [headend/main.py](/Users/peter/projects/timelapse-pro/headend/main.py:1975) `/api/updates/report` opdaterer `PendingUpdate.status` direkte. `PendingUpdate` har `deployed_count` og `failed_count`, men ingen separat target-tabel.
+**KORREKTION 2026-07-05 (Claude):** Den oprindelige evidens var forældet — `update_targets`-tabellen (`headend/database.py::UpdateTarget`) fandtes allerede, blev populeret pr. Edge-report, og var allerede eksponeret via `/api/updates/{id}/flow-status` samt vist per-device i `UpdatesPage.tsx` (kodet siden juni 2026). Den reelle, stadig-aktuelle del af risikoen var i stedet: `/api/updates/report` satte den GLOBALE `PendingUpdate.status` direkte fra ÉT enkelt device's rapport uden hensyn til scope — for `scope=global/customer/site` (flere targets) kunne dermed ét device alene gøre hele rollout'en "deployed" eller "rolled_back", mens resten stadig var undervejs. `_update_flow_stage()` i samme fil forudsatte allerede (via sine "Edge arbejder"/"Afventer Edge heartbeat"-grene) at status burde blive stående på "approved" indtil alle targets er færdige — så bugfixen følger kodens eget eksisterende designintent, ikke ny adfærd.
 
-**Risiko:** Ved global/customer/site rollout kan én enhed få hele opdateringen til at se deployed eller rolled back ud. Det underminerer staged rollout, audit og automatisk rollback.
+**Rettet i kode (afventer commit/push af Codex/Peter):** `headend/main.py::report_update` — for `scope="device"` (ét target) er adfærden uændret (øjeblikkelig flip, som hidtil testet/brugt). For multi-target scopes venter global status nu på at ALLE kendte targets (via `_resolve_update_targets`) har rapporteret en terminal-status (deployed/rolled_back/failed), før `PendingUpdate.status` flippes — ved blandet udfald (nogle deployed, nogle fejlet) sættes status konservativt til `rolled_back`. Som sidegevinst er `deployed_count` (der aldrig blev inkrementeret ved success, jf. `Update_Flow_v10.md` linje 549) nu korrekt for begge stier.
 
-**Foreslået rettelse:** Indfør `update_targets` med `update_id`, `device_id`, `camera_id`, `status`, timestamps, attempts, logs, artifact hash og rollback result.
+**Verifikation:** `python3 -m py_compile headend/main.py` ren. Isoleret Python-simulering af rollup-algoritmen (3 scenarier: staged multi-target completion, single-target uændret adfærd, blandet multi-target-udfald) bekræfter forventet opførsel — se HANDOVER_LOG 2026-07-05. IKKE testet mod live Postgres eller rigtige multi-device rollouts (kræver Mac Mini-adgang).
+
+**Resterende risiko:** Live-verifikation på en faktisk multi-device rollout udestår. Ellers lukket.
 
 ### HLTH-009 - Policy evalueres, men enforcement er ufuldstændig
 
