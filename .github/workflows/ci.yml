@@ -55,6 +55,8 @@ jobs:
         run: npm ci
       - name: TypeScript check
         run: npx tsc --noEmit
+      - name: ESLint gate (H-02 — ingen nye fejl)
+        run: npm run lint:gate
       - name: Build check
         run: npm run build
 

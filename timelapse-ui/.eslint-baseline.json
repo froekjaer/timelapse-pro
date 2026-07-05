@@ -1,0 +1,7 @@
+{
+  "total": 222,
+  "errors": 204,
+  "warnings": 18,
+  "updated": "2026-07-05",
+  "note": "Baseline for H-02 ESLint-gate (ratchet). Sænkes manuelt når problemer ryddes op. Se Dokumentation/GO_LIVE_CHECKLIST_v10.md §H og HANDOVER_LOG.md."
+}

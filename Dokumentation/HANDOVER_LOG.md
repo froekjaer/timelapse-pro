@@ -2858,3 +2858,76 @@ person vide".
 - **Ikke udført automatisk:** UI-stikprøve på DevicePage/Statistik er ikke klikket igennem fra
   heartbeat, da API'en kræver autentificeret session/MFA. Bør tjekkes manuelt i UI'et: at
   Hardware/Kamera-diagnostik-panelet igen viser CPU/SSD/batteri/kamera-drift på et par enheder.
+
+### Handover 2026-07-05 02:06 — fra Claude (periodisk tjek): H-02 ESLint-gate i CI (ratchet)
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste `HANDOVER_LOG.md`-halen — ingen nye
+  Codex-entries siden diagnostics-deploy-bekræftelsen (`1a2bafb1`), intet åbent spørgsmål
+  adresseret til mig. `git status --short` viste fortsat kun samme untracked `claude_proxy.py`
+  (ladt urørt) plus den kendte harmløse `.git/index.lock`. Ingen af de udestående P0-punkter i
+  §11 kan rykkes uden Mac Mini/Cloudflare/juridisk adgang, og Peters §6-beslutning (CA/mTLS) samt
+  R17-live-smoketesten er stadig ikke besvaret. Valgte derfor P1.5 — **H-02 ESLint-gate i
+  CI** — som hidtil kun har været et åbent punkt uden konkret forslag.
+- **Analyse først:** Læste `.github/workflows/ci.yml` — bekræftede at der **ingen ESLint-step
+  findes i dag** (kun `tsc --noEmit` + `npm run build` i `ui-check`-jobbet). Kørte
+  `npx eslint . -f json` i `timelapse-ui/` og talte selv op: **204 fejl + 18 advarsler = 222**,
+  hvilket bekræfter tallet der allerede stod i `GO_LIVE_CHECKLIST_v10.md` H-02. At kræve alle 222
+  rettet før en gate kan aktiveres er urealistisk i én kørsel (kræver manuel gennemgang, jf.
+  tidligere entries) — H-02's faktiske krav er "ingen NYE fejl", altså en ratchet, ikke en
+  nul-fejl-gate.
+- **Udført (rent CI/tooling, ingen produktkode rørt):**
+  1. Ny `timelapse-ui/scripts/eslint-gate.mjs`: kører `eslint . -f json`, summerer
+     fejl+advarsler, sammenligner mod en baseline-fil, exit 1 hvis flere problemer end baseline,
+     exit 0 (med forslag om at sænke baseline) hvis færre eller uændret.
+  2. Ny `timelapse-ui/.eslint-baseline.json`: `{"total": 222, "errors": 204, "warnings": 18,
+     "updated": "2026-07-05"}` — matcher den dokumenterede status. Sænkes manuelt fremover i
+     takt med oprydning (ingen automatisk nedjustering — bevidst, for at undgå at en gate
+     stille sænker sig selv ved en fejl).
+  3. `timelapse-ui/package.json`: nyt script `"lint:gate": "node scripts/eslint-gate.mjs"`.
+  4. `.github/workflows/ci.yml`: nyt step "ESLint gate (H-02 — ingen nye fejl)" i `ui-check`-
+     jobbet, mellem `tsc --noEmit` og `npm run build` — kører før build, så en regression
+     stopper pipelinen tidligt.
+  5. `RISK_ASSESSMENT_v10.md` (§11 P1.5) og `GO_LIVE_CHECKLIST_v10.md` (§H, H-02) opdateret til
+     at afspejle at gaten er kodet, men endnu ikke committet/kørt i en rigtig CI-pipeline.
+- **Verifikation her:** Kørte `node scripts/eslint-gate.mjs` direkte — rapporterer korrekt "204
+  fejl, 18 advarsler (222 i alt)" mod baseline 222, exit 0. Simulerede derefter en regression ved
+  midlertidigt at sætte baseline til 0 i en kopi — scriptet fejlede korrekt med exit 1 og en klar
+  fejlbesked, hvorefter jeg gendannede den rigtige baseline-fil (verificeret ved at gencatte
+  filen efter gendannelse). Bekræftede desuden at `.github/workflows/ci.yml` fortsat er gyldig
+  YAML-struktur (visuel gennemlæsning af diff — kun to linjer tilføjet, ingen eksisterende steps
+  rørt). Ingen `.py`-filer rørt i denne runde, så `py_compile` ikke relevant.
+- **IKKE gjort — bevidst:** Ingen af de 222 eksisterende ESLint-problemer rettet — det var
+  bevidst uden for scope for denne runde (kræver manuel gennemgang case for case, jf. tidligere
+  entries om de 49 mekaniske fejl 2026-07-04). Gaten er derfor **ikke afprøvet i en rigtig
+  GitHub Actions-runner** — kun lokalt i sandbox. Har bevidst IKKE selv committet/pushet
+  (`.github/workflows/`-ændringer bør efter konvention ses af Peter/Codex først, særligt da det
+  er en CI-adfærdsændring, ikke bare produktkode).
+- **Bemærket, ikke rettet:** En efterladt `timelapse-ui/eslint_stderr.log` (tom, 0 bytes, fra
+  min egen test-kørsel) kunne ikke slettes fra sandbox-siden (samme fillås-mønster som
+  `.git/index.lock` i tidligere entries — "Operation not permitted" ved `rm`, men tømning til 0
+  bytes lykkedes). Harmløs, men bør ryddes op/committes ikke af Peter/Codex.
+- **Codex/Peter: kør venligst** (ingen af disse er kørt af mig):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt) rm -f .git/index.lock
+  rm -f timelapse-ui/eslint_stderr.log   # tom testfil, se note ovenfor
+
+  git add .github/workflows/ci.yml timelapse-ui/package.json timelapse-ui/scripts/eslint-gate.mjs \
+          timelapse-ui/.eslint-baseline.json Dokumentation/RISK_ASSESSMENT_v10.md \
+          Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "ci: add ESLint ratchet gate (H-02) — fail only on new problems above baseline 222"
+  git push
+  ```
+  Forventet: næste CI-kørsel på `main` (eller først synlig ved et efterfølgende PR/push, da
+  `ui-check` trigges på push/PR til `main`) viser det nye "ESLint gate"-step som grønt (222 ≤
+  222). Værd at bekræfte at selve GitHub Actions-runneren rent faktisk kører steppet og ikke
+  fejler af miljøårsager (fx `npm ci` uden `--include=dev` — burde være fint, da eslint allerede
+  er i `devDependencies`, men ikke testet i den rigtige runner af mig).
+- **Filer rørt:** `.github/workflows/ci.yml`, `timelapse-ui/package.json`,
+  `timelapse-ui/scripts/eslint-gate.mjs` (ny), `timelapse-ui/.eslint-baseline.json` (ny),
+  `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** næste periodiske runde bekræfter om Codex/Peter har committet og om CI
+  rent faktisk er grøn med det nye step; ellers ser den på P1.4 (per-target deployment status)
+  hvis intet nyt er dukket op, eller på Peters §6-beslutning (CA/mTLS) / R17-smoketest hvis en af
+  dem er besvaret i mellemtiden.

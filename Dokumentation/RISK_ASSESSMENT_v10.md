@@ -553,7 +553,9 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
    af non-enforceable parametre er nu på plads (2026-07-05), resterer kun live-verifikation på
    hardware og en eksplicit beslutning om aperture/shutter_speed-drift-mål
 4. Per-target deployment status (update-flow)
-5. ESLint-gate i CI
+5. ~~ESLint-gate i CI~~ — ratchet-gate implementeret 2026-07-05 (fejler kun ved FLERE
+   problemer end baseline 222, kræver ikke oprydning af eksisterende problemer først), afventer
+   commit/push + første grønne CI-kørsel som live-bekræftelse
 
 ### 🟡 P2 — Production hardening
 1. Disk-kryptering på Edge (R05)

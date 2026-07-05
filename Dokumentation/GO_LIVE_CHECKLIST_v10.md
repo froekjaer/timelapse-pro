@@ -139,7 +139,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | # | Krav | Status |
 |---|---|---|
 | H-01 | GitHub Actions CI er grøn på alle builds | ✅ Efter commit 79581ac |
-| H-02 | ESLint-gate i CI — ingen nye fejl | 🟠 Mangler (222 tilbage, ned fra 271 — 49 mekaniske fejl rettet 2026-07-04 nat, resten kræver manuel gennemgang, se `HANDOVER_LOG.md`) |
+| H-02 | ESLint-gate i CI — ingen nye fejl | 🟠 Kode klar, afventer commit+push (2026-07-05, Claude): ratchet-gate (`timelapse-ui/scripts/eslint-gate.mjs` + `.eslint-baseline.json`, baseline 222) tilføjet som CI-step i `ui-check` — fejler kun hvis antal ESLint-problemer STIGER over baseline, kræver ikke at de 222 eksisterende rettes først. Baseline sænkes manuelt i takt med oprydning. |
 | H-03 | `slowapi` tilføjet til requirements.txt | ✅ Rettet 2026-07-03 (Claude) — hele `requirements.txt` er samtidig pinnet til konkrete versioner (var 100% upinnet); se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §3.1. Committet (`b0e224c`) og installeret i live-venv af Peter |
 | H-04 | deploy/launchd/dk.froekjaer.timelapse-headend.plist opdateret (ikke-secret version) | 🟠 Mangler |
 | H-05 | Python test-suite med edge/headend contract-tests | 🟡 Ønsket |
