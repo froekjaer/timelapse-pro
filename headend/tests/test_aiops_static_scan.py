@@ -41,6 +41,7 @@ _TMP_DB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMP_DB.name}")
 
 from main import (  # noqa: E402
+    _aiops_scan_is_secret_value_literal,
     _aiops_scan_should_skip_line,
     _aiops_scan_should_skip_path,
     _aiops_static_scan,
@@ -119,3 +120,52 @@ class TestAiopsStaticScanSelfReferenceRegression:
             )
         ]
         assert self_referential == []
+
+
+class TestAiopsScanIsSecretValueLiteral:
+    """Baggrund (2026-07-05, periodisk tjek #18/#19 -> denne runde): under VPEN-006-triagen
+    blev alle 10 daværende `hardcoded_secret_terms`-signaler manuelt vurderet false positive —
+    samtlige var variabel-/kwarg-referencer (fx `token=req.bootstrap_token`,
+    `wifi_password=wifi_password`), ikke bogstavelige hemmelige værdier. Forbedringsforslaget
+    fra den runde ("kun flage når højresiden ligner en streng-literal"), som blev noteret men
+    IKKE udført dengang, er implementeret her som `_aiops_scan_is_secret_value_literal()`."""
+
+    def test_quoted_literal_is_flagged(self):
+        assert _aiops_scan_is_secret_value_literal('password="hunter2"', "password=") is True
+        assert _aiops_scan_is_secret_value_literal("api_key='sk-abc123'", "api_key=") is True
+
+    def test_variable_reference_is_not_flagged(self):
+        assert _aiops_scan_is_secret_value_literal(
+            "bootstrap_token=req.bootstrap_token", "token="
+        ) is False
+        assert _aiops_scan_is_secret_value_literal(
+            "wifi_password=wifi_password", "password="
+        ) is False
+
+    def test_needle_not_present_returns_false(self):
+        assert _aiops_scan_is_secret_value_literal("no needle here", "password=") is False
+
+    def test_whitespace_before_quote_is_tolerated(self):
+        assert _aiops_scan_is_secret_value_literal('secret=   "abc"', "secret=") is True
+
+
+class TestAiopsStaticScanHardcodedSecretTermsPrecision:
+    """Integrationstest: bekræfter at `_aiops_static_scan()`'s filter for
+    `hardcoded_secret_terms` rent faktisk anvendes i den fulde scan, ikke kun i den isolerede
+    hjælpefunktion ovenfor."""
+
+    def test_variable_reference_pattern_is_not_reported_as_finding(self):
+        """Regressionsværn mod at VPEN-006's konkrete false-positive-mønster
+        (`token=req.bootstrap_token`-stil variabel-referencer) dukker op igen som et
+        `hardcoded_secret_terms`-fund i en fremtidig scan."""
+        result = _aiops_static_scan()
+        secret_term_findings = [
+            f for f in result["findings"] if f["category"] == "hardcoded_secret_terms"
+        ]
+        for finding in secret_term_findings:
+            snippet = finding["snippet"]
+            assert "=" in snippet
+            # Redigeret snippet skal enten indeholde den maskerede '***'-erstatning
+            # (bogstavelig literal-værdi) eller en quote-karakter tæt på tildelingen — ikke en
+            # bar variabel-/kwarg-reference uden citationstegn.
+            assert "***" in snippet or "'" in snippet or '"' in snippet

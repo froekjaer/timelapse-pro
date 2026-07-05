@@ -15221,6 +15221,33 @@ def _aiops_scan_should_skip_line(line: str) -> bool:
     return _AIOPS_SCAN_SELF_IGNORE_MARKER in line
 
 
+_AIOPS_SCAN_SECRET_TERMS_CATEGORY = "hardcoded_secret_terms"
+
+
+def _aiops_scan_is_secret_value_literal(line: str, needle: str) -> bool:
+    """Ren, sideeffektfri hjælpefunktion — testbar uden filsystem/DB. Se
+    `headend/tests/test_aiops_static_scan.py`.
+
+    Bruges KUN for `_AIOPS_SCAN_SECRET_TERMS_CATEGORY`-kategorien. Et nøgleord efterfulgt af
+    tildeling er kun en reel "hardcoded secret"-kandidat hvis højresiden rent faktisk er en
+    bogstavelig streng-literal (starter med `'` eller `"`) — IKKE hvis den er en variabel-
+    eller kwarg-reference (fx `X=req.bootstrap_token` eller `Y=wifi_password`, hvor selve
+    navnet blot genbruger nøgleordet). Under VPEN-006-triagen (periodisk tjek #18/#19) viste
+    en manuel gennemgang at ALLE daværende signaler i denne kategori var netop den slags
+    referencer, ikke faktiske hardcodede værdier — denne funktion filtrerer dem fra ved kilden
+    i stedet for at kræve manuel triage hver gang scanneren køres igen.
+
+    OBS til vedligeholdere: undgå at gengive de faktiske søgeord fra opslagstabellen i
+    `_aiops_static_scan()` her uden `_AIOPS_SCAN_SELF_IGNORE_MARKER` — se advarslen i
+    `_aiops_scan_should_skip_line()`."""
+    lower = line.lower()
+    idx = lower.find(needle.lower())
+    if idx == -1:
+        return False
+    rest = line[idx + len(needle):].lstrip()
+    return rest[:1] in ("'", '"')
+
+
 def _aiops_static_scan() -> dict:
     """Lightweight read-only SAST snapshot for AI Ops.
 
@@ -15258,17 +15285,24 @@ def _aiops_static_scan() -> dict:
                 continue
             lower = line.lower()
             for category, needles in patterns.items():
-                if any(n.lower() in lower for n in needles):
-                    snippet = line.strip()
-                    for sensitive in ("password", "api_key", "secret", "token"):
-                        snippet = _re.sub(rf"({sensitive}\s*[=:]\s*)['\"]?[^'\"\s,]+", rf"\1***", snippet, flags=_re.I)
-                    findings.append({
-                        "category": category,
-                        "file": rel,
-                        "line": idx,
-                        "snippet": snippet[:180],
-                    })
-                    break
+                matched_needle = next((n for n in needles if n.lower() in lower), None)
+                if matched_needle is None:
+                    continue
+                if (
+                    category == _AIOPS_SCAN_SECRET_TERMS_CATEGORY
+                    and not _aiops_scan_is_secret_value_literal(line, matched_needle)
+                ):
+                    continue
+                snippet = line.strip()
+                for sensitive in ("password", "api_key", "secret", "token"):
+                    snippet = _re.sub(rf"({sensitive}\s*[=:]\s*)['\"]?[^'\"\s,]+", rf"\1***", snippet, flags=_re.I)
+                findings.append({
+                    "category": category,
+                    "file": rel,
+                    "line": idx,
+                    "snippet": snippet[:180],
+                })
+                break
             if len(findings) >= 80:
                 break
     return {"files_scanned": scanned, "findings": findings, "finding_count": len(findings)}

@@ -3984,3 +3984,65 @@ person vide".
   E2E", device-decommission-beslutningen, bekræftelse af den faktiske Gemini/Vertex-
   produktionsregion, samt den lav-prioritets `hardcoded_secret_terms`-heuristik-forbedring
   noteret (men ikke udført) i #18/#19.
+
+### Handover 2026-07-05 (periodisk tjek #20) — fra Claude: `hardcoded_secret_terms`-heuristik-forbedring implementeret (den sidste udestående SAST-opgave fra #18/#19)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -3` bekræftede `3efe405e` (docs: mark
+  VPEN-006 SAST triage complete) er seneste commit. `git status --short` viste kun den kendte
+  untracked `claude_proxy.py` (uændret, ingen ny fra en tidligere Claude-session — ladt urørt
+  per konvention). Ingen ny Codex-entry med spørgsmål til Claude siden sidst. Forrige rundes
+  "Går videre til" nævnte flere punkter, hvoraf alle undtagen ét kræver enten live-adgang
+  (multi-device-rollout-test, R17-smoketest, Gemini/Vertex-regionsbekræftelse) eller en
+  Peter-beslutning (CA/mTLS-arkitekturvalg, device-decommission-løsning). Det ENE punkt der
+  kunne gennemføres FÆRDIGT i denne runde uden nogen af delene: den lav-prioritets
+  `hardcoded_secret_terms`-heuristik-forbedring noteret men ikke udført i #18/#19.
+- **Udført:** Ny ren funktion `_aiops_scan_is_secret_value_literal(line, needle)` i
+  `headend/main.py` — kræver at højresiden af en `password=`/`api_key=`/`secret=`/`token=`-
+  tildeling starter med `'` eller `"` (en bogstavelig streng-literal) før linjen tælles som et
+  `hardcoded_secret_terms`-fund. Scan-løkken i `_aiops_static_scan()` er opdateret til at bruge
+  den matchede needle (ikke kun kategorien) og springe kategorien over hvis literal-tjekket
+  fejler, uden at afbryde tjek af de øvrige 3 kategorier for samme linje. Begrundelse: under
+  VPEN-006-triagen (#18) blev ALLE 10 daværende signaler i denne kategori manuelt vurderet false
+  positive — samtlige var variabel-/kwarg-referencer (fx `token=req.bootstrap_token`,
+  `wifi_password=wifi_password`), aldrig faktiske hardcodede værdier. Denne fix fjerner den
+  manuelle triage-byrde ved kilden i stedet for at kræve gentaget gennemgang ved hver scan.
+- **Test:** 5 nye tests i `headend/tests/test_aiops_static_scan.py` — 2 rene funktionstests af
+  `_aiops_scan_is_secret_value_literal()` (literal flages, variabel-reference flages ikke,
+  needle-ikke-fundet, whitespace-tolerance), samt 1 integrationstest der kører den fulde
+  `_aiops_static_scan()` og bekræfter at ingen `hardcoded_secret_terms`-fund længere er en bar
+  variabel-reference uden citationstegn.
+- **Verifikation:** Da det lokale `.venv` i repoet er macOS/homebrew-bundet (ubrugelig i denne
+  Linux-sandbox), blev et midlertidigt venv oprettet (`/tmp/tlp_venv`,
+  `pip install -r headend/requirements.txt pytest`). `python3 -m py_compile headend/main.py
+  headend/database.py headend/tests/test_aiops_static_scan.py` ren. Hele
+  `headend/tests/`-suiten: **37/37 bestået** (32 eksisterende + 5 nye — `test_aiops_static_scan.py`
+  selv 14/14, plus `test_change_ticket_sbom.py`, `test_gemini_region_guard.py`,
+  `test_report_update_rollup.py`, `test_update_lifecycle.py` uændret grønne). Kørte desuden
+  `_aiops_static_scan()` direkte før/efter for at bekræfte effekten i praksis:
+  `hardcoded_secret_terms` bidrager nu **0** fund (var 10); `files_scanned` steg fra 40 til 48 i
+  denne reproduktion, fordi de 10 frigjorte pladser under det uændrede 80-fundsloft nu går til
+  faktisk kildekode i stedet — ingen nye fund dukkede op i de øvrige 3 kategorier som følge
+  heraf. `git diff --stat`: kun `headend/main.py` (+45/-11) og
+  `headend/tests/test_aiops_static_scan.py` (+50) ændret.
+- **Dokumentation opdateret (samme runde):** `RISK_ASSESSMENT_v10.md` — §11 P2.4's
+  SAST-triage-punkt udvidet med denne opfølgning; §12 dokumenthistorik fik en ny linje.
+- **Ikke gjort — bevidst:** ingen ændring af de øvrige 3 kategoriers logik eller af det hårde
+  80-fundsloft. Ingen commit/push (Peter/Codex committer selv).
+- **Codex/Peter: kør venligst når I har et vindue (kodefix + tests, ufarlig at merge — rører
+  kun en read-only AI Ops-diagnostikfunktion, ingen deploy/genstart kræves, men indgår i næste
+  normale headend-deploy som vanligt):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git diff headend/main.py headend/tests/test_aiops_static_scan.py Dokumentation/RISK_ASSESSMENT_v10.md
+  git add headend/main.py headend/tests/test_aiops_static_scan.py \
+          Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "fix: AI Ops SAST hardcoded_secret_terms scan only flags string-literal RHS, not variable refs"
+  git push
+  ```
+- **Filer rørt:** `headend/main.py`, `headend/tests/test_aiops_static_scan.py`,
+  `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** VPEN-006/SAST-sporet er nu fuldt afsluttet, inkl. den tidligere noterede
+  heuristik-forbedring. Den resterende, uændrede liste kræver enten live-adgang eller en
+  Peter-beslutning: live multi-device-rollout-test (P1.4/R06), Peters §6-beslutning (CA/mTLS),
+  R17-smoketesten, §K's "OS offline-artifact update E2E", device-decommission-beslutningen, samt
+  bekræftelse af den faktiske Gemini/Vertex-produktionsregion.

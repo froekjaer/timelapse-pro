@@ -660,8 +660,19 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
    `shell_execution` (40), `legacy_update_paths` (5) og `dangerous_file_ops` (24). **Ingen
    bekræftede reelle sårbarheder.** Ét opmærksomhedspunkt til Peter (ikke hastende): bekræft
    restriktive filrettigheder på `.claude_proxy/` (lokalt, ikke Git-sporet dev-værktøj med
-   `shell=True` mod fil-baseret IPC — se VPEN-2026-009). Lav-prioritets forbedringsforslag til
-   `hardcoded_secret_terms`-heuristikken (kun flage streng-literaler) noteret, ikke udført
+   `shell=True` mod fil-baseret IPC — se VPEN-2026-009). **Opfølgning 2026-07-05 (periodisk
+   tjek #20, Claude):** den noterede men ikke-udførte `hardcoded_secret_terms`-heuristik-
+   forbedring er nu implementeret — ny `_aiops_scan_is_secret_value_literal()` kræver at
+   højresiden af tildelingen ligner en bogstavelig streng-literal (starter med `'`/`"`) før
+   linjen flages; rene variabel-/kwarg-referencer (fx `token=req.bootstrap_token`,
+   `wifi_password=wifi_password` — dvs. netop det mønster alle 10 tidligere false positives
+   i denne kategori havde) tælles ikke længere med. 5 nye tests i
+   `headend/tests/test_aiops_static_scan.py` (14/14 bestået i kategorien, 37/37 i hele
+   `headend/tests/`-suiten). Reproduktion efter fix: `hardcoded_secret_terms` bidrager nu 0
+   fund (var 10); det uændrede 80-fundsloft betyder de frigjorte pladser i stedet dækker flere
+   reelle filer (`files_scanned` steg fra 40 til 48 i denne reproduktion) — ingen nye reelle
+   fund i de øvrige 3 kategorier som følge heraf. Ingen kodeændring i selve scan-logikkens
+   øvrige kategorier eller i det hårde loft.
 5. Secrets → macOS Keychain
 6. AI resource governor + Ollama beslutning
 7. ~~CMDB-indikator/auto-timeout for debug/lab mode pr. enhed (R17)~~ — kode deployet
@@ -693,6 +704,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #17) | Claude: VPEN-2026-008 (NY) — fandt at AI Ops' SAST-snapshot (grundlaget for VPEN-006/§11 P2.4's "73 signaler") fejlagtigt talte en lokal, gitignore'et vendored virtualenv (`artifacts/edge-qa-training/.venv-edge-qa-train-py312/`, tredjeparts-biblioteker som sympy/onnxruntime) med som egne signaler, og at det hårde 80-fund-loft blev brugt op af denne støj før egen kode blev scannet. Rettet i `_aiops_static_scan()`/ny `_aiops_scan_should_skip_path()`, testdækket (6 nye + 23 eksisterende tests, 29/29 bestået i midlertidig venv). Reel triage af signalerne i egen kode er fortsat udestående — se §11 P2.4 |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #18) | Claude: VPEN-2026-009 (NY) — fandt og rettede endnu en scanner-selvreference (pattern-opslagstabellen matchede sig selv; under verifikation blev også en anden-ordens variant i fix'ets egne kommentarer fundet og rettet), testdækket (3 nye tests, 32/32 bestået). Gennemførte derefter en første triage-batch af VPEN-006's SAST-signaler — `hardcoded_secret_terms`, `shell_execution`, `legacy_update_paths` (56 af 80) — ingen reelle sårbarheder, ét opmærksomhedspunkt (lokalt dev-værktøj `claude_proxy.py`'s `shell=True`). `dangerous_file_ops` (24) resterer til næste runde. Se §11 P2.4 |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #19) | Claude: afsluttede VPEN-006's SAST-triage — gennemgik den resterende `dangerous_file_ops`-kategori (24 signaler) enkeltvis mod faktisk kildekode. Ingen reelle sårbarheder: temp-fil-oprydning bag `try/except`/`missing_ok=True`, admin-gated capture-sletning via saniteret filnavn-opslag (`_sanitize_filename`/`_sanitize_device_id` afviser path traversal), offline admin-CLI-værktøjer (`argparse`, ikke web-eksponeret), og ét `chown`/`chmod`-fund der reelt STRAMMER rettigheder (700/600) på `.ssh` inde i et loop-mountet OS-image. Alle 4 kategorier (80/80 signaler) er nu triageret på tværs af tjek #18+#19 — §11 P2.4 og §2 opdateret til "triage afsluttet". Ingen kodeændring (ingen fund krævede det); ingen commit/push nødvendig |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #20) | Claude: implementerede den i #18/#19 noterede men ikke-udførte `hardcoded_secret_terms`-heuristik-forbedring — ny `_aiops_scan_is_secret_value_literal()` kræver en bogstavelig streng-literal på højresiden før en linje flages, så variabel-/kwarg-referencer (mønsteret bag alle 10 tidligere false positives i denne kategori) ikke længere tælles med. 5 nye tests (`headend/tests/test_aiops_static_scan.py`, 14/14 i filen, 37/37 i hele `headend/tests/`-suiten). Reproduktion bekræfter `hardcoded_secret_terms` nu bidrager 0 fund (var 10); §11 P2.4 opdateret. Ingen commit/push (Peter/Codex committer selv) |
 
 ---
 
