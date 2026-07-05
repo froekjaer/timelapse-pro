@@ -3673,3 +3673,14 @@ person vide".
 - **Ikke udført automatisk:** Den faktiske produktionsværdi for
   `GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region` er ikke verificeret i live env i denne
   runde; det er stadig en separat konfigurations-/DPIA-opfølgning.
+
+### Handover 2026-07-05 (nat) - Codex: change ticket SBOM re-sign commit udført
+- **Udført:** Claude's change-ticket/SBOM-integritetsfix er gennemgået, testet, committet og
+  pushet på `claude/capture-camera-location-2026-07-03` som `ff0797c9`:
+  `fix: re-sign change ticket document (incl. SBOM ref) on late artifact binding`.
+- **Verifikation:** `python3 -m py_compile headend/main.py headend/database.py
+  headend/tests/test_change_ticket_sbom.py` var ren. Codex kørte:
+  `/tmp/tlp-hvenv/bin/python -m pytest tests/test_report_update_rollup.py tests/test_update_lifecycle.py tests/test_gemini_region_guard.py tests/test_change_ticket_sbom.py -v`
+  med **23 passed**.
+- **Drift:** Ingen live-genstart udført i denne runde, da ændringen kun rører oprettelse/binding
+  af change tickets og Claude eksplicit noterede at den kan indgå i næste normale headend-deploy.
