@@ -82,7 +82,7 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 | VPEN-003 Backup/failover | Åben — restore-test mangler |
 | VPEN-004 CMDB coverage | Delvist — node-agent stoppet 2026-06-22 |
 | VPEN-005 Legacy update paths | Delvist — opt-in; bør fjernes fra production |
-| VPEN-006 SAST backlog (73 signals) | Åben — triage ikke udført |
+| VPEN-006 SAST backlog (73 signals) | Åben — triage ikke udført. **Se VPEN-2026-008 (2026-07-05):** selve signal-optællingen var upålidelig (scanner-fejl fundet og rettet), reel triage af de faktiske signaler i egen kode er fortsat udestående og formentlig et STØRRE arbejde end de oprindelige 73 antydede |
 | VPEN-007 AI resource governance | Åben |
 
 ### Fra QA_Pentest_Risk_Assessment_2026-06-21
@@ -481,6 +481,13 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 **Beskrivelse:** 25.574 captures, heraf 2.535 uden AI-analyse og 3.033 uden tags. Ingen retention policy implementeret.
 **Anbefaling:** Retention policy i DB pr. camera. Adgangslog pr. billede/download.
 
+#### VPEN-2026-008 — AI Ops' SAST-snapshot talte tredjeparts-bibliotekskode med som egne signaler (NY, fundet + rettet 2026-07-05, Claude periodisk tjek)
+**Prioritet:** P2 (dataintegritet i GRC-evidens, ikke selv en sårbarhed)
+**Beskrivelse:** `_aiops_static_scan()` i `headend/main.py` (grundlaget for VPEN-006's "73 SAST-signaler") sprang kun stier over ved et EKSAKT match på en hel path-del (`venv`, `node_modules` osv.). Den lokale, `.gitignore`'ede mappe `artifacts/edge-qa-training/.venv-edge-qa-train-py312/` indeholder et komplet vendored virtualenv (sympy, onnxruntime, onnx, fsspec, networkx, packaging m.fl.) fra en tidligere trænings-kørsel — ikke committet til Git, men til stede på disk. En reproduktion af scanneren i denne runde viste at 72 af 80 (scannerens hårde loft) rapporterede "signaler" reelt kom fra denne tredjeparts-kode, ikke fra TimeLapse Pro. Værre: fordi scanneren stopper ved 80 fund og traverserer dybde-først, blev loftet brugt op af denne støj FØR resten af repoet (inkl. `headend/main.py` selv) nåede at blive scannet — så den tekst der reelt vises for et menneske i AI Ops-cockpittet kunne mangle rigtige fund fra vores egen kode.
+**Rettet (kode + tests):** Skip-logikken er udtrukket til en ren funktion `_aiops_scan_should_skip_path()`, som nu også springer `artifacts/` (eksakt topniveau-match), enhver sti-del der starter med `.venv`, og enhver sti-del der indeholder `site-packages`/`dist-packages` over. 6 nye kontrakt-tests i `headend/tests/test_aiops_static_scan.py` (inkl. det konkrete tilfælde ovenfor samt regressionstests for at rigtig produktkode, fx `headend/main.py`, `claude_proxy.py`, fortsat scannes). Hele test-suiten kørt i midlertidig venv: **29/29 bestået** (23 eksisterende + 6 nye).
+**Konsekvens for VPEN-006:** Efter rettelsen viser en reproduktion at scanneren nu rammer det samme 80-punkts loft udelukkende med signaler fra egen kode (mest `headend/main.py`: `subprocess.run`/`unlink`/`rmtree`-kald i backup-, thumbnail- og docker-relateret driftskode). Det betyder VPEN-006's underliggende antal reelt formentlig ER STØRRE end de oprindelige "73" (som var domineret af støj), ikke mindre. Selve triagen (kategorisering i accepted safe pattern / needs guardrail / needs test / needs change ticket, jf. den oprindelige VPEN-006-anbefaling) er IKKE udført i denne runde — det er et betydeligt, separat arbejde der kræver gennemgang af hvert enkelt fund, og bør ikke forceres igennem overfladisk i en 20-minutters periodisk kørsel.
+**Ikke gjort — bevidst:** Ingen ændring af selve "80 fund"-loftet eller af hvilke filtyper/mønstre der scannes — kun stien der forårsagede falsk støj er rettet. Ingen commit/push (Peter/Codex committer selv, se HANDOVER_LOG).
+
 ---
 
 ## 6. IEC 62443 zone-model (opdateret)
@@ -627,7 +634,11 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 1. Disk-kryptering på Edge (R05)
 2. Off-site backup (R09)
 3. GDPR adgangslog pr. billede
-4. SAST backlog triage (73 signaler)
+4. SAST backlog triage (73 signaler) — **OBS 2026-07-05:** selve tallet "73" var upålideligt
+   (scanneren talte vendored tredjeparts-bibliotekskode med som egne signaler, se
+   VPEN-2026-008); scanner-fejlen er nu rettet og testdækket (`headend/tests/test_aiops_static_scan.py`),
+   men den faktiske triage af de reelle signaler i egen kode (formentlig FLERE end 73, ikke
+   færre) er stadig fuldt ud åben og ikke påbegyndt
 5. Secrets → macOS Keychain
 6. AI resource governor + Ollama beslutning
 7. ~~CMDB-indikator/auto-timeout for debug/lab mode pr. enhed (R17)~~ — kode deployet
@@ -656,6 +667,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #11, docs-sync) | Claude: R06/§11 P1.4, `SYSTEM_HEALTH_REGISTER.md` HLTH-008/HLTH-015, `GO_LIVE_CHECKLIST_v10.md` H-05/H-06/§K og `KRAVREGISTER_og_STATUS_v10.md` UPD-012 opdateret — Codex har siden committet/pushet/deployet flush-rettelsen (`1e3c3321`, inkl. H-05-testene, 13/13 bestået) og README-oprydningen (`9dda9923`, H-06), samt genstartet headend og bekræftet health 200 OK (se HANDOVER_LOG "nat"-entry). Dokumenterne sagde stadig "IKKE committet endnu" og var dermed kommet bagud. R06/HLTH-008/UPD-012 nedjusteret fra P0/🟠 til P1/🟡 (kode er live, kun live multi-device-rollout-test resterer nu); HLTH-015 lukket ✅ |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #12) | Claude: bekræftede at forrige rundes docs-sync (P1.4/HLTH-008/H-05/H-06/UPD-012) er committet af Peter/Codex som `c7d409cb` — ingen uncommittede docs-ændringer længere. Fandt derefter et separat, uafhængigt stale-doc-fund i `GO_LIVE_CHECKLIST_v10.md` H-04 (ikke i denne fil): repo-plisten for headend var allerede omlagt til en secret-fri system-LaunchDaemon-version (`deploy/launchd/macos/dk.froekjaer.timelapse-headend.plist`, committet 2026-07-03 af Codex i `d7a952db`), men checklisten sagde stadig "🟠 Mangler". Rettet — se GO_LIVE_CHECKLIST_v10.md. Ingen ændring nødvendig i denne fil (RISK_ASSESSMENT), da VPEN-2026-003 (P2, plaintext secrets i `/etc/timelapse/headend.env` på disk, Keychain-migration) er en separat, fortsat reelt åben risiko, adskilt fra H-04s Git-hygiejne-scope |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #16) | Claude: formaliserede device-decommission-midt-i-rollout-gap'et i R06 (først fundet/testdokumenteret 2026-07-05 periodisk tjek #9, men aldrig tilføjet til selve risikodokumentet — flere efterfølgende runder havde flagget dette som udestående). Ingen kodeændring; ren dokumentation af en allerede committet, eksisterende kontrakttest samt de tre løsningsmuligheder Peter skal vælge imellem, før kode kan skrives |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #17) | Claude: VPEN-2026-008 (NY) — fandt at AI Ops' SAST-snapshot (grundlaget for VPEN-006/§11 P2.4's "73 signaler") fejlagtigt talte en lokal, gitignore'et vendored virtualenv (`artifacts/edge-qa-training/.venv-edge-qa-train-py312/`, tredjeparts-biblioteker som sympy/onnxruntime) med som egne signaler, og at det hårde 80-fund-loft blev brugt op af denne støj før egen kode blev scannet. Rettet i `_aiops_static_scan()`/ny `_aiops_scan_should_skip_path()`, testdækket (6 nye + 23 eksisterende tests, 29/29 bestået i midlertidig venv). Reel triage af signalerne i egen kode er fortsat udestående — se §11 P2.4 |
 
 ---
 

@@ -3745,3 +3745,83 @@ person vide".
   decommission-beslutning er kommet igennem; ellers samme liste som hidtil — live
   multi-device-rollout-test, Peters §6-beslutning (CA/mTLS), R17-smoketesten, §K's "OS
   offline-artifact update E2E", eller at bekræfte den faktiske Gemini/Vertex-produktionsregion.
+
+### Handover 2026-07-05 (periodisk tjek #17) — fra Claude: VPEN-2026-008 (NY) — AI Ops' SAST-tal ("73 signaler") var upålideligt, scanner-fejl fundet og rettet
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -3` bekræftede `73c1d692` (docs:
+  formalize device-decommission-mid-rollout gap) stadig er seneste commit. `git status --short`
+  viste kun den kendte untracked `claude_proxy.py` (uændret, ikke rørt). Ingen ny Codex-entry med
+  spørgsmål til Claude siden sidst. Gennemgik §11 P2-listen for et punkt ingen tidligere runde
+  havde rørt — valgte "SAST backlog triage (73 signaler)" (VPEN-006), som havde stået uændret
+  siden pentesten i maj 2026.
+- **Fund:** `_aiops_static_scan()` i `headend/main.py` — funktionen bag AI Ops-cockpittets
+  "73 SAST-signaler" — er en simpel regex/substring-scanner over hele repoet. Den sprang kun
+  stier over ved et EKSAKT match på en hel path-del (`venv`, `node_modules`, `dist` osv.). Den
+  lokale, `.gitignore`'ede mappe `artifacts/edge-qa-training/.venv-edge-qa-train-py312/`
+  indeholder et helt vendored virtualenv (sympy, onnxruntime, onnx, fsspec, networkx m.fl.) fra
+  en tidligere AI-trænings-kørsel — IKKE committet til Git (`git ls-files` bekræftede 0 rørte
+  filer deri), men til stede på disk. En reproduktion af scan-logikken i denne runde viste at
+  **72 af 80** (scannerens hårde loft) rapporterede "signaler" reelt kom fra denne
+  tredjeparts-kode, ikke fra TimeLapse Pro. Værre: fordi scanneren stopper hårdt ved 80 fund og
+  traverserer dybde-først, blev hele loftet brugt op af denne støj FØR resten af repoet —
+  inklusive `headend/main.py` selv — nåede at blive scannet. Det betyder cockpittets tal ikke
+  bare var upræcist, men reelt kunne skjule ægte fund fra egen kode. Et reelt
+  dataintegritetsproblem i en GRC-evidenskilde, ikke bare kosmetik.
+- **Rettet (kode + tests):**
+  1. Skip-logikken er udtrukket fra `_aiops_static_scan()` til en ren, sideeffektfri
+     hjælpefunktion `_aiops_scan_should_skip_path()`, som nu ud over de oprindelige eksakte
+     mappenavne også springer `artifacts` (eksakt topniveau-match), enhver sti-del der STARTER
+     MED `.venv` (fanger navngivne venvs som `.venv-edge-qa-train-py312`, ikke kun den
+     bogstavelige `.venv`), og enhver sti-del der INDEHOLDER `site-packages`/`dist-packages`
+     over.
+  2. Ny testfil `headend/tests/test_aiops_static_scan.py` — 6 kontrakt-tests: det konkrete
+     tilfælde der udløste fixet, `artifacts/`-topniveau uden venv-navn, dotted-venv-varianter,
+     regression på de oprindelige eksakte mappenavne (`venv`/`node_modules`/`__pycache__`), at
+     rigtig produktkode (`headend/main.py`, `claude_proxy.py`, `e2e_test.sh`,
+     `timelapse-ui/src/...`) FORTSAT scannes (fixet må ikke blive for grådigt), og at et
+     tilfældigt filnavn der bare indeholder "venv" som substreng (uden at være en dotfile-venv)
+     ikke fejlagtigt springes over.
+- **Verifikation:** Samme mønster som tidligere runder — frisk venv (`/tmp/hvenv2`, allerede til
+  stede i denne sandbox) med `fastapi==0.136.1`, `sqlalchemy==2.0.49`,
+  `python-jose[cryptography]==3.5.0`, `bcrypt==5.0.0`, `passlib==1.7.4`, `slowapi==0.1.9`,
+  `python-multipart==0.0.27`, `python-dotenv`, `pytest`, `httpx`. `python3 -m py_compile main.py
+  database.py tests/test_aiops_static_scan.py` ren. Hele test-suiten i `headend/tests/`:
+  **29/29 bestået** (23 eksisterende, uændrede + 6 nye). Kørte desuden selve
+  `_aiops_static_scan()` direkte (med sqlite-DB) FØR og EFTER rettelsen for at bekræfte
+  effekten i praksis: før fixet var 72/80 fund fra `artifacts/...site-packages/...`; efter
+  fixet er samtlige 80 fund fra egen kode (mest `headend/main.py`: `subprocess.run`/`unlink`/
+  `rmtree`-kald i backup-, thumbnail- og docker-relateret driftskode — jf. funktionens egen
+  docstring er dette "review signals, not proof of vulnerability", ikke i sig selv bekræftede
+  sårbarheder). Ingen live-kald foretaget noget sted.
+- **Dokumentation opdateret (samme runde):** `RISK_ASSESSMENT_v10.md` — ny §5.2-post
+  VPEN-2026-008 med fuld beskrivelse; §2's historiske VPEN-006-linje opdateret med henvisning;
+  §11 P2.4 ("SAST backlog triage") opdateret til at forklare at det oprindelige tal "73" var
+  upålideligt, og at den reelle triage-mængde formentlig er STØRRE, ikke mindre, end før troet;
+  §12 dokumenthistorik fik en ny linje.
+- **Ikke gjort — bevidst:** INGEN faktisk triage af de reelle SAST-signaler i egen kode udført
+  denne runde (kategorisering i accepted safe pattern / needs guardrail / needs test / needs
+  change ticket, jf. VPEN-006's oprindelige anbefaling) — det er et betydeligt, separat stykke
+  arbejde der kræver individuel vurdering af hvert fund (nu formentlig 80+, ikke 73), og bør
+  ikke forceres overfladisk igennem i én 20-minutters periodisk kørsel. VPEN-006/§11 P2.4 er
+  derfor bevidst IKKE markeret løst — kun selve måleinstrumentets pålidelighed er rettet. Ingen
+  ændring af det hårde 80-fund-loft eller af hvilke filtyper/mønstre der scannes. Ingen
+  commit/push (samme konvention — Peter/Codex committer selv).
+- **Codex/Peter: kør venligst når I har et vindue (kodefix + ny test, ufarlig at merge —
+  rører kun en read-only AI Ops-diagnostikfunktion, ingen deploy/genstart kræves for selve
+  denne ændring, men indgår i næste normale headend-deploy som vanligt):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git diff headend/main.py
+  git add headend/main.py headend/tests/test_aiops_static_scan.py \
+          Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "fix: AI Ops SAST scan no longer counts vendored artifacts/ virtualenv as own-code signals"
+  git push
+  ```
+- **Filer rørt:** `headend/main.py`, `headend/tests/test_aiops_static_scan.py` (ny),
+  `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** næste periodiske runde kan enten (a) begynde selve triagen af de reelle
+  SAST-signaler i `headend/main.py` (nu synlige, tidligere druknet i støj) i overskuelige
+  batches, eller (b) tage fat på den øvrige, fortsat uændrede liste — live
+  multi-device-rollout-test, Peters §6-beslutning (CA/mTLS), R17-smoketesten, §K's "OS
+  offline-artifact update E2E", device-decommission-beslutningen, eller at bekræfte den
+  faktiske Gemini/Vertex-produktionsregion.

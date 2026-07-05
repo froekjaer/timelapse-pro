@@ -15174,6 +15174,34 @@ from ai.vocabulary_routes import vocab_router; app.include_router(vocab_router)
 from ai.review_api import review_router as _rev_router; app.include_router(_rev_router)
 
 
+# Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
+# ikke bare være en delstreng af den).
+_AIOPS_SCAN_SKIP_PARTS = {"dist", "exports", "__pycache__", ".git", "venv", "node_modules", "artifacts"}
+# Path-dele der starter med en af disse præfikser skal også springes over (fx navngivne
+# venvs som ".venv-edge-qa-train-py312", ikke kun den bogstavelige ".venv").
+_AIOPS_SCAN_SKIP_PART_PREFIXES = (".venv",)
+# Path-dele der INDEHOLDER en af disse substrings skal springes over — typisk vendored
+# tredjeparts-biblioteker installeret i en lokal, .gitignore'et build-/trænings-mappe (fx
+# "artifacts/edge-qa-training/.venv-edge-qa-train-py312/lib/python3.12/site-packages/...").
+# Uden dette tælles hele biblioteker som sympy/onnxruntime/onnx/fsspec med som "SAST-signaler"
+# fra TimeLapse Pro's egen kode, hvilket dels er misvisende (det er ikke vores kode), dels kan
+# få det hårde 80-fund-loft til at blive brugt op af tredjepartsstøj, før resten af repoet er
+# scannet, så reelle fund fra vores egen kode aldrig når med i snapshottet.
+_AIOPS_SCAN_SKIP_PART_SUBSTRINGS = ("site-packages", "dist-packages")
+
+
+def _aiops_scan_should_skip_path(path_parts: tuple[str, ...]) -> bool:
+    """Ren, sideeffektfri hjælpefunktion — testbar uden filsystem/DB. Se
+    `headend/tests/test_aiops_static_scan.py`."""
+    if any(part in _AIOPS_SCAN_SKIP_PARTS for part in path_parts):
+        return True
+    if any(part.startswith(_AIOPS_SCAN_SKIP_PART_PREFIXES) for part in path_parts):
+        return True
+    if any(sub in part for part in path_parts for sub in _AIOPS_SCAN_SKIP_PART_SUBSTRINGS):
+        return True
+    return False
+
+
 def _aiops_static_scan() -> dict:
     """Lightweight read-only SAST snapshot for AI Ops.
 
@@ -15188,7 +15216,6 @@ def _aiops_static_scan() -> dict:
         "dangerous_file_ops": ["unlink(", "rmtree(", "chmod 777", "chown "],
         "legacy_update_paths": ["git pull", "legacy_git_update", "TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE"],
     }
-    skip_parts = {"dist", "exports", "__pycache__", ".git", "venv", "node_modules"}
     findings: list[dict] = []
     scanned = 0
     for path in root.rglob("*"):
@@ -15196,7 +15223,7 @@ def _aiops_static_scan() -> dict:
             break
         if not path.is_file() or path.suffix not in {".py", ".ts", ".tsx", ".js", ".sh", ".sql", ".yaml", ".yml"}:
             continue
-        if any(part in skip_parts for part in path.parts):
+        if _aiops_scan_should_skip_path(path.parts):
             continue
         try:
             rel = str(path.relative_to(root))
