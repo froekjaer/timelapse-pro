@@ -3598,6 +3598,68 @@ person vide".
   eller den separate opfølgning ovenfor om at bekræfte den faktiske Gemini/Vertex-region i
   produktion.
 
+### Handover 2026-07-05 05:3x — fra Claude (periodisk tjek): change ticket-dokument gensignes nu korrekt ved sen artifact-binding (SBOM-integritetshul lukket)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -3` bekræftede at Codex' commit `225f82f2`
+  (dokumentation om deployet Gemini/Vertex-guard) stadig er seneste commit. `git status --short`
+  viste kun den kendte untracked `claude_proxy.py`. Ingen ny Codex-entry siden sidst. Gennemgik
+  §11 og §J/§K igen — valgte at følge op på §K-linjen "Change ticket med artifact/SBOM/rollback |
+  Delvist", som ingen tidligere runde havde undersøgt konkret.
+- **Fund:** `ChangeTicket.sbom_ref`/`.test_evidence_ref` blev gemt i DB og eksponeret via
+  ticket-API'et (`_ticket_to_dict`), men optrådte ALDRIG i selve det signerede dokument
+  (`machine_json`/`human_readable_md`) — hverken ved oprettelse. Værre: når et artifact blev
+  bundet til en ALLEREDE OPRETTET ticket via `bind_artifact_to_update` (den almindelige rækkefølge
+  — ticket oprettes typisk før artifactet findes), blev `ticket.sbom_ref`/`.artifact_id` opdateret
+  direkte på DB-rækken UDEN at dokumentet blev gensigneret. Det betyder `content_sha256`/
+  `signature` (den kryptografiske binding et signeret change ticket skal give troværdighed fra)
+  reelt kunne stå og pege på et FORÆLDET dokument, mens de "friske" DB-kolonner viste noget andet
+  — et reelt integritetshul i netop den kontrol §K efterspørger.
+- **Rettet (kode + tests):**
+  1. Udtrak dokumentbygningen (machine_json + human_readable_md + hash + signatur) fra
+     `_build_change_ticket` til en ny delt funktion `_render_change_ticket_document()` i
+     `headend/main.py`, som nu også inkluderer `sbom_ref` og `test_evidence_ref` i både
+     maskin- og menneskelæsbar form.
+  2. `bind_artifact_to_update()`s gren for "ticket findes allerede" kalder nu samme funktion og
+     genskriver `human_readable_md`/`machine_json`/`content_sha256`/`signature`/`signed_at` —
+     ticket_id, oprindelig `created_by`/`created_at` bevares uændret (kun dokumentets indhold og
+     signaturen opdateres, ikke hvem der oprindeligt oprettede ticketen).
+  3. Ny testfil `headend/tests/test_change_ticket_sbom.py` — 4 kontrakt-tests: SBOM med i
+     dokumentet ved oprettelse med kendt artifact, korrekt "intet artifact endnu"-tekst uden
+     artifact, gensignering (ændret hash/signatur) ved sen artifact-binding, og at oprindelig
+     creator/ticket_id IKKE ændres af re-signeringen.
+- **Dokumentation opdateret (samme runde):** `GO_LIVE_CHECKLIST_v10.md` §K — linjen er fortsat
+  "Delvist" (bevidst, se nedenfor) med en ny TILFØJELSE 2026-07-05 der forklarer præcis hvad der
+  er lukket og hvad der stadig mangler.
+- **Verifikation:** Genbrugte samme mønster som tidligere runder (repoets `headend/venv` er
+  macOS-kompileret, kører ikke i denne Linux-sandbox). Frisk venv (`/tmp/hvenv2`) med
+  `fastapi==0.136.1`, `sqlalchemy==2.0.49`, `python-jose[cryptography]==3.5.0`, `bcrypt==5.0.0`,
+  `passlib==1.7.4`, `slowapi==0.1.9`, `python-multipart==0.0.27`, `python-dotenv`, `pytest`,
+  `httpx`. `python3 -m py_compile main.py database.py` ren. Hele test-suiten i `headend/tests/`:
+  **23/23 bestået** (19 eksisterende, uændrede + 4 nye). Ingen live-kald foretaget noget sted.
+- **Ikke gjort — bevidst:** Status er IKKE ændret til "Løst"/✅ — der findes fortsat ingen kode
+  eller politik der KRÆVER et SBOM/test-evidens-felt før en ticket kan godkendes (feltet kan
+  stadig stå tomt uden fejl), og selve SBOM-indholdets dækning/kvalitet er ikke vurderet i denne
+  runde — kun at det, der rent faktisk ER registreret, nu vises korrekt og forbliver kryptografisk
+  bundet til dokumentet. Ingen commit/push (samme konvention — Peter/Codex committer selv).
+- **Codex/Peter: kør venligst når I har et vindue:**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git diff headend/main.py
+  git add headend/main.py headend/tests/test_change_ticket_sbom.py \
+          Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "fix: re-sign change ticket document (incl. SBOM ref) on late artifact binding"
+  git push
+  # Ingen live-genstart nødvendig for selve denne ændring alene (kun rørt ved binding/oprettelse
+  # af change tickets), men indgår i næste normale headend-deploy som vanligt.
+  ```
+- **Filer rørt:** `headend/main.py`, `headend/tests/test_change_ticket_sbom.py` (ny),
+  `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** næste periodiske runde bekræfter om denne commit er committet/pushet;
+  ellers kan den se på den fortsat udestående live multi-device-rollout-test,
+  device-decommission-gap'et, Peters §6-beslutning (CA/mTLS) / R17-smoketesten, §K's "OS
+  offline-artifact update E2E"/"Stale/legacy credentials migreret"-linjer, eller den separate
+  opfølgning fra sidste runde om at bekræfte den faktiske Gemini/Vertex-region i produktion.
+
 ### Handover 2026-07-05 (nat) - Codex: Gemini/Vertex bucket-region guard committet og deploy-tjekket
 - **Udført:** Claude's Gemini/GDPR batch-region fix er gennemgået, testet, committet og pushet
   på `claude/capture-camera-location-2026-07-03` som `78a4ab93`:

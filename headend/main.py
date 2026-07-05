@@ -8231,6 +8231,32 @@ def bind_artifact_to_update(
         ticket.artifact_id = artifact.artifact_id
         ticket.sbom_ref = artifact.sbom_ref
         ticket.test_evidence_ref = payload.get("test_evidence_ref") or ticket.test_evidence_ref
+        # Gendan (og re-signér) det maskin-/menneskelæsbare dokument, så det
+        # aldrig kan drifte fra de kolonner der lige blev opdateret ovenfor —
+        # se docstring i `_render_change_ticket_document` for baggrund.
+        risk = _risk_assessment(update.update_type, update.severity, None, None, update.status)
+        doc = _render_change_ticket_document(
+            ticket_id=ticket.ticket_id,
+            pending_update_id=update.id,
+            title=ticket.title,
+            summary=ticket.summary,
+            update=update,
+            risk=risk,
+            rollback_plan=ticket.rollback_plan,
+            maintenance_window=ticket.maintenance_window,
+            reboot_required=bool(ticket.reboot_required),
+            status=ticket.status,
+            created_by=ticket.created_by,
+            created_at=ticket.created_at,
+            artifact=artifact,
+            test_evidence_ref=ticket.test_evidence_ref,
+        )
+        ticket.human_readable_md = doc["human_readable_md"]
+        ticket.machine_json = doc["machine_json"]
+        ticket.content_sha256 = doc["content_sha256"]
+        ticket.signature = doc["signature"]
+        ticket.signed_by = doc["signed_by"]
+        ticket.signed_at = now_utc()
         ticket.updated_at = now_utc()
 
     if update.status == "blocked":
@@ -8240,23 +8266,39 @@ def bind_artifact_to_update(
     return {"ok": True, "update_id": update.id, "artifact_id": artifact.artifact_id, "status": update.status}
 
 
-def _build_change_ticket(
+def _render_change_ticket_document(
+    *,
+    ticket_id: str,
+    pending_update_id: int,
+    title: str,
+    summary: str,
     update: PendingUpdate,
-    payload: ChangeTicketPayload,
-    user: User,
-    artifact: UpdateArtifact | None = None,
-) -> ChangeTicket:
-    created_at = now_utc()
-    ticket_id = f"TL-CHG-{created_at:%Y%m%d}-{update.id:05d}"
-    title = payload.title or f"{update.update_type} {update.version}"
-    summary = payload.summary or update.description or ""
-    rollback_plan = payload.rollback_plan or "Automatisk rollback ved fejlet healthcheck; manuel intervention hvis rollback fejler."
-    maintenance_window = payload.maintenance_window or "Efter gældende update policy"
-    risk = _risk_assessment(update.update_type, update.severity, None, None, update.status)
+    risk: dict,
+    rollback_plan: str,
+    maintenance_window: str,
+    reboot_required: bool,
+    status: str,
+    created_by: str,
+    created_at,
+    artifact: UpdateArtifact | None,
+    test_evidence_ref: str | None,
+) -> dict:
+    """Bygger det signerede maskinlæsbare (`machine_json`) og menneskelæsbare
+    (`human_readable_md`) change ticket-dokument ud fra ticketens FAKTISKE felter.
+
+    Delt mellem oprettelse (`_build_change_ticket`) og senere artifact-binding
+    (`bind_artifact_to_update`), så det signerede dokument aldrig kan drifte fra
+    ticket-rækkens `sbom_ref`/`test_evidence_ref`/`artifact_id`-kolonner. Før
+    2026-07-05 blev disse to kolonner opdateret direkte på en eksisterende
+    ChangeTicket ved artifact-binding, uden at `machine_json`/`human_readable_md`
+    (og dermed `content_sha256`/`signature`) blev gendannet — det signerede,
+    auditerbare dokument kunne derfor tavst komme ud af trit med den faktiske
+    ticket-tilstand (§K "Change ticket med artifact/SBOM/rollback").
+    """
     machine = {
         "schema": "timelapse.change_ticket.v1",
         "ticket_id": ticket_id,
-        "pending_update_id": update.id,
+        "pending_update_id": pending_update_id,
         "title": title,
         "summary": summary,
         "update": {
@@ -8274,15 +8316,17 @@ def _build_change_ticket(
             "score": risk["score"],
             "level": risk["level"],
             "factors": risk["factors"],
-            "reboot_required": bool(payload.reboot_required),
+            "reboot_required": bool(reboot_required),
             "maintenance_window": maintenance_window,
             "rollback_plan": rollback_plan,
         },
         "created": {
-            "by": user.username,
+            "by": created_by,
             "at": created_at.isoformat(),
         },
     }
+    if test_evidence_ref:
+        machine["test_evidence_ref"] = test_evidence_ref
     if artifact:
         machine["artifact"] = {
             "artifact_id": artifact.artifact_id,
@@ -8291,6 +8335,7 @@ def _build_change_ticket(
             "source_commit": artifact.source_commit,
             "source_ref": artifact.source_ref,
             "sha256": artifact.sha256,
+            "sbom_ref": artifact.sbom_ref,
             "signed_by": artifact.signed_by,
             "signed_at": artifact.signed_at.isoformat() if artifact.signed_at else None,
         }
@@ -8300,13 +8345,13 @@ def _build_change_ticket(
     human_md = "\n".join([
         f"# {ticket_id} - {title}",
         "",
-        f"**Status:** {payload.status or 'ready'}",
+        f"**Status:** {status}",
         f"**Update:** {update.update_type} {update.version}",
         f"**Severity:** {update.severity}",
         f"**Risk score:** {risk['score']}/100 ({risk['level']})",
         f"**Miljø:** {update.environment or 'production'}",
         f"**Scope:** {update.scope or 'device'}{f' / {update.scope_id}' if update.scope_id else ''}",
-        f"**Oprettet af:** {user.username}",
+        f"**Oprettet af:** {created_by}",
         f"**Oprettet:** {created_at.isoformat()}",
         "",
         "## Beskrivelse",
@@ -8319,6 +8364,10 @@ def _build_change_ticket(
         f"Artifact ID: `{artifact.artifact_id}`" if artifact else "Ingen artifact er bundet endnu. Opret/registrer artifact i Headend-kataloget før produktionsgodkendelse.",
         f"Artifact SHA-256: `{artifact.sha256}`" if artifact else "",
         f"Artifact signeret af: {artifact.signed_by or '-'}" if artifact else "",
+        f"SBOM-reference: `{artifact.sbom_ref}`" if artifact and artifact.sbom_ref else ("SBOM-reference: mangler (intet SBOM registreret på dette artifact endnu)." if artifact else ""),
+        "",
+        "## Test-evidens",
+        f"Reference: `{test_evidence_ref}`" if test_evidence_ref else "Ingen test-evidens-reference registreret endnu.",
         "",
         "## Rollback-plan",
         rollback_plan,
@@ -8329,11 +8378,50 @@ def _build_change_ticket(
         "",
         "## Vedligehold/reboot",
         f"Maintenance window: {maintenance_window}",
-        f"Reboot required: {bool(payload.reboot_required)}",
+        f"Reboot required: {bool(reboot_required)}",
         "",
         "## Maskinlæsbar binding",
         f"SHA-256: `{content_sha256}`",
     ])
+    return {
+        "human_readable_md": human_md,
+        "machine_json": machine_json,
+        "content_sha256": content_sha256,
+        "signature": signature,
+        "signed_by": signed_by,
+    }
+
+
+def _build_change_ticket(
+    update: PendingUpdate,
+    payload: ChangeTicketPayload,
+    user: User,
+    artifact: UpdateArtifact | None = None,
+) -> ChangeTicket:
+    created_at = now_utc()
+    ticket_id = f"TL-CHG-{created_at:%Y%m%d}-{update.id:05d}"
+    title = payload.title or f"{update.update_type} {update.version}"
+    summary = payload.summary or update.description or ""
+    rollback_plan = payload.rollback_plan or "Automatisk rollback ved fejlet healthcheck; manuel intervention hvis rollback fejler."
+    maintenance_window = payload.maintenance_window or "Efter gældende update policy"
+    status = payload.status or "ready"
+    risk = _risk_assessment(update.update_type, update.severity, None, None, update.status)
+    doc = _render_change_ticket_document(
+        ticket_id=ticket_id,
+        pending_update_id=update.id,
+        title=title,
+        summary=summary,
+        update=update,
+        risk=risk,
+        rollback_plan=rollback_plan,
+        maintenance_window=maintenance_window,
+        reboot_required=bool(payload.reboot_required),
+        status=status,
+        created_by=user.username,
+        created_at=created_at,
+        artifact=artifact,
+        test_evidence_ref=None,
+    )
     return ChangeTicket(
         ticket_id=ticket_id,
         title=title,
@@ -8344,7 +8432,7 @@ def _build_change_ticket(
         environment=update.environment or "production",
         scope=update.scope,
         scope_id=update.scope_id,
-        status=payload.status or "ready",
+        status=status,
         source_commit=artifact.source_commit if artifact else (update.version if update.update_type in ("app_security", "app_updates") else None),
         source_ref=artifact.source_ref if artifact else None,
         artifact_id=artifact.artifact_id if artifact else None,
@@ -8352,11 +8440,11 @@ def _build_change_ticket(
         rollback_plan=rollback_plan,
         reboot_required=bool(payload.reboot_required),
         maintenance_window=maintenance_window,
-        human_readable_md=human_md,
-        machine_json=machine_json,
-        content_sha256=content_sha256,
-        signature=signature,
-        signed_by=signed_by,
+        human_readable_md=doc["human_readable_md"],
+        machine_json=doc["machine_json"],
+        content_sha256=doc["content_sha256"],
+        signature=doc["signature"],
+        signed_by=doc["signed_by"],
         signed_at=created_at,
         created_by=user.username,
         created_at=created_at,
