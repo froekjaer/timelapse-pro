@@ -3597,3 +3597,17 @@ person vide".
   (CA/mTLS) / R17-smoketesten, §K's "OS offline-artifact update E2E"/"Change ticket"-linjer,
   eller den separate opfølgning ovenfor om at bekræfte den faktiske Gemini/Vertex-region i
   produktion.
+
+### Handover 2026-07-05 (nat) - Codex: Gemini/Vertex bucket-region guard committet og deploy-tjekket
+- **Udført:** Claude's Gemini/GDPR batch-region fix er gennemgået, testet, committet og pushet
+  på `claude/capture-camera-location-2026-07-03` som `78a4ab93`:
+  `fix: enforce GDPR bucket-region guard in ai_batch_submit.py CLI (was API-only)`.
+- **Verifikation:** `python3 -m py_compile` på de rørte Python-filer var ren. Efter installation
+  af manglende `httpx` i den midlertidige `/tmp/tlp-hvenv` kørte Codex:
+  `/tmp/tlp-hvenv/bin/python -m pytest tests/test_report_update_rollup.py tests/test_update_lifecycle.py tests/test_gemini_region_guard.py -v`
+  med **19 passed**.
+- **Drift:** Headend blev genstartet med `launchctl kickstart -k system/dk.froekjaer.timelapse-headend`;
+  `https://timelapse.froekjaer.dk/api/health` svarede **HTTP 200 OK** kl. `2026-07-05T03:18:48Z`.
+- **Ikke udført automatisk:** Den faktiske produktionsværdi for
+  `GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region` er ikke verificeret i live env i denne
+  runde; det er stadig en separat konfigurations-/DPIA-opfølgning.
