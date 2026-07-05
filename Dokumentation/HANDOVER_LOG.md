@@ -3924,3 +3924,63 @@ person vide".
   med **32 passed**.
 - **Drift:** Ingen live-genstart udført; ændringen rører kun read-only AI Ops-diagnostik og
   dokumenteret SAST-triage.
+
+### Handover 2026-07-05 (periodisk tjek #19) — fra Claude: VPEN-006 SAST-triage afsluttet (dangerous_file_ops, 24/24) — 80/80 signaler nu gennemgået, ingen reelle sårbarheder
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `git log -3` bekræftede `b76bb07a` (docs: mark AI
+  Ops SAST self-reference fix committed) er seneste commit — Codex' morgen-entry bekræfter
+  `0305fa39` (VPEN-2026-009) er committet, pushet og testverificeret (32/32 bestået).
+  `git status --short` viste kun den kendte untracked `claude_proxy.py` (uændret). Ingen ny
+  Codex-entry med spørgsmål til Claude siden sidst. Forrige rundes "Går videre til" pegede
+  entydigt på at fortsætte triagen med `dangerous_file_ops` (24 signaler, sidste utriagerede
+  kategori) — valgt, da det er det eneste punkt der kunne gennemføres FÆRDIGT uden live-adgang
+  eller en Peter-beslutning.
+- **Udført:** Genkørte `_aiops_static_scan()` i samme midlertidige venv/sqlite-opsætning som
+  tidligere runder (`/tmp/hvenv2`, `DATABASE_URL=sqlite:///...`) for at hente den fulde,
+  aktuelle `dangerous_file_ops`-liste (24 fund), og gennemgik hvert enkelt mod faktisk
+  kildekode med `sed`/`grep` (ikke kun snippet-teksten fra scanneren):
+  - **18 i `headend/main.py`/`headend/itim.py`** — temp-fil-oprydning efter upload-SHA-mismatch,
+    backup-arkivering (`rmtree` på backup-arbejdsmappe efter tar-pakning), thumbnail-generering,
+    storage-writable-probes, samt `delete_capture`/bulk-delete. Alle er enten
+    `try/except`/`missing_ok=True`-beskyttet oprydning af faste, ikke-brugerkontrollerede
+    sti-mønstre (`NamedTemporaryFile`, faste probe-navne, `.thumbs`/`.headend-thumbs`), eller
+    kører bag `require_role("admin")` + `_find_image()`s glob-opslag mod fastlagte storage-roots.
+    Bekræftede desuden at `_sanitize_filename()`/`_sanitize_device_id()` (linje ~149-170 i
+    `main.py`) eksplicit afviser `..`/`/`/`\` i både device_id og filnavn ved indlæsning, så
+    path traversal via `capture.filename` ved sletning kan strukturelt ikke opstå.
+  - **3 i `headend/tools/fetch_os_bundle.py`/`build_edge_disk_image.py`** — admin-kørte offline
+    build-CLI'er (`argparse`-baserede), ikke web-eksponerede; `rmtree`/`unlink` rammer kun
+    værktøjets eget, eksplicit angivne output-/tmp-directory.
+  - **1 i `headend/tools/backfill_thumbnails.py`** — samme tmp-fil-oprydningsmønster som
+    thumbnail-koden i `main.py`.
+  - **1 i `headend/tools/inject_wifi_image.py`** — reelt et `chown`/`chmod`-fund (ikke
+    unlink/rmtree), inde i en indlejret bash-heredoc der kører INDE I et loop-mountet OS-image
+    under offline disk-image-bygning. Sætter 700/600-rettigheder og faste UID'er (0 for root,
+    1000 for standardbruger) på `.ssh` — gør adgangen STRAMMERE, ikke løsere. Ingen risiko.
+  - **3 i `claude_proxy.py`** — samme lokale, ikke-Git-sporede dev-værktøj som allerede flagget
+    under `shell_execution` i forrige runde (#18); unlink af værktøjets egne state-filer
+    (`cmd_in.json`, lockfil). Ingen ny risiko ud over den allerede noterede.
+  - **Konklusion: 24/24 false positive/lavrisiko/accepteret mønster. Ingen bekræftede reelle
+    sårbarheder.**
+- **Effekt:** Alle 4 kategorier af VPEN-006's 80 aktuelle SAST-signaler (`hardcoded_secret_terms`
+  10, `shell_execution` 40, `legacy_update_paths` 5, `dangerous_file_ops` 24) er nu triageret på
+  tværs af periodisk tjek #18 og #19. VPEN-006/§11 P2.4 er markeret "triage afsluttet, ingen
+  fund kræver kodeændring" i stedet for "delvist"/"utriaget".
+- **Ingen kodeændring denne runde** — ren gennemgang/triage af allerede committede findings, så
+  ingen ny test eller `py_compile`-check var relevant. `git status --short` uændret
+  (kun `claude_proxy.py` untracked, som før).
+- **Dokumentation opdateret (samme runde):** `RISK_ASSESSMENT_v10.md` — VPEN-2026-009-afsnittet
+  i §5.2 udvidet med den fulde `dangerous_file_ops`-triage og konklusion; §2's VPEN-006-linje og
+  §11 P2.4 opdateret fra "delvist"/"utriaget" til "triage afsluttet"; §12 dokumenthistorik fik en
+  ny linje.
+- **Til Peter (uændret, ikke hastende, gentaget fra #18 for synlighed):** bekræft restriktive
+  filrettigheder på `.claude_proxy/` — lokalt, ikke Git-sporet "kør vilkårlig kommando"-værktøj
+  (`shell=True` mod fil-baseret IPC via `cmd_in.json`); risikoen afhænger fuldt ud af at kun du
+  selv kan skrive dertil.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md` (kun dokumentation, ingen kode).
+- **Går videre til:** VPEN-006's SAST-backlog-triage er nu færdig som selvstændigt punkt. Den
+  øvrige, fortsat uændrede liste står tilbage: live multi-device-rollout-test (P1.4/R06), Peters
+  §6-beslutning (CA/mTLS, design-notat klar), R17-smoketesten, §K's "OS offline-artifact update
+  E2E", device-decommission-beslutningen, bekræftelse af den faktiske Gemini/Vertex-
+  produktionsregion, samt den lav-prioritets `hardcoded_secret_terms`-heuristik-forbedring
+  noteret (men ikke udført) i #18/#19.
