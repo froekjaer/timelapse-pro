@@ -4233,3 +4233,43 @@ person vide".
   (ingen livehandling krævet af Claude her, blot en bekræftelse): **C-03** — er standard
   super_admin-passwordet faktisk ændret fra default? Dette står stadig som ubekræftet 🔴 i §C og
   var maskeret af §J's forkerte "✅ Klar"-konklusion for Auth-kategorien.
+
+### Handover 2026-07-05 (periodisk tjek #25) — fra Claude: docs-sync — `KRAVREGISTER_og_STATUS_v10.md` var kommet bagud siden 2026-07-02 (CAP-008/ADM-012 viste stadig GDPR-adgangslog som "mangler")
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md —
+  seneste entry er tjek #24 (Claude selv), ingen nye Codex-entries og intet nyt spørgsmål til
+  Claude siden da (C-03-spørgsmålet fra #24 står stadig ubesvaret). `mcp__workspace__bash`
+  fejlede igen på hvert forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output
+  error` som i tjek #21–#24) — kunne derfor hverken køre `git status`, `py_compile` eller andet
+  denne runde. Valgte derfor, som de seneste runder, bevidst en ren dokumentationsopgave uden
+  kodeændring.
+- **Fundet:** Gennemgik `RISK_ASSESSMENT_v10.md` §11 og `GO_LIVE_CHECKLIST_v10.md` §J igen —
+  ingen ændringer siden tjek #24 (P0 #5 HMAC/stale credentials afventer stadig Peters beslutning
+  om `TL-DCA63234D813`, se `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md`; ikke noget Claude kan
+  rykke uden live-adgang/Peter-beslutning). Udvidede i stedet krydstjekket til et dokument der
+  ikke er blevet docs-sync'et i de foregående 24 runder: `KRAVREGISTER_og_STATUS_v10.md`
+  (dateret 2026-07-02, dvs. før stort set alle fund/rettelser fra 07-03 til 07-05). Fandt en
+  konkret, verificerbar uoverensstemmelse: CAP-008 ("Download/adgangslog pr. billede") og
+  ADM-012 ("Revision per billede/download") stod begge som "🔴 Mangler | GDPR-krav", men samme
+  krav (GDPR-download-/adgangslog pr. fuldopløsningsbillede) blev faktisk implementeret og
+  testverificeret 2026-07-05 — `CaptureAccessLog`-tabel + `_log_capture_access()`, kaldt fra
+  `GET /api/images/{device_id}/{filename}`, 4/4 + 41/41 tests bestået, committet/pushet af Codex
+  (se `GO_LIVE_CHECKLIST_v10.md` §G-05, allerede rettet til ✅ i tjek #21/#22). Samme
+  docs-sync-mønster som tidligere (tjek #14/#15/#18/#22/#23/#24), blot i endnu et tredje
+  dokument.
+- **Udført:** Rettet CAP-008 og ADM-012 i `KRAVREGISTER_og_STATUS_v10.md` til "✅ Implementeret
+  (2026-07-05)" med henvisning til §G-05. Opdaterede §3 "Implementeringsoverblik"-tabellen
+  tilsvarende (Capture og Admin UI-rækkerne, samt total- og procent-linjen: 46→48 implementeret,
+  20→18 mangler, 53%→56% fuldt implementeret). Tilføjede en kort note under tabellen om at KUN
+  disse to punkter er krydstjekket denne runde — resten af dokumentets ~86 krav-ID'er er bevidst
+  IKKE gennemgået (for stort til én rund uden test-kørsel muligt lige nu pga. sandbox-fejlen).
+  Ren tekstændring, ingen kode rørt, intet at teste ud over visuel krydslæsning mod
+  `GO_LIVE_CHECKLIST_v10.md` §G-05.
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`.
+- **Går videre til:** Uændret liste af punkter der kræver live-adgang eller en Peter-beslutning:
+  live multi-device-rollout-test (P1.4/R06), Peters §6-beslutning (CA/mTLS), R17-smoketesten,
+  §K's "OS offline-artifact update E2E", device-decommission-beslutningen,
+  Gemini/Vertex-produktionsregion-bekræftelse, C-03-bekræftelsen (super_admin-password),
+  P0 #5 (HMAC/stale credentials — `TL-DCA63234D813`-beslutningen). Nyt, ikke-hastende
+  opmærksomhedspunkt: `KRAVREGISTER_og_STATUS_v10.md` har formentlig flere forældede rækker
+  end de to rettet her (fx UI-011 downloadbar timelapse-video, ADM-010/SEC-012 DPIA — bør
+  krydstjekkes i en kommende runde, én ad gangen, samme metode).

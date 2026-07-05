@@ -32,7 +32,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | CAP-005 | AI-analyse og tagging af billeder | ✅ Delvist | Gemini cloud + Ollama; tag-backlog 3033 |
 | CAP-006 | Thumbnail postprocessing (baggrundsgenerering) | 🟡 Delvist | Trigger eksisterer; backlog genereres ikke automatisk |
 | CAP-007 | Retention policy pr. kamera | 🔴 Mangler | Ingen retention implementeret |
-| CAP-008 | Download/adgangslog pr. billede | 🔴 Mangler | GDPR-krav |
+| CAP-008 | Download/adgangslog pr. billede | ✅ Implementeret (2026-07-05) | Ny `CaptureAccessLog`-tabel + `_log_capture_access()`, kaldt fra `GET /api/images/{device_id}/{filename}` (kun fuldopløsning, ikke thumbnails). Testverificeret (4/4 + 41/41), committet/pushet af Codex. Se `GO_LIVE_CHECKLIST_v10.md` §G-05 |
 | CAP-009 | Sidecar JSON med XMP-metadata | ✅ Implementeret | |
 | CAP-010 | Relay-styring (kamera strøm) | ✅ Implementeret | GPIO pin 356 |
 
@@ -68,7 +68,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | ADM-010 | Billedhistorik følger kamera-lokation ved Edge-udskiftning (sidste led af ADM-005-hierarkiet) | ✅ Implementeret 2026-07-03 | Var reelt IKKE implementeret før 2026-07-03 (fundet ved frisk kodegennemgang, Claude) — `Capture` havde kun `device_id`, ikke `camera_id`. Rettet: schema-migration v12, resolver, additivt `camera_id`-filter på `/api/admin/captures`, backfill-script; committet+pushet (`3a2c0a8`). Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5 |
 | ADM-010 | DPIA-template pr. kunde/site | 🔴 Mangler | GDPR Art. 35 |
 | ADM-011 | Rapporter pr. compliance-standard | 🟡 Delvist | GRC cockpit har rapport-skeleton |
-| ADM-012 | Revision per billede/download | 🔴 Mangler | |
+| ADM-012 | Revision per billede/download | ✅ Implementeret (2026-07-05) | Samme løsning som CAP-008 — `CaptureAccessLog`, se `GO_LIVE_CHECKLIST_v10.md` §G-05 |
 
 ### Kategori: Edge-management og update
 
@@ -144,16 +144,18 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 
 | Kategori | Implementeret | Delvist | Mangler | Total |
 |---|---:|---:|---:|---:|
-| Capture | 7 | 2 | 2 | 11 |
+| Capture | 8 | 2 | 1 | 11 |
 | Kundevendt UI | 8 | 0 | 3 | 11 |
-| Admin UI | 7 | 3 | 2 | 12 |
+| Admin UI | 8 | 3 | 1 | 12 |
 | Update/Edge | 6 | 7 | 2 | 15 |
 | Provisioning | 5 | 3 | 2 | 10 |
 | Sikkerhed | 7 | 3 | 6 | 16 |
 | Konfiguration | 6 | 2 | 3 | 11 |
-| **Total** | **46** | **20** | **20** | **86** |
+| **Total** | **48** | **20** | **18** | **86** |
 
-**Samlet implementeringsgrad:** 53% fuldt implementeret, 23% delvist, 23% mangler.
+**Samlet implementeringsgrad:** 56% fuldt implementeret, 23% delvist, 21% mangler.
+
+*(Opdateret 2026-07-05, Claude periodisk tjek #25: CAP-008/ADM-012 rettet fra "🔴 Mangler" til "✅ Implementeret" — GDPR download-/adgangslog pr. billede blev implementeret og testverificeret 2026-07-05 (`CaptureAccessLog`, se `GO_LIVE_CHECKLIST_v10.md` §G-05), men dette register var ikke opdateret siden 2026-07-02 og viste stadig det gamle "mangler"-billede. Øvrige rækker i dette dokument er IKKE fuldt krydstjekket denne runde — kun disse to konkrete, verificerbare punkter.)*
 
 ---
 
