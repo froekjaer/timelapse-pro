@@ -181,15 +181,30 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   delvist forældet — data/API/UI fandtes allerede. Den reelle, resterende del af risikoen var at
   `/api/updates/report` satte den globale `PendingUpdate.status` fra ét enkelt device-report,
   så én enhed kunne gøre en hel multi-target rollout (global/customer/site) "deployed"/
-  "rolled_back" mens andre devices stadig var i gang. **Rettet i kode** (afventer commit/push):
-  global status for multi-target scopes venter nu på at alle kendte targets har rapporteret
+  "rolled_back" mens andre devices stadig var i gang. **Rettet i kode, committet/pushet af Codex
+  (`61802951`) og deployet** (headend genstartet, `/api/health` 200 OK, 2026-07-05 nat): global
+  status for multi-target scopes venter nu på at alle kendte targets har rapporteret
   terminal-status; `deployed_count`/`failed_count` beregnes nu korrekt (var også en bug — se
   `Update_Flow_v10.md` linje 549). Se `SYSTEM_HEALTH_REGISTER.md` HLTH-008 for fuld analyse.
-  Verificeret isoleret (py_compile + Python-simulering), IKKE live-testet.
-- **Åbent:** OS E2E på aktiv Edge ikke testet; live-verifikation af multi-target-rollup på en
-  faktisk multi-device rollout udestår
-- **Residualrisiko:** 🟢 4 i kode pr. 2026-07-05 (var reelt 🟡 6 for multi-target rollouts —
-  se korrektion ovenfor; nedgraderes fuldt til 🟢 4 først når live-verificeret)
+  Verificeret isoleret (py_compile + Python-simulering) FØR deploy; live multi-device-rollout
+  IKKE testet endnu.
+- **REGRESSION i den deployede fix (fundet 2026-07-05, Claude, periodisk tjek, samme dag):** Byggede
+  en rigtig kontrakttest (`headend/tests/test_report_update_rollup.py`) der kører den faktiske
+  `report_update()`-kode mod en midlertidig SQLite-DB (ikke en simulering). Testen viste at den
+  deployede `61802951`-fix manglede en `db.flush()` før rollup-forespørgslen (`SessionLocal` har
+  `autoflush=False`, jf. `database.py` linje 73) — konsekvensen er at global status for
+  multi-target rollouts ALDRIG flipper til `deployed`/`rolled_back`, heller ikke når alle devices
+  reelt er terminale, fordi det SIDSTE device's egen rapport er usynlig for dets egen
+  rollup-forespørgsel. Det er reelt værre end den oprindelige risiko (for-tidlig flip er erstattet
+  af en flip der aldrig sker — rollout'en hænger fast på "approved"). 1-linjes rettelse
+  (`db.flush()`) er lavet i `headend/main.py` og verificeret: 2 af 4 tests fejlede uden rettelsen,
+  4/4 passerer med den. IKKE committet/pushet/deployet endnu — se HANDOVER_LOG for kommandoer.
+- **Åbent:** OS E2E på aktiv Edge ikke testet; commit/push/deploy af flush-rettelsen udestår;
+  live-verifikation af multi-target-rollup på en faktisk multi-device rollout (2+ test-enheder,
+  `scope=site`) udestår
+- **Residualrisiko:** 🟠 8 (genopjusteret 2026-07-05 — den deployede kode er reelt i en "stuck"
+  tilstand for multi-target rollouts indtil flush-rettelsen er committet/deployet; nedgraderes til
+  🟢 4 først når flush-rettelsen er live OG en faktisk multi-device rollout er live-verificeret)
 
 ### R07 — Nøgle-kompromittering
 - **Status:** 🟡 Delvist kontrolleret
@@ -565,13 +580,19 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 3. Nikon Z30 config-model — desired state + accepted equivalents (R14); detektion + UI-visning
    af non-enforceable parametre er nu på plads (2026-07-05), resterer kun live-verifikation på
    hardware og en eksplicit beslutning om aperture/shutter_speed-drift-mål
-4. ~~Per-target deployment status (update-flow)~~ — data/API/UI fandtes allerede; den reelle
-   rest-bug (global status flippet af ét device-report i multi-target rollouts) rettet i kode
-   2026-07-05 (Claude), afventer commit/push + live-verifikation af en faktisk multi-device
-   rollout (se R06, `SYSTEM_HEALTH_REGISTER.md` HLTH-008)
+4. **Per-target deployment status (update-flow) — REGRESSION, ikke lukket:** data/API/UI fandtes
+   allerede; rest-bug'en fra P1.4 (global status flippet af ét device-report i multi-target
+   rollouts) blev rettet i kode 2026-07-05 (Claude), committet/pushet af Codex (`61802951`) og
+   deployet — MEN den deployede rettelse manglede selv en `db.flush()` (fundet 2026-07-05, Claude,
+   via en rigtig kontrakttest, `headend/tests/test_report_update_rollup.py`), så multi-target
+   rollouts nu i stedet hænger fast på "approved" for evigt og ALDRIG flipper til
+   deployed/rolled_back. Ny 1-linjes rettelse er lavet og testverificeret (4/4 passed), men IKKE
+   committet/deployet endnu — se R06, `SYSTEM_HEALTH_REGISTER.md` HLTH-008 og HANDOVER_LOG for
+   kommandoer. Genopjusteret til P0-hastende given det er en aktiv produktionsregression
 5. ~~ESLint-gate i CI~~ — ratchet-gate implementeret 2026-07-05 (fejler kun ved FLERE
-   problemer end baseline 222, kræver ikke oprydning af eksisterende problemer først), afventer
-   commit/push + første grønne CI-kørsel som live-bekræftelse
+   problemer end baseline 222, kræver ikke oprydning af eksisterende problemer først), committet/
+   pushet af Codex (`68805577`). Resterer kun: bekræfte at GitHub Actions-runneren faktisk viser
+   det nye "ESLint gate"-step grønt ved næste push/PR
 
 ### 🟡 P2 — Production hardening
 1. Disk-kryptering på Edge (R05)
@@ -601,6 +622,8 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-05 01:28 | Claude (periodisk tjek): §13.3 og §11 P1.2 opdateret med henvisning til nyt design-notat `Claude_Intern_CA_mTLS_Design_2026-07-05.md` (#52) — intern CA/mTLS-arkitektur, ingen kode rørt, afventer Peters valg mellem Cloudflare Access mTLS og ende-til-ende-model |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #4) | Claude: R14 UI/CMDB-visning af `camera_config_non_enforceable` implementeret (ny DB-kolonne + selvhelende v14-migration + frontend-info-boks); undervejs fundet og rettet en uafhængig, reel bug — `get_device_detail` returnerede aldrig "diagnostics"-nøglen, så hele Hardware/Kamera-diagnostik-panelet har vist tomt for alle enheder siden ~15. april |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #6) | Claude: R06/HLTH-008/UPD-012 "per-target deployment status" — fandt at data/API/UI faktisk allerede fandtes siden juni 2026 (dokumenterne var forældede); rettede den reelle rest-bug: global `PendingUpdate.status` blev sat af ét device-report i multi-target rollouts. Rettet i kode, verificeret isoleret, afventer commit/push + live-test |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #7, docs-sync) | Claude: §11 P1.4/P1.5, R06 og §12 opdateret — Codex har siden committet/pushet/deployet HLTH-008-fixet (`61802951`, headend genstartet, health 200 OK) og H-02 ESLint-gaten (`68805577`); dokumenterne var kommet bagud. Kun live multi-device-rollouttest (P1.4) og bekræftelse af grøn GitHub Actions-kørsel (H-02/P1.5) resterer nu |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #8) | Claude: skrev en rigtig kontrakttest (`headend/tests/test_report_update_rollup.py`) mod den faktiske `report_update()`-kode (SQLite, ikke simulering) — startpunkt for GO_LIVE_CHECKLIST H-05. Testen afslørede en REGRESSION i den allerede deployede `61802951`-fix: manglende `db.flush()` betød at multi-target rollouts aldrig flippede til deployed/rolled_back, selv når alle devices var terminale (P1.4/R06/HLTH-008 genåbnet til P0). 1-linjes rettelse lavet og testverificeret (4/4 passed), IKKE committet/deployet endnu |
 
 ---
 

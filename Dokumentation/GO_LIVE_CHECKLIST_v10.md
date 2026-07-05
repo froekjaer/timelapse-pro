@@ -139,11 +139,11 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | # | Krav | Status |
 |---|---|---|
 | H-01 | GitHub Actions CI er grøn på alle builds | ✅ Efter commit 79581ac |
-| H-02 | ESLint-gate i CI — ingen nye fejl | 🟠 Kode klar, afventer commit+push (2026-07-05, Claude): ratchet-gate (`timelapse-ui/scripts/eslint-gate.mjs` + `.eslint-baseline.json`, baseline 222) tilføjet som CI-step i `ui-check` — fejler kun hvis antal ESLint-problemer STIGER over baseline, kræver ikke at de 222 eksisterende rettes først. Baseline sænkes manuelt i takt med oprydning. |
+| H-02 | ESLint-gate i CI — ingen nye fejl | 🟢 Kode klar og pushet (2026-07-05, Claude → Codex commit `68805577`): ratchet-gate (`timelapse-ui/scripts/eslint-gate.mjs` + `.eslint-baseline.json`, baseline 222) tilføjet som CI-step i `ui-check` — fejler kun hvis antal ESLint-problemer STIGER over baseline, kræver ikke at de 222 eksisterende rettes først. Baseline sænkes manuelt i takt med oprydning. Resterer: bekræfte grønt "ESLint gate"-step i en faktisk GitHub Actions-kørsel. |
 | H-03 | `slowapi` tilføjet til requirements.txt | ✅ Rettet 2026-07-03 (Claude) — hele `requirements.txt` er samtidig pinnet til konkrete versioner (var 100% upinnet); se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §3.1. Committet (`b0e224c`) og installeret i live-venv af Peter |
 | H-04 | deploy/launchd/dk.froekjaer.timelapse-headend.plist opdateret (ikke-secret version) | 🟠 Mangler |
-| H-05 | Python test-suite med edge/headend contract-tests | 🟡 Ønsket |
-| H-06 | README opdateret (ikke Vite-template) | 🟡 Ønsket |
+| H-05 | Python test-suite med edge/headend contract-tests | 🟡 Ønsket — `headend/tests/test_report_update_rollup.py` (4 tests) + `test_update_lifecycle.py` (9 tests) skrevet 2026-07-05 (Claude), 13/13 bestået lokalt mod SQLite. IKKE committet endnu (afventer Codex/Peter, se HANDOVER_LOG). |
+| H-06 | README opdateret (ikke Vite-template) | 🟢 Rettet 2026-07-05 (Claude, periodisk tjek) — repo-rod `README.md` var uændret `create-vite`-boilerplate (ingen omtale af headend/edge/UI/tests); erstattet med reelt projekt-README (formål, mappestruktur, lokal opsætning for headend/UI/edge, test-kommandoer, pointer til `Dokumentation/00_START_HER.md`). IKKE committet endnu. |
 
 ---
 
@@ -157,7 +157,7 @@ curl -sk https://timelapse-pro.dk/api/health | jq .
 | App-artifact update E2E på aktiv Edge | Løst i lab | P0 |
 | OS offline-artifact update E2E på aktiv Edge (`apt-get --no-download`, manifest/signatur/hash) | Åben | P1 |
 | Change ticket med artifact/SBOM/rollback | Delvist | P1 |
-| Per-target update status | 🟢 Data + UI var faktisk allerede på plads (`update_targets`-tabel, `/api/updates/{id}/flow-status`, `UpdatesPage.tsx` per-device visning, siden juni 2026) — men den GLOBALE `PendingUpdate.status` blev sat direkte fra ét enkelt device-report, så ét device kunne gøre en hel multi-target rollout (global/customer/site) "deployed"/"rolled_back" mens andre devices stadig var i gang (HLTH-008). Rettet i kode 2026-07-05 (Claude, periodisk tjek): global status for multi-target scopes venter nu på at ALLE targets har rapporteret terminal-status; `deployed_count`/`failed_count` beregnes nu korrekt fra faktiske per-target rækker (var også en bug — `deployed_count` blev aldrig inkrementeret). Verificeret isoleret (se HANDOVER_LOG), afventer commit/push + Codex/Peter-review, ikke live-testet med rigtige multi-device rollouts. | P1 |
+| Per-target update status | 🟠 REGRESSION i deployet fix (fundet 2026-07-05, Claude, periodisk tjek): den 2026-07-05-deployede rettelse (`61802951`, se HLTH-008) manglede en `db.flush()` før rollup-forespørgslen (`SessionLocal` har `autoflush=False`), så det SIDSTE device i en multi-target rollout aldrig gjorde global status synlig i egen forespørgsel — global status sad derfor fast på "approved" for evigt, selv når alle devices reelt var terminale. Ny 1-linjes rettelse er lavet og verificeret med en rigtig kontrakttest (`headend/tests/test_report_update_rollup.py`, kører faktisk kode mod SQLite, 4/4 passed — 2 af dem fejlede uden flush-rettelsen), men er IKKE committet/deployet endnu. Se HANDOVER_LOG for copy-paste kommandoer. Data+UI (`update_targets`, `/api/updates/{id}/flow-status`, `UpdatesPage.tsx`) har eksisteret siden juni 2026. | P0 |
 
 ---
 

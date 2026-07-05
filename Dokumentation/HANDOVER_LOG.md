@@ -3038,3 +3038,274 @@ person vide".
 - **Ikke udført automatisk:** Live multi-device rollout-test er ikke kørt fra heartbeat, da den
   ændrer update-state for rigtige enheder. Bør testes kontrolleret med 2+ test-enheder: global
   update-status skal blive på `approved` indtil alle targets er terminale.
+
+### Handover 2026-07-05 — fra Claude (periodisk tjek): docs-sync efter Codex' commits/deploy (H-02, HLTH-008)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste HANDOVER_LOG-halen — seneste entry er Codex'
+  bekræftelse af at HLTH-008-rettelsen er committet (`61802951`), pushet og deployet (headend
+  genstartet, `/api/health` 200 OK). Ingen nyt spørgsmål adresseret til Claude. `git status
+  --short` viste udelukkende samme kendte untracked `claude_proxy.py` (urørt, som hidtil) — ingen
+  uncommittede rester fra tidligere sessioner.
+- **Fund:** `RISK_ASSESSMENT_v10.md` (§11 P1.4/P1.5, R06-korrektion, §12-historik),
+  `GO_LIVE_CHECKLIST_v10.md` (§H H-02, §K per-target status), `KRAVREGISTER_og_STATUS_v10.md`
+  (UPD-012) og `SYSTEM_HEALTH_REGISTER.md` (HLTH-008) var alle bagud ift. HANDOVER_LOG: de sagde
+  stadig "afventer commit/push" for både H-02 (ESLint-gate, faktisk pushet af Codex som `68805577`
+  ifølge en tidligere Codex-entry) og HLTH-008/P1.4 (faktisk committet som `61802951` OG deployet
+  med bekræftet health-check, per entrien lige ovenfor). Samme mønster som tidligere docs-sync-
+  runder (fx R17 2026-07-05 nat) — dokumenterne opdateres ikke automatisk når Codex committer.
+- **Rettet (kun tekst, ingen kode rørt):** Opdaterede de 4 dokumenter til at afspejle den
+  faktiske status: H-02 sat til 🟢 (kode pushet som `68805577`, resterer kun bekræftelse af grøn
+  GitHub Actions-kørsel); HLTH-008/UPD-012/P1.4 sat til 🟢 (kode committet `61802951`, deployet,
+  health OK — resterer kun en faktisk live multi-device-rollouttest, IKKE kun "commit/push" som
+  dokumenterne fejlagtigt stadig sagde). R06-residualrisiko-teksten justeret til "🟢 4 i kode og i
+  produktion" (var "i kode" alene). Tilføjet ny §12-historik-linje.
+- **Verifikation her:** Ren tekstredigering af 4 `.md`-filer — ingen `.py`/kode rørt, så
+  `py_compile` ikke relevant. Genlæste hvert redigeret afsnit efter ændring for at bekræfte at
+  markdown-struktur og tabelformattering er intakt (ingen ødelagte `|`-tabeller). `git status
+  --short` bekræftede bagefter at kun de 4 tilsigtede `.md`-filer er ændret (plus den kendte
+  untracked `claude_proxy.py`, urørt).
+- **IKKE gjort — bevidst:** Ingen kodeændringer denne runde. Ingen forsøg på at bekræfte GitHub
+  Actions-runner-status eller køre en live multi-device-rollout (kræver hhv. GitHub-adgang og
+  Mac Mini-adgang, som heartbeat ikke har).
+- **Codex/Peter: kør venligst når I har et vindue** (ingen kode ændret, kun docs — normal commit-
+  konvention gælder stadig):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt) rm -f .git/index.lock
+
+  git add Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/GO_LIVE_CHECKLIST_v10.md \
+          Dokumentation/KRAVREGISTER_og_STATUS_v10.md Dokumentation/SYSTEM_HEALTH_REGISTER.md \
+          Dokumentation/HANDOVER_LOG.md
+  git commit -m "docs: sync H-02/HLTH-008 status after commit+deploy (docs had gone stale)"
+  git push
+  ```
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`,
+  `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`, `Dokumentation/SYSTEM_HEALTH_REGISTER.md`.
+- **Går videre til:** næste periodiske runde tjekker om GitHub Actions-runneren viser H-02-gaten
+  grøn, eller om en live multi-device-rollouttest (HLTH-008) er udført; ellers Peters §6-beslutning
+  (CA/mTLS), R17-smoketesten, eller H-04/H-05/H-06 i GO_LIVE_CHECKLIST §H hvis intet nyt er dukket op.
+
+### Handover 2026-07-05 — fra Claude (periodisk tjek): H-05 kontrakttest afslørede REGRESSION i den deployede HLTH-008-fix — multi-target rollouts flipper aldrig status (fastfrosset på "approved")
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste HANDOVER_LOG-halen — seneste entry er min egen
+  docs-sync (§11 P1.4/P1.5, R06, §12) efter at Codex committede/pushede/deployede både H-02
+  (`68805577`) og HLTH-008 (`61802951`). Intet nyt spørgsmål adresseret til mig. `git status
+  --short` viste udelukkende samme kendte untracked `claude_proxy.py` (urørt) — ingen uncommittede
+  rester fra tidligere sessioner rørt. Ingen af de reelle P0-punkter (Cloudflare Tunnel-migrering,
+  off-site backup, DPIA, node-agent, stale credentials) kan rykkes uden Mac Mini/Cloudflare/
+  juridisk adgang, og Peters §6-beslutning (CA/mTLS) samt R17-smoketesten er stadig ubesvarede.
+  Tog derfor mit eget "går videre til"-punkt: **H-05 i GO_LIVE_CHECKLIST §H — "Python test-suite
+  med edge/headend contract-tests"** (🟡 Ønsket, helt åben, ingen `headend/tests/`-mappe fandtes).
+- **Opsætning (denne runde, ikke tidligere muligt):** Opdagede at `headend/database.py` faktisk
+  understøtter SQLite via `DATABASE_URL`-miljøvariablen (bruges allerede til noget andet i
+  produktion — se linje 43-46) — det betyder at `headend/main.py` KAN importeres og køres i
+  sandbox'en uden Postgres, hvis man bygger et minimalt, isoleret virtuelt miljø med kun de
+  moduler `main.py` reelt importerer på modul-niveau (`fastapi`, `sqlalchemy`, `slowapi`,
+  `python-jose`, `bcrypt`, `passlib`, `python-multipart`, `python-dotenv` — `webauthn`/`pyotp`/
+  `google-genai` importeres kun lazily inde i funktioner og var ikke nødvendige). Den eksisterende
+  `headend/venv/` i repoet er en macOS-venv (binær `Exec format error` i Linux-sandbox) og kunne
+  ikke genbruges direkte, men et helt nyt venv i `/tmp` med de pinnede versioner fra
+  `requirements.txt` virkede og kunne importere `main.py` uden fejl.
+- **Skrevet:** `headend/tests/test_report_update_rollup.py` — en RIGTIG kontrakttest der kalder
+  den faktiske `report_update()`-funktion i `main.py` direkte (ikke via HTTP/TestClient, for at
+  undgå `@app.on_event("startup")`-bivirkninger som baggrundstråde/log-collector — FastAPI's
+  `@app.post`-dekorator returnerer selve funktionen uændret, så direkte kald er ækvivalent for
+  denne funktions logik) mod en frisk, midlertidig SQLite-fil. 4 testcases: (1) multi-target
+  site-rollout hvor 2 devices er terminale og 1 stadig kører → status skal blive "approved"; alle
+  3 rapporterer "deployed" → status skal flippe til "deployed"; (2) `scope="device"` skal fortsat
+  flippe øjeblikkeligt (uændret sti); (3) blandet udfald (1 deployed, 1 rolled_back) → konservativ
+  "rolled_back"; (4) rene fremskridtsstatusser (queued/downloading/…) må aldrig flippe status.
+- **FUND — den deployede `61802951`-fix virker ikke som tiltænkt:** 2 af de 4 tests fejlede FØR
+  jeg rettede noget: både "alle targets bliver til sidst deployed" og "blandet udfald" testen
+  fejlede med `assert 'approved' == 'deployed'` / `'rolled_back'`. Rodårsag fundet ved at spore
+  koden: `database.py` linje 73 sætter `SessionLocal = sessionmaker(..., autoflush=False, ...)`.
+  I `report_update()` tilføjes/ændres dette devices EGEN `UpdateTarget`-række (`db.add(target)`
+  eller feltopdateringer på en eksisterende) — men fordi autoflush er slået fra, bliver denne
+  ændring IKKE sendt til databasen før et eksplicit `db.commit()`/`db.flush()`. Rollup-koden
+  længere nede kalder `db.query(UpdateTarget).filter_by(pending_update_id=u.id)...all()` for at
+  tælle hvor mange targets der er terminale — men denne forespørgsel går direkte mod DB'en og ser
+  IKKE den lige tilføjede/ændrede, endnu ikke flush'ede række. Konsekvens: netop det SIDSTE device
+  i en multi-target rollout (det der reelt ville gøre alle targets terminale) tælles ALDRIG med i
+  sin egen afsluttende rapport — `len(statuses) == total` bliver derfor aldrig sandt, og global
+  status flipper aldrig til `deployed`/`rolled_back`. Rollout'en hænger fast på "approved" for
+  evigt (indtil et helt urelateret, efterfølgende device-report for samme update tilfældigvis
+  får den forsinkede række med — hvilket i praksis sjældent/aldrig sker for en allerede afsluttet
+  rollout). **Dette er reelt værre end den oprindelige HLTH-008-risiko** (for-tidlig flip er
+  erstattet af en flip der aldrig sker), og det er i PRODUKTION nu, da `61802951` er deployet.
+- **Rettet i kode (kun `headend/main.py`, 1 linje + kommentar):** Tilføjet `db.flush()` i
+  `report_update()` umiddelbart før rollup-forespørgslen (samme sted som den eksisterende
+  HLTH-008-kommentar), så dette devices egen, netop tilføjede/ændrede `UpdateTarget`-række er
+  synlig for forespørgslen der tæller terminale targets. Ingen anden logik ændret.
+- **Verifikation:** `python3 -m py_compile headend/main.py headend/database.py` ren. Byggede
+  minimal venv i `/tmp/hvenv` (se ovenfor) og kørte `pytest headend/tests/test_report_update_rollup.py
+  -v`: 2 fejl FØR flush-rettelsen (nøjagtig de scenarier hvor sidste device fuldfører rollout'en),
+  4/4 bestået EFTER. Dette er en test af den FAKTISKE kode i `main.py` — ikke en isoleret
+  simulering (i modsætning til forrige rundes verifikation af selve `61802951`-fixet). Ingen live
+  Postgres/produktions-DB rørt; testen bruger udelukkende en midlertidig SQLite-fil.
+- **IKKE gjort — bevidst:** Ingen commit/push. Ingen live-test mod faktisk produktions-rollout
+  (kræver Mac Mini-adgang). Ingen ændring af andre dele af `report_update()`, `_resolve_update_
+  targets()` eller `_update_flow_stage()`.
+- **Dokumenter opdateret (kun tekst):** `SYSTEM_HEALTH_REGISTER.md` (HLTH-008 genåbnet til 🟠/P0
+  med fuld regressions-analyse), `RISK_ASSESSMENT_v10.md` (R06 residualrisiko genopjusteret til
+  🟠 8, §11 P1.4 un-strike'et, ny §12-historik-linje), `GO_LIVE_CHECKLIST_v10.md` (§K genopjusteret
+  til P0), `KRAVREGISTER_og_STATUS_v10.md` (UPD-012 genopjusteret til 🟠).
+- **Codex/Peter: kør venligst SNAREST — dette er en aktiv produktionsregression, ikke kun docs**
+  (kode + ny testfil, ingen af delene committet af mig):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt) rm -f .git/index.lock
+
+  git add headend/main.py headend/tests/test_report_update_rollup.py \
+          Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/GO_LIVE_CHECKLIST_v10.md \
+          Dokumentation/KRAVREGISTER_og_STATUS_v10.md Dokumentation/SYSTEM_HEALTH_REGISTER.md \
+          Dokumentation/HANDOVER_LOG.md
+  git commit -m "fix: flush update_targets before multi-target rollup so last device is counted (HLTH-008 regression)"
+  git push
+  ```
+  Verificér lokalt før commit hvis I vil (kræver et venv med fastapi/sqlalchemy/slowapi/
+  python-jose/bcrypt/passlib/python-multipart/python-dotenv/pytest installeret — se
+  `headend/tests/test_report_update_rollup.py`s docstring for præcis opskrift):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro/headend
+  python3 -m pytest tests/test_report_update_rollup.py -v
+  ```
+  Deploy: genstart `headend`-servicen på Mac Mini'en som normalt (samme som ved `61802951`).
+  Ingen DB-migration nødvendig. **Værd at stikprøvetjekke efter deploy:** kør en multi-device
+  test-rollout (`scope=site`, 2+ enheder) og bekræft at update'en rent faktisk skifter til
+  "Deployet" (eller "Rullet tilbage") når alle enheder har rapporteret — IKKE kun at den forbliver
+  "Godkendt" undervejs (det sidste var allerede bekræftet af `61802951`; det nye at bekræfte er at
+  den rent faktisk kommer i mål).
+- **Filer rørt:** `headend/main.py`, `headend/tests/test_report_update_rollup.py` (ny fil),
+  `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`,
+  `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`, `Dokumentation/SYSTEM_HEALTH_REGISTER.md`.
+- **Går videre til:** næste periodiske runde bekræfter om Codex/Peter har committet/deployet
+  flush-rettelsen og evt. kørt en live multi-device-test; ellers ser den på H-05 (flere
+  contract-tests, fx for `_resolve_update_targets`/`promote_update`/`force_rollback`), Peters
+  §6-beslutning (CA/mTLS), eller R17-smoketesten hvis en af dem er besvaret i mellemtiden.
+
+### Handover 2026-07-05 03:2x — fra Claude (periodisk tjek): H-05 udvidet med flere contract-tests + endnu et gap fundet (device-decommission midt i rollout)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste HANDOVER_LOG-halen — seneste entry er min
+  egen forrige runde (flush-regression i `report_update()`, 1-linjes fix + ny test,
+  IKKE committet endnu). `git status --short` uændret siden da: samme 4 `.md`-filer +
+  `headend/main.py` + `headend/tests/` (ny) + den kendte untracked `claude_proxy.py` —
+  ingen ny Codex-entry, intet committet/pushet af flush-fixet endnu. Kørte
+  `tests/test_report_update_rollup.py` igen for at bekræfte baseline stadig er 4/4 grøn med
+  den uncommittede fix i arbejdstræet (den var).
+- **Fund (gennemgang, ingen ny bug i denne omgang):** Læste `promote_update()`,
+  `force_rollback()` og `_auto_approve_update_for_target()` linje for linje for at lede efter
+  samme autoflush-mønster som HLTH-008-regressionen (dvs. en `db.query(...)` der forudsætter at
+  en lige tilføjet/ændret række allerede er synlig). Fandt INGEN tilsvarende bug: `promote_update()`
+  kalder allerede `db.flush()` efter `db.add(prod_update)` før den efterfølgende brug;
+  `force_rollback()` sætter kun status og committer uden mellemliggende query;
+  `_auto_approve_update_for_target()` flusher allerede efter `db.add(ticket)`. Denne gennemgang var
+  selve arbejdet denne runde (negativt resultat er stadig et resultat — bekræfter at
+  flush-regressionen var isoleret til `report_update()`, ikke et bredere mønster i update-flow-koden).
+- **Skrevet:** `headend/tests/test_update_lifecycle.py` (ny fil, 9 tests) — supplerer H-05:
+  1. `_resolve_update_targets()` for alle 5 scopes (device/site/customer/global/eksplicit
+     `target_device_ids`, inkl. device-scope mod et device der ikke findes i CMDB → tom liste,
+     ingen crash).
+  2. `force_rollback()` — status flipper til `rollback_requested`; 404 for ukendt update-id.
+  3. **Ny edge case fundet og dokumenteret (test, ikke rettet):** hvis et device fjernes fra
+     CMDB (`Device`-rækken slettet — fx decommissioned/udskiftet hardware, jf. R16-mønsteret)
+     MIDT i en igangværende multi-target rollout, EFTER det selv har rapporteret en
+     ikke-terminal status (`downloading`), tæller `_resolve_update_targets()` det fjernede
+     device ikke længere med i `total`. Konsekvens: rollup'en flipper global status til
+     `deployed`, så snart de RESTERENDE devices er terminale — selvom det fjernede device reelt
+     aldrig afsluttede sin egen installation. Dette er en separat, snævrere risiko end
+     HLTH-008-flush-bugget (som er dækket af flush-fixet) — det kræver et device der fysisk
+     forsvinder fra CMDB midt i en rollout, hvilket er sjældnere end "et device rapporterer bare
+     langsomt". Testen bekræfter dette er den FAKTISKE nuværende opførsel (ikke en hypotese).
+- **Verifikation:** `python3 -m pytest tests/ -v` → 13/13 bestået (4 eksisterende +
+  9 nye). `python3 -m py_compile headend/main.py headend/database.py` ren (ingen kode ændret,
+  kun ny testfil). `git status --short` bekræftede bagefter at kun `headend/tests/test_update_lifecycle.py`
+  er tilføjet ift. sidste runde — ingen andre filer rørt denne gang.
+- **IKKE gjort — bevidst:** Ingen rettelse af device-decommission-gap'et (kræver en
+  produktbeslutning: skal et device der forsvinder fra CMDB midt i en rollout tælles som
+  "aldrig terminal" for evigt, blokere rollout'en permanent, eller behandles som nu? Alle tre
+  har afvejninger — bør besluttes af Peter, ikke antaget af mig). Ingen commit/push (samme
+  konvention som hidtil — kode+tests afventer Codex/Peters commit sammen med flush-fixet).
+- **Codex/Peter:** intet nyt hastende at køre ud over den allerede rapporterede
+  flush-fix-commit fra forrige runde (se ovenfor). Når I committer, tag også
+  `headend/tests/test_update_lifecycle.py` med i samme `git add`:
+  ```bash
+  git add headend/tests/test_update_lifecycle.py
+  ```
+  (kan tilføjes til den tidligere foreslåede `git add`-linje for flush-fixet).
+- **Filer rørt:** `headend/tests/test_update_lifecycle.py` (ny fil). Ingen andre filer.
+- **Går videre til:** næste periodiske runde bekræfter om flush-fixet + de nye tests er
+  committet/deployet og om en live multi-device-test er kørt; ellers vurderer den
+  device-decommission-gap'et ovenfor som et nyt, lille RISK_ASSESSMENT/GO_LIVE-punkt (kræver
+  først Peters produktbeslutning om ønsket adfærd), eller ser på Peters §6-beslutning (CA/mTLS)
+  / R17-smoketesten hvis en af dem er besvaret i mellemtiden.
+
+### Handover 2026-07-05 03:4x — fra Claude (periodisk tjek): H-06 lukket — repo-rod README var stadig `create-vite`-boilerplate
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste HANDOVER_LOG-halen — seneste entry er min
+  egen forrige runde (H-05 udvidet, device-decommission-gap dokumenteret som test, IKKE
+  committet). `git status --short` uændret siden da: samme 4 `.md`-filer + `headend/main.py`
+  (flush-fix) + `headend/tests/` (2 filer, 13 tests) + kendt untracked `claude_proxy.py` —
+  ingen ny Codex-entry, intet committet/pushet/deployet endnu. Ingen ny live-info om Peters
+  §6-beslutning (CA/mTLS) eller R17-smoketesten. Da tre på hinanden følgende runder allerede har
+  brugt kredit på `report_update()`/update-lifecycle-kontrakttests (H-05), og videre arbejde der
+  nu kræver enten en produktbeslutning (device-decommission) eller adgang jeg ikke har (live
+  test), valgte jeg i stedet et andet, helt uafhængigt og fuldt afsluttet ønsket punkt fra samme
+  GO_LIVE_CHECKLIST §H: **H-06 — "README opdateret (ikke Vite-template)"**.
+- **Fund:** Repo-rodens `README.md` (`/Users/peter/projects/timelapse-pro/README.md`, ikke
+  `timelapse-ui/README.md`) var stadig 100% uændret `create-vite`-skabelonen ("React + TypeScript
+  + Vite... This template provides a minimal setup...") — ingen omtale af headend, edge,
+  timelapse-ui, node-agent, website, tests eller `Dokumentation/`. Der findes intet
+  `package.json` i repo-roden (kun i `timelapse-ui/`), så dette er tydeligvis en fejlagtigt
+  efterladt fil fra dengang `timelapse-ui` blev scaffoldet, ikke et bevidst tomt monorepo-README.
+- **Rettet:** Erstattede `README.md` med et reelt projekt-README: kort formål/status-linje
+  (LAB/pre-production, peger til `Dokumentation/00_START_HER.md` og
+  `GO_LIVE_CHECKLIST_v10.md`/`RISK_ASSESSMENT_v10.md` for detaljer — README'et duplikerer
+  bevidst IKKE arkitektur/sikkerhedsindhold, kun "kom i gang"), en tabel over mappestrukturen
+  (`headend/`, `edge/`, `timelapse-ui/`, `node-agent/`, `website/`, `deploy/`, `tests/`,
+  `Dokumentation/`), copy-paste lokal opsætning for headend (venv + `DATABASE_URL=sqlite:///`
+  til lokal test, jf. samme SQLite-mønster som H-05-testene bruger), UI (`npm install`/`dev`/
+  `build`/`lint:gate`) og edge (pointer til Installationsguide Del B/C), test-kommandoer
+  (`pytest tests/`, `cd headend && pytest tests/ -v`, `npm run lint:gate`), samt et kort
+  sikkerheds-/compliance-afsnit (SABSA/ISO 27001/IEC 62443/CRA/GDPR/NIS2/AI Act) med pointer til
+  `Dokumentation/`.
+- **Verifikation:** Ren dokumentationsændring, ingen kode rørt. Tjekkede at antal
+  markdown-kodeblok-afgrænsninger (` ``` `) er lige (6 — balanceret, ingen ufuldstændige
+  fences), og læste filen igennem for korrekthed mod faktisk repo-struktur (`ls` af alle nævnte
+  mapper, `timelapse-ui/package.json`-scripts, `headend/requirements.txt`) før commit-forslag.
+  Ingen `py_compile`/`pytest` relevant (ingen `.py`/`.ts`-filer ændret).
+- **Også opdateret (samme runde, konsistens):** `GO_LIVE_CHECKLIST_v10.md` §H — H-06 sat til
+  🟢 med beskrivelse af rettelsen; H-05-rækken fik samtidig en statusopdatering (var stadig
+  plain "🟡 Ønsket" selvom 13 tests reelt er skrevet af tidligere runder) så tabellen ikke
+  modsiger `RISK_ASSESSMENT_v10.md` §11 P1.4/HANDOVER_LOG. Ingen ændring i
+  `KRAVREGISTER_og_STATUS_v10.md` — der findes ikke en tilsvarende README-linje der, og det er
+  ikke et krav-register-punkt.
+- **IKKE gjort — bevidst:** Ingen ændring af `timelapse-ui/README.md` (ikke undersøgt denne
+  runde — kan være et separat, mindre punkt hvis det også er uændret Vite-boilerplate). Ingen
+  commit/push (samme konvention — afventer Codex/Peter, kan tages sammen med de øvrige
+  uncommittede filer nedenfor).
+- **Codex/Peter: kør venligst når I har et vindue** (README + docs, ingen kodeadfærd ændret —
+  kan committes uafhængigt af flush-fix/tests, eller samlet):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+
+  ps aux | grep -i git | grep -v grep
+  # (hvis tomt) rm -f .git/index.lock
+
+  git add README.md Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "docs: replace stale create-vite README with real project README (H-06)"
+  git push
+  ```
+  (Kan evt. laves som ét samlet commit med de øvrige uncommittede filer —
+  `headend/main.py`, `headend/tests/`, `RISK_ASSESSMENT_v10.md`,
+  `KRAVREGISTER_og_STATUS_v10.md`, `SYSTEM_HEALTH_REGISTER.md` — se forrige to entries. README-
+  ændringen er uafhængig og kan også committes for sig, hvis I foretrækker mindre commits.)
+- **Filer rørt:** `README.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** næste periodiske runde bekræfter om noget af det ovenstående (flush-fix,
+  H-05-tests, README) er committet/deployet; ellers kigger den på `timelapse-ui/README.md` (er
+  den også stadig Vite-boilerplate?), H-04 (`deploy/launchd/...plist` ikke-secret version,
+  🟠 Mangler i §H), device-decommission-gap'et (kræver Peters produktbeslutning), eller Peters
+  §6-beslutning (CA/mTLS) / R17-smoketesten hvis en af dem er besvaret i mellemtiden.

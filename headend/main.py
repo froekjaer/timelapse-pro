@@ -9335,6 +9335,13 @@ def report_update(payload: dict, db: Session = Depends(get_db)):
             # status til deployed/rolled_back når ALLE kendte targets har rapporteret en
             # terminal-status. Så længe rollout er i gang forbliver u.status "approved",
             # hvilket allerede er det _update_flow_stage()/flow-status-UI'en forventer.
+            #
+            # VIGTIGT: SessionLocal er konfigureret med autoflush=False (database.py), så
+            # uden en eksplicit flush her er `target` (dette device's EGEN rapport, som lige
+            # er tilføjet/ændret ovenfor) usynlig for `db.query(UpdateTarget)...` nedenfor —
+            # rollouten ville dermed aldrig se det sidste device som terminal, og global
+            # status ville aldrig flippe (fundet af tests/test_report_update_rollup.py).
+            db.flush()
             resolved_devices = _resolve_update_targets(db, u)
             total = len(resolved_devices)
             if total:
