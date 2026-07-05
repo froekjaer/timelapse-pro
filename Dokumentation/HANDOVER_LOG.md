@@ -4533,3 +4533,42 @@ person vide".
   `mcp__workspace__bash` har fejlet konsekvent i 10+ runder — hvis det er en rettelig
   infrastrukturfejl, bør den prioriteres, da den blokerer al fremtidig kodetestning fra denne
   kanal.
+
+### Handover 2026-07-05 (periodisk tjek #30) — fra Claude: konkret ja/nej-anbefaling til "✅ Delvist" vs. "🟡 Delvist"
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md —
+  seneste entries er Claudes eget tjek #29 samt Codex' agent/service-principal-forslag og
+  Claudes eget svar derpå (begge allerede besvaret af Claude, ingen ny Codex- eller
+  Peter-reaktion endnu). `mcp__workspace__bash` fejlede igen ved gentagne forsøg (samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som i tjek #21–#29) —
+  kunne derfor hverken køre `git status`, teste kode eller køre andet denne runde.
+- **Fundet:** `RISK_ASSESSMENT_v10.md` §11 og `GO_LIVE_CHECKLIST_v10.md` §J er uændrede siden
+  tjek #29 — ingen nye P0/P1-punkter. Brugte i stedet runden på at gøre det udestående
+  "✅ Delvist" vs. "🟡 Delvist"-spørgsmål (tjek #26–#29) letbesvarligt for Peter, i stedet for
+  blot at gentage at det "afventer en beslutning". Talte alle statusmarkører i
+  `KRAVREGISTER_og_STATUS_v10.md` §2: 13 rækker bruger "✅ Delvist", 16 rækker bruger
+  "🟡 Delvist" — begge stilarter er udbredte, ikke få enkeltstående afvigelser. Gennemgik
+  dernæst dokumentets fulde emoji-brug: ✅ bruges ELLERS udelukkende til "✅ Implementeret"
+  (ingen undtagelser fundet), 🔴 udelukkende til "Mangler", og 🟡 er den eneste farve der ellers
+  parres med "Delvist". Der findes ingen legend/forklaring i §1–§2, der definerer to niveauer af
+  "Delvist". Stikprøve af indholdet i begge grupper (fx CAP-005 "✅ Delvist" har en 3033-elements
+  tag-backlog; UPD-006 "🟡 Delvist" mangler kun ticket-signatur) viser intet konsistent mønster
+  der adskiller "mere færdig" fra "mindre færdig" delvist-status mellem de to emoji-grupper.
+  Konklusion: "✅ Delvist" ligner en utilsigtet copy-paste-rest fra "✅ Implementeret"-rækker
+  (kun ordet ændret, ikke emojien), ikke en bevidst tredje statuskategori.
+- **Udført:** Intet rettet i selve dokumentet — bevidst, samme forsigtighed som tjek #26–#29,
+  da dette stadig er Peters beslutning at bekræfte, ikke Claudes at antage. I stedet formuleret
+  en konkret anbefaling klar til et rent ja/nej: **ensret alt "✅ Delvist" til "🟡 Delvist"**
+  (13 rækker i §2, samt tilsvarende i §3-optællingen), da dette matcher dokumentets egen
+  eksisterende trafiklys-konvention og intet fundet tyder på en bevidst semantisk forskel. Hvis
+  Peter/Codex svarer "ja"/"godkendt" i denne log, kan en kommende runde udføre den rene
+  tekstændring OG samtidig rette §3-optællingsfejlen (Capture/Admin UI/Sikkerhed, tjek #27) i
+  én samlet, testfri redigering — i stedet for at blive ved med at udskyde begge punktvist.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #29 (live multi-device-rollout-test, Peters §6
+  CA/mTLS-arkitekturvalg, R17-smoketest, §K OS offline-artifact E2E, device-decommission-
+  beslutning, Gemini/Vertex-region-bekræftelse, C-03-bekræftelse, P0 #5 HMAC/stale credentials,
+  Codex' agent/service-principal-forslag som afventer Peters navngivnings-/GDPR-/lab-instans-svar),
+  plus nu et konkret, lille afventende punkt: Peters ja/nej til "✅ Delvist"→"🟡 Delvist"-
+  ensretningen ovenfor. `mcp__workspace__bash` fejler fortsat konsekvent (11+ runder i træk nu)
+  — fortsat værd for Peter at undersøge direkte.
