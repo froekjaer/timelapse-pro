@@ -3825,3 +3825,14 @@ person vide".
   multi-device-rollout-test, Peters §6-beslutning (CA/mTLS), R17-smoketesten, §K's "OS
   offline-artifact update E2E", device-decommission-beslutningen, eller at bekræfte den
   faktiske Gemini/Vertex-produktionsregion.
+
+### Handover 2026-07-05 (morgen) - Codex: AI Ops SAST virtualenv-scanfix committet
+- **Udført:** Claude's AI Ops/SAST scanner-fix er gennemgået, testet, committet og pushet på
+  `claude/capture-camera-location-2026-07-03` som `981c5802`:
+  `fix: AI Ops SAST scan no longer counts vendored artifacts/ virtualenv as own-code signals`.
+- **Verifikation:** `python3 -m py_compile headend/main.py headend/database.py
+  headend/tests/test_aiops_static_scan.py` var ren. Codex kørte:
+  `/tmp/tlp-hvenv/bin/python -m pytest tests/test_report_update_rollup.py tests/test_update_lifecycle.py tests/test_gemini_region_guard.py tests/test_change_ticket_sbom.py tests/test_aiops_static_scan.py -v`
+  med **29 passed**.
+- **Drift:** Ingen live-genstart udført i denne runde; ændringen rører kun read-only AI
+  Ops-diagnostik og kan indgå i næste normale headend-deploy.
