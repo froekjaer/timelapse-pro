@@ -273,6 +273,7 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **TILFØJELSE 2026-07-04 (Claude):** GPS/lokationsmetadata (breddegrad/længdegrad/højde pr. optagelse) er nu reelt implementeret og verificeret i produktion (kildeprioritet enhed/kamera > site, signeret GPS-fix fra kameraet kan ikke overskrives, kilde vises i UI). Dette er personoplysning i GDPR-forstand (præcis geografisk placering af overvågningsudstyr, potentielt private adresser) og falder ind under nærværende risiko — DPIA/retention-arbejdet (se §11 P0) skal eksplicit dække GPS-feltet, ikke kun selve billedet. Ingen kodeændring nødvendig, men scope for DPIA-template bør nævne det eksplicit.
 - **TILFØJELSE 2026-07-04 (nat, Claude):** DPIA-skabelon, retention-policy-design og subprocessor-liste udarbejdet — se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Dette er tekniske/organisatoriske UDKAST (ikke juridisk godkendt), og retention er kun et design, ikke implementeret kode. Databehandleraftale og brudprocedure er bevidst IKKE dækket (kræver jurist). Fandt undervejs R18 (separat, urelateret produktionsbug — rettet, se nedenfor).
 - **TILFØJELSE 2026-07-05 (Claude, periodisk tjek):** Opfulgte DPIA-dokumentets §4-anbefaling ("Bekræft Gemini/Vertex AI's faktiske region-indstilling som allerførste skridt") ved kodegennemgang af `headend/ai/gemini_service.py`/`headend/main.py`/`headend/ai/ai_batch_submit.py`. Fund: Vertex-region defaulter til `europe-west1` (EU) hvis `GOOGLE_CLOUD_LOCATION` ikke er sat, OG `POST /api/admin/ai-batch/...`-endepunktet (API-stien bag "Kør AI-batch nu" i UI'et) havde allerede et tjek der stopper jobbet, hvis det konfigurerede `gemini_gcs_bucket_region` ikke matcher Vertex-regionen — MEN `headend/ai/ai_batch_submit.py` (CLI-scriptet til manuel bulk re-tag, kører direkte på Mac Mini'en, samme Vertex-batch-upload) havde INTET tilsvarende tjek. En operatør der kørte CLI-scriptet i stedet for UI-knappen kunne dermed sende et helt bulk-batch-job til et forkert-region GCS-bucket uden nogen advarsel. Rettet: logikken er udtrukket til én delt funktion (`validate_batch_bucket_region()` i `gemini_service.py`), brugt af begge indgange, med 6 nye kontrakt-tests (`headend/tests/test_gemini_region_guard.py`) samt kørsel af hele den eksisterende test-suite (19/19 bestået) og `py_compile` på alle rørte filer. **Fortsat IKKE bekræftet af denne runde** (kræver live-adgang til den faktiske produktions-`GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region`-værdi, som Claude ikke har): at de FAKTISK konfigurerede værdier i produktion reelt er sat til EU-regioner — kun at koden nu konsekvent HÅNDHÆVER match mellem de to, uanset hvilken indgang der bruges. Se `GO_LIVE_CHECKLIST_v10.md` §G for status.
+- **TILFØJELSE 2026-07-05 (Claude, Peters miljøafklaring + Codex-præcisering):** Peter har bekræftet at der allerede findes en **databehandleraftale med kunden Kirkbi A/S** (som ejer Site "Travbyen", hvorfra billederne i R&D-miljøet er importeret). Dette er en delvis, ikke fuld, lempelse af "databehandleraftale mangler". Codex' vigtige præcisering (fastholdt her): dette dækker lovligt behandlingsgrundlag for drift/support, men er IKKE i sig selv det samme som fri R&D-agentadgang til kundebilleder til AI/QA-udvikling — det er et separat spørgsmål, adskilt fra selve DPA-eksistensen. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §4 for de tre adskilte spørgsmål og forbehold: aftalen skal verificeres til også at dække TimeLapse Pro's FAKTISKE nuværende behandling (AI/Gemini cloud-eskalering, GPS-metadata), før den kan bruges som fuld GDPR-evidens for G-03 i `GO_LIVE_CHECKLIST_v10.md`. Nye kunder ud over Kirkbi A/S kræver fortsat hver deres egen aftale.
 
 ### R17 — Debug/lab mode kan efterlades aktiveret uden overvågning (NY, fundet 2026-07-04)
 - **Status:** 🟢 Rettet og deployet (2026-07-05, Claude periodisk tjek + Codex-deploy) — kode
@@ -420,6 +421,14 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Sandsynlighed:** var 5 (skete ved hver eneste godkendelse), **Konsekvens:** 2 (workflow-fejl, ikke datalækage), **Score:** var 🟡 10 → **Residualrisiko efter fix:** 🟢 3 (workflowet virker igen; GDPR-dele af R12 uændret åbne)
 - Se `HANDOVER_LOG.md` 2026-07-04 (nat).
 
+### R19 — Agent-adgang til fremtidig prod-fysisk-system ikke formelt udelukket, mens maskinen allerede håndterer live kundedata (NY, 2026-07-05)
+- **Status:** 🟡 Under afklaring — designdiskussion i gang (Codex' agent/service-principal-forslag), intet kodet endnu
+- **Kontekst (Peters miljøafklaring, se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`):** Den fremtidige `timelapsepro.dk`-prod-vært er et helt andet fysisk system end det nuværende R&D-system (Mac Mini). Denne prod-maskine kører **allerede i dag** CrushFTP til udveksling af kundedata og det legacy timelapse-system, TimeLapse Pro skal erstatte — dvs. den håndterer reelle kunders data NU, selvom TimeLapse Pro-applikationen ikke er deployet dertil endnu.
+- **Fund/vurdering (Claude):** Codex' oprindelige forslag antog implicit at prod-isolation primært er en fremtidig "ved cutover"-opgave. Den antagelse holder ikke — hvis der nogensinde skulle opstå agent-adgang (SSH-nøgle, deploy-key, API-token) til denne maskine, ville det være en adgang til et system med LIVE personoplysninger allerede i dag, ikke et tomt fremtidigt system.
+- **Åbent:** (1) Eksplicit bekræftelse af, at ingen agent-brugte credentials nogensinde er blevet oprettet på eller givet adgang til denne maskine. (2) Den bredere `AgentPrincipal`/miljøflag-model (Codex' forslag) er stadig kun et designforslag — se `HANDOVER_LOG.md` 2026-07-05 for Claudes fulde svar (SABSA/IEC 62443-vurdering: trust boundary bør være en infrastruktur-zone, ikke kun en applikations-env-flag). (3) Staging (§1 i miljødokumentet) er endnu ikke etableret som kørende system — dens agent-adgangsniveau er ikke besluttet.
+- **Anbefaling:** Behandl "ingen agent-adgang til den fysiske prod-maskine" som gældende FRA NU (allerede en de-facto-politik, ikke noget der først skal håndhæves ved launch), og prioritér §6-zonemodellens udvidelse med et miljø-lag (se nedenfor) højt i P0/P1-arbejdet med agent-adgangsmodellen.
+- **Sandsynlighed:** 2 (ingen agent-adgang er observeret i dag; det er fraværet af en FORMEL kontrol der er risikoen, ikke et konkret hændelsestegn), **Konsekvens:** 5 (ville være et reelt databrud på live kundedata + legacy-system, hvis det skete), **Score:** 🟠 10
+
 ---
 
 ## 5. Virtuel penetrationstest — opdatering juni 2026
@@ -531,6 +540,18 @@ Zone 5: Kamera/relay/lokal enhedsgrænseflade
 - Zone 2→4: ✅ JWT/HMAC; stale credentials
 - Zone 4→5: ✅ gphoto2/GPIO
 
+**TILFØJELSE 2026-07-05 (Claude, Peters miljøafklaring) — miljø-zoner (ortogonalt lag):**
+Zonemodellen ovenfor beskriver netværkslag INDENFOR ét kørende system. Peter har nu bekræftet en
+separat, ortogonal zone-dimension: tre FYSISK adskilte miljøer — `rd` (nuværende Mac Mini,
+`timelapse.froekjaer.dk`), `staging` (planlagt, 3. server/iMac, software-parity med prod) og
+`prod` (planlagt, helt andet fysisk system, `timelapsepro.dk` — kører allerede i dag CrushFTP med
+live kundedata + det legacy-system TimeLapse Pro skal erstatte). Se
+`MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` for fuld beskrivelse og R19 for risikovurderingen af
+agent-adgang på tværs af disse miljøer. IEC 62443-anbefaling: behandl `rd`↔`staging`↔`prod` som en
+zone-grænse på linje med (ikke underordnet) zonerne 0-5 ovenfor — specifikt bør ingen conduit
+(secret, credential, netværksrute) krydse `prod`-grænsen for agent-brug, uanset hvor godt de
+interne zoner 0-5 er implementeret på selve prod-systemet.
+
 ---
 
 ## 7. CRA-vurdering (Cyber Resilience Act)
@@ -610,8 +631,9 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 | ✅ Ny/løst — fundet, rettet og backfillet komplet i produktion 2026-07-03 |
 | R17 Debug/lab mode uden overvågning | 🟢 (deployet) | ↓ Rettet 2026-07-05, committet (`44b78fb7`) og deployet af Codex, health 200 + `npm run build` OK; manuel UI-smoketest (aktiver/deaktiver + auto-timeout) fortsat ikke kørt |
 | R18 Manglende gdpr_manager.py crashede Gemini-godkendelse | 🟢 3 | ✅ Ny/løst — fundet og rettet 2026-07-04, GDPR-dele af R12 uændret åbne |
+| R19 Agent-adgang til fremtidig prod-fysisk-system ikke formelt udelukket | 🟠 10 | 🆕 Ny 2026-07-05 — Peters miljøafklaring viste prod-maskinen allerede kører live kundedata (CrushFTP+legacy) i dag |
 
-**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001). R16 er fuldt lukket (kode + deploy + backfill).
+**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, R19, nginx port-eksponering (VPEN-2026-001). R16 er fuldt lukket (kode + deploy + backfill).
 
 ---
 
@@ -623,6 +645,9 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 3. DPIA-template + retention policy (R12)
 4. Node-agent genetableret (R13)
 5. HMAC enforcement globalt — stale credentials migreret/afviklet
+6. Bekræft/håndhæv nul agent-adgang til det fremtidige prod-fysiske-system (R19) — bør behandles
+   som gældende FRA NU, ikke først ved cutover, da maskinen allerede kører live kundedata via
+   CrushFTP/legacy-systemet. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`.
 
 ### 🟠 P1 — Skal lukkes inden første rigtige kunde-site
 1. MFA/WebAuthn til admin-login (R02)
@@ -709,6 +734,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #18) | Claude: VPEN-2026-009 (NY) — fandt og rettede endnu en scanner-selvreference (pattern-opslagstabellen matchede sig selv; under verifikation blev også en anden-ordens variant i fix'ets egne kommentarer fundet og rettet), testdækket (3 nye tests, 32/32 bestået). Gennemførte derefter en første triage-batch af VPEN-006's SAST-signaler — `hardcoded_secret_terms`, `shell_execution`, `legacy_update_paths` (56 af 80) — ingen reelle sårbarheder, ét opmærksomhedspunkt (lokalt dev-værktøj `claude_proxy.py`'s `shell=True`). `dangerous_file_ops` (24) resterer til næste runde. Se §11 P2.4 |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #19) | Claude: afsluttede VPEN-006's SAST-triage — gennemgik den resterende `dangerous_file_ops`-kategori (24 signaler) enkeltvis mod faktisk kildekode. Ingen reelle sårbarheder: temp-fil-oprydning bag `try/except`/`missing_ok=True`, admin-gated capture-sletning via saniteret filnavn-opslag (`_sanitize_filename`/`_sanitize_device_id` afviser path traversal), offline admin-CLI-værktøjer (`argparse`, ikke web-eksponeret), og ét `chown`/`chmod`-fund der reelt STRAMMER rettigheder (700/600) på `.ssh` inde i et loop-mountet OS-image. Alle 4 kategorier (80/80 signaler) er nu triageret på tværs af tjek #18+#19 — §11 P2.4 og §2 opdateret til "triage afsluttet". Ingen kodeændring (ingen fund krævede det); ingen commit/push nødvendig |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #20) | Claude: implementerede den i #18/#19 noterede men ikke-udførte `hardcoded_secret_terms`-heuristik-forbedring — ny `_aiops_scan_is_secret_value_literal()` kræver en bogstavelig streng-literal på højresiden før en linje flages, så variabel-/kwarg-referencer (mønsteret bag alle 10 tidligere false positives i denne kategori) ikke længere tælles med. 5 nye tests (`headend/tests/test_aiops_static_scan.py`, 14/14 i filen, 37/37 i hele `headend/tests/`-suiten). Reproduktion bekræfter `hardcoded_secret_terms` nu bidrager 0 fund (var 10); §11 P2.4 opdateret. Ingen commit/push (Peter/Codex committer selv) |
+| 10 (tilføjelse) | 2026-07-05 (Peters miljøafklaring) | Claude: R19 (NY) tilføjet — agent-adgang til det fremtidige prod-fysiske-system (`timelapsepro.dk`, kører allerede CrushFTP+legacy med live kundedata) er ikke formelt udelukket. R12 udvidet med Travbyen-databehandleraftale-note (delvis, ikke fuld, lempelse). §6 zone-model udvidet med et miljø-lag (`rd`/`staging`/`prod`), ortogonalt på de eksisterende netværkszoner. Nyt dokument `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` oprettet som kanonisk topologi-kilde. Ingen kode ændret — ren dokumentation af Peters arkitekturbeslutning, som svar på Codex' agent/service-principal-forslag (se `HANDOVER_LOG.md`) |
 
 ---
 

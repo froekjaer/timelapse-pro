@@ -132,7 +132,7 @@ A-09 er dermed lukket som "ukendt port"-blocker. Eksponeringsrisikoen for 5000/7
 |---|---|---|
 | G-01 | DPIA udfyldt for hvert aktiv kunde-site | 🟠 Skabelon klar (2026-07-04) — mangler udfyldelse pr. site + juridisk godkendelse |
 | G-02 | Retention policy konfigureret pr. kamera | 🔴 Design klar (2026-07-04) — IKKE implementeret i kode endnu |
-| G-03 | Databehandleraftale med kunden | 🔴 Blocker for første kunde — kræver jurist, ikke startet |
+| G-03 | Databehandleraftale med kunden | 🟠 Delvist — Kirkbi A/S (kunden bag Site Travbyen) har allerede en aftale, men dækningen mod TimeLapse Pro's faktiske nuværende behandling (AI/Gemini, GPS) OG mod agenters (Claude/Codex) R&D-adgang til billederne er ikke verificeret — det er bevidst to adskilte spørgsmål (Codex-præcisering 2026-07-05). Fortsat blocker for NYE kunder — kræver jurist, ikke startet for dem. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §4 |
 | G-04 | Subprocessor-liste (Google Cloud/Gemini) offentliggjort | 🟠 Udkast klar (2026-07-04). 2026-07-05 (Claude): kode håndhæver nu at GCS-bucket-region matcher Vertex-region i BEGGE indgange (UI-API + CLI-bulk-script, se `RISK_ASSESSMENT_v10.md` R12) — men den faktiske PRODUKTIONS-værdi af `GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region` er stadig ikke bekræftet at være EU (kræver live-adgang, ikke gjort af Claude) |
 | G-05 | Download/adgangslog pr. billede implementeret | ✅ Implementeret og testverificeret 2026-07-05 — ny `CaptureAccessLog`-tabel + `_log_capture_access()`, kaldt fra `GET /api/images/{device_id}/{filename}` (kun fuldopløsningsbilledet, ikke thumbnails). Codex kørte `python3 -m py_compile headend/main.py headend/database.py headend/tests/test_capture_access_log.py`, `pytest tests/test_capture_access_log.py -v` (**4/4 passed**) og hele `headend/tests/` (**41/41 passed**). |
 | G-06 | Procedure for databrud (Art. 33/34, 72t) dokumenteret | 🟠 Anbefalet |
@@ -185,6 +185,25 @@ Login-knapper på public website skal redirecte til `https://backend.timelapse-p
 
 ---
 
+## M. Miljøadskillelse og agent-adgang (R&D/Staging/Prod)
+
+**Baggrund (2026-07-05):** Peter har afklaret topologien i `HANDOVER_LOG.md` som svar på Codex'
+agent/service-principal-forslag — se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` for fuld
+beskrivelse. Nuværende system = R&D/Test (`rd`, `timelapse.froekjaer.dk`); planlagt 3. server
+(iMac) = Staging; fremtidig `timelapsepro.dk` på et helt andet fysisk system = Prod, som allerede
+i dag kører CrushFTP med live kundedata + det legacy-system TimeLapse Pro skal erstatte.
+
+| # | Krav | Status |
+|---|---|---|
+| M-01 | Miljøterminologi fastlagt (`rd`/`staging`/`prod`) uden kollision med eksisterende "lab mode" (kamera-debug, R17) | ✅ Besluttet 2026-07-05 (Peter) |
+| M-02 | Bekræftet at INGEN agent-credentials (SSH/deploy-keys/API-tokens) nogensinde har haft adgang til det fysiske prod-system | 🔴 Ikke bekræftet — se R19 i `RISK_ASSESSMENT_v10.md`. Bør behandles som gældende krav FRA NU, da maskinen allerede håndterer live kundedata |
+| M-03 | Staging-server (iMac) verificeret kapabel til fuld softwarestack | 🟡 Ikke testet — ældre hardware, kapacitet ukendt |
+| M-04 | Staging etableret som software-parity-gate før prod-deploy | 🟡 Planlagt, ikke bygget |
+| M-05 | Agent/service-principal-model (Codex-forslag) med hård prod-afvisning implementeret | 🔴 Designdiskussion i gang (se `HANDOVER_LOG.md` 2026-07-05), intet kodet |
+| M-06 | Travbyen-databehandleraftale verificeret til at dække faktisk nuværende behandling | 🟠 Aftale eksisterer, dækning ikke verificeret — se G-03 |
+
+---
+
 ## I. Verificeringskommandoer (endelig go-live-check)
 
 ```bash
@@ -233,8 +252,9 @@ Forventet ved go-live: ingen TimeLapse-origin på public `*:80/443/21/22/8080`; 
 | D. Secrets | 0 blokkere | ✅ Klar |
 | E. Backup | 1 blokker (E-02 restore-test) | 🔴 Ikke klar |
 | F. CMDB | 0 blokkere | ✅ Klar |
-| G. GDPR | 2 blokkere (per-kunde) (G-02 retention-kode, G-03 databehandleraftale) — G-05 er lukket 2026-07-05 | 🔴 Ikke klar |
+| G. GDPR | 2 blokkere (per-kunde) (G-02 retention-kode, G-03 databehandleraftale — nu delvist lempet for Travbyen, se M-06) — G-05 er lukket 2026-07-05 | 🔴 Ikke klar |
 | H. Code quality | 0 blokkere | ✅ Klar |
+| M. Miljøadskillelse/agent-adgang | 1 blokker (M-02: prod-isolation ikke bekræftet, R19) | 🔴 Ikke klar |
 
 **Konklusion:** Systemet er IKKE klar til Internet-eksponering og domæneskift til timelapse-pro.dk. Estimeret tid til go-live gate: **4–6 uger** med fokusindsats.
 
