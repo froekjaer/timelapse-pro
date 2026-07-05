@@ -31,7 +31,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | CAP-004 | Billedkvalitets-check (blur, QA) | ✅ Implementeret | Blur-score, QA-flag |
 | CAP-005 | AI-analyse og tagging af billeder | ✅ Delvist | Gemini cloud + Ollama; tag-backlog 3033 |
 | CAP-006 | Thumbnail postprocessing (baggrundsgenerering) | 🟡 Delvist | Trigger eksisterer; backlog genereres ikke automatisk |
-| CAP-007 | Retention policy pr. kamera | 🔴 Mangler | Ingen retention implementeret |
+| CAP-007 | Retention policy pr. kamera | 🔴 Mangler | Ingen retention implementeret i kode. Design skrevet 2026-07-04, se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` §3 og `GO_LIVE_CHECKLIST_v10.md` G-02 (status uændret 🔴, kun kommentar præciseret 2026-07-05 periodisk tjek #32) |
 | CAP-008 | Download/adgangslog pr. billede | ✅ Implementeret (2026-07-05) | Ny `CaptureAccessLog`-tabel + `_log_capture_access()`, kaldt fra `GET /api/images/{device_id}/{filename}` (kun fuldopløsning, ikke thumbnails). Testverificeret (4/4 + 41/41), committet/pushet af Codex. Se `GO_LIVE_CHECKLIST_v10.md` §G-05 |
 | CAP-009 | Sidecar JSON med XMP-metadata | ✅ Implementeret | |
 | CAP-010 | Relay-styring (kamera strøm) | ✅ Implementeret | GPIO pin 356 |
@@ -65,7 +65,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | ADM-007 | Post-processing admin-job | ✅ Delvist | Trigger OK; progress mangler |
 | ADM-008 | Backup-UI | ✅ Implementeret | Til /Volumes/Backup |
 | ADM-009 | Edge image build (disk image) | ✅ Implementeret | inject_edge_image.py, WiFi-inject |
-| ADM-010 | DPIA-template pr. kunde/site | 🔴 Mangler | GDPR Art. 35 |
+| ADM-010 | DPIA-template pr. kunde/site | 🟠 Skabelon klar (2026-07-04) | GDPR Art. 35. DPIA-skabelon skrevet, se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` §2 og `GO_LIVE_CHECKLIST_v10.md` G-01 — mangler udfyldelse pr. site + juridisk godkendelse. Rettet 2026-07-05 (periodisk tjek #32) — registret viste stadig "🔴 Mangler" uden reference til skabelonen |
 | ADM-011 | Rapporter pr. compliance-standard | 🟡 Delvist | GRC cockpit har rapport-skeleton |
 | ADM-012 | Revision per billede/download | ✅ Implementeret (2026-07-05) | Samme løsning som CAP-008 — `CaptureAccessLog`, se `GO_LIVE_CHECKLIST_v10.md` §G-05 |
 | ADM-013 | Billedhistorik følger kamera-lokation ved Edge-udskiftning (sidste led af ADM-005-hierarkiet) | ✅ Implementeret 2026-07-03 | Var reelt IKKE implementeret før 2026-07-03 (fundet ved frisk kodegennemgang, Claude) — `Capture` havde kun `device_id`, ikke `camera_id`. Rettet: schema-migration v12, resolver, additivt `camera_id`-filter på `/api/admin/captures`, backfill-script; committet+pushet (`3a2c0a8`). Se `Claude_Kritisk_Statusgennemgang_2026-07-03.md` §2.4/§2.5. (Omdøbt fra det oprindelige, kolliderende ID "ADM-010" til ADM-013 2026-07-05 periodisk tjek #26 — se HANDOVER_LOG.) |

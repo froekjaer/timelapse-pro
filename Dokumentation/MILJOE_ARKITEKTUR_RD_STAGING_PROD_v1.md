@@ -115,7 +115,31 @@ egen aftale, jf. DPIA-skabelonen.
 
 ---
 
-## 5. Åbne beslutninger
+## 5. Agent-adgangspolitik — BESLUTTET, permanent (2026-07-05)
+
+**Peter, ordret:** "Hverken Codex eller dig har eller vil få adgang til staging og Prod. Kun
+vores R&D udviklingssystem."
+
+Dette er nu en fast, permanent politik, ikke en midlertidig tilstand eller noget der revurderes
+ved go-live:
+
+- **Claude og Codex arbejder KUN på `rd`** (nuværende Mac Mini). Ingen undtagelser, ingen "kun
+  til et engangstjek".
+- **`staging` og `prod` er 100% Peters (og evt. fremtidige menneskelige kollegers) domæne.**
+  Ingen agent-SSH-nøgler, deploy-keys, API-tokens eller lignende må nogensinde oprettes for disse
+  miljøer. Dette lukker det tidligere åbne spørgsmål #3 (staging-agent-adgang: **nej**, samme
+  regel som prod) og gør R19 i `RISK_ASSESSMENT_v10.md` til en bekræftet, håndhævet politik i
+  stedet for en anbefaling.
+- **Praktisk konsekvens:** installationer på `staging`/`prod` skal kunne udføres af Peter ALENE,
+  uden agent-assistance i selve udførelsen. Det er baggrunden for
+  `INSTALLATION_GUIDE_HEADEND_v1.md`/`deploy/install/install_headend.sh` (§6) — de skal være
+  udførlige/robuste nok til at stå alene, da Claude/Codex ikke kan fejlsøge live på de maskiner.
+- Codex' `AgentPrincipal`/miljøflag-model (agent/service-principal-forslaget) er stadig relevant
+  som en TEKNISK, defense-in-depth-håndhævelse af denne politik (i tilfælde af fejlkonfiguration
+  eller fremtidige nye agenter) — men politikken gælder allerede nu, uafhængigt af om/hvornår den
+  kode skrives.
+
+## 6. Øvrige åbne beslutninger
 
 1. **Kan staging-iMac'en håndtere den fulde stack?** — kapacitetstest udestår (Postgres + headend
    + nginx, evt. Ollama). Hvis ikke: overvej reduceret staging-scope (kun headend+DB, uden AI) eller
@@ -123,15 +147,43 @@ egen aftale, jf. DPIA-skabelonen.
 2. **Bekræft ingen eksisterende agent-/deploy-credentials på den fremtidige prod-maskine** — den
    kører allerede CrushFTP/legacy i dag; ingen SSH-nøgle, deploy-key eller lignende bør nogensinde
    have eksisteret der for Claude/Codex.
-3. **Skal staging have agent-adgang?** Hvis ja: med hvilken rettighed, og skal det logges/
-   audit-spores på samme måde som `rd` (se Codex' agent/service-principal-forslag)?
-4. **Verificér Travbyen-databehandleraftalens dækning** mod den faktiske nuværende tekniske
+4. **Verificér Kirkbi A/S-databehandleraftalens dækning** mod den faktiske nuværende tekniske
    behandling (se §4).
-5. **Skal `AgentPrincipal`/miljøflag-modellen (Codex' forslag) implementeres for alle tre miljøer
-   samtidig, eller først for `rd`+`prod` og siden udvidet til `staging` når den er sat op?** —
-   Claudes anbefaling: design modellen generisk nok til tre miljøer fra start (billigere end at
-   eftermontere), men implementér/aktivér kun `rd`/`prod`-håndhævelsen først, da `staging` endnu
-   ikke findes som kørende system.
+5. **`AgentPrincipal`/miljøflag-modellen** kan nu designes præcist til to håndhævede miljøer
+   (`rd` tilladt, `staging`+`prod` for evigt forbudt for agenter) — enklere end oprindeligt
+   antaget, da der ikke er noget "måske" tilbage for `staging`.
+
+## 7. Styresystem og Cloudflare-arkitektur (afklaret 2026-07-05)
+
+- **OS:** macOS på både `staging` (ældre iMac) og `prod`, samme som `rd` i dag. Historisk startede
+  headend på en Raspberry Pi 5 (nu helt udfaset). Fremtidig Linux-understøttelse er ikke udelukket,
+  men er bevidst IKKE en del af scope nu — tages op hvis/når det bliver relevant.
+- **Cloudflare Tunnel undgås bevidst** (Peters eksplicitte, tidligere aftalte valg) — se §8.
+
+## 8. KORREKTION — Cloudflare Tunnel er IKKE målarkitekturen for prod
+
+Store dele af `GO_LIVE_CHECKLIST_v10.md` §A og `RISK_ASSESSMENT_v10.md`s zone-model (samt
+`NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`) har hidtil antaget at vejen til go-live går via
+Cloudflare Tunnel (`cloudflared`, nul åbne indgående porte). **Peter har bekræftet at dette IKKE
+er den ønskede prod-arkitektur** — Cloudflare Tunnel skal undgås. Dette er allerede reflekteret i
+det statiske marketingsite, der er bygget (`www/index.html`): en almindelig offentlig
+`www.timelapse-pro.dk`, med login-knapper der peger direkte på `https://backend.timelapse-pro.dk/`
+— dvs. almindelig direkte HTTPS-eksponering (standard port 443, ægte Let's Encrypt-certifikat,
+hostname-baseret nginx-routing), samme mønster som den NUVÆRENDE `rd`-nginx-config
+(`deploy/nginx/timelapse.froekjaer.dk.conf`) allerede bruger — ikke `cloudflared` på et
+loopback-baseret 18443-mønster.
+
+**Konsekvens for CA/mTLS-designet (#52):** Dette gør Model B ("ende-til-ende mTLS til
+nginx/Headend selv", `Claude_Intern_CA_mTLS_Design_2026-07-05.md` §6) til det naturlige valg
+fremfor Model A (Cloudflare Access mTLS), da der slet ikke skal være nogen Cloudflare Tunnel i
+vejen. Se opdateret §6/§10 i det dokument.
+
+**Bemærk:** dette ændrer ikke nødvendigvis noget for `rd`-domænet (`timelapse.froekjaer.dk`),
+som er internt/agent-/Peter-vendt, ikke kundevendt og ikke en go-live-blocker — `rd` kan fortsat
+bruge Cloudflare (DNS/evt. proxy) som i dag, uafhængigt af prod-beslutningen. §A i
+`GO_LIVE_CHECKLIST_v10.md` og VPEN-2026-001 er opdateret til at beskrive den korrekte
+prod-målarkitektur (se de dokumenter for detaljer).
 
 Ingen kode er ændret som følge af dette dokument — det er en topologi-/beslutningsafklaring, der
-fodrer det videre arbejde med agent-adgangsmodellen (se `HANDOVER_LOG.md` 2026-07-05).
+fodrer det videre arbejde med agent-adgangsmodellen og installationsscriptet (se `HANDOVER_LOG.md`
+2026-07-05).

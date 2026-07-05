@@ -4678,3 +4678,39 @@ person vide".
   #25–#28). `mcp__workspace__bash` fejler fortsat konsekvent ved hver eneste periodiske runde
   siden tjek #21 — dette er nu et meget længerevarende mønster og fortsat værd for Peter at
   undersøge direkte, da det forhindrer al kodetest/`git status`-verifikation fra denne kanal.
+
+### Handover 2026-07-05 (periodisk tjek #32) — fra Claude: udførte tjek #31's foreslåede opfølgning — krydstjekkede `KRAVREGISTER_og_STATUS_v10.md` mod §9/G-checklisten, fandt og rettede ADM-010 (DPIA-skabelon)
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen (samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert forsøg siden
+  tjek #21, nu bekræftet endnu en gang) — kunne derfor hverken køre `git status`, teste kode
+  eller køre `py_compile` denne runde; al verifikation er ren kildelæsning. Læste de sidste
+  ~40 linjer af HANDOVER_LOG.md: ingen nye Codex-entries siden tjek #31, ingen åbent spørgsmål
+  adresseret til Claude. `RISK_ASSESSMENT_v10.md` §11 og `GO_LIVE_CHECKLIST_v10.md` §J uændrede
+  siden sidst.
+- **Fundet:** Fulgte tjek #31's konkrete forslag og krydstjekkede `KRAVREGISTER_og_STATUS_v10.md`'s
+  GDPR-relaterede rækker mod `GO_LIVE_CHECKLIST_v10.md` §G og `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`.
+  Fandt samme type drift som tidligere runder (CAP-008/ADM-012, ADM-010-ID-kollision, UI-011,
+  SEC-012): **ADM-010** ("DPIA-template pr. kunde/site") viste stadig blankt "🔴 Mangler | GDPR
+  Art. 35" — men DPIA-skabelonen faktisk blev skrevet 2026-07-04 nat (`DPIA_SKABELON_OG_RETENTION_
+  POLICY_v1.md` §2, samme kilde som G-01 = "🟠 Skabelon klar" i GO_LIVE_CHECKLIST). SEC-012 var
+  allerede korrekt opdateret (tjek #28) og nævnte skabelonen — men ADM-010 (en separat række, samme
+  krav set fra Admin UI-vinklen) var aldrig blevet rettet til at afspejle det samme faktum.
+  **CAP-007** ("Retention policy pr. kamera") var status-mæssigt korrekt (🔴, retention er reelt
+  ikke implementeret i kode, matcher G-02), men manglede en henvisning til at et design/udkast
+  rent faktisk findes (samme kilde-dokument, §3) — ren præcisering, ikke en statusfejl.
+- **Udført:** Rettet ADM-010 fra "🔴 Mangler" til "🟠 Skabelon klar (2026-07-04)" med henvisning
+  til DPIA-skabelonen og G-01. Præciseret CAP-007's kommentar med henvisning til retention-designet
+  og G-02 (status uændret 🔴, kun kommentaren udvidet). **Bevidst IKKE rørt:** §3-optællingstabellen
+  (Implementeret/Delvist/Mangler pr. kategori og Total-rækken) — tjek #28 flagged eksplicit at denne
+  tabel allerede er systemisk inkonsistent (kategori-Total matcher ikke antal fysiske ID-rækker i
+  flere kategorier) og anbefalede at IKKE lave flere punktvise tal-rettelser før Peter har besluttet
+  konvention og en samlet gennemgang af alle ~86 rækker kan laves på én gang. At justere Admin UI-
+  tallene for kun denne ene ADM-010-ændring ville gøre den eksisterende inkonsistens værre, ikke
+  bedre — så status-teksten er rettet, men tælletabellen er bevidst ladt urørt, som anbefalet.
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md` (ADM-010, CAP-007).
+- **Går videre til:** Uændret liste fra tjek #31 (live multi-device-rollout-test, Peters §6
+  CA/mTLS-valg, R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning,
+  C-03-bekræftelse, P0 #5 HMAC/stale credentials, Peters 5 åbne miljø-/agent-adgangsbeslutninger),
+  plus den fra tjek #28 udestående dedikerede §3-optællings-genberegning (kræver Peters
+  konvention-beslutning først). `mcp__workspace__bash` fejler fortsat konsekvent ved hver
+  periodisk runde siden tjek #21 — uændret, langvarigt mønster.
