@@ -3394,3 +3394,74 @@ person vide".
   (kræver Peter/Codex, live-adgang), device-decommission-gap'et fra en tidligere runde (kræver
   Peters produktbeslutning), H-04 (`deploy/launchd/...plist` ikke-secret version, 🟠 Mangler),
   eller Peters §6-beslutning (CA/mTLS) / R17-smoketesten hvis en af dem er besvaret i mellemtiden.
+
+### Handover 2026-07-05 04:2x — fra Claude (periodisk tjek): docs-sync-commit bekræftet + H-04 var reelt allerede løst (bare ikke markeret)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste HANDOVER_LOG-halen — seneste entry er min
+  egen forrige runde (#11, docs-sync). `git log -3` og `git show c7d409cb --stat` bekræftede at
+  Peter/Codex har committet den foreslåede docs-sync præcis som foreslået: `c7d409cb`
+  ("docs: sync HLTH-008/H-05/H-06/UPD-012 status with already-deployed flush fix + README"),
+  2026-07-05 04:15:55 — kun ca. 10 minutter før denne runde. `git status --short` viste kun den
+  kendte untracked `claude_proxy.py`. Ingen ny Codex-entry i mellemtiden.
+- **Fund:** Gennemgik §11 i RISK_ASSESSMENT_v10.md og §H/§J i GO_LIVE_CHECKLIST_v10.md for
+  resterende åbne P0/P1-punkter. De fleste kræver enten live-adgang (multi-device-rollout-test,
+  R17-smoketest) eller en produktbeslutning fra Peter (device-decommission-gap, §6 CA/mTLS-valg
+  Cloudflare Access vs. ende-til-ende). Valgte i stedet **H-04** (`🟠 Mangler`) som et uafhængigt,
+  afgrænset fund: undersøgte de to plist-filer i repoet —
+  `deploy/launchd/dk.froekjaer.timelapse-headend.plist` (rod, bruger-LaunchAgent-stil, med
+  `DATABASE_URL` og `TIMELAPSE_GPG_KEY` inline i klartekst) og
+  `deploy/launchd/macos/dk.froekjaer.timelapse-headend.plist` (system-LaunchDaemon-stil, INGEN
+  secrets inline — kun en pointer `TIMELAPSE_HEADEND_ENV_FILE=/etc/timelapse/headend.env`, som
+  læses af `deploy/macos/timelapse-headend-start.sh`). `git log` viste at BEGGE blev tilføjet i
+  samme commit `d7a952db` (2026-07-03, Codex' Mac Mini-hardening/kernel-panic-arbejde — se
+  HANDOVER_LOG 2026-07-03 10:15-entry). `SERVICES_OG_DRIFT_kilde_til_sandhed.md` bekræftede at
+  den LIVE, kanoniske service er system-LaunchDaemon-versionen (`system/dk.froekjaer.timelapse-
+  headend`), ikke rod-plisten. Konklusion: H-04 ("opdateret ikke-secret version") blev reelt
+  udført af Codex allerede 2026-07-03 — checklisten var bare aldrig opdateret til at afspejle
+  det, og er dermed endnu et eksempel på samme type efterslæb som tidligere docs-sync-runder
+  (H-05/H-06/HLTH-008 osv.).
+- **Rettet (kun tekst, ingen kode/plist-filer rørt):**
+  1. `GO_LIVE_CHECKLIST_v10.md` H-04 opdateret fra `🟠 Mangler` til `🟢 Løst` med commit-hash,
+     forklaring af hvilken fil er den kanoniske, og en eksplicit note om at rod-plisten med
+     inline secrets er en efterladt, ikke-brugt artefakt fra før 2026-07-03-migrationen (ikke
+     slettet denne runde — filsletning/-oprydning er en bevidst udeladt handling, se nedenfor).
+  2. `RISK_ASSESSMENT_v10.md` §12 — ny historik-linje der noterer fundet og eksplicit adskiller
+     det fra VPEN-2026-003 (§5.2, P2): VPEN-2026-003 handler om plaintext `JWT_SECRET`/
+     `BREAK_GLASS_ENC_KEY` i selve `/etc/timelapse/headend.env` PÅ DISK (kræver Keychain-
+     migration) — det er en reelt fortsat åben risiko og IKKE det samme som H-04s snævrere
+     Git-hygiejne-scope (at det Git-tjekkede plist-*template* ikke indeholder secrets). Ingen af
+     de to punkter er lukket forkert af den anden.
+- **Verifikation:** Læste begge plist-filer og `timelapse-headend-start.sh` i deres helhed før
+  konklusion (ikke gættet ud fra filnavne alene). Krydstjekkede med `git log`/`git show --stat`
+  at `d7a952db` faktisk indeholder begge plist-tilføjelser og at commit-datoen (2026-07-03)
+  stemmer med HANDOVER_LOG-entryen fra samme dato. Ren dokumentationsændring — ingen kode/plist
+  rørt, så ingen `py_compile`/`pytest` relevant. Kontrollerede efter redigering at
+  tabelstrukturen i `GO_LIVE_CHECKLIST_v10.md` §H stadig har korrekt kolonneantal (ingen løse
+  `|`-tegn i den nye tekst).
+- **IKKE gjort — bevidst:** Ingen sletning/omdøbning af den forældede rod-plist
+  (`deploy/launchd/dk.froekjaer.timelapse-headend.plist`) — selvom den er ubrugt, er
+  fil-oprydning i `deploy/` uden for scope for en periodisk docs-tjek-runde uden mulighed for at
+  få fanget en fejl, og kunne teoretisk forveksles med en fil nogen stadig har en lokal
+  reference til. Efterlader det som forslag til Peter/Codex nedenfor i stedet. Ingen commit/push
+  (samme konvention — Peter/Codex committer selv).
+- **Codex/Peter: kør venligst når I har et vindue** (ren docs-sync, ingen kodeadfærd ændret):
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git add Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/RISK_ASSESSMENT_v10.md \
+          Dokumentation/HANDOVER_LOG.md
+  git commit -m "docs: mark H-04 (secret-free headend plist) as resolved since 2026-07-03 (d7a952db)"
+  git push
+  ```
+  **Valgfrit oprydningsforslag** (ikke hastende, kun hvis I er enige i at rod-plisten er dødvægt):
+  ```bash
+  git rm deploy/launchd/dk.froekjaer.timelapse-headend.plist
+  git commit -m "chore: remove superseded user-LaunchAgent headend plist (replaced by system LaunchDaemon in d7a952db)"
+  git push
+  ```
+- **Filer rørt:** `Dokumentation/GO_LIVE_CHECKLIST_v10.md`, `Dokumentation/RISK_ASSESSMENT_v10.md`.
+- **Går videre til:** næste periodiske runde bekræfter om denne H-04-docs-sync (og evt. det
+  valgfrie plist-oprydningsforslag) er committet/pushet; ellers ser den på den fortsat
+  udestående live multi-device-rollout-test, device-decommission-gap'et, Peters §6-beslutning
+  (CA/mTLS) / R17-smoketesten, eller K-linjen "OS offline-artifact update E2E" / "Change ticket
+  med artifact/SBOM/rollback" i §K (begge stadig "Åben"/"Delvist" og uundersøgt af Claude indtil
+  videre).
