@@ -2931,3 +2931,13 @@ person vide".
   rent faktisk er grøn med det nye step; ellers ser den på P1.4 (per-target deployment status)
   hvis intet nyt er dukket op, eller på Peters §6-beslutning (CA/mTLS) / R17-smoketest hvis en af
   dem er besvaret i mellemtiden.
+
+### Handover 2026-07-05 (nat) — Codex: H-02 ESLint ratchet gate committet
+- **Udført:** Claudes H-02 CI-gate er verificeret lokalt, committet og pushet som `68805577`
+  (`ci: add ESLint ratchet gate (H-02) — fail only on new problems above baseline 222`).
+- **Verifikation:** `cd timelapse-ui && node scripts/eslint-gate.mjs` rapporterede `204 fejl,
+  18 advarsler (222 i alt)` mod baseline 222 og exit 0.
+- **Oprydning:** Tom testfil `timelapse-ui/eslint_stderr.log` og stale `.git/index.lock` blev
+  fjernet før commit. `claude_proxy.py` ligger fortsat untracked og urørt.
+- **Ikke verificeret:** GitHub Actions-runneren er ikke tjekket fra heartbeat; næste push/PR til
+  relevant branch bør vise om det nye "ESLint gate"-step også er grønt i CI-miljøet.
