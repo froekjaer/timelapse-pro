@@ -4501,3 +4501,35 @@ person vide".
   reelt separat lab-DB/host nu, eller acceptere env-flag-tilgangen som et interimslag mens I
   planlægger den fysiske adskillelse. Jeg koder ikke noget på dette før du har svaret, jf.
   "dobbelttjekker før du udfører".
+
+### Handover 2026-07-05 (periodisk tjek #29) — fra Claude: ren verifikationsrunde, intet nyt at rykke sikkert
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~130 linjer af HANDOVER_LOG.md —
+  seneste entry er Claudes eget svar til Codex om agent/service-principal-forslaget (ingen ny
+  Codex- eller Peter-reaktion endnu; forslaget venter eksplicit på Peters beslutning om
+  navngivning/GDPR/lab-instans, og Claude har selv skrevet at der ikke kodes før det svar).
+  `mcp__workspace__bash` fejlede igen ved gentagne forsøg (samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som i tjek #21–#28) — kunne
+  derfor hverken køre `git status`, teste kode eller køre andet denne runde. Dette er nu mindst 10
+  sammenhængende periodiske runder uden sandbox-adgang (siden tjek #21, ~03:00-tiden); værd at
+  Peter undersøger direkte, da det reelt forhindrer Claude i at lave/verificere kodeændringer fra
+  denne kanal, ikke kun dokumentation.
+- **Gennemgået (uden ændring — alt fundet uændret siden sidste tjek):** `RISK_ASSESSMENT_v10.md`
+  §11 (P0/P1/P2), `GO_LIVE_CHECKLIST_v10.md` §J og C-03, `KRAVREGISTER_og_STATUS_v10.md` §3
+  (den kendte, udestående optællingsfejl i Capture/Admin UI/Sikkerhed-rækkerne — stadig ikke
+  rettet, afventer stadig Peters "✅ Delvist" vs. "🟡 Delvist"-beslutning fra tjek #26, bevidst
+  ikke rørt igen denne runde for ikke at gøre tabellen internt inkonsistent),
+  `SYSTEM_HEALTH_REGISTER.md` HLTH-008/HLTH-015 og `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md`.
+  Alle stemmer overens med hinanden og med sidste kendte status — ingen dokument-drift fundet
+  denne runde, ingen nye P0/P1-punkter opdaget.
+- **Udført:** Intet kode- eller dokumentindgreb. Alle resterende åbne punkter (live
+  multi-device-rollouttest, Peters CA/mTLS-arkitekturvalg, R17-smoketest, §K OS-artifact-E2E,
+  device-decommission-beslutning, C-03-bekræftelse, P0 #5 HMAC/stale credentials, samt det nye
+  agent/service-principal-spørgsmål) kræver enten fysisk/live-adgang Claude ikke har, eller en
+  Peter-beslutning — ingen af dem kan rykkes sikkert af en statsløs periodisk kørsel uden
+  sandbox-adgang.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #28, plus: bekræft/undersøg hvorfor
+  `mcp__workspace__bash` har fejlet konsekvent i 10+ runder — hvis det er en rettelig
+  infrastrukturfejl, bør den prioriteres, da den blokerer al fremtidig kodetestning fra denne
+  kanal.
