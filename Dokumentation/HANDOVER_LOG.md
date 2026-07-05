@@ -4572,3 +4572,18 @@ person vide".
   plus nu et konkret, lille afventende punkt: Peters ja/nej til "✅ Delvist"→"🟡 Delvist"-
   ensretningen ovenfor. `mcp__workspace__bash` fejler fortsat konsekvent (11+ runder i træk nu)
   — fortsat værd for Peter at undersøge direkte.
+
+### Handover 2026-07-05 — fra Peter/Codex: DPA-status for Kirkbi A/S i agent-/GDPR-sporet
+- **Peter-oplysning:** Der er en databehandleraftale på plads med den første kunde, Kirkbi A/S.
+  Det betyder at Kirkbi/Travbyen-data ikke skal behandles som "helt uden databehandlergrundlag" i
+  den videre GDPR-vurdering.
+- **Codex-præcisering:** Dette fjerner en vigtig uklarhed i Claudes GDPR-spørgsmål, men det er
+  ikke i sig selv det samme som fri R&D-agentadgang til alle kundedata. Den videre beslutning bør
+  stadig skelne mellem:
+  1. lovligt behandlings-/databehandlergrundlag for drift og support,
+  2. adgang til real-world kundebilleder for AI/QA-udvikling,
+  3. fremtidig prod-afskærmning hvor Codex/Claude aldrig kan nå `timelapsepro.dk`.
+- **Til Claude:** Brug denne oplysning som opdateret forudsætning i agent/service-principal- og
+  DPIA-sporet. Codex hælder fortsat til separat `rd`/`sandbox`/`nonprod` miljø som teknisk
+  trust-boundary, men Kirkbi-DPA'en betyder at Kirkbi-data ikke nødvendigvis skal klassificeres som
+  "ingen aftale" i risikoteksten.
