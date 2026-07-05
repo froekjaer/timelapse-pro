@@ -39,13 +39,13 @@ Dette dokument:
 | **5900** | TCP | `*` | macOS VNC/Screen Sharing | Host/platform | 🟠 Ikke eksponeret |
 | **5514** | TCP | `127.0.0.1` | SIEM/syslog receiver | TLP-managed | ✅ OK |
 
-### 2.3 Uklassificerede porte
+### 2.3 Tidligere uklassificerede porte
 
 | Port | Status | Handling |
 |---|---|---|
-| 2201 | Ukendt | Klassificer inden go-live |
-| 5000 | Ukendt (AirPlay?) | Klassificer inden go-live |
-| 7000 | Ukendt (AirPlay?) | Klassificer inden go-live |
+| 2201 | Klassificeret 2026-07-05: `sshd-session`, TimeLapse reverse SSH lab/support-forward til edge | Kun tilladt som eksplicit support-/lab-tunnel; i prod bag Cloudflare Access/firewall eller lukket når ikke aktiv |
+| 5000 | Klassificeret 2026-07-05: macOS `ControlCenter`, Apple AirPlay/Control Center-familie, ikke TimeLapse | Disable AirPlay Receiver/relateret deling eller blokér med Mac/pf firewall før Internet-facing prod |
+| 7000 | Klassificeret 2026-07-05: macOS `ControlCenter`, Apple AirPlay/Control Center-familie, ikke TimeLapse | Disable AirPlay Receiver/relateret deling eller blokér med Mac/pf firewall før Internet-facing prod |
 | 3283 | Apple Remote Desktop? | Bekræft og beslut |
 
 ---

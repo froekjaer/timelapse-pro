@@ -26,7 +26,7 @@
 | A-06 | TCP/22 (SSH) ikke direkte Internet-eksponeret — enten lukket eller bag Cloudflare Access | 🟠 Anbefalet | Firewall |
 | A-07 | TCP/8080 ikke eksponeret direkte | 🔴 Blocker | Audit |
 | A-08 | SFTP-port ændret fra 22222 til 12222 eller bag Cloudflare Tunnel | 🟠 Anbefalet | Konfiguration |
-| A-09 | Alle ukendte porte (2201, 5000, 7000) klassificeret | 🔴 Blocker | Asset-register |
+| A-09 | Alle ukendte porte (2201, 5000, 7000) klassificeret | ✅ Klassificeret 2026-07-05 | Asset-register |
 | A-10 | fail2ban aktivt og konfigureret (API login + scanner) | 🟠 Anbefalet | Drift |
 | A-11 | Mac firewall (pf/macOS) blokerer alt indgående undtagen Cloudflare IP-ranges + SFTP | 🟠 Anbefalet | Konfiguration |
 | A-12 | OpenWebUI er lab-only eller RBAC-beskyttet intern service (ikke public) | 🟠 P1 | Konfiguration |
@@ -38,6 +38,16 @@ sudo lsof -i -n -P | grep LISTEN | grep -v '127.0.0.1\|::1'
 # Bør kun vise Cloudflare Tunnel daemon, evt. SFTP-port
 curl -sk https://timelapse-pro.dk/api/health | jq .
 ```
+
+**A-09 klassifikation (verificeret 2026-07-05 af Codex på Mac Headend):**
+
+| Port | Proces/ejer | Klassifikation | Produktionsbeslutning |
+|---:|---|---|---|
+| 2201 | `sshd-session` | TimeLapse reverse SSH lab/support-forward til edge (`ssh -p 2201 ...`) | Tilladt kun som eksplicit support-/lab-tunnel; må ikke være generel Internet-facing port uden Cloudflare Access/firewall-regel. |
+| 5000 | macOS `ControlCenter` | Host/platform, Apple AirPlay/Control Center-familie — ikke TimeLapse | Skal enten disable's på headend eller blokeres af Mac/pf firewall før Internet-facing produktion. |
+| 7000 | macOS `ControlCenter` | Host/platform, Apple AirPlay/Control Center-familie — ikke TimeLapse | Skal enten disable's på headend eller blokeres af Mac/pf firewall før Internet-facing produktion. |
+
+A-09 er dermed lukket som "ukendt port"-blocker. Eksponeringsrisikoen for 5000/7000 håndteres fortsat under A-11 (Mac firewall) og den generelle Cloudflare Tunnel-migration A-01 til A-04.
 
 ---
 
@@ -217,7 +227,7 @@ Forventet ved go-live: ingen TimeLapse-origin på public `*:80/443/21/22/8080`; 
 
 | Kategori | Blokerende | Status |
 |---|---|---|
-| A. Netværk/porte | 7 blokkere (A-01,02,03,04,05,07,09) | 🔴 Ikke klar |
+| A. Netværk/porte | 6 blokkere (A-01,02,03,04,05,07) | 🔴 Ikke klar |
 | B. TLS | 0 blokkere | ✅ Klar |
 | C. Auth | 1 blokker uafklaret (C-03: bekræft super_admin-password er ændret fra default) + P0 #5 (HMAC-enforcement/stale credentials, C-10) stadig åben — MFA (C-07) er løst 2026-07-02, men det er ikke det samme som "ingen blokkere" | 🔴 Ikke klar |
 | D. Secrets | 0 blokkere | ✅ Klar |
