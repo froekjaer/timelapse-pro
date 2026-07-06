@@ -7459,3 +7459,51 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
   med i en opfølgende lille commit eller direkte i PR #2's branch.
 - **Går videre til:** Uændret — #52/#62's foreslåede første delskridt (se to entries ovenfor)
   afventer stadig Peters valg. `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet uændret åbent.
+
+### Handover 2026-07-06 — fra Claude: #62 og #52's foreslåede første delskridt (DB-skema, ingen nøglegenerering) BEGGE bygget — "kør bare på i den rækkefølge der er bedst for dig"
+
+- **Kontekst:** Peter gav fri hånd til rækkefølgen. Valgte at bygge begge skema-stykker i samme
+  runde, da begge er små, additive og lavrisiko (ingen nøglegenerering, ingen CA, ingen
+  udstedelses-endpoint) — konsistent med den etablerede "auth-/PKI-nær kode fortjener sin egen
+  fokuserede runde"-praksis for selve NØGLE-kodefaserne, men ikke til hinder for ren skema-
+  forberedelse.
+- **#62 — `AccessTicket` (ny, separat tabel i `headend/database.py`):** Implementerede modellen
+  præcis som anbefalet i periodisk tjek #80 (separat fra `ChangeTicket`, se §6 i
+  `Claude_Support_Access_Model_2026-07-06.md`). Felter: `ticket_id`, `agent`, `machine`,
+  `purpose`, `customer_scope`, `customer_consent_basis`, `customer_consent_reference`,
+  `valid_from`/`valid_until`, `granted_by`, `status` (active|expired|revoked — tids-baseret),
+  `revoked_at`/`revoked_by`/`revoked_reason`, `credential_id` (fremtidig, ikke-brugt kobling til
+  en kommende `KeyCredential`-SSH-nøgle), samt det genbrugte GPG-signeringsmønster
+  (`content_sha256`+`signature`+`signed_by`) fra `ChangeTicket`. Ingen udstedelses-endpoint,
+  script eller Support-CA-nøgle bygget.
+- **#52 — `KeyCredential.key_type="mtls_device_cert"` (UDVIDELSE af eksisterende tabel, IKKE en ny
+  tabel):** Modsat #62 blev en helt ny, parallel tabel bevidst FRAVALGT her — ved gennemlæsning af
+  `KeyCredential` (allerede en aktiv, generisk "lifecycle-styret credential"-tabel til
+  api/ssh/signing/bootstrap) viste det sig at dens `status`
+  (active|revoked|expired|rotated)/`expires_at`/`revoked_at`/`revoked_by`/`revoke_reason`/
+  `rotated_from_id` allerede matcher CA/mTLS-designets §7-certifikatlivscyklus næsten felt-for-
+  felt — modsat AccessTicket, hvor `ChangeTicket` reelt IKKE passede (se sammenligningen i
+  modellens docstring). CN/SAN kræver ingen nye kolonner (CN=device_id=`entity_id`, SAN afledt
+  deraf, jf. designdokumentets §4.1). Certifikat-specifikke detaljer uden egne kolonner
+  (serienummer, `not_before`, udsteder-CN, den effektive levetids-/grace-politik VED UDSTEDELSE)
+  får en dokumenteret `metadata_json`-kontrakt til den fremtidige CSR-signerings-endpoint (§9 trin
+  3). Tilføjede desuden `"mtls_device_cert": ["device:mtls-auth"]` til `_key_scopes()`s
+  standard-dict i `main.py` (rent dokumentationsformål, ingen ny funktion). **Bevidst IKKE
+  ændret:** `/api/admin/key-management/credentials`s `key_type`-validering (stadig kun
+  api|ssh|signing|bootstrap) — den manuelle admin-oprettelses-endpoint er ikke det rette sted at
+  udstede device-certifikater; det bliver en dedikeret fremtidig endpoint, ikke denne generiske
+  admin-formular.
+- **Testet:** Ny testfil `headend/tests/test_access_ticket_and_device_cert_schema.py` (7 tests) +
+  fuld eksisterende suite genkørt for regression — **78/78 bestået**, `py_compile` OK. Alt kørt
+  via `claude_proxy.py` (audit-logget).
+- **Committet + pushet** til `claude/m05-agent-lockdown-2026-07-06` (samme, allerede åbne PR #2 —
+  ingen ny PR, da grenen stadig er åben og de to skema-tilføjelser er tematisk relaterede
+  "kodefase 1 af 2"-skridt fra samme session).
+- **Filer rørt:** `headend/database.py` (ny `AccessTicket`-model + `KeyCredential`-docstring),
+  `headend/main.py` (`_key_scopes()`), `headend/tests/test_access_ticket_and_device_cert_schema.py`
+  (ny), `Claude_Support_Access_Model_2026-07-06.md` (§9 doc-historik), `Claude_Intern_CA_mTLS_
+  Design_2026-07-05.md` (§11 doc-historik), denne HANDOVER_LOG-entry.
+- **Går videre til:** Den FAKTISKE nøgle-/CA-kodefase for begge (#52 trin 2-3 for reel CSR-
+  signering, #62's `grant_support_access.sh`+Support-CA) er fortsat ikke bygget og kræver Peters
+  eget terminal for nøglegenerering, jf. begge designdokumenter. `NGINX_CLOUDFLARE_MIGRATION_LAB_
+  v1.md`-spørgsmålet og Codex-netværksadgang-spørgsmålet (periodisk tjek #78) uændret åbne.

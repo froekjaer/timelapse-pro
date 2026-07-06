@@ -2381,6 +2381,11 @@ def _key_scopes(key_type: str, scopes: list[str] | None = None) -> list[str]:
         "ssh": ["ssh:manual-debug", "ssh:reverse-tunnel"],
         "signing": ["artifact:sign", "change-ticket:sign", "inventory:sign"],
         "bootstrap": ["device:bootstrap"],
+        # #52 (CA/mTLS) forberedelse, 2026-07-06 — kun scope-standarddokumentation,
+        # ingen kode udsteder endnu credentials af denne type (se database.py's
+        # KeyCredential-docstring). Konstrueres direkte af den fremtidige CSR-
+        # signerings-endpoint (§9 trin 3), ikke via den manuelle admin-oprettelse.
+        "mtls_device_cert": ["device:mtls-auth"],
     }
     return defaults.get(key_type, [])
 

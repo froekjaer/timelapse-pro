@@ -400,6 +400,63 @@ class ChangeApproval(Base):
     notes              = Column(Text)
 
 
+class AccessTicket(Base):
+    """Signeret, audit-sporbart ticket for kontrolleret break-glass support-adgang
+    til staging/prod (task #62, design: Claude_Support_Access_Model_2026-07-06.md §6).
+
+    BEVIDST EN SEPARAT TABEL FRA `ChangeTicket` — ikke en `ticket_type`-diskriminator
+    på `change_tickets` (rådgivende anbefaling, periodisk tjek #80, 2026-07-06, baseret
+    på faktisk kodelæsning af begge modeller): `ChangeTicket.status`-vokabularet
+    (draft|ready|pending_approval|approved|rejected|deployed|rolled_back|cancelled) er
+    en godkendelses-livscyklus, mens en adgangstildeling har en tids-baseret livscyklus
+    (active|expired|revoked) — at presse begge ind i samme felt/tabel ville enten
+    overbelaste en eksisterende, UI-koblet enum (`ChangeTicketsPage.tsx` har knap-/
+    farvelogik der antager netop ChangeTicket-værdierne) eller kræve endnu et felt ved
+    siden af, hvilket reelt er det samme som en separat tabel, bare mere indirekte.
+    Se designdokumentets §6 for den fulde begrundelse (feltmisforhold + status-
+    vokabular-inkompatibilitet + separation-of-duties-parallellen til den separate
+    Support-CA i §4).
+
+    GPG-signeringsmønsteret (`content_sha256`+`signature`+`signed_by`) GENBRUGES
+    bevidst fra `ChangeTicket` — kun selve tabelstrukturen holdes adskilt, ikke
+    signerings-disciplinen.
+
+    Status ved oprettelse (2026-07-06): SKEMA/MODEL-KODE ALENE. Ingen udstedelses-
+    endpoint, intet `grant_support_access.sh`-script, ingen Support-CA-nøgle er bygget
+    endnu — det er bevidst Peters eget, senere skridt (kun Peter kan aktivere adgang,
+    jf. designdokumentets §3). `credential_id` er en fremadrettet, IKKE ENDNU BRUGT
+    kobling til en fremtidig `KeyCredential`-række (key_type="ssh") for selve det
+    tidsbegrænsede SSH-certifikat, hvis/når udstedelses-flowet bygges — ingen FK-
+    constraint, samme mønster som `KeyAuditEvent`/`CaptureAccessLog` i denne fil.
+    """
+    __tablename__ = "access_tickets"
+
+    id                       = Column(Integer, primary_key=True)
+    ticket_id                = Column(String(80), unique=True, nullable=False, index=True)
+    # Matcher SSH-certifikatets `-I <ticket-id>`-identitet, når/hvis certifikatet
+    # rent faktisk udstedes (fremtidigt skridt) — se docstring ovenfor.
+    agent                    = Column(String(50), nullable=False, index=True)   # "claude" | "codex"
+    machine                  = Column(String(100), nullable=False)             # "staging" | "prod-<navn>"
+    purpose                  = Column(Text)                                    # installation/fejlsøgning/andet
+    customer_scope           = Column(Text)          # hvilke(n) kunde(r) har data på maskinen
+    customer_consent_basis   = Column(String(30))     # implicit_dpa|explicit_per_case|no_customer_data
+    customer_consent_reference = Column(Text)         # fritekst-reference til dokumenteret samtykke
+    valid_from               = Column(DateTime, nullable=False)
+    valid_until              = Column(DateTime, nullable=False)
+    granted_by               = Column(String(100), nullable=False)  # altid Peter — kun han kan udstede
+    status                   = Column(String(20), default="active", index=True)
+    # active|expired|revoked — TIDS-baseret, IKKE godkendelses-baseret (se docstring)
+    revoked_at               = Column(DateTime)
+    revoked_by               = Column(String(100))
+    revoked_reason           = Column(Text)
+    credential_id            = Column(String(80), index=True)  # fremtidig kobling, se docstring — ikke brugt endnu
+    content_sha256           = Column(String(64), index=True)
+    signature                = Column(Text)
+    signed_by                = Column(String(200))
+    signed_at                = Column(DateTime)
+    created_at               = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class UpdateArtifact(Base):
     """Release artifact eller OS/app update manifest distribueret via Headend."""
     __tablename__ = "update_artifacts"
@@ -476,7 +533,34 @@ class UpdateJobRecord(Base):
 
 
 class KeyCredential(Base):
-    """Lifecycle-styret credential til Headend, Edge, SSH, API og signing."""
+    """Lifecycle-styret credential til Headend, Edge, SSH, API og signing.
+
+    key_type-værdier (2026-07-06): "api" | "ssh" | "signing" | "bootstrap" |
+    "mtls_device_cert". Sidstnævnte tilføjet som forberedelse til #52 (intern CA/mTLS
+    for edge-devices, Claude_Intern_CA_mTLS_Design_2026-07-05.md) — SKEMA/MODEL-KODE
+    ALENE ved denne tilføjelse, ingen CSR-signerings-endpoint eller CA-nøglegenerering
+    er bygget endnu (det er §9 trin 2-3 i designdokumentet, et separat, senere skridt).
+
+    Bevidst genbrug af DENNE tabel for device-certifikater, IKKE en ny, parallel
+    tabel: `status` (active|revoked|expired|rotated), `expires_at`,
+    `revoked_at`/`revoked_by`/`revoke_reason` og `rotated_from_id` matcher allerede
+    §7's certifikat-livscyklus (udstedelse→active, rotation→rotated, udløb→expired,
+    revokering→revoked) næsten felt-for-felt — modsat AccessTicket (se ovenfor), hvor
+    det eksisterende `ChangeTicket`-skema reelt IKKE passede. For `key_type=
+    "mtls_device_cert"` gælder: `entity_type="edge"`, `entity_id=<device_id>` (CN/SAN
+    er derfor allerede implicit til stede, jf. §4.1: CN=device_id,
+    SAN=URI:timelapse:device:<device_id> — ingen separate CN/SAN-kolonner nødvendige),
+    `fingerprint`=certifikat-fingeraftryk (bruges ved CRL-opslag, §7), `algorithm`=
+    fx "ECDSA-P256", `public_key`=certifikatets PEM (ikke kun nøglen — device-cert-
+    verifikation har brug for hele certifikatet, ikke blot nøglen). Certifikat-
+    specifikke detaljer der IKKE har egne kolonner (X.509-serienummer, `not_before`,
+    udsteder-CN, samt den effektive levetids-/grace-politik fra config-hierarkiet der
+    var gældende VED UDSTEDELSE, jf. §4.3) opbevares i `metadata_json` som et objekt
+    med nøglerne: `serial_number`, `not_before`, `issuer_cn`,
+    `lifetime_days_at_issuance`, `expiry_grace_policy_at_issuance`. Dette er en
+    dokumenteret KONTRAKT for fremtidig kode (CSR-signerings-endpointet, #52 trin 3),
+    ikke selve implementeringen.
+    """
     __tablename__ = "key_credentials"
 
     id                 = Column(Integer, primary_key=True)
