@@ -7427,3 +7427,35 @@ cd headend && python3 -m pytest tests/test_agent_principal_lockdown.py -v && cd 
 `RISK_ASSESSMENT_v10.md` og `GO_LIVE_CHECKLIST_v10.md` committes sammen — samme mønster som
 #84/#85's batch-commits. Overvej desuden testfilens anbefalede manuelle curl-efterprøvning af
 selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfilen.)
+
+### Handover 2026-07-06 — fra Claude: ovenstående verifikation ER UDFØRT — `claude_proxy.py` sat i drift med audit-log, M-05 testet (24/24), committet, **PR #2 åbnet**
+
+- **Kontekst:** Peter satte selv `claude_proxy.py` i drift ("samme rettigheder som du tidligere
+  har haft, og som Codex altid har") og bad om en audit-log tilføjelse. Claude tilføjede
+  `.claude_proxy/audit.log` (append-only, aldrig slettet — tidsstempel, cwd, kommando, returkode,
+  varighed pr. linje; IKKE fuld stdout/stderr, samme afvejning som SIEM-loggen ellers i systemet)
+  og lagde `claude_proxy.py` selv ind i `.gitignore` som ekstra sikkerhedsnet (mappen
+  `.claude_proxy/` var allerede ignoreret, selve scriptfilen var det ikke).
+- **Udført via proxyen (alt audit-logget, se `.claude_proxy/audit.log` på rd-maskinen):**
+  1. `py_compile headend/main.py headend/database.py` → OK.
+  2. `pytest headend/tests/test_agent_principal_lockdown.py -v` → **24/24 bestået** (15
+     testfunktioner, flere parametriserede) — matcher #88's uafhængige, statiske code review
+     (ingen fejl fundet ved linje-for-linje-gennemgang) med en reel, kørt bekræftelse.
+  3. Opdagede undervejs at lokal `main`-branch-ref er forældet/afviger fra `origin/main` (samme
+     ting #87 gættede på ud fra `packed-refs`) — `git checkout main` blev korrekt AFVIST af git
+     selv ("local changes would be overwritten"), ingen data tabt. Løste det ved i stedet at
+     grene direkte fra nuværende HEAD (som allerede indeholder den mergede `079f2496`-batch) og
+     `git merge origin/main --no-edit` → "Already up to date", dvs. ingen reel konflikt med det
+     virkelige `origin/main`.
+  4. `git add` (kun de 7 tiltænkte filer — IKKE `claude_proxy.py`, som nu er usynlig for git efter
+     gitignore-tilføjelsen) → commit → push → `gh pr create --base main --head
+     claude/m05-agent-lockdown-2026-07-06` → **PR #2:
+     https://github.com/froekjaer/timelapse-pro/pull/2**.
+- **IKKE endnu:** Peters review/merge af PR #2, CI-kørsel, deploy. Opdaterede
+  `GO_LIVE_CHECKLIST_v10.md` M-05 og `RISK_ASSESSMENT_v10.md` R19 til at afspejle "testet +
+  committet + PR åben", ikke længere "ikke testet".
+- **Filer rørt:** `GO_LIVE_CHECKLIST_v10.md` (M-05), `RISK_ASSESSMENT_v10.md` (R19), denne
+  HANDOVER_LOG-entry — disse tre er (endnu) IKKE del af PR #2 (skrevet efter push) og bør tages
+  med i en opfølgende lille commit eller direkte i PR #2's branch.
+- **Går videre til:** Uændret — #52/#62's foreslåede første delskridt (se to entries ovenfor)
+  afventer stadig Peters valg. `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet uændret åbent.

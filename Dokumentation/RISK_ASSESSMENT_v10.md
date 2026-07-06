@@ -591,11 +591,16 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
     kontekst — ingen eksisterende test i denne mappe gør det; login()'s nye linjer er en tynd,
     mekanisk anvendelse af samme allerede-testede helper). Se testfilens docstring for en
     anbefalet manuel curl-efterprøvning på en rigtig kørende instans.
-  - **IKKE endnu:** `py_compile`/`pytest` kørt (Claudes sandbox `mcp__workspace__bash` fejlede
-    igen med samme `useradd`-fejl, genbekræftet 2026-07-06 lige før denne kodesession), commit,
-    merge, deploy. Afventer Peters terminal — samme mønster som forrige rettelser denne uge.
-    Indtil da forbliver residualrisikoen UÆNDRET (kun kildekode-tilstedeværelse ændrer intet i
-    et kørende system).
+  - **Opdatering 2026-07-06 (samme dag):** Peter satte `claude_proxy.py` (VPEN-2026-009, lokalt
+    fil-baseret IPC-værktøj) i drift til Claude, med en ny audit-log tilføjet på Peters
+    eksplicitte ønske (`.claude_proxy/audit.log`, append-only, tidsstempel+cwd+kommando+
+    returkode+varighed pr. linje — aldrig fuld stdout/stderr). Claude kørte derefter selv
+    `py_compile` (OK) + `pytest headend/tests/test_agent_principal_lockdown.py -v` (**24/24
+    bestået** — 15 testfunktioner, flere parametriserede) via proxyen, committede
+    (`claude/m05-agent-lockdown-2026-07-06`), pushede og åbnede **PR #2**
+    (`https://github.com/froekjaer/timelapse-pro/pull/2`). Afventer stadig Peters review/merge
+    og selve CI/deploy-kørslen. Indtil merge/deploy forbliver residualrisikoen UÆNDRET (kildekode
+    i en åben PR ændrer intet i et kørende system).
 - **Sandsynlighed:** 1 (ned fra 2 — eksplicit, ordret politik-bekræftelse fra Peter 2026-07-05, plus en dedikeret installationsguide der gør Peter uafhængig af agent-hjælp på staging/prod), **Konsekvens:** 5 (uændret — ville stadig være et reelt databrud på live kundedata + legacy-system, hvis det skete), **Score:** 🟡 5 (ned fra 🟠 10, uændret ved denne kodesession — se ovenfor)
 
 ---
