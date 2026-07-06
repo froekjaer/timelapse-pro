@@ -937,6 +937,43 @@ def _ensure_super_admin(db):
         db.commit()
         log.warning("Standard super_admin oprettet — SKIFT PASSWORD STRAKS via /api/auth/change-password")
 
+def _warn_if_default_admin_password_active(db):
+    """Logger en VEDVARENDE advarsel (hvert opstart, ikke kun ved oprettelse) hvis en
+    aktiv admin/super_admin-konto stadig bruger standard-passwordet 'changeme'.
+
+    Baggrund (GO_LIVE_CHECKLIST_v10.md §C-03): "bekræft super_admin-password er
+    ændret fra default" er en åben go-live-blokker. `_ensure_super_admin()` logger
+    kun ÉN gang, ved selve oprettelsen — hvis den advarsel bliver overset, er der
+    intet der minder om risikoen igen. Denne funktion kører ved hvert opstart og
+    bruger `_verify_password()` (bcrypt) i stedet for en direkte hash-sammenligning,
+    så den virker uanset salt. `log.critical()` her bliver samlet op af
+    `headend/siem.py`s generiske log-baserede SIEM-pipeline (samme mønster som andre
+    log-drevne sikkerhedshændelser i denne fil), så risikoen bliver synlig i SIEM
+    indtil password rent faktisk skiftes — ikke kun i en opstartslog ingen læser.
+    """
+    from database import User
+    try:
+        admins = (
+            db.query(User)
+            .filter(User.role.in_(["admin", "super_admin"]), User.is_active == True)  # noqa: E712
+            .all()
+        )
+    except Exception:
+        log.exception("Kunne ikke tjekke for standard admin-password ved opstart")
+        return
+    for u in admins:
+        try:
+            if _verify_password("changeme", u.password_hash):
+                log.critical(
+                    "SIKKERHEDSADVARSEL: bruger '%s' (rolle=%s) bruger stadig standard-"
+                    "passwordet 'changeme' — skift STRAKS via /api/auth/change-password "
+                    "(GO_LIVE_CHECKLIST_v10.md §C-03)",
+                    u.username, u.role,
+                )
+        except Exception:
+            # En enkelt korrupt/ugyldig hash må aldrig stoppe tjekket af de øvrige brugere.
+            continue
+
 def get_current_user(
     request: Request,
     db: Session = Depends(get_db)
@@ -1382,6 +1419,7 @@ def _startup_ensure_admin():
     db = next(db_gen)
     try:
         _ensure_super_admin(db)
+        _warn_if_default_admin_password_active(db)
     finally:
         db_gen.close()
 

@@ -20,7 +20,7 @@ Opdateres når noget ændres. Sidst rørt: 2026-07-03.
 | UI dev server | system LaunchDaemon `dk.froekjaer.timelapse-ui` | `127.0.0.1:5173` | Vite dev server; nginx proxyer normalt offentlig trafik |
 | WiFi watchdog | system LaunchDaemon `dk.froekjaer.timelapse-wifi-ensure` | — | Tjekker hvert minut WiFi `en1`, router `192.168.86.1`, SSID `p-froekjaer` |
 | Ollama (lokal vision) | bruger-service `homebrew.mxcl.ollama` | `127.0.0.1:11434` | Model `qwen2.5vl:7b`; starter pt. efter bruger-login |
-| nginx | system LaunchDaemon `dk.froekjaer.timelapse-nginx` | `80/443` (mål: Cloudflare Tunnel) | Serverer UI, proxy `/api` → `127.0.0.1:8000` |
+| nginx | system LaunchDaemon `dk.froekjaer.timelapse-nginx` | `80/443` (rd/lab — uændret; evt. Cloudflare Tunnel-migration af LAB-domænet er et ÅBENT spørgsmål, se `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-banner) | Serverer UI, proxy `/api` → `127.0.0.1:8000`. **Bemærk:** staging/prod bruger IKKE dette mønster — der ejer CrushFTP 80/443, og backend kører i stedet direkte på port 8443 (ikke Cloudflare Tunnel), se `PORT_AUDIT_og_WEBSITE_v10.md` §3/§4 |
 | Log | fil | — | `~/Library/Logs/timelapse-headend.log` |
 | Captures/billeder | volumen | — | `sftp_base`-setting = `/Volumes/data-fast/timelapse-incoming/canonical-images` |
 | Headend runtime-env | lokal systemfil | — | `/etc/timelapse/headend.env` (`root:staff`, ikke i Git) |

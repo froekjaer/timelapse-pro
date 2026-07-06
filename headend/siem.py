@@ -402,7 +402,7 @@ def start_headend_log_collector() -> None:
     mode = os.getenv("TIMELAPSE_ENV", "lab").lower()
     min_severity = os.getenv(
         "TIMELAPSE_SIEM_HEADEND_MIN_SEVERITY",
-        "info" if mode == "lab" else "warning",
+        "info" if mode in ("lab", "rd") else "warning",
     ).lower()
     interval_s = int(os.getenv("TIMELAPSE_SIEM_HEADEND_INTERVAL_S", "30"))
     max_lines = int(os.getenv("TIMELAPSE_SIEM_HEADEND_MAX_LINES", "200"))

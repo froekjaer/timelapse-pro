@@ -35,7 +35,7 @@ De nyeste/gældende dokumenter er vægtet højest.
 
 | Emne | Uoverensstemmelse | Beslutning/anbefaling |
 |---|---|---|
-| Porte `80/443` | Ældre docs og aktiv nginx bruger public `80/443`; nyere krav siger TimeLapse ikke må eje dem på Mac Headend | Public `80/443` må ejes af Cloudflare/website/proxy; Mac Headend-origin flyttes til `127.0.0.1:18443` |
+| Porte `80/443` | Ældre docs og aktiv nginx bruger public `80/443`; nyere krav siger TimeLapse ikke må eje dem på Mac Headend | ~~Public `80/443` må ejes af Cloudflare/website/proxy; Mac Headend-origin flyttes til `127.0.0.1:18443`~~ (**rettet, periodisk tjek #49:** denne 18443/Cloudflare Tunnel-anbefaling er forældet — CrushFTP ejer fortsat 80/443/21/22 på staging/prod-maskinerne, og backend eksponeres i stedet **direkte på port 8443**, certifikat via DNS-01 (`certbot-dns-cloudflare`), INGEN Cloudflare Tunnel; besluttet 2026-07-05, se `PORT_AUDIT_og_WEBSITE_v10.md` §3/§4) |
 | SFTP port | Ældre docs bruger `22`/`2222`; nyere portprofil bruger `22222`, portplan foreslår `12222` | Ny production bør bruge `12222`; aldrig TimeLapse på `22` |
 | JWT algoritme | Ældre RBAC-docs beskriver RS256; aktuel kode bruger HS256 | Dokumentér HS256 som aktuel; migrér evt. til RS256/EdDSA, ellers stærk secret + kort session |
 | Auth tokens i UI | Ældre docs siger ingen localStorage; aktuel UI bruger localStorage | Før production bør auth-cookie være primær, localStorage risikovurderes/ryddes |

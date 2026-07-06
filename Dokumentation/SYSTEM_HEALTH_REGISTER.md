@@ -205,29 +205,41 @@
 
 **Prioritet:** P2  
 **Område:** UI småfejl  
-**Status:** Åben
+**Status:** ✅ Løst (dato for selve rettelsen ukendt, men bekræftet allerede før 2026-05-28 — se nedenfor). Statusfeltet i dette register var blot aldrig opdateret. Fundet/rettet i dokumentationen 2026-07-05 (periodisk tjek #56).
 
-**Observation:** `FILTERS` indeholder `deployed` to gange, hvilket giver duplicate React keys og forvirrende UI.
+**Oprindelig observation (forældet):** `FILTERS` indeholder `deployed` to gange, hvilket giver duplicate React keys og forvirrende UI.
 
-**Evidens:** [UpdatesPage.tsx](/Users/peter/projects/timelapse-pro/timelapse-ui/src/pages/UpdatesPage.tsx:181)
+**Verifikation:** Direkte kildelæsning af nuværende `FILTERS`-array i
+[UpdatesPage.tsx](/Users/peter/projects/timelapse-pro/timelapse-ui/src/pages/UpdatesPage.tsx:1145)
+(linje 1145–1153) viser kun ét `deployed`-element — ingen dublet. Den oprindelige evidens-linje
+(`:181`) peger i dag på en helt urelateret interface-linje (`size_bytes`), hvilket bekræfter at
+filen er vokset/ændret betydeligt siden fundet blev noteret. `RISK_ASSESSMENT_v10.md` §2 har
+allerede noteret "HLTH-011 Duplicate filter key — ✅ Løst" i lang tid, og det ældre
+`Gamle versioner/VIRTUAL_PENTEST_STATUS_2026-05-28.md` bekræfter eksplicit "FILTERS har ikke
+længere dublet `deployed`" — dvs. rettelsen fandtes allerede før 2026-05-28. Dette register
+(`SYSTEM_HEALTH_REGISTER.md`, dateret 2026-05-23) er altså det ene tilbageværende sted der stadig
+viste "Åben" — samme docs-lag-drift-mønster som tidligere fundet i RISK_ASSESSMENT/GO_LIVE/
+KRAVREGISTER (se HANDOVER_LOG tjek #24/#33/#36/#41/#43/#46/#48/#49).
 
-**Foreslået rettelse:** Fjern dubletten.
+**Rettelse:** Ingen kodeændring nødvendig (allerede rettet i kode for måneder siden) — kun
+statusfeltet i dette register korrigeret til at afspejle virkeligheden.
 
 ### HLTH-012 - Frontend lint baseline er ikke grøn
 
 **Prioritet:** P2  
 **Område:** Kvalitet, CI/CD, maintainability  
-**Status:** Åben
+**Status:** 🟡 Delvist løst — ratchet-gate committet/pushet 2026-07-05 (Claude → Codex commit `68805577`), se GO_LIVE_CHECKLIST_v10.md H-02. Fejlmængden selv er ikke reduceret.
 
-**Observation:** `npm run lint` fejler med 197 errors og 8 warnings.
+**Oprindelig observation (forældet pr. 2026-07-05):** `npm run lint` fejler med 197 errors og 8 warnings (målt 2026-05-23). Aktuelt tal (2026-07-05, `.eslint-baseline.json`) er 222 problemer (204 errors, 18 warnings) — tallet er steget siden maj i takt med ny kode, ikke faldet.
 
-**Risiko:** CI kan ikke bruges som kvalitetsgate, og reelle fejl drukner i støj.
+**Rettelse (dækker kun risikoen, ikke fejlmængden):** `timelapse-ui/scripts/eslint-gate.mjs` + `timelapse-ui/.eslint-baseline.json` (baseline 222) er wiret ind som CI-step i `.github/workflows/ci.yml` (`ui-check`) — bygget fejler kun hvis antallet af ESLint-problemer STIGER over baseline 222, ikke fordi de 222 eksisterende findes. Mekanismen (script + baseline + CI-step) er funktionelt verificeret to gange i sandbox uden GH-adgang (se HANDOVER_LOG.md 2026-07-05 02:06 og 04:4x): korrekt exit 0 mod reelt tal, og korrekt fejl når en kunstigt sænket baseline blev testet. Selve "CI kan ikke bruges som kvalitetsgate"-risikoen er dermed adresseret — "reelle fejl drukner i støj" er det ikke, de 222 problemer er stadig urørte.
 
-**Foreslået rettelse:**
+**Resterende risiko:**
 
 - Ret små åbenlyse fejl først: unused imports, duplicate keys, expressions uden effekt.
 - Beslut om React Compiler-reglerne skal være hårde nu, eller om de skal justeres mens appen stabiliseres.
-- Indfør lint baseline som gate, når fejlmængden er bragt ned.
+- Sænk `.eslint-baseline.json`s `total` gradvist i takt med oprydning (gaten håndhæver kun "ikke flere end i dag", ikke et fremadrettet mål).
+- Bekræft en faktisk grøn "ESLint gate"-kørsel i GitHub Actions selv (kræver GH-adgang, ikke gjort fra periodisk heartbeat).
 
 ### HLTH-013 - Python testmiljø mangler
 
@@ -270,7 +282,7 @@
 Første små commit bør være lav risiko og reducere umiddelbar fare:
 
 1. `.gitignore`: tilføj `secrets/`, `headend/exports/`, `*.bak_*`, `*.gdoc` og lokale snapshots efter konkret review.
-2. `UpdatesPage.tsx`: send approve body og fjern duplicate `deployed` filter.
+2. `UpdatesPage.tsx`: send approve body. ~~fjern duplicate `deployed` filter~~ — allerede rettet, se HLTH-011.
 3. `headend/main.py`: returnér de update-felter UI allerede forventer.
 4. Dokumentér at `edge_update.sh` er legacy/LAB-only, indtil Headend artifact update-flow er implementeret.
 

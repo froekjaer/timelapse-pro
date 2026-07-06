@@ -19,7 +19,7 @@
 
 - **AI-tagging:** Gemini 2.5 Flash (Vertex, europe-west1) + Gemini Batch API (~50% pris); lokal Ollama til tekst/oversættelse. Canonical tags engelsk, danske labels via `ai\_tag\_vocabulary.display\_name\_da`.
 
-- **Public (planlagt):** `www.timelapse-pro.dk` (statisk info) + `backend.timelapse-pro.dk` (UI/API bag Cloudflare Tunnel, origin `127.0.0.1:18443`). Lab i dag: `timelapse.froekjaer.dk`.
+- **Public (planlagt):** `www.timelapse-pro.dk` (statisk info, hostes separat fra staging/prod) + `backend.timelapse-pro.dk:8443` (UI/API, direkte nginx-eksponering — IKKE Cloudflare Tunnel, da CrushFTP allerede ejer 21/22/80/443 på staging/prod-maskinerne; certifikat via DNS-01, se `PORT_AUDIT_og_WEBSITE_v10.md` §3/§4). Lab i dag: `timelapse.froekjaer.dk`.
 
 **Status i én sætning:** LAB/pre-production-klar; **ikke** Internet-facing production-klar. Største blockere: port-/proxy-migration, backup+restore-evidens, GDPR (DPIA/retention/DPA), frisk CMDB/node-agent, MFA + stale credential-cleanup, Nikon Z30 LAB/fokus/video.
 
@@ -38,7 +38,7 @@ Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne b
 | `RISK\_ASSESSMENT\_v10.md` | SABSA/ISO/IEC 62443/CRA/NIS2/GDPR risikovurdering + pentest + PKI/Key Mgmt |
 | `KRAVREGISTER\_og\_STATUS\_v10.md` | Krav-/ønskeregister, status, tidslinje, oprindelige krav, P0/P1/P2 |
 | `GO\_LIVE\_CHECKLIST\_v10.md` | Krav (A–L) før Internet-eksponering + go/no-go |
-| `PORT\_AUDIT\_og\_WEBSITE\_v10.md` | Portaudit, Cloudflare Tunnel-migration, website/backend-arkitektur |
+| `PORT\_AUDIT\_og\_WEBSITE\_v10.md` | Portaudit, port 8443 + DNS-01-migration (IKKE Cloudflare Tunnel), website/backend-arkitektur |
 | `Installationsguide\_v10.md` | **Del A: headend-installation · Del B: edge-installation · Del C: edge lokal provisioning** |
 | `ADMINISTRATORMANUAL\_v10.md` | Drift, sikkerhed, update, backup, CMDB, RBAC, GRC, troubleshooting |
 | `BRUGERMANUAL\_v10.md` | Bruger/kunde/site manager-manual |

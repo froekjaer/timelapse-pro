@@ -1,6 +1,6 @@
 # TimeLapse Pro — Observability / ITIM — Design-notat
 
-**Forfatter:** Claude · **Dato:** 2026-06-29 · **Status:** Til godkendelse (kode følger efter accept)
+**Forfatter:** Claude · **Dato:** 2026-06-29 · **Status:** Implementeret og live-verificeret (v1.0 bygget 2026-06-29, live-verificeret af Codex 2026-06-30 — se HANDOVER_LOG.md)
 **Beslægtet:** `SERVICES_OG_DRIFT_kilde_til_sandhed.md`, `README_CMDB.md`, `siem.py`, `cmdb.py`
 
 > **Beslutning truffet med Peter (2026-06-29):** Underliggende lag = **letvægt i Postgres**
@@ -303,11 +303,21 @@ være billig (få hundrede ms hvert 30.-60. s) for ikke at konkurrere med headen
 
 ---
 
-## 13. Åbne spørgsmål til Peter
+## 13. Åbne spørgsmål til Peter — AFGJORT af implementeringen (opdateret 2026-07-05, periodisk tjek #45)
+
+**Note (Claude, tjek #45):** Begge spørgsmål blev reelt afgjort af den faktiske v1.0-implementering
+(se `HANDOVER_LOG.md`, entries 2026-06-29 og 2026-06-30 09:40) og er ikke længere åbne: (1) tråd-i-
+headend blev valgt (ikke egen launchd-agent) — "dør med headend; edge-ping dækker hullet senere";
+(2) `psutil`-only blev valgt for v1 — Codex' live-verifikations-entry nævner ingen installation af
+`smartmontools`/`powermetrics`, så Mac-temperatur/SMART er stadig ikke en del af v1. Spørgsmålene er
+efterladt herunder som historisk kontekst (samme docs-lag-drift-mønster som tidligere fundet i
+`RISK_ASSESSMENT_v10.md` §13.3 og `Claude_Intern_CA_mTLS_Design_2026-07-05.md`, tjek #41/#44).
 
 1. **Collector-placering:** egen launchd-agent (isoleret, overlever headend-genstart) **eller**
    tråd inde i headend (enklere, men dør med headend)? *Forslag: tråd i headend nu, egen agent
    senere hvis vi vil overvåge headend selv når den er nede (edge-pinger kan dække det hul).*
+   → **Valgt: tråd i headend.**
 2. **Temperatur/SMART på Mac:** må Codex installere `smartmontools`/bruge `powermetrics` (kræver
    sudo) for temp/SMART, eller holder vi os til `psutil`-only i v1?
+   → **Valgt: `psutil`-only i v1** (temp/SMART ikke aktiveret).
 3. **Retention-vinduer:** er 48t rå / 30d 5m / 13mdr 1t passende for jeres lagring?

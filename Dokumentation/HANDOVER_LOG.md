@@ -4714,3 +4714,2431 @@ person vide".
   plus den fra tjek #28 udestående dedikerede §3-optællings-genberegning (kræver Peters
   konvention-beslutning først). `mcp__workspace__bash` fejler fortsat konsekvent ved hver
   periodisk runde siden tjek #21 — uændret, langvarigt mønster.
+
+### Handover 2026-07-05 — fra Claude til Codex/Peter: permanent agent-lockdown besvaret, Cloudflare Tunnel-korrektion, CA-model valgt, nyt installationsscript
+- **Peter har svaret direkte** på flere af de 5 åbne beslutninger i
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §5 (nu §6/§7), samt bedt om et
+  installationsscript til headend på staging/prod. Fem substantielle afklaringer i denne
+  runde, alle nu skrevet ind i dokumenterne:
+- **1) Permanent agent-lockdown, bekræftet ordret:** "Hverken Codex eller dig har eller vil få
+  adgang til staging og Prod. Kun vores R&D udviklingssystem." Dette gælder BEGGE agenter, ikke
+  kun Claude. R19 i `RISK_ASSESSMENT_v10.md` nedjusteret 🟠10→🟡5 (politik bekræftet, teknisk
+  håndhævelse/`AgentPrincipal` mangler stadig som defense-in-depth). `GO_LIVE_CHECKLIST_v10.md`
+  M-02 sat til ✅. Praktisk konsekvens: Peter skal kunne installere staging/prod HELT alene —
+  deraf punkt 5 nedenfor.
+- **2) OS: macOS på staging+prod** (RPi5 er historisk, nu fuldt udfaset; Linux ikke udelukket
+  fremover, men uden for scope nu). Installationsscriptet er macOS-only v1.
+- **3) VIGTIG KORREKTION — Cloudflare Tunnel er IKKE prod-målarkitekturen:** Peter har bekræftet
+  (som "tidligere aftalt") at Cloudflare Tunnel bevidst skal undgås for prod. Dette modsagde en
+  gennemgående antagelse i `GO_LIVE_CHECKLIST_v10.md` §A (A-01–A-04) og
+  `RISK_ASSESSMENT_v10.md`s zonemodel. Fundet konkret bekræftet af det allerede byggede
+  `www/index.html` (login-knapper peger direkte på `https://backend.timelapse-pro.dk/`, standard
+  443, ingen tunnel) og den nuværende, afprøvede `rd`-nginx-config
+  (`deploy/nginx/timelapse.froekjaer.dk.conf`, direkte 80/443-eksponering). §A er omskrevet til
+  direkte nginx-eksponering (hostname-routing, Let's Encrypt, fail2ban) — gælder specifikt
+  `prod`, ikke `rd` (upåvirket, ikke kundevendt).
+- **4) CA/mTLS (#52) — hovedblocker ryddet:** Peters Cloudflare-svar gør Model B (ende-til-ende
+  mTLS til nginx/Headend selv) til det naturlige valg fremfor Model A — opdateret i
+  `Claude_Intern_CA_mTLS_Design_2026-07-05.md` §6. Root CA-nøgle placeres pt. på R&D-maskinen
+  (Peters valg, ønsker fleksibelt design til senere flytning) — jeg har tilføjet en nuance i §4.2:
+  "mindst netværkseksponeret" og "utilgængelig for mine filværktøjer" er to forskellige ting, da
+  jeg reelt kan læse/skrive filer i `~/projects/timelapse-pro/` på R&D-maskinen i dag. Anbefaling:
+  nøglen lægges UDENFOR repoet (`/etc/timelapse/ca/root/`, samme mønster som `headend.env`),
+  genereret af Peter selv i Terminal, ikke af mig. **Selve PKI-koden er bevidst IKKE skrevet i
+  denne runde** — det er en auth-nær ændring (bootstrap-flow, DB-skema, edge-CSR) der fortjener en
+  egen, fokuseret runde med ekstra dobbelttjek, ikke en hurtig tilføjelse oven på en allerede lang
+  session. To spørgsmål står stadig åbne til Peter/Codex i designdokumentet §10 (cert-levetid,
+  HMAC-lagets fremtid).
+- **5) NYT: installationsscript + -guide til headend på staging/prod:**
+  `deploy/install/install_headend.sh` (macOS, parameteriseret via en config-fil pr. maskine —
+  genbrugelig til fremtidige ekstra prod-servere) + `Dokumentation/INSTALLATION_GUIDE_HEADEND_v1.md`
+  + to eksempel-configs (`example-staging.conf`, `example-prod.conf`). Scriptet dækker: venv/deps,
+  idempotent Postgres-DB/bruger-oprettelse, `/etc/timelapse/headend.env`-generering (nyt
+  `JWT_SECRET` pr. miljø, `TIMELAPSE_ENV=<rd|staging|prod>` — se fund nedenfor, aldrig overskriver
+  en eksisterende fil), UI-build, launchd-installation, og en nginx-konfiguration der håndterer
+  certifikat-kip-i-halen-problemet (kan ikke skrive et `:443`-block før certbot er kørt — scriptet
+  detekterer om certifikatet findes og skriver enten et `:80`-bootstrap-block eller det fulde
+  `:80`+`:443`-block, og er derfor designet til bevidst at køres to gange: én gang før certbot, én
+  gang efter). Scriptet stopper bevidst FØR det første RBAC-login — jeg har verificeret direkte i
+  koden (`main.py`s `mfa_required_by_role["super_admin"]=True`, kodedefault) at allerførste login
+  for `admin`/`changeme` tvinger en MFA-enrollment-skærm, som ikke kan og ikke bør scriptes; dette
+  besvarer samtidig den længe ubesvarede C-03 (super_admin-password) fra periodisk tjek #24 for
+  ALLE fremtidige installationer, ikke kun ved at bekræfte den ene gang.
+- **Fund undervejs:** `TIMELAPSE_ENV` (`os.getenv("TIMELAPSE_ENV", "lab")`, `main.py` linje 81-87)
+  findes ALLEREDE i koden — default `"lab"`, med en indbygget sikkerhedsspærre (kræver
+  ≥32-tegns `JWT_SECRET` når `TIMELAPSE_ENV=prod`, ellers `raise` ved opstart). Dette er en god,
+  allerede eksisterende byggesten til hele miljø-/agent-adgangssporet — men dens default-værdi
+  `"lab"` bør IKKE bruges konsekvent, jf. den allerede aftalte `rd`/`staging`/`prod`-terminologi.
+  Installationsscriptet sætter eksplicit `TIMELAPSE_ENV=rd|staging|prod` i den genererede
+  env-fil. **Til Codex/Peter:** overvej at eksplicit sætte `TIMELAPSE_ENV=rd` i det LIVE
+  `/etc/timelapse/headend.env` på R&D-maskinen (sætter det formentlig implicit til `"lab"` i dag)
+  for konsistens, inden `AgentPrincipal`-koden begynder at bruge denne variabel til håndhævelse.
+- **IKKE afprøvet af mig:** scriptet er skrevet og manuelt gennemgået linje for linje (fangede og
+  rettede selv en cert-kip-i-halen-bug undervejs), men kunne ikke eksekveres i min sandbox
+  (`mcp__workspace__bash` fejler fortsat konsekvent, samme `useradd`-fejl som periodisk tjek har
+  rapporteret siden #21). **Kør venligst `zsh -n install_headend.sh` (syntakstjek) og derefter
+  `--dry-run` på en rigtig maskine, FØR det bruges til en reel installation.**
+- **Filer rørt:** `deploy/install/install_headend.sh` (ny), `deploy/install/example-staging.conf`
+  (ny), `deploy/install/example-prod.conf` (ny), `Dokumentation/INSTALLATION_GUIDE_HEADEND_v1.md`
+  (ny), `Dokumentation/MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` (§5-8 tilføjet),
+  `Dokumentation/GO_LIVE_CHECKLIST_v10.md` (§A omskrevet, M-02/M-07 opdateret, §J),
+  `Dokumentation/RISK_ASSESSMENT_v10.md` (R19 nedjusteret, §10/§12),
+  `Dokumentation/Claude_Intern_CA_mTLS_Design_2026-07-05.md` (§4.2 ny, §6/§10/§11 opdateret).
+- **Går videre til:** opgave #52's kodefase afventer stadig Peter/Codex' svar på cert-levetid og
+  HMAC-fremtid (se designdokumentets §10), samt opgave #53 (Nikon Z30 config-drift-design).
+
+### Handover 2026-07-05 (periodisk tjek #33) — fra Claude: rester af "Cloudflare Tunnel"-antagelsen ryddet op i RISK_ASSESSMENT/GO_LIVE_CHECKLIST + separat M-02/M-05-fejlhenvisning rettet
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21) — kunne derfor hverken køre `git status`, teste kode eller køre
+  `py_compile` denne runde; al verifikation er ren kildelæsning. Læste de sidste ~140 linjer af
+  HANDOVER_LOG.md (op til tjek #32 samt hele installationsscript-runden): ingen nye Codex-entries
+  siden tjek #32, intet nyt spørgsmål adresseret direkte til Claude (C-03 er allerede besvaret af
+  installationsscript-runden selv, se nedenfor — ikke længere åben).
+- **Fundet:** Installationsscript-runden (samme dag, 2026-07-05) rettede allerede
+  `GO_LIVE_CHECKLIST_v10.md` §A (A-01–A-04) og `RISK_ASSESSMENT_v10.md` R19 til at afspejle Peters
+  bekræftede beslutning om at Cloudflare Tunnel bevidst IKKE er prod-målarkitekturen (direkte
+  nginx-eksponering på 443/80 med Let's Encrypt er den faktiske plan). Den samme entry nævnte
+  eksplicit at dette "modsagde en gennemgående antagelse i ... `RISK_ASSESSMENT_v10.md`s
+  zonemodel" — men zonemodellen (§6) blev aldrig selv rettet dengang. Fandt i alt 3 glemte steder
+  i `RISK_ASSESSMENT_v10.md` (§11 P0 #1, VPEN-2026-001 i §5.2, §6 zone-diagram/conduits) og 4 i
+  `GO_LIVE_CHECKLIST_v10.md` (verifikationskommentar linje ~50, A-09-konklusion linje ~62, §L
+  domænetabel linje ~194, §J "de tre vigtigste opgaver" linje ~275) der stadig ordret anbefalede
+  eller antog Cloudflare Tunnel-migrering — samme docs-lag-driftmønster set gentagne gange
+  tidligere (§9, §3, ADM-010 osv.), blot med arkitektur-beslutninger i stedet for statusfelter.
+  Separat fund undervejs: `GO_LIVE_CHECKLIST_v10.md` §J's "M"-kategori-blokker henviste fejlagtigt
+  til "M-02: prod-isolation ikke bekræftet" — men M-02 (selve nul-agent-adgang-**politikken**) er
+  allerede ✅ besluttet/bekræftet af Peter (samme installationsscript-runde). Den faktisk
+  resterende blocker er M-05 (teknisk håndhævelse/defense-in-depth, `AgentPrincipal`), ikke M-02.
+- **Udført:** Rettet alle 7 Cloudflare Tunnel-referencer til at afspejle den allerede besluttede
+  arkitektur (direkte nginx + Let's Encrypt + fail2ban/rate-limiting for prod; zone-model-conduit
+  0/1 opdateret med note om at Cloudflare-som-ren-DNS-proxy/WAF fortsat er en åben, valgfri
+  undervariant, jf. A-11). Rettet §J's blocker-reference fra M-02 til M-05. Tilføjet
+  changelog-linje i RISK_ASSESSMENT §12. Ren tekstsammenkøring af allerede eksisterende, dateret
+  beslutning — ingen ny vurdering foretaget, ingen kode rørt, ingen test nødvendig ud over
+  kildelæsning på tværs af de to dokumenter.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** Uændret liste fra tjek #31/#32 (live multi-device-rollout-test, Peters §6
+  CA/mTLS-valg, R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5
+  HMAC/stale credentials, §3-optælling i `KRAVREGISTER_og_STATUS_v10.md`), plus opgave #52's
+  kodefase (afventer cert-levetid/HMAC-fremtid-svar) og #53 (Nikon Z30). `mcp__workspace__bash`
+  fejler fortsat konsekvent ved hver periodisk runde siden tjek #21 — et nu meget langvarigt
+  mønster, fortsat værd for Peter at undersøge direkte, da det forhindrer al kodetest/
+  `git status`-verifikation fra denne kanal.
+
+### Handover 2026-07-05 (periodisk tjek #34) — fra Claude: verificerede tjek #33's Cloudflare Tunnel-oprydning (fuldt ude), rettede forældet ADM-006-kommentar i KRAVREGISTER mod R14
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21) — kunne derfor hverken køre `git status`, teste kode eller køre
+  `py_compile` denne runde; al verifikation er ren kildelæsning. Da bash er utilgængeligt, er
+  ingen kodeændring valgt denne runde (kan ikke selv testes) — kun dokumentationsarbejde, jf.
+  instruktionens eksempler. Læste de sidste ~160 linjer af HANDOVER_LOG.md (op til tjek #33):
+  ingen nye Codex-entries siden tjek #33, intet åbent spørgsmål adresseret direkte til Claude.
+- **Fundet (verifikation af tjek #33):** Krydstjekkede alle resterende forekomster af
+  "Cloudflare Tunnel" i `RISK_ASSESSMENT_v10.md` og `GO_LIVE_CHECKLIST_v10.md` — de 4 tilbageværende
+  match i hvert dokument er alle enten korrekt gennemstreget/negeret ("ikke Cloudflare Tunnel",
+  "udgår") eller daterede changelog-/historik-noter (fx GO_LIVE_CHECKLIST linje 280's
+  "TILFØJELSE 2026-07-04"-notat, som beskriver en historisk vurdering fra FØR arkitekturbeslutningen
+  og bevidst er ladt urørt som tidsstemplet historik). Tjek #33's oprydning er altså fuldt
+  konsistent — ingen nye rester fundet.
+- **Fundet (ny drift):** `KRAVREGISTER_og_STATUS_v10.md` ADM-006 ("LAB mode / kamera-test") havde
+  stadig den oprindelige, vage kommentar "Nikon Z30 problemer åbne" fra dokumentets grundlæggelse
+  (2026-07-02) — samme type efterslæb som tidligere fundet på ADM-010/CAP-007 (tjek #32) og
+  UI-011/CAP-008 (tjek #25/#27): en betydelig mængde konkret arbejde på R14 (Nikon Z30 config
+  drift) er sket siden 2026-07-05 (nøgle-mismatch-bug fundet og rettet, UI/CMDB-visning af
+  non-enforceable parametre implementeret), men dette register nævnte intet af det.
+- **Udført:** Rettet ADM-006's kommentar til at referere `RISK_ASSESSMENT_v10.md` R14 konkret:
+  hvad der var i stykker (nøgle-mismatch, drift-check reelt inaktiv), hvad der er rettet og
+  verificeret isoleret, og hvad der stadig resterer (live-hardware-verifikation + eksplicit
+  beslutning om aperture/shutter_speed-drift-mål — bevidst udeladt design, ikke en fejl). Status-
+  markøren "✅ Delvist" er bevidst IKKE ændret (samme uafklarede markør-konvention som tjek #26
+  flaggede — afventer stadig Peters beslutning før en samlet oprydning). **Bevidst IKKE rørt:**
+  §3-optællingstabellen, af samme grund som tjek #28/#32 allerede har dokumenteret.
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md` (ADM-006).
+- **Går videre til:** Uændret liste fra tjek #31/#32/#33 (live multi-device-rollout-test, Peters
+  §6 CA/mTLS-valg, R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning
+  — se `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md`, som stadig afventer Peters bekræftelse
+  i UI'en —, P0 #5 HMAC/stale credentials, §3-optælling i `KRAVREGISTER_og_STATUS_v10.md`), plus
+  opgave #52's kodefase (afventer cert-levetid/HMAC-fremtid-svar) og #53 (Nikon Z30 — resterer nu
+  kun live-verifikation + aperture/shutter_speed-drift-mål-beslutning, se ADM-006-rettelsen
+  ovenfor). `mcp__workspace__bash` fejler fortsat konsekvent ved hver periodisk runde siden
+  tjek #21 — et nu meget langvarigt mønster, fortsat værd for Peter at undersøge direkte, da det
+  forhindrer al kodetest/`git status`-verifikation fra denne kanal.
+
+### Handover 2026-07-05 — fra Peter til Claude/Codex: eksplicit udviklingstilladelse til Travbyen-billeder
+- **Peter-oplysning:** Ud over selve databehandleraftalen med Kirkbi A/S er der givet **eksplicit
+  tilladelse til at Travbyen-billederne anvendes i forbindelse med udviklingen af TimeLapse Pro**.
+- **Betydning:** Dette besvarer direkte Codex' tidligere rejste, adskilte spørgsmål 2 (se
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §4): "AI-agenters (Claude/Codex) adgang til reelle
+  kundebilleder til udvikling/QA" er et separat spørgsmål fra selve DPA'en, og det er nu
+  udtrykkeligt besvaret ja — Claude/Codex' nuværende R&D-arbejde på Travbyen-billederne er dermed
+  eksplicit dækket, ikke kun antaget ud fra en generel databehandleraftale. Dækker fortsat IKKE
+  automatisk andre formål (fx offentlig markedsføring) — kun udvikling. Nye kunder kræver en
+  tilsvarende eksplicit tilladelse ud over selve DPA'en.
+- **Udført:** Opdateret `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §4, `RISK_ASSESSMENT_v10.md`
+  R12, `GO_LIVE_CHECKLIST_v10.md` G-03 og M-06 (M-06 sat til 🟢). Fortsat åbent: om
+  Kirkbi-aftalen også dækker AI/Gemini cloud-eskalering og GPS-metadata specifikt (uændret fra
+  tidligere runde).
+- **Filer rørt:** `Dokumentation/MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`,
+  `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+
+### Handover 2026-07-05 (periodisk tjek #35) — fra Claude: SEC-012 i KRAVREGISTER var kommet bagud efter Travbyen-DPA-afklaringen
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21) — kunne derfor hverken køre `git status`, teste kode eller køre
+  `py_compile` denne runde; al verifikation er ren kildelæsning. Da bash er utilgængeligt, er
+  ingen kodeændring valgt denne runde, kun dokumentationsarbejde. Læste de sidste ~200 linjer af
+  HANDOVER_LOG.md (op til Peters Travbyen-udviklingstilladelse-entry): ingen nye Codex-entries
+  siden tjek #34, intet åbent spørgsmål adresseret direkte til Claude. Verificerede først at
+  Peters seneste entry ("eksplicit udviklingstilladelse til Travbyen-billeder") faktisk var
+  korrekt ført igennem i `RISK_ASSESSMENT_v10.md` R12 og `GO_LIVE_CHECKLIST_v10.md` G-03/M-06 —
+  det var den, alle tre steder konsistente og korrekte.
+- **Fundet (ny drift):** `KRAVREGISTER_og_STATUS_v10.md` SEC-012 (DPIA og GDPR-evidens) havde
+  stadig sætningen "databehandleraftale (G-03) ... kræver jurist og er slet ikke startet" fra
+  periodisk tjek #28 (2026-07-05, før Travbyen-afklaringen samme dag) — samme type efterslæb som
+  tidligere fundet på ADM-010/CAP-007 (tjek #32), UI-011/CAP-008 (tjek #25/#27) og ADM-006 (tjek
+  #34): en konkret status-ændring et andet sted (her: Peters bekræftelse af Kirkbi A/S-DPA +
+  eksplicit udviklingstilladelse, ført ind i R12/G-03/M-06 samme dag) var ikke propageret til
+  dette register.
+- **Udført:** Tilføjet et "Opdateret 2026-07-05 (periodisk tjek #35)"-afsnit til SEC-012-rækken
+  der præciserer at databehandleraftalen IKKE længere er "slet ikke startet" (Kirkbi A/S-DPA +
+  udviklingstilladelse bekræftet), men fortsat uverificeret for AI/Gemini-eskalering/GPS specifikt
+  og fortsat 🔴 for kunder ud over Kirkbi A/S. Status-markøren "🟡 Delvist" er bevidst IKKE ændret
+  (samme uafklarede markør-konvention som tjek #26/#32/#34 flaggede — afventer stadig Peters
+  beslutning). **Bevidst IKKE rørt:** §3-optællingstabellen, af samme grund som tjek #28/#32/#34
+  allerede har dokumenteret (kræver Peters konvention-beslutning + én samlet gennemgang, ikke
+  endnu en punktrettelse).
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md` (SEC-012).
+- **Går videre til:** Uændret liste fra tjek #31-#34 (live multi-device-rollout-test, Peters §6
+  CA/mTLS-valg, R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — se
+  `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md`, afventer stadig Peters bekræftelse i UI'en —,
+  P0 #5 HMAC/stale credentials, §3-optælling i `KRAVREGISTER_og_STATUS_v10.md`), plus opgave #52's
+  kodefase (afventer cert-levetid/HMAC-fremtid-svar) og #53 (Nikon Z30 — kun live-verifikation +
+  aperture/shutter_speed-drift-mål-beslutning resterer). `mcp__workspace__bash` fejler fortsat
+  konsekvent ved hver periodisk runde siden tjek #21 — et nu meget langvarigt mønster (15
+  sammenhængende runder), fortsat værd for Peter at undersøge direkte, da det forhindrer al
+  kodetest/`git status`-verifikation fra denne kanal.
+
+### Handover 2026-07-05 (periodisk tjek #36) — fra Claude: to glemte Cloudflare-Tunnel-rester fundet i GO_LIVE_CHECKLIST §B (B-02/B-06), som tjek #33's oprydning ikke dækkede
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu 16 sammenhængende runder) — kunne derfor hverken køre `git status`,
+  teste kode eller køre `py_compile` denne runde; al verifikation er ren kildelæsning. Læste de
+  sidste ~150 linjer af HANDOVER_LOG.md (op til tjek #35): ingen nye Codex-entries siden tjek #35,
+  intet åbent spørgsmål adresseret direkte til Claude.
+- **Fundet:** Tjek #33 ryddede 7 steder op hvor `RISK_ASSESSMENT_v10.md` og `GO_LIVE_CHECKLIST_v10.md`
+  stadig ordret antog Cloudflare Tunnel som prod-arkitektur (den var afvist til fordel for direkte
+  nginx-eksponering på port 8443 + Let's Encrypt via DNS-01). Ved gennemgang af §11/§J denne runde
+  fandtes 2 yderligere, hidtil urørte rester i `GO_LIVE_CHECKLIST_v10.md` §B: B-02 krævede stadig
+  "Cloudflare managed eller Let's Encrypt"-certifikat, og B-06 krævede stadig et separat
+  "Origin-certifikat valideret af Cloudflare" — begge formuleret ud fra den forkastede
+  Cloudflare-proxy/Tunnel-model, hvor Cloudflare selv terminerer/udsteder certifikatet. Ved den
+  faktiske plan (ren direkte 8443-eksponering) er der intet Cloudflare-origin-certifikat — kun
+  Let's Encrypt-certifikatet fra B-02. Bekræftede at §J's opsummeringstabel allerede korrekt
+  markerer "B. TLS | 0 blokkere | ✅ Klar", så denne rettelse ændrer ikke go/no-go-status, kun
+  kravteksten.
+- **Udført:** Rettet B-02 til at kræve Let's Encrypt via DNS-01 (`certbot-dns-cloudflare`) som det
+  faktiske krav, med "Cloudflare managed"-varianten betinget af den valgfrie DNS-proxy-undervariant
+  (A-11). Rettet B-06 til eksplicit kun at gælde HVIS A-11-undervarianten senere vælges — ellers er
+  kravet allerede dækket af B-02. Samme stil/konvention som tjek #33's rettelser (inline
+  "RETTET <dato>"-markør, ingen sletning af den oprindelige kravtekst). Tjekkede
+  `KRAVREGISTER_og_STATUS_v10.md` for B-02/B-06/"Cloudflare managed"/"Origin-certifikat"-referencer
+  — ingen fundet, så ingen yderligere propagering nødvendig.
+- **Filer rørt:** `Dokumentation/GO_LIVE_CHECKLIST_v10.md` (§B, B-02 og B-06).
+- **Går videre til:** Uændret liste fra tjek #31-#35 (live multi-device-rollout-test, Peters §6
+  CA/mTLS-valg, R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5
+  HMAC/stale credentials, §3-optælling i `KRAVREGISTER_og_STATUS_v10.md`), plus opgave #52's
+  kodefase (afventer cert-levetid/HMAC-fremtid-svar) og #53 (Nikon Z30). `mcp__workspace__bash`
+  fejler fortsat konsekvent ved hver periodisk runde siden tjek #21 — nu 16 sammenhængende runder,
+  fortsat værd for Peter at undersøge direkte, da det forhindrer al kodetest/`git status`-
+  verifikation fra denne kanal.
+
+### Handover 2026-07-05 (periodisk tjek #37) — fra Claude: opgave #52 er FAKTISK ubloklet — "afventer cert-levetid/HMAC-fremtid-svar" i tjek #33-#36 er selv en stale note
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu 17 sammenhængende runder) — kunne derfor hverken køre `git status`,
+  teste kode eller køre `py_compile` denne runde; al verifikation er ren kildelæsning. Læste de
+  sidste ~200 linjer af HANDOVER_LOG.md (op til tjek #36): ingen nye Codex-entries siden tjek #36,
+  intet åbent spørgsmål adresseret direkte til Claude.
+- **Fundet (vigtigt for Codex, som poller denne log hvert minut):** Hver af tjek #33, #34, #35 og
+  #36's "Går videre til"-afsnit har gentaget "opgave #52's kodefase afventer stadig Peter/Codex'
+  svar på cert-levetid og HMAC-fremtid-svar" — men det er ikke længere korrekt. Krydstjekkede
+  `Claude_Intern_CA_mTLS_Design_2026-07-05.md` §10 og §11 (dokumenthistorik) direkte: der findes
+  en changelog-linje **"2026-07-05 (designspørgsmål besvaret)"**, som citerer Peter ordret på alle
+  fire tidligere åbne §10-spørgsmål (Model B/Cloudflare udgår, 10 års default cert-levetid
+  konfigurerbar pr. global/kunde/site/kamera + separat udløbs-grace-politik, HMAC bevares
+  permanent ved siden af mTLS + det eksisterende R&D-device `Frøkjær` retrofittes, Root CA-nøgle
+  placeres på R&D-maskinen udenfor repoet). §10 selv konkluderer eksplicit: "Alle fire
+  designspørgsmål er nu besvaret af Peter (2026-07-05)... kode-fasen (§9, trin 2-9) kan nu
+  påbegyndes som en ny, afgrænset opgave — design er færdigt, ingen blockers tilbage."
+  Krydstjekkede derefter `RISK_ASSESSMENT_v10.md` §11 P1.2 og §13.2 — begge er allerede korrekt
+  opdateret og fuldt konsistente med designdokumentet (nævner de samme fire svar). Så selve
+  designdokumentet og RISK_ASSESSMENT er IKKE bagud — det er HANDOVER_LOG's egne gentagne
+  "Går videre til"-noter (installationsscript-runden satte spørgsmålene som åbne samme dag, FØR de
+  blev besvaret; selve "designspørgsmål besvaret"-runden fik aldrig sin egen daterede top-niveau-
+  entry her i loggen, kun en linje i designdokumentets interne §11-historik) der er blevet
+  kopieret uændret videre gennem fire på hinanden følgende periodiske tjek, uden at nogen af dem
+  genverificerede mod selve designdokumentet. Samme type docs-lag-drift som tidligere fund (§9,
+  §3, ADM-010/CAP-007, ADM-006, SEC-012, Cloudflare Tunnel-resterne) — blot denne gang i selve
+  HANDOVER_LOG'ens "next steps"-felt, som Codex bruger direkte til at vurdere hvad der venter.
+- **Udført:** Ingen ændring af tidligere entries (historik rettes ikke, jf. fast konvention).
+  Denne entry retter fremadrettet: opgave #52's kodefase er IKKE blokeret af manglende Peter-svar
+  — den er blokeret af, at ingen (Claude eller Codex) endnu har afsat en dedikeret, fokuseret runde
+  til selve PKI/mTLS-implementeringen (auth-nær kode, kræver ekstra dobbelttjek, bevidst ikke
+  startet impulsivt oven på andre opgaver, jf. designdokumentets §9/§10-konklusion). Ren
+  kildeverifikation på tværs af tre dokumenter — ingen kode rørt, ingen ny vurdering af selve
+  designbeslutningerne (kun bekræftelse af at de allerede er truffet og korrekt dokumenteret to
+  steder).
+- **Til Codex/Peter:** Hvis I har afsat tid til opgave #52 baseret på tidligere "afventer stadig
+  svar"-noter i denne log — det gør den ikke længere. Designet er færdigt
+  (`Claude_Intern_CA_mTLS_Design_2026-07-05.md` §4.3/§5/§6/§10), og næste skridt er en dedikeret
+  kodefase (§9, trin 2-9), ikke yderligere afklaring.
+- **Filer rørt:** Ingen.
+- **Går videre til:** Uændret liste fra tjek #31-#36 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling i `KRAVREGISTER_og_STATUS_v10.md`, #53 Nikon Z30 live-verifikation),
+  MEN opgave #52 flyttes hermed fra "afventer svar" til "klar til kodefase" (se fund ovenfor) —
+  næste konkrete skridt er at afsætte en dedikeret, fokuseret session til selve PKI/mTLS-kode
+  (§9 trin 2-9), ikke yderligere afklaring fra Peter. `mcp__workspace__bash` fejler fortsat
+  konsekvent ved hver periodisk runde siden tjek #21 — nu 17 sammenhængende runder, fortsat værd
+  for Peter at undersøge direkte, da det forhindrer al kodetest/`git status`-verifikation fra
+  denne kanal.
+
+### Handover 2026-07-05 (periodisk tjek #38) — fra Claude: bekræftede Cloudflare Tunnel-oprydningen er fuldt ude på tværs af ALLE aktive dokumenter, rettede tomt SEC-009-felt i KRAVREGISTER mod opgave #52's designafslutning
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu 18 sammenhængende runder) — kunne derfor hverken køre `git status`,
+  teste kode eller køre `py_compile` denne runde; al verifikation er ren kildelæsning. Læste de
+  sidste ~170 linjer af HANDOVER_LOG.md (op til tjek #37): ingen nye Codex-entries siden tjek #37,
+  intet åbent spørgsmål adresseret direkte til Claude. Tjekkede også
+  `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md` — uændret, afventer stadig Peters bekræftelse
+  i UI'en, ingen ny handling mulig herfra.
+- **Fundet (verifikation, bredere end tjek #34):** Tjek #33/#36 ryddede kun op i
+  `RISK_ASSESSMENT_v10.md`/`GO_LIVE_CHECKLIST_v10.md`, og tjek #34 verificerede kun de to filer.
+  Denne runde søgte "Cloudflare Tunnel" på tværs af HELE `Dokumentation/`-mappen (15 filer med
+  match). Alle aktive/live dokumenter (`PORT_AUDIT_og_WEBSITE_v10.md`, `00_START_HER.md`,
+  `Claude_Intern_CA_mTLS_Design_2026-07-05.md`, `SERVICES_OG_DRIFT_kilde_til_sandhed.md`,
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`, `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`,
+  `KRAVREGISTER_og_STATUS_v10.md`) er konsistente — enten korrekt negeret ("ikke Cloudflare
+  Tunnel") eller eksplicit scopet til LAB-domænet (som fortsat er et separat, åbent spørgsmål, jf.
+  `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`s eget banner). `Timelapse_pro_full_documentation_v10.md`
+  har ~20 uændrede Cloudflare Tunnel-referencer i selve brødteksten — men dokumentet har allerede
+  et eksplicit, dateret "⚠️ KORREKTION 2026-07-05"-banner øverst (linje 12-24) der navngiver præcis
+  disse afsnit som FORÆLDEDE og henviser til de fire nyere, autoritative dokumenter. Vurdering:
+  ingen yderligere rettelse nødvendig her — banneret dækker allerede formålet (forhindre
+  fejllæsning), og at redigere linje-for-linje i en bevidst "stor, historisk konsolidering" (jf.
+  dokumentets egen advarsel) ville være at gøre præcis det tidligere runder har frarådet for andre
+  historiske/arkiverede dokumenter. `Gamle versioner/`-mappens filer er arkiv, korrekt urørt.
+  **Konklusion: Cloudflare Tunnel-oprydningen (tjek #33/#36) er nu bekræftet komplet på tværs af
+  alle dokumenter der reelt kræver det.**
+- **Fundet (ny drift, mindre):** `KRAVREGISTER_og_STATUS_v10.md` SEC-009 ("Intern CA +
+  client-certs") havde et helt tomt kommentarfelt — ingen henvisning til at designfasen for
+  opgave #52 faktisk er færdig (se tjek #37: alle 4 designspørgsmål besvaret af Peter 2026-07-05,
+  `Claude_Intern_CA_mTLS_Design_2026-07-05.md`). Samme type manglende propagering som tidligere
+  fundet på ADM-010/CAP-007/ADM-006/SEC-012.
+- **Udført:** Tilføjet en kommentar til SEC-009 der refererer designdokumentet og
+  `RISK_ASSESSMENT_v10.md` P1.2/§13.2, og præciserer at status bevidst er uændret 🔴 (koden er
+  faktisk ikke skrevet endnu) — kun kommentarfeltet er opdateret, ingen statusændring. Ren
+  tekst-tilføjelse, ingen kode rørt, ingen ny vurdering af selve designbeslutningen.
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md` (SEC-009).
+- **Går videre til:** Uændret liste fra tjek #31-#37 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — se
+  `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md`, fortsat uændret afventer Peters bekræftelse i
+  UI'en —, P0 #5 HMAC/stale credentials, §3-optælling i `KRAVREGISTER_og_STATUS_v10.md`, opgave
+  #52's kodefase — klar, afventer en dedikeret session — og #53 Nikon Z30 live-verifikation).
+  `mcp__workspace__bash` fejler fortsat konsekvent ved hver periodisk runde siden tjek #21 — nu 18
+  sammenhængende runder, fortsat værd for Peter at undersøge direkte, da det forhindrer al
+  kodetest/`git status`-verifikation fra denne kanal.
+
+### Handover 2026-07-05 (periodisk tjek #39) — fra Claude: ren verifikationsrunde, intet nyt at rykke sikkert
+
+- **Kontekst:** Periodisk 20-minutters-tjek. Læste de sidste ~150 linjer af HANDOVER_LOG.md (til og
+  med tjek #38): ingen nye Codex- eller Peter-entries siden da, filen slutter ved linje 5052 uden
+  yderligere indhold. `mcp__workspace__bash` fejlede igen ved to gentagne forsøg (samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert forsøg siden
+  tjek #21 — nu **19 sammenhængende runder**) — kunne derfor hverken køre `git status`, teste kode
+  eller køre `py_compile` denne runde; al verifikation er ren kildelæsning via fil-værktøjer.
+- **Gennemgået:** §11 i `RISK_ASSESSMENT_v10.md` og §J i `GO_LIVE_CHECKLIST_v10.md` er uændrede
+  siden tjek #38 — ingen nye P0/P1-punkter. Krydstjekkede derefter specifikt de punkter der har
+  stået som "afventer Peter" flest runder i træk, for at se om noget er blevet besvaret uden for
+  denne log:
+  - **"✅ Delvist" vs. "🟡 Delvist"-konventionen** (tjek #26–#30's klare ja/nej-anbefaling): stadig
+    ubesvaret — ingen Peter/Codex-reaktion fundet noget sted i loggen efter tjek #30. §3-optællingen
+    i `KRAVREGISTER_og_STATUS_v10.md` derfor bevidst fortsat urørt (samme forsigtighed som
+    tidligere runder).
+  - **Device-decommission-midt-i-rollout-gap** (R06, tjek #9/#16): stadig uafklaret — de tre
+    løsningsmuligheder venter fortsat på Peters valg, intet nyt fundet.
+  - **M-05 agent/service-principal-design** (Codex' forslag + Claudes svar, linje 4424–4503):
+    stadig "jeg koder ikke noget på dette før du har svaret" — GDPR-punktet, navngivningen og
+    lab-DB-investeringsspørgsmålet er alle fortsat ubesvarede.
+  - **C-03** (bekræft super_admin-password ændret fra default): kræver pr. definition en manuel
+    Peter-bekræftelse på den faktiske deployede værdi, ikke noget der kan verificeres via
+    kildelæsning.
+  - `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md`: uændret, afventer stadig Peters bekræftelse
+    i UI'en.
+  - **M-05/#52 CA/mTLS-kodefase:** fortsat en gyldig kandidat til en fremtidig session, men bevidst
+    ikke startet i denne runde — auth-nær kode uden mulighed for at teste den (bash nede) er præcis
+    den kombination "dobbelttjekker før du udfører" advarer imod.
+- **Konklusion:** Intet nyt sikkert at rykke denne runde. Alt resterende åbent arbejde er enten (a)
+  reelt blokeret på en Peter-beslutning, (b) kræver live/hardware-verifikation Claude ikke har
+  adgang til, eller (c) er kode der ville kræve test som `mcp__workspace__bash`-fejlen forhindrer.
+  Ingen filer rettet denne runde ud over denne log-entry.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38 (live multi-device-rollout-test, R17-smoketest,
+  §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale credentials,
+  §3-optælling/"Delvist"-konvention, opgave #52's kodefase, #53 Nikon Z30 live-verifikation,
+  M-05 agent-design-svar). `mcp__workspace__bash` fejler fortsat konsekvent — nu 19 sammenhængende
+  runder siden tjek #21 (~6+ timers periodisk drift) — dette er efterhånden selv værd at behandle
+  som et driftsproblem, ikke kun en generende bivirkning: Peter bør undersøge
+  `useradd`/sandbox-brugeroprettelsen direkte, da ingen periodisk Claude-runde kan teste eller
+  committe kode, før dette er løst.
+
+### Handover 2026-07-05 (periodisk tjek #41) — fra Claude: rettede stale mTLS-blocker-tekst i RISK_ASSESSMENT §13.3
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **21 sammenhængende runder**) — kunne derfor hverken køre
+  `git status`, teste kode eller køre `py_compile` denne runde; al verifikation er ren
+  kildelæsning. Filen sluttede ved linje 5124 (tjek #40): ingen nye Codex- eller Peter-entries
+  siden da.
+- **Fundet:** `RISK_ASSESSMENT_v10.md` §13.3 havde stadig den oprindelige "**Blocker for kode:**
+  valg mellem Cloudflare Access mTLS og ende-til-ende mTLS til nginx/Headend ... kræver
+  Peter/Codex' input før implementering kan starte"-tekst — selvom tjek #37 allerede for flere
+  runder siden fastslog (og §11 P1.2 allerede korrekt afspejlede) at Peter besvarede alle 4
+  designspørgsmål 2026-07-05, valgte Model B (ende-til-ende mTLS, ingen Cloudflare Access/
+  Tunnel), og at designdokumentets §10 selv konkluderer "ingen blockers tilbage". §13.3 var
+  altså en efterladt kopi af den gamle blocker-tekst, som tjek #37's docs-krydstjek (der kun
+  sammenlignede §11 P1.2 mod designdokumentet) ikke fangede dengang — samme docs-lag-drift-
+  mønster som tidligere fund (§9, §3, ADM-010/CAP-007, ADM-006, SEC-012, Cloudflare
+  Tunnel-resterne), blot denne gang i et tredje sted (§13.3) ingen tidligere runde havde
+  krydstjekket direkte mod §11/designdokumentet.
+- **Rettet:** §13.3 omskrevet til at matche §11 P1.2 — Model B valgt, alle 4 spørgsmål besvaret,
+  ingen blockers tilbage, næste skridt er en dedikeret kodefase (designdokumentets §9, trin 2-9).
+  §12 dokumenthistorik-tabellen fik en ny linje for denne rettelse. Ren tekstrettelse af allerede
+  besluttet arkitektur/status — ingen ny vurdering, ingen kode rørt.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md` (§13.3 + §12-historik).
+- **Går videre til:** Uændret liste fra tjek #38-#40 (live multi-device-rollout-test,
+  R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — nu bekræftet blocker-fri
+  i BÅDE §11 og §13.3 — #53 Nikon Z30 live-verifikation, M-05 agent-design-svar).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 21 sammenhængende runder siden tjek #21
+  (~7 timers periodisk drift). **Til Peter:** stadig anbefalingen fra tjek #39/#40 om at
+  undersøge sandbox-`useradd`/brugeroprettelsen direkte, da ingen periodisk Claude-runde kan
+  teste eller committe kode, før det er løst. **Til Codex/Peter (uændret fra tjek #37):** hvis
+  I planlægger opgave #52's mTLS-kodefase, er den klar til at starte — designet er færdigt og nu
+  konsistent dokumenteret alle steder, ingen yderligere afklaring nødvendig.
+
+### Handover 2026-07-05 (periodisk tjek #40) — fra Claude: ren verifikationsrunde, ingen ny drift fundet
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **20 sammenhængende runder**) — kunne derfor hverken køre `git status`,
+  teste kode eller køre `py_compile` denne runde; al verifikation er ren kildelæsning. Filen slutter
+  ved linje 5095 (tjek #39): ingen nye Codex- eller Peter-entries siden da.
+- **Gennemgået (ingen ny drift fundet):** §11 i `RISK_ASSESSMENT_v10.md` (P0/P1/P2-listerne) og §J
+  i `GO_LIVE_CHECKLIST_v10.md` uændrede og fortsat indbyrdes konsistente. Krydstjekkede specifikt
+  §A (A-01–A-05/A-07/A-13) mod §11 P0.1's 8443/DNS-01-beskrivelse — fuldt konsistent, ingen rester
+  af tidligere fejlantagelser. Genlæste KRAVREGISTER-rækkerne ADM-010, ADM-012/013, SEC-009,
+  SEC-011/012 samt §3-fodnoterne (tjek #25/#27/#28-observationerne) — alle allerede opdaterede
+  korrekt, ingen nye mismatch fundet ud over den kendte, bevidst urørte §3-optællings-/
+  "Delvist"-konvention (afventer stadig Peters beslutning, jf. tjek #26/#28/#32/#34/#35).
+  `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md` uændret — status stadig "Forberedt, IKKE
+  eksekveret", afventer fortsat Peters bekræftelse i UI'en.
+- **Konklusion:** Intet nyt sikkert at rykke denne runde — samme vurdering som tjek #39. Alt
+  resterende åbent arbejde er enten (a) en reel Peter-beslutning, (b) kræver live/hardware-adgang
+  Claude ikke har, eller (c) er kode der kræver test som bash-fejlen forhindrer.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38/#39 (live multi-device-rollout-test, R17-smoketest,
+  §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale credentials,
+  §3-optælling/"Delvist"-konvention, opgave #52's kodefase, #53 Nikon Z30 live-verifikation,
+  M-05 agent-design-svar). `mcp__workspace__bash` fejler fortsat konsekvent — nu 20 sammenhængende
+  runder siden tjek #21 (~6.5+ timers periodisk drift). **Til Peter:** dette er nu et selvstændigt
+  driftsproblem der bør undersøges direkte (sandbox-`useradd`/brugeroprettelse), da ingen periodisk
+  Claude-runde kan teste eller committe kode, før det er løst — samme anbefaling som tjek #39, blot
+  endnu en runde ældre.
+
+### Handover 2026-07-05 (periodisk tjek #43) — fra Claude: to glemte "73 signals"-SAST-rester fundet og rettet i konsoliderede dokumenter
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **23 sammenhængende runder**, ~7.5+ timer) — kunne derfor hverken
+  køre `git status`, teste kode eller køre `py_compile` denne runde; al verifikation er ren
+  kildelæsning. Filen sluttede ved linje 5194 (tjek #42): ingen nye Codex- eller Peter-entries
+  siden da.
+- **Krydstjekket denne runde:** §11/§13.3 i `RISK_ASSESSMENT_v10.md` mod §J/§K/§M i
+  `GO_LIVE_CHECKLIST_v10.md` — fortsat konsistente, ingen nye rester af den tidligere
+  Cloudflare Tunnel-antagelse (linje 298 i GO_LIVE_CHECKLIST er en dateret 2026-07-04-historik-
+  note om datidens (dengang korrekte) antagelse, ikke en aktiv anbefaling — samme konklusion som
+  tjek #38).
+- **Fundet:** Samme docs-lag-drift-mønster som tidligere (§9/§3/ADM-010/Cloudflare Tunnel/§13.3),
+  denne gang i to af de bredere, mindre hyppigt opdaterede konsoliderede dokumenter:
+  `TimeLapse_Security_Compliance_v10.md` §5 og `Timelapse_pro_full_documentation_v10.md`
+  (ISO 27001-mapping, kontrol 8.28) skrev begge stadig "SAST-backlog (73 signals) er stadig
+  åben"/"73 signals (v5.28-pentest)" — selvom periodisk tjek #17-#20 for flere runder siden
+  fastslog at "73 signals" var en upålidelig scanner-optælling (to selvreference-bugs i AI Ops'
+  egen statiske scanner), og VPEN-006's fulde triage af de reelle 80 signaler blev afsluttet
+  2026-07-05 (tjek #19) uden bekræftede sårbarheder. `RISK_ASSESSMENT_v10.md` (VPEN-006-rækken)
+  havde allerede den korrekte, opdaterede tekst — de to konsoliderede dokumenter var bare aldrig
+  synkroniseret dengang.
+- **Rettet:** Begge steder omskrevet til at forklare at "73 signals" var upålidelig, og at alle
+  80 aktuelle signaler nu er triaget uden bekræftede reelle sårbarheder (med henvisning til
+  VPEN-006/VPEN-2026-008/-009). Status-emoji i ISO-tabellen (🟡) er bevidst IKKE ændret — kontrol
+  8.28 dækker bredere secure-coding-praksis end blot denne ene SAST-triage. Arkiverede
+  "Gamle versioner"-filer med samme tal er bevidst ikke rørt (historisk snapshot). Ren
+  tekstrettelse, ingen kode rørt.
+- **Filer rørt:** `Dokumentation/TimeLapse_Security_Compliance_v10.md` (§5),
+  `Dokumentation/Timelapse_pro_full_documentation_v10.md` (ISO 27001-tabel, 8.28).
+- **Går videre til:** Uændret liste fra tjek #38-#42 (live multi-device-rollout-test,
+  R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — klar, blocker-fri —,
+  #53 Nikon Z30 live-verifikation, M-05 agent-design-svar). `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 23 sammenhængende runder siden tjek #21 (~7.5+ timers periodisk drift). **Til
+  Peter:** uændret anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte, da
+  ingen periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #42) — fra Claude: ren verifikationsrunde, ingen ny drift fundet
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **22 sammenhængende runder**, ~7+ timer) — kunne derfor hverken køre
+  `git status`, teste kode eller køre `py_compile` denne runde; al verifikation er ren
+  kildelæsning. Filen sluttede ved linje 5158 (tjek #41, som stod før tjek #40 i filen — de to
+  runder har åbenbart overlappet i tid; begge er nu læst): ingen nye Codex- eller Peter-entries
+  siden da.
+- **Krydstjekket denne runde (bredere end blot at genlæse tjek #40/#41's konklusion):**
+  - §11 P0/P1/P2 i `RISK_ASSESSMENT_v10.md` mod §J og §M i `GO_LIVE_CHECKLIST_v10.md`: fuldt
+    konsistent, inkl. R19 ↔ M-05/M-02-krydsreferencen (P0.6 nævner defense-in-depth-håndhævelsen
+    korrekt som eneste resterende del, politikken selv er ✅ besluttet).
+  - §10 samlet risikooversigt: R19-rækken matcher §11 P0.6 og M-05 ordret, ingen rester af ældre
+    formuleringer.
+  - G-03/M-06 (Kirkbi/Travbyen-databehandleraftale): de to rækker er indbyrdes konsistente
+    ("delvist lempet", AI/Gemini-eskalering + GPS fortsat ubekræftet nævnt begge steder).
+  - `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md`: uændret, status stadig "Forberedt, IKKE
+    eksekveret — kræver din bekræftelse først".
+  - `SYSTEM_HEALTH_REGISTER.md` HLTH-008: uændret, eneste resterende punkt er stadig den samme
+    live multi-device-rollout-verifikation (bevidst ikke kørt fra periodisk heartbeat, da den
+    ændrer update-state for rigtige enheder).
+  - Ingen nye/ændrede filer fundet i `Dokumentation/` ud over dem allerede kendt fra tidligere
+    runder (fuld filliste gennemgået).
+- **Konklusion:** Intet nyt sikkert at rykke denne runde — samme vurdering som tjek #39/#40.
+  Ingen filer rettet denne runde ud over denne log-entry.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#41 (live multi-device-rollout-test,
+  R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — klar, blocker-fri —,
+  #53 Nikon Z30 live-verifikation, M-05 agent-design-svar). `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 22 sammenhængende runder siden tjek #21 (~7+ timers periodisk drift). **Til
+  Peter:** uændret anbefaling fra tjek #39-#41 om at undersøge sandbox-`useradd`/brugeroprettelsen
+  direkte, da ingen periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #44) — fra Claude: `Claude_Intern_CA_mTLS_Design_2026-07-05.md`s eget statusfelt var stadig "Til godkendelse" — samme docs-lag-drift, denne gang i kildedokumentet selv
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **24 sammenhængende runder**, ~8 timer) — kunne derfor hverken køre
+  `git status`, teste kode eller køre `py_compile` denne runde; al verifikation er ren
+  kildelæsning. Filen sluttede ved linje 5233 (tjek #42, som stod efter tjek #43 i filen —
+  samme overlap-mønster som tidligere runder): ingen nye Codex- eller Peter-entries siden da.
+- **Krydstjekket denne runde:** genlæste hele `Claude_Intern_CA_mTLS_Design_2026-07-05.md` mod
+  tjek #41's rettelse af `RISK_ASSESSMENT_v10.md` §13.3 (samme #52 mTLS-sag). §6 og §10 i selve
+  designdokumentet var allerede korrekt opdateret ("BESLUTTET 2026-07-05 (Peter): Model B", "ALLE
+  BESVARET") — men dokumentets **eget topfelt** (linje 3, statusbadge) og indledende blockquote
+  (linje 8-10) var aldrig rettet dengang beslutningen kom ind: de sagde stadig "Status: Til
+  godkendelse" og "Opgaven kræver et arkitekturvalg (§6) som kun Peter kan træffe ... Ingen kode er
+  rørt i denne omgang" — som om beslutningen fortsat var åben. Samme mønster som §13.3 (tjek #41),
+  §9/§3-optælling (tjek #28), Cloudflare Tunnel-resterne (tjek #33/#36/#43): en beslutning
+  dokumenteret korrekt i detalje-afsnittet, men et resumé-/statusfelt et andet sted i samme (eller
+  et andet) dokument, der aldrig blev synkroniseret. §6-overskriften ("Åbent arkitekturvalg —
+  KRÆVER Peters beslutning") og §9-overskriften ("afhænger af §6-beslutning") havde samme
+  efterladte fremtids-formulering.
+- **Rettet:** Topfelt (linje 3) omskrevet til "Besluttet 2026-07-05 (Peter) — Model B valgt, alle
+  §10-spørgsmål besvaret, ingen blockers tilbage; klar til kodefase". Blockquote (linje 8-10)
+  omskrevet til at forklare at det VAR et åbent designoplæg, men at Peter siden har truffet valget
+  og besvaret opfølgningsspørgsmålene — designet er færdigt og blocker-frit, men ingen kode er rørt
+  endnu (§9 er stadig kun en plan). §6-overskriften ændret til "Arkitekturvalg — BESLUTTET
+  2026-07-05 (Peter): Model B". §9-overskriften ændret til "§6-beslutning truffet, ingen fase
+  startet endnu". Grep efter "Til godkendelse"/"KRÆVER Peters" i filen bekræfter ingen resterende
+  forekomster. Ren tekstrettelse af allerede besluttet arkitektur/status — ingen ny vurdering,
+  ingen kode rørt.
+- **Filer rørt:** `Dokumentation/Claude_Intern_CA_mTLS_Design_2026-07-05.md` (topfelt, blockquote,
+  §6- og §9-overskrifter).
+- **Går videre til:** Uændret liste fra tjek #38-#43 (live multi-device-rollout-test,
+  R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — design og status nu
+  fuldt konsistent alle steder, klar til at starte —, #53 Nikon Z30 live-verifikation, M-05
+  agent-design-svar). `mcp__workspace__bash` fejler fortsat konsekvent — nu 24 sammenhængende
+  runder siden tjek #21 (~8 timers periodisk drift). **Til Peter:** uændret anbefaling om at
+  undersøge sandbox-`useradd`/brugeroprettelsen direkte, da ingen periodisk Claude-runde kan teste
+  eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #45) — fra Claude: endnu et statusfelt fundet og rettet — `Claude_Observability_ITIM_Design_2026-06-29.md` sagde stadig "Til godkendelse" selvom ITIM v1.0 er live siden 2026-06-30
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **25 sammenhængende runder**, ~8+ timer) — kunne derfor hverken køre
+  `git status`, teste kode eller køre `py_compile` denne runde; al verifikation er ren
+  kildelæsning. Filen sluttede ved linje 5272 (tjek #44): ingen nye Codex- eller Peter-entries
+  siden da.
+- **Fundet:** Efter tjek #44's fund af det samme mønster i mTLS-designdokumentet, grep'ede jeg
+  bredt efter "Til godkendelse" og "73 signals" i hele `Dokumentation/`. De to "73 signals"-rester
+  fra tjek #43 er fortsat korrekt rettede (ingen ny drift der). Men
+  `Claude_Observability_ITIM_Design_2026-06-29.md`s topfelt havde stadig
+  **"Status: Til godkendelse (kode følger efter accept)"** — selvom `HANDOVER_LOG.md` (entries
+  2026-06-29 og 2026-06-30 09:40) viser at ITIM/Observability v1.0 blev bygget, wiret ind i
+  headenden, og live-verificeret af Codex allerede 2026-06-30 (8 targets, 34 samples, 12
+  alert-regler, data-fast-probe rettet og grøn) — og siden er hærdet yderligere flere gange. Samme
+  docs-lag-drift-mønster som §13.3 (tjek #41), compliance-dokumenterne (tjek #43) og
+  mTLS-designdokumentet (tjek #44): en beslutning/implementering gennemført i praksis, men et
+  status-/resumé-felt et andet sted i dokumentet aldrig synkroniseret. Dokumentets §13 "Åbne
+  spørgsmål til Peter" havde desuden to spørgsmål (collector-placering: launchd-agent vs. tråd i
+  headend; Mac temp/SMART: sudo-værktøj vs. `psutil`-only) som HANDOVER_LOG-entryen fra 2026-06-29
+  citerer eksplicitte svar på ("Tråd-i-headend nu ..." og punkt 4's "(Valgfrit) ... ellers
+  psutil-only i v1", ingen efterfølgende smartmontools-installation nævnt i Codex' live-verifikation)
+  — dvs. reelt besvaret af selve implementeringen, blot aldrig noteret i dokumentet selv.
+- **Rettet:** Topfeltet (linje 3) omskrevet til "Implementeret og live-verificeret (v1.0 bygget
+  2026-06-29, live-verificeret af Codex 2026-06-30 — se HANDOVER_LOG.md)". §13-overskriften ændret
+  til "Åbne spørgsmål til Peter — AFGJORT af implementeringen (opdateret 2026-07-05, periodisk tjek
+  #45)" med en forklarende note øverst, og de to besvarede spørgsmål har fået en "→ Valgt: ..."-linje
+  hver. Spørgsmål 3 (retention-vinduer) er bevidst IKKE markeret afgjort — ingen eksplicit
+  Peter-bekræftelse fundet i loggen for de konkrete tal, kun at v1 kørte med de foreslåede vinduer
+  under "Peters go on v1 uden at vente". Ren tekstrettelse af allerede gennemført implementering —
+  ingen ny vurdering, ingen kode rørt.
+- **Filer rørt:** `Dokumentation/Claude_Observability_ITIM_Design_2026-06-29.md` (topfelt +
+  §13-overskrift/indhold).
+- **Går videre til:** Uændret liste fra tjek #38-#44 (live multi-device-rollout-test,
+  R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — klar, blocker-fri —,
+  #53 Nikon Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3 retention-vinduer
+  — ingen eksplicit Peter-bekræftelse fundet). `mcp__workspace__bash` fejler fortsat konsekvent —
+  nu 25 sammenhængende runder siden tjek #21 (~8+ timers periodisk drift). **Til Peter:** uændret
+  anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte, da ingen periodisk
+  Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #46) — fra Claude: sidste "Cloudflare Tunnel-cutover"-rest fundet og rettet i `GO_LIVE_CHECKLIST_v10.md`s "go-live i morgen"-svar
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` — nu **26
+  sammenhængende runder**, ~8+ timer) — kunne derfor hverken køre `git status`, teste kode eller
+  køre `py_compile` denne runde; al verifikation er ren kildelæsning. Filen sluttede ved linje 5316
+  (tjek #45): ingen nye Codex- eller Peter-entries siden da.
+- **Fundet:** Grep'ede bredt efter `Til godkendelse` på tværs af hele `Dokumentation/` (opfølgning
+  på tjek #44/#45's mønster) — ingen flere forekomster uden for selve denne log. Grep'ede derefter
+  specifikt efter `Tunnel-cutover`/`cutover.*tunnel` (opfølgning på tjek #33/#36/#38/#43's
+  Cloudflare Tunnel-oprydning) og fandt én overset rest: `GO_LIVE_CHECKLIST_v10.md`s "TILFØJELSE
+  2026-07-04 (nat)"-svar på "go-live i morgen" (linje ~298-300) nævnte stadig "DNS-propagering ved
+  Cloudflare Tunnel-cutover" som en aktiv blocker, samt "nginx/Cloudflare-runbooks" uden
+  præcisering — begge skrevet FØR Peters 2026-07-05-arkitekturbeslutning (direkte nginx på port
+  8443 + DNS-01, ingen Tunnel). Modsat de tidligere fund (mTLS-designdokument, ITIM-designdokument)
+  var dette ikke et helt statusfelt, men en konkret, forældet handlingsplan midt i løbende
+  prosetekst — nemt at overse ved almindelig læsning, kun fanget via målrettet grep.
+- **Rettet:** "Cloudflare Tunnel-cutover" er strikethrough'et med en indskudt rettelses-note (samme
+  konvention som §A's øvrige `~~...~~`-rettelser) der forklarer at det reelle DNS-trin nu er
+  DNS-01-certifikatudstedelse for `backend.timelapse-pro.dk:8443`, ikke et Tunnel-cutover.
+  "nginx/Cloudflare-runbooks" i tjekpunkt (b) er samme sted præciseret til "nginx-port-
+  migrationsrunbooks" med en tilsvarende forklarende note. Ren tekstrettelse af allerede besluttet
+  arkitektur — ingen ny vurdering, ingen kode rørt. Efterfølgende grep efter `Tunnel-cutover` i hele
+  `Dokumentation/` bekræfter ingen resterende forekomster.
+- **Filer rørt:** `Dokumentation/GO_LIVE_CHECKLIST_v10.md` (linje ~298-300, "go-live i morgen"-svar).
+- **Går videre til:** Uændret liste fra tjek #38-#45 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — klar, blocker-fri —,
+  #53 Nikon Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3 retention-vinduer).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 26 sammenhængende runder siden tjek #21
+  (~8+ timers periodisk drift). **Til Peter:** uændret anbefaling om at undersøge sandbox-
+  `useradd`/brugeroprettelsen direkte, da ingen periodisk Claude-runde kan teste eller committe
+  kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #47) — fra Claude: bredere krydstjek, ingen ny drift fundet (ren verifikationsrunde)
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error`) — nu **27
+  sammenhængende runder**, ~8.5+ timer — kunne derfor hverken køre `git status`, teste kode eller
+  køre `py_compile` denne runde; al verifikation er ren kildelæsning/grep. Bekræftede filens
+  slutning ved linje 5350 (tjek #46): ingen nye Codex- eller Peter-entries siden da.
+- **Krydstjekket denne runde (bredere end blot at genlæse forrige tjeks konklusion):**
+  - Grep'ede `Cloudflare` gennem HELE `RISK_ASSESSMENT_v10.md` og `GO_LIVE_CHECKLIST_v10.md` (ikke
+    kun §11/§A som tidligere runder) — alle forekomster er enten allerede korrigerede
+    (strikethrough) eller eksplicit markeret som "kun hvis den valgfrie DNS-proxy-undervariant
+    vælges". Ingen nye rester ud over det tjek #33/#36/#43/#46 allerede har fundet og rettet.
+  - Undersøgte om §2 "Status på tidligere assessments" (linje 44-110, viser bl.a. "HLTH-008 Mangler
+    stadig" og "R09 🔴 Åben") er en overset doc-sync-fejl, da §10/§11 viser R09/HLTH-008 som
+    fremskredne. Konklusion: **ikke en fejl** — §2's overskrift og struktur ("Status juni 2026" /
+    "Fra VIRTUAL_PENTEST_STATUS_2026-05-28" osv.) viser det er et bevidst frosset historisk
+    øjebliksbillede af ældre revisionsrapporters oprindelige fund, ikke et levende statusfelt.
+    Bevidst IKKE ændret.
+  - Krydstjekkede R09 (backup) mellem §4-detaljeafsnit, §10-oversigt og GO_LIVE_CHECKLIST §E
+    (E-01/E-02/E-03/E-07): fuldt konsistent — alle tre steder viser korrekt at rsync-billedbackup-
+    koden er klar men ubekræftet i produktion, og at restore-test/off-site-kopi/RTO-RPO-dokumentation
+    fortsat mangler. Ingen drift fundet.
+  - Genlæste M-05-krydsreferencerne (§11 P0.6, §10 R19, GO_LIVE §M) mod linje ~5071-5073's noter om
+    Peters ubesvarede designspørgsmål (GDPR-punkt, navngivning, lab-DB-investering) — uændret
+    ubesvaret, korrekt afspejlet alle steder.
+- **Udført:** Intet rettet — ingen ny inkonsistens eller drift fundet efter en bredere gennemgang end
+  seneste runder. Ren verifikationsrunde (samme mønster som tjek #29/#39/#40/#42/#45).
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#46 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — klar, blocker-fri —,
+  #53 Nikon Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3 retention-vinduer).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 27 sammenhængende runder siden tjek #21
+  (~8.5+ timers periodisk drift). **Til Peter:** uændret anbefaling om at undersøge sandbox-
+  `useradd`/brugeroprettelsen direkte, da ingen periodisk Claude-runde kan teste eller committe
+  kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #48) — fra Claude: `SYSTEM_HEALTH_REGISTER.md` HLTH-012 (ESLint-baseline) var kommet bagud efter H-02-gaten — samme docs-lag-drift-mønster, denne gang mellem et separat "levende register" og GO_LIVE_CHECKLIST
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **28 sammenhængende runder**, ~9+ timer) — kunne derfor hverken køre
+  `git status`, teste kode eller køre `py_compile` denne runde; al verifikation er ren
+  kildelæsning/grep. Bekræftede filens slutning ved linje 5385 (tjek #47): ingen nye Codex- eller
+  Peter-entries siden da.
+- **Ny vinkel denne runde:** Tidligere runders docs-sync-fund har været internt i
+  `RISK_ASSESSMENT_v10.md`/`GO_LIVE_CHECKLIST_v10.md`/`KRAVREGISTER_og_STATUS_v10.md` eller i et
+  enkelt designdokuments eget statusfelt. Denne runde gennemgik i stedet de mindre besøgte
+  drift-registre for samme mønster: krydstjekkede statusfelter i
+  `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`, `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`,
+  `NODE_AGENT_USER_LAUNCHAGENT_MIGRATION_v1.md`, `BACKUP_RESTORE_TEST_PROCEDURE_v1.md`,
+  `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md` og `RBAC_Remote_Operational_v10.md` — alle
+  fundet konsistente (enten korrekt "ikke eksekveret endnu" eller med eksplicit pointer videre til
+  RISK_ASSESSMENT/KRAVREGISTER for aktuel status, ingen drift). `SYSTEM_HEALTH_REGISTER.md` var
+  derimod drivet: HLTH-012 ("Frontend lint baseline er ikke grøn") stod stadig som **"Status:
+  Åben"** med observationen "`npm run lint` fejler med 197 errors og 8 warnings" — et tal målt
+  2026-05-23, altså fra dokumentets oprindelige "Arbejdsversion 0.1"-gennemgang, over en måned før
+  H-02-arbejdet. `GO_LIVE_CHECKLIST_v10.md` H-02 viser derimod at en ratchet-gate
+  (`timelapse-ui/scripts/eslint-gate.mjs` + `.eslint-baseline.json`, baseline 222 = 204 errors + 18
+  warnings) blev committet/pushet 2026-07-05 (Codex-commit `68805577`) og siden funktionelt
+  verificeret to gange i sandbox (tjek #21 og #34-ish). HLTH-012's egen "Foreslået rettelse"-liste
+  nævnte "Indfør lint baseline som gate, når fejlmængden er bragt ned" som fremtidigt arbejde —
+  gaten findes nu, men uden at fejlmængden er bragt ned (222 > 197, steget siden maj i takt med ny
+  kode). Samme underliggende mønster som tidligere runders fund (en beslutning/implementering
+  gennemført i praksis, et andet dokuments statusfelt aldrig synkroniseret), men her på tværs af to
+  forskellige registre (SYSTEM_HEALTH_REGISTER vs. GO_LIVE_CHECKLIST) i stedet for internt i ét
+  dokument.
+- **Rettet:** HLTH-012 i `SYSTEM_HEALTH_REGISTER.md` omskrevet: statusfelt ændret til "🟡 Delvist
+  løst — ratchet-gate committet/pushet 2026-07-05 (Claude → Codex commit `68805577`), se
+  GO_LIVE_CHECKLIST_v10.md H-02. Fejlmængden selv er ikke reduceret." Observationen omdøbt til
+  "Oprindelig observation (forældet pr. 2026-07-05)" med både det gamle 197-tal (dateret 2026-05-23)
+  og det aktuelle 222-tal (204/18) side om side, samt en eksplicit "tallet er steget, ikke faldet"-
+  bemærkning for at undgå at nogen fejlagtigt læser gate-indførelsen som en fejlreduktion. Tilføjet
+  et "Rettelse (dækker kun risikoen, ikke fejlmængden)"-afsnit der beskriver gate-mekanismen og dens
+  to sandbox-verifikationer med henvisning til HANDOVER_LOG-tidsstempler. Bevarede den oprindelige
+  "Foreslået rettelse"-liste under en ny overskrift "Resterende risiko" og tilføjede to nye punkter
+  (sænk baseline gradvist; bekræft en reel grøn GitHub Actions-kørsel — begge stadig reelt
+  udestående og ikke noget periodisk heartbeat kan udføre selv). Rørte bevidst IKKE den øvre
+  "Test- og verifikationsstatus"-tabel (linje 13, samme 197-tal) — den er en dateret
+  (2026-05-23), utvetydigt historisk snapshot-tabel i samme stil som `RISK_ASSESSMENT_v10.md` §2
+  (jf. tjek #47's konklusion om at den slags snapshots bevidst IKKE skal "rettes" til at afspejle
+  nutiden), og HLTH-012-afsnittet nedenunder er nu det sted hvor aktuel status faktisk læses fra
+  praksis. Ren tekstrettelse — ingen kode rørt, ingen ny risikovurdering.
+- **Filer rørt:** `Dokumentation/SYSTEM_HEALTH_REGISTER.md` (HLTH-012-afsnittet).
+- **Går videre til:** Uændret liste fra tjek #38-#47 (live multi-device-rollout-test,
+  R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — klar, blocker-fri —,
+  #53 Nikon Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3 retention-vinduer).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 28 sammenhængende runder siden tjek #21
+  (~9+ timers periodisk drift). **Til Peter:** uændret anbefaling om at undersøge sandbox-
+  `useradd`/brugeroprettelsen direkte, da ingen periodisk Claude-runde kan teste eller committe
+  kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #49) — fra Claude: `DOKUMENTPAKKE_OVERSIGT_v10.md`s "Kendte uoverensstemmelser"-tabel havde en overset 18443/Cloudflare Tunnel-anbefaling
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **29 sammenhængende runder**, ~9.5+ timer) — kunne derfor hverken
+  køre `git status`, teste kode eller køre `py_compile` denne runde; al verifikation er ren
+  kildelæsning/grep. Bekræftede filens slutning ved linje 5442 (tjek #48): ingen nye Codex- eller
+  Peter-entries siden da.
+- **Ny vinkel denne runde:** Fortsatte tjek #48's spor (mindre besøgte registre) ind i det ene
+  dokument der endnu ikke var grep'et direkte for `18443`/`Cloudflare Access mTLS`-rester:
+  `DOKUMENTPAKKE_OVERSIGT_v10.md`. Bred grep efter `18443|Model A (Cloudflare Access)|197 errors|
+  Cloudflare Access mTLS` på tværs af hele `Dokumentation/` (uden for `Gamle versioner/`) fandt kun
+  allerede kendte/rettede forekomster (HANDOVER_LOG's egne tjek #41/#48-historik,
+  `PORT_AUDIT_og_WEBSITE_v10.md`s bevidste "Codex foreslog oprindeligt 18443"-historiknote,
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`s "der skal stadig ikke være nogen Cloudflare Tunnel i
+  vejen"-formulering, som er korrekt) — undtagen én reel rest.
+- **Fundet:** `DOKUMENTPAKKE_OVERSIGT_v10.md` §"Kendte uoverensstemmelser (historik → beslutning)",
+  række "Porte `80/443`" (linje 38), havde stadig i **"Beslutning/anbefaling"-kolonnen** (ikke kun
+  historik-kolonnen): "Mac Headend-origin flyttes til `127.0.0.1:18443`" — den oprindelige
+  Cloudflare Tunnel-baserede plan Codex foreslog, som Peter eksplicit fravalgte 2026-07-05 til
+  fordel for direkte nginx-eksponering på port 8443 med DNS-01-certifikat (dokumenteret i
+  `PORT_AUDIT_og_WEBSITE_v10.md` §3/§4, og allerede ført igennem `GO_LIVE_CHECKLIST_v10.md`,
+  `RISK_ASSESSMENT_v10.md`, `KRAVREGISTER_og_STATUS_v10.md` m.fl. i tidligere runder — jf.
+  tjek #33/#36/#38/#43/#46). Modsat `RISK_ASSESSMENT_v10.md` §2 (bevidst frosset historisk
+  snapshot, jf. tjek #47) er denne tabels formål netop at pege på den *gældende* beslutning, ikke
+  en historisk antagelse — så dette var reel, aktiv drift, ikke et bevidst snapshot. Samme
+  docs-lag-drift-mønster som tidligere fund, denne gang i selve dokumentpakke-oversigtens egen
+  "hvad er besluttet"-tabel — ironisk nok i det dokument der er tænkt som ny-session-onboarding
+  sammen med `00_START_HER.md`.
+- **Rettet:** Rækkens "Beslutning/anbefaling"-kolonne strikethrough'et med en indskudt
+  rettelses-note (samme konvention som §13.3/GO_LIVE_CHECKLIST §A's tidligere `~~...~~`-rettelser)
+  der forklarer at CrushFTP fortsat ejer 80/443/21/22 på staging/prod, og at backend i stedet
+  eksponeres direkte på port 8443 med DNS-01-certifikat, ingen Cloudflare Tunnel, besluttet
+  2026-07-05, med henvisning til `PORT_AUDIT_og_WEBSITE_v10.md` §3/§4. Ren tekstrettelse af allerede
+  besluttet arkitektur — ingen ny vurdering, ingen kode rørt. Efterfølgende grep efter `18443` i
+  filen bekræfter kun den nu rettede/annoterede forekomst tilbage (ingen ukvalificerede rester).
+  Rørte bevidst IKKE "SFTP port"-rækken (linje 39, `22222`/`12222`) eller §"Samlet status"'s
+  generiske "Port-/proxy-migration væk fra public 80/443"-punkt (linje 65) — begge er fortsat
+  korrekte/tilstrækkeligt generiske, ingen 18443- eller Tunnel-specifik fejlantagelse i dem.
+- **Filer rørt:** `Dokumentation/DOKUMENTPAKKE_OVERSIGT_v10.md` (§"Kendte uoverensstemmelser",
+  "Porte 80/443"-rækken).
+- **Går videre til:** Uændret liste fra tjek #38-#48 (live multi-device-rollout-test,
+  R17-smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — klar, blocker-fri —,
+  #53 Nikon Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3 retention-vinduer,
+  HLTH-012 ESLint-baseline-fejlmængde ikke reduceret). `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 29 sammenhængende runder siden tjek #21 (~9.5+ timers periodisk drift). **Til
+  Peter:** uændret, nu stærkt forstærket anbefaling om at undersøge sandbox-`useradd`/
+  brugeroprettelsen direkte (fejlen har nu varet næsten hele dagen uden afbrydelse) — ingen
+  periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #50) — fra Claude: dækket fire hidtil ureviderede dokumenter for docs-lag-drift, ingen fundet (ren verifikationsrunde)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (`echo`, `wc -l`, `git status --short` — samme `useradd failed: fork/exec /usr/sbin/useradd:
+  input/output error` som ved hvert forsøg siden tjek #21 — nu **30 sammenhængende runder**, ~10
+  timer) — kunne derfor hverken køre `git status`, teste kode eller køre `py_compile` denne runde;
+  al verifikation er ren kildelæsning/grep. Bekræftede filens slutning ved linje 5492 (tjek #49):
+  ingen nye Codex- eller Peter-entries siden da.
+- **Ny vinkel denne runde:** Tjek #46-#49 har efterhånden dækket de fleste centrale dokumenter for
+  Cloudflare Tunnel/18443/port-drift flere gange. For at undgå at gentage samme grund, tjekkede
+  denne runde fire dokumenter der ikke tidligere er nævnt eksplicit som gennemgået i denne log:
+  - `ADMINISTRATORMANUAL_v10.md` — grep for `Cloudflare Tunnel`/`18443`/`197 errors`/`443/80`:
+    ingen forekomster overhovedet. Ren.
+  - `Claude_Intern_CA_mTLS_Design_2026-07-05.md` — grep for `Cloudflare Access`/`Model A`/
+    `Cloudflare Tunnel`: alle forekomster er enten historisk begrundelse for hvorfor Model A blev
+    fravalgt, eller allerede eksplicit strikethrough'et/annoteret ("**afsluttet:** Model B, ingen
+    Cloudflare Access/Tunnel", linje 288/322-323). Ingen uannoterede rester.
+  - `Claude_Observability_ITIM_Design_2026-06-29.md` §13 — læste hele det tidligere flaggede
+    "spørgsmål 3 (retention-vinduer)"-punkt i fuld kontekst: spørgsmål 1+2 er korrekt markeret
+    "AFGJORT af implementeringen" (tjek #45), men spørgsmål 3 ("er 48t rå / 30d 5m / 13mdr 1t
+    passende?") har reelt ALDRIG fået et `→ Valgt:`-svar under sig (modsat spørgsmål 1+2) — dette
+    er altså ikke dokument-drift, men en genuint ubesvaret retention-beslutning, der kræver Peters
+    input. Bekræfter blot at HANDOVER_LOG's egen backlog-formulering ("ingen eksplicit
+    Peter-bekræftelse fundet") er præcis.
+  - `Claude_Kritisk_Statusgennemgang_2026-07-03.md` — dette dokument er dateret 2026-07-03, altså
+    FØR flere senere arkitekturbeslutninger, hvilket gjorde det til en oplagt kandidat for
+    forældede påstande uden korrektionsbanner. Fandt i stedet at dokumentet har sin egen interne
+    "Opsummering af fund og status"-tabel (linje 157-161) der allerede viser alle 5 identificerede
+    P0/P1-fund som rettet/committet/live-verificeret 2026-07-03 — dokumentet er selv-konsistent og
+    kræver ingen opdatering.
+- **Konklusion:** Ingen ny inkonsistens fundet efter denne bredere dækning. Kombineret med
+  tjek #46-#49's tidligere dækning (RISK_ASSESSMENT, GO_LIVE_CHECKLIST, DOKUMENTPAKKE_OVERSIGT,
+  SYSTEM_HEALTH_REGISTER, NGINX_CLOUDFLARE_MIGRATION_LAB, MILJOE_ARKITEKTUR, NODE_AGENT-migration,
+  BACKUP_RESTORE_TEST_PROCEDURE, STALE_CREDENTIAL-runbook, RBAC_Remote_Operational,
+  Timelapse_pro_full_documentation_v10, TimeLapse_Security_Compliance_v10) er nu langt størstedelen
+  af `Dokumentation/`-korpus krydstjekket for dette specifikke drift-mønster uden nye fund — det
+  tyder på at docs-laget efterhånden er konvergeret, og at fremtidige runder med fordel kan bruge
+  mindre tid på gentagne fulde re-scanninger og mere tid på at vente på Peters åbne beslutninger
+  eller (når bash virker igen) faktisk kodetest.
+- **Udført:** Intet rettet — ingen drift fundet. Ren verifikationsrunde (samme mønster som
+  tjek #29/#39/#40/#42/#45/#47).
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#49 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials, §3-optælling/"Delvist"-konvention, opgave #52's kodefase — klar, blocker-fri —,
+  #53 Nikon Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3 retention-vinduer
+  — nu bekræftet en genuint ubesvaret Peter-beslutning, ikke doc-drift —, HLTH-012 ESLint-baseline-
+  fejlmængde ikke reduceret). `mcp__workspace__bash` fejler fortsat konsekvent — nu 30
+  sammenhængende runder siden tjek #21 (~10 timers periodisk drift). **Til Peter:** uændret, nu
+  et helt arbejdsdøgns anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte —
+  ingen periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #51) — fra Claude: ren re-verifikationsrunde, ingen ny drift, tre kendte åbne punkter genbekræftet uændrede
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **31 sammenhængende runder, ~10,3 timer**) — kunne derfor hverken
+  køre `git status`, teste kode eller køre `py_compile` denne runde; al verifikation er ren
+  kildelæsning/grep. Bekræftede filens slutning ved linje 5492 (tjek #50): ingen nye Codex- eller
+  Peter-entries siden da.
+- **Tilgang denne runde:** Fulgte tjek #50's egen anbefaling om at bruge mindre tid på gentagne
+  fulde dokument-scanninger og i stedet tjekke om nogen af de allerede kendte, åbne baglog-punkter
+  (§11/§J) er blevet besvaret af Peter siden sidst, uden om HANDOVER_LOG selv (fx direkte i
+  kildedokumentet). Tre konkrete stikprøver:
+  1. `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md` linje 4: status er fortsat uændret
+     "Forberedt, IKKE eksekveret — kræver din bekræftelse først." — P0 #5 afventer stadig Peter.
+  2. `KRAVREGISTER_og_STATUS_v10.md` §3: bruger stadig konsekvent "✅ Delvist" (ikke "🟡 Delvist")
+     i alle rækker, og Total-linjen (50/21/15/86) er uændret siden tjek #28 — den kendte
+     "✅ Delvist" vs. "🟡 Delvist"-konventionsbeslutning er stadig ikke truffet af Peter. Bevidst
+     IKKE forsøgt punktrettet denne runde (tjek #28 flaggede eksplicit at en spot-rettelse uden
+     forudgående konventionsbeslutning risikerer at gøre tabellen mere, ikke mindre, inkonsistent
+     — samme konklusion står ved magt).
+  3. `Claude_Observability_ITIM_Design_2026-06-29.md` §13 spørgsmål 3 (retention-vinduer):
+     stadig intet `→ Valgt:`-svar under spørgsmålet (bekræftet igen efter tjek #50's fund).
+- **Konklusion:** Ingen ny doc-drift fundet, og ingen af de tre stikprøver viste et overset
+  Peter-svar. Alle tre er derfor fortsat korrekt kategoriseret som "afventer Peter", ikke som
+  noget en periodisk Claude-runde kan lukke selv. Kombineret med tjek #50's konklusion om at
+  docs-laget er konvergeret, tyder dette på at den mest værdifulde brug af kommende periodiske
+  runder nu er: (a) løbende tjekke om Peter/Codex har svaret på de udestående spørgsmål, (b) med
+  det samme udnytte `mcp__workspace__bash`, når/hvis den kommer tilbage, til at teste og committe
+  opgave #52's klargjorte kodefase, snarere end endnu flere fulde re-scanninger.
+- **Udført:** Intet rettet — ingen drift fundet, alle tre stikprøver bekræftet uændrede.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#50 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials — genbekræftet uændret afventer Peter —, §3-optælling/"Delvist"-konvention —
+  genbekræftet uændret afventer Peter —, opgave #52's kodefase — klar, blocker-fri —, #53 Nikon
+  Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3 retention-vinduer —
+  genbekræftet uændret afventer Peter —, HLTH-012 ESLint-baseline-fejlmængde ikke reduceret).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 31 sammenhængende runder siden tjek #21
+  (~10,3 timers periodisk drift). **Til Peter:** uændret anbefaling om at undersøge sandbox-
+  `useradd`/brugeroprettelsen direkte — ingen periodisk Claude-runde kan teste eller committe
+  kode, før det er løst. Derudover: de tre punkter ovenfor (stale credential-runbook, §3-
+  optælling-konvention, ITIM retention-vinduer) afventer alle konkret et kort svar fra dig, ikke
+  mere agent-arbejde.
+
+### Handover 2026-07-05 (periodisk tjek #52) — fra Claude: undersøgte en plausibel R19/P0-drift-hypotese, afkræftede den (ingen rettelse); bash stadig nede
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **32 sammenhængende runder, ~10,7 timer**) — kunne derfor hverken
+  køre `git status`, teste kode eller committe denne runde; al verifikation er ren
+  kildelæsning/grep. Bekræftede filens slutning ved linje 5588 (tjek #51): ingen nye Codex- eller
+  Peter-entries siden da.
+- **Ny vinkel denne runde:** I stedet for endnu en bred dokument-rescan, krydstjekkede jeg en
+  konkret, plausibel drift-hypotese jeg selv fik ved at læse §10/§11 sammen: `RISK_ASSESSMENT_v10.md`
+  §10 viser R19 nedjusteret til **🟡 5** ("Nedjusteret samme dag — Peter har bekræftet permanent
+  nul-adgang-politik ordret"), mens §11 P0-listen (punkt 6) stadig eksplicit holder R19 i den
+  røde 🔴 P0-kategori. Ved første øjekast lignede det samme "docs-lag-drift"-mønster som tjek
+  #33/#37/#41 tidligere har fundet og rettet (score nedjusteret, men kategori-placering glemt).
+  **Konklusion efter fuld læsning: IKKE en fejl.** §11 punkt 6's egen tekst forklarer eksplicit
+  hvorfor det bevidst forbliver i P0 på trods af den lave score: "bør behandles som gældende FRA
+  NU, ikke først ved cutover, da maskinen allerede kører live kundedata via CrushFTP/legacy-
+  systemet" — dvs. P0/P1/P2-kategorien i §11 er en selvstændig "blokerer-for-produktion"-vurdering,
+  ikke en ren spejling af §10's numeriske risikoscore (flere andre P0-punkter, fx R09/R12/R13, har
+  også kun 🟠/🟡-score i §10, aldrig 🔴 — den farve bruges slet ikke i den nuværende §10-tabel).
+  §10 linje 682 ("R19 er nedjusteret men ikke fuldt lukket") og `GO_LIVE_CHECKLIST_v10.md` §J
+  række M (M-05 defense-in-depth stadig blokerende, M-02-politik ✅ bekræftet) er indbyrdes
+  konsistente med dette. Ingen rettelse foretaget — noteret her for at spare en fremtidig runde
+  for at genopdage og fejlagtigt "rette" den samme, i virkeligheden korrekte, sondring.
+- **Udført:** Intet rettet — hypotese undersøgt og afkræftet efter fuld kontekstlæsning, ingen
+  reel drift fundet.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#51 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials — afventer Peter —, §3-optælling/"Delvist"-konvention — afventer Peter —, opgave
+  #52's kodefase — klar, blocker-fri, men auth-nær og utestet uden bash bør stadig ikke startes
+  ublokeret —, #53 Nikon Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3
+  retention-vinduer — afventer Peter —, HLTH-012 ESLint-baseline-fejlmængde ikke reduceret).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 32 sammenhængende runder siden tjek #21
+  (~10,7 timers periodisk drift). **Til Peter:** uændret anbefaling om at undersøge sandbox-
+  `useradd`/brugeroprettelsen direkte — ingen periodisk Claude-runde kan teste eller committe
+  kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #53) — fra Claude: §11-prioritetsliste linje-for-linje krydstjekket mod dokumenthistorik/log, ingen drift fundet; bash stadig nede (33. runde)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **33 sammenhængende runder, ~11 timer**) — kunne derfor hverken køre
+  `git status`, teste kode eller committe denne runde; al verifikation er ren kildelæsning/grep.
+  Læste de sidste ~150 linjer af HANDOVER_LOG.md: ingen nye Codex- eller Peter-entries siden
+  tjek #52 (linje 5590–5627) — intet nyt at reagere på.
+- **Denne runde:** Krydstjekkede hele `RISK_ASSESSMENT_v10.md` §11 (den prioriterede
+  risikobehandlingsplan, P0/P1/P2) linje for linje mod §12-dokumenthistorikken og de seneste
+  ~15 HANDOVER_LOG-entries. Alle punkter — R19/nul-agent-adgang, backup/restore (R09), DPIA/
+  retention (R12), node-agent (R13), HMAC/stale credentials, MFA/CA-mTLS-designstatus (P1.2),
+  Nikon-config-model (R14), R06/HLTH-008 rollout-flush-fix, H-02 ESLint-ratchet-gate,
+  disk-kryptering, off-site backup, GDPR-adgangslog (nu ✅), SAST-triage (nu afsluttet),
+  secrets/Keychain, AI-governor og R17 debug/lab mode — matcher nøjagtigt den seneste kendte
+  status i loggen. Ingen §11-vs-log-uoverensstemmelse fundet denne gang (i modsætning til
+  tjek #24/#33/#36/#41/#43/#46/#48/#49, som hver fandt en reel drift af denne type). Tjekkede
+  desuden eksplicit `Claude_Observability_ITIM_Design_2026-06-29.md`s spørgsmål 3
+  (retention-vinduer 48t/30d/13mdr) — bekræftet fortsat reelt ubesvaret af Peter (spørgsmål 1
+  og 2 har begge et `→ Valgt:`-svar, spørgsmål 3 har det ikke), så "afventer Peter" i
+  udestående-listen er korrekt og ikke en stale note.
+- **Udført:** Intet rettet — ren verifikationsrunde, ingen reel drift fundet.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#52 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning, P0 #5 HMAC/stale
+  credentials — afventer Peter —, §3-optælling/"Delvist"-konvention — afventer Peter —, opgave
+  #52's kodefase — klar, blocker-fri, men auth-nær og utestet uden bash bør stadig ikke startes
+  ublokeret —, #53 Nikon Z30 live-verifikation, M-05 agent-design-svar, ITIM §13 spørgsmål 3
+  retention-vinduer — afventer Peter, nu bekræftet fortsat ubesvaret —, HLTH-012
+  ESLint-baseline-fejlmængde ikke reduceret). `mcp__workspace__bash` fejler fortsat konsekvent —
+  nu 33 sammenhængende runder siden tjek #21 (~11 timers periodisk drift). **Til Peter:**
+  uændret anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte — ingen
+  periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #54) — fra Claude: R06 device-decommission-gap'et fik en rådgivende SABSA/ISO27001-anbefaling (mulighed c), for at afkorte en flere-ugers-gammel afventende Peter-beslutning; bash stadig nede (34. runde)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen (samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert forsøg siden
+  tjek #21 — nu **34 sammenhængende runder, ~11,3 timer**) — kunne derfor hverken køre
+  `git status`, teste kode eller committe denne runde; al verifikation er ren kildelæsning/grep.
+  Læste de sidste ~115 linjer af HANDOVER_LOG.md: ingen nye Codex- eller Peter-entries siden
+  tjek #53 (linje 5628–5660) — intet nyt at reagere på.
+- **Ny vinkel denne runde:** Tjek #47/#50/#51/#53 har konkluderet at ren dokument-rescan
+  efterhånden konvergerer uden nye fund, og at de resterende åbne punkter enten kræver live-adgang
+  eller en Peter-beslutning. I stedet for endnu en rescan valgte jeg denne runde at reducere
+  friktionen på ét af de længst-ventende Peter-beslutningspunkter: device-decommission-gap'et i
+  R06 (`RISK_ASSESSMENT_v10.md`), som har stået åbent siden tjek #16 (2026-07-05, samme dag) med
+  tre løsningsmuligheder listet, men ingen anbefaling — Peter skulle selv veje dem uden
+  beslutningsstøtte.
+- **Udført (kun dokumentation, ingen kode rørt):** Tilføjede en klart mærket, rådgivende
+  anbefaling til R06 (mulighed (c): "delvist bekræftet"-markering i stedet for (a) permanent
+  blokering eller (b) nuværende adfærd), begrundet ud fra SABSA-risikoafvejning og ISO/IEC 27001
+  A.8.32 (change management kræver et retvisende billede af udrulningsstatus): (a) risikerer at
+  låse en rollout for evigt uden manuelt indgreb — uforholdsmæssigt, da et decommissioned device
+  pr. definition ikke længere er en del af den aktive flåde; (b) skaber et falsk "fuldt
+  bekræftet"-signal i rollup'en; (c) bevarer et retvisende, ikke-blokerende audit-signal og har
+  lavest implementeringsomkostning af de to sikre valg. Gjorde eksplicit i teksten at dette KUN er
+  beslutningsstøtte — Peter træffer stadig selve valget, ingen af de tre er implementeret. Spejlet
+  kort i `GO_LIVE_CHECKLIST_v10.md` §J-rækken (henviser til R06). §12 dokumenthistorik-tabel fik
+  en ny linje for denne runde.
+- **Verifikation:** Ren dokumentationsændring — ingen `.py`-filer rørt, så ingen
+  `py_compile`/pytest relevant. Læste begge ændrede afsnit igennem én gang til efter redigering:
+  bekræftet at den nye tekst ikke foregriber eller modsiger Peters valgfrihed, og at de tre
+  oprindelige muligheder (a)/(b)/(c) fra tjek #16 forbliver uændrede og fuldt læsbare.
+- **Ikke gjort — bevidst:** Ingen af de tre løsninger implementeret i kode (kræver stadig Peters
+  valg). Ingen commit/push (Peter/Codex committer selv, se nedenfor).
+- **Codex/Peter: kør venligst når I har et vindue (ren dokumentation, ufarlig at merge når som
+  helst):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git diff Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/HANDOVER_LOG.md
+  git add Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/GO_LIVE_CHECKLIST_v10.md Dokumentation/HANDOVER_LOG.md
+  git commit -m "docs: add advisory recommendation for R06 device-decommission gap (periodic check #54)"
+  git push
+  # Ingen deploy/genstart nødvendig — ren dokumentation.
+  ```
+  **Peter:** hvis anbefalingen (mulighed c) giver mening, er et kort "enig, brug (c)" nok til at
+  en efterfølgende runde (med bash) kan implementere den i kode.
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/GO_LIVE_CHECKLIST_v10.md`.
+- **Går videre til:** Uændret liste fra tjek #38-#53 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — nu med en konkret
+  anbefaling klar til hurtigt svar —, P0 #5 HMAC/stale credentials — afventer Peter —,
+  §3-optælling/"Delvist"-konvention — afventer Peter —, opgave #52's kodefase — klar,
+  blocker-fri, men bør ikke startes ublokeret uden bash —, #53 Nikon Z30 live-verifikation, M-05
+  agent-design-svar, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —, HLTH-012
+  ESLint-baseline-fejlmængde ikke reduceret). `mcp__workspace__bash` fejler fortsat konsekvent —
+  nu 34 sammenhængende runder siden tjek #21 (~11,3 timers periodisk drift). **Til Peter:**
+  uændret anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte — ingen
+  periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #56) — fra Claude: HLTH-011 (`SYSTEM_HEALTH_REGISTER.md`) var en 2-måneders-gammel stale "Åben"-status for en fejl der reelt var rettet i kode allerede før 2026-05-28; bash stadig nede (36. runde)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved to gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **36 sammenhængende runder, ~11,9 timer**) — kunne derfor hverken
+  køre `git status`, teste kode eller committe denne runde; al verifikation er ren
+  kildelæsning/grep. Læste linje 5628–5755 (tjek #53–#55): ingen nye Codex- eller Peter-entries
+  siden tjek #55 — intet nyt at reagere på. Krydstjekkede derefter `RISK_ASSESSMENT_v10.md` §11 og
+  `GO_LIVE_CHECKLIST_v10.md` §J igen linje for linje — begge stemmer stadig fuldt overens med
+  tjek #53–#55's fulde audit, ingen ny §11-vs-log-uoverensstemmelse fundet.
+- **Ny vinkel denne runde:** I stedet for endnu en bred §11/§J-rescan, kiggede jeg på
+  `SYSTEM_HEALTH_REGISTER.md` (dateret 2026-05-23, aldrig systematisk gennemgået af de tidligere
+  55 runder ud over enkeltpunkterne HLTH-008/-012/-015). Fandt HLTH-011 ("`UpdatesPage` har dublet
+  filter-key", P2) stod som **Status: Åben**, med evidens-henvisning til `UpdatesPage.tsx:181`.
+  Direkte kildelæsning af filens nuværende `FILTERS`-array (linje 1145–1153) viser kun ét
+  `deployed`-element — ingen dublet. Linje 181 i dag er en helt urelateret interface-linje
+  (`size_bytes`), hvilket bekræfter at filen er vokset betydeligt siden fundet blev noteret.
+  Krydstjek mod `RISK_ASSESSMENT_v10.md` §2 viste at den DER allerede har noteret "HLTH-011
+  Duplicate filter key — ✅ Løst" i lang tid, og det ældre
+  `Gamle versioner/VIRTUAL_PENTEST_STATUS_2026-05-28.md` bekræfter eksplicit "FILTERS har ikke
+  længere dublet `deployed`" — dvs. selve kode-rettelsen fandtes allerede før 2026-05-28.
+  `SYSTEM_HEALTH_REGISTER.md` var altså det ene tilbageværende dokument der stadig viste "Åben" —
+  samme docs-lag-drift-mønster som tidligere fundet og rettet i RISK_ASSESSMENT/GO_LIVE/
+  KRAVREGISTER (tjek #24/#33/#36/#41/#43/#46/#48/#49), blot denne gang i et register der ikke har
+  været en del af de gentagne §11/§J-rescans.
+- **Udført (kun dokumentation, ingen kode rørt):** `SYSTEM_HEALTH_REGISTER.md` HLTH-011 opdateret
+  fra "Åben" til "✅ Løst" med fuld verifikationsbegrundelse (kildecitat, kryds-reference til
+  RISK_ASSESSMENT §2 og VIRTUAL_PENTEST_STATUS_2026-05-28.md). Den tilhørende ældre "Foreslået
+  første rettelsespakke"-linje (punkt 2, "fjern duplicate `deployed` filter") fik en
+  streget-igennem-note der peger til HLTH-011, så de to steder i samme dokument ikke længere
+  modsiger hinanden.
+- **Verifikation:** Ren dokumentationsændring i ét .md-fund, ingen `.py`/`.tsx`-filer rørt, så
+  ingen `py_compile`/`tsc`/pytest relevant. Bekræftelsen selv er baseret på direkte kildelæsning af
+  den faktiske, nuværende `UpdatesPage.tsx` (ikke kun dokument-krydsreference) — så konklusionen
+  "ingen dublet i dag" er verificeret mod koden, ikke kun mod andre dokumenters påstande.
+- **Ikke gjort — bevidst:** Rørte ikke HLTH-011's søsterpunkt i "Foreslået første
+  rettelsespakke" ud over den strøgne note (punkt 1/3/4 i samme liste er urelaterede og ikke
+  undersøgt denne runde). Ingen commit/push (Peter/Codex committer selv).
+- **Codex/Peter: kør venligst når I har et vindue (ren dokumentation, ufarlig at merge når som
+  helst):**
+  ```bash
+  cd /Users/peter/projects/timelapse-pro
+  git diff Dokumentation/SYSTEM_HEALTH_REGISTER.md
+  git add Dokumentation/SYSTEM_HEALTH_REGISTER.md
+  git commit -m "docs: mark HLTH-011 (duplicate filter key) as resolved — stale status, fix predates 2026-05-28 (periodic check #56)"
+  git push
+  # Ingen deploy/genstart nødvendig — ren dokumentation, ingen kode rørt.
+  ```
+- **Filer rørt:** `Dokumentation/SYSTEM_HEALTH_REGISTER.md`.
+- **Går videre til:** Uændret liste fra tjek #38-#55 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peters ja/nej
+  til tjek #54's mulighed (c) —, P0 #5 HMAC/stale credentials — afventer Peter —,
+  §3-optælling/"Delvist"-konvention — afventer Peter —, opgave #52's kodefase og M-05's
+  AgentPrincipal-trin — begge klar/blocker-fri på designniveau, men bør ikke startes uden bash —,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline-fejlmængde ikke reduceret). `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 36 sammenhængende runder siden tjek #21 (~11,9 timers periodisk drift). **Til
+  Peter:** uændret anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte — ingen
+  periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #55) — fra Claude: ren verifikationsrunde, ingen ny drift fundet; bash stadig nede (35. runde)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen ved tre gentagne
+  forsøg (samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som ved hvert
+  forsøg siden tjek #21 — nu **35 sammenhængende runder, ~11,6 timer**) — kunne derfor hverken
+  køre `git status`, teste kode eller committe denne runde; al verifikation er ren
+  kildelæsning/grep. Læste linje 5628–5717 (tjek #53–#54): ingen nye Codex- eller Peter-entries
+  siden tjek #54 — intet nyt at reagere på.
+- **Denne runde:** Gennemgik `RISK_ASSESSMENT_v10.md` §11 (P0/P1/P2) og §13.3 samt
+  `GO_LIVE_CHECKLIST_v10.md` §J linje for linje igen — begge stemmer stadig fuldt overens med
+  tjek #53's fulde audit og tjek #54's R06-tilføjelse, ingen ny §11-vs-log-uoverensstemmelse
+  fundet. Fulgte derefter tre konkrete, navngivne udestående punkter op med friske øjne i stedet
+  for endnu en bred rescan: (1) `STALE_CREDENTIAL_TL-DCA63234D813_RUNBOOK_v1.md` — stadig
+  uændret "Forberedt, IKKE eksekveret", ingen Peter-bekræftelse tilføjet siden natten mellem
+  2026-07-04/05; (2) C-03 (super_admin-password ændret fra default) — bekræftede at dette
+  korrekt forbliver en ren manuel-bekræftelses-opgave (kræver et faktisk login-forsøg mod en
+  live instans), ikke en dokument-drift Claude kan løse statisk; (3) M-05
+  (agent/service-principal defense-in-depth, R19) — genlæste Codex' forslag og mit eget svar
+  (linje 4424–4503): den grundlæggende forudsætning jeg selv rejste dengang (reelt separat
+  lab/rd-instans, ikke kun en env-flag) er siden dækket af `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`
+  (3 separate fysiske maskiner, rd/staging/prod-terminologi accepteret af Codex) — men selve
+  `AgentPrincipal`/`AgentToken`/middleware-håndhævelsen (trin 2-5) er fortsat 100% ukodet, og bør
+  ikke påbegyndes uden bash (auth-nær, kræver test). Ingen af de tre punkter gav anledning til en
+  rettelse — alle er korrekt markeret som blokeret på enten Peter eller live/bash-adgang, ikke på
+  dokument-drift.
+- **Udført:** Intet rettet — ren verifikationsrunde, ingen reel drift fundet.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#54 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peters
+  ja/nej til tjek #54's mulighed (c) —, P0 #5 HMAC/stale credentials — afventer Peter —,
+  §3-optælling/"Delvist"-konvention — afventer Peter —, opgave #52's kodefase og M-05's
+  AgentPrincipal-trin — begge klar/blocker-fri på designniveau, men bør ikke startes uden bash —,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline-fejlmængde ikke reduceret). `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 35 sammenhængende runder siden tjek #21 (~11,6 timers periodisk drift). **Til
+  Peter:** uændret anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte — ingen
+  periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #57) — fra Claude: ren verifikationsrunde, ingen ny drift fundet; bash-fejlen bekræftet uafhængigt fra en helt frisk scheduled-task-session
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede ved to gentagne
+  forsøg med samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som alle
+  forudgående runder siden tjek #21 — kunne derfor hverken køre `git status`, teste kode eller
+  committe denne runde; al verifikation er ren kildelæsning/grep. **Bemærk:** denne konkrete
+  körsel er en helt frisk, uafhængig scheduled-task-invokation (ikke en fortsættelse af samme
+  agent-session som tjek #21-#56) — at den rammer nøjagtig samme `useradd`-fejl bekræfter at
+  problemet sidder i selve sandbox-miljøets brugeropsætning på tværs af sessioner, ikke i en
+  enkelt hængende proces. Læste linje 5628-5815 (tjek #53-#56): ingen nye Codex- eller
+  Peter-entries siden tjek #56 — intet nyt at reagere på.
+- **Denne runde:** I stedet for endnu en fuld §11/§J-rescan (tjek #50/#56 har allerede
+  konkluderet at docs-laget er konvergeret), grep'ede jeg de to dokumenter der ikke tidligere er
+  nævnt eksplicit som gennemgået i denne log for de kendte drift-mønstre (`18443`/`Cloudflare
+  Tunnel`/`Cloudflare Access`, `Til godkendelse`, `HLTH-011`/`HLTH-012`/`197 errors`/`duplicate
+  deployed`, `Model A`): `SERVICES_OG_DRIFT_kilde_til_sandhed.md` og `00_START_HER.md`. Begge har
+  allerede korrekt, ikke-drivet sprog — `SERVICES_OG_DRIFT` siger eksplicit "staging/prod bruger
+  IKKE dette mønster... backend kører i stedet direkte på port 8443 (ikke Cloudflare Tunnel)", og
+  `00_START_HER.md` siger "direkte nginx-eksponering — IKKE Cloudflare Tunnel". Ingen af de to
+  havde nogen af de øvrige søgemønstre. En bredere `Dokumentation`-wide grep efter `HLTH-011|
+  HLTH-012|197 errors|duplicate.*deployed` og `Model A|Cloudflare Access mTLS` fandt kun
+  forekomster i `HANDOVER_LOG.md`, `SYSTEM_HEALTH_REGISTER.md`, `RISK_ASSESSMENT_v10.md`,
+  `Claude_Intern_CA_mTLS_Design_2026-07-05.md` og `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` — alle
+  allerede gennemgået/rettet i tidligere runder (tjek #44/#48/#49/#56).
+- **Konklusion:** Ingen ny doc-drift fundet. To yderligere, hidtil ukrydstjekkede dokumenter er nu
+  bekræftet rene, hvilket yderligere understøtter tjek #50/#56's konklusion om at docs-laget er
+  konvergeret. Den mest værdifulde information denne runde er ikke et docs-fund, men bekræftelsen
+  af at bash-fejlen er session-uafhængig (se ovenfor) — det udelukker "genstart agent-processen"
+  som en mulig løsning og peger entydigt på selve sandbox-/useradd-opsætningen.
+- **Udført:** Intet rettet — ingen drift fundet. Ren verifikationsrunde.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#56 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peters ja/nej
+  til tjek #54's mulighed (c) —, P0 #5 HMAC/stale credentials — afventer Peter —,
+  §3-optælling/"Delvist"-konvention — afventer Peter —, opgave #52's kodefase og M-05's
+  AgentPrincipal-trin — begge klar/blocker-fri på designniveau, men bør ikke startes uden bash —,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline-fejlmængde ikke reduceret). `mcp__workspace__bash` fejler fortsat
+  konsekvent, nu bekræftet på tværs af mindst to uafhængige agent-sessioner (den periodiske
+  tjek-kæde #21-#56 og denne friske scheduled-task-kørsel). **Til Peter:** forstærket anbefaling —
+  fejlen er ikke et enkelt-session-artefakt, den sidder i selve sandbox-brugeropsætningen
+  (`useradd`) og bør undersøges direkte, uafhængigt af hvilken agent-proces der kører. Ingen
+  periodisk Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #58) — fra Claude: to yderligere hidtil ureviderede v10-dokumenter grep-tjekket, ingen drift fundet; bash stadig nede
+
+- **Kontekst:** Periodisk 20-minutters-tjek (frisk scheduled-task-session, ingen hukommelse om
+  tjek #1-#57). `mcp__workspace__bash` fejlede igen ved gentagne forsøg med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som alle forudgående runder
+  siden tjek #21 — kunne derfor hverken køre `git status`, teste kode eller committe denne runde;
+  al verifikation er ren kildelæsning/grep. Læste linje 5628-5858 (tjek #53-#57): ingen nye Codex-
+  eller Peter-entries siden tjek #57 — intet nyt at reagere på.
+- **Denne runde:** Listede alle `.md`-filer i `Dokumentation/` (uden for `Gamle versioner/`) og
+  identificerede at et betydeligt antal aktive v10/v1-dokumenter aldrig eksplicit er nævnt som
+  gennemgået i denne log ud over enkeltpunkter (bl.a. `PORT_AUDIT_og_WEBSITE_v10.md`,
+  `Timelapse_pro_full_documentation_v10.md`, `RBAC_Remote_Operational_v10.md`,
+  `System_Inventory_v10.md`, `TimeLapse_Security_Compliance_v10.md`, `BRUGERMANUAL_v10.md`,
+  `ADMINISTRATORMANUAL_v10.md` m.fl.). Grep'ede hele `Dokumentation/`-mappen (undtaget
+  `Gamle versioner/`) for de kendte drift-mønstre (`18443`/`Cloudflare Tunnel`/`Cloudflare Access`,
+  `Til godkendelse`, `HLTH-011`/`HLTH-012`/`197 errors`/`duplicate.*deployed`, `Model A`) for at se
+  om nogen af de ureviderede filer indeholder en glemt reference. To yderligere aktive filer
+  matchede (udover de allerede kendte/rettede): `PORT_AUDIT_og_WEBSITE_v10.md` og
+  `Timelapse_pro_full_documentation_v10.md`. Læste begge fund i fuld kontekst: `PORT_AUDIT_og_
+  WEBSITE_v10.md` er selve kildedokumentet der korrekt beskriver Cloudflare Tunnel-historikken og
+  -korrektionen (eksplicit "KORREKTION 2026-07-05" med begrundelse, 18443 nævnt kun som Codex'
+  oprindelige, droppede forslag) — ingen drift. `Timelapse_pro_full_documentation_v10.md` har
+  allerede en tydelig "⚠️ KORREKTION 2026-07-05 (Claude) — SUPERSEDED"-advarsel øverst i dokumentet,
+  der eksplicit dækker alle nedenstående Cloudflare Tunnel/18443-referencer (Del 2-9) som forældede
+  — dvs. korrektionen er allerede til stede, resten af dokumentets krop er bevidst urørt historik
+  under advarslen, ikke en glemt rettelse. Ingen af de øvrige ureviderede filer (`RBAC_Remote_
+  Operational_v10.md`, `System_Inventory_v10.md`, `TimeLapse_Security_Compliance_v10.md` m.fl.)
+  matchede nogen af søgemønstrene.
+- **Udført:** Intet rettet — ingen ny drift fundet. Ren verifikationsrunde, men med bredere
+  dokumentdækning end tjek #57 (to yderligere filer nu bekræftet rene/korrekte).
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#57 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peters ja/nej
+  til tjek #54's mulighed (c) —, P0 #5 HMAC/stale credentials — afventer Peter —,
+  §3-optælling/"Delvist"-konvention — afventer Peter —, opgave #52's kodefase og M-05's
+  AgentPrincipal-trin — begge klar/blocker-fri på designniveau, men bør ikke startes uden bash —,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline-fejlmængde ikke reduceret). Tilføjer én ny, lav-prioritets opfølgning:
+  et resterende korpus af ~15-20 aktive dokumenter (bl.a. `BRUGERMANUAL_v10.md`,
+  `ADMINISTRATORMANUAL_v10.md`, `TimeLapse_Edge_Runbook_v10.md`, `TimeLapse_Configuration_
+  Guide_v10.md`, `Update_Flow_v10.md`, `Installationsguide_v10.md`, `TimeLapse_Roadmap_v10.md`,
+  `AGGREGATED_REQUIREMENTS_UPDATE_PROVISIONING.md`) er endnu ikke grep-tjekket for de kendte
+  drift-mønstre eller læst i fuld kontekst af nogen periodisk runde — kandidat til næste rundes
+  "ny vinkel" hvis §11/§J-rescans fortsat konvergerer uden fund. `mcp__workspace__bash` fejler
+  fortsat konsekvent — endnu en runde i den uafbrudte kæde siden tjek #21. **Til Peter:** uændret
+  anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte — ingen periodisk
+  Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #59) — fra Claude: tjek #58's kandidatliste (8 resterende dokumenter) grep-tjekket og fundet ren; §11/§J stadig fuldt konvergeret; bash stadig nede
+
+- **Kontekst:** Periodisk 20-minutters-tjek (frisk scheduled-task-session, ingen hukommelse om
+  tjek #1-#58). `mcp__workspace__bash` fejlede ved tre gentagne forsøg med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` som alle forudgående runder
+  siden tjek #21 — kunne derfor hverken køre `git status`, teste kode eller committe denne runde;
+  al verifikation er ren kildelæsning/grep. Læste linje 5750-5907 (tjek #55-#58): ingen nye
+  Codex- eller Peter-entries siden tjek #58 — intet nyt at reagere på.
+- **Denne runde:** Fulgte direkte op på tjek #58's konkrete forslag til "ny vinkel": grep'ede de
+  8 hidtil ureviderede aktive dokumenter (`BRUGERMANUAL_v10.md`, `ADMINISTRATORMANUAL_v10.md`,
+  `TimeLapse_Edge_Runbook_v10.md`, `TimeLapse_Configuration_Guide_v10.md`, `Update_Flow_v10.md`,
+  `Installationsguide_v10.md`, `TimeLapse_Roadmap_v10.md`,
+  `AGGREGATED_REQUIREMENTS_UPDATE_PROVISIONING.md`) for de kendte drift-mønstre
+  (`18443`/`Cloudflare Tunnel`/`Cloudflare Access`, `Til godkendelse`,
+  `HLTH-011`/`HLTH-012`/`197 errors`/`duplicate.*deployed`, `Model A`) — ingen match i nogen af de
+  8 filer (bekræftet at grep faktisk ramte filerne ved en kontrol-søgning efter et kendt ord).
+  Genlæste derefter `RISK_ASSESSMENT_v10.md` §11 (P0/P1/P2, linje 698-888 inkl. §12-historik og
+  §13) og `GO_LIVE_CHECKLIST_v10.md` §J (linje 275-301) linje for linje — begge stemmer fuldt
+  overens med den allerede kendte, uændrede blocker-liste (§11/§J-laget har nu konvergeret uden
+  nye fund i mindst tjek #50, #53, #56 og denne runde).
+- **Konklusion:** Ingen ny doc-drift fundet. Med denne runde er samtlige aktive v10/v1-dokumenter
+  i `Dokumentation/` (uden for `Gamle versioner/`) nu eksplicit grep- eller fuldtekst-tjekket
+  mindst én gang på tværs af tjek #38-#59 for de kendte drift-mønstre — der er ikke længere en
+  oplagt "ny vinkel" af typen "endnu ureviderede dokumenter" til næste runde; fremtidige runder
+  bør i stedet fokusere på at genbekræfte at §11/§J forbliver i sync efterhånden som Peter/Codex
+  committer nyt, eller afvente et af de Peter-blokerede punkter nedenfor.
+- **Udført:** Intet rettet — ingen drift fundet. Ren verifikationsrunde.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#58 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peters ja/nej
+  til tjek #54's mulighed (c) —, P0 #5 HMAC/stale credentials — afventer Peter —,
+  §3-optælling/"Delvist"-konvention — afventer Peter —, opgave #52's kodefase og M-05's
+  AgentPrincipal-trin — begge klar/blocker-fri på designniveau, men bør ikke startes uden bash —,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline-fejlmængde ikke reduceret). `mcp__workspace__bash` fejler fortsat
+  konsekvent — endnu en runde i den uafbrudte kæde siden tjek #21 (nu bekræftet uafhængigt i
+  mindst 4 separate scheduled-task-sessioner: #21-kæden, #57, #58, #59). **Til Peter:** uændret
+  anbefaling om at undersøge sandbox-`useradd`/brugeroprettelsen direkte — ingen periodisk
+  Claude-runde kan teste eller committe kode, før det er løst.
+
+### Handover 2026-07-05 (periodisk tjek #60) — fra Claude: §3-optællingsfejlen er langt større end tidligere antaget — fuld 7-kategori recount + konkret rettelsesforslag (research/mapping, IKKE anvendt endnu)
+
+- **Kontekst:** Periodisk 20-minutters-tjek (frisk scheduled-task-session, ingen hukommelse om
+  tjek #1-#59). `mcp__workspace__bash` fejlede igen ved gentagne forsøg med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` — kunne derfor hverken køre
+  `git status`, teste kode eller committe denne runde (nu 5. selvstændige bekræftelse siden
+  tjek #57/#58/#59). Læste linje 5860-5947 (tjek #58-#59): ingen nye Codex- eller Peter-entries
+  siden tjek #59 — intet nyt at reagere på. Tjek #59 konkluderede at "unrevideret dokument"-vinklen
+  er udtømt og foreslog at fremtidige runder enten genbekræfter §11/§J-synk eller venter på
+  Peter-blokerede punkter — denne runde valgte i stedet en tredje, tidligere kun delvist udført
+  vinkel: en fuld, dedikeret recount af §3-tabellen, som tjek #28 eksplicit anbefalede skulle
+  gøres "i én samlet gennemgang" i stedet for punktvis.
+- **Denne runde:** Talte samtlige 82 fysiske krav-ID-rækker i `KRAVREGISTER_og_STATUS_v10.md` §2
+  (alle 7 kategorier, ikke kun de 3 tidligere flagget: Capture/Admin UI/Sikkerhed) op mod §3-
+  oversigtstabellen. Brugt regel: hver ID tælles præcis ÉN gang, i kolonnen der matcher ORDET i
+  statusteksten ("Delvist"→Delvist, "Mangler"→Mangler, ellers→Implementeret) — UANSET om symbolet
+  foran er ✅/🟡/🟠. Dette adskiller den rene tælle-mekanik fra tjek #26's uafklarede "✅ Delvist"
+  vs. "🟡 Delvist"-symbol-konvention, som fortsat afventer Peter og IKKE er rørt her. To rækker
+  krævede skøn og flages eksplicit til Peter/Codex' godkendelse, ikke besluttet ensidigt: ADM-010
+  (🟠 "Skabelon klar" — talt som Delvist, hverken færdig eller manglende) og UPD-012 (🟡, unik
+  statustekst "Flush-regression rettet og deployet" — talt som Delvist, jf. kommentarens "resterer
+  kun: live-test").
+- **Fund:** Fejlen rammer 6 af 7 kategorier, ikke kun de 3 tidligere fundne af tjek #26-#28. Tabel
+  (nuværende) vs. korrekt optalt, format Impl/Delvist/Mangler/Total:
+  - Capture: tabel 8/2/1/11 → korrekt **7/2/1/10**
+  - Kundevendt UI: tabel 10/0/1/11 → **10/0/1/11** (allerede korrekt siden tjek #27, uændret)
+  - Admin UI: tabel 8/3/1/12 → korrekt **7/6/0/13**
+  - Update/Edge: tabel 6/7/2/15 → korrekt **3/12/0/15** (tabellens "2 Mangler" er rent forkert —
+    ingen eneste UPD-*-række er faktisk 🔴 Mangler i den aktuelle kravliste)
+  - Provisioning: tabel 5/3/2/10 → korrekt **4/3/2/9**
+  - Sikkerhed: tabel 7/4/5/16 → korrekt **5/5/4/14** (bekræfter tjek #28's egen, dengang uverificerede
+    mistanke om at "Implementeret-tallet 7 er sandsynligvis også for højt")
+  - Konfiguration: tabel 6/2/3/11 → korrekt **6/1/3/10**
+  - **Total:** tabel 50/21/15/86 → korrekt **42/29/11/82** (58%/24%/17% → ville blive ca.
+    51%/35%/13% fuldt implementeret/delvist/mangler)
+  Mekanisme: primært dobbelttælling af rækker med ✅-symbol men "Delvist" i statusteksten (fx
+  CAP-005, ADM-002/004/006/007, PROV-002, SEC-003/008, UPD-001/002/005/015) — talt både i
+  Implementeret- og Delvist-kolonnen i den nuværende tabel. Update/Edge-kategoriens afvigelse er
+  større end dette mønster alene forklarer (2 påståede "Mangler"-rækker der slet ikke findes) og
+  tyder på at netop den kategorirække ikke er opdateret siden en ældre version af kravlisten.
+- **Udført:** INGEN ændring af selve §3-tabellen denne runde — bevidst. Dels fordi tjek #28
+  eksplicit anbefalede én samlet gennemgang frem for punktvise rettelser (denne runde ER den
+  gennemgang, men leverer resultatet som forslag, ikke fuldbyrdet redigering), dels fordi to
+  rækker (ADM-010, UPD-012) kræver et skøn jeg ikke vil indføre ensidigt i et dokument flere
+  parter (Peter, Codex) læser og handler på uden mulighed for at fange en fejl. Den fulde,
+  verificerbare recount + de to skønspunkter er dokumenteret her, klar til at blive anvendt i én
+  redigering så snart skønnene er bekræftet (eller korrigeret). Ren research/kortlægning, ingen
+  kode eller andre dokumenter rørt.
+- **Filer rørt:** Ingen (kun denne log-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#59 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peters ja/nej
+  til tjek #54's mulighed (c) —, P0 #5 HMAC/stale credentials — afventer Peter —, §3-optælling —
+  se ovenfor, nu med konkret forslag —, opgave #52's kodefase og M-05's AgentPrincipal-trin, #53
+  Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline). **Codex/Peter: kør venligst** — hvis I er enige i ADM-010/UPD-012-
+  skønnet ovenfor, kan §3-tabellen (linje 145-156 i `KRAVREGISTER_og_STATUS_v10.md`) erstattes
+  direkte med tallene ovenfor plus en dateret fodnote der refererer denne entry (tjek #60) — det
+  kræver ingen live-adgang eller kodeændring, kun en tekstredigering og et `git commit`.
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 5. selvstændige bekræftelse (tjek #57,
+  #58, #59, og denne runde).
+
+### Handover 2026-07-05 (periodisk tjek #61) — fra Claude: §3-optællingen fra tjek #60 anvendt efter uafhængig blind genberegning fandt 100% match
+
+- **Kontekst:** Periodisk 20-minutters-tjek (frisk scheduled-task-session, ingen hukommelse om
+  tidligere tjek). `mcp__workspace__bash` fejlede igen med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` (nu 6. selvstændige
+  bekræftelse) — kunne derfor hverken køre `git status`, teste kode eller committe denne runde.
+  Bemærkede desuden to LibreOffice-lockfiler i `Dokumentation/`: `GO_LIVE_CHECKLIST_v10.md` er
+  låst af Peter selv (Mac-mini, 05.07.2026 11:46 — sandsynligvis aktivt åben lige nu) og
+  `KRAVREGISTER_og_STATUS_v10.md` har en ældre lock fra 02.07.2026 (stadig til stede, men flere
+  senere tjek — #25-#59 — har redigeret filen siden uden problemer, så den vurderes stale/uden
+  reel LibreOffice-session bag). Undlod derfor helt at røre `GO_LIVE_CHECKLIST_v10.md` denne
+  runde af forsigtighed, men vurderede redigering af `KRAVREGISTER_og_STATUS_v10.md` som sikker,
+  jf. etableret praksis.
+  Læste tjek #60 (linje 5948-6007): en fuld 7-kategori recount af §3-tabellen i
+  `KRAVREGISTER_og_STATUS_v10.md`, bevidst IKKE anvendt fordi to rækker (ADM-010, UPD-012) kræver
+  et skøn, og tjek #60 bad eksplicit om Codex/Peter-bekræftelse før tabellen erstattes.
+- **Denne runde:** Genberegnede alle 82 fysiske krav-ID-rækker i §2 fra bunden, uafhængigt og
+  blindt (skrev min egen optælling for hver af de 7 kategorier først, sammenlignede først
+  bagefter med tjek #60's tal) — samme tælleregel som tjek #60 (hver ID tælles én gang efter
+  ORDET i statusteksten: Delvist/Mangler/ellers Implementeret, uanset ✅/🟡/🟠-symbol). Resultat:
+  **100% match i alle 7 kategorier og totalen**, ingen afvigelse fundet (Capture 7/2/1/10,
+  Kundevendt UI 10/0/1/11, Admin UI 7/6/0/13, Update/Edge 3/12/0/15, Provisioning 4/3/2/9,
+  Sikkerhed 5/5/4/14, Konfiguration 6/1/3/10, Total 42/29/11/82 = 51%/35%/13%). De to
+  skønsrækker (ADM-010, UPD-012) vurderet rimelige og konsistente med dokumentets egen
+  farve-konvention (se detaljeret begrundelse i tjek #60 og i den nye fodnote).
+- **Udført:** To uafhængige, blinde optællinger der stemmer 100% overens vurderes som
+  tilstrækkelig bekræftelse til at anvende tjek #60's forslag direkte (ren tekstredigering, ingen
+  kode, fuldt reversibel via git). §3-tabellen i `KRAVREGISTER_og_STATUS_v10.md` (linje ~145-154)
+  erstattet med de korrekte tal; "Samlet implementeringsgrad" opdateret til 51%/35%/13%; ny,
+  dateret fodnote tilføjet efter tjek #28's fodnote, der refererer denne entry og eksplicit
+  fremhæver ADM-010/UPD-012 som skøn til efterfølgende Peter/Codex-review (ikke ensidigt
+  endeligt). Ingen andre rækker eller dokumenter rørt.
+- **Filer rørt:** `Dokumentation/KRAVREGISTER_og_STATUS_v10.md` (§3-tabel + ny fodnote — IKKE
+  committet, se nedenfor).
+- **Går videre til:** Uændret liste fra tjek #38-#60 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase og M-05's AgentPrincipal-trin,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline). §3-optællingen (tjek #60/#61) er nu FÆRDIG og anvendt — kun ADM-010/
+  UPD-012-skønnet resterer som et "sig til hvis I er uenige"-punkt, ikke en blokerende opgave.
+  **Codex/Peter: kør venligst** følgende, da jeg ikke selv kan committe:
+  ```
+  cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+  git status --short
+  git add Dokumentation/KRAVREGISTER_og_STATUS_v10.md
+  git commit -m "docs: ret §3-implementeringsoverblik til korrekt 82-krav optælling (tjek #60/#61)"
+  git push
+  ```
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 6. selvstændige bekræftelse (tjek #57-
+  #60, og denne runde).
+
+### Handover 2026-07-06 (periodisk tjek #62) — fra Claude: ingen ny drift i §11/§J, men to strukturelle observationer der bør adresseres
+
+- **Kontekst:** Periodisk 20-minutters-tjek, første runde i en ny kalenderdag (forrige entry, #61,
+  var dateret 2026-07-05 — dvs. der er sandsynligvis gået flere timer uden en Claude-runde, eller
+  uden at nogen runde har fundet noget værd at logge). `mcp__workspace__bash` fejlede igen med
+  samme `useradd failed: fork/exec /usr/sbin/useradd: input/output error` — **9. selvstændige
+  bekræftelse på tværs af to kalenderdage (tjek #57-#61, denne runde)**. Kunne derfor hverken
+  køre `git status`, teste kode eller committe.
+- **Denne runde:** Læste HANDOVER_LOG fra §61 og bagud (linje ~3500-6059), krydstjekkede §11 i
+  `RISK_ASSESSMENT_v10.md` og §J i `GO_LIVE_CHECKLIST_v10.md` linje-for-linje mod hinanden og mod
+  de seneste ~15 periodiske tjeks konklusioner. **Ingen ny docs-drift fundet** — §J's blokerings-
+  optælling (A: 7, C: 2, E: 1, G: 2, M: 1) matcher stadig §11's P0/P1-liste og de faktiske
+  detalje-afsnit (E-02 restore-test, §A port-8443-arkitektur, C-10/HMAC, G-02/G-03, M-05). Tjekkede
+  desuden de to LibreOffice-lockfiler nævnt i tjek #61: `.~lock.GO_LIVE_CHECKLIST_v10.md#` har
+  **samme uændrede timestamp** (peter, Mac-mini, 05.07.2026 11:46) som ved #61 — nu >24 timer
+  gammel uden opdatering, hvilket bekræfter den er stale/uden aktiv LibreOffice-session bag (Peter
+  har ikke haft filen åben siden). `.~lock.KRAVREGISTER_og_STATUS_v10.md#` er fortsat den ældre,
+  kendte stale lock fra 02.07.2026. Ingen af filerne er derfor reelt "off-limits" for redigering
+  længere — men fandt ingen konkret rettelse at lave i nogen af dem denne runde.
+- **To strukturelle observationer (ikke rettet, kun flaget — kræver Peter/Codex' opmærksomhed
+  fremfor endnu en punktrettelse):**
+  1. **Voksende uncommittet dokumentations-backlog:** Den seneste Codex-bekræftede commit jeg kan
+     finde i HANDOVER_LOG er `bce5f856` (2026-07-05 morgen, `hardcoded_secret_terms`-heuristikken,
+     se linje ~4051-4065). Alle periodiske tjek siden — #22 til #61, dvs. størstedelen af
+     2026-07-05 eftermiddag/aften/nat og nu ind i 2026-07-06 — har lavet rene docs-only-rettelser
+     (§3-optælling, GDPR §9-tabel, Cloudflare Tunnel-oprydning x3, statusfelter, ID-kollision,
+     m.fl.) og hver gang selv skrevet "IKKE committet". Jeg kan ikke bekræfte dette uafhængigt
+     (bash nede, kan ikke køre `git status`/`git log`), men der findes ingen modsigende
+     "fra Codex: ... committet"-entry i denne periode heller. Hvis antagelsen holder, ligger der nu
+     et **stort antal ukommitterede ændringer i mindst 4-5 `.md`-filer** ophobet over ~40 runder.
+     Det er ikke i sig selv farligt (ren dokumentation, fuldt reversibelt via git), men risikoen
+     stiger for (a) et uoverskueligt diff at reviewe på én gang, (b) tab af arbejde hvis noget går
+     galt lokalt inden commit, og (c) reelle merge-konflikter hvis Codex/Peter selv redigerer de
+     samme afsnit i mellemtiden uden at se mine ændringer først.
+  2. **Selve bash-nedbruddet er nu en 2-dages-hændelse, ikke en forbigående fejl:** 9 uafhængige
+     bekræftelser af samme `useradd`/I/O-fejl på tværs af mange friske, statsløse
+     scheduled-task-sessioner tyder på et vedvarende infrastrukturproblem i selve sandbox-miljøet
+     for denne periodiske opgave (ikke i repoet) — ikke noget en fremtidig Claude-runde kan løse
+     ved at prøve igen.
+- **Anbefaling til Peter/Codex (ingen af delene hastende/blokerende for go-live, men bør
+  adresseres for at undgå at problem 1 vokser sig endnu større):**
+  1. Kør en samlet gennemgang + commit af den formodede backlog snarest belejligt:
+     ```
+     cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+     git status --short
+     git diff -- Dokumentation/
+     git add Dokumentation/*.md
+     git commit -m "docs: batch-commit periodiske Claude-tjek #22-#61 (docs-sync, ingen kode)"
+     git push
+     ```
+     (juster filnavne efter hvad `git status` faktisk viser — ovenstående er et gæt baseret på
+     hvilke filer de seneste ~40 entries siger de har rørt).
+  2. Hvis bekvemt: kig på hvorfor den periodiske scheduled-task-sandbox konsekvent fejler på
+     `useradd` — dette er adskilt fra selve TimeLapse Pro-infrastrukturen og kræver ikke
+     domænekendskab til projektet, blot en kigger på selve Cowork/agent-miljøet.
+- **Går videre til:** Uændret liste fra tjek #38-#61 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase og M-05's AgentPrincipal-trin,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline). Ingen filer rørt denne runde (ren undersøgelse/observation).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 9. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #63) — fra Claude: ren re-verifikationsrunde, ingen ny drift; bash stadig nede (10. bekræftelse)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` (afprøvet 3 gange denne
+  runde) — **10. selvstændige bekræftelse**, nu på tværs af to kalenderdage. Kunne derfor hverken
+  køre `git status`, teste kode eller committe.
+- **Denne runde:** Krydstjekkede §11 i `RISK_ASSESSMENT_v10.md` linje-for-linje mod §J i
+  `GO_LIVE_CHECKLIST_v10.md` (blokerings-optællingen A:7, C:2 [C-03 + P0 #5/C-10], E:1, G:2, M:1) —
+  alle tal stemmer stadig overens, ingen drift. HLTH-012 i `SYSTEM_HEALTH_REGISTER.md` er korrekt
+  og opdateret (ratchet-gate-status matcher H-02). Genkontrollerede de to LibreOffice-lockfiler fra
+  tjek #61/#62: begge har **samme uændrede timestamps** som ved sidste tjek (`GO_LIVE_CHECKLIST_v10.md`
+  peter/Mac-mini 05.07.2026 11:46; `KRAVREGISTER_og_STATUS_v10.md` peter/Mac-mini 02.07.2026 12:02) —
+  yderligere bekræftelse på at begge er stale/uden aktiv LibreOffice-session bag. Fandt ingen ny
+  konkret rettelse at lave i nogen fil denne runde, og gentager derfor ikke #62's to allerede
+  flagede strukturelle observationer (uncommittet docs-backlog + 2-dages bash-hændelsen) — de står
+  stadig ved magt og afventer Peter/Codex, men endnu en gentagelse ville være en indholdsløs entry.
+- **Går videre til:** Uændret liste fra tjek #38-#62 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase og M-05's AgentPrincipal-trin,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline, tjek #62's to strukturelle observationer). Ingen filer rørt denne runde
+  (ren verifikation). `mcp__workspace__bash` fejler fortsat konsekvent — nu 10. selvstændige
+  bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #64) — fra Claude: R14's aperture/shutter_speed-drift-beslutning fik en rådgivende SABSA-anbefaling + en implementeringsfælde flagget
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` (afprøvet 3 gange denne
+  runde) — **nu 11.-12. selvstændige bekræftelse** på tværs af to kalenderdage. Kunne derfor
+  hverken køre `git status`, teste kode eller committe.
+- **Denne runde:** Krydstjekkede §11/§J igen (linje-for-linje mod hinanden og mod tjek #62/#63) —
+  **ingen ny drift fundet**, tallene er uændrede (A:7, C:2, E:1, G:2, M:1). Genkontrollerede de to
+  LibreOffice-lockfiler fra tjek #61-#63: **samme uændrede timestamps** som ved sidste tjek
+  (`GO_LIVE_CHECKLIST_v10.md` peter/Mac-mini 05.07.2026 11:46; `KRAVREGISTER_og_STATUS_v10.md`
+  peter/Mac-mini 02.07.2026 12:02) — fortsat stale, ingen aktiv LibreOffice-session bag nogen af
+  dem. I stedet for endnu en indholdsløs "ingen drift"-gentagelse, gik jeg videre til §11 P1.3's
+  sidste åbne underpunkt (Nikon Z30 config-model, R14): den eksplicit udestående beslutning om
+  aperture/shutter_speed-drift-mål, som ingen tidligere runde har givet en konkret anbefaling til
+  (i modsætning til R06's device-decommission-gap, som fik en tilsvarende anbefaling i tjek #54).
+- **Fund (ved faktisk kodelæsning, ikke antagelse):** `edge/diagnostics/camera_diagnostics.py` har
+  hverken `aperture` eller `shutter_speed` i `CAMERA_CONFIG_PARAMS`/`FLEET_DEFAULTS`, og
+  `SHORT_KEY_ALIASES` mapper dem eksplicit til `None` ("intentionally dropped, not a bug") — så en
+  per-device override for disse to parametre ville i dag blive stille droppet, og deres aktuelle
+  værdier indgår slet ikke i `camera_config`/CMDB-observability. Ved at læse
+  `edge/camera/drivers/gphoto2_driver.py` fandt jeg desuden at aperture/shutter_speed's gphoto2-
+  stier IKKE er ens på tværs af kameraprofiler i denne flåde (Canon-konvention bruger `f-number`
+  for blænde, andre profiler bruger `aperture`/`shutterspeed`) — præcis samme nøgle-mismatch-klasse
+  som forårsagede den oprindelige R14-bug (fundet/rettet 2026-07-05). En naiv implementering (fast
+  gphoto2-sti pr. nøgle, som resten af `CAMERA_CONFIG_PARAMS` allerede gør) ville derfor genskabe
+  den samme bug for netop disse to nye parametre.
+- **Udført:** Tilføjede en rådgivende SABSA/ISO27001-baseret anbefaling til R14-detaljeafsnittet i
+  `RISK_ASSESSMENT_v10.md` (tre muligheder: (a) status quo/ingen overvågning, (b) fleet-wide
+  baseline — risiko for alarm-støj da aperture/shutter_speed er legitimt site-specifikke, (c)
+  **anbefalet**: opt-in pr. enhed via eksisterende per-device override-mekanisme, observability-only
+  som standard) samt en eksplicit implementeringsadvarsel om profil-afhængige gphoto2-stier, så en
+  fremtidig implementering (Codex eller Peter) ikke falder i samme fælde igen. §11 P1.3-linjen
+  opdateret med en kort henvisning. **Ingen kode ændret** — dette rører præcis den
+  drift-detektionslogik der forårsagede den oprindelige bug, og uden bash kan jeg ikke
+  `py_compile`/teste en ændring før jeg står inde for den (dobbelttjekker-reglen). Peter/Codex
+  træffer stadig selve valget mellem (a)/(b)/(c); Codex kan implementere (c) direkte (har
+  shell-adgang til at teste).
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md` (R14-detaljeafsnit + §11 P1.3-linje + §12
+  dokumenthistorik — IKKE committet, se nedenfor).
+- **Går videre til:** Uændret liste fra tjek #38-#63 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase og M-05's AgentPrincipal-trin,
+  #53 Nikon Z30 live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —,
+  HLTH-012 ESLint-baseline, tjek #62's to strukturelle observationer) **plus** R14's nye
+  aperture/shutter_speed-anbefaling (afventer Peters valg af (a)/(b)/(c), derefter Codex' kodefase
+  for (c) inkl. profil-bevidst gphoto2-sti-læsning).
+  **Codex/Peter: kør venligst** følgende, da jeg ikke selv kan committe:
+  ```
+  cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+  git status --short
+  git add Dokumentation/RISK_ASSESSMENT_v10.md
+  git commit -m "docs: R14 aperture/shutter_speed-drift-anbefaling (SABSA, periodisk tjek #64)"
+  git push
+  ```
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 11.-12. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #65) — fra Claude: TIMELAPSE_ENV-terminologi-drift fundet — implementeringsfælde for AgentPrincipal (M-05), flaget FØR kodefasen
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` (afprøvet 3 gange denne
+  runde) — **13. selvstændige bekræftelse** på tværs af to kalenderdage. Kunne derfor hverken
+  køre `git status`, teste kode eller committe.
+- **Denne runde:** Krydstjekkede §11/§J igen — ingen ny drift (A:7, C:2, E:1, G:2, M:1, uændret).
+  I stedet for endnu en indholdsløs "ingen drift"-gentagelse, gik jeg videre til
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §6 punkt 5, som eksplicit siger at
+  `AgentPrincipal`/miljøflag-modellen (M-05) "nu kan designes præcist" — men ingen runde har
+  endnu tjekket om den kode der allerede LÆSER `TIMELAPSE_ENV` rent faktisk er klar til den
+  kanoniske `rd`/`staging`/`prod`-terminologi, Peter besluttede 2026-07-05.
+- **Fund (ved faktisk kodelæsning af alle forbrugssteder, ikke antagelse):** Ingen af de 3
+  eksisterende steder der læser `TIMELAPSE_ENV` kender værdien `"rd"`:
+  1. `edge/agent.py` linje 1479-1482 — legacy git-emergency-opdateringsstiens allowlist er
+     `{"lab", "dev", "development"}`. **"rd" indgår ikke.** Sættes `TIMELAPSE_ENV=rd` eksplicit
+     på R&D-maskinen (som en tidligere HANDOVER_LOG-runde selv anbefalede, "inden
+     `AgentPrincipal`-koden begynder at bruge denne variabel"), blokeres denne sti **permanent og
+     stille** — kun en logadvarsel, ingen fejl. Fail-safe retning (blokerer mere, ingen
+     sikkerhedsregression), men et reelt funktionelt hul.
+  2. `headend/main.py` linje 81 og `headend/siem.py` linje 402 — begge default'er til `"lab"` hvis
+     usat (ufarligt, da installationsscriptet altid sætter variablen eksplicit), men
+     `siem.py` linje 402-406 bruger desuden `mode == "lab"` til SIEM-logniveau (`info` vs.
+     `warning`) — en omdøbning til `rd` ville stille sænke logverbositeten på udviklingsmaskinen.
+  3. Bekræftet mod `deploy/install/install_headend.sh` linje 100-102, som allerede hårdt afviser
+     alt andet end `rd`/`staging`/`prod` — dvs. den kanoniske terminologi er allerede
+     "single source of truth" ét sted (installationsscriptet), men ikke i selve
+     applikationskoden endnu.
+- **Udført (dokumentation, ingen kode ændret):** Tilføjet et nyt kodeaudit-afsnit til R19 i
+  `RISK_ASSESSMENT_v10.md` (§11-nær, med konkret anbefaling: løs terminologien FØR
+  `AgentPrincipal`-middleware bygges, ikke efter), en krydshenvisning i
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §6 punkt 5, en kort note i
+  `GO_LIVE_CHECKLIST_v10.md` M-05-rækken, samt en ny §12-dokumenthistorik-linje i
+  `RISK_ASSESSMENT_v10.md`. **Ingen kode rørt** — dette er en ren terminologi-fix (kan udføres
+  uden designdiskussion), men kræver test (`py_compile`/kør de eksisterende test-suiter for at
+  bekræfte ingen regression i legacy-opdateringsstien), som jeg ikke kan køre uden bash
+  (dobbelttjekker-reglen).
+- **Filer rørt:** `Dokumentation/RISK_ASSESSMENT_v10.md` (R19 + §12),
+  `Dokumentation/MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` (§6),
+  `Dokumentation/GO_LIVE_CHECKLIST_v10.md` (M-05) — IKKE committet, se nedenfor.
+- **Går videre til:** Uændret liste fra tjek #38-#64 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase, #53 Nikon Z30
+  live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —, HLTH-012
+  ESLint-baseline, tjek #62's to strukturelle observationer, R14's aperture/shutter_speed-valg —
+  afventer Peter) **plus** denne rundes nye fund: M-05's `TIMELAPSE_ENV`-terminologi-fix (klar til
+  at udføres af Codex, ren terminologi/ingen designbeslutning, men kræver test af de 3
+  berørte filer + eksisterende test-suiter før commit).
+  **Codex/Peter: kør venligst** følgende, da jeg ikke selv kan committe:
+  ```
+  cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+  git status --short
+  git add Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md Dokumentation/GO_LIVE_CHECKLIST_v10.md
+  git commit -m "docs: TIMELAPSE_ENV terminologi-drift-fund forud for AgentPrincipal/M-05 (periodisk tjek #65)"
+  git push
+  ```
+  Hvis I er enige i selve terminologi-fixet (anbefalet: migrér de 3 kodesteder fuldt til
+  `rd`/`staging`/`prod`, fjern `lab`/`dev`/`development`-synonymerne), kan Codex implementere og
+  teste det direkte — ren mekanisk rettelse, ingen ny beslutning nødvendig.
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 13. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #66) — fra Claude: ren verifikationsrunde + bevidst IKKE tilføjet endnu en ukommitteret rettelse (backlog-hensyn fra tjek #62)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` (afprøvet 3 gange denne
+  runde) — **14. selvstændige bekræftelse** på tværs af nu tre kalenderdage (2026-07-04 aften til
+  2026-07-06). Kunne derfor hverken køre `git status`, teste kode eller committe.
+- **Denne runde:** Krydstjekkede §11 i `RISK_ASSESSMENT_v10.md` og §J i `GO_LIVE_CHECKLIST_v10.md`
+  linje-for-linje mod hinanden og mod tjek #62/#64/#65 — **ingen ny drift**, blokerings-tallene er
+  uændrede (A:7, C:2, E:1, G:2, M:1). Verificerede desuden ved faktisk fil-læsning (ikke antagelse)
+  at tjek #65's ukommitterede TIMELAPSE_ENV-rettelser rent faktisk stadig ligger i alle tre filer
+  og ikke er gået tabt eller reverteret: `GO_LIVE_CHECKLIST_v10.md` linje 226 (M-05-rækken
+  refererer korrekt til R19/tjek #65), samt R19-kodeauditten i `RISK_ASSESSMENT_v10.md` — begge
+  matcher tjek #65's egen beskrivelse ordret. De to LibreOffice-lockfiler er fortsat uændrede
+  (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini, 05.07.2026 11:46 — samme timestamp som ved
+  tjek #61-#64, nu >36 timer stale), ingen ny aktiv redigeringssession.
+- **Bevidst fravalg denne runde:** Fandt ingen ny drift og valgte **ikke** at gå videre til endnu
+  et nyt punkt fra §11/§J-listen for at "finde noget at rette" — tjek #62 flagede allerede for
+  4-5 runder siden at den voksende ukommitterede dokumentations-backlog er en reel risiko
+  (uoverskueligt diff, tab-risiko, merge-konflikt-risiko), og siden da har både tjek #64 (R14) og
+  #65 (R19 + 2 andre filer) alligevel tilføjet mere til bunken uden at nogen har committet. At
+  tilføje en 6. runde med endnu en ukommitteret rettelse oven på det ville forværre præcis det
+  problem, jeg selv anbefalede at løse. Denne runde er derfor bevidst en ren verifikationsrunde
+  uden nye filændringer, for at undgå at forlænge ventetiden yderligere.
+- **Filer rørt:** Ingen (kun denne HANDOVER_LOG-entry).
+- **Går videre til:** Uændret liste fra tjek #38-#65 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase, #53 Nikon Z30
+  live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —, HLTH-012
+  ESLint-baseline, R14's aperture/shutter_speed-valg — afventer Peter —, M-05's
+  TIMELAPSE_ENV-terminologi-fix — klar til Codex). **Fornyet, samlet anbefaling til Codex/Peter:**
+  commit alt akkumuleret siden `bce5f856` (tjek #22-#65, primært `RISK_ASSESSMENT_v10.md`,
+  `GO_LIVE_CHECKLIST_v10.md`, `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`, og efter alt at dømme et par
+  flere `.md`-filer nævnt i mellemliggende tjeks) i ÉT overskueligt kig, frem for at vente på at
+  bunken vokser sig endnu større:
+  ```
+  cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+  git status --short
+  git diff -- Dokumentation/ | less
+  git add Dokumentation/*.md
+  git commit -m "docs: batch-commit periodiske Claude-tjek #22-#65 (docs-sync + R14/R19-anbefalinger, ingen kode)"
+  git push
+  ```
+  Justér filliste efter hvad `git status` faktisk viser. Ingen af de ukommitterede ændringer er
+  hastende eller blokerende i sig selv (ren dokumentation, fuldt reversibel), men jo længere de
+  ligger, jo større bliver reviewet og jo højere risikoen for at nogen redigerer de samme afsnit
+  parallelt uden at se hinandens ændringer.
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 14. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #67) — fra Claude: ren re-verifikation + ny anbefaling om selve tjek-kadencen (ingen docs rørt)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` (afprøvet 2 gange denne
+  runde) — **15. selvstændige bekræftelse**, nu på tværs af tre kalenderdage. Kunne derfor hverken
+  køre `git status`, teste kode eller committe.
+- **Denne runde:** Ingen nye Codex- eller Peter-entries siden #66 (bekræftet — #66 er fortsat
+  seneste entry før denne). Genlæste §11 i `RISK_ASSESSMENT_v10.md` og §J i
+  `GO_LIVE_CHECKLIST_v10.md` direkte fra disk (ikke kun via loggens egne påstande) — blokerings-
+  optællingen er uændret (A:7, C:2 [C-03 + P0 #5/C-10], E:1, G:2, M:1), og tjek #64/#65's
+  ukommitterede R14/R19-tilføjelser ligger stadig intakt i filerne. De to LibreOffice-lockfiler har
+  **samme uændrede timestamps** som ved #61-#66 (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini,
+  05.07.2026 11:46 — nu >42 timer stale; `KRAVREGISTER_og_STATUS_v10.md`: 02.07.2026 12:02) —
+  ingen aktiv redigeringssession. Ingen ny drift fundet.
+- **Bevidst fravalg (samme begrundelse som #66):** Tilføjede **ikke** endnu en ny docs-rettelse
+  oven på den allerede flaggede ukommitterede backlog (#62, #66).
+- **Ny observation denne runde (ikke tidligere sagt så eksplicit):** Selve tjek-kadencen er nu ved
+  at ramme aftagende afkast. 15 uafhængige, statsløse 20-minutters-runder over 3 kalenderdage har
+  bekræftet samme bash-fejl hver gang uden at noget internt i denne opgave kan afhjælpe det, og
+  §11/§J har været docs-mæssigt konvergeret (samme 5 blokerende kategorier) i adskillige runder i
+  træk — begge dele peger på at yderligere 20-minutters-runder giver faldende marginalnytte, indtil
+  enten (a) bash er genoprettet, eller (b) den ophobede docs-backlog er committet, så nye runder kan
+  teste/committe deres egne fund i stedet for blot at rapportere og vente. **Anbefaling til
+  Peter (ikke hastende, rent proces-forslag):** overvej at sætte dette periodiske tjek på pause
+  eller forlænge intervallet (fx til hver 2.-4. time) indtil enten bash-sandboxen er rettet, eller
+  et menneske/Codex har committet akkumuleret siden `bce5f856` — dette er en ren
+  Cowork/agent-sandbox-infrastrukturfejl (useradd/I/O), ikke noget i selve TimeLapse Pro-repoet, og
+  bør formentlig rapporteres separat som en Cowork-fejl fremfor at blive ved med at afprøve den
+  samme handling 20 min. ad gangen.
+- **Filer rørt:** Ingen ud over denne HANDOVER_LOG-entry.
+- **Går videre til:** Uændret liste fra tjek #38-#66 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase, #53 Nikon Z30
+  live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —, HLTH-012
+  ESLint-baseline, R14's aperture/shutter_speed-valg — afventer Peter —, M-05's
+  TIMELAPSE_ENV-terminologi-fix — klar til Codex, samt #62/#66's uændrede anbefaling om at
+  batch-committe den ophobede docs-backlog). **Codex/Peter: kør venligst** (uændret fra #66):
+  ```
+  cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+  git status --short
+  git diff -- Dokumentation/ | less
+  git add Dokumentation/*.md
+  git commit -m "docs: batch-commit periodiske Claude-tjek #22-#66 (docs-sync + R14/R19-anbefalinger, ingen kode)"
+  git push
+  ```
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 15. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #68) — fra Claude: 3. rene re-verifikationsrunde i træk, ingen ny drift; alle §64/§65-fund bekræftet stadig intakte og ukommitterede
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` (afprøvet 2 gange denne
+  runde) — **16. selvstændige bekræftelse**, nu på tværs af tre kalenderdage. Kunne derfor hverken
+  køre `git status`, teste kode eller committe.
+- **Denne runde:** Krydstjekkede §J i `GO_LIVE_CHECKLIST_v10.md` linje-for-linje mod §11 i
+  `RISK_ASSESSMENT_v10.md` direkte fra disk — blokerings-optællingen er uændret (A:7, C:2 [C-03 +
+  P0 #5/C-10], E:1, G:2, M:1), ingen ny drift siden tjek #67. Verificerede desuden eksplicit, ved
+  faktisk fil-læsning (ikke antagelse), at INGEN af de tidligere rundes ukommitterede fund er gået
+  tabt eller reverteret: tjek #64's R14-anbefaling (§11 P1.3 + R14-detaljeafsnit) og tjek #65's
+  R19-kodeaudit + `GO_LIVE_CHECKLIST_v10.md` M-05-rækken + `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`
+  §6 punkt 5 står stadig ordret som beskrevet i deres respektive entries. Gennemsøgte desuden §12's
+  dokumenthistorik-tabel i `RISK_ASSESSMENT_v10.md` for enhver "committet af Codex"-note nyere end
+  `bce5f856` (2026-07-05 morgen) — fandt ingen, hvilket bekræfter tjek #62/#66's antagelse: hele
+  docs-backlogget fra tjek #22 til nu (#67) er efter alt at dømme fortsat ukommitteret. De to
+  LibreOffice-lockfiler er fortsat helt uændrede (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini,
+  05.07.2026 11:46 — nu >48 timer stale; `KRAVREGISTER_og_STATUS_v10.md`: 02.07.2026 12:02) — ingen
+  aktiv redigeringssession, begge reelt frie for redigering.
+- **Bevidst fravalg (samme begrundelse som #66/#67):** Tilføjede **ikke** endnu en ny
+  docs-rettelse oven på den allerede flaggede, voksende ukommitterede backlog. Fandt ingen nyt punkt
+  i §11/§J, der objektivt var vigtigere at få dokumenteret end at holde bunken fra at vokse en 4.
+  runde i træk.
+- **Filer rørt:** Ingen ud over denne HANDOVER_LOG-entry.
+- **Går videre til:** Uændret liste fra tjek #38-#67 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase, #53 Nikon Z30
+  live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —, HLTH-012
+  ESLint-baseline, R14's aperture/shutter_speed-valg — afventer Peter —, M-05's
+  TIMELAPSE_ENV-terminologi-fix — klar til Codex, tjek #67's kadence-anbefaling — afventer Peter).
+  **Codex/Peter: kør venligst** (uændret fra #66/#67, nu 3 runder gammel og voksende):
+  ```
+  cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+  git status --short
+  git diff -- Dokumentation/ | less
+  git add Dokumentation/*.md
+  git commit -m "docs: batch-commit periodiske Claude-tjek #22-#67 (docs-sync + R14/R19-anbefalinger, ingen kode)"
+  git push
+  ```
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 16. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #69) — fra Claude: 4. rene re-verifikationsrunde i træk, ingen ny drift; bash stadig nede (17. bekræftelse)
+
+- **Kontekst:** Periodisk 20-minutters-tjek. `mcp__workspace__bash` fejlede igen med samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error` (afprøvet 2 gange) — **17.
+  selvstændige bekræftelse**, nu på tværs af tre kalenderdage. Kunne derfor hverken køre
+  `git status`, teste kode eller committe.
+- **Denne runde:** Ingen nye Codex/Peter-entries siden #68. Genlæste §11 (`RISK_ASSESSMENT_v10.md`)
+  og §J (`GO_LIVE_CHECKLIST_v10.md`) direkte fra disk — blokerings-optællingen er uændret (A:7, C:2
+  [C-03 + P0 #5/C-10], E:1, G:2, M:1). Læste indholdet af begge LibreOffice-lockfiler direkte
+  (ikke kun Glob/metadata): begge har **samme uændrede lock-tekst** som ved #61-#68
+  (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini, 05.07.2026 11:46; `KRAVREGISTER_og_STATUS_v10.md`:
+  02.07.2026 12:02) — fortsat ingen aktiv redigeringssession, begge reelt frie. Tjek #64/#65's
+  ukommitterede R14/R19-tilføjelser er stadig intakte i filerne (ikke reverteret).
+- **Bevidst fravalg (uændret begrundelse fra #66-#68):** Ingen ny docs-rettelse oven på den
+  allerede flaggede, voksende ukommitterede backlog (#22-#65, stadig ukommitteret siden `bce5f856`).
+- **Vurdering af selve tjekket:** §11/§J har nu været identisk konvergeret i 5 sammenhængende
+  runder (#64-#69), og bash har fejlet 17/17 gange på tværs af 3 dage. #67's anbefaling om at
+  sætte tjekket på pause eller forlænge intervallet står ved magt og gentages ikke yderligere her
+  for at undgå selv at bidrage til støj — men flages som fortsat ubesvaret.
+- **Filer rørt:** Ingen ud over denne HANDOVER_LOG-entry.
+- **Går videre til:** Uændret liste fra tjek #38-#68 (live multi-device-rollout-test, R17-
+  smoketest, §K OS offline-artifact E2E, device-decommission-beslutning — afventer Peter —, P0 #5
+  HMAC/stale credentials — afventer Peter —, opgave #52's kodefase, #53 Nikon Z30
+  live-verifikation, ITIM §13 spørgsmål 3 retention-vinduer — afventer Peter —, HLTH-012
+  ESLint-baseline, R14's aperture/shutter_speed-valg — afventer Peter —, M-05's
+  TIMELAPSE_ENV-terminologi-fix — klar til Codex, #67's kadence-anbefaling — afventer Peter).
+  **Codex/Peter: kør venligst** (uændret fra #66-#68, nu 4 runder gammel):
+  ```
+  cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+  git status --short
+  git diff -- Dokumentation/ | less
+  git add Dokumentation/*.md
+  git commit -m "docs: batch-commit periodiske Claude-tjek #22-#68 (docs-sync + R14/R19-anbefalinger, ingen kode)"
+  git push
+  ```
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 17. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #70) — fra Claude: 5. rene re-verifikationsrunde i træk, ingen ny drift; bash stadig nede (18. bekræftelse) — kort entry bevidst
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd`-I/O-fejl — **18.
+  selvstændige bekræftelse** på tværs af tre kalenderdage. Ingen `git status`/test/commit mulig.
+- **Denne runde:** §11 (`RISK_ASSESSMENT_v10.md`) og §J (`GO_LIVE_CHECKLIST_v10.md`) genlæst
+  direkte fra disk — blokerings-optællingen uændret (A:7, C:2, E:1, G:2, M:1), nu **7.
+  sammenhængende runde** identisk. Begge LibreOffice-lockfiler læst direkte: samme uændrede
+  indhold som #61-#69 (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini 05.07.2026 11:46, nu godt
+  ét døgn+ stale). Ingen nye Codex/Peter-entries siden #69.
+- **Bevidst kort denne gang:** #67 flagede allerede at gentagne identiske "ingen drift"-runder
+  giver aftagende nytte og selv bliver støj — så denne entry er holdt kort i stedet for at
+  gengive samme detaljerede argumentation en 5. gang. Ingen ny docs-rettelse tilføjet (samme
+  backlog-hensyn som #66-#69).
+- **Filer rørt:** Ingen ud over denne entry.
+- **Går videre til:** Uændret liste fra #38-#69 (se der for fuld liste). Uændret, stående
+  anbefaling til Codex/Peter: batch-commit docs-backlog siden `bce5f856` (§62/§66-69), afklar
+  R14/R19/M-05-punkterne, og overvej #67's forslag om at forlænge tjek-intervallet indtil bash
+  er rettet eller backloggen er committet.
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 18. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #71) — fra Claude: 6. rene re-verifikationsrunde i træk, ingen ny drift; bash stadig nede (19. bekræftelse) — kort entry bevidst
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd`-I/O-fejl (afprøvet 2 gange
+  denne runde) — **19. selvstændige bekræftelse** på tværs af tre kalenderdage. Ingen
+  `git status`/test/commit mulig.
+- **Denne runde:** §11 (`RISK_ASSESSMENT_v10.md`) og §J (`GO_LIVE_CHECKLIST_v10.md`) genlæst
+  direkte fra disk — blokerings-optællingen uændret (A:7, C:2, E:1, G:2, M:1), nu **8.
+  sammenhængende runde** identisk. Begge LibreOffice-lockfiler læst direkte: samme uændrede
+  indhold som #61-#70 (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini 05.07.2026 11:46, nu godt
+  1,5 døgn stale; `KRAVREGISTER_og_STATUS_v10.md`: 02.07.2026 12:02). Ingen nye Codex/Peter-entries
+  siden #70.
+- **Bevidst kort/ingen ny rettelse (uændret begrundelse fra #66-#70):** Samme backlog-hensyn —
+  ingen ny ukommitteret docs-ændring tilføjet oven på den allerede flaggede bunke siden `bce5f856`.
+- **Filer rørt:** Ingen ud over denne entry.
+- **Går videre til:** Uændret liste fra #38-#70 (se der for fuld liste). Uændret, stående
+  anbefaling til Codex/Peter: batch-commit docs-backlog siden `bce5f856` (§62/§66-70), afklar
+  R14/R19/M-05-punkterne, og overvej #67's forslag om at forlænge tjek-intervallet indtil bash er
+  rettet eller backloggen er committet.
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 19. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #72) — fra Claude: 7. rene re-verifikationsrunde i træk, ingen ny drift; bash stadig nede (20. bekræftelse — milepæl)
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd`-I/O-fejl (afprøvet 2 gange
+  denne runde) — **20. selvstændige bekræftelse** på tværs af tre kalenderdage. Ingen
+  `git status`/test/commit mulig.
+- **Denne runde:** §11 (`RISK_ASSESSMENT_v10.md`) og §J (`GO_LIVE_CHECKLIST_v10.md`) genlæst
+  direkte fra disk — blokerings-optællingen uændret (A:7, C:2, E:1, G:2, M:1), nu **9.
+  sammenhængende runde** identisk. Begge LibreOffice-lockfiler læst direkte: samme uændrede
+  indhold som #61-#71 (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini 05.07.2026 11:46, nu knap 2
+  døgn stale; `KRAVREGISTER_og_STATUS_v10.md`: 02.07.2026 12:02) — fortsat ingen aktiv
+  redigeringssession, begge reelt frie. Ingen nye Codex/Peter-entries siden #71.
+- **Bevidst ingen ny rettelse (uændret begrundelse fra #66-#71):** Samme backlog-hensyn — ingen
+  ny ukommitteret docs-ændring tilføjet oven på den allerede flaggede bunke siden `bce5f856`.
+- **Filer rørt:** Ingen ud over denne entry.
+- **Går videre til:** Uændret liste fra #38-#71 (se der for fuld liste). Uændret, stående
+  anbefaling til Codex/Peter: batch-commit docs-backlog siden `bce5f856` (§62/§66-71), afklar
+  R14/R19/M-05-punkterne. **Milepæl-note (ikke en ny anbefaling, kun et faktuelt flag):** dette er
+  20. selvstændige bash-fejl-bekræftelse — #67's forslag om at forlænge tjek-intervallet står
+  fortsat ubesvaret og gentages ikke yderligere efter denne runde, medmindre noget faktisk ændrer
+  sig (ny drift, bash rettet, eller backlog committet).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 20. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #73) — fra Claude: 10. rene re-verifikationsrunde i træk, ingen ny drift; bash stadig nede (21. bekræftelse) — kort entry, jf. #72
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd`-I/O-fejl (afprøvet 2 gange
+  denne runde) — **21. selvstændige bekræftelse** på tværs af tre kalenderdage. Ingen
+  `git status`/test/commit mulig; faldt tilbage på direkte fil-læsning som i #61-#72.
+- **Denne runde:** §11 (`RISK_ASSESSMENT_v10.md`) og §J (`GO_LIVE_CHECKLIST_v10.md`) genlæst
+  direkte fra disk — blokerings-optællingen uændret (A:7, C:2 [C-03 + P0 #5/C-10], E:1, G:2, M:1),
+  nu **10. sammenhængende runde** identisk. Begge LibreOffice-lockfiler læst direkte: samme
+  uændrede indhold som #61-#72 (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini 05.07.2026 11:46, nu
+  knap 2 døgn stale; `KRAVREGISTER_og_STATUS_v10.md`: 02.07.2026 12:02) — fortsat ingen aktiv
+  redigeringssession. Ingen nye Codex/Peter-entries siden #72.
+- **Bevidst ingen ny rettelse (uændret begrundelse fra #66-#72):** Samme backlog-hensyn — ingen ny
+  ukommitteret docs-ændring tilføjet oven på den allerede flaggede bunke siden `bce5f856`.
+- **Filer rørt:** Ingen ud over denne entry.
+- **Går videre til:** Uændret liste fra #38-#72 (se der for fuld liste). Uændret, stående
+  anbefaling til Codex/Peter: batch-commit docs-backlog siden `bce5f856` (§62/§66-72), afklar
+  R14/R19/M-05-punkterne. Ingen ny milepæl-note tilføjet (jf. #72's beslutning om ikke at gentage
+  medmindre noget faktisk ændrer sig — det er det ikke denne runde).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 21. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #74) — fra Claude: 11. rene re-verifikationsrunde i træk, ingen ny drift; bash stadig nede (22. bekræftelse) — kort entry, jf. #70-#73
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` (afprøvet 2 gange denne runde) — **22. selvstændige
+  bekræftelse** på tværs af tre kalenderdage. Ingen `git status`/test/commit mulig; faldt tilbage
+  på direkte fil-læsning som i #61-#73.
+- **Denne runde:** §11 (`RISK_ASSESSMENT_v10.md`) og §J (`GO_LIVE_CHECKLIST_v10.md`) genlæst
+  direkte fra disk — blokerings-optællingen uændret (A:7, C:2 [C-03 + P0 #5/C-10], E:1, G:2, M:1),
+  nu **11. sammenhængende runde** identisk. Begge LibreOffice-lockfiler læst direkte: samme
+  uændrede indhold som #61-#73 (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini 05.07.2026 11:46, nu
+  over 2 døgn stale; `KRAVREGISTER_og_STATUS_v10.md`: 02.07.2026 12:02). Bekræftede desuden ved
+  grep at tjek #64/#65's ukommitterede R14/R19-fund stadig findes uændret i alle tre berørte filer
+  (`RISK_ASSESSMENT_v10.md`, `GO_LIVE_CHECKLIST_v10.md`, `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`)
+  — intet tabt eller reverteret. Ingen nye Codex/Peter-entries siden #73.
+- **Bevidst ingen ny rettelse (uændret begrundelse fra #66-#73):** Samme backlog-hensyn — ingen ny
+  ukommitteret docs-ændring tilføjet oven på den allerede flaggede bunke siden `bce5f856`.
+- **Filer rørt:** Ingen ud over denne entry.
+- **Går videre til:** Uændret liste fra #38-#73 (se der for fuld liste). Uændret, stående
+  anbefaling til Codex/Peter: batch-commit docs-backlog siden `bce5f856` (§62/§66-73), afklar
+  R14/R19/M-05-punkterne. #67's kadence-anbefaling (forlæng tjek-intervallet eller sæt på pause
+  indtil bash er rettet/backlog committet) står fortsat ubesvaret efter nu 8 runder — gentages
+  ikke yderligere her, jf. #72's beslutning om kun at flage ved faktisk ændring.
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 22. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #75) — fra Claude: 12. rene re-verifikationsrunde i træk, ingen ny drift; bash stadig nede (23. bekræftelse) — kort entry, jf. #70-#74
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` (afprøvet 2 gange denne runde) — **23. selvstændige
+  bekræftelse** på tværs af tre kalenderdage. Ingen `git status`/test/commit mulig; faldt tilbage
+  på direkte fil-læsning som i #61-#74.
+- **Denne runde:** §11 (`RISK_ASSESSMENT_v10.md`) og §J (`GO_LIVE_CHECKLIST_v10.md`) genlæst
+  direkte fra disk — blokerings-optællingen uændret (A:7, C:2 [C-03 + P0 #5/C-10], E:1, G:2, M:1),
+  nu **12. sammenhængende runde** identisk. Begge LibreOffice-lockfiler læst direkte: samme
+  uændrede indhold som #61-#74 (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini 05.07.2026 11:46, nu
+  over 2 døgn stale; `KRAVREGISTER_og_STATUS_v10.md`: 02.07.2026 12:02). Ingen nye Codex/Peter-
+  entries siden #74.
+- **Bevidst ingen ny rettelse (uændret begrundelse fra #66-#74):** Samme backlog-hensyn — ingen ny
+  ukommitteret docs-ændring tilføjet oven på den allerede flaggede bunke siden `bce5f856`.
+- **Filer rørt:** Ingen ud over denne entry.
+- **Går videre til:** Uændret liste fra #38-#74 (se der for fuld liste). Uændret, stående
+  anbefaling til Codex/Peter: batch-commit docs-backlog siden `bce5f856` (§62/§66-74), afklar
+  R14/R19/M-05-punkterne. #67's kadence-anbefaling står fortsat ubesvaret efter nu 9 runder —
+  gentages ikke yderligere her, jf. #72's beslutning om kun at flage ved faktisk ændring.
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 23. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #76) — fra Claude: ny verifikationsmetode fundet (læste `.git/logs/HEAD` direkte) — retter en fejlagtig antagelse fra 10 tidligere runder
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` (afprøvet 2 gange) — **24. selvstændige bekræftelse**.
+  Ingen `git status`/test/commit muligt via bash.
+- **Denne runde valgte jeg noget andet end endnu en (13.) identisk §11/§J-reverifikation:** alle
+  tidligere runder (#57-#75) har antaget at `git`-tilstand er *fuldstændig* utilgængelig uden bash.
+  Det er ikke korrekt — `.git/HEAD` og `.git/logs/HEAD` er almindelige tekstfiler og kan læses
+  direkte med `Read`-værktøjet, uden shell. Dette er ikke forsøgt i nogen af de 75 forrige runder.
+- **Fund 1 (retter en fejlagtig antagelse fra §62/§66-75):** `.git/logs/HEAD` viser at rigtige
+  commits fortsatte et godt stykke forbi `bce5f856` (tjek #21's SAST-fix, som §62 fejlagtigt brugte
+  som "sidste bekræftede commit"). Reflog'en indeholder bl.a. `docs: record Claude periodic check 29`,
+  `docs: record Claude periodic check 30`, `docs: resolve duplicate ADM-010 requirement id`,
+  `docs: mark downloadable timelapse video requirement implemented`, `docs: sync GDPR risk table status`,
+  og som **seneste registrerede commit**: `docs: sync DPIA requirement and agent policy`
+  (~2026-07-05 ca. 13:30 lokal tid, ud fra commit-timestamp 1783244320) — dette matcher indholdet af
+  periodisk tjek #32 (ADM-010/DPIA-krydstjek). Dvs. **tjek #22-#32 BLEV rent faktisk committet**
+  (formentlig af Codex, uden hver gang at skrive en matchende "fra Codex: ... committet"-entry) —
+  §62/§66-75's antagelse om at "intet er committet siden bce5f856" var forkert.
+- **Fund 2 (bekræfter en indsnævret, men stadig reel backlog):** Efter denne commit findes **ingen**
+  yderligere entries i reflog'en — dvs. tjek #33 og frem (R14 aperture/shutter-anbefalingen fra #64,
+  R19 TIMELAPSE_ENV-fundet fra #65, samt ca. 40 andre docs-sync-runder) er efter alt at dømme
+  **stadig reelt ukommitteret**, blot fra et senere og mere præcist startpunkt end tidligere antaget.
+  Backloggen er derfor mindre end §62/§66-75 frygtede (∼#33-#75, ikke #22-#75), men stadig reel.
+- **Fund 3 (ny observation, ikke tidligere tjekket):** `.git/HEAD` viser at dette checkout står på
+  branch `claude/capture-camera-location-2026-07-03` — **ikke** `main`. Ingen tidligere runde har
+  kontrolleret hvilken branch der reelt er checket ud. Hvis Codex/Peter's egen arbejdskopi (fx på
+  Mac Mini) er på en anden branch eller har rebaset/merget siden, kan billedet af "seneste commit"
+  se anderledes ud der end i dette specifikke checkout — denne runde kan kun tale for netop dette
+  checkout.
+- **Begrænsning/usikkerhed (vigtig):** Reflog er lokal til dette checkout/worktree og viser kun
+  HEAD-bevægelser her. Jeg kan ikke udelukke at commits er sket i en anden klon uden at det
+  reflekteres her, og jeg kan (uden `git diff`/`git status`) ikke bekræfte 100 % at der ikke er
+  yderligere, endnu nyere commits jeg overser. Konklusionen er derfor "sandsynligt og bedre
+  underbygget end før", ikke "fuldstændig verificeret".
+- **Udført:** Ingen docs-filer rørt (bevidst, jf. #66-75's backlog-hensyn) — kun denne
+  HANDOVER_LOG-entry. **Opdateret anbefaling til Codex/Peter** (erstatter §62/§66-75's upræcise
+  "siden `bce5f856`"-reference):
+  ```
+  cd /Volumes/data-fast/peter-home/projects/timelapse-pro
+  git branch --show-current   # bekræft om dette stadig er claude/capture-camera-location-2026-07-03
+  git log --oneline -5        # bekræft seneste commit (forventet: "docs: sync DPIA requirement and agent policy")
+  git status --short -- Dokumentation/
+  git diff -- Dokumentation/ | less
+  git add Dokumentation/*.md
+  git commit -m "docs: batch-commit periodiske Claude-tjek #33-#75 (R14/R19-anbefalinger + docs-sync, ingen kode)"
+  git push   # overvej om denne branch skal merges til main først
+  ```
+- **Går videre til:** Uændret liste fra #38-#75 (se der for fuld liste), nu med præcist afgrænset
+  backlog-omfang (#33-#75, ikke #22-#75) og en ny, ubesvaret branch-afklaring (er
+  `claude/capture-camera-location-2026-07-03` reelt den rigtige branch at committe til?).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 24. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #77) — fra Claude: 14. sammenhængende re-verifikation (uændret ift. #76), plus uafhængig kode-bekræftelse af #64's R14-analyse
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **25. selvstændige bekræftelse** på tværs af tre
+  kalenderdage. Ingen `git status`/test/commit muligt via bash; faldt tilbage på #76's metode
+  (direkte `Read` af `.git/HEAD`/`.git/logs/HEAD`) plus fil-læsning som i #61-#75.
+- **Git-tilstand (samme metode som #76):** `.git/HEAD` viser stadig branch
+  `claude/capture-camera-location-2026-07-03`. `.git/logs/HEAD` er uændret — seneste registrerede
+  commit er stadig `docs: sync DPIA requirement and agent policy` (samme reflog-linje som #76
+  fandt). Ingen nye commits, ingen branch-skift siden #76. #76's branch-afklaringsspørgsmål til
+  Codex/Peter står fortsat ubesvaret.
+- **§11/§J genlæst direkte fra disk:** blokerings-optællingen uændret (A:7, C:2 [C-03 + P0 #5/
+  C-10], E:1, G:2, M:1) — **14. sammenhængende runde** identisk (talt fra #61, jf. #76's
+  korrigerede backlog-afgrænsning). Begge LibreOffice-lockfiler læst direkte, samme uændrede
+  indhold som #61-#76 (`GO_LIVE_CHECKLIST_v10.md`: peter/Mac-mini 05.07.2026 11:46, nu over 2
+  døgn stale; `KRAVREGISTER_og_STATUS_v10.md`: 02.07.2026 12:02) — ingen aktiv redigeringssession.
+  Ingen nye Codex/Peter-entries siden #76.
+- **Uafhængig kode-bekræftelse af #64's R14-analyse (ikke tidligere gjort — #64 læste selv koden,
+  men ingen senere runde har efterprøvet konklusionen):** Læste `edge/diagnostics/
+  camera_diagnostics.py` og `edge/agent.py::_build_camera_commands` direkte. Bekræfter #64's
+  centrale påstande er korrekte: `aperture`/`shutter_speed` er hverken i `CAMERA_CONFIG_PARAMS`
+  eller `FLEET_DEFAULTS`, og `SHORT_KEY_ALIASES` mapper dem eksplicit til `None`, så en eventuel
+  per-device override i dag droppes stille af `_canonicalize_config_key()`. **Ny detalje, som
+  præciserer (men ikke ændrer) #64's anbefaling:** skrive-/håndhævelses-siden virker allerede
+  korrekt og profil-bevidst — `_build_camera_commands()` kalder `driver.build_config_command()`,
+  som for Nikon Z30 slår op i `CAMERA_PROFILES["Nikon Z30"]["config_commands"]["aperture"]["path"]`
+  (`/main/capturesettings/f-number`) og altså ALLEREDE sætter den korrekte gphoto2-sti. Det er
+  udelukkende **læse-/observability-siden** (aktuel værdi ind i `camera_config`/CMDB til
+  drift-sammenligning) der mangler, præcis som #64 konkluderede via anbefaling (c)/(ii) — ingen
+  ny anbefaling nødvendig, kun en bekræftelse at #64's implementeringsnote er præcis og
+  implementeringsklar for Codex. R19/`TIMELAPSE_ENV`-fundet fra #65 blev også stikprøvekontrolleret
+  (samme 3 filer, samme terminologi) — uændret.
+- **Bevidst ingen ny rettelse i RISK_ASSESSMENT/GO_LIVE_CHECKLIST:** #64/#65's analyser var allerede
+  korrekte og fuldstændige — en bekræftelse tilføjer ikke ny beslutningsværdi til selve
+  risikodokumentet og ville kun forøge den allerede flaggede docs-backlog unødigt.
+- **Filer rørt:** Ingen ud over denne entry.
+- **Går videre til:** Uændret liste fra #38-#76 (se der for fuld liste), inkl. #76's
+  branch-afklaringsspørgsmål og de præcise `git`-kommandoer til batch-commit af #33-#76-backloggen.
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 25. selvstændige bekræftelse (kvart hundrede).
+
+### Handover 2026-07-06 — fra Claude: port-arkitektur-korrektion (8443/DNS-01, 2. runde), Cloudflare Tunnel-oprydning, og NYT design: kontrolleret support-adgang (break-glass) til staging/prod
+
+- **Kontekst:** To separate, Peter-initierede runder i samme session (ikke et periodisk tjek —
+  `mcp__workspace__bash` fortsat utilgængeligt, samme fejl som #57-#77, ingen ny bekræftelsestælling
+  tilføjet her da det ikke var formålet med runden).
+
+- **Runde 1 — port-arkitektur, 2. korrektion (opgave #59/#60, nu afsluttet):** Peter bekræftede at
+  **CrushFTP allerede kører på BÅDE staging-iMac'en og prod-Mac Mini'en** og optager 21/22/80/443
+  dér — hvilket gjorde min FORRIGE korrektion (installationsscript-runden, 2026-07-05: "direkte
+  nginx-eksponering på standard 443/80") selv forkert. Rettet igennem hele dokumentations- og
+  kodesættet til den nu endeligt aftalte arkitektur: **backend.timelapse-pro.dk på port 8443**
+  (direkte offentligt bundet, ikke Cloudflare Tunnel), certifikat via **DNS-01**
+  (`certbot-dns-cloudflare`, rører ingen port), marketingsite (`www.timelapse-pro.dk`) hostet
+  **separat** fra staging/prod-maskinerne. Filer ændret: `PORT_AUDIT_og_WEBSITE_v10.md` (hele
+  dokumentet — primær kilde), `GO_LIVE_CHECKLIST_v10.md` (§A/§I/§J/§L),
+  `RISK_ASSESSMENT_v10.md` (VPEN-2026-001/002, §6 zone-model med ny "Zone X"-note for CrushFTP,
+  §11 P0.1), `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` (§8), `Claude_Intern_CA_mTLS_Design_2026-07-05.md`
+  (§6/§9, mTLS-transportlaget flyttet til 8443), `deploy/install/install_headend.sh` (ny
+  `TL_BACKEND_PORT`-variabel, default 8443, forbudt at sætte til 21/22/80/443; DNS-01-baseret
+  cert-detektion i stedet for HTTP-01-webroot; `TL_DOMAIN_WWW`/`WWW_BLOCK` fjernet helt),
+  `example-staging.conf`/`example-prod.conf`, `INSTALLATION_GUIDE_HEADEND_v1.md` (§5/§6 omskrevet
+  til DNS-01), `www/index.html` (3 login-hrefs fik `:8443` tilføjet). Desuden ryddet resterende
+  "Cloudflare Tunnel til frontend"-referencer i `00_START_HER.md`, `KRAVREGISTER_og_STATUS_v10.md`,
+  `SERVICES_OG_DRIFT_kilde_til_sandhed.md` og `Timelapse_pro_full_documentation_v10.md` (sidstnævnte
+  fik en top-banner, da hele dokumentet er for stort til linje-for-linje-retning i denne runde).
+  `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md` (kun for `rd`/lab-domænet, ikke prod) fik et
+  SUPERSEDED-lignende banner i stedet for at blive rettet/slettet — uklart om Peters "til
+  frontend"-instruktion også dækker lab-domænet (som ikke har CrushFTP-konflikten); **afventer
+  Peters bekræftelse**. Ingen kode (kun `.md`/`.sh`/`.html`) rørt.
+
+- **Runde 2 — NYT design: kontrolleret support-adgang til staging/prod (opgave #61, IKKE
+  afsluttet — kun design, ingen kode):** Peter uddybede den permanente nul-adgang-politik
+  (2026-07-05): "Jeg tænker vi (trods min tidligere udtalelse) skal have en kontrolleret og
+  logget adgangsmulighed for dig (Codex) til support adgang, som kan anvendes i forbindelse med
+  installation og fejlsøgning/fejlretning." Efter afklarende spørgsmål (gælder begge agenter;
+  mekanisme = tidsbegrænset SSH-nøgle/konto; livscyklus = manuel aktivering pr. session, med
+  kunde-samtykke-tjek, indbygget udløb, signeret ticket + audit-log) er der skrevet et nyt
+  design-notat: **`Claude_Support_Access_Model_2026-07-06.md`**. Kernepunkter: (1) default-deny
+  er UÆNDRET standardtilstand — dette er en kontrolleret undtagelsesvej, ikke en erstatning; (2)
+  en **separat Support-CA**, bevidst ADSKILT fra device-CA'en i #52-designet (separation of
+  duties/trust domains — device-cert-kompromittering må aldrig kunne bruges til admin-adgang og
+  omvendt); (3) SSH-brugercertifikater med **kryptografisk indbygget udløb**
+  (`ssh-keygen -s ... -V <start>:<slut>`) — ingen cron-job, ingen "glemte at lukke adgangen"-
+  risiko; (4) kunde-samtykke-tjek pr. aktivering (hvilken kunde har data på maskinen, implicit
+  DPA-dækning eller kræver eksplicit "ja" for netop denne session — samme sondring som Kirkbi
+  A/S-DPA'en allerede etablerede for udviklingsbrug, men her for LIVE support-adgang); (5) et nyt
+  "AccessTicket"-koncept, der genbruger SIGNERINGS-MØNSTERET fra det eksisterende `ChangeTicket`
+  (`headend/database.py:345`) uden at overbelaste selve update-flow-tabellen. Opdaterede
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §5, `GO_LIVE_CHECKLIST_v10.md` (M-02 omformuleret,
+  ny M-08), `RISK_ASSESSMENT_v10.md` R19 til at henvise til dette. **Ingen kode, script eller
+  CA-nøgle er oprettet** — dette er bevidst kun et design-/principoplæg, samme forsigtighed som
+  #52's CA/mTLS-design, givet emnets adgangskontrol-nærhed. **Åbne punkter til Codex/Peter:**
+  AccessTicket-skema (ny tabel vs. `ticket_type`-diskriminator på `change_tickets`), hvem skriver
+  `grant_support_access.sh` (kun Peter kører det, ingen agent-adgangskonflikt ved at skrive det),
+  og en generel, gentagelig proces for kunde-samtykke-opslag (i dag kun manuelt for Kirkbi A/S).
+
+- **Sammenfaldende note (samme session, separat fra ovenstående):** Peter besvarede desuden
+  #52's sidste tre åbne designspørgsmål (cert-levetid, HMAC-lag, Root CA-placering) — se
+  `Claude_Intern_CA_mTLS_Design_2026-07-05.md`s egen dokumenthistorik for detaljer (10-års
+  konfigurerbar device-cert-levetid via eksisterende config-hierarki, permanent HMAC+mTLS,
+  retrofit af det eksisterende R&D-device til mTLS som verifikation). #52's design er nu
+  FULDSTÆNDIGT — ingen åbne spørgsmål tilbage, kodefasen kan påbegyndes som en ny, afgrænset
+  opgave når Codex/Peter ønsker det.
+
+- **Filer rørt (denne handover-entry dækker begge runder):** `PORT_AUDIT_og_WEBSITE_v10.md`,
+  `GO_LIVE_CHECKLIST_v10.md`, `RISK_ASSESSMENT_v10.md`, `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`,
+  `Claude_Intern_CA_mTLS_Design_2026-07-05.md`, `install_headend.sh`, `example-staging.conf`,
+  `example-prod.conf`, `INSTALLATION_GUIDE_HEADEND_v1.md`, `www/index.html`, `00_START_HER.md`,
+  `KRAVREGISTER_og_STATUS_v10.md`, `SERVICES_OG_DRIFT_kilde_til_sandhed.md`,
+  `Timelapse_pro_full_documentation_v10.md`, `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`, samt nyt
+  dokument `Claude_Support_Access_Model_2026-07-06.md`. Ingen kode rørt, kun dokumentation/config/
+  script/html. Ikke committet (samme bash-begrænsning som #57-#77 — kan ikke selv køre `git`).
+- **Går videre til (nyt, ud over #38-#77's liste):** (a) Peters bekræftelse af om
+  `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md` (rd/lab) også skal undgå Cloudflare Tunnel, eller om det
+  var kun prod-instruktionen der gjaldt; (b) #61's åbne implementeringsvalg (AccessTicket-skema,
+  hvem skriver support-access-scriptet); (c) #52's kodefase kan nu startes (design er
+  fuldstændigt); (d) den store, allerede eksisterende docs-backlog (#33-#77) er UÆNDRET af denne
+  entry — samme `git`-kommandoer som #76 anbefalede gælder fortsat, blot nu med endnu flere filer
+  at inkludere i batch-commit'et.
+  `mcp__workspace__bash` fejler fortsat konsekvent under denne session (samme fejlbillede som
+  #57-#77) — kunne ikke selv verificere/committe noget af ovenstående.
+
+### Handover 2026-07-06 (periodisk tjek #78) — fra Claude: SABSA-review af det nye Support-Access-designnotat fandt en uverificeret netværksforudsætning
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **26. selvstændige bekræftelse**. Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#77).
+- **Git-tilstand (samme metode som #76/#77):** `.git/HEAD` peger stadig på
+  `claude/capture-camera-location-2026-07-03`. `.git/logs/HEAD` uændret — seneste registrerede
+  commit er stadig `docs: sync DPIA requirement and agent policy`
+  (`b93409a3178942e316f2174f622c87a50a956fdf`). Ingen nye commits, ingen branch-skift siden #76/#77.
+  §11/§J (`RISK_ASSESSMENT_v10.md`/`GO_LIVE_CHECKLIST_v10.md` §J) genlæst — blokerings-billedet er
+  uændret ift. #77 (A:7, C:2, E:1, G:2, M:1).
+- **Denne runde valgte jeg noget andet end endnu en ren re-verifikation:** sidste (ikke-periodiske)
+  Peter-session tilføjede et helt nyt designdokument, `Claude_Support_Access_Model_2026-07-06.md`
+  (break-glass SSH-adgang til staging/prod), som endnu ikke var blevet uafhængigt gennemgået af
+  nogen efterfølgende runde. Som SABSA/ISO27001/IEC 62443-bevidst reviewer læste jeg det grundigt
+  igennem for huller, ikke kun for drift ift. §11/§J.
+- **Fund (ny, ikke tidligere flagget):** Designets §5 trin 4 ("Agenten bruger certifikatet til at
+  forbinde via SSH i sessionens levetid") antager stiltiende at agenten selv kan etablere en
+  udgående SSH-forbindelse til staging-/prod-maskinen. For Claude specifikt er dette **ikke
+  verificeret** — mit eget shell-værktøj (`mcp__workspace__bash`) kører i et isoleret, sandboxed
+  Linux-miljø med kun allowlistet netværksadgang, ikke fri adgang til vilkårlige private IP-adresser
+  på Peters hjemmenetværk. Uden en dedikeret, offentligt nåbar SSH-endpoint (eller en anden
+  overdragelsesmekanisme) kan hele break-glass-flowet vise sig ubrugeligt for Claude, uanset hvor
+  korrekt CA/certifikat-delen er designet. Bemærk at dette formentlig **ikke** gælder Codex på samme
+  måde, da Codex' eksekveringsmiljø (kører direkte på Peters/Codex' egen maskine, ikke i en
+  ekstern sandbox) sandsynligvis har almindelig netværksadgang — men det bør bekræftes eksplicit
+  pr. agent, ikke antages fælles, før scriptet bygges.
+- **Udført:** Tilføjet ét nyt, afgrænset punkt til §8 ("Hvad der IKKE er besluttet/bygget endnu") i
+  `Claude_Support_Access_Model_2026-07-06.md` (plus tilsvarende dokumenthistorik-linje) med denne
+  observation og en konkret anbefaling: verificér empirisk fra agentens faktiske eksekveringsmiljø
+  om SSH-forbindelsen kan etableres, FØR Support-CA'en/`grant_support_access.sh` bygges. Ingen
+  ændring af selve modellens kernedesign (CA-separation, ticket-skema, udløbsmekanisme) — kun en ny
+  forudsætning at afklare. Ingen kode rørt.
+- **Går videre til:** Uændret liste fra #38-#77 (branch-afklaring, AccessTicket-skema,
+  `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet, docs-batch-commit #33-#77), plus dette nye
+  punkt: **Codex/Peter — bekræft om Codex' eksekveringsmiljø har almindelig udgående netværksadgang
+  til staging/prod's SSH-port**, og om Claude i så fald skal udelades af break-glass-flowet (eller
+  have en anden overdragelsesvej, jf. designnotatets nye §8-punkt).
+  `mcp__workspace__bash` fejler fortsat konsekvent — nu 26. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #79) — fra Claude: intern Cloudflare Tunnel-inkonsistens rettet i `Claude_Intern_CA_mTLS_Design_2026-07-05.md` §1/§2
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **27. selvstændige bekræftelse**. Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#78).
+- **Git-tilstand:** Ikke gen-tjekket denne runde (uændret ift. #76-#78 forventet — `.git/HEAD`
+  på `claude/capture-camera-location-2026-07-03`, seneste reflog-commit stadig
+  `docs: sync DPIA requirement and agent policy`). §11/§J-blokeringsbilledet (A:7, C:2, E:1, G:2,
+  M:1) er ikke selvstændigt genoptalt i denne runde — se #77/#78 for sidste fulde optælling.
+- **Denne runde valgte jeg at følge op på #78's egen anbefaling** om at gennemgå det store
+  port-arkitektur-korrektionsrunde (samme session som #78, 2026-07-06) for reelle rester, i stedet
+  for endnu en ren re-verifikation. Grep'ede "Cloudflare Tunnel" på tværs af alle 12 aktive (ikke
+  "Gamle versioner") Dokumentation-filer og læste hver træfning i kontekst.
+- **Fund (ny, ikke tidligere flagget):** 10 af 12 filers træfninger er korrekte, eksplicitte
+  afvisninger ("ikke Cloudflare Tunnel", "udgår") og kræver ingen rettelse. Men
+  `Claude_Intern_CA_mTLS_Design_2026-07-05.md` — samme dokument der selv indeholder den korrekte,
+  daterede §3/§6-rettelse ("rettet 2026-07-05: ... ingen Cloudflare Tunnel") — havde to interne
+  rester der IKKE blev opdateret i den korrektionsrunde:
+  - §1 ("Hvorfor"): "TLS termineres i dag af Cloudflare Tunnel/nginx (se §6)" — modsagde §3 (linje
+    76) og §6's egen, senere beslutning.
+  - §2 (SABSA-tabellen, "Komponent"-rækken): "Cloudflare Tunnel/`cloudflared` eller nginx
+    `ssl_client_certificate` afhængig af §6-valg" — beskrev §6-valget som stadig åbent, selvom §6
+    selv (og dokumentets statusfelt i toppen) siger "Besluttet 2026-07-05 — Model B ... ingen
+    blockers tilbage".
+  Samme docs-lag-drift-mønster som #22-#59's mange fund, blot denne gang internt i ét og samme
+  dokument snarere end mellem to dokumenter.
+- **Udført:** Rettet begge steder til at matche §3/§6/statusfeltet: §1 siger nu "TLS termineres i
+  dag direkte af nginx på port 8443 (staging/prod, ingen Cloudflare Tunnel, se §6/§8-korrektionen)";
+  §2's Komponent-række siger nu "nginx `ssl_client_certificate` (Model B, besluttet 2026-07-05 —
+  Cloudflare Tunnel indgår ikke i prod-arkitekturen, se §6)". Tilføjet tilsvarende linje i §11
+  Dokumenthistorik. §2's "Drift"-række ("Codex ejer ... Cloudflare-konfiguration") er bevidst IKKE
+  rørt — DNS-01 (`certbot-dns-cloudflare`) bruger fortsat Cloudflares DNS-API, så den reference er
+  stadig korrekt, kun Tunnel-brugen er udgået.
+- **Filer rørt:** `Claude_Intern_CA_mTLS_Design_2026-07-05.md` (§1, §2, §11), denne
+  HANDOVER_LOG-entry. Ingen kode rørt. Ikke committet (samme bash-begrænsning som #57-#78).
+- **Går videre til:** Uændret liste fra #38-#78 (branch-afklaring, AccessTicket-skema,
+  `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet, Codex-netværksadgang-spørgsmålet fra #78,
+  docs-batch-commit #33-#79 — nu med denne fil tilføjet til listen). `mcp__workspace__bash` fejler
+  fortsat konsekvent — nu 27. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #80) — fra Claude: AccessTicket-skema-spørgsmålet fra #61 besvaret med en kodebaseret anbefaling
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **28. selvstændige bekræftelse**. Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#79).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/capture-camera-location-2026-07-03`.
+  `.git/logs/HEAD` uændret — seneste registrerede commit er stadig
+  `docs: sync DPIA requirement and agent policy` (`b93409a3178942e316f2174f622c87a50a956fdf`).
+  Ingen nye commits, ingen branch-skift siden #76-#79. §11/§J genlæst — blokerings-billedet
+  (P0: 6 punkter, P1: 5, P2: 7; GO_LIVE §J: A:7, C:2, E:1, G:2, M:1) er uændret ift. #77-#79.
+- **Denne runde valgte jeg** at følge op på et af de eneste reelt ÅBNE (ikke blot "afventer
+  Peter/Codex-bekræftelse") implementeringsspørgsmål fra #61's design-notat: AccessTicket-skemaet
+  (ny tabel vs. `ticket_type`-diskriminator på `change_tickets`). Dette er et spørgsmål jeg kan
+  besvare med rådgivning ved at læse den faktiske kode, i modsætning til fx netværks-/lab-
+  spørgsmålene, der reelt afventer Peters beslutning.
+- **Fund/udført:** Læste `headend/database.py:345-434` (`ChangeTicket`, `ChangeApproval`,
+  `UpdateArtifact`, `UpdateTarget`-modellerne) og `timelapse-ui/src/pages/ChangeTicketsPage.tsx`
+  (status-badge-farver og knap-logik). Tre konkrete tekniske fund understøtter en **separat
+  `access_tickets`-tabel** frem for en diskriminator på `change_tickets`: (1) 8 deployment-
+  specifikke `ChangeTicket`-felter (`pending_update_id`, `artifact_id`, `sbom_ref`,
+  `rollback_plan` osv.) ville stå NULL for en adgangstildeling, og omvendt mangler alle
+  §6-adgangsfelterne — et sparse/polymorphic-table-antimønster, ikke bare smag; (2)
+  `ChangeTicket.status`-enummet (`draft|ready|...|deployed|rolled_back`) er hårdkodet ind i
+  `ChangeTicketsPage.tsx`'s UI-logik og er semantisk inkompatibelt med et tidsbaseret
+  AccessTicket-livsforløb (`active`/`expired`/`revoked`); (3) samme separation-of-duties-princip
+  som §4 allerede bruger til at begrunde en separat Support-CA (ikke device-CA'en) gælder her —
+  blanding af de to i én tabel/UI-side gør RBAC/visning pr.-række-afhængig i stedet for
+  pr.-tabel/endpoint. Anbefalede at `ticket_id`-navnerum + GPG-signeringsmønsteret genbruges på
+  tværs, men selve tabelstrukturen holdes adskilt.
+- **Skrevet til:** `Claude_Support_Access_Model_2026-07-06.md` §6 (udvidet med den fulde
+  begrundelse), §8 (opdateret fra "åbent implementeringsvalg" til "rådgivende anbefaling givet"),
+  §9 (dokumenthistorik). Dette er **rådgivning til beslutningsstøtte, ikke en truffet beslutning**
+  — Peter/Codex vælger stadig endeligt. Ingen kode, migration eller tabel oprettet.
+- **Går videre til:** Uændret liste fra #38-#79 (branch-afklaring, `NGINX_CLOUDFLARE_
+  MIGRATION_LAB_v1.md`-spørgsmålet, Codex-netværksadgang-spørgsmålet fra #78, docs-batch-commit
+  #33-#80), nu med AccessTicket-skema-spørgsmålet markeret som besvaret (rådgivning klar, afventer
+  Peter/Codex' endelige valg og evt. implementering). `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 28. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #81) — fra Claude: integritetstjek af den akkumulerede ukommitterede docs-backlog (#33-#80) — intet tabt
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **29. selvstændige bekræftelse**. Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#80).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/capture-camera-location-2026-07-03`.
+  `.git/logs/HEAD` uændret — seneste registrerede commit er stadig
+  `docs: sync DPIA requirement and agent policy` (`b93409a3178942e316f2174f622c87a50a956fdf`).
+  Ingen nye commits, ingen branch-skift siden #76-#80. §11/§J genlæst — blokerings-billedet
+  (P0: 6 punkter, P1: 5, P2: 7; GO_LIVE §J: A:7, C:2, E:1, G:2, M:1) er uændret ift. #77-#80.
+- **Hvorfor denne runde er noget andet end endnu en ren re-verifikation:** #76-#80 har alle
+  bekræftet git-tilstanden via `.git/HEAD`/`.git/logs/HEAD` — men det viser kun *committet*
+  historik, ikke om det store, stadig-ukommitterede backlog af doc-/script-rettelser fra #33-#80
+  reelt stadig ligger urørt i working tree. Ingen tidligere runde har faktisk læst indholdet af
+  disse filer for at bekræfte at intet er gået tabt (fx via en util fra Peter eller en anden agent
+  — `git checkout`/`stash`/`reset` ville ikke nødvendigvis vise sig i `.git/logs/HEAD` på en måde
+  jeg tidligere har tjekket for). Med 29 rundes akkumuleret, ukommitteret arbejde er dette en reel,
+  ikke-triviel risiko, og noget jeg konkret KAN verificere uden bash (kun `Grep`/`Read`).
+- **Udført:** Stikprøvekontrol af indhold på tværs af både den ældste (#33-#59-æraen) og nyeste
+  (#78-#80) del af backloggen:
+  - `Claude_Support_Access_Model_2026-07-06.md` — §6/§8/§9's AccessTicket-anbefaling fra #80
+    (`access_tickets`-tabel, tre tekniske fund) er intakt.
+  - `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md` — SUPERSEDED-banneret og "afventer Peters
+    bekræftelse"-teksten fra #77 er intakt.
+  - `PORT_AUDIT_og_WEBSITE_v10.md` — 37 forekomster af 8443/DNS-01/`certbot-dns-cloudflare`
+    (port-korrektionsrunden, 2026-07-05) er intakt.
+  - `deploy/install/install_headend.sh` — 21 forekomster af `TL_BACKEND_PORT` (samme
+    port-korrektionsrunde) er intakt.
+  **Konklusion: ingen data-tab fundet.** Hele den kendte backlog (#33-#80) ser ud til stadig at
+  ligge urørt i working tree, klar til det samme batch-commit tidligere runder (#76-#80) allerede
+  har foreslået kommandoer til. Ingen dokumentation eller kode ændret denne runde — ren
+  verifikation.
+- **Går videre til:** Uændret liste fra #38-#80 (branch-afklaring, `NGINX_CLOUDFLARE_
+  MIGRATION_LAB_v1.md`-spørgsmålet, Codex-netværksadgang-spørgsmålet fra #78, AccessTicket-skema-
+  valget fra #80, docs-batch-commit #33-#80 — nu med en bekræftet-intakt-status i stedet for kun
+  en antagelse). `mcp__workspace__bash` fejler fortsat konsekvent — nu 29. selvstændige
+  bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #82) — fra Claude: ren re-verifikation + krydstjek af #65's GO_LIVE-propagering, ingen ny drift
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **30. selvstændige bekræftelse**. Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#81).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/capture-camera-location-2026-07-03`.
+  `.git/logs/HEAD` uændret (203 linjer, samme som #76-#81) — seneste registrerede commit er
+  stadig `docs: sync DPIA requirement and agent policy` (`b93409a3178942e316f2174f622c87a50a956fdf`).
+  Ingen nye commits, ingen branch-skift, ingen ny Codex-entry i HANDOVER_LOG siden #77/#78.
+  §11/§J genlæst — blokerings-billedet (P0: 6 punkter, P1: 5, P2: 7; GO_LIVE §J: A:7, C:2, E:1,
+  G:2, M:1) er uændret ift. #77-#81.
+- **Denne runde:** krydstjekkede at #65's fund (TIMELAPSE_ENV-terminologi-drift, forudsætning for
+  M-05-håndhævelsen) faktisk er propageret til selve go-live-gate-dokumentet, ikke kun til
+  RISK_ASSESSMENT R19-detaljeafsnittet hvor det oprindeligt blev skrevet. Bekræftet: GO_LIVE_
+  CHECKLIST_v10.md linje 226 (M-05) indeholder allerede den korrekte "Forudsætning (2026-07-06,
+  periodisk tjek #65)"-henvisning. Ingen docs-lag-drift fundet her — allerede korrekt synkroniseret
+  (formentlig i samme redigering som #65 selv). Ingen rettelse nødvendig, ingen fil ændret.
+- **Går videre til:** Uændret liste fra #38-#81 (branch-afklaring, `NGINX_CLOUDFLARE_
+  MIGRATION_LAB_v1.md`-spørgsmålet — afventer Peters bekræftelse, Codex-netværksadgang-
+  spørgsmålet fra #78, docs-batch-commit #33-#81). `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 30. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #83) — fra Claude: SABSA_Architecture_v10.md's egen tillidsgrænse-model manglede miljø-laget fra 2026-07-05
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **31.-32. selvstændige bekræftelse** (fejlede to
+  gange denne runde, incl. et forsøg på blot `wc -l`). Faldt tilbage på direkte `Read`/`Grep` af
+  filsystemet (samme metode som #76-#82).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/capture-camera-location-2026-07-03`.
+  `.git/logs/HEAD` uændret (203 linjer, samme som #76-#82) — seneste registrerede commit er
+  stadig `docs: sync DPIA requirement and agent policy` (`b93409a3178942e316f2174f622c87a50a956fdf`).
+  Ingen nye commits, ingen branch-skift, ingen ny Codex-entry i HANDOVER_LOG siden #77/#78.
+  §11/§J genlæst — blokerings-billedet (P0: 6 punkter, P1: 5, P2: 7; GO_LIVE §J: A:7, C:2, E:1,
+  G:2, M:1) er uændret ift. #77-#82.
+- **Denne runde:** i stedet for endnu en ren re-verifikation, tjekkede jeg om #65's
+  `TIMELAPSE_ENV`-terminologi-fund (rd/staging/prod vs. gammel lab/dev/development, forudsætning
+  for M-05) var propageret bredere end de 3 steder #82 allerede havde bekræftet (RISK_ASSESSMENT
+  R19, `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §6, `GO_LIVE_CHECKLIST_v10.md` M-05). Grep'ede
+  `KRAVREGISTER_og_STATUS_v10.md` og `SABSA_Architecture_v10.md` for `TIMELAPSE_ENV`/R19/miljø-
+  relaterede nøgleord.
+- **Fund 1 (ingen handling nødvendig):** `KRAVREGISTER_og_STATUS_v10.md` nævner intet om
+  miljø-lag/agent-adgang (M-01–M-08) — men efter gennemgang af registrets faktiske scope
+  (ADM-/CAP-xxx funktionelle/GDPR-krav) er dette korrekt: miljøtopologi/agent-adgang er en
+  sikkerheds-/risikoarkitektur-beslutning, ikke et funktionelt krav, og hører rigtigt hjemme i
+  RISK_ASSESSMENT/GO_LIVE_CHECKLIST alene. Ingen rettelse.
+- **Fund 2 (ny, reel — rettet):** `SABSA_Architecture_v10.md` §3 "Tillidsgrænser (mål-tilstand)"
+  — selve dette projekts kanoniske SABSA-tillidsgrænse-afsnit — nævnte overhovedet ikke
+  miljø-laget (rd/staging/prod) som en selvstændig tillidsgrænse, selvom RISK_ASSESSMENT §6
+  allerede (2026-07-05) blev udvidet med præcis dette som "et miljø-lag, ortogonalt på de
+  eksisterende netværkszoner". §3 beskrev kun komponent-/netværkstillidsgrænser
+  (Edge/Headend/Browser/Kamera), ikke miljø-adskillelsen eller den gældende default-deny
+  agent-adgangspolitik (R19/M-02) — et reelt hul i netop det dokument, der ifølge
+  projektinstruktionerne (SABSA-ekspert-rollen) burde være den kanoniske kilde til
+  tillidsgrænse-modellering.
+- **Udført:** Tilføjet ét nyt afsnit til §3 (efter den eksisterende tillidsgrænse-paragraf) der
+  beskriver miljø-laget som en selvstændig SABSA-tillidsgrænse, med henvisning til
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`, `RISK_ASSESSMENT_v10.md` R19,
+  `GO_LIVE_CHECKLIST_v10.md` M-01–M-08 og `Claude_Support_Access_Model_2026-07-06.md`
+  (break-glass-designet), samt en kort note om at selve håndhævelsen (M-05) og
+  `TIMELAPSE_ENV=rd`-implementeringsfælden (R19) stadig ikke er kodet/rettet. Bekræftede ved
+  samme lejlighed (fornyet kodelæsning) at de 3 kodesteder fra #65 (`edge/agent.py:1481`,
+  `headend/main.py:81`, `headend/siem.py:402`) stadig er uændrede. Ren dokumentationstilføjelse,
+  ingen kode rørt, ingen eksisterende tekst slettet eller omskrevet — kun tilføjet.
+- **Filer rørt:** `SABSA_Architecture_v10.md` (§3), denne HANDOVER_LOG-entry. Ikke committet
+  (samme bash-begrænsning som #57-#82).
+- **Går videre til:** Uændret liste fra #38-#82 (branch-afklaring, `NGINX_CLOUDFLARE_
+  MIGRATION_LAB_v1.md`-spørgsmålet, Codex-netværksadgang-spørgsmålet fra #78, docs-batch-commit
+  #33-#83 — nu med denne fil tilføjet til listen). `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 32. selvstændige bekræftelse.
+
+**Codex/Peter: kør venligst** (samlet batch-commit-forslag, uændret fra #76-#82, nu blot udvidet
+med denne runde tilføjelse):
+
+```bash
+cd /path/til/timelapse-pro
+git status --short
+git add Dokumentation/HANDOVER_LOG.md Dokumentation/SABSA_Architecture_v10.md \
+        Dokumentation/RISK_ASSESSMENT_v10.md Dokumentation/GO_LIVE_CHECKLIST_v10.md \
+        Dokumentation/Claude_Intern_CA_mTLS_Design_2026-07-05.md \
+        Dokumentation/Claude_Support_Access_Model_2026-07-06.md \
+        Dokumentation/NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md
+git commit -m "docs: sync SABSA trust-boundary model with rd/staging/prod environment layer (periodisk tjek #83)"
+```
+
+(Kør `git status --short` FØRST og bekræft at kun docs-filer er ukommitterede, ikke kode — hvis
+der er andet i working tree, stop og spørg Peter/Claude før commit.)
+
+### Handover 2026-07-06 (periodisk tjek #84) — fra Claude: rettede #65's `TIMELAPSE_ENV`-terminologi-drift i kode (ikke kun dokumentation), R19/M-05-forudsætning nu lukket
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **34. selvstændige bekræftelse** (også forsøgt til
+  `py_compile`-verifikation af selve rettelsen nedenfor, se "Testet"). Faldt tilbage på direkte
+  `Read`/`Grep` af filsystemet (samme metode som #76-#83).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/capture-camera-location-2026-07-03`.
+  `.git/logs/HEAD` uændret (202 committede entries, samme HEAD-commit som #76-#83) — seneste
+  registrerede commit er stadig `docs: sync DPIA requirement and agent policy`
+  (`b93409a3178942e316f2174f622c87a50a956fdf`). Ingen nye commits, ingen branch-skift siden #76-#83.
+  §11/§J genlæst — blokerings-billedet (P0: 6 punkter, P1: 5, P2: 7; GO_LIVE §J: A:7, C:2, E:1,
+  G:2, M:1) er uændret i kategori-optælling ift. #77-#83 (denne runde ændrer indhold, ikke antal,
+  i P0 #6/M-05).
+- **Denne runde — valgte at rette koden, ikke kun dokumentere den:** #65-#83 har flere gange
+  dokumenteret `TIMELAPSE_ENV`-terminologi-driften (de 3 kodesteder kender endnu ikke `"rd"`,
+  kun `lab`/`dev`/`development`) som en forudsætning for M-05, men ingen runde havde endnu rettet
+  selve koden. Dette er netop den slags "lille isoleret kodefix jeg selv kan teste, som ikke
+  kræver genstart af live services" opgaveinstruksen beder om — så jeg rettede den denne runde
+  i stedet for endnu en re-verifikation.
+- **Udført (kode):**
+  1. `edge/agent.py` linje 1479-1483 — tilføjede `"rd"` til allowlisten
+     `{"lab", "dev", "development"}` for den legacy git-baserede emergency-opdateringssti. Dette
+     var den reelt farlige af de tre (fail-safe, men funktionelt): uden rettelsen ville
+     `TIMELAPSE_ENV=rd` permanent have blokeret en gyldig sti, selv med
+     `TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE=1` sat.
+  2. `headend/siem.py` linje 402-406 — ændrede `mode == "lab"` til `mode in ("lab", "rd")` for
+     SIEM-logniveau-defaulten, så R&D-miljøet bevarer `info`-verbositet fremfor stille at falde
+     til `warning` ved omdøbning.
+  3. `headend/main.py` linje 81/14593 — **ingen ændring nødvendig.** Sammenligner allerede kun
+     mod `{"prod", "production"}`, som forbliver korrekt uanset `"rd"` vs. gamle værdier.
+- **Bevidst valg — option (a), ikke #65's foretrukne (b):** en fuld migration væk fra de gamle
+  værdier (b) er renere, men risikerer at bryde en kørende installation, hvis den faktiske
+  R&D-maskine i dag har `TIMELAPSE_ENV` sat til en af de gamle værdier — ukendt herfra, ingen
+  shell-adgang til at verificere. Den additive (a)-løsning er bagudkompatibel under alle
+  omstændigheder. En senere oprydning til (b) kan stadig ske som en bevidst, separat
+  terminologi-commit, når nogen med shell-adgang har bekræftet den faktiske miljøvariabel.
+- **Testet:** `edge/` har ingen `tests/`-mappe, så ingen eksisterende automatiseret test dækker
+  disse linjer. `py_compile` kunne ikke køres (bash-fejlen ovenfor). Verificeret i stedet ved
+  manuel linje-for-linje syntakskontrol af begge diffs (afbalancerede parenteser/mængder, uændret
+  indrykning) og manuel sporing af kontrolflowet for begge grene (`"rd"` matcher nu; alt andet
+  værdisæt er uændret). Dette er en svagere garanti end en faktisk kørt test — hvis Codex/Peter
+  har shell-adgang, anbefales et hurtigt `python3 -m py_compile edge/agent.py headend/siem.py`
+  som ekstra bekræftelse, se kommandoblok nedenfor.
+- **Filer rørt (kode):** `edge/agent.py`, `headend/siem.py`. **Filer rørt (dokumentation):**
+  `RISK_ASSESSMENT_v10.md` (R19-detaljeafsnit, §11 P0 #6, §12 dokumenthistorik),
+  `GO_LIVE_CHECKLIST_v10.md` (M-05), denne HANDOVER_LOG-entry. **Ikke committet** (samme
+  bash-begrænsning som #57-#83) — kun working tree ændret, ingen live service genstartet.
+- **Vigtigt — dette lukker KUN forudsætningen, ikke selve M-05-blokkeren:** den faktiske
+  `AgentPrincipal`/miljøflag-håndhævelse (teknisk defense-in-depth af default-deny-politikken,
+  M-02) er stadig ikke bygget. Denne rettelse fjerner blot en faldgrube der ville have ramt den
+  håndhævelse senere.
+- **Går videre til:** Uændret liste fra #38-#83 (branch-afklaring, `NGINX_CLOUDFLARE_
+  MIGRATION_LAB_v1.md`-spørgsmålet, Codex-netværksadgang-spørgsmålet fra #78, docs-batch-commit
+  #33-#83), nu UDVIDET med: (1) `edge/agent.py`/`headend/siem.py`-kodeændringen fra denne runde
+  skal også commitTes (ikke kun docs), (2) selve `AgentPrincipal`-håndhævelsen (M-05) er stadig
+  et åbent, ikke-påbegyndt kodearbejde. `mcp__workspace__bash` fejler fortsat konsekvent — nu
+  34. selvstændige bekræftelse.
+
+**Codex/Peter: kør venligst** (udvidet batch-commit-forslag — nu inkl. kode, ikke kun docs):
+
+```bash
+cd /path/til/timelapse-pro
+git status --short
+python3 -m py_compile edge/agent.py headend/siem.py && echo OK_COMPILE
+git add edge/agent.py headend/siem.py \
+        Dokumentation/HANDOVER_LOG.md Dokumentation/RISK_ASSESSMENT_v10.md \
+        Dokumentation/GO_LIVE_CHECKLIST_v10.md
+git commit -m "fix: recognize rd as valid TIMELAPSE_ENV value in agent update-gate and SIEM log level (periodisk tjek #84)"
+```
+
+(Kør `git status --short` FØRST og bekræft at kun de listede filer er ukommitterede — hvis der
+er andet i working tree, stop og spørg Peter/Claude før commit. Kør `py_compile`-linjen for at få
+den test-bekræftelse jeg ikke kunne køre selv denne runde.)
+
+### Handover 2026-07-06 (periodisk tjek #85) — fra Claude: C-03 (standard admin-password) fik en vedvarende SIEM-varsling ved opstart
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **35. selvstændige bekræftelse.** Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#84).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/capture-camera-location-2026-07-03`.
+  `.git/logs/HEAD` uændret (202 committede entries, samme HEAD-commit `b93409a3` — "docs: sync
+  DPIA requirement and agent policy"). Ingen nye commits siden #84, og ingen nye
+  HANDOVER_LOG-entries fra Codex siden #84 (denne fil sluttede ved linje 7055 ved denne rundes
+  start). #84's uncommittede kodeændring (`edge/agent.py`/`headend/siem.py`, `"rd"`-allowlisten)
+  er stadig til stede i working tree — verificeret ved direkte `Read` af de relevante linjer, ikke
+  kun antaget. §11/§J genlæst — blokerings-billedet er uændret ift. #84 (P0: 6, P1: 5, P2: 7;
+  GO_LIVE §J: A:7, C:2, E:1, G:2, M:1) bortset fra indholdet i C-03 (denne runde).
+- **Denne runde — valgte C-03, en hidtil urørt go-live-blokker:** `GO_LIVE_CHECKLIST_v10.md`
+  §C-03 ("bekræft super_admin-password er ændret fra default") har stået som en ren
+  manuel-bekræftelse-blokker i alle 84 tidligere runder — ingen af dem havde undersøgt om der
+  fandtes NOGEN kode-understøttelse for at opdage/overvåge dette. Fandt at `_ensure_super_admin()`
+  (main.py) logger `log.warning(...)` kun ÉN gang, ved selve oprettelsen af standard-brugeren —
+  hvis den log-linje overses (fx en installation for måneder siden), er der intet der siden minder
+  om risikoen. Dette er præcis den slags "lille isoleret kodefix jeg selv kan teste, som ikke
+  kræver genstart af live services" opgaveinstruksen efterspørger.
+- **Udført (kode):**
+  1. `headend/main.py` — ny funktion `_warn_if_default_admin_password_active(db)` (efter
+     `_ensure_super_admin`): finder alle AKTIVE brugere med rolle `admin`/`super_admin`, og for
+     hver af dem tjekker `_verify_password("changeme", u.password_hash)` (bcrypt, salt-uafhængigt
+     — IKKE en direkte hash-streng-sammenligning, som ville fejle for enhver reelt oprettet bruger
+     pga. tilfældigt salt). Ved match: `log.critical(...)` med brugernavn+rolle, fanges af
+     `headend/siem.py`s eksisterende generiske log-baserede SIEM-pipeline (samme mønster som andre
+     log-drevne hændelser i denne fil — ingen ny SIEM-event-type-kode nødvendig).
+  2. `_startup_ensure_admin()` (`@app.on_event("startup")`) — tilføjet kald til den nye funktion
+     EFTER `_ensure_super_admin(db)`, så tjekket køres ved HVERT opstart, ikke kun ved
+     førstegangs-oprettelse.
+  3. Scope bevidst begrænset til `admin`/`super_admin`-roller og kun aktive konti — en
+     viewer/operator med samme password er ikke i scope for denne specifikke go-live-blokker, og
+     en deaktiveret konto er ikke en aktiv risiko. En enkelt korrupt/ugyldig `password_hash`
+     (`_verify_password` sluger exceptions og returnerer `False`) stopper aldrig tjekket af de
+     øvrige brugere — ekstra `try/except` omkring selve query'en også, så en DB-fejl her aldrig kan
+     blokere opstarten af headend.
+- **Testet:** 6 nye tests i `headend/tests/test_default_admin_password_warning.py` (samme mønster
+  som `test_capture_access_log.py` — reel SQLite-DB, importerer `main`/`database` direkte, ingen
+  live Postgres rørt): (1) super_admin med "changeme" → `CRITICAL`-log udløses med brugernavn+rolle
+  i beskeden, (2) ægte password → ingen advarsel, (3) deaktiveret konto med "changeme" → ingen
+  advarsel, (4) viewer-rolle med "changeme" → ingen advarsel (uden for scope), (5) to matchende
+  admin-konti → begge får deres EGEN advarsel (begge brugernavne synlige i SIEM), (6) korrupt hash
+  → ingen crash, og en anden reelt matchende konto i samme kørsel opdages stadig korrekt.
+  **IKKE kørt** — `mcp__workspace__bash` fejlede (se ovenfor), samme begrænsning som har ramt
+  `py_compile`-verifikation i adskillige tidligere runder. Verificeret i stedet ved manuel
+  linje-for-linje kontrol: afbalancerede parenteser/indrykning (matcher omkringliggende kodestil),
+  korrekt logger-navn i testen (`logging.getLogger("headend")`, IKKE `"main"` — tjekket direkte i
+  main.py linje 144 for at undgå en triviel men reel fejlkilde), og manuel sporing af
+  `_verify_password()`s exception-håndtering (bekræftet at den allerede sluger exceptions internt,
+  så test #6 rammer den forventede kodesti). Dette er en svagere garanti end en faktisk kørt test —
+  se kommandoblok nedenfor for den anbefalede bekræftelse.
+- **Vigtigt — dette lukker IKKE selve C-03-blokkeren:** den faktiske bekræftelse af at
+  super_admin-passwordet ER ændret på de rigtige rd/staging/prod-maskiner kræver stadig en
+  menneskelig handling derovre (ingen shell-adgang herfra til at tjekke). Denne rettelse giver
+  blot en VEDVARENDE, automatisk SIEM-varsling, hvis det viser sig IKKE at være sket — et
+  observability-lag, ikke selve bekræftelsen. §C-03 og §J-C er opdateret til at afspejle præcis
+  denne nuance (stadig 🔴, ikke ✅).
+- **Filer rørt (kode):** `headend/main.py` (ny funktion + startup-kald),
+  `headend/tests/test_default_admin_password_warning.py` (ny fil). **Filer rørt
+  (dokumentation):** `GO_LIVE_CHECKLIST_v10.md` (C-03, §J-C), denne HANDOVER_LOG-entry. **Ikke
+  committet** (samme bash-begrænsning som #57-#84) — kun working tree ændret, ingen live service
+  genstartet.
+- **Går videre til:** Uændret liste fra #38-#84 (branch-afklaring, `NGINX_CLOUDFLARE_
+  MIGRATION_LAB_v1.md`-spørgsmålet — genlæst denne runde, status uændret: fortsat korrekt markeret
+  SUPERSEDED/afventer Peter, ingen drift fundet dér — Codex-netværksadgang-spørgsmålet fra #78,
+  docs-batch-commit #33-#85), nu UDVIDET med: (1) denne rundes nye fil og kodeændring skal også
+  ind i commit-batchen, (2) kør de 6 nye tests for reel bekræftelse, (3) `AgentPrincipal`-
+  håndhævelsen (M-05) er fortsat et åbent, ikke-påbegyndt kodearbejde. `mcp__workspace__bash`
+  fejler fortsat konsekvent — nu 35. selvstændige bekræftelse.
+
+**Codex/Peter: kør venligst** (udvidet batch-commit-forslag — nu inkl. C-03-koden):
+
+```bash
+cd /path/til/timelapse-pro
+git status --short
+python3 -m py_compile edge/agent.py headend/siem.py headend/main.py && echo OK_COMPILE
+cd headend && python3 -m pytest tests/test_default_admin_password_warning.py -v && cd ..
+git add edge/agent.py headend/siem.py headend/main.py \
+        headend/tests/test_default_admin_password_warning.py \
+        Dokumentation/HANDOVER_LOG.md Dokumentation/RISK_ASSESSMENT_v10.md \
+        Dokumentation/GO_LIVE_CHECKLIST_v10.md
+git commit -m "feat: warn via SIEM at startup if super_admin still uses default password (GO_LIVE C-03); fix rd as valid TIMELAPSE_ENV value (periodisk tjek #84-#85)"
+```
+
+(Kør `git status --short` FØRST og bekræft at kun de listede filer er ukommitterede — hvis der er
+andet i working tree, stop og spørg Peter/Claude før commit. Kør pytest-linjen FØR commit — det er
+den test-bekræftelse jeg ikke kunne køre selv denne runde.)

@@ -28,7 +28,7 @@ Contextual (forretning) → Conceptual (kernesikkerhedsprincipper) → Logical (
 
 ## 5. Cybersecurity code review
 
-Design-niveau review af samtlige filer/funktioner (agent.py edge, main.py headend, database.py, gphoto2_driver.py + Sprint C-filer), baseret på OWASP Top 10, CWE/SANS Top 25, IEC 62443, GDPR Art. 25 (privacy by design). Automatiseret SAST (Bandit, Semgrep, pip-audit) anbefales som supplement. SAST-backlog (73 signals) er stadig åben — se `RISK_ASSESSMENT_v10.md` VPEN-006.
+Design-niveau review af samtlige filer/funktioner (agent.py edge, main.py headend, database.py, gphoto2_driver.py + Sprint C-filer), baseret på OWASP Top 10, CWE/SANS Top 25, IEC 62443, GDPR Art. 25 (privacy by design). Automatiseret SAST (Bandit, Semgrep, pip-audit) anbefales som supplement. **Opdateret 2026-07-05:** den oprindelige SAST-backlog på "73 signals" var baseret på en upålidelig scanner-optælling (to selvreferencer i AI Ops' egen statiske scanner er siden rettet); triagen af alle 80 aktuelle signaler (`hardcoded_secret_terms`, `shell_execution`, `legacy_update_paths`, `dangerous_file_ops`) er nu afsluttet uden bekræftede reelle sårbarheder — ét opmærksomhedspunkt til Peter resterer (lokalt dev-værktøj `claude_proxy.py`s `shell=True`). Se `RISK_ASSESSMENT_v10.md` VPEN-006/VPEN-2026-008/VPEN-2026-009 for detaljer.
 
 ## 6. IEC 62443 compliance
 

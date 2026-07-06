@@ -9,6 +9,20 @@
 
 > **Læsevejledning:** Dette dokument er en autoritativ konsolidering. Del 1–8 udgør drifts- og risikoviden. Del 9 indeholder standard-specifikke indekser med kontrol-mapping. Del 10–11 indeholder leverandør/partner- og kundedokumenter, der er klar til tilpasning. Appendiks dokumenterer uoverensstemmelser og handover-status.
 
+> **⚠️ KORREKTION 2026-07-05 (Claude) — Cloudflare Tunnel-arkitekturen i dette dokument er SUPERSEDED:**
+> Alle henvisninger i dette dokument til "Cloudflare Tunnel", `cloudflared`, port `18443` eller
+> "direkte 80/443" som prod-/go-live-arkitektur (bl.a. Del 2, Del 3 R13, Del 4 NET-001–003/WEB-003,
+> Del 5 §A, Del 8 hele portmigrationsplanen, Del 9's IEC 62443-conduit-diagrammer) er FORÆLDEDE.
+> Peter har bekræftet at Cloudflare Tunnel bevidst undgås for prod, OG at CrushFTP allerede
+> optager 21/22/80/443 på både staging- og prod-maskinerne — så end ikke "direkte 80/443" er
+> muligt dér. Den nu gældende arkitektur er: `backend.timelapse-pro.dk` på **port 8443** (direkte
+> offentlig eksponering, ikke Tunnel), certifikat via **DNS-01** (`certbot-dns-cloudflare`,
+> rører ingen port), marketingsite hostet separat fra staging/prod. De autoritative, opdaterede
+> kilder er `PORT_AUDIT_og_WEBSITE_v10.md` §3/§4, `GO_LIVE_CHECKLIST_v10.md` §A/§I/§J/§L,
+> `RISK_ASSESSMENT_v10.md` §5.2/§6 og `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §8 — dette
+> konsoliderede dokument er IKKE opdateret linje-for-linje til at følge med (det er en stor,
+> historisk konsolidering fra 2026-07-02), så brug de nyere dokumenter ved enhver uoverensstemmelse.
+
 ---
 
 ## Indholdsfortegnelse
@@ -1055,7 +1069,7 @@ ISO/IEC 27001:2022 specificerer krav til etablering, implementering, vedligehold
 | **8.12** Data leakage prevention | SFTP chroot; RBAC isolation | 🟡 |
 | **8.16** Monitoring activities | GRC dashboard; health endpoint; syslog SIEM | 🟡 |
 | **8.24** Use of cryptography | TLS 1.2+; HMAC; GPG; JWT | 🟡 |
-| **8.28** Secure coding | SAST via CI; 73 signals (v5.28-pentest) | 🟡 |
+| **8.28** Secure coding | SAST via CI; oprindelig "73 signals" (v5.28-pentest) var en upålidelig scanner-optælling — alle 80 aktuelle signaler triaget 2026-07-05, ingen bekræftede reelle sårbarheder (se RISK_ASSESSMENT_v10.md VPEN-006) | 🟡 |
 | **8.31** Separation of development and production | Lab → staging → prod gate planlagt | 🟡 |
 
 ### Gaps mod ISO 27001:2022

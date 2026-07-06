@@ -61,7 +61,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | ADM-003 | Key Management UI | ✅ Implementeret | HMAC, revokering, cleanup-preview |
 | ADM-004 | GRC/Compliance cockpit | ✅ Delvist | Dashboard implementeret; evidence-links ufuldstændige |
 | ADM-005 | Global Config med hierarki | ✅ Implementeret | 4-lags: global→kunde→site→kamera |
-| ADM-006 | LAB mode / kamera-test | ✅ Delvist | Nikon Z30 problemer åbne |
+| ADM-006 | LAB mode / kamera-test | ✅ Delvist | Config-drift-detektion for Nikon Z30 var reelt inaktiv (nøgle-mismatch mellem profil-driver og `CAMERA_CONFIG_PARAMS`); rettet og verificeret isoleret 2026-07-05, samt UI/CMDB-visning af non-enforceable parametre implementeret samme dag — se `RISK_ASSESSMENT_v10.md` R14. Resterer: live-verifikation på faktisk Z30-hardware, og en eksplicit beslutning om aperture/shutter_speed-drift-mål (bevidst udeladt indtil videre, ikke en fejl) |
 | ADM-007 | Post-processing admin-job | ✅ Delvist | Trigger OK; progress mangler |
 | ADM-008 | Backup-UI | ✅ Implementeret | Til /Volumes/Backup |
 | ADM-009 | Edge image build (disk image) | ✅ Implementeret | inject_edge_image.py, WiFi-inject |
@@ -116,10 +116,10 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | SEC-006 | HMAC request-signatur for device-tokens | ✅ Implementeret | Aktive noder + headend-agent |
 | SEC-007 | SFTP chroot-isolation | ✅ Implementeret | per-site brugere |
 | SEC-008 | MFA/WebAuthn | ✅ Delvist (2026-07-02; MFA-dækning korrigeret 2026-07-03) | MFA (TOTP) policy-drevet + enforced for admin/super_admin; WebAuthn stadig separat/off. **NB:** enforcement dækkede kun `main.py`-endpoints — CMDB/ITIM omgik reelt MFA indtil rettelse 2026-07-03, nu committet+pushet (`b0e224c`) og live-verificeret af Peter |
-| SEC-009 | Intern CA + client-certs | 🔴 Mangler | |
+| SEC-009 | Intern CA + client-certs | 🔴 Mangler | **Opdateret 2026-07-05 (periodisk tjek #38):** selve koden er stadig ikke skrevet (status uændret 🔴), men designfasen er nu FÆRDIG — alle 4 åbne designspørgsmål er besvaret af Peter 2026-07-05 (Model B/ende-til-ende mTLS, 10-års konfigurerbar cert-levetid, HMAC bevares permanent, Root CA-nøgle på R&D-maskinen), se `Claude_Intern_CA_mTLS_Design_2026-07-05.md` §4.3/§5/§6/§10 og `RISK_ASSESSMENT_v10.md` §11 P1.2/§13.2. Ingen blockers tilbage — næste skridt er en dedikeret kodefase (design-dokumentets §9, trin 2-9), bevidst ikke startet impulsivt i en periodisk runde (auth-nær ændring, kræver ekstra dobbelttjek). |
 | SEC-010 | Disk-kryptering på Edge | 🔴 Mangler | |
 | SEC-011 | fail2ban | 🟡 Delvist | Konfigurationsfiler i Dokumentation/; drift-status ukendt |
-| SEC-012 | DPIA og GDPR-evidens | 🟡 Delvist (2026-07-05, periodisk tjek #28) | DPIA-skabelon, retention-policy-design, subprocessor-liste og oplysningspligt-udkast skrevet 2026-07-04 nat (se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`) — men alt sammen teknisk/organisatorisk UDKAST, ikke juridisk godkendt; retention er kun designet, IKKE implementeret i kode (G-02 fortsat 🔴); databehandleraftale (G-03) og brudprocedure (G-06) kræver jurist og er slet ikke startet; sløring/redaction-workflow (UI-010) mangler helt. Se `RISK_ASSESSMENT_v10.md` R12 (fortsat 🔴 Åben) og `GO_LIVE_CHECKLIST_v10.md` §G. |
+| SEC-012 | DPIA og GDPR-evidens | 🟡 Delvist (2026-07-05, periodisk tjek #28) | DPIA-skabelon, retention-policy-design, subprocessor-liste og oplysningspligt-udkast skrevet 2026-07-04 nat (se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`) — men alt sammen teknisk/organisatorisk UDKAST, ikke juridisk godkendt; retention er kun designet, IKKE implementeret i kode (G-02 fortsat 🔴); sløring/redaction-workflow (UI-010) mangler helt. **Opdateret 2026-07-05 (periodisk tjek #35):** databehandleraftale (G-03) er IKKE længere "slet ikke startet" — Peter har bekræftet en eksisterende DPA med Kirkbi A/S (Site Travbyen) samt eksplicit tilladelse til at anvende Travbyen-billederne til udvikling (se `RISK_ASSESSMENT_v10.md` R12, `GO_LIVE_CHECKLIST_v10.md` M-06/G-03). Fortsat uverificeret: om aftalen specifikt dækker AI/Gemini cloud-eskalering og GPS-metadata, og fortsat 🔴 for enhver kunde ud over Kirkbi A/S. Brudprocedure (G-06) kræver stadig jurist og er ikke startet. Se `RISK_ASSESSMENT_v10.md` R12 (fortsat 🔴 Åben) og `GO_LIVE_CHECKLIST_v10.md` §G. |
 | SEC-013 | Incident response procedure | 🔴 Mangler | |
 | SEC-014 | Vulnerability handling og CVE-process | 🔴 Mangler | |
 
@@ -144,22 +144,24 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 
 | Kategori | Implementeret | Delvist | Mangler | Total |
 |---|---:|---:|---:|---:|
-| Capture | 8 | 2 | 1 | 11 |
+| Capture | 7 | 2 | 1 | 10 |
 | Kundevendt UI | 10 | 0 | 1 | 11 |
-| Admin UI | 8 | 3 | 1 | 12 |
-| Update/Edge | 6 | 7 | 2 | 15 |
-| Provisioning | 5 | 3 | 2 | 10 |
-| Sikkerhed | 7 | 4 | 5 | 16 |
-| Konfiguration | 6 | 2 | 3 | 11 |
-| **Total** | **50** | **21** | **15** | **86** |
+| Admin UI | 7 | 6 | 0 | 13 |
+| Update/Edge | 3 | 12 | 0 | 15 |
+| Provisioning | 4 | 3 | 2 | 9 |
+| Sikkerhed | 5 | 5 | 4 | 14 |
+| Konfiguration | 6 | 1 | 3 | 10 |
+| **Total** | **42** | **29** | **11** | **82** |
 
-**Samlet implementeringsgrad:** 58% fuldt implementeret, 24% delvist, 17% mangler.
+**Samlet implementeringsgrad:** 51% fuldt implementeret, 35% delvist, 13% mangler.
 
 *(Opdateret 2026-07-05, Claude periodisk tjek #25: CAP-008/ADM-012 rettet fra "🔴 Mangler" til "✅ Implementeret" — GDPR download-/adgangslog pr. billede blev implementeret og testverificeret 2026-07-05 (`CaptureAccessLog`, se `GO_LIVE_CHECKLIST_v10.md` §G-05), men dette register var ikke opdateret siden 2026-07-02 og viste stadig det gamle "mangler"-billede. Øvrige rækker i dette dokument er IKKE fuldt krydstjekket denne runde — kun disse to konkrete, verificerbare punkter.)*
 
 *(Opdateret 2026-07-05, Claude periodisk tjek #27: UI-011 rettet fra "🔴 Mangler" til "✅ Implementeret" — fuldt end-to-end downloadbar timelapse-video (FFmpeg-render + download-endpoint + frontend-UI) fandtes allerede, men var aldrig registreret her. Samtidig rettet en separat, ældre regnefejl i "Kundevendt UI"-rækken: UI-009 (MFA/WebAuthn) blev markeret ✅ Implementeret allerede 2026-07-02 (samme dag registret blev skrevet), men oversigtstabellen var aldrig opdateret til at tælle den med — rækken viste 8/0/3 selvom de faktiske ID-statusser altid har summeret til 9/0/2 (nu 10/0/1 efter UI-011). Total-linjen og procentsatserne er justeret tilsvarende (48→50 implementeret, 18→16 mangler). SEC-012 (DPIA og GDPR-evidens) blev IKKE krydstjekket denne runde — stadig udestående fra tjek #26's opfølgningsliste.)*
 
 *(Opdateret 2026-07-05, Claude periodisk tjek #28: SEC-012 (DPIA og GDPR-evidens) krydstjekket mod `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` og rettet fra "🔴 Mangler" (uden kommentar) til "🟡 Delvist" — skabelon/design/udkast for DPIA, retention-policy, subprocessor-liste og oplysningspligt blev skrevet 2026-07-04 nat, men intet er juridisk godkendt, retention er ikke kodet, og databehandleraftale/brudprocedure/redaction-workflow mangler stadig helt (se ny kommentar på SEC-012-rækken samt `RISK_ASSESSMENT_v10.md` R12, fortsat 🔴 Åben). Sikkerheds-rækken justeret tilsvarende (Delvist 3→4, Mangler 6→5); Total-linjen og procentsatserne opdateret (Delvist 20→21, Mangler 16→15, 23%/19%→24%/17%). **Ny, IKKE rettet observation denne runde:** ved optælling af de faktiske ID-rækker fandt jeg at flere kategori-rækkers "Total"-kolonne ikke matcher det reelle antal ID'er i kategorien — Capture har 10 fysiske CAP-*-rækker, men Total-kolonnen siger 11; Admin UI har 13 fysiske ADM-*-rækker (bekræftet uændret siden tjek #26), men Total-kolonnen siger 12; Sikkerhed har 14 fysiske SEC-*-rækker (SEC-001–014), men Total-kolonnen siger 16 — også efter denne rundes rettelse (7+4+5=16), dvs. den samme type fejl findes her og er IKKE løst af min rettelse ovenfor, blot forskudt internt i rækken (Implementeret-tallet 7 er sandsynligvis også for højt). Disse tre mismatch ser ud til at være en ældre, systemisk unøjagtighed i §3-tabellen (formentlig fra dokumentets oprindelse 2026-07-02, forud for alle efterfølgende punktvise rettelser) og hænger sammen med den uafklarede "✅ Delvist" vs. "🟡 Delvist"-konvention fra tjek #26 — en fuld, korrekt optælling kræver først en Peter-beslutning om konvention, derefter én sammenhængende gennemgang af alle ~86 rækker på én gang (punktvise rettelser risikerer at gøre tabellen internt inkonsistent, som det fremgår her). Foreslås som en dedikeret fremtidig runde, ikke endnu en punktrettelse.)*
+
+*(Opdateret 2026-07-05, Claude periodisk tjek #61: §3-tabellen erstattet med den fulde 7-kategori recount som periodisk tjek #60 udarbejdede men bevidst ikke anvendte (afventede bekræftelse). Denne runde regnede alle 82 fysiske krav-ID-rækker igennem uafhængigt og blindt (uden at kigge på tjek #60's tal undervejs) og fandt 100% match mod tjek #60 i alle 7 kategorier og totalen — ingen afvigelse. Tælleregel (uændret fra tjek #60): hver ID tælles én gang efter ORDET i statusteksten (Delvist/Mangler/ellers Implementeret), uanset ✅/🟡/🟠-symbol foran. To rækker er fortsat skøn, ikke ren mekanik, og bør efterses af Peter/Codex hvis de er uenige: **ADM-010** (🟠 "Skabelon klar" — talt Delvist: skabelon findes, men mangler udfyldelse pr. site + juridisk godkendelse, dvs. hverken færdig eller reelt "intet lavet") og **UPD-012** (🟡 "Flush-regression rettet og deployet" — talt Delvist: kode rettet/deployet/testet 13/13, men kommentaren angiver eksplicit at live multi-device-rollout-test udestår, og 🟡-farven er konsistent med de øvrige Delvist-rækker i samme kategori). Ingen andre rækker i dokumentet rørt denne runde. Git-historik/diff er den fulde audit trail hvis nogen af de to skøn skal ændres.)*
 
 ---
 
@@ -255,9 +257,9 @@ Yderligere krav-ID'er fra Codex-registeret:
 
 | ID | Krav | Status | Mangler |
 |---|---|---|---|
-| NET-001 | Ikke bruge 80/443/21/22/8080 på Mac Headend-origin | Mangler i lab | Cloudflare Tunnel + origin-port 18443 |
-| WEB-001 | Public website `www.timelapse-pro.dk` | Statisk draft | Hosting + endelig tekst/brand-QA |
-| WEB-002 | Login-redirect til backend | Draft | Backend-domæne go-live |
+| NET-001 | Ikke bruge 80/443/21/22/8080 på staging/prod-Headend-origin (CrushFTP ejer disse dér, ikke Cloudflare Tunnel) | Mangler på staging/prod | **Rettet 2026-07-05** (tidl. antog Cloudflare Tunnel + origin-port 18443): backend på port 8443 + certifikat via DNS-01 (`certbot-dns-cloudflare`) — se `PORT_AUDIT_og_WEBSITE_v10.md` §3/§4 |
+| WEB-001 | Public website `www.timelapse-pro.dk` | Statisk draft (`www/index.html`) | Hosting et andet sted end staging/prod-maskinerne (CrushFTP-konflikt) + endelig tekst/brand-QA |
+| WEB-002 | Login-redirect til backend | Draft (`https://backend.timelapse-pro.dk:8443/`) | Backend-domæne go-live |
 
 **Prioritering (Codex P0/P1/P2):**
 - **P0:** port-/proxy-migration; backup + restore-test; GDPR DPIA/retention/DPA; node-agent + frisk CMDB; stale credential cleanup + HMAC globalt.

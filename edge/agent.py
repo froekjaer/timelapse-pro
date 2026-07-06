@@ -1478,13 +1478,14 @@ class EdgeAgent:
                 return
             legacy_allowed = (
                 _os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") == "1"
-                and _os.getenv("TIMELAPSE_ENV", "").strip().lower() in {"lab", "dev", "development"}
+                and _os.getenv("TIMELAPSE_ENV", "").strip().lower()
+                in {"lab", "dev", "development", "rd"}
             )
             if not legacy_allowed:
                 log.warning("App update %d afvist: Edge updates skal komme fra Headend artifact", update_id)
                 self._report_update(update_id, "blocked", "headend_signed_artifact_required")
                 return
-            # LAB/dev-only emergency path. Production Edge updates must use Headend artifacts.
+            # LAB/dev/rd-only emergency path. Production Edge updates must use Headend artifacts.
             script = Path("/opt/timelapse/deploy/edge_update.sh")
             if not script.exists():
                 log.warning("edge_update.sh ikke fundet")

@@ -1,16 +1,35 @@
 # nginx → Cloudflare Tunnel — konkret migrationsplan for LAB-domænet (v1)
 
+> **STATUS 2026-07-05 (Claude) — SUPERSEDED for prod/staging, ÅBENT SPØRGSMÅL for `rd`/lab:**
+> Peter har eksplicit bedt om at dokumenterne rettes så Cloudflare Tunnel ikke bruges "til
+> frontend" ("Du må gerne rette dokumenterne så vi ikke anvender Claudflare tunnel til
+> frontend"). For `backend.timelapse-pro.dk` (staging/prod) er dette allerede udført — se
+> `PORT_AUDIT_og_WEBSITE_v10.md` §4, `GO_LIVE_CHECKLIST_v10.md` §A og
+> `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §8: arkitekturen er nu port 8443 + DNS-01, ikke
+> Cloudflare Tunnel.
+>
+> DETTE dokument beskriver derimod en Cloudflare Tunnel-migration for det NUVÆRENDE
+> `rd`/lab-domæne (`timelapse.froekjaer.dk`), som er et andet domæne, en anden maskine (ingen
+> CrushFTP-portkonflikt dér) og ikke kundevendt. Jeg kan ikke afgøre med sikkerhed om Peters
+> "til frontend"-instruktion også dækker dette lab-domæne, eller kun den kundevendte
+> prod-frontend — planen herunder er derfor markeret SUPERSEDED/PÅ HOLD, ikke slettet, indtil
+> Peter bekræfter. Hvis lab-domænet SKAL undgå Cloudflare Tunnel ligesom prod, er den relevante
+> erstatning enten (a) fortsat direkte nginx på standard 80/443 (som i dag — ingen
+> portkonflikt på `rd`), eller (b) samme 8443-mønster som prod, hvis konsistens på tværs af
+> miljøer foretrækkes. Ingen kode er ændret som følge af denne markering.
+
 **Dato:** 2026-07-04 (nat)
 **Forfatter:** Claude (mens Peter sov — se `HANDOVER_LOG.md`)
 **Status:** Forberedt, IKKE eksekveret. Kræver Peter (interaktivt Cloudflare-login kan
-ikke automatiseres).
-**Forhold til eksisterende dokumentation:** `PORT_AUDIT_og_WEBSITE_v10.md` §4 beskriver
-allerede migrationen fyldestgørende, men kun for de FREMTIDIGE produktionsdomæner
-(`timelapse-pro.dk`/`backend.timelapse-pro.dk`). Dette dokument gør det samme konkret
+ikke automatiseres). **Se SUPERSEDED-banner ovenfor — afventer Peters bekræftelse for `rd`/lab.**
+**Forhold til eksisterende dokumentation:** `PORT_AUDIT_og_WEBSITE_v10.md` §4 beskrev
+tidligere migrationen for de FREMTIDIGE produktionsdomæner
+(`timelapse-pro.dk`/`backend.timelapse-pro.dk`) — men §4 er nu selv rettet til IKKE at bruge
+Cloudflare Tunnel (se banner ovenfor). Dette dokument gør fortsat det samme konkret
 for det AKTUELLE lab-domæne (`timelapse.froekjaer.dk` + `openwebui.froekjaer.dk`), som
 er det, der rent faktisk er eksponeret på public 80/443 i dag (VPEN-2026-001,
-GO_LIVE_CHECKLIST_v10.md §A-01–A-04). Dette er ikke en erstatning for §4 — det er
-samme opskrift, anvendt på den kode/konfiguration der faktisk kører nu.
+GO_LIVE_CHECKLIST_v10.md §A-01–A-04) — men om det SKAL Tunnel-migreres er nu et åbent
+spørgsmål, ikke en besluttet plan.
 
 ---
 

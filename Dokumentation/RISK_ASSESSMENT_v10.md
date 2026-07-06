@@ -227,6 +227,18 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   fjernede devices fra `total` som nu (nuværende adfærd) → kan skjule at et device aldrig nåede at
   fuldføre før det blev udskiftet, (c) log/marker rollup'en som "delvist bekræftet" når et device
   forsvinder midt i en ikke-terminal status, uden at blokere den. Ingen af de tre er rettet endnu.
+- **Claudes anbefaling (rådgivende — periodisk tjek #54, IKKE en beslutning, kun beslutningsstøtte
+  for at afkorte en flere-ugers-gammel afventende produktbeslutning):** (c) frem for (a) og (b),
+  ud fra et SABSA/revisionsspor-perspektiv. (a) permanent blokering giver en tilgængeligheds-
+  /driftsrisiko der vokser med udskiftningsfrekvensen (kan låse en rollout for evigt uden manuelt
+  indgreb) — uforholdsmæssigt, da et decommissioned device pr. definition ikke længere er en del
+  af den aktive flåde. (b), nuværende adfærd, er mest lempelig men skaber et falsk "fuldt
+  bekræftet"-signal i rollup'en — problematisk for et revisionsspor/change management-formål
+  (ISO/IEC 27001 A.8.32), da udrulningsstatus ikke længere er retvisende. (c) bevarer et
+  retvisende, ikke-blokerende signal (rollout afsluttes operationelt, men audit-sporet viser
+  eksplicit at ét device forsvandt midt i en ikke-terminal status i stedet for at tie det ihjel)
+  og har lavest implementeringsomkostning af de to sikre valg (kun en ny statusværdi, ingen ny
+  blokerende UI-tilstand). Peter træffer stadig selve valget.
 - **Residualrisiko:** 🟡 6 (nedjusteret fra 🟠 8 2026-07-05 — kodefix + unit/contract-tests er nu
   committet, deployet og health-checket, så "stuck forever"-bugget er reelt lukket i produktion;
   holdes på 🟡 og ikke 🟢 indtil en faktisk multi-device rollout er live-verificeret end-to-end, og
@@ -274,6 +286,7 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **TILFØJELSE 2026-07-04 (nat, Claude):** DPIA-skabelon, retention-policy-design og subprocessor-liste udarbejdet — se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Dette er tekniske/organisatoriske UDKAST (ikke juridisk godkendt), og retention er kun et design, ikke implementeret kode. Databehandleraftale og brudprocedure er bevidst IKKE dækket (kræver jurist). Fandt undervejs R18 (separat, urelateret produktionsbug — rettet, se nedenfor).
 - **TILFØJELSE 2026-07-05 (Claude, periodisk tjek):** Opfulgte DPIA-dokumentets §4-anbefaling ("Bekræft Gemini/Vertex AI's faktiske region-indstilling som allerførste skridt") ved kodegennemgang af `headend/ai/gemini_service.py`/`headend/main.py`/`headend/ai/ai_batch_submit.py`. Fund: Vertex-region defaulter til `europe-west1` (EU) hvis `GOOGLE_CLOUD_LOCATION` ikke er sat, OG `POST /api/admin/ai-batch/...`-endepunktet (API-stien bag "Kør AI-batch nu" i UI'et) havde allerede et tjek der stopper jobbet, hvis det konfigurerede `gemini_gcs_bucket_region` ikke matcher Vertex-regionen — MEN `headend/ai/ai_batch_submit.py` (CLI-scriptet til manuel bulk re-tag, kører direkte på Mac Mini'en, samme Vertex-batch-upload) havde INTET tilsvarende tjek. En operatør der kørte CLI-scriptet i stedet for UI-knappen kunne dermed sende et helt bulk-batch-job til et forkert-region GCS-bucket uden nogen advarsel. Rettet: logikken er udtrukket til én delt funktion (`validate_batch_bucket_region()` i `gemini_service.py`), brugt af begge indgange, med 6 nye kontrakt-tests (`headend/tests/test_gemini_region_guard.py`) samt kørsel af hele den eksisterende test-suite (19/19 bestået) og `py_compile` på alle rørte filer. **Fortsat IKKE bekræftet af denne runde** (kræver live-adgang til den faktiske produktions-`GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region`-værdi, som Claude ikke har): at de FAKTISK konfigurerede værdier i produktion reelt er sat til EU-regioner — kun at koden nu konsekvent HÅNDHÆVER match mellem de to, uanset hvilken indgang der bruges. Se `GO_LIVE_CHECKLIST_v10.md` §G for status.
 - **TILFØJELSE 2026-07-05 (Claude, Peters miljøafklaring + Codex-præcisering):** Peter har bekræftet at der allerede findes en **databehandleraftale med kunden Kirkbi A/S** (som ejer Site "Travbyen", hvorfra billederne i R&D-miljøet er importeret). Dette er en delvis, ikke fuld, lempelse af "databehandleraftale mangler". Codex' vigtige præcisering (fastholdt her): dette dækker lovligt behandlingsgrundlag for drift/support, men er IKKE i sig selv det samme som fri R&D-agentadgang til kundebilleder til AI/QA-udvikling — det er et separat spørgsmål, adskilt fra selve DPA-eksistensen. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §4 for de tre adskilte spørgsmål og forbehold: aftalen skal verificeres til også at dække TimeLapse Pro's FAKTISKE nuværende behandling (AI/Gemini cloud-eskalering, GPS-metadata), før den kan bruges som fuld GDPR-evidens for G-03 i `GO_LIVE_CHECKLIST_v10.md`. Nye kunder ud over Kirkbi A/S kræver fortsat hver deres egen aftale.
+- **TILFØJELSE 2026-07-05 (Claude, opfølgning) — udviklingsanvendelse eksplicit tilladt:** Peter har oplyst at der, UD OVER selve databehandleraftalen, er givet **eksplicit tilladelse til at Travbyen-billederne anvendes i forbindelse med udviklingen af TimeLapse Pro**. Dette besvarer direkte Codex' tidligere rejste punkt 2 (agent-udviklingsadgang til reelle kundebilleder er et separat spørgsmål fra selve DPA'en) — det er nu udtrykkeligt dækket for udviklingsformål, ikke kun antaget. Dækker IKKE automatisk andre formål (fx offentlig markedsføring af billederne) — kun udvikling. Nye kunder kræver en tilsvarende eksplicit tilladelse, ikke kun en DPA.
 
 ### R17 — Debug/lab mode kan efterlades aktiveret uden overvågning (NY, fundet 2026-07-04)
 - **Status:** 🟢 Rettet og deployet (2026-07-05, Claude periodisk tjek + Codex-deploy) — kode
@@ -396,6 +409,61 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
     grundlæggende "IKKE verificeret på levende hardware"-status fra tidligere står stadig ved magt.
     DB-migrationen er additiv/nullable og selvhelende ved opstart, så intet manuelt SQL-skridt er
     nødvendigt fra Codex/Peter — kun almindelig git pull + headend-genstart.
+  - **Opfølgning 2026-07-06 (periodisk tjek #64, Claude): rådgivende SABSA-anbefaling til
+    aperture/shutter_speed-drift-beslutningen (§11 P1.3, sidste åbne underpunkt).**
+    - **Nuværende kode (bekræftet ved læsning, ikke antaget):** `camera_diagnostics.py` har hverken
+      `aperture` eller `shutter_speed` i `CAMERA_CONFIG_PARAMS`/`FLEET_DEFAULTS` — og
+      `SHORT_KEY_ALIASES` mapper eksplicit `"shutterspeed"`/`"shutter_speed"`/`"aperture"` til
+      `None` ("no drift-check target exists ... intentionally dropped, not a bug"). Konsekvens:
+      selv hvis en tekniker satte en per-device override for disse to parametre i dag, ville den
+      blive stille droppet af `_canonicalize_config_key()` — og værdierne indgår slet ikke i
+      `camera_config`/CMDB-observability i dag (ingen audit-spor overhovedet for disse to felter).
+    - **Tre muligheder:**
+      (a) Lad stå uændret permanent — ingen overvågning, ingen synlighed. Risiko: en utilsigtet
+      eller ondsindet ændring af eksponering kan stille forringe optagelseskvaliteten for et
+      kundesite uden nogen alarm eller audit-spor.
+      (b) Tilføj fleet-wide `FLEET_DEFAULTS`-baseline og håndhæv som de øvrige parametre. Risiko:
+      aperture/shutter_speed er legitimt site-/scene-specifikke (forskellig lysforhold pr.
+      lokation/årstid) — én fælles fleet-værdi vil udløse konstante falske drift-alarmer, hvilket
+      undergraver tilliden til hele drift-alarm-funktionen (alert fatigue, jf. ISO/IEC 27001
+      A.5.7-hensyn om overvågningens reelle effektivitet).
+      (c) **Anbefalet:** Opt-in pr. enhed, efter nøjagtig samme mønster som R14-rettelsen allerede
+      har bygget for de øvrige parametre: tilføj aperture/shutter_speed som **observability-only**
+      felter (aktuel værdi ind i `camera_config`/CMDB uanset), men **uden** en `FLEET_DEFAULTS`-
+      værdi. En tekniker der bevidst fastlåser en manuel eksponeringsindstilling for et konkret
+      site kan sætte `camera.aperture`/`camera.shutter_speed` i den enheds eksisterende per-device
+      override-konfiguration (`expected_overrides` — samme mekanisme som alle andre parametre
+      allerede bruger) — herved opt'er enheden ind i drift-check udelukkende mod SIN EGEN ønskede
+      værdi. Enheder uden override får synlighed uden alarmstøj (samme informationsniveau som det
+      allerede byggede `camera_config_non_enforceable`-felt).
+    - **Vigtig teknisk advarsel før implementering — grundet i faktisk kode, ikke antagelse:** i
+      modsætning til de øvrige `CAMERA_CONFIG_PARAMS`-nøgler er aperture/shutter_speed's gphoto2-
+      stier IKKE ens på tværs af kameraprofiler i denne flåde. `edge/camera/drivers/gphoto2_driver.py`
+      viser at nogle profiler læser lukkertid via `/main/capturesettings/shutterspeed` og blænde
+      via `/main/capturesettings/aperture`, mens mindst én anden profil (Canon-konvention) i
+      stedet bruger `/main/capturesettings/f-number` for blænde (med `shutterspeed`/`shutterspeed2`-
+      fallback for lukkertid). `camera_diagnostics.py::CAMERA_CONFIG_PARAMS` antager derimod ÉN
+      fast gphoto2-sti pr. kanonisk nøgle, brugt direkte i `_read_gphoto2_param(path)` — præcis
+      samme klasse nøgle-mismatch som gjorde drift-detektion stille inaktiv indtil 2026-07-05-
+      rettelsen. En naiv tilføjelse af blot én fast sti (fx `"aperture": "/main/capturesettings/aperture"`)
+      ville derfor stille fejle på Canon-kroppe der bruger `f-number`, og gengive præcis samme bug
+      for netop disse to nye parametre. Korrekt implementering kræver enten (i) en per-profil
+      sti-liste med fallback (som `_read_capture_settings()` allerede gør, gphoto2_driver.py
+      linje ~174-221), eller (ii) genbrug af driverens allerede profil-bevidste
+      `_read_capture_settings()`-output i stedet for endnu en, parallel rå gphoto2-læsning inde i
+      `camera_diagnostics.py`.
+    - **Anbefaling:** (c), implementeret via (ii) — led driverens allerede korrekte, profil-
+      bevidste eksponeringslæsning ind i diagnostics-dict'et, i stedet for at tilføje nye faste
+      stier til `CAMERA_CONFIG_PARAMS`. Vend samtidig `SHORT_KEY_ALIASES`' `shutterspeed`/
+      `shutter_speed`/`aperture`-poster fra `None` til deres kanoniske navne, så en device-level
+      override, når den først sættes, ikke længere bliver stille droppet.
+    - **IKKE implementeret i kode denne runde:** dette rører præcis den samme
+      camera-config-drift-logik der forårsagede den oprindelige R14-bug, og `mcp__workspace__bash`
+      er fortsat nede (se HANDOVER_LOG, nu 12.+ selvstændige bekræftelse) — jeg kan derfor ikke
+      køre `py_compile` eller de eksisterende diagnostics-tests for at verificere en ændring før
+      jeg står inde for den, og efter dette projekts "dobbelttjekker før du udfører"-regel vil jeg
+      ikke gætte mig frem i netop denne drift-detektionskode uden at kunne teste den. Dette er ren
+      beslutningsstøtte + en implementeringsnote til Codex (som har shell-adgang) til at tage op.
 
 ### R15 — `/api/siem/*` uden autentificering (NY, fundet + rettet 2026-07-03)
 - **Status:** ✅ Kontrolleret i kode og **live-verificeret** (Peter, 2026-07-03: health `200`, `GET /api/siem/events` uden auth → `401`)
@@ -421,13 +489,68 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Sandsynlighed:** var 5 (skete ved hver eneste godkendelse), **Konsekvens:** 2 (workflow-fejl, ikke datalækage), **Score:** var 🟡 10 → **Residualrisiko efter fix:** 🟢 3 (workflowet virker igen; GDPR-dele af R12 uændret åbne)
 - Se `HANDOVER_LOG.md` 2026-07-04 (nat).
 
-### R19 — Agent-adgang til fremtidig prod-fysisk-system ikke formelt udelukket, mens maskinen allerede håndterer live kundedata (NY, 2026-07-05)
-- **Status:** 🟡 Under afklaring — designdiskussion i gang (Codex' agent/service-principal-forslag), intet kodet endnu
+### R19 — Agent-adgang til fremtidig prod-fysisk-system ikke formelt udelukket, mens maskinen allerede håndterer live kundedata (NY, 2026-07-05, uddybet 2026-07-06)
+- **Status:** 🟢 Politik besluttet (2026-07-05, Peter, ordret): "Hverken Codex eller dig har eller vil få adgang til staging og Prod. Kun vores R&D udviklingssystem." Dette er en permanent, bekræftet DEFAULT-politik (default-deny) — ikke længere kun en anbefaling. **Uddybet 2026-07-06 (Peter):** en kontrolleret, tidsbegrænset, logget undtagelsesvej ("break-glass") til installation/fejlsøgning er nu godkendt ved siden af default-deny — se `Claude_Support_Access_Model_2026-07-06.md` (design-notat, INGEN kode/CA bygget endnu: separat Support-CA, korttidslevende SSH-certifikater, kunde-samtykke-tjek, signeret ticket + audit). Dette er ikke en svækkelse af R19 — det er den samme risikomodel som "ingen adgang", blot med en dokumenteret, sporbar proces for de tilfælde hvor Peter selv vurderer at agent-hjælp er nødvendig, i stedet for en udokumenteret ad-hoc-løsning, hvis behovet alligevel skulle opstå i praksis. **Teknisk håndhævelse af selve default-deny (Codex' agent/service-principal-forslag) er stadig ikke kodet** — se `HANDOVER_LOG.md` 2026-07-05 — men politikken gælder allerede nu ved menneskelig disciplin (Peter foretager selv al installation på staging/prod, se `INSTALLATION_GUIDE_HEADEND_v1.md`, undtagen ved en fremtidig, aktiveret break-glass-session). Residualrisiko forbliver 🟡 5 (uændret ved denne uddybning, da intet er bygget endnu — vurderes på ny når Support-CA/scriptet er kodet og testet).
 - **Kontekst (Peters miljøafklaring, se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`):** Den fremtidige `timelapsepro.dk`-prod-vært er et helt andet fysisk system end det nuværende R&D-system (Mac Mini). Denne prod-maskine kører **allerede i dag** CrushFTP til udveksling af kundedata og det legacy timelapse-system, TimeLapse Pro skal erstatte — dvs. den håndterer reelle kunders data NU, selvom TimeLapse Pro-applikationen ikke er deployet dertil endnu.
 - **Fund/vurdering (Claude):** Codex' oprindelige forslag antog implicit at prod-isolation primært er en fremtidig "ved cutover"-opgave. Den antagelse holder ikke — hvis der nogensinde skulle opstå agent-adgang (SSH-nøgle, deploy-key, API-token) til denne maskine, ville det være en adgang til et system med LIVE personoplysninger allerede i dag, ikke et tomt fremtidigt system.
 - **Åbent:** (1) Eksplicit bekræftelse af, at ingen agent-brugte credentials nogensinde er blevet oprettet på eller givet adgang til denne maskine. (2) Den bredere `AgentPrincipal`/miljøflag-model (Codex' forslag) er stadig kun et designforslag — se `HANDOVER_LOG.md` 2026-07-05 for Claudes fulde svar (SABSA/IEC 62443-vurdering: trust boundary bør være en infrastruktur-zone, ikke kun en applikations-env-flag). (3) Staging (§1 i miljødokumentet) er endnu ikke etableret som kørende system — dens agent-adgangsniveau er ikke besluttet.
 - **Anbefaling:** Behandl "ingen agent-adgang til den fysiske prod-maskine" som gældende FRA NU (allerede en de-facto-politik, ikke noget der først skal håndhæves ved launch), og prioritér §6-zonemodellens udvidelse med et miljø-lag (se nedenfor) højt i P0/P1-arbejdet med agent-adgangsmodellen.
-- **Sandsynlighed:** 2 (ingen agent-adgang er observeret i dag; det er fraværet af en FORMEL kontrol der er risikoen, ikke et konkret hændelsestegn), **Konsekvens:** 5 (ville være et reelt databrud på live kundedata + legacy-system, hvis det skete), **Score:** 🟠 10
+- **Kodeaudit 2026-07-06 (periodisk tjek #65, Claude): `TIMELAPSE_ENV`-terminologi-drift fundet —
+  en konkret implementeringsfælde for `AgentPrincipal`-håndhævelsen (M-05).**
+  `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §2 fastlægger de kanoniske miljønøgler som
+  **`rd`/`staging`/`prod`** (bekræftet af `deploy/install/install_headend.sh` linje 100-102, som
+  hårdt afviser andre værdier: `TL_ENV skal være rd, staging eller prod`). Ved faktisk kodelæsning
+  (ikke antagelse) af alle nuværende `TIMELAPSE_ENV`-forbrugssteder viste det sig at **ingen af dem
+  kender til `"rd"`** — de er alle skrevet før miljøafklaringen 2026-07-05 og bruger stadig den
+  gamle `lab`-terminologi:
+  1. `edge/agent.py` linje 1479-1482 — den eneste reelt farlige af de tre: allowlisten for den
+     legacy git-baserede emergency-opdateringssti er `{"lab", "dev", "development"}` (**"rd"
+     indgår ikke**). Hvis `TIMELAPSE_ENV=rd` nogensinde sættes eksplicit på R&D-maskinen (jf.
+     HANDOVER_LOG.md 2026-07-05's egen anbefaling om at gøre dette "inden `AgentPrincipal`-koden
+     begynder at bruge denne variabel"), vil legacy-opdateringsstien blive **permanent blokeret**,
+     selv med `TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE=1` sat — stille, kun en logadvarsel
+     ("headend_signed_artifact_required"). Retningen er fail-safe (blokerer mere, ikke mindre —
+     ingen sikkerhedsregression), men er et reelt funktionelt hul, der bør rettes FØR omdøbningen,
+     ikke opdages bagefter under fejlsøgning.
+  2. `headend/main.py` linje 81 og `headend/siem.py` linje 402 — begge falder tilbage til
+     default-strengen `"lab"` hvis `TIMELAPSE_ENV` er usat. Ufarligt i praksis, da
+     installationsscriptet altid sætter variablen eksplicit, men er endnu et sted samme
+     terminologi-drift ville dukke op hvis nogen læser koden som reference. `siem.py` linje 402-406
+     bruger desuden `mode == "lab"` til at vælge SIEM-logniveau (`info` vs. `warning`) — en
+     omdøbning til `rd` ville stille sænke logverbositeten på selve udviklingsmaskinen (kosmetisk/
+     observability-effekt, ikke en sikkerhedsregression, men uønsket).
+  - **Anbefaling til Codex/Peter (kan udføres uden designdiskussion — ren terminologi-fix, ikke en
+    ny beslutning):** Før `TIMELAPSE_ENV=rd` sættes noget sted i praksis, opdatér de 3 ovenstående
+    steder til enten (a) at behandle `rd` som synonymt med `lab`/`dev`/`development` i alle tre
+    checks, eller (b) fuldt migrere til kun `rd`/`staging`/`prod` og fjerne de gamle synonymer —
+    (b) er at foretrække, da det fjerner selve tvetydigheden fremfor at udvide den, og passer bedst
+    med at `AgentPrincipal`/miljøflag-modellen (§6 punkt 5 i `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`)
+    nu skal bygges på netop denne variabel som single source of truth. Bør løses FØR selve
+    `AgentPrincipal`-middleware-koden påbegyndes, så håndhævelsen bygges på en allerede-konsistent
+    variabel i stedet for at arve tre forskellige ad-hoc-tolkninger.
+  - **Rettet 2026-07-06 (periodisk tjek #84, Claude) — valgte option (a), ikke (b):** tilføjede
+    `"rd"` som synonym til det eksisterende `{"lab", "dev", "development"}`-sæt i
+    `edge/agent.py` linje 1479-1482 (den reelt farlige af de tre — luk­ker fail-safe-hullet der
+    ville have blokeret legacy-emergency-opdateringsstien permanent, hvis `TIMELAPSE_ENV=rd`
+    sættes) og i `headend/siem.py` linje 402-406 (`mode in ("lab", "rd")` i stedet for kun
+    `mode == "lab"` — bevarer `info`-logniveau i R&D fremfor at falde til `warning`).
+    `headend/main.py` linje 81/14593 krævede INGEN rettelse — den sammenligner allerede kun mod
+    `{"prod", "production"}`, som forbliver korrekt uanset om variablen sættes til den gamle eller
+    nye ikke-prod-terminologi. **Bevidst valg af (a) frem for den i #65 foretrukne (b):** en fuld
+    migration væk fra `lab`/`dev`/`development` risikerer at bryde en eksisterende, kørende
+    installation, hvis den faktiske R&D-maskine i dag har `TIMELAPSE_ENV` sat til en af de gamle
+    værdier (ukendt herfra — ingen shell-adgang til at verificere den faktiske miljøvariabel på
+    Mac Mini'en). Den additive (a)-løsning er bagudkompatibel og ikke-brydende under alle
+    omstændigheder; en senere oprydning til (b) kan stadig ske som en bevidst, separat
+    terminologi-commit når Peter/Codex har bekræftet at ingen live-system længere sætter de gamle
+    værdier. **Testet:** ingen automatiseret testsuite dækker disse linjer (`edge/` har ingen
+    `tests/`-mappe), så ændringen er verificeret ved (1) manuel linje-for-linje syntakskontrol af
+    de to diffs (afbalancerede parenteser/mængder, uændret indrykning) og (2) manuel sporing af
+    kontrolflowet — `mcp__workspace__bash` fejlede fortsat (`useradd`-fejlen, 34. selvstændige
+    bekræftelse), så `py_compile` kunne ikke køres denne runde. **Ikke deployet, ikke committet**
+    (samme bash-begrænsning som alle tidligere runder) — kun kildekoden i working tree er ændret.
+    Ingen live service genstartet.
+- **Sandsynlighed:** 1 (ned fra 2 — eksplicit, ordret politik-bekræftelse fra Peter 2026-07-05, plus en dedikeret installationsguide der gør Peter uafhængig af agent-hjælp på staging/prod), **Konsekvens:** 5 (uændret — ville stadig være et reelt databrud på live kundedata + legacy-system, hvis det skete), **Score:** 🟡 5 (ned fra 🟠 10)
 
 ---
 
@@ -456,13 +579,34 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 
 #### VPEN-2026-001 — nginx lytter på public 80/443
 **Prioritet:** P1 (blocker for go-live)
-**Beskrivelse:** nginx binder til `*:80` og `*:443`. Med Cloudflare foran er dette acceptabelt i lab, men i production-model uden Cloudflare Tunnel er det en angrebsflade.
-**Anbefaling:** Migrer til Cloudflare Tunnel + nginx på `127.0.0.1:18443`. Se PORT_AUDIT_og_WEBSITE_2026-06-23.md.
+**Beskrivelse:** nginx binder til `*:80` og `*:443` **på `rd`** (dette er OK dér — `rd` kører ikke
+CrushFTP). **Opdateret 2026-07-05 (2. korrektion):** Den forrige opdatering af dette fund (samme
+dato) konkluderede "direkte nginx-eksponering på standard 443/80 er den faktiske
+målarkitektur" for prod — **det var forkert**. Peter har efterfølgende bekræftet at **CrushFTP
+allerede kører på BÅDE staging-iMac'en og prod-Mac Mini'en** og optager 21/22/80/443 dér.
+TimeLapse Pro's nginx må derfor ALDRIG binde til 80/443 på staging/prod. Den faktiske
+målarkitektur for staging/prod er i stedet: nginx på **port 8443** (direkte offentligt bundet,
+ikke Cloudflare Tunnel), certifikat via **DNS-01** (`certbot-dns-cloudflare`, rører ingen port).
+Kompenserende kontroller (gyldigt cert, fail2ban, rate-limiting) er fortsat kritiske, da der ikke
+er en Cloudflare-edge foran til at absorbere scanning/DDoS (medmindre Peter senere aktivt vælger
+Cloudflares gratis DNS-proxy foran 8443 — valgfrit, ikke besluttet).
+**Anbefaling:** ~~Migrer til Cloudflare Tunnel + nginx på `127.0.0.1:18443`~~ — udgår.
+~~Direkte nginx-eksponering på standard 443/80~~ — udgår for staging/prod (CrushFTP-konflikt). I
+stedet: nginx på port 8443, gyldigt Let's Encrypt-certifikat (DNS-01), fail2ban aktivt,
+rate-limiting på login/API (se `GO_LIVE_CHECKLIST_v10.md` §A, A-01–A-04/A-10/A-13, og
+`PORT_AUDIT_og_WEBSITE_v10.md` §3/§4 for den fulde begrundelse).
 
 #### VPEN-2026-002 — SSH port 22 eksponeret til internet
 **Prioritet:** P1
-**Beskrivelse:** Port 22 er synlig i ældre port-/asset-evidens som macOS/system-SSH. TimeLapse's egne sftp_*-brugere er blokeret via Match-regler, men admin-SSH-adgang må ikke være en uklassificeret public produktionsflade.
-**Anbefaling:** Flyt admin SSH til non-standard administrativ kanal eller bag VPN/Cloudflare Access. Aktiver fail2ban. Brug ikke TCP/22 til TimeLapse SFTP.
+**Beskrivelse:** Port 22 er synlig i ældre port-/asset-evidens som macOS/system-SSH på `rd`. På
+staging/prod kan port 22 desuden være ejet af CrushFTP (SFTP-tjeneste) — bekræft pr. maskine med
+`lsof` før nogen TimeLapse-tjeneste antages at kunne bruge porten. TimeLapse's egne sftp_*-brugere
+er blokeret via Match-regler på `rd`, men admin-SSH-adgang må ikke være en uklassificeret public
+produktionsflade nogen steder.
+**Anbefaling:** Flyt admin SSH til non-standard administrativ kanal eller bag VPN/IP-allowlist
+(Cloudflare Access er en valgfri ekstra mulighed, men Tunnel-produktet indgår ikke i den besluttede
+arkitektur). Aktiver fail2ban. Brug ikke TCP/22 til TimeLapse SFTP — brug 22222 (se §4 i
+PORT_AUDIT-dokumentet).
 
 #### VPEN-2026-003 — Secrets i LaunchAgent plist-fil
 **Prioritet:** P2
@@ -521,8 +665,8 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 
 ```
 Zone 0: Public internet
-  ↕ Conduit: Cloudflare → nginx
-Zone 1: DMZ / Reverse proxy (nginx, Cloudflare Tunnel)
+  ↕ Conduit: nginx (direkte TLS-termination — port 443/80 på rd, port 8443 på staging/prod)
+Zone 1: DMZ / Reverse proxy (nginx)
   ↕ Conduit: nginx → uvicorn 127.0.0.1:8000
 Zone 2: Headend applikation (FastAPI, PostgreSQL)
   ↕ Conduit: API → Ollama 127.0.0.1:11434
@@ -531,10 +675,26 @@ Zone 3: AI/Tooling services (Ollama, OpenWebUI)
 Zone 4: Edge management (Reverse SSH tunnel, update artifacts)
   ↕ Conduit: SFTP port 22222, gphoto2, GPIO
 Zone 5: Kamera/relay/lokal enhedsgrænseflade
+
+(Kun på staging/prod, sameksisterende men UDENFOR TimeLapse Pro's zonemodel:)
+Zone X: CrushFTP — ejer 21/22/80/443 på disse to maskiner. Ingen conduit mellem
+        Zone X og TimeLapse Pro's zoner — adskillelsen er ren portadskillelse,
+        ikke en netværksmæssig segmentering (samme OS/vært).
 ```
 
+**RETTET 2026-07-05 (periodisk tjek #33, derefter igen samme dag efter Peters CrushFTP-
+bekræftelse):** Zone 0/1 nævnte oprindeligt "Cloudflare"/"Cloudflare Tunnel" som conduit/reverse-
+proxy-lag; det blev først rettet til "direkte nginx-TLS-termination på standard 80/443" — men
+DEN rettelse var også ufuldstændig, fordi CrushFTP allerede ejer 80/443 på staging- og
+prod-maskinerne (bekræftet af Peter, se `PORT_AUDIT_og_WEBSITE_v10.md` §3). Diagrammet er nu
+rettet en 2. gang: `rd` bruger fortsat 80/443 (ingen CrushFTP dér), mens `staging`/`prod` bruger
+port **8443** og en ny "Zone X" er tilføjet for at gøre CrushFTP's sameksistens eksplicit i
+modellen, i stedet for blot at antage den væk. Cloudflare som ren DNS-proxy/WAF (orange cloud,
+ikke Tunnel) foran port 8443 er fortsat en åben, valgfri undervariant (se
+`GO_LIVE_CHECKLIST_v10.md` A-11).
+
 **Implementeringsstatus:**
-- Zone 0→1: ✅ nginx/TLS/Cloudflare
+- Zone 0→1: 🟠 nginx/TLS — direkte eksponering på port 8443 endnu ikke bygget på staging/prod (se GO_LIVE_CHECKLIST §A-01–A-03/A-13); TLS-konfiguration i sig selv OK i `rd` (standard 80/443, ingen CrushFTP-konflikt dér)
 - Zone 1→2: ✅ reverse proxy
 - Zone 2→3: 🟡 Ollama intern, OpenWebUI nede
 - Zone 2→4: ✅ JWT/HMAC; stale credentials
@@ -639,32 +799,51 @@ sammenkøring med allerede eksisterende, dateret status fra §11 P0 #3, G-01–G
 | R16 Kryds-kunde-lækage ved Edge-gentildeling | 🟢 4 | ✅ Ny/løst — fundet, rettet og backfillet komplet i produktion 2026-07-03 |
 | R17 Debug/lab mode uden overvågning | 🟢 (deployet) | ↓ Rettet 2026-07-05, committet (`44b78fb7`) og deployet af Codex, health 200 + `npm run build` OK; manuel UI-smoketest (aktiver/deaktiver + auto-timeout) fortsat ikke kørt |
 | R18 Manglende gdpr_manager.py crashede Gemini-godkendelse | 🟢 3 | ✅ Ny/løst — fundet og rettet 2026-07-04, GDPR-dele af R12 uændret åbne |
-| R19 Agent-adgang til fremtidig prod-fysisk-system ikke formelt udelukket | 🟠 10 | 🆕 Ny 2026-07-05 — Peters miljøafklaring viste prod-maskinen allerede kører live kundedata (CrushFTP+legacy) i dag |
+| R19 Agent-adgang til fremtidig prod-fysisk-system ikke formelt udelukket | 🟡 5 | → Uændret 2026-07-06 — default-deny-politik bekræftet, nu uddybet med en godkendt (men ikke bygget) kontrolleret break-glass-undtagelsesvej, se `Claude_Support_Access_Model_2026-07-06.md`; teknisk håndhævelse af default-deny (defense-in-depth) mangler stadig |
 
-**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, R19, nginx port-eksponering (VPEN-2026-001). R16 er fuldt lukket (kode + deploy + backfill).
+**Kritiske/blokkerende risici for go-live (Internet):** R05, R09, R12, nginx port-eksponering (VPEN-2026-001, opdateret målarkitektur 2026-07-05 — se GO_LIVE_CHECKLIST §A). R16 er fuldt lukket (kode + deploy + backfill). R19 er nedjusteret men ikke fuldt lukket.
 
 ---
 
 ## 11. Prioriteret risikobehandlingsplan
 
 ### 🔴 P0 — Blokkerer production/Internet-eksponering
-1. Migrer nginx væk fra public 80/443 → Cloudflare Tunnel
+1. **Opdateret 2026-07-05 (Peters arkitekturbeslutning, 2. korrektion samme dag):** ~~Migrer
+   nginx væk fra public 80/443 → Cloudflare Tunnel~~ — udgår, Cloudflare Tunnel er IKKE
+   prod-målarkitekturen. ~~Direkte nginx-eksponering på standard 443/80~~ — udgår OGSÅ for
+   staging/prod, fordi CrushFTP allerede kører på begge disse fysiske maskiner og ejer 21/22/80/443
+   (bekræftet af Peter). Faktisk krav er i stedet: **direkte nginx-eksponering på port 8443** med
+   gyldigt Let's Encrypt-certifikat udstedt via **DNS-01** (`certbot-dns-cloudflare`, rører ingen
+   port), hostname-baseret routing og fail2ban/rate-limiting som kompenserende kontrol (ingen
+   Cloudflare-edge til at absorbere scanning/DDoS, medmindre Cloudflares valgfrie DNS-proxy
+   aktiveres foran 8443 senere). Marketingsitet hostes separat fra disse maskiner. Se
+   `GO_LIVE_CHECKLIST_v10.md` §A (A-01–A-04/A-13, korrigeret 2026-07-05) og
+   `PORT_AUDIT_og_WEBSITE_v10.md` §3/§4 for den fulde begrundelse.
 2. Backup + restore-test dokumenteret (R09)
 3. DPIA-template + retention policy (R12)
 4. Node-agent genetableret (R13)
 5. HMAC enforcement globalt — stale credentials migreret/afviklet
 6. Bekræft/håndhæv nul agent-adgang til det fremtidige prod-fysiske-system (R19) — bør behandles
    som gældende FRA NU, ikke først ved cutover, da maskinen allerede kører live kundedata via
-   CrushFTP/legacy-systemet. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`.
+   CrushFTP/legacy-systemet. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`. **Delvist fremskridt
+   2026-07-06 (periodisk tjek #84):** forudsætningen fra #65 (`TIMELAPSE_ENV`-terminologi-drift,
+   se R19-detaljeafsnittet) er nu rettet i `edge/agent.py` og `headend/siem.py` (tilføjet `"rd"`
+   som synonym til `lab`/`dev`/`development`). Selve `AgentPrincipal`/miljøflag-håndhævelsen
+   (den faktiske M-05-blokker) er dermed IKKE bygget endnu — kun en implementeringsfælde, der
+   ville have ramt håndhævelsen senere, er ryddet af vejen på forhånd.
 
 ### 🟠 P1 — Skal lukkes inden første rigtige kunde-site
 1. MFA/WebAuthn til admin-login (R02)
-2. Intern CA + device client certs (R05, R07, R08) — design-notat klar
-   (`Claude_Intern_CA_mTLS_Design_2026-07-05.md`), afventer Peter/Codex' arkitekturvalg
-   (Cloudflare Access mTLS vs. ende-til-ende) før kode
+2. Intern CA + device client certs (R05, R07, R08) — design-notat FÆRDIGT
+   (`Claude_Intern_CA_mTLS_Design_2026-07-05.md`), alle 4 åbne designspørgsmål besvaret af Peter
+   2026-07-05 (Model B, 10-års konfigurerbar cert-levetid, permanent HMAC+mTLS, retrofit af
+   eksisterende R&D-device) — ingen blockers tilbage, kodefasen kan påbegyndes som ny, afgrænset
+   opgave (auth-nær, kræver ekstra dobbelttjek, bevidst ikke startet i denne session)
 3. Nikon Z30 config-model — desired state + accepted equivalents (R14); detektion + UI-visning
    af non-enforceable parametre er nu på plads (2026-07-05), resterer kun live-verifikation på
-   hardware og en eksplicit beslutning om aperture/shutter_speed-drift-mål
+   hardware og en eksplicit beslutning om aperture/shutter_speed-drift-mål (rådgivende SABSA-
+   anbefaling givet 2026-07-06, periodisk tjek #64 — se R14-detaljeafsnittet: opt-in pr. enhed,
+   IKKE fleet-baseline; kræver profil-bevidst gphoto2-sti-læsning, ikke implementeret endnu)
 4. **Per-target deployment status (update-flow) — flush-regression fundet OG rettet, kun
    live-test resterer:** data/API/UI fandtes allerede; rest-bug'en fra P1.4 (global status
    flippet af ét device-report i multi-target rollouts) blev rettet i kode 2026-07-05 (Claude),
@@ -742,8 +921,18 @@ sammenkøring med allerede eksisterende, dateret status fra §11 P0 #3, G-01–G
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #18) | Claude: VPEN-2026-009 (NY) — fandt og rettede endnu en scanner-selvreference (pattern-opslagstabellen matchede sig selv; under verifikation blev også en anden-ordens variant i fix'ets egne kommentarer fundet og rettet), testdækket (3 nye tests, 32/32 bestået). Gennemførte derefter en første triage-batch af VPEN-006's SAST-signaler — `hardcoded_secret_terms`, `shell_execution`, `legacy_update_paths` (56 af 80) — ingen reelle sårbarheder, ét opmærksomhedspunkt (lokalt dev-værktøj `claude_proxy.py`'s `shell=True`). `dangerous_file_ops` (24) resterer til næste runde. Se §11 P2.4 |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #19) | Claude: afsluttede VPEN-006's SAST-triage — gennemgik den resterende `dangerous_file_ops`-kategori (24 signaler) enkeltvis mod faktisk kildekode. Ingen reelle sårbarheder: temp-fil-oprydning bag `try/except`/`missing_ok=True`, admin-gated capture-sletning via saniteret filnavn-opslag (`_sanitize_filename`/`_sanitize_device_id` afviser path traversal), offline admin-CLI-værktøjer (`argparse`, ikke web-eksponeret), og ét `chown`/`chmod`-fund der reelt STRAMMER rettigheder (700/600) på `.ssh` inde i et loop-mountet OS-image. Alle 4 kategorier (80/80 signaler) er nu triageret på tværs af tjek #18+#19 — §11 P2.4 og §2 opdateret til "triage afsluttet". Ingen kodeændring (ingen fund krævede det); ingen commit/push nødvendig |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #20) | Claude: implementerede den i #18/#19 noterede men ikke-udførte `hardcoded_secret_terms`-heuristik-forbedring — ny `_aiops_scan_is_secret_value_literal()` kræver en bogstavelig streng-literal på højresiden før en linje flages, så variabel-/kwarg-referencer (mønsteret bag alle 10 tidligere false positives i denne kategori) ikke længere tælles med. 5 nye tests (`headend/tests/test_aiops_static_scan.py`, 14/14 i filen, 37/37 i hele `headend/tests/`-suiten). Reproduktion bekræfter `hardcoded_secret_terms` nu bidrager 0 fund (var 10); §11 P2.4 opdateret. Ingen commit/push (Peter/Codex committer selv) |
-| 10 (tilføjelse) | 2026-07-05 (Peters miljøafklaring) | Claude: R19 (NY) tilføjet — agent-adgang til det fremtidige prod-fysiske-system (`timelapsepro.dk`, kører allerede CrushFTP+legacy med live kundedata) er ikke formelt udelukket. R12 udvidet med Travbyen-databehandleraftale-note (delvis, ikke fuld, lempelse). §6 zone-model udvidet med et miljø-lag (`rd`/`staging`/`prod`), ortogonalt på de eksisterende netværkszoner. Nyt dokument `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` oprettet som kanonisk topologi-kilde. Ingen kode ændret — ren dokumentation af Peters arkitekturbeslutning, som svar på Codex' agent/service-principal-forslag (se `HANDOVER_LOG.md`) |
+| 10 (tilføjelse) | 2026-07-05 (Peters miljøafklaring) | Claude: R19 (NY) tilføjet — agent-adgang til det fremtidige prod-fysiske-system (`timelapsepro.dk`, kører allerede CrushFTP+legacy med live kundedata) er ikke formelt udelukket. R12 udvidet med Kirkbi A/S-databehandleraftale-note (delvis, ikke fuld, lempelse). §6 zone-model udvidet med et miljø-lag (`rd`/`staging`/`prod`), ortogonalt på de eksisterende netværkszoner. Nyt dokument `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` oprettet som kanonisk topologi-kilde. Ingen kode ændret — ren dokumentation af Peters arkitekturbeslutning, som svar på Codex' agent/service-principal-forslag (se `HANDOVER_LOG.md`) |
+| 10 (tilføjelse) | 2026-07-05 (installationsscript-runde) | Claude: R19 nedjusteret 🟠10→🟡5 — Peter har ordret bekræftet permanent nul-agent-adgang-politik for staging/prod. Rettet en væsentlig fejlantagelse på tværs af dokumenterne: Cloudflare Tunnel er IKKE prod-målarkitekturen (Peter vil bevidst undgå den) — GO_LIVE_CHECKLIST §A (A-01–A-04) omskrevet til direkte nginx-eksponering (matcher allerede byggede `www/index.html` + nuværende `rd`-nginx-mønster). CA/mTLS-designdokumentet (#52) opdateret: Model B (ende-til-ende mTLS) valgt fremfor Model A (Cloudflare Access), Root CA-nøgle placeres pt. på R&D-maskinen (Peters valg, fleksibelt design). Nyt installationsscript + -guide oprettet til headend på staging/prod, da Peter skal kunne installere selvstændigt uden agent-adgang |
 | 10 (tilføjelse) | 2026-07-05 (periodisk tjek #31) | Claude: §9 GDPR-vurderingstabellen var kommet bagud ift. `GO_LIVE_CHECKLIST_v10.md` §G (G-01–G-07) og `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` — 6 af 9 rækker rettet fra blankt "🔴 Mangler" til deres reelle, allerede daterede status (skabeloner/udkast fra 2026-07-04, Adgangslog ✅ implementeret 2026-07-05). Ren sammenkøring af eksisterende status, ingen ny vurdering, ingen kode rørt |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #33) | Claude: §11 P0.1, VPEN-2026-001 (§5.2) og §6 zone-model-diagrammet var alle stadig kommet bagud ift. Peters arkitekturbeslutning (installationsscript-runden, samme dag) — nævnte fortsat "Migrer til Cloudflare Tunnel", selvom `GO_LIVE_CHECKLIST_v10.md` §A allerede var omskrevet til direkte nginx-eksponering (Cloudflare Tunnel bevidst fravalgt af Peter for prod); zone-modellen var udtrykkeligt nævnt som modsagt i samme HANDOVER_LOG-runde men blev aldrig selv rettet dengang. Alle tre rettet til at henvise til den faktiske målarkitektur. Ren tekstrettelse af allerede besluttet arkitektur, ingen ny vurdering, ingen kode rørt |
+| 10 (tilføjelse) | 2026-07-05 (port-korrektionsrunde, 2.) | Claude: Forrige rundes "direkte nginx-eksponering på standard 443/80" (samme dag) var SELV en fejlantagelse — Peter bekræftede at CrushFTP allerede kører på BÅDE staging-iMac'en og prod-Mac Mini'en og optager 21/22/80/443 dér. VPEN-2026-001, VPEN-2026-002, §6 zone-model (ny "Zone X"-note for CrushFTP), §10 (henvisning), §11 P0.1 alle rettet en 2. gang til den nu endeligt aftalte arkitektur: backend på port **8443** (direkte, ikke Tunnel), certifikat via **DNS-01**/`certbot-dns-cloudflare` (rører ingen port), marketingsite hostet separat. Samme rettelse ført igennem `GO_LIVE_CHECKLIST_v10.md` §A/§I/§J/§L, `PORT_AUDIT_og_WEBSITE_v10.md` (hele dokumentet), `install_headend.sh`, `example-staging.conf`/`example-prod.conf`, `INSTALLATION_GUIDE_HEADEND_v1.md`, `www/index.html`. Ren arkitekturkorrektion, ingen nyt risikofund ud over selve dobbelt-fejlen (dokumenteret som en proces-læring: konsultér `PORT_AUDIT_og_WEBSITE_v10.md` FØR man "retter" portarkitektur — det dokument havde allerede forudset CrushFTP-co-residence-risikoen for måneder siden) |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #41) | Claude: §13.3 havde stadig den GAMLE "Blocker for kode: valg mellem Cloudflare Access mTLS og ende-til-ende mTLS ... kræver Peter/Codex' input"-tekst, selvom §11 P1.2 (og designdokumentets §10, jf. tjek #37) allerede korrekt viste at Model B var valgt og alle 4 designspørgsmål besvaret. §13.3 er nu rettet til at matche §11 P1.2 — samme docs-lag-drift-mønster som tjek #37 fandt i selve HANDOVER_LOG'ens "næste skridt"-noter, blot denne gang inde i selve risikodokumentet. Ren tekstrettelse, ingen ny vurdering, ingen kode rørt |
+| 10 (tilføjelse) | 2026-07-05 (periodisk tjek #54) | Claude: R06 device-decommission-gap'et (afventet Peters beslutning siden tjek #16) fik tilføjet en rådgivende SABSA/ISO27001 A.8.32-baseret anbefaling (mulighed (c), "delvist bekræftet"-markering, frem for (a) permanent blokering eller (b) nuværende adfærd) med begrundelse, som beslutningsstøtte — Peter træffer stadig selve valget. Ingen kode rørt, ingen af de tre løsninger implementeret |
+| 10 (tilføjelse) | 2026-07-06 (periodisk tjek #64) | Claude: R14's sidste åbne underpunkt (aperture/shutter_speed-drift-mål, afventet siden 2026-07-05) fik en rådgivende SABSA/ISO27001-baseret anbefaling — mulighed (c) opt-in pr. enhed (observability-only som standard, enforceable kun efter eksplicit per-device override), frem for (a) status quo eller (b) fleet-wide baseline. Fandt undervejs, ved læsning af faktisk kode (`gphoto2_driver.py`), at aperture/shutter_speed's gphoto2-stier IKKE er ens på tværs af kameraprofiler (Canon `f-number` vs. øvrige `aperture`/`shutterspeed`) — samme nøgle-mismatch-klasse som forårsagede den oprindelige R14-bug — og flaggede dette som en implementeringsfælde for den der udfører (c). Ren beslutningsstøtte + implementeringsnote, ingen kode ændret (bash utilgængeligt denne runde, kan ikke teste en ændring i netop denne drift-detektionskode) |
+| 10 (tilføjelse) | 2026-07-06 (periodisk tjek #65) | Claude: R19 fik tilføjet et konkret kodeaudit-fund forud for `AgentPrincipal`-håndhævelsen (M-05) — de 3 nuværende kodesteder der læser `TIMELAPSE_ENV` (`edge/agent.py`, `headend/main.py`, `headend/siem.py`) kender endnu ikke den kanoniske værdi `"rd"` (besluttet 2026-07-05, `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §2), kun den ældre `lab`/`dev`/`development`-terminologi. Værst: `edge/agent.py`'s legacy-opdaterings-allowlist ville reelt (fail-safe, men funktionelt) blokere en gyldig sti hvis `TIMELAPSE_ENV=rd` sættes uden samtidig kode-opdatering. `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §6 punkt 5 opdateret med samme krydshenvisning. Ren kodeaudit + dokumentation, ingen kode ændret (kræver test, bash utilgængeligt denne runde) — anbefaling givet til Codex/Peter om at rette terminologien FØR selve håndhævelses-middlewaren bygges |
+| 10 (tilføjelse) | 2026-07-06 | Claude: R19 uddybet efter Peters anmodning om en kontrolleret, tidsbegrænset, logget break-glass-undtagelsesvej til staging/prod-support-adgang (installation/fejlsøgning), ved siden af den fortsatte default-deny-standardtilstand. Nyt design-notat `Claude_Support_Access_Model_2026-07-06.md` (separat Support-CA fra device-CA'en i #52, korttidslevende SSH-certifikater med kryptografisk indbygget udløb, kunde-samtykke-tjek pr. aktivering, signeret ticket + audit-log — ingen kode/CA bygget endnu). §13.2 (cert-levetider) opdateret separat samme dag med Peters CA/mTLS-designsvar (10-års konfigurerbar device-cert-levetid, permanent HMAC+mTLS, retrofit af R&D-device til mTLS) — se `Claude_Intern_CA_mTLS_Design_2026-07-05.md`s egen dokumenthistorik. `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §5 og `GO_LIVE_CHECKLIST_v10.md` M-02/M-08 opdateret tilsvarende. Ingen kode rørt. |
+| 10 (tilføjelse) | 2026-07-06 (periodisk tjek #84) | Claude: R19/§11 P0 #6 og `GO_LIVE_CHECKLIST_v10.md` M-05 opdateret — #65's `TIMELAPSE_ENV`-terminologi-drift-fund er nu FAKTISK RETTET i kode (ikke kun dokumenteret): `"rd"` tilføjet som synonym til `lab`/`dev`/`development` i `edge/agent.py` (den fail-safe, men funktionelt farlige legacy-opdaterings-allowlist) og `headend/siem.py` (SIEM-logniveau-default); `headend/main.py` krævede ingen ændring (sammenligner allerede kun mod `prod`/`production`). Valgte bevidst den additive løsning (a) frem for #65's foretrukne fulde migration (b), da (b) risikerer at bryde en kørende installation uden mulighed for at verificere den faktiske miljøvariabel (ingen shell-adgang). Verificeret manuelt (linje-for-linje syntakstjek af diff'ene) — `py_compile` kunne ikke køres, `mcp__workspace__bash` fejlede fortsat (34. selvstændige bekræftelse). Selve M-05-håndhævelsen (AgentPrincipal-middleware) er stadig ikke bygget — kun en forudsætnings-faldgrube er ryddet. Ikke committet (Peter/Codex committer selv). |
+| 10 (tilføjelse) | 2026-07-06 (periodisk tjek #85) | Claude: `GO_LIVE_CHECKLIST_v10.md` C-03 (standard super_admin-password) fik ny vedvarende SIEM-varsling — `_warn_if_default_admin_password_active()` (headend/main.py) kører ved hvert opstart (ikke kun ved brugeroprettelse) og logger `log.critical(...)` hvis en aktiv admin/super_admin-konto stadig autentificerer mod "changeme" (bcrypt `_verify_password`, salt-uafhængigt). 6 nye tests i `headend/tests/test_default_admin_password_warning.py`, IKKE kørt (`mcp__workspace__bash` fejlede, 35. selvstændige bekræftelse) — kun manuel linje-for-linje-verifikation. Dette er et observability-lag, IKKE selve bekræftelsen — C-03 forbliver 🔴, kræver stadig en faktisk manuel kontrol på rd/staging/prod-maskinerne. Ingen RISK_ASSESSMENT-risikopost ændret (C-03 hører hjemme i GO_LIVE_CHECKLIST, ikke i denne risikoliste) — kun nævnt her for fuldstændig sporing af rundens arbejde. Ikke committet (Peter/Codex committer selv). |
 
 ---
 
@@ -764,11 +953,21 @@ TimeLapse Root CA  (Mac Mini — offline privat nøgle)
 
 ### 13.2 Certifikat-levetider
 
+**Rettet 2026-07-05 (Peter, designspørgsmål #52 besvaret):** Device client cert-levetiden
+nedenfor er ændret fra 6 måneder til **10 år som default**, og gjort **konfigurerbar** pr.
+global/kunde/site/kamera via den eksisterende config-hierarki-mekanisme
+(`_resolve_config_hierarchy()` i `headend/main.py`) — se
+`Claude_Intern_CA_mTLS_Design_2026-07-05.md` §4.3 for den fulde begrundelse og konsekvensen for
+CRL-friskhed (bliver vigtigere med en så lang levetid). Peter har desuden besluttet at et
+**udløbet** (men ikke revokeret) certifikat konfigurerbart kan tillades at fortsætte drift
+("grace"-tilstand) — men et **revokeret** certifikat skal ALTID stoppe kommunikation
+øjeblikkeligt, uden undtagelse.
+
 | Type | Levetid | Fornyelse |
 |------|---------|-----------|
 | Root CA | 10 år | Manuel |
 | Headend server cert | 1 år | Halvautomatisk (Key Mgmt UI) |
-| Device client cert | 6 måneder | Automatisk ved bootstrap |
+| Device client cert | **10 år, default — konfigurerbar pr. global/kunde/site/kamera** (ændret 2026-07-05, var 6 måneder) | Automatisk ved bootstrap, eller manuel rotation via Key Mgmt UI |
 | SFTP SSH user key | Ubegrænset | Revokering ved kompromittering |
 | SSH tunnel key | Ubegrænset | Revokering via Key Mgmt UI |
 | JWT access token | 12 timer | Automatisk ved login |
@@ -780,9 +979,11 @@ Self-signed individuelle certifikater frarådes (manuel trust-konfiguration pr. 
 **Design-notat 2026-07-05 (Claude):** Se `Claude_Intern_CA_mTLS_Design_2026-07-05.md` for et
 udfoldet forslag — Root CA → Issuing CA → device client cert (ECDSA P-256, CN=`device_id`),
 mTLS lagt *ved siden af* eksisterende HMAC-lag (ikke erstatning), CRL fremfor OCSP given
-fleet-størrelsen. **Blocker for kode:** valg mellem Cloudflare Access mTLS og ende-til-ende
-mTLS til nginx/Headend (§6 i notatet) kræver kig i Cloudflare-dashboardet/-planniveau, som
-Claude ikke har adgang til — kræver Peter/Codex' input før implementering kan starte.
+fleet-størrelsen. **Opdateret 2026-07-05 (Peter har besvaret alle 4 designspørgsmål, jf.
+designdokumentets §10 og RISK_ASSESSMENT §11 P1.2):** Model B (ende-til-ende mTLS til
+nginx/Headend, ingen Cloudflare Access/Tunnel) er valgt — se §6 i designdokumentet. Ingen
+blockers tilbage; næste skridt er en dedikeret kodefase (designdokumentets §9, trin 2-9), ikke
+yderligere afklaring fra Peter/Codex.
 
 ## 14. Key Management UI — funktionskrav (bevaret fra v6)
 
