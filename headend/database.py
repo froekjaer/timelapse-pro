@@ -235,7 +235,15 @@ class User(Base):
     username      = Column(String(100), unique=True, nullable=False, index=True)
     email         = Column(String(200), unique=True)
     password_hash = Column(String(200), nullable=False)
-    role          = Column(String(50), default="viewer")   # super_admin|admin|operator|viewer
+    role          = Column(String(50), default="viewer")   # super_admin|admin|operator|viewer|agent
+    # "agent" (M-05, headend/main.py `_agent_role_blocked_in_this_environment`): reserveret
+    # til AI-agent-/service-principaler (Claude/Codex). Håndhæves hårdt i kode, IKKE via
+    # RBAC-hierarkiet nedenfor: en "agent"-rolle-bruger afvises ubetinget i staging/prod,
+    # uanset password/token — se main.py for begrundelse og MILJOE_ARKITEKTUR_RD_STAGING_
+    # PROD_v1.md §5 for politikken. I andre miljøer (rd) er "agent" i dag reelt uden egen
+    # rettighedsprofil i `_ROLE_HIERARCHY` — den falder udenfor og får ingen rettigheder
+    # medmindre/indtil et fremtidigt AgentPrincipal/AgentToken-skema bygges (trin 3 i den
+    # oprindelige 5-trins plan, HANDOVER_LOG 2026-07-05).
     customer_id   = Column(String(36))
     totp_secret   = Column(String(64))
     mfa_enabled   = Column(Boolean, default=False)                     # null = adgang til alle kunder

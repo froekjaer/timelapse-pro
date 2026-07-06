@@ -7142,3 +7142,288 @@ git commit -m "feat: warn via SIEM at startup if super_admin still uses default 
 (Kør `git status --short` FØRST og bekræft at kun de listede filer er ukommitterede — hvis der er
 andet i working tree, stop og spørg Peter/Claude før commit. Kør pytest-linjen FØR commit — det er
 den test-bekræftelse jeg ikke kunne køre selv denne runde.)
+
+### Handover 2026-07-06 (periodisk tjek #86) — fra Claude: uafhængig manuel code review af #84+#85 (ingen nyt kodearbejde denne runde)
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **36. selvstændige bekræftelse.** Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#85).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/capture-camera-location-2026-07-03`.
+  `.git/logs/HEAD` uændret (202 committede entries, samme HEAD-commit `b93409a3` — "docs: sync
+  DPIA requirement and agent policy"). Ingen nye commits, ingen nye HANDOVER_LOG-entries fra Codex
+  siden #85. §11/§J genlæst — blokerings-billedet er uændret (P0: 6, P1: 5, P2: 7; GO_LIVE §J:
+  A:7, C:2, E:1, G:2, M:1).
+- **Denne runde — bevidst IKKE endnu en ny kodeændring:** #84 og #85 skrev hver en uncommittet
+  kodeændring, begge kun "manuelt syntakstjekket" fordi `py_compile`/pytest ikke kunne køres
+  (34. og 35. bekræftelse af samme bash-fejl). At lægge en TREDJE lag uverificeret kode oveni,
+  uden nogen mulighed for reel test, øgede risikoen for at én fejl i bunden ville blive skjult af
+  senere ændringer. Valgte i stedet at bruge denne runde til en uafhængig, grundig manuel
+  gennemgang af de to forrige rundes ændringer — stadig "et afgrænset, sikkert stykke arbejde jeg
+  kan lave færdigt i denne ene kørsel", blot som verifikation frem for nyt kodearbejde.
+- **Udført (verifikation, ingen filer ændret):**
+  1. `edge/agent.py` linje 1479-1483 (#84): `legacy_allowed`-udtrykket er syntaktisk korrekt
+     (afbalanceret parentes/mængde-litteral), `"rd"` er nu i allowlisten sammen med
+     `lab`/`dev`/`development`, kontrolflowet uændret for alle andre værdier.
+  2. `headend/siem.py` linje 402-406 (#84): `min_severity`-udtrykket er syntaktisk korrekt,
+     `mode in ("lab", "rd")` erstatter korrekt den gamle `mode == "lab"`-sammenligning.
+  3. `headend/main.py` (#85): `_warn_if_default_admin_password_active()` (linje 940-975) og
+     kaldet fra `_startup_ensure_admin()` (linje 1416-1424) er syntaktisk korrekte. Krydstjekkede
+     desuden tre konkrete, tidligere kun antagne fakta direkte i koden i stedet for at stole på
+     forrige rundes beskrivelse: (a) `_verify_password(plain, hashed)`-signaturen (linje 741)
+     matcher kaldet `_verify_password("changeme", u.password_hash)` — argumentrækkefølgen er
+     korrekt, ikke byttet om; (b) modul-loggeren hedder rent faktisk `logging.getLogger("headend")`
+     (linje 144) — matcher testens `caplog.at_level(..., logger="headend")` præcist; (c)
+     `database.User`-modellen (linje 230-244) har alle felter testen/funktionen bruger
+     (`username`, `email`, `password_hash`, `role`, `is_active`), ingen typo i feltnavne.
+  4. `headend/tests/test_default_admin_password_warning.py` (#85): gennemgik alle 6 tests
+     linje-for-linje mod den faktiske funktion. Særligt tjekket
+     `test_warns_for_each_matching_admin_independently` for en mulig falsk-positiv pga.
+     substring-overlap ("admin" er substring af "super_admin" og af "admin2") — assertions holder
+     stadig, fordi hver log-besked kun indeholder ÉT brugernavn, så `"admin2" not in m` korrekt
+     identificerer beskeden for den første bruger.
+  5. **Ingen fejl fundet i nogen af de to runders ændringer.** Dette er stadig ikke det samme som
+     en reelt kørt `py_compile`/pytest — en tredje uafhængig læsning kan overse noget en
+     interpreter/testkører ville fange — men det er den stærkeste tilgængelige bekræftelse uden
+     shell-adgang.
+- **Filer rørt:** Ingen (ren læse-verifikation). **Ikke committet** — n/a, ingen ændring.
+- **Går videre til:** Uændret liste fra #38-#85 (branch-afklaring, `NGINX_CLOUDFLARE_
+  MIGRATION_LAB_v1.md`-spørgsmålet, Codex-netværksadgang-spørgsmålet fra #78, docs-batch-commit
+  #33-#85 — nu inkl. #84+#85's kode, som stadig afventer den ÉN reelle `py_compile`+pytest-kørsel
+  ingen agent-runde har kunnet udføre). `mcp__workspace__bash` fejler fortsat konsekvent — nu
+  36. selvstændige bekræftelse. Ingen ny anbefaling til Codex/Peter ud over den allerede
+  eksisterende kommandoblok i #85-entryen ovenfor (uændret, stadig gyldig).
+
+### Handover 2026-07-06 — fra Claude til Codex/Peter: BRANCH-AFKLARINGEN ER LUKKET — PR #1 merget til `main`, CI grøn, deployet til rd-headend
+
+- **Kontekst:** Ikke et periodisk tjek — Peter selv, i realtid, gennemførte batch-commit + PR +
+  merge. Dette lukker det spørgsmål #76-#86 gentagne gange har flagget som ubesvaret
+  ("hvilken branch skal der committes til, og skal `claude/capture-camera-location-2026-07-03`
+  merges til `main`").
+- **Hvad der skete:** Peter committede hele den akkumulerede docs+kode-backlog (periodiske tjek
+  #33-#85, plus denne sessions arkitekturarbejde) som én commit
+  (`079f2496`, "docs+fix: batch-commit periodic checks #33-#85 ...") på
+  `claude/capture-camera-location-2026-07-03`, pushede den, og åbnede derefter
+  **PR #1** (`gh pr create --base main --head claude/capture-camera-location-2026-07-03`) —
+  https://github.com/froekjaer/timelapse-pro/pull/1. CI kørte automatisk på PR'en:
+  **Python Syntax Check ✅ (12s), Web UI Build Check ✅ (45s)** — kun to informative,
+  ikke-blokerende advarsler om at Node 20 er deprecated i `actions/checkout@v4`/
+  `actions/setup-python@v5`/`actions/setup-node@v4` (runneren tvinger Node 24 i stedet, ingen
+  handling påkrævet lige nu, men actions-versionerne bør opgraderes på et tidspunkt). PR'en blev
+  merget til `main`, hvilket udløste **Deploy to Mac mini Headend ✅** og **Signal Deploy ✅** —
+  dvs. `git pull origin main` + `launchctl kickstart` af rd-headend'en er nu kørt med den fulde
+  batch, inkl. #84/#85's kodeændringer.
+- **Konkret betydning for tidligere ÅBNE punkter:**
+  1. **R19/M-05-forudsætningen (TIMELAPSE_ENV="rd") er nu reelt LIVE på rd**, ikke kun rettet i
+     working tree — se opdateret `RISK_ASSESSMENT_v10.md` R19 og `GO_LIVE_CHECKLIST_v10.md` M-05.
+  2. **C-03's SIEM-varslingsmekanisme er nu reelt LIVE på rd** — Peter kørte selv
+     `headend/tests/test_default_admin_password_warning.py` FØR commit: **6/6 bestået**
+     (den `py_compile`+pytest-bekræftelse #84-#86 efterlyste, men ikke selv kunne udføre, er nu
+     gennemført af Peter). Se opdateret `GO_LIVE_CHECKLIST_v10.md` C-03.
+  3. **Den lange, gentagne "docs-backlog ukommitteret siden `bce5f856`/#33"-bekymring (#62,
+     #66-#86) er nu lukket** — alt er committet, merget og på `main`.
+  4. **`claude_proxy.py`** (det lokale, ikke-Git-sporede dev-IPC-værktøj med `shell=True`,
+     VPEN-2026-009) blev bevidst UDELADT fra commit'et — det er stadig kun untracked i working
+     tree på rd, ikke i Git-historikken. Korrekt håndteret.
+- **Fortsat åbent (uændret af denne runde):** `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet
+  (gælder Peters "ingen Cloudflare Tunnel til frontend"-instruktion også `rd`/lab-domænet?),
+  Codex-netværksadgang-spørgsmålet fra #78 (kan Codex' sandbox nå staging/prod's SSH-port —
+  relevant for #61/#62's break-glass-design), selve `AgentPrincipal`-håndhævelsen (M-05, kun
+  forudsætningen er ryddet), og opgave #52/#62's kodefaser (CA/mTLS, break-glass support-adgang).
+- **Filer rørt:** `GO_LIVE_CHECKLIST_v10.md` (C-03, M-05), `RISK_ASSESSMENT_v10.md` (R19), denne
+  HANDOVER_LOG-entry. Alt allerede en del af det Peter selv har adgang til at committe fra rd —
+  ingen ny agent-side ukommitteret ændring introduceret ud over disse tre dokumentationsopdateringer,
+  som følger op på en allerede afsluttet, verificeret handling.
+
+### Handover 2026-07-06 (periodisk tjek #87) — fra Claude: bekræftede merge-status lokalt + rettede ét resterende docs-lag-drift-fund (§11 P0 #6 vs. R19-detaljeafsnit/M-05)
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **37. selvstændige bekræftelse.** Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#86).
+- **Git-tilstand:** Læste hele resten af `HANDOVER_LOG.md` (linje 6770 til filens slutning,
+  linje 7236) for at fange den store nyhed siden #86: Peters real-time-entry om at PR #1
+  (`claude/capture-camera-location-2026-07-03` → `main`) er merget, CI grøn, og
+  `deploy-macmini`/Signal Deploy har kørt. **Bekræftet lokalt (denne mount):** `.git/HEAD` peger
+  stadig på `claude/capture-camera-location-2026-07-03`, men `.git/logs/HEAD` viser nu 203
+  committede entries hvor linje 203 ER selve batch-commit'et (`079f2496...`, "docs+fix:
+  batch-commit periodic checks #33-#85 ..."), dvs. denne lokale klon har allerede batch-commit'et
+  som HEAD på feature-branchen. `packed-refs` viser en `main`-pointer (`79581ac6...`), men den er
+  formentlig et forældet fetch-snapshot fra før PR-mergen — jeg har ingen netværksadgang herfra
+  til at `git fetch` og bekræfte `main`s faktiske nuværende tip på GitHub, så selve merge-til-
+  `main`-hændelsen er bekræftet via Peters entry + det matchende commit-hash, ikke ved selv at se
+  `main` bevæge sig. §11/§J genlæst i deres nuværende (allerede opdaterede) form.
+- **Denne runde — valgte docs-konsistens-verifikation frem for nyt kodearbejde:** givet den store
+  tilstandsændring (merge til `main`) er den mest værdifulde, sikre handling at bekræfte at alle
+  tre dokumenter (`HANDOVER_LOG.md`, `RISK_ASSESSMENT_v10.md`, `GO_LIVE_CHECKLIST_v10.md`) reelt
+  stemmer overens efter mergen, i stedet for at lægge endnu et lag uverificeret kode oveni (samme
+  forsigtighedsprincip som #86 anvendte efter #84/#85).
+- **Fund (ny, reel — rettet):** `GO_LIVE_CHECKLIST_v10.md` M-05 og `RISK_ASSESSMENT_v10.md`s eget
+  R19-detaljeafsnit var begge allerede korrekt opdateret med merge/deploy-bekræftelsen
+  ("Committet, merget og deployet 2026-07-06 ... via PR #1 ... CI grøn ... deploy-macmini").
+  Men samme dokuments **§11 P0 #6** (den korte prioriterings-punktliste, få afsnit under selve
+  R19-detaljeafsnittet) var IKKE fulgt med — den sagde stadig kun "rettet i `edge/agent.py` og
+  `headend/siem.py`" uden at nævne at rettelsen siden er merget til `main` og deployet live på rd.
+  Samme docs-lag-drift-mønster som #83 fandt (internt i ét dokument, mellem et detaljeafsnit og
+  dokumentets egen korte opsummering af samme punkt), denne gang i `RISK_ASSESSMENT_v10.md`.
+- **Udført:** Rettet §11 P0 #6 til at nævne merge/deploy (PR #1, CI grøn, `deploy-macmini`),
+  matcher nu ordlyden i R19-detaljeafsnittet og `GO_LIVE_CHECKLIST_v10.md` M-05. Tilføjet
+  tilsvarende linje i §12 Dokumenthistorik. Ingen kode rørt, ingen eksisterende tekst slettet —
+  kun udvidet til at matche det allerede besluttede/verificerede faktum.
+- **Ikke fundet noget at rette i:** `GO_LIVE_CHECKLIST_v10.md` (C-03/M-05 allerede korrekte),
+  `HANDOVER_LOG.md` selv (Peters entry er allerede fyldestgørende).
+- **Filer rørt:** `RISK_ASSESSMENT_v10.md` (§11 P0 #6, §12), denne HANDOVER_LOG-entry. Ingen kode
+  rørt. Ikke committet (samme bash-begrænsning som #57-#86, samt at Peter/Codex committer selv
+  per fast konvention).
+- **Går videre til:** Med branch-afklaringen og #33-#85-docs-backloggen nu lukket (Peters merge),
+  reduceres den tidligere lange liste til: (1) `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet
+  — fortsat SUPERSEDED/afventer Peters bekræftelse, (2) Codex-netværksadgang-spørgsmålet fra #78
+  (kan Codex' sandbox nå staging/prod's SSH-port — relevant for break-glass-designet), (3) selve
+  `AgentPrincipal`-håndhævelsen (M-05) — stadig helt ubegyndt kodearbejde, bevidst ikke
+  påbegyndt denne runde (auth-nær, kræver et miljø hvor en reel test kan køres, ikke kun manuel
+  syntaksgennemgang), (4) CA/mTLS-kodefasen (#52) og break-glass-support-adgangen (#61/#62) —
+  begge design-færdige, ingen kode skrevet endnu. `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 37. selvstændige bekræftelse.
+
+### Handover 2026-07-06 — fra Claude: M-05 "layer 2" kodet (agent-rolle hård afvist i staging/prod) — Codex er væk til den 9. juni, Claude kører solo
+
+- **Kontekst:** Peter bad eksplicit om at fortsætte til alle tre resterende punkter (M-05,
+  #52-kodefase, #62-kodefase), og et systemflag bekræftede at Codex er utilgængelig i en
+  længere periode ("Codex sover til den 9. juni"). Givet auth-nær kode og "dobbelttjekker før
+  du udfører" er kun M-05 bygget denne runde — den mindst risikable af de tre og allerede
+  klart afgrænset som "layer 2, ikke layer 1" i den oprindelige plan. #52 og #62 kræver reel
+  nøglemateriale-generering, som per de eksisterende designdokumenter skal ske i Peters eget
+  terminal, ikke af en agent — se "Går videre til" nedenfor for et konkret forslag til første
+  skridt på hver.
+- **Genlæst før kodning:** Den fulde oprindelige Codex-proposal + Claudes eget svar
+  (HANDOVER_LOG linje ~4424-4523, 2026-07-05) — 5-trins byggerækkefølge: (1) reel infrastruktur-
+  adskillelse [nu i høj grad opfyldt af Peters fysiske rd/staging/prod-adskillelse], (2) env-flag
+  + hård afvisning i middleware/opstartstjek [DETTE er hvad der er bygget nu], (3) det fulde
+  `AgentPrincipal`/`AgentToken`/`AgentElevationGrant`-skema, (4) audit-udvidelse, (5) CLI.
+  Bekræftede desuden ved kodelæsning at `_oauth2_scheme` (main.py linje 78) er defineret men
+  reelt ubrugt andre steder — al menneske-/agent-bruger-autentificering går gennem cookie/JWT +
+  `get_current_user()`, mens edge-enheder bruger en helt separat mekanisme (`BootstrapToken`,
+  ikke `User`/rolle-baseret). Det betyder `get_current_user()` er det ENE centrale sted, der
+  skal håndhæve M-05 for at dække alle autentificerede endpoints.
+- **Implementeret (`headend/main.py`, `headend/database.py`):**
+  1. Ny reserveret rolleværdi `role="agent"` — `User.role` er allerede en fri `String(50)`
+     (ingen DB-migration nødvendig, rent additivt). Kommentar tilføjet i database.py der
+     forklarer at en "agent"-rolle-bruger i dag reelt har NUL rettigheder noget sted (heller
+     ikke i rd) — `_ROLE_HIERARCHY.get(user.role, {user.role})` falder tilbage til `{"agent"}`,
+     som intet endpoint kræver. Bevidst, dokumenteret sideeffekt, ikke en ny funktion.
+  2. `_agent_role_blocked_in_this_environment(role)` — ren funktion: True hvis rolle
+     (normaliseret for case/whitespace) er "agent" OG `TIMELAPSE_ENV` ∈ {staging, prod,
+     production}. Bevidst IKKE en DB-policy-indstilling (i modsætning til fx
+     `mfa_exempt_usernames`) — kan ikke slås fra ved en fejlkonfiguration i kunde-/site-/
+     kamera-hierarkiet.
+  3. Håndhævet to steder: (a) `/api/auth/login` — afvist FØR password-verifikation med samme
+     generiske 401-besked som forkert password (ingen rolle-/brugernavn-lækage); (b)
+     `get_current_user()` — afviser også ALLEREDE udstedte sessions (dækker fx en maskine der
+     får ændret `TIMELAPSE_ENV` efter et login, eller en gendannet DB-kopi).
+  4. `_log_agent_lockdown_status()` — `log.critical()` ved hvert opstart når håndhævelsen er
+     aktiv (staging/prod), `log.info()` ellers — samme SIEM-synligheds-mønster som C-03's
+     `_warn_if_default_admin_password_active()`. Kaldt fra `_startup_ensure_admin()`.
+- **Testet (ikke selv kørt — bash-sandbox fortsat i stykker, se nedenfor):** 15 nye pytest-tests
+  i `headend/tests/test_agent_principal_lockdown.py`, samme mønster som C-03-testfilen. Dækker:
+  `_agent_role_blocked_in_this_environment()` i alle miljø-varianter (inkl. case/whitespace),
+  at almindelige roller ALDRIG rammes uanset miljø, kerne-scenariet (`get_current_user()` afviser
+  en allerede-udstedt agent-session i prod, men tillader den i rd), at en deaktiveret bruger
+  fortsat afvises som før (regressionsværn), at afvisningen logges `critical` med brugernavn, og
+  begge grene af opstartsloggen. Bevidst IKKE testet: selve `/api/auth/login` via et rigtigt
+  HTTP-kald — endpointet er dekoreret med `@limiter.limit(...)` (slowapi), som forventer en fuld
+  ASGI-request-kontekst; ingen eksisterende test i `headend/tests/` kalder et rate-limited
+  endpoint direkte, og login()'s nye linjer er en tynd, mekanisk genbrug af samme allerede-
+  testede helper. Testfilens docstring giver en konkret manuel curl-kommando til Peter/Codex som
+  slutverifikation på en rigtig kørende instans.
+- **`mcp__workspace__bash` reconfirmed i stykker** lige før denne kodesession (samme
+  `useradd failed: fork/exec /usr/sbin/useradd: input/output error`) — 38. selvstændige
+  bekræftelse. `py_compile`/pytest er derfor IKKE kørt af mig. Kommandoer givet til Peter (se
+  chat) til at køre begge dele fra `~/.venvs/timelapse-headend/bin/python`, samme working-tree-
+  placering som forrige runders mønster.
+- **IKKE committet/merget/deployet** — afventer Peters `py_compile`+pytest-bekræftelse først,
+  præcis samme rækkefølge som C-03/TIMELAPSE_ENV-fixene i sidste uge.
+- **Filer rørt:** `headend/main.py` (helper-funktioner + login + get_current_user + startup-hook),
+  `headend/database.py` (rollekommentar), `headend/tests/test_agent_principal_lockdown.py` (ny),
+  `GO_LIVE_CHECKLIST_v10.md` (M-05, §J), `RISK_ASSESSMENT_v10.md` (R19), denne HANDOVER_LOG-entry.
+- **Går videre til:**
+  1. **#52 (CA/mTLS kodefase):** Designet er komplet, men selve Root/Issuing CA-nøglegenerering
+     skal ifølge designdokumentet ske i Peters eget terminal, ikke af en agent. Forslag til
+     første konkrete, agent-byggelige delskridt (afventer Peters valg): (a) DB-skema for
+     enheds-certifikater (ny tabel/felter på `Device`), (b) bootstrap-CSR-signerings-endpoint i
+     headend, (c) edge-side CSR-generering (`edge/agent.py`), (d) Key Mgmt-UI-visning af
+     certifikatstatus. CA-nøglegenerering + retrofit af det eksisterende R&D-device holdes
+     bevidst udenfor agent-scope.
+  2. **#62 (break-glass support-adgang kodefase):** Designet er komplet, men to sub-spørgsmål
+     er fortsat åbne (periodisk tjek #78/#80, se `[[timelapse-support-access-breakglass]]`):
+     kan en agents sandbox overhovedet nå staging/prod's SSH-port, og den anbefalede (men ikke
+     besluttede) `access_tickets`-tabel som separat skema fra `ChangeTicket`. Foreslår at #62's
+     første kodeskridt er DB-skemaet (laveste risiko, ingen nøglegenerering), ikke selve
+     Support-CA'en/SSH-certifikat-scriptet.
+  3. `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet er fortsat uændret åbent.
+
+### Handover 2026-07-06 (periodisk tjek #88) — fra Claude: uafhængig code review af M-05 "layer 2" + rettede ét docs-lag-drift-fund (§11 P0 #6 var kommet bagud ift. R19-detaljeafsnittet)
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **39. selvstændige bekræftelse.** Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#87).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/capture-camera-location-2026-07-03`.
+  `.git/logs/HEAD` uændret (203 committede entries, samme HEAD-commit `079f2496` — batch-commit
+  #33-#85). Ingen nye commits siden #87. Læste hele resten af `HANDOVER_LOG.md` (linje 7237 til
+  filens slutning, 7361) for at fange nyheden siden #87: Peter bad eksplicit om at fortsætte til
+  M-05/#52/#62, Codex utilgængelig ("sover til den 9. juni"), og Claude kodede M-05 "layer 2"
+  solo i en direkte anmodet session (ikke et periodisk tjek). §11/§J genlæst — blokerings-
+  billedet er uændret i kategori-optælling (P0: 6, P1: 5, P2: 7; GO_LIVE §J: A:7, C:2, E:1, G:2,
+  M:1), men M-05's INDHOLD er ændret markant siden #87 (kode skrevet).
+- **Denne runde — valgte uafhængig code review + docs-konsistens frem for nyt kodearbejde:**
+  samme forsigtighedsprincip som #86 anvendte efter #84/#85 — en tredje uverificeret kodelag
+  oveni M-05 (auth-nær, ingen mulighed for reel test her) ville øge risikoen mere end værdien.
+  Læste i stedet `headend/main.py` (`_agent_role_blocked_in_this_environment`, `get_current_user`
+  linje 1018-1040, login linje 1478-1495, `_log_agent_lockdown_status` linje 948-963),
+  `headend/database.py` (rollekommentar linje 238-240) og alle 15 tests i
+  `headend/tests/test_agent_principal_lockdown.py` linje-for-linje.
+- **Fund 1 (verifikation, ingen fejl):** Koden er syntaktisk og logisk konsistent. Krydstjekkede
+  konkret: `COOKIE_NAME = "tl_session"` (linje 92) matcher testens `main.COOKIE_NAME`-brug;
+  `get_current_user(request, db)`-signaturen matcher testens positionelle kald
+  `main.get_current_user(fake_request, db_session)`; query'et filtrerer allerede `is_active=True`
+  FØR M-05-tjekket kører, så regressionsværns-testen (`test_get_current_user_inactive_agent_
+  still_returns_none_as_before`) er korrekt — en deaktiveret bruger findes aldrig af query'et,
+  uanset rolle. `_startup_ensure_admin()` (separat `@app.on_event("startup")`-handler fra
+  hoved-`startup()`) kalder `_log_agent_lockdown_status()` efter `_ensure_super_admin(db)` —
+  FastAPI understøtter flere startup-handlere, ingen konflikt. Ingen fejl fundet i nogen af de
+  15 tests mod den faktiske implementering.
+- **Fund 2 (ny, reel — rettet):** `RISK_ASSESSMENT_v10.md` §11 P0 #6 (den korte
+  prioriterings-punktliste) var kommet bagud ift. samme dokuments eget R19-detaljeafsnit
+  (linje 555-599) — R19-detaljeafsnittet var allerede korrekt opdateret med at M-05 "layer 2" er
+  KODET 2026-07-06 (kun ikke testet/committet/deployet endnu), men §11 P0 #6 sagde stadig
+  ordret at håndhævelsen "FORTSAT IKKE er bygget". `GO_LIVE_CHECKLIST_v10.md` M-05/§J var
+  allerede korrekte (ingen rettelse nødvendig dér) — samme docs-lag-drift-mønster internt i ét
+  dokument som #83/#87 tidligere har fundet.
+- **Udført:** Rettet §11 P0 #6 til at nævne at M-05-koden er skrevet (2026-07-06, Claude), med
+  status "IKKE testet/committet/merget/deployet endnu", matcher nu R19-detaljeafsnittet og
+  GO_LIVE_CHECKLIST_v10.md. Tilføjet tilsvarende linje i §12 Dokumenthistorik. Ingen kode rørt,
+  ingen eksisterende tekst slettet — kun udvidet/rettet til at matche allerede besluttet/kodet
+  faktum.
+- **Filer rørt:** `RISK_ASSESSMENT_v10.md` (§11 P0 #6, §12), denne HANDOVER_LOG-entry. Ingen
+  kode rørt. Ikke committet (samme bash-begrænsning som #57-#87, samt at Peter/Codex committer
+  selv per fast konvention).
+- **Går videre til:** Uændret liste fra #38-#87, nu med denne rundes docs-rettelse tilføjet til
+  commit-batchen: (1) `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet — fortsat afventer
+  Peters bekræftelse, (2) Codex-netværksadgang-spørgsmålet fra #78, (3) den KRITISKE næste
+  handling: Peters `py_compile`+pytest-bekræftelse af M-05-koden
+  (`headend/main.py`/`headend/database.py`/`test_agent_principal_lockdown.py`) — se
+  kommandoforslag nedenfor, (4) #52 (CA/mTLS) og #62 (break-glass) kodefaser — begge
+  design-færdige, afventer Peters valg af første delskridt (se forrige entry). `mcp__workspace__
+  bash` fejler fortsat konsekvent — nu 39. selvstændige bekræftelse.
+
+**Codex/Peter: kør venligst** (M-05-verifikation — højeste prioritet, auth-nær kode):
+
+```bash
+cd /path/til/timelapse-pro
+git status --short
+python3 -m py_compile headend/main.py headend/database.py && echo OK_COMPILE
+cd headend && python3 -m pytest tests/test_agent_principal_lockdown.py -v && cd ..
+```
+
+(Kør `git status --short` FØRST. Hvis alle 15 tests består og `py_compile` er OK, kan
+`headend/main.py`, `headend/database.py`, `headend/tests/test_agent_principal_lockdown.py`,
+`RISK_ASSESSMENT_v10.md` og `GO_LIVE_CHECKLIST_v10.md` committes sammen — samme mønster som
+#84/#85's batch-commits. Overvej desuden testfilens anbefalede manuelle curl-efterprøvning af
+selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfilen.)

@@ -922,6 +922,47 @@ def _user_has_totp(user: User | None) -> bool:
 def _user_has_partial_mfa(user: User | None) -> bool:
     return bool(user and (user.mfa_enabled or user.totp_secret) and not _user_has_totp(user))
 
+# ── M-05: AgentPrincipal-håndhævelse (default-deny for agent-adgang til staging/prod) ──
+#
+# Baggrund: HANDOVER_LOG 2026-07-05 (Codex' oprindelige AgentPrincipal/AgentToken-forslag)
+# + MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md §5 (permanent politik, uddybet 2026-07-06 med
+# en SEPARAT, menneske-aktiveret break-glass-undtagelse — se Claude_Support_Access_Model_
+# 2026-07-06.md — som IKKE går gennem denne mekanisme).
+#
+# Dette er "layer 2" i den oprindelige 5-trins byggerækkefølge (env-flag + hård afvisning),
+# IKKE det fulde AgentPrincipal/AgentToken/AgentElevationGrant-skema (det er et separat,
+# senere skridt hvis/når der reelt skal udstedes maskin-legitimation til agenter). Formålet
+# her er en simpel, IKKE DB-konfigurerbar kodespærre: enhver bruger med role="agent" kan
+# aldrig autentificeres — hverken ved login eller via en allerede udstedt cookie/JWT-session
+# — når TIMELAPSE_ENV er staging/prod. "Ikke DB-konfigurerbar" er bevidst: det må ikke kunne
+# slås fra ved en fejl i kunde-/site-/kamera-policy-hierarkiet (i modsætning til fx MFA-policy).
+_AGENT_LOCKED_ENVIRONMENTS = {"staging", "prod", "production"}
+_AGENT_ROLE = "agent"
+
+
+def _agent_role_blocked_in_this_environment(role: str | None) -> bool:
+    """True hvis en bruger med denne rolle IKKE må autentificeres i dette miljø (M-05)."""
+    return (role or "").strip().lower() == _AGENT_ROLE and TIMELAPSE_ENV in _AGENT_LOCKED_ENVIRONMENTS
+
+
+def _log_agent_lockdown_status():
+    """Kører ved hvert opstart — samme mønster som `_warn_if_default_admin_password_active()`:
+    gør håndhævelsens status synlig i SIEM ved hver eneste opstart, ikke kun i kildekoden."""
+    if TIMELAPSE_ENV in _AGENT_LOCKED_ENVIRONMENTS:
+        log.critical(
+            "M-05 AgentPrincipal-håndhævelse AKTIV: TIMELAPSE_ENV='%s' — enhver bruger med "
+            "role='agent' afvises hårdt ved login og ved eksisterende sessions (default-deny, "
+            "jf. MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md §5). Ikke konfigurerbar via DB-policy.",
+            TIMELAPSE_ENV,
+        )
+    else:
+        log.info(
+            "M-05 AgentPrincipal-håndhævelse: TIMELAPSE_ENV='%s' — agent-rolle-spærren er kun "
+            "aktiv i staging/prod, ikke i dette miljø.",
+            TIMELAPSE_ENV,
+        )
+
+
 def _ensure_super_admin(db):
     """Opretter standard super_admin hvis ingen brugere findes."""
     from database import User
@@ -986,6 +1027,16 @@ def get_current_user(
     if not payload:
         return None
     user = db.query(User).filter_by(username=payload.get("sub"), is_active=True).first()
+    # M-05 AgentPrincipal-håndhævelse — dækker sessions der allerede var udstedt FØR miljøet
+    # blev spærret (fx en maskine der ændrer TIMELAPSE_ENV, eller en gendannet DB-kopi).
+    # Centralt sted: alle cookie/JWT-autoriserede endpoints går gennem denne funktion.
+    if user and _agent_role_blocked_in_this_environment(user.role):
+        log.critical(
+            "M-05 AgentPrincipal-håndhævelse: eksisterende session AFVIST for agent-rolle-"
+            "bruger '%s' i miljø '%s' (token allerede udstedt, men miljøet er nu spærret).",
+            user.username, TIMELAPSE_ENV,
+        )
+        return None
     return user
 
 # Rollehierarki — højere roller inkluderer lavere rollers rettigheder
@@ -1422,6 +1473,7 @@ def _startup_ensure_admin():
         _warn_if_default_admin_password_active(db)
     finally:
         db_gen.close()
+    _log_agent_lockdown_status()
 
 @app.post("/api/auth/login")
 @limiter.limit("10/minute")
@@ -1429,6 +1481,18 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     """Login — returnerer JWT access token."""
     from database import User
     user = db.query(User).filter_by(username=req.username, is_active=True).first()
+    # M-05 AgentPrincipal-håndhævelse — tjekkes FØR password-verifikation, så et korrekt
+    # password for en agent-rolle-bruger aldrig kan give adgang i staging/prod. Fejlbesked
+    # er bevidst identisk med "forkert brugernavn/password" for ikke at lække rolle-info
+    # til en ekstern, ikke-autoriseret klient — den fulde begrundelse logges kun internt.
+    if user and _agent_role_blocked_in_this_environment(user.role):
+        log.critical(
+            "M-05 AgentPrincipal-håndhævelse: login-forsøg AFVIST for agent-rolle-bruger "
+            "'%s' i miljø '%s' (default-deny, jf. MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md §5). "
+            "IP=%s",
+            user.username, TIMELAPSE_ENV, request.client.host if request.client else "ukendt",
+        )
+        raise HTTPException(status_code=401, detail="Forkert brugernavn eller adgangskode")
     if not user or not _verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Forkert brugernavn eller adgangskode")
     user.last_login = now_utc()

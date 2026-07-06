@@ -547,10 +547,56 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
     `tests/`-mappe), så ændringen er verificeret ved (1) manuel linje-for-linje syntakskontrol af
     de to diffs (afbalancerede parenteser/mængder, uændret indrykning) og (2) manuel sporing af
     kontrolflowet — `mcp__workspace__bash` fejlede fortsat (`useradd`-fejlen, 34. selvstændige
-    bekræftelse), så `py_compile` kunne ikke køres denne runde. **Ikke deployet, ikke committet**
-    (samme bash-begrænsning som alle tidligere runder) — kun kildekoden i working tree er ændret.
-    Ingen live service genstartet.
-- **Sandsynlighed:** 1 (ned fra 2 — eksplicit, ordret politik-bekræftelse fra Peter 2026-07-05, plus en dedikeret installationsguide der gør Peter uafhængig af agent-hjælp på staging/prod), **Konsekvens:** 5 (uændret — ville stadig være et reelt databrud på live kundedata + legacy-system, hvis det skete), **Score:** 🟡 5 (ned fra 🟠 10)
+    bekræftelse), så `py_compile` kunne ikke køres denne runde. **Committet, merget og deployet
+    2026-07-06:** Peter kørte `py_compile` manuelt (OK), committede via PR #1
+    (`claude/capture-camera-location-2026-07-03` → `main`), CI (`python-check`/`ui-check`) kørte
+    grønt, og `deploy-macmini`-jobbet genstartede rd-headend med den nye kode. Faldgruben er
+    dermed reelt lukket, ikke kun rettet i working tree.
+- **M-05 "layer 2"-kode skrevet 2026-07-06 (Claude), IKKE testet/committet/deployet endnu:**
+  Peter bad eksplicit om at fortsætte til selve `AgentPrincipal`-håndhævelsen, samtidig med at
+  Codex var utilgængelig ("Codex sover til den 9. juni"), så dette blev udført solo af Claude
+  med ekstra fokus på "dobbelttjekker før du udfører" (læste den fulde oprindelige Codex-
+  proposal + Claudes egen 5-trins-plan igen, og User.role/`_ROLE_HIERARCHY`/`get_current_user()`-
+  koden grundigt, før noget blev ændret). Scope er bevidst begrænset til trin 2 af 5 (env-flag +
+  hård afvisning) — IKKE det fulde `AgentPrincipal`/`AgentToken`/`AgentElevationGrant`-skema
+  (trin 3), som er en separat, større beslutning (ny tabel, tokenudstedelse, elevation-flow).
+  Implementering (`headend/main.py`, `headend/database.py`):
+  1. Ny reserveret rolleværdi `role="agent"` (User.role er allerede en fri `String(50)`, ingen
+     DB-migration nødvendig — additivt).
+  2. `_agent_role_blocked_in_this_environment(role)` — ren, ikke-DB-konfigurerbar funktion:
+     True hvis rolle (case/whitespace-normaliseret) er "agent" OG `TIMELAPSE_ENV` er
+     staging/prod/production. Bevidst IKKE en DB-policy-indstilling (i modsætning til fx
+     `mfa_exempt_usernames`) — må ikke kunne slås fra ved en fejl i kunde-/site-/kamera-
+     konfigurationshierarkiet.
+  3. Håndhævet to steder: (a) `/api/auth/login` — afvises FØR password-verifikation, med
+     samme generiske 401-fejlbesked som forkert password (undgår rolle-/brugernavn-lækage til
+     en ekstern klient); (b) `get_current_user()` — det CENTRALE håndhævelsespunkt, da alle
+     cookie/JWT-autoriserede endpoints går gennem denne ene funktion. Dette dækker også
+     allerede udstedte sessions (fx hvis en maskines `TIMELAPSE_ENV` ændres efter login, eller
+     ved en gendannet DB-kopi) — ikke kun nye login-forsøg.
+  4. `_log_agent_lockdown_status()` — `log.critical()` ved hvert opstart i staging/prod (samme
+     SIEM-synligheds-mønster som C-03's `_warn_if_default_admin_password_active()`), `log.info()`
+     ellers.
+  5. En "agent"-rolle-bruger har med denne ændring reelt INGEN rettigheder nogetsteds i dag,
+     heller ikke i rd — `_ROLE_HIERARCHY.get(user.role, {user.role})` falder tilbage til
+     `{"agent"}`, som intet endpoint kræver. Det er en bevidst, dokumenteret sideeffekt (ingen
+     regression), ikke en ny funktion — reel brug af rollen kræver trin 3.
+  - **Testet:** 15 nye pytest-tests i `headend/tests/test_agent_principal_lockdown.py`, samme
+    mønster som C-03-testfilen (direkte funktionskald mod `main.py`, midlertidig SQLite-DB, ingen
+    live Postgres/headend rørt). Dækker `_agent_role_blocked_in_this_environment()` i alle
+    miljøer, `get_current_user()`'s afvisning af eksisterende sessions (kerne-scenariet),
+    at almindelige menneskelige roller ALDRIG rammes, at afvisningen logges `critical`, og
+    opstartsloggens to grene. Bevidst IKKE testet: selve `/api/auth/login`-endpointet via et
+    rigtigt HTTP-kald (dekoreret med `@limiter.limit(...)`/slowapi, som forventer en fuld ASGI-
+    kontekst — ingen eksisterende test i denne mappe gør det; login()'s nye linjer er en tynd,
+    mekanisk anvendelse af samme allerede-testede helper). Se testfilens docstring for en
+    anbefalet manuel curl-efterprøvning på en rigtig kørende instans.
+  - **IKKE endnu:** `py_compile`/`pytest` kørt (Claudes sandbox `mcp__workspace__bash` fejlede
+    igen med samme `useradd`-fejl, genbekræftet 2026-07-06 lige før denne kodesession), commit,
+    merge, deploy. Afventer Peters terminal — samme mønster som forrige rettelser denne uge.
+    Indtil da forbliver residualrisikoen UÆNDRET (kun kildekode-tilstedeværelse ændrer intet i
+    et kørende system).
+- **Sandsynlighed:** 1 (ned fra 2 — eksplicit, ordret politik-bekræftelse fra Peter 2026-07-05, plus en dedikeret installationsguide der gør Peter uafhængig af agent-hjælp på staging/prod), **Konsekvens:** 5 (uændret — ville stadig være et reelt databrud på live kundedata + legacy-system, hvis det skete), **Score:** 🟡 5 (ned fra 🟠 10, uændret ved denne kodesession — se ovenfor)
 
 ---
 
@@ -828,9 +874,19 @@ sammenkøring med allerede eksisterende, dateret status fra §11 P0 #3, G-01–G
    CrushFTP/legacy-systemet. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md`. **Delvist fremskridt
    2026-07-06 (periodisk tjek #84):** forudsætningen fra #65 (`TIMELAPSE_ENV`-terminologi-drift,
    se R19-detaljeafsnittet) er nu rettet i `edge/agent.py` og `headend/siem.py` (tilføjet `"rd"`
-   som synonym til `lab`/`dev`/`development`). Selve `AgentPrincipal`/miljøflag-håndhævelsen
-   (den faktiske M-05-blokker) er dermed IKKE bygget endnu — kun en implementeringsfælde, der
-   ville have ramt håndhævelsen senere, er ryddet af vejen på forhånd.
+   som synonym til `lab`/`dev`/`development`). **Committet, merget og deployet 2026-07-06
+   (Peter):** via PR #1 (`claude/capture-camera-location-2026-07-03` → `main`), CI grøn,
+   `deploy-macmini`-jobbet genstartede rd-headend — faldgruben er dermed reelt lukket på rd,
+   ikke kun rettet i working tree (se R19-detaljeafsnittet for fuld sporing). **Selve
+   `AgentPrincipal`/miljøflag-håndhævelsen (M-05, "layer 2" — env-flag + hård afvisning i
+   `/api/auth/login` og `get_current_user()`) er nu KODET 2026-07-06 (Claude, Peter bad
+   eksplicit om at fortsætte mens Codex var utilgængeligt)** — se R19-detaljeafsnittet for fuld
+   implementeringsdetalje. 15 nye pytest-tests skrevet (`headend/tests/test_agent_principal_
+   lockdown.py`), men **IKKE kørt/committet/merget/deployet endnu** (afventer Peters
+   `py_compile`+pytest-bekræftelse, samme mønster som #84/#85). Bevidst kun trin 2 af 5 i den
+   oprindelige byggerækkefølge — det fulde `AgentPrincipal`/`AgentToken`/`AgentElevationGrant`-
+   skema (trin 3) er en separat, større, endnu ikke påbegyndt beslutning. Blokkeren nedjusteres
+   IKKE til lukket, før test+deploy er bekræftet.
 
 ### 🟠 P1 — Skal lukkes inden første rigtige kunde-site
 1. MFA/WebAuthn til admin-login (R02)
@@ -933,6 +989,8 @@ sammenkøring med allerede eksisterende, dateret status fra §11 P0 #3, G-01–G
 | 10 (tilføjelse) | 2026-07-06 | Claude: R19 uddybet efter Peters anmodning om en kontrolleret, tidsbegrænset, logget break-glass-undtagelsesvej til staging/prod-support-adgang (installation/fejlsøgning), ved siden af den fortsatte default-deny-standardtilstand. Nyt design-notat `Claude_Support_Access_Model_2026-07-06.md` (separat Support-CA fra device-CA'en i #52, korttidslevende SSH-certifikater med kryptografisk indbygget udløb, kunde-samtykke-tjek pr. aktivering, signeret ticket + audit-log — ingen kode/CA bygget endnu). §13.2 (cert-levetider) opdateret separat samme dag med Peters CA/mTLS-designsvar (10-års konfigurerbar device-cert-levetid, permanent HMAC+mTLS, retrofit af R&D-device til mTLS) — se `Claude_Intern_CA_mTLS_Design_2026-07-05.md`s egen dokumenthistorik. `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §5 og `GO_LIVE_CHECKLIST_v10.md` M-02/M-08 opdateret tilsvarende. Ingen kode rørt. |
 | 10 (tilføjelse) | 2026-07-06 (periodisk tjek #84) | Claude: R19/§11 P0 #6 og `GO_LIVE_CHECKLIST_v10.md` M-05 opdateret — #65's `TIMELAPSE_ENV`-terminologi-drift-fund er nu FAKTISK RETTET i kode (ikke kun dokumenteret): `"rd"` tilføjet som synonym til `lab`/`dev`/`development` i `edge/agent.py` (den fail-safe, men funktionelt farlige legacy-opdaterings-allowlist) og `headend/siem.py` (SIEM-logniveau-default); `headend/main.py` krævede ingen ændring (sammenligner allerede kun mod `prod`/`production`). Valgte bevidst den additive løsning (a) frem for #65's foretrukne fulde migration (b), da (b) risikerer at bryde en kørende installation uden mulighed for at verificere den faktiske miljøvariabel (ingen shell-adgang). Verificeret manuelt (linje-for-linje syntakstjek af diff'ene) — `py_compile` kunne ikke køres, `mcp__workspace__bash` fejlede fortsat (34. selvstændige bekræftelse). Selve M-05-håndhævelsen (AgentPrincipal-middleware) er stadig ikke bygget — kun en forudsætnings-faldgrube er ryddet. Ikke committet (Peter/Codex committer selv). |
 | 10 (tilføjelse) | 2026-07-06 (periodisk tjek #85) | Claude: `GO_LIVE_CHECKLIST_v10.md` C-03 (standard super_admin-password) fik ny vedvarende SIEM-varsling — `_warn_if_default_admin_password_active()` (headend/main.py) kører ved hvert opstart (ikke kun ved brugeroprettelse) og logger `log.critical(...)` hvis en aktiv admin/super_admin-konto stadig autentificerer mod "changeme" (bcrypt `_verify_password`, salt-uafhængigt). 6 nye tests i `headend/tests/test_default_admin_password_warning.py`, IKKE kørt (`mcp__workspace__bash` fejlede, 35. selvstændige bekræftelse) — kun manuel linje-for-linje-verifikation. Dette er et observability-lag, IKKE selve bekræftelsen — C-03 forbliver 🔴, kræver stadig en faktisk manuel kontrol på rd/staging/prod-maskinerne. Ingen RISK_ASSESSMENT-risikopost ændret (C-03 hører hjemme i GO_LIVE_CHECKLIST, ikke i denne risikoliste) — kun nævnt her for fuldstændig sporing af rundens arbejde. Ikke committet (Peter/Codex committer selv). |
+| 10 (tilføjelse) | 2026-07-06 (periodisk tjek, docs-sync) | Claude: Peter committede/mergede selv hele #33-#85-backlogget (`079f2496` → PR #1 → `main`, CI grøn, deployet til rd via `deploy-macmini`) — den lange "ukommitteret siden #33"-bekymring (#62, #66-#86) er lukket. Fandt ved samme lejlighed at §11 P0 #6 (denne fil) var kommet ét lag bagud ift. R19-detaljeafsnittet ovenfor og `GO_LIVE_CHECKLIST_v10.md` M-05, som begge allerede var opdateret med merge/deploy-bekræftelsen — §11 P0 #6 nævnte stadig kun "rettet i working tree". Rettet til at matche. Ren docs-lag-synkronisering internt i samme dokument, ingen ny vurdering, ingen kode rørt. |
+| 10 (tilføjelse) | 2026-07-06 (periodisk tjek, docs-sync efter M-05 layer-2-kodning) | Claude: M-05 "layer 2" (env-flag + hård afvisning af `role="agent"` i `/api/auth/login`/`get_current_user()`, se R19-detaljeafsnittet ovenfor) blev kodet i en direkte Peter-anmodet session (ikke et periodisk tjek), samtidig med at Codex var utilgængeligt. `GO_LIVE_CHECKLIST_v10.md` M-05/§J var allerede opdateret til at afspejle dette korrekt ("kode skrevet, IKKE testet/committet/deployet"), men **denne fils §11 P0 #6 var kommet bagud** — sagde stadig kun at håndhævelsen "FORTSAT IKKE er bygget". Rettet til at matche R19-detaljeafsnittet og GO_LIVE_CHECKLIST. Uafhængig manuel code review udført samme runde (`headend/main.py` §`_agent_role_blocked_in_this_environment`/`get_current_user`/login, `headend/database.py` rollekommentar, alle 15 tests i `test_agent_principal_lockdown.py`) — ingen fejl fundet, konsistent med koden. Ren docs-lag-synkronisering + verifikation, ingen kode rørt, ikke committet. |
 
 ---
 

@@ -61,6 +61,7 @@ Icon
 # blokerede .git/index.lock. Se HANDOVER_LOG.md 2026-07-03.
 .base_image_cache/
 .claude_proxy/
+claude_proxy.py
 artifacts/
 dokumentation.tar.gz
 timelapse-pro-doc.gz
