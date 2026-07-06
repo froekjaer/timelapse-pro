@@ -17,6 +17,28 @@
 > erstatning enten (a) fortsat direkte nginx på standard 80/443 (som i dag — ingen
 > portkonflikt på `rd`), eller (b) samme 8443-mønster som prod, hvis konsistens på tværs af
 > miljøer foretrækkes. Ingen kode er ændret som følge af denne markering.
+>
+> **Rådgivende SABSA/ISO27001-anbefaling 2026-07-06 (Claude, periodisk tjek #91) — Peter
+> træffer stadig selve valget:** Anbefaler option (b), dvs. samme 8443 + DNS-01-mønster som
+> allerede er valgt og dokumenteret for prod/staging — IKKE Cloudflare Tunnel, og IKKE
+> "behold status quo på 80/443". Begrundelse: (1) Peter har allerede afvist Cloudflare
+> Tunnel som arkitektur-mønster for det mere sikkerhedskritiske prod-miljø; at bygge og
+> vedligeholde en ANDEN perimeterløsning (cloudflared-login, tunnel-credentials,
+> launchd-service) kun til det mindre kritiske lab-miljø tilføjer en ekstra kontrolsti
+> uden tilsvarende sikkerhedsgevinst, da fail2ban/rate-limiting-kontrollerne der er
+> vurderet tilstrækkelige for prod pr. definition også dækker det lavere-risiko lab-miljø.
+> (2) `install_headend.sh` og `example-staging.conf`/`example-prod.conf` er allerede
+> bygget og testdokumenteret til 8443/DNS-01-mønsteret — at genbruge samme skabelon på
+> lab-domænet er en ren konfigurationsopgave, mens Tunnel kræver helt ny infrastruktur som
+> intet andet miljø bruger. (3) To forskellige perimeter-arkitekturer på tværs af
+> rd/staging/prod øger risikoen for at et forkert runbook anvendes mod det forkerte miljø
+> — præcis den fejlklasse `PORT_AUDIT_og_WEBSITE_v10.md`s procesnote ("port-korrektionsrunde
+> 2") allerede dokumenterer er sket én gang. (4) Lukker stadig VPEN-2026-001-hullet uanset
+> §0's ubesvarede `dig`-spørgsmål. **Konsekvens hvis (b) vælges:** dette dokuments §2-§4
+> (nginx `listen 18443` + cloudflared-config + Tunnel-udførelsesplan) bliver reelt
+> overflødige og bør markeres SUPERSEDED (ikke slettet) til fordel for blot `listen 8443
+> ssl` direkte + `certbot-dns-cloudflare` DNS-01, samme fremgangsmåde som staging/prod.
+> Ingen kode/config ændret som følge af denne anbefaling — kun dokumentation.
 
 **Dato:** 2026-07-04 (nat)
 **Forfatter:** Claude (mens Peter sov — se `HANDOVER_LOG.md`)

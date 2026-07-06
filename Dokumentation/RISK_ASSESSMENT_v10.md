@@ -887,19 +887,35 @@ sammenkøring med allerede eksisterende, dateret status fra §11 P0 #3, G-01–G
    `/api/auth/login` og `get_current_user()`) er nu KODET 2026-07-06 (Claude, Peter bad
    eksplicit om at fortsætte mens Codex var utilgængeligt)** — se R19-detaljeafsnittet for fuld
    implementeringsdetalje. 15 nye pytest-tests skrevet (`headend/tests/test_agent_principal_
-   lockdown.py`), men **IKKE kørt/committet/merget/deployet endnu** (afventer Peters
-   `py_compile`+pytest-bekræftelse, samme mønster som #84/#85). Bevidst kun trin 2 af 5 i den
-   oprindelige byggerækkefølge — det fulde `AgentPrincipal`/`AgentToken`/`AgentElevationGrant`-
-   skema (trin 3) er en separat, større, endnu ikke påbegyndt beslutning. Blokkeren nedjusteres
-   IKKE til lukket, før test+deploy er bekræftet.
+   lockdown.py`). **Opdateret samme dag (Peter, via `claude_proxy.py` med audit-log):** kørt reelt —
+   24/24 tests bestået, `py_compile` OK — committet, pushet og **PR #2 åbnet**
+   (`claude/m05-agent-lockdown-2026-07-06` → `main`,
+   https://github.com/froekjaer/timelapse-pro/pull/2). Afventer stadig Peters PR-review/merge +
+   CI/`deploy-macmini`, samme sidste skridt som M-05's forudsætning (#84) gennemgik for PR #1.
+   Samme gren fik desuden to lavrisiko skema-forberedende tilføjelser (ingen nøglegenerering,
+   ingen CA, ingen udstedelses-endpoint): ny `AccessTicket`-tabel (#62 break-glass support-adgang)
+   og `KeyCredential.key_type="mtls_device_cert"` (#52-forberedelse, se P1.2 nedenfor).
+   Testdækket (`headend/tests/test_access_ticket_and_device_cert_schema.py`, 7 tests, fuld suite
+   78/78), committet/pushet til samme PR #2. Uafhængig manuel code review (periodisk tjek #89) af
+   både M-05 og skema-tilføjelserne fandt ingen fejl. Bevidst kun trin 2 af 5 i den oprindelige
+   byggerækkefølge — det fulde `AgentPrincipal`/`AgentToken`/`AgentElevationGrant`-skema (trin 3)
+   er en separat, større, endnu ikke påbegyndt beslutning. Blokkeren nedjusteres IKKE til lukket,
+   før PR #2 er merget og deployet.
 
 ### 🟠 P1 — Skal lukkes inden første rigtige kunde-site
 1. MFA/WebAuthn til admin-login (R02)
 2. Intern CA + device client certs (R05, R07, R08) — design-notat FÆRDIGT
    (`Claude_Intern_CA_mTLS_Design_2026-07-05.md`), alle 4 åbne designspørgsmål besvaret af Peter
    2026-07-05 (Model B, 10-års konfigurerbar cert-levetid, permanent HMAC+mTLS, retrofit af
-   eksisterende R&D-device) — ingen blockers tilbage, kodefasen kan påbegyndes som ny, afgrænset
-   opgave (auth-nær, kræver ekstra dobbelttjek, bevidst ikke startet i denne session)
+   eksisterende R&D-device) — ingen blockers tilbage. **Kodefase trin 1 (skema-forberedelse)
+   bygget 2026-07-06:** `KeyCredential.key_type="mtls_device_cert"` — genbruger den eksisterende
+   credential-lifecycle-tabel (status/expires_at/revoked_at/rotated_from_id matcher §7's
+   certifikat-livscyklus felt-for-felt), CN/SAN kræver ingen nye kolonner (afledt af
+   `entity_id`), certifikat-specifikke detaljer (serienummer, `not_before`, udsteder-CN,
+   levetids-/grace-politik ved udstedelse) i en dokumenteret `metadata_json`-kontrakt. Testdækket,
+   committet/pushet til PR #2 (se §11 P0 #6 ovenfor). **Selve CSR-signerings-endpointet og
+   CA-nøglegenerering (designdokumentets §9 trin 2-3) er fortsat ikke bygget** — kræver Peters
+   eget terminal for nøglematerialet, jf. designdokumentet
 3. Nikon Z30 config-model — desired state + accepted equivalents (R14); detektion + UI-visning
    af non-enforceable parametre er nu på plads (2026-07-05), resterer kun live-verifikation på
    hardware og en eksplicit beslutning om aperture/shutter_speed-drift-mål (rådgivende SABSA-
@@ -996,6 +1012,7 @@ sammenkøring med allerede eksisterende, dateret status fra §11 P0 #3, G-01–G
 | 10 (tilføjelse) | 2026-07-06 (periodisk tjek #85) | Claude: `GO_LIVE_CHECKLIST_v10.md` C-03 (standard super_admin-password) fik ny vedvarende SIEM-varsling — `_warn_if_default_admin_password_active()` (headend/main.py) kører ved hvert opstart (ikke kun ved brugeroprettelse) og logger `log.critical(...)` hvis en aktiv admin/super_admin-konto stadig autentificerer mod "changeme" (bcrypt `_verify_password`, salt-uafhængigt). 6 nye tests i `headend/tests/test_default_admin_password_warning.py`, IKKE kørt (`mcp__workspace__bash` fejlede, 35. selvstændige bekræftelse) — kun manuel linje-for-linje-verifikation. Dette er et observability-lag, IKKE selve bekræftelsen — C-03 forbliver 🔴, kræver stadig en faktisk manuel kontrol på rd/staging/prod-maskinerne. Ingen RISK_ASSESSMENT-risikopost ændret (C-03 hører hjemme i GO_LIVE_CHECKLIST, ikke i denne risikoliste) — kun nævnt her for fuldstændig sporing af rundens arbejde. Ikke committet (Peter/Codex committer selv). |
 | 10 (tilføjelse) | 2026-07-06 (periodisk tjek, docs-sync) | Claude: Peter committede/mergede selv hele #33-#85-backlogget (`079f2496` → PR #1 → `main`, CI grøn, deployet til rd via `deploy-macmini`) — den lange "ukommitteret siden #33"-bekymring (#62, #66-#86) er lukket. Fandt ved samme lejlighed at §11 P0 #6 (denne fil) var kommet ét lag bagud ift. R19-detaljeafsnittet ovenfor og `GO_LIVE_CHECKLIST_v10.md` M-05, som begge allerede var opdateret med merge/deploy-bekræftelsen — §11 P0 #6 nævnte stadig kun "rettet i working tree". Rettet til at matche. Ren docs-lag-synkronisering internt i samme dokument, ingen ny vurdering, ingen kode rørt. |
 | 10 (tilføjelse) | 2026-07-06 (periodisk tjek, docs-sync efter M-05 layer-2-kodning) | Claude: M-05 "layer 2" (env-flag + hård afvisning af `role="agent"` i `/api/auth/login`/`get_current_user()`, se R19-detaljeafsnittet ovenfor) blev kodet i en direkte Peter-anmodet session (ikke et periodisk tjek), samtidig med at Codex var utilgængeligt. `GO_LIVE_CHECKLIST_v10.md` M-05/§J var allerede opdateret til at afspejle dette korrekt ("kode skrevet, IKKE testet/committet/deployet"), men **denne fils §11 P0 #6 var kommet bagud** — sagde stadig kun at håndhævelsen "FORTSAT IKKE er bygget". Rettet til at matche R19-detaljeafsnittet og GO_LIVE_CHECKLIST. Uafhængig manuel code review udført samme runde (`headend/main.py` §`_agent_role_blocked_in_this_environment`/`get_current_user`/login, `headend/database.py` rollekommentar, alle 15 tests i `test_agent_principal_lockdown.py`) — ingen fejl fundet, konsistent med koden. Ren docs-lag-synkronisering + verifikation, ingen kode rørt, ikke committet. |
+| 10 (tilføjelse) | 2026-07-06 (periodisk tjek #89) | Claude: §11 P0 #6 og P1.2 var begge kommet bagud ift. to real-time Peter-sessioner siden tjek #88: (1) M-05 er reelt TESTET (24/24 via `claude_proxy.py`), committet, **PR #2 åbnet** — dokumentet sagde stadig "IKKE kørt/committet"; (2) #52/#62 fik hver et lavrisiko skema-forberedende kodestykke (`AccessTicket`-tabel, `KeyCredential.key_type="mtls_device_cert"`), testdækket (7 nye + 78/78 fuld suite), committet til samme PR #2 — nævnt ingen steder i denne fil endnu. Uafhængig manuel code review af skema-tilføjelserne (`headend/database.py` linje 403-457/535-589, `headend/main.py` `_key_scopes()`, alle 7 tests i `test_access_ticket_and_device_cert_schema.py`) fandt ingen fejl — bekræftede bl.a. at den manuelle admin-key-endpoint (linje 2900-2904) bevidst IKKE er udvidet til `mtls_device_cert`, som påstået. `.git/logs/HEAD` krydstjekket lokalt og bekræfter nøjagtig samme committræk som HANDOVER_LOG beskriver (HEAD nu `60d2313e`, "feat: schema prep for #62 (AccessTicket) and #52 (mtls_device_cert)"). Ren docs-lag-synkronisering + verifikation, ingen kode rørt, ikke committet (Peter/Codex committer selv). `mcp__workspace__bash` fejlede fortsat (40. selvstændige bekræftelse), Read/Grep anvendt i stedet. |
 
 ---
 

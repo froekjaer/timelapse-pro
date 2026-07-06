@@ -7507,3 +7507,245 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
   signering, #62's `grant_support_access.sh`+Support-CA) er fortsat ikke bygget og kræver Peters
   eget terminal for nøglegenerering, jf. begge designdokumenter. `NGINX_CLOUDFLARE_MIGRATION_LAB_
   v1.md`-spørgsmålet og Codex-netværksadgang-spørgsmålet (periodisk tjek #78) uændret åbne.
+
+### Handover 2026-07-06 (periodisk tjek #89) — fra Claude: rettede docs-lag-drift i RISK_ASSESSMENT_v10.md/GO_LIVE_CHECKLIST_v10.md efter de to seneste real-time-sessioner (M-05-test/PR #2, #52/#62-skema) — ingen nyt kodearbejde
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **40. selvstændige bekræftelse.** Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#88).
+- **Git-tilstand:** Læste `.git/HEAD` (peger nu på `claude/m05-agent-lockdown-2026-07-06`, ikke
+  længere `claude/capture-camera-location-2026-07-03` — branch-skiftet skete i den efterfølgende
+  real-time-session, se reflog) og hele `.git/logs/HEAD` (209 entries). Bekræftede lokalt at
+  reflog'en nøjagtigt matcher de to real-time HANDOVER_LOG-entries siden #88: entry 205-207 er
+  M-05-commit+amend+"docs: confirm M-05 verified"-commit (`bd8c699b`), entry 208 er
+  "feat: schema prep for #62 (AccessTicket) and #52 (mtls_device_cert)" (`60d2313e`, nuværende
+  HEAD). Ingen ukommitterede eller uventede commits fundet — git-historikken stemmer 1:1 med det
+  Peter selv har beskrevet. §11/§J genlæst — blokerings-billedet er uændret i kategori-optælling
+  (P0: 6, P1: 5, P2: 7; GO_LIVE §J: A:7, C:2, E:1, G:2, M:1), men INDHOLDET i P0 #6, P1.2 og
+  §J-M-rækken var kommet bagud ift. de to real-time-sessioner.
+- **Denne runde — valgte docs-konsistens-verifikation frem for nyt kodearbejde:** samme
+  forsigtighedsprincip som #86/#88 anvendte — en fjerde uverificeret kodelag oveni M-05/#52/#62 på
+  én runde uden reel testmulighed her ville øge risikoen mere end værdien. Læste i stedet
+  `headend/database.py` (`AccessTicket`-model linje 403-457, `KeyCredential`-docstring/felter
+  linje 535-589), `headend/main.py` (`_key_scopes()` linje 2376-2390, samt
+  `/api/admin/key-management/credentials`s `key_type`-validering linje 2900-2904) og alle 7 tests
+  i `headend/tests/test_access_ticket_and_device_cert_schema.py` linje-for-linje.
+- **Fund 1 (verifikation, ingen fejl):** Skema-tilføjelserne er syntaktisk og logisk konsistente
+  med testene og med deres egne docstrings. Krydstjekkede konkret: alle felter testene bruger
+  (`credential_id`, `entity_type`, `entity_id`, `key_type`, `status`, `public_key`, `fingerprint`,
+  `algorithm`, `metadata_json`, `revoked_at`/`revoked_by`/`revoke_reason`, `rotated_from_id` på
+  `KeyCredential`; samtlige `AccessTicket`-felter inkl. `customer_consent_basis`,
+  `valid_from`/`valid_until`, `credential_id`) findes faktisk i modellerne, ingen typo i
+  feltnavne. Bekræftede desuden konkret at `/api/admin/key-management/credentials` (linje 2903)
+  stadig KUN accepterer `{"api", "ssh", "signing", "bootstrap"}` — dvs. påstanden i
+  `KeyCredential`-docstringen og testfilens egen kommentar ("bevidst IKKE udvidet") holder ved
+  faktisk kodelæsning, ikke kun ved at stole på beskrivelsen. `_key_scopes("mtls_device_cert")`
+  returnerer korrekt `["device:mtls-auth"]`, og `_key_scopes()`s fallback (`defaults.get(key_type,
+  [])`) betyder en ukendt `key_type` fortsat giver tom liste, ikke en exception — regressionstesten
+  holder. Ingen fejl fundet i nogen af de 7 nye tests mod den faktiske implementering.
+- **Fund 2 (ny, reel — rettet):** `RISK_ASSESSMENT_v10.md` §11 P0 #6 sagde stadig "15 nye
+  pytest-tests skrevet ... men IKKE kørt/committet/merget/deployet endnu" — men Peter havde siden
+  (real-time, se to entries ovenfor) rent faktisk kørt dem (24/24 via `claude_proxy.py`),
+  committet og åbnet **PR #2**. Samme dokuments §11 P1.2 (CA/mTLS) nævnte slet ikke den nye
+  `KeyCredential.key_type="mtls_device_cert"`-skema-forberedelse. `GO_LIVE_CHECKLIST_v10.md`
+  M-05-rækken og §J-M-rækken havde samme "IKKE testet/committet/deployet"-ordlyd, og M-08-rækken
+  nævnte ikke den nye `AccessTicket`-tabel. Samme docs-lag-drift-mønster som #83/#87/#88 fandt —
+  denne gang udløst af to real-time-sessioner i træk uden mellemliggende docs-sync-runde.
+- **Udført:** Rettet §11 P0 #6 og P1.2 (`RISK_ASSESSMENT_v10.md`), M-05-rækken, M-08-rækken og
+  §J-M-rækken (`GO_LIVE_CHECKLIST_v10.md`) til at nævne PR #2, de reelt kørte 24/24- og 78/78-
+  testresultater, og de to nye skema-tilføjelser — med tydelig markering af at selve
+  merge/deploy (M-05) og CA-nøglegenerering/udstedelses-endpoint (#52/#62) fortsat udestår. Tilføjet
+  tilsvarende linje i `RISK_ASSESSMENT_v10.md`s §12 Dokumenthistorik. Ingen kode rørt, ingen
+  eksisterende tekst slettet — kun udvidet/rettet til at matche allerede besluttede/kørte fakta.
+- **Filer rørt:** `RISK_ASSESSMENT_v10.md` (§11 P0 #6, §11 P1.2, §12), `GO_LIVE_CHECKLIST_v10.md`
+  (M-05, M-08, §J), denne HANDOVER_LOG-entry. Ingen kode rørt. Ikke committet (samme
+  bash-begrænsning som #57-#88, samt at Peter/Codex committer selv per fast konvention).
+- **Går videre til:** Uændret liste fra #38-#88: (1) `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-
+  spørgsmålet — fortsat afventer Peters bekræftelse, (2) Codex-netværksadgang-spørgsmålet fra #78,
+  (3) Peters review/merge/CI/deploy af PR #2 (dækker både M-05 og #52/#62-skemaet), (4) den
+  FAKTISKE nøgle-/CA-kodefase for #52 (CSR-signering, trin 2-3) og #62
+  (`grant_support_access.sh`+Support-CA) — begge kræver Peters eget terminal for
+  nøglegenerering, ingen af delene er agent-byggelige. `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 40. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #90) — fra Claude: ren re-verifikation efter #89, ingen ny drift, intet nyt kodearbejde denne runde
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **41. selvstændige bekræftelse.** Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#89).
+- **Git-tilstand:** Læste `.git/HEAD` (peger stadig på `claude/m05-agent-lockdown-2026-07-06`) og
+  hele `.git/logs/HEAD` (209 linjer, uændret ift. #89's optælling). HEAD er fortsat `60d2313e`
+  ("feat: schema prep for #62 (AccessTicket) and #52 (mtls_device_cert)") — ingen nye commits,
+  intet branch-skift siden #89. Ingen ny Codex- eller Peter-entry i `HANDOVER_LOG.md` siden #89
+  (filen slutter fortsat med #89's entry).
+- **Denne runde:** genlæste §11 (`RISK_ASSESSMENT_v10.md`) og §J (`GO_LIVE_CHECKLIST_v10.md`) i
+  fuld bredde, ikke kun optælling — bekræftede at #89's rettelser (P0 #6, P1.2, M-05-/M-08-rækken,
+  §J-M-rækken) rent faktisk står som beskrevet, ord for ord, ikke kun at de blev skrevet. Ingen
+  docs-lag-drift fundet denne gang. Blokerings-billedet er uændret ift. #89: P0: 6 punkter, P1: 5,
+  P2: 7; GO_LIVE §J: A:7, C:2, E:1, G:2, M:1.
+- **Vurdering:** Ingen ny, sikker, agent-byggelig og selv-testbar opgave identificeret denne runde
+  ud over re-verifikationen ovenfor — samme forsigtighedsprincip som #82/#86/#89 anvendte. Alle
+  resterende åbne punkter kræver enten Peters terminal (nøglegenerering til #52/#62, en faktisk
+  manuel kontrol af C-03) eller en beslutning/handling fra Peter/Codex (PR #2-review/merge, svar på
+  Codex-netværksadgang-spørgsmålet fra #78, bekræftelse af `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-
+  spørgsmålet) — ingen af dem er noget en stateløs periodisk kørsel bør gribe ind i uden test-
+  mulighed (bash fortsat nede).
+- **Filer rørt:** Ingen kode, ingen dokumentation ud over denne HANDOVER_LOG-entry.
+- **Går videre til:** Uændret liste fra #38-#89: (1) `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-
+  spørgsmålet — fortsat afventer Peters bekræftelse, (2) Codex-netværksadgang-spørgsmålet fra #78,
+  (3) Peters review/merge/CI/deploy af PR #2 (dækker både M-05 og #52/#62-skemaet), (4) den
+  FAKTISKE nøgle-/CA-kodefase for #52 (CSR-signering, trin 2-3) og #62
+  (`grant_support_access.sh`+Support-CA) — begge kræver Peters eget terminal for
+  nøglegenerering, ingen af delene er agent-byggelige. `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 41. selvstændige bekræftelse.
+
+### Handover 2026-07-06 (periodisk tjek #91) — fra Claude: rådgivende SABSA-anbefaling til det åbne NGINX_CLOUDFLARE_MIGRATION_LAB-spørgsmål (#38-#90's ventende punkt (1))
+
+- **Kontekst:** `mcp__workspace__bash` fejlede igen med samme `useradd failed: fork/exec
+  /usr/sbin/useradd: input/output error` — **42. selvstændige bekræftelse.** Faldt tilbage på
+  direkte `Read`/`Grep` af filsystemet (samme metode som #76-#90).
+- **Git-tilstand:** `.git/HEAD` peger stadig på `claude/m05-agent-lockdown-2026-07-06`,
+  `.git/logs/HEAD` uændret (209 linjer, stadig samme som #89/#90) — HEAD fortsat `60d2313e`
+  ("feat: schema prep for #62 (AccessTicket) and #52 (mtls_device_cert)"). Ingen nye commits,
+  intet branch-skift. Læste de sidste ~200 `### Handover`-entries — ingen ny Codex- eller
+  Peter-entry siden #90 (filen sluttede med #90's entry ved denne rundes start).
+- **Denne runde:** genlæste §11 (`RISK_ASSESSMENT_v10.md`) og §J (`GO_LIVE_CHECKLIST_v10.md`)
+  i fuld bredde — samme blokerings-billede som #89/#90, ingen docs-lag-drift fundet (P0: 6,
+  P1: 5, P2: 7; §J: A:7, C:2, E:1, G:2, M:1). I stedet for endnu en ren re-verifikation valgte
+  jeg at adressere ét af de fire punkter på #38-#90's faste "går videre til"-liste, der
+  reelt ER agent-byggeligt: `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md` har stået som et åbent,
+  ubesvaret spørgsmål til Peter siden 2026-07-05 (skal `rd`/lab-domænet også væk fra
+  Cloudflare Tunnel, og i så fald til hvad). Tilføjede en rådgivende SABSA/ISO27001-baseret
+  anbefaling direkte i dokumentets SUPERSEDED-banner (samme mønster som #54's
+  device-decommission-anbefaling og #64's aperture/shutter_speed-anbefaling): anbefaler
+  option (b) — samme 8443+DNS-01-mønster som allerede valgt til prod/staging — fremfor
+  Cloudflare Tunnel eller status quo på 80/443. Begrundelse i fire punkter: (1) at bygge
+  endnu en perimeterarkitektur kun til det lavere-risiko lab-miljø, når Peter allerede har
+  afvist Tunnel for det mere kritiske prod-miljø, giver ekstra vedligeholdelsesbyrde uden
+  tilsvarende sikkerhedsgevinst; (2) `install_headend.sh`+`example-*.conf` er allerede
+  bygget og testdokumenteret til 8443/DNS-01 — ren konfiguration frem for ny infrastruktur;
+  (3) to forskellige perimeter-mønstre på tværs af rd/staging/prod øger risikoen for
+  forkert-runbook-mod-forkert-miljø-fejl (samme fejlklasse som "port-korrektionsrunde 2"
+  allerede viste er sket); (4) lukker VPEN-2026-001-hullet uanset §0's ubesvarede
+  `dig`-spørgsmål. Peter træffer stadig selve valget — anbefalingen ændrer ingen kode/config,
+  kun dokumentation, og §2-§4 i dokumentet er IKKE ændret eller slettet (kun markeret som
+  potentielt overflødige, hvis anbefalingen følges).
+- **Vurdering:** Sikkert, selvstændigt, dokumentations-kun arbejde — ingen kodeændring, ingen
+  test nødvendig, ingen risiko for at "fange en fejl for sent" da intet system rørt. Adskiller
+  sig bevidst fra #82/#86/#89/#90's rene re-verifikationer ved at levere reelt nyt
+  beslutningsstøtte-indhold på et punkt der ellers har stået stille i 6 dage.
+- **Filer rørt:** `Dokumentation/NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md` (banner udvidet med
+  anbefaling). Ingen kode rørt. Ikke committet (Peter/Codex committer selv, jf. fast
+  konvention).
+- **Går videre til:** Uændret liste fra #38-#90 minus dette punkts fremdrift: (1)
+  `NGINX_CLOUDFLARE_MIGRATION_LAB_v1.md`-spørgsmålet har nu en konkret anbefaling, men
+  afventer stadig Peters faktiske bekræftelse/valg, (2) Codex-netværksadgang-spørgsmålet fra
+  #78, (3) Peters review/merge/CI/deploy af PR #2 (dækker både M-05 og #52/#62-skemaet), (4)
+  den FAKTISKE nøgle-/CA-kodefase for #52 (CSR-signering, trin 2-3) og #62
+  (`grant_support_access.sh`+Support-CA) — begge kræver Peters eget terminal for
+  nøglegenerering, ingen af delene er agent-byggelige. `mcp__workspace__bash` fejler fortsat
+  konsekvent — nu 42. selvstændige bekræftelse.
+
+### Handover 2026-07-06 — fra Claude: Open WebUI (127.0.0.1:8080) fejlsøgt og bragt i drift via `claude_proxy.py` — to reelle, uafhængige fund, IKKE selve M-05/#52/#62-arbejdet
+
+- **Kontekst:** Peter slog "Peter vil gerne lege med Ollama" (`open_webui_priority`-toggle,
+  `AIPage.tsx`/`/api/ai/ollama-priority`) til, gik til Open WebUI-siden og klikkede "Åbn Open
+  WebUI" — fik "127.0.0.1:8080 ikke tilgængelig". Denne toggle sætter KUN et
+  ressource-arbitrage-flag (pauser TimeLapse's egen Ollama-brug for at frigive kapacitet til
+  interaktiv brug) — den starter IKKE selve Open WebUI-processen. Det er en separat, adskilt
+  fejl.
+- **Fund 1 — LaunchAgent aldrig installeret:** `deploy/launchd/dk.froekjaer.open-webui.plist`
+  findes kun i repo'et, er ALDRIG kopieret til `~/Library/LaunchAgents/` og ALDRIG loadet.
+  `launchctl print gui/$(id -u)/dk.froekjaer.open-webui` → "Could not find service". Bekræftet
+  ved `diff`/`ls` mod den faktiske `~/Library/LaunchAgents/`-mappe. Servicen er heller ikke
+  omtalt i `SERVICES_OG_DRIFT_kilde_til_sandhed.md` — dette er reelt en aldrig fuldført
+  installation, ikke en fejlkonfiguration af en kørende service.
+- **Fund 2 — `open-webui.log` viste en ÆLDRE, ANDEN fejl (fra en tidligere `launchctl load`,
+  ikke aktuel):** `PermissionError: [Errno 1] Operation not permitted:
+  '.../openwebui-env/pyvenv.cfg'`. `/Users/peter/projects/openwebui-env` peger (via
+  symlink/mount) på `/Volumes/data-fast/peter-home/projects/openwebui-env` — et USB-tilsluttet
+  APFS-drev (bekræftet: `diskutil info` → `Protocol: USB`). `EPERM` (ikke `ENOENT`) her matcher
+  et velkendt macOS-mønster: launchd-startede baggrundsprocesser kører i en anden TCC-kontekst
+  end en Terminal-startet proces og kan blive nægtet adgang til filer på eksterne/USB-drev,
+  selv når den samme binary virker fint fra Terminal. **IKKE verificeret 100% (kræver en reel
+  `launchctl load` for at bekræfte igen) — men konsistent med alle observerede symptomer.**
+- **Fund 3 (opdaget ved LIVE test, den faktiske blokerende fejl lige nu):** Startede Open WebUI
+  manuelt via `claude_proxy.py` (samme Terminal-lignende kontekst som Peter selv ville have) —
+  kom denne gang MEGET længere (gennemførte alle databasemigrationer) end launchd-loggen nogensinde
+  viste, men crashede til sidst med `NotADirectoryError: ... '.../jsonschema_specifications/
+  schemas/Icon\r'`. **Samme kendte macOS-Finder-artefakt som allerede er dokumenteret og
+  håndteret i selve repo'et** (`tools/cleanup_macos_icon_files.sh`, `.gitignore`s "Tunge
+  cache-/build-/scratch-mapper"-sektion, 2026-07-03) — men her fundet i en HELT ANDEN mappe
+  (`openwebui-env`-venv'en, uden for Git). `find` fandt **8.595** af disse `Icon\r`-filer i hele
+  venv-træet — et markant omfang, der tyder på at HELE `/Volumes/data-fast`-drevet systematisk
+  genererer disse (sandsynligvis Finder-indstilling eller Time Machine-relateret), ikke kun
+  enkelte mapper.
+- **Udført (via `claude_proxy.py`, alt audit-logget):**
+  1. Kørte `tools/cleanup_macos_icon_files.sh /Users/peter/projects/openwebui-env` (samme,
+     allerede gennemgåede script som bruges på selve repo'et) — fjernede alle 8.595 filer
+     (kun `-size 0`-varianter, ingen risiko for at slette en reel, tilsigtet mappe-ikon).
+  2. Genstartede `open-webui serve --host 127.0.0.1 --port 8080` manuelt (baggrundsproces via
+     `nohup`+`disown`, ikke launchd) — kom denne gang HELT igennem opstarten (inkl. en
+     engangs-download af `sentence-transformers/all-MiniLM-L6-v2`-embedding-modellen fra
+     HuggingFace, ~90 sekunder på denne forbindelse — cached til fremtidige opstarter).
+  3. **Verificeret: `curl http://127.0.0.1:8080/` → HTTP 200.** Processen er BEVIDST efterladt
+     kørende (PID 36878), så Peter kan bruge Open WebUI med det samme uden at skulle gøre noget
+     selv.
+- **Hvad der STADIG ikke er løst (kræver Peters handling, ikke agent-byggeligt):**
+  1. Servicen kører nu manuelt, IKKE som en launchd-styret, persistent baggrundstjeneste — den
+     overlever ikke en genstart/logout. For at gøre den permanent: kopiér
+     `deploy/launchd/dk.froekjaer.open-webui.plist` til `~/Library/LaunchAgents/` og
+     `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dk.froekjaer.open-webui.plist`.
+  2. **Men gør IKKE det uden også at adressere Fund 2 først** — hvis EPERM-teorien er korrekt,
+     vil en reel launchd-load formentlig crash-loope igen (samme symptom som den gamle log).
+     Hvis Peter vil have en persistent tjeneste, bør han enten (a) give Full Disk Access til
+     Python-binariet der reelt kører (`/opt/homebrew/Cellar/python@3.12/.../Python.app`, jf.
+     `ps`-output) via System Settings → Privacy & Security → Full Disk Access, ELLER (b) flytte
+     `openwebui-env`-venv'en til den interne disk (ikke USB-drevet) for at fjerne selve
+     årsagen til TCC-restriktionen. (b) er den mere robuste løsning, men kræver en
+     ny/geninstalleret venv — ikke gjort her, kun anbefalet.
+  3. Selve `Icon\r`-forureningen på `/Volumes/data-fast` bør rod-årsags-undersøges (Finder-
+     indstilling for det drev, eller Time Machine der sikkerhedskopierer det eksternt) — 8.595
+     filer i ÉN mappe alene er usædvanligt meget og vil sandsynligvis dukke op igen.
+- **Filer rørt:** Ingen kode/dokumentation i selve `timelapse-pro`-repoet — kun oprydning i den
+  eksterne `openwebui-env`-venv (uden for Git) og en manuel processtart. Denne HANDOVER_LOG-
+  entry er den eneste "kode"-rørte fil.
+- **Går videre til:** De tre punkter i "Hvad der STADIG ikke er løst" ovenfor, plus den
+  uændrede liste fra #38-#91.
+
+- **Opfølgning samme dag — Peter spurgte direkte: "Er den stadig beskyttet som tidligere, og
+  login-integreret?"** Svaret var NEJ for min improviserede test-instans, og jeg lukkede den
+  derfor ned igen med det samme i stedet for at lade den stå:
+  1. Min manuelle `open-webui serve`-test kørte UDEN plisttens miljøvariabler
+     (`DATA_DIR`, `WEBUI_AUTH_TRUSTED_*_HEADER`, `OLLAMA_BASE_URL`, `CORS_ALLOW_ORIGIN`) — dvs.
+     mod en helt ny, tom database (IKKE Peters rigtige `/Users/peter/.open-webui/webui.db`,
+     5 MB, dateret 15. juni) og uden nginx' login-integration.
+  2. **Reelt, uafhængigt fund ved verifikation:** `openwebui_public_url`-settingen i
+     Headend-databasen var `None` — dvs. "Åbn Open WebUI"-knappen ville (selv med en korrekt
+     kørende backend) have åbnet den rå `http://127.0.0.1:8080/` i stedet for den
+     nginx-beskyttede `https://openwebui.froekjaer.dk` (som RENT FAKTISK er konfigureret i
+     nginx med `auth_request` mod `/api/openwebui/access/check` — bekræftet ved at læse
+     `deploy/nginx/timelapse.froekjaer.dk.conf`). Samme gjaldt `openwebui_cookie_domain`
+     (også `None`) — uden den ville den MFA-udstedte cookie kun være scoped til Headend-
+     domænet, ikke dele sig til `openwebui.froekjaer.dk`, og login-integrationen ville fejle
+     selv med korrekt URL.
+  3. **Rettet (efter Peters valg via spørgsmål — "Sæt openwebui_public_url korrekt"):** satte
+     `openwebui_public_url = "https://openwebui.froekjaer.dk"` og
+     `openwebui_cookie_domain = ".froekjaer.dk"` direkte i `settings`-tabellen (samme UPDATE/
+     INSERT-mønster som den eksisterende `PUT /api/admin/settings`-endpoint selv bruger,
+     `headend/main.py` linje ~15057-15067 — ingen ny kode, kun en konfigurationsværdi sat via
+     `claude_proxy.py`). Verificeret ved genindlæsning fra databasen efter commit.
+  4. **Verificeret at selve beskyttelsen virker:** `curl https://openwebui.froekjaer.dk/`
+     (uden session-cookie) → **HTTP 302** til `https://timelapse.froekjaer.dk/openwebui` —
+     nøjagtigt nginx' `@openwebui_denied`-adfærd for uautentificerede requests. DNS
+     (`openwebui.froekjaer.dk` → `192.168.86.102`, en lokal LAN-adresse — ikke offentligt
+     eksponeret) og TLS virker begge.
+  5. **STADIG IKKE løst:** selve Open WebUI-processen kører ikke længere (jeg dræbte min
+     test-instans og genstartede den IKKE, jf. punkt 1) — hvis Peter logger ind nu og
+     kommer forbi 302-gaten, vil nginx `proxy_pass`e til `127.0.0.1:8080`, hvor intet lytter,
+     og han vil få en 502. URL/cookie-domain-fixet er en forudsætning for at login-
+     integrationen kan virke, men gør ikke selve tjenesten kørende — det kræver stadig enten
+     en persistent launchd-installation (afventer TCC-/Full-Disk-Access-afklaringen fra
+     tidligere) eller en manuel, korrekt-konfigureret opstart med de rigtige miljøvariabler.
+- **Filer rørt (opfølgning):** Kun `settings`-tabellen i den kørende Headend-database (via
+  `claude_proxy.py`), ingen filer i repoet. Denne HANDOVER_LOG-tilføjelse.
