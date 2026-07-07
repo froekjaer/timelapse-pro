@@ -48,7 +48,7 @@ export function Navbar() {
     { to: '/import',        label: 'Import',        icon: Upload },
     { to: '/siem',          label: 'SIEM',          icon: Shield },
     { to: '/retention',     label: 'Retention',     icon: Clock },
-    { to: '/redaction',     label: 'GDPR Redaction',icon: EyeOff },
+    { to: '/redaction',     label: 'GDPR Sløring',icon: EyeOff },
     { to: '/observability', label: 'Drift',         icon: Activity },
   ]
 

@@ -68,7 +68,7 @@ export default function RedactionPage() {
         ? `/api/redaction/pending?status_filter=${statusFilter}`
         : "/api/redaction/pending";
       const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to load pending captures");
+      if (!res.ok) throw new Error("Kunne ikke indlæse afventende billeder");
       const data = await res.json();
       setPendingData(data);
     } catch (e) {
@@ -84,7 +84,7 @@ export default function RedactionPage() {
       const res = await fetch(`/api/redaction/analyze/${captureId}`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error("Analysis failed");
+      if (!res.ok) throw new Error("Analyse fejlede");
       const data = await res.json();
       setAnalysisResult(data.detections);
       setSelectedCapture((prev) => (prev ? { ...prev, redaction_status: data.redaction_status } : null));
@@ -107,7 +107,7 @@ export default function RedactionPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ blur_kernel: 51, blur_sigma: 30, auto_approve: false }),
       });
-      if (!res.ok) throw new Error("Redaction failed");
+      if (!res.ok) throw new Error("Sløring fejlede");
       await loadPending();
       await loadCaptureStatus(captureId); // Refresh selected
     } catch (e) {
@@ -123,7 +123,7 @@ export default function RedactionPage() {
       const res = await fetch(`/api/redaction/approve/${captureId}`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error("Approval failed");
+      if (!res.ok) throw new Error("Godkendelse fejlede");
       await loadPending();
       await loadCaptureStatus(captureId);
     } catch (e) {
@@ -184,9 +184,9 @@ export default function RedactionPage() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">GDPR Redaction Workflow</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">GDPR Slørings-workflow</h1>
         <p className="text-gray-600">
-          Analysér og slør ansigter og nummerplader i overensstemmelse med GDPR.
+          Analyser og slør ansigter og nummerplader i overensstemmelse med GDPR.
         </p>
       </div>
 
@@ -194,7 +194,7 @@ export default function RedactionPage() {
       {pendingData && (
         <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="bg-white p-4 rounded-lg shadow">
-            <div className="text-sm text-gray-500">Total ikke-redacted</div>
+            <div className="text-sm text-gray-500">Total ikke-slørede</div>
             <div className="text-2xl font-bold">{pendingData.total}</div>
           </div>
           <div className="bg-white p-4 rounded-lg shadow">
@@ -214,7 +214,7 @@ export default function RedactionPage() {
             >
               <option value="detected">Kun GDPR-detektioner</option>
               <option value="pending">Afventer analyse</option>
-              <option value="">Alle ikke-redacted</option>
+              <option value="">Alle ikke-slørede</option>
             </select>
           </div>
         </div>
@@ -266,7 +266,7 @@ export default function RedactionPage() {
             <>
               <div className="px-4 py-3 border-b border-gray-200">
                 <h2 className="text-lg font-medium">{selectedCapture.filename}</h2>
-                <div className="text-sm text-gray-500">Capture ID: {selectedCapture.capture_id}</div>
+                <div className="text-sm text-gray-500">Billede ID: {selectedCapture.capture_id}</div>
               </div>
               <div className="p-4">
                 {/* Actions */}
@@ -277,7 +277,7 @@ export default function RedactionPage() {
                       disabled={loading}
                       className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                     >
-                      Analysér
+                      Analyser
                     </button>
                   )}
                   {selectedCapture.redaction_status === "detected" && (
@@ -287,7 +287,7 @@ export default function RedactionPage() {
                         disabled={loading}
                         className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
                       >
-                        Slør (Redact)
+                        Slør
                       </button>
                       <button
                         onClick={() => approveCapture(selectedCapture.capture_id)}
