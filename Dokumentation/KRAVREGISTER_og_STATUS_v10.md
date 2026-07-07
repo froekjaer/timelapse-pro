@@ -1,7 +1,7 @@
 # TimeLapse Pro — Samlet kravregister, implementeringsstatus og tidslinje (v10, konsolideret)
 
 **Version:** 10 (konsolideret)
-**Dato:** 2026-07-02
+**Dato:** 2026-07-07
 **Kilder:** Alle dokumenter i Dokumentation/, kodebase-gennemgang, sessionhistorik
 **Konsoliderer:** `KRAVREGISTER_og_STATUS_2026-06-23.md`, `Claude_KRAVREGISTER_og_STATUS_2026-06-23.md`, `Codex_KRAVREGISTER_og_STATUS_2026-06-23.md`, samt essens af de oprindelige krav-kilder `Startkrav.docx` og `AGGREGATED_REQUIREMENTS_UPDATE_PROVISIONING.md` (§6–§8). Tidligere versioner arkiveret i `Gamle versioner/`.
 
@@ -31,7 +31,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | CAP-004 | Billedkvalitets-check (blur, QA) | ✅ Implementeret | Blur-score, QA-flag |
 | CAP-005 | AI-analyse og tagging af billeder | ✅ Delvist | Gemini cloud + Ollama; tag-backlog 3033 |
 | CAP-006 | Thumbnail postprocessing (baggrundsgenerering) | 🟡 Delvist | Trigger eksisterer; backlog genereres ikke automatisk |
-| CAP-007 | Retention policy pr. kamera | 🔴 Mangler | Ingen retention implementeret i kode. Design skrevet 2026-07-04, se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` §3 og `GO_LIVE_CHECKLIST_v10.md` G-02 (status uændret 🔴, kun kommentar præciseret 2026-07-05 periodisk tjek #32) |
+| CAP-007 | Retention policy pr. kamera | ✅ Implementeret (2026-07-07) | Database migration v15 (Camera.retention_days, CaptureDeletionLog), backend cleanup loop, API endpoints, UI (RetentionPage + per-kamera felt), test suite (8/8 unit tests). Se ADMINISTRATORMANUAL v10 §1.5.5, BRUGERMANUAL v10 §7.2. |
 | CAP-008 | Download/adgangslog pr. billede | ✅ Implementeret (2026-07-05) | Ny `CaptureAccessLog`-tabel + `_log_capture_access()`, kaldt fra `GET /api/images/{device_id}/{filename}` (kun fuldopløsning, ikke thumbnails). Testverificeret (4/4 + 41/41), committet/pushet af Codex. Se `GO_LIVE_CHECKLIST_v10.md` §G-05 |
 | CAP-009 | Sidecar JSON med XMP-metadata | ✅ Implementeret | |
 | CAP-010 | Relay-styring (kamera strøm) | ✅ Implementeret | GPIO pin 356 |
@@ -57,7 +57,7 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 | ID | Krav | Status | Kommentar |
 |---|---|---|---|
 | ADM-001 | CMDB med device-overblik | ✅ Implementeret | Freshness-baseret status |
-| ADM-002 | Update-management (approve/reject/promote) | ✅ Delvist | UI OK; kamera/site-scope mangler |
+| ADM-002 | Update-management (approve/reject/promote) | ✅ Implementeret (2026-07-07) | UI har alle 4 scopes (global/device/customer/site) med fungerende dropdowns. |
 | ADM-003 | Key Management UI | ✅ Implementeret | HMAC, revokering, cleanup-preview |
 | ADM-004 | GRC/Compliance cockpit | ✅ Delvist | Dashboard implementeret; evidence-links ufuldstændige |
 | ADM-005 | Global Config med hierarki | ✅ Implementeret | 4-lags: global→kunde→site→kamera |
@@ -110,18 +110,18 @@ Styrende principper: SABSA-arkitektur, IEC 62443, ISO 27001, CRA, NIS2, GDPR.
 |---|---|---|---|
 | SEC-001 | ISO 27001/NIS2/CRA/IEC 62443 compliance-targets | 🟡 Delvist | Dokumenteret; ikke fuldt operationaliseret |
 | SEC-002 | Secrets ikke i Git | ✅ Implementeret | .gitignore dækker secrets/ |
-| SEC-003 | Test-gate før deploy (CI) | ✅ Delvist | Python + UI build OK; edge/headend contract-tests mangler |
+| SEC-003 | Test-gate før deploy (CI) | ✅ Implementeret (2026-07-07) | Python testmiljø (requirements-dev.txt + pyproject.toml med pytest/ruff/black/mypy) + UI build OK; edge/headend contract-tests implementeret (13/13 tests bestået). |
 | SEC-004 | RBAC med 4 roller | ✅ Implementeret | **NB 2026-07-03:** `/api/siem/*` manglede helt RBAC (fundet ved frisk kodegennemgang); rettet i kode, committet+pushet (`b0e224c`) og live-verificeret af Peter (401 uden auth) |
 | SEC-005 | JWT med kort levetid | ✅ Implementeret | 12 timer |
 | SEC-006 | HMAC request-signatur for device-tokens | ✅ Implementeret | Aktive noder + headend-agent |
 | SEC-007 | SFTP chroot-isolation | ✅ Implementeret | per-site brugere |
 | SEC-008 | MFA/WebAuthn | ✅ Delvist (2026-07-02; MFA-dækning korrigeret 2026-07-03) | MFA (TOTP) policy-drevet + enforced for admin/super_admin; WebAuthn stadig separat/off. **NB:** enforcement dækkede kun `main.py`-endpoints — CMDB/ITIM omgik reelt MFA indtil rettelse 2026-07-03, nu committet+pushet (`b0e224c`) og live-verificeret af Peter |
 | SEC-009 | Intern CA + client-certs | 🔴 Mangler | **Opdateret 2026-07-05 (periodisk tjek #38):** selve koden er stadig ikke skrevet (status uændret 🔴), men designfasen er nu FÆRDIG — alle 4 åbne designspørgsmål er besvaret af Peter 2026-07-05 (Model B/ende-til-ende mTLS, 10-års konfigurerbar cert-levetid, HMAC bevares permanent, Root CA-nøgle på R&D-maskinen), se `Claude_Intern_CA_mTLS_Design_2026-07-05.md` §4.3/§5/§6/§10 og `RISK_ASSESSMENT_v10.md` §11 P1.2/§13.2. Ingen blockers tilbage — næste skridt er en dedikeret kodefase (design-dokumentets §9, trin 2-9), bevidst ikke startet impulsivt i en periodisk runde (auth-nær ændring, kræver ekstra dobbelttjek). |
-| SEC-010 | Disk-kryptering på Edge | 🔴 Mangler | |
-| SEC-011 | fail2ban | 🟡 Delvist | Konfigurationsfiler i Dokumentation/; drift-status ukendt |
-| SEC-012 | DPIA og GDPR-evidens | 🟡 Delvist (2026-07-05, periodisk tjek #28) | DPIA-skabelon, retention-policy-design, subprocessor-liste og oplysningspligt-udkast skrevet 2026-07-04 nat (se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`) — men alt sammen teknisk/organisatorisk UDKAST, ikke juridisk godkendt; retention er kun designet, IKKE implementeret i kode (G-02 fortsat 🔴); sløring/redaction-workflow (UI-010) mangler helt. **Opdateret 2026-07-05 (periodisk tjek #35):** databehandleraftale (G-03) er IKKE længere "slet ikke startet" — Peter har bekræftet en eksisterende DPA med Kirkbi A/S (Site Travbyen) samt eksplicit tilladelse til at anvende Travbyen-billederne til udvikling (se `RISK_ASSESSMENT_v10.md` R12, `GO_LIVE_CHECKLIST_v10.md` M-06/G-03). Fortsat uverificeret: om aftalen specifikt dækker AI/Gemini cloud-eskalering og GPS-metadata, og fortsat 🔴 for enhver kunde ud over Kirkbi A/S. Brudprocedure (G-06) kræver stadig jurist og er ikke startet. Se `RISK_ASSESSMENT_v10.md` R12 (fortsat 🔴 Åben) og `GO_LIVE_CHECKLIST_v10.md` §G. |
-| SEC-013 | Incident response procedure | 🔴 Mangler | |
-| SEC-014 | Vulnerability handling og CVE-process | 🔴 Mangler | |
+| SEC-010 | Disk-kryptering på Edge | 🔴 Mangler | Kræver fysisk adgang til edge — se P2-07 |
+| SEC-011 | fail2ban | 🟡 Delvist (2026-07-07) | Verifikations-script og konfiguration oprettet (`deploy/scripts/verify_fail2ban.sh`, `deploy/fail2ban-timelapse-pro.conf`). Kræver manuel opsætning og verifikation at fail2ban kører på production headend. |
+| SEC-012 | DPIA og GDPR-evidens | 🟡 Delvist (2026-07-05→07) | DPIA-skabelon, retention-policy-design, subprocessor-liste og oplysningspligt-udkast skrevet 2026-07-04 nat (se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`) — men alt sammen teknisk/organisatorisk UDKAST, ikke juridisk godkendt; **retention (CAP-007/G-02) er nu implementeret i kode (2026-07-07)**; sløring/redaction-workflow (UI-010) mangler helt. **Opdateret 2026-07-05 (periodisk tjek #35):** databehandleraftale (G-03) er IKKE længere "slet ikke startet" — Peter har bekræftet en eksisterende DPA med Kirkbi A/S (Site Travbyen) samt eksplicit tilladelse til at anvende Travbyen-billederne til udvikling (se `RISK_ASSESSMENT_v10.md` R12, `GO_LIVE_CHECKLIST_v10.md` M-06/G-03). Fortsat uverificeret: om aftalen specifikt dækker AI/Gemini cloud-eskalering og GPS-metadata, og fortsat 🔴 for enhver kunde ud over Kirkbi A/S. Brudprocedure (G-06) kræver stadig jurist og er ikke startet. Se `RISK_ASSESSMENT_v10.md` R12 (fortsat 🔴 Åben) og `GO_LIVE_CHECKLIST_v10.md` §G. |
+| SEC-013 | Incident response procedure | 🟡 Delvist (2026-07-07) | Procedure-dokument oprettet (`SEC-013_Incident_Response_Procedure.md`) med GDPR Art. 33/34 notifikationskrav, classifications, triage, containment, recovery. Ikke testet i praksis endnu. |
+| SEC-014 | Vulnerability handling og CVE-process | 🟡 Delvist (2026-07-07) | Procedure-dokument oprettet (`SEC-014_Vulnerability_Handling_CVE_Process.md`) med CVE overvågning, triage, patch process, rollback plan. Ikke testet i praksis endnu. |
 
 ### Kategori: Konfiguration og arkitektur
 

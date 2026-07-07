@@ -1,0 +1,47 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# requirements-dev.txt — Development og test dependencies til TimeLapse Pro
+# Version: 1.0.0 | 2026-07-07
+# ────────────────────────────────────────────────────────────────────────────────
+# Installer med: pip install -r requirements-dev.txt
+# Dette installerer værktøjer til unit tests, integration tests, linting og formatting.
+# For produktions dependencies, se headend/requirements.txt og edge/requirements.txt.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Test Framework ─────────────────────────────────────────────────────────────
+pytest==8.3.2
+pytest-cov==6.0.0
+pytest-asyncio==0.24.0
+pytest-xdist[psutil]==3.6.1
+
+# ── HTTP Testing ─────────────────────────────────────────────────────────────────
+requests==2.32.3
+responses==0.25.3
+httpx==0.28.1
+
+# ── Code Quality ────────────────────────────────────────────────────────────────
+ruff==0.7.2
+black==24.10.0
+mypy==1.13.0
+
+# ── Type Stubs ─────────────────────────────────────────────────────────────────
+types-requests==2.32.0.20240712
+
+# ── CI/CD ───────────────────────────────────────────────────────────────────────
+pytest-timeout==2.3.1
+pytest-html==4.1.1
+
+# ── Pytest Plugins ───────────────────────────────────────────────────────────────
+# pytest-randomly (for at finde flaky tests)
+pytest-randomly==3.16.0
+
+# ── Debugging ───────────────────────────────────────────────────────────────────
+# ipython (til debugging)
+# ipython==8.28.0
+
+# ── Documentation ────────────────────────────────────────────────────────────────
+# mkdocs-material (hvis dokumentation genereres lokalt)
+# mkdocs-material==9.5.44
+
+# ── Version Pinning Strategy ──────────────────────────────────────────────────────
+# Alle versioner er pinnet for reproducible builds.
+# Opdateringer bør testes i PR før merge.

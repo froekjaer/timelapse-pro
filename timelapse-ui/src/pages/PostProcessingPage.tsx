@@ -103,6 +103,14 @@ function Stat({ label, value }: { label: string; value: number | string }) {
   )
 }
 
+interface ThumbnailBacklog {
+  total: number
+  missing: number
+  devices: Record<string, number>
+  scan_time_seconds: number
+  partial: boolean
+}
+
 export default function PostProcessingPage() {
   const [devices, setDevices] = useState<Device[]>([])
   const [status, setStatus] = useState<JobStatus | null>(null)
@@ -116,6 +124,7 @@ export default function PostProcessingPage() {
   const [notifyOnComplete, setNotifyOnComplete] = useState(true)
   const [startingBatch, setStartingBatch] = useState(false)
   const [batchJobs, setBatchJobs] = useState<BatchJob[]>([])
+  const [backlog, setBacklog] = useState<ThumbnailBacklog | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function loadStatus() {
@@ -137,6 +146,13 @@ export default function PostProcessingPage() {
     } catch { /* ikke kritisk */ }
   }
 
+  async function loadBacklog() {
+    try {
+      const data = await api('/api/admin/thumbnail-backlog')
+      setBacklog(data)
+    } catch { /* ikke kritisk */ }
+  }
+
   useEffect(() => {
     api('/api/admin/devices')
       .then((data: any) => setDevices(data.devices ?? data))
@@ -144,6 +160,7 @@ export default function PostProcessingPage() {
     loadStatus().catch(e => setError(e instanceof Error ? e.message : 'Kunne ikke hente status'))
     loadAiStatus()
     loadBatchJobs()
+    loadBacklog()
   }, [])
 
   useEffect(() => {
@@ -214,13 +231,21 @@ export default function PostProcessingPage() {
           </h1>
           <p className="text-sm text-slate-500 mt-1">Kontrolleret efterbehandling af eksisterende billeder, thumbnails og AI-tags.</p>
         </div>
-        <button
-          onClick={() => loadStatus().catch(() => {})}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 bg-white text-sm text-slate-700 hover:bg-slate-50"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Opdater
-        </button>
+        <div className="flex items-center gap-2">
+          {backlog && backlog.missing > 0 && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200">
+              <Image className="w-4 h-4 text-amber-600" />
+              <span className="text-sm font-medium text-amber-900">{backlog.missing} manglende thumbnails</span>
+            </div>
+          )}
+          <button
+            onClick={() => { loadStatus(); loadBacklog(); }}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-slate-200 bg-white text-sm text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Opdater
+          </button>
+        </div>
       </div>
 
       {error && <div className="border border-red-200 bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}

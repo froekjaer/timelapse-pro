@@ -76,7 +76,7 @@ TimeLapse Pro er en multi-tenant edge/headend-platform til professionel, kontinu
 
 1. **Porte:** nginx lytter på public `*:80` og `*:443` — skal migreres til Cloudflare Tunnel + `127.0.0.1:18443`
 2. **Backup/restore:** Automatisk backup kører, men restore-test er ikke dokumenteret
-3. **GDPR:** DPIA-template, retention policy og databehandleraftale mangler pr. kunde/site
+3. **GDPR:** DPIA-template og databehandleraftale mangler pr. kunde/site (**retention policy er nu implementeret 2026-07-07**)
 
 ## 1.3 Estimeret tid til go-live gate
 
@@ -194,7 +194,7 @@ Begge assessments (Claude v7 og Codex v7) er gennemført som:
 | **Continuity** | 🟡 | 🟡 | 🟡 Gul | Edge buffer og rollback findes; restore-test mangler |
 | **Extensibility** | 🟢 | — | 🟢 Grøn | HAL, multi-target build, DeviceAssignment model er skalerbar |
 | **Auditability** | 🟡 | 🟡 | 🟡 Gul | GRC-dashboard findes; evidens-friskhed er ujævn |
-| **Privacy** | 🔴 | 🟡/🔴 | 🔴 Rød | DPIA, retention policy og DPA mangler — blocker for kundeproduktion |
+| **Privacy** | 🔴 | 🟡/🔴 | 🔴 Rød | DPIA og DPA mangler — retention policy er implementeret (2026-07-07); blocker for kundeproduktion |
 | **Resilience** | 🟡 | — | 🟡 Gul | Rollback implementeret; off-site backup og RTO/RPO mangler |
 
 ## 3.3 Konsolideret risikoregister

@@ -98,10 +98,39 @@ Compliance-/GRC-rapportering er primært for administratorer, men kunder kan på
 
 Rapporter skal baseres på CMDB, update evidence, backup evidence, adgangslogs og kundens/siteets konfiguration.
 
+### 7.1 Compliance- og backup-status
+
+I Compliance- og Backup/Resilience-sektionerne kan administratorer følge den aktuelle operationelle status for systemet. Når der endnu ikke er indsamlet evidence, vil UI'et vise en tydelig "ikke tilgængelig/ikke data endnu"-tilstand i stedet for at virke som om status er uklar eller fejlet. Det gør det lettere at skelne mellem "ikke udført endnu" og "fejlet".
+
+### 7.2 Retention Policy (GDPR G-02)
+
+TimeLapse Pro har automatiseret retention policy for at overholde GDPR krav om begrænset opbevaring af persondata.
+
+**Adgang (administrator):**
+1. Gå til **Retention** i menuen (kræver admin/super_admin rolle).
+2. Du ser tre tabs:
+   - **Status**: Viser om cleanup kører, progress log og antal slettede captures.
+   - **Indstillinger**: Konfigurer hvor ofte automatisk cleanup skal køre (manuel/dagligt/ugentligt/månedligt).
+   - **Sletningslog**: Revisionslog over alle slettede captures med detaljer.
+
+**Per-kamera retention:**
+- Hvert kamera har sin egen `retention_days` værdi (default: 365 dage).
+- Ændr dette via kamera-konfigurationssiden under "Kamera identitet" → "Retention (dage)".
+- Billeder ældre end det konfigurerede antal dage slettes automatisk ved næste cleanup.
+
+**Manuelt trigger:**
+- Klik "Start retention cleanup nu" i Status-tab for at køre cleanup med det samme.
+- Sletning er permanent — en log gemmes til compliance-formål.
+
+**Sikkerhedsnoter:**
+- Sletning er permanent. Billeder kan ikke gendannes efter sletning.
+- Alle sletninger logges med capture_id, kamera, device, filename, sletningstidspunkt, årsag og hvem der udførte slettet.
+- Retention kan sættes til `NULL` for at deaktivere automatisk sletning for et specifikt kamera.
+
 ## 8. Kendte begrænsninger
 
 - AI-tags kan være ufuldstændige på historiske billeder, indtil postprocessering er kørt færdig.
-- Retention og GDPR-adgangslog er ikke fuldt implementeret endnu.
+- GDPR-adgangslog er delvist implementeret (se Retention Policy for sletningslog).
 - MFA/WebAuthn er planlagt som krav før moden flerbrugerdrift.
 - Nikon Z30 LAB/fokusfunktioner er delvist implementeret, men ikke endeligt production-hærdet.
 

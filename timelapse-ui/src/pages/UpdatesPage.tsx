@@ -195,7 +195,7 @@ interface UpdateArtifact {
 
 interface ApproveOptions {
   environment:      'test' | 'production'
-  scope:            'global' | 'device'
+  scope:            'global' | 'device' | 'customer' | 'site'
   scope_id:         string
 }
 
@@ -1167,6 +1167,8 @@ export function UpdatesPage() {
   const [headendDeployStatus, setHeadendDeployStatus] = useState<Record<number, HeadendDeployStatus>>({})
   const [flowStatuses, setFlowStatuses] = useState<Record<number, UpdateFlowStatus>>({})
   const [updateJobs, setUpdateJobs] = useState<Record<string, UpdateJobStatus>>({})
+  const [customers, setCustomers]   = useState<Array<{id: string, name: string}>>([])
+  const [sites, setSites]           = useState<Array<{id: string, name: string, customer_id: string}>>([])
   const [watchedUpdateIds, setWatchedUpdateIds] = useState<number[]>([])
   const [approveOpts, setApproveOpts] = useState<ApproveOptions>({
     environment: 'production', scope: 'device', scope_id: ''
@@ -1233,16 +1235,35 @@ export function UpdatesPage() {
     return () => window.clearInterval(timer)
   }, [watchedUpdateIds, updates, flowStatuses, loading, refreshing, load])
 
+  // Hent customers og sites til scope dropdown (P1-02)
+  useEffect(() => {
+    const loadCustomersAndSites = async () => {
+      try {
+        const [customersData, sitesData] = await Promise.all([
+          api('/api/admin/customers'),
+          api('/api/admin/sites'),
+        ])
+        setCustomers(Array.isArray(customersData) ? customersData.map((c: any) => ({ id: c.id, name: c.name })) : [])
+        setSites(Array.isArray(sitesData) ? sitesData.map((s: any) => ({ id: s.id, name: s.name, customer_id: s.customer_id })) : [])
+      } catch (e: any) {
+        console.warn('Kunne ikke hente customers/sites:', e.message)
+      }
+    }
+    loadCustomersAndSites()
+  }, [])
+
   async function approve(id: number) {
-    if (approveOpts.scope === 'device' && !approveOpts.scope_id.trim()) {
-      setError('Device ID er påkrævet ved specifik enhed')
+    const requiresScopeId = ['device', 'customer', 'site'].includes(approveOpts.scope)
+    if (requiresScopeId && !approveOpts.scope_id.trim()) {
+      const label = approveOpts.scope === 'device' ? 'Device ID' : approveOpts.scope === 'customer' ? 'Kunde ID' : 'Site ID'
+      setError(`${label} er påkrævet ved ${approveOpts.scope === 'device' ? 'specifik enhed' : approveOpts.scope === 'customer' ? 'kunde' : 'site'}-scope`)
       return
     }
     setBusy(id)
     const payload = {
       environment: approveOpts.environment,
       scope: approveOpts.scope,
-      scope_id: approveOpts.scope === 'device' ? approveOpts.scope_id.trim() : null,
+      scope_id: requiresScopeId ? approveOpts.scope_id.trim() : null,
     }
     try {
       await api(`/api/updates/${id}/approve`, { method: 'POST', body: JSON.stringify(payload) })
@@ -1564,19 +1585,43 @@ export function UpdatesPage() {
             <div>
               <label className="text-xs text-gray-500 block mb-1">Scope</label>
               <select value={approveOpts.scope}
-                onChange={e => setApproveOpts(o => ({...o, scope: e.target.value as any}))}
+                onChange={e => setApproveOpts(o => ({...o, scope: e.target.value as any, scope_id: ''}))}
                 className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
                 <option value="global">Alle enheder</option>
                 <option value="device">Specifik enhed</option>
+                <option value="customer">Kunde</option>
+                <option value="site">Site</option>
               </select>
             </div>
             {approveOpts.scope === 'device' && (
-              <div className="col-span-2">
+              <div>
                 <label className="text-xs text-gray-500 block mb-1">Device ID</label>
                 <input value={approveOpts.scope_id}
                   onChange={e => setApproveOpts(o => ({...o, scope_id: e.target.value}))}
                   placeholder="fx TL-C87FF9587CA0"
                   className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-mono" />
+              </div>
+            )}
+            {approveOpts.scope === 'customer' && (
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">Kunde</label>
+                <select value={approveOpts.scope_id}
+                  onChange={e => setApproveOpts(o => ({...o, scope_id: e.target.value}))}
+                  className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
+                  <option value="">Vælg kunde...</option>
+                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            )}
+            {approveOpts.scope === 'site' && (
+              <div>
+                <label className="text-xs text-gray-500 block mb-1">Site</label>
+                <select value={approveOpts.scope_id}
+                  onChange={e => setApproveOpts(o => ({...o, scope_id: e.target.value}))}
+                  className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
+                  <option value="">Vælg site...</option>
+                  {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
               </div>
             )}
           </div>

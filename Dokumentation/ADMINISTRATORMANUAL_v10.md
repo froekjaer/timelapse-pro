@@ -1,9 +1,11 @@
 # TimeLapse Pro — Administratormanual (v10, konsolideret)
 
 **Version:** 10 (konsolideret)
-**Dato:** 2026-07-02
+**Dato:** 2026-07-02 (opdateret 2026-07-06 med juli-sikkerhedsforbedringer)
 **Målgruppe:** TimeLapse Pro-administrator (Peter Frøkjær), drift, sikkerhedsansvarlig, teknisk projektleder
 **Konsoliderer:** `ADMIN_MANUAL_2026-06-23.md` + `Claude_ADMIN_MANUAL_2026-06-23.md` (operationel backbone) samt `ADMINISTRATORMANUAL_2026-06-23.md` + `Codex_ADMINISTRATORMANUAL_2026-06-23.md` (governance/proces — foldet ind som §15–§19). Tidligere versioner arkiveret i `Gamle versioner/`.
+
+**Seneste ændringer (2026-07-06):** Tilføjet §1.5 med nye sikkerheds- og compliance-opdateringer: M-05 agent-lockdown, R17 debug/lab mode forbedringer, G-05 download-/adgangslog, R09 backup forbedringer.
 
 ---
 
@@ -20,6 +22,154 @@
 **Headend URL (intern):** http://127.0.0.1:8000
 **Headend URL (public):** https://timelapse.froekjaer.dk
 **Repo:** ~/projects/timelapse-pro → /Volumes/data-fast/peter-home/projects/timelapse-pro
+
+---
+
+## 1.5 Nye sikkerheds- og compliance-opdateringer (juli 2026)
+
+Følgende væsentlige sikkerheds- og compliance-forbedringer er implementeret i juli 2026 og bør være en del af administratorviden:
+
+### 1.5.1 M-05: Agent-role lockdown (PR #2)
+
+**Status:** Kode skrevet, testet (24/24 tests passed), committet, PR #2 åben, afventer review+merge.
+
+**Formål:** Forhindre at AI-agenter (Claude/Codex) ved en fejl kan få adgang til staging/production-systemer. Implementerer en "default-deny" politik med hård kodespærre.
+
+**Implementering:**
+- Ny reserveret rolle `role="agent"` i User-model
+- `_agent_role_blocked_in_this_environment()` afviser agent-login i staging/prod/production miljøer
+- Håndhævet to steder: `/api/auth/login` (før password-tjek) og `get_current_user()` (central auth-guard)
+- SIEM-logging ved opstart (`_log_agent_lockdown_status()`)
+
+**Forudsætning:** `TIMELAPSE_ENV` skal være sat korrekt (`rd`/`staging`/`prod`).
+
+**Dokumentation:** Se `GO_LIVE_CHECKLIST_v10.md` §M, `RISK_ASSESSMENT_v10.md` R19.
+
+### 1.5.2 R17: Debug/lab mode forbedringer
+
+**Status:** Kode deployet (commit `44b78fb7`), health 200 OK, manuel smoketest udestår.
+
+**Problem:** Lab mode (`debug_mode.enabled`) kunne efterlades aktiveret uden nogen synlighed eller automatisk slukning, hvilket gav operationel risiko (konstant relæ-belastning, GPS-problemer).
+
+**Løsning:**
+- CMDB-dashboard indikator: `debug_mode_enabled`/`debug_mode_enabled_at` badge i SystemAdminPage og LabPage
+- Auto-timeout: `_debug_mode_auto_timeout_loop()` slukker automatisk efter `TIMELAPSE_DEBUG_MODE_MAX_HOURS` (default 8t)
+- SIEM-logging: `debug_mode_change` og `debug_mode_auto_timeout` events logges med ikon/label
+
+**Dokumentation:** Se `RISK_ASSESSMENT_v10.md` R17.
+
+### 1.5.3 G-05: Download-/adgangslog pr. billede
+
+**Status:** Implementeret og testverificeret (4/4 tests + 41/41 total tests passed).
+
+**Formål:** GDPR-compliance — log hvornår et billede downloades (fuld opløsning), af hvem, til hvilken kunde/site.
+
+**Implementering:**
+- Ny `CaptureAccessLog`-tabel (`capture_id`, `accessed_at`, `user_id`, `customer_id`, `site_id`, `purpose`)
+- `_log_capture_access()` kaldes fra `GET /api/images/{device_id}/{filename}`
+- Kun fuldopløsningsbilleder logges (thumbnails ikke)
+
+**Dokumentation:** Se `GO_LIVE_CHECKLIST_v10.md` §G-05, `KRAVREGISTER_og_STATUS_v10.md` CAP-008/ADM-012.
+
+### 1.5.4 R09: Backup og resilience forbedringer
+
+**Status:** Kode klar (2026-07-04 nat), IKKE bekræftet kørt i produktion — kræver verifikation.
+
+**Problem:** Billedbackup (`backup_include_images`) fandtes i UI, men blev aldrig læst af `_run_backup_archive()`. Derfor blev 27.000+ produktionsbilleder ALDRIG backet op. Også `backup_auto_interval` blev ikke brugt — ingen automatisk backup.
+
+**Løsning:**
+- `_get_backup_include_images()` wired ind i `_run_backup_archive()` — rsync af `_sftp_base_path()` til `{base_dir}/timelapse-images-mirror/`
+- `_backup_auto_loop()` tjekker `backup_auto_interval` hvert 10. min og kører automatisk backup ved `daily`/`weekly`
+
+**VIGTIGT:** Peter/Codex bør manuelt trigge en backup og bekræfte at billed-mirror opfører som forventet på Mac Mini'en.
+
+**Fortsat åbent:** Off-site/3-2-1-kopi, reel restore-test, RTO/RPO-dokumentation.
+
+**Dokumentation:** Se `RISK_ASSESSMENT_v10.md` R09, `GO_LIVE_CHECKLIST_v10.md` §E.
+
+### 1.5.5 P0-05: Retention Policy (GDPR G-02)
+
+**Status:** Implementeret og testet (2026-07-07) — backend, UI og tests 100% komplet.
+
+**Formål:** GDPR-compliant automatisk sletning af gamle billeder. Forhindrer uendelig lagring af persondata og sikrer at data slettes når retentionsperioden udløber.
+
+**Implementering:**
+- Database migration v15: `Camera.retention_days` (default 365 dage) + `CaptureDeletionLog` tabel
+- Backend cleanup loop: `_retention_cleanup_loop()` og `_run_retention_cleanup()` i main.py
+- API endpoints:
+  - `POST /api/admin/retention/trigger` — manuelt trigger cleanup
+  - `GET /api/admin/retention/status` — se status, progress og deleted_count
+  - `GET/PUT /api/admin/retention/settings` — konfigurer cleanup interval
+  - `GET /api/admin/retention/deletion-log` — revisionslog (pagineret, filtrérbar)
+- Frontend UI: `RetentionPage.tsx` med tre tabs (status/settings/deletion-log)
+- Per-kamera config: `CameraPage.tsx` "Retention (dage)" felt
+
+**Betjening:**
+1. Gå til **Retention** i menuen (admin/super_admin).
+2. **Status-tab:** Se om cleanup kører, progress log og antal slettede captures.
+3. **Indstillinger-tab:** Vælg cleanup interval (manuel/dagligt/ugentligt/månedligt).
+4. **Sletningslog-tab:** Filtrer på kamera/device, se alle sletninger med detaljer.
+
+**Per-kamera retention:**
+- Hvert kamera har sin egen `retention_days` værdi (default: 365).
+- Ændr via kamera-konfiguration → "Kamera identitet" → "Retention (dage)".
+- `NULL` deaktiverer automatisk sletning for det specifikke kamera.
+
+**Sikkerhed og compliance:**
+- Sletning er permanent — ingen gendannelse mulig.
+- Alle sletninger logges med: capture_id, device_id, camera_id, filename, deleted_at, deletion_reason, retention_days, performed_by.
+- Downloadlog (`CaptureAccessLog`) sporer hvem der har adgang til billeder før sletning.
+
+**Test:**
+- Unit tests: 8/8 bestået (pytest `tests/test_retention_policy.py -m "not integration"`)
+- Integration tests: 10 klar (kræver kørende headend)
+
+**Dokumentation:** Se BRUGERMANUAL v10 §7.2, `tests/test_retention_policy.py`.
+
+### 1.5.6 SEC-013: Incident Response Procedure
+
+**Status:** Procedure oprettet (2026-07-07) — ikke testet i praksis endnu.
+
+**Formål:** Struktureret incident response med GDPR Art. 33/34 notifikationskrav (72 timer).
+
+**Implementering:**
+- `SEC-013_Incident_Response_Procedure.md` med klassifikation, triage, containment, recovery
+- GDPR notifikationskrav: Art. 33 (tilsynsførhed inden 72t) og Art. 34 (registrerede uden unødig forsinkelse)
+- Template for incident log og post-incident review
+- Klassifikationer: Low/Medium/High/Critical med tidsfrister
+
+**Anvendelse ved incident:**
+1. Klassificer incident (Low/Medium/High/Critical)
+2. Triage og containment (isolér berørte systemer)
+3. Recovery (gendannelse fra backup hvis nødvendigt)
+4. GDPR notifikation (inden 72t for persondata-incidents)
+5. Post-incident review og læring
+
+**Dokumentation:** Se `SEC-013_Incident_Response_Procedure.md`, `GO_LIVE_CHECKLIST_v10.md` §G-06, `RISK_ASSESSMENT_v10.md` R20.
+
+### 1.5.7 SEC-014: Vulnerability Handling og CVE-proces
+
+**Status:** Procedure oprettet (2026-07-07) — ikke testet i praksis endnu.
+
+**Formål:** Struktureret håndtering af sårbarheder (CVE) med patch process og rollback plan.
+
+**Implementering:**
+- `SEC-014_Vulnerability_Handling_CVE_Process.md` med CVE overvågning, triage, patch process
+- Kilder: NVD (National Vulnerability Database), vendor advisories, GitHub Security Advisories
+- Triage: Severity (Low/Medium/High/Critical), eksponering, impact
+- Patch process: Test i staging → patch → verify → monitor
+- Rollback plan: Hurtig tilbagefald til tidligere version hvis patch fejler
+
+**CVE-håndtering:**
+1. Overvåg CVE kilder (dagligt/ugentligt)
+2. Triage: Er systemet eksponeret? Hvor alvorlig er sårbarheden?
+3. Prioritér: Critical/High først, derefter Medium/Low
+4. Patch i test-miljø først (staging/rd)
+5. Deploy til production med rollback plan klar
+6. Verificer at patch løser problemet
+7. Dokumenter i change ticket
+
+**Dokumentation:** Se `SEC-014_Vulnerability_Handling_CVE_Process.md`, `GO_LIVE_CHECKLIST_v10.md` §G-08.
 
 ---
 
@@ -66,6 +216,15 @@ psql -U timelapse timelapse_db -c \
 # Storage-brug
 df -h /Volumes/data-fast
 ```
+
+### 2.4 Compliance, backup og resilience-status
+
+Administrations-UI'et bruger nu en mere stabil compliance- og backup-API, hvor endpointene returnerer konsistente felter selv når DB'en endnu ikke har fuld evidence. Det betyder at Compliance cockpit og Backup/Resilience-sider kan vise tydelige tilstande som "ikke data endnu" eller "ikke tilgængelig" i stedet for at bryde eller fremstå inkonsistente.
+
+For drift og governance er det vigtigt at følge:
+- Compliance summary og standard reports efter større ændringer i CMDB, opdateringer, backup-evidence eller access-log. 
+- Backup status og resilience summary for at sikre at NAS-path, include-images-setting og sidste backup-operation er tilgængelige.
+- Daglige smoke-tests og regressionstests i CI for hurtig feedback på kerne-routes og UI-build.
 
 ---
 
@@ -238,26 +397,170 @@ gpg --edit-key F75C248F694C097F
 
 ### 8.2 Verificer backup
 
+**Brug verify_backup.sh scriptet (anbefalet):**
+
+```bash
+# Kør fra repo rod
+./deploy/scripts/verify_backup.sh
+
+# Valg:
+# --dry-run        Vis hvad der ville blive tjekket uden at udføre handlinger
+# --test-restore   Udfør faktisk restore til /tmp/timelapse-restore-test og verifikation
+# --max-age HOURS  Maximal alder af backup i timer (default: 48)
+
+# Eksempler:
+./deploy/scripts/verify_backup.sh                          # Tjek backup eksisterer og er ny nok
+./deploy/scripts/verify_backup.sh --max-age 24             # Kræv backup inden for 24 timer
+./deploy/scripts/verify_backup.sh --test-restore           # Fuld restore test
+```
+
+**Manuel tjek:**
+
 ```bash
 ls -la /Volumes/Backup/timelapse/
 # Bekræft nyeste backup er inden for de seneste 24 timer
 ```
 
-### 8.3 Restore (procedure)
+**Tjek backup via API:**
 
 ```bash
-# STOP headend først
-launchctl bootout gui/$(id -u)/dk.froekjaer.timelapse-headend
-
-# Restore PostgreSQL
-pg_restore -U timelapse -d timelapse_db /Volumes/Backup/timelapse/db/latest.dump
-
-# Restore captures (rsync fra backup)
-rsync -avz /Volumes/Backup/timelapse/captures/ /Volumes/data-fast/
-
-# Genstart headend
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dk.froekjaer.timelapse-headend.plist
+# Headend skal køre
+curl http://127.0.0.1:8000/api/admin/backup/status | jq .
+curl http://127.0.0.1:8000/api/admin/backup/settings | jq .
 ```
+
+### 8.3 Restore procedure
+
+**RTO (Recovery Time Objective):** 1-2 timer for fuld systemgendannelse (forventet)
+**RPO (Recovery Point Objective):** 24 timer (maksimalt datatab ved backup interval daglig)
+
+**⚠️ ADVARSEL:** Restore stopper headend og er midlertidig nedetid. Udfør kun ved nødvendigt driftsstop eller planlagt maintenance.
+
+**Fuld restore procedure (trin-for-trin):**
+
+1. **STOP headend service**
+   ```bash
+   launchctl bootout gui/$(id -u)/dk.froekjaer.timelapse-headend
+   # Bekræft at processen er stoppet
+   launchctl list | grep timelapse
+   ```
+
+2. **Vælg backup til restore**
+   ```bash
+   # Find seneste backup
+   ls -lt /Volumes/Backup/timelapse/*.tar.gz | head -5
+
+   # Eller brug scriptet
+   LATEST_BACKUP=$(find /Volumes/Backup/timelapse -name "timelapse-backup-headend-*.tar.gz" -type f | sort -r | head -1)
+   echo "Seneste backup: $LATEST_BACKUP"
+   ```
+
+3. **Opret midlertidig restore directory**
+   ```bash
+   mkdir -p /tmp/timelapse-restore
+   cd /tmp/timelapse-restore
+   ```
+
+4. **Ekstraher backup**
+   ```bash
+   tar -xzf "$LATEST_BACKUP" -C /tmp/timelapse-restore
+   # Verificer indhold
+   ls -la /tmp/timelapse-restore/
+   ```
+
+5. **STOP PostgreSQL (vigtigt før db restore)**
+   ```bash
+   brew services stop postgresql@17
+   # Eller hvis du bruger en anden version
+   # brew services stop postgresql
+   ```
+
+6. **Backup eksisterende database (valgfrit men anbefalet)**
+   ```bash
+   pg_dump -U timelapse timelapse_db > /tmp/timelapse-pre-restore-$(date +%Y%m%d-%H%M%S).sql
+   ```
+
+7. **DROP og genskab database**
+   ```bash
+   psql -U timelapse postgres
+   # I psql:
+   DROP DATABASE timelapse_db;
+   CREATE DATABASE timelapse_db OWNER timelapse;
+   \q
+   ```
+
+8. **Restore database fra backup**
+   ```bash
+   # Find database dump i ekstraheret backup
+   DB_DUMP=$(find /tmp/timelapse-restore -name "timelapse_db_*.sql" | head -1)
+   echo "Restoring fra: $DB_DUMP"
+
+   # Restore
+   psql -U timelapse timelapse_db < "$DB_DUMP"
+   ```
+
+9. **Verificer database**
+   ```bash
+   psql -U timelapse timelapse_db -c "\dt"  # Vis alle tables
+   psql -U timelapse timelapse_db -c "SELECT COUNT(*) FROM captures;"  # Tjek captures
+   ```
+
+10. **START PostgreSQL**
+    ```bash
+    brew services start postgresql@17
+    # Vent til PostgreSQL er klar
+    pg_isready -U timelapse
+    ```
+
+11. **Restore billeder (valgfrit — kun hvis billeddata mistet)**
+    ```bash
+    # Hvis backup inkluderede billed-mirror, rsync tilbage
+    rsync -avz /Volumes/Backup/timelapse/timelapse-images-mirror/ /Volumes/data-fast/timelapse-incoming/canonical-images/
+
+    # Eller hvis billeder er i en anden backup
+    # rsync -avz /path/to/backup/captures/ /Volumes/data-fast/timelapse-incoming/canonical-images/
+    ```
+
+12. **Genstart headend**
+    ```bash
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dk.froekjaer.timelapse-headend.plist
+    ```
+
+13. **Verificer system**
+    ```bash
+    # Tjek health endpoint
+    curl http://127.0.0.1:8000/api/health
+
+    # Tjek log
+    tail -50 ~/Library/Logs/timelapse-headend.log
+
+    # Tjek at CMDB loades korrekt
+    curl http://127.0.0.1:8000/api/admin/stats | jq .
+    ```
+
+14. **Ryd op midlertidige filer**
+    ```bash
+    rm -rf /tmp/timelapse-restore
+    ```
+
+**Test restore (uden at stoppe produktion):**
+
+```bash
+# Brug verify_backup.sh --test-restore flaget
+./deploy/scripts/verify_backup.sh --test-restore
+
+# Dette udpakker backup til /tmp/timelapse-restore-test,
+# verifikere indholdet, og rydder op igen — uden at påvirke kørende system
+```
+
+**Hvis restore fejler:**
+
+1. Tjek at PostgreSQL kører: `brew services list | grep postgres`
+2. Tjek at database dump er gyldig: `head -20 "$DB_DUMP"`
+3. Tjek headend log for fejl: `tail -100 ~/Library/Logs/timelapse-headend.log`
+4. Hvis alt andet fejler, kontakt support med databasen backup fil
+
+**Dokumentation:** Se `GO_LIVE_CHECKLIST_v10.md` §E, `deploy/scripts/verify_backup.sh`
 
 ---
 

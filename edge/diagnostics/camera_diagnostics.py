@@ -120,12 +120,22 @@ def _canonicalize_config_key(raw_key: str) -> Optional[str]:
     return SHORT_KEY_ALIASES.get(short)
 
 # Shutter life ratings per camera model (conservative estimate)
+# Source: Manufacturer specifications + industry standards
 SHUTTER_RATINGS = {
+    # Canon EOS entry-level series (100k rating is standard)
+    "Canon EOS 1000D": 100_000,
+    "Canon EOS 1100D": 100_000,
+    "Canon EOS 1200D": 100_000,
     "Canon EOS 1300D": 100_000,
     "Canon EOS 2000D": 100_000,
+    "Canon EOS 2000D/4000D": 100_000,
+    "Canon EOS 4000D": 100_000,
+    # Canon EOS mid-range (higher rating)
     "Canon EOS 250D": 100_000,
     "Canon EOS 90D": 150_000,
     "Canon EOS 5D Mark IV": 150_000,
+    # Nikon mirrorless (Z30)
+    "Nikon Z30": 100_000,
 }
 DEFAULT_SHUTTER_RATING = 100_000
 

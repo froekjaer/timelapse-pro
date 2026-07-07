@@ -122,11 +122,17 @@ def main() -> int:
     os.chmod(output / "verify-installed.sh", 0o755)
     write_json(output / "bundle-summary.json", bundle_summary(output))
 
+    # P2-08 (2026-07-07): Generate SBOM for OS bundle
+    bundle_id = hashlib.sha256(json.dumps(package_manifest, sort_keys=True).encode()).hexdigest()[:16]
+    sbom = generate_sbom(packages_dir, bundle_id, args.device_id, args.target_os)
+    write_json(output / "sbom.json", sbom)
+
     print(json.dumps({
         "ok": True,
         "bundle": str(output),
         "packages_requested": len(packages),
         "deb_files": len(package_file_entries),
+        "sbom_generated": True,
         "next": "Copy folder to Headend and register it in Updates > OS bundle",
     }, indent=2))
     return 0
@@ -295,6 +301,52 @@ def bundle_summary(root: Path) -> dict[str, Any]:
         "schema": "timelapse.os_bundle_summary.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "files": files,
+    }
+
+
+def generate_sbom(packages_dir: Path, bundle_id: str, device_id: str, target_os: str) -> dict[str, Any]:
+    """Generate CycloneDX 1.5 SBOM for OS bundle packages.
+
+    P2-08 (2026-07-07): SBOM auto-generering for OS bundles.
+    Extracts package metadata from .deb files and creates a standards-compliant SBOM.
+    """
+    deb_files = sorted(packages_dir.glob("*.deb"))
+    components = []
+
+    for deb_path in deb_files:
+        metadata = deb_metadata(deb_path, expected_arch="unknown")
+        component = {
+            "type": "library",
+            "name": metadata.get("name", deb_path.stem),
+            "version": metadata.get("version", "unknown"),
+            "purl": f"pkg:deb/debian/{metadata.get('name', deb_path.stem)}@{metadata.get('version', 'unknown')}?arch={metadata.get('architecture', 'unknown')}",
+            "properties": [
+                {"name": "timelapse:sha256", "value": metadata.get("sha256", "")},
+                {"name": "timelapse:size_bytes", "value": str(metadata.get("size_bytes", 0))},
+                {"name": "timelapse:filename", "value": metadata.get("filename", deb_path.name)},
+            ],
+        }
+        components.append(component)
+
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:timelapse-os-bundle-{bundle_id}",
+        "version": 1,
+        "metadata": {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "component": {
+                "type": "operating-system",
+                "name": target_os,
+                "version": "offline-bundle",
+            },
+            "properties": [
+                {"name": "timelapse:device_id", "value": device_id},
+                {"name": "timelapse:bundle_id", "value": bundle_id},
+                {"name": "timelapse:packages_count", "value": str(len(components))},
+            ],
+        },
+        "components": components,
     }
 
 

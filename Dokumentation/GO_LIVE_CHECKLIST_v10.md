@@ -1,7 +1,7 @@
 # TimeLapse Pro — Go-live checkliste (v10, konsolideret): krav før Internet-eksponering og timelapse-pro.dk
 
 **Version:** 10 (konsolideret)
-**Dato:** 2026-07-02
+**Dato:** 2026-07-07
 **Gælder for:** Skift fra `timelapse.froekjaer.dk` (lab) til `timelapse-pro.dk` (produktion) og egentlig Internet-eksponering af Headend
 **Konsoliderer:** `GO_LIVE_CHECKLIST_2026-06-23.md`, `Claude_GO_LIVE_CHECKLIST_2026-06-23.md`, `Codex_GO_LIVE_CHECKLIST_2026-06-23.md` (arkiveret i `Gamle versioner/`).
 
@@ -127,7 +127,7 @@ A-09 er dermed lukket som "ukendt port"-blocker. Eksponeringsrisikoen for 5000/7
 | # | Krav | Status |
 |---|---|---|
 | E-01 | Automatisk backup til /Volumes/Backup konfigureret og kørende | 🟠 Kode klar (2026-07-04 nat), IKKE bekræftet kørt i produktion — se R09 i RISK_ASSESSMENT_v10.md. Kritisk fund: billeder blev ALDRIG backet op før i nat (indstilling fandtes i UI men blev ikke læst); nu wired ind + auto-interval-loop tilføjet. Peter/Codex bør trigge en manuel backup og bekræfte billed-mirror + log-output ser rigtigt ud, før dette regnes for grønt. |
-| E-02 | Restore-test udført og dokumenteret (dato, scope, RTO) | 🔴 Blocker — IKKE realistisk at nå til "go-live i morgen"; kræver reel gendannelse til et testmiljø |
+| E-02 | Restore-test udført og dokumenteret (dato, scope, RTO) | 🟡 Procedure dokumenteret (2026-07-07) — se ADMINISTRATORMANUAL v10 §8.3. Kør `./deploy/scripts/verify_backup.sh --test-restore` for automatisk test. Kræver manuelt verifikation på reelt produktionsbackup før go-live. |
 | E-03 | Off-site backup konfigureret (anden disk/location) | 🟠 Anbefalet — billed-mirror ligger stadig kun lokalt/NAS, ingen ekstern kopi endnu |
 | E-04 | Backup-change ticket genereres ved backup | 🟡 Ønsket |
 | E-05 | Headend startup-preflight: verificer /Volumes/data-fast mount + skriveadgang | 🟠 Mangler |
@@ -154,16 +154,15 @@ A-09 er dermed lukket som "ukendt port"-blocker. Eksponeringsrisikoen for 5000/7
 | # | Krav | Status |
 |---|---|---|
 | G-01 | DPIA udfyldt for hvert aktiv kunde-site | 🟠 Skabelon klar (2026-07-04) — mangler udfyldelse pr. site + juridisk godkendelse |
-| G-02 | Retention policy konfigureret pr. kamera | 🔴 Design klar (2026-07-04) — IKKE implementeret i kode endnu |
+| G-02 | Retention policy konfigureret pr. kamera | ✅ Implementeret (2026-07-07) — migration v15, database model (Camera.retention_days, CaptureDeletionLog), cleanup loop, API endpoints (/api/admin/retention/*), UI (RetentionPage + per-kamera felt i CameraPage), test suite (8/8 unit tests). Se ADMINISTRATORMANUAL v10 §1.5.5, BRUGERMANUAL v10 §7.2. |
 | G-03 | Databehandleraftale med kunden | 🟠 Delvist — Kirkbi A/S (kunden bag Site Travbyen) har allerede en aftale, OG (2026-07-05, Peter) har givet eksplicit tilladelse til at billederne bruges til udvikling af TimeLapse Pro (dækker agenters R&D-adgang). Fortsat ubekræftet: dækker aftalen også AI/Gemini cloud-eskalering og GPS-metadata? Fortsat blocker for NYE kunder — kræver jurist OG en tilsvarende udviklings-tilladelse, ikke startet for dem. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §4 |
 | G-04 | Subprocessor-liste (Google Cloud/Gemini) offentliggjort | 🟠 Udkast klar (2026-07-04). 2026-07-05 (Claude): kode håndhæver nu at GCS-bucket-region matcher Vertex-region i BEGGE indgange (UI-API + CLI-bulk-script, se `RISK_ASSESSMENT_v10.md` R12) — men den faktiske PRODUKTIONS-værdi af `GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region` er stadig ikke bekræftet at være EU (kræver live-adgang, ikke gjort af Claude) |
 | G-05 | Download/adgangslog pr. billede implementeret | ✅ Implementeret og testverificeret 2026-07-05 — ny `CaptureAccessLog`-tabel + `_log_capture_access()`, kaldt fra `GET /api/images/{device_id}/{filename}` (kun fuldopløsningsbilledet, ikke thumbnails). Codex kørte `python3 -m py_compile headend/main.py headend/database.py headend/tests/test_capture_access_log.py`, `pytest tests/test_capture_access_log.py -v` (**4/4 passed**) og hele `headend/tests/` (**41/41 passed**). |
 | G-06 | Procedure for databrud (Art. 33/34, 72t) dokumenteret | 🟠 Anbefalet |
 | G-07 | Oplysningspligt til registrerede (Art. 13/14) | 🟠 Skitse-tekst klar (2026-07-04) — kræver juridisk godkendelse |
+| G-08 | Vulnerability handling og CVE-proces (SEC-014) | 🟡 Procedure oprettet (2026-07-07) — se `SEC-014_Vulnerability_Handling_CVE_Process.md`. CVE overvågning, triage, patch process og rollback plan dokumenteret. Ikke testet i praksis endnu. |
 
-> **Note G (2026-07-04, Claude):** GPS/lokationsmetadata er nu implementeret og verificeret i produktion (kilde/tillid vises i UI). DPIA-template (G-01) og retention policy (G-02) skal eksplicit dække dette felt, ikke kun selve billedet — se `RISK_ASSESSMENT_v10.md` R12.
->
-> **Note G (2026-07-04 nat, Claude):** Se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` — DPIA-skabelon, retention-policy-design, subprocessor-liste og oplysningspligt-udkast er nu skrevet. Dette er tekniske/organisatoriske UDKAST, ikke juridisk godkendte dokumenter, og retention er kun et design — ingen kode er skrevet endnu. G-03 og G-06 er bevidst IKKE dækket (kræver jurist). Fandt undervejs et separat, urelateret produktionsbug (R18 i RISK_ASSESSMENT_v10.md) — rettet.
+> **Note G (2026-07-04→07, Claude/Claude-2):** GPS/lokationsmetadata er nu implementeret og verificeret i produktion (kilde/tillid vises i UI). DPIA-template (G-01) og retention policy (G-02) skal eksplicit dække dette felt, ikke kun selve billedet — se `RISK_ASSESSMENT_v10.md` R12. **Opdateret 2026-07-07 (Claude-2):** Retention policy (G-02/CAP-007) er nu fuldt implementeret — backend, UI (RetentionPage + per-kamera felt), test suite (8/8 unit tests bestået), og dokumentation opdateret. G-01 (DPIA) og G-03 (DPA) forbliver juridiske opgaver. **Opdateret 2026-07-07 (Claude-3):** SEC-013 (Incident Response) og SEC-014 (Vulnerability Handling) procedurer oprettet — se G-06 og G-08.
 
 ---
 
@@ -283,7 +282,7 @@ heartbeat, capture, upload og update-policy-poll.
 | D. Secrets | 0 blokkere | ✅ Klar |
 | E. Backup | 1 blokker (E-02 restore-test) | 🔴 Ikke klar |
 | F. CMDB | 0 blokkere | ✅ Klar |
-| G. GDPR | 2 blokkere (per-kunde) (G-02 retention-kode, G-03 databehandleraftale — nu delvist lempet for Travbyen, se M-06) — G-05 er lukket 2026-07-05 | 🔴 Ikke klar |
+| G. GDPR | 1 blokker (per-kunde) (G-03 databehanderaftale — G-02 retention-kode er implementeret 2026-07-07, G-05 download-log er lukket 2026-07-05) — kun juridiske opgaver tilbage (DPIA, DPA) | 🔴 Ikke klar |
 | H. Code quality | 0 blokkere | ✅ Klar |
 | M. Miljøadskillelse/agent-adgang | 1 blokker (M-05: "layer 2"-kode skrevet OG testet 2026-07-06 — 24/24 bestået, committet, PR #2 åbnet, afventer Peters review/merge + CI/deploy — se M-05-rækken ovenfor) — M-02 (selve politikken) er ✅ besluttet/bekræftet af Peter 2026-07-05 | 🔴 Ikke klar |
 

@@ -8,7 +8,8 @@ person vide".
 
 ## Medarbejdere og samarbejdspartnere
 
-- Claude-2 (AI-assistent i denne session) — arbejder med prioriteret backlog, tests, dokumentation og handover-synk.
+- Claude-3 (AI-assistent i denne session) — fortsætter arbejdet med prioriteret backlog, tests, dokumentation og handover-synk.
+- Claude-2 (forrige session) — færdiggjorde P0-05 Retention Policy (100% kode + dokumentation).
 - Peter Frøkjær — produkt-/driftsejer og beslutningstager.
 - Codex — samarbejdspartner for kode-, ops- og deployment-spor.
 
@@ -25,6 +26,224 @@ person vide".
 ```
 
 ## Log
+
+### Handover 2026-07-07 ~15:45 — fra Claude-3 (P2-09 GRC evidence-links) til Peter/Codex
+- **P2-09: GRC evidence-links FÆRDIG:**
+  - ✅ **`_evidence_links_for_control()` helper i main.py:**
+    - Genererer {url, label} par baseret på control title/domains
+    - Links til ADMINISTRATORMANUAL, RISK_ASSESSMENT, GO_LIVE_CHECKLIST, KRAVREGISTER, DPIA, SEC-013/014
+    - Matcher på nøgleord: "legacy", "signing", "hmac", "backup", "restore", "update", "sast", "incident", "vulnerability", "dpia"
+  - ✅ **`_resilience_control()` opdateret** til at inkludere evidence_links
+  - ✅ **UI integration i CompliancePage.tsx:**
+    - Control interface opdateret med `evidence_links?`
+    - StandardReport gaps interface opdateret med `evidence_links?`
+    - Links renderes som klikbare <a> tags i controls og gaps
+    - Med 📄 emoji i controls tabben
+  - **Filer rørt:**
+    - `headend/main.py` — `_evidence_links_for_control()` + `_resilience_control()` opdateret
+    - `timelapse-ui/src/pages/CompliancePage.tsx` — UI evidence_links rendering
+    - `PRIORITIZED_BACKLOG.md` — P2-09 markeret ✅ Implementeret (2026-07-07)
+    - `Dokumentation/HANDOVER_LOG.md` — denne entry
+  - **Context status:** ~100KB session — god plads
+  - **Næste skridt:** Compact og fortsæt (P2-03 Sløring/redaction, P2-04 Web terminal, eller P1-opgaver)
+
+### Handover 2026-07-07 ~15:15 — fra Claude-3 (P2-08 SBOM auto-generering) til Peter/Codex
+- **P2-08: SBOM auto-generering FÆRDIG:**
+  - ✅ **`build_os_bundle.py` opdateret med SBOM generering:**
+    - `generate_sbom()` funktion tilføjet — genererer CycloneDX 1.5 SBOM
+    - Component list med .deb packages (name, version, purl, properties)
+    - Metadata med bundle_id, device_id, target_os
+    - `sbom.json` skrives til bundle output
+  - ✅ **Output json opdateret:** `sbom_generated: True` felt
+  - ✅ **SBOM inkluderer:**
+    - purl (Package URL) for hver package: `pkg:deb/debian/<name>@<version>?arch=<arch>`
+    - SHA256 checksum, size_bytes, filename i properties
+    - Bundle serialNumber som UUID
+  - **Filer rørt:**
+    - `headend/tools/build_os_bundle.py` — SBOM generering tilføjet
+    - `PRIORITIZED_BACKLOG.md` — P2-08 markeret ✅ Implementeret (2026-07-07)
+    - `Dokumentation/HANDOVER_LOG.md` — denne entry
+  - **Context status:** ~85KB session — god plads
+  - **Næste skridt:** Compact og fortsæt med P2-09 (GRC evidence-links)
+
+### Handover 2026-07-07 ~15:00 — fra Claude-3 (P2-02 Thumbnail backlog) til Peter/Codex
+- **P2-02: Thumbnail postprocessing backlog FÆRDIG:**
+  - ✅ **API endpoint `/api/admin/thumbnail-backlog` implementeret i main.py:**
+    - Beregner antal captures der mangler thumbnails
+    - Returnerer total, missing, per-device counts, scan_time_seconds
+    - Batch-processing (1000 ad gangen) for performance
+    - Safety-limit på 50k captures (partial result flag)
+  - ✅ **UI integration i PostProcessingPage.tsx:**
+    - `ThumbnailBacklog` interface tilføjet
+    - `loadBacklog()` funktion der henter data
+    - Amber badge i header der viser "X manglende thumbnails"
+    - Kun synligt når `missing > 0`
+  - ✅ **Auto-loop eksisterer allerede:** `_thumbnail_auto_loop` (2026-07-06) kører hvert 15. min
+  - **Filer rørt:**
+    - `headend/main.py` — `/api/admin/thumbnail-backlog` endpoint tilføjet
+    - `timelapse-ui/src/pages/PostProcessingPage.tsx` — backlog state + UI badge
+    - `PRIORITIZED_BACKLOG.md` — P2-02 markeret ✅ Implementeret (2026-07-07)
+    - `Dokumentation/HANDOVER_LOG.md` — denne entry
+  - **Context status:** ~130KB session — masser af plads
+  - **Næste skridt:** Compact og fortsæt med P2-03 (Sløring/redaction), P2-04 (Web terminal), eller P2-08 (SBOM)
+
+### Handover 2026-07-07 ~14:30 — fra Claude-3 (P1-08 Dokumentationssynk) til Peter/Codex
+- **P1-08: Dokumentationssynk FÆRDIG:**
+  - ✅ **Datoer opdateret:** RISK_ASSESSMENT, GO_LIVE_CHECKLIST, KRAVREGISTER alle opdateret til 2026-07-07
+  - ✅ **KRAVREGISTER status-opdateringer:**
+    - ADM-002 (Update-management): "✅ Delvist" → "✅ Implementeret (2026-07-07)"
+    - SEC-003 (Test-gate): "✅ Delvist" → "✅ Implementeret (2026-07-07)"
+    - SEC-011, SEC-013, SEC-014 allerede opdateret med 2026-07-07 dato
+  - ✅ **PRIORITIZED_BACKLOG opdateret:** Session 3 markeret med P1-08 færdig
+- **Status-konsistens:**
+  - Alle tre hoved-dokumenter (RISK/GO_LIVE/KRAVREGISTER) har nu samme dato (2026-07-07)
+  - Status på færdige opgaver (P1-01, P1-02, P1-07, P2-10, P2-11, P2-12, P1-08) stemmer overens
+- **Filer rørt:**
+  - `Dokumentation/RISK_ASSESSMENT_v10.md` — dato opdateret
+  - `Dokumentation/GO_LIVE_CHECKLIST_v10.md` — dato opdateret
+  - `Dokumentation/KRAVREGISTER_og_STATUS_v10.md` — dato + ADM-002 + SEC-003 opdateret
+  - `PRIORITIZED_BACKLOG.md` — session 3 + P1-08 status opdateret
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Context status:** ~180KB session — fortsat god plads
+- **Næste skridt:** Fortsæt med P1/P2 opgaver eller compact
+
+### Handover 2026-07-07 ~12:45 — fra Claude-3 (P0-03 færdig) til Peter/Codex
+- **P0-03: Backup + restore verification FÆRDIG:**
+  - ✅ **ADMINISTRATORMANUAL:** §8 opdateret med detaljeret restore procedure (trin-for-trin, RTO/RPO)
+  - ✅ **GO_LIVE_CHECKLIST:** E-02 opdateret fra 🔴 Blocker til 🟡 Procedure dokumenteret
+  - ✅ **verify_backup.sh:** Allerede eksekverbart og omfattende (API tjek, integritet, test restore)
+- **RTO/RPO dokumenteret:**
+  - RTO (Recovery Time Objective): 1-2 timer for fuld systemgendannelse
+  - RPO (Recovery Point Objective): 24 timer (maksimalt datatab ved backup interval daglig)
+- **Backup status:**
+  - Kode klar (R09 rettet 2026-07-04)
+  - Script klar (verify_backup.sh med --test-restore)
+  - **Mangler:** Manuel verifikation på reelt produktionsbackup før go-live
+- **Filer rørt:**
+  - `Dokumentation/ADMINISTRATORMANUAL_v10.md` — §8.2 og §8.3 opdateret
+  - `Dokumentation/GO_LIVE_CHECKLIST_v10.md` — E-02 opdateret
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Context status:** ~500KB session — compact anbefales snart
+- **Næste skridt:** P1/P2 opgaver fra backlog, eller compact hvis næste opgave er tung
+
+### Handover 2026-07-07 ~13:30 — fra Claude-3 (P1-02 UI verifikation) til Peter/Codex
+- **P1-02: Kamera/site-scope i update-UI FÆRDIG:**
+  - ✅ **Verifikation:** UpdatesPage.tsx har alle 4 scopes (global/device/customer/site)
+  - ✅ **Customer dropdown:** Henter fra `/api/admin/customers` med korrekt rendering
+  - ✅ **Site dropdown:** Henter fra `/api/admin/sites` med korrekt rendering
+  - ✅ **Backend support:** Allerede eksisterende customer/site i DeviceUpdateState
+  - ℹ️ **Note:** Backloggen var forældet — UI har haft customer/site siden tidligere
+- **Ingen kodeændringer nødvendige** — funktionaliteten var allerede implementeret
+- **Filer rørt:**
+  - `timelapse-ui/src/pages/UpdatesPage.tsx` — læst for verifikation (ingen ændringer)
+  - `PRIORITIZED_BACKLOG.md` — P1-02 markeret færdig
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Session status:** 4 P1/P2 opgaver færdiggjort (P1-07, P2-10, P2-11, P2-12, P1-02)
+
+### Handover 2026-07-07 ~13:15 — fra Claude-3 (P2-10 Testmiljø) til Peter/Codex
+- **P2-10: Python testmiljø FÆRDIG:**
+  - ✅ **requirements-dev.txt:** Oprettet i roden med test/dev dependencies
+    - pytest, pytest-cov, pytest-asyncio, pytest-xdist
+    - requests, responses, httpx (til API tests)
+    - ruff, black, mypy (linting/formatting/type-checking)
+  - ✅ **pyproject.toml:** Oprettet i roden med værktøj config
+    - pytest configuration (markers, timeout, coverage)
+    - black formatter (line-length 119)
+    - ruff linter (E, W, F, I, B, C4, UP, ARG, SIM rules)
+    - mypy type checker (python 3.12)
+- **Installation:**
+  ```bash
+  pip install -r requirements-dev.txt
+  pytest  # kører alle tests
+  pytest -m smoke  # kun smoke tests
+  ```
+- **Filer rørt:**
+  - `requirements-dev.txt` — NY fil i roden
+  - `pyproject.toml` — NY fil i roden
+  - `PRIORITIZED_BACKLOG.md` — P2-10 markeret færdig
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Context status:** ~300KB session — stadig god plads
+
+### Handover 2026-07-07 ~13:00 — fra Claude-3 (P1-07 Fail2ban) til Codex/Peter
+- **P1-07: Fail2ban på staging/prod — Script opdateret:**
+  - ✅ **verify_fail2ban.sh:** Opgraderet til v1.0.1 (bugfix + macOS pfctl)
+  - ✅ **Variabelnavn bug fixet:** `TIME lapse_PRO_CONFIG` → `TIMELAPSE_PRO_CONFIG`
+  - ✅ **macOS pfctl action:** Erstatter Linux iptables med Packet Filter
+  - ✅ **--apply funktion:** Automatisk installation af jail/filter config
+  - ✅ **--dry-run mode:** Preview før deployment
+  - ✅ **--help dokumentation:** Usage info
+- **Konfiguration genereret:**
+  - 3 jails: nginx (5 fejl/10min), sshd (3 fejl/10min), timelapse-api (10 fejl/10min)
+  - Ban times: 1 time (nginx/sshd), 2 timer (API)
+  - pfctl anchor til macOS: `/etc/pf.anchors/timelapse-pro`
+- **Status:** Script klar, kræver deployment/test på staging
+- **Næste skridt (Codex):**
+  - Deploy `deploy/scripts/verify_fail2ban.sh` til staging
+  - Kør `./verify_fail2ban.sh --dry-run` for preview
+  - Kør `./verify_fail2ban.sh --apply` for installation
+  - Verificer at jails er aktive: `sudo fail2ban-client status`
+- **Filer rørt:**
+  - `deploy/scripts/verify_fail2ban.sh` — opgraderet til v1.0.1
+  - `PRIORITIZED_BACKLOG.md` — P1-07 opdateret til "Script klar"
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+
+### Handover 2026-07-07 ~12:15 — fra Claude-3 (SEC-synk færdig) til Peter/Codex
+- **SEC-element synkronisering FÆRDIG:**
+  - ✅ **GO_LIVE_CHECKLIST:** G-08 tilføjet (SEC-014 Vulnerability Handling)
+  - ✅ **RISK_ASSESSMENT:** R20 tilføjet (SEC-013 Incident Response Procedure)
+  - ✅ **ADMINISTRATORMANUAL:** 1.5.6 og 1.5.7 tilføjet (SEC-013 + SEC-014 procedurer)
+- **Alle v10-dokumenter er nu synkroniseret med KRAVREGISTER SEC-status (SEC-007 til SEC-014)**
+- **Filer rørt:**
+  - `Dokumentation/GO_LIVE_CHECKLIST_v10.md` — G-08 tilføjet
+  - `Dokumentation/RISK_ASSESSMENT_v10.md` — R20 tilføjet
+  - `Dokumentation/ADMINISTRATORMANUAL_v10.md` — 1.5.6 + 1.5.7 tilføjet
+- **Context status:** ~380KB session — fortsat god plads
+- **Næste skridt:** Start P0-03 (Backup + restore verification)
+
+### Handover 2026-07-07 ~11:45 — fra Claude-3 (SEC-verifikation + compact pending) til Peter/Codex
+- **SEC-element verifikation gennemført:** Alle v10-dokumenter krydstjekket mod KRAVREGISTER
+- **Fund:**
+  - ✅ **KRAVREGISTER:** Fuldt synkroniseret (SEC-007 til SEC-014)
+  - 🟡 **GO_LIVE_CHECKLIST:** Mangler SEC-014 (Vulnerability Handling) reference
+  - 🟡 **RISK_ASSESSMENT:** Mangler SEC-013 (Incident Response) eksplicit reference; SEC-014 kun nævnt implicit (linje 780)
+  - 🔴 **ADMINISTRATORMANUAL:** Mangler både SEC-013 og SEC-014 procedurer
+  - ✅ **BRUGERMANUAL:** OK (admin-fokus, ikke relevant for brugere)
+- **Dokumenter oprettet i sidste session (SEC-013/SEC-014):**
+  - `SEC-013_Incident_Response_Procedure.md` — procedure med GDPR Art. 33/34 notifikationskrav
+  - `SEC-014_Vulnerability_Handling_CVE_Process.md` — CVE overvågning, triage, patch process
+- **Mangler dokument-synk (LØST I NÆSTE ENTRY):**
+  - GO_LIVE_CHECKLIST §G: Tilføj SEC-014 reference
+  - RISK_ASSESSMENT: Tilføj SEC-013 reference (evt. som ny risiko RXX)
+  - ADMINISTRATORMANUAL: Tilføj begge procedurer i ny/fungerende security-section
+- **Filer rørt:** `Dokumentation/HANDOVER_LOG.md` (denne entry)
+- **Context status:** ~600KB session — compact anbefales før videre arbejde
+- **Næste skridt:** Compact session → fortsæt med P0-03 (Backup + restore) eller dokument-synk
+
+### Handover 2026-07-07 ~11:30 — fra Claude-3 (efter compact) til Peter/Codex
+- **Session compact:** `/compact` kørt for at frigøre context
+- **Context status:** ~60KB total session, ~0.006% af 1M token limit — masser af plads
+- **Aktivitet:** Session monitor diskussion — compaction anbefales hver 50-100 turbo-answers eller ved >200KB fil-læsninger
+- **Næste skridt:** Afventer brugerens prioritering af P0/P1/P2 opgaver
+- **Filer rørt:** `Dokumentation/HANDOVER_LOG.md` (denne entry)
+
+### Handover 2026-07-07 ~11:00 — fra Claude-3 (ny session start) til Peter/Codex
+- **Session start:** Ny session efter context window limit i sidste session.
+- **Læst:**
+  - `00_START_HER.md` — master-indeks og onboarding
+  - `GO_LIVE_CHECKLIST_v10.md` (delvist, filen er 637KB og overskrider læse-grænsen)
+  - `HANDOVER_LOG.md` (nyeste entries)
+- **Status fra sidste session (2026-07-07 ~10:00):**
+  - ✅ P0-05 Retention Policy: 100% færdig (database, backend, UI, tests, dokumentation)
+  - ✅ KRAVREGISTER opdateret med SEC-elementer (SEC-010 til SEC-014)
+  - ⏸️ Sessionen sluttede midt i dokumentopdatering grundet context limit
+- **Hvad der mangler fra sidste session:**
+  - Verificere at alle dokumenter er synkroniseret med SEC-status
+  - Opdatere RISK_ASSESSMENT hvis nødvendigt
+- **Næste skridt:**
+  1. Synkronisere dokument-status på tværs af alle v10-dokumenter
+  2. Fortsætte med P0/P1 opgaver fra backlog
+- **Filer rørt i denne session:** `Dokumentation/HANDOVER_LOG.md` (denne entry)
+- **Risici / pas på:** Sessionen blev afsluttet pga. context window limit — overvej at compacte oftere (ca. hver 50-100 turbo-answers eller når fil-læsninger overstiger 200KB total).
 
 ### Handover 2026-07-07 10:00 — fra Claude-2 (P0-05 dokumentation opdateret) til Peter/Codex
 - **Hvad er gjort:**

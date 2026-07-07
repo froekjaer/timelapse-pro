@@ -106,7 +106,7 @@ anlægs- og infrastruktursektoren, jf. `RISK_ASSESSMENT_v10.md` §8):
 | Lokationsdata (kamera-GPS) afslører adresse | Lav — adressen er allerede kendt (byggepladsens egen adresse) | Lav | Ingen særskilt risiko udover selve stedets kendte adresse |
 | AI-scenebeskrivelse identificerer/omtaler personer i fritekst | Middel | Lav-middel | Gennemgås manuelt ved eskalering (review-workflow); ingen automatiseret beslutning baseret på dette |
 | Data sendt til cloud-AI (Gemini) uden for EU | Lav, men **skal bekræftes teknisk** | Middel-høj hvis bekræftet | Se §4 — regionsindstilling er IKKE verificeret i denne gennemgang, kun at koden STØTTER EU-region |
-| Overskridelse af rimelig opbevaringsperiode | Høj (ingen automatisk sletning findes i dag) | Middel | Se §3 (retention policy) — teknisk ikke implementeret endnu |
+| Overskridelse af rimelig opbevaringsperiode | Lav-middel (automatisk sletning implementeret, men kræver per-kamera konfiguration) | Middel | Se §3 (retention policy) — **teknisk implementeret 2026-07-07** (Camera.retention_days, cleanup loop, API, UI, tests). Mangler: per-kamera konfiguration, verifikation i production. |
 
 ### 2.5 Foranstaltninger og konklusion [KUNDE]
 
@@ -116,7 +116,19 @@ anlægs- og infrastruktursektoren, jf. `RISK_ASSESSMENT_v10.md` §8):
 
 ---
 
-## 3. Retention policy — design (teknisk, endnu IKKE implementeret)
+## 3. Retention policy — implementeret 2026-07-07
+
+**OPDATERING 2026-07-07 (Claude-2):** Retention policy er nu **teknisk implementeret**:
+
+- Database migration v15: `Camera.retention_days` (default 365) + `CaptureDeletionLog` tabel
+- Backend cleanup loop: `_retention_cleanup_loop()` i `headend/main.py`
+- API endpoints: `/api/admin/retention/*` (trigger, status, settings, deletion-log)
+- Frontend UI: `RetentionPage.tsx` (globalt) + per-kamera felt i `CameraPage.tsx`
+- Test suite: `tests/test_retention_policy.py` (8/8 unit tests bestået)
+
+Se ADMINISTRATORMANUAL v10 §1.5.5 og BRUGERMANUAL v10 §7.2 for betjening.
+
+**Original design (til reference):**
 
 Databasen har allerede en isoleret datamodel klar til formålet
 (`headend/ai/ai_models.py`, `GDPRDetection.retain_until`/`is_expired()`/

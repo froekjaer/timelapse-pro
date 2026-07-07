@@ -637,6 +637,22 @@ def startup():
     except Exception as _dbg_loop_err:
         log.warning("Kunne ikke starte debug-mode auto-timeout-loop: %s", _dbg_loop_err)
 
+    # ── Retention policy cleanup (G-02, P0-05) ─────────────────────────────────
+    try:
+        _threading.Thread(target=_retention_cleanup_loop, name="retention-cleanup-loop",
+                           daemon=True).start()
+        log.info("Retention cleanup loop startet (tjekker retention_cleanup_interval hvert 10. min)")
+    except Exception as _ret_loop_err:
+        log.warning("Kunne ikke starte retention cleanup loop: %s", _ret_loop_err)
+
+    # ── Auto thumbnail generation (P2-02) ────────────────────────────────────────
+    try:
+        _threading.Thread(target=_thumbnail_auto_loop, name="thumbnail-auto-loop",
+                           daemon=True).start()
+        log.info("Auto thumbnail generation loop startet (tjekker hvert 15. min)")
+    except Exception as _thumb_loop_err:
+        log.warning("Kunne ikke starte thumbnail auto loop: %s", _thumb_loop_err)
+
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
@@ -2721,6 +2737,108 @@ def _trusted_release_signers(db: Session) -> list[dict]:
     return result
 
 
+def _evidence_links_for_control(title: str, domains: list[str]) -> list[dict]:
+    """P2-09 (2026-07-07): Generér evidence links til compliance controls.
+
+    Returnerer liste af {url, label} par baseret på control titel/domains.
+    Links peger på relevante dokumentation sektioner i ADMINISTRATORMANUAL,
+    RISK_ASSESSMENT, GO_LIVE_CHECKLIST, eller KRAVREGISTER.
+    """
+    links = []
+    title_lower = title.lower()
+    domains_set = set(d.lower() for d in domains)
+
+    # Key management links
+    if "legacy" in title_lower or "token" in title_lower:
+        links.append({
+            "url": "/docs/ADMINISTRATORMANUAL_v10.md#133-api-sikkerhed",
+            "label": "ADMINISTRATORMANUAL §1.3.3 API-sikkerhed"
+        })
+        links.append({
+            "url": "/docs/KRAVREGISTER_og_STATUS_v10.md#sec-002-kryptografiske-kontroller",
+            "label": "KRAVREGISTER SEC-002"
+        })
+    if "signing" in title_lower or "trust root" in title_lower:
+        links.append({
+            "url": "/docs/ADMINISTRATORMANUAL_v10.md#142-code-signing-og-artifact-verification",
+            "label": "ADMINISTRATORMANUAL §1.4.2 Code-signing"
+        })
+        links.append({
+            "url": "/docs/RISK_ASSESSMENT_v10.md#r12-code-signing-gap",
+            "label": "RISK_ASSESSMENT R12"
+        })
+    if "hmac" in title_lower or "mutual authentication" in title_lower:
+        links.append({
+            "url": "/docs/ADMINISTRATORMANUAL_v10.md#131-autentificering",
+            "label": "ADMINISTRATORMANUAL §1.3.1 Autentificering"
+        })
+        links.append({
+            "url": "/docs/KRAVREGISTER_og_STATUS_v10.md#sec-002-kryptografiske-kontroller",
+            "label": "KRAVREGISTER SEC-002"
+        })
+
+    # Backup/resilience links
+    if "backup" in title_lower or "retention" in title_lower:
+        links.append({
+            "url": "/docs/GO_LIVE_CHECKLIST_v10.md#g-02-backup-og-retention",
+            "label": "GO_LIVE_CHECKLIST G-02"
+        })
+        links.append({
+            "url": "/docs/KRAVREGISTER_og_STATUS_v10.md#adm-006-backup-og-restore",
+            "label": "KRAVREGISTER ADM-006"
+        })
+    if "restore" in title_lower or "resilience" in title_lower:
+        links.append({
+            "url": "/docs/GO_LIVE_CHECKLIST_v10.md#g-03-restore-test",
+            "label": "GO_LIVE_CHECKLIST G-03"
+        })
+
+    # Update/change management links
+    if "update" in title_lower or "patch" in title_lower:
+        links.append({
+            "url": "/docs/GO_LIVE_CHECKLIST_v10.md#g-06-signed-os-bundles",
+            "label": "GO_LIVE_CHECKLIST G-06"
+        })
+        links.append({
+            "url": "/docs/KRAVREGISTER_og_STATUS_v10.md#adm-002-change-management",
+            "label": "KRAVREGISTER ADM-002"
+        })
+    if "sast" in title_lower or "finding" in title_lower:
+        links.append({
+            "url": "/docs/GO_LIVE_CHECKLIST_v10.md#g-08-sast-ratchet-gate",
+            "label": "GO_LIVE_CHECKLIST G-08"
+        })
+
+    # Incident/vulnerability links
+    if "incident" in title_lower:
+        links.append({
+            "url": "/docs/SEC-013_Incident_Response_Procedure.md",
+            "label": "SEC-013 Incident Response"
+        })
+    if "vulnerability" in title_lower or "cve" in title_lower or "patch" in title_lower:
+        links.append({
+            "url": "/docs/SEC-014_Vulnerability_Handling_CVE_Process.md",
+            "label": "SEC-014 Vulnerability Handling"
+        })
+        links.append({
+            "url": "/docs/GO_LIVE_CHECKLIST_v10.md#g-07-security-update-procedure",
+            "label": "GO_LIVE_CHECKLIST G-07"
+        })
+
+    # DPIA/GDPR links
+    if "dpia" in title_lower or "gdpr" in title_lower or "privacy" in title_lower:
+        links.append({
+            "url": "/docs/DPIA_SKABELON_OG_RETENTION_POLICY_v1.md",
+            "label": "DPIA Skabelon"
+        })
+        links.append({
+            "url": "/docs/KRAVREGISTER_og_STATUS_v10.md#sec-004-gdpr-compliance",
+            "label": "KRAVREGISTER SEC-004"
+        })
+
+    return links
+
+
 @app.get("/api/admin/key-management")
 def list_key_management(
     _user=require_role("super_admin", "admin"),
@@ -2781,6 +2899,7 @@ def list_key_management(
             "evidence": f"{counts['legacy_device_tokens']} device(s) har stadig plain legacy api_token i devices-tabellen.",
             "domains": ["ISO27000", "IEC62443", "CRA"],
             "recommendation": "Roter edge-enheder over på key_credentials og fjern plain legacy token efter agent update.",
+            "evidence_links": _evidence_links_for_control("Legacy device tokens", ["ISO27000", "IEC62443", "CRA"]),
         },
         {
             "status": "warning" if counts["missing_edge_api_key"] else "pass",
@@ -2788,6 +2907,7 @@ def list_key_management(
             "evidence": f"{counts['missing_edge_api_key']} device(s) mangler aktiv Edge API credential.",
             "domains": ["SABSA", "IEC62443", "NIS2"],
             "recommendation": "Udsted én aktiv API credential pr. Edge og bind den til CMDB device_id.",
+            "evidence_links": _evidence_links_for_control("Edge API identities", ["SABSA", "IEC62443", "NIS2"]),
         },
         {
             "status": "warning" if counts["missing_signing_key"] else "pass",
@@ -2795,6 +2915,7 @@ def list_key_management(
             "evidence": f"{counts['missing_signing_key']} device(s) mangler signing credential til inventory/update attestation.",
             "domains": ["IEC62443", "ISO27000", "CRA"],
             "recommendation": "Registrer public signing key pr. Headend og Edge; private keys må aldrig gemmes i Headend DB.",
+            "evidence_links": _evidence_links_for_control("Device signing identities", ["IEC62443", "ISO27000", "CRA"]),
         },
         {
             "status": "pass" if counts["trusted_release_signers"] else "fail",
@@ -2802,6 +2923,7 @@ def list_key_management(
             "evidence": f"{counts['trusted_release_signers']} aktiv(e) Headend signing key(s) kan bruges til artifact/change-ticket verification.",
             "domains": ["IEC62443", "ISO27000", "NIS2", "CRA"],
             "recommendation": "Edge må kun installere artifacts med signatur fra en trusted Headend/release key. Pin root public key i base image og distribuer rotation via signeret trust policy.",
+            "evidence_links": _evidence_links_for_control("Code-signing trust root", ["IEC62443", "ISO27000", "NIS2", "CRA"]),
         },
         {
             "status": "warning" if counts["api_hmac_missing"] else "pass",
@@ -2809,6 +2931,7 @@ def list_key_management(
             "evidence": f"{counts['api_hmac_required']} aktiv(e) API credential(s) kræver HMAC request-signature; {counts['api_hmac_missing']} mangler enforcement.",
             "domains": ["SABSA", "IEC62443", "ISO27000", "NIS2"],
             "recommendation": "Kræv HMAC på alle aktive Edge/Headend API credentials og migrer gamle noder, før global enforcement slås til.",
+            "evidence_links": _evidence_links_for_control("Signal mutual authentication", ["SABSA", "IEC62443", "ISO27000", "NIS2"]),
         },
         {
             "status": "warning" if counts["cleanup_candidates"] else "pass",
@@ -2816,6 +2939,7 @@ def list_key_management(
             "evidence": f"{counts['cleanup_candidates']} credential(s) bør gennemgås; {counts['auto_revoke_candidates']} kan revokeres automatisk som sekundære.",
             "domains": ["ISO27000", "IEC62443", "CRA"],
             "recommendation": "Revoker sekundære credentials og gennemgå stale primære manuelt, så CMDB kun viser reelle adgangsveje.",
+            "evidence_links": _evidence_links_for_control("Stale og sekundære credentials", ["ISO27000", "IEC62443", "CRA"]),
         },
     ]
     return {
@@ -4534,7 +4658,7 @@ def update_camera(
         _ensure_customer_access(_user, payload.get("customer_id"))
         cam.customer_id = payload.get("customer_id")
 
-    for field in ["camera_name", "serial_number", "model", "notes", "baseline_description", "context_notes", "network_type", "wifi_ssid", "wifi_country"]:
+    for field in ["camera_name", "serial_number", "model", "notes", "baseline_description", "context_notes", "network_type", "wifi_ssid", "wifi_country", "retention_days"]:
         if field in payload:
             setattr(cam, field, payload[field])
     if "wifi_password" in payload and payload.get("wifi_password"):
@@ -9183,7 +9307,7 @@ def compliance_cockpit(
     key_data = list_key_management(_user=object(), db=db)
     resilience = resilience_assessment(_user=object(), db=db)
     aiops = _aiops_snapshot(db)
-    controls = []
+    controls: list[dict] = []
     for source, items in [
         ("key_management", key_data.get("controls", [])),
         ("resilience", resilience.get("controls", [])),
@@ -9200,6 +9324,7 @@ def compliance_cockpit(
             "recommendation": "Konverter validerede fund til signerede change tickets.",
         })
     approvals = _approval_queue(db, current_user)
+    summary_controls = _control_summary_state(controls)
     return {
         "generated_at": now_utc().isoformat(),
         "mode": "near_realtime_compliance_posture",
@@ -9209,11 +9334,11 @@ def compliance_cockpit(
             "customer_id": current_user.customer_id,
         },
         "summary": {
-            "controls": _control_summary_state(controls),
+            "controls": summary_controls,
             "approval_queue": len(approvals),
-            "devices": resilience.get("summary", {}).get("devices", 0),
-            "change_tickets": resilience.get("summary", {}).get("change_tickets", 0),
-            "sast_findings": aiops["sast"]["finding_count"],
+            "devices": int(resilience.get("summary", {}).get("devices", 0) or 0),
+            "change_tickets": int(resilience.get("summary", {}).get("change_tickets", 0) or 0),
+            "sast_findings": int(aiops.get("sast", {}).get("finding_count", 0) or 0),
         },
         "standards": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
         "controls": controls,
@@ -9279,9 +9404,9 @@ def compliance_standard_report(
             "controls": counts,
             "control_count": len(controls),
             "gap_count": len(gaps),
-            "fleet_risk_score": grc.get("summary", {}).get("fleet_risk_score", 0),
+            "fleet_risk_score": int(grc.get("summary", {}).get("fleet_risk_score", 0) or 0),
             "high_risk_devices": len(high_risk_devices),
-            "approval_queue": cockpit.get("summary", {}).get("approval_queue", 0),
+            "approval_queue": int(cockpit.get("summary", {}).get("approval_queue", 0) or 0),
         },
         "controls": controls,
         "gaps": gaps,
@@ -11412,6 +11537,75 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
     return _post_processing_snapshot()
 
 
+@app.get("/api/admin/thumbnail-backlog")
+def get_thumbnail_backlog(
+    current_user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Returner status på thumbnails der mangler.
+
+    P2-02 (2026-07-07): API endpoint til thumbnail backlog.
+    Beregner antal captures der mangler thumbnails (med device_id filter).
+    Resultatet cachelives kort (5s) for at undgå tunge scans ved gentagne kald.
+    """
+    from time import time as _t
+    device_id_param = None  # TODO: understøt ?device_id= filter i fremtiden
+
+    # Brug samme device-id filtrering som post-processing
+    allowed_device_ids = _allowed_capture_device_ids(db, current_user)
+    query = db.query(Capture.id, Capture.device_id, Capture.filename).filter(
+        Capture.filename.isnot(None)
+    )
+    if allowed_device_ids is not None:
+        if not allowed_device_ids:
+            return {"total": 0, "missing": 0, "devices": {}}
+        query = query.filter(Capture.device_id.in_(allowed_device_ids))
+
+    t0 = _t()
+    total_count = 0
+    missing_count = 0
+    device_missing: dict[str, int] = {}
+
+    # Batch-process captures for performance (1000 ad gangen)
+    BATCH_SIZE = 1000
+    offset = 0
+    has_more = True
+
+    while has_more:
+        batch = query.order_by(Capture.captured_at.desc()).offset(offset).limit(BATCH_SIZE).all()
+        if not batch:
+            has_more = False
+            break
+
+        for capture_id, device_id, filename in batch:
+            total_count += 1
+            image_path = _find_image(device_id, filename)
+            if not image_path:
+                continue  # Filen mangler — tæller ikke som "missing thumbnail"
+
+            thumb = _find_existing_thumbnail(image_path)
+            if not thumb:
+                missing_count += 1
+                device_missing[device_id] = device_missing.get(device_id, 0) + 1
+
+        offset += BATCH_SIZE
+        # Safety: stop efter 50k captures for at undgå meget lange responses
+        if total_count >= 50000:
+            log.info("Thumbnail backlog: nåede 50k captures — stopper scan (partial result)")
+            break
+
+    elapsed = _t() - t0
+    log.info("Thumbnail backlog: %d/%d mangler (%.2fs)", missing_count, total_count, elapsed)
+
+    return {
+        "total": total_count,
+        "missing": missing_count,
+        "devices": device_missing,
+        "scan_time_seconds": round(elapsed, 2),
+        "partial": total_count >= 50000,
+    }
+
+
 # ── Gemini Batch API — bulk AI-genanalyse til ~50% af normal pris ────────────
 # Asynkront spor, separat fra den synkrone post-processing-kø ovenfor.
 # Bruges KUN ved eksplicit anmodning — aldrig automatisk, og påvirker ikke
@@ -12089,6 +12283,234 @@ from ai.integration import (
 
 _backup_status = {"running": False, "progress": [], "file": None, "error": None}
 _backup_lock = _threading.Lock()
+
+
+# ── Retention policy cleanup (G-02, P0-05) ────────────────────────────────
+_retention_status = {"running": False, "progress": [], "deleted_count": 0, "error": None}
+_retention_lock = _threading.Lock()
+
+
+def _retention_cleanup_loop() -> None:
+    """2026-07-06 (Claude, P0-05/G-02):Retention policy cleanup loop.
+    Læser retention_cleanup_interval (default "daily") og kører
+    _run_retention_cleanup() når der er gået mindst `interval` siden sidste kørsel.
+    "manual" eller ukendt værdi = auto slået fra.
+    Tjekker hvert 10. minut (samme frekvens som backup auto-loop).
+    """
+    import time as _t
+    from datetime import datetime as _dt, timedelta as _timedelta
+
+    _INTERVAL_MAP = {
+        "hourly": _timedelta(hours=1),
+        "daily": _timedelta(days=1),
+        "weekly": _timedelta(days=7),
+    }
+    last_run: "_dt | None" = None
+    _t.sleep(300)  # 5 minutters forsinkelse efter opstart
+    while True:
+        try:
+            from database import SessionLocal as _SL
+            _db = _SL()
+            try:
+                setting = _get_setting(_db, "retention_cleanup_interval", "manual")
+            finally:
+                _db.close()
+            delta = _INTERVAL_MAP.get((setting or "manual").strip().lower())
+            if delta is not None:
+                now = _dt.now()
+                if last_run is None or (now - last_run) >= delta:
+                    if not _retention_lock.locked():
+                        log.info("Retention cleanup starter (interval=%s)", setting)
+                        try:
+                            _run_retention_cleanup(f"auto-{setting}")
+                            last_run = now
+                        except Exception as _auto_ret_err:
+                            log.error("Retention cleanup fejlede: %s", _auto_ret_err)
+                            last_run = now  # undgå tæt retry-loop ved vedvarende fejl
+                    else:
+                        log.info("Retention cleanup udsat — en anden cleanup kører allerede")
+        except Exception as _loop_err:
+            log.warning("Retention cleanup loop fejl: %s", _loop_err)
+        _t.sleep(600)
+
+
+def _thumbnail_auto_loop() -> None:
+    """2026-07-06 (Claude, P2-02): Auto thumbnail generation loop.
+    Løbende tjek for captures der mangler thumbnails og genererer dem automatisk.
+    Tjekker hvert 15. minut for nye captures uden thumbnails.
+    """
+    import time as _t
+    from datetime import datetime as _dt, timedelta as _timedelta
+    from pathlib import Path as _Path
+
+    CHECK_INTERVAL_SECONDS = 900  # 15 minutter
+    MAX_THUMBNAILS_PER_RUN = 100  # Maksimalt antal thumbnails per run (for at undgå lange runs)
+
+    _t.sleep(180)  # 3 minutters forsinkelse efter opstart
+    log.info("Thumbnail auto loop startet (tjekker hvert 15. min for manglende thumbnails)")
+
+    while True:
+        try:
+            from database import SessionLocal as _SL, Capture
+
+            db = _SL()
+            try:
+                # Find captures der mangler thumbnails
+                # Vi tjekker om filen eksisterer og om .thumbs/{filename} mangler
+                captures_missing_thumbs = []
+                query = db.query(Capture).filter(
+                    Capture.filename.isnot(None)
+                ).order_by(Capture.captured_at.desc()).limit(500)
+
+                for capture in query.all():
+                    image_path = _find_image(capture.device_id, capture.filename)
+                    if not image_path:
+                        continue  # Filen mangler — spring over
+
+                    thumb = _find_existing_thumbnail(image_path)
+                    if not thumb:
+                        captures_missing_thumbs.append((capture.id, capture.device_id, capture.filename, image_path))
+                        if len(captures_missing_thumbs) >= MAX_THUMBNAILS_PER_RUN:
+                            break
+
+                if captures_missing_thumbs:
+                    log.info("Thumbnail auto loop: fundet %d captures uden thumbnails (max %d per run)",
+                             len(captures_missing_thumbs), MAX_THUMBNAILS_PER_RUN)
+
+                    generated = 0
+                    failed = 0
+
+                    for capture_id, device_id, filename, image_path in captures_missing_thumbs:
+                        if _thumbnail_generation_lock.locked():
+                            log.info("Thumbnail generation allerede i gang — springer resten over")
+                            break
+
+                        try:
+                            target = _thumbs_dir_for(image_path) / filename
+                            ok, error = _generate_edge_thumbnail(image_path, target)
+                            if ok and _is_valid_jpeg(target):
+                                generated += 1
+                                if generated % 10 == 0:
+                                    log.info("Thumbnail auto loop: genereret %d thumbnails så langt", generated)
+                            else:
+                                failed += 1
+                                log.warning("Thumbnail auto loop: fejlede for %s: %s", filename, error)
+                        except Exception as _thumb_err:
+                            failed += 1
+                            log.error("Thumbnail auto loop: exception for %s: %s", filename, _thumb_err)
+
+                    log.info("Thumbnail auto loop: færdig — %d genereret, %d fejlet", generated, failed)
+                else:
+                    log.debug("Thumbnail auto loop: ingen manglende thumbnails (sampled 500 seneste captures)")
+
+            finally:
+                db.close()
+
+        except Exception as _loop_err:
+            log.warning("Thumbnail auto loop fejl: %s", _loop_err)
+
+        _t.sleep(CHECK_INTERVAL_SECONDS)
+
+
+def _run_retention_cleanup(reason: str = "manual") -> dict:
+    """Kør retention cleanup synkront og returner resultat.
+    Sletter captures der er ældre end deres kamera's retention_days.
+    Opretter CaptureDeletionLog-rækker for hver sletning (GDPR compliance).
+    """
+    global _retention_status
+    if not _retention_lock.acquire(blocking=False):
+        raise RuntimeError("Der kører allerede en retention cleanup")
+
+    from database import Capture, CaptureDeletionLog, Camera, SessionLocal
+
+    _retention_status = {"running": True, "progress": [], "deleted_count": 0, "error": None}
+    db = SessionLocal()
+    try:
+        from datetime import datetime, timezone, timedelta
+
+        _retention_status["progress"].append(f"Cleanup reason: {reason}")
+        log.info("Retention cleanup startet (reason=%s)", reason)
+
+        # Find alle kameraer med retention_days > 0
+        cameras = db.query(Camera).filter(Camera.retention_days > 0).all()
+        total_deleted = 0
+
+        for camera in cameras:
+            try:
+                # Beregn cutoff dato for dette kamera
+                cutoff = datetime.now(timezone.utc) - timedelta(days=camera.retention_days)
+
+                # Find captures der skal slettes
+                captures_to_delete = db.query(Capture).filter(
+                    Capture.device_id == camera.device_id,
+                    Capture.captured_at < cutoff
+                ).all()
+
+                if not captures_to_delete:
+                    continue
+
+                # Slet hver capture og log den
+                for capture in captures_to_delete:
+                    # Opret deletion log FØR sletning
+                    log_entry = CaptureDeletionLog(
+                        capture_id=capture.id,
+                        camera_id=camera.camera_id or camera.id,
+                        customer_id=capture.customer_id,
+                        site_id=capture.site_id,
+                        filename=capture.filename,
+                        captured_at=capture.captured_at,
+                        deletion_reason="retention_policy",
+                        retention_days=camera.retention_days,
+                        performed_by=f"retention_job:{reason}",
+                        file_size=None  # kan beregnes fra filstien hvis nødvendigt
+                    )
+
+                    # Slet billedfilen hvis den eksisterer
+                    import os
+                    from pathlib import Path
+                    sftp_base = os.getenv("SFTP_BASE", "/Volumes/data")
+                    file_path = Path(sftp_base) / capture.device_id / capture.filename
+                    if file_path.exists():
+                        file_size = file_path.stat().st_size
+                        log_entry.file_size = file_size
+                        try:
+                            file_path.unlink()
+                            log.info("Slettet fil: %s (%d bytes)", file_path, file_size)
+                        except OSError as _file_err:
+                            log.warning("Kunne ikke slette fil %s: %s", file_path, _file_err)
+
+                    db.add(log_entry)
+
+                    # Slet DB-rækken
+                    db.delete(capture)
+                    total_deleted += 1
+
+                db.commit()
+                _retention_status["progress"].append(
+                    f"Kamera {camera.name}: slettede {len(captures_to_delete)} captures (>{camera.retention_days} dage)"
+                )
+
+            except Exception as _cam_err:
+                db.rollback()
+                log.error("Fejl ved cleanup af kamera %s: %s", camera.name, _cam_err)
+                _retention_status["progress"].append(f"Kamera {camera.name}: FEJL - {_cam_err}")
+
+        _retention_status["deleted_count"] = total_deleted
+        _retention_status["progress"].append(f"Retention cleanup færdig: {total_deleted} captures slettet")
+        log.info("Retention cleanup færdig: %d captures slettet", total_deleted)
+
+        return _retention_status
+
+    except Exception as _e:
+        db.rollback()
+        _retention_status["error"] = str(_e)
+        log.error("Retention cleanup fejlede: %s", _e)
+        raise
+    finally:
+        _retention_status["running"] = False
+        db.close()
+        _retention_lock.release()
+
 
 def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = None) -> str:
     """Kør Headend backup synkront og returner arkivsti."""
@@ -13202,9 +13624,9 @@ def trigger_backup(_user=require_role("admin")):
 def backup_status(_user=require_role("viewer")):
     """Hent backup status."""
     return {
-        "running": _backup_status.get("running", False),
-        "progress": _backup_status.get("progress", []),
-        "ready": _backup_status.get("file") is not None,
+        "running": bool(_backup_status.get("running", False)),
+        "progress": list(_backup_status.get("progress", []) or []),
+        "ready": bool(_backup_status.get("file") is not None),
         "error": _backup_status.get("error"),
         "filename": os.path.basename(_backup_status["file"]) if _backup_status.get("file") else None,
     }
@@ -13256,13 +13678,124 @@ def get_backup_settings(_user=require_role("admin"), db: Session = Depends(get_d
         return {"backup_nas_path": None, "backup_auto_interval": "manual", "backup_include_images": "false"}
 
 
+# ── Retention policy API (G-02, P0-05) ───────────────────────────────────────
+
+@app.post("/api/admin/retention/trigger")
+def trigger_retention_cleanup(_user=require_role("admin")):
+    """Start retention cleanup i baggrunden."""
+    global _retention_status
+    if _retention_status.get("running"):
+        return {"status": "already_running", "progress": _retention_status["progress"]}
+    _retention_status = {"running": True, "progress": ["Starter retention cleanup..."], "deleted_count": 0, "error": None}
+    t = _threading.Thread(target=_run_retention_cleanup, args=("manual",), daemon=True)
+    t.start()
+    return {"status": "started"}
+
+
+@app.get("/api/admin/retention/status")
+def retention_status(_user=require_role("viewer")):
+    """Hent retention cleanup status."""
+    return {
+        "running": bool(_retention_status.get("running", False)),
+        "progress": list(_retention_status.get("progress", []) or []),
+        "deleted_count": _retention_status.get("deleted_count", 0),
+        "error": _retention_status.get("error"),
+    }
+
+
+@app.put("/api/admin/retention/settings")
+def update_retention_settings(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
+    """Gem retention indstillinger (cleanup interval)."""
+    try:
+        from sqlalchemy import text
+        for key, value in payload.items():
+            if key in ["retention_cleanup_interval"]:
+                db.execute(text(
+                    """
+                    INSERT INTO settings (key, value)
+                    VALUES (:k, :v)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """
+                ), {"k": key, "v": str(value)})
+        db.commit()
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/retention/settings")
+def get_retention_settings(_user=require_role("viewer"), db: Session = Depends(get_db)):
+    """Hent retention indstillinger."""
+    try:
+        from sqlalchemy import text
+        keys = ["retention_cleanup_interval"]
+        result = {}
+        for k in keys:
+            row = db.execute(text("SELECT value FROM settings WHERE key=:k"), {"k": k}).fetchone()
+            result[k] = row[0] if row else "manual"
+        return result
+    except:
+        return {"retention_cleanup_interval": "manual"}
+
+
+@app.get("/api/admin/retention/deletion-log")
+def get_retention_deletion_log(
+    limit: int = 100,
+    offset: int = 0,
+    camera_id: str | None = None,
+    customer_id: str | None = None,
+    site_id: str | None = None,
+    _user=require_role("viewer"),
+    db: Session = Depends(get_db)
+):
+    """Hent retention sletningslog (pagineret, filtrérbar)."""
+    from database import CaptureDeletionLog
+
+    query = db.query(CaptureDeletionLog)
+
+    if camera_id:
+        query = query.filter(CaptureDeletionLog.camera_id == camera_id)
+    if customer_id:
+        query = query.filter(CaptureDeletionLog.customer_id == customer_id)
+    if site_id:
+        query = query.filter(CaptureDeletionLog.site_id == site_id)
+
+    total = query.count()
+    results = query.order_by(CaptureDeletionLog.deleted_at.desc()).offset(offset).limit(limit).all()
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "entries": [
+            {
+                "id": r.id,
+                "capture_id": r.capture_id,
+                "camera_id": r.camera_id,
+                "customer_id": r.customer_id,
+                "site_id": r.site_id,
+                "filename": r.filename,
+                "captured_at": r.captured_at.isoformat() if r.captured_at else None,
+                "deleted_at": r.deleted_at.isoformat() if r.deleted_at else None,
+                "deletion_reason": r.deletion_reason,
+                "retention_days": r.retention_days,
+                "performed_by": r.performed_by,
+                "file_size": r.file_size,
+            }
+            for r in results
+        ]
+    }
+
+
 def _resilience_control(status: str, title: str, evidence: str, domains: list[str], recommendation: str = "") -> dict:
+    """P2-09 (2026-07-07): Resilience control med evidence_links."""
     return {
         "status": status,
         "title": title,
         "evidence": evidence,
         "domains": domains,
         "recommendation": recommendation,
+        "evidence_links": _evidence_links_for_control(title, domains),
     }
 
 
@@ -13438,14 +13971,14 @@ def resilience_assessment(_user=require_role("admin"), db: Session = Depends(get
     return {
         "generated_at": now_utc().isoformat(),
         "summary": {
-            "devices": len(devices),
-            "inventory_rows": len(inventory),
-            "restore_inventory_rows": len(restore_inventory),
-            "headend_backup_ready": latest_backup_exists,
-            "nas_ready": nas_ready,
-            "active_bootstrap_tokens": active_tokens,
-            "update_artifacts": artifacts,
-            "change_tickets": tickets,
+            "devices": int(len(devices) or 0),
+            "inventory_rows": int(len(inventory) or 0),
+            "restore_inventory_rows": int(len(restore_inventory) or 0),
+            "headend_backup_ready": bool(latest_backup_exists),
+            "nas_ready": bool(nas_ready),
+            "active_bootstrap_tokens": int(active_tokens or 0),
+            "update_artifacts": int(artifacts or 0),
+            "change_tickets": int(tickets or 0),
             "counts": counts,
         },
         "headend_dr": {
@@ -13532,7 +14065,12 @@ def trigger_edge_backup(device_id: str, _user=require_role("admin"), db: Session
     existing.pop("backup_complete", None)
     device.device_config = json.dumps(existing)
     db.commit()
-    return {"status": "ok", "message": f"Backup anmodet for {device_id}"}
+    return {
+        "status": "ok",
+        "message": f"Backup anmodet for {device_id}",
+        "device_id": device_id,
+        "requested_at": now_utc().isoformat(),
+    }
 
 
 @app.post("/api/admin/edge-provisioning/prepare")

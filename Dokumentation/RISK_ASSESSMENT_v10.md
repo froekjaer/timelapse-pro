@@ -1,7 +1,7 @@
 # TimeLapse Pro — SABSA/ISO 27001/IEC 62443/CRA/NIS2/GDPR Risikovurdering (v10, konsolideret) + Virtuel Penetrationstest
 
 **Version:** 10 (konsolideret)
-**Dato:** 2026-07-02
+**Dato:** 2026-07-07
 **Forfatter:** Peter Frøkjær / TimeLapse Pro
 **Afløser/konsoliderer:** `RISK_ASSESSMENT_v7_2026-06-23.md` (backbone) + `Claude_`/`Codex_RISK_ASSESSMENT_v7` + `RISK_ASSESSMENT_v6.md` (+ `TimeLapse_SABSA_Risk_Assessment.docx` v2–v6), `QA_Pentest_Risk_Assessment_2026-06-21`, `QA_SABSA_Reassessment_2026-06-22`, `VIRTUAL_PENTEST_STATUS_2026-05-28`, `SABSA_RISK_ANALYSIS_UPDATE_2026-05-28`. Tidligere versioner arkiveret i `Gamle versioner/`.
 **Status:** Gældende — pre-production LAB/R&D
@@ -109,6 +109,12 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 | P2 Secrets i LaunchAgent | 🟡 Acceptabelt for nu, ikke moden model |
 
 ---
+
+### 2.1 Opdatering 2026-07-06 – driftssikkerhed og evidens
+
+- **Status:** 🟡 Gul — forbedret, men fortsat afhængig af live miljø og faktisk NAS-backup-konfiguration.
+- **Implementerede kontroller:** Daglig smoke-suite og regressionstests for operational readiness, backup/resilience og compliance; stabilisering af compliance- og backup-endpointes response-contracts for UI og automatiserede checks.
+- **Residualrisiko:** Mindre end før, men stadig relevant for live-verifikation mod en kørende headend-instans og konkrete backup-paths. Tilsyneladende "tom" data kan stadig være et reelt miljøfænomen og ikke kun en UI-bug.
 
 ## 3. SABSA Business Attribute Profile (opdateret)
 
@@ -283,7 +289,8 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
 - **Mangler:** DPIA pr. kunde/site, retention policy, adgangslog pr. billede, sløring/redaction workflow, databehandleraftale, subprocessor-liste (Gemini/Google Cloud)
 - **Anbefaling:** DPIA-template, retention-policy i DB pr. camera, download-audit log
 - **TILFØJELSE 2026-07-04 (Claude):** GPS/lokationsmetadata (breddegrad/længdegrad/højde pr. optagelse) er nu reelt implementeret og verificeret i produktion (kildeprioritet enhed/kamera > site, signeret GPS-fix fra kameraet kan ikke overskrives, kilde vises i UI). Dette er personoplysning i GDPR-forstand (præcis geografisk placering af overvågningsudstyr, potentielt private adresser) og falder ind under nærværende risiko — DPIA/retention-arbejdet (se §11 P0) skal eksplicit dække GPS-feltet, ikke kun selve billedet. Ingen kodeændring nødvendig, men scope for DPIA-template bør nævne det eksplicit.
-- **TILFØJELSE 2026-07-04 (nat, Claude):** DPIA-skabelon, retention-policy-design og subprocessor-liste udarbejdet — se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Dette er tekniske/organisatoriske UDKAST (ikke juridisk godkendt), og retention er kun et design, ikke implementeret kode. Databehandleraftale og brudprocedure er bevidst IKKE dækket (kræver jurist). Fandt undervejs R18 (separat, urelateret produktionsbug — rettet, se nedenfor).
+- **TILFØJELSE 2026-07-04 (nat, Claude):** DPIA-skabelon, retention-policy-design og subprocessor-liste udarbejdet — se `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`. Dette er tekniske/organisatoriske UDKAST (ikke juridisk godkendt). Databehandleraftale og brudprocedure er bevidst IKKE dækket (kræver jurist). Fandt undervejs R18 (separat, urelateret produktionsbug — rettet, se nedenfor).
+- **TILFØJELSE 2026-07-07 (Claude-2):** Retention policy (G-02) er nu **implementeret i kode** — database migration v15 (Camera.retention_days, CaptureDeletionLog), backend cleanup loop, API endpoints, UI (RetentionPage + per-kamera felt), og test suite (8/8 unit tests bestået). Se ADMINISTRATORMANUAL v10 §1.5.5 og BRUGERMANUAL v10 §7.2. R12 forbliver 🔴 da DPIA, DPA og redaction-workflow stadig mangler.
 - **TILFØJELSE 2026-07-05 (Claude, periodisk tjek):** Opfulgte DPIA-dokumentets §4-anbefaling ("Bekræft Gemini/Vertex AI's faktiske region-indstilling som allerførste skridt") ved kodegennemgang af `headend/ai/gemini_service.py`/`headend/main.py`/`headend/ai/ai_batch_submit.py`. Fund: Vertex-region defaulter til `europe-west1` (EU) hvis `GOOGLE_CLOUD_LOCATION` ikke er sat, OG `POST /api/admin/ai-batch/...`-endepunktet (API-stien bag "Kør AI-batch nu" i UI'et) havde allerede et tjek der stopper jobbet, hvis det konfigurerede `gemini_gcs_bucket_region` ikke matcher Vertex-regionen — MEN `headend/ai/ai_batch_submit.py` (CLI-scriptet til manuel bulk re-tag, kører direkte på Mac Mini'en, samme Vertex-batch-upload) havde INTET tilsvarende tjek. En operatør der kørte CLI-scriptet i stedet for UI-knappen kunne dermed sende et helt bulk-batch-job til et forkert-region GCS-bucket uden nogen advarsel. Rettet: logikken er udtrukket til én delt funktion (`validate_batch_bucket_region()` i `gemini_service.py`), brugt af begge indgange, med 6 nye kontrakt-tests (`headend/tests/test_gemini_region_guard.py`) samt kørsel af hele den eksisterende test-suite (19/19 bestået) og `py_compile` på alle rørte filer. **Fortsat IKKE bekræftet af denne runde** (kræver live-adgang til den faktiske produktions-`GOOGLE_CLOUD_LOCATION`/`gemini_gcs_bucket_region`-værdi, som Claude ikke har): at de FAKTISK konfigurerede værdier i produktion reelt er sat til EU-regioner — kun at koden nu konsekvent HÅNDHÆVER match mellem de to, uanset hvilken indgang der bruges. Se `GO_LIVE_CHECKLIST_v10.md` §G for status.
 - **TILFØJELSE 2026-07-05 (Claude, Peters miljøafklaring + Codex-præcisering):** Peter har bekræftet at der allerede findes en **databehandleraftale med kunden Kirkbi A/S** (som ejer Site "Travbyen", hvorfra billederne i R&D-miljøet er importeret). Dette er en delvis, ikke fuld, lempelse af "databehandleraftale mangler". Codex' vigtige præcisering (fastholdt her): dette dækker lovligt behandlingsgrundlag for drift/support, men er IKKE i sig selv det samme som fri R&D-agentadgang til kundebilleder til AI/QA-udvikling — det er et separat spørgsmål, adskilt fra selve DPA-eksistensen. Se `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §4 for de tre adskilte spørgsmål og forbehold: aftalen skal verificeres til også at dække TimeLapse Pro's FAKTISKE nuværende behandling (AI/Gemini cloud-eskalering, GPS-metadata), før den kan bruges som fuld GDPR-evidens for G-03 i `GO_LIVE_CHECKLIST_v10.md`. Nye kunder ud over Kirkbi A/S kræver fortsat hver deres egen aftale.
 - **TILFØJELSE 2026-07-05 (Claude, opfølgning) — udviklingsanvendelse eksplicit tilladt:** Peter har oplyst at der, UD OVER selve databehandleraftalen, er givet **eksplicit tilladelse til at Travbyen-billederne anvendes i forbindelse med udviklingen af TimeLapse Pro**. Dette besvarer direkte Codex' tidligere rejste punkt 2 (agent-udviklingsadgang til reelle kundebilleder er et separat spørgsmål fra selve DPA'en) — det er nu udtrykkeligt dækket for udviklingsformål, ikke kun antaget. Dækker IKKE automatisk andre formål (fx offentlig markedsføring af billederne) — kun udvikling. Nye kunder kræver en tilsvarende eksplicit tilladelse, ikke kun en DPA.
@@ -603,6 +610,20 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
     i en åben PR ændrer intet i et kørende system).
 - **Sandsynlighed:** 1 (ned fra 2 — eksplicit, ordret politik-bekræftelse fra Peter 2026-07-05, plus en dedikeret installationsguide der gør Peter uafhængig af agent-hjælp på staging/prod), **Konsekvens:** 5 (uændret — ville stadig være et reelt databrud på live kundedata + legacy-system, hvis det skete), **Score:** 🟡 5 (ned fra 🟠 10, uændret ved denne kodesession — se ovenfor)
 
+### R20 — Incident Response Procedure mangler (NY, 2026-07-07)
+- **Status:** 🟡 Procedure oprettet — ikke testet i praksis
+- **Formål:** GDPR Art. 33/34 notifikationskrav (72t) og struktureret incident response
+- **Implementerede kontroller:**
+  - `SEC-013_Incident_Response_Procedure.md` oprettet med classifications, triage, containment, recovery
+  - GDPR notifikationskrav dokumenteret (Art. 33 tilsynsførhed, Art. 34 registrerede)
+  - Template for incident log og post-incident review
+- **Åbent:**
+  - Procedure er ikke testet i praksis (ingen simulated incident)
+  - Ingen tidsmåling (RTO) for containment/recovery
+  - Post-incident review proces ikke etableret
+- **Sandsynlighed:** 2 (kan ske ved enhver security-hændelse), **Konsekvens:** 4 (potentielt GDPR-bøde ved for sen notifikation), **Score:** 🟡 8
+- **Dokumentation:** Se `SEC-013_Incident_Response_Procedure.md`, `GO_LIVE_CHECKLIST_v10.md` §G-06
+
 ---
 
 ## 5. Virtuel penetrationstest — opdatering juni 2026
@@ -808,7 +829,7 @@ NIS2 gælder potentielt for kritisk infrastruktur og vigtige tjenester. TimeLaps
 | Art. 35 — DPIA | Billedovervågning med høj risiko | 🟠 Skabelon klar (G-01, 2026-07-04) — mangler udfyldelse pr. kunde/site + juridisk godkendelse |
 | Art. 28 — Databehandleraftale | Aftale med Peter/TimeLapse Pro | 🟠 Delvist (G-03) — Kirkbi A/S (Site Travbyen) har en eksisterende aftale, dækning mod faktisk nuværende behandling (AI/Gemini, GPS) og agent-adgang er ikke verificeret; fortsat 🔴 for nye kunder |
 | Art. 13/14 — Oplysningspligt | Information til registrerede | 🟠 Skitse-tekst klar (G-07, 2026-07-04) — kræver juridisk godkendelse |
-| Retention | Opbevaringsbegrænsning | 🔴 Design klar (G-02, 2026-07-04) — IKKE implementeret i kode endnu |
+| Retention | Opbevaringsbegrænsning | 🟡 Backend implementeret (G-02, 2026-07-06) — migration v15, database model, cleanup loop, API endpoints klar. Mangler: UI, per-kamera config, test suite. Kræver migration FØR deploy. |
 | Adgangslog | Log pr. billede/download | ✅ Implementeret og testverificeret 2026-07-05 (G-05) — `CaptureAccessLog` + `_log_capture_access()`, 4/4 + 41/41 tests bestået |
 | Subprocessorer | Google Cloud/Gemini, evt. andre | 🟡 Udkast-liste klar (G-04, 2026-07-04 nat) — ikke juridisk bekræftet/offentliggjort |
 

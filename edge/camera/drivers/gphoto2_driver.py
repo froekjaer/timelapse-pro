@@ -167,52 +167,204 @@ def _read_gpsd_fix(timeout_s: int = 10) -> dict:
     return {}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Camera Profiles — TimeLapse Pro
+# Version: 2.0.0 | 2026-07-07
+# ────────────────────────────────────────────────────────────────────────────────
+#
+# Design principles:
+#   1. Shared settings defined once in base profile (inherited by all)
+#   2. Camera-specific features in dedicated profiles
+#   3. All settings that affect image hash are explicitly listed
+#   4. GPS/NTP sync capabilities documented per camera
+#   5. Shutter life ratings documented per model
+#
+# Hash inclusion policy:
+#   Any setting listed in config_commands, capture_settings, or camera_capabilities
+#   will be included in the camera config hash used for drift detection.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Base Profile: Shared Settings ────────────────────────────────────────────
+# These settings are common across all supported camera models.
+# Individual camera profiles inherit and can override specific paths.
+_BASE_CAMERA_PROFILE = {
+    "name": "Base Camera Profile",
+    "description": "Shared configuration inherited by all camera profiles",
+    # Shutter life rating (actuations) — used for diagnostics/alarm
+    "shutter_rating": 100_000,
+    # Capture settings — paths for reading current values after capture
+    "capture_settings": {
+        "exposure_time": ["/main/capturesettings/shutterspeed"],
+        "aperture": [
+            "/main/capturesettings/aperture",
+            "/main/capturesettings/f-number",
+        ],
+        "iso": [
+            "/main/capturesettings/iso",
+            "/main/imgsettings/iso",
+        ],
+        "focus_mode": ["/main/capturesettings/focusmode"],
+    },
+    # Config commands — for writing settings (drift-checked)
+    # All these settings are included in camera config hash
+    "config_commands": {
+        "iso": {
+            "path": "/main/imgsettings/iso",
+            "skip_values": ["Auto", "auto", ""],
+        },
+        "shutter_speed": {
+            "path": "/main/capturesettings/shutterspeed",
+            "skip_values": ["Auto", "auto", ""],
+        },
+        "aperture": {
+            "path": "/main/capturesettings/f-number",
+            "skip_values": ["Auto", "auto", ""],
+        },
+        "whitebalance": {
+            "path": "/main/imgsettings/whitebalance",
+            "value_map": {
+                "Auto": "Automatic",
+                "AWB White": "Automatic",
+                "Daylight": "Daylight",
+                "Cloudy": "Cloudy",
+                "Tungsten": "Incandescent",
+                "Fluorescent": "Fluorescent",
+                "Flash": "Flash",
+                "Shade": "Shade",
+            },
+        },
+        "colorspace": {"path": "/main/imgsettings/colorspace"},
+        "imageformat": {"path": "/main/imgsettings/imageformat"},
+        "exposurecompensation": {"path": "/main/capturesettings/exposurecompensation"},
+        "picturestyle": {"path": "/main/capturesettings/picturestyle"},
+        "meteringmode": {"path": "/main/capturesettings/meteringmode"},
+        "autoexposuremode": {"path": "/main/capturesettings/autoexposuremode"},
+    },
+    # Camera capabilities — what this camera class can do
+    "camera_capabilities": {
+        "autofocus": False,        # Can trigger autofocus via software
+        "remote_focus": False,    # Can drive focus motor via software
+        "liveview": True,         # Can preview live view
+        "movie": False,           # Can record video
+        "gps_sync": False,        # Can sync internal clock from GPS/NTP
+        "location_embed": False,  # Can embed GPS coordinates in EXIF
+        "datetime_sync": True,    # Can set date/time via gphoto2
+    },
+    # Actions — gphoto2 action paths
+    "actions": {},
+    # Focus controls — for cameras with motorized focus
+    "focus_controls": {},
+}
+
+# ── Camera Profiles ───────────────────────────────────────────────────────────────
 CAMERA_PROFILES = {
     "default": {
-        "name": "Generic gPhoto2",
-        "capture_settings": {
-            "exposure_time": ["/main/capturesettings/shutterspeed"],
-            "aperture": [
-                "/main/capturesettings/aperture",
-                "/main/capturesettings/f-number",
-            ],
-            "iso": [
-                "/main/capturesettings/iso",
-                "/main/imgsettings/iso",
-            ],
-            "focus_mode": ["/main/capturesettings/focusmode"],
-        },
-        "features": {
-            "autofocus": False,
-            "remote_focus": False,
-            "liveview": True,
-            "movie": False,
-        },
-        "actions": {},
+        **_BASE_CAMERA_PROFILE,
+        "name": "Generic gPhoto2 Camera",
+        "description": "Fallback profile for unknown cameras",
     },
-    "Canon EOS": {
-        "name": "Canon EOS",
+
+    # ── Canon EOS 1000D (Rebel XS) ────────────────────────────────────────────────
+    "Canon EOS 1000D": {
+        **_BASE_CAMERA_PROFILE,
+        "name": "Canon EOS 1000D",
+        "description": "Entry-level DSLR from 2008, 10.1MP",
+        "shutter_rating": 100_000,
+        # Override capture settings with model-specific paths
         "capture_settings": {
             "exposure_time": ["/main/capturesettings/shutterspeed"],
-            "aperture": ["/main/capturesettings/aperture"],
-            "iso": [
-                "/main/capturesettings/iso",
-                "/main/imgsettings/iso",
-            ],
+            "aperture": ["/main/capturesettings/f-number"],
+            "iso": ["/main/imgsettings/iso"],
             "focus_mode": ["/main/capturesettings/focusmode"],
         },
-        "features": {
-            "autofocus": False,
-            "remote_focus": False,
-            "liveview": True,
-            "movie": False,
+        "config_commands": {
+            **_BASE_CAMERA_PROFILE["config_commands"],
+            # EOS 1000D specific value mappings
+            "whitebalance": {
+                "path": "/main/imgsettings/whitebalance",
+                "value_map": {
+                    "Auto": "AWB White",
+                    "Daylight": "Daylight",
+                    "Cloudy": "Cloudy",
+                    "Tungsten": "Tungsten",
+                    "Fluorescent": "Fluorescent",
+                    "Flash": "Flash",
+                },
+            },
+        },
+        "camera_capabilities": {
+            **_BASE_CAMERA_PROFILE["camera_capabilities"],
+            "datetime_sync": True,
         },
         "actions": {
             "viewfinder": "/main/actions/viewfinder",
         },
     },
+
+    # ── Canon EOS 1300D (Rebel T6) ────────────────────────────────────────────────
+    "Canon EOS 1300D": {
+        **_BASE_CAMERA_PROFILE,
+        "name": "Canon EOS 1300D",
+        "description": "Entry-level DSLR from 2016, 18MP with WiFi",
+        "shutter_rating": 100_000,
+        "capture_settings": {
+            "exposure_time": ["/main/capturesettings/shutterspeed"],
+            "aperture": ["/main/capturesettings/f-number"],
+            "iso": [
+                "/main/capturesettings/iso",
+                "/main/imgsettings/iso",
+            ],
+            "focus_mode": ["/main/capturesettings/focusmode"],
+        },
+        "camera_capabilities": {
+            **_BASE_CAMERA_PROFILE["camera_capabilities"],
+            "datetime_sync": True,
+            "wifi_transfer": True,  # Can transfer via WiFi (not used in TimeLapse Pro)
+        },
+        "actions": {
+            "viewfinder": "/main/actions/viewfinder",
+        },
+    },
+
+    # ── Canon EOS 2000D (Rebel T7) ────────────────────────────────────────────────
+    "Canon EOS 2000D": {
+        **_BASE_CAMERA_PROFILE,
+        "name": "Canon EOS 2000D",
+        "description": "Entry-level DSLR from 2018, 24.1MP",
+        "shutter_rating": 100_000,
+        "capture_settings": {
+            "exposure_time": ["/main/capturesettings/shutterspeed"],
+            "aperture": ["/main/capturesettings/f-number"],
+            "iso": [
+                "/main/capturesettings/iso",
+                "/main/imgsettings/iso",
+            ],
+            "focus_mode": ["/main/capturesettings/focusmode"],
+        },
+        "camera_capabilities": {
+            **_BASE_CAMERA_PROFILE["camera_capabilities"],
+            "datetime_sync": True,
+            "wifi_transfer": True,
+        },
+        "actions": {
+            "viewfinder": "/main/actions/viewfinder",
+        },
+    },
+
+    # ── Canon EOS 2000D variant (alternative model name) ─────────────────────────────
+    "Canon EOS 2000D/4000D": {
+        **_BASE_CAMERA_PROFILE,
+        "name": "Canon EOS 2000D/4000D",
+        "description": "Entry-level DSLR series, similar config",
+        "shutter_rating": 100_000,
+    },
+
+    # ── Nikon Z30 ───────────────────────────────────────────────────────────────────
     "Nikon Z30": {
+        **_BASE_CAMERA_PROFILE,
         "name": "Nikon Z30",
+        "description": "APS-C mirrorless from 2022, 20.9MP",
+        "shutter_rating": 100_000,
         "capture_settings": {
             "exposure_time": [
                 "/main/capturesettings/shutterspeed",
@@ -222,33 +374,12 @@ CAMERA_PROFILES = {
             "iso": ["/main/imgsettings/iso"],
             "focus_mode": ["/main/capturesettings/focusmode"],
         },
-        "features": {
-            "autofocus": True,
-            "remote_focus": True,
-            "liveview": True,
-            "movie": True,
-        },
-        "actions": {
-            "autofocus": "/main/actions/autofocusdrive",
-            "manual_focus": "/main/actions/manualfocusdrive",
-            "viewfinder": "/main/actions/viewfinder",
-            "movie": "/main/actions/movie",
-            "control_mode": "/main/actions/controlmode",
-        },
-        "focus_controls": {
-            "manual_focus_default_step": "500",
-            "manual_focus_min": "-32767",
-            "manual_focus_max": "32767",
-            "manual_focus_context": {
-                "/main/capturesettings/liveviewaffocus": "Manual Focus (selection)",
-                "/main/actions/viewfinder": "1",
-            },
-        },
         "config_commands": {
+            **_BASE_CAMERA_PROFILE["config_commands"],
+            # Z30-specific config paths and behaviors
             "iso": {
                 "path": "/main/imgsettings/iso",
-                # Z30 often exposes concrete ISO values only; "Auto" is camera-mode
-                # dependent and should not be forced as a drift expectation.
+                # Z30 exposes concrete ISO values; "Auto" is mode-dependent
                 "skip_values": ["Auto", "auto", ""],
             },
             "shutter_speed": {
@@ -274,9 +405,94 @@ CAMERA_PROFILES = {
             "colorspace": {"path": "/main/imgsettings/colorspace"},
             "imageformat": {"path": "/main/imgsettings/imageformat"},
             "exposurecompensation": {"path": "/main/capturesettings/exposurecompensation"},
-            # gphoto2 exposes focus mode as readonly on Z30 in our lab profile.
+            # Focus mode is readonly on Z30 in current firmware
             "focusmode": {"skip": True},
         },
+        "camera_capabilities": {
+            **_BASE_CAMERA_PROFILE["camera_capabilities"],
+            "autofocus": True,        # Can trigger autofocus drive
+            "remote_focus": True,    # Can drive focus motor in steps
+            "liveview": True,
+            "movie": True,
+            "datetime_sync": True,
+        },
+        "actions": {
+            "autofocus": "/main/actions/autofocusdrive",
+            "manual_focus": "/main/actions/manualfocusdrive",
+            "viewfinder": "/main/actions/viewfinder",
+            "movie": "/main/actions/movie",
+            "control_mode": "/main/actions/controlmode",
+        },
+        "focus_controls": {
+            "manual_focus_default_step": "500",
+            "manual_focus_min": "-32767",
+            "manual_focus_max": "32767",
+            "manual_focus_context": {
+                "/main/capturesettings/liveviewaffocus": "Manual Focus (selection)",
+                "/main/actions/viewfinder": "1",
+            },
+        },
+    },
+
+    # ── Legacy: Generic Canon EOS ───────────────────────────────────────────────────
+    # Fallback for any Canon EOS camera not specifically listed
+    "Canon EOS": {
+        **_BASE_CAMERA_PROFILE,
+        "name": "Canon EOS (Generic)",
+        "description": "Generic Canon EOS profile for unlisted models",
+        "shutter_rating": 100_000,
+        "actions": {
+            "viewfinder": "/main/actions/viewfinder",
+        },
+    },
+}
+
+# ── Camera Metadata Table ───────────────────────────────────────────────────────────
+# Quick reference for camera model information used by diagnostics and UI
+CAMERA_METADATA = {
+    "Canon EOS 1000D": {
+        "shutter_rating": 100_000,
+        "megapixels": 10.1,
+        "release_year": 2008,
+        "sensor": "APS-C CMOS",
+        "gps_embed": False,
+        "datetime_sync": True,
+    },
+    "Canon EOS 1300D": {
+        "shutter_rating": 100_000,
+        "megapixels": 18.0,
+        "release_year": 2016,
+        "sensor": "APS-C CMOS",
+        "gps_embed": False,
+        "datetime_sync": True,
+        "wifi": True,
+    },
+    "Canon EOS 2000D": {
+        "shutter_rating": 100_000,
+        "megapixels": 24.1,
+        "release_year": 2018,
+        "sensor": "APS-C CMOS",
+        "gps_embed": False,
+        "datetime_sync": True,
+        "wifi": True,
+    },
+    "Canon EOS 4000D": {
+        "shutter_rating": 100_000,
+        "megapixels": 18.0,
+        "release_year": 2017,
+        "sensor": "APS-C CMOS",
+        "gps_embed": False,
+        "datetime_sync": True,
+    },
+    "Nikon Z30": {
+        "shutter_rating": 100_000,
+        "megapixels": 20.9,
+        "release_year": 2022,
+        "sensor": "APS-C CMOS",
+        "gps_embed": False,
+        "datetime_sync": True,
+        "autofocus_drive": True,
+        "mirrorless": True,
     },
 }
 
@@ -853,15 +1069,104 @@ class GPhoto2Driver(CameraBase):
 
     def supports_autofocus(self) -> bool:
         """True if the selected gphoto2 camera profile exposes AF drive."""
-        return bool(self._profile.get("features", {}).get("autofocus"))
+        # Try camera_capabilities first (new structure), fallback to features (legacy)
+        caps = self._profile.get("camera_capabilities") or self._profile.get("features", {})
+        return bool(caps.get("autofocus"))
 
     def supports_liveview(self) -> bool:
         """True if the selected gphoto2 camera profile exposes preview/liveview."""
-        return bool(self._profile.get("features", {}).get("liveview"))
+        # Try camera_capabilities first (new structure), fallback to features (legacy)
+        caps = self._profile.get("camera_capabilities") or self._profile.get("features", {})
+        return bool(caps.get("liveview"))
 
     def supports_remote_focus(self) -> bool:
         """True if the selected gphoto2 camera profile exposes focus motor steps."""
-        return bool(self._profile.get("features", {}).get("remote_focus"))
+        # Try camera_capabilities first (new structure), fallback to features (legacy)
+        caps = self._profile.get("camera_capabilities") or self._profile.get("features", {})
+        return bool(caps.get("remote_focus"))
+
+    def supports_datetime_sync(self) -> bool:
+        """True if the camera can have its internal clock set via gphoto2."""
+        caps = self._profile.get("camera_capabilities", {})
+        return bool(caps.get("datetime_sync", True))  # Default true for most cameras
+
+    def get_capabilities(self) -> dict:
+        """Return full camera capabilities dict for UI/CMDB."""
+        return self._profile.get("camera_capabilities", {})
+
+    def sync_camera_datetime(self, dt: Optional[datetime] = None) -> bool:
+        """Synchronize camera internal clock with system time or provided datetime.
+
+        Args:
+            dt: Optional datetime to set. If None, uses current system UTC time.
+
+        Returns:
+            True if sync succeeded, False otherwise.
+
+        IMPORTANT: Camera timestamp is included in EXIF data and affects image
+        hash calculation. Sync before capture for accurate timestamps.
+        """
+        if not self.supports_datetime_sync():
+            log.debug("Camera does not support datetime sync")
+            return False
+
+        if dt is None:
+            dt = datetime.now(timezone.utc)
+
+        # Format datetime for gphoto2: YYYYMMDD HHMMSS
+        # Time is always set in camera's local time — we use UTC for consistency
+        dt_str = dt.strftime("%Y%m%d %H%M%S")
+
+        log.info("Syncing camera datetime to: %s UTC", dt_str)
+
+        try:
+            result = _run(
+                [
+                    GPHOTO2_CMD,
+                    "--port", self._port,
+                    "--set-config",
+                    f"/main/settings/datetime={dt_str}"
+                ],
+                timeout=STATUS_TIMEOUT_S,
+                check=False,
+            )
+            success = result.returncode == 0
+            if success:
+                log.info("Camera datetime synced successfully")
+            else:
+                log.warning("Camera datetime sync failed: %s", result.stderr.strip())
+            return success
+        except Exception as exc:
+            log.warning("Camera datetime sync error: %s", exc)
+            return False
+
+    def get_camera_datetime(self) -> Optional[datetime]:
+        """Read camera's internal datetime setting.
+
+        Returns:
+            Camera datetime as timezone-aware UTC, or None if unavailable.
+        """
+        try:
+            result = _run(
+                [GPHOTO2_CMD, "--port", self._port,
+                 "--get-config", "/main/settings/datetime"],
+                timeout=STATUS_TIMEOUT_S,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None
+
+            match = re.search(r"Current:\s*(\d{8}\s+\d{6})", result.stdout)
+            if not match:
+                return None
+
+            dt_str = match.group(1)  # YYYYMMDD HHMMSS
+            # Parse as naive datetime, treat as UTC (camera convention in TimeLapse Pro)
+            dt = datetime.strptime(dt_str, "%Y%m%d %H%M%S")
+            return dt.replace(tzinfo=timezone.utc)
+        except Exception as exc:
+            log.debug("Failed to read camera datetime: %s", exc)
+            return None
 
     def run_autofocus(self) -> bool:
         """Trigger autofocus on cameras that expose an autofocus action."""
@@ -953,13 +1258,18 @@ class GPhoto2Driver(CameraBase):
 
     def get_profile_summary(self) -> dict:
         """Return normalized camera profile/capability information for UI/CMDB."""
+        # Get capabilities from new structure, fallback to legacy "features"
+        caps = self._profile.get("camera_capabilities") or self._profile.get("features", {})
+
         return {
             "driver": self.driver_name,
             "profile_key": self._profile_key,
             "profile_name": self._profile.get("name", self._profile_key),
+            "description": self._profile.get("description", ""),
             "detected_model": self._model or "Unknown",
             "gphoto2_port": self._port,
-            "features": dict(self._profile.get("features", {})),
+            "shutter_rating": self._profile.get("shutter_rating", 100_000),
+            "camera_capabilities": dict(caps),
             "capture_settings": dict(self._profile.get("capture_settings", {})),
             "config_commands": dict(self._profile.get("config_commands", {})),
             "focus_controls": dict(self._profile.get("focus_controls", {})),

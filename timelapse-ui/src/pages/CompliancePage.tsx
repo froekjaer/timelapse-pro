@@ -33,6 +33,7 @@ interface Control {
   evidence: string
   recommendation: string
   domains: string[]
+  evidence_links?: Array<{ url: string; label: string }>
 }
 
 interface Approval {
@@ -140,6 +141,7 @@ interface StandardReport {
     evidence: string
     recommendation: string
     source: string
+    evidence_links?: Array<{ url: string; label: string }>
   }>
   high_risk_devices: GrcDashboard['devices']
   evidence_sources: string[]
@@ -307,6 +309,21 @@ export function CompliancePage() {
                     <span className={`text-[11px] px-1.5 py-0.5 rounded border ${statusClass(control.status)}`}>{control.status}</span>
                   </div>
                   <p className="mt-1 text-xs text-gray-600">{control.evidence}</p>
+                  {control.evidence_links && control.evidence_links.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {control.evidence_links.map((link, idx) => (
+                        <a
+                          key={idx}
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] text-sky-600 hover:text-sky-800 hover:underline"
+                        >
+                          {link.label}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                   <p className="mt-1 text-[11px] text-gray-400">{control.recommendation}</p>
                 </div>
               ))}
@@ -496,6 +513,21 @@ export function CompliancePage() {
                     <span className="text-[11px] text-gray-400">{control.source}</span>
                   </div>
                   <p className="text-sm text-gray-600 mt-2">{control.evidence}</p>
+                  {control.evidence_links && control.evidence_links.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {control.evidence_links.map((link, idx) => (
+                        <a
+                          key={idx}
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-sky-600 hover:text-sky-800 hover:underline flex items-center gap-1"
+                        >
+                          📄 {link.label}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                   <p className="text-xs text-gray-400 mt-2">{control.recommendation}</p>
                   <div className="mt-3 flex gap-1 flex-wrap">
                     {control.domains.map(domain => (
@@ -536,6 +568,21 @@ export function CompliancePage() {
                         <span className={`text-[11px] px-1.5 py-0.5 rounded border ${statusClass(gap.status)}`}>{gap.status}</span>
                       </div>
                       <p className="mt-1 text-xs text-gray-600">{gap.evidence}</p>
+                      {gap.evidence_links && gap.evidence_links.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {gap.evidence_links.map((link, idx) => (
+                            <a
+                              key={idx}
+                              href={link.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] text-sky-600 hover:text-sky-800 hover:underline"
+                            >
+                              {link.label}
+                            </a>
+                          ))}
+                        </div>
+                      )}
                       <p className="mt-1 text-[11px] text-gray-400">{gap.recommendation}</p>
                     </div>
                   ))}

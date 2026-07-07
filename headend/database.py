@@ -303,6 +303,12 @@ class Camera(Base):
     # Factory default bruges indtil enrolled: JBSWY3DPEHPK3PXP / sid=factory-default
     bt_totp_secret      = Column(String(64), default=None)
     bt_totp_sid         = Column(String(100), default=None)
+    # ── Retention policy (v15 migration, 2026-07-06) ───────────────────────
+    # retention_days: Antal dage billeder fra dette kamera skal opbevares
+    #   inden automatisk sletning. Konfigurerbar pr. kunde/site/kamera via
+    #   config-hierarkiet (retention.days i camera config). Default 365 dage.
+    #   Hvis 0 eller NULL, ingen automatisk sletning (manuel styring).
+    retention_days      = Column(Integer, default=365)
 
 
 class DeviceAssignment(Base):
@@ -634,6 +640,31 @@ class CaptureAccessLog(Base):
     role          = Column(String(50))
     customer_id   = Column(String(36), index=True)
     accessed_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class CaptureDeletionLog(Base):
+    """Revisionslog for slettede captures — GDPR G-02 retention policy.
+
+    Oprettes VED sletning af et capture-billede (fil + DB-række) og bevares for
+    compliance-evidens. Uafhængig af selve billedet — loggen lever videre selv
+    efter filen er slettet.
+
+    Se DPIA_SKABELON_OG_RETENTION_POLICY_v1.md §3 for design.
+    """
+    __tablename__ = "capture_deletion_log"
+
+    id               = Column(Integer, primary_key=True)
+    capture_id       = Column(Integer, nullable=False, index=True)
+    camera_id        = Column(String(36), nullable=False, index=True)
+    customer_id      = Column(String(36), index=True)
+    site_id          = Column(String(36), index=True)
+    filename         = Column(String(255), nullable=False)
+    captured_at      = Column(DateTime, nullable=False)
+    deleted_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    deletion_reason  = Column(String(100))  # retention_policy|manual|gdpr_request|error
+    retention_days   = Column(Integer)       # policy der var aktiv ved sletning
+    performed_by     = Column(String(100))   # system|admin:<username>|retention_job
+    file_size        = Column(BigInteger)   # størrelse i bytes før sletning
 
 
 class WebAuthnCredential(Base):

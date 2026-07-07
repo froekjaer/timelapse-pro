@@ -36,6 +36,8 @@ jobs:
         run: pytest tests/test_agent_integrity.py -v
       - name: Headend endpoint tests
         run: pytest tests/test_headend_endpoints.py -v
+      - name: Daily smoke suite
+        run: pytest tests/test_smoke_suite.py -m smoke -v
 
   ui-check:
     name: Web UI Build Check
