@@ -29,7 +29,9 @@
     <key>PATH</key>
     <string>/Users/peter/projects/openwebui-env/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     <key>DATA_DIR</key>
-    <string>/Users/peter/.open-webui</string>
+    <string>/Volumes/data-fast/peter-home/open-webui-data</string>
+    <key>WEBUI_SECRET_KEY_FILE</key>
+    <string>/Volumes/data-fast/peter-home/open-webui-data/.webui_secret_key</string>
     <key>OLLAMA_BASE_URL</key>
     <string>http://127.0.0.1:11434</string>
     <key>CORS_ALLOW_ORIGIN</key>
@@ -83,7 +85,17 @@
        RunAtLoad=true + KeepAlive=true er derfor korrekt — det matcher den
        faktiske, allerede-fungerende deployment. Et separat eksperiment med
        RunAtLoad=false/KeepAlive=false som en gui-domæne LaunchAgent er forkastet
-       (den var i konflikt med denne daemon om port 8080). -->
+       (den var i konflikt med denne daemon om port 8080).
+
+       TILFØJET 2026-07-07: DATA_DIR flyttet fra /Users/peter/.open-webui (intern
+       disk) til /Volumes/data-fast/peter-home/open-webui-data (USB-drevet) —
+       Peter ville undgå at chat-historik/uploads/vector-database vokser på den
+       interne disk (kun 53 GB fri), i tråd med at openwebui-env allerede ligger
+       på USB'en. Muliggjort af Full Disk Access-tildelingen ovenfor, som dækker
+       ALLE stier processen tilgår, ikke kun venv'et. WEBUI_SECRET_KEY_FILE er nu
+       eksplicit sat til en fil i DATA_DIR (ikke i venv'et), så nøglen ikke går
+       tabt hvis openwebui-env geninstalleres. Gammel data ligger stadig urørt i
+       /Users/peter/.open-webui som backup, ikke slettet. -->
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>

@@ -8,7 +8,7 @@ person vide".
 
 ## Medarbejdere og samarbejdspartnere
 
-- Claude (AI-assistant i denne session) — arbejder med prioriteret backlog, tests, dokumentation og handover-synk.
+- Claude-2 (AI-assistent i denne session) — arbejder med prioriteret backlog, tests, dokumentation og handover-synk.
 - Peter Frøkjær — produkt-/driftsejer og beslutningstager.
 - Codex — samarbejdspartner for kode-, ops- og deployment-spor.
 
@@ -26,7 +26,52 @@ person vide".
 
 ## Log
 
-### Handover 2026-07-07 09:00 — fra Claude (ny session) til Peter/Codex
+### Handover 2026-07-07 10:00 — fra Claude-2 (P0-05 dokumentation opdateret) til Peter/Codex
+- **Hvad er gjort:**
+  - ✅ **BRUGERMANUAL_v10.md** — tilføjet §7.2 "Retention Policy (GDPR G-02)" med brugervejledning
+  - ✅ **ADMINISTRATORMANUAL_v10.md** — tilføjet §1.5.5 "P0-05: Retention Policy" med tekniske detaljer
+  - ✅ **RISK_ASSESSMENT_v10.md** — opdateret R12 note: retention nu implementeret i kode (men R12 forbliver 🔴 grundet DPIA/DPA)
+  - ✅ **KRAVREGISTER_og_STATUS_v10.md** — opdateret CAP-007 (✅ Implementeret) og SEC-012 note
+  - ✅ **GO_LIVE_CHECKLIST_v10.md** — opdateret G-02 (✅ Implementeret) og Note G
+  - ✅ **DPIA_SKABELON_OG_RETENTION_POLICY_v1.md** — opdateret §2 risikotabel og §3 header
+  - ✅ **Alle referencer til "retention ikke implementeret" fjernet eller korrigeret**
+- **Status på P0-05 Retention Policy (GDPR G-02):**
+  - ✅ Database migration v15
+  - ✅ Backend cleanup loop + API endpoints
+  - ✅ Globalt UI (RetentionPage)
+  - ✅ Per-kamera UI (CameraPage)
+  - ✅ Test suite (8/8 unit tests)
+  - ✅ **Dokumentation opdateret**
+- **Filer rørt:**
+  - `Dokumentation/BRUGERMANUAL_v10.md`
+  - `Dokumentation/ADMINISTRATORMANUAL_v10.md`
+  - `Dokumentation/RISK_ASSESSMENT_v10.md`
+  - `Dokumentation/KRAVREGISTER_og_STATUS_v10.md`
+  - `Dokumentation/GO_LIVE_CHECKLIST_v10.md`
+  - `Dokumentation/DPIA_SKABELON_OG_RETENTION_POLICY_v1.md`
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Næste skridt:**
+  - P0-05 er 100% kode- og dokumentation-mæssigt færdig
+  - Kræver: migration run, deploy til staging, og verifikation før production
+
+### Handover 2026-07-07 09:30 — fra Claude-2 (P0-05 tests færdig) til Peter/Codex
+  - ✅ Backend cleanup loop og API endpoints
+  - ✅ Globalt retention UI (RetentionPage.tsx)
+  - ✅ Per-kamera retention UI (CameraPage.tsx)
+  - ✅ **Test suite (unit + integration)**
+- **Filer rørt:**
+  - `tests/test_retention_policy.py` — ny testfil med 21 tests
+  - `tests/conftest.py` — tilføjet "unit" marker
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Kør test:**
+  - Unit tests: `pytest tests/test_retention_policy.py -v -m "not integration"`
+  - Integration: `pytest tests/test_retention_policy.py -v -m integration` (kræver headend)
+  - Smoke: `pytest tests/test_retention_policy.py -v -m smoke` (kræver headend)
+- **Risici / pas på:** Integration tests kræver `TIMELAPSE_TEST_BASE_URL` environment variable for at teste mod staging.
+
+### Handover 2026-07-07 09:15 — fra Claude-2 (P0-05 færdiggørelse) til Peter/Codex
+
+### Handover 2026-07-07 09:00 — fra Claude-2 (ny session) til Peter/Codex
 - **Session start:** Læst 00_START_HER.md, GO_LIVE_CHECKLIST_v10.md (delvist, for stor), og HANDOVER_LOG.md (nyeste 500 linjer).
 - **Status fra sidste session (2026-07-06 23:30):**
   - ✅ P0-05 Retention Policy backend: 80% færdig (mangler UI og tests)
@@ -8015,3 +8060,42 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - **Filer rørt:** `deploy/launchd/dk.froekjaer.open-webui.plist` (RunAtLoad/KeepAlive rettet
   tilbage + udvidet forklarende kommentar). Ingen ændringer i `headend/`. Denne
   HANDOVER_LOG-tilføjelse.
+
+- **Opfølgning 2026-07-07 — DATA_DIR flyttet til USB-drevet, og et sudo-adgangsproblem
+  løst undervejs på en sikker måde:**
+  1. Peter var bekymret for at `DATA_DIR` (`/Users/peter/.open-webui`, 185 MB — 133 MB
+     uploads, 48 MB vector-database, 4,8 MB `webui.db`) ligger på den interne disk, som
+     kun har 53 GB fri (ud af 228 GB), og vokser over tid i takt med brug. Ville have den
+     flyttet til USB-drevet (555 GB fri), i tråd med at `openwebui-env` allerede ligger der.
+  2. **Peter tilbød sit sudo-kodeord direkte i chatten. Det brugte jeg IKKE** — en kommando
+     med kodeordet indbygget ville være blevet skrevet i klartekst til
+     `.claude_proxy/audit.log` (append-only, aldrig ryddet) og ville komme tilbage gennem
+     `cmd_out.json` ind i denne samtales historik. I stedet bad jeg Peter om at oprette en
+     smalt afgrænset `NOPASSWD`-sudoers-regel (`/etc/sudoers.d/dk-froekjaer-openwebui`, via
+     `visudo` for syntakstjek) for netop de 5 kommandoer der var nødvendige (bootout/
+     bootstrap/kickstart/print for `dk.froekjaer.open-webui` + én `cp` til den ene plist-fil)
+     — intet bredere. Virkede uden kodeord efter Peters oprettelse.
+  3. **Fremgangsmåde:** `rsync -a` af hele `/Users/peter/.open-webui/` til
+     `/Volumes/data-fast/peter-home/open-webui-data/` (bevarer rettigheder), + kopi af
+     `.webui_secret_key` fra `openwebui-env` til samme sted (så eksisterende login-sessions
+     IKKE blev invalideret af flytningen). `sqlite3 PRAGMA integrity_check` kørt FØR og
+     EFTER kopiering (begge `ok`).
+  4. `deploy/launchd/dk.froekjaer.open-webui.plist` opdateret: `DATA_DIR` →
+     `/Volumes/data-fast/peter-home/open-webui-data`, og en ny `WEBUI_SECRET_KEY_FILE` →
+     samme mappe (rettede samtidig det tidligere fund om at nøglefilen lå forkert, i
+     `openwebui-env` i stedet for `DATA_DIR`).
+  5. Deployeret via de nye NOPASSWD-scopede sudo-kommandoer: `cp` til
+     `/Library/LaunchDaemons/dk.froekjaer.open-webui.plist`, `bootout` + `bootstrap` +
+     `kickstart -k`. Verificeret med `lsof -p <pid>` at den kørende proces reelt har
+     `webui.db`, `webui.db-shm/-wal` og `vector_db/chroma.sqlite3` åbne fra den NYE
+     placering, og at `ps eww` viser `DATA_DIR`/`WEBUI_SECRET_KEY_FILE` korrekt sat i
+     processens miljø (ikke kun i plisten — reelt inherited).
+  6. **Funktionel verifikation:** `curl http://127.0.0.1:8080/` → HTTP 200. `curl
+     https://openwebui.froekjaer.dk/` (uden login) → HTTP 302 (korrekt gate). `sqlite3
+     .../open-webui-data/webui.db 'select count(*) from chat'` → 19 — Peters eksisterende
+     chat-historik er bevaret intakt på den nye placering.
+  7. **Bevidst IKKE gjort:** gammel data i `/Users/peter/.open-webui` er IKKE slettet — den
+     ligger stadig som backup, indtil Peter selv beslutter at rydde den.
+- **Filer rørt:** `deploy/launchd/dk.froekjaer.open-webui.plist` (DATA_DIR +
+  WEBUI_SECRET_KEY_FILE tilføjet/rettet). `/etc/sudoers.d/dk-froekjaer-openwebui` (oprettet af
+  Peter selv, ikke i Git). Denne HANDOVER_LOG-tilføjelse.
