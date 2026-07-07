@@ -123,6 +123,14 @@ class Capture(Base):
     quality_passed  = Column(Boolean)
     blur_score      = Column(Float)
     brightness_mean = Column(Float)
+    # wb_cast_strength (v16, 2026-07-07): hvidbalance-driftsignal, samme rolle
+    # som blur_score/brightness_mean har for fokus/eksponering. Nullable/
+    # sparse med vilje — udfyldes kun når Edge's autonome optimizer kørte og
+    # rapporterede en white_balance-feature (afhænger af
+    # quality.edge_ai.run_optimizer-politik). Se
+    # headend/migrations/v16_wb_cast_strength.sql og
+    # headend/ai/drift_detection.py.
+    wb_cast_strength = Column(Float)
     uploaded        = Column(Boolean, default=False)
     exposure_time   = Column(String(20))
     aperture        = Column(String(20))

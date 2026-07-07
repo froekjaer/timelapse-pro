@@ -46,6 +46,7 @@ interface CameraLocation {
   notes: string | null
   baseline_description: string | null
   context_notes: string | null
+  retention_days?: number | null  // P0-05: Antal dage billeder skal opbevares (default 365)
 }
 
 interface CameraOption { id: string; camera_name: string; site_name?: string; customer_name?: string; customer_id?: string; site_id?: string }
@@ -105,6 +106,12 @@ const CAMERA_PARAMS: ParamRow[] = [
   { key: 'quality.edge_ai.runner', label: 'NPU runner', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py', description: 'Lokal kommando der returnerer QA JSON' },
   { key: 'quality.edge_ai.model_path', label: 'NPU model', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/models/edge_qa.nb', description: 'Vendor/NPU modelsti på Edge' },
   { key: 'quality.edge_ai.vendor_binary', label: 'VIPLite wrapper', section: 'Kvalitet', type: 'text', placeholder: '/opt/timelapse/bin/edge_qa_viplite', description: 'Valgfri board-lokal binary der kører .nb modellen og returnerer scores JSON' },
+  { key: 'quality.drift_detection.focus.enabled', label: 'Fokus-drift-alarm', section: 'Kvalitet', type: 'boolean', description: 'Alarmerer hvis skarpheden systematisk falder over tid (manuel fokus kan glide)' },
+  { key: 'quality.drift_detection.focus.z_threshold', label: 'Fokus-følsomhed', section: 'Kvalitet', type: 'number', placeholder: '2.0', description: 'Antal standardafvigelser fra kameraets egen baseline før der alarmeres — lavere = mere følsom' },
+  { key: 'quality.drift_detection.exposure.enabled', label: 'Eksponerings-drift-alarm', section: 'Kvalitet', type: 'boolean', description: 'Alarmerer hvis lysstyrken systematisk skifter over tid (støv/tåge/sæson)' },
+  { key: 'quality.drift_detection.exposure.z_threshold', label: 'Eksponerings-følsomhed', section: 'Kvalitet', type: 'number', placeholder: '2.5' },
+  { key: 'quality.drift_detection.white_balance.enabled', label: 'Hvidbalance-drift-alarm', section: 'Kvalitet', type: 'boolean', description: 'Kræver at edge-optimizeren rapporterer hvidbalance-data — slået fra som default' },
+  { key: 'quality.drift_detection.white_balance.z_threshold', label: 'Hvidbalance-følsomhed', section: 'Kvalitet', type: 'number', placeholder: '2.0' },
   // Diagnostik
   { key: 'diagnostics.heartbeat_interval_minutes', label: 'Heartbeat interval', section: 'Diagnostik', type: 'number', unit: 'min', placeholder: '60', description: 'Minutter mellem diagnostik uploads' },
 ]
@@ -148,6 +155,7 @@ export function CameraPage() {
   const [cameraName, setCameraName]   = useState('')
   const [baselineDescription, setBaselineDescription] = useState('')
   const [contextNotes, setContextNotes]               = useState('')
+  const [retentionDays, setRetentionDays]             = useState(365)  // P0-05: Retention policy
   const [cameraIndex, setCameraIndex] = useState(0)
   const [relayCamera, setRelayCamera] = useState(356)
   const [relayModem, setRelayModem]   = useState(361)
@@ -188,6 +196,7 @@ export function CameraPage() {
         if (cam) {
           setBaselineDescription(cam.baseline_description ?? '')
           setContextNotes(cam.context_notes ?? '')
+          setRetentionDays(cam.retention_days ?? 365)  // P0-05: Load retention
         }
         return cam
       }
@@ -247,6 +256,7 @@ export function CameraPage() {
             camera_name: cameraName,
             baseline_description: baselineDescription,
             context_notes: contextNotes,
+            retention_days: retentionDays,
           }),
         })
         await api(`/api/admin/config-overrides/camera/${encodeURIComponent(cameraLocation.id)}`, {
@@ -530,6 +540,12 @@ export function CameraPage() {
             <input type="number" min={0} max={7} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={cameraIndex} onChange={e => setCameraIndex(parseInt(e.target.value) || 0)} />
             <p className="text-xs text-gray-300 mt-1">Fysisk node-index. Kamera-config gemmes på lokationen.</p>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Retention (dage)</label>
+            <input type="number" min={1} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              value={retentionDays} onChange={e => setRetentionDays(parseInt(e.target.value) || 365)} />
+            <p className="text-xs text-gray-300 mt-1">Antal dage billeder opbevares før automatisk sletning (GDPR)</p>
           </div>
           <div>
             <label className="text-xs text-gray-400 block mb-1">Relay GPIO (kamera)</label>

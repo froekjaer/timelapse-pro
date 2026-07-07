@@ -130,6 +130,12 @@ const SECTIONS: { key: keyof ConfigDefaults; label: string; description: string;
       { key: 'edge_ai.runner', label: 'NPU runner', type: 'text', placeholder: '/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py' },
       { key: 'edge_ai.model_path', label: 'NPU model', type: 'text', placeholder: '/opt/timelapse/models/edge_qa.nb' },
       { key: 'edge_ai.vendor_binary', label: 'VIPLite wrapper', type: 'text', placeholder: '/opt/timelapse/bin/edge_qa_viplite' },
+      { key: 'drift_detection.focus.enabled', label: 'Fokus-drift-alarm', type: 'boolean', default: true, description: 'Alarmerer hvis skarpheden systematisk falder over tid (manuel fokus kan glide)' },
+      { key: 'drift_detection.focus.z_threshold', label: 'Fokus-følsomhed', type: 'number', placeholder: '2.0', default: 2.0, description: 'Antal standardafvigelser fra kameraets egen baseline før der alarmeres — lavere = mere følsom' },
+      { key: 'drift_detection.exposure.enabled', label: 'Eksponerings-drift-alarm', type: 'boolean', default: true, description: 'Alarmerer hvis lysstyrken systematisk skifter over tid (støv/tåge/sæson)' },
+      { key: 'drift_detection.exposure.z_threshold', label: 'Eksponerings-følsomhed', type: 'number', placeholder: '2.5', default: 2.5 },
+      { key: 'drift_detection.white_balance.enabled', label: 'Hvidbalance-drift-alarm', type: 'boolean', default: false, description: 'Kræver at edge-optimizeren rapporterer hvidbalance-data — slået fra som default' },
+      { key: 'drift_detection.white_balance.z_threshold', label: 'Hvidbalance-følsomhed', type: 'number', placeholder: '2.0', default: 2.0 },
     ],
   },
   {

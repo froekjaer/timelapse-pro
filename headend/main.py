@@ -3786,6 +3786,46 @@ def heartbeat(
 
 # ── Captures ──────────────────────────────────────────────────────────────────
 
+def _extract_wb_cast_strength(edge_ai_result: dict | None) -> float | None:
+    """Udtræk hvidbalance-driftsignalet (cast_strength) fra Edge's QA-payload.
+
+    2026-07-07 (Claude, drift-detection fase 1): cast_strength beregnes KUN af
+    den autonome optimizer på Edge (edge/ai/autonomous_optimizer.py), ikke af
+    den altid-kørende deterministiske QA-test (edge/capture/quality.py). Den
+    optræder derfor kun i payloaden når quality.edge_ai.run_optimizer=true OG
+    optimizeren rent faktisk nåede at køre — IKKE på hver capture. Dette er en
+    bevidst, lav-risiko afgrænsning: at gøre cast_strength til en altid-
+    tilstedeværende feature ville kræve at ændre den deterministiske CV-kode
+    på Edge selv (edge/capture/quality.py::_cv_features), som kræver
+    redeploy/test på fysisk hardware. Server-side udtræk fra den JSON der
+    allerede sendes er nul-risiko og nul-deploy.
+
+    Payloaden kan have strukturen på to måder afhængigt af hvor den kommer
+    fra (se autonomous_optimizer.py/_control_plan og edge_qa_npu_runner.py):
+      - result["autonomous_optimizer"]["features"]["white_balance"]["cast_strength"]
+      - result["npu"]["optimizer"]["features"]["white_balance"]["cast_strength"]
+    Returnerer None hvis ingen af de to findes eller værdien ikke er numerisk.
+    """
+    if not edge_ai_result:
+        return None
+    for path in (
+        ("autonomous_optimizer", "features", "white_balance", "cast_strength"),
+        ("npu", "optimizer", "features", "white_balance", "cast_strength"),
+    ):
+        node: object = edge_ai_result
+        for key in path:
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(key)
+        if node is not None:
+            try:
+                return float(node)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
 @app.post("/api/captures/{device_id}")
 def receive_capture(
     device_id: str,
@@ -3837,6 +3877,15 @@ def receive_capture(
             "source": "edge",
             "edge_ai_engine": req.edge_ai_engine or req.edge_ai_result.get("engine"),
         }, ensure_ascii=False)
+
+    # wb_cast_strength (v16, drift-detection fase 1): opdateres hver gang
+    # optimizeren rapporterede en ny værdi — i modsætning til ai_result ovenfor
+    # (write-once) vil vi have den NYESTE kendte hvidbalance-måling, ligesom
+    # blur_score/brightness_mean altid er den nyeste. Skriver ikke None over
+    # en tidligere god værdi, hvis denne specifikke upload ikke havde optimizer-data.
+    _wb_cast = _extract_wb_cast_strength(req.edge_ai_result)
+    if _wb_cast is not None:
+        capture.wb_cast_strength = _wb_cast
 
     # Update device last_seen
     device = db.query(Device).filter_by(device_id=device_id).first()
@@ -12921,6 +12970,44 @@ def get_config_resolution(
         camera_id=camera_id,
         device_id=device_id,
     )
+
+
+@app.get("/api/cameras/{camera_id}/drift-analysis")
+def get_camera_drift_analysis(
+    camera_id: str,
+    _user=require_role("viewer"),
+    db: Session = Depends(get_db),
+):
+    """Drift-analyse (fase 1, 2026-07-07) for fokus/eksponering/hvidbalance
+    for ét kamera — selv-kalibrerende sammenligning af nyeste vindue mod et
+    ældre baseline-vindue, se headend/ai/drift_detection.py for detaljer.
+
+    Rent diagnostisk/read-only (ingen kamerastyring, intet auto-trigger), på
+    linje med at se captures/QA-metadata — derfor viewer-niveau i stedet for
+    admin, ligesom list_captures() ovenfor og IKKE som config-resolution
+    (som eksponerer rå config-overrides på tværs af lag)."""
+    cam = db.query(Camera).filter_by(id=camera_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+    if cam.site_id:
+        _ensure_site_access(db, _user, cam.site_id)
+    elif cam.customer_id:
+        _ensure_customer_access(_user, cam.customer_id)
+
+    from ai.drift_detection import analyse_camera_drift
+
+    resolved = _resolve_config_hierarchy(db, camera_id=camera_id)
+    result = analyse_camera_drift(
+        db,
+        Capture,
+        camera_id,
+        resolved.get("effective_config"),
+    )
+    return {
+        "camera_id": camera_id,
+        "camera_name": cam.camera_name,
+        "dimensions": result,
+    }
 
 
 @app.put("/api/admin/config-overrides/{layer}/{entity_id}")

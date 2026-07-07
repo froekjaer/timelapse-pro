@@ -56,14 +56,28 @@ function buildQualityOverride(
     vendorBinary: string
     adaptiveExposure: string
     evStep: string
+    driftFocusEnabled: string
+    driftFocusZ: string
+    driftExposureEnabled: string
+    driftExposureZ: string
+    driftWbEnabled: string
+    driftWbZ: string
   }
 ) {
   const quality = { ...(existingConfig?.quality ?? {}) }
   const edgeAi = { ...(quality.edge_ai ?? {}) }
   const adaptive = { ...(quality.adaptive_exposure ?? {}) }
+  const drift = { ...(quality.drift_detection ?? {}) }
+  const driftFocus = { ...(drift.focus ?? {}) }
+  const driftExposure = { ...(drift.exposure ?? {}) }
+  const driftWb = { ...(drift.white_balance ?? {}) }
 
   for (const key of ['enabled', 'mode', 'prefer_npu', 'runner', 'model_path', 'vendor_binary']) delete edgeAi[key]
   for (const key of ['enabled', 'step_ev']) delete adaptive[key]
+  for (const obj of [driftFocus, driftExposure, driftWb]) {
+    delete obj.enabled
+    delete obj.z_threshold
+  }
 
   const enabled = triTo(fields.edgeAiEnabled)
   const preferNpu = triTo(fields.preferNpu)
@@ -78,10 +92,30 @@ function buildQualityOverride(
   if (adaptiveEnabled !== undefined) adaptive.enabled = adaptiveEnabled
   if (fields.evStep.trim()) adaptive.step_ev = Number(fields.evStep)
 
+  const driftFocusEnabled = triTo(fields.driftFocusEnabled)
+  if (driftFocusEnabled !== undefined) driftFocus.enabled = driftFocusEnabled
+  if (fields.driftFocusZ.trim()) driftFocus.z_threshold = Number(fields.driftFocusZ)
+
+  const driftExposureEnabled = triTo(fields.driftExposureEnabled)
+  if (driftExposureEnabled !== undefined) driftExposure.enabled = driftExposureEnabled
+  if (fields.driftExposureZ.trim()) driftExposure.z_threshold = Number(fields.driftExposureZ)
+
+  const driftWbEnabled = triTo(fields.driftWbEnabled)
+  if (driftWbEnabled !== undefined) driftWb.enabled = driftWbEnabled
+  if (fields.driftWbZ.trim()) driftWb.z_threshold = Number(fields.driftWbZ)
+
   if (Object.keys(edgeAi).length) quality.edge_ai = edgeAi
   else delete quality.edge_ai
   if (Object.keys(adaptive).length) quality.adaptive_exposure = adaptive
   else delete quality.adaptive_exposure
+  if (Object.keys(driftFocus).length) drift.focus = driftFocus
+  else delete drift.focus
+  if (Object.keys(driftExposure).length) drift.exposure = driftExposure
+  else delete drift.exposure
+  if (Object.keys(driftWb).length) drift.white_balance = driftWb
+  else delete drift.white_balance
+  if (Object.keys(drift).length) quality.drift_detection = drift
+  else delete quality.drift_detection
   return quality
 }
 
@@ -112,6 +146,12 @@ export function CustomerPage() {
   const [edgeAiVendorBinary, setEdgeAiVendorBinary] = useState('')
   const [adaptiveExposure, setAdaptiveExposure] = useState('')
   const [evStep, setEvStep]               = useState('')
+  const [driftFocusEnabled, setDriftFocusEnabled]       = useState('')
+  const [driftFocusZ, setDriftFocusZ]                   = useState('')
+  const [driftExposureEnabled, setDriftExposureEnabled] = useState('')
+  const [driftExposureZ, setDriftExposureZ]             = useState('')
+  const [driftWbEnabled, setDriftWbEnabled]             = useState('')
+  const [driftWbZ, setDriftWbZ]                         = useState('')
 
   // Nyt site form
   const [showNewSite, setShowNewSite]     = useState(false)
@@ -144,6 +184,16 @@ export function CustomerPage() {
         setEdgeAiVendorBinary(edgeAi.vendor_binary ?? '')
         setAdaptiveExposure(triFrom(adaptive.enabled))
         setEvStep(adaptive.step_ev != null ? String(adaptive.step_ev) : '')
+        const drift = quality.drift_detection ?? {}
+        const driftFocus = drift.focus ?? {}
+        const driftExposure = drift.exposure ?? {}
+        const driftWb = drift.white_balance ?? {}
+        setDriftFocusEnabled(triFrom(driftFocus.enabled))
+        setDriftFocusZ(driftFocus.z_threshold != null ? String(driftFocus.z_threshold) : '')
+        setDriftExposureEnabled(triFrom(driftExposure.enabled))
+        setDriftExposureZ(driftExposure.z_threshold != null ? String(driftExposure.z_threshold) : '')
+        setDriftWbEnabled(triFrom(driftWb.enabled))
+        setDriftWbZ(driftWb.z_threshold != null ? String(driftWb.z_threshold) : '')
       })
       .catch(() => setError('Kunne ikke hente kunde'))
       .finally(() => setLoading(false))
@@ -161,6 +211,12 @@ export function CustomerPage() {
         vendorBinary: edgeAiVendorBinary,
         adaptiveExposure,
         evStep,
+        driftFocusEnabled,
+        driftFocusZ,
+        driftExposureEnabled,
+        driftExposureZ,
+        driftWbEnabled,
+        driftWbZ,
       })
       const config_overrides: Record<string, any> = {
         ...(customer?.config_overrides ?? {}),
@@ -373,6 +429,61 @@ export function CustomerPage() {
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={edgeAiVendorBinary} onChange={e => setEdgeAiVendorBinary(e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      {/* Drift-detektion — kunde-lag */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
+        <h2 className="text-sm font-semibold text-gray-700 mb-1">Drift-detektion — kunde-override</h2>
+        <p className="text-xs text-gray-400 mb-4">
+          Alarmerer hvis fokus/eksponering/hvidbalance systematisk skifter over tid for et kamera. Blank betyder arv fra globalt niveau.
+        </p>
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Fokus-drift-alarm</label>
+            <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              value={driftFocusEnabled} onChange={e => setDriftFocusEnabled(e.target.value)}>
+              <option value="">Arv</option>
+              <option value="true">Aktiver</option>
+              <option value="false">Deaktiver</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Fokus-følsomhed</label>
+            <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="Arv"
+              value={driftFocusZ} onChange={e => setDriftFocusZ(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Eksponerings-drift-alarm</label>
+            <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              value={driftExposureEnabled} onChange={e => setDriftExposureEnabled(e.target.value)}>
+              <option value="">Arv</option>
+              <option value="true">Aktiver</option>
+              <option value="false">Deaktiver</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Eksponerings-følsomhed</label>
+            <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="Arv"
+              value={driftExposureZ} onChange={e => setDriftExposureZ(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Hvidbalance-drift-alarm</label>
+            <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              value={driftWbEnabled} onChange={e => setDriftWbEnabled(e.target.value)}>
+              <option value="">Arv</option>
+              <option value="true">Aktiver</option>
+              <option value="false">Deaktiver</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Hvidbalance-følsomhed</label>
+            <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
+              placeholder="Arv"
+              value={driftWbZ} onChange={e => setDriftWbZ(e.target.value)} />
           </div>
         </div>
       </div>
