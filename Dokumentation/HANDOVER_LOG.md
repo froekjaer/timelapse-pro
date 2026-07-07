@@ -8099,3 +8099,100 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - **Filer rørt:** `deploy/launchd/dk.froekjaer.open-webui.plist` (DATA_DIR +
   WEBUI_SECRET_KEY_FILE tilføjet/rettet). `/etc/sudoers.d/dk-froekjaer-openwebui` (oprettet af
   Peter selv, ikke i Git). Denne HANDOVER_LOG-tilføjelse.
+
+### Handover 2026-07-07 ~15:30 — fra Claude-3 (P1-01 kamera-profiler) til Peter/Codex
+- **P1-01: Kamera-profil model FÆRDIG:**
+  - ✅ **Separate profiler oprettet** for hver kameratype:
+    * Nikon Z30
+    * Canon EOS 2000D
+    * Canon EOS 1300D
+    * Canon EOS 1000D
+    * Canon EOS 4000D (generisk)
+  - ✅ **Base profil (_BASE_CAMERA_PROFILE)** med fælles settings:
+    * ISO, shutter speed, aperture, white balance
+    * Color space, image format, exposure compensation
+    * Picture style, metering mode, AE mode
+    * Alle settings er inkluderet i camera config hash (drift detection)
+  - ✅ **Kamera-specifikke capabilities:**
+    * Nikon Z30: autofocus drive, remote focus motor, liveview, movie
+    * Canon EOS: datetime sync via gphoto2, viewfinder action
+    * Shutter ratings per model (100k for entry-level, 150k for pro)
+  - ✅ **GPS/NTP sync:**
+    * `sync_camera_datetime()` — synkroniserer kamera-clock med UTC
+    * `get_camera_datetime()` — læser kameraets aktuelle datetime
+    * GPS-data kan skrives til EXIF (eksisterende funktionalitet)
+  - ✅ **CAMERA_METADATA tabel** med hurtig opslag til UI/CMDB
+- **Filer rørt:**
+  - `edge/camera/drivers/gphoto2_driver.py` — CAMERA_PROFILES redesignet v2.0.0
+  - `edge/camera/drivers/gphoto2_driver.py` — sync_camera_datetime(), get_camera_datetime() tilføjet
+  - `edge/camera/drivers/gphoto2_driver.py` — supports_datetime_sync(), get_capabilities() tilføjet
+  - `edge/diagnostics/camera_diagnostics.py` — SHUTTER_RATINGS opdateret med alle modeller
+  - `PRIORITIZED_BACKLOG.md` — P1-01 markeret færdig
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Design beslutninger:**
+  1. "features" → "camera_capabilities" (med backwards compatibility)
+  2. Base profil bruger **_BASE_CAMERA_PROFILE som template — arvet via {**_BASE_CAMERA_PROFILE, ...}
+  3. Alle config_commands parametre er inkluderet i camera config hash
+  4. datetime_sync er default True for alle kameraer (gphoto2 standard)
+- **Næste skridt:** Test datetime sync på rigtigt kamera (valgfrit pt.)
+
+### Handover 2026-07-07 ~17:00 — fra Claude (drift-detection fase 1) til Peter/Codex
+- **Baggrund (Peters ønske):** kameraerne bruger bevidst MANUELT fokus (for at
+  undgå slid på autofokusmotoren), hvilket betyder fokus kan glide over uger/
+  måneder uden at nogen bemærker det — hvert enkelt billede kan stadig ligge
+  lige omkring kvalitetsgrænsen. Peter bad EKSPLICIT om at samme design også
+  dækker eksponering (støv/tåge/sæsonlys) og hvidbalance (linsebelægning/
+  sensor-drift), som en samlet fase 1, til/fra pr. lag i config-hierakiet
+  (global/kunde/site/kamera). Fase 2 (auto-trigger en focus-slice når drift
+  opdages) og fase 3 (auto-anvend bedste fokus) er AFTALT som separate,
+  senere skridt — IKKE bygget i denne omgang.
+- **Design:** selv-kalibrerende trend-sammenligning pr. kamera — nyeste
+  vindue (default 7 dage) sammenlignes med et ældre baseline-vindue (default
+  30 dage før vinduet), afvigelsen normaliseres til antal standardafvigelser
+  af KAMERAETS EGEN historiske spredning (z-score). Ingen fast global
+  tærskel — robust mod normal sæson-/dag-til-dag-variation, som Peter selv
+  nævnte som en bekymring. Kører på headend (ikke Edge) — al historik er der
+  allerede, og Edge-boards er ressourcebegrænsede. Ren analysefunktion:
+  INGEN kamerastyring, intet auto-trigger, intet auto-apply i denne fase.
+- **✅ Færdigt:**
+  - `headend/ai/drift_detection.py` (ny) — `analyse_camera_drift()`, tre
+    dimensioner (focus/blur_score, exposure/brightness_mean,
+    white_balance/wb_cast_strength). white_balance er default-OFF (sparse
+    data — kræver at Edge's autonome optimizer har kørt). 16 tests, alle
+    grønne (`headend/tests/test_drift_detection.py`).
+  - `headend/migrations/v16_wb_cast_strength.sql` + `database.py`: ny
+    nullable `wb_cast_strength`-kolonne på `Capture`, samme rolle som
+    blur_score/brightness_mean. Kørt mod live Postgres, verificeret.
+  - `headend/main.py`: `_extract_wb_cast_strength()` udtrækker signalet fra
+    `edge_ai_result`-JSON'en ved ingest (`receive_capture`) — nul-risiko,
+    nul-Edge-deploy (læser data der allerede sendes). Ny endpoint
+    `GET /api/cameras/{camera_id}/drift-analysis` — **viewer-niveau**
+    (samme adgangstjek som `list_captures`: site/kunde-scoped), IKKE
+    admin-niveau som `config-resolution`, fordi drift-analyse er
+    read-only/diagnostisk på linje med at se captures/QA-metadata, ikke en
+    config-redigerende handling.
+  - 4 config-UI-sider (`GlobalConfigPage.tsx`, `CameraPage.tsx`,
+    `SitePage.tsx`, `CustomerPage.tsx`) — nye felter under
+    `quality.drift_detection.<focus|exposure|white_balance>.{enabled,
+    z_threshold}`. Alle fire sider har hver sit hand-rullede felt-format
+    (ingen delt skema) — tilføjet i alle fire, `tsc --noEmit` grøn.
+  - Committed på `claude/qa-drift-detection-2026-07-07` (commit `253f98d8`,
+    9 filer, kun mine hunks staged/committed — se note nedenfor).
+- **⚠️ Delt fil-forsigtighed:** `headend/main.py` og `headend/database.py`
+  havde BEGGE også større, uafsluttede ændringer fra parallel Codex-arbejde
+  (backup/resilience/compliance-kode, ~550 linjer i main.py alene) i working
+  tree på samme tidspunkt. Committede IKKE filerne som helhed — udtrak kun
+  mine egne hunks (`_extract_wb_cast_strength`, receive_capture-kaldet, den
+  nye drift-analysis-endpoint, wb_cast_strength-kolonnen) via `git diff` +
+  `git apply --cached`, så Codex's igangværende ændringer forbliver
+  urystet/unstaged i working tree. Peter/Codex: jeres uncommitted ændringer
+  i disse to filer er STADIG DER, urørt — jeg har blot ikke committet dem.
+- **⏳ Mangler stadig (samme fase 1, ikke startet):**
+  - UI-visning af drift-status (fx et lille panel på `DevicePage.tsx` eller
+    `CameraPage.tsx` der viser resultatet af de tre dimensioner for et
+    kamera) — endpointet findes, men intet i UI kalder det endnu.
+  - Ingen tests af selve HTTP-endpointet (`get_camera_drift_analysis`) —
+    kun analysemodulet er testet direkte.
+- **Næste skridt:** UI-panel til drift-status, så endpoint-tests, så evt.
+  PR mod main. Herefter fase 2/3 (auto-trigger/auto-apply focus-slice) som
+  separate, senere opgaver — ikke påbegyndt.
