@@ -26,6 +26,7 @@ import { UpdatesPage } from './pages/UpdatesPage'
 import { ChangeTicketsPage } from './pages/ChangeTicketsPage'
 import { CompliancePage } from './pages/CompliancePage'
 import { RetentionPage } from './pages/RetentionPage'
+import RedactionPage from './pages/RedactionPage'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { CMDBPage, CMDBDetailPage } from './pages/CMDBPage'
 import { SIEMPage } from './pages/SIEMPage'
@@ -88,6 +89,7 @@ function AppRoutes() {
                 <Route path="/change-tickets" element={<ChangeTicketsPage />} />
                 <Route path="/compliance" element={<CompliancePage />} />
                 <Route path="/retention" element={<RetentionPage />} />
+                <Route path="/redaction" element={<RedactionPage />} />
         <Route path="/cmdb" element={<CMDBPage />} />
         <Route path="/siem" element={<SIEMPage />} />
         <Route path="/import" element={<ImportPage />} />

@@ -4,7 +4,7 @@ import {
   Brain, Camera, Settings, Database, Globe, LogOut,
   Shield, Users, Key, Terminal, Package, Server,
   ChevronDown, ClipboardCheck, Upload, Bot, Tag,
-  Wrench, Activity,
+  Wrench, Activity, EyeOff, Clock,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -47,6 +47,8 @@ export function Navbar() {
     { to: '/cmdb',          label: 'CMDB',          icon: Server },
     { to: '/import',        label: 'Import',        icon: Upload },
     { to: '/siem',          label: 'SIEM',          icon: Shield },
+    { to: '/retention',     label: 'Retention',     icon: Clock },
+    { to: '/redaction',     label: 'GDPR Redaction',icon: EyeOff },
     { to: '/observability', label: 'Drift',         icon: Activity },
   ]
 

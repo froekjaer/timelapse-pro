@@ -1,6 +1,6 @@
 # Prioriteret backlog for TimeLapse Pro
 
-**Opdateret:** 2026-07-07 (Session 6 — P2-09 GRC evidence-links færdig)
+**Opdateret:** 2026-07-07 (Session 6 — P2-03 Redaction workflow færdig)
 
 **Kontekst:** Denne backlog er udarbejdet efter gennemgang af RISK_ASSESSMENT_v10.md, GO_LIVE_CHECKLIST_v10.md, KRAVREGISTER_og_STATUS_v10.md, SYSTEM_HEALTH_REGISTER.md og HANDOVER_LOG.md. Den prioriterer arbejder der bringer systemet fra LAB/pre-production til Internet-facing production readiness.
 
@@ -40,7 +40,7 @@
 |----|--------|---------|--------|--------|
 | **P2-01** | **Refaktorering af headend/main.py** — brydes op i mindre komponenter for bedre vedligeholdelse | 1-2 uger | Claude | 🟡 Store moduler |
 | **P2-02** | **Thumbnail postprocessing backlog** — ✅ FÆRDIG 2026-07-07. API endpoint `/api/admin/thumbnail-backlog` implementeret med UI badge på PostProcessingPage. | 2-3 dage | Claude/Codex | ✅ Implementeret |
-| **P2-03** | **Sløring/redaction workflow (UI-010)** — GDPR-krav til blurring af ansigter/nummerplader | 1-2 uger | Claude/Codex | 🔴 Mangler |
+| **P2-03** | **Sløring/redaction workflow (UI-010)** — ✅ FÆRDIG 2026-07-07. Database migration v17 (redaction fields), OpenCV-based detection/sløring (ansigter/nummerplader), API endpoints (/api/redaction/*), UI (RedactionPage.tsx + navbar link). Kræver migration v17 FØR deploy. | 1-2 uger | Claude/Codex | ✅ Implementeret |
 | **P2-04** | **Web terminal (xterm.js/websocket SSH)** — remote shell til Edge-noder | 1-2 uger | Claude/Codex | 🔴 Mangler |
 | **P2-05** | **GPS tidssynkronisering** — GPS-clock til Edge-noder | 1 uge | Codex | 🔴 Mangler |
 | **P2-06** | **Lokal management UI på Edge** — til provisioning/debug uden headend-forbindelse | 1-2 uger | Claude/Codex | 🔴 Mangler |

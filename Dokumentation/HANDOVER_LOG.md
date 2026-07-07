@@ -8430,3 +8430,45 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - **Næste skridt:** UI-panel til drift-status, så endpoint-tests, så evt.
   PR mod main. Herefter fase 2/3 (auto-trigger/auto-apply focus-slice) som
   separate, senere opgaver — ikke påbegyndt.
+
+---
+
+### 📅 Session 6 fortsat (2026-07-07)
+
+**Opgave:** P2-03 — Sløring/redaction workflow (UI-010)
+
+**Følgende implementeret:**
+- Database migration v17: `redaction_fields` til Capture (redaction_status enum, has_gdpr_data, gdpr_detections JSONB, redaction_method, redacted_at, redacted_by)
+- OpenCV-based detection (ansigter/nummerplader) i `headend/redaction.py`
+  - `detect_pii()\): Haar cascade classifiers
+  - `redact_image()\): Gaussian blur på detekterede områder
+  - `redaction_pipeline()\): Komplett workflow
+- API endpoints i `headend/redaction_api.py`:
+  - POST `/api/redaction/analyze/{capture_id}` — Analyse for GDPR data
+  - POST `/api/redaction/redact/{capture_id}` — Udfør redaction
+  - GET `/api/redaction/status/{capture_id}` — Status lookup
+  - GET `/api/redaction/pending` — List ikke-redacted captures
+  - POST `/api/redaction/approve/{capture_id}` — Godkend redacted billede
+- UI: `timelapse-ui/src/pages/RedactionPage.tsx`
+  - List view med filter (pending/detected/analyzed)
+  - Detail view med detections (ansigter/nummerplader med bounding boxes)
+  - Actions: Analysér, Slør, Godkend
+  - Integration med App.tsx routing (`/redaction`)
+- Navbar integration: "GDPR Redaction" link under admin menu (EyeOff icon)
+
+**Krav opfyldt:** UI-010 (GDPR redaction workflow)
+
+**Filer ændret:**
+- `headend/migrations/v17_redaction_fields.sql` (ny)
+- `headend/redaction.py` (ny)
+- `headend/redaction_api.py` (ny)
+- `headend/main.py` (import + include router)
+- `timelapse-ui/src/pages/RedactionPage.tsx` (ny)
+- `timelapse-ui/src/App.tsx` (route)
+- `timelapse-ui/src/components/Navbar.tsx` (menu link)
+- `PRIORITIZED_BACKLOG.md` (P2-03 status opdateret)
+
+**⚠️ Deploy-krav:** Migration v17 skal KØRES før headend restart.
+
+**Næste skridt:** Test på staging med faktisk OpenCV + cascade filer, UI smoke-test.
+

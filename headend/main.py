@@ -103,6 +103,7 @@ from ai.settings_api import settings_router
 from siem import router as siem_router, start_headend_log_collector, record_events as _siem_record_events
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from itim import router as itim_router, start_itim_collector
+from redaction_api import router as redaction_router
 from database import (
     BootstrapToken,
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
@@ -10881,6 +10882,7 @@ app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(itim_router, prefix="/api/itim")
 app.include_router(settings_router)
+app.include_router(redaction_router)
 
 @app.post("/api/inventory/{device_id}")
 def edge_report_inventory(
