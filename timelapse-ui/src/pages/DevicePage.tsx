@@ -19,7 +19,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, 
 import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setParam, pathSegment, getApiUrl } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
-import { CaptureThumbnailCard, parseCaptureQA } from '../components/CaptureThumbnailCard'
+import { CaptureThumbnailCard, parseCaptureQA, qaHardFailed, causeLabels } from '../components/CaptureThumbnailCard'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import type { DeviceDetail, Capture } from '../types'
 
@@ -508,24 +508,9 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                   const optPct = ai ? optimizerPercent(ai) : null
                   const description = ai ? usefulActionText(ai.description) ?? usefulActionText(ai.recommended_action) ?? usefulActionText(ai.recommendations?.[0]?.reason) : null
                   const recommendation = ai ? usefulActionText(ai.recommended_action) : null
-                  const causeLabels: Record<string, string> = {
-                    ok: 'OK', condensation_on_lens: 'Kondens på linse',
-                    dirty_lens: 'Snavset linse', focus_drift: 'Fokusdrift',
-                    camera_moved: 'Kamera flyttet', obstruction: 'Afskærmning',
-                    rain_on_lens: 'Regn på linse', sun_flare: 'Solreflektion',
-                    night_capture: 'Natkamera', hardware_failure: 'Hardwarefejl',
-                    focus_or_lens_issue: 'Fokus/linse-problem',
-                    snow_or_dirt_on_lens: 'Sne/skidt på frontglas',
-                    condensation_or_soft_lens_obstruction: 'Dug/kondens/blød linse',
-                    direct_sun_reflection: 'Direkte sol/refleks',
-                    underexposure_or_camera_blocked: 'Undereksponeret/blokeret',
-                    overexposure_or_direct_sun: 'Overeksponeret/sol',
-                    depth_of_field_issue: 'Dybdeskarphed/fokus',
-                    white_balance_cast: 'Hvidbalance-farvestik',
-                    qa_analysis_error: 'QA-analysefejl',
-                    file_integrity_error: 'Filfejl',
-                    unknown: 'Ukendt',
-                  }
+                  // causeLabels importeret fra CaptureThumbnailCard (delt kilde til
+                  // sandhed, se 2026-07-07-kommentar der).
+                  const hardFailed = ai ? qaHardFailed(ai) : false
                   const actionLabels: Record<string, string> = {
                     none: '—', inspect_camera_housing: 'Tjek kamerahus',
                     clean_lens: 'Rengør linse', check_focus: 'Tjek fokus',
@@ -575,12 +560,25 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                         </>
                       ) : (
                         <>
+                          {/* 2026-07-07 (Claude, Peters fototekniske gennemgang): Status
+                              viser nu KUN den deterministiske QA-test (flag/passed/
+                              quality_ok — se qaHardFailed i CaptureThumbnailCard.tsx),
+                              ikke is_anomaly. is_anomaly betyder blot at optimizeren har
+                              en anbefaling (kan være "excellent"-scoret og stadig have
+                              en anbefaling) — det er IKKE en QA-fejl, og skal derfor ikke
+                              vise ⚠️. Bløde anbefalinger vises stadig, blot uden
+                              alarmfarve, i "Beskrivelse"/"Anbefaling" nedenfor. */}
                           <MR l="Status" v={
-                            <span className={`font-medium ${ai.alarm ? 'text-red-400' : ai.is_anomaly ? 'text-amber-400' : 'text-emerald-400'}`}>
-                              {ai.alarm ? '🚨 ' : ai.is_anomaly ? '⚠️ ' : '✓ '}
-                              {causeLabels[ai.probable_cause] ?? ai.probable_cause}
+                            <span className={`font-medium ${ai.alarm ? 'text-red-400' : hardFailed ? 'text-red-400' : 'text-emerald-400'}`}>
+                              {ai.alarm ? '🚨 ' : hardFailed ? '⚠️ ' : '✓ '}
+                              {ai.alarm || hardFailed ? (causeLabels[ai.probable_cause] ?? ai.probable_cause) : 'OK'}
                             </span>
                           } />
+                          {!hardFailed && !ai.alarm && ai.is_anomaly && ai.probable_cause && ai.probable_cause !== 'ok' && (
+                            <MR l="Optimizer-tip" v={
+                              <span className="text-sky-300">💡 {causeLabels[ai.probable_cause] ?? ai.probable_cause}</span>
+                            } />
+                          )}
                           <MR l="Konfidence" v={`${Math.round((ai.confidence ?? 0) * 100)}%`} />
                           <MR l="Blur" v={ai.blur_score != null ? `${Math.round(ai.blur_score)}` : '—'} />
                           <MR l="Lys" v={ai.brightness_mean != null ? `${Math.round(ai.brightness_mean)}/255` : '—'} />

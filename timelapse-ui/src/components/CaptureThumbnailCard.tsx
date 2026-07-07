@@ -42,12 +42,54 @@ function filenameParts(filename: string) {
   }
 }
 
+// 2026-07-07 (Claude, Peters fototekniske gennemgang): "Dansk" navnegivet
+// oversættelse af probable_cause → menneskelæsbar label. Delt mellem
+// CaptureThumbnailCard og DevicePage, så de to steder ikke kan drifte fra
+// hinanden (var tidligere duplikeret lokalt i DevicePage.tsx).
+export const causeLabels: Record<string, string> = {
+  ok: 'OK', condensation_on_lens: 'Kondens på linse',
+  dirty_lens: 'Snavset linse', focus_drift: 'Fokusdrift',
+  camera_moved: 'Kamera flyttet', obstruction: 'Afskærmning',
+  rain_on_lens: 'Regn på linse', sun_flare: 'Solreflektion',
+  night_capture: 'Natkamera', hardware_failure: 'Hardwarefejl',
+  focus_or_lens_issue: 'Fokus/linse-problem',
+  snow_or_dirt_on_lens: 'Sne/skidt på frontglas',
+  condensation_or_soft_lens_obstruction: 'Dug/kondens/blød linse',
+  direct_sun_reflection: 'Direkte sol/refleks',
+  underexposure_or_camera_blocked: 'Undereksponeret/blokeret',
+  overexposure_or_direct_sun: 'Overeksponeret/sol',
+  depth_of_field_issue: 'Dybdeskarphed/fokus',
+  white_balance_cast: 'Hvidbalance-farvestik',
+  qa_analysis_error: 'QA-analysefejl',
+  file_integrity_error: 'Filfejl',
+  unknown: 'Ukendt',
+}
+
+// 2026-07-07 (Claude): skelner mellem en REEL QA-fejl (den deterministiske
+// OpenCV-test i edge/capture/quality.py fejlede: flag != 'ok' / passed ===
+// false / quality_ok === false) og en BLØD anbefaling fra den autonome
+// optimizer (is_anomaly === true, men selve billedet bestod fint). Se
+// edge_qa_npu_runner.py linje 93: `is_anomaly = bool(recs)` — is_anomaly
+// betyder kun "optimizeren har en anbefaling", ikke "billedet er dårligt".
+// Peter fangede at et billede med flag=ok og "excellent"-score alligevel
+// fik en advarselstrekant, fordi UI kun kiggede på is_anomaly. Denne
+// funktion er den fælles kilde til sandhed for "er dette en REEL fejl".
+export function qaHardFailed(ai: Record<string, any> | null): boolean {
+  if (!ai) return false
+  if (ai.alarm) return true
+  if (ai.passed === false) return true
+  if (typeof ai.flag === 'string' && ai.flag !== 'ok') return true
+  if (ai.quality_ok === false) return true
+  if (typeof ai.quality_flag === 'string' && !['ok', 'clear_image'].includes(ai.quality_flag)) return true
+  return false
+}
+
 function qaBadge(ai: Record<string, any> | null) {
   if (!ai) return null
   if (ai.alarm) {
     return <span title={ai.description ?? 'QA alarm'} className="text-xs flex-shrink-0 cursor-help">🚨</span>
   }
-  if (ai.is_anomaly) {
+  if (qaHardFailed(ai)) {
     return <span title={ai.description ?? 'QA afvigelse'} className="text-xs flex-shrink-0 cursor-help">⚠️</span>
   }
   if (ai.probable_cause === 'ok' || ai.scene_dk || ai.quality_flag) {
@@ -61,6 +103,23 @@ function qaBadge(ai: Record<string, any> | null) {
     )
   }
   return null
+}
+
+// Blød optimizer-anbefaling (is_anomaly=true, men IKKE en reel QA-fejl) —
+// vises som en almindelig tag-chip i stedet for en advarselstrekant, som
+// Peter bad om. Kun for edge-kilden, hvor probable_cause findes.
+function qaSoftTag(ai: Record<string, any> | null) {
+  if (!ai || qaHardFailed(ai) || !ai.is_anomaly) return null
+  const cause = ai.probable_cause
+  if (!cause || cause === 'ok') return null
+  return (
+    <span
+      title={ai.recommended_action ?? ai.description ?? 'Optimizer-anbefaling (ikke en QA-fejl)'}
+      className="text-[9px] bg-sky-50 text-sky-600 px-1 py-0.5 rounded-full flex-shrink-0 cursor-help"
+    >
+      💡 {causeLabels[cause] ?? cause}
+    </span>
+  )
 }
 
 export function CaptureThumbnailCard({
@@ -224,12 +283,13 @@ export function CaptureThumbnailCard({
               <p className="text-xs text-gray-800 leading-tight mt-0.5 truncate">{parts.site}</p>
               <p className="text-xs text-gray-700 leading-tight mt-0.5 truncate">{parts.camera}</p>
             </div>
-            {capture.ai_tags && capture.ai_tags.length > 0 && (
+            {(qaSoftTag(ai) || (capture.ai_tags && capture.ai_tags.length > 0)) && (
               <div className="flex flex-wrap gap-0.5 mt-1">
-                {capture.ai_tags.slice(0, 3).map((t: string) => (
+                {qaSoftTag(ai)}
+                {capture.ai_tags?.slice(0, 3).map((t: string) => (
                   <span key={t} className="text-[9px] bg-gray-100 text-gray-500 px-1 py-0.5 rounded-full">#{tagLabel(t, tagLabels)}</span>
                 ))}
-                {capture.ai_tags.length > 3 && (
+                {capture.ai_tags && capture.ai_tags.length > 3 && (
                   <span className="text-[9px] text-gray-400">+{capture.ai_tags.length - 3}</span>
                 )}
               </div>
