@@ -2,7 +2,7 @@
 // UpdatesPage.tsx
 // Version: 1.0.0  |  08. maj 2026
 // ═══════════════════════════════════════════════════════════════
-import { useEffect, useState, useCallback } from 'react'
+import { ChangeEvent, useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, RefreshCw, CheckCircle, XCircle, Clock,
@@ -32,6 +32,16 @@ function api(path: string, opts?: RequestInit) {
     }
     return r.json()
   })
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return 'Ukendt fejl'
+  }
 }
 
 interface Update {
@@ -82,7 +92,7 @@ interface UpdateJobStatus {
   started_at: string | null
   finished_at: string | null
   message: string | null
-  result?: any
+  result?: unknown
   error?: string | null
 }
 
@@ -126,6 +136,17 @@ interface UpdateCategory {
   key: string
   label: string
   types: string[]
+}
+
+interface Customer {
+  id: string
+  name: string
+}
+
+interface Site {
+  id: string
+  name: string
+  customer_id: string
 }
 
 interface DeviceUpdateCategory {
@@ -1193,7 +1214,7 @@ export function UpdatesPage() {
         try {
           const status = await api(`/api/updates/${u.id}/flow-status`)
           return [u.id, status as UpdateFlowStatus] as const
-        } catch (e: any) {
+        } catch (error: unknown) {
           return [u.id, {
             update_id: u.id,
             status: u.status,
@@ -1202,7 +1223,7 @@ export function UpdatesPage() {
             ticket_id: null,
             targets: [],
             next_edge_poll: '',
-            error: e?.message || 'ukendt fejl',
+            error: getErrorMessage(error),
           } as UpdateFlowStatus] as const
         }
       }))
@@ -1213,8 +1234,8 @@ export function UpdatesPage() {
       setFlowStatuses(nextFlowStatuses)
       setWatchedUpdateIds(ids => ids.filter(id => isActiveFlow(nextFlowStatuses[id])))
       setLast(new Date())
-    } catch (e: any) {
-      setError(`Kunne ikke hente opdateringer (${e.message})`)
+    } catch (error: unknown) {
+      setError(`Kunne ikke hente opdateringer (${getErrorMessage(error)})`)
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -1243,10 +1264,18 @@ export function UpdatesPage() {
           api('/api/admin/customers'),
           api('/api/admin/sites'),
         ])
-        setCustomers(Array.isArray(customersData) ? customersData.map((c: any) => ({ id: c.id, name: c.name })) : [])
-        setSites(Array.isArray(sitesData) ? sitesData.map((s: any) => ({ id: s.id, name: s.name, customer_id: s.customer_id })) : [])
-      } catch (e: any) {
-        console.warn('Kunne ikke hente customers/sites:', e.message)
+        setCustomers(Array.isArray(customersData)
+          ? customersData
+              .filter((c): c is Customer => Boolean(c && typeof c === 'object' && typeof (c as { id?: unknown }).id === 'string' && typeof (c as { name?: unknown }).name === 'string'))
+              .map(c => ({ id: c.id, name: c.name }))
+          : [])
+        setSites(Array.isArray(sitesData)
+          ? sitesData
+              .filter((s): s is Site => Boolean(s && typeof s === 'object' && typeof (s as { id?: unknown }).id === 'string' && typeof (s as { name?: unknown }).name === 'string' && typeof (s as { customer_id?: unknown }).customer_id === 'string'))
+              .map(s => ({ id: s.id, name: s.name, customer_id: s.customer_id }))
+          : [])
+      } catch (error: unknown) {
+        console.warn('Kunne ikke hente customers/sites:', getErrorMessage(error))
       }
     }
     loadCustomersAndSites()
@@ -1272,14 +1301,14 @@ export function UpdatesPage() {
       setFilter('all')
       await load(false, 'all')
     }
-    catch (e: any) { setError(e.message) }
+    catch (error: unknown) { setError(getErrorMessage(error)) }
     finally { setBusy(null) }
   }
 
   async function reject(id: number) {
     setBusy(id)
     try { await api(`/api/updates/${id}/reject`, { method: 'POST' }); load() }
-    catch (e: any) { setError(e.message) }
+    catch (e: unknown) { setError(getErrorMessage(e)) }
     finally { setBusy(null) }
   }
 
@@ -1299,7 +1328,7 @@ export function UpdatesPage() {
       )
       await load(false, target === 'staging' ? 'approved' : 'pending')
     }
-    catch (e: any) { setError(e.message) }
+    catch (error: unknown) { setError(getErrorMessage(error)) }
     finally { setBusy(null) }
   }
 
@@ -1307,7 +1336,7 @@ export function UpdatesPage() {
     if (!confirm('Er du sikker på at du vil rulle denne opdatering tilbage?')) return
     setBusy(id)
     try { await api(`/api/updates/${id}/force-rollback`, { method: 'POST' }); load() }
-    catch (e: any) { setError(e.message) }
+    catch (error: unknown) { setError(getErrorMessage(error)) }
     finally { setBusy(null) }
   }
 
@@ -1322,8 +1351,8 @@ export function UpdatesPage() {
       setFilter('pending')
       setNotice(`Artifact ${artifactId} er bundet til update #${id}. Den ligger nu i Afventer til godkendelse.`)
       await load(false, 'pending')
-    } catch (e: any) {
-      setError(`Kunne ikke binde artifact (${e.message})`)
+    } catch (e: unknown) {
+      setError(`Kunne ikke binde artifact (${getErrorMessage(e)})`)
     } finally {
       setBusy(null)
     }
@@ -1365,8 +1394,8 @@ export function UpdatesPage() {
       setNotice(`OS artifact job startet: ${started.job_id}`)
       await pollUpdateJob(started.job_id, 'pending')
       setFilter('pending')
-    } catch (e: any) {
-      setError(`Kunne ikke bygge OS artifact (${e.message})`)
+    } catch (e: unknown) {
+      setError(`Kunne ikke bygge OS artifact (${getErrorMessage(e)})`)
     } finally {
       setBusy(null)
     }
@@ -1395,8 +1424,8 @@ export function UpdatesPage() {
         if (!status.running) break
       }
       await load()
-    } catch (e: any) {
-      setError(`Headend-installation fejlede (${e.message})`)
+    } catch (e: unknown) {
+      setError(`Headend-installation fejlede (${getErrorMessage(e)})`)
     } finally {
       setBusy(null)
     }
@@ -1408,8 +1437,8 @@ export function UpdatesPage() {
     try {
       await api('/api/updates/artifacts/catalog-current', { method: 'POST' })
       await load()
-    } catch (e: any) {
-      setError(`Kunne ikke registrere artifact (${e.message})`)
+    } catch (e: unknown) {
+      setError(`Kunne ikke registrere artifact (${getErrorMessage(e)})`)
     } finally {
       setRefreshing(false)
     }
@@ -1430,8 +1459,8 @@ export function UpdatesPage() {
         }),
       })
       await load()
-    } catch (e: any) {
-      setError(`Kunne ikke registrere OS artifact (${e.message})`)
+    } catch (e: unknown) {
+      setError(`Kunne ikke registrere OS artifact (${getErrorMessage(e)})`)
     } finally {
       setRefreshing(false)
     }
@@ -1450,8 +1479,8 @@ export function UpdatesPage() {
       setFilter('blocked')
       setNotice(`Lab-katalog importeret: ${summary.os_security || 0} security og ${summary.os_updates || 0} funktionelle pakker. Plan: ${result.plan_path}`)
       await load(false, 'blocked')
-    } catch (e: any) {
-      setError(`Kunne ikke importere lab-katalog (${e.message})`)
+    } catch (e: unknown) {
+      setError(`Kunne ikke importere lab-katalog (${getErrorMessage(e)})`)
     } finally {
       setRefreshing(false)
     }
@@ -1471,8 +1500,8 @@ export function UpdatesPage() {
       setNotice(`Mac-builder katalogjob startet: ${started.job_id}`)
       await pollUpdateJob(started.job_id, 'blocked')
       setFilter('blocked')
-    } catch (e: any) {
-      setError(`Kunne ikke refreshe OS-katalog fra Mac-builder (${e.message})`)
+    } catch (e: unknown) {
+      setError(`Kunne ikke refreshe OS-katalog fra Mac-builder (${getErrorMessage(e)})`)
     } finally {
       setRefreshing(false)
     }
@@ -1576,7 +1605,7 @@ export function UpdatesPage() {
             <div>
               <label className="text-xs text-gray-500 block mb-1">Miljø</label>
               <select value={approveOpts.environment}
-                onChange={e => setApproveOpts(o => ({...o, environment: e.target.value as any}))}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setApproveOpts(o => ({...o, environment: e.target.value as ApproveOptions['environment']}))}
                 className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
                 <option value="test">Test (deploy til testmiljø først)</option>
                 <option value="production">Produktion</option>
@@ -1585,7 +1614,7 @@ export function UpdatesPage() {
             <div>
               <label className="text-xs text-gray-500 block mb-1">Scope</label>
               <select value={approveOpts.scope}
-                onChange={e => setApproveOpts(o => ({...o, scope: e.target.value as any, scope_id: ''}))}
+                onChange={(e: ChangeEvent<HTMLSelectElement>) => setApproveOpts(o => ({...o, scope: e.target.value as ApproveOptions['scope'], scope_id: ''}))}
                 className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
                 <option value="global">Alle enheder</option>
                 <option value="device">Specifik enhed</option>

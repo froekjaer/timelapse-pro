@@ -5,7 +5,7 @@
 // P0-05 Retention Policy UI
 // Viser retention status, settings og deletion log
 // ═══════════════════════════════════════════════════════════════
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Calendar, CheckCircle, Clock, Database, RefreshCw, Shield,
   Trash2, XCircle, Settings, FileText, AlertTriangle
@@ -64,28 +64,7 @@ export function RetentionPage() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // Hent initial data
-  useEffect(() => {
-    loadStatus()
-    loadSettings()
-  }, [])
-
-  // Auto-refresh status hvis running
-  useEffect(() => {
-    if (status.running) {
-      const interval = setInterval(() => loadStatus(), 2000)
-      return () => clearInterval(interval)
-    }
-  }, [status.running])
-
-  // Hent deletion log når tab skifter til deletion-log
-  useEffect(() => {
-    if (tab === 'deletion-log') {
-      loadDeletionLog()
-    }
-  }, [tab, logPage, logFilter])
-
-  function loadStatus() {
+  const loadStatus = useCallback(() => {
     api('/admin/retention/status')
       .then(setStatus)
       .then(() => setLoading(false))
@@ -93,15 +72,15 @@ export function RetentionPage() {
         console.error('Failed to load retention status:', err)
         setLoading(false)
       })
-  }
+  }, [])
 
-  function loadSettings() {
+  const loadSettings = useCallback(() => {
     api('/admin/retention/settings')
       .then(setSettings)
       .catch(err => console.error('Failed to load retention settings:', err))
-  }
+  }, [])
 
-  function loadDeletionLog() {
+  const loadDeletionLog = useCallback(() => {
     const params = new URLSearchParams({
       page: String(logPage),
       limit: '50',
@@ -114,7 +93,28 @@ export function RetentionPage() {
         setLogTotal(data.total || 0)
       })
       .catch(err => console.error('Failed to load deletion log:', err))
-  }
+  }, [logFilter.camera_id, logFilter.device_id, logPage])
+
+  // Hent initial data
+  useEffect(() => {
+    loadStatus()
+    loadSettings()
+  }, [loadSettings, loadStatus])
+
+  // Auto-refresh status hvis running
+  useEffect(() => {
+    if (status.running) {
+      const interval = setInterval(() => loadStatus(), 2000)
+      return () => clearInterval(interval)
+    }
+  }, [status.running, loadStatus])
+
+  // Hent deletion log når tab skifter til deletion-log
+  useEffect(() => {
+    if (tab === 'deletion-log') {
+      loadDeletionLog()
+    }
+  }, [loadDeletionLog, tab])
 
   function triggerCleanup() {
     setTriggering(true)
@@ -124,7 +124,7 @@ export function RetentionPage() {
         loadStatus()
       })
       .catch(err => {
-        setMessage({ type: 'error', text: `Fejl: ${err.message}` })
+        setMessage({ type: 'error', text: `Fejl: ${err instanceof Error ? err.message : String(err)}` })
       })
       .finally(() => setTriggering(false))
   }
@@ -146,16 +146,6 @@ export function RetentionPage() {
 
   function formatDate(dateStr: string): string {
     return new Date(dateStr).toLocaleString('da-DK')
-  }
-
-  function formatInterval(interval: string): string {
-    switch (interval) {
-      case 'daily': return 'Dagligt'
-      case 'weekly': return 'Ugentligt'
-      case 'monthly': return 'Månedligt'
-      case 'manual': return 'Manuelt'
-      default: return interval
-    }
   }
 
   return (

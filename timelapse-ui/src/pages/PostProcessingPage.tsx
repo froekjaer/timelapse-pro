@@ -155,7 +155,18 @@ export default function PostProcessingPage() {
 
   useEffect(() => {
     api('/api/admin/devices')
-      .then((data: any) => setDevices(data.devices ?? data))
+      .then((data: unknown) => {
+        if (Array.isArray(data)) {
+          setDevices(data)
+          return
+        }
+        if (data && typeof data === 'object' && 'devices' in data) {
+          const payload = data as { devices?: unknown }
+          if (Array.isArray(payload.devices)) {
+            setDevices(payload.devices)
+          }
+        }
+      })
       .catch(() => {})
     loadStatus().catch(e => setError(e instanceof Error ? e.message : 'Kunne ikke hente status'))
     loadAiStatus()
