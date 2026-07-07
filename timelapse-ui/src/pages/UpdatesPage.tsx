@@ -2,7 +2,7 @@
 // UpdatesPage.tsx
 // Version: 1.0.0  |  08. maj 2026
 // ═══════════════════════════════════════════════════════════════
-import { ChangeEvent, useEffect, useState, useCallback } from 'react'
+import { type ChangeEvent, useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, RefreshCw, CheckCircle, XCircle, Clock,

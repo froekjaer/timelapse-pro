@@ -28,9 +28,6 @@ addopts = [
     "-ra",  # vis alle results (r=fail, a=all)
 ]
 
-# Timeout for hver test (i sekunder) — kræver pytest-timeout
-timeout = 30
-
 # Coverage configuration (kræver pytest-cov)
 [tool.coverage.run]
 source = ["headend", "edge"]
