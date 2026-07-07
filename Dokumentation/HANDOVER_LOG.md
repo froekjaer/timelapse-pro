@@ -6,6 +6,12 @@ Kanoniske fakta om services/stier/porte ligger stadig i
 `SERVICES_OG_DRIFT_kilde_til_sandhed.md`. Denne fil er kun "hvad skete der, hvad skal næste
 person vide".
 
+## Medarbejdere og samarbejdspartnere
+
+- Claude (AI-assistant i denne session) — arbejder med prioriteret backlog, tests, dokumentation og handover-synk.
+- Peter Frøkjær — produkt-/driftsejer og beslutningstager.
+- Codex — samarbejdspartner for kode-, ops- og deployment-spor.
+
 ## Skabelon
 
 ```md
@@ -19,6 +25,206 @@ person vide".
 ```
 
 ## Log
+
+### Handover 2026-07-07 09:00 — fra Claude (ny session) til Peter/Codex
+- **Session start:** Læst 00_START_HER.md, GO_LIVE_CHECKLIST_v10.md (delvist, for stor), og HANDOVER_LOG.md (nyeste 500 linjer).
+- **Status fra sidste session (2026-07-06 23:30):**
+  - ✅ P0-05 Retention Policy backend: 80% færdig (mangler UI og tests)
+  - ✅ verify_backup.sh og cleanup_stale_credentials.py scripts oprettet
+  - ✅ P2-02 thumbnail auto-loop implementeret
+  - ✅ P1-02 update UI scopes (customer/site) implementeret
+- **Næste skridt der kræver fysisk adgang (Codex/Peter):**
+  1. Kør verify_backup.sh: `sudo ./deploy/scripts/verify_backup.sh --max-age 48`
+  2. Kør cleanup_stale_credentials.py: `python3 deploy/scripts/cleanup_stale_credentials.py --older-than 30 --dry-run`
+  3. Genstart headend for at aktivere thumbnail auto loop
+- **Arbejde der kan gøres NU (uden fysisk adgang):**
+  1. Færdiggør P0-05 Retention Policy: UI + tests
+  2. Refaktorering af headend/main.py (P2-01) hvis ønsket
+  3. Andre P1/P2 opgaver fra backlog
+- **Filer rørt i denne session:** `Dokumentation/HANDOVER_LOG.md` (denne entry)
+- **Risici / pas på:** Ingen ændringer til kode endnu — read-only analyse.
+
+### Handover 2026-07-06 23:30 — fra Claude (P0-scripts + P1/P2 arbejde) til Peter/Codex
+- **Hvad er gjort i denne session (2026-07-06, 22:30-00:30):**
+  1. ✅ verify_backup.sh oprettet til P0-03 (backup verify) — tjek backup eksistens, alder, integritet, indhold, billed-mirror. Understøtter --dry-run og --test-restore.
+  2. ✅ cleanup_stale_credentials.py oprettet til P0-07 (stale credentials) — identifikation af stale API/SSH credentials, inactive devices, expired tokens. Auto-revoke af sekundære credentials.
+  3. ✅ P0-02 port 8443-migration guide allerede detaljeret i PORT_AUDIT_og_WEBSITE_v10.md — ingen ny guide nødvendig
+  4. ✅ P2-02 (Thumbnail postprocessing backlog) løst — _thumbnail_auto_loop() implementeret. Løbende tjek for captures uden thumbnails og automatisk generering (hvert 15. min, max 100 per run).
+  5. ✅ P1-02 (Kamera/site-scope i update-UI) løst — UI udvidet til at understøtte 'customer' og 'site' scopes udover 'global' og 'device'. Inkluderer dropdowns til at vælge kunde/site.
+  6. ✅ _thumbnail_auto_loop og customer/site useEffect tilføjet
+  7. ✅ main.py og UpdatesPage.tsx kompilerer med alle ændringer
+- **Filer opdateret:**
+  - `deploy/scripts/verify_backup.sh` (ny, executable)
+  - `deploy/scripts/cleanup_stale_credentials.py` (ny)
+  - `headend/main.py` (_thumbnail_auto_loop + background task start)
+  - `timelapse-ui/src/pages/UpdatesPage.tsx` (customer/site scope support)
+  - `Dokumentation/HANDOVER_LOG.md` (denne entry)
+- **Næste skridt (kræver Codex/Peter med fysisk adgang):**
+  1. Kør verify_backup.sh: `sudo ./deploy/scripts/verify_backup.sh --max-age 48`
+  2. Kør cleanup_stale_credentials.py: `python3 deploy/scripts/cleanup_stale_credentials.py --older-than 30 --dry-run`
+  3. Genstart headend for at aktivere thumbnail auto loop
+  4. Verificer at thumbnail auto loop starter: `tail -f /opt/timelapse/headend.log | grep "Thumbnail auto loop startet"`
+  5. UI test: Åbn UpdatesPage i UI'en og bekræft at customer/site scopes vises i dropdown
+- **Fortsætter med:** Yderligere P1/P2 opgaver eller refaktorering af headend/main.py (P2-01)
+
+### Handover 2026-07-06 22:00 — fra Claude (P0-05 Retention Policy) til Peter/Codex
+- **Hvad er gjort i denne session (2026-07-06, 18-20):**
+  1. Læst og analyseret alle centrale dokumenter (00_START_HER, GO_LIVE_CHECKLIST_v10, RISK_ASSESSMENT_v10, KRAVREGISTER_og_STATUS_v10, PRIORITIZED_BACKLOG, HANDOVER_LOG, SYSTEM_HEALTH_REGISTER, etc.)
+  2. Introduceret mig selv i HANDOVER_LOG.md med fuld kontekst og rollebeskrivelse
+  3. Opdateret PRIORITIZED_BACKLOG.md med omfattende, prioriteret backlog (P0: 8, P1: 10, P2: 12, P3: 6 opgaver)
+  4. Reviewet PR #2 (M-05 agent-lockdown) — konklusion: ✅ klar til merge (kode, tests, docs OK)
+  5. Synkroniseret dokumentstatus på tværs af RISK_ASSESSMENT, GO_LIVE_CHECKLIST, KRAVREGISTER
+  6. Opdateret ADMINISTRATORMANUAL_v10.md med nyeste sikkerheds- og compliance-opdateringer (§1.5)
+  7. Analyseret teknisk gæld i headend/main.py (16.692 linjer, 461 funktioner, 20 funktioner >125 linjer)
+  8. Oprettet TENKNISK_GÆLD_ANALYSE_headend_main_py_2026-07-06.md med konkrete refaktorerings-anbefalinger
+- **Filer opdateret:**
+  - `Dokumentation/HANDOVER_LOG.md` (2 nye entries)
+  - `Dokumentation/PRIORITIZED_BACKLOG.md` (omskrevet)
+  - `Dokumentation/ADMINISTRATORMANUAL_v10.md` (ny §1.5, dato opdateret)
+  - `Dokumentation/TENKNISK_GÆLD_ANALYSE_headend_main_py_2026-07-06.md` (ny)
+- **Næste skridt (forslag til Peter/Codex):**
+  1. Review og merge PR #2 (M-05) hvis enig i min vurdering
+  2. Prioritér P0-opgaver: port 8443-migration, backup verify, DPIA/retention, stale credential cleanup
+  3. Beslut: skal vi starte refaktorering af headend/main.py baseret på teknisk gæld-analysen?
+  4. Eventuelt: opdater 00_START_HER.md med reference til teknisk gæld-analysen
+- **Risici / pas på:** Ingen nye risici introduceret i denne session — alt var read-only analyse og dokumentopdatering. PR #2 review var konservativt (anbefalede merge uden kodeændringer).
+- **Session-afslutning:** Alle 6 planlagte opgaver er fuldført. Klar til næste session eller til at Peter/Codex overtager.
+
+### Handover 2026-07-06 22:00 — fra Claude (P0-05 Retention Policy) til Peter/Codex
+- **Hvad er gjort i denne session (2026-07-06, 21-22):**
+  1. ✅ Migration v15 oprettet (v15_retention_policy.sql) — tilføjer retention_days til cameras og capture_deletion_log tabel
+  2. ✅ Camera.model opdateret med retention_days felt (default 365 dage)
+  3. ✅ CaptureDeletionLog model tilføjet til database.py — revisionslog for slettede captures (GDPR G-02)
+  4. ✅ _retention_cleanup_loop() implementeret i main.py — baggrundstråd der tjekker retention_cleanup_interval
+  5. ✅ _run_retention_cleanup() implementeret — sletter captures ældre end retention_days og logger sletninger
+  6. ✅ Retention cleanup loop tilføjet til _start_background_tasks()
+  7. ✅ API endpoints tilføjet:
+     - POST /api/admin/retention/trigger — trigger manual cleanup
+     - GET /api/admin/retention/status — hent status
+     - PUT /api/admin/retention/settings — gem indstillinger
+     - GET /api/admin/retention/settings — hent indstillinger
+     - GET /api/admin/retention/deletion-log — hent sletningslog (pagineret, filtrérbar)
+- **Filer opdateret:**
+  - `headend/migrations/v15_retention_policy.sql` (ny)
+  - `headend/database.py` (retention_days + CaptureDeletionLog)
+  - `headend/main.py` (cleanup loop + API endpoints)
+- **Næste skridt (kræver Codex/Peter med fysisk adgang):**
+  1. Kør migration v15 i produktion: `psql -U timelapse timelapse_db < headend/migrations/v15_retention_policy.sql`
+  2. Genstart headend for at loade den nye kode
+  3. Bekræft at retention cleanup loop starter (check log for "Retention cleanup loop startet")
+  4. Test manuelt: `curl -X POST https://backend.timelapse-pro.dk:8443/api/admin/retention/trigger` (kræver auth)
+  5. Konfigurer auto-cleanup interval: `PUT /api/admin/retention/settings` med `{"retention_cleanup_interval": "daily"}`
+- **Hvad mangler (P0-05 er 80% færdig):**
+  - UI til retention policy management (kamera-visning, settings, deletion-log visning) — TODO P1
+  - Test suite til retention cleanup (unit tests + integration tests) — TODO P1
+  - Per-kamera retention indstilling i Camera config (retention.days felt) — UI mangler
+- **Risici / pas på:**
+  - Migration v15 skal køres FØR headend genstartes med ny kode ellers fejler CaptureDeletionLog model
+  - Sletning er permanent — CaptureDeletionLog er den ENESTE evidens efter sletning
+  - Filsletning kan fejle hvis filen ikke findes (logging fortsætter, men filen bliver liggende)
+- **Verifikation:**
+  - `python3 -m py_compile headend/database.py` ✅ OK
+  - `python3 -m py_compile headend/main.py` ✅ OK
+
+### Handover 2026-07-06 19:00 — fra Claude til Peter (PR #2 Review)
+- **Hvad er gjort:** Review af PR #2 (M-05 agent-lockdown) gennemført. Kode, tests og dokumentation er gennemgået.
+- **Review-konklusion:** ✅ **Klar til merge** — implementeringen er solid, velkommenteret og korrekt håndhævet.
+- **Kode-kvalitet:**
+  - God separering af concerns: `_agent_role_blocked_in_this_environment()` er ren og testbar
+  - Håndhævelse to steder: login (før password-tjek) og get_current_user (central auth-guard)
+  - SIEM-logging ved opstart: `_log_agent_lockdown_status()` gør status synlig
+  - Ingen information lække: 401-besked er identisk med "forkert password", undgår rolle-lækage
+- **Test-dækning (15 tests, 24 cases via parametrize):**
+  - Agent role blocked i prod/production/staging ✅
+  - Agent role IKKE blocked i rd/lab/dev/development ✅
+  - Non-agent roles aldrig blocked (viewer, operator, admin, super_admin) ✅
+  - Case/whitespace insensitivity ✅
+  - get_current_user rejecter agent sessions i prod ✅
+  - get_current_user tillader agent sessions i rd ✅
+  - Inactive agents returnerer None (eksisterende adfærd bevaret) ✅
+  - Startup logging testet ✅
+- **Dokumentation:**
+  - Kommentarer i koden er udførlige og peger på relevante dokumenter
+  - RISK_ASSESSMENT_v10.md R19 opdateret med detaljer
+  - GO_LIVE_CHECKLIST_v10.md M-05 opdateret
+- **Anbefaling:** Merge til main når Peter har godkendt. Herefter deploy til rd-headend.
+- **Næste skridt efter merge:**
+  1. Deploy til rd-headend og verifikér at `/api/health` returnerer 200
+  2. Bekræft at SIEM-log viser "M-05 AgentPrincipal-håndhævelse AKTIV" ved opstart
+  3. Test en agent-login (forsøg med role="agent" bruger) — skal give 401
+- **Filer reviewet:** `headend/main.py`, `headend/database.py`, `headend/tests/test_agent_principal_lockdown.py`
+- **Risici / pas på:** Ingen — implementeringen er konservativ og fail-safe.
+
+### Handover 2026-07-06 18:00 — fra Claude (ny session) til Peter/Codex
+- **Hvad er gjort:**
+  - Læst og analyseret alle centrale dokumenter: `00_START_HER.md`, `GO_LIVE_CHECKLIST_v10.md`,
+    `RISK_ASSESSMENT_v10.md`, `KRAVREGISTER_og_STATUS_v10.md`, `PRIORITIZED_BACKLOG.md`,
+    `HANDOVER_Claude_Codex_arbejdsdeling.md`, `SYSTEM_HEALTH_REGISTER.md`.
+  - Fået komplet overblik over TimeLapse Pro-projektet: Edge-noder (Orange Pi + Nikon Z30),
+    Headend (FastAPI + PostgreSQL), React UI, AI-tagging (Gemini + Ollama), sikkerhedsarkitektur.
+  - Identificeret de vigtigste blockere for go-live: port 8443-migration, backup/restore-test,
+    GDPR-DPIA/retention, M-05 agent-lockdown (PR #2 åben).
+  - Forstået arbejdsdelingen Claude/Codex: Claude = kode/AI/prompt/design/analyse; Codex =
+    OS/drift/launchd/sudo; Peter = beslutningstager.
+  - Oprettet en opgaveliste med 6 prioriteter: introduktion, backlog, PR review, docs-synk,
+    admin-manual opdatering, teknisk gældsanalyse.
+- **Hvad jeg kan bidrage med:**
+  - Code review (sikkerhed, arkitektur, teknisk gæld)
+  - Dokumentation (synkronisering, opdatering, nye designs)
+  - Tests (smoke suite, operational readiness, backup resilience)
+  - Arkitektur (SABSA/ISO27001/IEC62443 compliance, design-notater)
+  - AI/prompt-arbejde (tag-vokabular, baseline, sammenligning)
+- **Næste skridt:**
+  1. Review PR #2 (M-05 agent-lockdown) og give feedback
+  2. Lave prioriteret backlog baseret på documentation review
+  3. Synkronisere dokumentstatus på tværs af alle dokumenter
+  4. Opdatere ADMINISTRATORMANUAL_v10.md med nyeste ændringer
+  5. Analysere teknisk gæld i headend/main.py
+- **Kommandoer der skal køres (af Codex/Peter):**
+  - PR #2 review: `gh pr view 2` + gennemgang af `claude/m05-agent-lockdown-2026-07-06` branch
+  - Docs-synk: `grep -r "🔴\|🟠\|🟡\|✅" Dokumentation/*.md` for at finde status-kollisioner
+  - Admin-manual: check om M-05, R17, G-05, R09 er dokumenteret korrekt
+- **Filer rørt (planlagt):**
+  - `Dokumentation/HANDOVER_LOG.md` (denne entry)
+  - `Dokumentation/PRIORITERET_BACKLOG.md` (opdateres med ny backlog)
+  - `Dokumentation/ADMINISTRATORMANUAL_v10.md` (opdateres)
+  - `Dokumentation/RISK_ASSESSMENT_v10.md` (status-synk)
+  - `Dokumentation/GO_LIVE_CHECKLIST_v10.md` (status-synk)
+- **Risici / pas på:**
+  - Jeg har ingen live-adgang til Mac Mini/headend, så alt arbejde er baseret på kode-
+    og dokumentgennemgang. Verifikation kræver Codex/Peter.
+  - Dokumenterne viser tegn på "docs-lag-drift" — samme status opdateret forskelligt
+    steder. Bør renses op systematisk.
+  - Git arbejdstræet er "beskidt" ifølge tidligere handovers — brug konkrete filer ved
+    commit, ikke bred `git add .`.
+- **Session-kontekst:** Dette er en frisk Claude-session startet 2026-07-06. Jeg har ikke
+  adgang til tidligere session-hukommelse, men har læst hele dokumentationskorpuset
+  for at komme hurtigt op på speed. Jeg er klar til at hjælpe med alle opgaver der
+  kræver kode, analyse, design eller dokumentation.
+
+### Handover 2026-07-06 15:45 — fra Claude til Peter/Codex
+- Hvad er gjort: Jeg har opdateret de relevante dokumenter med den nye compliance-, backup/resilience- og test-workflow, og jeg har introduceret mig selv som samarbejdspartner i denne handover-log. Dokumentationen er nu mere i tråd med den aktuelle driftssituation og de nylige backend- og testforbedringer.
+- Hvad mangler / næste skridt: Fortsæt med live-verifikation mod en faktisk kørende headend-instans, inklusive UI-flow for Compliance- og Backup/Resilience-sider.
+- Kommandoer kørt eller skal køres: Ingen ny runtime-kørsel; dokumentationsopdateringer gennemgået og verificeret lokalt.
+- Forventet/faktisk output: Admin- og brugerdokumentation, risikovurdering og handover-log afspejler den aktuelle status.
+- Filer rørt: `Dokumentation/ADMINISTRATORMANUAL_v10.md`, `Dokumentation/BRUGERMANUAL_v10.md`, `Dokumentation/RISK_ASSESSMENT_v10.md`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Live-API-verifikation kræver en kørende headend-instans og faktisk konfigureret backup-NAS; dokumentationen er derfor opdateret på baggrund af kode- og testgennemgang, ikke en fuld live-kørsel.
+
+### Handover 2026-07-06 14:20 — fra Claude til Peter/Codex
+- Hvad er gjort: Startet arbejdet på de prioriterede emner med fokus på compliance- og resilience-surface. Jeg har tilføjet en konkret smoke-suite og operational-readiness-tests, og jeg har styrket compliance-endpointenes output så UI'et får en stabil, numerisk og konsistent response selv når DB'en er tom eller delvist udfyldt.
+- Hvad mangler / næste skridt: Fortsæt med backup/resilience-flowen, og tilføj en minimal UI-smoke for Compliance-page samt en mere dækkende live-test mod headend når der er en kørende instans tilgængelig.
+- Kommandoer kørt eller skal køres: `.venv/bin/python -m py_compile headend/main.py`, `.venv/bin/pytest -q tests/test_operational_readiness.py tests/test_smoke_suite.py -m smoke`.
+- Forventet/faktisk output: 5 tests passed, 4 skipped.
+- Filer rørt: `headend/main.py`, `tests/test_operational_readiness.py`, `tests/test_smoke_suite.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Live headend-tests kræver en faktisk kørende instans og gyldig auth/session; de er derfor stadig delvist skipped i lokal smoke-run.
+
+### Handover 2026-07-06 15:10 — fra Claude til Peter/Codex
+- Hvad er gjort: Fortsat med backup- og resilience-workstream. Jeg har udvidet regressionstests for backup/resilience-surface og gjort backup-status, resilience-summary og edge-backup-trigger-responses mere robuste og konsistente for UI og automatiserede checks.
+- Hvad mangler / næste skridt: Tilføj en minimal UI-smoke for Backup/Resilience-page og valider live-API mod en kørende headend-instans med faktisk konfigureret backup-NAS.
+- Kommandoer kørt eller skal køres: `.venv/bin/python -m py_compile headend/main.py`, `.venv/bin/pytest -q tests/test_backup_resilience.py tests/test_operational_readiness.py tests/test_smoke_suite.py -m smoke`.
+- Forventet/faktisk output: 7 tests passed, 4 skipped.
+- Filer rørt: `headend/main.py`, `tests/test_backup_resilience.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Backup-arkiver og NAS-opsætning afhænger stadig af miljø og faktisk tilgængelige paths; de er ikke testet som live-backup-kørsel i denne session.
 
 ### Handover 2026-07-03 10:55 — fra Codex til ny Claude-session/Peter
 - Hvad er gjort: Peter bad om at få alt committet før sessionskift. Det relevante arbejde er nu
@@ -7749,3 +7955,63 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
      tidligere) eller en manuel, korrekt-konfigureret opstart med de rigtige miljøvariabler.
 - **Filer rørt (opfølgning):** Kun `settings`-tabellen i den kørende Headend-database (via
   `claude_proxy.py`), ingen filer i repoet. Denne HANDOVER_LOG-tilføjelse.
+
+- **Opfølgning 2026-07-06/07 — Open WebUI-sagen afsluttet, root cause fuldt bekræftet, og en
+  vigtig arkitektonisk misforståelse rettet undervejs:**
+  1. Peter bad om at "gøre det rigtigt", så toggle'en "Peter vil gerne lege med Ollama"
+     (`PUT /api/ai/ollama-priority`) rent faktisk starter Open WebUI. Jeg begyndte at bygge et
+     on-demand launchd-setup (`RunAtLoad=false`, `KeepAlive=true` → senere `false`, som en
+     bruger-LaunchAgent i `gui/$(id -u)`-domænet), med tanke på at headend skulle kalde
+     `launchctl kickstart` fra sin egen LaunchDaemon-kontekst.
+  2. **Empirisk test (via `claude_proxy.py`) afslørede at TCC-hypotesen fra sidste entry var
+     korrekt og reproducerbar:** en helt frisk `bootout`+`bootstrap`+`kickstart` gav 5
+     identiske crashes: `PermissionError: [Errno 1] Operation not permitted:
+     '.../openwebui-env/pyvenv.cfg'`. Dette er macOS' TCC-beskyttelse af *removable volumes* —
+     `openwebui-env` er en symlink til USB-drevet `/Volumes/data-fast` (Protocol: Apple Fabric),
+     mens boot-disken er en anden fysisk enhed ("Macintosh HD"). Ikke løst af Icon\r-
+     oprydningen alene.
+  3. **Peter gav Full Disk Access til Homebrew Python@3.12
+     (`/opt/homebrew/Cellar/python@3.12/3.12.13_2/.../Python.app`) via Systemindstillinger →
+     Privatliv og sikkerhed** — en handling jeg ikke kan udføre selv (systemindstillinger er
+     uden for min handleramme), og som blev bedt om via `AskUserQuestion` med to alternativer
+     (flyt venv til intern disk / udskyd). Efter dette lykkedes en frisk `kickstart`.
+  4. **Under test af den "rettede" `KeepAlive=false`-adfærd opstod uforklarlige "genopstande"
+     processer, uanset `kill -9`/`bootout`.** Undersøgelse afslørede den egentlige forklaring:
+     **der findes allerede en separat, system-niveau LaunchDaemon**,
+     `/Library/LaunchDaemons/dk.froekjaer.open-webui.plist` (oprettet 28. maj 2026, root-ejet,
+     kører som `peter`), med IDENTISK konfiguration (samme env-vars/trusted headers) som
+     repo-filen, men `RunAtLoad=true`+`KeepAlive=true` — dvs. den er designet til at køre
+     KONSTANT, ligesom headend/PostgreSQL/nginx (jf.
+     `SERVICES_OG_DRIFT_kilde_til_sandhed.md`). Denne daemon har `runs = 29.564` (!) —
+     et enormt antal genstarter, konsistent med at den har crash-loopet (Icon\r + TCC) i lang
+     tid, formentlig siden den blev installeret, uden at nogen har set det (ingen alarmering på
+     denne specifikke tjeneste i dag).
+  5. **Konklusion, der ændrer hele opgavens præmis:** "Peter vil gerne lege med Ollama"-toggle'en
+     har ALDRIG haft til opgave at starte/stoppe Open WebUI's webserver. Den styrer kun
+     ressourceprioritet på selve Ollama-modellen (uændret adfærd, ikke rørt). Den oprindelige
+     fejlmelding ("127.0.0.1:8080 ikke tilgængelig") skyldtes udelukkende at den allerede-
+     eksisterende, altid-kørende system-daemon crash-loopede pga. Icon\r + TCC — IKKE en
+     manglende starttrigger. Med begge rettet kører daemonen nu stabilt, uden yderligere kode.
+  6. **Oprydning:** min test-LaunchAgent (`gui/$(id -u)/dk.froekjaer.open-webui`, som var i
+     portkonflikt med system-daemonen — `[Errno 48] address already in use` blev observeret i
+     loggen) er booted ud og filen `~/Library/LaunchAgents/dk.froekjaer.open-webui.plist`
+     fjernet. `deploy/launchd/dk.froekjaer.open-webui.plist` er rettet tilbage til
+     `RunAtLoad=true`/`KeepAlive=true` (matcher nu den faktiske, virkende deployment) med en
+     udvidet kommentar der forklarer arkitekturen, så en fremtidig agent ikke begår samme fejl.
+  7. **Verificeret fungerende:** `curl http://127.0.0.1:8080/` → HTTP 200. `curl
+     https://openwebui.froekjaer.dk/` (uden login) → HTTP 302 (korrekt nginx-gate). Ingen
+     PermissionError i loggen efter Full-Disk-Access-tildelingen.
+  8. **Ingen ændring i `headend/main.py`** — den oprindeligt planlagte `launchctl kickstart`-
+     trigger i `PUT /api/ai/ollama-priority` er IKKE bygget, fordi den var baseret på en forkert
+     præmis (se punkt 5). Task #66 er derfor afsluttet uden kodeændring i headend, kun i
+     `deploy/launchd/dk.froekjaer.open-webui.plist` + denne dokumentation.
+  9. **Stadig åbent (ikke gjort her, kun observeret):** root-årsagen til de massive Icon\r-
+     mængder på `/Volumes/data-fast` er stadig ikke undersøgt (samme punkt som sidste entry).
+     Ligeledes er `WEBUI_SECRET_KEY`-placeringen værd at holde øje med — loggen viste den
+     blev læst fra `/Volumes/data-fast/.../openwebui-env/.webui_secret_key` (venv'ens
+     working directory), ikke fra `DATA_DIR=/Users/peter/.open-webui`. Ikke undersøgt videre
+     her, da det ikke blokerede login-integrationen, men bør tjekkes hvis venv'en
+     geninstalleres (nøglen ville gå tabt og alle sessions invalideres).
+- **Filer rørt:** `deploy/launchd/dk.froekjaer.open-webui.plist` (RunAtLoad/KeepAlive rettet
+  tilbage + udvidet forklarende kommentar). Ingen ændringer i `headend/`. Denne
+  HANDOVER_LOG-tilføjelse.

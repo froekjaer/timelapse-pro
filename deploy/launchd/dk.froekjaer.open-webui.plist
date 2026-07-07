@@ -57,6 +57,33 @@
   <key>StandardErrorPath</key>
   <string>/Users/peter/Library/Logs/open-webui.log</string>
 
+  <!-- RETTET 2026-07-06/07 efter fejlagtigt forsøg på "on-demand via toggle":
+       Open WebUI er IKKE en on-demand-tjeneste. Den er allerede installeret
+       som en SYSTEM-LaunchDaemon (/Library/LaunchDaemons/dk.froekjaer.open-webui.plist,
+       oprettet 28. maj 2026) og kører KONSTANT i baggrunden, ligesom headend,
+       PostgreSQL og nginx — jf. SERVICES_OG_DRIFT_kilde_til_sandhed.md. Denne
+       fil her (deploy/launchd/) er kilde-kopien til den daemon, ikke en separat
+       LaunchAgent.
+
+       "Peter vil gerne lege med Ollama"-toggle'en (PUT /api/ai/ollama-priority)
+       har ALDRIG haft til opgave at starte/stoppe denne webserver — den styrer
+       kun ressourceprioritet på selve Ollama-modellen, uafhængigt af om
+       Open WebUI's HTTP-server kører.
+
+       Den oprindelige fejl ("127.0.0.1:8080 ikke tilgængelig") skyldtes IKKE en
+       manglende starttrigger, men at denne daemon crash-loopede (29.564
+       registrerede genstarter, se `launchctl print system/dk.froekjaer.open-webui`)
+       pga. (1) macOS Finder Icon\r-filer i venv'et der knækkede Pythons
+       pathlib.iterdir(), og (2) TCC-beskyttelse af removable volumes, der
+       blokerede launchd-spawnede processers adgang til venv'et på USB-drevet
+       /Volumes/data-fast (Peter gav Full Disk Access til Homebrew Python@3.12
+       via Systemindstillinger 2026-07-07). Begge er nu rettet, og daemonen
+       kører stabilt (verificeret: HTTP 200 lokalt, HTTP 302 via nginx uden login).
+
+       RunAtLoad=true + KeepAlive=true er derfor korrekt — det matcher den
+       faktiske, allerede-fungerende deployment. Et separat eksperiment med
+       RunAtLoad=false/KeepAlive=false som en gui-domæne LaunchAgent er forkastet
+       (den var i konflikt med denne daemon om port 8080). -->
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
