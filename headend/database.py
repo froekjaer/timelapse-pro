@@ -36,7 +36,7 @@ load_dotenv()
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, Integer,
     String, Text, create_engine, event,
-    LargeBinary, BigInteger, UniqueConstraint
+    LargeBinary, BigInteger, UniqueConstraint, JSON
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -177,6 +177,22 @@ class Capture(Base):
     # historikken via et live join (samme lektie som R16, se RISK_ASSESSMENT_v10.md).
     # Bevidst KUN tagging indtil videre — bruges endnu ikke til håndhævelse.
     site_id             = Column(String(36), index=True)
+
+    # ── GDPR Redaction (v17, 2026-07-07) ────────────────────────────────────────
+    # Redaction workflow for UI-010 (Sløring/redaction workflow). Se
+    # headend/migrations/v17_redaction_fields.sql for database schema.
+    # redaction_status: ENUM (pending/analyzed/detected/redacted/exempt/skipped)
+    # has_gdpr_data: TRUE hvis GDPR-data (ansigter/nummerplader) detekteret
+    # redaction_method: Metode brugt til redaction (opencv_blur/manual/none)
+    # gdpr_detections: JSONB med detaljeret detection data (faces, plates)
+    # redacted_at: Tidspunkt for redaction
+    # redacted_by: Hvem udførte redaction (auto eller brugernavn)
+    redaction_status   = Column(String(20), default='pending')
+    has_gdpr_data      = Column(Boolean)
+    redaction_method   = Column(String(50))
+    gdpr_detections    = Column(JSON)
+    redacted_at        = Column(DateTime(timezone=True))
+    redacted_by        = Column(String(100))
 
 
 class Diagnostic(Base):
