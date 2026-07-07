@@ -20,7 +20,12 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install pyflakes pytest
+        run: |
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          else
+            pip install pyflakes pytest
+          fi
       - name: Syntax check edge
         run: |
           python -m py_compile edge/agent.py
