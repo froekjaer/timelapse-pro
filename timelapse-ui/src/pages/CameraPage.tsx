@@ -6,9 +6,9 @@ import { getApiUrl, pathSegment } from '../api/client'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-
     },
     ...opts
   }).then(r => {
@@ -155,7 +155,7 @@ export function CameraPage() {
   const [cameraName, setCameraName]   = useState('')
   const [baselineDescription, setBaselineDescription] = useState('')
   const [contextNotes, setContextNotes]               = useState('')
-  const [retentionDays, setRetentionDays]             = useState(365)  // P0-05: Retention policy
+  const [retentionDays, setRetentionDays]             = useState(99999)  // P0-05: Retention policy (default)
   const [cameraIndex, setCameraIndex] = useState(0)
   const [relayCamera, setRelayCamera] = useState(356)
   const [relayModem, setRelayModem]   = useState(361)
@@ -187,20 +187,26 @@ export function CameraPage() {
     if (!deviceId) return null
     try {
       const r = await fetch(`${getApiUrl()}/api/admin/devices/${encodeURIComponent(deviceId)}/camera-location`, {
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       })
       if (r.ok) {
         const data = await r.json()
         const cam = data.camera ?? null
+        console.log('DEBUG loadCameraLocation:', { deviceId, camera: cam, retention_days: cam?.retention_days })
         setCameraLocation(cam)
         if (cam) {
           setBaselineDescription(cam.baseline_description ?? '')
           setContextNotes(cam.context_notes ?? '')
-          setRetentionDays(cam.retention_days ?? 365)  // P0-05: Load retention
+          setRetentionDays(cam.retention_days ?? 99999)  // P0-05: Load retention
         }
         return cam
+      } else {
+        console.error('DEBUG loadCameraLocation failed:', r.status)
       }
-    } catch { /* silent */ }
+    } catch (e) {
+      console.error('DEBUG loadCameraLocation error:', e)
+    }
     return null
   }
 
@@ -250,21 +256,26 @@ export function CameraPage() {
         relayModem,
       )
       if (cameraLocation?.id) {
+        const payload = {
+          camera_name: cameraName,
+          baseline_description: baselineDescription,
+          context_notes: contextNotes,
+          retention_days: retentionDays,
+        }
+        console.log('DEBUG save: sending payload:', { cameraId: cameraLocation.id, payload })
         await api(`/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}`, {
           method: 'PUT',
-          body: JSON.stringify({
-            camera_name: cameraName,
-            baseline_description: baselineDescription,
-            context_notes: contextNotes,
-            retention_days: retentionDays,
-          }),
+          body: JSON.stringify(payload),
         })
+        console.log('DEBUG save: after PUT, retentionDays =', retentionDays)
         await api(`/api/admin/config-overrides/camera/${encodeURIComponent(cameraLocation.id)}`, {
           method: 'PUT',
           body: JSON.stringify({ mode: 'merge', config_overrides: nextOverrides }),
         })
         setOverrides(nextOverrides)
+        console.log('DEBUG save: before loadCameraLocation, retentionDays =', retentionDays)
         await loadCameraLocation()
+        console.log('DEBUG save: after loadCameraLocation, retentionDays =', retentionDays)
       } else {
         await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}/info`, {
           method: 'PUT',
@@ -273,7 +284,8 @@ export function CameraPage() {
       }
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
-    } catch {
+    } catch (e) {
+      console.error('DEBUG save error:', e)
       setError('Kunne ikke gemme')
     } finally {
       setSaving(false)
@@ -317,6 +329,7 @@ export function CameraPage() {
     setBtTotpLoading(true)
     try {
       const r = await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-qr`, {
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       })
       if (r.ok) setBtTotp(await r.json())
@@ -330,6 +343,7 @@ export function CameraPage() {
     try {
       await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-regenerate`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       })
       await loadBtTotp()
@@ -541,12 +555,19 @@ export function CameraPage() {
               value={cameraIndex} onChange={e => setCameraIndex(parseInt(e.target.value) || 0)} />
             <p className="text-xs text-gray-300 mt-1">Fysisk node-index. Kamera-config gemmes på lokationen.</p>
           </div>
-          <div>
-            <label className="text-xs text-gray-400 block mb-1">Retention (dage)</label>
-            <input type="number" min={1} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-              value={retentionDays} onChange={e => setRetentionDays(parseInt(e.target.value) || 365)} />
-            <p className="text-xs text-gray-300 mt-1">Antal dage billeder opbevares før automatisk sletning (GDPR)</p>
-          </div>
+          {cameraLocation?.id ? (
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Retention (dage)</label>
+              <input type="number" min={1} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                value={retentionDays} onChange={e => setRetentionDays(parseInt(e.target.value) || 99999)} />
+              <p className="text-xs text-gray-300 mt-1">Antal dage billeder opbevares før automatisk sletning (GDPR)</p>
+            </div>
+          ) : (
+            <div>
+              <label className="text-xs text-gray-400 block mb-1">Retention (dage)</label>
+              <div className="text-xs text-gray-400 italic">Tildel en kamera-lokation for at konfigurere retention</div>
+            </div>
+          )}
           <div>
             <label className="text-xs text-gray-400 block mb-1">Relay GPIO (kamera)</label>
             <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"

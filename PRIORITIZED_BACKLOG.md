@@ -1,6 +1,6 @@
 # Prioriteret backlog for TimeLapse Pro
 
-**Opdateret:** 2026-07-07 (Session 6 — P2-03 Redaction workflow færdig)
+**Opdateret:** 2026-07-07 (Session 7 — Test script oprettet, backlog opdateret med test-status)
 
 **Kontekst:** Denne backlog er udarbejdet efter gennemgang af RISK_ASSESSMENT_v10.md, GO_LIVE_CHECKLIST_v10.md, KRAVREGISTER_og_STATUS_v10.md, SYSTEM_HEALTH_REGISTER.md og HANDOVER_LOG.md. Den prioriterer arbejder der bringer systemet fra LAB/pre-production til Internet-facing production readiness.
 
@@ -78,6 +78,75 @@ Følgende P0-opgaver **skal** være løst før systemet kan gå Internet-facing 
 8. 🟠 **P0-08**: Node-agent kørende
 
 **Estimeret tid:** 4-6 uger med fokusindsats.
+
+---
+
+## Test Status — Weekend 5-7 Juli 2026 Features
+
+**Opdateret:** 2026-07-07
+**Test Script:** `tests/test_weekend_features_api.py`
+
+### Test Suite Oversigt
+
+| Kategori | Tests | Status | Prioritet |
+|----------|-------|--------|-----------|
+| **P2-03 GDPR Redaction** | 3 | ⬜ | HØJ |
+| **P0-05 Retention Policy** | 2 | ⬜ | KRITISK |
+| **Drift-Detection** | 2 | ⬜ | HØJ |
+| **M-05 Agent-Lockdown** | 1 | ⬜ | SIKKERHED |
+| **Update UI Scopes** | 1 | ⬜ | MEDIUM |
+| **P2-02 Thumbnail Backlog** | 1 | ⬜ | MEDIUM |
+| **Database Schema (v15-v17)** | 3 | ⬜ | KRITISK |
+| **TOTAL** | **13** | **⬜** | |
+
+### Kør Test Script
+
+```bash
+# Mod localhost (kræver headend kørende)
+python tests/test_weekend_features_api.py
+
+# Mod staging/produktion
+TIMELAPSE_TEST_BASE_URL=https://timelapse-pro-staging.kirkbi.local \
+TIMELAPSE_TEST_USER=admin \
+TIMELAPSE_TEST_PASSWORD=*** \
+python tests/test_weekend_features_api.py
+
+# Med verbose output
+python tests/test_weekend_features_api.py --verbose
+
+# Uden login (offentlige endpoints)
+python tests/test_weekend_features_api.py --no-login
+```
+
+### Manual UI Tests (ikke automatiseret)
+
+Disse skal testes manuelt i browseren:
+
+| # | Feature | UI Side | Status |
+|---|---------|---------|--------|
+| **UI-01** | GDPR Redaction (dansk tekst) | Admin → GDPR Sløring | ⬜ |
+| **UI-02** | Retention per kamera | Enheder → rediger kamera | ⬜ |
+| **UI-03** | Global retention config | Admin → Retention | ⬜ |
+| **UI-04** | Drift config hierarki | Admin → Drift → Config | ⬜ |
+| **UI-05** | Update scopes | Admin → Opdateringer | ⬜ |
+| **UI-06** | Thumbnail backlog badge | Admin → Post-processing | ⬜ |
+
+### Database Migration Checks
+
+Før testen køres, sørg for at følgende migrations er kørt:
+
+```bash
+# Tjek v15 (Retention)
+psql -U timelapse -d timelapse_db -c "\d cameras" | grep retention_days
+psql -U timelapse -d timelapse_db -c "\d captures" | grep retention_date
+
+# Tjek v16 (wb_cast_strength)
+psql -U timelapse -d timelapse_db -c "\d captures" | grep wb_cast_strength
+
+# Tjek v17 (Redaction)
+psql -U timelapse -d timelapse_db -c "SELECT unnest(enum_range(NULL::redaction_status_enum));"
+psql -U timelapse -d timelapse_db -c "\d captures" | grep redaction_status
+```
 
 ---
 

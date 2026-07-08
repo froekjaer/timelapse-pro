@@ -32,6 +32,7 @@ interface RetentionStatus {
 
 interface RetentionSettings {
   retention_cleanup_interval: string
+  retention_days?: number  // P0-05: Global retention default
 }
 
 interface DeletionLogEntry {
@@ -54,7 +55,7 @@ type Tab = 'status' | 'settings' | 'deletion-log'
 export function RetentionPage() {
   const [tab, setTab] = useState<Tab>('status')
   const [status, setStatus] = useState<RetentionStatus>({ running: false, progress: [], deleted_count: 0, error: null })
-  const [settings, setSettings] = useState<RetentionSettings>({ retention_cleanup_interval: 'manual' })
+  const [settings, setSettings] = useState<RetentionSettings>({ retention_cleanup_interval: 'manual', retention_days: 99999 })
   const [deletionLog, setDeletionLog] = useState<DeletionLogEntry[]>([])
   const [logPage, setLogPage] = useState(1)
   const [logTotal, setLogTotal] = useState(0)
@@ -296,7 +297,7 @@ export function RetentionPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-4">
               <Settings className="w-5 h-5 text-gray-400" />
-              Automatisk cleanup
+              Retention indstillinger
             </h2>
 
             <div className="space-y-4">
@@ -316,6 +317,22 @@ export function RetentionPage() {
                 </select>
                 <p className="text-xs text-gray-400 mt-1">
                   Hvor ofte systemet automatisk skal køre retention cleanup
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Global retention (dage)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={settings.retention_days ?? 99999}
+                  onChange={e => setSettings({ ...settings, retention_days: parseInt(e.target.value) || 99999 })}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Default retention for nye kameraer. Anvendes hvis kameraet ikke har en egen retention værdi.
                 </p>
               </div>
 
@@ -343,9 +360,9 @@ export function RetentionPage() {
 
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
             <p className="text-sm text-blue-800">
-              <strong>Note:</strong> Ændringer til cleanup interval træder i kraft ved næste planlagte tjek
-              (hvert 10. minut). Hvis "Manuelt" er valgt, kører cleanup kun når du klikker "Start retention cleanup nu"
-              i Status-tabben.
+              <strong>Note:</strong> Global retention bruges som default for nye kameraer.
+              Eksisterende kameraer beholder deres egen retention værdi indtil de ændres.
+              Cleanup interval træder i kraft ved næste planlagte tjek (hvert 10. minut).
             </p>
           </div>
         </div>

@@ -4912,6 +4912,7 @@ def get_device_camera_location(
             "notes":         cam.notes,
             "baseline_description": getattr(cam, "baseline_description", None),
             "context_notes":        getattr(cam, "context_notes", None),
+            "retention_days":       getattr(cam, "retention_days", 99999),
         },
     }
 
@@ -12433,18 +12434,27 @@ def _run_retention_cleanup(reason: str = "manual") -> dict:
         _retention_status["progress"].append(f"Cleanup reason: {reason}")
         log.info("Retention cleanup startet (reason=%s)", reason)
 
-        # Find alle kameraer med retention_days > 0
-        cameras = db.query(Camera).filter(Camera.retention_days > 0).all()
+        # Hent global retention_days default (99999 hvis ikke sat)
+        from sqlalchemy import text
+        global_retention_row = db.execute(text("SELECT value FROM settings WHERE key='retention_days'")).fetchone()
+        global_retention_days = int(global_retention_row[0]) if global_retention_row else 99999
+        _retention_status["progress"].append(f"Global retention: {global_retention_days} dage")
+
+        # Find alle kameraer
+        cameras = db.query(Camera).all()
         total_deleted = 0
 
         for camera in cameras:
             try:
-                # Beregn cutoff dato for dette kamera
-                cutoff = datetime.now(timezone.utc) - timedelta(days=camera.retention_days)
+                # Brug kameraets retention_days, eller global default hvis 0/None
+                retention = camera.retention_days if camera.retention_days and camera.retention_days > 0 else global_retention_days
 
-                # Find captures der skal slettes
+                # Beregn cutoff dato for dette kamera
+                cutoff = datetime.now(timezone.utc) - timedelta(days=retention)
+
+                # Find captures der skal slettes (matcher på camera_id)
                 captures_to_delete = db.query(Capture).filter(
-                    Capture.device_id == camera.device_id,
+                    Capture.camera_id == camera.id,
                     Capture.captured_at < cutoff
                 ).all()
 
@@ -12456,13 +12466,13 @@ def _run_retention_cleanup(reason: str = "manual") -> dict:
                     # Opret deletion log FØR sletning
                     log_entry = CaptureDeletionLog(
                         capture_id=capture.id,
-                        camera_id=camera.camera_id or camera.id,
+                        camera_id=capture.camera_id or camera.id,
                         customer_id=capture.customer_id,
                         site_id=capture.site_id,
                         filename=capture.filename,
                         captured_at=capture.captured_at,
                         deletion_reason="retention_policy",
-                        retention_days=camera.retention_days,
+                        retention_days=retention,
                         performed_by=f"retention_job:{reason}",
                         file_size=None  # kan beregnes fra filstien hvis nødvendigt
                     )
@@ -12489,13 +12499,13 @@ def _run_retention_cleanup(reason: str = "manual") -> dict:
 
                 db.commit()
                 _retention_status["progress"].append(
-                    f"Kamera {camera.name}: slettede {len(captures_to_delete)} captures (>{camera.retention_days} dage)"
+                    f"Kamera {camera.camera_name}: slettede {len(captures_to_delete)} captures (>{retention} dage)"
                 )
 
             except Exception as _cam_err:
                 db.rollback()
-                log.error("Fejl ved cleanup af kamera %s: %s", camera.name, _cam_err)
-                _retention_status["progress"].append(f"Kamera {camera.name}: FEJL - {_cam_err}")
+                log.error("Fejl ved cleanup af kamera %s: %s", camera.camera_name, _cam_err)
+                _retention_status["progress"].append(f"Kamera {camera.camera_name}: FEJL - {_cam_err}")
 
         _retention_status["deleted_count"] = total_deleted
         _retention_status["progress"].append(f"Retention cleanup færdig: {total_deleted} captures slettet")
@@ -13683,7 +13693,7 @@ def get_backup_settings(_user=require_role("admin"), db: Session = Depends(get_d
 # ── Retention policy API (G-02, P0-05) ───────────────────────────────────────
 
 @app.post("/api/admin/retention/trigger")
-def trigger_retention_cleanup(_user=require_role("admin")):
+def trigger_retention_cleanup(_user=require_role("operator")):
     """Start retention cleanup i baggrunden."""
     global _retention_status
     if _retention_status.get("running"):
@@ -13707,11 +13717,11 @@ def retention_status(_user=require_role("viewer")):
 
 @app.put("/api/admin/retention/settings")
 def update_retention_settings(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
-    """Gem retention indstillinger (cleanup interval)."""
+    """Gem retention indstillinger (cleanup interval + global retention_days)."""
     try:
         from sqlalchemy import text
         for key, value in payload.items():
-            if key in ["retention_cleanup_interval"]:
+            if key in ["retention_cleanup_interval", "retention_days"]:
                 db.execute(text(
                     """
                     INSERT INTO settings (key, value)
@@ -13730,14 +13740,16 @@ def get_retention_settings(_user=require_role("viewer"), db: Session = Depends(g
     """Hent retention indstillinger."""
     try:
         from sqlalchemy import text
-        keys = ["retention_cleanup_interval"]
         result = {}
-        for k in keys:
-            row = db.execute(text("SELECT value FROM settings WHERE key=:k"), {"k": k}).fetchone()
-            result[k] = row[0] if row else "manual"
+        # Cleanup interval
+        row = db.execute(text("SELECT value FROM settings WHERE key='retention_cleanup_interval'")).fetchone()
+        result["retention_cleanup_interval"] = row[0] if row else "manual"
+        # Global retention_days (default 99999)
+        row = db.execute(text("SELECT value FROM settings WHERE key='retention_days'")).fetchone()
+        result["retention_days"] = int(row[0]) if row else 99999
         return result
     except:
-        return {"retention_cleanup_interval": "manual"}
+        return {"retention_cleanup_interval": "manual", "retention_days": 99999}
 
 
 @app.get("/api/admin/retention/deletion-log")
