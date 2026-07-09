@@ -48,12 +48,12 @@ NOW = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
 CAMERA = "cam-drift-test-1"
 
 
-def _make_capture(db, *, days_ago: float, blur=None, brightness=None, wb=None, idx=0):
+def _make_capture(db, *, days_ago: float, blur=None, brightness=None, wb=None, idx=0, camera_id=None):
     cap = database.Capture(
         device_id="TL-DRIFTTEST",
         filename=f"img_{idx:04d}.jpg",
         captured_at=NOW - timedelta(days=days_ago),
-        camera_id=CAMERA,
+        camera_id=camera_id or CAMERA,
         blur_score=blur,
         brightness_mean=brightness,
         wb_cast_strength=wb,
@@ -245,3 +245,131 @@ def test_analyse_camera_drift_ignores_other_cameras(db_session):
 
     result = analyse_camera_drift(db_session, database.Capture, CAMERA, raw_config=None, now=NOW)
     assert result["focus"]["drift_suspected"] is True  # egen data, uaendret af det andet kamera
+
+
+# ── HTTP endpoint tests (/api/cameras/{camera_id}/drift-analysis) ─────────
+
+import main  # noqa: E402
+
+
+def _make_customer(db, customer_id="cust-a"):
+    """Opret en Customer til brug i tests."""
+    cust = database.Customer(id=customer_id, name=f"Customer {customer_id}")
+    db.add(cust)
+    db.commit()
+    return cust
+
+
+def _make_site(db, site_id="site-a", customer_id="cust-a"):
+    """Opret en Site til brug i tests."""
+    site = database.Site(id=site_id, name=f"Site {site_id}", customer_id=customer_id)
+    db.add(site)
+    db.commit()
+    return site
+
+
+def _make_camera(db, camera_id="cam-1", customer_id="cust-a", site_id="site-a"):
+    """Opret et Camera-objekt til brug i endpoint tests. Opretter også Customer
+    og Site hvis de ikke findes."""
+    # Sørg for at Customer og Site findes
+    if not db.query(database.Customer).filter_by(id=customer_id).first():
+        _make_customer(db, customer_id)
+    if site_id and not db.query(database.Site).filter_by(id=site_id).first():
+        _make_site(db, site_id, customer_id)
+
+    cam = database.Camera(
+        id=camera_id,
+        camera_name=f"Camera {camera_id}",
+        customer_id=customer_id,
+        site_id=site_id,
+    )
+    db.add(cam)
+    db.commit()
+    return cam
+
+
+def _make_user(db, username="viewer1", role="viewer", customer_id="cust-a"):
+    """Opret en bruger til authentication. Opretter Customer hvis den ikke findes."""
+    if not db.query(database.Customer).filter_by(id=customer_id).first():
+        _make_customer(db, customer_id)
+    user = database.User(
+        username=username,
+        email=f"{username}@example.test",
+        password_hash="x",
+        role=role,
+        customer_id=customer_id,
+    )
+    db.add(user)
+    db.commit()
+    return user
+
+
+def test_drift_analysis_endpoint_404_for_unknown_camera(db_session):
+    """GET /api/cameras/{camera_id}/drift-analysis skal returnere 404 hvis kameraet
+    ikke findes."""
+    user = _make_user(db_session)
+    with pytest.raises(main.HTTPException) as exc_info:
+        main.get_camera_drift_analysis(camera_id="unknown-cam", _user=user, db=db_session)
+    assert exc_info.value.status_code == 404
+    assert "ikke fundet" in exc_info.value.detail.lower()
+
+
+def test_drift_analysis_endpoint_returns_expected_structure(db_session):
+    """Endpoint skal returnere expected struktur med camera_id, camera_name og
+    dimensions dict med focus/exposure/white_balance keys."""
+    cam = _make_camera(db_session, camera_id="cam-endpoint-test")
+    user = _make_user(db_session, customer_id="cust-a")
+    _seed(db_session, baseline_n=10, recent_n=10, baseline_blur=500.0, recent_blur=500.0)
+
+    result = main.get_camera_drift_analysis(camera_id=cam.id, _user=user, db=db_session)
+
+    assert result["camera_id"] == cam.id
+    assert result["camera_name"] == cam.camera_name
+    assert "dimensions" in result
+    assert "focus" in result["dimensions"]
+    assert "exposure" in result["dimensions"]
+    assert "white_balance" in result["dimensions"]
+
+
+def test_drift_analysis_endpoint_respects_site_access(db_session):
+    """Endpoint skal respektere site access control — en bruger fra kunde B
+    maa ikke tilga kameraer paa kunde A's site."""
+    cam = _make_camera(db_session, camera_id="cam-site-a", customer_id="cust-a", site_id="site-a")
+    user_b = _make_user(db_session, username="user-b", customer_id="cust-b")
+
+    # Bruger B prøver at tilgå kamera på kunde A's site — skal fejle med 403
+    with pytest.raises(main.HTTPException) as exc_info:
+        main.get_camera_drift_analysis(camera_id=cam.id, _user=user_b, db=db_session)
+    assert exc_info.value.status_code == 403
+    assert "ingen adgang" in exc_info.value.detail.lower()
+
+
+def test_drift_analysis_endpoint_uses_resolved_config(db_session):
+    """Endpoint skal bruge _resolve_config_hierarchy til at hente kamera-specifik
+    config (quality.drift_detection.*)."""
+    # Brug samme kamera ID som _seed funktionen (CAMERA konstanten)
+    cam = _make_camera(db_session, camera_id=CAMERA, customer_id="cust-a", site_id="site-a")
+    user = _make_user(db_session, customer_id="cust-a")
+
+    # Seed med mere ekstremt blur-drop for at trigge drift (baseline=600, recent=150)
+    _seed(db_session, baseline_n=10, recent_n=10, baseline_blur=600.0, recent_blur=150.0)
+
+    # Default config har focus.enabled=True, så vi burde se et drift-resultat
+    result = main.get_camera_drift_analysis(camera_id=cam.id, _user=user, db=db_session)
+
+    focus_dim = result["dimensions"]["focus"]
+    assert focus_dim["enabled"] is True  # fra default config
+    assert focus_dim["sufficient_data"] is True
+    assert focus_dim["drift_suspected"] is True  # vi seedede med ekstremt blur-drop
+
+
+def test_drift_analysis_endpoint_requires_viewer_role(db_session):
+    """Endpoint skal være viewer-niveau (kræver viewer rolle eller højere) —
+    defineret af require_role("viewer") i endpoint decorator."""
+    # Test at viewer kan tilgå endpointet
+    cam = _make_camera(db_session)
+    viewer = _make_user(db_session, username="viewer", role="viewer")
+    _seed(db_session, baseline_n=10, recent_n=10, baseline_blur=500.0, recent_blur=500.0)
+
+    result = main.get_camera_drift_analysis(camera_id=cam.id, _user=viewer, db=db_session)
+    assert "dimensions" in result

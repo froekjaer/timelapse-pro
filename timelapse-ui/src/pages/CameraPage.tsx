@@ -72,6 +72,32 @@ interface ParamRow {
   description?: string
 }
 
+interface DriftDimension {
+  dimension: 'focus' | 'exposure' | 'white_balance'
+  enabled: boolean
+  sufficient_data: boolean
+  baseline_n: number
+  recent_n: number
+  baseline_mean: number | null
+  baseline_stdev: number | null
+  recent_mean: number | null
+  delta: number | null
+  z_score: number | null
+  drift_suspected: boolean
+  message: string
+  config: Record<string, unknown>
+}
+
+interface DriftAnalysis {
+  camera_id: string
+  camera_name: string
+  dimensions: {
+    focus: DriftDimension
+    exposure: DriftDimension
+    white_balance: DriftDimension
+  }
+}
+
 const CAMERA_PARAMS: ParamRow[] = [
   // Optagelse
   { key: 'schedule.interval_minutes', label: 'Optagelsesinterval', section: 'Optagelse', type: 'number', unit: 'min', placeholder: '60', description: 'Minutter mellem hvert billede' },
@@ -177,6 +203,11 @@ export function CameraPage() {
   const [btTotpLoading, setBtTotpLoading] = useState(false)
   const [btTotpRegen, setBtTotpRegen]     = useState(false)
 
+  // ── Drift-analyse (fase 1, 2026-07-07) ─────────────────────────────────────
+  const [driftData, setDriftData]         = useState<DriftAnalysis | null>(null)
+  const [driftLoading, setDriftLoading]   = useState(false)
+  const [driftError, setDriftError]       = useState<string | null>(null)
+
   useEffect(() => {
     fetch(`${getApiUrl()}/api/admin/sites`).then(r=>r.json()).then((ss:any[]) => setSites(ss)).catch(()=>{})
     // Load all cameras for reassignment picker
@@ -225,6 +256,20 @@ export function CameraPage() {
     }
   }
 
+  async function loadDriftAnalysis(cameraId: string) {
+    setDriftLoading(true)
+    setDriftError(null)
+    try {
+      const data: DriftAnalysis = await api(`/api/cameras/${encodeURIComponent(cameraId)}/drift-analysis`)
+      setDriftData(data)
+    } catch (e: any) {
+      console.error('Failed to load drift analysis:', e)
+      setDriftError(e?.message ?? 'Kunne ikke hente drift-analyse')
+    } finally {
+      setDriftLoading(false)
+    }
+  }
+
   useEffect(() => {
     if (!deviceId) return
     api(`/api/admin/devices/${pathSegment(deviceId)}`)
@@ -235,8 +280,12 @@ export function CameraPage() {
         setCameraIndex(dev.camera_index ?? 0)
         setRelayCamera(dev.relay_gpio_camera ?? 356)
         setRelayModem(dev.relay_gpio_modem ?? 361)
-        await loadCameraLocation()
+        const camLoc = await loadCameraLocation()
         await loadResolvedConfig()
+        // Load drift analysis when we have a camera location
+        if (camLoc?.id) {
+          loadDriftAnalysis(camLoc.id)
+        }
       })
       .catch(() => setError('Kunne ikke hente enhed'))
       .finally(() => setLoading(false))
@@ -602,6 +651,62 @@ export function CameraPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Drift-analyse (fase 1) ───────────────────────────────────────────── */}
+      {driftLoading && (
+        <div className="bg-white border border-gray-200 rounded-xl p-6 mb-5">
+          <p className="text-sm text-gray-500">Indlæser drift-analyse…</p>
+        </div>
+      )}
+      {driftError && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
+          <p className="text-sm text-amber-800">⚠️ {driftError}</p>
+        </div>
+      )}
+      {driftData && !driftLoading && (
+        <div className="bg-white border border-gray-200 rounded-xl p-6 mb-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">Drift-analyse</h2>
+          <p className="text-xs text-gray-400 mb-4">
+            Opdager om kameraet glider ud af kalibrering over tid (fokus, eksponering, hvidbalance).
+            Sammenligner nyeste billeder med ældre baseline — kun hvis nok data er tilgængeligt.
+          </p>
+          <div className="space-y-3">
+            {(['focus', 'exposure', 'white_balance'] as const).map(dim => {
+              const d = driftData.dimensions[dim]
+              if (!d?.enabled) return null
+              const icon = d.drift_suspected ? '⚠️' : d.sufficient_data ? '✓' : '○'
+              const color = d.drift_suspected ? 'text-red-600' : d.sufficient_data ? 'text-green-600' : 'text-gray-400'
+              const label = {
+                focus: 'Fokus',
+                exposure: 'Eksponering',
+                white_balance: 'Hvidbalance'
+              }[dim]
+              return (
+                <div key={dim} className="flex items-start gap-2 text-sm">
+                  <span className={color}>{icon}</span>
+                  <div className="flex-1">
+                    <span className="font-medium text-gray-700">{label}</span>
+                    {!d.sufficient_data && (
+                      <span className="text-xs text-gray-400 ml-2">(ikke nok data endnu)</span>
+                    )}
+                    {d.sufficient_data && d.z_score !== null && (
+                      <span className="text-xs text-gray-500 ml-2">
+                        z-score: {d.z_score.toFixed(1)} / {((d.config?.z_threshold as number) ?? 2.0).toFixed(1)}
+                      </span>
+                    )}
+                    <p className="text-xs text-gray-500 mt-0.5">{d.message}</p>
+                  </div>
+                </div>
+              )
+            })}
+            {!driftData.dimensions.focus.enabled && !driftData.dimensions.exposure.enabled && !driftData.dimensions.white_balance.enabled && (
+              <p className="text-xs text-gray-400 italic">
+                Drift-analyse er slået fra i konfigurationen. Slå til under "Kvalitet" ovenfor.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Kamera-niveau config overrides */}
       {sections.map(section => (
