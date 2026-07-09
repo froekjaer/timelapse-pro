@@ -1,0 +1,1 @@
+/Volumes/data-fast/peter-home/projects/timelapse-pro/deploy/scripts/restore.sh

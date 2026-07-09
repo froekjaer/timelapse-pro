@@ -6,6 +6,7 @@ Indeholder fixtures til integration tests med authenticated sessions.
 import os
 import pytest
 import requests
+import uuid
 
 BASE_URL = os.getenv("TIMELAPSE_TEST_BASE_URL", "http://127.0.0.1:8000")
 
@@ -14,6 +15,10 @@ TEST_CREDENTIALS = {
     "admin": {
         "username": "admin",
         "password": "TestAdmin123!"
+    },
+    "super_admin": {
+        "username": "test-super-admin",
+        "password": "TestSuperAdmin123!"
     },
     "viewer": {
         "username": "test-viewer",
@@ -124,6 +129,68 @@ def operator_session():
         )
     except Exception as e:
         pytest.skip(f"Kunne ikke oprette operator session: {e}")
+
+
+@pytest.fixture(scope="session")
+def super_admin_session():
+    """Authenticated session med super_admin rolle.
+
+    Opretter test-super-admin user hvis den ikke findes.
+    Bruger: test-super-admin / TestSuperAdmin123!
+    """
+    from database import get_db, User
+
+    # Prøv at logge ind først
+    try:
+        return AuthenticatedSession(
+            TEST_CREDENTIALS["super_admin"]["username"],
+            TEST_CREDENTIALS["super_admin"]["password"]
+        )
+    except Exception:
+        # User findes ikke - opret via database
+        pass
+
+    # Opret user i database
+    try:
+        db_gen = get_db()
+        db = next(db_gen)
+
+        # Tjek om user allerede findes
+        existing = db.query(User).filter_by(
+            username=TEST_CREDENTIALS["super_admin"]["username"]
+        ).first()
+
+        if existing:
+            # User findes men login fejlede - slet og genskab
+            db.delete(existing)
+            db.commit()
+
+        # Opret ny super_admin user
+        from headend.main import _hash_password
+        new_user = User(
+            username=TEST_CREDENTIALS["super_admin"]["username"],
+            password_hash=_hash_password(TEST_CREDENTIALS["super_admin"]["password"]),
+            role="super_admin",
+            email="test-super-admin@timelapse.local",
+            is_active=True
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+
+        # Log ind med nye credentials
+        return AuthenticatedSession(
+            TEST_CREDENTIALS["super_admin"]["username"],
+            TEST_CREDENTIALS["super_admin"]["password"]
+        )
+
+    except Exception as e:
+        pytest.skip(f"Kunne ikke oprette super_admin session: {e}")
+    finally:
+        try:
+            db.close()
+        except:
+            pass
 
 
 def pytest_configure(config):

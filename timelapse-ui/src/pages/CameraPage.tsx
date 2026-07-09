@@ -86,6 +86,12 @@ interface DriftDimension {
   drift_suspected: boolean
   message: string
   config: Record<string, unknown>
+  recommendations: Array<{
+    type: string
+    reason: string
+    confidence: number
+    params?: Record<string, unknown>
+  }>
 }
 
 interface DriftAnalysis {

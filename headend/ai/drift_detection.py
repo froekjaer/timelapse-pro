@@ -112,6 +112,7 @@ class DriftResult:
     drift_suspected: bool = False
     message: str = ""
     config: dict = field(default_factory=dict)
+    recommendations: list = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -128,6 +129,7 @@ class DriftResult:
             "drift_suspected": self.drift_suspected,
             "message": self.message,
             "config": self.config,
+            "recommendations": self.recommendations,
         }
 
 
@@ -307,6 +309,32 @@ def _analyse_dimension(
     result.drift_suspected = trend["drift_suspected"]
     key = "drift" if trend["drift_suspected"] else "ok"
     result.message = _MESSAGES[dimension][key].format(window_days=window_days, baseline_days=baseline_days)
+    
+    # Tilføj recommendations baseret på drift-type
+    if result.drift_suspected:
+        if dimension == "focus":
+            result.recommendations = [{
+                "type": "focus_slice",
+                "reason": "Fokus-drift detekteret - focus-slice anbefales for at finde optimal position",
+                "confidence": min(0.95, 0.5 + (abs(result.z_score or 0) / 4.0)),
+                "params": {
+                    "run_autofocus_first": True,
+                    "count": 7,
+                }
+            }]
+        elif dimension == "exposure":
+            result.recommendations = [{
+                "type": "exposure_adjustment",
+                "reason": "Eksponerings-drift detekteret - tjek linse for støv/tåge",
+                "confidence": min(0.9, 0.5 + (abs(result.z_score or 0) / 5.0)),
+            }]
+        elif dimension == "white_balance":
+            result.recommendations = [{
+                "type": "white_balance_check",
+                "reason": "Hvidbalance-drift detekteret - tjek linse for belægning",
+                "confidence": min(0.85, 0.5 + (abs(result.z_score or 0) / 5.0)),
+            }]
+    
     return result
 
 

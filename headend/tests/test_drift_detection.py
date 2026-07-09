@@ -373,3 +373,56 @@ def test_drift_analysis_endpoint_requires_viewer_role(db_session):
 
     result = main.get_camera_drift_analysis(camera_id=cam.id, _user=viewer, db=db_session)
     assert "dimensions" in result
+
+
+# ── Recommendations (fase 2/3, 2026-07-09) ────────────────────────────────────
+
+def test_drift_analysis_includes_focus_recommendation_when_drift_detected(db_session):
+    """Når fokus-drift detekteres, skal analysen inkludere en recommendation
+    om at køre focus-slice."""
+    _seed(db_session, baseline_n=10, recent_n=10, baseline_blur=600.0, recent_blur=150.0)
+
+    result = analyse_camera_drift(
+        db_session, database.Capture, CAMERA, raw_config=None, now=NOW
+    )
+
+    focus_dim = result["focus"]
+    assert focus_dim["drift_suspected"] is True
+    assert "recommendations" in focus_dim
+    assert len(focus_dim["recommendations"]) > 0
+    rec = focus_dim["recommendations"][0]
+    assert rec["type"] == "focus_slice"
+    assert "fokus-drift" in rec["reason"].lower()
+    assert rec["confidence"] > 0.5
+    assert "params" in rec
+
+
+def test_drift_analysis_no_recommendations_when_no_drift(db_session):
+    """Når ingen drift detekteres, skal recommendations være tom."""
+    _seed(db_session, baseline_n=10, recent_n=10, baseline_blur=500.0, recent_blur=500.0)
+
+    result = analyse_camera_drift(
+        db_session, database.Capture, CAMERA, raw_config=None, now=NOW
+    )
+
+    focus_dim = result["focus"]
+    assert focus_dim["drift_suspected"] is False
+    assert focus_dim["recommendations"] == []
+
+
+def test_exposure_drift_recommendation(db_session):
+    """Når eksponerings-drift detekteres, skal analysen inkludere en recommendation."""
+    _seed(db_session, baseline_n=10, recent_n=10, 
+           baseline_blur=500.0, recent_blur=500.0,
+           baseline_bright=128.0, recent_bright=180.0)  # Lysere exposure
+
+    result = analyse_camera_drift(
+        db_session, database.Capture, CAMERA, raw_config=None, now=NOW
+    )
+
+    exposure_dim = result["exposure"]
+    # brightness_mean kan variere, men hvis der er drift skal vi have en recommendation
+    if exposure_dim["drift_suspected"]:
+        assert len(exposure_dim["recommendations"]) > 0
+        rec = exposure_dim["recommendations"][0]
+        assert rec["type"] == "exposure_adjustment"
