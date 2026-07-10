@@ -1,6 +1,6 @@
 # Prioriteret backlog for TimeLapse Pro
 
-**Opdateret:** 2026-07-09 (Session 10 — Drift-detection fase 1 færdig: UI panel på CameraPage + HTTP endpoint tests. 21 tests i test_drift_detection.py, alle passerer. Status badge ⚠️/✓ rettet til kun at vise reelle QA-fejl, ikke bløde optimizer-anbefalinger.)
+**Opdateret:** 2026-07-09 (Session 10 — Drift-detection fase 2/3 færdig: Auto-trigger focus-slice + recommendations. 24 tests i test_drift_detection.py, alle passerer. UI viser 🔧 knapper når drift detekteres.)
 
 **Kontekst:** Denne backlog er udarbejdet efter gennemgang af RISK_ASSESSMENT_v10.md, GO_LIVE_CHECKLIST_v10.md, KRAVREGISTER_og_STATUS_v10.md, SYSTEM_HEALTH_REGISTER.md og HANDOVER_LOG.md. Den prioriterer arbejder der bringer systemet fra LAB/pre-production til Internet-facing production readiness.
 
@@ -33,7 +33,7 @@
 | **P1-08** | **Dokumentationssynk** — ✅ FÆRDIG 2026-07-07. Datoer opdateret til 2026-07-07, ADM-002 og SEC-003 opdateret til "Implementeret", status konsistent på tværs af RISK/GO_LIVE/KRAVREGISTER. | 1-2 dage | Claude | ✅ Implementeret |
 | **P1-09** | **MFA/WebAuthn UI-forbedringer** — ✅ Test suite oprettet (TOTP setup, QR generation, backup codes, WebAuthn, UI workflow). TOTP enforced, men UI kan forbedres (setup, recovery, etc.). | 2-3 dage | Claude | 🟡 Tests + TOTP klar |
 | **P1-10** | **Break-glass rate-limit/IP-allowlist** — ✅ Test suite oprettet (28/43 tests passerer). Mangler: IP allowlist implementation, rate limiting bypass logic, audit logging integration. | 2-3 dage | Claude/Codex | 🟡 Tests klar |
-| **P1-11** | **Drift-detection (kamera-kalibrering)** — ✅ FÆRDIG 2026-07-09 (Fase 1). Analyse-modulet (focus/exposure/WB), endpoint `/api/cameras/{id}/drift-analysis`, UI panel på CameraPage, config-hierarki på 4 sider, 21 tests. Fase 2/3 (auto-trigger/apply fokus) er senere skridt. | 3-5 dage | Claude | ✅ Fase 1 færdig |
+| **P1-11** | **Drift-detection (kamera-kalibrering)** — ✅ FÆRDIG 2026-07-09 (Fase 1-3). Analyse-modulet (focus/exposure/WB), endpoint `/api/cameras/{id}/drift-analysis`, UI panel på CameraPage, config-hierarki på 4 sider, 24 tests, auto-trigger focus-slice ved drift, recommendations med konfidens. | 3-5 dage | Claude | ✅ Implementeret |
 
 ## P2 — Medium prioritet (teknisk gæld og kvalitet)
 
@@ -97,7 +97,7 @@ Nye tests i Session 10: +5 endpoint tests for drift-analysis (P1-11)
 | **test_break_glass.py** (P1-10) | 43 | 28 | 15 | 0 | HØJ |
 | **test_credential_rotation.py** (P0-07) | 28 | ~18 | ~10 | 0 | KRITISK |
 | **test_nginx_8443_config.py** (P0-02) | 32 | ~20 | ~12 | 0 | KRITISK |
-| **test_drift_detection.py** (P1-11) | 21 | 21 | 0 | 0 | HØJ |
+| **test_drift_detection.py** (P1-11) | 24 | 24 | 0 | 0 | HØJ |
 | **test_node_agent_launchd.py** (P0-08) | 29 | ~19 | ~10 | 0 | KRITISK |
 | **test_mfa_ui_workflow.py** (P1-09) | 35 | ~22 | ~13 | 0 | HØJ |
 | **test_eslint_compliance.py** (P1-06) | 26 | ~16 | ~10 | 0 | MEDIUM |
