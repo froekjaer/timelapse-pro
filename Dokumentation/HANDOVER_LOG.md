@@ -8,8 +8,9 @@ person vide".
 
 ## Medarbejdere og samarbejdspartnere
 
-- Claude-3 (AI-assistent i denne session) — fortsætter arbejdet med prioriteret backlog, tests, dokumentation og handover-synk.
-- Claude-2 (forrige session) — færdiggjorde P0-05 Retention Policy (100% kode + dokumentation).
+- **Claude-4 (AI-assistent i denne session)** — fortsætter arbejdet med prioriteret backlog, commit, dokumentation og main-track merge.
+- Claude-3 (forrige session) — færdiggjorde P1-11 Drift-detection fase 2/3.
+- Claude-2 (tidligere session) — færdiggjorde P0-05 Retention Policy (100% kode + dokumentation).
 - Peter Frøkjær — produkt-/driftsejer og beslutningstager.
 - Codex — samarbejdspartner for kode-, ops- og deployment-spor.
 
@@ -26,6 +27,22 @@ person vide".
 ```
 
 ## Log
+
+### Handover 2026-07-10 ~09:00 — fra Claude-4 (Session genoptagelse) til Peter/Codex
+- **Session genoptaget efter context limit:**
+  - ✅ Læst `00_START_HER.md`, `HANDOVER_LOG.md`, `PRIORITIZED_BACKLOG.md`
+  - ✅ P1-11 Drift-detection fase 2/3 bekræftet færdig (commit 738639ff)
+  - ✅ 24 tests i `test_drift_detection.py` (alle passerer)
+  - ✅ UI viser 🔧 knapper når drift detekteres
+- **Commits i dag:**
+  - 9944d13c: PRIORITIZED_BACKLOG.md opdateret (fase 2/3 status)
+- **Næste skridt:**
+  - Merge `claude/qa-drift-detection-2026-07-07` til main
+  - Push til GitHub
+  - Fortsæt med P0-opgaver (port migration, backup, DPIA)
+- **Filer rørt:**
+  - `PRIORITIZED_BACKLOG.md` — opdateret med fase 2/3 status
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
 
 ### Handover 2026-07-07 ~15:45 — fra Claude-3 (P2-09 GRC evidence-links) til Peter/Codex
 - **P2-09: GRC evidence-links FÆRDIG:**
