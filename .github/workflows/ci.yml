@@ -115,9 +115,9 @@ jobs:
           git pull origin main
       - name: Restart headend
         run: |
-          USER_ID=$(id -u)
-          launchctl kickstart -k "gui/${USER_ID}/dk.froekjaer.timelapse-headend"
-          launchctl print "gui/${USER_ID}/dk.froekjaer.timelapse-headend" | grep -E "state =|pid =|last exit code =" || true
+          # Brug sudo launchctl til global service (runner kører i eget domæne)
+          sudo launchctl kickstart -k "dk.froekjaer.timelapse-headend"
+          sudo launchctl print "dk.froekjaer.timelapse-headend" | grep -E "state =|pid =|last exit code =" || true
           echo "✅ Headend genstartet"
       - name: Rebuild UI
         run: |
