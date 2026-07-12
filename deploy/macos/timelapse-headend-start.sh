@@ -128,9 +128,9 @@ ensure_port_available() {
     local pid cmd
 
     info=$(check_port_occupation 8000) || true
-    local status=$?
+    local port_status=$?
 
-    case $status in
+    case $port_status in
       0)
         echo "$LOG_PREFIX [STARTUP_GUARD] Port 8000 is available"
         return 0
