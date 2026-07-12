@@ -126,9 +126,13 @@ ensure_port_available() {
     attempt=$((attempt + 1))
     local info
     local pid cmd
+    local port_status
 
-    info=$(check_port_occupation 8000) || true
-    local port_status=$?
+    # Temporarily disable 'exit on error' to capture non-zero exit codes
+    set +e
+    info=$(check_port_occupation 8000)
+    port_status=$?
+    set -e
 
     case $port_status in
       0)
