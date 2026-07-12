@@ -44,10 +44,10 @@ Styrer hvornår billeder tages.
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `timezone` | select | Europe/Copenhagen | Tidszone for schedule |
-| `capture_mode` | select | interval | `interval` eller `fixed_times` |
-| `interval_minutes` | number | 60 | Minutter mellem captures (interval mode) |
-| `active_hours` | array | ["06:00", "21:00"] | Start/slut tid for daglig capture |
+| `timezone` | select | Europe/Copenhagen | Tidszone for schedule. Sikrer at captures sker på korrekte lokale tider for hver site. Vigtig når sites er i forskellige tidszoner. Ændringer påvirker alle fremtidige captures. |
+| `capture_mode` | select | interval | Interval (fast frekvens) eller fixed_times (specificerede tidspunkter). Interval bruges til kontinuerlig timelapse af byggeprocesser. Fixed times er til periodiske status-billeder. |
+| `interval_minutes` | number | 60 | Minutter mellem captures i interval mode. Lavere værdi = tættere timelapse men mere plads og strøm. Typisk 5-60 minutter for byggepladser. Juster baseret på projektets tempo. |
+| `active_hours` | array | ["06:00", "21:00"] | Tidsvindue for daglig capture (f.eks. 06-21). Billeder uden for dette vindue saves ikke. Spar plads og strøm om natten. Bruges når der er minimal aktivitet. |
 
 #### 2. Kamera (Camera)
 
@@ -55,22 +55,22 @@ Kamerastyring og eksponering.
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `power_mode` | select | relay | `relay` eller `usb_powered` |
-| `iso` | select | Auto | ISO følsomhed |
-| `shutter_speed` | select | Auto | Lukker tid |
-| `aperture` | select | Auto | Blændeåbning |
-| `whitebalance` | select | Auto | Hvidbalance |
-| `relay_gpio_pin` | number | 356 | GPIO pin nummer (RK3588: 356, H3: BOARD 7) |
-| `relay_on_seconds_before` | number | 10 | Sekunder kameraet skal være tændt før capture |
-| `relay_off_seconds_after` | number | 5 | Sekunder før strøm slukkes efter capture |
-| `delete_after_download` | boolean | true | Slet billeder fra kamera efter download |
-| `gphoto2_port` | text | usb: | gPhoto2 port streng |
-| `azimuth_deg` | number | - | Kamera retning (grader)
-| `tilt_deg` | number | - | Kamera tilt (grader, negativ = nedad)
-| `mount_height_m` | number | - | Montering højde (meter)
-| `fov_horizontal_deg` | number | - | Horisontalt felt af syn (grader)
-| `fov_vertical_deg` | number | - | Vertikalt felt af syn (grader)
-| `perspective` | select | eye_level | `eye_level`, `high_angle`, `low_angle`, `birds_eye`, `worms_eye` |
+| `power_mode` | select | relay | Relay (ekstern strømstyring via GPIO) eller usb_powered (kameraet tændt altid). Relay anbefales for battery saving og kamera levetid. USB kræver konstant forbindelse. |
+| `iso` | select | Auto | Kameraets lysfølsomhed (100-6400). Lav ISO = mindre støj men kræver mere lys. Høj ISO for svage lysforhold men introducerer støj. Udendørs dagslys: 100-200. |
+| `shutter_speed` | select | Auto | Lukkerhastighed der styrer eksponeringstid og bevægelsesuskarphed. Hurtige lukker (1/500+) fryser bevægelse men kræver meget lys. Udendørs: 1/125-1/500. |
+| `aperture` | select | Auto | Blændeåbning (f-tal) der styrer dybdeskarphed og lysmængde. Lav f-tal (f/3.5) = lille dybde. Højt f-tal (f/11) = stor dybde. Byggeplads: f/8-f/11. |
+| `whitebalance` | select | Auto | Farvetemperatur korrektion for naturlige farver. Auto fungerer oftest godt i variable lysforhold. Daylight til solrigt vejr (5500K). Cloudy til overskyet (7000K). |
+| `relay_gpio_pin` | number | 356 | GPIO pin nummer til relay styring af kamera strøm. RK3588: 356, H3: BOARD 7. Forkert pin vil ikke virke. Ændres kun hvis hardware ændres. |
+| `relay_on_seconds_before` | number | 10 | Sekunder kameraet skal være tændt før capture. Kameraet skal varme op og stabilisere fx/iso. For kort tid kan give ustabile billeder. Typisk 5-15 sekunder. |
+| `relay_off_seconds_after` | number | 5 | Sekunder at vente efter capture før strøm slukkes. Sikrer at download er færdig og kamera kan lukke korrekt. For kort kan beskadige SD kort. Typisk 3-10 sekunder. |
+| `delete_after_download` | boolean | true | Slet billeder fra kameraets SD kort efter download til edge. Frigør plads på kamera kortet. Anbefales da billeder gemmes lokalt på edge. |
+| `gphoto2_port` | text | usb: | gPhoto2 port streng for kamera forbindelse. usb: er standard for USB forbundne kameraer. Ændres kun hvis kamera forbindelse ikke er USB. |
+| `azimuth_deg` | number | - | Kamera retning i grader (0=N, 90=Ø, 180=S, 270=V). Bruges til at dokumentere kamera orientering og til AI analyse. |
+| `tilt_deg` | number | - | Kamera vinkel i grader (0=horisont, positiv=opad, negativ=nedad). Negativ værdi (f.eks. -15) betyder kameraet peger nedad mod motivet. |
+| `mount_height_m` | number | - | Kamera højde over jorden i meter. Bruges til at beregne afstand og skala i billederne. Hjælper AI med at forstå motivstørrelse. |
+| `fov_horizontal_deg` | number | - | Horisontalt felt af syn i grader. Bestemmer hvor bredt billedet er. Typisk 50-70 grader for standard linser. Findes i kamera/linse specifikationer. |
+| `fov_vertical_deg` | number | - | Vertikalt felt af syn i grader. Bestemmer hvor højt billedet er. Typisk 35-50 grader for standard linser. Findes i kamera/linse specifikationer. |
+| `perspective` | select | eye_level | Kamera perspektiv type for AI analyse og metadata. eye_level (1.5-2m), high_angle (oppefra), low_angle (nedefra), birds_eye (lodret), worms_eye (fra jorden). |
 
 #### 3. Kvalitet (Quality)
 
@@ -78,43 +78,43 @@ Automatisk billedkvalitetskontrol.
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `check_enabled` | boolean | true | Aktivér kvalitetstjek |
-| `blur_threshold` | number | 80 | Minimum skarpheds-score (Laplacian variance) |
-| `dark_threshold` | number | 25 | Minimum lysstyrke (0-255) |
-| `bright_threshold` | number | 230 | Maksimum lysstyrke (0-255) |
+| `check_enabled` | boolean | true | Aktivérer automatisk kvalitetstjek af alle captures. Billeder der ikke opfylder kriterier markeres som "failed". Anbefales altid aktiveret for kvalitetssikring. |
+| `blur_threshold` | number | 80 | Minimum skarpheds-score (Laplacian variance 0-∞). Lavere værdi = mere tolerant over for uskarpe billeder. Typisk 50-100. Juster baseret på kamera og motiv. |
+| `dark_threshold` | number | 25 | Minimum lysstyrke i gennemsnit (0-255, hvor 0 er sort). Billeder mørkere end dette markeres som for mørke. Nat billeder kan fejle hvis for højt. Typisk 15-40. |
+| `bright_threshold` | number | 230 | Maksimum lysstyrke i gennemsnit (0-255, hvor 255 er hvid). Billeder lysere end dette markeres som overeksponerede. Typisk 220-245. |
 
 **Adaptiv Eksponering:**
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `adaptive_exposure.enabled` | boolean | false | Auto-juster EV baseret på brightness |
-| `adaptive_exposure.target_brightness` | number | 118 | Mål lysstyrke (0-255, 128 = optimal) |
-| `adaptive_exposure.brightness_tolerance` | number | 32 | Acceptabel afvigelse fra mål |
-| `adaptive_exposure.step_ev` | number | 0.3 | EV step per justering |
-| `adaptive_exposure.min_ev` | number | -2.0 | Minimum EV korrektion |
-| `adaptive_exposure.max_ev` | number | 2.0 | Maksimum EV korrektion |
+| `adaptive_exposure.enabled` | boolean | false | Auto-juster EV baseret på brightness måling. Kompenserer for variable lysforhold (skygge, sol, overskyet). Anbefales ved variable lysforhold. |
+| `adaptive_exposure.target_brightness` | number | 118 | Mål lysstyrke (0-255, 128 = optimal midtone). Systemet justerer EV for at nå denne værdi. Typisk 110-130 for timelapse. |
+| `adaptive_exposure.brightness_tolerance` | number | 32 | Acceptabel afvigelse fra mål brightness (± værdi). Mindre tolerance = hyppigere justering. Typisk 20-50. |
+| `adaptive_exposure.step_ev` | number | 0.3 | EV step per justering (0.1-3.0 EV). Mindre step = finere justering men flere cycles. Typisk 0.3-0.7. |
+| `adaptive_exposure.min_ev` | number | -2.0 | Minimum EV korrektion (negativ = mørkere). Beskytter mod for mørke billeder. Typisk -2 til -3 EV. |
+| `adaptive_exposure.max_ev` | number | 2.0 | Maksimum EV korrektion (positiv = lysere). Beskytter mod overeksponering. Typisk +2 til +3 EV. |
 
 **Edge AI Kvalitet:**
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `edge_ai.enabled` | boolean | true | Aktivér AI kvalitetsanalyse |
-| `edge_ai.mode` | select | assist | `off`, `monitor`, `assist`, `autonomous`, `npu_first`, `lab` |
-| `edge_ai.prefer_npu` | boolean | true | Foretræk NPU frem for CPU |
-| `edge_ai.runner` | text | - | Sti til NPU runner script |
-| `edge_ai.model_path` | text | - | Sti til NPU model fil |
-| `edge_ai.vendor_binary` | text | - | Sti til vendor wrapper (VIPLite) |
+| `edge_ai.enabled` | boolean | true | Aktiverer AI-baseret kvalitetsanalyse på edge-enheden. Bruger NPU til at detektere problemer (sløring, mørk, lens obstruction). Anbefales altid aktiveret. |
+| `edge_ai.mode` | select | assist | AI adfærdsmode: off, monitor (log kun), assist (advar og vent), autonomous (rett automatisk), npu_first, lab. Assist anbefales til produktion. |
+| `edge_ai.prefer_npu` | boolean | true | Brug NPU (hardware accelerator) frem for CPU. NPU er hurtigere og bruger mindre strøm. Anbefales altid aktiveret på NPU-hardware. |
+| `edge_ai.runner` | text | - | Sti til NPU runner script der executerer AI modellen. Standard path er korrekt for default installation. |
+| `edge_ai.model_path` | text | - | Sti til NPU model fil (.nb format for RK3588). Tom = brug built-in model. Ændres kun hvis du har en trænet model. |
+| `edge_ai.vendor_binary` | text | - | Sti til vendor NPU wrapper (VIPLite). Tom = brug built-in wrapper. Ændres kun ved custom NPU driver installation. |
 
 **Drift Detektion:**
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `drift_detection.focus.enabled` | boolean | true | Alarmer på fokus-drift |
-| `drift_detection.focus.z_threshold` | number | 2.0 | Standardafvigelser før alarm |
-| `drift_detection.exposure.enabled` | boolean | true | Alarmer på eksponerings-drift |
-| `drift_detection.exposure.z_threshold` | number | 2.5 | Standardafvigelser før alarm |
-| `drift_detection.white_balance.enabled` | boolean | false | Alarmer på hvidbalance-drift |
-| `drift_detection.white_balance.z_threshold` | number | 2.0 | Standardafvigelser før alarm |
+| `drift_detection.focus.enabled` | boolean | true | Alarmer hvis skarpheden systematisk falder over tid. Detekterer manuel fokus der glider (vibrationer, temperatur). Anbefales aktiveret. |
+| `drift_detection.focus.z_threshold` | number | 2.0 | Antal standardafvigelser fra baseline før alarm. Lavere = mere følsom. Typisk 2.0-3.0. |
+| `drift_detection.exposure.enabled` | boolean | true | Alarmer hvis eksponering systematisk skifter over tid. Detekterer støv på linse, tåge, eller sæson ændringer. |
+| `drift_detection.exposure.z_threshold` | number | 2.5 | Antal standardafvigelser fra baseline før alarm. Højere end focus da lysstyrke naturligt varierer mere. Typisk 2.5-4.0. |
+| `drift_detection.white_balance.enabled` | boolean | false | Alarmer hvis hvidbalance systematisk skifter. Kræver at edge-optimizeren rapporterer hvidbalance-data. Slået fra som default. |
+| `drift_detection.white_balance.z_threshold` | number | 2.0 | Antal standardafvigelser fra baseline før alarm. Typisk 2.0-3.0. |
 
 #### 4. Edge-lagring (Storage)
 
@@ -122,9 +122,9 @@ Lokal lagring på Edge-enheder.
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `local_path` | text | /data/captures | Sti til billedlagring |
-| `circular_buffer_gb` | number | 50 | Maksimal GB før oprydning |
-| `db_path` | text | /data/timelapse_edge.db | Sti til SQLite database |
+| `local_path` | text | /data/captures | Lokal sti til billedlagring på edge-enheden. Billeder gemmes her før upload til headend. Skal have tilstrækkelig plads (se buffer). |
+| `circular_buffer_gb` | number | 50 | Maksimal plads i GB før circular buffer sletter gamle uploaded billeder. Ældre uploaded filer slettes først. Større buffer = mere offline tolerance. Minimum 20-30 GB. |
+| `db_path` | text | /data/timelapse_edge.db | Sti til SQLite database med capture metadata, logs og lokal state. Database backupes sammen med billeder. |
 
 #### 5. Diagnostik (Diagnostics)
 
@@ -132,10 +132,10 @@ System overvågning og rapportering.
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `heartbeat_interval_minutes` | number | 60 | Minutter mellem heartbeats til headend |
-| `config_poll_interval_minutes` | number | 5 | Minutter mellem config pulls |
-| `update_poll_interval_minutes` | number | 5 | Minutter mellem opdateringstjek |
-| `inventory_report_interval_hours` | number | 24 | Timer mellem inventory rapporter |
+| `heartbeat_interval_minutes` | number | 60 | Minutter mellem heartbeat signals til headend. Heartbeat indeholder device status, capture statistik, og sundhedsmetrics. For lang interval = for sent til at opdage problemer. |
+| `config_poll_interval_minutes` | number | 5 | Minutter mellem tjek for konfigurationsændringer fra headend. Lavere = hurtigere response men mere network trafik. Typisk 5-10 minutter. |
+| `update_poll_interval_minutes` | number | 5 | Minutter mellem tjek for systemopdateringer fra headend. Opdateringer downloades og installeres automatisk. Typisk 5-15 minutter. |
+| `inventory_report_interval_hours` | number | 24 | Timer mellem inventory rapporter til headend. Inventory indeholder hardware info, versions, og kapacitet. Typisk 24 timer (daglig). |
 
 #### 6. System (System)
 
@@ -143,9 +143,9 @@ Timeouts og recovery parametre.
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `error_recovery_sleep_s` | number | 30 | Sekunder at vente efter fejl før retry |
-| `min_sleep_s` | number | 60 | Minimum søvn mellem captures |
-| `api_timeout_s` | number | 15 | Timeout for API kald (sekunder) |
+| `error_recovery_sleep_s` | number | 30 | Sekunder at vente efter fejl før retry. Forhindrer hurtig retry loop. Network timeout: 30-60 sekunder. Camera fejl: 60-120 sekunder. |
+| `min_sleep_s` | number | 60 | Minimum søvn mellem captures i sekunder. Selv ved fejl eller hurtig retry. Sikrer at systemet hviler. Typisk 30-120 sekunder. |
+| `api_timeout_s` | number | 15 | Timeout i sekunder for API kald til headend. Upload, heartbeat, config fetch. For kort kan give fejler på slow networks. Typisk 10-30 sekunder. |
 
 #### 7. Session og MFA (Session Policy)
 
@@ -153,15 +153,15 @@ Login sikkerhed og MFA konfiguration.
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `session_duration_hours` | number | 12 | Session levetid (timer) |
-| `remember_me_days` | number | 30 | "Husk mig" varighed (dage) |
-| `remember_me_allowed` | boolean | true | Tillad "Husk mig" funktion |
-| `mfa_required` | boolean | false | Kræv MFA for alle roller |
-| `mfa_required_by_role.super_admin` | boolean | true | Kræv MFA for super_admin |
-| `mfa_required_by_role.admin` | boolean | true | Kræv MFA for admin |
-| `mfa_required_by_role.operator` | boolean | false | Kræv MFA for operator |
-| `mfa_required_by_role.viewer` | boolean | false | Kræv MFA for viewer |
-| `mfa_exempt_usernames` | list | [] | Brugere undtaget fra MFA |
+| `session_duration_hours` | number | 12 | Session levetid i timer før bruger skal logge ind igen. Balancerer sikkerhed og convenience. Typisk 8-24 timer. Admin roller: 4-12 timer. |
+| `remember_me_days` | number | 30 | "Husk mig" session levetid i dage. Brugeren forbliver logget ind på enheden. Typisk 30-90 dage. |
+| `remember_me_allowed` | boolean | true | Tillad "Husk mig" funktion på login. Brugere kan vælge at forblive logget ind. Slå fra for højere sikkerhed. |
+| `mfa_required` | boolean | false | Kræv Multi-Factor Authentication for alle roller. Overrides rolle-specifikke indstillinger. Anbefales kun for highly secure miljøer. |
+| `mfa_required_by_role.super_admin` | boolean | true | Kræv MFA for super_admin rolle. Super admin har fuld adgang. MFA anbefales altid. Beskytter mod compromised passwords. |
+| `mfa_required_by_role.admin` | boolean | true | Kræv MFA for admin rolle. Admin har bred adgang til systemet. MFA anbefales altid. |
+| `mfa_required_by_role.operator` | boolean | false | Kræv MFA for operator rolle. Operator har limited adgang. MFA valgfrit baseret på risikovurdering. |
+| `mfa_required_by_role.viewer` | boolean | false | Kræv MFA for viewer rolle. Viewer har read-only adgang. MFA typisk ikke nødvendigt. |
+| `mfa_exempt_usernames` | list | [] | Udvalgte admin/super_admin brugere der undtages fra MFA krav. Backup adgang ved MFA system fejl. Should be minimal. |
 
 ### Brug af Global Config UI
 
@@ -171,10 +171,23 @@ Login sikkerhed og MFA konfiguration.
 2. Vælg kontekst (Kunde/Site/Kamera) via dropdowns
 3. Vælg hvilket lag du vil redigere
 
+#### Parameterbeskrivelser via Hover
+
+**Alle parametre har detaljerede tooltips der vises ved hover.**
+
+Hold cursoren over et parameternavn (f.eks. "camera.delete_after_download") for at se en 4-linje beskrivelse skrevet for fotoeksperter:
+
+- **Hvad parameteren gør** — praktisk forklaring
+- **Anbefalede værdier** — typiske indstillinger
+- **Konsekvenser** — hvad sker der hvis du ændrer det
+- **Tips** — bed practices og gotchas
+
+Tooltip informationen nedenfor i denne guide er en forkortet version. Se UI for fulde detaljer.
+
 #### Læsning af Konfiguration
 
 Tabellen viser:
-- **Parameter**: Navn og technical path
+- **Parameter**: Navn og technical path (hover for detaljeret beskrivelse)
 - **Global/Kunde/Site/Kamera**: Værdi på hvert lag
 - **Aktuel**: Effektiv værdi (efter arv)
 - **Farver**:
@@ -395,5 +408,14 @@ Ved henvendelse inkluder venligst:
 
 ---
 
-**Guide version:** 1.0
+**Guide version:** 1.1
 **Sidst opdateret:** 13. juli 2026
+
+---
+
+## Changelog
+
+### v1.1 (2026-07-13)
+- Tilføjet detaljerede parameterbeskrivelser i alle konfigurationssektioner
+- Dokumenteret hover-tooltip funktionalitet i UI
+- Udvidet beskrivelser for fotoeksperter med praktiske værdier og anbefalinger
