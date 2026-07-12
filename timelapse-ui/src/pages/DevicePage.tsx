@@ -20,6 +20,8 @@ import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDev
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaptureThumbnailCard, parseCaptureQA, qaHardFailed, causeLabels } from '../components/CaptureThumbnailCard'
+import { FotoTechnicalCard } from '../components/FotoTechnicalCard'
+import { SiteLookCard } from '../components/SiteLookCard'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import type { DeviceDetail, Capture } from '../types'
 
@@ -343,7 +345,12 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
           <span className="font-medium">{time}</span>
           <span className="text-white/50 text-xs">{cur + 1} / {captures.length}</span>
           {c.filesize_mb && <span className="text-white/40 text-xs">{c.filesize_mb} MB</span>}
-          {c.blur_score != null && <span className="text-white/40 text-xs">blur {Math.round(c.blur_score)}</span>}
+          {c.blur_score != null && (
+            <span className="text-white/40 text-xs">
+              blur {Math.round(c.blur_score)}
+              {c.quality_passed && <span className="text-[9px] text-emerald-400 font-bold ml-0.5" title="QA: OK">QA✓</span>}
+            </span>
+          )}
           {!c.quality_passed && <span className="text-red-400 text-xs font-medium">Kvalitet FEJL</span>}
         </div>
         <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
@@ -470,6 +477,9 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
               <div className={`flex items-center gap-1.5 ${c.blur_score < 80 ? 'text-red-400' : 'text-white/40'}`}>
                 <span className="w-2 h-2 rounded-full bg-current inline-block"></span>
                 Blur: {Math.round(c.blur_score)}
+                {c.quality_passed && (
+                  <span className="text-[9px] text-emerald-400 font-bold ml-1" title="QA: OK">QA✓</span>
+                )}
               </div>
             )}
           </div>
@@ -482,7 +492,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
           {!sidecar ? (
             <p className="text-white/40 text-xs italic">Ingen sidecar — billede optaget før v2.2.0 eller ikke uploadet endnu.</p>
           ) : (
-            <div className="grid grid-cols-3 gap-x-6 gap-y-0 text-xs">
+            <div className="grid grid-cols-5 gap-x-6 gap-y-0 text-xs">
 
               {/* Kolonne 1: Integritet + Kvalitet */}
               <div className="space-y-0.5">
@@ -657,9 +667,40 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                 <MR l="Perspektiv" v={metaLocation.perspective || c.perspective || '—'} />
               </div>
 
+              {/* Kolonne 4: Fototekniske Anbefalinger */}
+              <div className="space-y-0.5">
+                <FotoTechnicalCard
+                  data={sidecar?.ai_analysis?.autonomous_optimizer || sidecar?.autonomous_optimizer || null}
+                  onApplyOverride={(rec) => {
+                    console.log('Apply override:', rec)
+                    // TODO: Send til edge via headend API
+                  }}
+                  onDismissRecommendation={(action) => {
+                    console.log('Dismiss recommendation:', action)
+                    // TODO: Gem dismiss preference
+                  }}
+                />
+              </div>
+
+              {/* Kolonne 5: Site-Wide Look Matching */}
+              <div className="space-y-0.5">
+                <SiteLookCard
+                  data={sidecar?.ai_analysis?.site_look_matching || null}
+                  cameraModel={c.camera_model || sidecar?.camera?.model || 'Unknown'}
+                  onSetReference={() => {
+                    console.log('Set site reference')
+                    // TODO: Send til edge via headend API
+                  }}
+                  onRegenerateLUT={() => {
+                    console.log('Regenerate LUT')
+                    // TODO: Send til edge via headend API
+                  }}
+                />
+              </div>
+
               {/* Raw EXIF */}
               {exif && Object.keys(exif).length > 0 && (
-              <div className="col-span-3 mt-3 border-t border-white/10 pt-3">
+              <div className="col-span-4 mt-3 border-t border-white/10 pt-3">
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-2">📷 Raw EXIF fra JPG ({Object.keys(exif).length} felter)</p>
                 <div className="grid grid-cols-2 gap-x-8 gap-y-0.5 text-xs">
                   {Object.entries(exif)

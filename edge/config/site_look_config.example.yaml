@@ -1,0 +1,110 @@
+# TimeLapse Pro — Site-Wide Look Matching Configuration Example
+# =====================================================================
+#
+# Site-wide look matching sikrer at alle kameraer på et site kan
+# producere timelapse videoer med konsistent look.
+#
+# Placeres i edge/config/ og refereres fra hoved-config.yaml
+
+# ── Site-Wide Look Matching ───────────────────────────────────────────────
+site_look_matching:
+  # Aktivér/deaktivér site-wide look matching
+  enabled: true
+
+  # Hvor reference frames og LUTs gemmes
+  storage_path: "/var/lib/timelapse/site_looks"
+
+  # Kvalitetskrav for at et billede kan blive site reference
+  reference_quality_threshold: 75.0  # Quality score >= 75%
+
+  # Hvornår der automatisk oprettes nye referencer
+  auto_create_reference: true  # Opret reference fra høj-kvalitet captures
+  auto_update_reference: false  # Opdater ikke eksisterende reference (bevar stabilitet)
+
+  # LUT generering indstillinger
+  lut:
+    auto_generate: true  # Generer LUT automatisk efter hver capture
+    regeneration_interval_hours: 168  # Regenerer LUT ugentligt (7 dage)
+
+# ── Edge AI Policy ───────────────────────────────────────────────────────────
+# Policy for autonom optimizer og site look matching
+
+edge_ai_policy:
+  mode: "assist"  # off | monitor | assist | autonomous | npu_first | lab
+
+  # Kør optimizer på hver capture
+  run_optimizer: true
+
+  # Tillad kamera kommando hints fra site look matching
+  allow_camera_commands: true
+
+  # EV autopilot (automatisk eksponeringsjustering)
+  allow_ev_autopilot: true
+
+  # Schedule suggestions (avoid windows)
+  allow_schedule_suggestions: true
+
+  # Confidence floor for automatisk anvendelse
+  confidence_floor: 0.70  # 70% confidence kræves
+
+# ── Adaptive Exposure ────────────────────────────────────────────────────────
+quality:
+  adaptive_exposure:
+    target_brightness: 118.0  # Mål brightness (0-255)
+    brightness_tolerance: 32.0  # Tolerance ±32
+    step_ev: 0.3  # EV step størrelse
+    min_ev: -2.0  # Minimum EV compensation
+    max_ev: 2.0  # Maksimum EV compensation
+
+  blur_threshold: 80.0  # Blur score threshold
+  dark_threshold: 25.0  # Mørk pixel threshold
+  bright_threshold: 230.0  # Lys pixel threshold
+
+# ── Kamera-Specifikke Settings (Eksempler) ────────────────────────────────────
+# Disse kan overrides i kamera-konfigurationen
+
+camera:
+  # Nikon Z30 eksempel
+  model: "Nikon Z30"
+  picture_control: "Flat"  # Anbefalet til timelapse
+  picture_control_parameters:
+    sharpening: 3
+    contrast: 0
+    brightness: 0
+    saturation: 0
+    hue: 0
+
+  # Canon EOS 2000D eksempel
+  # model: "Canon EOS 2000D"
+  # picture_style: "Neutral"  # Anbefalet til timelapse
+  # picture_style_parameters:
+  #   sharpness: 2
+  #   contrast: 1
+  #   saturation: 1
+  #   color_tone: 0
+
+# ── Device Identitet (for site matching) ──────────────────────────────────────
+device:
+  device_id: "tlp-001"
+  customer_name: "example-customer"
+  site_name: "example-site"
+  camera_name: "camera-1"
+
+# ── Lokation (for GPS-aware features) ────────────────────────────────────────
+location:
+  gps_source: "manual"  # manual | gpsd
+  gps_lat: 55.6767
+  gps_lon: 12.5697
+  gps_alt_m: 12.0
+  address: "Copenhagen, Denmark"
+
+# ── Kamera Orientering ────────────────────────────────────────────────────────
+# Disse bruges til metadata og scene analyse
+
+camera:
+  azimuth_deg: 180.0  # Retning mod syd
+  tilt_deg: -15.0  # 15 grader nedad
+  mount_height_m: 3.5  # 3.5 meter over jorden
+  fov_horizontal_deg: 75.0
+  fov_vertical_deg: 53.0
+  perspective: "exterior"  # interior | exterior | mixed

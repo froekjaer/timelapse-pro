@@ -6,18 +6,30 @@ exposure compensation, white balance hints, focus actions, aperture/depth-of-fie
 signals and schedule avoid-window suggestions. It is deliberately deterministic
 so it can run on every edge node while a future NPU model acts as an accelerator
 or confidence booster, not as a hard dependency.
+
+INTEGRATED WITH SITE-WIDE LOOK MATCHING:
+    - Automatically creates site reference frames from high-quality captures
+    - Generates per-camera LUTs for matching to reference
+    - Provides camera command hints for consistent capture across site
+    - Ensures timelapse videos can be edited together without visible differences
 """
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 from pathlib import Path
 from typing import Any
 
 try:
     from ai.modes import edge_ai_policy
+    from ai.site_look_manager import SiteLookManager
 except Exception:  # pragma: no cover - used when imported as edge.ai.*
     from edge.ai.modes import edge_ai_policy
+    from edge.ai.site_look_manager import SiteLookManager
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,7 +51,12 @@ class OptimizerRecommendation:
 
 
 class AutonomousImageOptimizer:
-    """Analyse one captured image and propose next-capture improvements."""
+    """Analyse one captured image and propose next-capture improvements.
+
+    INTEGRATED WITH SITE-WIDE LOOK MATCHING:
+        When enabled, creates site reference frames and generates LUTs for
+        consistent color and exposure across all cameras on a site.
+    """
 
     def __init__(self, config: dict):
         self._config = config
@@ -54,6 +71,16 @@ class AutonomousImageOptimizer:
         self._blur_threshold = float(quality.get("blur_threshold", 80.0))
         self._dark_threshold = float(quality.get("dark_threshold", 25.0))
         self._bright_threshold = float(quality.get("bright_threshold", 230.0))
+
+        # Site-wide look matching manager
+        self._site_look_manager = None
+        site_look_config = config.get("site_look_matching", {}) or {}
+        if site_look_config.get("enabled", True):  # Enabled by default
+            try:
+                self._site_look_manager = SiteLookManager(config)
+                log.info("Site-wide look matching enabled")
+            except Exception as exc:
+                log.warning(f"Failed to initialize SiteLookManager: {exc}")
 
     def analyse(self, image_path: Path, quality_report: dict | None = None) -> dict[str, Any]:
         if not self._policy.run_optimizer:
@@ -71,12 +98,35 @@ class AutonomousImageOptimizer:
                     "autonomous_safe_to_apply": False,
                 },
             }
-        features = self._extract_features(image_path)
+        try:
+            features = self._extract_features(image_path)
+        except (ValueError, OSError, IOError) as exc:
+            # Handle invalid image gracefully
+            return {
+                "engine": "edge_autonomous_optimizer_v1",
+                "policy": self._policy.as_dict(),
+                "error": "invalid_image",
+                "error_message": str(exc),
+                "features": {},
+                "recommendations": [],
+                "control_plan": {
+                    "next_capture_ev_delta": 0.0,
+                    "commands": [],
+                    "avoid_window_suggestion": None,
+                    "autonomous_safe_to_apply": False,
+                },
+            }
         quality_report = quality_report or {}
         observations = self._observations(features)
         recommendations = self._recommend(features, quality_report)
         control = self._control_plan(features, quality_report, recommendations)
         score = self._score(features, quality_report)
+
+        # Site-wide look matching integration
+        site_look_data = self._process_site_look_matching(
+            image_path, features, quality_report, score, recommendations
+        )
+
         return {
             "engine": "edge_autonomous_optimizer_v1",
             "policy": self._policy.as_dict(),
@@ -86,6 +136,7 @@ class AutonomousImageOptimizer:
             "tags": [str(obs["tag"]) for obs in observations if obs.get("tag")],
             "recommendations": [r.as_dict() for r in recommendations],
             "control_plan": control,
+            "site_look_matching": site_look_data,
         }
 
     def _extract_features(self, image_path: Path) -> dict[str, Any]:
@@ -407,6 +458,117 @@ class AutonomousImageOptimizer:
             "white_balance_penalty": round(wb_penalty, 1),
             "highlight_penalty": round(highlight_penalty, 1),
         }
+
+    def _process_site_look_matching(
+        self,
+        image_path: Path,
+        features: dict[str, Any],
+        quality_report: dict,
+        score: dict,
+        recommendations: list[OptimizerRecommendation],
+    ) -> dict[str, Any]:
+        """Process site-wide look matching: create reference, generate LUT, get hints.
+
+        Returns dict with:
+        - has_site_reference: bool
+        - is_site_reference: bool (this image created/updated reference)
+        - lut_generated: bool
+        - capture_hints: dict (camera command hints)
+        - reference_info: dict (reference frame info if available)
+        - lut_info: dict (LUT info if available)
+        """
+        if self._site_look_manager is None:
+            return {
+                "enabled": False,
+                "has_site_reference": False,
+                "capture_hints": {},
+            }
+
+        # Get site and camera info from config
+        device_cfg = self._config.get("device", {}) or {}
+        site_id = device_cfg.get("site_name", "")
+        camera_id = device_cfg.get("camera_name", "")
+        customer_id = device_cfg.get("customer_name", "")
+        camera_model = self._config.get("camera", {}).get("model", "Unknown")
+
+        if not site_id or not camera_id:
+            return {
+                "enabled": True,
+                "has_site_reference": False,
+                "error": "missing_site_or_camera_id",
+                "capture_hints": {},
+            }
+
+        result = {
+            "enabled": True,
+            "has_site_reference": False,
+            "is_site_reference": False,
+            "lut_generated": False,
+            "capture_hints": {},
+            "reference_info": None,
+            "lut_info": None,
+        }
+
+        try:
+            # Check if site already has a reference
+            has_reference = self._site_look_manager.has_reference(site_id)
+            result["has_site_reference"] = has_reference
+
+            # Try to create/update reference if quality is high enough
+            overall_score = float(score.get("overall", 0.0))
+            if overall_score >= 75.0:
+                # Try to create reference (will fail if quality insufficient)
+                reference = self._site_look_manager.create_reference_from_capture(
+                    image_path=image_path,
+                    site_id=site_id,
+                    customer_id=customer_id,
+                    camera_id=camera_id,
+                    camera_model=camera_model,
+                    quality_report=quality_report,
+                )
+                if reference is not None:
+                    result["is_site_reference"] = True
+                    result["reference_info"] = {
+                        "site_id": reference.site_id,
+                        "created_at": reference.created_at.isoformat(),
+                        "created_by_camera": reference.created_by_camera_model,
+                        "quality_score": reference.quality_score,
+                        "scene_type": reference.scene_type,
+                        "picture_control": reference.reference_picture_control,
+                    }
+                    log.info(f"Created site reference for {site_id} (quality: {overall_score:.1f})")
+
+            # Generate/update LUT for this camera
+            lut = self._site_look_manager.generate_camera_lut(
+                image_path=image_path,
+                site_id=site_id,
+                camera_id=camera_id,
+                camera_model=camera_model,
+            )
+            if lut is not None:
+                result["lut_generated"] = True
+                result["lut_info"] = {
+                    "camera_model": lut.camera_model,
+                    "generated_at": lut.generated_at.isoformat(),
+                    "match_quality": lut.match_quality_score,
+                    "exposure_offset_ev": lut.exposure_offset_ev,
+                    "saturation_multiplier": lut.saturation_multiplier,
+                    "picture_control_hint": lut.picture_control_hint,
+                }
+
+            # Get capture hints for next capture
+            capture_hints = self._site_look_manager.get_capture_hints(
+                site_id=site_id,
+                camera_id=camera_id,
+                camera_model=camera_model,
+            )
+            result["capture_hints"] = capture_hints
+
+        except Exception as exc:
+            log.warning(f"Site look matching processing failed: {exc}")
+            result["error"] = str(exc)
+
+        return result
 
     @staticmethod
     def _dedupe(recommendations: list[OptimizerRecommendation]) -> list[OptimizerRecommendation]:
