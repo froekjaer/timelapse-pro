@@ -556,7 +556,7 @@ function StrategyTab() {
 
             {/* Strategi */}
             <div className="space-y-2">
-              <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">Strategi</label>
+              <label className="text-xs text-slate-400 font-medium uppercase tracking-wider" title="Vælg AI strategi: Technical_only (kun OpenCV kvalitetskontrol, ingen tags), Local_only (kun Ollama, offline), Local_then_cloud (Ollama først, Gemini ved usikkerhed), Cloud_only (kun Gemini Flash, bedste kvalitet). Cloud kræver API nøgle.">Strategi</label>
               <div className="grid grid-cols-2 gap-2">
                 {(Object.keys(STRATEGY_META) as Strategy[]).map(s => (
                   <button
@@ -567,6 +567,7 @@ function StrategyTab() {
                         ? 'border-violet-500 bg-violet-950/50'
                         : 'border-white/8 bg-gray-800 hover:border-white/20'
                     }`}
+                    title={STRATEGY_META[s].desc}
                   >
                     <div className="mt-0.5"><StrategyBadge strategy={s} /></div>
                     <p className="text-xs text-slate-400 mt-0.5">{STRATEGY_META[s].desc}</p>
@@ -578,11 +579,12 @@ function StrategyTab() {
             {/* Lokal model */}
             {(editing.strategy === 'local_only' || editing.strategy === 'local_then_cloud') && (
               <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">Lokal model</label>
+                <label className="text-xs text-slate-400 font-medium uppercase tracking-wider" title="Lokal vision model til tag analyse. qwen2.5vl:7b (anbefalet - balance mellem hastighed og kvalitet), llama3.2-vision:11b (tung men meget præcis), llava-phi3:latest (hurtig men mindre præcis). Modellen skal være pulled på Ollama server.">Lokal model</label>
                 <select
                   value={editing.local_model}
                   onChange={e => setEditing({ ...editing, local_model: e.target.value })}
                   className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                  title="Lokal vision model til tag analyse. qwen2.5vl:7b (anbefalet - balance mellem hastighed og kvalitet), llama3.2-vision:11b (tung men meget præcis), llava-phi3:latest (hurtig men mindre præcis). Modellen skal være pulled på Ollama server."
                 >
                   <option value="qwen2.5vl:7b">qwen2.5vl:7b (anbefalet)</option>
                   <option value="llama3.2-vision:11b">llama3.2-vision:11b (tung)</option>
@@ -595,7 +597,7 @@ function StrategyTab() {
             {editing.strategy === 'local_then_cloud' && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                  <label className="text-xs text-slate-400 font-medium uppercase tracking-wider" title="Confidence tærskel for eskalering til Gemini. Hvis lokal model confidence er under denne værdi (fx 0.70), sendes billedet til Gemini for bedre analyse. Højere værdi = mere cloud usage. Lavere værdi = flere locale resultater. Typisk 0.60-0.80.">
                     Eskalér hvis confidence &lt;
                   </label>
                   <input
@@ -603,10 +605,11 @@ function StrategyTab() {
                     value={editing.escalation_threshold}
                     onChange={e => setEditing({ ...editing, escalation_threshold: parseFloat(e.target.value) })}
                     className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                    title="Confidence tærskel (0.5-1.0). Hvis lokal model er usikker, eskaler til Gemini. Højere = mere cloud usage. Typisk 0.60-0.80."
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+                  <label className="text-xs text-slate-400 font-medium uppercase tracking-wider" title="Maksimalt antal nye/ukendte tags før eskalering til Gemini. Hvis lokal model finder mere end N tags der ikke er i vocab, sendes til Gemini for at udvide vokabulariet. Højere værdi = mere lokal autonomy. Typisk 3-10 nye tags.">
                     Eskalér hvis &gt; N nye tags
                   </label>
                   <input
@@ -614,6 +617,7 @@ function StrategyTab() {
                     value={editing.escalation_new_tags}
                     onChange={e => setEditing({ ...editing, escalation_new_tags: parseInt(e.target.value) })}
                     className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                    title="Maksimalt antal nye tags før eskalering (1-20). Højt tal = mere lokal autonomy. Typisk 3-10."
                   />
                 </div>
               </div>
@@ -621,7 +625,7 @@ function StrategyTab() {
 
             {/* Vocab limit */}
             <div className="space-y-1.5">
-              <label className="text-xs text-slate-400 font-medium uppercase tracking-wider">
+              <label className="text-xs text-slate-400 font-medium uppercase tracking-wider" title="Maksimalt antal tags i AI prompt for at begrænse token forbrug og øge hastighed. Færre tags = hurtigere analyse. 372 = fulde vokabular (alle tags). Typisk 100-300 for balance mellem hastighed og dækning.">
                 Max tags i prompt (performance)
               </label>
               <input
@@ -629,16 +633,18 @@ function StrategyTab() {
                 value={editing.tag_vocabulary_limit}
                 onChange={e => setEditing({ ...editing, tag_vocabulary_limit: parseInt(e.target.value) })}
                 className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
+                title="Max tags i prompt (20-372). Færre = hurtigere analyse. 372 = alle tags. Typisk 100-300."
               />
               <p className="text-xs text-slate-500">Færre = hurtigere. 372 = alle tags</p>
             </div>
 
             {/* Enabled */}
             <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-300">AI aktiveret for denne kunde</span>
+              <span className="text-sm text-slate-300" title="Aktiver AI tag analyse for denne kunde. Når deaktiveret, springes AI analyse over og captures markeres manuelt eller uden tags. Kan bruges til at pause AI eller kunder der ikke ønsker automatisk tagning.">AI aktiveret for denne kunde</span>
               <button
                 onClick={() => setEditing({ ...editing, enabled: !editing.enabled })}
                 className={`w-11 h-6 rounded-full transition-colors ${editing.enabled ? 'bg-violet-600' : 'bg-gray-700'}`}
+                title="Klik for at toggle AI aktivering for denne kunde"
               >
                 <div className={`w-4 h-4 rounded-full bg-white mx-auto transition-transform ${editing.enabled ? 'translate-x-2.5' : '-translate-x-2.5'}`} />
               </button>

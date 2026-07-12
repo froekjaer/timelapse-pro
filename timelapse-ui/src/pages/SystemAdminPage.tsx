@@ -58,11 +58,11 @@ function Section({ title, icon, description, children, defaultOpen = false }: Se
   )
 }
 
-function Field({ label, description, unit, children }: { label: string; description?: string; unit?: string; children: React.ReactNode }) {
+function Field({ label, description, unit, tooltip, children }: { label: string; description?: string; unit?: string; tooltip?: string; children: React.ReactNode }) {
   return (
     <div className="py-3 border-b border-gray-50 last:border-0">
       <div className="flex items-center gap-2 mb-1">
-        <label className="text-xs font-medium text-gray-600">{label}</label>
+        <label className="text-xs font-medium text-gray-600" title={tooltip}>{label}</label>
         {unit && <span className="text-xs text-gray-300">{unit}</span>}
       </div>
       {children}
@@ -502,7 +502,8 @@ export function SystemAdminPage() {
         description="Hardware GPIO pins til relæstyring og simuleringstilstand"
         defaultOpen={true}>
         <Field label="Kamera strømstyring"
-          description="relay = GPIO styrer kameraforsyning; usb_powered = kameraet har konstant USB/batteri og går selv i standby">
+          description="relay = GPIO styrer kameraforsyning; usb_powered = kameraet har konstant USB/batteri og går selv i standby"
+          tooltip="Strømstyringsmode: Relay (GPIO slukker/tænder kameraet mellem captures, battery saving) eller USB (kameraet tændt altid, går i standby selv). Relay anbefales for kamera levetid. USB kræver konstant forbindelse.">
           <select className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm"
             value={cameraPowerMode} onChange={e => setCameraPowerMode(e.target.value)}>
             <option value="relay">relay</option>
@@ -510,23 +511,28 @@ export function SystemAdminPage() {
           </select>
         </Field>
         <Field label="Kamera relay GPIO pin" unit="sysfs"
-          description="GPIO nummer i sysfs (fx 356 = physical pin 7 på Orange Pi 4 Pro)">
+          description="GPIO nummer i sysfs (fx 356 = physical pin 7 på Orange Pi 4 Pro)"
+          tooltip="GPIO pin nummer i sysfs notation til kamera relay. Fx 356 = physical pin 7 på Orange Pi 4 Pro. Skal matche hardware wiring. Forkert pin kan forårsage ukontrolleret adfærd.">
           <Num value={relayGpioCamera} onChange={setRelayGpioCamera} placeholder="356" />
         </Field>
         <Field label="Modem relay GPIO pin" unit="sysfs"
-          description="GPIO nummer til modem/4G relay (fx 361 = physical pin 11)">
+          description="GPIO nummer til modem/4G relay (fx 361 = physical pin 11)"
+          tooltip="GPIO pin nummer til modem/4G relay i sysfs notation. Fx 361 = physical pin 11 på Orange Pi. Bruges til power cycling af modem ved forbindelsesfejl. Forkert pin kan skade hardwaren.">
           <Num value={relayGpioModem} onChange={setRelayGpioModem} placeholder="361" />
         </Field>
         <Field label="Relay varmetid" unit="sekunder"
-          description="Sekunder relay er tændt inden kamera-connect forsøges">
+          description="Sekunder relay er tændt inden kamera-connect forsøges"
+          tooltip="Sekunder kameraet skal være tændt før gphoto2 connect. Kameraet skal varme op og stabilisere fx/iso. For kort tid kan give ustabile billeder. Typisk 5-15 sekunder afhængig af kameramodel.">
           <Num value={relayOnBefore} onChange={setRelayOnBefore} placeholder="10" />
         </Field>
         <Field label="Relay nedkølingstid" unit="sekunder"
-          description="Sekunder relay forbliver tændt efter capture er downloadet">
+          description="Sekunder relay forbliver tændt efter capture er downloadet"
+          tooltip="Sekunder relay forbliver tændt efter download for at sikker shutdown. Kameraet skal afslutte write operationer og lukke filesystem sikkert. For kort tid kan risikere SD card korruption. Typisk 3-10 sekunder.">
           <Num value={relayOffAfter} onChange={setRelayOffAfter} placeholder="5" />
         </Field>
         <Field label="Relay simulering"
-          description="Aktivér for at køre uden fysisk relay (test/development)">
+          description="Aktivér for at køre uden fysisk relay (test/development)"
+          tooltip="Simuler relay uden fysisk hardware til test/dev. Kameraet antages at være tændt altid. Ingen GPIO kontrol udføres. Kun til test på dev-maskiner uden relay hardware.">
           <Toggle value={relaySimulate} onChange={setRelaySimulate} />
         </Field>
       </Section>
@@ -541,11 +547,13 @@ export function SystemAdminPage() {
       <Section title="Kamera timeouts" icon={<Camera className="w-4 h-4" />}
         description="Timeout parametre for gphoto2 capture og download">
         <Field label="Capture timeout" unit="sekunder"
-          description="Maksimal ventetid på at gphoto2 trigger og downloader billede">
+          description="Maksimal ventetid på at gphoto2 trigger og downloader billede"
+          tooltip="Maksimal ventetid på gphoto2 capture kommando og download. Kameraet skal trigge, capture, og overføre billede. For lav værdi kan afbryde lange exposures. Typisk 30-120 sekunder. Højt ved dårlig USB/kabler.">
           <Num value={captureTimeout} onChange={setCaptureTimeout} placeholder="60" />
         </Field>
         <Field label="Download timeout" unit="sekunder"
-          description="Maksimal ventetid på filoverførsel fra kamera til edge SSD">
+          description="Maksimal ventetid på filoverførsel fra kamera til edge SSD"
+          tooltip="Maksimal ventetid på filoverførsel fra kamera til edge SSD. Store RAW filer kan tage 10-30 sekunder via USB 2.0. For lav værdi kan give fejl på store captures. Typisk 30-60 sekunder for JPEG, 60-120 for RAW.">
           <Num value={downloadTimeout} onChange={setDownloadTimeout} placeholder="30" />
         </Field>
       </Section>
@@ -554,19 +562,23 @@ export function SystemAdminPage() {
       <Section title="Modem & 4G" icon={<Wifi className="w-4 h-4" />}
         description="Automatisk power cycling af 4G modem ved forbindelsesfejl">
         <Field label="Power cycle efter N fejl"
-          description="Antal på hinanden følgende upload-fejl inden modem power cycles">
+          description="Antal på hinanden følgende upload-fejl inden modem power cycles"
+          tooltip="Antal consecutive upload fejl før modem power cycles. Højt tal = tålmodig men langsom recovery. Lavt tal = hurtig recovery men risiko for unødvendige cycles. Typisk 3-5 afhængig af netværk stabilitet. For midlertidige netværks problemer.">
           <Num value={modemCycleFailures} onChange={setModemCycleFailures} placeholder="3" />
         </Field>
         <Field label="Minimum interval mellem cycles" unit="sekunder"
-          description="Minimumstid mellem to modem power cycles (undgår rapid cycling)">
+          description="Minimumstid mellem to modem power cycles (undgår rapid cycling)"
+          tooltip="Minimum sekunder mellem modem power cycles for at undgå rapid cycling. Højt tal beskytter modem men forlænger downtime. Typisk 300-900 sekunder (5-15 min). Forhindrer evig loop ved vedvarende netværks problemer.">
           <Num value={modemMinInterval} onChange={setModemMinInterval} placeholder="600" />
         </Field>
         <Field label="Relay OFF tid ved cycle" unit="sekunder"
-          description="Sekunder modem relay slukkes under power cycle">
+          description="Sekunder modem relay slukkes under power cycle"
+          tooltip="Sekunder modem er slukket under power cycle for fuld reset. Modem skal helt lukke ned og tømme kapacitiv energi. For kort tid kan give ufuldstændig reset. Typisk 5-10 sekunder for 4G modems.">
           <Num value={modemOffSeconds} onChange={setModemOffSeconds} placeholder="5" />
         </Field>
         <Field label="Recovery ventetid efter cycle" unit="sekunder"
-          description="Sekunder der ventes på modem boot efter relay er tændt igen">
+          description="Sekunder der ventes på modem boot efter relay er tændt igen"
+          tooltip="Sekunder der ventes på modem boot og network registration efter relay er tændt. Modem skal boote, finde netværk, og autentificere. For kort tid kan give premature upload forsøg. Typisk 15-30 sekunder for 4G modems.">
           <Num value={modemRecoverSeconds} onChange={setModemRecoverSeconds} placeholder="15" />
         </Field>
       </Section>
@@ -575,7 +587,8 @@ export function SystemAdminPage() {
       <Section title="SFTP upload" icon={<HardDrive className="w-4 h-4" />}
         description="Upload forsøg og retry logik">
         <Field label="Max upload forsøg"
-          description="Antal gange upload forsøges inden capture markeres som fejlet">
+          description="Antal gange upload forsøges inden capture markeres som fejlet"
+          tooltip="Antal gange SFTP upload forsøges inden capture markeres som fejlet. Højt tal = bedre chance ved midlertidige netværks problemer men langsommere fejl detection. Typisk 3-10 forsøg. Hver retry har eksponentiel backoff.">
           <Num value={uploadAttempts} onChange={setUploadAttempts} placeholder="5" />
         </Field>
       </Section>
@@ -584,11 +597,13 @@ export function SystemAdminPage() {
       <Section title="Polling & heartbeat" icon={<Activity className="w-4 h-4" />}
         description="Kommunikationsintervaller med headend">
         <Field label="Config poll interval" unit="sekunder"
-          description="Sekunder mellem hentning af ny config fra headend">
+          description="Sekunder mellem hentning af ny config fra headend"
+          tooltip="Sekunder mellem config pull fra headend for at opdatere parametre. Lav værdi = hurtigere config udrulning men mere netværk traffic. Høj værdi = langsommere udrulning men mindre load. Typisk 180-600 sekunder (3-10 min). Ændringer træder ikke i kraft før næste poll.">
           <Num value={configPollS} onChange={setConfigPollS} placeholder="300" />
         </Field>
         <Field label="Heartbeat interval" unit="minutter"
-          description="Minutter mellem diagnostik-uploads til headend">
+          description="Minutter mellem diagnostik-uploads til headend"
+          tooltip="Minutter mellem diagnostik heartbeat uploads til headend. Indeholder device health, storage status, og fejl logs. Lav værdi = bedre overvågning men mere bandwidth. Høj værdi = mindre bandwidth men langsommere alarm detection. Typisk 30-120 minutter.">
           <Num value={heartbeatMin} onChange={setHeartbeatMin} placeholder="60" />
         </Field>
       </Section>
@@ -597,15 +612,18 @@ export function SystemAdminPage() {
       <Section title="System recovery" icon={<Shield className="w-4 h-4" />}
         description="Timeouts og recovery parametre for edge agenten">
         <Field label="Fejl recovery pause" unit="sekunder"
-          description="Sekunder der ventes i hoved-loop efter uventet fejl">
+          description="Sekunder der ventes i hoved-loop efter uventet fejl"
+          tooltip="Sekunder der ventes efter uventet fejl før retry. Forhindrer rapid fejl loops der kan dræne batteri eller blokere system. Typisk 15-60 sekunder afhængig af fejl type. For lang pause kan forsinke recovery. For kort pause kan forårsage CPU overload ved vedvarende fejl.">
           <Num value={errorSleepS} onChange={setErrorSleepS} placeholder="30" />
         </Field>
         <Field label="Minimum sleep" unit="sekunder"
-          description="Minimum ventetid når næste capture ikke kendes">
+          description="Minimum ventetid når næste capture ikke kendes"
+          tooltip="Minimum ventetid når næste capture schedule ikke kendes (fx offline mode). Kameraet slukkes mellem captures for battery saving. For kort pause kan dræne batteri unødvendigt. Typisk 30-120 sekunder. Kortere ved aktiv debug mode.">
           <Num value={minSleepS} onChange={setMinSleepS} placeholder="60" />
         </Field>
         <Field label="API timeout" unit="sekunder"
-          description="Maksimal ventetid på svar fra headend API">
+          description="Maksimal ventetid på svar fra headend API"
+          tooltip="Maksimal ventetid på svar fra headend API før timeout. For lav værdi kan give fejlagtige timeouts ved langsomme netværk. Høj værdi kan forsinke fejl detection. Typisk 10-30 sekunder. Højt ved dårlige 4G forbindelser.">
           <Num value={apiTimeoutS} onChange={setApiTimeoutS} placeholder="15" />
         </Field>
       </Section>
@@ -677,74 +695,96 @@ export function SystemAdminPage() {
       {/* Headend Settings */}
       <Section title="Headend indstillinger" icon={<Database className="w-4 h-4" />}
         description="SFTP, ffmpeg og system URLs — gemmes i databasen">
-        <Field label="SFTP upload aktiv" description="Aktiverer sekundær upload til kundens/NAS'ens SFTP-indløbsmappe">
+        <Field label="SFTP upload aktiv" description="Aktiverer sekundær upload til kundens/NAS'ens SFTP-indløbsmappe"
+          tooltip="Aktiverer automatisk SFTP upload af captures til kunde/NAS indløbsmappe. Captures uploades efter headend modtagelse. Kræver gyldige SFTP credentials. Deaktiveres ved auth problemer for at undgå låste accounts.">
           <Toggle
             value={(settings.sftp_enabled ?? 'false').toLowerCase() === 'true'}
             onChange={v => setSettings(s => ({...s, sftp_enabled: v ? 'true' : 'false'}))}
           />
         </Field>
-        <Field label="SFTP host" description="IP eller hostname på SFTP serveren">
+        <Field label="SFTP host" description="IP eller hostname på SFTP serveren"
+          tooltip="IP adresse eller hostname på kundens SFTP server. Kan være local IP (NAS) eller public hostname. Port specificeres separat. Mål være reachable fra headend. DNS issues kan forsinke upload.">
           <Txt value={settings.sftp_host ?? ''} onChange={v => setSettings(s => ({...s, sftp_host: v}))} mono />
         </Field>
-        <Field label="SFTP port" description="Port nummer (standard 22, TimeLapse Pro lab/prod 22222)">
+        <Field label="SFTP port" description="Port nummer (standard 22, TimeLapse Pro lab/prod 22222)"
+          tooltip="SFTP port nummer. Standard er 22 for SFTP. TimeLapse Pro lab/prod bruger 22222 for sikkerhed. Skal matche server konfiguration. Forkert port giver connection timeout.">
           <Txt value={settings.sftp_port ?? ''} onChange={v => setSettings(s => ({...s, sftp_port: v}))} mono />
         </Field>
-        <Field label="SFTP brugernavn">
+        <Field label="SFTP brugernavn"
+          tooltip="SFTP brugernavn til authentication. Skal have write adgang til remote base mappe. Gemmes krypteret i databasen. Forkert credentials blokerer alle uploads.">
           <Txt value={settings.sftp_user ?? ''} onChange={v => setSettings(s => ({...s, sftp_user: v}))} mono />
         </Field>
-        <Field label="SFTP password">
+        <Field label="SFTP password"
+          tooltip="SFTP password til authentication. Gemmes krypteret i databasen. Brug key-based auth for bedre sikkerhed hvis muligt. Forkert password kan låse konto ved for mange login forsøg.">
           <input type="password" className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-mono"
             value={settings.sftp_password ?? ''} onChange={e => setSettings(s => ({...s, sftp_password: e.target.value}))} />
         </Field>
-        <Field label="SFTP remote base" description="Sti på serveren hvor billeder uploades til">
+        <Field label="SFTP remote base" description="Sti på serveren hvor billeder uploades til"
+          tooltip="Sti på SFTP server hvor captures uploades til. Fx /timelapse/incoming/. Brugeren skal have write adgang til denne mappe. Sti oprettes hvis den ikke findes og brugeren har rettigheder.">
           <Txt value={settings.sftp_remote_base ?? ''} onChange={v => setSettings(s => ({...s, sftp_remote_base: v}))} mono />
         </Field>
-        <Field label="Canonical image root" description="Headendens aktive root til visning, thumbnails, imports og LAB-preview">
+        <Field label="Canonical image root" description="Headendens aktive root til visning, thumbnails, imports og LAB-preview"
+          tooltip="Headendens aktive image root til læsning af captures. Bruges til UI visning, thumbnail generation, imports, og LAB preview. Skal være eksisterende mappe med læse adgang. Ændringer kræver genstart for at tage effekt.">
           <Txt value={settings.sftp_base ?? ''} onChange={v => setSettings(s => ({...s, sftp_base: v}))} mono />
         </Field>
-        <Field label="Legacy/search image roots" description="Komma- eller linjeskiftseparerede gamle roots som stadig skal kunne læses">
+        <Field label="Legacy/search image roots" description="Komma- eller linjeskiftseparerede gamle roots som stadig skal kunne læses"
+          tooltip="Komma- eller linjeskiftseparerede gamle image roots der stadig skal være søgbare. Bruges til migration og backward compatibility. Data herfra er read-only. Tom = kun canonical root.">
           <Txt value={settings.sftp_legacy_roots ?? ''} onChange={v => setSettings(s => ({...s, sftp_legacy_roots: v}))} mono />
         </Field>
-        <Field label="Backup NAS path" description="Off-host/NAS root til headend- og edge-backups">
+        <Field label="Backup NAS path" description="Off-host/NAS root til headend- og edge-backups"
+          tooltip="Off-host/NAS sti til headend og edge backups. Backups gemmes her for disaster recovery. Skal have tilstrækkelig plads (typisk TB scale). Backup schedule configureres separat. NAS skal være reachable.">
           <Txt value={settings.backup_nas_path ?? ''} onChange={v => setSettings(s => ({...s, backup_nas_path: v}))} mono />
         </Field>
-        <Field label="Edge image artifact dir" description="Mappe til byggede rootfs/disk images og manifester">
+        <Field label="Edge image artifact dir" description="Mappe til byggede rootfs/disk images og manifester"
+          tooltip="Mappe til byggede edge rootfs/disk images og deployment manifester. Bruges til OS image distribution. Skal have write adgang og plads til images (GB scale). Ændringer kræver genstart for at tage effekt.">
           <Txt value={settings.edge_image_artifact_dir ?? ''} onChange={v => setSettings(s => ({...s, edge_image_artifact_dir: v}))} mono />
         </Field>
-        <Field label="FFmpeg sti" description="Fuld sti til ffmpeg binary">
+        <Field label="FFmpeg sti" description="Fuld sti til ffmpeg binary"
+          tooltip="Fuld sti til ffmpeg binary til video generation og billedkonvertering. Fx /usr/bin/ffmpeg eller /opt/homebrew/bin/ffmpeg. Skal være eksekverbar af headend process. Kræves til video export og post-processing.">
           <Txt value={settings.ffmpeg_path ?? ''} onChange={v => setSettings(s => ({...s, ffmpeg_path: v}))} mono />
         </Field>
-        <Field label="Base URL" description="Headend URL som vises i edge config">
+        <Field label="Base URL" description="Headend URL som vises i edge config"
+          tooltip="Headend base URL som vises i edge config og bruges til API kald. Edge enheder forbinder til denne URL. Skal være reachable fra onsite. Skift til public URL ved remote deployment.">
           <Txt value={settings.base_url ?? ''} onChange={v => setSettings(s => ({...s, base_url: v}))} mono />
         </Field>
-        <Field label="Upload backlog pr. retry" description="Hvor mange ventende billedfiler Edge må uploade pr. retry-loop">
+        <Field label="Upload backlog pr. retry" description="Hvor mange ventende billedfiler Edge må uploade pr. retry-loop"
+          tooltip="Maksimalt antal ventende billedfiler Edge må uploade pr. retry loop. Forhindrer oversvømmelse af server ved cache backlog. Højt tal = hurtigere backlog clearing men mere server load. Typisk 50-200 filer.">
           <Txt value={settings.upload_slot_max_pending_per_window ?? ''} onChange={v => setSettings(s => ({...s, upload_slot_max_pending_per_window: v}))} mono />
         </Field>
-        <Field label="Upload slot enforcement" description="true begrænser uploads til tildelte tidsvinduer; false uploader når Edge er online">
+        <Field label="Upload slot enforcement" description="true begrænser uploads til tildelte tidsvinduer; false uploader når Edge er online"
+          tooltip="Upload slot styring: true begrænser uploads til tildelte tidsvinduer (upload slot policy), false uploader når som helst Edge er online. Slot enforcement bruges til at styre bandwidth usage og omkostninger.">
           <Txt value={settings.upload_slot_enforced ?? ''} onChange={v => setSettings(s => ({...s, upload_slot_enforced: v}))} mono />
         </Field>
-        <Field label="WebAuthn RP ID" description="Domæne for passkeys/FIDO2, fx headendens hostname uden protokol">
+        <Field label="WebAuthn RP ID" description="Domæne for passkeys/FIDO2, fx headendens hostname uden protokol"
+          tooltip="Relying Party ID for WebAuthn/passkeys. Typisk headendens hostname uden protokol (fx timelapse.example.com). Skal matche browser origin for security. Forkert ID vil blokere passkey login.">
           <Txt value={settings.webauthn_rp_id ?? ''} onChange={v => setSettings(s => ({...s, webauthn_rp_id: v}))} mono />
         </Field>
-        <Field label="WebAuthn origin" description="Eksakt browser-origin for passkeys, inkl. protokol og evt. port">
+        <Field label="WebAuthn origin" description="Eksakt browser-origin for passkeys, inkl. protokol og evt. port"
+          tooltip="Eksakt browser origin for WebAuthn. Inkluderer protokol og evt. port (fx https://timelapse.example.com eller https://timelapse.example.com:8443). Skal matche rp_id for security. Forkert origin blokerer passkey login.">
           <Txt value={settings.webauthn_origin ?? ''} onChange={v => setSettings(s => ({...s, webauthn_origin: v}))} mono />
         </Field>
-        <Field label="Open WebUI URL" description="Offentlig URL der åbnes fra TimeLapse Pro">
+        <Field label="Open WebUI URL" description="Offentlig URL der åbnes fra TimeLapse Pro"
+          tooltip="Offentlig URL til Open WebUI AI assistent. Åbnes i ny tab fra TimeLapse Pro. Skal være reachable fra browseren. Bruger samme authentication som TimeLapse Pro for SSO.">
           <Txt value={settings.openwebui_public_url ?? ''} onChange={v => setSettings(s => ({...s, openwebui_public_url: v}))} mono />
         </Field>
-        <Field label="Open WebUI cookie domain" description="Tom = host-only cookie; udfyld kun ved delt domæne">
+        <Field label="Open WebUI cookie domain" description="Tom = host-only cookie; udfyld kun ved delt domæne"
+          tooltip="Cookie domain for Open WebUI SSO. Tom = host-only cookie (sikrest). Udfyld kun ved delt domæne (fx .example.com) for cross-subdomain SSO. Forkert domain kan blokere authentication.">
           <Txt value={settings.openwebui_cookie_domain ?? ''} onChange={v => setSettings(s => ({...s, openwebui_cookie_domain: v}))} mono />
         </Field>
-        <Field label="Ollama URL" description="Lokal modelserver til billed- og tekst-AI">
+        <Field label="Ollama URL" description="Lokal modelserver til billed- og tekst-AI"
+          tooltip="URL til lokal Ollama modelserver til AI billedanalyse og tekst processing. Bruges til local AI mode uden cloud afhængighed. Skal være reachable fra headend. Hvis tom, cloud AI (Gemini) bruges i stedet.">
           <Txt value={settings.ollama_url ?? ''} onChange={v => setSettings(s => ({...s, ollama_url: v}))} mono />
         </Field>
-        <Field label="Ollama vision model" description="Standard lokal vision-model">
+        <Field label="Ollama vision model" description="Standard lokal vision-model"
+          tooltip="Standard Ollama vision model til billedanalyse. Fx qwen2.5vl:7b eller llama3.2-vision:11b. Skal være pulled på Ollama server. Mindre modeller = hurtigere men mindre præcis. Større = bedre kvalitet men langsommere.">
           <Txt value={settings.ollama_vision_model ?? ''} onChange={v => setSettings(s => ({...s, ollama_vision_model: v}))} mono />
         </Field>
-        <Field label="Ollama tekstmodel" description="Standard lokal tekstmodel til SIEM/CMDB">
+        <Field label="Ollama tekstmodel" description="Standard lokal tekstmodel til SIEM/CMDB"
+          tooltip="Standard Ollama tekstmodel til SIEM log analyse og CMDB queries. Fx llama3.2:latest. Skal være pulled på Ollama server. Mindre modeller = hurtigere men mindre smarte. Større = bedre reasoning men langsommere.">
           <Txt value={settings.ollama_text_model ?? ''} onChange={v => setSettings(s => ({...s, ollama_text_model: v}))} mono />
         </Field>
-        <Field label="Ollama vision timeout" unit="sekunder">
+        <Field label="Ollama vision timeout" unit="sekunder"
+          tooltip="Maksimal ventetid på Ollama vision model inference. Store vision modeller kan tage 10-60 sekunder. For lav værdi kan give timeout og fejlet analyse. Høj værdi kan forsinke feedback til bruger. Typisk 30-120 sekunder.">
           <Txt value={settings.ollama_vision_timeout_s ?? ''} onChange={v => setSettings(s => ({...s, ollama_vision_timeout_s: v}))} mono />
         </Field>
         {storageRoots.length > 0 && (
@@ -780,10 +820,12 @@ export function SystemAdminPage() {
       {/* Gemini Batch (Vertex AI / GCS) — kun relevant ved service-account auth */}
       <Section title="Gemini Batch — Vertex AI / Cloud Storage" icon={<Database className="w-4 h-4" />}
         description="Kun nødvendigt hvis I bruger Vertex AI (service account) til Gemini. AI Studio (API-nøgle) bruger Files API i stedet og kræver ikke dette.">
-        <Field label="GCS bucket" description="Navn uden 'gs://', fx 'timelapse-ai-batch'. Bruges til at uploade billeder og hente resultater under batch-jobs.">
+        <Field label="GCS bucket" description="Navn uden 'gs://', fx 'timelapse-ai-batch'. Bruges til at uploade billeder og hente resultater under batch-jobs."
+          tooltip="Google Cloud Storage bucket navn til Gemini batch processing. Skal oprettes manuelt og have appropriate IAM permissions. Navn uden gs:// prefix (fx timelapse-ai-batch). Service account skal have Storage Object Admin.">
           <Txt value={settings.gemini_gcs_bucket ?? ''} onChange={v => setSettings(s => ({...s, gemini_gcs_bucket: v}))} mono />
         </Field>
-        <Field label="Bucket-region" description="SKAL matche jeres Vertex AI-region (fx 'europe-west1') — ellers stoppes batch-jobs for at undgå databehandling uden for EU (GDPR).">
+        <Field label="Bucket-region" description="SKAL matche jeres Vertex AI-region (fx 'europe-west1') — ellers stoppes batch-jobs for at undgå databehandling uden for EU (GDPR)."
+          tooltip="GCS bucket region SKAL matche Vertex AI region for at undgå data crossing region boundaries (GDPR). Fx europe-west1 for EU data. Forkert region kan stoppe batch-jobs for compliance. Service account og bucket skal være i samme region.">
           <Txt value={settings.gemini_gcs_bucket_region ?? ''} onChange={v => setSettings(s => ({...s, gemini_gcs_bucket_region: v}))} mono />
         </Field>
         <p className="text-xs text-amber-600 mt-1">
@@ -801,10 +843,12 @@ export function SystemAdminPage() {
       {/* BT PAN TOTP — globalt lag (laveste prioritet, lige over fabriksstandard) */}
       <Section title="BT PAN TOTP — global rotation" icon={<Database className="w-4 h-4" />}
         description="Gælder ALLE enheder uden mere specifikt kunde/site/kamera-override. Brug ved kompromitteret secret.">
-        <Field label="Global secret (Base32)" description="Tom = brug fabriksstandard JBSWY3DPEHPK3PXP">
+        <Field label="Global secret (Base32)" description="Tom = brug fabriksstandard JBSWY3DPEHPK3PXP"
+          tooltip="Global BT PAN TOTP secret i Base32 format. Gælder alle enheder uden specifikke overrides. Tom bruger fabriksstandard (JBSWY3DPEHPK3PXP = HELLO WORLD). Bruges til technician authentication via QR codes. KUN roter ved kompromittering.">
           <Txt value={settings.bt_totp_secret ?? ''} onChange={v => setSettings(s => ({...s, bt_totp_secret: v}))} mono />
         </Field>
-        <Field label="Global SID" description="Label vist på edge login-side og i CMDB">
+        <Field label="Global SID" description="Label vist på edge login-side og i CMDB"
+          tooltip="Global System Identifier vist på edge login-side og i CMDB. Identificerer hvilket TOTP system der bruges. Fx 'TimeLapse PRO Production' eller 'Site A'. Hjælper teknikere med at vælge rigtige credentials ved onsite login.">
           <Txt value={settings.bt_totp_sid ?? ''} onChange={v => setSettings(s => ({...s, bt_totp_sid: v}))} mono />
         </Field>
         <p className="text-xs text-amber-600 mt-1">
@@ -850,35 +894,43 @@ export function SystemAdminPage() {
       <Section title="SSH Tunnel" icon={<Terminal className="w-4 h-4" />}
         description="Reverse SSH tunnel til remote adgang — edge initierer forbindelsen">
         <Field label="Aktiver tunnel"
-          description="Edge åbner tunnel til headend ved næste config-poll">
+          description="Edge åbner tunnel til headend ved næste config-poll"
+          tooltip="Aktiver reverse SSH tunnel fra edge til headend for remote adgang. Edge initierer forbindelsen (firewall friendly). Tunnel oprettes ved næste config poll. Kræver gyldig endpoint og nøglefil.">
           <Toggle value={tunnelEnabled} onChange={setTunnelEnabled} />
         </Field>
         <Field label="Primær endpoint"
-          description="Bruger og host som edge forbinder til (user@host:port)">
+          description="Bruger og host som edge forbinder til (user@host:port)"
+          tooltip="SSH endpoint som edge forbinder til i formatet user@host:port. Edge authenticerer med key_file. Headend skal have tilsvarende public key i authorized_keys. Forkerte credentials giver connection timeout.">
           <Txt value={tunnelPrimary} onChange={setTunnelPrimary} mono placeholder="user@headend.example:22" />
         </Field>
         <Field label="Remote port"
-          description="Port der åbnes på headend — unik pr. device">
+          description="Port der åbnes på headend — unik pr. device"
+          tooltip="Port på headend der åbnes for tunnel ind til edge SSH. Skal være unik pr. device for at undgå konflikter. Fx 2201, 2202, osv. Skal være åben i headend firewall. Forkert port kan forårsage port conflict.">
           <Num value={tunnelRemotePort} onChange={setTunnelRemotePort} placeholder="2201" />
         </Field>
         <Field label="Lokal port på Edge"
-          description="Port på Edge som tunnelen videresender til">
+          description="Port på Edge som tunnelen videresender til"
+          tooltip="SSH port på edge enhed som tunnelen videresender til. Typisk 22 for standard SSH. Skal matche SSH daemon config på edge. Forkert port kan give tunnel til non-existent service.">
           <Num value={tunnelLocalPort} onChange={setTunnelLocalPort} placeholder="22" />
         </Field>
         <Field label="Nøglefil (edge)"
-          description="Sti til SSH privat nøgle på edge-enheden">
+          description="Sti til SSH privat nøgle på edge-enheden"
+          tooltip="Sti til SSH privat nøgle på edge enhed til tunnel authentication. Fx /root/.ssh/tunnel_key. Nøglen skal være tilgængelig på edge og matching public key skal være på headend. Forkert sti kan forhindre tunnel oprettelse.">
           <Txt value={tunnelKeyFile} onChange={setTunnelKeyFile} mono placeholder="/path/to/tunnel_key" />
         </Field>
         <Field label="Auto-start ved API-tab"
-          description="Start tunnel automatisk hvis headend API er utilgængeligt">
+          description="Start tunnel automatisk hvis headend API er utilgængeligt"
+          tooltip="Start SSH tunnel automatisk hvis headend API er utilgængelig i N sekunder. Bruges til remote recovery ved netværks problemer. Aktiveret som fallback mekanisme. Kræver at enabled er true.">
           <Toggle value={tunnelAutoOnApiLoss} onChange={setTunnelAutoOnApiLoss} />
         </Field>
         <Field label="Auto-start tærskel" unit="sekunder"
-          description="Hvor længe API skal være utilgængelig før tunnel startes">
+          description="Hvor længe API skal være utilgængelig før tunnel startes"
+          tooltip="Sekunder headend API skal være utilgængelig før tunnel auto-startes. For lav værdi kan give unødvendige tunnels ved midlertidige netværks glitches. Høj værdi kan forsinke recovery. Typisk 300-600 sekunder.">
           <Num value={tunnelAutoOnApiLossThresholdS} onChange={setTunnelAutoOnApiLossThresholdS} placeholder="300" />
         </Field>
         <Field label="Forbyd tunnel"
-          description="Denne enhed må aldrig oprette SSH tunnel (tilsidesætter enabled)">
+          description="Denne enhed må aldrig oprette SSH tunnel (tilsidesætter enabled)"
+          tooltip="Forbyd SSH tunnel for denne enhed uanset enabled setting. Bruges til sites med sikkerhedspolitik der forbyder remote adgang. Tilsidesætter både enabled og auto_on_api_loss.">
           <Toggle value={tunnelDeny} onChange={setTunnelDeny} />
         </Field>
         <div className="flex justify-end mt-3">

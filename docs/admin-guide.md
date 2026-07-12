@@ -354,6 +354,120 @@ Vigtige metrics at overvåge:
 
 ---
 
+## Site Konfiguration
+
+### Overblik
+
+Site-konfiguration giver mulighed for at styre indstillinger på tværs af alle kameraer på en specifik lokation. Site-niveau arver fra Kunde/Global og kan overstyres af Kamera-niveau.
+
+**Tooltip ved hover:**
+> Site-override gælder alle kameraer på dette site. Overstyrer kunde/global, men overstyres af kamera-lag.
+
+### Site Oplysninger
+
+| Parameter | Type | Default | Beskrivelse |
+|-----------|------|---------|-------------|
+| `name` | text | - | Navn på lokationen. Bruges til identifikation i rapporter og CMDB. Skal være unikt pr. kunde. |
+| `address` | text | - | Fysisk adresse på lokationen. Bruges til navigering og dokumentation. Frit format. |
+| `timezone` | select | Europe/Copenhagen | Tidszone for dette site. Sikrer at captures sker på korrekte lokale tider. Vigtig for tværl-okale sites. |
+| `notes` | textarea | - | Interne noter om dette site. Kun synligt for admin-brugere. |
+
+### SFTP Adgang
+
+| Parameter | Type | Default | Beskrivelse |
+|-----------|------|---------|-------------|
+| `sftp.username` | text | - | Brugernavn til SFTP server hvor edge-enheder uploader billeder. Unik pr. site. Autogenereres typisk. |
+| `sftp.password` | password | - | Password til SFTP auth. Gemmes sikkert og deles med edge-enheder. bør være stærkt og unikt. |
+| `sftp.remote_base` | text | - | Sti på SFTP server hvor billeder gemmes. Typisk /Users/Shared/timelapse/incoming/[site]. Skal eksistere på server. |
+| `sftp.port` | number | 22222 | SFTP server port. Standard 22222 for sikker SFTP. Skal matche server config. |
+
+### GPS og Lokation
+
+| Parameter | Type | Default | Beskrivelse |
+|-----------|------|---------|-------------|
+| `gps_lat` | number | - | GPS breddegrad i decimal format. Positiv for nordlige halvkugle, negativ for sydlige. Eksempel: 55.676098. |
+| `gps_lon` | number | - | GPS længdegrad i decimal format. Positiv for østlig, negativ for vestlig. Eksempel: 9.535400. |
+| `gps_alt` | number | - | GPS højde i meter over havets overflade. Positiv over hav, negativ under. Bruges til AI skala beregning. |
+
+**Tip:** Brug OpenStreetMap linket i UI til at verificere koordinaterne.
+
+### BT PAN TOTP (Site-override)
+
+| Parameter | Type | Default | Beskrivelse |
+|-----------|------|---------|-------------|
+| `bt_totp.secret` | text | - | TOTP secret til Bluetooth PAN auth. Base32 encoded. Tom = arv fra kunde/global. Overstyres af kamera. |
+| `bt_totp.sid` | text | - | Unikt site ID til TOTP authentication. Identificerer siteet i TOTP systemet. Tom = brug site navn. |
+
+### Edge AI (Site-override)
+
+Samme parametre som Global Config Quality sektion, men med site-override mulighed.
+
+| Parameter | Type | Default | Beskrivelse |
+|-----------|------|---------|-------------|
+| `quality.edge_ai.enabled` | boolean | arv | Aktiverer AI-baseret kvalitetsanalyse på edge. Sløring, mørk, lens obstruction. Anbefales altid. |
+| `quality.edge_ai.mode` | select | arv | AI adfærd: off, monitor (log kun), assist (advar), autonomous (rett), npu_first, lab. Assist anbefales. |
+| `quality.edge_ai.prefer_npu` | boolean | arv | Brug hardware accelerator (NPU) frem for CPU. Hurtigere og mindre strøm. Anbefales til NPU-hardware. |
+| `quality.adaptive_exposure.enabled` | boolean | arv | Auto-juster EV baseret på brightness. Kompenserer for skygge, sol, overskyet. Anbefales ved variable lys. |
+| `quality.adaptive_exposure.step_ev` | number | arv | EV step per justering (0.1-3.0). Mindre = finere justering men flere cycles. Typisk 0.3-0.7. |
+
+### Drift Detektion (Site-override)
+
+Samme parametre som Global Config Drift Detection sektion, men med site-override mulighed.
+
+| Parameter | Type | Default | Beskrivelse |
+|-----------|------|---------|-------------|
+| `quality.drift_detection.focus.enabled` | boolean | arv | Alarmer hvis skarphed systematisk falder. Detekterer manuel fokus der glider (vibration, temperatur). |
+| `quality.drift_detection.focus.z_threshold` | number | arv | Antal standardafvigelser før alarm (2.0-4.0). Lavere = mere følsom. Typisk 2.0-3.0. |
+| `quality.drift_detection.exposure.enabled` | boolean | arv | Alarmer hvis eksponering systematisk skifter. Detekterer støv, tåge, sæson ændringer. |
+| `quality.drift_detection.exposure.z_threshold` | number | arv | Antal standardafvigelser før alarm (2.5-4.0). Højere end focus da lysstyrke varierer mere. |
+| `quality.drift_detection.white_balance.enabled` | boolean | arv | Alarmer hvis hvidbalance systematisk skifter. Kræver at edge-optimizer rapporterer hvidbalance-data. |
+| `quality.drift_detection.white_balance.z_threshold` | number | arv | Antal standardafvigelser før alarm (2.0-3.0). Typisk 2.0-3.0. |
+
+---
+
+## Kunde Konfiguration
+
+### Overblik
+
+Kunde-konfiguration giver mulighed for at styre indstillinger på tværs af alle sites for en kunde. Kunde-niveau arver fra Global og kan overstyres af Site/Kamera-niveau.
+
+**Tooltip ved hover:**
+> Kunde-override gælder alle sites for denne kunde. Overstyrer global/fabriksstandard, men overstyres af site/kamera-lag.
+
+### Kundeoplysninger
+
+| Parameter | Type | Default | Beskrivelse |
+|-----------|------|---------|-------------|
+| `name` | text | - | Navnet på kunden. Bruges til identifikation, rapportering og fakturering. Skal være unikt. |
+| `contact_name` | text | - | Primær kontaktperson hos kunden. Bruges til kommunikation og support. |
+| `contact_email` | email | - | Emailadresse til kontaktperson. Bruges til kommunikation og notifikationer. |
+| `contact_phone` | tel | - | Telefonnummer til kontaktperson. Bruges til akutte henvendelser. Format: +45 XX XX XX XX. |
+| `address` | text | - | Fysisk adresse til fakturering og korrespondance. Frit format. |
+| `notes` | textarea | - | Interne noter om kunden. Kun synligt for admin-brugere. |
+
+### BT PAN TOTP (Kunde-override)
+
+Samme struktur som Site BT PAN TOTP, men på kunde-niveau.
+
+| Parameter | Type | Default | Beskrivelse |
+|-----------|------|---------|-------------|
+| `bt_totp.secret` | text | - | TOTP secret til Bluetooth PAN auth. Base32 encoded. Tom = arv fra global. Overstyres af site/kamera. |
+| `bt_totp.sid` | text | - | Unikt kunde ID til TOTP authentication. Identificerer kunden i TOTP systemet. Tom = brug kundenavn. |
+
+### Edge AI (Kunde-override)
+
+Samme parametre som Global Config Quality sektion, men med kunde-override mulighed.
+
+Se [Edge AI (Site-override)](#edge-ai-site-override) for parameter detaljer.
+
+### Drift Detektion (Kunde-override)
+
+Samme parametre som Global Config Drift Detection sektion, men med kunde-override mulighed.
+
+Se [Drift Detektion (Site-override)](#drift-detektion-site-override) for parameter detaljer.
+
+---
+
 ## Sikkerhed
 
 ### SSH Adgang
@@ -408,12 +522,18 @@ Ved henvendelse inkluder venligst:
 
 ---
 
-**Guide version:** 1.1
+**Guide version:** 1.2
 **Sidst opdateret:** 13. juli 2026
 
 ---
 
 ## Changelog
+
+### v1.2 (2026-07-13)
+- Tilføjet Site Konfiguration sektion med alle parametre (Site oplysninger, SFTP, GPS, BT PAN TOTP, Edge AI, Drift Detektion)
+- Tilføjet Kunde Konfiguration sektion med alle parametre (Kundeoplysninger, BT PAN TOTP, Edge AI, Drift Detektion)
+- Dokumenteret tooltip funktionalitet på SitePage og CustomerPage
+- Opdateret parameterbeskrivelser med tooltip tekst præcis som i UI
 
 ### v1.1 (2026-07-13)
 - Tilføjet detaljerede parameterbeskrivelser i alle konfigurationssektioner

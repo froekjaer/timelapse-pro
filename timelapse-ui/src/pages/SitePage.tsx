@@ -305,18 +305,27 @@ export function SitePage() {
         <h2 className="text-sm font-semibold text-gray-700 mb-4">Site oplysninger</h2>
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Site navn</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Site navn</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Navn på lokationen. Bruges til identifikation i rapporter og CMDB.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={name} onChange={e => setName(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Adresse</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Adresse</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Fysisk adresse på lokationen. Bruges til navigering og dokumentation.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               placeholder="Vejnavn 1, 1234 By"
               value={address} onChange={e => setAddress(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Tidszone</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Tidszone</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Tidszone for dette site. Sikrer at captures sker på korrekte lokale tider. Vigtig for tværl-okale sites.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={timezone} onChange={e => setTimezone(e.target.value)}>
               <option value="Europe/Copenhagen">Europe/Copenhagen (dansk tid)</option>
@@ -326,7 +335,10 @@ export function SitePage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Noter</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Noter</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Interne noter om dette site. Kun synligt for admin-brugere.">ⓘ</span>
+            </div>
             <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={2}
               placeholder="Interne noter om dette site..."
               value={notes} onChange={e => setNotes(e.target.value)} />
@@ -340,24 +352,36 @@ export function SitePage() {
         <p className="text-xs text-gray-400 mb-4">Credentials til edge-nodernes upload på dette site</p>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">SFTP brugernavn</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">SFTP brugernavn</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Brugernavn til SFTP server hvor edge-enheder uploader billeder. Unik pr. site.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="sftp_nvj17c"
               value={sftpUser} onChange={e => setSftpUser(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">SFTP password</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">SFTP password</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Password til SFTP auth. Gemmes sikkert og deles med edge-enheder.">ⓘ</span>
+            </div>
             <input type="password" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               value={sftpPassword} onChange={e => setSftpPassword(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Remote base sti</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Remote base sti</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Sti på SFTP server hvor billeder gemmes. Typisk /Users/Shared/timelapse/incoming/.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="/Users/Shared/timelapse/incoming/sftp_nvj17c"
               value={sftpRemoteBase} onChange={e => setSftpRemoteBase(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Port</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Port</label>
+              <span className="text-xs text-gray-300 cursor-help" title="SFTP server port. Standard 22222 for sikker SFTP. Skal matche server config.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="22222"
               value={sftpPort} onChange={e => setSftpPort(e.target.value)} />
@@ -373,13 +397,19 @@ export function SitePage() {
         </p>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Secret (Base32)</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Secret (Base32)</label>
+              <span className="text-xs text-gray-300 cursor-help" title="TOTP secret til Bluetooth PAN auth. Base32 encoded. Tom = arv fra kunde/global. Overstyres af kamera.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Tom = ingen site-override"
               value={btTotpSecret} onChange={e => setBtTotpSecret(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">SID</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">SID</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Unikt site ID til TOTP authentication. Identificerer siteet i TOTP systemet. Tom = brug site navn.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="site-label"
               value={btTotpSid} onChange={e => setBtTotpSid(e.target.value)} />
@@ -395,7 +425,10 @@ export function SitePage() {
         </p>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Edge AI</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Edge AI</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Aktiverer AI-baseret kvalitetsanalyse på edge. Sløring, mørk, lens obstruction. Anbefales altid.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={edgeAiEnabled} onChange={e => setEdgeAiEnabled(e.target.value)}>
               <option value="">Arv</option>
@@ -404,7 +437,10 @@ export function SitePage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">AI mode</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">AI mode</label>
+              <span className="text-xs text-gray-300 cursor-help" title="AI adfærd: off, monitor (log kun), assist (advar), autonomous (rett), npu_first, lab. Assist anbefales.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={edgeAiMode} onChange={e => setEdgeAiMode(e.target.value)}>
               <option value="">Arv</option>
@@ -412,7 +448,10 @@ export function SitePage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Foretræk NPU</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Foretræk NPU</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Brug hardware accelerator (NPU) frem for CPU. Hurtigere og mindre strøm. Anbefales til NPU-hardware.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={preferNpu} onChange={e => setPreferNpu(e.target.value)}>
               <option value="">Arv</option>
@@ -421,7 +460,10 @@ export function SitePage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Adaptiv EV</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Adaptiv EV</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Auto-juster EV baseret på brightness. Kompenserer for skygge, sol, overskyet. Anbefales ved variable lys.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={adaptiveExposure} onChange={e => setAdaptiveExposure(e.target.value)}>
               <option value="">Arv</option>
@@ -432,25 +474,37 @@ export function SitePage() {
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">EV trin</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">EV trin</label>
+              <span className="text-xs text-gray-300 cursor-help" title="EV step per justering (0.1-3.0). Mindre = finere justering men flere cycles. Typisk 0.3-0.7.">ⓘ</span>
+            </div>
             <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={evStep} onChange={e => setEvStep(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">NPU runner</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">NPU runner</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Sti til NPU runner script. Standard path er korrekt for default installation.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={edgeAiRunner} onChange={e => setEdgeAiRunner(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">NPU modelsti</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">NPU modelsti</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Sti til NPU model fil (.nb format). Tom = brug built-in model. Ændres kun ved custom models.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={edgeAiModel} onChange={e => setEdgeAiModel(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">VIPLite wrapper</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">VIPLite wrapper</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Sti til vendor NPU wrapper (VIPLite). Tom = brug built-in wrapper. Ændres kun ved custom driver.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={edgeAiVendorBinary} onChange={e => setEdgeAiVendorBinary(e.target.value)} />
@@ -466,7 +520,10 @@ export function SitePage() {
         </p>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Fokus-drift-alarm</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Fokus-drift-alarm</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Alarmer hvis skarphed systematisk falder. Detekterer manuel fokus der glider (vibration, temperatur).">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={driftFocusEnabled} onChange={e => setDriftFocusEnabled(e.target.value)}>
               <option value="">Arv</option>
@@ -475,13 +532,19 @@ export function SitePage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Fokus-følsomhed</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Fokus-følsomhed</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Antal standardafvigelser før alarm (2.0-4.0). Lavere = mere følsom. Typisk 2.0-3.0.">ⓘ</span>
+            </div>
             <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={driftFocusZ} onChange={e => setDriftFocusZ(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Eksponerings-drift-alarm</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Eksponerings-drift-alarm</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Alarmer hvis eksponering systematisk skifter. Detekterer støv, tåge, sæson ændringer.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={driftExposureEnabled} onChange={e => setDriftExposureEnabled(e.target.value)}>
               <option value="">Arv</option>
@@ -490,13 +553,19 @@ export function SitePage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Eksponerings-følsomhed</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Eksponerings-følsomhed</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Antal standardafvigelser før alarm (2.5-4.0). Højere end focus da lysstyrke varierer mere.">ⓘ</span>
+            </div>
             <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={driftExposureZ} onChange={e => setDriftExposureZ(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Hvidbalance-drift-alarm</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Hvidbalance-drift-alarm</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Alarmer hvis hvidbalance systematisk skifter. Kræver at edge-optimizer rapporterer hvidbalance-data.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={driftWbEnabled} onChange={e => setDriftWbEnabled(e.target.value)}>
               <option value="">Arv</option>
@@ -505,7 +574,10 @@ export function SitePage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Hvidbalance-følsomhed</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Hvidbalance-følsomhed</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Antal standardafvigelser før alarm (2.0-3.0). Typisk 2.0-3.0.">ⓘ</span>
+            </div>
             <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={driftWbZ} onChange={e => setDriftWbZ(e.target.value)} />
@@ -518,20 +590,29 @@ export function SitePage() {
         <h2 className="text-sm font-semibold text-gray-700 mb-4">GPS og lokation</h2>
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Breddegrad (lat)</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Breddegrad (lat)</label>
+              <span className="text-xs text-gray-300 cursor-help" title="GPS breddegrad i decimal format. Positiv for nordlige halvkugle, negativ for sydlige. Eksempel: 55.676098.">ⓘ</span>
+            </div>
             <input type="number" step="0.000001" placeholder="55.676098"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               value={gpsLat} onChange={e => setGpsLat(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Længdegrad (lon)</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Længdegrad (lon)</label>
+              <span className="text-xs text-gray-300 cursor-help" title="GPS længdegrad i decimal format. Positiv for østlig, negativ for vestlig. Eksempel: 9.535400.">ⓘ</span>
+            </div>
             <input type="number" step="0.000001" placeholder="9.535400"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               value={gpsLon} onChange={e => setGpsLon(e.target.value)} />
           </div>
         </div>
         <div className="mb-3">
-          <label className="text-xs text-gray-400 block mb-1">Højde (meter over hav)</label>
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-xs text-gray-400">Højde (meter over hav)</label>
+            <span className="text-xs text-gray-300 cursor-help" title="GPS højde i meter over havets overflade. Positiv over hav, negativ under. Bruges til AI skala beregning.">ⓘ</span>
+          </div>
           <input type="number" step="1" placeholder="0"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
             value={gpsAlt} onChange={e => setGpsAlt(e.target.value)} />

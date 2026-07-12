@@ -301,38 +301,56 @@ export function CustomerPage() {
         <h2 className="text-sm font-semibold text-gray-700 mb-4">Kundeoplysninger</h2>
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Firmanavn</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Firmanavn</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Navnet på kunden. Bruges til identifikation, rapportering og fakturering.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={name} onChange={e => setName(e.target.value)} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-gray-400 block mb-1">Kontaktperson</label>
+              <div className="flex items-center gap-2 mb-1">
+                <label className="text-xs text-gray-400">Kontaktperson</label>
+                <span className="text-xs text-gray-300 cursor-help" title="Primær kontaktperson hos kunden. Bruges til kommunikation og support.">ⓘ</span>
+              </div>
               <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                 placeholder="Fulde navn"
                 value={contactName} onChange={e => setContactName(e.target.value)} />
             </div>
             <div>
-              <label className="text-xs text-gray-400 block mb-1">Telefon</label>
+              <div className="flex items-center gap-2 mb-1">
+                <label className="text-xs text-gray-400">Telefon</label>
+                <span className="text-xs text-gray-300 cursor-help" title="Telefonnummer til kontaktperson. Bruges til akutte henvendelser.">ⓘ</span>
+              </div>
               <input type="tel" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                 placeholder="70 20 30 40"
                 value={contactPhone} onChange={e => setContactPhone(e.target.value)} />
             </div>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Email</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Email</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Emailadresse til kontaktperson. Bruges til kommunikation og notifikationer.">ⓘ</span>
+            </div>
             <input type="email" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               placeholder="kontakt@firma.dk"
               value={contactEmail} onChange={e => setContactEmail(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Faktureringsadresse</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Faktureringsadresse</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Fysisk adresse til fakturering og korrespondance.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               placeholder="Vejnavn 1, 1234 By"
               value={address} onChange={e => setAddress(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Noter</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Noter</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Interne noter om kunden. Kun synligt for admin-brugere.">ⓘ</span>
+            </div>
             <textarea className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={2}
               placeholder="Interne noter om kunden..."
               value={notes} onChange={e => setNotes(e.target.value)} />
@@ -348,13 +366,19 @@ export function CustomerPage() {
         </p>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Secret (Base32)</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Secret (Base32)</label>
+              <span className="text-xs text-gray-300 cursor-help" title="TOTP secret til Bluetooth PAN auth. Base32 encoded. Tom = arv fra global. Overstyres af site/kamera.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Tom = ingen kunde-override"
               value={btTotpSecret} onChange={e => setBtTotpSecret(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">SID</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">SID</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Unikt kunde ID til TOTP authentication. Identificerer kunden i TOTP systemet. Tom = brug kundenavn.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="kunde-label"
               value={btTotpSid} onChange={e => setBtTotpSid(e.target.value)} />
@@ -370,7 +394,10 @@ export function CustomerPage() {
         </p>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Edge AI</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Edge AI</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Aktiverer AI-baseret kvalitetsanalyse på edge. Sløring, mørk, lens obstruction. Anbefales altid.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={edgeAiEnabled} onChange={e => setEdgeAiEnabled(e.target.value)}>
               <option value="">Arv</option>
@@ -379,7 +406,10 @@ export function CustomerPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">AI mode</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">AI mode</label>
+              <span className="text-xs text-gray-300 cursor-help" title="AI adfærd: off, monitor (log kun), assist (advar), autonomous (rett), npu_first, lab. Assist anbefales.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={edgeAiMode} onChange={e => setEdgeAiMode(e.target.value)}>
               <option value="">Arv</option>
@@ -387,7 +417,10 @@ export function CustomerPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Foretræk NPU</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Foretræk NPU</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Brug hardware accelerator (NPU) frem for CPU. Hurtigere og mindre strøm. Anbefales til NPU-hardware.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={preferNpu} onChange={e => setPreferNpu(e.target.value)}>
               <option value="">Arv</option>
@@ -396,7 +429,10 @@ export function CustomerPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Adaptiv EV</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Adaptiv EV</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Auto-juster EV baseret på brightness. Kompenserer for skygge, sol, overskyet. Anbefales ved variable lys.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={adaptiveExposure} onChange={e => setAdaptiveExposure(e.target.value)}>
               <option value="">Arv</option>
@@ -407,25 +443,37 @@ export function CustomerPage() {
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">EV trin</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">EV trin</label>
+              <span className="text-xs text-gray-300 cursor-help" title="EV step per justering (0.1-3.0). Mindre = finere justering men flere cycles. Typisk 0.3-0.7.">ⓘ</span>
+            </div>
             <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={evStep} onChange={e => setEvStep(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">NPU runner</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">NPU runner</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Sti til NPU runner script. Standard path er korrekt for default installation.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={edgeAiRunner} onChange={e => setEdgeAiRunner(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">NPU modelsti</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">NPU modelsti</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Sti til NPU model fil (.nb format). Tom = brug built-in model. Ændres kun ved custom models.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={edgeAiModel} onChange={e => setEdgeAiModel(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">VIPLite wrapper</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">VIPLite wrapper</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Sti til vendor NPU wrapper (VIPLite). Tom = brug built-in wrapper. Ændres kun ved custom driver.">ⓘ</span>
+            </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={edgeAiVendorBinary} onChange={e => setEdgeAiVendorBinary(e.target.value)} />
@@ -441,7 +489,10 @@ export function CustomerPage() {
         </p>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Fokus-drift-alarm</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Fokus-drift-alarm</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Alarmer hvis skarphed systematisk falder. Detekterer manuel fokus der glider (vibration, temperatur).">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={driftFocusEnabled} onChange={e => setDriftFocusEnabled(e.target.value)}>
               <option value="">Arv</option>
@@ -450,13 +501,19 @@ export function CustomerPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Fokus-følsomhed</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Fokus-følsomhed</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Antal standardafvigelser før alarm (2.0-4.0). Lavere = mere følsom. Typisk 2.0-3.0.">ⓘ</span>
+            </div>
             <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={driftFocusZ} onChange={e => setDriftFocusZ(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Eksponerings-drift-alarm</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Eksponerings-drift-alarm</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Alarmer hvis eksponering systematisk skifter. Detekterer støv, tåge, sæson ændringer.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={driftExposureEnabled} onChange={e => setDriftExposureEnabled(e.target.value)}>
               <option value="">Arv</option>
@@ -465,13 +522,19 @@ export function CustomerPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Eksponerings-følsomhed</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Eksponerings-følsomhed</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Antal standardafvigelser før alarm (2.5-4.0). Højere end focus da lysstyrke varierer mere.">ⓘ</span>
+            </div>
             <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={driftExposureZ} onChange={e => setDriftExposureZ(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Hvidbalance-drift-alarm</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Hvidbalance-drift-alarm</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Alarmer hvis hvidbalance systematisk skifter. Kræver at edge-optimizer rapporterer hvidbalance-data.">ⓘ</span>
+            </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={driftWbEnabled} onChange={e => setDriftWbEnabled(e.target.value)}>
               <option value="">Arv</option>
@@ -480,7 +543,10 @@ export function CustomerPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Hvidbalance-følsomhed</label>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Hvidbalance-følsomhed</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Antal standardafvigelser før alarm (2.0-3.0). Typisk 2.0-3.0.">ⓘ</span>
+            </div>
             <input type="number" step="0.1" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               placeholder="Arv"
               value={driftWbZ} onChange={e => setDriftWbZ(e.target.value)} />

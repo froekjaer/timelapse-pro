@@ -8568,3 +8568,48 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - **Deploy krav:** UI skal deployes til production
 - **Næste skridt:** Deploy UI til production (timelapse-ui build)
 
+
+### Handover 2026-07-13 ~11:00 — fra Claude (Tooltip implementation) til Peter/Codex
+- **Tooltips tilføjet til alle UI konfigurationsparametre:**
+  - ✅ **SystemAdminPage.tsx** — Færdig i forrige session
+  - ✅ **AIPage.tsx** — Færdig i forrige session
+  - ✅ **CameraPage.tsx** — Færdig i denne session
+    - Tooltips på alle CAMERA_PARAMS (Optagelse, Kamera, Hardware, Orientering, Kvalitet, Diagnostik)
+    - Tooltip-visning med ⓘ ikon og HTML title attribut
+  - ✅ **DevicePage.tsx** — Færdig i denne session
+    - Tooltips på Enhedsidentitet (Kundenavn, Sitenavn, Kameranavn)
+    - Tooltips på GPS/Lokation (Breddegrad, Længdegrad, Højde, GPS kilde)
+    - Tooltips på Schedule (Interval, Aktiv fra/til, Tidspunkter)
+    - Tooltips på Kamera (Strømstyring, Opvarmningstid, Delete after download)
+- **GlobalConfigPage.tsx** — Allerede havde tooltips (62 references)
+- **UI bygget succesfuldt:** `npm run build` — grøn på alle sider
+- **Filer rørt:**
+  - `timelapse-ui/src/pages/CameraPage.tsx` — Tooltips på alle 40+ parametre
+  - `timelapse-ui/src/pages/DevicePage.tsx` — Tooltips på 13 labels
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+
+
+### Handover 2026-07-13 ~00:30 — fra Claude (Tooltip implementation fortsat) til Peter/Codex
+- **Tooltips tilføjet til SitePage og CustomerPage:**
+  - ✅ **SitePage.tsx** — Tooltips på alle konfigurationssektioner:
+    - Site oplysninger (navn, adresse, tidszone, noter)
+    - SFTP adgang (brugernavn, password, remote base, port)
+    - BT PAN TOTP (secret, SID)
+    - Edge QA AI (enabled, mode, prefer NPU, adaptiv EV, EV step, NPU runner, NPU modelsti, VIPLite wrapper)
+    - Drift-detektion (fokus, eksponering, hvidbalance — alle 6 parametre)
+    - GPS og lokation (breddegrad, længdegrad, højde)
+  - ✅ **CustomerPage.tsx** — Tooltips på alle konfigurationssektioner:
+    - Kundeoplysninger (firmanavn, kontaktperson, telefon, email, adresse, noter)
+    - BT PAN TOTP (secret, SID)
+    - Edge QA AI (samme parametre som SitePage)
+    - Drift-detektion (samme parametre som SitePage)
+- **Tooltip format:** ⓘ ikon med `title` attribut og `cursor-help` class
+- **UI bygget succesfuldt:** `npm run build` — ingen fejl
+- **Filer rørt:**
+  - `timelapse-ui/src/pages/SitePage.tsx` — Tooltips på 20+ felter
+  - `timelapse-ui/src/pages/CustomerPage.tsx` — Tooltips på 20+ felter
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Næste skridt:** Opdater Admin Guide og User Guide med tooltip dokumentation
+- **Næste skridt:**
+  - Test UI i browser for at verificere at tooltips vises korrekt
+  - Overvej om andre sider (SitePage, CustomerPage) også skal have tooltips

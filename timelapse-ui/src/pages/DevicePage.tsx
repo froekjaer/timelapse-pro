@@ -886,12 +886,15 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Enhedsidentitet</h3>
         <div className="space-y-3">
           {[
-            { label: 'Kundenavn', key: 'customer_name' },
-            { label: 'Sitenavn', key: 'site_name' },
-            { label: 'Kameranavn', key: 'camera_name' },
-          ].map(({ label, key }) => (
+            { label: 'Kundenavn', key: 'customer_name', tooltip: 'Navnet på kunden der ejer enheden. Bruges til rapportering og fakturering.' },
+            { label: 'Sitenavn', key: 'site_name', tooltip: 'Navnet på site lokationen hvor enheden er placeret. Typisk adresse eller bygningsnavn.' },
+            { label: 'Kameranavn', key: 'camera_name', tooltip: 'Unikt navn til kameraet. Bruges til identificering i rapporter og CMDB.' },
+          ].map(({ label, key, tooltip }) => (
             <div key={key}>
-              <label className="text-xs text-gray-400 block mb-1">{label}</label>
+              <div className="flex items-center gap-2 mb-1">
+                <label className="text-xs text-gray-400">{label}</label>
+                {tooltip && <span className="text-xs text-gray-300 cursor-help" title={tooltip}>ⓘ</span>}
+              </div>
               <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                 value={info?.[key] ?? ''} onChange={e => setInfo({ ...info, [key]: e.target.value })} />
             </div>
@@ -927,14 +930,14 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-gray-400 block mb-1">Breddegrad (lat)</label>
+              <label className="text-xs text-gray-400 block mb-1" title="GPS breddegrad i decimal grader. Positiv for nordlig halvkugle, negativ for sydlig. Typisk 45-60 for Danmark.">Breddegrad (lat)</label>
               <input type="number" step="0.000001" placeholder="55.676098"
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
                 value={cfg?.location?.gps_lat ?? ''}
                 onChange={e => setCfg({ ...cfg, location: { ...(cfg.location ?? {}), gps_lat: e.target.value ? parseFloat(e.target.value) : null } })} />
             </div>
             <div>
-              <label className="text-xs text-gray-400 block mb-1">Længdegrad (lon)</label>
+              <label className="text-xs text-gray-400 block mb-1" title="GPS længdegrad i decimal grader. Positiv for østlig, negativ for vestlig. Typisk 8-15 for Danmark.">Længdegrad (lon)</label>
               <input type="number" step="0.000001" placeholder="12.568337"
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
                 value={cfg?.location?.gps_lon ?? ''}
@@ -943,14 +946,14 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-gray-400 block mb-1">Højde (meter over hav)</label>
+              <label className="text-xs text-gray-400 block mb-1" title="Højde over havets overflade i meter. Bruges til beregning af solvinkler og dokumentation. Typisk 0-100m for Danmark.">Højde (meter over hav)</label>
               <input type="number" step="1" placeholder="0"
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
                 value={cfg?.location?.gps_alt ?? ''}
                 onChange={e => setCfg({ ...cfg, location: { ...(cfg.location ?? {}), gps_alt: e.target.value ? parseFloat(e.target.value) : null } })} />
             </div>
             <div>
-              <label className="text-xs text-gray-400 block mb-1">GPS kilde</label>
+              <label className="text-xs text-gray-400 block mb-1" title="Kilde til GPS data. Manual = indtastt manuelt i UI. gpsd = automatisk fra Orange Pi GPS modul (kræver hardware).">GPS kilde</label>
               <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                 value={cfg?.location?.gps_source ?? 'manual'}
                 onChange={e => setCfg({ ...cfg, location: { ...(cfg.location ?? {}), gps_source: e.target.value } })}>
@@ -997,20 +1000,20 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
         {(schedule.capture_mode ?? 'interval') === 'interval' ? (
           <div className="space-y-3">
             <div>
-              <label className="text-xs text-gray-400 block mb-1">Interval (minutter)</label>
+              <label className="text-xs text-gray-400 block mb-1" title="Minutter mellem hvert billede. 10 = hvert 10. minut, 60 = én gang i timen. Kortere interval = flere billeder men mere disk/usage.">Interval (minutter)</label>
               <input type="number" min={1} max={720} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                 value={schedule.interval_minutes ?? 10}
                 onChange={e => setCfg({ ...cfg, schedule: { ...schedule, interval_minutes: parseInt(e.target.value) } })} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Aktiv fra</label>
+                <label className="text-xs text-gray-400 block mb-1" title="Tidspunkt hvor kameraet starter med at tage billeder hver dag. Format: HH:MM. Typisk 06:00 for solnedgang.">Aktiv fra</label>
                 <input type="time" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={schedule.active_hours?.[0] ?? '06:00'}
                   onChange={e => setCfg({ ...cfg, schedule: { ...schedule, active_hours: [e.target.value, schedule.active_hours?.[1] ?? '21:00'] } })} />
               </div>
               <div>
-                <label className="text-xs text-gray-400 block mb-1">Aktiv til</label>
+                <label className="text-xs text-gray-400 block mb-1" title="Tidspunkt hvor kameraet stopper med at tage billeder hver dag. Format: HH:MM. Typisk 21:00 for efter solnedgang.">Aktiv til</label>
                 <input type="time" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   value={schedule.active_hours?.[1] ?? '21:00'}
                   onChange={e => setCfg({ ...cfg, schedule: { ...schedule, active_hours: [schedule.active_hours?.[0] ?? '06:00', e.target.value] } })} />
@@ -1019,7 +1022,7 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
           </div>
         ) : (
           <div className="space-y-3">
-            <label className="text-xs text-gray-400 block">Tidspunkter for optagelse</label>
+            <label className="text-xs text-gray-400 block" title="Specifikke tidspunkter for billedtagning (HH:MM format). Koordineres automatisk på tværs af kameraer på samme site. Bruges til faste tidspunkter frem for interval.">Tidspunkter for optagelse</label>
             <div className="space-y-2">
               {(schedule.capture_times ?? ['08:00']).map((t: string, i: number) => (
                 <div key={i} className="flex gap-2 items-center">
@@ -1055,7 +1058,7 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Kamera</h3>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Strømstyring</label>
+            <label className="text-xs text-gray-400 block mb-1" title="Strømstyring til kameraet. Relay = fuld kontrol via GPIO (tænd/sluk). usb_powered = konstant strøm. Relay sparer strøm men kræver ekstra hardware.">Strømstyring</label>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={camera.power_mode ?? 'relay'}
               onChange={e => setCfg({ ...cfg, camera: { ...camera, power_mode: e.target.value } })}>
@@ -1064,7 +1067,7 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Opvarmningstid (sekunder)</label>
+            <label className="text-xs text-gray-400 block mb-1" title="Sekunder kameraet skal varme op før capture. Kameraer bruger tid på at initialisere. 10 sekunder er typisk. For kort kan give fejl ved capture.">Opvarmningstid (sekunder)</label>
             <input type="number" min={1} max={60} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={camera.relay_on_seconds_before ?? 10}
               onChange={e => setCfg({ ...cfg, camera: { ...camera, relay_on_seconds_before: parseInt(e.target.value) } })} />
@@ -1073,7 +1076,7 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
             <input type="checkbox" id="delete_after"
               checked={camera.delete_after_download ?? true}
               onChange={e => setCfg({ ...cfg, camera: { ...camera, delete_after_download: e.target.checked } })} />
-            <label htmlFor="delete_after" className="text-sm text-gray-700">Slet billede fra kamera efter download</label>
+            <label htmlFor="delete_after" className="text-sm text-gray-700" title="Slet automatisk billede fra kameraets SD kort efter download til headend. Frigiver plads på kameraet. Anbefales aktiveret.">Slet billede fra kamera efter download</label>
           </div>
         </div>
       </div>
