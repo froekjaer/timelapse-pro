@@ -26,30 +26,30 @@ export function Navbar() {
   }, [])
 
   const links = [
-    { to: '/',             label: 'Enheder',       icon: Camera },
-    { to: '/backup',       label: 'Backup',        icon: Database },
+    { to: '/',             label: 'Enheder',       icon: Camera, tooltip: 'Oversigt over alle kameraenheder. Se status, captures, og enhedsspecifikke indstillinger. Administrer enheder og fejlfind.' },
+    { to: '/backup',       label: 'Backup',        icon: Database, tooltip: 'Backup af captures og database. Schedule og overvåg backup jobs. Restore fra backup ved behov.' },
     { to: '/global-config',label: 'Global Config', icon: Globe, tooltip: 'Hierarkisk konfiguration: Global → Kunde → Site → Kamera. Arv og overrides for alle parametre.' },
-    { to: '/tags',         label: 'Tag søgning',   icon: Tag },
-    { to: '/settings',     label: 'Indstillinger', icon: Settings },
-    { to: '/ai',           label: 'AI Styring',    icon: Brain },
-    { to: '/openwebui',    label: 'Open WebUI',    icon: Bot },
-    { to: '/compliance',   label: 'Compliance',    icon: ClipboardCheck },
+    { to: '/tags',         label: 'Tag søgning',   icon: Tag, tooltip: 'Søg captures på tværs af tags. Find billeder baseret på brugerdefinerede labels og metadata.' },
+    { to: '/settings',     label: 'Indstillinger', icon: Settings, tooltip: 'Personlige indstillinger og præferencer. Tilpas din brugeroplevelse og notifikationer.' },
+    { to: '/ai',           label: 'AI Styring',    icon: Brain, tooltip: 'AI-drevet billedanalyse og kvalitetskontrol. Konfigurer NPU, adaptive exposure, og drift detection.' },
+    { to: '/openwebui',    label: 'Open WebUI',    icon: Bot, tooltip: 'AI assistent interface til natural language queries. Få svar om captures, kvalitet, og system status.' },
+    { to: '/compliance',   label: 'Compliance',    icon: ClipboardCheck, tooltip: 'SABSA compliance cockpit. Audit logs, sikkerhedsrapporter, og compliance status for hele systemet.' },
   ]
 
   const adminLinks = [
-    { to: '/system-admin',  label: 'System Admin',  icon: Shield },
-    { to: '/users',         label: 'Brugere',       icon: Users },
-    { to: '/key-management',label: 'Nøgler',        icon: Key },
-    { to: '/ssh-tunnel',    label: 'SSH Tunnels',   icon: Terminal },
-    { to: '/updates',       label: 'Opdateringer',  icon: Package },
-    { to: '/change-tickets',label: 'Change tickets',icon: ClipboardCheck },
-    { to: '/post-processing',label: 'Post-processing',icon: Wrench },
-    { to: '/cmdb',          label: 'CMDB',          icon: Server },
-    { to: '/import',        label: 'Import',        icon: Upload },
-    { to: '/siem',          label: 'SIEM',          icon: Shield },
-    { to: '/retention',     label: 'Retention',     icon: Clock },
-    { to: '/redaction',     label: 'GDPR Sløring',icon: EyeOff },
-    { to: '/observability', label: 'Drift',         icon: Activity },
+    { to: '/system-admin',  label: 'System Admin',  icon: Shield, tooltip: 'Systemniveau administration. Service status, konfiguration, og avancerede systemindstillinger.' },
+    { to: '/users',         label: 'Brugere',       icon: Users, tooltip: 'Bruger- og rollestyring. Opret, rediger og deaktiver brugere. Konfigurer rettigheder og MFA.' },
+    { to: '/key-management',label: 'Nøgler',        icon: Key, tooltip: 'API nøgle administration. Generer, roter og tilbagekald API tokens. Se nøgle forbrug og aktivitet.' },
+    { to: '/ssh-tunnel',    label: 'SSH Tunnels',   icon: Terminal, tooltip: 'SSH tunnel management til edge-enheder. Opret sikre forbindelser til onsite udstyr.' },
+    { to: '/updates',       label: 'Opdateringer',  icon: Package, tooltip: 'Systemopdateringer og patches. Release notes, versionsstyring, og deployment af opdateringer.' },
+    { to: '/change-tickets',label: 'Change tickets',icon: ClipboardCheck, tooltip: 'Change management og tickets. Opret, tildel og spore ændringer gennem hele systemet.' },
+    { to: '/post-processing',label: 'Post-processing',icon: Wrench, tooltip: 'Billedbehandling efter capture. Bildemanipulation, formatkonvertering, og eksport pipelines.' },
+    { to: '/cmdb',          label: 'CMDB',          icon: Server, tooltip: 'Configuration Management Database. Asset tracking, relationer, og konfigurationshistorik.' },
+    { to: '/import',        label: 'Import',        icon: Upload, tooltip: 'Import af data fra eksterne kilder. Bulk upload, migrering, og data integration.' },
+    { to: '/siem',          label: 'SIEM',          icon: Shield, tooltip: 'SIEM integration og sikkerhedshændelser. Audit logs, alerts, og sikkerhedsmetrics.' },
+    { to: '/retention',     label: 'Retention',     icon: Clock, tooltip: 'Data retention politikker. Konfigurer hvor længe captures og logs gemmes automatisk.' },
+    { to: '/redaction',     label: 'GDPR Sløring',icon: EyeOff, tooltip: 'GDPR compliance med automatisk sløring. Detekter og slør personsensitive data i billeder.' },
+    { to: '/observability', label: 'Drift',         icon: Activity, tooltip: 'Driftsovervågning og diagnostik. System health, performance metrics, og alerts.' },
   ]
 
   const isAdmin = hasRole('super_admin', 'admin')
@@ -102,11 +102,12 @@ export function Navbar() {
 
             {adminOpen && (
               <div className="absolute top-full left-0 mt-1 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 py-1">
-                {adminLinks.map(({ to, label, icon: Icon }) => {
+                {adminLinks.map(({ to, label, icon: Icon, tooltip }) => {
                   const active = pathname.startsWith(to)
                   return (
                     <Link key={to} to={to}
                       onClick={() => setAdminOpen(false)}
+                      title={tooltip}
                       className={`flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
                         active ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
                       }`}
