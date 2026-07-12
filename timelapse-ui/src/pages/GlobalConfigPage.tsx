@@ -496,13 +496,13 @@ export function GlobalConfigPage() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-500">
               <tr>
-                <th className="text-left font-medium px-4 py-2 w-56">Parameter</th>
-                <th className="text-left font-medium px-4 py-2">Global</th>
-                <th className="text-left font-medium px-4 py-2">Kunde</th>
-                <th className="text-left font-medium px-4 py-2">Site</th>
-                <th className="text-left font-medium px-4 py-2">Kamera</th>
-                <th className="text-left font-medium px-4 py-2">Aktuel</th>
-                <th className="text-left font-medium px-4 py-2 w-64">Rediger valgt lag</th>
+                <th className="text-left font-medium px-4 py-2 min-w-[200px] max-w-[240px]">Parameter</th>
+                <th className="text-left font-medium px-4 py-2 min-w-[120px] max-w-[160px]">Global</th>
+                <th className="text-left font-medium px-4 py-2 min-w-[120px] max-w-[160px]">Kunde</th>
+                <th className="text-left font-medium px-4 py-2 min-w-[120px] max-w-[160px]">Site</th>
+                <th className="text-left font-medium px-4 py-2 min-w-[120px] max-w-[160px]">Kamera</th>
+                <th className="text-left font-medium px-4 py-2 min-w-[120px] max-w-[160px]">Aktuel</th>
+                <th className="text-left font-medium px-4 py-2 min-w-[180px] max-w-[220px]">Rediger valgt lag</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -511,23 +511,23 @@ export function GlobalConfigPage() {
                 const draftValue = getNested(draft, field.path)
                 return (
                   <tr key={field.path} className={field.changed_from_global ? 'bg-amber-50/30' : ''}>
-                    <td className="px-4 py-3 align-top">
-                      <div className="font-medium text-gray-800">{def?.label ?? field.key}</div>
-                      <div className="text-[11px] text-gray-400 font-mono">{field.path}</div>
+                    <td className="px-4 py-3 align-top min-w-[200px] max-w-[240px]">
+                      <div className="font-medium text-gray-800 break-words">{def?.label ?? field.key}</div>
+                      <div className="text-[11px] text-gray-400 font-mono break-all">{field.path}</div>
                       {!def && <div className="text-[11px] text-amber-600 mt-1">Dynamisk parameter</div>}
                     </td>
                     {(['global', 'customer', 'site', 'camera'] as LayerKey[]).map(layer => (
-                      <td key={layer} className="px-4 py-3 align-top">
-                        <span className={`inline-flex max-w-48 truncate rounded-lg border px-2 py-1 text-xs ${sourceClass(field.source, layer, field.changed_from_global)}`}>
+                      <td key={layer} className="px-4 py-3 align-top min-w-[120px] max-w-[160px]">
+                        <span className={`inline-flex w-full break-words rounded-lg border px-2 py-1 text-xs ${sourceClass(field.source, layer, field.changed_from_global)}`}>
                           {formatValue(field.values[layer])}
                         </span>
                       </td>
                     ))}
-                    <td className="px-4 py-3 align-top">
-                      <div className="text-gray-900">{formatValue(field.effective_value)}</div>
+                    <td className="px-4 py-3 align-top min-w-[120px] max-w-[160px]">
+                      <div className="text-gray-900 break-words">{formatValue(field.effective_value)}</div>
                       <div className="text-[11px] text-gray-400">fra {field.source}</div>
                     </td>
-                    <td className="px-4 py-3 align-top">
+                    <td className="px-4 py-3 align-top min-w-[180px] max-w-[220px]">
                       {def?.type === 'boolean' ? (
                         <label className="inline-flex items-center gap-2 text-xs text-gray-600">
                           <input type="checkbox" checked={draftValue === true}

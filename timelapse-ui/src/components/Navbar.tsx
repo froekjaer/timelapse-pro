@@ -28,7 +28,7 @@ export function Navbar() {
   const links = [
     { to: '/',             label: 'Enheder',       icon: Camera },
     { to: '/backup',       label: 'Backup',        icon: Database },
-    { to: '/global-config',label: 'Global Config', icon: Globe },
+    { to: '/global-config',label: 'Global Config', icon: Globe, tooltip: 'Hierarkisk konfiguration: Global → Kunde → Site → Kamera. Arv og overrides for alle parametre.' },
     { to: '/tags',         label: 'Tag søgning',   icon: Tag },
     { to: '/settings',     label: 'Indstillinger', icon: Settings },
     { to: '/ai',           label: 'AI Styring',    icon: Brain },
@@ -70,10 +70,11 @@ export function Navbar() {
         </Link>
 
         <div className="flex items-center gap-1">
-          {links.map(({ to, label, icon: Icon }) => {
+          {links.map(({ to, label, icon: Icon, tooltip }) => {
             const active = to === '/' ? pathname === '/' : pathname.startsWith(to)
             return (
               <Link key={to} to={to}
+                title={tooltip}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors ${
                   active ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                 }`}>
