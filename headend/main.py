@@ -1464,6 +1464,31 @@ class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Technician Auth (QR code login) — 2026-07-12
+# ═══════════════════════════════════════════════════════════════════════════
+class TechnicianAuthStartRequest(BaseModel):
+    """Request from edge to start technician auth session."""
+    device_id: str
+    challenge: str
+
+class TechnicianAuthConfirmRequest(BaseModel):
+    """Request from headend UI to confirm technician auth."""
+    session_id: str
+    device_id: str
+    challenge: str
+    technician_user_id: str
+    technician_username: str
+
+class TechnicianAuthCallbackRequest(BaseModel):
+    """Callback from headend to edge with auth confirmation."""
+    session_id: str
+    device_id: str
+    challenge: str
+    technician_user_id: str
+    technician_username: str
+    headend_token: str
+
 class UserCreateRequest(BaseModel):
     username:    str
     email:       Optional[str] = None
@@ -1479,6 +1504,23 @@ class UserUpdateRequest(BaseModel):
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────
+
+@app.on_event("shutdown")
+def shutdown():
+    """Graceful shutdown handler. Ensures clean exit and SABSA audit logging."""
+    log.info("TimeLapse Pro Headend shutting down gracefully")
+    # Log to system logger for external monitoring (SABSA accountability)
+    try:
+        import subprocess as _sp
+        _sp.run(
+            ["logger", "-t", "timelapse-headend", "SHUTDOWN: Headend terminating gracefully"],
+            check=False,
+            timeout=2
+        )
+    except Exception:
+        pass  # Don't fail shutdown if logger fails
+    # Database connections are closed automatically by SQLAlchemy engine disposal
+    # which happens when the process exits.
 
 @app.on_event("startup")
 def _startup_ensure_admin():
@@ -1601,6 +1643,245 @@ def change_password(
     db.commit()
     log.info("Adgangskode skiftet: %s", current_user.username)
     return {"ok": True}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Technician Auth (QR code login for edge technicians)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# In-memory pending technician auth sessions (TTL 15 minutes)
+_pending_technician_sessions: dict[str, dict] = {}
+_pending_sessions_lock = __import__("threading").Lock()
+
+def _cleanup_pending_sessions():
+    """Remove expired pending sessions."""
+    import time
+    now = time.time()
+    with _pending_sessions_lock:
+        expired = [sid for sid, sess in _pending_technician_sessions.items() if sess.get("expires_at", 0) < now]
+        for sid in expired:
+            del _pending_technician_sessions[sid]
+        if expired:
+            log.info("Cleaned up %d expired technician auth sessions", len(expired))
+
+@app.post("/api/technician/auth/start")
+@limiter.limit("20/hour")
+def technician_auth_start(req: TechnicianAuthStartRequest, request: Request, db: Session = Depends(get_db)):
+    """
+    Start a new technician auth session from edge.
+
+    Edge calls this to generate a challenge token. The technician scans the QR code
+    which redirects to /technician/auth/{session_id} for web login.
+    """
+    import secrets
+    import time
+    from database import Device
+
+    # Verify device exists
+    device = db.query(Device).filter_by(device_id=req.device_id).first()
+    if not device:
+        log.warning("Technician auth start for unknown device: %s", req.device_id)
+        # Still allow - device might not be provisioned yet
+
+    # Generate session
+    session_id = secrets.token_urlsafe(16)
+    now = time.time()
+    session = {
+        "session_id": session_id,
+        "device_id": req.device_id,
+        "challenge": req.challenge,
+        "created_at": now,
+        "expires_at": now + 900,  # 15 minutes
+        "status": "pending",
+        "ip": request.client.host if request.client else "unknown",
+    }
+
+    with _pending_sessions_lock:
+        _pending_technician_sessions[session_id] = session
+
+    # Cleanup expired
+    if len(_pending_technician_sessions) > 100:
+        _cleanup_pending_sessions()
+
+    log.info("Technician auth started: %s for device %s", session_id[:8], req.device_id)
+    return {
+        "session_id": session_id,
+        "expires_at": session["expires_at"],
+        "auth_url": f"/technician/auth/{session_id}",
+    }
+
+@app.post("/api/technician/auth/confirm")
+@limiter.limit("30/minute")
+def technician_auth_confirm(request: Request, req: TechnicianAuthConfirmRequest, current_user=Depends(get_current_user)):
+    """
+    Confirm technician auth after successful headend login.
+
+    Called from headend UI after technician logs in. Validates the session
+    and returns a confirmation token to send back to the edge.
+    """
+    import time
+    from database import Device
+
+    with _pending_sessions_lock:
+        session = _pending_technician_sessions.get(req.session_id)
+
+    if not session:
+        log.warning("Technician auth confirm for unknown session: %s", req.session_id[:8])
+        raise HTTPException(status_code=404, detail="Auth session ikke fundet eller udløbet")
+
+    if time.time() > session.get("expires_at", 0):
+        log.warning("Technician auth confirm for expired session: %s", req.session_id[:8])
+        raise HTTPException(status_code=404, detail="Auth session udløbet")
+
+    if session.get("challenge") != req.challenge:
+        log.warning("Technician auth confirm challenge mismatch: %s", req.session_id[:8])
+        raise HTTPException(status_code=400, detail="Challenge mismatch")
+
+    if session.get("device_id") != req.device_id:
+        log.warning("Technician auth confirm device mismatch: %s", req.session_id[:8])
+        raise HTTPException(status_code=400, detail="Device ID mismatch")
+
+    # Generate edge session token
+    import secrets
+    edge_token = secrets.token_urlsafe(32)
+
+    # Update session
+    session["status"] = "confirmed"
+    session["technician_user_id"] = str(current_user.id)
+    session["technician_username"] = current_user.username
+    session["technician_role"] = current_user.role
+    session["technician_customer_id"] = str(current_user.customer_id) if current_user.customer_id else None
+    session["confirmed_at"] = time.time()
+    session["edge_token"] = edge_token
+
+    with _pending_sessions_lock:
+        _pending_technician_sessions[req.session_id] = session
+
+    log.info(
+        "Technician auth confirmed: %s by %s (%s) for device %s",
+        req.session_id[:8],
+        current_user.username,
+        current_user.role,
+        req.device_id,
+    )
+
+    return {
+        "ok": True,
+        "edge_token": edge_token,
+        "edge_callback_url": f"/api/technician/auth/callback",
+    }
+
+@app.post("/api/technician/auth/callback")
+def technician_auth_callback(req: TechnicianAuthCallbackRequest):
+    """
+    Callback from edge to collect confirmed auth session.
+
+    Edge polls this endpoint to check if the technician has completed login.
+    Returns the session token if confirmed.
+    """
+    import time
+
+    with _pending_sessions_lock:
+        session = _pending_technician_sessions.get(req.session_id)
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Auth session ikke fundet")
+
+    if time.time() > session.get("expires_at", 0):
+        raise HTTPException(status_code=404, detail="Auth session udløbet")
+
+    if session.get("challenge") != req.challenge:
+        raise HTTPException(status_code=400, detail="Challenge mismatch")
+
+    if session.get("device_id") != req.device_id:
+        raise HTTPException(status_code=400, detail="Device ID mismatch")
+
+    # Verify headend token matches
+    if session.get("edge_token") != req.headend_token:
+        raise HTTPException(status_code=400, detail="Token mismatch")
+
+    # Return confirmed session data
+    return {
+        "ok": True,
+        "technician_user_id": session.get("technician_user_id"),
+        "technician_username": session.get("technician_username"),
+        "technician_role": session.get("technician_role"),
+        "technician_customer_id": session.get("technician_customer_id"),
+    }
+
+@app.get("/technician/auth/{session_id}")
+def technician_auth_page(session_id: str, db: Session = Depends(get_db)):
+    """
+    Technician auth landing page (visited via QR code scan).
+
+    Shows login page and auto-redirects after successful auth.
+    """
+    from fastapi.responses import HTMLResponse
+
+    with _pending_sessions_lock:
+        session = _pending_technician_sessions.get(session_id)
+
+    if not session:
+        return HTMLResponse(
+            """
+            <html><body><h1>Tekniker Auth Session</h1>
+            <p>Session ikke fundet eller udløbet. Scan QR koden igen.</p>
+            </body></html>
+        """,
+            status_code=404,
+        )
+
+    return HTMLResponse(
+        f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>TimeLapse Pro - Tekniker Login</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }}
+                .container {{ max-width: 500px; margin: 50px auto; padding: 20px; }}
+                .card {{ border: 1px solid #ddd; border-radius: 8px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                h1 {{ color: #0284c7; margin-bottom: 20px; }}
+                .device {{ background: #f5f5f5; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+                .btn {{ display: block; width: 100%; padding: 12px; background: #0284c7; color: white;
+                           border: none; border-radius: 4px; font-size: 16px; cursor: pointer; text-align: center; text-decoration: none; }}
+                .btn:hover {{ background: #026aa7; }}
+                .status {{ margin-top: 20px; padding: 10px; border-radius: 4px; display: none; }}
+                .status.success {{ background: #d4edda; color: #155724; }}
+                .status.error {{ background: #f8d7da; color: #721c24; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="card">
+                    <h1>🔧 TimeLapse Pro Tekniker Login</h1>
+                    <p>Du er ved at logge ind på enhed:</p>
+                    <div class="device">
+                        <strong>Enheds ID:</strong> {session.get('device_id', 'Ukendt')}<br>
+                        <small>Session: {session_id[:8]}...</small>
+                    </div>
+                    <p>Log ind med din TimeLapse Pro konto for at fortsætte.</p>
+                    <a href="/" class="btn" onclick="startAuth()">Log ind</a>
+                    <div id="status" class="status"></div>
+                </div>
+            </div>
+            <script>
+            const sessionId = '{session_id}';
+            function startAuth() {{
+                window.location.href = '/?technician_auth=' + sessionId;
+            }}
+            // Auto-redirect if already logged in
+            if (document.cookie.includes('timelapse_session=')) {{
+                setTimeout(() => {{
+                    window.location.href = '/?technician_auth=' + sessionId;
+                }}, 500);
+            }}
+            </script>
+        </body>
+        </html>
+        """
+    )
 
 @app.get("/api/auth/me")
 def me(request: Request, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
@@ -15950,6 +16231,9 @@ def change_user_password(
 from ai.vocabulary_routes import vocab_router; app.include_router(vocab_router)
 
 from ai.review_api import review_router as _rev_router; app.include_router(_rev_router)
+
+# Site-Wide Look Matching Configuration (F-012)
+from api.site_look_config_api import router as site_look_router; app.include_router(site_look_router)
 
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
