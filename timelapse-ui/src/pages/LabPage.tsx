@@ -12,7 +12,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Camera, FlaskConical, Power, PowerOff, RefreshCw,
-  Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi, Crosshair, Wand2
+  Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi, Crosshair, Wand2, Ban
 } from 'lucide-react'
 import {
   setDebugMode, requestPreview, requestCapture,
@@ -353,6 +353,7 @@ export default function LabPage() {
   const [labConnecting, setLabConnecting] = useState(false)
   const [labConnectSecs, setLabConnectSecs] = useState(0)
   const [labReady, setLabReady]           = useState(false)
+  const [labConnectingStart, setLabConnectingStart] = useState<number | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const { hist, compute, clear } = useHistogram(imgRef)
 
@@ -397,15 +398,20 @@ export default function LabPage() {
           setLabActive(true)
           setLabConnecting(false)
           setLabConnectSecs(0)
+          setLabConnectingStart(null)
           setLabReady(true)
           listPreviews(deviceId).then(setPreviews).catch(() => {})
         } else if (debugEnabled && !cameraReady) {
           setLabActive(false)
           setLabConnecting(true)
           setLabReady(false)
+          // Start tracking connection time if not already tracking
+          setLabConnectingStart(prev => prev || Date.now())
         } else {
           setLabActive(false)
           setLabConnecting(false)
+          setLabConnectSecs(0)
+          setLabConnectingStart(null)
           setLabReady(false)
         }
       } catch {
@@ -493,6 +499,7 @@ export default function LabPage() {
     const next = !labActive
     if (next) {
       setLabConnecting(true)
+      setLabConnectingStart(Date.now())
       setLabReady(false)
       const warmupS     = 30   // relay 10s + connect + commands
       const configPullS = 60   // edge waker hvert 60s
@@ -529,6 +536,7 @@ export default function LabPage() {
               setLabActive(true)
               setLabConnecting(false)
               setLabConnectSecs(0)
+              setLabConnectingStart(null)
               listPreviews(deviceId).then(setPreviews).catch(() => {})
               setLabReady(true)
             }
@@ -539,6 +547,7 @@ export default function LabPage() {
         setLabActive(false)
         setLabConnecting(false)
         setLabConnectSecs(0)
+        setLabConnectingStart(null)
         clearInterval(countdown)
         setStatusMsg('Fejl ved aktivering af lab mode')
       }
@@ -547,6 +556,7 @@ export default function LabPage() {
       setLivePreview(false)
       setLabConnecting(false)
       setLabConnectSecs(0)
+      setLabConnectingStart(null)
       setLabReady(false)
       // Nulstil camera-ready signal på headend
       try {
@@ -564,6 +574,31 @@ export default function LabPage() {
         setLabActive(true)
         setStatusMsg('Fejl ved deaktivering')
       }
+    }
+  }
+
+  async function forceStopLab() {
+    // Force stop LAB mode when stuck in connecting state
+    setLabConnecting(false)
+    setLabActive(false)
+    setLivePreview(false)
+    setLabConnectSecs(0)
+    setLabConnectingStart(null)
+    setLabReady(false)
+    setStatusMsg('LAB mode nulstillet')
+
+    // Send stop command to edge
+    try {
+      await setDebugMode(deviceId, false)
+      // Clear camera-ready signal
+      const apiUrl = (await import('../api/client')).getApiUrl()
+      await authFetch(`${apiUrl}/api/lab/${pathSegment(deviceId)}/camera-ready`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ready: false})
+      }).catch(() => {})
+      setTimeout(() => setStatusMsg(''), 3000)
+    } catch {
+      setStatusMsg('Fejl ved nulstilling')
     }
   }
 
@@ -869,7 +904,18 @@ export default function LabPage() {
                   Aktiv siden {new Date(debugModeInfo.enabled_at).toLocaleString('da-DK', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
                 </span>
               )}
-              <button onClick={toggleLab} disabled={labConnecting}
+              {/* Force stop button when stuck in connecting state */}
+              {labConnecting && (
+                <button
+                  onClick={forceStopLab}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium text-sm bg-red-100 hover:bg-red-200 text-red-700 transition-colors"
+                  title="Nulstil LAB mode nu"
+                >
+                  <Ban className="w-4 h-4" />
+                  Force stop
+                </button>
+              )}
+              <button onClick={toggleLab} disabled={labConnecting && !labConnectingStart}
                 className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all ${
                   labConnecting
                     ? 'bg-amber-400 text-white cursor-wait'
@@ -901,7 +947,25 @@ export default function LabPage() {
         <div className="max-w-2xl mx-auto mt-12 text-center">
           <RefreshCw className="w-12 h-12 text-purple-300 mx-auto mb-4 animate-spin" />
           <h2 className="text-xl font-semibold text-gray-700 mb-2">{labConnecting ? 'Venter på kamera' : 'Kontrollerer lab-status'}</h2>
-          <p className="text-gray-400">{labConnecting ? 'Relay er aktiveret. LAB-panelet åbner først når Edge melder camera-ready.' : 'Henter aktuel status fra headend.'}</p>
+          <p className="text-gray-400">
+            {labConnecting
+              ? 'LAB mode venter på kamera. Brug "Force stop" knappen til at nulstille hvis det hænger.'
+              : 'Henter aktuel status fra headend.'}
+          </p>
+          {labConnecting && labConnectingStart && (
+            <p className="text-xs text-gray-400 mt-2">
+              Ventetid: {Math.floor((Date.now() - labConnectingStart) / 60000)} minutter
+            </p>
+          )}
+          {labConnecting && (
+            <button
+              onClick={forceStopLab}
+              className="mt-6 flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm bg-red-100 hover:bg-red-200 text-red-700 transition-colors mx-auto"
+            >
+              <Ban className="w-4 h-4" />
+              Force stop LAB mode
+            </button>
+          )}
         </div>
       )}
 

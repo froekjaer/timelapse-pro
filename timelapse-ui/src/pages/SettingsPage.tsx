@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Globe, Wifi, Users, Save, Check, Terminal, Bell } from 'lucide-react'
+import { Globe, Wifi, Users, Save, Check, Terminal, Bell, Camera } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { getApiUrl } from '../api/client'
+import { SiteLookConfigPanel } from '../components/SiteLookConfigPanel'
 
 const TIMEZONES = [
   { value: 'Europe/Copenhagen', label: 'Danmark (CET/CEST)' },
@@ -143,6 +144,11 @@ export function SettingsPage() {
           <p className="text-xs text-gray-400 mt-4">Kommer i Fase 3</p>
         </div>
 
+      </div>
+
+      {/* Site-Wide Look Matching Full Panel */}
+      <div className="mt-6">
+        <SiteLookConfigPanel />
       </div>
     </div>
   )

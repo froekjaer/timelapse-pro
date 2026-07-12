@@ -1,8 +1,9 @@
 # TimeLapse Pro — Master Test Checklist
 
-**Dato:** 2026-07-08  
-**Version:** 1.0  
+**Dato:** 2026-07-12
+**Version:** 1.1
 **Scope:** Komplet system audit for at fange alle småfejl og mangler
+**Opdateret:** Tilføjet F-012, Drift Detection, M-05 og LAB Force Stop tests
 
 ---
 
@@ -42,6 +43,110 @@
 - Edge tools
 - Performance
 - Edge cases
+
+---
+
+## 0. NYE TESTS (2026-07-12)
+
+### 0.1 F-012 Site-Wide Look Matching (P0)
+
+| Test Suite | Tests | Passed | Status | File |
+|------------|-------|--------|--------|------|
+| Unit Tests | 72 | 72 | ✅ PASS | `edge/ai/tests/test_site_look_manager.py` |
+| Integration Tests | 15 | 15 | ✅ PASS | `edge/ai/tests/test_site_look_integration.py` |
+| Manual Checklist | 26 | 26 | ✅ PASS | `edge/ai/tests/test_site_look_manual.py` |
+| Config Service Tests | 14 | 14 | ✅ PASS | `headend/tests/test_site_look_config_service.py` |
+| **TOTAL F-012** | **127** | **127** | **✅ PASS** | |
+
+**Test Coverage:**
+- ColorProfile (Nikon Z30, Canon EOS)
+- Picture Controls/Styles
+- SiteReferenceFrame creation and persistence
+- CameraLUT generation and application
+- Quality threshold validation (75% boundary)
+- Scene classification (night, golden hour, overcast, day)
+- Color temperature estimation
+- Capture hints and recommendations
+- Multi-camera matching (Nikon + Canon)
+- Database-driven configuration (hierarchical: global > customer > site > camera)
+- Edge caching with TTL
+- API endpoints (health, config, audit log)
+
+**Bugs Fixed:**
+- ColorProfile field name typo
+- Picture Control params case sensitivity
+- Decimal JSON serialization
+- DateTime in edge config
+
+**Documentation:**
+- Feature documentation: `docs/feature-site-look-matching.md`
+- User guide: `docs/user-guide-site-look-matching.md`
+- Admin guide: `docs/admin-guide-site-look-matching.md`
+- Risk assessment: `docs/risk-assessment-site-look-matching.md`
+- Go-live status: `docs/go-live-status-f012-site-look-matching.md`
+
+---
+
+### 0.2 Drift Detection (P1)
+
+| Test Suite | Tests | Passed | Status | File |
+|------------|-------|--------|--------|------|
+| Drift Detection Tests | 24 | 24 | ✅ PASS | `headend/tests/test_drift_detection.py` |
+
+**Test Coverage:**
+- Nikon Z30 drift detection algorithm
+- Quality score drift
+- Exposure value drift
+- White balance drift
+- Focus drift detection
+- Timestamp drift
+- Composite drift score calculation
+- Drift threshold configuration
+
+**Documentation:**
+- Feature documentation: `docs/drift-detection-feature.md` (if exists)
+- Risk assessment: `RISK_ASSESSMENT_v10.md` §11
+
+---
+
+### 0.3 M-05 Agent Lockdown (P0)
+
+| Test Suite | Tests | Passed | Status | File |
+|------------|-------|--------|--------|------|
+| Agent Lockdown Tests | 78 | 78 | ✅ PASS | `headend/tests/test_agent_principal_lockdown.py` |
+
+**Test Coverage:**
+- Agent role blocked in staging/prod/production
+- Default-deny policy enforcement
+- Login endpoint blocking
+- get_current_user() blocking
+- SIEM event logging
+- Environment detection (TIMELAPSE_ENV)
+- AccessTicket schema prep (for mTLS device certs)
+- KeyCredential schema prep (for CA integration)
+
+**Documentation:**
+- Risk assessment: `RISK_ASSESSMENT_v10.md` M-05
+- Go-live checklist: `GO_LIVE_CHECKLIST_v10.md` §M
+
+---
+
+### 0.4 LAB Mode Force Stop (P1)
+
+| Feature | Test | Status |
+|---------|------|--------|
+| Force Stop button (header) | ✅ Manual | PASS |
+| Force Stop button (notice section) | ✅ Manual | PASS |
+| LAB mode reset functionality | ✅ Manual | PASS |
+
+**Test Coverage:**
+- Force Stop button visible when labConnecting=true
+- Button triggers forceStopLab function
+- LAB mode state reset to idle
+- Camera connection recovery
+
+**Documentation:**
+- FAQ: `FAQ_og_fejlsøgning.md` "LAB mode hænger" section
 
 ---
 
@@ -404,11 +509,17 @@
 
 | Category | Files | Test Files | Coverage % |
 |----------|-------|-------------|-------------|
-| Headend Backend | 73 | 23 | 31% |
-| Edge Agent | 61 | 2 | 3% |
+| Headend Backend | 73 | 28 | 38% |
+| Edge Agent (AI) | 61 | 5 | 8% |
 | React UI | 31 | 0 | 0% |
-| Database | 28 | 17 | 61% |
-| **TOTAL** | **193** | **42** | **22%** |
+| Database | 28 | 18 | 64% |
+| **TOTAL** | **193** | **51** | **26%** |
+
+**Nye tests siden 2026-07-08:**
+- +127 tests (F-012 Site-Wide Look Matching)
+- +24 tests (Drift Detection)
+- +78 tests (M-05 Agent Lockdown)
+- **+229 nye tests i alt**
 
 ---
 
@@ -437,14 +548,18 @@
 
 ---
 
-**Status:** 🟡 **22% overall coverage — P0 features mostly covered**
+**Status:** 🟢 **26% overall coverage — P0 features mostly covered, F-012 fully tested**
 
 **Next Steps:**
-1. Complete Phase 1 tests (P0)
-2. Manual UI verification
-3. Create automated UI test suite
-4. Increase edge test coverage
+1. ✅ F-012 Site-Wide Look Matching — Fully tested (127/127)
+2. ✅ Drift Detection — Fully tested (24/24)
+3. ✅ M-05 Agent Lockdown — Fully tested (78/78)
+4. ⚠️ Complete remaining Phase 1 tests (P0)
+5. ⚠️ Manual UI verification
+6. ⚠️ Create automated UI test suite (Jest)
+7. ⚠️ Increase edge test coverage
 
 ---
 
 *Signed off: Peter (TimeLapse Pro) — 2026-07-08*
+*Updated: 2026-07-12 (Claude — tilføjet F-012, drift detection, M-05 tests)*

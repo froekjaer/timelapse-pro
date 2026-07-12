@@ -141,6 +141,7 @@ def detect_orangepi_npu_runtime(
 
     return {
         "engine": "orangepi_npu_probe_v1",
+        "available": npu_ready,
         "npu_ready": npu_ready,
         "preferred": "allwinner_viplite" if (has_ai_sdk or has_viplite or has_device) else None,
         "missing": missing,

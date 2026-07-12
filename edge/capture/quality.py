@@ -166,12 +166,8 @@ class QualityChecker:
                 message=f"Analysis error: {exc}",
             )
 
-        # ── Apply thresholds ───────────────────────────────────────────────
-        if blur_score < self._blur_thresh:
-            flag = QualityFlag.BLURRY
-            msg  = (f"Blur score {blur_score:.1f} below threshold {self._blur_thresh} "
-                    f"— possible focus drift, dirt or condensation on glass")
-        elif brightness < self._dark_thresh:
+        # ── Apply thresholds — brightness checked before blur ─────────────
+        if brightness < self._dark_thresh:
             flag = QualityFlag.UNDEREXPOSED
             msg  = (f"Mean brightness {brightness:.1f} below {self._dark_thresh} "
                     f"— image too dark (night? lens cap? relay failure?)")
@@ -179,6 +175,10 @@ class QualityChecker:
             flag = QualityFlag.OVEREXPOSED
             msg  = (f"Mean brightness {brightness:.1f} above {self._bright_thresh} "
                     f"— image too bright (sun in lens? wrong exposure?)")
+        elif blur_score < self._blur_thresh:
+            flag = QualityFlag.BLURRY
+            msg  = (f"Blur score {blur_score:.1f} below threshold {self._blur_thresh} "
+                    f"— possible focus drift, dirt or condensation on glass")
         else:
             flag = QualityFlag.OK
             msg  = (f"OK — blur={blur_score:.1f} brightness={brightness:.1f}")
@@ -341,6 +341,24 @@ class QualityChecker:
                     if tile_lap < 50 and tile_sat < 35:
                         low_saturation_low_texture_tiles += 1
             tile_count = max(1, len(tile_laps))
+
+            # White balance analysis
+            bgr_mean = img.reshape(-1, 3).astype("float32").mean(axis=0)
+            b_mean, g_mean, r_mean = [float(x) for x in bgr_mean]
+            rg = r_mean / max(g_mean, 1.0)
+            bg = b_mean / max(g_mean, 1.0)
+            color_cast_strength = max(abs(rg - 1.0), abs(bg - 1.0))
+            if color_cast_strength < 0.10:
+                color_cast = "neutral"
+            elif rg > bg and rg > 1.10:
+                color_cast = "warm/red"
+            elif bg > rg and bg > 1.10:
+                color_cast = "cool/blue"
+            elif rg < 0.90 and bg < 0.90:
+                color_cast = "green"
+            else:
+                color_cast = "mixed"
+
             return {
                 "dark_ratio": round(dark_ratio, 4),
                 "bright_ratio": round(bright_ratio, 4),
@@ -351,6 +369,12 @@ class QualityChecker:
                 "center_brightness": round(center_brightness, 2),
                 "low_texture_tile_ratio": round(low_texture_tiles / tile_count, 4),
                 "low_saturation_low_texture_tile_ratio": round(low_saturation_low_texture_tiles / tile_count, 4),
+                "white_balance": {
+                    "red_green_ratio": round(rg, 3),
+                    "blue_green_ratio": round(bg, 3),
+                    "cast": color_cast,
+                    "cast_strength": round(color_cast_strength, 3),
+                },
             }
         except Exception as exc:
             log.debug("CV feature extraction failed for %s: %s", filepath.name, exc)

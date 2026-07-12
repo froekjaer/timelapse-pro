@@ -2,7 +2,7 @@
 
 **Til Peter** (når du selv vil løse noget) **og til Claude/Codex** (så vi giver samme svar på
 tværs af sessioner). Symptom → hurtig diagnose → løsning. Detaljer i
-`SERVICES_OG_DRIFT_kilde_til_sandhed.md`. Sidst rørt: 2026-07-03.
+`SERVICES_OG_DRIFT_kilde_til_sandhed.md`. Sidst rørt: 2026-07-12.
 
 > **Fælles regel:** dette er kanonisk i `Dokumentation/` (git-sporet, begge assistenter
 > opdaterer her). En **nød-kopi** ligger på boot-drevet (`~/Claude/Projects/Timelaps/`),
@@ -89,6 +89,27 @@ CLI-scripts (`backfill.py`, `camera_profile.py`, `compare_ollama_gemini.py`,
 - **Alle (~26.000), billigst:** via UI → **AI-batch** med `force` (kræver headend på ny kode).
 - **Specifikke id'er:** `backfill.py --ids 26406,26410 --force --strategy cloud_only`.
 - **Spredt over perioden + resultatfil:** `--site "..." --limit 50 --spread --out <fil>.json`.
+
+---
+
+## "LAB mode hænger — 'Venter på kamera'"
+
+**Symptom:** LAB mode viser "Venter på kamera" spinner i lang tid (flere minutter/dage), kameraet svarer ikke.
+
+**Årsag:** Kameraet har mistet connection eller headend kommunikation er i stykker. LAB mode venter på `camera-ready` signal der aldrig kommer.
+
+**Løsning (2026-07-12):**
+- Brug **"Force stop"** knappen i UI — den er nu synlig med det samme når LAB hænger
+- Knappen findes i notice-sektionen (midt på skærmen) og i header
+- Klikker du "Force stop" nulstilles LAB mode tilstand, så du kan starte forfra
+
+**Hvis Force stop ikke virker:**
+```bash
+# Tjek kamera connection
+curl -s http://<kamera-ip>/api/status
+# Genstart headend (hvis det er backend problem)
+sudo launchctl kickstart -k system/dk.froekjaer.timelapse-headend
+```
 
 ---
 

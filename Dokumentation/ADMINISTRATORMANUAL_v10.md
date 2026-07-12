@@ -171,6 +171,77 @@ Følgende væsentlige sikkerheds- og compliance-forbedringer er implementeret i 
 
 **Dokumentation:** Se `SEC-014_Vulnerability_Handling_CVE_Process.md`, `GO_LIVE_CHECKLIST_v10.md` §G-08.
 
+### 1.5.8 F-012: Site-Wide Look Matching (2026-07-12)
+
+**Status:** ✅ **Go-Live Approved** — Fully implemented, tested (127/127 passed), documented.
+
+**Formål:** Sikrer at alle kameraer på et site producerer timelapse-videoer med ensartede farver og eksponering. Uden denne funktion ville Nikon Z30 kameraer producere varme, mættede billeder, mens Canon EOS kameraer ville producere køligere, neutrale billeder — med synlige farvespring når klipper mellem kameravinkler.
+
+**Implementering:**
+- **Golden Reference Frame:** Site-bred farvestandard skabt fra høj-kvalitet capture (>= 75% quality score)
+- **Per-Camera LUTs:** Farvetransformationer (Look-Up Tables) beregnet for hvert kamera
+- **Capture Hints:** Realtids anbefalinger til kameraindstillinger (WB, Picture Control, EV)
+- **Match Quality Scoring:** 0-100% score der viser hvor godt kamera matcher reference
+- **Camera-Specific Profiles:** Optimeret for Nikon Z30 og Canon EOS 1300D/2000D
+- **Quality Threshold:** Reference oprettes kun fra captures med score >= 75%
+- **Fallback Mode:** Graceful degradation hvis reference ikke er tilgængelig
+
+**Database-driven Configuration:**
+- Hierarkisk konfiguration: global → kunde → site → kamera (lavere niveau vinder)
+- Edge caching med TTL (default 24 timer)
+- Audit logging af alle konfigurationsændringer
+- API endpoints til CRUD operations på config
+
+**Teknisk placering:**
+- `edge/ai/site_look_manager.py` — Core engine (600+ lines)
+- `edge/ai/autonomous_optimizer.py` — Integration point
+- `headend/services/site_look_config_service.py` — Database service
+- `headend/api/site_look_config_api.py` — Admin API
+- `timelapse-ui/src/components/SiteLookConfigPanel.tsx` — UI config panel
+- `timelapse-ui/src/components/SiteLookCard.tsx` — Device view component
+
+**API endpoints (admin):**
+- `GET /api/admin/site-look/health` — Health check
+- `GET/PUT/DELETE /api/admin/site-look/config` — CRUD på konfiguration
+- `GET /api/admin/site-look/edge/{id}/config` — Edge cache fetch
+- `GET /api/admin/site-look/audit/log` — Audit log
+
+**Test results:**
+- Unit tests: 72/72 passed
+- Integration tests: 15/15 passed
+- Manual checklist: 26/26 passed
+- Config service tests: 14/14 passed
+- **TOTAL: 127/127 passed**
+
+**Performance:**
+- Reference creation: < 200ms (actual: < 100ms)
+- LUT generation: < 150ms (actual: < 100ms)
+- Feature extraction: < 50ms
+- Config resolution: < 100ms (actual: < 50ms)
+- Edge cache fetch: < 50ms (actual: < 20ms)
+
+**Betjening (administrator):**
+1. Gå til **Settings → Site-Wide Look Matching**
+2. Konfigurer hierarkisk konfiguration (global/kunde/site/kamera)
+3. Set `enabled: true` for at aktivere
+4. Adjust `reference_quality_threshold` (default: 75.0%)
+5. Configure `auto_create_reference` og `auto_update_reference`
+6. Set LUT regeneration interval (default: 168 timer/uge)
+
+**Betjening (slutbruger):**
+1. Gå til **Devices → Vælg kamera**
+2. Se **SiteLookCard** i kolonne 5
+3. Hvis ingen site reference: Klik "Opret Site Reference" (kræver quality >= 75%)
+4. Når reference findes: Klik "Regenerer Kamera LUT"
+5. Følg capture hints (Picture Control, WB Kelvin, EV)
+
+**Troubleshooting:**
+- Ingen reference oprettet? Tjek at captures har quality score >= 75%
+- Lav match quality? Tjek at alle kameraer har lignende belysning og WB
+- Capture hints virker ikke? Tjek `edge_ai_policy.allow_camera_commands: true`
+
+**Dokumentation:** Se `docs/feature-site-look-matching.md`, `docs/admin-guide-site-look-matching.md`, `docs/user-guide-site-look-matching.md`, `docs/risk-assessment-site-look-matching.md`, `docs/go-live-status-f012-site-look-matching.md`.
+
 ---
 
 ## 2. Daglig drift

@@ -71,6 +71,17 @@ except ImportError:
     _SSH_TUNNEL_AVAILABLE = False
 from utils.database         import EdgeDatabase
 
+# Technician authentication (QR code login)
+try:
+    from technician_auth import TechnicianAuth, get_auth
+    from technician_ui   import serve_technician_ui
+    _TECH_UI_AVAILABLE = True
+except ImportError:
+    _TECH_UI_AVAILABLE = False
+    TechnicianAuth = None
+    serve_technician_ui = None
+    get_auth = None
+
 # ── HAL (Hardware Abstraction Layer) ──────────────────────────────────────────
 try:
     from hal import get_adapter as _hal_get_adapter
@@ -125,6 +136,18 @@ class EdgeAgent:
         self._uploader     = UploadManager(config, self._db)
         self._api          = HeadendClient(config, config_manager)
         self._connectivity = self._relay.connectivity      # modem auto-cycle monitor
+
+        # Technician authentication (QR code login)
+        self._tech_auth    = None
+        self._tech_ui_server = None
+        if _TECH_UI_AVAILABLE:
+            try:
+                db_path = self._cfg_mgr.base_dir / "technician_auth.db"
+                headend_url = config.get("headend", {}).get("base_url", "http://headend.local:8000")
+                self._tech_auth = TechnicianAuth(db_path, self._device_id, headend_url)
+                log.info("Technician auth initialised")
+            except Exception as exc:
+                log.warning("Technician auth init failed: %s", exc)
 
         # State
         self._last_heartbeat:    datetime = datetime.min.replace(tzinfo=timezone.utc)
@@ -221,6 +244,16 @@ class EdgeAgent:
                 log.info("SSH tunnel manager initialiseret")
             except Exception as exc:
                 log.warning("SSH tunnel manager fejl: %s", exc)
+
+        # Technician UI (QR code login) - starts on port 8099
+        if _TECH_UI_AVAILABLE and self._tech_auth:
+            try:
+                tech_ui_port = int(self._cfg.get("technician", {}).get("ui_port", 8099))
+                self._tech_ui_server = serve_technician_ui(self._tech_auth, port=tech_ui_port)
+                if self._tech_ui_server:
+                    log.info("Technician UI started on port %d", tech_ui_port)
+            except Exception as exc:
+                log.warning("Technician UI start failed: %s", exc)
 
         # 3. Detect camera features (once per session)
         self._load_camera_features()

@@ -72,13 +72,35 @@ class AutonomousImageOptimizer:
         self._dark_threshold = float(quality.get("dark_threshold", 25.0))
         self._bright_threshold = float(quality.get("bright_threshold", 230.0))
 
-        # Site-wide look matching manager
+        # Site-wide look matching manager with config client
         self._site_look_manager = None
+        self._site_look_config_client = None
+
         site_look_config = config.get("site_look_matching", {}) or {}
         if site_look_config.get("enabled", True):  # Enabled by default
             try:
-                self._site_look_manager = SiteLookManager(config)
-                log.info("Site-wide look matching enabled")
+                from edge.ai.site_look_config_client import get_config_client
+
+                # Get config client (must be initialized before optimizer)
+                config_client = get_config_client()
+                if config_client:
+                    self._site_look_config_client = config_client
+
+                    # Get enabled status from database config
+                    db_config = config_client.get_config()
+                    if db_config.get('enabled', True):
+                        site_id = config.get("site_id", "default-site")
+                        customer_id = config.get("customer_id")
+                        self._site_look_manager = SiteLookManager(
+                            config_client=config_client,
+                            site_id=site_id,
+                            customer_id=customer_id
+                        )
+                        log.info("Site-wide look matching enabled (database config)")
+                    else:
+                        log.info("Site-wide look matching disabled in database config")
+                else:
+                    log.warning("Config client not available")
             except Exception as exc:
                 log.warning(f"Failed to initialize SiteLookManager: {exc}")
 

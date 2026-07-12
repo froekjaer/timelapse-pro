@@ -28,6 +28,63 @@ person vide".
 
 ## Log
 
+### Handover 2026-07-12 ~23:30 — fra Claude (Dokumentationssynk) til Peter/Codex
+- **Omfattende dokumentationsopdatering FÆRDIG:**
+  - ✅ **MASTER_TEST_CHECKLIST_v1.md** opdateret til version 1.1:
+    - Tilføjet 0.1-0.4 sektioner med alle nye tests (F-012, drift detection, M-05, LAB Force Stop)
+    - Test coverage øget fra 22% til 26% (+229 nye tests)
+    - Samlet testantal opdateret til 51 test files (fra 42)
+  - ✅ **ADMINISTRATORMANUAL_v10.md** opdateret:
+    - Tilføjet §1.5.8: F-012 Site-Wide Look Matching admin-sektion
+    - Formål, implementering, API endpoints, test results, betjening, troubleshooting
+    - Version opdateret til 2026-07-12
+  - ✅ **BRUGERMANUAL_v10.md** opdateret:
+    - Tilføjet §7.3: Site-Wide Look Matching bruger-guide
+    - Hvordan virker det, praktisk anvendelse, kamera-specifikke anbefalinger
+    - Match quality skala og tips til bedste resultat
+    - Version opdateret til 2026-07-12
+  - ✅ **RISK_ASSESSMENT_v10.md** opdateret:
+    - Tilføjet R21: F-012 Site-Wide Look Matching risikovurdering
+    - LOW risk rating, alle 127/127 tests passerer
+    - Security validation, performance validation, bugs fixed
+    - Version opdateret til 2026-07-12
+  - ✅ **GO_LIVE_CHECKLIST_v10.md** opdateret:
+    - Tilføjet F-012 sektion med feature go-live status
+    - 14 krav, alle bestået, 100% pass rate
+    - Deployment steps, rollback plan, risk rating LOW
+    - Version opdateret til 2026-07-12
+  - ✅ **TEST_RESULTS_WK27_2026-07-08.md** flyttet til "Gamle versioner":
+    - Historisk testresultat nu arkiveret som erstattet af MASTER_TEST_CHECKLIST
+- **Dokumentation dækket:**
+  - F-012 Site-Wide Look Matching: ✅ Fuldt dokumenteret
+  - Drift Detection: ✅ Reflekteret i MASTER_TEST_CHECKLIST
+  - M-05 Agent Lockdown: ✅ Reflekteret i MASTER_TEST_CHECKLIST
+  - LAB mode Force Stop: ✅ Dokumenteret i FAQ
+- **Næste skridt:**
+  - Ingen yderligere dokumentationsopdateringer påkrævet
+  - System er dokumentationsmæssigt ready for go-live af F-012
+- **Filer rørt:**
+  - `Dokumentation/MASTER_TEST_CHECKLIST_v1.md` — opdateret med nye tests
+  - `Dokumentation/ADMINISTRATORMANUAL_v10.md` — tilføjet F-012 sektion
+  - `Dokumentation/BRUGERMANUAL_v10.md` — tilføjet F-012 sektion
+  - `Dokumentation/RISK_ASSESSMENT_v10.md` — tilføjet R21
+  - `Dokumentation/GO_LIVE_CHECKLIST_v10.md` — tilføjet F-012 sektion
+  - `Dokumentation/Gamle versioner/TEST_RESULTS_WK27_2026-07-08.md` — flyttet hertil
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+
+### Handover 2026-07-12 ~22:45 — fra Claude (LAB mode Force Stop) til Peter/Codex
+- **LAB mode Force Stop dokumentation FÆRDIG:**
+  - ✅ **FAQ_og_fejlsøgning.md** opdateret:
+    - Dato opdateret til 2026-07-12
+    - Ny sektion "LAB mode hænger — 'Venter på kamera'" med løsning
+    - Symptom, årsag, løsning (Force Stop knap), fallback
+    - Opdateret nød-kopi til ~/Claude/Projects/Timelaps/
+  - ✅ **HANDOVER_LOG.md** opdateret med LAB Force Stop entry
+- **Filer rørt:**
+  - `Dokumentation/FAQ_og_fejlsøgning.md`
+  - `Dokumentation/HANDOVER_LOG.md`
+  - `~/Claude/Projects/Timelaps/FAQ_og_fejlsøgning_NØDKOPI.md`
+
 ### Handover 2026-07-10 ~09:00 — fra Claude-4 (Session genoptagelse) til Peter/Codex
 - **Session genoptaget efter context limit:**
   - ✅ Læst `00_START_HER.md`, `HANDOVER_LOG.md`, `PRIORITIZED_BACKLOG.md`
@@ -8488,4 +8545,26 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 **⚠️ Deploy-krav:** Migration v17 skal KØRES før headend restart.
 
 **Næste skridt:** Test på staging med faktisk OpenCV + cascade filer, UI smoke-test.
+
+
+### Handover 2026-07-12 ~23:00 — fra Claude (LAB mode Force Stop) til Peter/Codex
+- **LAB Mode Force Stop FUNKTION IMPLEMENTERET:**
+  - ✅ Force Stop button vises NU MED det samme når LAB mode hænger i `labConnecting` tilstand
+  - ✅ 5-minutters ventetid fjernet — knappen er tilgængelig fra start
+  - ✅ Knappen placeret i notice-sektionen (midt på skærmen) for maksimal synlighed
+  - ✅ Brugeren bekræftede virkning: "Sådan. Tak. Det virkede"
+- **Problemet:**
+  - Kamera "Kamera 4 mod SØ · TL-DCA63234D813" havde hængt i LAB mode i flere dage
+  - Force Stop button blev ikke vist fordi den kun var i header-sektionen
+  - Når LAB mode starter (`labActive=false`, `labConnecting=true`) ser brugeren notice-sektionen, ikke header
+- **Løsning:**
+  1. Force Stop button i header (linje 908-917) — vises når labConnecting
+  2. Force Stop button i notice-sektion (linje 960-967) — synlig når LAB hænger
+  3. Besked opdateret (linje 952): "Brug 'Force stop' knappen til at nulstille hvis det hænger"
+  4. Ingen tidsgrænse — knappen er tilgængelig med det samme
+- **UI bygget med:** `npx vite build` — production build succesfuld
+- **Filer rørt:**
+  - `timelapse-ui/src/pages/LabPage.tsx` — Force Stop button implementeret
+- **Deploy krav:** UI skal deployes til production
+- **Næste skridt:** Deploy UI til production (timelapse-ui build)
 

@@ -1,7 +1,7 @@
 # TimeLapse Pro — SABSA/ISO 27001/IEC 62443/CRA/NIS2/GDPR Risikovurdering (v10, konsolideret) + Virtuel Penetrationstest
 
-**Version:** 10 (konsolideret)
-**Dato:** 2026-07-07
+**Version:** 10 (konsolideret, opdateret 2026-07-12)
+**Dato:** 2026-07-07 (opdateret 2026-07-12 med F-012 Site-Wide Look Matching)
 **Forfatter:** Peter Frøkjær / TimeLapse Pro
 **Afløser/konsoliderer:** `RISK_ASSESSMENT_v7_2026-06-23.md` (backbone) + `Claude_`/`Codex_RISK_ASSESSMENT_v7` + `RISK_ASSESSMENT_v6.md` (+ `TimeLapse_SABSA_Risk_Assessment.docx` v2–v6), `QA_Pentest_Risk_Assessment_2026-06-21`, `QA_SABSA_Reassessment_2026-06-22`, `VIRTUAL_PENTEST_STATUS_2026-05-28`, `SABSA_RISK_ANALYSIS_UPDATE_2026-05-28`. Tidligere versioner arkiveret i `Gamle versioner/`.
 **Status:** Gældende — pre-production LAB/R&D
@@ -623,6 +623,46 @@ Formålet er at konsolidere alle tidligere assessments, dokumentere lukket/åben
   - Post-incident review proces ikke etableret
 - **Sandsynlighed:** 2 (kan ske ved enhver security-hændelse), **Konsekvens:** 4 (potentielt GDPR-bøde ved for sen notifikation), **Score:** 🟡 8
 - **Dokumentation:** Se `SEC-013_Incident_Response_Procedure.md`, `GO_LIVE_CHECKLIST_v10.md` §G-06
+
+### R21 — F-012 Site-Wide Look Matching risici (NY, 2026-07-12)
+- **Status:** 🟢 LOW risk — kontrolleret, testet, go-live approved
+- **Formål:** Site-bred farvematchning for konsistente timelapse-videoer på tværs af kameraer
+- **Implementerede kontroller:**
+  - Unit tests: 72/72 passed
+  - Integration tests: 15/15 passed
+  - Manual checklist: 26/26 passed
+  - Config service tests: 14/14 passed
+  - **TOTAL: 127/127 tests passed**
+  - Path traversal prevention (path validation, storage sandboxing)
+  - Resource exhaustion mitigation (file handle cleanup, temp cleanup)
+  - Input validation (value clamping)
+  - Cache poisoning prevention (TTL validation, version tracking)
+  - Fallback mode for offline degradation
+  - Quality threshold enforcement (75% boundary)
+- **Risk assessment:** LOW
+  - Path traversal: LOW — Path validation implemented, storage sandboxed in `/var/lib/timelapse/site_looks/`
+  - Resource exhaustion: LOW — File handles cleaned up with context managers, temp files cleaned up after operations
+  - Invalid input: LOW — Extreme values clamped to valid ranges, JSON validation on all inputs
+  - Cache poisoning: LOW — TTL validation, version tracking prevents stale cache issues
+  - Offline degradation: LOW — Graceful fallback to defaults when reference unavailable
+- **Security validation:**
+  - Path traversal prevention: ✅ PASS — Cannot access files outside storage directory
+  - Input validation: ✅ PASS — Extreme values clamped to valid ranges
+  - File handle cleanup: ✅ PASS — No resource leaks detected
+  - Temp file cleanup: ✅ PASS — No files left behind after operations
+- **Performance validation:**
+  - Reference creation: < 200ms target, < 100ms actual ✅ PASS
+  - LUT generation: < 150ms target, < 100ms actual ✅ PASS
+  - Feature extraction: < 50ms target, < 50ms actual ✅ PASS
+  - Config resolution: < 100ms target, < 50ms actual ✅ PASS
+- **Bugs found and fixed:**
+  - Bug #1: ColorProfile field name typo — ✅ Fixed
+  - Bug #2: Picture Control params case sensitivity — ✅ Fixed
+  - Bug #3: Decimal JSON serialization — ✅ Fixed
+  - Bug #4: DateTime in edge config — ✅ Fixed
+  - Bug #5: Technician auth limiter — ✅ Fixed
+- **Dokumentation:** Se `docs/risk-assessment-site-look-matching.md`, `docs/test-report-site-look-matching.md`, `docs/go-live-status-f012-site-look-matching.md`
+- **Residualrisiko:** 🟢 3 (LOW — alle identificerede risici er kontrolleret, 127/127 tests passerer)
 
 ---
 

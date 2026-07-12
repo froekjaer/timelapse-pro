@@ -1,7 +1,7 @@
 # TimeLapse Pro — Brugermanual (v10, konsolideret)
 
-**Version:** 10 (konsolideret)
-**Dato:** 2026-07-02
+**Version:** 10 (konsolideret, opdateret 2026-07-12)
+**Dato:** 2026-07-02 (opdateret 2026-07-12 med F-012 Site-Wide Look Matching)
 **Målgruppe:** Kunde, site manager, projektleder og almindelig bruger
 **Status:** Pre-production manual. Skærmnavne kan ændre sig lidt, men arbejdsgangen er gældende.
 **Konsoliderer:** `BRUGERMANUAL_2026-06-23.md`, `Claude_BRUGERMANUAL_2026-06-23.md`, `Codex_BRUGERMANUAL_2026-06-23.md` (tidligere versioner arkiveret i `Gamle versioner/`).
@@ -126,6 +126,56 @@ TimeLapse Pro har automatiseret retention policy for at overholde GDPR krav om b
 - Sletning er permanent. Billeder kan ikke gendannes efter sletning.
 - Alle sletninger logges med capture_id, kamera, device, filename, sletningstidspunkt, årsag og hvem der udførte slettet.
 - Retention kan sættes til `NULL` for at deaktivere automatisk sletning for et specifikt kamera.
+
+### 7.3 Site-Wide Look Matching (F-012)
+
+Site-Wide Look Matching sikrer at alle kameraer på et site producerer timelapse-videoer med ensartede farver og eksponering. Det betyder at du frit kan klippe mellem forskellige kameravinkler uden synlige farveforskelle.
+
+**Hvordan virker det?**
+1. **Golden Reference** — En enkelt capture bruges som farvestandard for hele sitet
+2. **Per-Camera LUTs** — Hvert kamera får sin egen farvetransformation (LUT)
+3. **Capture Hints** — Kameraet får anbefalinger til optimal indstilling
+
+**I praksis:**
+1. Gå til **Devices** → vælg kamera
+2. Kig i **Site-Wide Look Matching** kolonnen (kolonne 5)
+3. Hvis du ser "Mangler Site Reference":
+   - Tag et nyt billede med god belysning
+   - Klik "Opret Site Reference" når billedet har quality >= 75%
+4. Når reference findes:
+   - Klik "Regenerer Kamera LUT"
+   - Følg anbefalingerne i "Capture Hints" sektionen
+
+**Capture Hints viser:**
+- Anbefalet Picture Control (Nikon) eller Picture Style (Canon)
+- White Balance temperatur (Kelvin)
+- Eksponering kompensering (EV)
+- Forventet match kvalitet (0-100%)
+
+**Kamera-specifikke anbefalinger:**
+
+*Nikon Z30 (Flat for timelapse):*
+- Picture Control: Flat
+- Skarphed: 3, Kontrast: 0, Mætning: 0
+
+*Canon EOS 1300D/2000D (Neutral for timelapse):*
+- Picture Style: Neutral
+- Skarphed: 2, Kontrast: 1, Mætning: 1
+
+**Match quality skala:**
+
+| Score | Kvalitet | Beskrivelse |
+|-------|----------|-------------|
+| 90-100% | 🟢 Fremragende | Ingen synlig forskel |
+| 75-89% | 🔵 God | Minimal forskel, acceptabel |
+| 60-74% | 🟡 Acceptabel | Synlig forskel, post-processing hjælper |
+| < 60% | 🔴 Dårlig | Betydelig forskel, manuel korrektion nødvendig |
+
+**Tips til bedste resultat:**
+- Undgå harsh middagssol (for meget kontrast)
+- Brug manuelt white balance (ikke auto)
+- Sikre at alle kameraer har lignende belysning
+- Hold Picture Control/Style konsekvent (Flat/Neutral)
 
 ## 8. Kendte begrænsninger
 

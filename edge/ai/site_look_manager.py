@@ -94,7 +94,7 @@ CANON_EOS_PROFILE = ColorProfile(
     ],
     saturation_boost=1.0,
     contrast_boost=1.05,  # Canon typically has slightly more contrast
-    supported_picture_styles=[
+    supported_picture_controls=[
         "Standard",       # Canon's default
         "Portrait",       # Soother tones for skin
         "Landscape",      # Deeper blues/greens
@@ -174,9 +174,10 @@ def get_picture_control_recommendation(camera_model: str, scenario: str = "defau
     model_key = camera_model.strip()
     for key, recs in PICTURE_CONTROL_RECOMMENDATIONS.items():
         if key.lower() in model_key.lower() or model_key.lower() in key.lower():
+            pic_control = recs.get(scenario, recs.get("default_for_timelapse", "Standard"))
             return {
-                "picture_control": recs.get(scenario, recs.get("default_for_timelapse", "Standard")),
-                "parameters": recs.get(f"{recs.get(scenario, 'standard')}_params", {}),
+                "picture_control": pic_control,
+                "parameters": recs.get(f"{pic_control.lower()}_params", {}),
             }
     return {
         "picture_control": "Standard",
@@ -445,12 +446,48 @@ class SiteLookManager:
     - Generate per-camera LUTs for matching to reference
     - Store/retrieve reference frames and LUTs
     - Provide camera command hints for consistent capture
+
+    Configuration is loaded from database via SiteLookConfigClient.
     """
 
-    def __init__(self, config: dict):
-        self._config = config
-        self._storage_base = Path(config.get("site_look_storage_path", "/var/lib/timelapse/site_looks"))
+    def __init__(self, config_client, site_id: str, customer_id: str = None):
+        """
+        Initialize manager with config client.
+
+        Args:
+            config_client: SiteLookConfigClient instance for database config
+            site_id: Site identifier
+            customer_id: Customer identifier (optional, for hierarchy)
+        """
+        self._config_client = config_client
+        self._site_id = site_id
+        self._customer_id = customer_id
+
+        # Get configuration from client (with cache fallback)
+        self._refresh_config()
+
+        # Initialize storage
+        storage_path = self._get_config_value('storage_path', '/var/lib/timelapse/site_looks')
+        self._storage_base = Path(storage_path)
         self._storage_base.mkdir(parents=True, exist_ok=True)
+
+    def _refresh_config(self) -> None:
+        """Refresh configuration from client."""
+        if self._customer_id:
+            config = self._config_client.get_config()
+        else:
+            config = self._config_client.get_config()
+        self._config = config
+
+    def _get_config_value(self, key: str, default=None):
+        """Get configuration value with fallback to default."""
+        # Try to get from hierarchy-specific config first
+        value = self._config.get(key)
+        if value is None:
+            # Fallback to global config
+            global_config = self._config_client.get_config()
+            value = global_config.get(key, default)
+        return value
 
     def _get_reference_path(self, site_id: str) -> Path:
         """Get path to site reference frame file."""
@@ -505,9 +542,10 @@ class SiteLookManager:
         quality_report = quality_report or {}
         quality_score = float(quality_report.get("score", {}).get("overall", 0.0))
 
-        # Quality threshold for becoming a reference
-        if quality_score < 75.0:
-            log.info(f"Image quality {quality_score:.1f} below reference threshold 75.0")
+        # Quality threshold from configuration
+        threshold = self._get_config_value('reference_quality_threshold', 75.0)
+        if quality_score < threshold:
+            log.info(f"Image quality {quality_score:.1f} below reference threshold {threshold}")
             return None
 
         # Extract features from image
@@ -835,16 +873,25 @@ class SiteLookManager:
 
         # Convert LAB chromaticity to approximate Kelvin
         # This is a rough approximation based on the Planckian locus
-        if b_channel > 20:
+        # Configurable values for color science constants
+        neutral_kelvin = self._get_config_value('neutral_kelvin', 6500)
+        warm_threshold = self._get_config_value('warm_lab_threshold', 20)
+        cool_threshold = self._get_config_value('cool_lab_threshold', -10)
+        warm_multiplier = self._get_config_value('warm_kelvin_multiplier', 50)
+        cool_multiplier = self._get_config_value('cool_kelvin_multiplier', 80)
+        kelvin_min = self._get_config_value('kelvin_min', 2700)
+        kelvin_max = self._get_config_value('kelvin_max', 10000)
+
+        if b_channel > warm_threshold:
             # Warm/yellowish
-            kelvin = int(6500 - b_channel * 50)
-        elif b_channel < -10:
+            kelvin = int(neutral_kelvin - b_channel * warm_multiplier)
+        elif b_channel < cool_threshold:
             # Cool/bluish
-            kelvin = int(6500 - b_channel * 80)
+            kelvin = int(neutral_kelvin - b_channel * cool_multiplier)
         else:
             # Neutral
-            kelvin = 6500
+            kelvin = neutral_kelvin
 
-        # Clamp to reasonable range
-        kelvin = max(2700, min(10000, kelvin))
+        # Clamp to configurable range
+        kelvin = max(kelvin_min, min(kelvin_max, kelvin))
         return kelvin

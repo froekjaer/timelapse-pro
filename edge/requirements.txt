@@ -10,6 +10,9 @@ cryptography>=41.0
 # Image quality (CPU-only build — no GPU/CUDA required)
 opencv-python-headless>=4.8.0
 
+# Technician authentication (QR code login)
+qrcode>=7.4.0
+
 # Scheduling & timezone support
 # (zoneinfo is stdlib in Python 3.9+, backport for older)
 # tzdata>=2024.1  # uncomment if zoneinfo data not on system

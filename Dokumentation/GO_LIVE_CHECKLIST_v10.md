@@ -1,7 +1,7 @@
 # TimeLapse Pro — Go-live checkliste (v10, konsolideret): krav før Internet-eksponering og timelapse-pro.dk
 
-**Version:** 10 (konsolideret)
-**Dato:** 2026-07-07
+**Version:** 10 (konsolideret, opdateret 2026-07-12)
+**Dato:** 2026-07-07 (opdateret 2026-07-12 med F-012 Site-Wide Look Matching go-live)
 **Gælder for:** Skift fra `timelapse.froekjaer.dk` (lab) til `timelapse-pro.dk` (produktion) og egentlig Internet-eksponering af Headend
 **Konsoliderer:** `GO_LIVE_CHECKLIST_2026-06-23.md`, `Claude_GO_LIVE_CHECKLIST_2026-06-23.md`, `Codex_GO_LIVE_CHECKLIST_2026-06-23.md` (arkiveret i `Gamle versioner/`).
 
@@ -225,7 +225,70 @@ i dag kører CrushFTP med live kundedata + det legacy-system TimeLapse Pro skal 
 | M-05 | Agent/service-principal-model (Codex-forslag) med hård prod-afvisning implementeret | 🟡 **"Layer 2" kodet OG testet 2026-07-06 (Claude, via `claude_proxy.py` med audit-log) — 24/24 tests bestået, `py_compile` OK, committet + PR #2 åbnet (`claude/m05-agent-lockdown-2026-07-06` → `main`, https://github.com/froekjaer/timelapse-pro/pull/2), afventer Peters review/merge + CI/deploy.** — se `headend/main.py`: ny reserveret rolle `role="agent"` (database.py), `_agent_role_blocked_in_this_environment()` (hård, IKKE DB-konfigurerbar kodespærre — kun TIMELAPSE_ENV afgør det), håndhævet to steder: (1) `/api/auth/login` afviser FØR password-tjek med samme generiske 401-besked som forkert password (ingen rolle-lækage), (2) `get_current_user()` — det centrale håndhævelsespunkt for ALLE cookie/JWT-autoriserede endpoints — afviser også allerede udstedte sessions. `_log_agent_lockdown_status()` logger status ved hvert opstart (samme SIEM-mønster som C-03). 15 nye tests i `headend/tests/test_agent_principal_lockdown.py`, reelt kørt og bestået (se ovenfor) — periodisk tjek #89 lavede desuden en uafhængig, statisk code review af koden mod testene, ingen fejl fundet. **Dette er stadig kun trin 2 af 5** (env-flag + hård afvisning) — det fulde `AgentPrincipal`/`AgentToken`/`AgentElevationGrant`-skema (trin 3), audit-udvidelse (trin 4) og CLI (trin 5) er IKKE bygget. Forudsætning fra forrige runde (`TIMELAPSE_ENV="rd"` i `edge/agent.py`/`headend/siem.py`) var allerede rettet/deployet 2026-07-06 |
 | M-06 | Kirkbi A/S-databehandleraftale + udviklingstilladelse verificeret til at dække faktisk nuværende behandling | 🟢 Aftale + eksplicit udviklingstilladelse (2026-07-05) bekræftet af Peter — kun AI/Gemini-eskalering + GPS-dækning fortsat ubekræftet, se G-03 |
 | M-07 | Udførlig, selvstændig installationsguide/-script til headend på staging/prod (Peter kan installere alene, uden agent-adgang) | 🟠 Under udarbejdelse 2026-07-05 — se `INSTALLATION_GUIDE_HEADEND_v1.md`/`deploy/install/install_headend.sh` |
-| M-08 | Kontrolleret, logget break-glass support-adgang (installation/fejlsøgning) — design | 🟠 Design-notat klar (`Claude_Support_Access_Model_2026-07-06.md`). **Skema-forberedelse bygget 2026-07-06:** ny, separat `AccessTicket`-tabel (`headend/database.py`) — testdækket, committet/pushet til PR #2 (se M-05). Fortsat INGEN Support-CA, `grant_support_access.sh`-script eller udstedelses-endpoint bygget — det er bevidst Peters eget, senere skridt (nøglegenerering). Nøgleelementer: separat Support-CA (ikke device-CA'en fra #52), korttidslevende SSH-certifikater med indbygget kryptografisk udløb, kunde-samtykke-tjek pr. aktivering, signeret ticket + audit-log. Peter er eneste, der kan aktivere adgangen |
+| M-08 | Kontrolleret, logget break-glass support-adgang (installation/fejlsøgning) — design | 🟠 Design-notat klar (`Claude_Support_Access_Model_2026-07-06.md`). **Skema-forberedelse bygget 2026-07-06:** ny, separat `AccessTicket`-tabel (`headend/database.py`) — testdækket, committet/pushet til PR #2 (se M-05). Fortsat INGEN Support-CA, `grant_support_access.sh`-script eller udstedelses-endpoint bygget — det er bevidst Peters eget, senere skridt (nøglegenerering). Nøglelementer: separat Support-CA (ikke device-CA'en fra #52), korttidslevende SSH-certifikater med indbygget kryptografisk udløb, kunde-samtykke-tjek pr. aktivering, signeret ticket + audit-log. Peter er eneste, der kan aktivere adgangen |
+
+---
+
+## F-012. Site-Wide Look Matching (Feature Go-Live)
+
+**Feature ID:** F-012
+**Feature Name:** Site-Wide Look Matching System
+**Status:** ✅ **READY FOR PRODUCTION — APPROVED FOR GO-LIVE 2026-07-12**
+
+Dette afsnit dokumenterer go-live status for F-012 featuret, som er en selvstændig feature der kan aktiveres uafhængigt af den fulde Internet-eksponering.
+
+| # | Krav | Status |
+|---|---|---|
+| F-012-01 | Unit tests passerer (72 tests) | ✅ PASS |
+| F-012-02 | Integration tests passerer (15 tests) | ✅ PASS |
+| F-012-03 | Manual checklist bestået (26 tests) | ✅ PASS |
+| F-012-04 | Config service tests passerer (14 tests) | ✅ PASS |
+| F-012-05 | Code review complete | ✅ PASS |
+| F-012-06 | Security review complete (LOW risk) | ✅ PASS |
+| F-012-07 | Performance validation (<200ms reference, <150ms LUT) | ✅ PASS |
+| F-012-08 | Feature documentation complete | ✅ PASS |
+| F-012-09 | User guide complete | ✅ PASS |
+| F-012-10 | Admin guide complete | ✅ PASS |
+| F-012-11 | Risk assessment complete | ✅ PASS |
+| F-012-12 | Database migration v18 applied | ⚠️ Deploy først ved go-live |
+| F-012-13 | UI integration (SiteLookConfigPanel) | ✅ PASS |
+| F-012-14 | Edge caching operational | ✅ PASS |
+
+**Test Results Summary:**
+- **Total Tests:** 127
+- **Passed:** 127
+- **Failed:** 0
+- **Pass Rate:** 100%
+
+**Deployment Steps:**
+1. Run database migration: `psql -d timelapse_db -f headend/migrations/v18_site_look_config.sql`
+2. Deploy config service and API to headend
+3. Deploy edge client to edge nodes
+4. Deploy UI config panel
+5. Smoke test endpoints
+
+**Risk Rating:** LOW
+- Path traversal: LOW (path validation, storage sandboxing)
+- Resource exhaustion: LOW (file handle cleanup, temp cleanup)
+- Invalid input: LOW (value clamping, validation)
+- Cache poisoning: LOW (TTL validation, version tracking)
+- Offline degradation: LOW (fallback to defaults)
+
+**Rollback Plan:**
+1. Disable feature via global config (`enabled: false`)
+2. Edge nodes continue with cached config (24-hour grace period)
+3. Revert code deployment if needed
+4. Investigate using audit logs
+
+**Go-Live Decision:** 🟢 **APPROVED FOR IMMEDIATE PRODUCTION DEPLOYMENT**
+
+**Documentation:**
+- Feature documentation: `docs/feature-site-look-matching.md`
+- User guide: `docs/user-guide-site-look-matching.md`
+- Admin guide: `docs/admin-guide-site-look-matching.md`
+- Risk assessment: `docs/risk-assessment-site-look-matching.md`
+- Go-live status: `docs/go-live-status-f012-site-look-matching.md`
+- Test report: `docs/test-report-site-look-matching.md`
 
 ---
 

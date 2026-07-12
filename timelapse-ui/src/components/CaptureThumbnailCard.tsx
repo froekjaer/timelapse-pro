@@ -20,6 +20,10 @@ export function parseEdgeQA(capture: any, sidecar?: any): Record<string, any> | 
     const parsed = JSON.parse(capture.ai_result)
     if (parsed?.edge_ai) return parsed.edge_ai
     if (parsed?.source === 'edge') return parsed
+    // 2026-07-12: Edge QA report har 'engine' der starter med "edge_" (fx "edge_cv_v1")
+    // og 'probable_cause' direkte i roden. Genkend dette format.
+    if (parsed?.engine?.startsWith('edge_')) return parsed
+    if (parsed?.probable_cause && !parsed.source) return parsed  // Legacy edge format fallback
   } catch {
     return null
   }
@@ -84,18 +88,29 @@ export function qaHardFailed(ai: Record<string, any> | null): boolean {
   return false
 }
 
-function qaBadge(ai: Record<string, any> | null) {
-  if (!ai) return null
-  if (ai.alarm) {
+function qaBadge(ai: Record<string, any> | null, capture: Capture | null = null) {
+  if (ai?.alarm) {
     return <span title={ai.description ?? 'QA alarm'} className="text-xs flex-shrink-0 cursor-help">🚨</span>
   }
-  if (qaHardFailed(ai)) {
+  if (ai && qaHardFailed(ai)) {
     return <span title={ai.description ?? 'QA afvigelse'} className="text-xs flex-shrink-0 cursor-help">⚠️</span>
   }
-  if (ai.probable_cause === 'ok' || ai.scene_dk || ai.quality_flag) {
+  if (ai?.probable_cause === 'ok' || ai?.scene_dk || ai?.quality_flag) {
     return (
       <span
         title={ai.scene_dk ? `AI: ${ai.scene_dk}` : 'QA: OK'}
+        className="text-[9px] flex-shrink-0 text-emerald-600 font-bold cursor-help"
+      >
+        QA✓
+      </span>
+    )
+  }
+  // 2026-07-12: Fallback - vis QA✓ hvis capture.quality_passed === true
+  // Dette dækker tilfælde hvor ai_result mangler eller har uventet format
+  if (capture?.quality_passed === true) {
+    return (
+      <span
+        title="QA: OK (quality_passed)"
         className="text-[9px] flex-shrink-0 text-emerald-600 font-bold cursor-help"
       >
         QA✓
@@ -273,7 +288,7 @@ export function CaptureThumbnailCard({
               ⬡ {Math.round(capture.blur_score)}
             </p>
           )}
-          {qaBadge(ai)}
+          {qaBadge(ai, capture)}
         </div>
 
         {!compact && (
