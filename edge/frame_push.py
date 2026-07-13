@@ -3,216 +3,249 @@
 ════════════════════════════════════════════════════════════════════════════════
 TimeLapse Pro — Frame Push Live View (F-013C)
 ──────────────────────────────────────────────────────────────────────────────────
-Version  : 1.1.0
+Version  : 2.0.0
 Dato     : 13. juli 2026
-Formål   : Real-time video streaming via frame push
+Formål   : Real-time video streaming via MJPEG frame push
 
 Edge pushes frames to headend via HTTP POST.
 Browser polls frames from headend via GET.
 
 Arkitektur:
-  Camera → gphoto2 → Edge → HTTP POST → Headend → Browser GET
+  Camera → gphoto2 --capture-movie → MJPEG stream → Edge → HTTP POST → Headend → Browser
 
 Ingen direkte forbindelse fra headend til edge!
 
-v1.1.0: Integrated camera driver - uses shared driver instance to avoid
-        gphoto2 exclusive access conflicts.
+v2.0.0: Live video streaming using gphoto2 --capture-movie --stdout
+        Parses MJPEG stream and extracts individual JPEG frames at ~15-30 FPS
 ════════════════════════════════════════════════════════════════════════════════
 """
 
 from __future__ import annotations
 
 import logging
-import tempfile
+import subprocess
 import threading
 import time
-from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger(__name__)
 
 # Configuration
-FRAME_INTERVAL = 0.8  # Sekunder mellem frames
-FRAME_DIR = Path(tempfile.gettempdir()) / "frame_push"
-FRAME_PATH = FRAME_DIR / "live_preview.jpg"
+FRAME_INTERVAL = 0.05  # Upload frames max every 50ms (20 FPS)
+MAX_FRAME_SIZE = 512 * 1024  # Max 512KB per frame
+JPEG_START = b'\xff\xd8\xff'  # JPEG start marker (SOI + first byte)
+JPEG_END = b'\xff\xd9'  # JPEG end marker (EOI)
+MJPG_HEADER = b'Content-Length:'
 
 
-class FramePusher:
+class MJPEGParser:
     """
-    Captures preview frames from gphoto2 and pushes to headend.
+    Parse MJPEG stream from gphoto2 --capture-movie.
 
-    Runs in background thread, continuously capturing and uploading.
+    MJPEG format: HTTP multipart with JPEG frames.
+    Each frame starts with headers followed by JPEG data.
     """
 
-    def __init__(self, device_id: str, api_client, camera_driver=None):
-        """
-        Initialize frame pusher.
+    def __init__(self):
+        self.buffer = bytearray()
+        self.frame_count = 0
 
-        Args:
-            device_id: Device ID for API calls
-            api_client: Edge API client instance
-            camera_driver: Optional camera driver instance (GPhoto2Driver).
-                          If provided, uses driver.capture_preview() instead
-                          of direct gphoto2 subprocess to avoid exclusive
-                          access conflicts.
+    def feed(self, data: bytes) -> list[bytes]:
         """
+        Feed new data from stdout and return complete JPEG frames.
+        """
+        self.buffer.extend(data)
+        frames = []
+
+        while len(self.buffer) > 0:
+            # Find JPEG start marker
+            start_idx = self.buffer.find(b'\xff\xd8')
+            if start_idx == -1:
+                # No start marker, clear buffer (keep last 100 bytes for partial matches)
+                self.buffer = self.buffer[-100:] if len(self.buffer) > 100 else bytearray()
+                break
+
+            # Remove everything before JPEG start
+            if start_idx > 0:
+                self.buffer = self.buffer[start_idx:]
+
+            # Find JPEG end marker (must come after start)
+            end_idx = self.buffer.find(b'\xff\xd9', 2)  # Start search after SOI
+            if end_idx == -1:
+                # No end marker yet, wait for more data
+                break
+
+            # Extract complete JPEG frame
+            frame_end = end_idx + 2  # Include EOI marker
+            frame_data = bytes(self.buffer[:frame_end])
+
+            # Only accept if reasonable size (basic validation)
+            if 1024 <= len(frame_data) <= MAX_FRAME_SIZE:
+                frames.append(frame_data)
+                self.frame_count += 1
+
+            # Remove consumed data from buffer
+            self.buffer = self.buffer[frame_end:]
+
+        return frames
+
+
+class LiveVideoStreamer:
+    """
+    Stream live video from camera using gphoto2 --capture-movie.
+
+    Runs gphoto2 in subprocess, parses MJPEG output,
+    and pushes frames to headend.
+    """
+
+    def __init__(self, device_id: str, api_client):
         self._device_id = device_id
         self._api = api_client
-        self._camera = camera_driver
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._parser = MJPEGParser()
         self._last_upload_time = 0
-        self._upload_lock = threading.Lock()
-        self._preview_dir = FRAME_DIR
+        self._frames_uploaded = 0
+        self._process: Optional[subprocess.Popen] = None
 
     def start(self):
-        """Start frame capture and upload loop."""
+        """Start live video streaming."""
         if self._running:
             return
 
         self._running = True
-        self._preview_dir.mkdir(parents=True, exist_ok=True)
-
-        self._thread = threading.Thread(target=self._capture_and_upload_loop, daemon=True, name="frame-pusher")
+        self._thread = threading.Thread(target=self._stream_loop, daemon=True, name="live-video-streamer")
         self._thread.start()
-        log.info("FRAME PUSH: Started (device=%s, camera=%s)",
-                 self._device_id, "shared" if self._camera else "direct")
+        log.info("LIVE VIDEO: Started streaming for device %s", self._device_id)
 
     def stop(self):
-        """Stop frame capture and upload loop."""
+        """Stop live video streaming."""
         self._running = False
+        if self._process:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
         if self._thread:
             self._thread.join(timeout=3)
-        log.info("FRAME PUSH: Stopped")
+        log.info("LIVE VIDEO: Stopped (uploaded %d frames)", self._frames_uploaded)
 
-    def _capture_and_upload_loop(self):
-        """Continuously capture frames and push to headend."""
-        while self._running:
-            try:
-                # Capture frame from gphoto2
-                frame_data = self._capture_frame()
+    def _stream_loop(self):
+        """Stream live video and push frames to headend."""
+        cmd = [
+            "gphoto2",
+            "--capture-movie",
+            "--stdout",
+            "--frames", "0",  # Unlimited frames
+        ]
 
-                if frame_data:
-                    # Upload to headend
-                    self._upload_frame(frame_data)
-
-            except Exception as e:
-                log.debug("FRAME PUSH: Error in loop: %s", e)
-
-            time.sleep(FRAME_INTERVAL)
-
-    def _capture_frame(self) -> Optional[bytes]:
-        """
-        Capture preview frame from gphoto2.
-
-        Uses shared camera driver if available, otherwise direct subprocess.
-        """
         try:
-            if self._camera:
-                # Use shared camera driver's capture_preview method
-                # This avoids exclusive access conflicts
-                log.debug("FRAME PUSH: Capturing via shared camera driver")
-                preview_path = self._camera.capture_preview(self._preview_dir)
-                if preview_path and preview_path.exists():
-                    frame_data = preview_path.read_bytes()
-                    log.debug("FRAME PUSH: Captured %d bytes", len(frame_data))
-                    return frame_data
-                else:
-                    log.warning("FRAME PUSH: Camera preview capture returned no file")
-                    return None
-            else:
-                # Fallback: direct gphoto2 subprocess (legacy mode)
-                log.debug("FRAME PUSH: Capturing via direct gphoto2")
-                import subprocess
-                result = subprocess.run(
-                    ["gphoto2", "--capture-preview", "--filename", str(FRAME_PATH), "--force-overwrite"],
-                    capture_output=True,
-                    text=True,
-                    timeout=12,
-                )
+            self._process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=8192,  # Line buffered for streaming
+            )
 
-                if result.returncode == 0 and FRAME_PATH.exists():
-                    return FRAME_PATH.read_bytes()
-                else:
-                    log.warning("FRAME PUSH: gphoto2 capture failed: %s", result.stderr)
-                    return None
+            log.info("LIVE VIDEO: gphoto2 capture-movie started (PID: %d)", self._process.pid)
+
+            while self._running:
+                try:
+                    # Read chunk from stdout
+                    chunk = self._process.stdout.read(8192)
+                    if not chunk:
+                        log.warning("LIVE VIDEO: End of stream from gphoto2")
+                        break
+
+                    # Parse MJPEG and extract frames
+                    frames = self._parser.feed(chunk)
+
+                    # Upload each frame
+                    for frame_data in frames:
+                        self._upload_frame(frame_data)
+
+                except Exception as e:
+                    log.debug("LIVE VIDEO: Error in stream loop: %s", e)
+                    time.sleep(0.1)
 
         except Exception as e:
-            log.warning("FRAME PUSH: Capture error: %s", e)
-            return None
+            log.error("LIVE VIDEO: Fatal error: %s", e)
+        finally:
+            if self._process:
+                self._process.terminate()
 
     def _upload_frame(self, frame_data: bytes):
         """Upload frame to headend via API."""
         try:
-            with self._upload_lock:
-                # Check if we should rate-limit uploads
-                now = time.time()
-                if now - self._last_upload_time < FRAME_INTERVAL:
-                    log.debug("FRAME PUSH: Upload skipped (rate limit)")
-                    return  # Skip upload if too soon
+            # Rate limit uploads
+            now = time.time()
+            if now - self._last_upload_time < FRAME_INTERVAL:
+                return  # Skip if too soon
 
-                # Upload via existing API client (device_id is already in api client)
-                success, error = self._api.upload_live_frame(frame_data)
-                self._last_upload_time = now
+            self._last_upload_time = now
+            success, error = self._api.upload_live_frame(frame_data)
 
-                if success:
-                    log.info("FRAME PUSH: Frame uploaded (%d bytes)", len(frame_data))
-                else:
-                    log.warning("FRAME PUSH: Upload failed - error: %s", error)
+            if success:
+                self._frames_uploaded += 1
+                if self._frames_uploaded % 30 == 0:  # Log every 30 frames
+                    log.info("LIVE VIDEO: Streamed %d frames", self._frames_uploaded)
+            else:
+                log.warning("LIVE VIDEO: Upload failed - %s", error)
 
         except Exception as e:
-            log.warning("FRAME PUSH: Upload exception: %s", e)
+            log.warning("LIVE VIDEO: Upload exception: %s", e)
 
     def is_running(self) -> bool:
-        """Check if frame pusher is running."""
+        """Check if streamer is running."""
         return self._running
 
 
 # ── Global instance for agent.py integration ─────────────────────────────────────
 
-_global_frame_pusher: Optional[FramePusher] = None
+_global_streamer: Optional[LiveVideoStreamer] = None
 
 
 def start_frame_push(device_id: str, api_client, camera_driver=None) -> bool:
     """
-    Start frame pusher for device.
+    Start live video streaming for device.
 
     Args:
         device_id: Device ID
         api_client: Edge API client instance
-        camera_driver: Optional camera driver instance (recommended)
+        camera_driver: Ignored (capture-movie uses its own gphoto2 instance)
 
     Returns:
         True if started successfully, False otherwise
     """
-    global _global_frame_pusher
+    global _global_streamer
 
-    if _global_frame_pusher and _global_frame_pusher.is_running():
-        log.info("FRAME PUSH: Already running")
+    if _global_streamer and _global_streamer.is_running():
+        log.info("LIVE VIDEO: Already running")
         return True
 
     try:
-        _global_frame_pusher = FramePusher(device_id, api_client, camera_driver)
-        _global_frame_pusher.start()
+        _global_streamer = LiveVideoStreamer(device_id, api_client)
+        _global_streamer.start()
         return True
 
     except Exception as e:
-        log.error("FRAME PUSH: Failed to start: %s", e)
+        log.error("LIVE VIDEO: Failed to start: %s", e)
         return False
 
 
 def stop_frame_push() -> None:
-    """Stop global frame pusher."""
-    global _global_frame_pusher
+    """Stop live video streaming."""
+    global _global_streamer
 
-    if _global_frame_pusher:
-        _global_frame_pusher.stop()
-        _global_frame_pusher = None
+    if _global_streamer:
+        _global_streamer.stop()
+        _global_streamer = None
 
 
 def is_running() -> bool:
-    """Check if frame pusher is running."""
-    return _global_frame_pusher is not None and _global_frame_pusher.is_running()
+    """Check if live video streaming is running."""
+    return _global_streamer is not None and _global_streamer.is_running()
 
 
 if __name__ == "__main__":
@@ -220,5 +253,4 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
-    # Test mode - requires API client mock
-    print("Frame Push module loaded (test mode)")
+    print("Live Video Streamer module loaded (test mode)")
