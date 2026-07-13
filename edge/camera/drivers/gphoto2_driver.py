@@ -567,17 +567,6 @@ def _run_external(args: list[str], timeout: int, label: str) -> subprocess.Compl
 
 def _parse_gphoto2_config(output: str) -> list[dict]:
     """Parse output of gphoto2 --list-all-config into structured dicts."""
-    # Parameters that should be editable even if gphoto2 reports them as readonly.
-    # gphoto2 sometimes incorrectly reports parameters as readonly depending on
-    # camera mode (e.g. when in certain exposure modes or during live view).
-    FORCE_EDITABLE = {
-        "/main/capturesettings/shutterspeed",
-        "/main/capturesettings/shutterspeed2",
-        "/main/capturesettings/aperture",
-        "/main/imgsettings/iso",
-        "/main/capturesettings/exposurecompensation",
-    }
-
     params = []
     current: dict = {}
     for line in output.splitlines():
@@ -606,9 +595,6 @@ def _parse_gphoto2_config(output: str) -> list[dict]:
             if len(parts) >= 3:
                 current["choices"].append({"index": parts[1], "label": parts[2]})
         elif line == "END" and current.get("path"):
-            # Override readonly for commonly-editable parameters
-            if current.get("path") in FORCE_EDITABLE:
-                current["readonly"] = False
             params.append(current)
             current = {}
     return params

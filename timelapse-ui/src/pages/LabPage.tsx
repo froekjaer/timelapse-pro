@@ -13,7 +13,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   Camera, FlaskConical, Power, PowerOff, RefreshCw,
   Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi, Crosshair, Wand2, Ban,
-  Maximize, Minimize
+  Maximize, Minimize, Info, HelpCircle
 } from 'lucide-react'
 import {
   setDebugMode, requestPreview, requestCapture,
@@ -65,6 +65,47 @@ const PARAM_GROUPS: Record<string, string[]> = {
   'Status':         ['/main/status/batterylevel', '/main/status/shuttercounter',
                     '/main/status/availableshots', '/main/status/lensname',
                     '/main/status/cameramodel'],
+}
+
+// ── Parameter beskrivelser (tooltips) ───────────────────────────────────────────
+const PARAM_DESCRIPTIONS: Record<string, string> = {
+  // Eksponering
+  '/main/capturesettings/autoexposuremode': 'Eksponeringsmode. I Auto/Program styrer kameraet lukker/blænde automatisk. I Manual (M) har du fuld kontrol. Shutter/Aperture priority giver delvis kontrol.',
+  '/main/capturesettings/shutterspeed': 'Lukkerhastighed i sekunder eller brøk (f.eks. 1/125). Hurtig = fryser bevægelse, langsom = motion blur. Kræver Manual eller Shutter Priority mode.',
+  '/main/capturesettings/aperture': 'Blændeåbning (f-tal). Lav (f/3.5) = lysstærk + lille dybdeskarphed. Høj (f/11) = stor dybdeskarphed. Kræver Manual eller Aperture Priority mode.',
+  '/main/capturesettings/exposurecompensation': 'EV kompensation ±. Justerer eksponering op/ned fra kameraets automatiske måling. Fungerer i alle auto/semi-auto modes.',
+  '/main/capturesettings/meteringmode': 'Lysmåling. Matrix evaluere hele scenen. Center-weightet fokus på midten. Spot måler lille område omkring fokuspunkt.',
+  // ISO & Lys
+  '/main/imgsettings/iso': 'ISO følsomhed. Lav (100) = mindre støj men kræver lys. Høj (3200+) til svagt lys men introducerer støj/grain.',
+  '/main/imgsettings/whitebalance': 'Hvidbalance. Auto justerer farvetemperatur automatisk. Daylight (5500K) til sol, Tungsten (3200K) til indendørs belysning.',
+  '/main/capturesettings/picturestyle': 'Farveprofil. Neutral/Standard til timelapse (bedre post-processing). Landscape/Vivid øger mætning.',
+  // Billedkvalitet
+  '/main/imgsettings/imageformat': 'Filformat. RAW til fuld kontrol (stor fil). JPEG til komprimering. RAW+JPEG begge dele.',
+  '/main/imgsettings/colorspace': 'Farverum. sRGB til skærme/web. Adobe RGB til print.',
+  // Fokus
+  '/main/capturesettings/focusmode': 'Fokusmode. Manual = du styrer. Autofokus = kameraet finder fokus. Kan være readonly hvis optaget ikke understøttes.',
+  '/main/actions/manualfocusdrive': 'Manuel fokusjustering. Flytter fokus trinvis (-5 til +5). Brug til fine-tuning.',
+  '/main/actions/autofocusdrive': 'Autofokus trigger. Kameraet søger og låser fokus automatisk.',
+  // Kamera-styring
+  '/main/settings/capturetarget': 'Hvor billeder gemmes. SD kort eller intern hukommelse.',
+  '/main/settings/reviewtime': 'Hvor længe billedet vises på skærmen efter capture. 0-10 sekunder.',
+  '/main/actions/syncdatetime': 'Synkroniser kameraets dato/tid med systemet.',
+  // Status
+  '/main/status/batterylevel': 'Batteriniveau i procent.',
+  '/main/status/shuttercounter': 'Antal lukkercyklinger (total levetid).',
+  '/main/status/availableshots': 'Estimerede billeder remaining på SD kort.',
+  '/main/status/lensname': 'Navn på objektivet.',
+  '/main/status/cameramodel': 'Kamera model.',
+}
+
+// ── Eksponeringsmode matrix ─────────────────────────────────────────────────────
+// Viser hvilke parametre der er editable i hvilke modes
+const EXPOSURE_MODE_MATRIX = {
+  'Auto': { shutter: false, aperture: false, iso: false, ev: true, note: 'Alt er automatisk' },
+  'Program (P)': { shutter: false, aperture: false, iso: false, ev: true, note: 'Kamera vælger lukker/blænde' },
+  'Shutter Priority (S)': { shutter: true, aperture: false, iso: false, ev: true, note: 'Du styrer lukker' },
+  'Aperture Priority (A)': { shutter: false, aperture: true, iso: false, ev: true, note: 'Du styrer blænde' },
+  'Manual (M)': { shutter: true, aperture: true, iso: true, ev: true, note: 'Fuld manuel kontrol' },
 }
 
 // ── Histogram hook ────────────────────────────────────────────────────────────
@@ -166,12 +207,33 @@ function ParamRow({
   const isReadonly = param.readonly || param.type === 'TEXT'
   const usableChoices = param.choices.filter(c => c.label && !/^unknown$/i.test(c.label.trim()))
   const hasChoices = usableChoices.length > 0
+  const paramDesc = PARAM_DESCRIPTIONS[param.path]
+
+  // Determine if readonly is due to exposure mode
+  const isExposureRelated = param.path.includes('shutter') || param.path.includes('aperture') || param.path.includes('iso')
+  const readonlyHint = isReadonly && isExposureRelated
+    ? 'Skift til Manual (M) mode for at ændre denne parameter'
+    : ''
 
   return (
     <div className={`flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-gray-50 transition-colors ${isReadonly ? 'opacity-60' : ''}`}>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-700 truncate">{param.label}</div>
-        <div className="text-xs text-gray-400 truncate">{param.path}</div>
+      <div className="flex-1 min-w-0 flex items-center gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1">
+            <span className="text-sm font-medium text-gray-700 truncate">{param.label}</span>
+            {paramDesc && (
+              <span className="text-gray-400 hover:text-sky-600 cursor-help" title={paramDesc}>
+                <HelpCircle className="w-3.5 h-3.5" />
+              </span>
+            )}
+            {isReadonly && readonlyHint && (
+              <span className="text-amber-600 hover:text-amber-700 cursor-help" title={readonlyHint}>
+                <Lock className="w-3 h-3" />
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-gray-400 truncate">{param.path}</div>
+        </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
         {!editing ? (
@@ -1172,6 +1234,43 @@ export default function LabPage() {
             </div>
 
             <CameraProfilePanel profile={cameraProfile} />
+
+            {/* Eksponeringsmode matrix - hjælpetabel for readonly parametre */}
+            <div className="mx-4 mt-4 rounded-xl border border-amber-100 bg-amber-50/60 p-4">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2 mb-3">
+                <HelpCircle className="w-4 h-4 text-amber-600" /> Eksponeringsmode og parametre
+              </h3>
+              <p className="text-xs text-gray-600 mb-3">
+                Viser hvilke parametre der kan ændres i hver eksponeringsmode. Skift til Manual (M) for fuld kontrol.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-amber-200">
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Mode</th>
+                      <th className="text-center py-2 px-2 font-semibold text-gray-700">Lukker</th>
+                      <th className="text-center py-2 px-2 font-semibold text-gray-700">Blænde</th>
+                      <th className="text-center py-2 px-2 font-semibold text-gray-700">ISO</th>
+                      <th className="text-center py-2 px-2 font-semibold text-gray-700">EV ±</th>
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(EXPOSURE_MODE_MATRIX).map(([mode, data]) => (
+                      <tr key={mode} className="border-b border-amber-100 hover:bg-amber-100/40">
+                        <td className="py-2 px-3 font-medium">{mode}</td>
+                        <td className="text-center py-2 px-2">{data.shutter ? '✅' : '🔒'}</td>
+                        <td className="text-center py-2 px-2">{data.aperture ? '✅' : '🔒'}</td>
+                        <td className="text-center py-2 px-2">{data.iso ? '✅' : '🔒'}</td>
+                        <td className="text-center py-2 px-2">{data.ev ? '✅' : '🔒'}</td>
+                        <td className="py-2 px-3 text-gray-600">{data.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
 
             <div className="mx-4 mt-4 rounded-xl border border-sky-100 bg-sky-50/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
