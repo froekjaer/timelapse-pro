@@ -15980,8 +15980,8 @@ async def get_live_stream(
                     yield frame_data
                     yield b"\r\n"
 
-            # Wait a bit before next frame (~15 FPS)
-            await asyncio.sleep(0.066)
+            # Wait a bit before next frame (~10 FPS to match edge upload rate)
+            await asyncio.sleep(0.1)
 
     return StreamingResponse(
         generate_mjpeg(),

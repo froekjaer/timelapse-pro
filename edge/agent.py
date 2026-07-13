@@ -2119,10 +2119,16 @@ class EdgeAgent:
             # Execute lab command
             cmd_type = lab_cmd.get("type")
             if cmd_type == "preview":
-                self._lab_capture_preview()
+                self._lab_stop_frame_push()  # Stop before preview
+                try:
+                    self._lab_capture_preview()
+                finally:
+                    self._lab_start_frame_push()  # Restart after preview
                 self._api.clear_lab_command(self._device_id)
             elif cmd_type == "capture":
-                log.info("LAB — full capture requested — disconnecting before cycle")
+                log.info("LAB — full capture requested — stopping frame push before cycle")
+                # Stop frame push FIRST to avoid gphoto2 conflicts
+                self._lab_stop_frame_push()
                 # Disconnect og frigiv kamera INDEN _do_capture_cycle kaldes.
                 # _do_capture_cycle forventer at kameraet IKKE er forbundet —
                 # den laver selv power-mode handling -> connect -> capture -> disconnect.
@@ -2152,6 +2158,7 @@ class EdgeAgent:
                             result["preview_filename"] = preview_path.name
                     except Exception as exc:
                         result["preview_error"] = str(exc)
+                # Note: Frame push will restart on next _lab_tick when camera is ready again
                 self._api._post("/lab/" + self._device_id + "/result", result)
                 self._api.clear_lab_command(self._device_id)
                 # _lab_relay_on er allerede False — næste _lab_tick re-initialiserer
@@ -2198,7 +2205,10 @@ class EdgeAgent:
                 value = lab_cmd.get("value", "")
                 log.info("LAB — focus drive: %s", value)
                 result = {"type": "focus_drive", "value": value, "ok": False}
+                self._lab_stop_frame_push()  # Stop before focus operation
                 try:
+                    # Reconnect driver for focus operation
+                    self._driver.connect()
                     if hasattr(self._driver, "drive_manual_focus"):
                         result["ok"] = bool(self._driver.drive_manual_focus(value))
                     if result["ok"]:
@@ -2209,13 +2219,18 @@ class EdgeAgent:
                 except Exception as exc:
                     result["error"] = str(exc)
                     log.warning("LAB — focus drive failed: %s", exc)
+                finally:
+                    self._lab_start_frame_push()  # Restart after focus operation
                 self._api._post("/lab/" + self._device_id + "/result", result)
                 self._api.clear_lab_command(self._device_id)
 
             elif cmd_type == "autofocus":
                 log.info("LAB — autofocus requested")
                 result = {"type": "autofocus", "ok": False}
+                self._lab_stop_frame_push()  # Stop before autofocus
                 try:
+                    # Reconnect driver for autofocus
+                    self._driver.connect()
                     result["ok"] = bool(self._driver.run_autofocus())
                     preview = self._lab_capture_preview()
                     if preview:
@@ -2224,17 +2239,25 @@ class EdgeAgent:
                 except Exception as exc:
                     result["error"] = str(exc)
                     log.warning("LAB — autofocus failed: %s", exc)
+                finally:
+                    self._lab_start_frame_push()  # Restart after autofocus
                 self._api._post("/lab/" + self._device_id + "/result", result)
                 self._api.clear_lab_command(self._device_id)
 
             elif cmd_type in ("focus_slice", "edge_ai_focus_test"):
                 log.info("LAB — %s requested", cmd_type)
-                result = self._lab_focus_slice(
-                    step_value=lab_cmd.get("step_value", ""),
-                    count=int(lab_cmd.get("count", 5)),
-                    run_autofocus_first=bool(lab_cmd.get("run_autofocus_first", True)),
-                    result_type=cmd_type,
-                )
+                self._lab_stop_frame_push()  # Stop before focus slice
+                try:
+                    # Reconnect driver for focus slice
+                    self._driver.connect()
+                    result = self._lab_focus_slice(
+                        step_value=lab_cmd.get("step_value", ""),
+                        count=int(lab_cmd.get("count", 5)),
+                        run_autofocus_first=bool(lab_cmd.get("run_autofocus_first", True)),
+                        result_type=cmd_type,
+                    )
+                finally:
+                    self._lab_start_frame_push()  # Restart after focus slice
                 self._api._post("/lab/" + self._device_id + "/result", result)
                 self._api.clear_lab_command(self._device_id)
 
@@ -2307,6 +2330,37 @@ class EdgeAgent:
             # Browser polls frames fra headend via /api/lab/{id}/live-frame.
 
         time.sleep(poll_s)
+
+    # ── Frame Push Management Helpers (LAB mode) ─────────────────────────────────────
+
+    def _lab_stop_frame_push(self) -> None:
+        """Stop frame push before camera operations to avoid gphoto2 conflicts."""
+        if _FRAME_PUSH_AVAILABLE and self._live_frame_enabled:
+            try:
+                stop_frame_push()
+                self._live_frame_enabled = False
+                log.info("LAB — Frame push stopped for camera operation")
+            except Exception as exc:
+                log.warning("LAB — Frame push stop failed: %s", exc)
+
+    def _lab_start_frame_push(self) -> None:
+        """Start/restart frame push after camera operations."""
+        if _FRAME_PUSH_AVAILABLE and not self._live_frame_enabled:
+            try:
+                # Disconnect driver to free camera for gphoto2 --capture-movie
+                try:
+                    self._driver.disconnect()
+                    log.debug("LAB — Driver disconnected for frame push restart")
+                except Exception:
+                    pass
+                # Start frame push (uses own gphoto2 instance)
+                if start_frame_push(self._device_id, self._api, self._driver):
+                    self._live_frame_enabled = True
+                    log.info("LAB — Frame push restarted")
+            except Exception as exc:
+                log.warning("LAB — Frame push restart failed: %s", exc)
+
+    # ── Lab Quality Summary ───────────────────────────────────────────────────────
 
     def _lab_quality_summary(self, filepath: Path) -> dict:
         """Run local deterministic image-quality analysis for LAB focus work."""
