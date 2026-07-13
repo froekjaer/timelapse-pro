@@ -15900,7 +15900,7 @@ async def receive_live_frame(
 @app.get("/api/lab/{device_id}/live-frame")
 async def get_live_frame(
     device_id: str,
-    _user = require_role("admin"),
+    _user = require_role("viewer"),
     db: Session = Depends(get_db),
 ):
     """

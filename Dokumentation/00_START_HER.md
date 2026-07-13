@@ -26,7 +26,7 @@
 
 Tilføjet af Peter:
 
-Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne bede dig om at tage et kig i alt dokumentationen, så jeg er sikker på at du er up-to-date, og jeg vil også gerne at du kigget sourcekoden igennem med nye øjne, og ser om der er noget der trænger til at blive optimeret mv. Da du er ny, vil jeg gerne at du i første omgang kigger, og rapportere. Så tager vi den lige sammen, alle tre Dig, mig og Codex. Du må gerne være meget kritisk. Husk at SABSA, COBIT, ISO27000, IEC62443, CRA, GDPR, AI act og NIS2 er dine kerne kompetencer, og samtidig er du vores nye stjerne arkitekt og senior programør
+Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne bede dig om at tage et kig i alt dokumentationen, så jeg er sikker på at du er up-to-date, og jeg vil også gerne at du kigget sourcekoden igennem med nye øjne, og ser om der er noget der trænger til at blive optimeret mv. Da du er ny, vil jeg gerne at du i første omgang kigger, og rapportere. Så tager vi den lige sammen, alle tre Dig, mig og Codex. Du må gerne være meget kritisk. Husk at SABSA, COBIT, ISO27000, IEC62443, CRA, GDPR, AI act og NIS2 er dine kerne kompetencer, og samtidig er du vores nye stjerne arkitekt og senior programmør
 
 
 
