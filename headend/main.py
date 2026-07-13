@@ -4188,7 +4188,11 @@ def heartbeat(
         diag.get("connectivity_type", "?"),
     )
 
-    return {"status": "ok", "server_time": now_utc().isoformat()}
+    return {
+        "status": "ok",
+        "server_time": now_utc().isoformat(),
+        "config_version": device.config_version or ""
+    }
 
 
 # ── Captures ──────────────────────────────────────────────────────────────────
@@ -15556,7 +15560,7 @@ def lab_clear_command(
     cfg.pop("lab_command", None)
     device.device_config = json.dumps(cfg)
     db.commit()
-    return {"status": "ok"}
+    return {"status": "ok", "config_version": device.config_version or ""}
 
 @app.post("/api/admin/devices/{device_id}/lab-clear-params")
 def lab_clear_params(
@@ -15570,7 +15574,7 @@ def lab_clear_params(
     cfg.pop("pending_params", None)
     device.device_config = json.dumps(cfg)
     db.commit()
-    return {"status": "ok"}
+    return {"status": "ok", "config_version": device.config_version or ""}
 
 
 @app.post("/api/lab/{device_id}/camera-ready")
@@ -15589,7 +15593,7 @@ def lab_camera_ready(
     device.last_seen = now_utc()
     db.commit()
     log.info("LAB camera ready: %s", device_id)
-    return {"status": "ok"}
+    return {"status": "ok", "config_version": device.config_version or ""}
 
 # ── WiFi konfiguration endpoints ─────────────────────────────────────────────
 
@@ -15865,6 +15869,7 @@ _live_frames: dict[str, bytes] = {}
 _live_frame_timestamps: dict[str, float] = {}
 
 # MJPEG streaming state (device_id -> queue of frames)
+import asyncio
 from asyncio import Queue
 _live_frame_queues: dict[str, Queue] = {}
 _live_frame_locks: dict[str, asyncio.Lock] = {}

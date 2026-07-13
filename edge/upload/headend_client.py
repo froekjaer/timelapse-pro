@@ -462,9 +462,10 @@ class HeadendClient:
                 # Silent success - don't spam logs for every frame
                 return True, None
             else:
-                # Only log failures
+                # Only log non-503 failures (503 = headend busy, skip silently)
                 error = f"HTTP {resp.status_code}: {resp.text[:100] if resp.text else 'No response'}"
-                log.warning("Live frame upload failed: %s", error)
+                if resp.status_code != 503:
+                    log.warning("Live frame upload failed: %s", error)
                 return False, error
 
         except requests.RequestException as exc:
@@ -628,13 +629,13 @@ class HeadendClient:
             return False, None
 
 
-    def clear_lab_command(self, device_id: str) -> None:
+    def clear_lab_command(self, device_id: str) -> tuple[bool, Optional[dict]]:
         """Clear pending lab command after execution."""
-        self._post(f"/admin/devices/{device_id}/lab-clear-command", {})
+        return self._post(f"/admin/devices/{device_id}/lab-clear-command", {})
 
-    def clear_lab_params(self, device_id: str) -> None:
+    def clear_lab_params(self, device_id: str) -> tuple[bool, Optional[dict]]:
         """Clear pending_params after applying them."""
-        self._post(f"/admin/devices/{device_id}/lab-clear-params", {})
+        return self._post(f"/admin/devices/{device_id}/lab-clear-params", {})
 
     # ── System helpers ────────────────────────────────────────────────────────
 

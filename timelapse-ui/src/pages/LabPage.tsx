@@ -12,7 +12,8 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Camera, FlaskConical, Power, PowerOff, RefreshCw,
-  Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi, Crosshair, Wand2, Ban
+  Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi, Crosshair, Wand2, Ban,
+  Maximize, Minimize
 } from 'lucide-react'
 import {
   setDebugMode, requestPreview, requestCapture,
@@ -351,6 +352,7 @@ export default function LabPage() {
   const [showHistogram, setShowHistogram] = useState(true)
   const [liveFrameEnabled, setLiveFrameEnabled] = useState(false) // F-013C: Frame Push Live View
   const [liveFrameUrl, setLiveFrameUrl] = useState<string | null>(null) // F-013C: Live frame URL
+  const [fullscreen, setFullscreen] = useState(false)
   const [pollInterval, setPollInterval]   = useState<ReturnType<typeof setInterval> | null>(null)
   const [statusMsg, setStatusMsg]     = useState('')
   const [labConnecting, setLabConnecting] = useState(false)
@@ -359,6 +361,28 @@ export default function LabPage() {
   const [labConnectingStart, setLabConnectingStart] = useState<number | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const liveFrameRef = useRef<HTMLImageElement>(null) // F-013C: Live frame img element
+  const videoContainerRef = useRef<HTMLDivElement>(null) // Fullscreen container ref
+
+  // Fullscreen toggle function
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      videoContainerRef.current?.requestFullscreen().catch(err => {
+        console.error('Fullscreen error:', err)
+      })
+    } else {
+      document.exitFullscreen().catch(err => {
+        console.error('Exit fullscreen error:', err)
+      })
+    }
+  }
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleChange = () => setFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handleChange)
+    return () => document.removeEventListener('fullscreenchange', handleChange)
+  }, [])
+
   const { hist, compute, clear } = useHistogram(imgRef)
 
   // Hold ref synkroniseret med state for brug i polling closure
@@ -1021,11 +1045,20 @@ export default function LabPage() {
                 <span className="text-xs text-gray-400 w-10 text-center">{Math.round(zoom*100)}%</span>
                 <button onClick={() => { setZoom(z => Math.min(4, z + 0.5)) }}
                   className="p-1 text-gray-400 hover:text-gray-700 rounded"><ZoomIn className="w-4 h-4" /></button>
+                <button onClick={toggleFullscreen} title="Fuldskærm"
+                  className="p-1 text-gray-400 hover:text-gray-700 rounded ml-1">
+                  {fullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+                </button>
               </div>
             </div>
 
             {/* Image */}
-            <div className="bg-gray-900 aspect-video flex items-center justify-center overflow-hidden relative">
+            <div
+              ref={videoContainerRef}
+              onClick={toggleFullscreen}
+              className="bg-gray-900 aspect-video flex items-center justify-center overflow-hidden relative cursor-pointer"
+              title="Klik for fuldskærm"
+            >
               {liveFrameEnabled && liveFrameUrl ? (
                 <img
                   ref={liveFrameRef}

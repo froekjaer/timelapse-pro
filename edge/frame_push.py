@@ -31,7 +31,7 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 # Configuration
-FRAME_INTERVAL = 0.1  # Upload frames max every 100ms (10 FPS for preview)
+FRAME_INTERVAL = 0.2  # Upload frames max every 200ms (5 FPS for preview)
 MAX_FRAME_SIZE = 512 * 1024  # Max 512KB per frame
 JPEG_START = b'\xff\xd8\xff'  # JPEG start marker (SOI + first byte)
 JPEG_END = b'\xff\xd9'  # JPEG end marker (EOI)
@@ -191,7 +191,9 @@ class LiveVideoStreamer:
                 if self._frames_uploaded % 100 == 0:  # Log every 100 frames
                     log.info("LIVE VIDEO: Streamed %d frames", self._frames_uploaded)
             else:
-                log.warning("LIVE VIDEO: Upload failed - %s", error)
+                # Only log non-503 errors (503 = headend busy, just skip frame)
+                if error and "503" not in error:
+                    log.warning("LIVE VIDEO: Upload failed - %s", error)
 
         except Exception as e:
             log.warning("LIVE VIDEO: Upload exception: %s", e)

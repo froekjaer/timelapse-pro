@@ -8,7 +8,8 @@ person vide".
 
 ## Medarbejdere og samarbejdspartnere
 
-- **Claude-4 (AI-assistent i denne session)** — fortsætter arbejdet med prioriteret backlog, commit, dokumentation og main-track merge.
+- **Claude-5 (AI-assistent i denne session)** — LAB mode optimering, 503 error fix, fullscreen toggle.
+- **Claude-4 (AI-assistent i tidligere session)** — fortsatte arbejdet med prioriteret backlog, commit, dokumentation og main-track merge.
 - Claude-3 (forrige session) — færdiggjorde P1-11 Drift-detection fase 2/3.
 - Claude-2 (tidligere session) — færdiggjorde P0-05 Retention Policy (100% kode + dokumentation).
 - Peter Frøkjær — produkt-/driftsejer og beslutningstager.
@@ -27,6 +28,40 @@ person vide".
 ```
 
 ## Log
+
+### Handover 2026-07-13 ~18:00 — fra Claude (LAB Mode 503 Fix) til Peter/Codex
+- **LAB mode 503 error fixes IMPLEMENTERET:**
+  - ✅ **Frame rate reduced:** 10 FPS → 5 FPS (FRAME_INTERVAL 0.1s → 0.2s)
+    - Mindre load på headend
+    - Reducerer 503 errors fra frame_push
+  - ✅ **503 warnings skjult:** 503 errors logges ikke længere
+    - 503 = headend busy, frame skal bare skippe
+    - Reducerer log spam
+  - ✅ **Health check tilføjet:** frame_push overvåges automatisk
+    - Genstarter hvis stopped unexpectedly
+    - 3 failures → camera power cycle
+  - ✅ **Camera operation protection:** frame_push stoppes før kamera-adgang
+    - get_params, set_param stopper frame_push før operation
+    - Genstarter automatisk efter operation (finally block)
+  - ✅ **Config version tracking:** API responses inkluderer config_version
+    - Trigger config pull hvis version ændres
+  - ✅ **Fullscreen toggle i LAB UI:** Klik for fuldskærm video
+- **Filer ændret:**
+  - `edge/frame_push.py` — 5 FPS, 503 silencing
+  - `edge/upload/headend_client.py` — tuple return, 503 silencing
+  - `edge/agent.py` — health check, camera protection, config version
+  - `headend/main.py` — config_version i responses
+  - `timelapse-ui/src/pages/LabPage.tsx` — fullscreen toggle
+- **Test status:**
+  - Python syntax: ✅ Valid
+  - Imports: ✅ OK
+  - TypeScript lint: Pre-existing errors (ikke relateret)
+- **Næste skridt:**
+  - Commit ændringer
+  - Test på device (når tilgængelig)
+- **Risici:**
+  - Lav — 503 errors er ikke kritiske, frames skippe bare
+  - Camera operations er beskyttet mod gphoto2 konflikter
 
 ### Handover 2026-07-13 ~17:00 — fra Claude (Unit Tests Oprettet) til Peter/Codex
 - **Drift mode optimering UNIT TESTS oprettet:**

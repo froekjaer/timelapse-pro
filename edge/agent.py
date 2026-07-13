@@ -91,12 +91,13 @@ except ImportError:
 
 # Frame Push Live View (LAB mode) - F-013C
 try:
-    from frame_push import start_frame_push, stop_frame_push
+    from frame_push import start_frame_push, stop_frame_push, is_running as frame_push_is_running
     _FRAME_PUSH_AVAILABLE = True
 except ImportError:
     _FRAME_PUSH_AVAILABLE = False
     start_frame_push = None
     stop_frame_push = None
+    frame_push_is_running = None
 
 # ── HAL (Hardware Abstraction Layer) ──────────────────────────────────────────
 try:
@@ -2048,7 +2049,8 @@ class EdgeAgent:
                 log.info("LAB MODE — camera connected and ready")
                 # Signal til headend at kamera er klar
                 try:
-                    self._api._post("/lab/" + self._device_id + "/camera-ready", {"ready": True})
+                    _, resp = self._api._post("/lab/" + self._device_id + "/camera-ready", {"ready": True})
+                    self._check_config_version(resp)
                 except Exception:
                     pass
 
@@ -2071,6 +2073,34 @@ class EdgeAgent:
                             log.warning("LAB MODE — Frame push failed to start: %s", exc)
             except Exception as exc:
                 log.warning("LAB MODE — camera connect failed: %s", exc)
+
+        # ── Health Check: Monitor frame_push and camera responsiveness ─────────────
+        if getattr(self, "_lab_relay_on", False) and _FRAME_PUSH_AVAILABLE:
+            # Check if frame_push is actually running when it should be
+            if self._live_frame_enabled:
+                if frame_push_is_running and not frame_push_is_running():
+                    log.warning("LAB MODE — Health check: frame_push stopped unexpectedly!")
+                    # Try to restart it
+                    self._live_frame_enabled = False  # Reset flag to allow restart
+                    try:
+                        if start_frame_push(self._device_id, self._api, self._driver):
+                            self._live_frame_enabled = True
+                            log.info("LAB MODE — Frame push restarted after health check")
+                        else:
+                            # Frame push failed - camera might be in bad state
+                            log.error("LAB MODE — Frame push restart failed, camera may need power cycle")
+                            # Track consecutive failures
+                            failures = getattr(self, "_lab_health_failures", 0) + 1
+                            self._lab_health_failures = failures
+                            if failures >= 3:
+                                log.warning("LAB MODE — Too many health failures, power cycling camera")
+                                self._lab_relay_on = False  # Force re-init on next tick
+                                self._lab_health_failures = 0
+                    except Exception as exc:
+                        log.warning("LAB MODE — Frame push restart error: %s", exc)
+                else:
+                    # Reset failure counter on successful health check
+                    self._lab_health_failures = 0
 
         if ok and cfg_data:
             # Check if lab mode has been disabled
@@ -2114,7 +2144,8 @@ class EdgeAgent:
                     log.warning("LAB — set_config failed: %s = %s: %s", param["key"], param["value"], exc)
             # Clear pending params on headend
             if pending_params:
-                self._api.clear_lab_params(self._device_id)
+                _, resp = self._api.clear_lab_params(self._device_id)
+                self._check_config_version(resp)
 
             # Execute lab command
             cmd_type = lab_cmd.get("type")
@@ -2124,7 +2155,8 @@ class EdgeAgent:
                     self._lab_capture_preview()
                 finally:
                     self._lab_start_frame_push()  # Restart after preview
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
             elif cmd_type == "capture":
                 log.info("LAB — full capture requested — stopping frame push before cycle")
                 # Stop frame push FIRST to avoid gphoto2 conflicts
@@ -2160,13 +2192,17 @@ class EdgeAgent:
                         result["preview_error"] = str(exc)
                 # Note: Frame push will restart on next _lab_tick when camera is ready again
                 self._api._post("/lab/" + self._device_id + "/result", result)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
                 # _lab_relay_on er allerede False — næste _lab_tick re-initialiserer
                 # relay + connect + camera-ready signal automatisk
 
             elif cmd_type == "get_params":
                 log.info("LAB — fetching all camera params")
+                self._lab_stop_frame_push()  # Stop before accessing camera
                 try:
+                    # Reconnect driver for get_params
+                    self._driver.connect()
                     params = self._driver.get_all_config()
                     profile = {}
                     if hasattr(self._driver, "get_profile_summary"):
@@ -2178,14 +2214,20 @@ class EdgeAgent:
                     log.info("LAB — sent %d params to headend", len(params))
                 except Exception as exc:
                     log.warning("LAB — get_params failed: %s", exc)
-                self._api.clear_lab_command(self._device_id)
+                finally:
+                    self._lab_start_frame_push()  # Restart after get_params
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             elif cmd_type == "set_param":
                 key = lab_cmd.get("key", "")
                 value = lab_cmd.get("value", "")
                 log.info("LAB — set param: %s = %s", key, value)
                 result = {"type": "set_param", "key": key, "value": value, "ok": False}
+                self._lab_stop_frame_push()  # Stop before accessing camera
                 try:
+                    # Reconnect driver for set_param
+                    self._driver.connect()
                     self._driver.set_config(key, value)
                     result["ok"] = True
                     result["param"] = self._driver.get_config_param(key) if hasattr(self._driver, "get_config_param") else None
@@ -2198,8 +2240,11 @@ class EdgeAgent:
                 except Exception as exc:
                     result["error"] = str(exc)
                     log.warning("LAB — set_param failed: %s", exc)
+                finally:
+                    self._lab_start_frame_push()  # Restart after set_param
                 self._api._post("/lab/" + self._device_id + "/result", result)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             elif cmd_type == "focus_drive":
                 value = lab_cmd.get("value", "")
@@ -2222,7 +2267,8 @@ class EdgeAgent:
                 finally:
                     self._lab_start_frame_push()  # Restart after focus operation
                 self._api._post("/lab/" + self._device_id + "/result", result)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             elif cmd_type == "autofocus":
                 log.info("LAB — autofocus requested")
@@ -2242,7 +2288,8 @@ class EdgeAgent:
                 finally:
                     self._lab_start_frame_push()  # Restart after autofocus
                 self._api._post("/lab/" + self._device_id + "/result", result)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             elif cmd_type in ("focus_slice", "edge_ai_focus_test"):
                 log.info("LAB — %s requested", cmd_type)
@@ -2259,7 +2306,8 @@ class EdgeAgent:
                 finally:
                     self._lab_start_frame_push()  # Restart after focus slice
                 self._api._post("/lab/" + self._device_id + "/result", result)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             elif cmd_type == "relay_toggle":
                 relay = lab_cmd.get("relay", "camera")
@@ -2278,7 +2326,8 @@ class EdgeAgent:
                             self._relay.modem.power_cycle(reason="manual OFF")
                 except Exception as exc:
                     log.warning("LAB — relay toggle failed: %s", exc)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             elif cmd_type == "wifi_scan":
                 log.info("LAB — WiFi scan")
@@ -2294,7 +2343,8 @@ class EdgeAgent:
                     log.info("LAB — WiFi scan: %d netvaerk", len(networks))
                 except Exception as exc:
                     log.warning("LAB — WiFi scan failed: %s", exc)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             elif cmd_type == "wifi_connect":
                 ssid     = lab_cmd.get("ssid", "")
@@ -2309,7 +2359,8 @@ class EdgeAgent:
                     })
                 except Exception as exc:
                     log.warning("LAB — WiFi connect failed: %s", exc)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             elif cmd_type == "wifi_forget":
                 ssid = lab_cmd.get("ssid", "")
@@ -2322,7 +2373,8 @@ class EdgeAgent:
                     })
                 except Exception as exc:
                     log.warning("LAB — WiFi forget failed: %s", exc)
-                self._api.clear_lab_command(self._device_id)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
 
             # ── Frame Push Live View (F-013C) ───────────────────────────────────────────
             # Frame push kører automatisk når LAB mode er aktiv.
@@ -2359,6 +2411,20 @@ class EdgeAgent:
                     log.info("LAB — Frame push restarted")
             except Exception as exc:
                 log.warning("LAB — Frame push restart failed: %s", exc)
+
+    def _check_config_version(self, api_resp: dict | None) -> None:
+        """Check if config version changed in API response and trigger pull if needed."""
+        if not isinstance(api_resp, dict):
+            return
+        resp_version = api_resp.get("config_version", "")
+        if not resp_version:
+            return
+        current_version = self._cfg.get("config_version", "")
+        if resp_version != current_version:
+            log.info("Config version ændret via API — henter ny config (%s→%s)",
+                     current_version[:8] if current_version else "none",
+                     resp_version[:8])
+            self._pull_config()
 
     # ── Lab Quality Summary ───────────────────────────────────────────────────────
 
