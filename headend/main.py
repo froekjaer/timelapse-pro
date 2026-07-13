@@ -15869,6 +15869,34 @@ from asyncio import Queue
 _live_frame_queues: dict[str, Queue] = {}
 _live_frame_locks: dict[str, asyncio.Lock] = {}
 
+# Frame expiry: 5 seconds (consistent across all endpoints)
+FRAME_EXPIRY_SECONDS = 5
+
+# Cleanup interval: every 60 seconds
+_last_frame_cleanup: float = 0
+
+
+def _cleanup_stale_frames() -> None:
+    """Remove frames older than FRAME_EXPIRY_SECONDS to prevent memory leaks."""
+    global _last_frame_cleanup
+    now = time.time()
+    if now - _last_frame_cleanup < 60:
+        return  # Only run cleanup every 60 seconds
+    _last_frame_cleanup = now
+
+    stale_devices = []
+    for dev_id, ts in _live_frame_timestamps.items():
+        if now - ts > FRAME_EXPIRY_SECONDS:
+            stale_devices.append(dev_id)
+
+    for dev_id in stale_devices:
+        _live_frames.pop(dev_id, None)
+        _live_frame_timestamps.pop(dev_id, None)
+        _live_frame_locks.pop(dev_id, None)
+
+    if stale_devices:
+        log.debug(f"Cleaned up {len(stale_devices)} stale live frame entries")
+
 
 @app.post("/api/lab/{device_id}/live-frame")
 async def receive_live_frame(
@@ -15880,6 +15908,9 @@ async def receive_live_frame(
     Receive live preview frame from edge.
     Edge pushes frames here via POST multipart/form-data.
     """
+    # Periodic cleanup of stale frames
+    _cleanup_stale_frames()
+
     try:
         # Verify device exists
         device = db.query(Device).filter_by(device_id=device_id).first()
@@ -15889,9 +15920,14 @@ async def receive_live_frame(
         # Read frame data
         frame_data = await frame.read()
 
-        # Store in memory (max 1 frame per device)
-        _live_frames[device_id] = frame_data
-        _live_frame_timestamps[device_id] = time.time()
+        # Get or create lock for this device
+        if device_id not in _live_frame_locks:
+            _live_frame_locks[device_id] = asyncio.Lock()
+
+        # Store frame with lock protection
+        async with _live_frame_locks[device_id]:
+            _live_frames[device_id] = frame_data
+            _live_frame_timestamps[device_id] = time.time()
 
         return {"status": "ok"}
 
@@ -15917,13 +15953,21 @@ async def get_live_frame(
     if device_id not in _live_frames:
         raise HTTPException(status_code=404, detail="No live frame available")
 
-    # Check if frame is recent (within 5 seconds)
+    # Check if frame is recent (within FRAME_EXPIRY_SECONDS)
     frame_time = _live_frame_timestamps.get(device_id, 0)
-    if time.time() - frame_time > 5:
+    if time.time() - frame_time > FRAME_EXPIRY_SECONDS:
         raise HTTPException(status_code=404, detail="Live frame expired")
 
-    # Return frame as JPEG
-    frame_data = _live_frames[device_id]
+    # Get frame with lock protection
+    if device_id in _live_frame_locks:
+        async with _live_frame_locks[device_id]:
+            frame_data = _live_frames.get(device_id)
+    else:
+        frame_data = _live_frames.get(device_id)
+
+    if not frame_data:
+        raise HTTPException(status_code=404, detail="No live frame available")
+
     return Response(
         content=frame_data,
         media_type="image/jpeg",
@@ -15959,7 +16003,14 @@ async def get_live_stream(
 
     async def generate_mjpeg():
         """Generator that yields MJPEG multipart stream."""
+        # Ensure lock exists for this device
+        if device_id not in _live_frame_locks:
+            _live_frame_locks[device_id] = asyncio.Lock()
+
         while True:
+            # Periodic cleanup
+            _cleanup_stale_frames()
+
             # Check if client disconnected
             if await request.is_disconnected():
                 log.debug("Live stream client disconnected for %s", device_id)
@@ -15968,17 +16019,19 @@ async def get_live_stream(
             # Get latest frame if available
             if device_id in _live_frames:
                 frame_time = _live_frame_timestamps.get(device_id, 0)
-                # Only send if frame is recent (within 2 seconds)
-                if time.time() - frame_time < 2:
-                    frame_data = _live_frames[device_id]
-                    yield (
-                        f"--{boundary}\r\n"
-                        f"Content-Type: image/jpeg\r\n"
-                        f"Content-Length: {len(frame_data)}\r\n"
-                        f"\r\n"
-                    ).encode()
-                    yield frame_data
-                    yield b"\r\n"
+                # Only send if frame is recent (within FRAME_EXPIRY_SECONDS)
+                if time.time() - frame_time < FRAME_EXPIRY_SECONDS:
+                    # Get frame with lock protection (non-blocking for stream)
+                    frame_data = _live_frames.get(device_id)
+                    if frame_data:
+                        yield (
+                            f"--{boundary}\r\n"
+                            f"Content-Type: image/jpeg\r\n"
+                            f"Content-Length: {len(frame_data)}\r\n"
+                            f"\r\n"
+                        ).encode()
+                        yield frame_data
+                        yield b"\r\n"
 
             # Wait a bit before next frame (~10 FPS to match edge upload rate)
             await asyncio.sleep(0.1)
