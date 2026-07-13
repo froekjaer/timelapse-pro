@@ -2053,8 +2053,8 @@ class EdgeAgent:
                 except Exception:
                     pass
 
-                # Start WebRTC server if enabled and camera supports liveview
-                if _WEBRTC_AVAILABLE and debug_cfg.get("lab_webrtc_enabled", False):
+                # Start WebRTC server automatically when LAB mode is active
+                if _WEBRTC_AVAILABLE and ok:
                     if not self._webrtc_enabled:
                         try:
                             webrtc_port = int(self._cfg.get("webrtc", {}).get("port", "8100"))
