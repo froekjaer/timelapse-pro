@@ -741,14 +741,20 @@ class EdgeAgent:
             self._send_heartbeat()
             self._sync_captures()
 
-        self._forward_siem_logs()
+        # SIEM forward - kun hvis due for at minimere overhead
+        siem_interval = timedelta(seconds=int(self._siem_cfg().get("forward_interval_s", 300)))
+        if now - self._last_siem_forward >= siem_interval:
+            self._forward_siem_logs()
 
         # Calculate sleep until next event
         sleep_s = self._seconds_until_next_event(now, mode)
 
         if sleep_s > 60:
             log.info("Sleeping %ds until next capture…", sleep_s)
-        self._stop_event.wait(min(sleep_s, 60))   # wake at least every 60s to check signals
+        # Smart wake-up: use max_idle_sleep_s to reduce unnecessary wake-ups
+        # Default 300s (5 min) - configurable via system.max_idle_sleep_s
+        max_idle_sleep = int(self._cfg.get("system", {}).get("max_idle_sleep_s", 300))
+        self._stop_event.wait(min(sleep_s, max_idle_sleep))  # wake at least every max_idle_sleep_s
 
     # ── Capture cycle ───────────────────────────────────────────────────────
 
