@@ -111,14 +111,18 @@ class FramePusher:
             if self._camera:
                 # Use shared camera driver's capture_preview method
                 # This avoids exclusive access conflicts
+                log.debug("FRAME PUSH: Capturing via shared camera driver")
                 preview_path = self._camera.capture_preview(self._preview_dir)
                 if preview_path and preview_path.exists():
-                    return preview_path.read_bytes()
+                    frame_data = preview_path.read_bytes()
+                    log.debug("FRAME PUSH: Captured %d bytes", len(frame_data))
+                    return frame_data
                 else:
                     log.warning("FRAME PUSH: Camera preview capture returned no file")
                     return None
             else:
                 # Fallback: direct gphoto2 subprocess (legacy mode)
+                log.debug("FRAME PUSH: Capturing via direct gphoto2")
                 import subprocess
                 result = subprocess.run(
                     ["gphoto2", "--capture-preview", "--filename", str(FRAME_PATH), "--force-overwrite"],
@@ -144,14 +148,20 @@ class FramePusher:
                 # Check if we should rate-limit uploads
                 now = time.time()
                 if now - self._last_upload_time < FRAME_INTERVAL:
+                    log.debug("FRAME PUSH: Upload skipped (rate limit)")
                     return  # Skip upload if too soon
 
                 # Upload via existing API client
-                self._api.upload_live_frame(self._device_id, frame_data)
+                success, _ = self._api.upload_live_frame(frame_data)
                 self._last_upload_time = now
 
+                if success:
+                    log.debug("FRAME PUSH: Frame uploaded (%d bytes)", len(frame_data))
+                else:
+                    log.warning("FRAME PUSH: Upload failed")
+
         except Exception as e:
-            log.debug("FRAME PUSH: Upload error: %s", e)
+            log.warning("FRAME PUSH: Upload error: %s", e)
 
     def is_running(self) -> bool:
         """Check if frame pusher is running."""
