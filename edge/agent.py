@@ -2037,6 +2037,9 @@ class EdgeAgent:
         if not getattr(self, "_lab_relay_on", False):
             log.info("LAB MODE — preparing camera (power_mode=%s)", self._camera_power_mode())
 
+            # Initialize relay flag for this initialization cycle
+            self._lab_relay_on = False
+
             # Track consecutive camera connection failures for auto-powercycle
             conn_failures = getattr(self, "_lab_cam_connect_failures", 0)
             max_retries = 2  # Retry once before powercycle, then powercycle + retry
@@ -2050,11 +2053,9 @@ class EdgeAgent:
                         # Second failure - powercycle camera
                         log.warning("LAB MODE — Camera connection failed twice, power cycling...")
                         self._camera_power_off("camera connect failure", force=True)
-                        self._lab_relay_on = False
                         time.sleep(5)  # Wait for full discharge
                         log.info("LAB MODE — Powering camera back on after cycle...")
                         self._camera_power_on("lab mode retry")
-                        self._lab_relay_on = True
                         warmup_s = self._camera_warmup_seconds()
                         if warmup_s:
                             log.info("LAB MODE — Waiting %ds for camera warm-up after power cycle...", warmup_s)
