@@ -1241,7 +1241,10 @@ export default function LabPage() {
                 <HelpCircle className="w-4 h-4 text-amber-600" /> Eksponeringsmode og parametre
               </h3>
               <p className="text-xs text-gray-600 mb-3">
-                Viser hvilke parametre der kan ændres i hver eksponeringsmode. Skift til Manual (M) for fuld kontrol.
+                <strong>Skift eksponeringsmode:</strong> Klik på tandhjulet ud for <span className="text-amber-700">Eksponeringsmode</span> under "Eksponering" gruppen og vælg en mode. Manual (M) giver fuld kontrol over alle parametre.
+              </p>
+              <p className="text-xs text-gray-600 mb-3">
+                Når en parameter er låst (🔒), betyder det at den styres automatisk i den aktuelle mode.
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs border-collapse">
