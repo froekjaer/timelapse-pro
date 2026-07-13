@@ -2053,10 +2053,17 @@ class EdgeAgent:
                     pass
 
                 # Start Frame Push automatically when LAB mode is active
+                # IMPORTANT: Disconnect driver first to avoid gphoto2 lock conflict
                 if _FRAME_PUSH_AVAILABLE and ok:
                     if not self._live_frame_enabled:
                         try:
-                            # Pass camera driver to use shared connection
+                            # Disconnect driver to free camera for gphoto2 --capture-movie
+                            try:
+                                self._driver.disconnect()
+                                log.debug("LAB MODE — Driver disconnected for frame push")
+                            except Exception:
+                                pass
+                            # Start frame push (uses own gphoto2 instance)
                             if start_frame_push(self._device_id, self._api, self._driver):
                                 self._live_frame_enabled = True
                                 log.info("LAB MODE — Frame push started")
@@ -2076,6 +2083,12 @@ class EdgeAgent:
                         stop_frame_push()
                         self._live_frame_enabled = False
                         log.info("LAB MODE — Frame push stopped")
+                        # Reconnect driver after frame push stops
+                        try:
+                            self._driver.connect()
+                            log.debug("LAB MODE — Driver reconnected after frame push")
+                        except Exception as exc:
+                            log.warning("LAB MODE — Driver reconnect failed: %s", exc)
                     except Exception as exc:
                         log.warning("LAB MODE — Frame push stop error: %s", exc)
 
