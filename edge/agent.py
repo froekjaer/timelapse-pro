@@ -2036,43 +2036,84 @@ class EdgeAgent:
         # Ensure camera is ready
         if not getattr(self, "_lab_relay_on", False):
             log.info("LAB MODE — preparing camera (power_mode=%s)", self._camera_power_mode())
-            self._camera_power_on("lab mode")
-            self._lab_relay_on = True
-            warmup_s = self._camera_warmup_seconds()
-            if warmup_s:
-                time.sleep(warmup_s)
-            try:
-                self._driver.connect()
-                commands = self._build_camera_commands()
-                if commands:
-                    self._driver.apply_initial_commands(commands)
-                log.info("LAB MODE — camera connected and ready")
-                # Signal til headend at kamera er klar
-                try:
-                    _, resp = self._api._post("/lab/" + self._device_id + "/camera-ready", {"ready": True})
-                    self._check_config_version(resp)
-                except Exception:
-                    pass
 
-                # Start Frame Push automatically when LAB mode is active
-                # IMPORTANT: Disconnect driver first to avoid gphoto2 lock conflict
-                if _FRAME_PUSH_AVAILABLE and ok:
-                    if not self._live_frame_enabled:
-                        try:
-                            # Disconnect driver to free camera for gphoto2 --capture-movie
+            # Track consecutive camera connection failures for auto-powercycle
+            conn_failures = getattr(self, "_lab_cam_connect_failures", 0)
+            max_retries = 2  # Retry once before powercycle, then powercycle + retry
+
+            for attempt in range(max_retries + 1):
+                if attempt > 0:
+                    if attempt == 1:
+                        log.info("LAB MODE — Retry camera connection (attempt %d/%d)", attempt + 1, max_retries + 1)
+                        time.sleep(2)  # Brief pause before retry
+                    elif attempt == 2:
+                        # Second failure - powercycle camera
+                        log.warning("LAB MODE — Camera connection failed twice, power cycling...")
+                        self._camera_power_off("camera connect failure", force=True)
+                        self._lab_relay_on = False
+                        time.sleep(5)  # Wait for full discharge
+                        log.info("LAB MODE — Powering camera back on after cycle...")
+                        self._camera_power_on("lab mode retry")
+                        self._lab_relay_on = True
+                        warmup_s = self._camera_warmup_seconds()
+                        if warmup_s:
+                            log.info("LAB MODE — Waiting %ds for camera warm-up after power cycle...", warmup_s)
+                            time.sleep(warmup_s)
+
+                try:
+                    # Power on if not already on
+                    if not self._lab_relay_on or attempt == 0:
+                        self._camera_power_on("lab mode")
+                        self._lab_relay_on = True
+                        warmup_s = self._camera_warmup_seconds()
+                        if warmup_s:
+                            time.sleep(warmup_s)
+
+                    self._driver.connect()
+                    commands = self._build_camera_commands()
+                    if commands:
+                        self._driver.apply_initial_commands(commands)
+                    log.info("LAB MODE — camera connected and ready")
+                    # Signal til headend at kamera er klar
+                    try:
+                        _, resp = self._api._post("/lab/" + self._device_id + "/camera-ready", {"ready": True})
+                        self._check_config_version(resp)
+                    except Exception:
+                        pass
+
+                    # Success! Reset failure counter
+                    self._lab_cam_connect_failures = 0
+
+                    # Start Frame Push automatically when LAB mode is active
+                    # IMPORTANT: Disconnect driver first to avoid gphoto2 lock conflict
+                    if _FRAME_PUSH_AVAILABLE and ok:
+                        if not self._live_frame_enabled:
                             try:
-                                self._driver.disconnect()
-                                log.debug("LAB MODE — Driver disconnected for frame push")
-                            except Exception:
-                                pass
-                            # Start frame push (uses own gphoto2 instance)
-                            if start_frame_push(self._device_id, self._api, self._driver):
-                                self._live_frame_enabled = True
-                                log.info("LAB MODE — Frame push started")
-                        except Exception as exc:
-                            log.warning("LAB MODE — Frame push failed to start: %s", exc)
-            except Exception as exc:
-                log.warning("LAB MODE — camera connect failed: %s", exc)
+                                # Disconnect driver to free camera for gphoto2 --capture-movie
+                                try:
+                                    self._driver.disconnect()
+                                    log.debug("LAB MODE — Driver disconnected for frame push")
+                                except Exception:
+                                    pass
+                                # Start frame push (uses own gphoto2 instance)
+                                if start_frame_push(self._device_id, self._api, self._driver):
+                                    self._live_frame_enabled = True
+                                    log.info("LAB MODE — Frame push started")
+                            except Exception as exc:
+                                log.warning("LAB MODE — Frame push failed to start: %s", exc)
+                    break  # Success - exit retry loop
+
+                except Exception as exc:
+                    conn_failures += 1
+                    self._lab_cam_connect_failures = conn_failures
+                    log.warning("LAB MODE — camera connect attempt %d failed: %s", attempt + 1, exc)
+
+                    if attempt >= max_retries:
+                        # All retries exhausted - critical failure
+                        log.critical("LAB MODE — Camera connection failed after %d attempts (including power cycle). MANUAL INTERVENTION REQUIRED.", max_retries + 1)
+                        log.critical("LAB MODE — Check: 1) Camera physically connected via USB, 2) Camera powered on, 3) gphoto2 --auto-detect works")
+                        self._lab_relay_on = False  # Force re-init on next tick
+                        break
 
         # ── Health Check: Monitor frame_push and camera responsiveness ─────────────
         if getattr(self, "_lab_relay_on", False) and _FRAME_PUSH_AVAILABLE:
