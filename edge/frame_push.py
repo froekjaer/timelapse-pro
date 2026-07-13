@@ -152,16 +152,16 @@ class FramePusher:
                     return  # Skip upload if too soon
 
                 # Upload via existing API client (device_id is already in api client)
-                success, _ = self._api.upload_live_frame(frame_data)
+                success, error = self._api.upload_live_frame(frame_data)
                 self._last_upload_time = now
 
                 if success:
-                    log.debug("FRAME PUSH: Frame uploaded (%d bytes)", len(frame_data))
+                    log.info("FRAME PUSH: Frame uploaded (%d bytes)", len(frame_data))
                 else:
-                    log.warning("FRAME PUSH: Upload failed")
+                    log.warning("FRAME PUSH: Upload failed - error: %s", error)
 
         except Exception as e:
-            log.warning("FRAME PUSH: Upload error: %s", e)
+            log.warning("FRAME PUSH: Upload exception: %s", e)
 
     def is_running(self) -> bool:
         """Check if frame pusher is running."""

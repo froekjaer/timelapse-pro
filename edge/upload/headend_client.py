@@ -421,7 +421,7 @@ class HeadendClient:
             log.warning("POST %s multipart failed: %s", path, exc)
             return False, None
 
-    def upload_live_frame(self, frame_data: bytes) -> tuple[bool, Optional[dict]]:
+    def upload_live_frame(self, frame_data: bytes) -> tuple[bool, Optional[str]]:
         """Upload a live preview frame to headend for real-time LAB view."""
         path = f"/lab/{self._device_id}/live-frame"
         url = f"{self._base_url}{path}"
@@ -460,15 +460,19 @@ class HeadendClient:
                 return True, None
             else:
                 # Only log failures
-                log.debug("Live frame upload failed: HTTP %s", resp.status_code)
-                return False, None
+                error = f"HTTP {resp.status_code}: {resp.text[:100] if resp.text else 'No response'}"
+                log.warning("Live frame upload failed: %s", error)
+                return False, error
 
         except requests.RequestException as exc:
             # Silent fail - we'll try again on next frame
-            return False, None
+            error = f"Request error: {exc}"
+            log.warning("Live frame upload request failed: %s", error)
+            return False, error
         except Exception as exc:
-            log.debug("Live frame upload error: %s", exc)
-            return False, None
+            error = f"Unexpected error: {exc}"
+            log.warning("Live frame upload error: %s", error)
+            return False, error
 
     def upload_edge_backup(self, archive_path: Path | str, sha256: str) -> tuple[bool, Optional[dict]]:
         """Upload an Edge backup archive to Headend."""
