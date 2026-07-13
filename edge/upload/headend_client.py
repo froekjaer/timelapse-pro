@@ -423,7 +423,8 @@ class HeadendClient:
 
     def upload_live_frame(self, frame_data: bytes) -> tuple[bool, Optional[str]]:
         """Upload a live preview frame to headend for real-time LAB view."""
-        path = f"/api/lab/{self._device_id}/live-frame"
+        # _base_url already includes /api, so use /lab/... here
+        path = f"/lab/{self._device_id}/live-frame"
         url = f"{self._base_url}{path}"
 
         # Calculate hash of frame data
