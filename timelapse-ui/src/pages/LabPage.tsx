@@ -188,6 +188,7 @@ function ParamRow({
   const [value, setValue]       = useState(param.current)
   const [saving, setSaving]     = useState(false)
   const [saved, setSaved]       = useState(false)
+  const [syncing, setSyncing]   = useState(false)  // Show while waiting for reload
   const [error, setError]       = useState('')
 
   async function save() {
@@ -195,12 +196,20 @@ function ParamRow({
     try {
       await setParam(deviceId, param.path, value)
       setSaved(true)
-      setTimeout(() => { setSaved(false); setEditing(false); }, 800)
-      setTimeout(() => { onChanged() }, 1500)
+      setSyncing(true)  // Show syncing state
+      setSaving(false)  // Stop saving spinner
+      // Wait for camera to apply change, then reload params
+      setTimeout(async () => {
+        await onChanged()  // Reload params - this will update param.current
+        setSyncing(false)
+        setSaved(false)
+        setEditing(false)
+      }, 2000)
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || 'Fejl'
       setError(msg)
       console.error('setParam error:', err)
+      setSyncing(false)
     } finally {
       setSaving(false)
     }
@@ -241,9 +250,12 @@ function ParamRow({
         {!editing ? (
           <>
             <span className={`text-sm px-2 py-0.5 rounded font-mono ${
+              syncing ? 'text-purple-700 bg-purple-50' :
               isReadonly ? 'text-gray-400 bg-gray-50' : 'text-sky-700 bg-sky-50'
-            }`}>{param.current || '–'}</span>
-            {!isReadonly && (
+            }`}>{syncing ? value : (param.current || '–')}</span>
+            {syncing ? (
+              <RefreshCw className="w-3.5 h-3.5 text-purple-500 animate-spin" />
+            ) : !isReadonly && (
               <button onClick={() => { setValue(param.current); setEditing(true) }}
                 className="p-1 text-gray-400 hover:text-sky-600 rounded">
                 <Settings className="w-3.5 h-3.5" />
