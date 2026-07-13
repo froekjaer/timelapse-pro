@@ -31,7 +31,7 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 # Configuration
-FRAME_INTERVAL = 0.05  # Upload frames max every 50ms (20 FPS)
+FRAME_INTERVAL = 0.1  # Upload frames max every 100ms (10 FPS for preview)
 MAX_FRAME_SIZE = 512 * 1024  # Max 512KB per frame
 JPEG_START = b'\xff\xd8\xff'  # JPEG start marker (SOI + first byte)
 JPEG_END = b'\xff\xd9'  # JPEG end marker (EOI)
@@ -188,7 +188,7 @@ class LiveVideoStreamer:
 
             if success:
                 self._frames_uploaded += 1
-                if self._frames_uploaded % 30 == 0:  # Log every 30 frames
+                if self._frames_uploaded % 100 == 0:  # Log every 100 frames
                     log.info("LIVE VIDEO: Streamed %d frames", self._frames_uploaded)
             else:
                 log.warning("LIVE VIDEO: Upload failed - %s", error)

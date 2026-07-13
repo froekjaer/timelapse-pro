@@ -15864,6 +15864,11 @@ def webrtc_get_ice_candidates(
 _live_frames: dict[str, bytes] = {}
 _live_frame_timestamps: dict[str, float] = {}
 
+# MJPEG streaming state (device_id -> queue of frames)
+from asyncio import Queue
+_live_frame_queues: dict[str, Queue] = {}
+_live_frame_locks: dict[str, asyncio.Lock] = {}
+
 
 @app.post("/api/lab/{device_id}/live-frame")
 async def receive_live_frame(
@@ -15926,6 +15931,66 @@ async def get_live_frame(
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
             "Expires": "0",
+        }
+    )
+
+
+@app.get("/api/lab/{device_id}/live-stream")
+async def get_live_stream(
+    device_id: str,
+    request: Request,
+    _user = require_role("viewer"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get MJPEG live stream for device.
+    Returns continuous multipart/x-mixed-replace stream with JPEG frames.
+    Browsers natively display this as video.
+    """
+    _ensure_capture_device_access(db, _user, device_id)
+
+    # Verify device exists
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    # MJPEG boundary
+    boundary = "timelapseframe"
+
+    async def generate_mjpeg():
+        """Generator that yields MJPEG multipart stream."""
+        while True:
+            # Check if client disconnected
+            if await request.is_disconnected():
+                log.debug("Live stream client disconnected for %s", device_id)
+                break
+
+            # Get latest frame if available
+            if device_id in _live_frames:
+                frame_time = _live_frame_timestamps.get(device_id, 0)
+                # Only send if frame is recent (within 2 seconds)
+                if time.time() - frame_time < 2:
+                    frame_data = _live_frames[device_id]
+                    yield (
+                        f"--{boundary}\r\n"
+                        f"Content-Type: image/jpeg\r\n"
+                        f"Content-Length: {len(frame_data)}\r\n"
+                        f"\r\n"
+                    ).encode()
+                    yield frame_data
+                    yield b"\r\n"
+
+            # Wait a bit before next frame (~15 FPS)
+            await asyncio.sleep(0.066)
+
+    return StreamingResponse(
+        generate_mjpeg(),
+        media_type=f"multipart/x-mixed-replace; boundary={boundary}",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Connection": "keep-alive",
         }
     )
 

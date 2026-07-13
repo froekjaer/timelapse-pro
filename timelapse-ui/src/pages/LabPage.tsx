@@ -375,33 +375,19 @@ export default function LabPage() {
     }
   }, [selectedPreview?.filename, showHistogram])
 
-  // ── Live Frame Polling (F-013C) ─────────────────────────────────────────────────
+  // ── Live Frame MJPEG Stream (F-013C) ─────────────────────────────────────────────
   useEffect(() => {
     if (!liveFrameEnabled) {
       setLiveFrameUrl(null)
       return
     }
 
-    // Poll for live frames every 500ms
-    const interval = setInterval(async () => {
-      try {
-        const apiUrl = getApiUrl()
-        const url = `${apiUrl}/api/lab/${pathSegment(deviceId)}/live-frame?t=${Date.now()}`
-        const resp = await fetch(url, { credentials: 'include' })
+    // Set MJPEG stream URL directly (browser handles natively)
+    const apiUrl = getApiUrl()
+    const streamUrl = `${apiUrl}/api/lab/${pathSegment(deviceId)}/live-stream`
+    setLiveFrameUrl(streamUrl)
 
-        if (resp.ok) {
-          setLiveFrameUrl(url)
-        } else {
-          // Frame not available yet - keep polling
-          setLiveFrameUrl(null)
-        }
-      } catch {
-        // Network error - keep polling
-        setLiveFrameUrl(null)
-      }
-    }, 500)
-
-    return () => clearInterval(interval)
+    // No polling needed - MJPEG stream is continuous
   }, [liveFrameEnabled, deviceId])
 
   // Load device info
