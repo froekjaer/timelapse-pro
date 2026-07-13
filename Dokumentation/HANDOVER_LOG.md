@@ -8883,16 +8883,28 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 ### Handover 2026-07-13 ~13:30 — LAB mode testing (Camera Operations — readonly fix)
 - **Probleme:** Shutter Speed (Lukker) mangler tandhjul-ikon i LAB UI, kan ikke ændres
 - **Årsag:** gphoto2 rapporterer `Readonly: 1` for shutterspeed i visse kameramodes
-- **Fix:** `FORCE_EDITABLE` override i `_parse_gphoto2_config()`:
-  - Tvinger følgende parametre til at være editable:
-    - `/main/capturesettings/shutterspeed`
-    - `/main/capturesettings/shutterspeed2`
-    - `/main/capturesettings/aperture`
-    - `/main/imgsettings/iso`
-    - `/main/capturesettings/exposurecompensation`
+- **Forkert fix (reverted):** `FORCE_EDITABLE` override i `_parse_gphoto2_config()`
+  - At ignorere readonly flaget hjælper ikke hvis kamera-firmwaren afviser ændringen
+  - Eksponeringsmode styrer hvilke parametre der er editable
+
+### Handover 2026-07-13 ~14:00 — LAB UI tooltips og exposure mode matrix
+- **Problemet:** Brugere forstår ikke HVORFOR visse parametre er readonly og HVAD de skal gøre
+- **Løsning:**
+  - **Tooltips:** HelpCircle (ℹ️) ikon ved hver parameter med 4-linjer beskrivelse
+  - **Lock hint:** Lås-ikon ved readonly parametre med tekst: "Skift til Manual (M) mode for at ændre denne parameter"
+  - **Matrix tabel:** Viser hvilke parametre der er editable i hver eksponeringsmode:
+    - **Auto:** Kun EV ± er editable
+    - **Program (P):** Kun EV ± er editable
+    - **Shutter Priority (S):** Lukker + EV ±
+    - **Aperture Priority (A):** Blænde + EV ±
+    - **Manual (M):** Alle parametre editable (fuld kontrol)
 - **Filer rørt:**
-  - `edge/camera/drivers/gphoto2_driver.py` — `_parse_gphoto2_config()`
+  - `edge/camera/drivers/gphoto2_driver.py` — Reverted FORCE_EDITABLE
+  - `timelapse-ui/src/pages/LabPage.tsx` — Added tooltips, lock hints, matrix table
+  - `docs/LAB_MODE_TEST_GUIDE.md` — Test guide til LAB mode
   - `Dokumentation/HANDOVER_LOG.md` — denne entry
-- **Git commit:** `3806b38b` — "fix: Override gphoto2 readonly flag for key camera params"
-- **Deploy:** Pull på edge: `cd /opt/timelapse && git pull && sudo systemctl restart timelapse-edge`
-- **Test:** Genindlæs parametre i LAB UI efter restart — tandhjulet skal nu vises ved Shutter Speed
+- **Git commits:**
+  - `66c9bba3` — "feat: LAB UI tooltips and exposure mode matrix"
+  - `3806b38b` — "fix: Override gphoto2 readonly flag" (REVERTED)
+- **Deploy UI:** `cd ~/projects/timelapse-pro/timelapse-ui && npm run build`
+- **Test:** Genåbn LAB UI — hover over parametre for at se tooltips, se matrix-tabellen
