@@ -89,14 +89,14 @@ except ImportError:
     serve_technician_ui = None
     get_auth = None
 
-# MJPEG Live View (LAB mode) - F-013B
+# Frame Push Live View (LAB mode) - F-013C
 try:
-    from mjpeg_server import start_mjpeg_server, stop_mjpeg_server
-    _MJPEG_AVAILABLE = True
+    from frame_push import start_frame_push, stop_frame_push
+    _FRAME_PUSH_AVAILABLE = True
 except ImportError:
-    _MJPEG_AVAILABLE = False
-    start_mjpeg_server = None
-    stop_mjpeg_server = None
+    _FRAME_PUSH_AVAILABLE = False
+    start_frame_push = None
+    stop_frame_push = None
 
 # ── HAL (Hardware Abstraction Layer) ──────────────────────────────────────────
 try:
@@ -165,8 +165,8 @@ class EdgeAgent:
             except Exception as exc:
                 log.warning("Technician auth init failed: %s", exc)
 
-        # WebRTC Live View server (LAB mode)
-        self._mjpeg_enabled = False
+        # Frame Push Live View (LAB mode)
+        self._live_frame_enabled = False
 
         # State
         self._last_heartbeat:    datetime = datetime.min.replace(tzinfo=timezone.utc)
@@ -2052,16 +2052,15 @@ class EdgeAgent:
                 except Exception:
                     pass
 
-                # Start MJPEG server automatically when LAB mode is active
-                if _MJPEG_AVAILABLE and ok:
-                    if not self._mjpeg_enabled:
+                # Start Frame Push automatically when LAB mode is active
+                if _FRAME_PUSH_AVAILABLE and ok:
+                    if not self._live_frame_enabled:
                         try:
-                            mjpeg_port = int(self._cfg.get("mjpeg", {}).get("port", "8101"))
-                            if start_mjpeg_server(mjpeg_port):
-                                self._mjpeg_enabled = True
-                                log.info("LAB MODE — MJPEG server started on port %d", mjpeg_port)
+                            if start_frame_push(self._device_id, self._api):
+                                self._live_frame_enabled = True
+                                log.info("LAB MODE — Frame push started")
                         except Exception as exc:
-                            log.warning("LAB MODE — MJPEG server failed to start: %s", exc)
+                            log.warning("LAB MODE — Frame push failed to start: %s", exc)
             except Exception as exc:
                 log.warning("LAB MODE — camera connect failed: %s", exc)
 
@@ -2070,14 +2069,14 @@ class EdgeAgent:
             if not cfg_data.get("debug_mode", {}).get("enabled", False):
                 log.info("LAB MODE — disabled from headend, exiting lab mode")
 
-                # Stop MJPEG server if running
-                if _MJPEG_AVAILABLE and self._mjpeg_enabled:
+                # Stop Frame Push if running
+                if _FRAME_PUSH_AVAILABLE and self._live_frame_enabled:
                     try:
-                        stop_mjpeg_server()
-                        self._mjpeg_enabled = False
-                        log.info("LAB MODE — MJPEG server stopped")
+                        stop_frame_push()
+                        self._live_frame_enabled = False
+                        log.info("LAB MODE — Frame push stopped")
                     except Exception as exc:
-                        log.warning("LAB MODE — MJPEG server stop error: %s", exc)
+                        log.warning("LAB MODE — Frame push stop error: %s", exc)
 
                 try: self._driver.disconnect()
                 except: pass
@@ -2288,10 +2287,10 @@ class EdgeAgent:
                     log.warning("LAB — WiFi forget failed: %s", exc)
                 self._api.clear_lab_command(self._device_id)
 
-            # ── MJPEG Live View (F-013B) ───────────────────────────────────────────
-            # MJPEG server kører automatisk når LAB mode er aktiv.
-            # Ingen signaling nødvendig - browser streamer direkte fra edge.
-            # Headend proxyer MJPEG stream til /api/lab/{id}/mjpeg
+            # ── Frame Push Live View (F-013C) ───────────────────────────────────────────
+            # Frame push kører automatisk når LAB mode er aktiv.
+            # Edge pushes frames til headend via /api/lab/{id}/live-frame.
+            # Browser polls frames fra headend via /api/lab/{id}/live-frame.
 
         time.sleep(poll_s)
 

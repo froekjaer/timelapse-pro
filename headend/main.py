@@ -15946,6 +15946,71 @@ def mjpeg_health(
         return {"available": False, "reason": str(e)}
 
 
+# ── Frame Push Live View (F-013C LAB mode) ─────────────────────────────────────
+
+# In-memory storage for latest live frames (device_id -> bytes)
+_live_frames: dict[str, bytes] = {}
+_live_frame_timestamps: dict[str, float] = {}
+
+
+@app.post("/api/lab/{device_id}/live-frame")
+async def receive_live_frame(
+    device_id: str,
+    frame: UploadFile,
+    db: Session = Depends(get_db),
+):
+    """
+    Receive live preview frame from edge.
+    Edge pushes frames here via POST multipart/form-data.
+    """
+    # Verify device exists
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    # Read frame data
+    frame_data = await frame.read()
+
+    # Store in memory (max 1 frame per device)
+    _live_frames[device_id] = frame_data
+    _live_frame_timestamps[device_id] = time.time()
+
+    return {"status": "ok"}
+
+
+@app.get("/api/lab/{device_id}/live-frame")
+async def get_live_frame(
+    device_id: str,
+    _user = require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get latest live preview frame for device.
+    Browser polls this endpoint to get real-time updates.
+    """
+    _ensure_capture_device_access(db, _user, device_id)
+
+    if device_id not in _live_frames:
+        raise HTTPException(status_code=404, detail="No live frame available")
+
+    # Check if frame is recent (within 5 seconds)
+    frame_time = _live_frame_timestamps.get(device_id, 0)
+    if time.time() - frame_time > 5:
+        raise HTTPException(status_code=404, detail="Live frame expired")
+
+    # Return frame as JPEG
+    frame_data = _live_frames[device_id]
+    return Response(
+        content=frame_data,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
+
+
 @app.get("/api/admin/captures/timeline")
 def captures_timeline(
     device_id: str,

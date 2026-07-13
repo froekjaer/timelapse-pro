@@ -21,7 +21,7 @@ import {
   requestFocusDrive, requestAutofocus, requestFocusSlice, requestEdgeAiFocusTest
 } from '../api/client'
 import type { LabPreview, CameraParam, DebugMode, CameraProfile } from '../types'
-// import { useWebRTC } from '../hooks/useWebRTC' // F-013B: Replaced with MJPEG
+// // import { useWebRTC } from '../hooks/useWebRTC' // F-013B/C: Replaced with Frame Push
 
 function authFetch(url: string, opts?: RequestInit) {
   return fetch(url, { ...opts, credentials: 'include' })
@@ -349,7 +349,8 @@ export default function LabPage() {
   const [wifiConnecting, setWifiConnecting] = useState('')
   const [zoom, setZoom]               = useState(1)
   const [showHistogram, setShowHistogram] = useState(true)
-  const [mjpegEnabled, setMjpegEnabled] = useState(false) // F-013B: MJPEG Live View
+  const [liveFrameEnabled, setLiveFrameEnabled] = useState(false) // F-013C: Frame Push Live View
+  const [liveFrameUrl, setLiveFrameUrl] = useState<string | null>(null) // F-013C: Live frame URL
   const [pollInterval, setPollInterval]   = useState<ReturnType<typeof setInterval> | null>(null)
   const [statusMsg, setStatusMsg]     = useState('')
   const [labConnecting, setLabConnecting] = useState(false)
@@ -357,7 +358,7 @@ export default function LabPage() {
   const [labReady, setLabReady]           = useState(false)
   const [labConnectingStart, setLabConnectingStart] = useState<number | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
-  const mjpegRef = useRef<HTMLImageElement>(null) // F-013B: MJPEG img element
+  const liveFrameRef = useRef<HTMLImageElement>(null) // F-013C: Live frame img element
   const { hist, compute, clear } = useHistogram(imgRef)
 
   // Hold ref synkroniseret med state for brug i polling closure
@@ -373,6 +374,35 @@ export default function LabPage() {
       return () => clearTimeout(t)
     }
   }, [selectedPreview?.filename, showHistogram])
+
+  // ── Live Frame Polling (F-013C) ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!liveFrameEnabled) {
+      setLiveFrameUrl(null)
+      return
+    }
+
+    // Poll for live frames every 500ms
+    const interval = setInterval(async () => {
+      try {
+        const apiUrl = getApiUrl()
+        const url = `${apiUrl}/api/lab/${pathSegment(deviceId)}/live-frame?t=${Date.now()}`
+        const resp = await fetch(url, { credentials: 'include' })
+
+        if (resp.ok) {
+          setLiveFrameUrl(url)
+        } else {
+          // Frame not available yet - keep polling
+          setLiveFrameUrl(null)
+        }
+      } catch {
+        // Network error - keep polling
+        setLiveFrameUrl(null)
+      }
+    }, 500)
+
+    return () => clearInterval(interval)
+  }, [liveFrameEnabled, deviceId])
 
   // Load device info
   useEffect(() => {
@@ -557,7 +587,7 @@ export default function LabPage() {
     } else {
       setLabActive(false)
       setLivePreview(false)
-      setMjpegEnabled(false)  // Stop MJPEG når lab stoppes
+      setLiveFrameEnabled(false)  // Stop MJPEG når lab stoppes
       setLabConnecting(false)
       setLabConnectSecs(0)
       setLabConnectingStart(null)
@@ -586,7 +616,7 @@ export default function LabPage() {
     setLabConnecting(false)
     setLabActive(false)
     setLivePreview(false)
-    setMjpegEnabled(false)  // Stop MJPEG
+    setLiveFrameEnabled(false)  // Stop MJPEG
     setLabConnectSecs(0)
     setLabConnectingStart(null)
     setLabReady(false)
@@ -1010,19 +1040,16 @@ export default function LabPage() {
 
             {/* Image */}
             <div className="bg-gray-900 aspect-video flex items-center justify-center overflow-hidden relative">
-              {mjpegEnabled ? (
+              {liveFrameEnabled && liveFrameUrl ? (
                 <img
-                  ref={mjpegRef}
-                  src={`${getApiUrl()}/api/lab/${pathSegment(deviceId)}/mjpeg`}
-                  alt="MJPEG Live View"
+                  ref={liveFrameRef}
+                  src={liveFrameUrl}
+                  alt="Live Frame"
                   className="w-full h-full object-contain"
                   style={{
                     transform: `scale(${zoom})`,
                     transformOrigin: 'center center',
                     transition: 'transform 0.15s',
-                  }}
-                  onError={(e) => {
-                    console.error('MJPEG stream error:', e)
                   }}
                 />
               ) : selectedPreview ? (
@@ -1060,26 +1087,26 @@ export default function LabPage() {
 
             {/* Preview actions */}
             <div className="p-4 flex gap-3">
-              <button onClick={() => setMjpegEnabled(v => !v)} disabled={labConnecting}
+              <button onClick={() => setLiveFrameEnabled(v => !v)} disabled={labConnecting}
                 className={`flex-1 flex items-center justify-center gap-2 py-2.5 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors ${
-                  mjpegEnabled ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-sky-600 hover:bg-sky-700'
+                  liveFrameEnabled ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-sky-600 hover:bg-sky-700'
                 }`}>
-                {mjpegEnabled ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                {mjpegEnabled ? 'MJPEG Live' : 'MJPEG Live'}
+                {liveFrameEnabled ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                {liveFrameEnabled ? 'MJPEG Live' : 'MJPEG Live'}
               </button>
-              <button onClick={() => setLivePreview(v => !v)} disabled={labConnecting || mjpegEnabled}
+              <button onClick={() => setLivePreview(v => !v)} disabled={labConnecting || liveFrameEnabled}
                 className={`flex-1 flex items-center justify-center gap-2 py-2.5 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors ${
                   livePreview ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-sky-600 hover:bg-sky-700'
                 }`}>
                 {livePreview ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
                 {livePreview ? 'Stop preview loop' : 'Preview loop'}
               </button>
-              <button onClick={takePreview} disabled={loadingPreview || mjpegEnabled}
+              <button onClick={takePreview} disabled={loadingPreview || liveFrameEnabled}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors">
                 {loadingPreview ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
                 Preview <span className="text-purple-200 text-xs">(ingen lukker)</span>
               </button>
-              <button onClick={takeCapture} disabled={loadingCapture || mjpegEnabled}
+              <button onClick={takeCapture} disabled={loadingCapture || liveFrameEnabled}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors">
                 {loadingCapture ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
                 Fuld capture <span className="text-gray-400 text-xs">(tæller lukker)</span>

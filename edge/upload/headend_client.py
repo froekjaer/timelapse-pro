@@ -421,6 +421,55 @@ class HeadendClient:
             log.warning("POST %s multipart failed: %s", path, exc)
             return False, None
 
+    def upload_live_frame(self, frame_data: bytes) -> tuple[bool, Optional[dict]]:
+        """Upload a live preview frame to headend for real-time LAB view."""
+        path = f"/lab/{self._device_id}/live-frame"
+        url = f"{self._base_url}{path}"
+
+        # Calculate hash of frame data
+        frame_hash = hashlib.sha256(frame_data).hexdigest()
+
+        try:
+            headers = request_signature_headers(
+                self._cfg_mgr.api_token,
+                "POST",
+                path,
+                payload_hash=frame_hash,
+            )
+            headers.update(edge_attestation_headers(
+                self._cfg_mgr.base_dir,
+                self._device_id,
+                "POST",
+                path,
+                payload_hash=frame_hash,
+            ))
+
+            # Upload as multipart/form-data
+            files = {"frame": ("live.jpg", frame_data, "image/jpeg")}
+
+            resp = requests.post(
+                url,
+                files=files,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+                verify=True,
+            )
+
+            if resp.status_code in (200, 201):
+                # Silent success - don't spam logs for every frame
+                return True, None
+            else:
+                # Only log failures
+                log.debug("Live frame upload failed: HTTP %s", resp.status_code)
+                return False, None
+
+        except requests.RequestException as exc:
+            # Silent fail - we'll try again on next frame
+            return False, None
+        except Exception as exc:
+            log.debug("Live frame upload error: %s", exc)
+            return False, None
+
     def upload_edge_backup(self, archive_path: Path | str, sha256: str) -> tuple[bool, Optional[dict]]:
         """Upload an Edge backup archive to Headend."""
         path_obj = Path(archive_path)
