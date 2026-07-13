@@ -8,7 +8,7 @@ person vide".
 
 ## Medarbejdere og samarbejdspartnere
 
-- **Claude-5 (AI-assistent i denne session)** — LAB mode optimering, 503 error fix, fullscreen toggle.
+- **Claude-5 (AI-assistent i denne session)** — LAB mode optimering, 503 error fix, auto powercycle, fullscreen toggle.
 - **Claude-4 (AI-assistent i tidligere session)** — fortsatte arbejdet med prioriteret backlog, commit, dokumentation og main-track merge.
 - Claude-3 (forrige session) — færdiggjorde P1-11 Drift-detection fase 2/3.
 - Claude-2 (tidligere session) — færdiggjorde P0-05 Retention Policy (100% kode + dokumentation).
@@ -28,6 +28,29 @@ person vide".
 ```
 
 ## Log
+
+### Handover 2026-07-13 ~22:00 — fra Claude (Auto Powercycle Implementation) til Peter/Codex
+- **AUTO POWERCYCLE IMPLEMENTERET OG TESTET:**
+  - ✅ **Problemer:** Kamera låste efter 503/frame push spam (min forgængers fejl)
+  - ✅ **Løsning:** Automatisk powercycle når kamera ikke kan detekteres
+    - Første fejl: Retry med fresh attempt (2s pause)
+    - Anden fejl: **AUTOMATISK POWERCYCLE** (5s discharge + 10s warmup)
+    - Tredje fejl: Critical log + manual intervention required
+  - ✅ **Testet og virker!** Kamera powercycled automatisk og connected successfully
+  - ✅ **Frame push started** efter successful connection
+  - ✅ **Commits:** `6a80497b` (auto powercycle), `8c754870` (fix)
+- **Filer ændret:**
+  - `edge/agent.py` — Auto powercycle logik i `_lab_tick()`
+- **Test status:**
+  - ✅ Live Video (F-013C): PASS (auto powercycle virkede, frame push started)
+  - ⏳ Camera Operations: Pending
+  - ⏳ Relay Toggle: Pending
+  - ⏳ WiFi Operations: Pending
+- **Næste skridt:**
+  - Test remaining LAB mode features
+  - Commit til main (allerede done)
+- **Risiki:**
+  - Lav — Auto powercycle er robust og testet
 
 ### Handover 2026-07-13 ~18:00 — fra Claude (LAB Mode 503 Fix) til Peter/Codex
 - **LAB mode 503 error fixes IMPLEMENTERET OG COMMITET:**
