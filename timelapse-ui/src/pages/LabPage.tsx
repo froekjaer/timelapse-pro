@@ -21,6 +21,7 @@ import {
   requestFocusDrive, requestAutofocus, requestFocusSlice, requestEdgeAiFocusTest
 } from '../api/client'
 import type { LabPreview, CameraParam, DebugMode, CameraProfile } from '../types'
+import { useWebRTC } from '../hooks/useWebRTC'
 
 function authFetch(url: string, opts?: RequestInit) {
   return fetch(url, { ...opts, credentials: 'include' })
@@ -348,6 +349,7 @@ export default function LabPage() {
   const [wifiConnecting, setWifiConnecting] = useState('')
   const [zoom, setZoom]               = useState(1)
   const [showHistogram, setShowHistogram] = useState(true)
+  const [webrtcEnabled, setWebrtcEnabled] = useState(false)
   const [pollInterval, setPollInterval]   = useState<ReturnType<typeof setInterval> | null>(null)
   const [statusMsg, setStatusMsg]     = useState('')
   const [labConnecting, setLabConnecting] = useState(false)
@@ -355,10 +357,41 @@ export default function LabPage() {
   const [labReady, setLabReady]           = useState(false)
   const [labConnectingStart, setLabConnectingStart] = useState<number | null>(null)
   const imgRef = useRef<HTMLImageElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const { hist, compute, clear } = useHistogram(imgRef)
+
+  // WebRTC Live View hook
+  const webrtc = useWebRTC({
+    deviceId,
+    enabled: webrtcEnabled,
+    onConnected: () => {
+      setStatusMsg('WebRTC Live View forbindt!')
+      setTimeout(() => setStatusMsg(''), 3000)
+    },
+    onError: (error) => {
+      setStatusMsg(`WebRTC fejl: ${error}`)
+      setTimeout(() => setStatusMsg(''), 5000)
+    },
+    onDisconnected: () => {
+      setLivePreview(false) // Stop preview loop hvis WebRTC disconnecter
+    }
+  })
 
   // Hold ref synkroniseret med state for brug i polling closure
   useEffect(() => { selectedPreviewRef.current = selectedPreview }, [selectedPreview])
+
+  // Vedhæft WebRTC stream til video element
+  useEffect(() => {
+    if (!webrtcEnabled || !videoRef.current) return
+
+    const stream = webrtc.getStream()
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream
+      videoRef.current.play().catch(err => {
+        console.error('Video play error:', err)
+      })
+    }
+  }, [webrtc.connected, webrtcEnabled])
 
   // Genberegn histogram når selectedPreview ændres (håndterer cached billeder)
   useEffect(() => {
@@ -554,6 +587,7 @@ export default function LabPage() {
     } else {
       setLabActive(false)
       setLivePreview(false)
+      setWebrtcEnabled(false)  // Stop WebRTC når lab stoppes
       setLabConnecting(false)
       setLabConnectSecs(0)
       setLabConnectingStart(null)
@@ -582,6 +616,7 @@ export default function LabPage() {
     setLabConnecting(false)
     setLabActive(false)
     setLivePreview(false)
+    setWebrtcEnabled(false)  // Stop WebRTC
     setLabConnectSecs(0)
     setLabConnectingStart(null)
     setLabReady(false)
@@ -1005,7 +1040,20 @@ export default function LabPage() {
 
             {/* Image */}
             <div className="bg-gray-900 aspect-video flex items-center justify-center overflow-hidden relative">
-              {selectedPreview ? (
+              {webrtcEnabled && webrtc.connected ? (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-contain"
+                  style={{
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'center center',
+                    transition: 'transform 0.15s',
+                  }}
+                />
+              ) : selectedPreview ? (
                 <img
                   key={selectedPreview.filename}
                   ref={imgRef}
@@ -1029,6 +1077,31 @@ export default function LabPage() {
                   <span>Tag et preview for at se billedet</span>
                 </div>
               )}
+
+              {/* WebRTC overlay */}
+              {webrtcEnabled && webrtc.connecting && (
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                  <div className="text-white text-sm flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Opretter WebRTC forbindelse…
+                  </div>
+                </div>
+              )}
+              {webrtcEnabled && webrtc.error && (
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                  <div className="text-white text-sm flex items-center gap-2">
+                    <span className="text-red-400">WebRTC fejl: {webrtc.error}</span>
+                  </div>
+                </div>
+              )}
+              {webrtcEnabled && !webrtc.connected && !webrtc.connecting && !webrtc.error && (
+                <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                  <div className="text-white text-sm flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Venter på WebRTC stream…
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Histogram */}
@@ -1040,19 +1113,26 @@ export default function LabPage() {
 
             {/* Preview actions */}
             <div className="p-4 flex gap-3">
-              <button onClick={() => setLivePreview(v => !v)} disabled={labConnecting}
+              <button onClick={() => setWebrtcEnabled(v => !v)} disabled={labConnecting}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors ${
+                  webrtcEnabled ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-sky-600 hover:bg-sky-700'
+                }`}>
+                {webrtcEnabled ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                {webrtcEnabled ? 'WebRTC Live' : 'WebRTC Live'}
+              </button>
+              <button onClick={() => setLivePreview(v => !v)} disabled={labConnecting || webrtcEnabled}
                 className={`flex-1 flex items-center justify-center gap-2 py-2.5 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors ${
                   livePreview ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-sky-600 hover:bg-sky-700'
                 }`}>
                 {livePreview ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
                 {livePreview ? 'Stop preview loop' : 'Preview loop'}
               </button>
-              <button onClick={takePreview} disabled={loadingPreview}
+              <button onClick={takePreview} disabled={loadingPreview || webrtcEnabled}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors">
                 {loadingPreview ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
                 Preview <span className="text-purple-200 text-xs">(ingen lukker)</span>
               </button>
-              <button onClick={takeCapture} disabled={loadingCapture}
+              <button onClick={takeCapture} disabled={loadingCapture || webrtcEnabled}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded-xl font-medium text-sm transition-colors">
                 {loadingCapture ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
                 Fuld capture <span className="text-gray-400 text-xs">(tæller lukker)</span>

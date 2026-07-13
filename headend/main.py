@@ -15673,6 +15673,190 @@ def wifi_result(
     db.commit()
     return {"status": "ok"}
 
+
+# ── WebRTC Live View Signaling (F-013 LAB mode) ────────────────────────────────
+
+@app.post("/api/lab/{device_id}/webrtc-offer")
+def webrtc_offer(
+    device_id: str,
+    payload: dict,
+    _user = require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    WebRTC signaling: Modtager SDP offer fra browser.
+    Gemmer i device_config til edge henter det via config polling.
+    UI henter answer via GET /api/lab/{device_id}/webrtc-answer
+    """
+    _ensure_capture_device_access(db, _user, device_id)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    offer_sdp = payload.get("sdp")
+    if not offer_sdp:
+        raise HTTPException(status_code=400, detail="Missing SDP offer")
+
+    existing = json.loads(device.device_config or "{}")
+    existing["webrtc_offer"] = {
+        "sdp": offer_sdp,
+        "timestamp": now_utc().isoformat(),
+    }
+    # Clear previous answer when new offer arrives
+    existing.pop("webrtc_answer", None)
+    device.device_config = json.dumps(existing, ensure_ascii=False)
+    db.commit()
+
+    log.info("WebRTC: Offer received for %s", device_id)
+    return {"status": "ok", "message": "Offer stored, waiting for answer from edge"}
+
+
+@app.get("/api/lab/{device_id}/webrtc-answer")
+def webrtc_get_answer(
+    device_id: str,
+    _user = require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    WebRTC signaling: Henter SDP answer som edge har gemt.
+    Returnerer 404 hvis answer ikke er klar endnu (edge har ikke processed offer).
+    """
+    _ensure_capture_device_access(db, _user, device_id)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    existing = json.loads(device.device_config or "{}")
+    answer_data = existing.get("webrtc_answer")
+
+    if not answer_data:
+        raise HTTPException(status_code=404, detail="Answer not ready - edge has not processed offer yet")
+
+    return {"answer": answer_data.get("sdp"), "timestamp": answer_data.get("timestamp")}
+
+
+@app.post("/api/lab/{device_id}/webrtc-answer")
+def webrtc_set_answer(
+    device_id: str,
+    payload: dict,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
+    """
+    WebRTC signaling: Modtager SDP answer fra edge agent.
+    Browser henter answer via GET /api/lab/{device_id}/webrtc-answer
+    """
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    answer_sdp = payload.get("answer")
+    if not answer_sdp:
+        raise HTTPException(status_code=400, detail="Missing SDP answer")
+
+    existing = json.loads(device.device_config or "{}")
+    existing["webrtc_answer"] = {
+        "sdp": answer_sdp,
+        "timestamp": now_utc().isoformat(),
+    }
+    device.device_config = json.dumps(existing, ensure_ascii=False)
+    db.commit()
+
+    log.info("WebRTC: Answer received from %s", device_id)
+    return {"status": "ok"}
+
+
+@app.post("/api/lab/{device_id}/webrtc-ice")
+def webrtc_ice_candidate(
+    device_id: str,
+    payload: dict,
+    _user = require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    WebRTC signaling: Modtager ICE candidate fra browser.
+    Gemmer i device_config til edge henter det via config polling.
+    """
+    _ensure_capture_device_access(db, _user, device_id)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    candidate = payload.get("candidate")
+    if not candidate:
+        raise HTTPException(status_code=400, detail="Missing ICE candidate")
+
+    existing = json.loads(device.device_config or "{}")
+    # Store array of candidates (max 10 to avoid bloat)
+    ice_candidates = existing.get("webrtc_ice_candidates", [])
+    ice_candidates.append({
+        "candidate": candidate,
+        "timestamp": now_utc().isoformat(),
+    })
+    # Keep only latest 10 candidates
+    existing["webrtc_ice_candidates"] = ice_candidates[-10:]
+    device.device_config = json.dumps(existing, ensure_ascii=False)
+    db.commit()
+
+    log.debug("WebRTC: ICE candidate received for %s (total %d)", device_id, len(ice_candidates))
+    return {"status": "ok"}
+
+
+@app.post("/api/lab/{device_id}/webrtc-ice-result")
+def webrtc_ice_candidate_from_edge(
+    device_id: str,
+    payload: dict,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
+    """
+    WebRTC signaling: Modtager ICE candidate fra edge agent.
+    UI poller disse via GET /api/lab/{device_id}/webrtc-ice-candidates
+    """
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    candidate = payload.get("candidate")
+    if not candidate:
+        raise HTTPException(status_code=400, detail="Missing ICE candidate")
+
+    existing = json.loads(device.device_config or "{}")
+    # Store array of edge candidates (max 10)
+    ice_candidates = existing.get("webrtc_ice_from_edge", [])
+    ice_candidates.append({
+        "candidate": candidate,
+        "timestamp": now_utc().isoformat(),
+    })
+    existing["webrtc_ice_from_edge"] = ice_candidates[-10:]
+    device.device_config = json.dumps(existing, ensure_ascii=False)
+    db.commit()
+
+    log.debug("WebRTC: ICE candidate from edge %s", device_id)
+    return {"status": "ok"}
+
+
+@app.get("/api/lab/{device_id}/webrtc-ice-candidates")
+def webrtc_get_ice_candidates(
+    device_id: str,
+    _user = require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    WebRTC signaling: Henter ICE candidates fra edge agent.
+    Browser poller dette endpoint efter at have sendt offer.
+    """
+    _ensure_capture_device_access(db, _user, device_id)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    existing = json.loads(device.device_config or "{}")
+    candidates = existing.get("webrtc_ice_from_edge", [])
+
+    return {"candidates": candidates}
+
+
 @app.get("/api/admin/captures/timeline")
 def captures_timeline(
     device_id: str,
