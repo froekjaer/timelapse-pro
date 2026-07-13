@@ -88,8 +88,23 @@ export const requestPreview = (deviceId: string) =>
 export const requestCapture = (deviceId: string) =>
   getClient().post(`/api/lab/${pathSegment(deviceId)}/capture`).then(r => r.data)
 
-export const setParam = (deviceId: string, key: string, value: string) =>
-  getClient().post(`/api/lab/${pathSegment(deviceId)}/set-param`, { key, value }).then(r => r.data)
+export const setParam = async (deviceId: string, key: string, value: string) => {
+  // Retry on 503 errors (headend busy)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await getClient().post(`/api/lab/${pathSegment(deviceId)}/set-param`, { key, value }).then(r => r.data)
+    } catch (err: any) {
+      const status = err?.response?.status
+      if (status === 503 && attempt < 2) {
+        // Wait 500ms and retry
+        await new Promise(resolve => setTimeout(resolve, 500))
+        continue
+      }
+      throw err
+    }
+  }
+  throw new Error('setParam failed after retries')
+}
 
 export const requestFocusDrive = (deviceId: string, value: string) =>
   getClient().post(`/api/lab/${pathSegment(deviceId)}/focus-drive`, { value }).then(r => r.data)

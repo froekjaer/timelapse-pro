@@ -529,7 +529,7 @@ export default function LabPage() {
     }
 
     checkExistingLab()
-    const iv = window.setInterval(checkExistingLab, 3000)
+    const iv = window.setInterval(checkExistingLab, 6000)  // Increased from 3s to 6s
     return () => { cancelled = true; window.clearInterval(iv) }
   }, [deviceId])
 
@@ -556,8 +556,8 @@ export default function LabPage() {
           if (p.length > 0 && !userSelectedRef.current && p[0].filename !== selectedPreviewRef.current?.filename) {
             setSelectedPreview(p[0])
           }
-        }).catch(() => {})
-      }, 3000)
+        }).catch(() => {})  // Silently ignore 503 errors
+      }, 5000)  // Increased from 3s to 5s to reduce headend load
       setPollInterval(iv)
       return () => clearInterval(iv)
     } else {
