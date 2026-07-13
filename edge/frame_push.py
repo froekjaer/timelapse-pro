@@ -151,7 +151,7 @@ class FramePusher:
                     log.debug("FRAME PUSH: Upload skipped (rate limit)")
                     return  # Skip upload if too soon
 
-                # Upload via existing API client
+                # Upload via existing API client (device_id is already in api client)
                 success, _ = self._api.upload_live_frame(frame_data)
                 self._last_upload_time = now
 
