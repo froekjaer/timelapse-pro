@@ -197,8 +197,10 @@ function ParamRow({
       setSaved(true)
       setTimeout(() => { setSaved(false); setEditing(false); }, 800)
       setTimeout(() => { onChanged() }, 1500)
-    } catch {
-      setError('Fejl')
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || 'Fejl'
+      setError(msg)
+      console.error('setParam error:', err)
     } finally {
       setSaving(false)
     }
