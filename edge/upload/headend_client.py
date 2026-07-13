@@ -443,6 +443,8 @@ class HeadendClient:
                 path,
                 payload_hash=frame_hash,
             ))
+            # Add JWT Authorization header
+            headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
 
             # Upload as multipart/form-data
             files = {"frame": ("live.jpg", frame_data, "image/jpeg")}
