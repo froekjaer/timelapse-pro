@@ -187,16 +187,19 @@ function ParamRow({
   const [editing, setEditing]   = useState(false)
   const [value, setValue]       = useState(param.current)
   const [saving, setSaving]     = useState(false)
+  const [saved, setSaved]       = useState(false)
   const [error, setError]       = useState('')
 
   async function save() {
     setSaving(true); setError('')
     try {
       await setParam(deviceId, param.path, value)
-      // Success - close editing and reload params
+      // Success - show saved indicator, keep editing open until params reload
+      setSaved(true)
+      // Reload params to sync with camera, then close editing
+      await onChanged()
       setEditing(false)
-      // Reload params with delay to let camera apply the change
-      setTimeout(() => onChanged(), 3000)
+      setTimeout(() => setSaved(false), 500)
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || 'Fejl'
       setError(msg)
@@ -265,13 +268,19 @@ function ParamRow({
                 onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
               />
             )}
-            <button onClick={save} disabled={saving}
-              className={`p-1 rounded ${saving ? 'text-gray-400' : 'text-green-600 hover:text-green-700'}`}>
-              {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-            </button>
-            <button onClick={() => setEditing(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded">
-              <X className="w-3.5 h-3.5" />
-            </button>
+            {saved ? (
+              <span className="text-xs text-green-600 font-medium">✓ Gemt!</span>
+            ) : (
+              <>
+                <button onClick={save} disabled={saving}
+                  className={`p-1 rounded ${saving ? 'text-gray-400' : 'text-green-600 hover:text-green-700'}`}>
+                  {saving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                </button>
+                <button onClick={() => setEditing(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
             {error && <span className="text-xs text-red-400">{error}</span>}
           </div>
         )}
