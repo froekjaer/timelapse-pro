@@ -8879,3 +8879,20 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - **Næste skridt:**
   - Test UI i browser for at verificere at tooltips vises korrekt
   - Overvej om andre sider (SitePage, CustomerPage) også skal have tooltips
+
+### Handover 2026-07-13 ~13:30 — LAB mode testing (Camera Operations — readonly fix)
+- **Probleme:** Shutter Speed (Lukker) mangler tandhjul-ikon i LAB UI, kan ikke ændres
+- **Årsag:** gphoto2 rapporterer `Readonly: 1` for shutterspeed i visse kameramodes
+- **Fix:** `FORCE_EDITABLE` override i `_parse_gphoto2_config()`:
+  - Tvinger følgende parametre til at være editable:
+    - `/main/capturesettings/shutterspeed`
+    - `/main/capturesettings/shutterspeed2`
+    - `/main/capturesettings/aperture`
+    - `/main/imgsettings/iso`
+    - `/main/capturesettings/exposurecompensation`
+- **Filer rørt:**
+  - `edge/camera/drivers/gphoto2_driver.py` — `_parse_gphoto2_config()`
+  - `Dokumentation/HANDOVER_LOG.md` — denne entry
+- **Git commit:** `3806b38b` — "fix: Override gphoto2 readonly flag for key camera params"
+- **Deploy:** Pull på edge: `cd /opt/timelapse && git pull && sudo systemctl restart timelapse-edge`
+- **Test:** Genindlæs parametre i LAB UI efter restart — tandhjulet skal nu vises ved Shutter Speed
