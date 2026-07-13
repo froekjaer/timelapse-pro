@@ -17,6 +17,21 @@ markers = [
     "integration: kræver live headend på TIMELAPSE_TEST_BASE_URL",
     "smoke: hurtig daglig/CI smoke-test for kernefunktionalitet",
     "unit: unit test der ikke kræver ekstern dependencies",
+    # Weekend features markers
+    "p203: P2-03 GDPR Redaction workflow (UI-010)",
+    "p005: P0-05 Retention Policy",
+    "p002: P2-02 Thumbnail Post-Processing",
+    "m005: M-05 Agent-Lockdown Layer 2",
+    "gdpr: GDPR relaterede tests",
+    "retention: Retention policy tests",
+    "drift: Drift-detection tests",
+    "security: Sikkerheds-relaterede tests",
+    "updates: Update UI scopes tests",
+    "thumbnail: Thumbnail/Post-Processing tests",
+    "database: Database schema tests",
+    "high: Høj prioritet",
+    "critical: Kritisk prioritet",
+    "medium: Medium prioritet",
 ]
 
 # Default behavior

@@ -15857,6 +15857,95 @@ def webrtc_get_ice_candidates(
     return {"candidates": candidates}
 
 
+# ── MJPEG Live View Proxy (F-013B LAB mode) ─────────────────────────────────────
+
+import httpx as _httpx
+
+@app.get("/api/lab/{device_id}/mjpeg")
+async def mjpeg_live_view(
+    device_id: str,
+    _user = require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    MJPEG Live View proxy for LAB mode.
+    Proxies MJPEG stream from edge device to browser.
+
+    Browser: <img src={`/api/lab/${device_id}/mjpeg`} />
+    Edge: http://edge:8101/mjpeg
+    """
+    _ensure_capture_device_access(db, _user, device_id)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    # Get edge address from device or use default
+    edge_ip = device.edge_ip or device.last_heartbeat_ip
+    if not edge_ip:
+        raise HTTPException(status_code=503, detail="Device edge IP unknown")
+
+    # MJPEG port (default 8101)
+    mjpeg_port = 8101
+    mjpeg_url = f"http://{edge_ip}:{mjpeg_port}/mjpeg"
+
+    # Proxy MJPEG stream from edge
+    async def generate():
+        try:
+            async with _httpx.AsyncClient(timeout=5.0) as client:
+                async with client.stream("GET", mjpeg_url) as response:
+                    if response.status_code != 200:
+                        raise HTTPException(
+                            status_code=response.status_code,
+                            detail=f"Edge MJPEG server returned {response.status_code}"
+                        )
+
+                    # Stream MJPEG frames to browser
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+        except Exception as e:
+            log.error(f"MJPEG proxy error for {device_id}: {e}")
+            raise HTTPException(status_code=503, detail=f"Edge MJPEG unavailable: {e}")
+
+    return Response(
+        content=generate(),
+        media_type="multipart/x-mixed-replace; boundary=FRAME",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
+
+
+@app.get("/api/lab/{device_id}/mjpeg-health")
+def mjpeg_health(
+    device_id: str,
+    _user = require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """
+    Check if MJPEG server is available on edge.
+    Returns 200 if MJPEG server responds, 503 otherwise.
+    """
+    _ensure_capture_device_access(db, _user, device_id)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    edge_ip = device.edge_ip or device.last_heartbeat_ip
+    if not edge_ip:
+        return {"available": False, "reason": "edge_ip_unknown"}
+
+    mjpeg_port = 8101
+    mjpeg_url = f"http://{edge_ip}:{mjpeg_port}/health"
+
+    try:
+        resp = _httpx.get(mjpeg_url, timeout=2.0)
+        return {"available": resp.status_code == 200, "status_code": resp.status_code}
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+
 @app.get("/api/admin/captures/timeline")
 def captures_timeline(
     device_id: str,

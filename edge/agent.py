@@ -89,14 +89,14 @@ except ImportError:
     serve_technician_ui = None
     get_auth = None
 
-# WebRTC Live View (LAB mode)
+# MJPEG Live View (LAB mode) - F-013B
 try:
-    from webrtc_server import run_webrtc_server, stop_webrtc_server
-    _WEBRTC_AVAILABLE = True
+    from mjpeg_server import start_mjpeg_server, stop_mjpeg_server
+    _MJPEG_AVAILABLE = True
 except ImportError:
-    _WEBRTC_AVAILABLE = False
-    run_webrtc_server = None
-    stop_webrtc_server = None
+    _MJPEG_AVAILABLE = False
+    start_mjpeg_server = None
+    stop_mjpeg_server = None
 
 # ── HAL (Hardware Abstraction Layer) ──────────────────────────────────────────
 try:
@@ -166,8 +166,7 @@ class EdgeAgent:
                 log.warning("Technician auth init failed: %s", exc)
 
         # WebRTC Live View server (LAB mode)
-        self._webrtc_server = None
-        self._webrtc_enabled = False
+        self._mjpeg_enabled = False
 
         # State
         self._last_heartbeat:    datetime = datetime.min.replace(tzinfo=timezone.utc)
@@ -2053,16 +2052,16 @@ class EdgeAgent:
                 except Exception:
                     pass
 
-                # Start WebRTC server automatically when LAB mode is active
-                if _WEBRTC_AVAILABLE and ok:
-                    if not self._webrtc_enabled:
+                # Start MJPEG server automatically when LAB mode is active
+                if _MJPEG_AVAILABLE and ok:
+                    if not self._mjpeg_enabled:
                         try:
-                            webrtc_port = int(self._cfg.get("webrtc", {}).get("port", "8100"))
-                            if run_webrtc_server(webrtc_port):
-                                self._webrtc_enabled = True
-                                log.info("LAB MODE — WebRTC server started")
+                            mjpeg_port = int(self._cfg.get("mjpeg", {}).get("port", "8101"))
+                            if start_mjpeg_server(mjpeg_port):
+                                self._mjpeg_enabled = True
+                                log.info("LAB MODE — MJPEG server started on port %d", mjpeg_port)
                         except Exception as exc:
-                            log.warning("LAB MODE — WebRTC server failed to start: %s", exc)
+                            log.warning("LAB MODE — MJPEG server failed to start: %s", exc)
             except Exception as exc:
                 log.warning("LAB MODE — camera connect failed: %s", exc)
 
@@ -2071,14 +2070,14 @@ class EdgeAgent:
             if not cfg_data.get("debug_mode", {}).get("enabled", False):
                 log.info("LAB MODE — disabled from headend, exiting lab mode")
 
-                # Stop WebRTC server if running
-                if _WEBRTC_AVAILABLE and self._webrtc_enabled:
+                # Stop MJPEG server if running
+                if _MJPEG_AVAILABLE and self._mjpeg_enabled:
                     try:
-                        stop_webrtc_server()
-                        self._webrtc_enabled = False
-                        log.info("LAB MODE — WebRTC server stopped")
+                        stop_mjpeg_server()
+                        self._mjpeg_enabled = False
+                        log.info("LAB MODE — MJPEG server stopped")
                     except Exception as exc:
-                        log.warning("LAB MODE — WebRTC server stop error: %s", exc)
+                        log.warning("LAB MODE — MJPEG server stop error: %s", exc)
 
                 try: self._driver.disconnect()
                 except: pass
@@ -2289,52 +2288,10 @@ class EdgeAgent:
                     log.warning("LAB — WiFi forget failed: %s", exc)
                 self._api.clear_lab_command(self._device_id)
 
-            # ── WebRTC Signaling (F-013 LAB mode Live View) ───────────────────────
-            if _WEBRTC_AVAILABLE and _REQUESTS_AVAILABLE:
-                try:
-                    webrtc_offer = cfg_data.get("webrtc_offer")
-                    if webrtc_offer and not self._cfg.get("webrtc_answer_sent"):
-                        # Browser har sendt offer - forward til WebRTC server
-                        webrtc_port = int(self._cfg.get("webrtc", {}).get("port", "8100"))
-                        offer_url = f"http://localhost:{webrtc_port}/offer"
-                        try:
-                            resp = requests.post(offer_url, json={"sdp": webrtc_offer.get("sdp")}, timeout=5)
-                            if resp.status_code == 200:
-                                answer_sdp = resp.json().get("answer")
-                                if answer_sdp:
-                                    # Send answer tilbage til headend
-                                    self._api._post(f"/lab/{self._device_id}/webrtc-answer", {"answer": answer_sdp})
-                                    # Marker at answer er sent (undgå resend)
-                                    self._cfg["webrtc_answer_sent"] = True
-                                    log.info("LAB MODE — WebRTC answer sent to headend")
-                            else:
-                                log.warning("LAB MODE — WebRTC offer failed: %s", resp.status_code)
-                        except requests.RequestException as exc:
-                            log.warning("LAB MODE — WebRTC server error: %s", exc)
-
-                    # Clear offer hvis vi har sendt answer (ready for next connection)
-                    if self._cfg.get("webrtc_answer_sent") and webrtc_offer:
-                        # Tving config refresh for at fjerne gamle offer
-                        try:
-                            self._api._post(f"/lab/{self._device_id}/webrtc-answer", {})
-                        except:
-                            pass
-
-                    # ICE candidates fra browser
-                    ice_candidates = cfg_data.get("webrtc_ice_candidates", [])
-                    for ice_item in ice_candidates:
-                        # Forward til WebRTC server
-                        webrtc_port = int(self._cfg.get("webrtc", {}).get("port", "8100"))
-                        ice_url = f"http://localhost:{webrtc_port}/ice"
-                        try:
-                            resp = requests.post(ice_url, json={"candidate": ice_item.get("candidate")}, timeout=2)
-                            if resp.status_code == 200:
-                                log.debug("LAB MODE — ICE candidate forwarded")
-                        except requests.RequestException:
-                            pass  # ICE er ikke kritisk
-
-                except Exception as webrtc_exc:
-                    log.debug("LAB MODE — WebRTC signaling error: %s", webrtc_exc)
+            # ── MJPEG Live View (F-013B) ───────────────────────────────────────────
+            # MJPEG server kører automatisk når LAB mode er aktiv.
+            # Ingen signaling nødvendig - browser streamer direkte fra edge.
+            # Headend proxyer MJPEG stream til /api/lab/{id}/mjpeg
 
         time.sleep(poll_s)
 
