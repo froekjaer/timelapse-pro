@@ -2419,6 +2419,8 @@ class EdgeAgent:
                 # Check if actually running before stopping
                 if frame_push_is_running and frame_push_is_running():
                     stop_frame_push()
+                    # Wait for gphoto2 to fully release camera (terminate() is async)
+                    time.sleep(1.0)
                     log.info("LAB — Frame push stopped for camera operation")
             except Exception as exc:
                 log.warning("LAB — Frame push stop failed: %s", exc)
