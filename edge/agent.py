@@ -2431,26 +2431,28 @@ class EdgeAgent:
         """Stop frame push before camera operations to avoid gphoto2 conflicts."""
         if _FRAME_PUSH_AVAILABLE and self._live_frame_enabled:
             try:
-                stop_frame_push()
-                self._live_frame_enabled = False
-                log.info("LAB — Frame push stopped for camera operation")
+                # Check if actually running before stopping
+                if frame_push_is_running and frame_push_is_running():
+                    stop_frame_push()
+                    log.info("LAB — Frame push stopped for camera operation")
             except Exception as exc:
                 log.warning("LAB — Frame push stop failed: %s", exc)
 
     def _lab_start_frame_push(self) -> None:
         """Start/restart frame push after camera operations."""
-        if _FRAME_PUSH_AVAILABLE and not self._live_frame_enabled:
+        if _FRAME_PUSH_AVAILABLE and self._live_frame_enabled:
             try:
-                # Disconnect driver to free camera for gphoto2 --capture-movie
-                try:
-                    self._driver.disconnect()
-                    log.debug("LAB — Driver disconnected for frame push restart")
-                except Exception:
-                    pass
-                # Start frame push (uses own gphoto2 instance)
-                if start_frame_push(self._device_id, self._api, self._driver):
-                    self._live_frame_enabled = True
-                    log.info("LAB — Frame push restarted")
+                # Only start if user enabled it AND it's not already running
+                if not frame_push_is_running or not frame_push_is_running():
+                    # Disconnect driver to free camera for gphoto2 --capture-movie
+                    try:
+                        self._driver.disconnect()
+                        log.debug("LAB — Driver disconnected for frame push restart")
+                    except Exception:
+                        pass
+                    # Start frame push (uses own gphoto2 instance)
+                    if start_frame_push(self._device_id, self._api, self._driver):
+                        log.info("LAB — Frame push restarted")
             except Exception as exc:
                 log.warning("LAB — Frame push restart failed: %s", exc)
 
