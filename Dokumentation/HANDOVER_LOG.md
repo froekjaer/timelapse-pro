@@ -30,7 +30,7 @@ person vide".
 ## Log
 
 ### Handover 2026-07-13 ~18:00 — fra Claude (LAB Mode 503 Fix) til Peter/Codex
-- **LAB mode 503 error fixes IMPLEMENTERET:**
+- **LAB mode 503 error fixes IMPLEMENTERET OG COMMITET:**
   - ✅ **Frame rate reduced:** 10 FPS → 5 FPS (FRAME_INTERVAL 0.1s → 0.2s)
     - Mindre load på headend
     - Reducerer 503 errors fra frame_push
@@ -46,6 +46,7 @@ person vide".
   - ✅ **Config version tracking:** API responses inkluderer config_version
     - Trigger config pull hvis version ændres
   - ✅ **Fullscreen toggle i LAB UI:** Klik for fuldskærm video
+  - ✅ **COMMIT:** `f51b9b6b` — alle ændringer commitet til main
 - **Filer ændret:**
   - `edge/frame_push.py` — 5 FPS, 503 silencing
   - `edge/upload/headend_client.py` — tuple return, 503 silencing
@@ -55,10 +56,10 @@ person vide".
 - **Test status:**
   - Python syntax: ✅ Valid
   - Imports: ✅ OK
-  - TypeScript lint: Pre-existing errors (ikke relateret)
+  - Git: ✅ Commitet til main
 - **Næste skridt:**
-  - Commit ændringer
   - Test på device (når tilgængelig)
+  - Push til origin/main når godkendt
 - **Risici:**
   - Lav — 503 errors er ikke kritiske, frames skippe bare
   - Camera operations er beskyttet mod gphoto2 konflikter
