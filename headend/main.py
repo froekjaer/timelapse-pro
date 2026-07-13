@@ -15867,26 +15867,33 @@ _live_frame_timestamps: dict[str, float] = {}
 @app.post("/api/lab/{device_id}/live-frame")
 async def receive_live_frame(
     device_id: str,
-    frame: UploadFile,
+    frame: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     """
     Receive live preview frame from edge.
     Edge pushes frames here via POST multipart/form-data.
     """
-    # Verify device exists
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
+    try:
+        # Verify device exists
+        device = db.query(Device).filter_by(device_id=device_id).first()
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
 
-    # Read frame data
-    frame_data = await frame.read()
+        # Read frame data
+        frame_data = await frame.read()
 
-    # Store in memory (max 1 frame per device)
-    _live_frames[device_id] = frame_data
-    _live_frame_timestamps[device_id] = time.time()
+        # Store in memory (max 1 frame per device)
+        _live_frames[device_id] = frame_data
+        _live_frame_timestamps[device_id] = time.time()
 
-    return {"status": "ok"}
+        return {"status": "ok"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Error receiving live frame for {device_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.get("/api/lab/{device_id}/live-frame")
