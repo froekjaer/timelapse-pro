@@ -508,6 +508,8 @@ export default function LabPage() {
           setLabConnectingStart(null)
           setLabReady(true)
           listPreviews(deviceId).then(setPreviews).catch(() => {})
+          // Auto-load params on refresh if camera ready
+          if (params.length === 0) loadParams().catch(() => {})
         } else if (debugEnabled && !cameraReady) {
           setLabActive(false)
           setLabConnecting(true)
@@ -646,6 +648,8 @@ export default function LabPage() {
               setLabConnectingStart(null)
               listPreviews(deviceId).then(setPreviews).catch(() => {})
               setLabReady(true)
+              // Auto-load params when camera is ready
+              loadParams().catch(() => {})
             }
           } catch { /* ignore */ }
         }, 3000)
