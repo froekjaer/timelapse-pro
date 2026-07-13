@@ -2056,7 +2056,8 @@ class EdgeAgent:
                 if _FRAME_PUSH_AVAILABLE and ok:
                     if not self._live_frame_enabled:
                         try:
-                            if start_frame_push(self._device_id, self._api):
+                            # Pass camera driver to use shared connection
+                            if start_frame_push(self._device_id, self._api, self._driver):
                                 self._live_frame_enabled = True
                                 log.info("LAB MODE — Frame push started")
                         except Exception as exc:

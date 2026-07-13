@@ -3,7 +3,7 @@
 ════════════════════════════════════════════════════════════════════════════════
 TimeLapse Pro — Frame Push Live View (F-013C)
 ──────────────────────────────────────────────────────────────────────────────────
-Version  : 1.0.0
+Version  : 1.1.0
 Dato     : 13. juli 2026
 Formål   : Real-time video streaming via frame push
 
@@ -14,13 +14,15 @@ Arkitektur:
   Camera → gphoto2 → Edge → HTTP POST → Headend → Browser GET
 
 Ingen direkte forbindelse fra headend til edge!
+
+v1.1.0: Integrated camera driver - uses shared driver instance to avoid
+        gphoto2 exclusive access conflicts.
 ════════════════════════════════════════════════════════════════════════════════
 """
 
 from __future__ import annotations
 
 import logging
-import subprocess
 import tempfile
 import threading
 import time
@@ -30,7 +32,7 @@ from typing import Optional
 log = logging.getLogger(__name__)
 
 # Configuration
-FRAME_INTERVAL = 0.8  # Sekunder mellem frames (gphoto2 limit)
+FRAME_INTERVAL = 0.8  # Sekunder mellem frames
 FRAME_DIR = Path(tempfile.gettempdir()) / "frame_push"
 FRAME_PATH = FRAME_DIR / "live_preview.jpg"
 
@@ -42,21 +44,26 @@ class FramePusher:
     Runs in background thread, continuously capturing and uploading.
     """
 
-    def __init__(self, device_id: str, api_client):
+    def __init__(self, device_id: str, api_client, camera_driver=None):
         """
         Initialize frame pusher.
 
         Args:
             device_id: Device ID for API calls
             api_client: Edge API client instance
+            camera_driver: Optional camera driver instance (GPhoto2Driver).
+                          If provided, uses driver.capture_preview() instead
+                          of direct gphoto2 subprocess to avoid exclusive
+                          access conflicts.
         """
         self._device_id = device_id
         self._api = api_client
+        self._camera = camera_driver
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._frame_path = FRAME_PATH
         self._last_upload_time = 0
         self._upload_lock = threading.Lock()
+        self._preview_dir = FRAME_DIR
 
     def start(self):
         """Start frame capture and upload loop."""
@@ -64,11 +71,12 @@ class FramePusher:
             return
 
         self._running = True
-        FRAME_DIR.mkdir(parents=True, exist_ok=True)
+        self._preview_dir.mkdir(parents=True, exist_ok=True)
 
         self._thread = threading.Thread(target=self._capture_and_upload_loop, daemon=True, name="frame-pusher")
         self._thread.start()
-        log.info("FRAME PUSH: Started (device=%s)", self._device_id)
+        log.info("FRAME PUSH: Started (device=%s, camera=%s)",
+                 self._device_id, "shared" if self._camera else "direct")
 
     def stop(self):
         """Stop frame capture and upload loop."""
@@ -89,31 +97,44 @@ class FramePusher:
                     self._upload_frame(frame_data)
 
             except Exception as e:
-                log.error("FRAME PUSH: Error in loop: %s", e)
+                log.debug("FRAME PUSH: Error in loop: %s", e)
 
             time.sleep(FRAME_INTERVAL)
 
     def _capture_frame(self) -> Optional[bytes]:
-        """Capture preview frame from gphoto2."""
+        """
+        Capture preview frame from gphoto2.
+
+        Uses shared camera driver if available, otherwise direct subprocess.
+        """
         try:
-            result = subprocess.run(
-                ["gphoto2", "--capture-preview", "--filename", str(self._frame_path), "--force-overwrite"],
-                capture_output=True,
-                text=True,
-                timeout=12,
-            )
-
-            if result.returncode == 0 and self._frame_path.exists():
-                return self._frame_path.read_bytes()
+            if self._camera:
+                # Use shared camera driver's capture_preview method
+                # This avoids exclusive access conflicts
+                preview_path = self._camera.capture_preview(self._preview_dir)
+                if preview_path and preview_path.exists():
+                    return preview_path.read_bytes()
+                else:
+                    log.warning("FRAME PUSH: Camera preview capture returned no file")
+                    return None
             else:
-                log.warning("FRAME PUSH: gphoto2 capture failed: %s", result.stderr)
-                return None
+                # Fallback: direct gphoto2 subprocess (legacy mode)
+                import subprocess
+                result = subprocess.run(
+                    ["gphoto2", "--capture-preview", "--filename", str(FRAME_PATH), "--force-overwrite"],
+                    capture_output=True,
+                    text=True,
+                    timeout=12,
+                )
 
-        except subprocess.TimeoutExpired:
-            log.warning("FRAME PUSH: gphoto2 capture timeout")
-            return None
+                if result.returncode == 0 and FRAME_PATH.exists():
+                    return FRAME_PATH.read_bytes()
+                else:
+                    log.warning("FRAME PUSH: gphoto2 capture failed: %s", result.stderr)
+                    return None
+
         except Exception as e:
-            log.error("FRAME PUSH: Capture error: %s", e)
+            log.warning("FRAME PUSH: Capture error: %s", e)
             return None
 
     def _upload_frame(self, frame_data: bytes):
@@ -142,13 +163,14 @@ class FramePusher:
 _global_frame_pusher: Optional[FramePusher] = None
 
 
-def start_frame_push(device_id: str, api_client) -> bool:
+def start_frame_push(device_id: str, api_client, camera_driver=None) -> bool:
     """
     Start frame pusher for device.
 
     Args:
         device_id: Device ID
         api_client: Edge API client instance
+        camera_driver: Optional camera driver instance (recommended)
 
     Returns:
         True if started successfully, False otherwise
@@ -160,7 +182,7 @@ def start_frame_push(device_id: str, api_client) -> bool:
         return True
 
     try:
-        _global_frame_pusher = FramePusher(device_id, api_client)
+        _global_frame_pusher = FramePusher(device_id, api_client, camera_driver)
         _global_frame_pusher.start()
         return True
 
