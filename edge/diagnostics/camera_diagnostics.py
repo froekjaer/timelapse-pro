@@ -164,15 +164,16 @@ def collect_camera_diagnostics(
     camera_model: Optional[str] = None,
     expected_overrides: Optional[dict] = None,
     non_enforceable_keys: Optional[set] = None,
+    include_fleet_defaults: bool = True,
 ) -> dict:
     """
     Read camera status and config via gphoto2.
 
     `expected_overrides` keys may be canonical CAMERA_CONFIG_PARAMS keys,
     short legacy gphoto2 key names, or full gphoto2 config paths — see
-    `_canonicalize_config_key`. They are MERGED onto FLEET_DEFAULTS (an
-    override wins per-key; a device with no overrides for a given setting
-    still gets checked against the fleet default for it) — previously a
+    `_canonicalize_config_key`. When `include_fleet_defaults` is true they are
+    merged onto FLEET_DEFAULTS (an override wins per-key). Profiled cameras set
+    it false and are checked only against their effective enforceable values — previously a
     non-None `expected_overrides` fully replaced FLEET_DEFAULTS, which meant
     an empty/partially-mapped overrides dict silently disabled most drift
     checks.
@@ -243,7 +244,7 @@ def collect_camera_diagnostics(
     # and layer any device-specific overrides on top (per-key), canonicalising
     # override keys first since they may arrive as short gphoto2 names or full
     # gphoto2 paths depending on the active camera profile.
-    expected = dict(FLEET_DEFAULTS)
+    expected = dict(FLEET_DEFAULTS) if include_fleet_defaults else {}
     if expected_overrides:
         dropped = []
         for raw_key, value in expected_overrides.items():

@@ -985,7 +985,12 @@ class EdgeAgent:
                 except Exception:
                     non_enforceable = set()
                 self._last_cam_diag = collect_camera_diagnostics(
-                    cam_model, expected, non_enforceable_keys=non_enforceable
+                    cam_model,
+                    expected,
+                    non_enforceable_keys=non_enforceable,
+                    include_fleet_defaults=not bool(
+                        (self._cfg.get("camera_profile", {}) or {}).get("profile_key")
+                    ),
                 )
                 log.info("Camera diagnostics collected: battery=%s shutter=%s drift=%s",
                     self._last_cam_diag.get("camera_status", {}).get("battery_pct"),
