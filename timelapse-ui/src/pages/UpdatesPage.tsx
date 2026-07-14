@@ -699,7 +699,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
             </button>
           </div>
         )}
-        {u.status === 'blocked' && (
+        {(u.status === 'blocked' || u.status === 'rolled_back') && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             <button onClick={() => onApprove(u.id)} disabled={isBusy}
               className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-lg disabled:opacity-50">
@@ -1227,7 +1227,8 @@ export function UpdatesPage() {
       setUpdates(updateList)
       setMatrix(matrixData && Array.isArray(matrixData.devices) ? matrixData : null)
       setArtifacts(Array.isArray(artifactData) ? artifactData : [])
-      const flowPairs = await Promise.all(updateList.map(async u => {
+      const activeFlowUpdates = updateList.filter(u => u.status === 'approved')
+      const flowPairs = await Promise.all(activeFlowUpdates.map(async u => {
         try {
           const status = await api(`/api/updates/${u.id}/flow-status`)
           return [u.id, status as UpdateFlowStatus] as const
@@ -1269,7 +1270,7 @@ export function UpdatesPage() {
     if (!shouldPoll || loading || refreshing) return
     const timer = window.setInterval(() => {
       load(false)
-    }, 2000)
+    }, 5000)
     return () => window.clearInterval(timer)
   }, [watchedUpdateIds, updates, flowStatuses, loading, refreshing, load])
 

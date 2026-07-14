@@ -9406,9 +9406,10 @@ def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTic
                 existing.ticket_id = ticket.ticket_id
             if ticket and ticket.artifact_id and existing.artifact_id != ticket.artifact_id:
                 existing.artifact_id = ticket.artifact_id
-            if update.status == "approved" and existing.status in {"pending", "failed"}:
+            if update.status == "approved" and existing.status in {"pending", "failed", "rolled_back"}:
                 existing.status = "queued"
                 existing.last_error = None
+                existing.completed_at = None
             existing.customer_id = existing.customer_id or device.customer_id
             existing.site_id = existing.site_id or device.site_id
             existing.target_version = existing.target_version or update.version
@@ -9729,7 +9730,7 @@ def approve_update(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
-    if u.status not in ("pending", "rejected", "blocked"):
+    if u.status not in ("pending", "rejected", "blocked", "rolled_back"):
         raise HTTPException(status_code=400, detail=f"Kan ikke godkende opdatering med status '{u.status}'")
     if payload.scope == "device" and not payload.scope_id and not payload.target_device_ids:
         raise HTTPException(status_code=400, detail="Device scope kræver scope_id eller target_device_ids")

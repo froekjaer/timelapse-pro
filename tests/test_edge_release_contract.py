@@ -123,6 +123,16 @@ def test_artifact_install_activates_and_verifies_local_management_services():
     assert "ReadWritePaths=/etc/systemd/system/timelapse-edge.service" in unit
 
 
+def test_rolled_back_update_can_be_explicitly_reapproved():
+    source = _source("headend/main.py")
+    approve_block = source[source.index("def approve_update("):source.index("def _user_can_approve_update(")]
+    target_block = source[source.index("def _ensure_update_targets("):source.index("def _update_flow_stage(")]
+
+    assert '"rolled_back"' in approve_block
+    assert 'existing.status in {"pending", "failed", "rolled_back"}' in target_block
+    assert "existing.completed_at = None" in target_block
+
+
 def test_legacy_edge_update_and_time_scripts_cannot_use_direct_internet_channels():
     legacy_executor = _source("edge/cmdb/executor.py")
     direct_deploy = _source("edge/scripts/deploy-totp.sh")
