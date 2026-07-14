@@ -38,6 +38,15 @@ def test_edge_artifact_download_is_scoped_to_the_authenticated_device():
     assert 'detail="Artifact er ikke godkendt til denne Edge"' in endpoint
 
 
+def test_headend_matches_full_gpg_fingerprint_and_64_bit_key_id():
+    source = _source("headend/main.py")
+    matcher = source.split("def _release_signer_matches", 1)[1].split("\n\ndef ", 1)[0]
+
+    assert "len(key_id) >= 16" in matcher
+    assert "fingerprint.endswith(key_id)" in matcher
+    assert "_release_signer_matches(artifact.signed_by, signer)" in source
+
+
 def test_site_look_configuration_router_is_not_public():
     source = _source("headend/main.py")
 

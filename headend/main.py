@@ -6722,16 +6722,29 @@ def _find_artifact_for_update(db: Session, update: PendingUpdate) -> UpdateArtif
     return q.filter(UpdateArtifact.version == version).first()
 
 
+def _release_signer_matches(signed_by: str | None, signer: dict) -> bool:
+    """Match a credential id, full GPG fingerprint, or 64-bit GPG key id."""
+    candidate = str(signed_by or "").strip()
+    if not candidate:
+        return False
+    if candidate == str(signer.get("credential_id") or "").strip():
+        return True
+    key_id = candidate.replace(" ", "").upper()
+    fingerprint = str(signer.get("gpg_fingerprint") or "").replace(" ", "").upper()
+    return (
+        len(key_id) >= 16
+        and all(char in "0123456789ABCDEF" for char in key_id)
+        and fingerprint.endswith(key_id)
+    )
+
+
 def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> dict | None:
     if not artifact:
         return None
     signer_fingerprint = None
     headend_fingerprint = None  # fallback: headend's own signing identity
     for signer in _trusted_release_signers(db):
-        if artifact.signed_by and artifact.signed_by in {
-            signer.get("credential_id"),
-            signer.get("gpg_fingerprint"),
-        }:
+        if _release_signer_matches(artifact.signed_by, signer):
             signer_fingerprint = signer.get("fingerprint")
             break
         # Gem headend-identitet som fallback for system-hash signerede artifacts
