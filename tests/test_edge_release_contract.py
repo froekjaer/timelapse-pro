@@ -154,7 +154,11 @@ def test_edge_installer_writes_a_verified_artifact_receipt():
 
     assert '"schema": "timelapse.edge.release.v1"' in install_block
     assert 'receipt_path = repo / "edge" / ".timelapse-release.json"' in install_block
-    assert "receipt_tmp.replace(receipt_path)" in install_block
+    assert '_os.fsync(handle.fileno())' in install_block
+    assert '_os.replace(receipt_tmp, receipt_path)' in install_block
+    assert 'persisted_receipt != release_receipt' in install_block
+    assert 'release_receipt_readback_mismatch' in install_block
+    assert install_block.index('persisted_receipt =') < install_block.index('self._report_update(update_id, "deployed")')
     assert "backup_receipt = backup / \"edge\" / receipt_path.name" in install_block
 
 

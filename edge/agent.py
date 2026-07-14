@@ -1702,20 +1702,6 @@ class EdgeAgent:
                 if dest.suffix == ".sh":
                     dest.chmod(dest.stat().st_mode | 0o111)
 
-            # Artifact copies do not move the local Git checkout. Persist a
-            # signed-artifact receipt so CMDB reports the code actually running.
-            release_receipt = {
-                "schema": "timelapse.edge.release.v1",
-                "artifact_id": str(artifact_id),
-                "source_commit": str(artifact.get("source_commit") or manifest.get("source_commit") or ""),
-                "version": str(artifact.get("version") or manifest.get("version") or ""),
-                "installed_at": datetime.now(timezone.utc).isoformat(),
-            }
-            receipt_tmp = receipt_path.with_name(f".{receipt_path.name}.tmp")
-            receipt_tmp.write_text(json.dumps(release_receipt, sort_keys=True), encoding="utf-8")
-            receipt_tmp.chmod(0o644)
-            receipt_tmp.replace(receipt_path)
-
             if management_changed:
                 # These components run as independent root-owned services.
                 # Copy their signed artifact files into the active systemd
@@ -1785,6 +1771,34 @@ class EdgeAgent:
                     )
                     if active.returncode != 0:
                         raise RuntimeError(f"managed_service_not_active:{service}")
+
+            # Artifact copies do not move the local Git checkout. Receipt
+            # persistence is therefore a hard deployment gate: CMDB must not
+            # report deployed until the durable identity can be read back.
+            release_receipt = {
+                "schema": "timelapse.edge.release.v1",
+                "artifact_id": str(artifact_id),
+                "source_commit": str(artifact.get("source_commit") or manifest.get("source_commit") or ""),
+                "version": str(artifact.get("version") or manifest.get("version") or ""),
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            receipt_tmp = receipt_path.with_name(f".{receipt_path.name}.tmp-{_os.getpid()}")
+            flags = _os.O_WRONLY | _os.O_CREAT | _os.O_TRUNC | getattr(_os, "O_NOFOLLOW", 0)
+            fd = _os.open(receipt_tmp, flags, 0o644)
+            try:
+                with _os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(release_receipt, handle, sort_keys=True)
+                    handle.flush()
+                    _os.fsync(handle.fileno())
+                _os.replace(receipt_tmp, receipt_path)
+                receipt_path.chmod(0o644)
+            finally:
+                if receipt_tmp.exists():
+                    receipt_tmp.unlink()
+            persisted_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if persisted_receipt != release_receipt:
+                raise RuntimeError("release_receipt_readback_mismatch")
+            log.info("App update %d release receipt persisted: %s", update_id, receipt_path)
 
             self._report_update(update_id, "deployed")
             log.info("App update %d installeret fra signeret artifact — genstarter agent", update_id)
