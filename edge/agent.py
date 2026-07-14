@@ -154,10 +154,15 @@ class EdgeAgent:
         self._api          = HeadendClient(config, config_manager)
         self._connectivity = self._relay.connectivity      # modem auto-cycle monitor
 
-        # Technician authentication (QR code login)
+        # The legacy QR technician server is intentionally opt-in. The TOTP
+        # portal is the supported local-management surface; keeping a second
+        # unaudited listener on the LAN expands the Edge attack surface.
         self._tech_auth    = None
         self._tech_ui_server = None
-        if _TECH_UI_AVAILABLE:
+        self._legacy_qr_ui_enabled = bool(
+            self._cfg.get("technician", {}).get("legacy_qr_ui_enabled", False)
+        )
+        if _TECH_UI_AVAILABLE and self._legacy_qr_ui_enabled:
             try:
                 db_path = self._cfg_mgr.base_dir / "technician_auth.db"
                 headend_url = config.get("headend", {}).get("base_url", "http://headend.local:8000")
@@ -265,8 +270,9 @@ class EdgeAgent:
             except Exception as exc:
                 log.warning("SSH tunnel manager fejl: %s", exc)
 
-        # Technician UI (QR code login) - starts on port 8099
-        if _TECH_UI_AVAILABLE and self._tech_auth:
+        # Legacy QR UI is opt-in only. Normal local setup uses the hardened
+        # TOTP service on 8443, which is started by its own systemd unit.
+        if _TECH_UI_AVAILABLE and self._legacy_qr_ui_enabled and self._tech_auth:
             try:
                 tech_ui_port = int(self._cfg.get("technician", {}).get("ui_port", 8099))
                 self._tech_ui_server = serve_technician_ui(self._tech_auth, port=tech_ui_port)
@@ -274,6 +280,8 @@ class EdgeAgent:
                     log.info("Technician UI started on port %d", tech_ui_port)
             except Exception as exc:
                 log.warning("Technician UI start failed: %s", exc)
+        elif _TECH_UI_AVAILABLE:
+            log.info("Legacy QR technician UI disabled; use local TOTP management on port 8443")
 
         # 3. Detect camera features (once per session)
         self._load_camera_features()
@@ -1592,6 +1600,7 @@ class EdgeAgent:
         repo = Path("/opt/timelapse")
         staging = Path(_tempfile.mkdtemp(prefix="tlp-artifact-", dir="/tmp"))
         backup = repo / "prev"
+        receipt_path = repo / "edge" / ".timelapse-release.json"
         try:
             self._report_update(update_id, "backing_up")
             pre_archive, pre_sha, pre_size_kb = self._create_edge_backup_archive(f"pre-update-{update_id}")
@@ -1623,6 +1632,10 @@ class EdgeAgent:
             self._report_update(update_id, "verifying")
             if backup.exists():
                 _shutil.rmtree(backup)
+            if receipt_path.is_file():
+                backup_receipt = backup / "edge" / receipt_path.name
+                backup_receipt.parent.mkdir(parents=True, exist_ok=True)
+                _shutil.copy2(receipt_path, backup_receipt)
             for item in outputs:
                 rel = Path(str(item["path"]))
                 source = repo / rel
@@ -1640,6 +1653,20 @@ class EdgeAgent:
                 _shutil.copy2(source, dest)
                 if dest.suffix == ".sh":
                     dest.chmod(dest.stat().st_mode | 0o111)
+
+            # Artifact copies do not move the local Git checkout. Persist a
+            # signed-artifact receipt so CMDB reports the code actually running.
+            release_receipt = {
+                "schema": "timelapse.edge.release.v1",
+                "artifact_id": str(artifact_id),
+                "source_commit": str(artifact.get("source_commit") or manifest.get("source_commit") or ""),
+                "version": str(artifact.get("version") or manifest.get("version") or ""),
+                "installed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            receipt_tmp = receipt_path.with_name(f".{receipt_path.name}.tmp")
+            receipt_tmp.write_text(json.dumps(release_receipt, sort_keys=True), encoding="utf-8")
+            receipt_tmp.chmod(0o644)
+            receipt_tmp.replace(receipt_path)
 
             self._report_update(update_id, "deployed")
             log.info("App update %d installeret fra signeret artifact — genstarter agent", update_id)
@@ -1819,6 +1846,10 @@ class EdgeAgent:
             self._report_update(update_id, "rolled_back", "rollback_source_missing")
             return
         _sp.run(["bash", "-c", f"cp -r {prev}/* /opt/timelapse/"], timeout=60)
+        previous_receipt = prev / "edge" / ".timelapse-release.json"
+        current_receipt = Path("/opt/timelapse/edge/.timelapse-release.json")
+        if not previous_receipt.exists():
+            current_receipt.unlink(missing_ok=True)
         log.info("Rollback til forrige version gennemført")
         self._report_update(update_id, "rolled_back")
 

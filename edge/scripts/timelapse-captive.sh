@@ -3,8 +3,8 @@
 #
 # Design:
 #   - TL_MGMT chain: whitelistede klienter (tilføjes af totp-service.py ved login)
-#   - Alt på br-bt blokeres undtagen port 80 + 8443
-#   - Port 80 redirectes til 8443 (HTTPS TOTP login)
+#   - Alt på br-bt blokeres undtagen den eksplicitte HTTPS management-port
+#   - Ingen NAT/redirect på TCP 80, 443 eller 8080
 #   - RFC1918 WiFi-adgang tillades direkte (ingen TOTP via WiFi)
 #
 # Kaldes fra timelapse-captive.service ved boot (start/stop)
@@ -14,7 +14,6 @@ set -euo pipefail
 BT_BRIDGE="br-bt"
 BT_IP="192.168.42.1"
 HTTPS_PORT="8443"
-HTTP_PORT="8080"
 CHAIN="TL_MGMT"
 
 cmd="${1:-start}"
@@ -24,13 +23,12 @@ flush_chain() {
     iptables -D FORWARD -i "$BT_BRIDGE" -j "$CHAIN" 2>/dev/null || true
     iptables -D INPUT   -i "$BT_BRIDGE" -j "$CHAIN" 2>/dev/null || true
     iptables -X "$CHAIN" 2>/dev/null || true
-    # Fjern NAT redirect
+    # Fjern redirects fra ældre installationer. Nye installationer opretter
+    # ingen NAT-regler på 80/443/8080.
     iptables -t nat -D PREROUTING -i "$BT_BRIDGE" -p tcp --dport 80 \
         -j REDIRECT --to-port 8080 2>/dev/null || true
     iptables -t nat -D PREROUTING -i "$BT_BRIDGE" -p tcp --dport 443 \
         -j REDIRECT --to-port "$HTTPS_PORT" 2>/dev/null || true
-    iptables -t nat -D PREROUTING ! -i "$BT_BRIDGE" -p tcp --dport 80 \
-        -j REDIRECT --to-port 8080 2>/dev/null || true
 }
 
 case "$cmd" in
@@ -55,8 +53,7 @@ start)
     iptables -A "$CHAIN" -i "$BT_BRIDGE" -p udp --dport 53 -j ACCEPT
     iptables -A "$CHAIN" -i "$BT_BRIDGE" -p tcp --dport 53 -j ACCEPT
 
-    # Tillad adgang til TOTP-service (HTTP redirect + HTTPS login)
-    iptables -A "$CHAIN" -i "$BT_BRIDGE" -p tcp -d "$BT_IP" --dport "$HTTP_PORT" -j ACCEPT
+    # Tillad adgang til TOTP-service på dens dedikerede HTTPS-port.
     iptables -A "$CHAIN" -i "$BT_BRIDGE" -p tcp -d "$BT_IP" --dport "$HTTPS_PORT" -j ACCEPT
 
     # Standard: DROP alt andet (whitelist tilføjes dynamisk af totp-service.py)
@@ -66,18 +63,7 @@ start)
     iptables -I INPUT   1 -i "$BT_BRIDGE" -j "$CHAIN"
     iptables -I FORWARD 1 -i "$BT_BRIDGE" -j "$CHAIN"
 
-    # NAT: port 80 → HTTP redirect service (8080), 443 → HTTPS TOTP (8443)
-    HTTP_REDIR_PORT="8080"
-    iptables -t nat -A PREROUTING -i "$BT_BRIDGE" -p tcp --dport 80 \
-        -j REDIRECT --to-port "$HTTP_REDIR_PORT"
-    iptables -t nat -A PREROUTING -i "$BT_BRIDGE" -p tcp --dport 443 \
-        -j REDIRECT --to-port "$HTTPS_PORT"
-
-    # WiFi: port 80 → HTTP redirect service
-    iptables -t nat -A PREROUTING ! -i "$BT_BRIDGE" -p tcp --dport 80 \
-        -j REDIRECT --to-port "$HTTP_REDIR_PORT"
-
-    echo "[captive] Captive portal aktiv — alt blokeret undtagen DHCP/DNS/TOTP"
+    echo "[captive] Lokal management aktiv på https://$BT_IP:$HTTPS_PORT (ingen port-redirect)"
     ;;
 
 stop)

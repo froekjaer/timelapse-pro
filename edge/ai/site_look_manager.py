@@ -30,9 +30,11 @@ Key features:
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import logging
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -438,6 +440,33 @@ class CameraLUT:
 
 # ── Site Look Manager ───────────────────────────────────────────────────────────
 
+class _StaticConfigClient:
+    """Compatibility adapter for the standalone/offline manager test contract."""
+
+    def __init__(self, config: dict[str, Any]):
+        self._config = dict(config)
+        # The original standalone manager used this spelling. Runtime config
+        # supplied by SiteLookConfigClient uses ``storage_path``.
+        if "storage_path" not in self._config and self._config.get("site_look_storage_path"):
+            self._config["storage_path"] = self._config["site_look_storage_path"]
+
+    def get_config(self) -> dict[str, Any]:
+        return dict(self._config)
+
+
+def _safe_storage_component(value: str) -> str:
+    """Convert a site/camera identifier to a stable, contained file component."""
+    normalized = str(value or "").strip()
+    if not normalized or len(normalized) > 128:
+        raise ValueError("empty or overlong site/camera identifier")
+    if all(ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in normalized):
+        return normalized
+    # Preserve readable names where possible, while an identifier-derived hash
+    # prevents collisions and makes separators/path traversal inert.
+    readable = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized).strip(".-") or "site"
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"{readable[:80]}-{digest}"
+
 class SiteLookManager:
     """Main manager for site-wide look matching.
 
@@ -450,7 +479,7 @@ class SiteLookManager:
     Configuration is loaded from database via SiteLookConfigClient.
     """
 
-    def __init__(self, config_client, site_id: str, customer_id: str = None):
+    def __init__(self, config_client: Any, site_id: str | None = None, customer_id: str | None = None):
         """
         Initialize manager with config client.
 
@@ -459,8 +488,17 @@ class SiteLookManager:
             site_id: Site identifier
             customer_id: Customer identifier (optional, for hierarchy)
         """
-        self._config_client = config_client
-        self._site_id = site_id
+        if isinstance(config_client, dict):
+            # Keep the deterministic local-manager interface usable for
+            # hardware-free QA and offline Edge operation.
+            self._config_client = _StaticConfigClient(config_client)
+            site_id = site_id or str(config_client.get("site_id") or "default-site")
+        else:
+            self._config_client = config_client
+            if self._config_client is None:
+                raise ValueError("SiteLookConfigClient is required")
+            site_id = site_id or "default-site"
+        self._site_id = _safe_storage_component(site_id)
         self._customer_id = customer_id
 
         # Get configuration from client (with cache fallback)
@@ -473,11 +511,7 @@ class SiteLookManager:
 
     def _refresh_config(self) -> None:
         """Refresh configuration from client."""
-        if self._customer_id:
-            config = self._config_client.get_config()
-        else:
-            config = self._config_client.get_config()
-        self._config = config
+        self._config = self._config_client.get_config()
 
     def _get_config_value(self, key: str, default=None):
         """Get configuration value with fallback to default."""
@@ -491,20 +525,27 @@ class SiteLookManager:
 
     def _get_reference_path(self, site_id: str) -> Path:
         """Get path to site reference frame file."""
-        return self._storage_base / f"{site_id}_reference.json"
+        return self._storage_base / f"{_safe_storage_component(site_id)}_reference.json"
 
     def _get_lut_path(self, site_id: str, camera_id: str) -> Path:
         """Get path to camera LUT file."""
-        return self._storage_base / f"{site_id}_{camera_id}_lut.json"
+        return self._storage_base / (
+            f"{_safe_storage_component(site_id)}_{_safe_storage_component(camera_id)}_lut.json"
+        )
 
     def has_reference(self, site_id: str) -> bool:
         """Check if site has a reference frame."""
-        return self._get_reference_path(site_id).exists()
+        try:
+            return self._get_reference_path(site_id).exists()
+        except ValueError:
+            return False
 
     def get_reference(self, site_id: str) -> Optional[SiteReferenceFrame]:
         """Get site reference frame."""
-        path = self._get_reference_path(site_id)
-        return SiteReferenceFrame.load(path)
+        try:
+            return SiteReferenceFrame.load(self._get_reference_path(site_id))
+        except ValueError:
+            return None
 
     def save_reference(self, reference: SiteReferenceFrame) -> None:
         """Save site reference frame."""
@@ -513,8 +554,10 @@ class SiteLookManager:
 
     def get_camera_lut(self, site_id: str, camera_id: str) -> Optional[CameraLUT]:
         """Get camera LUT for site."""
-        path = self._get_lut_path(site_id, camera_id)
-        return CameraLUT.load(path)
+        try:
+            return CameraLUT.load(self._get_lut_path(site_id, camera_id))
+        except ValueError:
+            return None
 
     def save_camera_lut(self, lut: CameraLUT) -> None:
         """Save camera LUT."""

@@ -4746,8 +4746,14 @@ class SshTunnelEventRequest(BaseModel):
     timestamp:      str
 
 @app.post("/api/ssh-tunnel/event")
-def ssh_tunnel_event(req: SshTunnelEventRequest, db: Session = Depends(get_db)):
+def ssh_tunnel_event(
+    req: SshTunnelEventRequest,
+    authenticated_device_id: str = Depends(_verify_payload_device_token),
+    db: Session = Depends(get_db),
+):
     """Edge notificerer headend om SSH tunnel events (connect, disconnect, fail)."""
+    if req.device_id != authenticated_device_id:
+        raise HTTPException(status_code=403, detail="device_id matcher ikke Edge credential")
     from database import SshTunnelLog
     entry = SshTunnelLog(
         device_id    = req.device_id,
@@ -6501,19 +6507,31 @@ def _file_sha256(path: Path) -> str:
 
 
 def _collect_release_outputs(root: Path) -> list[dict]:
+    # Explicitly list all Edge runtime paths.  Artifacts are the only accepted
+    # Edge update channel, so omitting a Python module or a systemd helper here
+    # silently produces a partial release on the device.
     candidates = [
         root / "headend" / "main.py",
         root / "headend" / "database.py",
         root / "edge" / "agent.py",
+        root / "edge" / "frame_push.py",
         root / "edge" / "security.py",
+        root / "edge" / "technician_auth.py",
+        root / "edge" / "technician_ui.py",
         root / "edge" / "requirements.txt",
+        root / "edge" / "ai",
         root / "edge" / "camera",
         root / "edge" / "capture",
         root / "edge" / "config",
         root / "edge" / "diagnostics",
+        root / "edge" / "hal",
+        root / "edge" / "npu_viplite",
+        root / "edge" / "scripts",
         root / "edge" / "tunnel",
+        root / "edge" / "tools" / "bootstrap_cli.py",
         root / "edge" / "upload",
         root / "edge" / "update",
+        root / "edge" / "utils",
         root / "timelapse-ui" / "dist",
     ]
     outputs: list[dict] = []
@@ -7961,6 +7979,30 @@ def download_update_artifact_file(
     artifact = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
     if not artifact or not artifact.manifest_json:
         raise HTTPException(status_code=404, detail="Artifact ikke fundet")
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device ikke fundet")
+
+    # A valid Edge credential proves *which* device is connecting, but must not
+    # turn the artifact catalogue into a cross-customer/cross-environment
+    # download service. Permit only an artifact attached to an update that
+    # currently applies to this device.
+    inventory = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    inventory = inventory or DeviceInventory(device_id=device_id)
+    authorized = False
+    candidates = db.query(PendingUpdate).filter(
+        PendingUpdate.status.in_(["approved", "rollback_requested"])
+    ).all()
+    for candidate in candidates:
+        if not _update_applies_to_device(candidate, device, inventory):
+            continue
+        candidate_artifact = _find_artifact_for_update(db, candidate)
+        if candidate_artifact and candidate_artifact.artifact_id == artifact_id:
+            authorized = True
+            break
+    if not authorized:
+        raise HTTPException(status_code=403, detail="Artifact er ikke godkendt til denne Edge")
+
     normalized = str(Path(file_path))
     if normalized.startswith("../") or normalized.startswith("/") or "/../" in normalized:
         raise HTTPException(status_code=400, detail="Ugyldig artifact path")
@@ -10698,8 +10740,14 @@ def create_provision_package(
 # ── Reverse SSH ───────────────────────────────────────────────────────────────
 
 @app.post("/api/reverse-ssh/ready")
-def reverse_ssh_ready(req: ReverseSshRequest, db: Session = Depends(get_db)):
+def reverse_ssh_ready(
+    req: ReverseSshRequest,
+    authenticated_device_id: str = Depends(_verify_payload_device_token),
+    db: Session = Depends(get_db),
+):
     """Edge notifies headend that reverse SSH tunnel is ready."""
+    if req.device_id != authenticated_device_id:
+        raise HTTPException(status_code=403, detail="device_id matcher ikke Edge credential")
     log.info(
         "Reverse SSH ready: %s on port %d",
         req.device_id, req.port
@@ -11525,17 +11573,6 @@ def _bounded_generate_thumbnail(src: _Path, thumb: _Path) -> tuple[bool, str | N
         _thumb_gen_semaphore.release()
 
 
-def _lazy_generate_thumbnail(src: _Path) -> _Path | None:
-    """Generér en manglende thumbnail synkront (cachet i .headend-thumbs/) når
-    galleriet beder om den — så `get_thumbnail` kan returnere 200 i stedet for 404.
-    Samtidigheds-begrænset, så en stor side ikke presser data-fast."""
-    target = _generated_thumbs_dir_for(src) / src.name
-    if _is_valid_jpeg(target):
-        return target
-    ok, _err = _bounded_generate_thumbnail(src, target)
-    return target if (ok and _is_valid_jpeg(target)) else None
-
-
 def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
     deleted = False
     for directory in (_thumbs_dir_for(image_path), _generated_thumbs_dir_for(image_path)):
@@ -11631,23 +11668,9 @@ def get_thumbnail(
             },
         )
 
-    # Generér-ved-miss (selvhelende, samtidigheds-begrænset). Gated by flag, så
-    # den kan slås fra hvis den nogensinde presser data-fast for hårdt.
-    if os.getenv("TIMELAPSE_THUMBNAIL_LAZY_GENERATE", "true").lower() in {"1", "true", "yes", "on"}:
-        generated = _lazy_generate_thumbnail(src)
-        if generated:
-            xr = _xaccel_redirect(generated, "image/jpeg", _thumb_cache)
-            if xr is not None:
-                return xr
-            return FileResponse(
-                str(generated),
-                media_type="image/jpeg",
-                headers={
-                    "Cache-Control": _thumb_cache,
-                    "X-Thumbnail-Source": "headend-lazy",
-                },
-            )
-
+    # Never generate inside a display request. The UI queues a bounded
+    # background repair after a 404, while normal uploads generate thumbnails
+    # on the Edge before transfer.
     raise HTTPException(
         status_code=404,
         detail="Thumbnail missing; Edge/backfill must generate and upload thumbnails",
@@ -15635,21 +15658,20 @@ def get_preview_image(device_id: str, filename: str, _user=require_role("viewer"
 
 @app.get("/api/lab/{device_id}/preview-thumb/{filename}")
 def get_preview_thumb(device_id: str, filename: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
-    """Serve a thumbnail of a preview image."""
+    """Serve an existing LAB preview thumbnail, or the preview as a cheap fallback."""
     _ensure_capture_device_access(db, _user, device_id)
     sftp_base = _sftp_base_path()
     src = sftp_base / "_lab" / device_id / filename
     if not src.exists():
         raise HTTPException(status_code=404, detail="Preview not found")
-    thumbs_dir = sftp_base / "_lab" / device_id / ".thumbs"
-    thumbs_dir.mkdir(parents=True, exist_ok=True)
-    thumb = thumbs_dir / filename
-    if not thumb.exists():
-        from PIL import Image
-        img = Image.open(src)
-        img.thumbnail((400, 400), Image.LANCZOS)
-        img.save(str(thumb), "JPEG", quality=75)
-    return FileResponse(str(thumb), media_type="image/jpeg")
+    thumb = sftp_base / "_lab" / device_id / ".thumbs" / filename
+    if thumb.exists():
+        return FileResponse(str(thumb), media_type="image/jpeg")
+    return FileResponse(
+        str(src),
+        media_type="image/jpeg",
+        headers={"X-Thumbnail-Source": "lab-preview-fallback"},
+    )
 
 @app.post("/api/admin/devices/{device_id}/lab-clear-command")
 def lab_clear_command(
@@ -16699,7 +16721,11 @@ from ai.vocabulary_routes import vocab_router; app.include_router(vocab_router)
 from ai.review_api import review_router as _rev_router; app.include_router(_rev_router)
 
 # Site-Wide Look Matching Configuration (F-012)
-from api.site_look_config_api import router as site_look_router; app.include_router(site_look_router)
+from api.site_look_config_api import router as site_look_router
+# The site-look router has its own data service and formerly declared no
+# authentication dependencies. Keep it platform-admin-only until tenant-aware
+# authorization is implemented for every hierarchy operation.
+app.include_router(site_look_router, dependencies=[require_role("super_admin")])
 
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,

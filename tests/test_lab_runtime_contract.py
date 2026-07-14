@@ -5,6 +5,7 @@ the LAB UI appear to work while commands were never executed by the Edge.
 """
 
 from pathlib import Path
+import stat
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +13,7 @@ sys.path.insert(0, str(ROOT / "edge"))
 
 from camera.drivers import gphoto2_driver
 from frame_push import LiveVideoStreamer
+from config.manager import ConfigManager
 
 
 class _Result:
@@ -117,3 +119,22 @@ def test_signed_tag_cataloguing_creates_test_candidates_without_auto_deploying()
     assert 'status="pending"' in candidate_block
     assert 'environment="test"' in candidate_block
     assert '_create_lab_update_candidates_for_artifact(db, artifact)' in source
+
+
+def test_saved_edge_api_token_is_owner_read_write_only(tmp_path):
+    ConfigManager(tmp_path).save_api_token("secret-token")
+    token_path = tmp_path / "api_token.txt"
+
+    assert token_path.read_text(encoding="utf-8") == "secret-token"
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+
+
+def test_reverse_ssh_edge_events_are_device_authenticated():
+    source = (Path(__file__).resolve().parents[1] / "headend" / "main.py").read_text(encoding="utf-8")
+
+    tunnel_block = source.split('def ssh_tunnel_event(', 1)[1].split('@app.get("/api/ssh-tunnel/active")', 1)[0]
+    ready_block = source.split('def reverse_ssh_ready(', 1)[1].split('# ── Admin / status endpoints', 1)[0]
+    assert 'Depends(_verify_payload_device_token)' in tunnel_block
+    assert 'Depends(_verify_payload_device_token)' in ready_block
+    assert 'device_id matcher ikke Edge credential' in tunnel_block
+    assert 'device_id matcher ikke Edge credential' in ready_block

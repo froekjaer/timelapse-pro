@@ -438,6 +438,7 @@ export default function LabPage() {
   const videoContainerRef = useRef<HTMLDivElement>(null) // Fullscreen container ref
   const paramsRef = useRef<CameraParam[]>([])
   const loadingParamsRef = useRef(false)
+  const autoParamsRequestedRef = useRef(false)
 
   // Fullscreen toggle function
   function toggleFullscreen() {
@@ -522,8 +523,16 @@ export default function LabPage() {
           setLabConnectingStart(null)
           setLabReady(true)
           listPreviews(deviceId).then(setPreviews).catch(() => {})
-          // Auto-load params on refresh if camera ready
-          if (paramsRef.current.length === 0 && !loadingParamsRef.current) loadParams().catch(() => {})
+          // One best-effort read per LAB session. A camera which returns an
+          // empty list must not cause the UI to enqueue commands indefinitely.
+          if (
+            paramsRef.current.length === 0 &&
+            !loadingParamsRef.current &&
+            !autoParamsRequestedRef.current
+          ) {
+            autoParamsRequestedRef.current = true
+            loadParams().catch(() => {})
+          }
         } else if (debugEnabled && !cameraReady) {
           setLabActive(false)
           setLabConnecting(true)
@@ -531,6 +540,7 @@ export default function LabPage() {
           // Start tracking connection time if not already tracking
           setLabConnectingStart(prev => prev || Date.now())
         } else {
+          autoParamsRequestedRef.current = false
           setLabActive(false)
           setLabConnecting(false)
           setLabConnectSecs(0)
@@ -621,6 +631,7 @@ export default function LabPage() {
   async function toggleLab() {
     const next = !labActive
     if (next) {
+      autoParamsRequestedRef.current = false
       setLabConnecting(true)
       setLabConnectingStart(Date.now())
       setLabReady(false)
@@ -663,7 +674,10 @@ export default function LabPage() {
               listPreviews(deviceId).then(setPreviews).catch(() => {})
               setLabReady(true)
               // Auto-load params when camera is ready
-              loadParams().catch(() => {})
+              if (!autoParamsRequestedRef.current) {
+                autoParamsRequestedRef.current = true
+                loadParams().catch(() => {})
+              }
             }
           } catch { /* ignore */ }
         }, 3000)
@@ -677,6 +691,7 @@ export default function LabPage() {
         setStatusMsg('Fejl ved aktivering af lab mode')
       }
     } else {
+      autoParamsRequestedRef.current = false
       setLabActive(false)
       setLivePreview(false)
       setLiveFrameEnabled(false)  // Stop MJPEG når lab stoppes
@@ -704,6 +719,7 @@ export default function LabPage() {
     setLabConnectSecs(0)
     setLabConnectingStart(null)
     setLabReady(false)
+    autoParamsRequestedRef.current = false
     setStatusMsg('LAB mode nulstillet')
 
     // Send stop command to edge

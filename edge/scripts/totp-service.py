@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 TimeLapse Pro — Local Management TOTP captive portal
-Kører på br-bt (192.168.42.1:8443 HTTPS + 8080 HTTP→redirect)
+Kører på br-bt (192.168.42.1:8443 HTTPS)
 
 Flow:
   1. Telefon forbinder til BT PAN → får IP 192.168.42.x
-  2. iptables blokerer alt undtagen port 8080/8443
-  3. Browser åbner → redirect til HTTPS TOTP-login
+  2. iptables blokerer alt undtagen port 8443
+  3. Teknikeren åbner direkte HTTPS TOTP-login på port 8443
   4. Bruger indtaster TOTP-kode fra authenticator app
   5. Ved success: klient-IP whitelistes i iptables (session_timeout)
   6. Management UI tilgængeligt
@@ -105,6 +105,7 @@ def _default_config() -> dict:
         },
         "management": {
             "https_port": 8443,
+            "enable_interactive_shell": False,
             "session_timeout": 3600,
             "cert_file": "/etc/timelapse/certs/mgmt.crt",
             "key_file": "/etc/timelapse/certs/mgmt.key",
@@ -127,6 +128,26 @@ def load_config() -> dict:
     merged["totp"] = defaults["totp"] | (cfg.get("totp") or {})
     merged["management"] = defaults["management"] | (cfg.get("management") or {})
     return merged
+
+
+def save_config(cfg: dict) -> None:
+    """Atomically persist local management configuration as root-only data."""
+    config_path = Path(CONFIG_FILE)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = config_path.with_name(f".{config_path.name}.tmp")
+    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(cfg, handle, allow_unicode=True, default_flow_style=False)
+        os.chmod(temp_path, 0o600)
+        os.replace(temp_path, config_path)
+        os.chmod(config_path, 0o600)
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 # ── Session store (in-memory) ─────────────────────────────────────────────────
@@ -376,14 +397,41 @@ def _systemd_ntp_active() -> bool:
 
 def _fetch_headend_config(cfg: dict) -> dict:
     """Hent merged config fra headend (inkl. hierarki-lag)."""
-    import urllib.request, json as _json
-    device_id = cfg.get("device", {}).get("device_id", "")
-    headend = cfg.get("management", {}).get("headend_url", "")
+    import json as _json
+    import sys
+    import urllib.request
+
+    edge_config_path = EDGE_ROOT / "config.yaml"
+    edge_config = {}
+    try:
+        if edge_config_path.exists():
+            edge_config = yaml.safe_load(edge_config_path.read_text()) or {}
+    except Exception:
+        edge_config = {}
+    device_id = edge_config.get("device", {}).get("device_id", "")
+    headend = edge_config.get("device", {}).get("headend_url", "")
+    token_path = EDGE_ROOT / "api_token.txt"
+    token = token_path.read_text().strip() if token_path.exists() else ""
     if not device_id or not headend:
         return {}
     try:
-        url = f"{headend}/api/config/{device_id}"
-        with urllib.request.urlopen(url, timeout=4) as r:
+        api_base = headend.rstrip("/")
+        if not api_base.endswith("/api"):
+            api_base = f"{api_base}/api"
+        path = f"/config/{device_id}"
+        url = f"{api_base}{path}"
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        edge_module_dir = str(EDGE_ROOT)
+        if edge_module_dir not in sys.path:
+            sys.path.insert(0, edge_module_dir)
+        try:
+            from security import edge_attestation_headers, request_signature_headers
+            headers.update(request_signature_headers(token, "GET", path))
+            headers.update(edge_attestation_headers(EDGE_ROOT, device_id, "GET", path))
+        except Exception as signing_exc:
+            log.warning("Headend config request kører uden Edge-signatur: %s", signing_exc)
+        request = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(request, timeout=4) as r:
             return _json.loads(r.read())
     except Exception:
         return {}
@@ -972,6 +1020,41 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
         for cmd, label in buttons
     )
     allowed = " ".join(sorted(CLI_ALLOWED_FLAGS))
+    shell_enabled = bool(load_config()["management"].get("enable_interactive_shell", False))
+    shell_panel = ""
+    if shell_enabled:
+        shell_panel = """
+    <div class=\"card wide\">
+      <h2>SSH bash</h2>
+      <p class=\"hint\">Interaktiv lokal shell på edgen bag TOTP-sessionen. Luk terminalen når du er færdig.</p>
+      <div class=\"actions\">
+        <button type=\"button\" onclick=\"openShell()\">Åbn bash</button>
+        <button class=\"secondary\" type=\"button\" onclick=\"closeShell()\">Luk bash</button>
+      </div>
+      <textarea id=\"term\" spellcheck=\"false\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\"></textarea>
+    </div>"""
+    shell_script = ""
+    if shell_enabled:
+        shell_script = """
+let shellWs = null;
+const term = document.getElementById('term');
+function openShell() {
+  if (shellWs && shellWs.readyState === WebSocket.OPEN) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  shellWs = new WebSocket(proto + '//' + location.host + '/mgmt/cli/bash/ws');
+  shellWs.onopen = () => { term.value += '\\n[connected]\\n'; term.focus(); };
+  shellWs.onmessage = (event) => { term.value += event.data; term.scrollTop = term.scrollHeight; };
+  shellWs.onclose = () => { term.value += '\\n[closed]\\n'; };
+}
+function closeShell() { if (shellWs) shellWs.close(); }
+term.addEventListener('keydown', (event) => {
+  if (!shellWs || shellWs.readyState !== WebSocket.OPEN) return;
+  if (event.key === 'Enter') { shellWs.send('\\n'); event.preventDefault(); }
+  else if (event.key === 'Backspace') { shellWs.send('\\x7f'); event.preventDefault(); }
+  else if (event.key === 'Tab') { shellWs.send('\\t'); event.preventDefault(); }
+  else if (event.ctrlKey && event.key.length === 1) { shellWs.send(String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64)); event.preventDefault(); }
+  else if (!event.metaKey && !event.altKey && event.key.length === 1) { shellWs.send(event.key); event.preventDefault(); }
+});"""
     return f"""<!DOCTYPE html>
 <html lang="da">
 <head>
@@ -1031,52 +1114,11 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
       </form>
       <p class="hint">Tilladte flags: {html.escape(allowed)}</p>
     </div>
-    <div class="card wide">
-      <h2>SSH bash</h2>
-      <p class="hint">Interaktiv lokal shell på edgen bag TOTP-sessionen. Luk terminalen når du er færdig.</p>
-      <div class="actions">
-        <button type="button" onclick="openShell()">Åbn bash</button>
-        <button class="secondary" type="button" onclick="closeShell()">Luk bash</button>
-      </div>
-      <textarea id="term" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
-    </div>
+    {shell_panel}
     {output_html}
   </div>
 </div>
-<script>
-let shellWs = null;
-const term = document.getElementById('term');
-function openShell() {{
-  if (shellWs && shellWs.readyState === WebSocket.OPEN) return;
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  shellWs = new WebSocket(proto + '//' + location.host + '/mgmt/cli/bash/ws');
-  shellWs.onopen = () => {{ term.value += '\\n[connected]\\n'; term.focus(); }};
-  shellWs.onmessage = (event) => {{ term.value += event.data; term.scrollTop = term.scrollHeight; }};
-  shellWs.onclose = () => {{ term.value += '\\n[closed]\\n'; }};
-}}
-function closeShell() {{
-  if (shellWs) shellWs.close();
-}}
-term.addEventListener('keydown', (event) => {{
-  if (!shellWs || shellWs.readyState !== WebSocket.OPEN) return;
-  if (event.key === 'Enter') {{
-    shellWs.send('\\n');
-    event.preventDefault();
-  }} else if (event.key === 'Backspace') {{
-    shellWs.send('\\x7f');
-    event.preventDefault();
-  }} else if (event.key === 'Tab') {{
-    shellWs.send('\\t');
-    event.preventDefault();
-  }} else if (event.ctrlKey && event.key.length === 1) {{
-    shellWs.send(String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64));
-    event.preventDefault();
-  }} else if (!event.metaKey && !event.altKey && event.key.length === 1) {{
-    shellWs.send(event.key);
-    event.preventDefault();
-  }}
-}});
-</script>
+<script>{shell_script}</script>
 </body>
 </html>"""
 
@@ -1297,6 +1339,9 @@ async def mgmt_cli_run(request: Request, command: str = Form(...)):
 
 @app.websocket("/mgmt/cli/bash/ws")
 async def mgmt_cli_bash_ws(websocket: WebSocket):
+    if not load_config()["management"].get("enable_interactive_shell", False):
+        await websocket.close(code=1008)
+        return
     token = websocket.cookies.get(SESSION_COOKIE, "")
     client_ip = websocket.client.host if websocket.client else ""
     if not _valid_token(token, client_ip):
@@ -1539,11 +1584,7 @@ async def mgmt_time_save(request: Request,
         "ntp": {"enabled": ntp_enabled == "on", "servers": [s.strip() for s in ntp_servers.split(",")]},
     }
 
-    import tempfile, shutil
-    tmp = CONFIG_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-    shutil.move(tmp, CONFIG_FILE)
+    save_config(cfg)
     log.info(f"Tidskonfiguration gemt af {request.client.host}")
 
     hcfg = _fetch_headend_config(cfg)
@@ -1578,54 +1619,19 @@ async def mgmt_totp_sync(request: Request):
     return HTMLResponse(_system_page(msg))
 
 
-# ── HTTP → HTTPS redirect (simpel http.server, port 80 + 8080) ───────────────
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-class _RedirectHandler(BaseHTTPRequestHandler):
-    https_port = 8443
-
-    def do_GET(self):
-        host = self.headers.get("Host", self.server.server_address[0]).split(":")[0]
-        location = f"https://{host}:{self.https_port}{self.path}"
-        self.send_response(301)
-        self.send_header("Location", location)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    do_POST = do_GET
-    do_HEAD = do_GET
-
-    def log_message(self, fmt, *args):
-        log.info(f"[http-redirect] {fmt % args}")
-
-
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 def _sync_totp_from_headend() -> str:
     """Hent TOTP secret fra headend (via config-hierarki) og opdater bt-config.yaml.
     Kaldes KUN ved eksplicit brugerhandling — aldrig automatisk ved boot.
     Returnerer statusbesked til management-UI.
     """
-    import urllib.request, json as _json, re as _re
     try:
-        device_id   = os.environ.get("DEVICE_ID", "")
-        headend_url = os.environ.get("HEADEND_URL", "")
-        main_cfg_path = "/etc/timelapse/config.yaml"
-        if os.path.exists(main_cfg_path):
-            try:
-                with open(main_cfg_path) as _f:
-                    _mcfg = yaml.safe_load(_f) or {}
-                device_id   = device_id   or _mcfg.get("device_id", "")
-                headend_url = headend_url or _mcfg.get("headend_url", "")
-            except Exception:
-                pass
-        if not device_id or not headend_url:
+        edge_cfg = _fetch_headend_config(load_config())
+        if not edge_cfg:
             msg = "Ingen forbindelse til CMDB — device_id eller headend_url mangler"
             log.warning("TOTP sync: %s", msg)
             return msg
-        url = f"{headend_url}/api/config/{device_id}"
-        with urllib.request.urlopen(url, timeout=5) as r:
-            hcfg = _json.loads(r.read())
-        bt_totp    = hcfg.get("bt_totp", {})
+        bt_totp    = edge_cfg.get("bt_totp", {})
         new_secret = bt_totp.get("secret", "")
         new_sid    = bt_totp.get("sid", "")
         if not new_secret:
@@ -1633,13 +1639,9 @@ def _sync_totp_from_headend() -> str:
         cfg = load_config()
         if cfg["totp"].get("secret") == new_secret and cfg["totp"].get("sid") == new_sid:
             return f"Allerede opdateret (sid={new_sid}) — ingen ændring nødvendig"
-        # Opdater bt-config.yaml in-place (bevarer kommentarer)
-        with open(CONFIG_FILE) as f:
-            raw = f.read()
-        raw = _re.sub(r'(secret:\s*")[^"]*(")', f'\\g<1>{new_secret}\\2', raw)
-        raw = _re.sub(r'(sid:\s*")[^"]*(")', f'\\g<1>{new_sid}\\2', raw)
-        with open(CONFIG_FILE, "w") as f:
-            f.write(raw)
+        cfg["totp"]["secret"] = new_secret
+        cfg["totp"]["sid"] = new_sid
+        save_config(cfg)
         log.info("TOTP sync: opdateret → sid=%s", new_sid)
         # Genstart totp-service så nyt secret træder i kraft (non-blocking)
         subprocess.Popen(
@@ -1654,7 +1656,6 @@ def _sync_totp_from_headend() -> str:
 
 
 if __name__ == "__main__":
-    import threading
     import uvicorn
     # TOTP synces IKKE automatisk ved boot — fabriksstandard forbliver under hele
     # installationen. Rotation sker KUN ved eksplicit handling:
@@ -1663,18 +1664,6 @@ if __name__ == "__main__":
     cfg = load_config()
     mgmt = cfg["management"]
     https_port = mgmt.get("https_port", 8443)
-    http_port = 8080  # HTTP redirect port (iptables sender port 80 hertil)
-
-    _RedirectHandler.https_port = https_port
-
-    def run_http_redirect(port):
-        srv = HTTPServer(("0.0.0.0", port), _RedirectHandler)
-        log.info(f"HTTP redirect server lytter på port {port} → HTTPS:{https_port}")
-        srv.serve_forever()
-
-    # Port 80 håndteres af iptables NAT redirect → port 8080
-    t = threading.Thread(target=run_http_redirect, args=(http_port,), daemon=True)
-    t.start()
 
     uvicorn.run(
         app,

@@ -14,6 +14,7 @@ SABSA: Manageability — central config control with local autonomous fallback.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -83,7 +84,11 @@ class ConfigManager:
 
     def save_api_token(self, token: str) -> None:
         token_path = self._base / "api_token.txt"
-        token_path.write_text(token.strip())
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(token.strip())
+        os.chmod(token_path, 0o600)
         log.info("API token saved")
 
     @property

@@ -1,8 +1,8 @@
-"""
-TimeLapse Pro — Edge Technician UI
+"""Retired legacy QR technician UI.
 
-Local web UI for technicians to manage edge devices via QR code login.
-Served on port 8099 when edge has network connectivity.
+The supported local-management surface is the TOTP-protected HTTPS service on
+port 8443.  This module remains only to make older imports harmless; it never
+starts an unauthenticated HTTP listener.
 """
 from __future__ import annotations
 
@@ -632,38 +632,11 @@ def serve_technician_ui(
     Returns:
         HTTPServer if started, None if port unavailable
     """
-    # Find available port
-    available_port = find_available_port(port)
-
-    def handler(*args, **kwargs):
-        return TechnicianUIHandler(*args, auth=auth, **kwargs)
-
-    try:
-        server = HTTPServer(("0.0.0.0", available_port), handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=daemon)
-        thread.start()
-
-        log.info("Technician UI started: http://0.0.0.0:%d", available_port)
-        return server
-
-    except OSError as e:
-        log.error("Failed to start technician UI: %s", e)
-        return None
+    log.warning("Legacy QR technician UI is retired; use TOTP HTTPS on port 8443")
+    return None
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-
-    # Initialize auth
-    db_path = EDGE_DATA_DIR / "technician_auth.db"
-    auth = TechnicianAuth(db_path, DEVICE_ID, HEADEND_URL)
-
-    # Start server
-    serve_technician_ui(auth)
-    log.info("Technician UI running. Press Ctrl+C to stop.")
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        log.info("Shutting down technician UI")
+    log.error("Legacy QR technician UI is retired; use TOTP HTTPS on port 8443")
+    raise SystemExit(2)

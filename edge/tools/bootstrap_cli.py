@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import getpass
 import html
-import http.server
 import json
 import os
 import platform
@@ -34,7 +33,6 @@ EDGE_ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP_FILE = "bootstrap.yaml"
 NETWORK_FILE = "local_network.yaml"
 SERVICE_NAME = os.getenv("TIMELAPSE_EDGE_SERVICE", "timelapse-edge")
-DEFAULT_UI_PORT = int(os.getenv("TIMELAPSE_TECH_UI_PORT", "8099"))
 PHOTO_SETTINGS = {
     "exposure_comp": {
         "label": "Eksponeringskompensation",
@@ -87,8 +85,7 @@ def main() -> int:
     parser.add_argument("--network-preference", choices=["ethernet", "wifi", "4g"], help="Set preferred TimeLapse connectivity order")
     parser.add_argument("--qa-image", help="Run Edge CV QA against a local JPEG")
     parser.add_argument("--technician-report", action="store_true", help="Write local technician HTML report")
-    parser.add_argument("--serve-ui", action="store_true", help="Serve local technician UI on --port")
-    parser.add_argument("--port", type=int, default=DEFAULT_UI_PORT, help="Technician UI port")
+    parser.add_argument("--serve-ui", action="store_true", help="Retired; use the TOTP portal on HTTPS port 8443")
     parser.add_argument("--camera-detect", action="store_true", help="Run gphoto2 --auto-detect")
     parser.add_argument("--camera-summary", action="store_true", help="Print camera status/config summary")
     parser.add_argument("--camera-config", help="Print one gphoto2 config path")
@@ -134,7 +131,8 @@ def main() -> int:
         print(path)
         return 0
     if args.serve_ui:
-        return serve_technician_ui(base_dir, args.port)
+        print("Lokal tekniker-UI er erstattet af TOTP-portalen: https://192.168.42.1:8443")
+        return 2
     if args.camera_detect:
         return 0 if run_camera_operation(lambda: camera_detect(), base_dir, args.maintenance) else 1
     if args.camera_summary:
@@ -352,14 +350,13 @@ def ui_menu(base_dir: Path) -> None:
         print("Lokal tekniker-UI")
         print("-----------------")
         print("1. Generer HTML statusrapport")
-        print("2. Start lokal web UI")
+        print("2. Vis lokal TOTP-adresse")
         print("3. Tilbage")
         choice = input("Valg: ").strip()
         if choice == "1":
             print(f"Rapport: {write_technician_report(base_dir)}")
         elif choice == "2":
-            raw = input(f"Port [{DEFAULT_UI_PORT}]: ").strip()
-            serve_technician_ui(base_dir, int(raw or DEFAULT_UI_PORT))
+            print("Brug den beskyttede lokale management-portal: https://192.168.42.1:8443")
         elif choice == "3":
             return
         else:
@@ -1190,27 +1187,6 @@ def write_technician_report(base_dir: Path) -> Path:
     path = out_dir / "index.html"
     path.write_text(render_technician_html(status), encoding="utf-8")
     return path
-
-
-def serve_technician_ui(base_dir: Path, port: int) -> int:
-    report = write_technician_report(base_dir)
-    directory = str(report.parent)
-    os.chdir(directory)
-
-    class TechnicianHandler(http.server.SimpleHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
-            if self.path in {"/", "/index.html"}:
-                write_technician_report(base_dir)
-            super().do_GET()
-
-    print(f"Lokal tekniker-UI: http://0.0.0.0:{port}/  ({report})")
-    print("Tryk Ctrl+C for at stoppe.")
-    try:
-        with http.server.ThreadingHTTPServer(("0.0.0.0", port), TechnicianHandler) as server:
-            server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nUI stoppet")
-    return 0
 
 
 def render_technician_html(status: dict[str, Any]) -> str:

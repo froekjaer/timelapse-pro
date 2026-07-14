@@ -33,7 +33,8 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "2.8.0"    # Opdateres ved release (TODO: læs fra VERSION-fil)
+APP_VERSION = "2.8.0"    # Fallback for unprovisioned/development installations
+RELEASE_METADATA_FILE = Path("/opt/timelapse/edge/.timelapse-release.json")
 GPG_KEY_UID = "timelapse@froekjaer.dk"  # Til fingerprint-opslag
 
 
@@ -520,6 +521,26 @@ def _git_app_tag() -> Optional[str]:
     return None
 
 
+def _artifact_release_metadata() -> dict[str, str]:
+    """Read the release identity written after a verified artifact install.
+
+    Artifact deployment deliberately copies files without changing the local Git
+    checkout. Git HEAD therefore describes the checkout, not necessarily the
+    running code. This small, non-secret receipt is the CMDB source of truth.
+    """
+    try:
+        raw = json.loads(RELEASE_METADATA_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(raw, dict) or raw.get("schema") != "timelapse.edge.release.v1":
+        return {}
+    return {
+        key: str(raw[key]).strip()
+        for key in ("artifact_id", "source_commit", "version", "installed_at")
+        if raw.get(key) is not None and str(raw[key]).strip()
+    }
+
+
 # ── Samlet inventar ───────────────────────────────────────────────────────────
 
 def collect_inventory(config: dict) -> dict:
@@ -537,10 +558,12 @@ def collect_inventory(config: dict) -> dict:
     data_type, data_gb, data_pct = _storage_info(data_path) if Path(data_path).exists() else (None, None, None)
     package_manager, os_packages = _os_packages()
 
-    # Git-version (foretrækkes over hardkodet APP_VERSION)
+    # A verified artifact receipt takes precedence over Git. Artifact installs
+    # intentionally do not mutate the Edge checkout's Git HEAD.
+    release = _artifact_release_metadata()
     git_commit = _git_app_version()
     git_tag    = _git_app_tag()
-    app_ver    = git_tag or git_commit or APP_VERSION
+    app_ver    = release.get("source_commit") or release.get("version") or git_tag or git_commit or APP_VERSION
 
     # Bruger + services (ikke-blokerende)
     local_users: list[dict] = []
@@ -565,8 +588,12 @@ def collect_inventory(config: dict) -> dict:
         log.debug("_apt_updates_available fejl: %s", exc)
 
     software = _software_inventory()
+    software["timelapse_pro"] = app_ver
     software["git_commit"] = git_commit
     software["git_tag"]    = git_tag
+    if release:
+        software["release_artifact_id"] = release.get("artifact_id", "")
+        software["release_installed_at"] = release.get("installed_at", "")
 
     return {
         # Hardware
@@ -584,6 +611,9 @@ def collect_inventory(config: dict) -> dict:
         "firmware_version":         _firmware_version(),
         "python_version":           platform.python_version(),
         "app_version":              app_ver,
+        "release_artifact_id":      release.get("artifact_id"),
+        "release_source_commit":    release.get("source_commit"),
+        "release_installed_at":     release.get("installed_at"),
         "git_commit":               git_commit,
         "git_tag":                  git_tag,
         "package_manager":          package_manager,

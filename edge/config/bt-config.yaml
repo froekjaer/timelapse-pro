@@ -15,7 +15,8 @@ management:
   require_mfa: true      # false = åben adgang (kun RFC1918-begrænsning gælder)
   session_timeout: 3600  # sekunder — 0 = ubegrænset
   https_port: 8443
-  # http_port: port 80+443 redirectes via iptables NAT direkte til https_port
+  # Ingen HTTP/NAT redirect: teknikeren åbner direkte https://192.168.42.1:8443
+  enable_interactive_shell: false
   cert_file: "/etc/timelapse/tls/server.crt"
   key_file: "/etc/timelapse/tls/server.key"
 

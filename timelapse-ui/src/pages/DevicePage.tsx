@@ -669,17 +669,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
               {/* Kolonne 4: Fototekniske Anbefalinger */}
               <div className="space-y-0.5">
-                <FotoTechnicalCard
-                  data={sidecar?.ai_analysis?.autonomous_optimizer || sidecar?.autonomous_optimizer || null}
-                  onApplyOverride={(rec) => {
-                    console.log('Apply override:', rec)
-                    // TODO: Send til edge via headend API
-                  }}
-                  onDismissRecommendation={(action) => {
-                    console.log('Dismiss recommendation:', action)
-                    // TODO: Gem dismiss preference
-                  }}
-                />
+                <FotoTechnicalCard data={sidecar?.ai_analysis?.autonomous_optimizer || sidecar?.autonomous_optimizer || null} />
               </div>
 
               {/* Kolonne 5: Site-Wide Look Matching */}
@@ -687,14 +677,6 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                 <SiteLookCard
                   data={sidecar?.ai_analysis?.site_look_matching || null}
                   cameraModel={c.camera_model || sidecar?.camera?.model || 'Unknown'}
-                  onSetReference={() => {
-                    console.log('Set site reference')
-                    // TODO: Send til edge via headend API
-                  }}
-                  onRegenerateLUT={() => {
-                    console.log('Regenerate LUT')
-                    // TODO: Send til edge via headend API
-                  }}
                 />
               </div>
 
