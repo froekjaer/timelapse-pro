@@ -80,7 +80,7 @@ class AutonomousImageOptimizer:
         site_look_config = config.get("site_look_matching", {}) or {}
         if site_look_config.get("enabled", True):  # Enabled by default
             try:
-                from edge.ai.site_look_config_client import get_config_client
+                from ai.site_look_config_client import get_config_client
 
                 # Get config client (must be initialized before optimizer)
                 config_client = get_config_client()

@@ -75,7 +75,20 @@ class UploadManager:
         targets = []
         sftp    = config.get("sftp", {})
 
-        if sftp.get("enabled", True) and sftp.get("host"):
+        def is_complete(target: dict, name: str) -> bool:
+            if not target.get("enabled", True):
+                return False
+            required = ("host", "username", "remote_base")
+            missing = [key for key in required if not str(target.get(key) or "").strip()]
+            if not str(target.get("password") or "").strip() and not str(target.get("key_file") or "").strip():
+                missing.append("password/key_file")
+            if missing:
+                if target.get("host") or target.get("enabled"):
+                    log.warning("Ignoring incomplete %s configuration; missing %s", name, ", ".join(missing))
+                return False
+            return True
+
+        if is_complete(sftp, sftp.get("role") or "customer_sftp"):
             targets.append(SFTPTarget(
                 name        = sftp.get("role") or "customer_sftp",
                 host        = sftp["host"],
@@ -87,7 +100,7 @@ class UploadManager:
             ))
 
         secondary = sftp.get("secondary_sftp", {})
-        if secondary.get("enabled") and secondary.get("host"):
+        if is_complete(secondary, secondary.get("role") or "secondary_sftp"):
             targets.append(SFTPTarget(
                 name        = secondary.get("role") or "backup_sftp",
                 host        = secondary["host"],
@@ -99,7 +112,7 @@ class UploadManager:
             ))
 
         backup = sftp.get("backup_sftp", {})
-        if backup.get("enabled") and backup.get("host"):
+        if is_complete(backup, backup.get("role") or "backup_sftp"):
             targets.append(SFTPTarget(
                 name        = backup.get("role") or "backup_sftp",
                 host        = backup["host"],
