@@ -404,13 +404,14 @@ function stepDotStyle(state: WorkflowStepState) {
   return map[state]
 }
 
-function workflowForUpdate(u: Update, deployStatus?: HeadendDeployStatus): { title: string; nextAction: string; steps: WorkflowStep[] } {
+function workflowForUpdate(u: Update, deployStatus?: HeadendDeployStatus, flowStatus?: UpdateFlowStatus): { title: string; nextAction: string; steps: WorkflowStep[] } {
   const headendScoped = isHeadendScoped(u)
   const headendDeployable = canDeployOnHeadend(u)
   const deployFailed = deployStatus?.status === 'failed'
   const deployDone = u.status === 'deployed' || deployStatus?.status === 'deployed'
   const deployRunning = deployStatus?.running === true
   const phase = deployStatus?.phase || ''
+  const edgeTargetStatus = flowStatus?.targets[0]?.status || ''
 
   if (u.status === 'pending') {
     const prodReady = isProdReadyUpdate(u)
@@ -489,15 +490,21 @@ function workflowForUpdate(u: Update, deployStatus?: HeadendDeployStatus): { tit
   }
 
   if (u.status === 'approved') {
+    const edgeStarted = ['backing_up', 'downloading', 'verifying', 'installing'].includes(edgeTargetStatus)
+    const backupActive = edgeTargetStatus === 'backing_up'
+    const backupDone = ['downloading', 'verifying', 'installing'].includes(edgeTargetStatus)
+    const trustActive = edgeTargetStatus === 'verifying'
+    const trustDone = edgeStarted && !trustActive
+    const installActive = ['downloading', 'installing'].includes(edgeTargetStatus)
     return {
       title: 'Edge pull-flow',
       nextAction: 'Edge henter selv opdateringen ved næste policy-poll. Den skal have et signeret artifact og lave pre-update backup før installation.',
       steps: [
         { title: 'Godkendt', detail: `${u.approved_by || 'Admin'} godkendte update til ${u.environment || 'ukendt miljø'}.`, state: 'done' },
-        { title: 'Afventer Edge poll', detail: 'Edge kalder Headend og henter update-policy.', state: 'current' },
-        { title: 'Artifact trust check', detail: 'Edge validerer signatur, sha256 og signer-scope.', state: 'waiting' },
-        { title: 'Pre-update backup', detail: 'Edge laver lokal restore-backup og uploader til Headend.', state: 'waiting' },
-        { title: 'Install/rollback', detail: 'Edge installerer eller ruller tilbage og rapporterer resultat.', state: 'waiting' },
+        { title: 'Afventer Edge poll', detail: 'Edge kalder Headend og henter update-policy.', state: edgeStarted ? 'done' : 'current' },
+        { title: 'Artifact trust check', detail: 'Edge validerer signatur, sha256 og signer-scope.', state: trustActive ? 'current' : trustDone ? 'done' : 'waiting' },
+        { title: 'Pre-update backup', detail: 'Edge laver lokal restore-backup og uploader til Headend.', state: backupActive ? 'current' : backupDone ? 'done' : 'waiting' },
+        { title: 'Install/rollback', detail: 'Edge downloader, installerer eller ruller tilbage og rapporterer resultat.', state: installActive ? 'current' : 'waiting' },
       ],
     }
   }
@@ -518,6 +525,19 @@ function workflowForUpdate(u: Update, deployStatus?: HeadendDeployStatus): { tit
   }
 
   if (u.status === 'deployed') {
+    if (!headendScoped) {
+      return {
+        title: 'Edge pull-flow',
+        nextAction: u.environment === 'test' ? 'Test-deploy er færdig. Næste governance-trin er testaccept før pakken markeres Prod-klar.' : 'Deploy er færdig. Overvåg drift og behold rollback-evidence.',
+        steps: [
+          { title: 'Godkendt', detail: 'Update blev godkendt.', state: 'done' },
+          { title: 'Edge poll', detail: 'Edge hentede den signerede update-policy.', state: 'done' },
+          { title: 'Artifact trust check', detail: 'Signatur, sha256 og signer-scope blev accepteret.', state: 'done' },
+          { title: 'Pre-update backup', detail: 'Restore-backup blev oprettet før installation.', state: 'done' },
+          { title: 'Installeret', detail: `Edge rapporterede deployment ${fmt(u.deployed_at)}.`, state: 'done' },
+        ],
+      }
+    }
     return {
       title: 'Deploy-flow',
       nextAction: u.environment === 'test' ? 'Test-deploy er færdig. Næste governance-trin er at markere pakken Prod-klar efter testaccept.' : 'Deploy er færdig. Overvåg drift og behold rollback-evidence.',
@@ -538,8 +558,8 @@ function workflowForUpdate(u: Update, deployStatus?: HeadendDeployStatus): { tit
   }
 }
 
-function WorkflowStatusPanel({ update, deployStatus }: { update: Update; deployStatus?: HeadendDeployStatus }) {
-  const workflow = workflowForUpdate(update, deployStatus)
+function WorkflowStatusPanel({ update, deployStatus, flowStatus }: { update: Update; deployStatus?: HeadendDeployStatus; flowStatus?: UpdateFlowStatus }) {
+  const workflow = workflowForUpdate(update, deployStatus, flowStatus)
   const prodReady = isProdReadyUpdate(update)
   return (
     <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3">
@@ -771,7 +791,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
             {u.deployed_at && <div><span className="text-gray-400">Deployet: </span><span className="text-gray-700">{fmt(u.deployed_at)}</span></div>}
             <div><span className="text-gray-400">ID: </span><span className="text-gray-500 font-mono">#{u.id}</span></div>
           </div>
-          <WorkflowStatusPanel update={u} deployStatus={deployStatus} />
+          <WorkflowStatusPanel update={u} deployStatus={deployStatus} flowStatus={flowStatus} />
           {!headendScoped && <FlowTargetsPanel flowStatus={flowStatus} />}
           {u.status === 'blocked' && (u.update_type === 'os_security' || u.update_type === 'os_updates') && (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
