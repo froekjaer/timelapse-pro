@@ -99,7 +99,7 @@ site_look_matching:
   enabled: true
 
 # Storage path for reference frames and LUTs
-site_look_storage_path: "/var/lib/timelapse/site_looks"
+site_look_storage_path: "/data/timelapse/site_looks"
 ```
 
 ## API Output

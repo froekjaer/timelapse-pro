@@ -467,6 +467,19 @@ def _safe_storage_component(value: str) -> str:
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
     return f"{readable[:80]}-{digest}"
 
+
+def _edge_storage_path(value: str | Path) -> Path:
+    """Map the legacy Edge state root into the sandbox-approved data volume."""
+    path = Path(value)
+    legacy_root = Path("/var/lib/timelapse")
+    try:
+        relative = path.relative_to(legacy_root)
+    except ValueError:
+        return path
+    mapped = Path("/data/timelapse") / relative
+    log.info("Site Look storage mapped from legacy %s to %s", path, mapped)
+    return mapped
+
 class SiteLookManager:
     """Main manager for site-wide look matching.
 
@@ -506,7 +519,7 @@ class SiteLookManager:
 
         # Initialize storage
         storage_path = self._get_config_value('storage_path', '/var/lib/timelapse/site_looks')
-        self._storage_base = Path(storage_path)
+        self._storage_base = _edge_storage_path(storage_path)
         self._storage_base.mkdir(parents=True, exist_ok=True)
 
     def _refresh_config(self) -> None:

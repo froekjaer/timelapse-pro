@@ -12,7 +12,7 @@ site_look_matching:
   enabled: true
 
   # Hvor reference frames og LUTs gemmes
-  storage_path: "/var/lib/timelapse/site_looks"
+  storage_path: "/data/timelapse/site_looks"
 
   # Kvalitetskrav for at et billede kan blive site reference
   reference_quality_threshold: 75.0  # Quality score >= 75%
