@@ -77,12 +77,16 @@ def test_artifact_install_activates_and_verifies_local_management_services():
     install_block = source.split("def _run_artifact_app_update", 1)[1].split("def _run_artifact_os_update", 1)[0]
     unit = _source("edge/scripts/timelapse-edge.service")
 
+    assert '"timelapse-bt-pan.service"' in install_block
+    assert '"timelapse-bt-agent.service"' in install_block
     assert '"timelapse-captive.service"' in install_block
     assert '"timelapse-totp.service"' in install_block
     assert '["systemctl", "daemon-reload"]' in install_block
     assert '["systemctl", "restart", service]' in install_block
     assert '["systemctl", "is-active", "--quiet", service]' in install_block
     assert '["systemctl", "try-restart", service]' in install_block
+    assert "bt_pan_active" in install_block
+    assert "captive firewall afventer PAN-recovery" in install_block
     assert "User=root" in unit
 
 

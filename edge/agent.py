@@ -1633,10 +1633,14 @@ class EdgeAgent:
         receipt_path = repo / "edge" / ".timelapse-release.json"
         unit_backup = staging / "systemd-backup"
         managed_units = (
+            "timelapse-bt-pan.service",
+            "timelapse-bt-agent.service",
             "timelapse-captive.service",
             "timelapse-totp.service",
         )
         management_runtime_paths = {
+            "edge/scripts/timelapse-bt-pan.sh",
+            "edge/scripts/bt-autoagent.py",
             "edge/scripts/totp-service.py",
             "edge/scripts/timelapse-captive.sh",
             "edge/scripts/gen-bt-cert.sh",
@@ -1729,8 +1733,49 @@ class EdgeAgent:
                         raise RuntimeError(f"managed_systemd_unit_missing:{unit}")
                     _shutil.copy2(source, target)
                 _sp.run(["systemctl", "daemon-reload"], check=True, capture_output=True, text=True)
-                for service in ("timelapse-captive.service", "timelapse-totp.service"):
+                for service in managed_units:
                     _sp.run(["systemctl", "enable", service], check=True, capture_output=True, text=True)
+
+                # Bluetooth hardware or its vendor driver can be unavailable
+                # on an otherwise healthy Edge.  That must be visible, but it
+                # must not roll back a verified application release.  Captive
+                # firewall activation is only meaningful after PAN made br-bt.
+                _sp.run(
+                    ["systemctl", "restart", "timelapse-bt-pan.service"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                bt_pan_active = _sp.run(
+                    ["systemctl", "is-active", "--quiet", "timelapse-bt-pan.service"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                ).returncode == 0
+                if bt_pan_active:
+                    _sp.run(
+                        ["systemctl", "restart", "timelapse-bt-agent.service"],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    service = "timelapse-captive.service"
+                    _sp.run(["systemctl", "restart", service], check=True, capture_output=True, text=True)
+                    active = _sp.run(
+                        ["systemctl", "is-active", "--quiet", service],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if active.returncode != 0:
+                        raise RuntimeError(f"managed_service_not_active:{service}")
+                else:
+                    log.warning(
+                        "App update %d: Bluetooth PAN er ikke aktiv; captive firewall afventer PAN-recovery",
+                        update_id,
+                    )
+
+                for service in ("timelapse-totp.service",):
                     _sp.run(["systemctl", "restart", service], check=True, capture_output=True, text=True)
                     active = _sp.run(
                         ["systemctl", "is-active", "--quiet", service],
@@ -1753,7 +1798,7 @@ class EdgeAgent:
                         if previous.is_file():
                             _shutil.copy2(previous, Path("/etc/systemd/system") / unit)
                     _sp.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
-                    for service in ("timelapse-captive.service", "timelapse-totp.service"):
+                    for service in managed_units:
                         _sp.run(["systemctl", "try-restart", service], check=False, capture_output=True, text=True)
             except Exception as service_rollback_exc:
                 log.warning("Rollback af lokale management-services fejlede: %s", service_rollback_exc)
