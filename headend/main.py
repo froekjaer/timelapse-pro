@@ -69,6 +69,7 @@ import gzip as _gzip
 import lzma as _lzma
 import urllib.request as _urlrequest
 import functools as _functools
+import shutil as _shutil
 # ── Auth imports (Sprint C) ───────────────────────────────────────────────
 from jose import JWTError, jwt as _jwt
 import bcrypt as _bcrypt_lib
@@ -6706,6 +6707,50 @@ def _collect_release_outputs(root: Path) -> list[dict]:
     return outputs
 
 
+def _materialize_release_snapshot(source_root: Path, artifact_id: str, outputs: list[dict]) -> Path:
+    """Copy signed release inputs into immutable, artifact-scoped storage."""
+    configured = os.getenv("TIMELAPSE_UPDATE_ARTIFACT_DIR")
+    storage_root = Path(configured).expanduser() if configured else _repo_root() / "artifacts" / "update-artifacts"
+    storage_root.mkdir(parents=True, exist_ok=True, mode=0o750)
+    final_root = storage_root / artifact_id
+
+    def _verify_snapshot(root: Path) -> None:
+        for output in outputs:
+            rel = Path(str(output.get("path") or ""))
+            if not rel.parts or rel.is_absolute() or ".." in rel.parts:
+                raise ValueError(f"Ugyldig release output path: {rel}")
+            file_path = root / rel
+            if not file_path.is_file() or _file_sha256(file_path) != output.get("sha256"):
+                raise ValueError(f"Immutable artifact snapshot matcher ikke manifest: {rel}")
+
+    if final_root.exists():
+        _verify_snapshot(final_root)
+        return final_root
+
+    staging_root = storage_root / f".{artifact_id}.tmp-{_uuid.uuid4().hex}"
+    try:
+        for output in outputs:
+            rel = Path(str(output.get("path") or ""))
+            if not rel.parts or rel.is_absolute() or ".." in rel.parts:
+                raise ValueError(f"Ugyldig release output path: {rel}")
+            source_file = (source_root / rel).resolve()
+            resolved_source_root = source_root.resolve()
+            if resolved_source_root not in source_file.parents:
+                raise ValueError(f"Release output ligger udenfor source root: {rel}")
+            destination = staging_root / rel
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            _shutil.copy2(source_file, destination)
+        _verify_snapshot(staging_root)
+        for snapshot_file in staging_root.rglob("*"):
+            snapshot_file.chmod(0o550 if snapshot_file.is_dir() else 0o440)
+        staging_root.chmod(0o550)
+        staging_root.rename(final_root)
+    except Exception:
+        _shutil.rmtree(staging_root, ignore_errors=True)
+        raise
+    return final_root
+
+
 def _find_artifact_for_update(db: Session, update: PendingUpdate) -> UpdateArtifact | None:
     ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
     if ticket and ticket.artifact_id:
@@ -8246,6 +8291,7 @@ def catalog_current_release_artifact(
     manifest_json = _canonical_json(manifest)
     manifest_sha = _sha256_text(manifest_json)
     signature, signed_by = _sign_payload(manifest_json)
+    snapshot_root = _materialize_release_snapshot(root, artifact_id, outputs)
     artifact = UpdateArtifact(
         artifact_id=artifact_id,
         artifact_type="app",
@@ -8253,7 +8299,7 @@ def catalog_current_release_artifact(
         source_commit=commit,
         source_ref=ref,
         filename=f"{artifact_id}.manifest.json",
-        storage_path=str(root),
+        storage_path=str(snapshot_root),
         size_bytes=sum(int(o.get("size_bytes") or 0) for o in outputs),
         sha256=manifest_sha,
         manifest_json=manifest_json,
@@ -8422,6 +8468,7 @@ def _build_artifact_from_git_tag(
         manifest_json = _canonical_json(manifest)
         manifest_sha = _sha256_text(manifest_json)
         signature, signed_by = _sign_payload(manifest_json)
+        snapshot_root = _materialize_release_snapshot(tmp_path, artifact_id, outputs)
         artifact = UpdateArtifact(
             artifact_id=artifact_id,
             artifact_type="app",
@@ -8429,7 +8476,7 @@ def _build_artifact_from_git_tag(
             source_commit=commit,
             source_ref=tag,
             filename=f"{artifact_id}.manifest.json",
-            storage_path=str(root),
+            storage_path=str(snapshot_root),
             size_bytes=sum(int(o.get("size_bytes") or 0) for o in outputs),
             sha256=manifest_sha,
             manifest_json=manifest_json,

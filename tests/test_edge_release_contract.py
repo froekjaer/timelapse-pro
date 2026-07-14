@@ -30,6 +30,19 @@ def test_edge_release_artifact_contains_all_active_runtime_paths():
         assert runtime_path in collector
 
 
+def test_release_artifacts_use_immutable_artifact_scoped_storage():
+    source = _source("headend/main.py")
+    snapshot = source.split("def _materialize_release_snapshot", 1)[1].split("\n\ndef ", 1)[0]
+    tag_builder = source.split("def _build_artifact_from_git_tag", 1)[1].split("def _git_tag_poller_loop", 1)[0]
+
+    assert 'storage_root / artifact_id' in snapshot
+    assert '_verify_snapshot(staging_root)' in snapshot
+    assert '0o550 if snapshot_file.is_dir() else 0o440' in snapshot
+    assert 'staging_root.rename(final_root)' in snapshot
+    assert '_materialize_release_snapshot(tmp_path, artifact_id, outputs)' in tag_builder
+    assert 'storage_path=str(snapshot_root)' in tag_builder
+
+
 def test_edge_artifact_download_is_scoped_to_the_authenticated_device():
     source = _source("headend/main.py")
     endpoint = source.split("def download_update_artifact_file", 1)[1].split('@app.get("/api/updates/artifacts")', 1)[0]
