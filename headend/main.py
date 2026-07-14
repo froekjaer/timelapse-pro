@@ -4113,7 +4113,7 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
         headend_version = _sp.run(
             ["git", "-C", repo_dir, "rev-parse", "HEAD"],
             capture_output=True, text=True, timeout=5
-        ).stdout.strip()[:7]
+        ).stdout.strip()
     except Exception:
         headend_version = ""
 
@@ -4130,12 +4130,16 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
             device_id, os_security, os_total,
         )
 
-    if edge_version and headend_version and edge_version != headend_version:
+    edge_is_current = bool(edge_version and headend_version.startswith(edge_version))
+    if edge_version and headend_version and not edge_is_current:
         if not _has_pending("app_updates"):
             db.add(PendingUpdate(
                 update_type = "app_updates",
                 version     = headend_version,
-                description = f"TimeLapse Pro opdatering tilgængelig (edge: {edge_version} → headend: {headend_version})",
+                description = (
+                    "TimeLapse Pro opdatering tilgængelig "
+                    f"(edge: {edge_version} → headend: {headend_version[:12]})"
+                ),
                 severity    = "medium",
                 scope="device", scope_id=device_id, status="pending",
             ))
@@ -8077,6 +8081,59 @@ _git_tag_poller_seen: set[str] = set()
 _git_tag_poller_lock = _threading.Lock()
 
 
+def _create_lab_update_candidates_for_artifact(db: Session, artifact: UpdateArtifact) -> int:
+    """Make a signed release visible to LAB devices without deploying it.
+
+    A release should enter the test approval queue as soon as Headend has
+    verified and catalogued the signed tag. Waiting for a 60-minute Edge
+    heartbeat leaves a release invisible and tempted earlier implementations
+    to bypass the change flow. Only inventory-marked LAB/test devices are
+    eligible here; staging and production require an explicit promotion.
+    """
+    if artifact.artifact_type != "app" or not artifact.source_commit:
+        return 0
+
+    lab_inventory = db.query(DeviceInventory).filter(
+        DeviceInventory.environment.in_(["lab", "test", "rd"])
+    ).all()
+    created = 0
+    for inv in lab_inventory:
+        device = db.query(Device).filter_by(device_id=inv.device_id).first()
+        if not device:
+            continue
+        installed = str(inv.app_version or device.app_version or "").strip()
+        if installed and artifact.source_commit.startswith(installed):
+            continue
+        existing = db.query(PendingUpdate).filter(
+            PendingUpdate.update_type == "app_updates",
+            PendingUpdate.version == artifact.source_commit,
+            PendingUpdate.scope == "device",
+            PendingUpdate.scope_id == device.device_id,
+            PendingUpdate.status.in_(["pending", "approved", "deployed"]),
+        ).first()
+        if existing:
+            continue
+        db.add(PendingUpdate(
+            update_type="app_updates",
+            version=artifact.source_commit,
+            description=(
+                f"GPG-signeret TimeLapse Pro LAB-release {artifact.source_ref or artifact.source_commit[:12]} "
+                "er klar til test. Edge henter kun fra Headend efter godkendelse."
+            ),
+            severity="medium",
+            scope="device",
+            scope_id=device.device_id,
+            target_device_ids=json.dumps([device.device_id]),
+            status="pending",
+            environment="test",
+        ))
+        created += 1
+    if created:
+        db.commit()
+        log.info("Oprettede %d LAB app-update kandidat(er) for artifact %s", created, artifact.artifact_id)
+    return created
+
+
 def _build_artifact_from_git_tag(
     tag: str,
     triggered_by: str,
@@ -8190,6 +8247,7 @@ def _build_artifact_from_git_tag(
         )
         db.add(artifact)
         db.commit()
+        _create_lab_update_candidates_for_artifact(db, artifact)
         log.info("Artifact %s bygget og registreret for tag %s", artifact_id, tag)
         return _artifact_to_dict(artifact)
 
