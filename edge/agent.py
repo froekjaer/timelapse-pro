@@ -1638,13 +1638,14 @@ class EdgeAgent:
             "timelapse-captive.service",
             "timelapse-totp.service",
         )
+        managed_unit_files = (*managed_units, "timelapse-edge.service")
         management_runtime_paths = {
             "edge/scripts/timelapse-bt-pan.sh",
             "edge/scripts/bt-autoagent.py",
             "edge/scripts/totp-service.py",
             "edge/scripts/timelapse-captive.sh",
             "edge/scripts/gen-bt-cert.sh",
-            *(f"edge/scripts/{unit}" for unit in managed_units),
+            *(f"edge/scripts/{unit}" for unit in managed_unit_files),
         }
         management_changed = any(
             str(item.get("path")) in management_runtime_paths for item in outputs
@@ -1710,7 +1711,7 @@ class EdgeAgent:
                 # so the application rollback loop never copies them into the
                 # repository tree.
                 unit_backup.mkdir(parents=True, exist_ok=True)
-                for unit in managed_units:
+                for unit in managed_unit_files:
                     target = Path("/etc/systemd/system") / unit
                     if target.exists():
                         _shutil.copy2(target, unit_backup / unit)
@@ -1719,7 +1720,7 @@ class EdgeAgent:
                         raise RuntimeError(f"managed_systemd_unit_missing:{unit}")
                     _shutil.copy2(source, target)
                 _sp.run(["systemctl", "daemon-reload"], check=True, capture_output=True, text=True)
-                for service in managed_units:
+                for service in managed_unit_files:
                     _sp.run(["systemctl", "enable", service], check=True, capture_output=True, text=True)
 
                 # Bluetooth hardware or its vendor driver can be unavailable
@@ -1807,7 +1808,7 @@ class EdgeAgent:
             log.warning("App artifact update %d fejlede: %s", update_id, exc)
             try:
                 if unit_backup.exists():
-                    for unit in managed_units:
+                    for unit in managed_unit_files:
                         previous = unit_backup / unit
                         if previous.is_file():
                             _shutil.copy2(previous, Path("/etc/systemd/system") / unit)
@@ -1824,6 +1825,11 @@ class EdgeAgent:
                             dest = repo / rel
                             dest.parent.mkdir(parents=True, exist_ok=True)
                             _shutil.copy2(source, dest)
+                previous_receipt = backup / "edge" / receipt_path.name
+                if previous_receipt.is_file():
+                    _shutil.copy2(previous_receipt, receipt_path)
+                elif receipt_path.exists():
+                    receipt_path.unlink()
             except Exception as rollback_exc:
                 log.warning("Rollback efter app artifact update fejlede: %s", rollback_exc)
             self._report_update(update_id, "rolled_back", str(exc)[:700])

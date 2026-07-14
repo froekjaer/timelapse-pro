@@ -110,6 +110,7 @@ def test_artifact_install_activates_and_verifies_local_management_services():
     assert '"timelapse-bt-agent.service"' in install_block
     assert '"timelapse-captive.service"' in install_block
     assert '"timelapse-totp.service"' in install_block
+    assert 'managed_unit_files = (*managed_units, "timelapse-edge.service")' in install_block
     assert '["systemctl", "daemon-reload"]' in install_block
     assert '["systemctl", "restart", service]' in install_block
     assert '["systemctl", "is-active", "--quiet", service]' in install_block
@@ -117,6 +118,9 @@ def test_artifact_install_activates_and_verifies_local_management_services():
     assert "bt_pan_active" in install_block
     assert "captive firewall afventer PAN-recovery" in install_block
     assert "User=root" in unit
+    assert "Type=simple" in unit
+    assert "WatchdogSec=" not in unit
+    assert "ReadWritePaths=/etc/systemd/system/timelapse-edge.service" in unit
 
 
 def test_legacy_edge_update_and_time_scripts_cannot_use_direct_internet_channels():
@@ -160,6 +164,8 @@ def test_edge_installer_writes_a_verified_artifact_receipt():
     assert 'release_receipt_readback_mismatch' in install_block
     assert install_block.index('persisted_receipt =') < install_block.index('self._report_update(update_id, "deployed")')
     assert "backup_receipt = backup / \"edge\" / receipt_path.name" in install_block
+    assert 'elif receipt_path.exists()' in install_block
+    assert 'receipt_path.unlink()' in install_block
 
 
 def test_local_management_is_totp_https_only_and_has_no_interactive_shell_by_default():
