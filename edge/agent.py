@@ -2170,6 +2170,10 @@ class EdgeAgent:
         """
         poll_s = int(debug_cfg.get("config_poll_s", 1))
 
+        # LAB mode has its own loop and does not pass through _tick(). Keep the
+        # signed Headend update policy active while a camera session is open.
+        self._check_and_apply_updates_if_due()
+
         ok, cfg_data = self._api.fetch_config()
         if ok and cfg_data:
             old_version = self._cfg.get("config_version", "")

@@ -3048,6 +3048,94 @@ def _trusted_release_signers(db: Session) -> list[dict]:
     return result
 
 
+def _configured_release_signer_material() -> dict | None:
+    """Resolve the public identity of the GPG key currently used for releases."""
+    key_id = os.getenv("CHANGE_TICKET_GPG_KEY") or os.getenv("TIMELAPSE_GPG_KEY")
+    if not key_id:
+        return None
+    fingerprint_result = _subprocess.run(
+        ["gpg", "--batch", "--with-colons", "--fingerprint", key_id],
+        capture_output=True, text=True, timeout=10,
+    )
+    export_result = _subprocess.run(
+        ["gpg", "--batch", "--armor", "--export", key_id],
+        capture_output=True, text=True, timeout=10,
+    )
+    if fingerprint_result.returncode != 0 or export_result.returncode != 0:
+        raise RuntimeError("configured release signing key could not be exported")
+    full_fingerprint = next(
+        (line.split(":")[9] for line in fingerprint_result.stdout.splitlines() if line.startswith("fpr:")),
+        "",
+    ).upper()
+    public_key = export_result.stdout.strip()
+    if not full_fingerprint or not public_key:
+        raise RuntimeError("configured release signing key has no public identity")
+    return {
+        "gpg_fingerprint": full_fingerprint,
+        "public_key": public_key,
+        "fingerprint": hashlib.sha256(public_key.encode("utf-8")).hexdigest(),
+    }
+
+
+def _ensure_configured_release_signer(db: Session) -> KeyCredential | None:
+    """Keep CMDB trust roots aligned with the key that signs new artifacts."""
+    material = _configured_release_signer_material()
+    if not material:
+        return None
+    for credential in db.query(KeyCredential).filter_by(
+        entity_type="headend", key_type="signing", status="active"
+    ).all():
+        try:
+            metadata = json.loads(credential.metadata_json or "{}")
+        except Exception:
+            metadata = {}
+        if str(metadata.get("gpg_fingerprint") or "").upper() == material["gpg_fingerprint"]:
+            return credential
+
+    short_id = material["gpg_fingerprint"][-16:].lower()
+    credential = KeyCredential(
+        credential_id=f"TL-KEY-{now_utc():%Y%m%d}-release-{short_id}",
+        entity_type="headend",
+        entity_id="headend",
+        key_type="signing",
+        label="Headend active release/code-signing trust root",
+        status="active",
+        scopes_json=json.dumps(["artifact:sign", "change-ticket:sign", "trust-policy:sign"]),
+        public_key=material["public_key"],
+        fingerprint=material["fingerprint"],
+        algorithm="openpgp",
+        compliance_domains="SABSA,IEC62443,ISO27000,NIS2,CRA",
+        created_by="headend:release-signer-sync",
+        created_at=now_utc(),
+        metadata_json=json.dumps({
+            "gpg_fingerprint": material["gpg_fingerprint"],
+            "purpose": "Edge verifies signed update artifacts and trust policy",
+            "synced_from_active_headend_signer": True,
+        }),
+    )
+    db.add(credential)
+    db.flush()
+    _audit_key_event(db, credential, "release_signer_enrolled", "headend:startup", {
+        "gpg_fingerprint": material["gpg_fingerprint"],
+        "reason": "active artifact signer was missing from CMDB trust policy",
+    })
+    db.commit()
+    log.warning("Aktiv release-signer blev registreret i CMDB trust policy: %s", material["gpg_fingerprint"])
+    return credential
+
+
+@app.on_event("startup")
+def _startup_sync_release_signer():
+    db = SessionLocal()
+    try:
+        _ensure_configured_release_signer(db)
+    except Exception as exc:
+        db.rollback()
+        log.error("Release-signer/CMDB trust sync fejlede: %s", exc)
+    finally:
+        db.close()
+
+
 def _evidence_links_for_control(title: str, domains: list[str]) -> list[dict]:
     """P2-09 (2026-07-07): Generér evidence links til compliance controls.
 
@@ -9581,7 +9669,7 @@ def approve_update(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
-    if u.status not in ("pending", "rejected"):
+    if u.status not in ("pending", "rejected", "blocked"):
         raise HTTPException(status_code=400, detail=f"Kan ikke godkende opdatering med status '{u.status}'")
     if payload.scope == "device" and not payload.scope_id and not payload.target_device_ids:
         raise HTTPException(status_code=400, detail="Device scope kræver scope_id eller target_device_ids")

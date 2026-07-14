@@ -72,6 +72,13 @@ def test_edge_agent_starts_and_stops_the_site_look_policy_client():
     assert 'self._site_look_config_client.stop_polling()' in shutdown
 
 
+def test_lab_mode_keeps_signed_update_poll_active():
+    source = _source("edge/agent.py")
+    lab_tick = source.split("def _lab_tick", 1)[1].split("\n    def ", 1)[0]
+
+    assert "self._check_and_apply_updates_if_due()" in lab_tick
+
+
 def test_artifact_install_activates_and_verifies_local_management_services():
     source = _source("edge/agent.py")
     install_block = source.split("def _run_artifact_app_update", 1)[1].split("def _run_artifact_os_update", 1)[0]

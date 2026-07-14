@@ -654,10 +654,11 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
         className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-50 transition-colors text-left">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-mono font-semibold text-gray-700">#{u.id}</span>
             <span className="text-sm font-medium text-gray-800">
               {TYPE_LABELS[u.update_type] ?? u.update_type}
             </span>
-            <span className="text-xs font-mono text-gray-500">v{u.version}</span>
+            <span className="text-xs font-mono text-gray-500">{u.version.startsWith('v') ? u.version : `commit ${shortHash(u.version)}`}</span>
             <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${severityBadge(u.severity)}`}>
               {u.severity}
             </span>
@@ -675,6 +676,12 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
               </span>
             )}
           </div>
+          {flowStatus?.artifact && (
+            <p className="text-[11px] font-mono text-gray-500 mt-1 break-all">
+              Artifact: {flowStatus.artifact.artifact_id}
+              {flowStatus.artifact.version ? ` · ${flowStatus.artifact.version}` : ''}
+            </p>
+          )}
           <p className="text-xs text-gray-400 mt-0.5">Oprettet {fmt(u.created_at)}</p>
         </div>
         {u.status === 'pending' && (
@@ -689,6 +696,15 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
               className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg border border-red-200 disabled:opacity-50 transition-colors">
               <XCircle className="w-3.5 h-3.5" />
               Afvis
+            </button>
+          </div>
+        )}
+        {u.status === 'blocked' && (
+          <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <button onClick={() => onApprove(u.id)} disabled={isBusy}
+              className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-lg disabled:opacity-50">
+              <RefreshCw className="w-3.5 h-3.5" />
+              Genprøv
             </button>
           </div>
         )}
@@ -1194,6 +1210,7 @@ export function UpdatesPage() {
   const [approveOpts, setApproveOpts] = useState<ApproveOptions>({
     environment: 'production', scope: 'device', scope_id: ''
   })
+  const approveUpdate = approveId === null ? null : updates.find(update => update.id === approveId) ?? null
 
   const load = useCallback(async (spin = false, filterOverride?: Filter) => {
     if (spin) setRefreshing(true)
@@ -1600,7 +1617,13 @@ export function UpdatesPage() {
 
       {approveId !== null && (
         <div className="bg-white rounded-xl border border-green-200 p-4 mb-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-800 mb-3">⚙️ Godkend opdatering</h3>
+          <h3 className="text-sm font-semibold text-gray-800">Godkend opdatering #{approveId}</h3>
+          {approveUpdate && (
+            <div className="mt-1 mb-3 text-xs text-gray-600">
+              <div>{TYPE_LABELS[approveUpdate.update_type] ?? approveUpdate.update_type} · {approveUpdate.version.startsWith('v') ? approveUpdate.version : `commit ${shortHash(approveUpdate.version)}`}</div>
+              <div className="font-mono mt-0.5">Mål: {approveUpdate.scope}{approveUpdate.scope_id ? ` / ${approveUpdate.scope_id}` : ''} · Miljø: {approveUpdate.environment || 'ikke angivet'}</div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
               <label className="text-xs text-gray-500 block mb-1">Miljø</label>
@@ -1687,7 +1710,7 @@ export function UpdatesPage() {
                 setApproveId(id)
                 setApproveOpts({
                   environment: (u.environment === 'test' || u.environment === 'production') ? u.environment : 'production',
-                  scope: 'device',
+                  scope: (['global', 'device', 'customer', 'site'].includes(u.scope) ? u.scope : 'device') as ApproveOptions['scope'],
                   scope_id: u.scope_id || ''
                 })
               }}
