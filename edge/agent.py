@@ -147,11 +147,12 @@ class EdgeAgent:
         self._relay        = RelayController(config)        # dual relay (camera + modem)
         self._driver       = get_driver(config)
         self._last_cam_diag: dict = {}
-        self._quality      = QualityChecker(config)
         self._buffer       = CircularBuffer(config)
         self._diag         = DiagnosticsCollector(config)
         self._uploader     = UploadManager(config, self._db)
         self._api          = HeadendClient(config, config_manager)
+        self._site_look_config_client = self._init_site_look_config_client()
+        self._quality      = QualityChecker(config)
         self._connectivity = self._relay.connectivity      # modem auto-cycle monitor
 
         # The legacy QR technician server is intentionally opt-in. The TOTP
@@ -191,6 +192,35 @@ class EdgeAgent:
         signal.signal(signal.SIGINT,  self._handle_signal)
 
         log.info("EdgeAgent initialised — device_id=%s", self._device_id)
+
+    def _init_site_look_config_client(self):
+        """Start the authenticated, offline-capable Site Look policy client."""
+        settings = self._cfg.get("site_look_matching", {}) or {}
+        if not settings.get("enabled", True):
+            log.info("Site Look matching is disabled by Edge configuration")
+            return None
+        headend_url = self._cfg.get("device", {}).get("headend_url", "")
+        if not headend_url or not self._cfg_mgr.api_token:
+            log.warning("Site Look matching deferred: Headend URL or Edge credential is missing")
+            return None
+        try:
+            from ai.site_look_config_client import init_config_client
+
+            storage = self._cfg.get("storage", {}) or {}
+            client = init_config_client({
+                "headend_url": headend_url,
+                "edge_node_id": self._device_id,
+                "api_token": self._cfg_mgr.api_token,
+                "edge_base_dir": str(self._cfg_mgr.base_dir),
+                "cache_path": str(Path(storage.get("local_path", "/data/captures")).parent / "site_look_config.json"),
+                "poll_interval_seconds": settings.get("config_poll_interval_seconds", 300),
+                "cache_ttl_seconds": settings.get("config_cache_ttl_seconds", 86400),
+            })
+            log.info("Site Look config client initialised")
+            return client
+        except Exception as exc:
+            log.warning("Site Look config client could not start: %s", exc)
+            return None
 
     def _handle_signal(self, signum, frame):
         log.info("Signal %d received — shutting down gracefully…", signum)
@@ -1601,6 +1631,20 @@ class EdgeAgent:
         staging = Path(_tempfile.mkdtemp(prefix="tlp-artifact-", dir="/tmp"))
         backup = repo / "prev"
         receipt_path = repo / "edge" / ".timelapse-release.json"
+        unit_backup = staging / "systemd-backup"
+        managed_units = (
+            "timelapse-captive.service",
+            "timelapse-totp.service",
+        )
+        management_runtime_paths = {
+            "edge/scripts/totp-service.py",
+            "edge/scripts/timelapse-captive.sh",
+            "edge/scripts/gen-bt-cert.sh",
+            *(f"edge/scripts/{unit}" for unit in managed_units),
+        }
+        management_changed = any(
+            str(item.get("path")) in management_runtime_paths for item in outputs
+        )
         try:
             self._report_update(update_id, "backing_up")
             pre_archive, pre_sha, pre_size_kb = self._create_edge_backup_archive(f"pre-update-{update_id}")
@@ -1668,11 +1712,51 @@ class EdgeAgent:
             receipt_tmp.chmod(0o644)
             receipt_tmp.replace(receipt_path)
 
+            if management_changed:
+                # These components run as independent root-owned services.
+                # Copy their signed artifact files into the active systemd
+                # locations, then restart and verify them before marking the
+                # deployment successful.  Backups are kept outside ``prev``
+                # so the application rollback loop never copies them into the
+                # repository tree.
+                unit_backup.mkdir(parents=True, exist_ok=True)
+                for unit in managed_units:
+                    target = Path("/etc/systemd/system") / unit
+                    if target.exists():
+                        _shutil.copy2(target, unit_backup / unit)
+                    source = repo / "edge" / "scripts" / unit
+                    if not source.is_file():
+                        raise RuntimeError(f"managed_systemd_unit_missing:{unit}")
+                    _shutil.copy2(source, target)
+                _sp.run(["systemctl", "daemon-reload"], check=True, capture_output=True, text=True)
+                for service in ("timelapse-captive.service", "timelapse-totp.service"):
+                    _sp.run(["systemctl", "enable", service], check=True, capture_output=True, text=True)
+                    _sp.run(["systemctl", "restart", service], check=True, capture_output=True, text=True)
+                    active = _sp.run(
+                        ["systemctl", "is-active", "--quiet", service],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if active.returncode != 0:
+                        raise RuntimeError(f"managed_service_not_active:{service}")
+
             self._report_update(update_id, "deployed")
             log.info("App update %d installeret fra signeret artifact — genstarter agent", update_id)
             _sp.Popen(["systemctl", "restart", "timelapse-edge"])
         except Exception as exc:
             log.warning("App artifact update %d fejlede: %s", update_id, exc)
+            try:
+                if unit_backup.exists():
+                    for unit in managed_units:
+                        previous = unit_backup / unit
+                        if previous.is_file():
+                            _shutil.copy2(previous, Path("/etc/systemd/system") / unit)
+                    _sp.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
+                    for service in ("timelapse-captive.service", "timelapse-totp.service"):
+                        _sp.run(["systemctl", "try-restart", service], check=False, capture_output=True, text=True)
+            except Exception as service_rollback_exc:
+                log.warning("Rollback af lokale management-services fejlede: %s", service_rollback_exc)
             try:
                 if backup.exists():
                     for source in backup.rglob("*"):
@@ -2676,6 +2760,11 @@ class EdgeAgent:
 
     def _shutdown(self) -> None:
         log.info("Shutting down edge agent…")
+        if self._site_look_config_client is not None:
+            try:
+                self._site_look_config_client.stop_polling()
+            except Exception as exc:
+                log.warning("Site Look config poller stop failed: %s", exc)
         tunnel = getattr(self, "_tunnel", None)
         if tunnel is not None:
             try:

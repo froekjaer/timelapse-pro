@@ -44,6 +44,64 @@ def test_site_look_configuration_router_is_not_public():
     assert 'app.include_router(site_look_router, dependencies=[require_role("super_admin")])' in source
 
 
+def test_site_look_edge_policy_uses_device_auth_and_active_camera_binding():
+    source = _source("headend/main.py")
+    endpoint = source.split("def get_edge_site_look_config", 1)[1].split('@app.get("/api/admin/devices/{device_id}/config")', 1)[0]
+
+    assert 'Depends(_verify_device_token)' in endpoint
+    assert 'camera = _active_camera_for_device(db, device_id)' in endpoint
+    assert 'service.get_config(' in endpoint
+    assert 'for_edge_node=device_id' in endpoint
+
+
+def test_site_look_edge_client_is_signed_and_uses_an_atomic_private_cache():
+    source = _source("edge/ai/site_look_config_client.py")
+
+    assert 'path = f"/edge/site-look/{self._edge_node_id}/config"' in source
+    assert 'request_signature_headers(self._api_token, "GET", path)' in source
+    assert 'edge_attestation_headers(' in source
+    assert 'os.replace(temp_path, self._cache_path)' in source
+    assert 'os.chmod(self._cache_path, 0o600)' in source
+
+
+def test_edge_agent_starts_and_stops_the_site_look_policy_client():
+    source = _source("edge/agent.py")
+
+    assert 'self._site_look_config_client = self._init_site_look_config_client()' in source
+    shutdown = source.split('def _shutdown(self)', 1)[1].split('# ── Helpers', 1)[0]
+    assert 'self._site_look_config_client.stop_polling()' in shutdown
+
+
+def test_artifact_install_activates_and_verifies_local_management_services():
+    source = _source("edge/agent.py")
+    install_block = source.split("def _run_artifact_app_update", 1)[1].split("def _run_artifact_os_update", 1)[0]
+    unit = _source("edge/scripts/timelapse-edge.service")
+
+    assert '"timelapse-captive.service"' in install_block
+    assert '"timelapse-totp.service"' in install_block
+    assert '["systemctl", "daemon-reload"]' in install_block
+    assert '["systemctl", "restart", service]' in install_block
+    assert '["systemctl", "is-active", "--quiet", service]' in install_block
+    assert '["systemctl", "try-restart", service]' in install_block
+    assert "User=root" in unit
+
+
+def test_legacy_edge_update_and_time_scripts_cannot_use_direct_internet_channels():
+    legacy_executor = _source("edge/cmdb/executor.py")
+    direct_deploy = _source("edge/scripts/deploy-totp.sh")
+    gps_setup = _source("edge/scripts/setup-gps-time.sh")
+    time_sync = _source("edge/scripts/sync-time.sh")
+
+    assert "apt-get" not in legacy_executor
+    assert "import subprocess" not in legacy_executor
+    assert "_apply_git" not in legacy_executor
+    assert "scp " not in direct_deploy
+    assert "apt-get" not in gps_setup
+    assert "pool pool.ntp.org" not in gps_setup
+    assert "http://192.168.86.125" not in time_sync
+    assert '[[ ! "$HEADEND_URL" =~ ^https:// ]]' in time_sync
+
+
 def test_artifact_receipt_is_cmdb_version_source_of_truth(tmp_path, monkeypatch):
     receipt = tmp_path / ".timelapse-release.json"
     receipt.write_text(

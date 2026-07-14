@@ -55,7 +55,7 @@ class SiteLookConfigService:
         with self._get_conn() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Start with global config
-                config = self._get_level_config(cur, level='global')
+                config = self._get_level_config(cur, level='global') or {}
 
                 # Apply customer override if exists
                 if customer_id:
@@ -112,9 +112,9 @@ class SiteLookConfigService:
                 config_cache_ttl_seconds
             FROM site_look_config
             WHERE level = %s
-              AND (customer_id = %s OR customer_id IS NULL)
-              AND (site_id = %s OR site_id IS NULL)
-              AND (camera_id = %s OR camera_id IS NULL)
+              AND customer_id IS NOT DISTINCT FROM %s
+              AND site_id IS NOT DISTINCT FROM %s
+              AND camera_id IS NOT DISTINCT FROM %s
         """
 
         params = [level, customer_id, site_id, camera_id]
@@ -230,6 +230,10 @@ class SiteLookConfigService:
 
                 conn.commit()
 
+                # A change can affect several devices. Purging this small
+                # cache is safer than serving a stale policy for a full TTL.
+                self.invalidate_edge_cache()
+
                 log.info(f"Config upserted: level={level}, customer={customer_id}, site={site_id}, camera={camera_id}")
                 return new_values
 
@@ -268,6 +272,8 @@ class SiteLookConfigService:
                     )
 
                 conn.commit()
+                if affected > 0:
+                    self.invalidate_edge_cache()
                 return affected > 0
 
     def get_all_configs(self, level: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -300,20 +306,30 @@ class SiteLookConfigService:
                 row = cur.fetchone()
 
                 if row:
-                    return {
-                        'config': row['config_json'],
-                        'cached_at': row['cached_at'].isoformat(),
-                        'expires_at': row['expires_at'].isoformat(),
-                        'version': row['version'],
-                    }
+                    payload = row['config_json']
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    if not isinstance(payload, dict):
+                        return None
+                    payload = dict(payload)
+                    # New entries store the complete Edge response envelope.
+                    # Early entries stored the resolved config directly; keep
+                    # those readable until their normal expiry/refresh cycle.
+                    if not isinstance(payload.get('config'), dict):
+                        payload = {'config': payload}
+                    payload['version'] = int(row['version'] or payload.get('version') or 0)
+                    payload['cached_at'] = row['cached_at'].isoformat()
+                    payload['expires_at'] = row['expires_at'].isoformat()
+                    return payload
                 return None
 
     def update_edge_cache(self, edge_node_id: str, config: Dict[str, Any]) -> None:
         """Update cached configuration for an edge node."""
         with self._get_conn() as conn:
             with conn.cursor() as cur:
+                resolved = config.get('config', config)
                 expires_at = datetime.now(timezone.utc) + timedelta(
-                    seconds=config.get('config_cache_ttl_seconds', 86400)
+                    seconds=resolved.get('config_cache_ttl_seconds', 86400)
                 )
 
                 query = """

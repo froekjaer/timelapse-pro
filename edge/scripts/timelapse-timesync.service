@@ -6,7 +6,7 @@ Before=timelapse-totp.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-Environment=HEADEND_URL=http://192.168.86.125:8000
+EnvironmentFile=-/etc/timelapse/time-sync.env
 ExecStart=/bin/bash /opt/timelapse/edge/scripts/sync-time.sh
 StandardOutput=append:/var/log.hdd/timelapse/time-sync.log
 StandardError=append:/var/log.hdd/timelapse/time-sync.log

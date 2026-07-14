@@ -8,8 +8,11 @@ RequiresMountsFor=/data
 
 [Service]
 Type=notify
-User=timelapse
-Group=timelapse
+# The agent performs verified artifact installation and hardware control.  The
+# deployed production unit runs as root; keep this source unit aligned so an
+# artifact update cannot silently downgrade its own operational permissions.
+User=root
+Group=root
 WorkingDirectory=/opt/timelapse/edge
 
 # Environment

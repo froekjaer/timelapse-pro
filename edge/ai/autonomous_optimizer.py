@@ -75,6 +75,7 @@ class AutonomousImageOptimizer:
         # Site-wide look matching manager with config client
         self._site_look_manager = None
         self._site_look_config_client = None
+        self._site_look_context: dict[str, Any] = {}
 
         site_look_config = config.get("site_look_matching", {}) or {}
         if site_look_config.get("enabled", True):  # Enabled by default
@@ -89,8 +90,10 @@ class AutonomousImageOptimizer:
                     # Get enabled status from database config
                     db_config = config_client.get_config()
                     if db_config.get('enabled', True):
-                        site_id = config.get("site_id", "default-site")
-                        customer_id = config.get("customer_id")
+                        self._site_look_context = dict(db_config.get("hierarchy") or {})
+                        device_cfg = config.get("device", {}) or {}
+                        site_id = self._site_look_context.get("site_id") or device_cfg.get("site_id")
+                        customer_id = self._site_look_context.get("customer_id") or device_cfg.get("customer_id")
                         self._site_look_manager = SiteLookManager(
                             config_client=config_client,
                             site_id=site_id,
@@ -508,9 +511,9 @@ class AutonomousImageOptimizer:
 
         # Get site and camera info from config
         device_cfg = self._config.get("device", {}) or {}
-        site_id = device_cfg.get("site_name", "")
-        camera_id = device_cfg.get("camera_name", "")
-        customer_id = device_cfg.get("customer_name", "")
+        site_id = self._site_look_context.get("site_id") or device_cfg.get("site_id", "")
+        camera_id = self._site_look_context.get("camera_id") or device_cfg.get("camera_id", "")
+        customer_id = self._site_look_context.get("customer_id") or device_cfg.get("customer_id", "")
         camera_model = self._config.get("camera", {}).get("model", "Unknown")
 
         if not site_id or not camera_id:

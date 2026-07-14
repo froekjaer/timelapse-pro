@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -15,6 +16,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 import requests
+
+try:
+    from security import edge_attestation_headers, request_signature_headers
+except ImportError:  # pragma: no cover - package import for standalone tests
+    from edge.security import edge_attestation_headers, request_signature_headers
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +51,8 @@ class SiteLookConfigClient:
         self._headend_url = config.get('headend_url', 'http://localhost:8000')
         self._edge_node_id = config.get('edge_node_id', 'unknown-edge')
         self._cache_path = Path(config.get('cache_path', '/var/lib/timelapse/site_look_config.json'))
+        self._api_token = config.get('api_token')
+        self._edge_base_dir = Path(config.get('edge_base_dir', '/opt/timelapse/edge'))
         self._poll_interval = config.get('poll_interval_seconds', 300)  # 5 min default
         self._cache_ttl = config.get('cache_ttl_seconds', 86400)  # 24 hour default
 
@@ -102,8 +110,14 @@ class SiteLookConfigClient:
                 'config': config,
             }
 
-            with open(self._cache_path, 'w') as f:
+            temp_path = self._cache_path.with_suffix(self._cache_path.suffix + ".tmp")
+            fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 json.dump(cached, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, self._cache_path)
+            os.chmod(self._cache_path, 0o600)
 
             log.debug(f"Saved cached config (v{version}, expires {datetime.fromtimestamp(expires_at)})")
         except Exception as exc:
@@ -112,8 +126,19 @@ class SiteLookConfigClient:
     def _fetch_from_api(self) -> Optional[dict]:
         """Fetch configuration from headend API."""
         try:
-            url = f"{self._headend_url}/api/admin/site-look/edge/{self._edge_node_id}/config"
-            response = requests.get(url, timeout=10)
+            base_url = self._headend_url.rstrip('/')
+            if base_url.endswith('/api'):
+                base_url = base_url[:-4]
+            path = f"/edge/site-look/{self._edge_node_id}/config"
+            url = f"{base_url}/api{path}"
+            headers = {"Accept": "application/json"}
+            if self._api_token:
+                headers["Authorization"] = f"Bearer {self._api_token}"
+                headers.update(request_signature_headers(self._api_token, "GET", path))
+                headers.update(edge_attestation_headers(
+                    self._edge_base_dir, self._edge_node_id, "GET", path,
+                ))
+            response = requests.get(url, headers=headers, timeout=10, verify=True)
 
             if response.status_code == 200:
                 data = response.json()
@@ -124,8 +149,8 @@ class SiteLookConfigClient:
 
                 return {'config': config, 'version': version}
             elif response.status_code == 404:
-                log.warning("Config endpoint not found - using defaults")
-                return self._get_defaults()
+                log.warning("Site Look endpoint or Edge binding was not found")
+                return None
             else:
                 log.error(f"API returned status {response.status_code}")
                 return None

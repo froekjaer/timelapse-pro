@@ -4023,6 +4023,17 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "remote_base": "",
         })
 
+    # Logical hierarchy identifiers are stable across an Edge replacement.
+    # Features such as Site Look must use these IDs, never display names.
+    active_camera = _active_camera_for_device(db, device_id)
+    cfg["device"].update({
+        "customer_id": (
+            active_camera.customer_id if active_camera and active_camera.customer_id else device.customer_id
+        ),
+        "site_id": active_camera.site_id if active_camera and active_camera.site_id else device.site_id,
+        "camera_id": active_camera.id if active_camera else None,
+    })
+
     # Versioner den effektive config, så Edge også opdager globale DB-ændringer
     # som fx NAS/SFTP roots, upload-politik eller kamera/site defaults.
     try:
@@ -4034,6 +4045,46 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     # bt_totp er sat som base + overrides via hierarkiet — intet ekstra her.
 
     return cfg
+
+
+
+@app.get("/api/edge/site-look/{device_id}/config")
+def get_edge_site_look_config(
+    device_id: str,
+    _auth: None = Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
+    """Return the resolved Site Look policy to the authenticated Edge only."""
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    camera = _active_camera_for_device(db, device_id)
+    customer_id = camera.customer_id if camera and camera.customer_id else device.customer_id
+    site_id = camera.site_id if camera and camera.site_id else device.site_id
+    camera_id = camera.id if camera else None
+
+    from api.site_look_config_api import get_config_service
+
+    service = get_config_service()
+    cached = service.get_edge_cache(device_id)
+    if cached:
+        hierarchy = (cached.get("config") or {}).get("hierarchy") or {}
+        if (
+            hierarchy.get("customer_id") == customer_id
+            and hierarchy.get("site_id") == site_id
+            and hierarchy.get("camera_id") == camera_id
+        ):
+            return cached
+
+    resolved = service.get_config(
+        customer_id=customer_id,
+        site_id=site_id,
+        camera_id=camera_id,
+        for_edge_node=device_id,
+    )
+    service.update_edge_cache(device_id, resolved)
+    return resolved
 
 
 

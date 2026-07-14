@@ -34,7 +34,7 @@ manglede backend-endpointet `/api/cmdb/edge-flow`, som nu findes.
 
 ### Edge (Python)
 - `edge/cmdb/collector.py` — Ubuntu/apt/pip/git inventory (cachet)
-- `edge/cmdb/executor.py` — installerer pr. kategori, med rollback (erstatter git-only `_apply_update`)
+- `edge/cmdb/executor.py` — retired fail-safe stub; Edge-opdateringer udføres kun af `EdgeAgent` via Headend-signerede artifacts.
 - `edge/agent_cmdb_integration.py` — klip-ind metoder til `agent.py`
 
 ### UI (React/TypeScript)

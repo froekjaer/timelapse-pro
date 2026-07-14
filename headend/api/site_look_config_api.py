@@ -61,10 +61,10 @@ class ConfigDelete(BaseModel):
 
 def get_config_service() -> SiteLookConfigService:
     """Get config service instance."""
-    # In production, this would come from app config
-    # For now, use environment variable or default
     import os
-    db_url = os.getenv("SITE_LOOK_DB_URL", "postgresql://timelapse@localhost/timelapse_db")
+    db_url = os.getenv("SITE_LOOK_DB_URL") or os.getenv("DATABASE_URL")
+    if not db_url:
+        raise RuntimeError("DATABASE_URL eller SITE_LOOK_DB_URL mangler")
     return SiteLookConfigService(db_url)
 
 
