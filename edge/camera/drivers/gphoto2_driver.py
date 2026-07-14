@@ -1186,11 +1186,19 @@ class GPhoto2Driver(CameraBase):
         if not action or not value:
             return False
         for key, context_value in self._profile.get("focus_controls", {}).get("manual_focus_context", {}).items():
-            _run(
+            context_result = _run(
                 [GPHOTO2_CMD, "--port", self._port, "--set-config", f"{key}={context_value}"],
                 timeout=STATUS_TIMEOUT_S,
                 check=False,
             )
+            if context_result.returncode != 0:
+                log.warning(
+                    "Manual focus context failed: %s=%s: %s",
+                    key,
+                    context_value,
+                    context_result.stderr.strip(),
+                )
+                return False
         result = _run(
             [GPHOTO2_CMD, "--port", self._port, "--set-config", f"{action}={value}"],
             timeout=STATUS_TIMEOUT_S,
@@ -1249,7 +1257,7 @@ class GPhoto2Driver(CameraBase):
         Returns list of dicts with keys: path, label, type, current, choices, readonly.
         """
         result = _run(
-            [GPHOTO2_CMD, "--list-all-config"],
+            [GPHOTO2_CMD, "--port", self._port, "--list-all-config"],
             timeout=30, check=False
         )
         if result.returncode != 0:
@@ -1269,6 +1277,9 @@ class GPhoto2Driver(CameraBase):
             "detected_model": self._model or "Unknown",
             "gphoto2_port": self._port,
             "shutter_rating": self._profile.get("shutter_rating", 100_000),
+            # `features` is the UI contract. Keep `camera_capabilities` as the
+            # explicit backend name so older CMDB consumers remain compatible.
+            "features": dict(caps),
             "camera_capabilities": dict(caps),
             "capture_settings": dict(self._profile.get("capture_settings", {})),
             "config_commands": dict(self._profile.get("config_commands", {})),

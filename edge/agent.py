@@ -2201,6 +2201,7 @@ class EdgeAgent:
                 ok = self._do_capture_cycle()
                 result = {
                     "type": "capture",
+                    "command_id": lab_cmd.get("command_id"),
                     "ok": bool(ok),
                     **(getattr(self, "_last_capture_result", None) or {}),
                 }
@@ -2250,7 +2251,13 @@ class EdgeAgent:
                 key = lab_cmd.get("key", "")
                 value = lab_cmd.get("value", "")
                 log.info("LAB — set param: %s = %s", key, value)
-                result = {"type": "set_param", "key": key, "value": value, "ok": False}
+                result = {
+                    "type": "set_param",
+                    "command_id": lab_cmd.get("command_id"),
+                    "key": key,
+                    "value": value,
+                    "ok": False,
+                }
                 self._lab_stop_frame_push()  # Stop before accessing camera
                 try:
                     # Reconnect driver for set_param
@@ -2276,7 +2283,12 @@ class EdgeAgent:
             elif cmd_type == "focus_drive":
                 value = lab_cmd.get("value", "")
                 log.info("LAB — focus drive: %s", value)
-                result = {"type": "focus_drive", "value": value, "ok": False}
+                result = {
+                    "type": "focus_drive",
+                    "command_id": lab_cmd.get("command_id"),
+                    "value": value,
+                    "ok": False,
+                }
                 self._lab_stop_frame_push()  # Stop before focus operation
                 try:
                     # Reconnect driver for focus operation
@@ -2299,7 +2311,11 @@ class EdgeAgent:
 
             elif cmd_type == "autofocus":
                 log.info("LAB — autofocus requested")
-                result = {"type": "autofocus", "ok": False}
+                result = {
+                    "type": "autofocus",
+                    "command_id": lab_cmd.get("command_id"),
+                    "ok": False,
+                }
                 self._lab_stop_frame_push()  # Stop before autofocus
                 try:
                     # Reconnect driver for autofocus
@@ -2330,8 +2346,37 @@ class EdgeAgent:
                         run_autofocus_first=bool(lab_cmd.get("run_autofocus_first", True)),
                         result_type=cmd_type,
                     )
+                    result["command_id"] = lab_cmd.get("command_id")
                 finally:
                     self._lab_start_frame_push()  # Restart after focus slice
+                self._api._post("/lab/" + self._device_id + "/result", result)
+                _, resp = self._api.clear_lab_command(self._device_id)
+                self._check_config_version(resp)
+
+            elif cmd_type == "live_stream":
+                enabled = bool(lab_cmd.get("enabled"))
+                result = {
+                    "type": "live_stream",
+                    "command_id": lab_cmd.get("command_id"),
+                    "enabled": enabled,
+                    "ok": False,
+                }
+                if not _FRAME_PUSH_AVAILABLE:
+                    result["error"] = "Frame push module is unavailable on this Edge"
+                elif enabled:
+                    # A separate gphoto2 process owns the camera while movie
+                    # capture is active; release the normal driver first.
+                    self._live_frame_enabled = True
+                    self._lab_start_frame_push()
+                    result["ok"] = bool(frame_push_is_running and frame_push_is_running())
+                    if not result["ok"]:
+                        result["error"] = "Could not start camera movie stream"
+                else:
+                    self._lab_stop_frame_push()
+                    self._live_frame_enabled = False
+                    result["ok"] = not bool(frame_push_is_running and frame_push_is_running())
+                    if not result["ok"]:
+                        result["error"] = "Could not stop camera movie stream"
                 self._api._post("/lab/" + self._device_id + "/result", result)
                 _, resp = self._api.clear_lab_command(self._device_id)
                 self._check_config_version(resp)

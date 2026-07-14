@@ -12344,9 +12344,9 @@ def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), d
         new_debug_mode["disabled_at"]     = now_iso
         new_debug_mode["disabled_reason"] = "manual"
     existing["debug_mode"] = new_debug_mode
-    # Nulstil lab_camera_ready når debug mode aktiveres
-    if enabled:
-        existing["lab_camera_ready"] = False
+    # Camera readiness is Edge-owned. It must never survive a new LAB session
+    # or make a stopped session look ready in the UI.
+    existing["lab_camera_ready"] = False
 
     device.device_config = json.dumps(existing, ensure_ascii=False)
     device.config_version = hashlib.md5(device.device_config.encode()).hexdigest()
@@ -12374,91 +12374,83 @@ def set_debug_mode(device_id: str, payload: dict, _user=require_role("admin"), d
 def toggle_relay(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Toggle relay TIL/FRA — bruges af SystemAdminPage til test."""
     _ensure_capture_device_access(db, _user, device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404)
     relay   = payload.get("relay", "camera")
     state   = payload.get("state", False)
-    existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {
-        "type":  "relay_toggle",
+    response = _queue_lab_command(device_id, {
+        "type": "relay_toggle",
         "relay": relay,
         "state": state,
-    }
-    device.device_config = json.dumps(existing)
-    db.commit()
+    }, db)
     log.info("Relay toggle: %s %s → %s", device_id, relay, state)
-    return {"status": "ok", "relay": relay, "state": state}
+    return {**response, "relay": relay, "state": state}
 
 
 @app.post("/api/lab/{device_id}/preview")
 def request_preview(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request a preview capture from the device (no shutter count)."""
     _ensure_capture_device_access(db, _user, device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-    # Set a pending_preview flag in device_config
-    existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {"type": "preview", "requested_at": now_utc().isoformat()}
-    existing.pop("lab_result", None)
-    device.device_config = json.dumps(existing)
-    db.commit()
-    return {"status": "ok", "command": "preview"}
+    return _queue_lab_command(device_id, {"type": "preview"}, db)
 
 
 @app.post("/api/lab/{device_id}/capture")
 def request_capture(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request a full-resolution capture from the device."""
     _ensure_capture_device_access(db, _user, device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-    existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {"type": "capture", "requested_at": now_utc().isoformat()}
-    existing.pop("lab_result", None)
-    device.device_config = json.dumps(existing)
-    db.commit()
-    return {"status": "ok", "command": "capture"}
+    return _queue_lab_command(device_id, {"type": "capture"}, db)
 
 
 @app.post("/api/lab/{device_id}/set-param")
 def set_camera_param(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Set a camera parameter on the device (queued for next poll)."""
     _ensure_capture_device_access(db, _user, device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
     key   = payload.get("key")
     value = payload.get("value")
     if not key or value is None:
         raise HTTPException(status_code=400, detail="key and value required")
-    existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {
+    return _queue_lab_command(device_id, {
         "type": "set_param",
         "key": str(key),
         "value": str(value),
-        "requested_at": now_utc().isoformat(),
-    }
-    existing.pop("lab_result", None)
-    device.device_config = json.dumps(existing, ensure_ascii=False)
-    db.commit()
-    return {"status": "ok", "key": key, "value": value}
+    }, db)
 
 
-def _queue_lab_command(device_id: str, command: dict, db: Session) -> dict:
+def _queue_lab_command(
+    device_id: str,
+    command: dict,
+    db: Session,
+    *,
+    clear_keys: tuple[str, ...] = (),
+) -> dict:
+    """Store one Edge-executed LAB command without overwriting another.
+
+    LAB uses Edge polling, not a synchronous device connection. A second command
+    written before the next poll used to silently replace the first one. Rejecting
+    that state is deliberate: the UI waits for completion before it submits its
+    dependent command.
+    """
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {
+    pending = existing.get("lab_command")
+    if isinstance(pending, dict) and pending.get("type"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"LAB command pending: {pending.get('type')}",
+        )
+    for key in clear_keys:
+        existing.pop(key, None)
+    queued = {
         **command,
         "requested_at": now_utc().isoformat(),
+        "command_id": _uuid.uuid4().hex,
     }
+    existing["lab_command"] = queued
     existing.pop("lab_result", None)
     device.device_config = json.dumps(existing, ensure_ascii=False)
+    device.config_version = hashlib.md5(device.device_config.encode()).hexdigest()
     db.commit()
-    return {"status": "ok", "command": existing["lab_command"]}
+    return {"status": "ok", "command": queued}
 
 
 @app.post("/api/lab/{device_id}/focus-drive")
@@ -12527,6 +12519,21 @@ def lab_edge_ai_focus_test(
         "count": count,
         "run_autofocus_first": True,
     }, db)
+
+
+@app.post("/api/lab/{device_id}/live-stream")
+def lab_live_stream(
+    device_id: str,
+    payload: dict,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Start or stop the Edge-originated MJPEG frame push for a LAB session."""
+    _ensure_capture_device_access(db, _user, device_id)
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="enabled must be boolean")
+    return _queue_lab_command(device_id, {"type": "live_stream", "enabled": enabled}, db)
 
 
 @app.post("/api/lab/{device_id}/result")
@@ -15448,10 +15455,12 @@ def lab_store_params(
     if not device: raise HTTPException(status_code=404)
     existing = json.loads(device.device_config or "{}")
     existing["camera_params"] = payload.get("params", [])
+    existing["camera_params_updated_at"] = now_utc().isoformat()
     if "profile" in payload:
         existing["camera_profile"] = payload.get("profile") or {}
     existing.pop("lab_command", None)
-    device.device_config = json.dumps(existing)
+    device.device_config = json.dumps(existing, ensure_ascii=False)
+    device.config_version = hashlib.md5(device.device_config.encode()).hexdigest()
     db.commit()
     log.info("LAB params stored for %s: %d params", device_id, len(existing["camera_params"]))
     return {"status": "ok"}
@@ -15461,15 +15470,14 @@ def lab_store_params(
 def lab_get_params(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Queue get-params kommando til edge."""
     _ensure_capture_device_access(db, _user, device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device: raise HTTPException(status_code=404)
-    existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {"type": "get_params"}
-    existing.pop("lab_result", None)
-    device.device_config = json.dumps(existing)
-    db.commit()
+    response = _queue_lab_command(
+        device_id,
+        {"type": "get_params"},
+        db,
+        clear_keys=("camera_params", "camera_profile", "camera_params_updated_at"),
+    )
     log.info("LAB get-params queued for %s", device_id)
-    return {"status": "ok"}
+    return response
 
 
 @app.get("/api/lab/{device_id}/previews")
@@ -15601,20 +15609,12 @@ def lab_camera_ready(
 def wifi_scan(device_id: str, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request WiFi scan from device."""
     _ensure_capture_device_access(db, _user, device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device: raise HTTPException(status_code=404)
-    existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {"type": "wifi_scan", "requested_at": now_utc().isoformat()}
-    device.device_config = json.dumps(existing)
-    db.commit()
-    return {"status": "ok", "command": "wifi_scan"}
+    return _queue_lab_command(device_id, {"type": "wifi_scan"}, db)
 
 @app.post("/api/lab/{device_id}/wifi/connect")
 def wifi_connect(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request WiFi connection on device."""
     _ensure_capture_device_access(db, _user, device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device: raise HTTPException(status_code=404)
     ssid     = payload.get("ssid", "")
     password = payload.get("password", "")
     if not ssid: raise HTTPException(status_code=400, detail="ssid required")
@@ -15631,35 +15631,23 @@ def wifi_connect(device_id: str, payload: dict, _user=require_role("admin"), db:
                 "only in LAB/staging."
             ),
         )
-    existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {
+    command = {
         "type": "wifi_connect",
         "ssid": ssid,
-        "requested_at": now_utc().isoformat()
     }
     if password:
-        existing["lab_command"]["password"] = password
-    device.device_config = json.dumps(existing)
-    db.commit()
-    return {"status": "ok", "command": "wifi_connect", "ssid": ssid}
+        command["password"] = password
+    response = _queue_lab_command(device_id, command, db)
+    return {**response, "ssid": ssid}
 
 @app.post("/api/lab/{device_id}/wifi/forget")
 def wifi_forget(device_id: str, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Request removal of saved WiFi network."""
     _ensure_capture_device_access(db, _user, device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device: raise HTTPException(status_code=404)
     ssid = payload.get("ssid", "")
     if not ssid: raise HTTPException(status_code=400, detail="ssid required")
-    existing = json.loads(device.device_config or "{}")
-    existing["lab_command"] = {
-        "type": "wifi_forget",
-        "ssid": ssid,
-        "requested_at": now_utc().isoformat()
-    }
-    device.device_config = json.dumps(existing)
-    db.commit()
-    return {"status": "ok", "command": "wifi_forget", "ssid": ssid}
+    response = _queue_lab_command(device_id, {"type": "wifi_forget", "ssid": ssid}, db)
+    return {**response, "ssid": ssid}
 
 @app.post("/api/lab/{device_id}/wifi/result")
 def wifi_result(
@@ -15907,6 +15895,7 @@ def _cleanup_stale_frames() -> None:
 async def receive_live_frame(
     device_id: str,
     frame: UploadFile = File(...),
+    _auth: None = Depends(_verify_device_token),
     db: Session = Depends(get_db),
 ):
     """
@@ -16008,6 +15997,7 @@ async def get_live_stream(
 
     async def generate_mjpeg():
         """Generator that yields MJPEG multipart stream."""
+        last_sent_at = 0.0
         # Ensure lock exists for this device
         if device_id not in _live_frame_locks:
             _live_frame_locks[device_id] = asyncio.Lock()
@@ -16025,7 +16015,7 @@ async def get_live_stream(
             if device_id in _live_frames:
                 frame_time = _live_frame_timestamps.get(device_id, 0)
                 # Only send if frame is recent (within FRAME_EXPIRY_SECONDS)
-                if time.time() - frame_time < FRAME_EXPIRY_SECONDS:
+                if time.time() - frame_time < FRAME_EXPIRY_SECONDS and frame_time > last_sent_at:
                     # Get frame with lock protection (non-blocking for stream)
                     frame_data = _live_frames.get(device_id)
                     if frame_data:
@@ -16037,6 +16027,7 @@ async def get_live_stream(
                         ).encode()
                         yield frame_data
                         yield b"\r\n"
+                        last_sent_at = frame_time
 
             # Wait a bit before next frame (~10 FPS to match edge upload rate)
             await asyncio.sleep(0.1)

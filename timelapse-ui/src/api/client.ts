@@ -1,6 +1,12 @@
 import axios from 'axios'
 import type { Device, DeviceDetail, Stats, Capture, DeviceConfig } from '../types'
 
+declare global {
+  interface Window {
+    __TIMELAPSE_API__?: string
+  }
+}
+
 export const DEFAULT_API_URL = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8000'
 
 const isProductionHttpsOrigin = () =>
@@ -10,7 +16,7 @@ const isProductionHttpsOrigin = () =>
 
 export const getApiUrl = () => {
   if (typeof window !== 'undefined') {
-    const runtimeApi = (window as any).__TIMELAPSE_API__
+    const runtimeApi = window.__TIMELAPSE_API__
     if (runtimeApi) return String(runtimeApi).replace(/\/$/, '')
   }
   if (isProductionHttpsOrigin()) return window.location.origin
@@ -88,13 +94,16 @@ export const requestPreview = (deviceId: string) =>
 export const requestCapture = (deviceId: string) =>
   getClient().post(`/api/lab/${pathSegment(deviceId)}/capture`).then(r => r.data)
 
+export const requestCameraParams = (deviceId: string) =>
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/get-params`).then(r => r.data)
+
 export const setParam = async (deviceId: string, key: string, value: string) => {
   // Retry on 503 errors (headend busy)
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return await getClient().post(`/api/lab/${pathSegment(deviceId)}/set-param`, { key, value }).then(r => r.data)
-    } catch (err: any) {
-      const status = err?.response?.status
+    } catch (err: unknown) {
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined
       if (status === 503 && attempt < 2) {
         // Wait 500ms and retry
         await new Promise(resolve => setTimeout(resolve, 500))
@@ -117,6 +126,9 @@ export const requestFocusSlice = (deviceId: string, payload: { step_value: strin
 
 export const requestEdgeAiFocusTest = (deviceId: string, payload: { step_value: string; count: number }) =>
   getClient().post(`/api/lab/${pathSegment(deviceId)}/edge-ai-focus-test`, payload).then(r => r.data)
+
+export const setLiveStream = (deviceId: string, enabled: boolean) =>
+  getClient().post(`/api/lab/${pathSegment(deviceId)}/live-stream`, { enabled }).then(r => r.data)
 
 export const listPreviews = (deviceId: string) =>
   getClient().get(`/api/lab/${pathSegment(deviceId)}/previews`).then(r => r.data)

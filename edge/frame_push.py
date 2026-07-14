@@ -98,9 +98,10 @@ class LiveVideoStreamer:
     and pushes frames to headend.
     """
 
-    def __init__(self, device_id: str, api_client):
+    def __init__(self, device_id: str, api_client, camera_port: str = "usb:"):
         self._device_id = device_id
         self._api = api_client
+        self._camera_port = camera_port
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._parser = MJPEGParser()
@@ -135,6 +136,7 @@ class LiveVideoStreamer:
         """Stream live video and push frames to headend."""
         cmd = [
             "gphoto2",
+            "--port", self._camera_port,
             "--capture-movie",
             "--stdout",
             "--frames", "0",  # Unlimited frames
@@ -172,6 +174,7 @@ class LiveVideoStreamer:
         except Exception as e:
             log.error("LIVE VIDEO: Fatal error: %s", e)
         finally:
+            self._running = False
             if self._process:
                 self._process.terminate()
 
@@ -215,7 +218,8 @@ def start_frame_push(device_id: str, api_client, camera_driver=None) -> bool:
     Args:
         device_id: Device ID
         api_client: Edge API client instance
-        camera_driver: Ignored (capture-movie uses its own gphoto2 instance)
+        camera_driver: Used only for the configured gphoto2 port. Movie
+            capture still owns its own gphoto2 process.
 
     Returns:
         True if started successfully, False otherwise
@@ -227,7 +231,8 @@ def start_frame_push(device_id: str, api_client, camera_driver=None) -> bool:
         return True
 
     try:
-        _global_streamer = LiveVideoStreamer(device_id, api_client)
+        camera_port = getattr(camera_driver, "_port", "usb:")
+        _global_streamer = LiveVideoStreamer(device_id, api_client, camera_port)
         _global_streamer.start()
         return True
 

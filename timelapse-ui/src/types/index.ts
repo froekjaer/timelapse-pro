@@ -137,6 +137,7 @@ export interface CameraProfile {
   detected_model: string
   gphoto2_port: string
   features: Record<string, boolean>
+  camera_capabilities?: Record<string, boolean>
   capture_settings: Record<string, string[]>
   config_commands?: Record<string, { path?: string; skip?: boolean; value_map?: Record<string, string>; skip_values?: string[] }>
   focus_controls?: Record<string, any>
