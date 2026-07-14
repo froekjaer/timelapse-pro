@@ -2499,6 +2499,34 @@ async def _verify_device_token(
         db.commit()
 
 
+async def _verify_payload_device_token(
+    request: Request,
+    authorization: str = Header(default=""),
+    db: Session = Depends(get_db),
+) -> str:
+    """Authenticate an Edge POST whose device id is carried in its JSON body.
+
+    Update status and availability reports predate the path-scoped Edge API.
+    Keep their wire format compatible, but bind their body ``device_id`` to the
+    same credential, request signature and attestation controls as every other
+    Edge endpoint.
+    """
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Ugyldig JSON payload") from exc
+    device_id = str(payload.get("device_id") or "").strip()
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id er påkrævet")
+    await _verify_device_token(
+        device_id=device_id,
+        request=request,
+        authorization=authorization,
+        db=db,
+    )
+    return device_id
+
+
 async def _verify_edge_request_signature(request: Request, secret: str, *, required: bool = False) -> None:
     """Validate optional Edge request signature.
 
@@ -9952,13 +9980,19 @@ def get_update_policy(
     return {**policy, "pending_updates": filtered}
 
 @app.post("/api/updates/report")
-def report_update(payload: dict, db: Session = Depends(get_db)):
+def report_update(
+    payload: dict,
+    authenticated_device_id: str = Depends(_verify_payload_device_token),
+    db: Session = Depends(get_db),
+):
     """Edge rapporterer resultat af deployment (deployed/rolled_back/blocked)."""
     from database import PendingUpdate
     update_id = payload.get("update_id")
     status    = payload.get("status")
     reason    = str(payload.get("reason") or "").strip()
     device_id = str(payload.get("device_id") or "").strip()
+    if device_id != authenticated_device_id:
+        raise HTTPException(status_code=403, detail="device_id matcher ikke Edge credential")
     final_statuses = {"deployed", "rolled_back", "blocked"}
     progress_statuses = {"queued", "downloading", "verifying", "backing_up", "installing"}
     if not update_id or status not in (final_statuses | progress_statuses):
@@ -10072,6 +10106,7 @@ def report_update(payload: dict, db: Session = Depends(get_db)):
 @app.post("/api/updates/available")
 def report_available_updates(
     payload: dict,
+    authenticated_device_id: str = Depends(_verify_payload_device_token),
     db: Session = Depends(get_db),
 ):
     """Edge rapporterer app-update hints.
@@ -10082,7 +10117,9 @@ def report_available_updates(
     """
     from database import PendingUpdate
 
-    device_id          = payload.get("device_id", "unknown")
+    device_id          = str(payload.get("device_id") or "").strip()
+    if device_id != authenticated_device_id:
+        raise HTTPException(status_code=403, detail="device_id matcher ikke Edge credential")
     os_security_count  = int(payload.get("os_security_count", 0))
     os_updates_count   = int(payload.get("os_updates_count", 0))
     app_version        = payload.get("app_version", "")

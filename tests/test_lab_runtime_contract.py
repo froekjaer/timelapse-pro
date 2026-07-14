@@ -94,3 +94,16 @@ def test_headend_lab_commands_are_serialised_and_live_stream_is_device_authentic
     assert 'async def receive_live_frame(' in source
     live_frame_block = source.split('async def receive_live_frame(', 1)[1].split('@app.get("/api/lab/{device_id}/live-frame")', 1)[0]
     assert 'Depends(_verify_device_token)' in live_frame_block
+
+
+def test_edge_update_reports_are_bound_to_the_authenticated_device():
+    source = (Path(__file__).resolve().parents[1] / "headend" / "main.py").read_text(encoding="utf-8")
+
+    assert 'async def _verify_payload_device_token(' in source
+    assert 'await _verify_device_token(' in source
+    report_block = source.split('def report_update(', 1)[1].split('@app.post("/api/updates/available")', 1)[0]
+    available_block = source.split('def report_available_updates(', 1)[1].split('# ── PROVISION PACKAGE', 1)[0]
+    assert 'Depends(_verify_payload_device_token)' in report_block
+    assert 'Depends(_verify_payload_device_token)' in available_block
+    assert 'device_id != authenticated_device_id' in report_block
+    assert 'device_id != authenticated_device_id' in available_block
