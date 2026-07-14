@@ -647,7 +647,7 @@ function FlowTargetsPanel({ flowStatus }: { flowStatus?: UpdateFlowStatus }) {
   )
 }
 
-function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDeploy, onBindArtifact, onBuildOsBundle, busy, deployStatus, flowStatus }: {
+function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDeploy, onBindArtifact, onBuildOsBundle, onRequestFlow, busy, deployStatus, flowStatus }: {
   u: Update
   onApprove:  (id: number) => void
   onReject:   (id: number) => void
@@ -656,6 +656,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
   onHeadendDeploy: (id: number) => void
   onBindArtifact: (id: number, artifactId: string) => void
   onBuildOsBundle: (id: number) => void
+  onRequestFlow: (id: number) => void
   busy: number | null
   deployStatus?: HeadendDeployStatus
   flowStatus?: UpdateFlowStatus
@@ -670,7 +671,11 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
 
   return (
     <div className="border-b border-gray-50 last:border-0">
-      <button onClick={() => setOpen(o => !o)}
+      <button onClick={() => {
+        const nextOpen = !open
+        setOpen(nextOpen)
+        if (nextOpen && !flowStatus) onRequestFlow(u.id)
+      }}
         className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-50 transition-colors text-left">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -1282,6 +1287,27 @@ export function UpdatesPage() {
 
   useEffect(() => { load() }, [load])
 
+  const requestFlowStatus = useCallback(async (id: number) => {
+    try {
+      const status = await api(`/api/updates/${id}/flow-status`) as UpdateFlowStatus
+      setFlowStatuses(current => ({ ...current, [id]: status }))
+    } catch (error: unknown) {
+      setFlowStatuses(current => ({
+        ...current,
+        [id]: {
+          update_id: id,
+          status: updates.find(update => update.id === id)?.status || 'unknown',
+          stage: { key: 'unavailable', label: 'Flow-status utilgængelig' },
+          artifact: null,
+          ticket_id: null,
+          targets: [],
+          next_edge_poll: '',
+          error: getErrorMessage(error),
+        },
+      }))
+    }
+  }, [updates])
+
   useEffect(() => {
     const shouldPoll =
       watchedUpdateIds.length > 0 ||
@@ -1741,6 +1767,7 @@ export function UpdatesPage() {
               onHeadendDeploy={headendDeploy}
               onBindArtifact={bindArtifact}
               onBuildOsBundle={buildOsBundle}
+              onRequestFlow={requestFlowStatus}
               busy={busy}
               deployStatus={headendDeployStatus[u.id]}
               flowStatus={flowStatuses[u.id]}
