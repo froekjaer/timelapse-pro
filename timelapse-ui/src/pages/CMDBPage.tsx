@@ -204,6 +204,138 @@ function compactValue(value: unknown) {
   return String(value)
 }
 
+type VersionRisk = 'security' | 'feature' | 'current'
+
+interface VersionRow {
+  key: string
+  name: string
+  installed: string
+  available: string
+  source: string
+  risk: VersionRisk
+}
+
+function normalizedPackageName(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase().replace(/:(arm64|amd64|all)$/, '')
+}
+
+function versionRows(detail: CMDBDetail, sbom: SbomDocument | null): VersionRow[] {
+  const rows = new Map<string, VersionRow>()
+  const addInstalled = (name: string, version: unknown, source: string) => {
+    const key = normalizedPackageName(name)
+    if (!key || key.startsWith('_')) return
+    const current = rows.get(key)
+    rows.set(key, {
+      key,
+      name: current?.name || name,
+      installed: String(version ?? current?.installed ?? '—'),
+      available: current?.available || String(version ?? '—'),
+      source: current?.source || source,
+      risk: current?.risk || 'current',
+    })
+  }
+  Object.entries(detail.os_packages ?? {}).forEach(([name, version]) => addInstalled(name, version, 'OS'))
+  Object.entries(detail.venv_packages ?? {}).forEach(([name, version]) => addInstalled(name, version, 'Python'))
+  Object.entries(detail.software_inventory ?? {}).forEach(([name, version]) => {
+    if (!['available_software_updates', '_os_updates_available'].includes(name) && ['string', 'number'].includes(typeof version)) {
+      addInstalled(name, version, 'Applikation')
+    }
+  })
+  ;(sbom?.components ?? []).forEach(component => {
+    if (component.name) addInstalled(component.name, component.version, component.type || 'SBOM')
+  })
+
+  const updates = Array.isArray(detail.software_inventory?.available_software_updates)
+    ? detail.software_inventory.available_software_updates as Array<Record<string, unknown>>
+    : []
+  updates.forEach(update => {
+    const name = String(update.name ?? 'ukendt')
+    const key = normalizedPackageName(name)
+    const current = rows.get(key)
+    const kind = String(update.kind ?? update.update_type ?? '').toLowerCase()
+    const risk: VersionRisk = kind.includes('security') ? 'security' : 'feature'
+    rows.set(key, {
+      key,
+      name: current?.name || name,
+      installed: String(update.installed_version ?? current?.installed ?? '—'),
+      available: String(update.available_version ?? current?.available ?? '—'),
+      source: String(update.manager ?? current?.source ?? 'Update'),
+      risk,
+    })
+  })
+
+  ;(detail.update_summary?.latest ?? []).forEach(update => {
+    if (!update.component) return
+    const key = normalizedPackageName(update.component)
+    if (rows.has(key) && rows.get(key)?.risk !== 'current') return
+    const risk: VersionRisk = update.update_type.includes('security') ? 'security' : 'feature'
+    const current = rows.get(key)
+    rows.set(key, {
+      key,
+      name: current?.name || update.component,
+      installed: update.current_version || current?.installed || '—',
+      available: update.latest_available_version || current?.available || '—',
+      source: update.update_type,
+      risk,
+    })
+  })
+
+  const priority: Record<VersionRisk, number> = { security: 0, feature: 1, current: 2 }
+  return [...rows.values()].sort((a, b) => priority[a.risk] - priority[b.risk] || a.name.localeCompare(b.name))
+}
+
+function VersionInventory({ detail, sbom }: { detail: CMDBDetail; sbom: SbomDocument | null }) {
+  const rows = versionRows(detail, sbom)
+  const security = rows.filter(row => row.risk === 'security').length
+  const feature = rows.filter(row => row.risk === 'feature').length
+  return (
+    <div className="mt-4 rounded-lg border border-gray-200 overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
+        <span className="text-xs font-semibold text-gray-700">Komponentversioner</span>
+        {security > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-semibold">{security} sikkerhed</span>}
+        {feature > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-semibold">{feature} feature</span>}
+        {security === 0 && feature === 0 && <span className="text-[10px] text-emerald-700">Ingen kendte versionsgab</span>}
+        <span className="ml-auto text-[10px] text-gray-400">{rows.length} komponenter</span>
+      </div>
+      <div className="max-h-80 overflow-auto">
+        <table className="w-full text-xs">
+          <thead className="sticky top-0 bg-white text-[10px] uppercase text-gray-400 border-b border-gray-100">
+            <tr>
+              <th className="text-left px-3 py-1.5">Komponent</th>
+              <th className="text-left px-3 py-1.5">Installeret</th>
+              <th className="text-left px-3 py-1.5">Tilgængelig</th>
+              <th className="text-right px-3 py-1.5">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => {
+              const rowClass = row.risk === 'security' ? 'bg-red-50' : row.risk === 'feature' ? 'bg-orange-50' : ''
+              const badgeClass = row.risk === 'security'
+                ? 'bg-red-100 text-red-700'
+                : row.risk === 'feature' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-50 text-emerald-700'
+              return (
+                <tr key={row.key} className={`border-b border-gray-100 last:border-0 ${rowClass}`}>
+                  <td className="px-3 py-1.5 min-w-40">
+                    <div className="font-medium text-gray-800">{row.name}</div>
+                    <div className="text-[10px] text-gray-400">{row.source}</div>
+                  </td>
+                  <td className="px-3 py-1.5 font-mono text-gray-600 break-all">{row.installed}</td>
+                  <td className={`px-3 py-1.5 font-mono font-medium break-all ${row.risk === 'security' ? 'text-red-700' : row.risk === 'feature' ? 'text-orange-700' : 'text-gray-500'}`}>{row.available}</td>
+                  <td className="px-3 py-1.5 text-right">
+                    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${badgeClass}`}>
+                      {row.risk === 'security' ? 'Sikkerhed' : row.risk === 'feature' ? 'Feature' : 'Aktuel'}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 // ── CMDB List (oversigt) ──────────────────────────────────────────────────
 
 export function CMDBPage() {
@@ -675,6 +807,10 @@ export function CMDBDetailPage() {
             <Row label="Sidst set" value={fmtDate(detail.last_seen)} />
             <Row label="Inv. rapporteret" value={fmtDate(detail.inventory_reported_at)} />
           </div>
+          <VersionInventory detail={detail} sbom={sbom} />
+          <details className="mt-3">
+            <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">Teknisk rådata og SBOM-evidens</summary>
+            <div className="mt-2 border-l-2 border-gray-100 pl-3">
           {Object.keys(detail.software_inventory ?? {}).length > 0 && (() => {
             // Skjul nøgler der allerede vises i dedikerede sektioner
             const skipKeys = new Set(['available_software_updates', '_os_updates_available'])
@@ -962,6 +1098,8 @@ export function CMDBDetailPage() {
               </details>
             )
           })()}
+            </div>
+          </details>
         </div>
 
         {/* Storage */}
