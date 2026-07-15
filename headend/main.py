@@ -11247,6 +11247,7 @@ def get_timelapse_frames(
     db: Session = Depends(get_db),
 ):
     """Returner billeder i tidsinterval til timelapse preview."""
+    _ensure_capture_device_access(db, _user, device_id)
     from datetime import datetime as _dt
     try:
         start_dt = _dt.fromisoformat(start.replace("Z", "+00:00"))
@@ -11306,7 +11307,6 @@ def get_timelapse_frames(
             log.warning("Dag/nat filter fejl: %s\n%s", exc, traceback.format_exc())
     else:
         frames = q.all()
-        frames = q.all()
     return [
         {
             "id":            c.id,
@@ -11342,29 +11342,36 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
         title: str,                 # Til filnavn
     }
     """
-    device_id  = payload.get("device_id")
+    from services.timelapse_render_service import (
+        RenderOptions,
+        ffmpeg_filter_capabilities,
+        validate_filter_capabilities,
+    )
+    device_id  = _sanitize_device_id(payload.get("device_id"))
+    _ensure_capture_device_access(db, _user, device_id)
     frame_ids  = payload.get("frame_ids", [])
-    fps        = int(payload.get("fps", 25))
-    resolution = payload.get("resolution", "1080p")
-    codec      = payload.get("codec", "h264")
-    deflicker  = bool(payload.get("deflicker", False))
-    fade_frames= int(payload.get("fade_frames", 0))
-    ts_overlay = bool(payload.get("timestamp_overlay", False))
-    ts_pos     = payload.get("timestamp_position", "br")
-    ken_burns  = payload.get("ken_burns", "none")
-    crop_ratio = payload.get("crop_ratio", "16:9")
-    title      = payload.get("title", "timelapse")
+    options = RenderOptions.from_payload(payload)
+    validate_filter_capabilities(
+        options,
+        ffmpeg_filter_capabilities(os.getenv("FFMPEG_PATH", "ffmpeg")),
+    )
+    fps, resolution, codec = options.fps, options.resolution, options.codec
+    deflicker, fade_frames = options.deflicker, options.fade_frames
+    ts_overlay, ts_pos = options.timestamp_overlay, options.timestamp_position
+    ken_burns, crop_ratio, title = options.ken_burns, options.crop_ratio, options.title
 
-    if not frame_ids:
+    if not isinstance(frame_ids, list) or not frame_ids:
         raise HTTPException(status_code=400, detail="Ingen billeder valgt")
+    if len(frame_ids) > 100_000 or any(not isinstance(frame_id, int) for frame_id in frame_ids):
+        raise HTTPException(status_code=422, detail="Ugyldig eller for stor frame-liste")
 
     # Hent billeder fra DB
     frames = db.query(Capture).filter(
-        Capture.id.in_(frame_ids)
+        Capture.id.in_(frame_ids), Capture.device_id == device_id
     ).order_by(Capture.captured_at.asc()).all()
 
-    if not frames:
-        raise HTTPException(status_code=404, detail="Ingen billeder fundet")
+    if len(frames) != len(set(frame_ids)):
+        raise HTTPException(status_code=404, detail="Et eller flere valgte billeder findes ikke på den valgte enhed")
 
     # Find billedstier
     image_paths = []
@@ -11391,9 +11398,7 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
     # Start render i baggrunden
     t = _threading.Thread(
         target=_render_timelapse,
-        args=(job_id, image_paths, fps, resolution, codec,
-              deflicker, fade_frames, ts_overlay, ts_pos,
-              ken_burns, crop_ratio, title),
+        args=(job_id, image_paths, options),
         daemon=True
     )
     t.start()
@@ -11401,11 +11406,14 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
     return {"job_id": job_id, "frame_count": len(image_paths), "duration_s": round(len(image_paths)/fps, 1)}
 
 
-def _render_timelapse(job_id, image_paths, fps, resolution, codec,
-                      deflicker, fade_frames, ts_overlay, ts_pos,
-                      ken_burns, crop_ratio, title):
+def _render_timelapse(job_id, image_paths, options):
     """Kør FFmpeg rendering i baggrundstråd."""
-#Peter    import os, tempfile
+    from services.timelapse_render_service import enhancement_filters
+
+    fps, resolution, codec = options.fps, options.resolution, options.codec
+    fade_frames = options.fade_frames
+    ts_overlay, ts_pos = options.timestamp_overlay, options.timestamp_position
+    ken_burns, crop_ratio, title = options.ken_burns, options.crop_ratio, options.title
 
     RENDER_JOBS[job_id]["status"] = "rendering"
     output_file = RENDER_OUTPUT_DIR / f"{job_id}_{title.replace(' ','_')}.mp4"
@@ -11437,9 +11445,7 @@ def _render_timelapse(job_id, image_paths, fps, resolution, codec,
         elif resolution == "4k":
             vf_parts.append("scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2")
 
-        # Deflicker
-        if deflicker:
-            vf_parts.append("deflicker=size=10:mode=pm")
+        vf_parts.extend(enhancement_filters(options))
 
         # Ken Burns
         if ken_burns == "zoom_in":

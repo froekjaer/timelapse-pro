@@ -78,6 +78,9 @@ interface Settings {
   day_night: 'all' | 'day' | 'night'
   quality_only: boolean
   timestamp_format: 'pts' | 'datetime'
+  stabilization: 'none' | 'light' | 'strong'
+  denoise: 'none' | 'light' | 'strong'
+  sharpen: 'none' | 'light' | 'strong'
   title: string
 }
 
@@ -97,6 +100,9 @@ const DEFAULT_SETTINGS: Settings = {
   day_night: 'all',
   quality_only: false,
   timestamp_format: 'pts',
+  stabilization: 'none',
+  denoise: 'none',
+  sharpen: 'none',
   title: 'timelapse',
 }
 
@@ -268,6 +274,9 @@ export default function TimelapseVideoPage() {
           timestamp_overlay:  settings.timestamp_overlay,
           timestamp_position: settings.timestamp_position,
           timestamp_format:   settings.timestamp_format,
+          stabilization:      settings.stabilization,
+          denoise:            settings.denoise,
+          sharpen:            settings.sharpen,
           ken_burns:          settings.ken_burns,
           crop_ratio:         settings.crop_ratio,
           title:              settings.title || 'timelapse',
@@ -489,6 +498,31 @@ export default function TimelapseVideoPage() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Fotografisk efterbehandling */}
+                <div className="space-y-3 border-t border-white/10 pt-3">
+                  <div className="text-xs font-medium text-white/70">Fotografisk efterbehandling</div>
+                  {([
+                    ['stabilization', 'Stabilisering'],
+                    ['denoise', 'Støjreduktion'],
+                    ['sharpen', 'Skarphed'],
+                  ] as const).map(([key, label]) => (
+                    <div key={key}>
+                      <label className="text-xs text-white/40 block mb-1.5">{label}</label>
+                      <div className="flex gap-1.5">
+                        {([['none', 'Ingen'], ['light', 'Let'], ['strong', 'Kraftig']] as const).map(([value, text]) => (
+                          <button
+                            key={value}
+                            onClick={() => setSettings(s => ({...s, [key]: value}))}
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${settings[key] === value ? 'bg-sky-600 text-white' : 'bg-gray-800 text-white/50 hover:text-white'}`}
+                          >
+                            {text}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Checkboxes */}
