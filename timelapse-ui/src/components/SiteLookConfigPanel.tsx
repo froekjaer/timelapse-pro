@@ -10,7 +10,7 @@
  * Configuration is stored in database and syncs to edge nodes via polling.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Save, RotateCcw, Trash2, ChevronDown, ChevronUp, Info, CheckCircle, AlertCircle } from 'lucide-react'
 
 interface ConfigLevel {
@@ -80,20 +80,15 @@ export function SiteLookConfigPanel({ customerId, siteId, cameraId }: SiteLookCo
   const [success, setSuccess] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
 
-  // Fetch config when level or IDs change
-  useEffect(() => {
-    fetchConfig()
-  }, [level, customerId, siteId, cameraId])
-
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     setLoading(true)
     setError(null)
 
     try {
       const params = new URLSearchParams()
-      if (customerId) params.append('customer_id', customerId)
-      if (siteId) params.append('site_id', siteId)
-      if (cameraId) params.append('camera_id', cameraId)
+      if (level !== 'global' && customerId) params.append('customer_id', customerId)
+      if ((level === 'site' || level === 'camera') && siteId) params.append('site_id', siteId)
+      if (level === 'camera' && cameraId) params.append('camera_id', cameraId)
 
       const response = await fetch(`/api/admin/site-look/config?${params}`)
       if (response.ok) {
@@ -126,7 +121,12 @@ export function SiteLookConfigPanel({ customerId, siteId, cameraId }: SiteLookCo
     } finally {
       setLoading(false)
     }
-  }
+  }, [level, customerId, siteId, cameraId])
+
+  // Fetch config when level or IDs change
+  useEffect(() => {
+    fetchConfig()
+  }, [fetchConfig])
 
   const handleSave = async () => {
     setSaving(true)
@@ -267,7 +267,7 @@ export function SiteLookConfigPanel({ customerId, siteId, cameraId }: SiteLookCo
             return (
               <button
                 key={lvl.level}
-                onClick={() => setLevel(lvl.level as any)}
+                onClick={() => setLevel(lvl.level)}
                 disabled={isDisabled}
                 className={`p-4 rounded-lg border-2 text-left transition-colors ${
                   level === lvl.level

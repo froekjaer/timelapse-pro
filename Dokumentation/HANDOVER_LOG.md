@@ -29,6 +29,14 @@ person vide".
 
 ## Log
 
+### Handover 2026-07-15 — Codex reel fejlrevision, tranche 2
+- **Central auth:** GDPR-redaction ejer ikke længere JWT-secret/parser/sessionlogik. `get_required_user` delegerer runtime til Headends centrale `get_current_user`, så agent-lockdown og kommende auth-regler ikke divergerer. Mutable Pydantic-listedefaults er erstattet med factories.
+- **Skjulte driftsfejl:** Backup- og retention-settings returnerede tidligere gyldige defaults ved databasefejl. De logger og returnerer nu HTTP 500, så UI/monitorering kan se fejlen. `_get_nas_path` lukker sessionen også ved fejl. Edge LAB-disconnect og AI-backfill rollback-fejl forsvinder ikke længere lydløst.
+- **Site Look reel funktionsfejl:** UI hentede altid camera/site-parametre uanset valgt lag, så “Global” kunne vise kameraets resolved config. Fetch følger nu global→customer→site→camera præcist. Avancerede Kelvin/LAB-felter blev vist og sendt, men ignoreret af API/DB; de er nu valideret, persisteret og migrerbare via `v19_site_look_colour_parameters.sql` samt medtaget i v18 fresh-install-skemaet.
+- **Arkitektur-ratchet:** Første fulde kørsel stoppede korrekt fem linjers nettovækst i `main.py`. Obsolete patchkommentarer/whitespace blev fjernet; monolitten er nu 18.482 linjer mod maksimum 18.483. Baseline blev ikke hævet.
+- **QA:** **1.033 collected; 486 passed, 4 skipped, 0 failed; 543 integration/hardware deselected**. UI build består. ESLint er **186** (166 fejl, 20 advarsler), ned fra 222.
+- **Deployment:** Koden og v19-migrationen er endnu ikke deployet/anvendt på live PostgreSQL. Kør migration via kontrolleret backup/change-flow før UI-felterne anvendes live.
+
 ### Handover 2026-07-15 — Codex reel fejlrevision, tranche 1
 - **Kritisk auth-fund:** `main.py` genererede en tilfældig JWT-secret uden env-værdi, mens `redaction_api.py` uafhængigt brugte den kendte fallback `dev-secret-do-not-use-in-production`. Det kunne både afvise legitime sessions og gøre redaction-endpoints modtagelige for forfalskede tokens med den kendte secret. Runtime-secret synkroniseres nu før routerimport; regressionsvagt bekræfter identitet.
 - **GDPR/logning:** `_find_image_path` skrev device-id, filnavn og fulde storage-stier til `/tmp/redaction_debug.log`. Den ukontrollerede sensitive debugfil er fjernet og dækket af test.

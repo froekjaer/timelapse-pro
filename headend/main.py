@@ -89,7 +89,6 @@ if TIMELAPSE_ENV in {"prod", "production"}:
         )
 
 JWT_SECRET    = _jwt_secret_from_env or _secrets.token_hex(32)
-os.environ.setdefault("JWT_SECRET", JWT_SECRET)
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_H  = 12   # access token levetid
 COOKIE_NAME   = "tl_session"
@@ -13324,15 +13323,18 @@ def _run_backup():
 
 def _get_nas_path():
     """Hent NAS sti fra settings i DB."""
+    db = None
     try:
-#Peter        from sqlalchemy import text
         from database import SessionLocal
         db = SessionLocal()
         result = db.execute(text("SELECT value FROM settings WHERE key='backup_nas_path'")).fetchone()
-        db.close()
         return result[0] if result else None
-    except:
+    except Exception as exc:
+        log.exception("Kunne ikke læse backup_nas_path: %s", exc)
         return None
+    finally:
+        if db is not None:
+            db.close()
 
 
 def _get_backup_include_images() -> bool:
@@ -14357,17 +14359,15 @@ def update_backup_settings(payload: dict, _user=require_role("admin"), db: Sessi
 def get_backup_settings(_user=require_role("admin"), db: Session = Depends(get_db)):
     """Hent backup indstillinger."""
     try:
-#Peter        from sqlalchemy import text
         keys = ["backup_nas_path", "backup_auto_interval", "backup_include_images"]
         result = {}
         for k in keys:
             row = db.execute(text("SELECT value FROM settings WHERE key=:k"), {"k": k}).fetchone()
             result[k] = row[0] if row else None
         return result
-    except:
-        return {"backup_nas_path": None, "backup_auto_interval": "manual", "backup_include_images": "false"}
-
-
+    except Exception as exc:
+        log.exception("Kunne ikke hente backup-indstillinger: %s", exc)
+        raise HTTPException(status_code=500, detail="Backup-indstillinger kunne ikke hentes")
 # ── Retention policy API (G-02, P0-05) ───────────────────────────────────────
 
 @app.post("/api/admin/retention/trigger")
@@ -14426,10 +14426,9 @@ def get_retention_settings(_user=require_role("viewer"), db: Session = Depends(g
         row = db.execute(text("SELECT value FROM settings WHERE key='retention_days'")).fetchone()
         result["retention_days"] = int(row[0]) if row else 99999
         return result
-    except:
-        return {"retention_cleanup_interval": "manual", "retention_days": 99999}
-
-
+    except Exception as exc:
+        log.exception("Kunne ikke hente retention-indstillinger: %s", exc)
+        raise HTTPException(status_code=500, detail="Retention-indstillinger kunne ikke hentes")
 @app.get("/api/admin/retention/deletion-log")
 def get_retention_deletion_log(
     limit: int = 100,

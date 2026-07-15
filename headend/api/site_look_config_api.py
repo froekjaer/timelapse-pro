@@ -9,7 +9,7 @@ import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.site_look_config_service import SiteLookConfigService
 
@@ -37,6 +37,13 @@ class ConfigUpsert(BaseModel):
     lut_regeneration_interval_hours: Optional[int] = None
     config_poll_interval_seconds: Optional[int] = None
     config_cache_ttl_seconds: Optional[int] = None
+    neutral_kelvin: Optional[int] = Field(None, ge=1000, le=20000)
+    warm_lab_threshold: Optional[float] = Field(None, ge=-128, le=127)
+    cool_lab_threshold: Optional[float] = Field(None, ge=-128, le=127)
+    warm_kelvin_multiplier: Optional[float] = Field(None, ge=0, le=1000)
+    cool_kelvin_multiplier: Optional[float] = Field(None, ge=0, le=1000)
+    kelvin_min: Optional[int] = Field(None, ge=1000, le=20000)
+    kelvin_max: Optional[int] = Field(None, ge=1000, le=20000)
 
 
 class ConfigReset(BaseModel):
@@ -112,6 +119,13 @@ def upsert_config(
         lut_regeneration_interval_hours=data.lut_regeneration_interval_hours,
         config_poll_interval_seconds=data.config_poll_interval_seconds,
         config_cache_ttl_seconds=data.config_cache_ttl_seconds,
+        neutral_kelvin=data.neutral_kelvin,
+        warm_lab_threshold=data.warm_lab_threshold,
+        cool_lab_threshold=data.cool_lab_threshold,
+        warm_kelvin_multiplier=data.warm_kelvin_multiplier,
+        cool_kelvin_multiplier=data.cool_kelvin_multiplier,
+        kelvin_min=data.kelvin_min,
+        kelvin_max=data.kelvin_max,
         customer_id=data.customer_id,
         site_id=data.site_id,
         camera_id=data.camera_id,

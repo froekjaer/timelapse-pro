@@ -426,8 +426,10 @@ def main():
         except Exception as e:
             print(f"\r  [{i:3}/{len(captures)}] {name[:44]:<44} ❌ {e}")
             stats["fejl"] += 1
-            try: db.rollback()
-            except: pass
+            try:
+                db.rollback()
+            except Exception as rollback_exc:
+                print(f"Rollback efter backfill-fejl mislykkedes: {rollback_exc}", file=sys.stderr)
 
     if args.out and results_out:
         with open(args.out, "w", encoding="utf-8") as _f:

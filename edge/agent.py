@@ -252,8 +252,10 @@ class EdgeAgent:
                     # Reset lab state if switching back to normal
                     if getattr(self, "_lab_relay_on", False):
                         log.info("LAB MODE — exiting, camera release")
-                        try: self._driver.disconnect()
-                        except: pass
+                        try:
+                            self._driver.disconnect()
+                        except Exception as exc:
+                            log.warning("LAB MODE — camera disconnect on exit failed: %s", exc)
                         self._camera_power_off("lab exit", force=True)
                         self._lab_relay_on = False
                     self._tick(mode)
@@ -2338,8 +2340,10 @@ class EdgeAgent:
                     except Exception as exc:
                         log.warning("LAB MODE — Frame push stop error: %s", exc)
 
-                try: self._driver.disconnect()
-                except: pass
+                try:
+                    self._driver.disconnect()
+                except Exception as exc:
+                    log.warning("LAB MODE — camera disconnect after disable failed: %s", exc)
                 self._camera_power_off("lab disabled", force=True)
                 self._lab_relay_on = False
                 # Save updated config

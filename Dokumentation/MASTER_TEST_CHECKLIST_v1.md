@@ -607,9 +607,9 @@ at ramme live PostgreSQL eller en delt Headend.
 
 | Måling | Resultat |
 |---|---:|
-| Tests collected | **1.028** |
-| Serverløse unit/contract valgt | **485** |
-| Bestået | **481** |
+| Tests collected | **1.033** |
+| Serverløse unit/contract valgt | **490** |
+| Bestået | **486** |
 | Skipped | **4** (auth-afhængige live smoke-kald) |
 | Fejlet | **0** |
 | Deselecterede integration/hardware | **543** |
@@ -680,7 +680,7 @@ som bestået:
 - Alle trackede Pythonfiler: syntax PASS.
 - Alle trackede shellscripts: `bash -n` PASS.
 - UI TypeScript/Vite production build: PASS.
-- ESLint ratchet: PASS, baseline sænket fra 222 til 188 (167 fejl, 21 advarsler).
+- ESLint ratchet: PASS, baseline sænket fra 222 til 186 (166 fejl, 20 advarsler).
 - Kendt gæld: FastAPI `on_event`- og Pydantic v1-config warnings samt stor UI-chunk.
 
 ---

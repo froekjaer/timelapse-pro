@@ -38,6 +38,15 @@ CREATE TABLE IF NOT EXISTS site_look_config (
     config_poll_interval_seconds INT DEFAULT 300,  -- 5 minutes
     config_cache_ttl_seconds INT DEFAULT 86400,  -- 24 hours (max cache if DB unreachable)
 
+    -- Colour-temperature estimation used by the Edge Site Look manager
+    neutral_kelvin INT DEFAULT 6500,
+    warm_lab_threshold DECIMAL(7,2) DEFAULT 20,
+    cool_lab_threshold DECIMAL(7,2) DEFAULT -10,
+    warm_kelvin_multiplier DECIMAL(8,2) DEFAULT 50,
+    cool_kelvin_multiplier DECIMAL(8,2) DEFAULT 80,
+    kelvin_min INT DEFAULT 2700,
+    kelvin_max INT DEFAULT 10000,
+
     -- Metadata
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
@@ -51,7 +60,9 @@ CREATE TABLE IF NOT EXISTS site_look_config (
         (level = 'customer' AND customer_id IS NOT NULL AND site_id IS NULL AND camera_id IS NULL) OR
         (level = 'site' AND customer_id IS NOT NULL AND site_id IS NOT NULL AND camera_id IS NULL) OR
         (level = 'camera' AND customer_id IS NOT NULL AND site_id IS NOT NULL AND camera_id IS NOT NULL)
-    )
+    ),
+    CONSTRAINT site_look_kelvin_range_valid
+        CHECK (kelvin_min <= neutral_kelvin AND neutral_kelvin <= kelvin_max)
 );
 
 -- Indexes for efficient lookups

@@ -164,6 +164,13 @@ class SiteLookConfigService:
         lut_regeneration_interval_hours: Optional[int] = None,
         config_poll_interval_seconds: Optional[int] = None,
         config_cache_ttl_seconds: Optional[int] = None,
+        neutral_kelvin: Optional[int] = None,
+        warm_lab_threshold: Optional[float] = None,
+        cool_lab_threshold: Optional[float] = None,
+        warm_kelvin_multiplier: Optional[float] = None,
+        cool_kelvin_multiplier: Optional[float] = None,
+        kelvin_min: Optional[int] = None,
+        kelvin_max: Optional[int] = None,
         customer_id: Optional[str] = None,
         site_id: Optional[str] = None,
         camera_id: Optional[str] = None,
@@ -185,11 +192,17 @@ class SiteLookConfigService:
                         auto_create_reference, auto_update_reference,
                         lut_auto_generate, lut_regeneration_interval_hours,
                         config_poll_interval_seconds, config_cache_ttl_seconds,
+                        neutral_kelvin, warm_lab_threshold, cool_lab_threshold,
+                        warm_kelvin_multiplier, cool_kelvin_multiplier,
+                        kelvin_min, kelvin_max,
                         updated_by, updated_at
                     ) VALUES (
                         %s, %s, %s, %s,
                         %s, %s, %s,
                         %s, %s,
+                        %s, %s,
+                        %s, %s,
+                        %s, %s, %s,
                         %s, %s,
                         %s, %s,
                         %s, NOW()
@@ -205,6 +218,13 @@ class SiteLookConfigService:
                         lut_regeneration_interval_hours = COALESCE(EXCLUDED.lut_regeneration_interval_hours, site_look_config.lut_regeneration_interval_hours),
                         config_poll_interval_seconds = COALESCE(EXCLUDED.config_poll_interval_seconds, site_look_config.config_poll_interval_seconds),
                         config_cache_ttl_seconds = COALESCE(EXCLUDED.config_cache_ttl_seconds, site_look_config.config_cache_ttl_seconds),
+                        neutral_kelvin = COALESCE(EXCLUDED.neutral_kelvin, site_look_config.neutral_kelvin),
+                        warm_lab_threshold = COALESCE(EXCLUDED.warm_lab_threshold, site_look_config.warm_lab_threshold),
+                        cool_lab_threshold = COALESCE(EXCLUDED.cool_lab_threshold, site_look_config.cool_lab_threshold),
+                        warm_kelvin_multiplier = COALESCE(EXCLUDED.warm_kelvin_multiplier, site_look_config.warm_kelvin_multiplier),
+                        cool_kelvin_multiplier = COALESCE(EXCLUDED.cool_kelvin_multiplier, site_look_config.cool_kelvin_multiplier),
+                        kelvin_min = COALESCE(EXCLUDED.kelvin_min, site_look_config.kelvin_min),
+                        kelvin_max = COALESCE(EXCLUDED.kelvin_max, site_look_config.kelvin_max),
                         updated_by = EXCLUDED.updated_by,
                         updated_at = NOW()
                     RETURNING *
@@ -216,6 +236,9 @@ class SiteLookConfigService:
                     auto_create_reference, auto_update_reference,
                     lut_auto_generate, lut_regeneration_interval_hours,
                     config_poll_interval_seconds, config_cache_ttl_seconds,
+                    neutral_kelvin, warm_lab_threshold, cool_lab_threshold,
+                    warm_kelvin_multiplier, cool_kelvin_multiplier,
+                    kelvin_min, kelvin_max,
                     updated_by
                 ]
 

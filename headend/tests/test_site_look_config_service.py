@@ -254,6 +254,9 @@ class TestCRUDOperations:
             )
 
             assert result['reference_quality_threshold'] == 85.0
+            insert_call = next(call for call in cursor.execute.call_args_list if "INSERT INTO site_look_config" in call.args[0])
+            query, params = insert_call.args
+            assert query.count("%s") == len(params)
 
     def test_delete_config(self, service, mock_db):
         """Test deleting config."""

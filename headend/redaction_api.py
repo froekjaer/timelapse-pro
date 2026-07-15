@@ -26,88 +26,39 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from jose import JWTError, jwt as _jwt  # Samme som main.py
 
 # Import fra headend moduler
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database import SessionLocal, Capture, User
+from database import Capture, User, get_db
 
 router = APIRouter(prefix="/api/redaction", tags=["redaction"])
-
-# JWT Constants (samme som i main.py)
-COOKIE_NAME = "tl_session"
-JWT_SECRET = os.getenv("JWT_SECRET", "dev-secret-do-not-use-in-production")
-JWT_ALGORITHM = "HS256"
 
 # Logger
 log = logging.getLogger(__name__)
 
 
-# ── Database Session ────────────────────────────────────────────────────────────
-
-def get_db():
-    """Dependency for database session."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        try:
-            db.rollback()
-        finally:
-            db.close()
-
-
 # ── Authentication ─────────────────────────────────────────────────────────────
-
-
-# ── Authentication ─────────────────────────────────────────────────────────────
-
-def _decode_token(token: str) -> dict | None:
-    """Decode JWT token."""
-    try:
-        return _jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
-    except JWTError:
-        return None
-
-
-def get_current_user(
-    request: Request,
-    db: Session = Depends(get_db)
-) -> User | None:
-    """FastAPI dependency — returnerer current user fra cookie eller None.
-
-    SECURITY: Hvis ingen cookie/ugyldig token, returneres None (til opt_endpoints).
-    For krævet auth, brug Depends(get_required_user).
-    """
-    token = request.cookies.get(COOKIE_NAME)
-    if not token:
-        return None
-    payload = _decode_token(token)
-    if not payload:
-        return None
-    user = db.query(User).filter_by(username=payload.get("sub"), is_active=True).first()
-    return user
-
 
 def get_required_user(
-    current_user: User | None = Depends(get_current_user)
+    request: Request,
+    db: Session = Depends(get_db)
 ) -> User:
-    """FastAPI dependency — kræver authenticated user.
+    """Delegate session validation to Headend's single central auth implementation."""
+    from main import get_current_user
 
-    Kaster 401 hvis ingen user.
-    """
-    if not current_user:
+    user = get_current_user(request, db)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Ikke autentificeret",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return current_user
+    return user
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -127,8 +78,8 @@ class BoundingBox(BaseModel):
 
 
 class PIIDetections(BaseModel):
-    faces: list[BoundingBox] = []
-    license_plates: list[BoundingBox] = []
+    faces: list[BoundingBox] = Field(default_factory=list)
+    license_plates: list[BoundingBox] = Field(default_factory=list)
     has_pii: bool = False
 
     def to_dict(self) -> dict:
