@@ -42,6 +42,11 @@ interface CaptureAccessRow {
   id: number; capture_id: number; device_id: string; filename: string
   action: string; username: string; role: string; accessed_at: string
 }
+interface AlertRule {
+  id: number; name: string; target_kind: string | null; target_key: string | null
+  metric: string; op: string; threshold: number; for_seconds: number
+  severity: string; enabled: boolean; notify: boolean
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function api(path: string) {
@@ -117,6 +122,7 @@ export default function DriftPage() {
   const [accessRows, setAccessRows] = useState<CaptureAccessRow[]>([])
   const [accessLoading, setAccessLoading] = useState(false)
   const [accessFilters, setAccessFilters] = useState({ username: '', device_id: '', filename: '', action: '', hours: '168' })
+  const [alertRules, setAlertRules] = useState<AlertRule[]>([])
 
   const loadHealth = useCallback(async () => {
     try {
@@ -127,6 +133,8 @@ export default function DriftPage() {
       if (!h.ok) throw new Error(`health ${h.status}`)
       setTiles(await h.json())
       setAlerts(a.ok ? await a.json() : [])
+      const rulesResponse = await api('/api/itim/alert-rules')
+      if (rulesResponse.ok) setAlertRules(await rulesResponse.json())
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Kunne ikke hente drifts-status')
@@ -182,6 +190,18 @@ export default function DriftPage() {
     } finally {
       setAccessLoading(false)
     }
+  }
+
+  async function updateAlertRule(rule: AlertRule, changes: Partial<AlertRule>) {
+    const response = await fetch(`${getApiUrl()}/api/itim/alert-rules/${rule.id}`, {
+      method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(changes),
+    })
+    if (!response.ok) {
+      setError(`Alarmregel kunne ikke opdateres (${response.status})`)
+      return
+    }
+    setAlertRules(rows => rows.map(row => row.id === rule.id ? {...row, ...changes} : row))
   }
 
   // Gruppér tiles efter scope
@@ -268,6 +288,27 @@ export default function DriftPage() {
               {accessRows.map(row => <tr key={row.id} className="border-t border-slate-100"><td className="px-2 py-1.5 whitespace-nowrap">{new Date(row.accessed_at).toLocaleString('da-DK')}</td><td className="px-2 py-1.5"><div>{row.username}</div><div className="text-[10px] text-slate-400">{row.role}</div></td><td className="px-2 py-1.5"><div className="font-mono break-all">{row.filename}</div><div className="text-[10px] text-slate-400">{row.device_id} · capture #{row.capture_id}</div></td><td className="px-2 py-1.5">{row.action === 'thumbnail_view' ? 'Thumbnail' : 'Fuld visning/download'}</td></tr>)}
               {!accessLoading && accessRows.length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-400">Tryk Søg for at hente adgangsloggen</td></tr>}
             </tbody>
+          </table>
+        </div>
+      </details>
+
+      <details className="border border-slate-200 bg-white rounded-lg p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-800">Alarmregler &amp; notifikationer</summary>
+        <div className="flex items-center justify-between gap-3 mt-2">
+          <p className="text-xs text-slate-500">Driftsalarmer bruger samme mail/SMS/Teams-kanaler som SIEM og sender både alarm og recovery.</p>
+          <button onClick={() => navigate('/notifications')} className="text-xs text-sky-700 hover:text-sky-900 whitespace-nowrap">Notifikationsopsætning</button>
+        </div>
+        <div className="mt-3 max-h-80 overflow-auto rounded border border-slate-100">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="text-left px-2 py-1.5">Regel</th><th className="text-left px-2 py-1.5">Betingelse</th><th className="text-center px-2 py-1.5">Aktiv</th><th className="text-center px-2 py-1.5">Send</th></tr></thead>
+            <tbody>{alertRules.map(rule => (
+              <tr key={rule.id} className="border-t border-slate-100">
+                <td className="px-2 py-1.5"><div className="font-medium text-slate-800">{rule.name}</div><div className="text-[10px] text-slate-400">{rule.severity} · {rule.target_key || rule.target_kind || 'alle'}</div></td>
+                <td className="px-2 py-1.5 font-mono text-slate-600">{rule.metric} {rule.op} {rule.threshold}{rule.for_seconds ? ` i ${rule.for_seconds}s` : ''}</td>
+                <td className="px-2 py-1.5 text-center"><input type="checkbox" checked={rule.enabled} onChange={e => updateAlertRule(rule, {enabled: e.target.checked})} /></td>
+                <td className="px-2 py-1.5 text-center"><input type="checkbox" checked={rule.notify} onChange={e => updateAlertRule(rule, {notify: e.target.checked})} /></td>
+              </tr>
+            ))}</tbody>
           </table>
         </div>
       </details>

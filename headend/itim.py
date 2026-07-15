@@ -624,11 +624,16 @@ def evaluate_alerts(db: Session) -> None:
             elif not firing and open_ev:
                 open_ev.state = "resolved"
                 open_ev.resolved_at = _now()
+                if rule.notify:
+                    _notify_alert(db, rule, t, open_ev, resolved=True)
     db.commit()
 
 
-def _notify_alert(db: Session, rule: ItimAlertRule, target: ItimTarget, ev: ItimAlertEvent) -> None:
-    key = (target.target_key, rule.metric)
+def _notify_alert(
+    db: Session, rule: ItimAlertRule, target: ItimTarget, ev: ItimAlertEvent,
+    resolved: bool = False,
+) -> None:
+    key = (target.target_key, rule.metric, "resolved" if resolved else "firing")
     now_ts = time.time()
     with _notify_cooldown_lock:
         if now_ts - _notify_cooldown.get(key, 0) < NOTIFY_COOLDOWN_SECONDS:
@@ -639,11 +644,11 @@ def _notify_alert(db: Session, rule: ItimAlertRule, target: ItimTarget, ev: Itim
         if not get_notification_config(db):
             return
         notify({
-            "rule_name":    f"ITIM: {rule.name}",
+            "rule_name":    f"ITIM {'LØST' if resolved else 'ALARM'}: {rule.name}",
             "rule_id":      "itim",
             "severity":     "critical" if rule.severity == "critical" else "warning",
             "device_id":    target.device_id or target.target_key,
-            "description":  ev.message,
+            "description":  (f"Tilstanden er normal igen. Oprindelig alarm: {ev.message}" if resolved else ev.message),
             "matched_on":   [f"{rule.metric}{rule.op}{rule.threshold:g}"],
             "confidence":   1.0,
             "triggered_at": _now().isoformat(),
