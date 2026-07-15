@@ -16686,6 +16686,7 @@ def delete_capture_controlled(capture_id: int, payload: dict, _user=require_role
     from services.capture_deletion_service import delete_capture
     username = str(getattr(_user, "username", None) or getattr(_user, "email", None) or "unknown")
     deleted = delete_capture(db, capture, deletion_reason=payload.get("deletion_reason"),
+                             deletion_details=payload.get("deletion_details"),
                              performed_by=f"admin:{username}", find_image=_find_image,
                              unlink_thumbnails=_unlink_thumbnail_variants)
     log.warning("Capture %d kontrolleret slettet af %s: %s", capture_id, username, payload.get("deletion_reason"))
@@ -16695,11 +16696,12 @@ def delete_capture_controlled(capture_id: int, payload: dict, _user=require_role
 @app.post("/api/admin/captures/bulk-delete")
 def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Delete only explicitly selected captures with one mandatory audit reason."""
-    from services.capture_deletion_service import delete_capture, validate_deletion_reason
+    from services.capture_deletion_service import audit_reason, delete_capture, validate_deletion_reason
     ids = payload.get("ids") or []
     if not ids:
         raise HTTPException(status_code=400, detail="Ingen ids angivet")
     reason = validate_deletion_reason(payload.get("deletion_reason"))
+    audit_reason(reason, payload.get("deletion_details"))
     username = str(getattr(_user, "username", None) or getattr(_user, "email", None) or "unknown")
     results = []
     for capture_id in ids:
@@ -16708,7 +16710,8 @@ def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session
             results.append({"id": capture_id, "status": "not_found_or_forbidden"})
             continue
         try:
-            delete_capture(db, capture, deletion_reason=reason, performed_by=f"admin:{username}",
+            delete_capture(db, capture, deletion_reason=reason,
+                           deletion_details=payload.get("deletion_details"), performed_by=f"admin:{username}",
                            find_image=_find_image, unlink_thumbnails=_unlink_thumbnail_variants)
             results.append({"id": capture_id, "status": "deleted"})
         except Exception as exc:

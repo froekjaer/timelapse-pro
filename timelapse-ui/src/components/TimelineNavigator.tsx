@@ -42,6 +42,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleting, setDeleting]       = useState(false)
   const [deletionReason, setDeletionReason] = useState<CaptureDeletionReason>('defective')
+  const [deletionDetails, setDeletionDetails] = useState('')
   const [naturalQuery, setNaturalQuery] = useState('')
   const [naturalNote, setNaturalNote] = useState('')
   const [naturalLoading, setNaturalLoading] = useState(false)
@@ -157,7 +158,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
     if (!confirm(`Slet ${selectedIds.size} billeder? Dette kan ikke fortrydes.`)) return
     setDeleting(true)
     try {
-      await deleteCapturesBulk([...selectedIds], deletionReason)
+      await deleteCapturesBulk([...selectedIds], deletionReason, deletionDetails)
       setSelectedIds(new Set())
       setDeleteMode(false)
       // Genindlæs dag-captures
@@ -200,10 +201,16 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
               <option value="defective">Defekt billede</option>
               <option value="unwanted">Uønsket billede</option>
               <option value="gdpr_request">GDPR-anmodning</option>
+              <option value="other">Anden</option>
             </select>
           )}
+          {deleteMode && selectedIds.size > 0 && deletionReason === 'other' && (
+            <input value={deletionDetails} onChange={e => setDeletionDetails(e.target.value)}
+              aria-label="Anden årsag" placeholder="Skriv konkret årsag" required minLength={3}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm min-w-48" />
+          )}
           {deleteMode && selectedIds.size > 0 && (
-            <button onClick={handleBulkDelete} disabled={deleting}
+            <button onClick={handleBulkDelete} disabled={deleting || (deletionReason === 'other' && deletionDetails.trim().length < 3)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 disabled:opacity-50">
               <Trash2 className="w-3.5 h-3.5" />
               {deleting ? 'Sletter…' : `Slet ${selectedIds.size}`}

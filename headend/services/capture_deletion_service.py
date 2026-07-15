@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from database import Capture, CaptureDeletionLog
 
 
-ALLOWED_REASONS = {"defective", "unwanted", "gdpr_request"}
+ALLOWED_REASONS = {"defective", "unwanted", "gdpr_request", "other"}
 
 
 def validate_deletion_reason(reason: object) -> str:
@@ -19,9 +19,20 @@ def validate_deletion_reason(reason: object) -> str:
     if value not in ALLOWED_REASONS:
         raise HTTPException(
             status_code=422,
-            detail="deletion_reason skal være defective, unwanted eller gdpr_request",
+            detail="deletion_reason skal være defective, unwanted, gdpr_request eller other",
         )
     return value
+
+
+def audit_reason(reason: object, details: object = None) -> str:
+    """Return the bounded value persisted in the existing audit column."""
+    value = validate_deletion_reason(reason)
+    if value != "other":
+        return value
+    explanation = str(details or "").strip()
+    if len(explanation) < 3:
+        raise HTTPException(status_code=422, detail="Anden kræver en konkret årsag")
+    return f"other:{explanation}"[:100]
 
 
 def delete_capture(
@@ -29,12 +40,13 @@ def delete_capture(
     capture: Capture,
     *,
     deletion_reason: str,
+    deletion_details: str | None = None,
     performed_by: str,
     find_image: Callable[[str, str], Path | None],
     unlink_thumbnails: Callable[[Path, str], bool],
 ) -> dict:
     """Delete one selected capture and retain an independent audit record."""
-    reason = validate_deletion_reason(deletion_reason)
+    reason = audit_reason(deletion_reason, deletion_details)
     path = find_image(capture.device_id, capture.filename)
     file_size = path.stat().st_size if path and path.is_file() else None
     audit = CaptureDeletionLog(

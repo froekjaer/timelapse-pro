@@ -142,10 +142,10 @@ export const getPreviewThumbUrl = (deviceId: string, filename: string) =>
 export const getDeviceRawConfig = (deviceId: string) =>
   getClient().get(`/api/config/${pathSegment(deviceId)}`).then(r => r.data)
 
-export type CaptureDeletionReason = 'defective' | 'unwanted' | 'gdpr_request'
+export type CaptureDeletionReason = 'defective' | 'unwanted' | 'gdpr_request' | 'other'
 
-export const deleteCapture = (id: number, deletionReason: CaptureDeletionReason) =>
-  getClient().delete(`/api/admin/captures/${id}`, { data: { deletion_reason: deletionReason } }).then(r => r.data)
+export const deleteCapture = (id: number, deletionReason: CaptureDeletionReason, deletionDetails = '') =>
+  getClient().delete(`/api/admin/captures/${id}`, { data: { deletion_reason: deletionReason, deletion_details: deletionDetails } }).then(r => r.data)
 
-export const deleteCapturesBulk = (ids: number[], deletionReason: CaptureDeletionReason) =>
-  getClient().post('/api/admin/captures/bulk-delete', { ids, deletion_reason: deletionReason }).then(r => r.data.deleted as number)
+export const deleteCapturesBulk = (ids: number[], deletionReason: CaptureDeletionReason, deletionDetails = '') =>
+  getClient().post('/api/admin/captures/bulk-delete', { ids, deletion_reason: deletionReason, deletion_details: deletionDetails }).then(r => r.data.deleted as number)
