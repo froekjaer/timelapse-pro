@@ -4382,9 +4382,10 @@ def heartbeat(
         capture_uploaded= stats.get("uploaded"),
         # Extended diagnostics
         ntp_offset_s    = diag.get("ntp_offset_s"),
-        ssd_total_gb    = diag.get("ssd_total_gb"),
-        ssd_used_pct    = diag.get("ssd_used_pct"),
-        ssd_free_gb     = diag.get("ssd_free_gb"),
+        # Edge collector uses disk_*; accept legacy ssd_* during rollout.
+        ssd_total_gb    = diag.get("disk_total_gb", diag.get("ssd_total_gb")),
+        ssd_used_pct    = diag.get("disk_used_pct", diag.get("ssd_used_pct")),
+        ssd_free_gb     = diag.get("disk_free_gb", diag.get("ssd_free_gb")),
         service_restarts= diag.get("service_restarts"),
         upload_queue    = diag.get("upload_queue_size"),
         # Camera diagnostics

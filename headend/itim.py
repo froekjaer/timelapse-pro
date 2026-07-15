@@ -467,7 +467,9 @@ def _probe_edge_from_diagnostics(db: Session) -> None:
             state = "warning" if state == "ok" else state; reasons.append(f"høj CPU-temp {m['cpu_temp_c']:.0f}°C")
         if r["cam_shutter_alarm"]:
             state = "warning" if state == "ok" else state; reasons.append("shutter-alarm")
-        if m.get("ssd_used_pct", 0) >= 92:
+        if m.get("ssd_used_pct", 0) >= 95:
+            state = "critical"; reasons.append("disk kritisk fuld")
+        elif m.get("ssd_used_pct", 0) >= 85:
             state = "warning" if state == "ok" else state; reasons.append("disk næsten fuld")
         set_health(db, f"edge:{did}", "edge", state, ", ".join(reasons) or "Normal",
                    {k: round(v, 1) for k, v in m.items()}, scope="edge",
@@ -706,18 +708,24 @@ _DEFAULT_RULES = [
     ("Edge offline",                  "edge",   None,            "up",             "==", 0, 0,   "warning"),
     ("Edge lav batterispænding",      "edge",   None,            "battery_v",      "<",  11.8, 0, "critical"),
     ("Edge høj CPU-temp",             "edge",   None,            "cpu_temp_c",     ">",  80, 0,   "warning"),
+    ("Edge disk næsten fuld",         "edge",   None,            "ssd_used_pct",   ">",  85, 0,   "warning"),
+    ("Edge disk kritisk fuld",        "edge",   None,            "ssd_used_pct",   ">",  95, 0,   "critical"),
     ("Billedfejl-rate høj",           "image_qa", "image_qa:all","unusable_rate",  ">",  20, 0,   "warning"),
     ("AI batch-jobs fejlet",          "pipeline","pipeline:ai",  "batch_jobs_failed_24h", ">", 0, 0, "warning"),
 ]
 
 
 def seed_defaults(db: Session) -> None:
-    if db.query(ItimAlertRule).count() == 0:
-        for name, kind, key, metric, op, thr, fs, sev in _DEFAULT_RULES:
+    existing = {name for (name,) in db.query(ItimAlertRule.name).all()}
+    added = 0
+    for name, kind, key, metric, op, thr, fs, sev in _DEFAULT_RULES:
+        if name not in existing:
             db.add(ItimAlertRule(name=name, target_kind=kind, target_key=key, metric=metric,
                                  op=op, threshold=thr, for_seconds=fs, severity=sev))
+            added += 1
+    if added:
         db.commit()
-        log.info("ITIM: %d default alarm-regler seedet", len(_DEFAULT_RULES))
+        log.info("ITIM: %d manglende default alarm-regler seedet", added)
 
 
 def run_collection_cycle(db: Session) -> None:
