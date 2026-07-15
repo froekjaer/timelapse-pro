@@ -32,7 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg2 \
         openssh-server openssh-client \
         iproute2 iputils-ping dnsutils \
-        rsync \
+        rsync autossh gphoto2 libgphoto2-6 libgphoto2-port12 \
+        gpsd gpsd-clients bluez \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Service user ─────────────────────────────────────────────────
@@ -63,9 +64,8 @@ RUN mkdir -p \
         /run/timelapse
 
 # ── Python venv ──────────────────────────────────────────────────
-# Brug slank base-requirements (uden opencv — for tungt til image-build).
-# opencv installeres post-flash via headend OS-bundle update.
-COPY headend/tools/requirements.edge-base.txt /tmp/requirements.edge-base.txt
+# Et nyt image skal kunne udføre samme QA som en opdateret Edge fra første boot.
+COPY edge/requirements.txt /tmp/requirements.edge.txt
 # Build-deps installeres midlertidigt og fjernes igen i samme RUN-lag.
 # libsodium23 (runtime) beholdes — pynacl linker mod det dynamisk.
 # SODIUM_INSTALL=system: pynacl bruger system-libsodium (sparer kompileringstid).
@@ -75,14 +75,19 @@ RUN apt-get update \
         libsodium23 libsodium-dev \
     && python3 -m venv /opt/timelapse/venv \
     && SODIUM_INSTALL=system /opt/timelapse/venv/bin/pip install --quiet --no-cache-dir \
-        -r /tmp/requirements.edge-base.txt \
+        -r /tmp/requirements.edge.txt \
     && apt-get remove -y gcc libffi-dev python3-dev make libsodium-dev \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Agent source ─────────────────────────────────────────────────
 COPY edge/ /opt/timelapse/edge/
-RUN chown -R timelapse:timelapse /opt/timelapse/edge
+RUN rm -rf /opt/timelapse/edge/__pycache__ /opt/timelapse/edge/**/__pycache__ \
+    && rm -f /opt/timelapse/edge/api_token.txt /opt/timelapse/edge/bootstrap.yaml \
+             /opt/timelapse/edge/config.yaml /opt/timelapse/edge/sftp_cache.yaml \
+             /opt/timelapse/edge/siem_journal.cursor \
+    && rm -rf /opt/timelapse/edge/keys \
+    && chown -R timelapse:timelapse /opt/timelapse/edge
 
 # ── Bootstrap config template ────────────────────────────────────
 RUN printf 'headend_url: "%s"\ndevice_id: "${DEVICE_ID}"\nbootstrap_token: "${BOOTSTRAP_TOKEN}"\n' \
@@ -98,7 +103,13 @@ RUN echo "${TIMELAPSE_VERSION}" > /opt/timelapse/edge/VERSION \
 # is present so it activates correctly when deployed to real hardware.
 COPY edge/scripts/timelapse-edge.service /etc/systemd/system/timelapse-edge.service
 COPY edge/scripts/timelapse-bootstrap.service /etc/systemd/system/timelapse-bootstrap.service
+COPY edge/scripts/timelapse-bt-pan.service /etc/systemd/system/timelapse-bt-pan.service
+COPY edge/scripts/timelapse-bt-agent.service /etc/systemd/system/timelapse-bt-agent.service
+COPY edge/scripts/timelapse-captive.service /etc/systemd/system/timelapse-captive.service
+COPY edge/scripts/timelapse-totp.service /etc/systemd/system/timelapse-totp.service
 COPY edge/scripts/bootstrap_agent.py /opt/timelapse/edge/scripts/bootstrap_agent.py
+RUN chmod 0644 /etc/systemd/system/timelapse-*.service \
+    && chmod 0755 /opt/timelapse/edge/scripts/*.sh
 
 EXPOSE 22
 

@@ -199,10 +199,8 @@ def _sign_manifest(
     progress: Callable[[str], None],
 ) -> tuple[str, str]:
     """GPG-signér manifest, returner (signature_or_hash, signed_by)."""
-    digest = _sha256_text(manifest_json)
     if not gpg_key_id:
-        progress("ℹ️  Ingen GPG nøgle — bruger SHA-256 hash-binding")
-        return f"sha256:{digest}", "system-hash"
+        raise RuntimeError("GPG release-nøgle mangler; Edge-images må ikke publiceres med hash-only trust")
     try:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(manifest_json)
@@ -217,10 +215,27 @@ def _sign_manifest(
         if result.returncode == 0 and result.stdout.strip():
             progress(f"✅ GPG-signatur OK (nøgle {gpg_key_id[:16]}…)")
             return result.stdout.strip(), gpg_key_id
-        progress(f"⚠️  GPG fejlede ({result.stderr[-200:]}), bruger hash-binding")
+        raise RuntimeError(f"GPG-signering fejlede: {result.stderr[-300:]}")
     except Exception as exc:
-        progress(f"⚠️  GPG utilgængelig ({exc}), bruger hash-binding")
-    return f"sha256:{digest}", "system-hash"
+        if isinstance(exc, RuntimeError):
+            raise
+        raise RuntimeError(f"GPG-signering utilgængelig: {exc}") from exc
+
+
+def _git_provenance(root: Path) -> dict[str, str]:
+    """Bind image buildet til rene, reviewbare Edge-inputs."""
+    paths = ["edge", "headend/tools/Dockerfile.edge", "headend/tools/requirements.edge-base.txt"]
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--", *paths], cwd=root,
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    if dirty:
+        raise RuntimeError(
+            "Edge image build-inputs har uncommittede ændringer. Commit og QA dem før image-build:\n" + dirty
+        )
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root, text=True).strip()
+    return {"commit": commit, "branch": branch}
 
 
 # ── Dockerfile selection ──────────────────────────────────────────────────────
@@ -311,13 +326,8 @@ def build_edge_image(
     rootfs_name = f"timelapse-edge-{target}-{timestamp}.rootfs.tar.gz"
     rootfs_path = out_dir / rootfs_name
 
-    # ── Git version ────────────────────────────────────────────────────────
-    try:
-        version = subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"], cwd=root, text=True
-        ).strip()
-    except Exception:
-        version = "unknown"
+    provenance = _git_provenance(root)
+    version = provenance["commit"]
 
     progress_cb(f"🔨 Starter Edge image build [{artifact_id}]")
     progress_cb(f"   Target:   {display_name} ({arch})")
@@ -444,16 +454,21 @@ def build_edge_image(
             "size_bytes": rootfs_path.stat().st_size,
         },
         "version":     version,
+        "source": {
+            **provenance,
+            "dockerfile_sha256": _sha256_file(dockerfile),
+            "build_inputs_clean": True,
+        },
         "headend_url": headend_url,
         "hardening": {
             "root_locked":          True,
             "ssh_password_auth":    "disabled",
             "ssh_root_login":       "disabled",
-            "service_user":         "timelapse",
+            "service_user":         "root (systemd sandboxed; hardware and signed update authority)",
         },
         "enrollment": {
             "method":   "zero_touch",
-            "endpoint": f"{headend_url}/devices/enroll",
+            "endpoint": f"{headend_url}/bootstrap",
             "auth":     "short-lived bootstrap token",
         },
         "sbom": {
