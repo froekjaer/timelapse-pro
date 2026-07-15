@@ -2,7 +2,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Trash2, X, Brain, Loader2, Search } from 'lucide-react'
 import type { Capture } from '../types'
-import { getApiUrl, deleteCapturesBulk } from '../api/client'
+import { getApiUrl, deleteCapturesBulk, type CaptureDeletionReason } from '../api/client'
 import { CaptureThumbnailCard } from './CaptureThumbnailCard'
 
 function authFetch(url: string) {
@@ -41,6 +41,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
   const [deleteMode, setDeleteMode]   = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleting, setDeleting]       = useState(false)
+  const [deletionReason, setDeletionReason] = useState<CaptureDeletionReason>('defective')
   const [naturalQuery, setNaturalQuery] = useState('')
   const [naturalNote, setNaturalNote] = useState('')
   const [naturalLoading, setNaturalLoading] = useState(false)
@@ -156,7 +157,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
     if (!confirm(`Slet ${selectedIds.size} billeder? Dette kan ikke fortrydes.`)) return
     setDeleting(true)
     try {
-      await deleteCapturesBulk([...selectedIds])
+      await deleteCapturesBulk([...selectedIds], deletionReason)
       setSelectedIds(new Set())
       setDeleteMode(false)
       // Genindlæs dag-captures
@@ -193,6 +194,14 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
         )}
         </div>
         <div className="flex items-center gap-2">
+          {deleteMode && selectedIds.size > 0 && (
+            <select value={deletionReason} onChange={e => setDeletionReason(e.target.value as CaptureDeletionReason)}
+              aria-label="Årsag til sletning" className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white">
+              <option value="defective">Defekt billede</option>
+              <option value="unwanted">Uønsket billede</option>
+              <option value="gdpr_request">GDPR-anmodning</option>
+            </select>
+          )}
           {deleteMode && selectedIds.size > 0 && (
             <button onClick={handleBulkDelete} disabled={deleting}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white text-sm rounded-lg hover:bg-red-600 disabled:opacity-50">

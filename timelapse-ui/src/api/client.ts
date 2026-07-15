@@ -142,8 +142,10 @@ export const getPreviewThumbUrl = (deviceId: string, filename: string) =>
 export const getDeviceRawConfig = (deviceId: string) =>
   getClient().get(`/api/config/${pathSegment(deviceId)}`).then(r => r.data)
 
-export const deleteCapture = (id: number) =>
-  getClient().delete(`/api/admin/captures/${id}`).then(r => r.data)
+export type CaptureDeletionReason = 'defective' | 'unwanted' | 'gdpr_request'
 
-export const deleteCapturesBulk = (ids: number[]) =>
-  getClient().post('/api/admin/captures/bulk-delete', { ids }).then(r => r.data.deleted as number)
+export const deleteCapture = (id: number, deletionReason: CaptureDeletionReason) =>
+  getClient().delete(`/api/admin/captures/${id}`, { data: { deletion_reason: deletionReason } }).then(r => r.data)
+
+export const deleteCapturesBulk = (ids: number[], deletionReason: CaptureDeletionReason) =>
+  getClient().post('/api/admin/captures/bulk-delete', { ids, deletion_reason: deletionReason }).then(r => r.data.deleted as number)

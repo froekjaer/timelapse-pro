@@ -16676,21 +16676,45 @@ def assign_device(device_id: str, payload: dict, _user=require_role("admin"), db
 # ── Slet capture ──────────────────────────────────────────────────────────────
 
 @app.delete("/api/admin/captures/{capture_id}")
-def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = Depends(get_db)):
-    """Capture deletion is disabled because images are immutable evidence."""
-    raise HTTPException(
-        status_code=409,
-        detail="Billeder er immutable og må ikke slettes fra TimeLapse Pro.",
-    )
+def delete_capture_controlled(capture_id: int, payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
+    """Delete one explicitly selected capture with mandatory audit reason."""
+    capture = db.query(Capture).filter(Capture.id == capture_id).first()
+    if not capture:
+        raise HTTPException(status_code=404, detail="Capture ikke fundet")
+    if not _capture_is_allowed(db, _user, capture):
+        raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
+    from services.capture_deletion_service import delete_capture
+    username = str(getattr(_user, "username", None) or getattr(_user, "email", None) or "unknown")
+    deleted = delete_capture(db, capture, deletion_reason=payload.get("deletion_reason"),
+                             performed_by=f"admin:{username}", find_image=_find_image,
+                             unlink_thumbnails=_unlink_thumbnail_variants)
+    log.warning("Capture %d kontrolleret slettet af %s: %s", capture_id, username, payload.get("deletion_reason"))
+    return {"status": "ok", "capture_id": capture_id, "deleted": deleted}
 
 
 @app.post("/api/admin/captures/bulk-delete")
 def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
-    """Bulk capture deletion is disabled because images are immutable evidence."""
-    raise HTTPException(
-        status_code=409,
-        detail="Billeder er immutable og må ikke slettes fra TimeLapse Pro.",
-    )
+    """Delete only explicitly selected captures with one mandatory audit reason."""
+    from services.capture_deletion_service import delete_capture, validate_deletion_reason
+    ids = payload.get("ids") or []
+    if not ids:
+        raise HTTPException(status_code=400, detail="Ingen ids angivet")
+    reason = validate_deletion_reason(payload.get("deletion_reason"))
+    username = str(getattr(_user, "username", None) or getattr(_user, "email", None) or "unknown")
+    results = []
+    for capture_id in ids:
+        capture = db.query(Capture).filter(Capture.id == capture_id).first()
+        if not capture or not _capture_is_allowed(db, _user, capture):
+            results.append({"id": capture_id, "status": "not_found_or_forbidden"})
+            continue
+        try:
+            delete_capture(db, capture, deletion_reason=reason, performed_by=f"admin:{username}",
+                           find_image=_find_image, unlink_thumbnails=_unlink_thumbnail_variants)
+            results.append({"id": capture_id, "status": "deleted"})
+        except Exception as exc:
+            log.exception("Kontrolleret sletning fejlede for capture %s", capture_id)
+            results.append({"id": capture_id, "status": "error", "error": str(exc)})
+    return {"status": "ok", "deleted": sum(r["status"] == "deleted" for r in results), "results": results}
 
 
 # ── EXIF fra billedfil ────────────────────────────────────────────────────────
