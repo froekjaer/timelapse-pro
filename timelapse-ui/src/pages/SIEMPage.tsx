@@ -2,7 +2,7 @@
 // TimeLapse Pro — SIEMPage.tsx
 // ═══════════════════════════════════════════════════════════════════════════
 import { useEffect, useState, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   Shield, AlertTriangle, AlertCircle, Info, RefreshCw,
   Wifi, Terminal, User, Key, Server, Activity, Zap, Brain, Loader2,
@@ -841,6 +841,14 @@ function EventDetailDrawer({ event, onClose, onFilter }: {
           <section>
             <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">Handlinger</h3>
             <div className="flex flex-wrap gap-2">
+              {event.device_id.startsWith('TL-') && (
+                <Link to={`/cmdb/${encodeURIComponent(event.device_id)}`} className="text-xs px-3 py-1.5 rounded-lg border border-sky-200 text-sky-700 hover:bg-sky-50">
+                  Åbn aktiv i CMDB
+                </Link>
+              )}
+              <Link to="/observability" className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
+                Åbn Drift
+              </Link>
               <button onClick={() => onFilter('device', event.device_id)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50">
                 Filtrer på device
               </button>

@@ -38,10 +38,11 @@ from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from database import Device, DeviceInventory, BreakGlassAccount, PendingUpdate, get_db, now_utc
+from services.fair_risk import estimate_annual_loss
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +132,25 @@ def _require_cmdb_role(*roles: str):
         return user
 
     return _check
+
+
+def _visible_device_ids(db: Session, user) -> set[str] | None:
+    """Return None for platform scope, otherwise the tenant's explicit device set."""
+    from main import _is_platform_admin, _visible_device_query
+
+    if _is_platform_admin(user):
+        return None
+    return {row[0] for row in _visible_device_query(db, user).with_entities(Device.device_id).all()}
+
+
+def _ensure_device_access(db: Session, user, device_id: str) -> Device | None:
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    visible = _visible_device_ids(db, user)
+    if visible is not None and device_id not in visible:
+        # Do not reveal whether another tenant owns the identifier.
+        raise HTTPException(status_code=404, detail="Ingen CMDB-post for denne enhed")
+    return device
+
 
 HEADEND_MANAGED_HOMEBREW_FORMULAE = {
     "certbot": "TimeLapse TLS/certificate platformkomponent",
@@ -564,7 +584,11 @@ def report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db
 @router.get("/")
 def list_cmdb(_user=Depends(_require_cmdb_role("viewer")), db: Session = Depends(get_db)):
     """Oversigt over alle CMDB-poster — til CMDB-siden i UI."""
-    rows = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    q = db.query(DeviceInventory)
+    visible = _visible_device_ids(db, _user)
+    if visible is not None:
+        q = q.filter(DeviceInventory.device_id.in_(visible)) if visible else q.filter(False)
+    rows = q.order_by(DeviceInventory.device_id).all()
     result = []
     for inv in rows:
         device = db.query(Device).filter_by(device_id=inv.device_id).first()
@@ -602,11 +626,118 @@ def list_cmdb(_user=Depends(_require_cmdb_role("viewer")), db: Session = Depends
 @router.get("/sbom/all")
 def get_all_sboms(_user=Depends(_require_cmdb_role("viewer")), db: Session = Depends(get_db)):
     """Generér SBOM pr. kendt CMDB-enhed."""
-    inventories = db.query(DeviceInventory).order_by(DeviceInventory.device_id).all()
+    q = db.query(DeviceInventory)
+    visible = _visible_device_ids(db, _user)
+    if visible is not None:
+        q = q.filter(DeviceInventory.device_id.in_(visible)) if visible else q.filter(False)
+    inventories = q.order_by(DeviceInventory.device_id).all()
     return {
         "generated_at": now_utc().isoformat(),
         "count": len(inventories),
         "sboms": [_sbom_for_inventory(inv) for inv in inventories],
+    }
+
+
+@router.get("/operational-context/{device_id}")
+def get_operational_context(
+    device_id: str,
+    hours: int = 24,
+    _user=Depends(_require_cmdb_role("viewer")),
+    db: Session = Depends(get_db),
+):
+    """Correlate CMDB, ITIM and SIEM without replacing their source records."""
+    if hours < 1 or hours > 8760:
+        raise HTTPException(status_code=422, detail="hours skal være mellem 1 og 8760")
+    device = _ensure_device_access(db, _user, device_id)
+    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Ingen CMDB-post for denne enhed")
+
+    from itim import ItimAlertEvent, ItimHealthStatus, ItimTarget
+    from siem import SecurityEvent
+
+    since = now_utc() - timedelta(hours=hours)
+    targets = db.query(ItimTarget).filter(ItimTarget.device_id == device_id).all()
+    target_ids = [target.id for target in targets]
+    health_rows = ({row.target_id: row for row in db.query(ItimHealthStatus)
+                    .filter(ItimHealthStatus.target_id.in_(target_ids)).all()}
+                   if target_ids else {})
+    firing = (db.query(ItimAlertEvent).filter(
+        ItimAlertEvent.target_id.in_(target_ids),
+        ItimAlertEvent.state == "firing",
+    ).order_by(ItimAlertEvent.started_at.desc()).all() if target_ids else [])
+
+    event_query = db.query(SecurityEvent).filter(
+        SecurityEvent.device_id == device_id,
+        SecurityEvent.occurred_at >= since,
+    )
+    events = event_query.order_by(SecurityEvent.occurred_at.desc()).limit(10).all()
+    severity_counts = {
+        str(severity or "info").lower(): int(count)
+        for severity, count in event_query.with_entities(
+            SecurityEvent.severity, func.count(SecurityEvent.id)
+        ).group_by(SecurityEvent.severity).all()
+    }
+
+    updates = _update_summary_for_device(db, device_id)
+    factors: list[dict] = []
+    score = 0
+
+    def add_factor(code: str, points: int, label: str) -> None:
+        nonlocal score
+        if points > 0:
+            score += points
+            factors.append({"code": code, "points": points, "label": label})
+
+    states = [health_rows[t.id].state for t in targets if t.id in health_rows]
+    add_factor("itim_critical", 35 if "critical" in states else 0, "Kritisk driftsstatus")
+    add_factor("itim_warning", 15 if "critical" not in states and "warning" in states else 0,
+               "Driftsstatus med advarsel")
+    add_factor("siem_critical", 30 if severity_counts.get("critical", 0) else 0,
+               "Kritisk SIEM-hændelse i perioden")
+    add_factor("siem_error", 15 if severity_counts.get("error", 0) else 0,
+               "SIEM-fejl i perioden")
+    add_factor("siem_warning", min(10, severity_counts.get("warning", 0) * 2),
+               "SIEM-advarsler i perioden")
+    add_factor("security_updates", 20 if updates.get("security_count", 0) else 0,
+               "Afventende sikkerhedsopdateringer")
+    add_factor("blocked_updates", 10 if updates.get("blocked_count", 0) else 0,
+               "Blokerede opdateringer")
+    add_factor("offline", 20 if not device or str(device.status).lower() != "online" else 0,
+               "Enheden er ikke online")
+    score = min(100, score)
+    risk_level = "critical" if score >= 70 else "high" if score >= 45 else "medium" if score >= 20 else "low"
+
+    return {
+        "device": {
+            "device_id": device_id,
+            "customer_id": device.customer_id if device else None,
+            "customer_name": device.customer_name if device else None,
+            "site_name": device.site_name if device else None,
+            "environment": inv.environment,
+            "status": _display_device_status(device),
+            "last_seen": device.last_seen.isoformat() if device and device.last_seen else None,
+        },
+        "priority": {"score": score, "level": risk_level, "factors": factors,
+                     "method": "deterministic-operational-priority-v1", "period_hours": hours},
+        "fair": estimate_annual_loss(None, device_id),
+        "updates": updates,
+        "itim": {
+            "targets": [{
+                "target_key": target.target_key,
+                "kind": target.kind,
+                "state": health_rows[target.id].state if target.id in health_rows else "unknown",
+                "summary": health_rows[target.id].summary if target.id in health_rows else None,
+            } for target in targets],
+            "firing_alerts": len(firing),
+        },
+        "siem": {
+            "counts_by_severity": severity_counts,
+            "recent": [{
+                "id": event.id, "event_type": event.event_type, "severity": event.severity,
+                "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
+            } for event in events[:10]],
+        },
     }
 
 
@@ -616,7 +747,7 @@ def get_cmdb(device_id: str, _user=Depends(_require_cmdb_role("viewer")), db: Se
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Ingen CMDB-post for denne enhed")
-    device = db.query(Device).filter_by(device_id=device_id).first()
+    device = _ensure_device_access(db, _user, device_id)
 
     packages = {}
     if inv.venv_packages:
@@ -693,6 +824,7 @@ def get_cmdb(device_id: str, _user=Depends(_require_cmdb_role("viewer")), db: Se
 @router.get("/{device_id}/sbom")
 def get_device_sbom(device_id: str, _user=Depends(_require_cmdb_role("viewer")), db: Session = Depends(get_db)):
     """Generér SBOM fra seneste CMDB inventory for en device/headend node."""
+    _ensure_device_access(db, _user, device_id)
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Ingen CMDB-post for denne enhed")
@@ -705,6 +837,7 @@ def update_cmdb(device_id: str, payload: dict, _user=Depends(_require_cmdb_role(
     Admin opdaterer editerbare CMDB-felter.
     Hardware-felter opdateres kun af edge — ikke her.
     """
+    _ensure_device_access(db, _user, device_id)
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Ingen CMDB-post for denne enhed")
@@ -736,6 +869,7 @@ def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmd
     Password genereres automatisk og krypteres. Admin ser det IKKE ved oprettelse
     — brug /checkout for at hente det.
     """
+    _ensure_device_access(db, _user, device_id)
     admin_username = payload.get("admin_username")
     if not admin_username:
         raise HTTPException(status_code=400, detail="admin_username påkrævet")
@@ -787,6 +921,7 @@ def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmd
 @router.get("/{device_id}/break-glass")
 def list_break_glass(device_id: str, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """List alle break-glass konti for en enhed — UDEN passwords."""
+    _ensure_device_access(db, _user, device_id)
     accounts = db.query(BreakGlassAccount).filter_by(
         device_id=device_id, is_active=True
     ).all()
@@ -826,6 +961,7 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
         2. IP-whitelisting
         3. Rate limiting (maks 3 checkouts pr. time)
     """
+    _ensure_device_access(db, _user, device_id)
     admin_username = payload.get("admin_username")
     reason = payload.get("reason", "Ikke angivet")
 
@@ -885,6 +1021,7 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
 @router.delete("/{device_id}/break-glass/{account_id}")
 def delete_break_glass(device_id: str, account_id: int, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """Deaktiver (soft delete) en break-glass konto."""
+    _ensure_device_access(db, _user, device_id)
     account = db.query(BreakGlassAccount).filter_by(
         id=account_id, device_id=device_id
     ).first()

@@ -13,7 +13,7 @@ import {
   Server, ChevronRight, RefreshCw, AlertTriangle,
   HardDrive, Cpu, Wifi, Package, Key, Eye, Trash2,
   Plus, ArrowLeft, Edit2, Check, X,
-  Brain, Loader2
+  Brain, Loader2, Shield, Activity
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 
@@ -83,6 +83,13 @@ interface UpdateSummary {
   blocked_count: number
   approved_count: number
   latest: UpdateSummaryItem[]
+}
+
+interface OperationalContext {
+  priority: { score: number; level: string; factors: Array<{ code: string; points: number; label: string }> }
+  fair: { status: 'needs_input' | 'estimated'; currency: string; missing?: string[]; annual_loss?: { p10: number; p50: number; p90: number }; assumptions?: Record<string, number[]> }
+  itim: { targets: Array<{ target_key: string; kind: string; state: string; summary: string | null }>; firing_alerts: number }
+  siem: { counts_by_severity: Record<string, number>; recent: Array<{ id: number; event_type: string; severity: string; occurred_at: string }> }
 }
 
 interface BreakGlassAccount {
@@ -588,6 +595,7 @@ export function CMDBDetailPage() {
   const [saving, setSaving] = useState(false)
   const [sbom, setSbom] = useState<SbomDocument | null>(null)
   const [sbomLoading, setSbomLoading] = useState(false)
+  const [operational, setOperational] = useState<OperationalContext | null>(null)
 
   // Break-glass state
   const [bgModal, setBgModal] = useState(false)
@@ -604,12 +612,17 @@ export function CMDBDetailPage() {
     if (!deviceId) return
     setLoading(true)
     try {
-      const [detailR, bgR] = await Promise.all([
+      const [detailR, contextR] = await Promise.all([
         api(`/api/cmdb/${pathSegment(deviceId)}`),
-        api(`/api/cmdb/${pathSegment(deviceId)}/break-glass`),
+        api(`/api/cmdb/operational-context/${pathSegment(deviceId)}`),
       ])
-      setDetail(await detailR.json())
-      setAccounts(await bgR.json())
+      if (detailR.ok) setDetail(await detailR.json())
+      if (contextR.ok) {
+        const context = await contextR.json() as OperationalContext
+        setOperational(context)
+      }
+      const bgR = await api(`/api/cmdb/${pathSegment(deviceId)}/break-glass`)
+      setAccounts(bgR.ok ? await bgR.json() : [])
     } catch { /* ignore */ }
     setLoading(false)
   }
@@ -767,6 +780,51 @@ export function CMDBDetailPage() {
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
+
+      {operational && (
+        <section className="mb-6 border border-gray-200 bg-white rounded-lg p-5">
+          <div className="flex flex-wrap items-start gap-4">
+            <div className="flex items-center gap-3 min-w-44">
+              <Shield className={`w-5 h-5 ${operational.priority.score >= 70 ? 'text-red-600' : operational.priority.score >= 45 ? 'text-orange-500' : operational.priority.score >= 20 ? 'text-amber-500' : 'text-emerald-600'}`} />
+              <div>
+                <div className="text-xs text-gray-500">Prioritetsindikator</div>
+                <div className="text-xl font-semibold text-gray-900">{operational.priority.score}/100</div>
+              </div>
+            </div>
+            <div className="flex-1 min-w-64">
+              {operational.priority.factors.length ? operational.priority.factors.map(factor => (
+                <span key={factor.code} className="inline-flex mr-2 mb-2 px-2 py-1 text-xs rounded border border-gray-200 bg-gray-50 text-gray-700">
+                  +{factor.points} {factor.label}
+                </span>
+              )) : <span className="text-sm text-emerald-700">Ingen aktive risikofaktorer registreret.</span>}
+            </div>
+            <div className="text-xs text-gray-600 space-y-1 min-w-40">
+              {operational.fair.status === 'estimated' && operational.fair.annual_loss ? (
+                <div title="FAIR-style P10/P50/P90 årligt tab">
+                  FAIR P50: {operational.fair.annual_loss.p50.toLocaleString('da-DK')} DKK/år
+                  <div className="text-[11px] text-gray-400">P10 {operational.fair.annual_loss.p10.toLocaleString('da-DK')} · P90 {operational.fair.annual_loss.p90.toLocaleString('da-DK')}</div>
+                </div>
+              ) : <div className="text-amber-700">FAIR: mangler validerede tabsinput</div>}
+              <div>{operational.itim.firing_alerts} aktive driftsalarmer</div>
+              <div>{Object.values(operational.siem.counts_by_severity).reduce((a, b) => a + b, 0)} SIEM-hændelser / 24 t</div>
+              <div className="flex gap-3 pt-1">
+                <Link className="text-sky-700 hover:underline" to={`/siem?device_id=${encodeURIComponent(detail.device_id)}`}>SIEM</Link>
+                <Link className="text-sky-700 hover:underline" to="/observability">Drift</Link>
+              </div>
+            </div>
+          </div>
+          {operational.itim.targets.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-2">
+              {operational.itim.targets.map(target => (
+                <span key={target.target_key} title={target.summary || ''} className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                  <Activity className={`w-3.5 h-3.5 ${target.state === 'critical' ? 'text-red-500' : target.state === 'warning' ? 'text-amber-500' : target.state === 'ok' ? 'text-emerald-500' : 'text-gray-400'}`} />
+                  {target.target_key}
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 

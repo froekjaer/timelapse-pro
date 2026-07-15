@@ -34,10 +34,10 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from sqlalchemy import Column, DateTime, Integer, String, Text, text
+from sqlalchemy import Column, DateTime, Integer, String, Text, func, text
 from sqlalchemy.orm import Session
 
-from database import Base, get_db
+from database import Base, Device, get_db
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["SIEM"])
@@ -78,6 +78,18 @@ def _require_siem_role(*roles: str):
         return user
 
     return Depends(_check)
+
+
+def _visible_event_query(db: Session, user):
+    """Apply the same device/tenant boundary used by CMDB."""
+    from main import _is_platform_admin, _visible_device_query
+
+    q = db.query(SecurityEvent)
+    if _is_platform_admin(user):
+        return q
+    device_ids = [row[0] for row in _visible_device_query(db, user)
+                  .with_entities(Device.device_id).all()]
+    return q.filter(SecurityEvent.device_id.in_(device_ids)) if device_ids else q.filter(False)
 
 
 async def _require_device_auth(
@@ -568,7 +580,7 @@ def get_events(
     """Hent security events med filtrering. Kræver mindst viewer-rolle."""
     _ensure_schema(db)
     since = _now() - timedelta(hours=hours)
-    q = db.query(SecurityEvent).filter(SecurityEvent.occurred_at >= since)
+    q = _visible_event_query(db, _user).filter(SecurityEvent.occurred_at >= since)
 
     if device_id:  q = q.filter(SecurityEvent.device_id  == device_id)
     if event_type: q = q.filter(SecurityEvent.event_type == event_type)
@@ -591,35 +603,13 @@ def get_summary(
     _ensure_schema(db)
     since = _now() - timedelta(hours=hours)
 
-    # Total pr. severity
-    severity_counts = db.execute(text("""
-        SELECT severity, COUNT(*) as count
-        FROM security_events
-        WHERE occurred_at >= :since
-        GROUP BY severity
-        ORDER BY count DESC
-    """), {"since": since}).fetchall()
-
-    # Total pr. event_type
-    type_counts = db.execute(text("""
-        SELECT event_type, COUNT(*) as count
-        FROM security_events
-        WHERE occurred_at >= :since
-        GROUP BY event_type
-        ORDER BY count DESC
-    """), {"since": since}).fetchall()
-
-    # Total pr. device
-    device_counts = db.execute(text("""
-        SELECT device_id, COUNT(*) as count
-        FROM security_events
-        WHERE occurred_at >= :since
-        GROUP BY device_id
-        ORDER BY count DESC
-    """), {"since": since}).fetchall()
+    visible = _visible_event_query(db, _user).filter(SecurityEvent.occurred_at >= since)
+    severity_counts = visible.with_entities(SecurityEvent.severity, func.count(SecurityEvent.id)).group_by(SecurityEvent.severity).all()
+    type_counts = visible.with_entities(SecurityEvent.event_type, func.count(SecurityEvent.id)).group_by(SecurityEvent.event_type).all()
+    device_counts = visible.with_entities(SecurityEvent.device_id, func.count(SecurityEvent.id)).group_by(SecurityEvent.device_id).all()
 
     # Seneste kritiske event
-    latest_critical = db.query(SecurityEvent).filter(
+    latest_critical = _visible_event_query(db, _user).filter(
         SecurityEvent.occurred_at >= since,
         SecurityEvent.severity == "critical"
     ).order_by(SecurityEvent.occurred_at.desc()).first()
@@ -660,19 +650,23 @@ def get_threats(
                     os.getenv("TIMELAPSE_SIEM_THREAT_EVENT_TYPES", default_types).split(",")
                     if t.strip()]
 
-    rows = db.execute(text("""
-        SELECT source_ip, device_id, COUNT(*) as attempts,
-               MIN(occurred_at) as first_seen,
-               MAX(occurred_at) as last_seen
-        FROM security_events
-        WHERE event_type = ANY(:types)
-          AND source_ip IS NOT NULL
-          AND occurred_at >= :since
-        GROUP BY source_ip, device_id
-        HAVING COUNT(*) >= :threshold
-        ORDER BY attempts DESC
-        LIMIT 100
-    """), {"since": since, "threshold": threshold, "types": threat_types}).fetchall()
+    rows = (_visible_event_query(db, _user)
+            .with_entities(
+                SecurityEvent.source_ip,
+                SecurityEvent.device_id,
+                func.count(SecurityEvent.id).label("attempts"),
+                func.min(SecurityEvent.occurred_at).label("first_seen"),
+                func.max(SecurityEvent.occurred_at).label("last_seen"),
+            )
+            .filter(
+                SecurityEvent.event_type.in_(threat_types),
+                SecurityEvent.source_ip.isnot(None),
+                SecurityEvent.occurred_at >= since,
+            )
+            .group_by(SecurityEvent.source_ip, SecurityEvent.device_id)
+            .having(func.count(SecurityEvent.id) >= threshold)
+            .order_by(func.count(SecurityEvent.id).desc())
+            .limit(100).all())
 
     return [
         {

@@ -38,7 +38,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Session
 
-from database import Base, get_db
+from database import Base, Device, get_db
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["ITIM"])
@@ -817,14 +817,36 @@ def _require_role(*roles: str):
     return _check
 
 
+def _visible_target_query(db: Session, user):
+    from main import _is_platform_admin, _visible_device_query
+
+    q = db.query(ItimTarget)
+    if _is_platform_admin(user):
+        return q
+    device_ids = [row[0] for row in _visible_device_query(db, user)
+                  .with_entities(Device.device_id).all()]
+    return q.filter(ItimTarget.device_id.in_(device_ids)) if device_ids else q.filter(False)
+
+
+def _ensure_target_access(db: Session, user, target: ItimTarget | None) -> ItimTarget:
+    if target is None:
+        raise HTTPException(status_code=404, detail="Ukendt target")
+    visible_ids = {row[0] for row in _visible_target_query(db, user).with_entities(ItimTarget.id).all()}
+    if target.id not in visible_ids:
+        raise HTTPException(status_code=404, detail="Ukendt target")
+    return target
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/health")
 def get_health(_user=Depends(_require_role("viewer")), db: Session = Depends(get_db)):
     """Alle targets + aktuel state — til drifts-tiles."""
     import json
+    visible_ids = _visible_target_query(db, _user).with_entities(ItimTarget.id)
     rows = (db.query(ItimTarget, ItimHealthStatus)
             .outerjoin(ItimHealthStatus, ItimHealthStatus.target_id == ItimTarget.id)
+            .filter(ItimTarget.id.in_(visible_ids))
             .filter(ItimTarget.enabled == True)  # noqa: E712
             .all())
     out = []
@@ -859,9 +881,7 @@ def get_metrics(
     db: Session = Depends(get_db),
 ):
     """Tidsserie til grafer."""
-    t = db.query(ItimTarget).filter_by(target_key=target).first()
-    if not t:
-        raise HTTPException(status_code=404, detail="Ukendt target")
+    t = _ensure_target_access(db, _user, db.query(ItimTarget).filter_by(target_key=target).first())
     since = _now() - timedelta(hours=hours)
     rows = db.execute(text("""
         SELECT ts, value FROM itim_metric_samples
@@ -880,8 +900,10 @@ def get_alerts(
     db: Session = Depends(get_db),
 ):
     since = _now() - timedelta(hours=hours)
+    visible_ids = _visible_target_query(db, _user).with_entities(ItimTarget.id)
     q = db.query(ItimAlertEvent, ItimTarget).outerjoin(
         ItimTarget, ItimTarget.id == ItimAlertEvent.target_id).filter(
+        ItimAlertEvent.target_id.in_(visible_ids),
         ItimAlertEvent.started_at >= since)
     if state:
         q = q.filter(ItimAlertEvent.state == state)
