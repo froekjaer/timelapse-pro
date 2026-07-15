@@ -13080,112 +13080,19 @@ def _thumbnail_auto_loop() -> None:
 
 
 def _run_retention_cleanup(reason: str = "manual") -> dict:
-    """Kør retention cleanup synkront og returner resultat.
-    Sletter captures der er ældre end deres kamera's retention_days.
-    Opretter CaptureDeletionLog-rækker for hver sletning (GDPR compliance).
-    """
+    """Audit retention candidates without deleting immutable captures."""
     global _retention_status
-    if not _retention_lock.acquire(blocking=False):
-        raise RuntimeError("Der kører allerede en retention cleanup")
-
-    from database import Capture, CaptureDeletionLog, Camera, SessionLocal
-
-    _retention_status = {"running": True, "progress": [], "deleted_count": 0, "error": None}
-    db = SessionLocal()
-    try:
-        from datetime import datetime, timezone, timedelta
-
-        _retention_status["progress"].append(f"Cleanup reason: {reason}")
-        log.info("Retention cleanup startet (reason=%s)", reason)
-
-        # Hent global retention_days default (99999 hvis ikke sat)
-        from sqlalchemy import text
-        global_retention_row = db.execute(text("SELECT value FROM settings WHERE key='retention_days'")).fetchone()
-        global_retention_days = int(global_retention_row[0]) if global_retention_row else 99999
-        _retention_status["progress"].append(f"Global retention: {global_retention_days} dage")
-
-        # Find alle kameraer
-        cameras = db.query(Camera).all()
-        total_deleted = 0
-
-        for camera in cameras:
-            try:
-                # Brug kameraets retention_days, eller global default hvis 0/None
-                retention = camera.retention_days if camera.retention_days and camera.retention_days > 0 else global_retention_days
-
-                # Beregn cutoff dato for dette kamera
-                cutoff = datetime.now(timezone.utc) - timedelta(days=retention)
-
-                # Find captures der skal slettes (matcher på camera_id)
-                captures_to_delete = db.query(Capture).filter(
-                    Capture.camera_id == camera.id,
-                    Capture.captured_at < cutoff
-                ).all()
-
-                if not captures_to_delete:
-                    continue
-
-                # Slet hver capture og log den
-                for capture in captures_to_delete:
-                    # Opret deletion log FØR sletning
-                    log_entry = CaptureDeletionLog(
-                        capture_id=capture.id,
-                        camera_id=capture.camera_id or camera.id,
-                        customer_id=capture.customer_id,
-                        site_id=capture.site_id,
-                        filename=capture.filename,
-                        captured_at=capture.captured_at,
-                        deletion_reason="retention_policy",
-                        retention_days=retention,
-                        performed_by=f"retention_job:{reason}",
-                        file_size=None  # kan beregnes fra filstien hvis nødvendigt
-                    )
-
-                    # Slet billedfilen hvis den eksisterer
-                    import os
-                    from pathlib import Path
-                    sftp_base = os.getenv("SFTP_BASE", "/Volumes/data")
-                    file_path = Path(sftp_base) / capture.device_id / capture.filename
-                    if file_path.exists():
-                        file_size = file_path.stat().st_size
-                        log_entry.file_size = file_size
-                        try:
-                            file_path.unlink()
-                            log.info("Slettet fil: %s (%d bytes)", file_path, file_size)
-                        except OSError as _file_err:
-                            log.warning("Kunne ikke slette fil %s: %s", file_path, _file_err)
-
-                    db.add(log_entry)
-
-                    # Slet DB-rækken
-                    db.delete(capture)
-                    total_deleted += 1
-
-                db.commit()
-                _retention_status["progress"].append(
-                    f"Kamera {camera.camera_name}: slettede {len(captures_to_delete)} captures (>{retention} dage)"
-                )
-
-            except Exception as _cam_err:
-                db.rollback()
-                log.error("Fejl ved cleanup af kamera %s: %s", camera.camera_name, _cam_err)
-                _retention_status["progress"].append(f"Kamera {camera.camera_name}: FEJL - {_cam_err}")
-
-        _retention_status["deleted_count"] = total_deleted
-        _retention_status["progress"].append(f"Retention cleanup færdig: {total_deleted} captures slettet")
-        log.info("Retention cleanup færdig: %d captures slettet", total_deleted)
-
-        return _retention_status
-
-    except Exception as _e:
-        db.rollback()
-        _retention_status["error"] = str(_e)
-        log.error("Retention cleanup fejlede: %s", _e)
-        raise
-    finally:
-        _retention_status["running"] = False
-        db.close()
-        _retention_lock.release()
+    _retention_status = {
+        "running": False,
+        "progress": [
+            f"Retention audit: {reason}",
+            "Capture deletion is prohibited; no images or metadata were removed.",
+        ],
+        "deleted_count": 0,
+        "error": None,
+    }
+    log.warning("Retention cleanup requested (%s), but capture deletion is prohibited", reason)
+    return _retention_status
 
 
 def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = None) -> str:
@@ -16770,74 +16677,20 @@ def assign_device(device_id: str, payload: dict, _user=require_role("admin"), db
 
 @app.delete("/api/admin/captures/{capture_id}")
 def delete_capture(capture_id: int, _user=require_role("admin"), db: Session = Depends(get_db)):
-    """Slet et billede: fil, thumbnail, sidecar JSON og DB-record."""
-    capture = db.query(Capture).filter(Capture.id == capture_id).first()
-    if not capture:
-        raise HTTPException(status_code=404, detail="Capture ikke fundet")
-    if not _capture_is_allowed(db, _user, capture):
-        raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
-
-    deleted = {"file": False, "thumbnail": False, "sidecar": False, "db": False}
-
-    # Slet billedfil
-    path = _find_image(capture.device_id, capture.filename)
-    if path and path.exists():
-        try:
-            path.unlink()
-            deleted["file"] = True
-        except Exception as exc:
-            log.warning("Kunne ikke slette fil %s: %s", path, exc)
-
-        # Slet thumbnail
-        deleted["thumbnail"] = _unlink_thumbnail_variants(path, capture.filename)
-
-        # Slet sidecar JSON
-        sidecar = path.with_suffix(".json")
-        if sidecar.exists():
-            try:
-                sidecar.unlink()
-                deleted["sidecar"] = True
-            except Exception as exc:
-                log.warning("Kunne ikke slette sidecar %s: %s", sidecar, exc)
-
-    # Slet fra DB
-    db.delete(capture)
-    db.commit()
-    deleted["db"] = True
-
-    log.info("Capture %d slettet: %s", capture_id, deleted)
-    return {"status": "ok", "capture_id": capture_id, "deleted": deleted}
+    """Capture deletion is disabled because images are immutable evidence."""
+    raise HTTPException(
+        status_code=409,
+        detail="Billeder er immutable og må ikke slettes fra TimeLapse Pro.",
+    )
 
 
 @app.post("/api/admin/captures/bulk-delete")
 def delete_captures_bulk(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
-    """Slet flere captures på én gang. payload: {ids: [int]}"""
-    ids = payload.get("ids", [])
-    if not ids:
-        raise HTTPException(status_code=400, detail="Ingen ids angivet")
-    results = []
-    for cid in ids:
-        try:
-            capture = db.query(Capture).filter(Capture.id == cid).first()
-            if not capture:
-                results.append({"id": cid, "status": "not_found"})
-                continue
-            if not _capture_is_allowed(db, _user, capture):
-                results.append({"id": cid, "status": "forbidden"})
-                continue
-            path = _find_image(capture.device_id, capture.filename)
-            if path and path.exists():
-                path.unlink(missing_ok=True)
-                _unlink_thumbnail_variants(path, capture.filename)
-                path.with_suffix(".json").unlink(missing_ok=True)
-            db.delete(capture)
-            results.append({"id": cid, "status": "ok"})
-        except Exception as exc:
-            results.append({"id": cid, "status": "error", "error": str(exc)})
-    db.commit()
-    log.info("Bulk slettet %d captures", len([r for r in results if r["status"] == "ok"]))
-    return {"status": "ok", "results": results}
-
+    """Bulk capture deletion is disabled because images are immutable evidence."""
+    raise HTTPException(
+        status_code=409,
+        detail="Billeder er immutable og må ikke slettes fra TimeLapse Pro.",
+    )
 
 
 # ── EXIF fra billedfil ────────────────────────────────────────────────────────
