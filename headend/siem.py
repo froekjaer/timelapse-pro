@@ -559,6 +559,7 @@ def get_events(
     event_type: Optional[str] = Query(None),
     severity:   Optional[str] = Query(None),
     source_ip:  Optional[str] = Query(None),
+    source:     Optional[str] = Query(None),
     hours:      int           = Query(24, ge=1, le=8760),
     limit:      int           = Query(500, ge=1, le=2000),
     _user=_require_siem_role("viewer"),
@@ -573,6 +574,7 @@ def get_events(
     if event_type: q = q.filter(SecurityEvent.event_type == event_type)
     if severity:   q = q.filter(SecurityEvent.severity   == severity)
     if source_ip:  q = q.filter(SecurityEvent.source_ip  == source_ip)
+    if source:     q = q.filter(SecurityEvent.source     == source)
 
     rows = q.order_by(SecurityEvent.occurred_at.desc()).limit(limit).all()
 

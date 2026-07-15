@@ -135,6 +135,7 @@ export function SIEMPage() {
   const [filterSeverity, setFilterSeverity] = useState('')
   const [filterType,     setFilterType]     = useState('')
   const [filterDevice,   setFilterDevice]   = useState('')
+  const [filterSource,   setFilterSource]   = useState('')
   const [activeTab, setActiveTab] = useState<SiemTab>('events')
   const [selectedEvent, setSelectedEvent] = useState<SecurityEvent | null>(null)
   const [autoRefresh,    setAutoRefresh]    = useState(true)
@@ -147,8 +148,10 @@ export function SIEMPage() {
   useEffect(() => {
     const dev = searchParams.get('device_id')
     const sev = searchParams.get('severity')
+    const source = searchParams.get('source')
     if (dev) setFilterDevice(dev)
     if (sev) setFilterSeverity(sev)
+    if (source) { setFilterSource(source); setActiveTab('events') }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -159,6 +162,7 @@ export function SIEMPage() {
       if (filterSeverity) params.set('severity',   filterSeverity)
       if (filterType)     params.set('event_type', filterType)
       if (filterDevice)   params.set('device_id',  filterDevice)
+      if (filterSource)   params.set('source', filterSource)
 
       const [evR, sumR, thrR] = await Promise.all([
         api(`/api/siem/events?${params}`),
@@ -170,7 +174,7 @@ export function SIEMPage() {
       setThreats(await thrR.json())
     } catch { /* ignore */ }
     setLoading(false)
-  }, [hours, filterSeverity, filterType, filterDevice])
+  }, [hours, filterSeverity, filterType, filterDevice, filterSource])
 
   useEffect(() => { load() }, [load])
 
@@ -188,6 +192,9 @@ export function SIEMPage() {
 
   function resetFilters() {
     setFilterSeverity('')
+    setFilterType('')
+    setFilterDevice('')
+    setFilterSource('')
     setFilterType('')
     setFilterDevice('')
   }
@@ -221,10 +228,10 @@ export function SIEMPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Shield className="w-6 h-6 text-red-500" />
-            Security Events — Mini SIEM
+            Logs &amp; sikkerhedshændelser
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Realtidsovervågning af alle noder
+            Normaliserede og redigerede drifts-, applikations- og sikkerhedslogs
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -441,7 +448,19 @@ export function SIEMPage() {
                 ))}
               </select>
             )}
-            {(filterSeverity || filterType || filterDevice) && (
+            <select
+              value={filterSource}
+              onChange={e => setFilterSource(e.target.value)}
+              className="text-xs border border-gray-200 rounded px-2 py-1.5 text-gray-600"
+            >
+              <option value="">Alle logkilder</option>
+              <option value="timelapse-headend.log">Headend applikation</option>
+              <option value="nginx-timelapse-error.log">nginx fejl</option>
+              <option value="nginx-timelapse-access.log">nginx adgang</option>
+              <option value="edge_journal">Edge journal</option>
+              <option value="syslog">Syslog</option>
+            </select>
+            {(filterSeverity || filterType || filterDevice || filterSource) && (
               <button
                 onClick={resetFilters}
                 className="text-xs border border-gray-200 rounded px-2 py-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-50"

@@ -49,7 +49,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -2815,7 +2815,7 @@ def _log_capture_access(db: Session, user: User, capture: Capture, action: str =
             user_id=user.id,
             username=user.username,
             role=user.role,
-            customer_id=user.customer_id,
+            customer_id=capture.customer_id or user.customer_id,
             accessed_at=now_utc(),
         ))
         db.commit()
@@ -2825,6 +2825,29 @@ def _log_capture_access(db: Session, user: User, capture: Capture, action: str =
             capture.device_id, capture.filename,
         )
         db.rollback()
+
+
+_capture_access_dedup: dict[tuple[int, int, str], float] = {}
+_capture_access_dedup_lock = _threading.Lock()
+
+
+def _log_capture_access_deduplicated(
+    db: Session, user: User, capture: Capture, action: str, window_s: int = 600,
+) -> None:
+    """Bound thumbnail audit volume while retaining who viewed which capture."""
+    now = time.time()
+    key = (int(user.id), int(capture.id), action)
+    with _capture_access_dedup_lock:
+        last = _capture_access_dedup.get(key, 0.0)
+        if now - last < window_s:
+            return
+        _capture_access_dedup[key] = now
+        if len(_capture_access_dedup) > 100_000:
+            cutoff = now - window_s
+            for old_key, timestamp in list(_capture_access_dedup.items()):
+                if timestamp < cutoff:
+                    _capture_access_dedup.pop(old_key, None)
+    _log_capture_access(db, user, capture, action=action)
 
 
 def _credential_metadata(credential: KeyCredential) -> dict:
@@ -11909,11 +11932,12 @@ def get_thumbnail(
     from urllib.parse import unquote as _unquote
     _sanitize_device_id(device_id)
     filename = _unquote(filename)
-    _ensure_capture_file_access(db, _user, device_id, filename)
+    capture = _ensure_capture_file_access(db, _user, device_id, filename)
     src = _find_image(device_id, filename)
     if not src:
         raise HTTPException(status_code=404, detail="Image not found")
-    _thumb_cache = "public, max-age=604800, immutable"
+    _log_capture_access_deduplicated(db, _user, capture, action="thumbnail_view")
+    _thumb_cache = "private, max-age=86400"
     thumb = _find_existing_thumbnail(src)
     if thumb:
         xr = _xaccel_redirect(thumb, "image/jpeg", _thumb_cache)
@@ -15293,6 +15317,61 @@ def download_edge_disk_image(artifact_id: str, _user=require_role("super_admin",
     )
 
 
+class DeleteDiskImageRequest(BaseModel):
+    confirm_artifact_id: str
+    reason: str
+
+
+_edge_image_admin_router = APIRouter()
+
+
+@_edge_image_admin_router.delete("/api/admin/edge-provisioning/disk-images/{artifact_id}")
+def delete_edge_disk_image(
+    artifact_id: str,
+    body: DeleteDiskImageRequest,
+    current_user=require_role("super_admin"),
+    db: Session = Depends(get_db),
+):
+    """Delete only the derived image payload; retain manifest and audit evidence."""
+    if body.confirm_artifact_id != artifact_id:
+        raise HTTPException(status_code=422, detail="Artifact-ID bekræftelse matcher ikke")
+    reason = body.reason.strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=422, detail="Begrundelse er påkrævet")
+    image_path, filename = _resolve_edge_image_path(artifact_id, db)
+    storage_dir = _edge_image_storage_dir(create=False).resolve()
+    resolved = image_path.resolve()
+    if storage_dir not in resolved.parents:
+        raise HTTPException(status_code=409, detail="Image ligger uden for den konfigurerede artifact-mappe")
+    if not (filename.endswith(".img.gz") or filename.endswith(".rootfs.tar.gz")):
+        raise HTTPException(status_code=409, detail="Kun afledte Edge image-filer kan slettes")
+    size_bytes = resolved.stat().st_size
+    resolved.unlink()
+
+    artifact = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
+    if artifact:
+        artifact.storage_path = None
+    db.add(Event(
+        device_id="HEADEND",
+        level="WARNING",
+        category="edge_image_deleted",
+        message=f"Edge image payload slettet: {artifact_id}",
+        extra=json.dumps({
+            "artifact_id": artifact_id,
+            "filename": filename,
+            "size_bytes": size_bytes,
+            "reason": reason,
+            "deleted_by": current_user.username,
+            "manifest_retained": True,
+        }),
+    ))
+    db.commit()
+    return {"ok": True, "artifact_id": artifact_id, "filename": filename, "manifest_retained": True}
+
+
+app.include_router(_edge_image_admin_router)
+
+
 class InjectWifiRequest(BaseModel):
     artifact_id: str
     wifi_ssid: str
@@ -16881,6 +16960,9 @@ from api.site_look_config_api import router as site_look_router
 # authentication dependencies. Keep it platform-admin-only until tenant-aware
 # authorization is implemented for every hierarchy operation.
 app.include_router(site_look_router, dependencies=[require_role("super_admin")])
+
+from api.capture_access_api import router as capture_access_router
+app.include_router(capture_access_router)
 
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,

@@ -1,7 +1,7 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle, CheckCircle, Clock, Database, Download, FileCheck,
-  HardDrive, Package, RefreshCw, Server, ShieldCheck, Wifi, Wrench, XCircle
+  HardDrive, Package, RefreshCw, Server, ShieldCheck, Trash2, Wifi, Wrench, XCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -1135,6 +1135,7 @@ function IsoTab({
   type DiskImageEntry = { artifact_id: string; filename: string | null; artifact_type: string; size_bytes: number | null; created_at: string | null; exists_on_disk: boolean; source?: string }
   const [diskImageList, setDiskImageList] = useState<DiskImageEntry[]>([])
   const [diskImageListLoading, setDiskImageListLoading] = useState(false)
+  const [deletingImageId, setDeletingImageId] = useState<string | null>(null)
 
   async function loadDiskImageList() {
     setDiskImageListLoading(true)
@@ -1143,6 +1144,29 @@ function IsoTab({
       if (r.ok) setDiskImageList(await r.json())
     } finally {
       setDiskImageListLoading(false)
+    }
+  }
+
+  async function deleteDiskImage(image: DiskImageEntry) {
+    if (!image.exists_on_disk) return
+    const confirmed = window.confirm(`Slet image-filen ${image.filename ?? image.artifact_id}? Manifest og audit-evidens bevares.`)
+    if (!confirmed) return
+    setDeletingImageId(image.artifact_id)
+    try {
+      const response = await api(`/admin/edge-provisioning/disk-images/${encodeURIComponent(image.artifact_id)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({
+          confirm_artifact_id: image.artifact_id,
+          reason: 'Image er ikke længere nødvendigt',
+        }),
+      })
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: response.statusText }))
+        window.alert(error.detail || 'Image kunne ikke slettes')
+      }
+      await loadDiskImageList()
+    } finally {
+      setDeletingImageId(null)
     }
   }
 
@@ -1598,6 +1622,16 @@ function IsoTab({
                               Tilføj WiFi
                             </button>
                           )}
+                          <button
+                            onClick={() => deleteDiskImage(img)}
+                            disabled={!img.exists_on_disk || deletingImageId === img.artifact_id}
+                            title="Slet image-fil; manifest og audit bevares"
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40"
+                          >
+                            {deletingImageId === img.artifact_id
+                              ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              : <Trash2 className="w-3.5 h-3.5" />}
+                          </button>
                         </div>
                       </div>
                     </div>

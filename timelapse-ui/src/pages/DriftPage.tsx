@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   Activity, RefreshCw, AlertTriangle, AlertCircle, CheckCircle2,
   HelpCircle, HardDrive, Server, Cpu, Camera, Brain, Boxes, ArrowRight,
+  ScrollText,
 } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -37,6 +38,10 @@ interface AlertRow {
   resolved_at: string | null
 }
 interface Point { ts: string; value: number | null }
+interface CaptureAccessRow {
+  id: number; capture_id: number; device_id: string; filename: string
+  action: string; username: string; role: string; accessed_at: string
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function api(path: string) {
@@ -109,6 +114,9 @@ export default function DriftPage() {
   const [metric, setMetric] = useState<string | null>(null)
   const [series, setSeries] = useState<Point[]>([])
   const [hours, setHours] = useState(24)
+  const [accessRows, setAccessRows] = useState<CaptureAccessRow[]>([])
+  const [accessLoading, setAccessLoading] = useState(false)
+  const [accessFilters, setAccessFilters] = useState({ username: '', device_id: '', filename: '', action: '', hours: '168' })
 
   const loadHealth = useCallback(async () => {
     try {
@@ -159,6 +167,23 @@ export default function DriftPage() {
     setMetric(keys[0] ?? null)
   }
 
+  async function loadCaptureAccess() {
+    setAccessLoading(true)
+    try {
+      const params = new URLSearchParams({ hours: accessFilters.hours, limit: '500' })
+      Object.entries(accessFilters).forEach(([key, value]) => {
+        if (key !== 'hours' && value.trim()) params.set(key, value.trim())
+      })
+      const response = await api(`/api/audit/capture-access?${params}`)
+      if (!response.ok) throw new Error(`Billedadgang ${response.status}`)
+      setAccessRows(await response.json())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Kunne ikke hente billedadgang')
+    } finally {
+      setAccessLoading(false)
+    }
+  }
+
   // Gruppér tiles efter scope
   const grouped = useMemo(() => {
     const g: Record<string, HealthTile[]> = {}
@@ -191,6 +216,61 @@ export default function DriftPage() {
       </div>
 
       {error && <div className="border border-red-200 bg-red-50 text-red-700 rounded-lg px-4 py-3 text-sm">{error}</div>}
+
+      <section className="border border-slate-200 bg-white rounded-lg p-4">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2"><ScrollText className="w-4 h-4 text-sky-500" /> Logs &amp; hændelser</h2>
+            <p className="text-xs text-slate-500 mt-1">Samlet, server-side redigeret logkonsol med RBAC.</p>
+          </div>
+          <button onClick={() => navigate('/siem')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-900 text-white text-xs hover:bg-slate-800">
+            Åbn alle <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
+          {[
+            ['Headend', '/siem?source=timelapse-headend.log'],
+            ['nginx fejl', '/siem?source=nginx-timelapse-error.log'],
+            ['nginx adgang', '/siem?source=nginx-timelapse-access.log'],
+            ['Edge journal', '/siem?source=edge_journal'],
+            ['Syslog', '/siem?source=syslog'],
+          ].map(([label, to]) => (
+            <button key={label} onClick={() => navigate(to)} className="text-left px-3 py-2 rounded-md border border-slate-200 hover:border-sky-300 hover:bg-sky-50 text-xs text-slate-700">
+              {label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <details className="border border-slate-200 bg-white rounded-lg p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-800">Billedadgang (GDPR)</summary>
+        <p className="text-xs text-slate-500 mt-1">Søg i hvem der har set eller hentet et bestemt billede. Thumbnailvisninger deduplikeres i ti minutter.</p>
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mt-3">
+          <input aria-label="Bruger" placeholder="Bruger" value={accessFilters.username} onChange={e => setAccessFilters(v => ({...v, username: e.target.value}))} className="text-xs border border-slate-200 rounded px-2 py-1.5" />
+          <input aria-label="Edge device" placeholder="Edge/device" value={accessFilters.device_id} onChange={e => setAccessFilters(v => ({...v, device_id: e.target.value}))} className="text-xs border border-slate-200 rounded px-2 py-1.5" />
+          <input aria-label="Filnavn" placeholder="Filnavn" value={accessFilters.filename} onChange={e => setAccessFilters(v => ({...v, filename: e.target.value}))} className="text-xs border border-slate-200 rounded px-2 py-1.5" />
+          <select aria-label="Adgangstype" value={accessFilters.action} onChange={e => setAccessFilters(v => ({...v, action: e.target.value}))} className="text-xs border border-slate-200 rounded px-2 py-1.5">
+            <option value="">Alle adgangstyper</option>
+            <option value="thumbnail_view">Thumbnail</option>
+            <option value="download">Fuld visning/download</option>
+          </select>
+          <div className="flex gap-2">
+            <select aria-label="Periode" value={accessFilters.hours} onChange={e => setAccessFilters(v => ({...v, hours: e.target.value}))} className="min-w-0 flex-1 text-xs border border-slate-200 rounded px-2 py-1.5">
+              <option value="24">24 timer</option><option value="168">7 dage</option><option value="720">30 dage</option><option value="8760">1 år</option>
+            </select>
+            <button onClick={loadCaptureAccess} disabled={accessLoading} className="px-3 py-1.5 rounded bg-slate-900 text-white text-xs disabled:opacity-50">Søg</button>
+          </div>
+        </div>
+        <div className="mt-3 max-h-72 overflow-auto rounded border border-slate-100">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr><th className="text-left px-2 py-1.5">Tid</th><th className="text-left px-2 py-1.5">Bruger</th><th className="text-left px-2 py-1.5">Billede</th><th className="text-left px-2 py-1.5">Handling</th></tr></thead>
+            <tbody>
+              {accessRows.map(row => <tr key={row.id} className="border-t border-slate-100"><td className="px-2 py-1.5 whitespace-nowrap">{new Date(row.accessed_at).toLocaleString('da-DK')}</td><td className="px-2 py-1.5"><div>{row.username}</div><div className="text-[10px] text-slate-400">{row.role}</div></td><td className="px-2 py-1.5"><div className="font-mono break-all">{row.filename}</div><div className="text-[10px] text-slate-400">{row.device_id} · capture #{row.capture_id}</div></td><td className="px-2 py-1.5">{row.action === 'thumbnail_view' ? 'Thumbnail' : 'Fuld visning/download'}</td></tr>)}
+              {!accessLoading && accessRows.length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-400">Tryk Søg for at hente adgangsloggen</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </details>
 
       {/* Aktive alarmer */}
       {alerts.length > 0 && (
