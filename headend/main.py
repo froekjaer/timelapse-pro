@@ -16964,6 +16964,9 @@ app.include_router(site_look_router, dependencies=[require_role("super_admin")])
 from api.capture_access_api import router as capture_access_router
 app.include_router(capture_access_router)
 
+from api.customer_risk_api import router as customer_risk_router
+app.include_router(customer_risk_router)
+
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).

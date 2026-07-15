@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Building2, MapPin, Save, Trash2, Plus, ChevronRight, CheckCircle, Camera } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { useAuth } from '../context/AuthContext'
 
 const AI_MODES = ['off', 'monitor', 'assist', 'autonomous', 'npu_first', 'lab']
 
@@ -35,6 +36,28 @@ interface Site {
   gps_lat?: number
   gps_lon?: number
   devices_count: number
+}
+
+interface CustomerRiskInput {
+  id: number
+  monthly_service_price: number
+  currency: string
+  effective_from: string
+  effective_to: string | null
+  source: string
+  note: string | null
+  validated_by: string
+  validated_at: string
+}
+
+interface CustomerRiskProfile {
+  id: number; version: number; status: string
+  product_value_dkk: number | null; daily_downtime_cost_dkk: number | null
+  recreation_cost_dkk: number | null; contractual_penalty_dkk: number | null
+  business_dependency: number; availability_impact: number; integrity_impact: number; confidentiality_impact: number
+  recovery_objective_hours: number | null; max_tolerable_downtime_hours: number | null
+  personal_data_level: string; assumptions: string | null; submitted_by: string; submitted_at: string
+  validated_by: string | null; validation_note: string | null
 }
 
 function triFrom(value: unknown) {
@@ -121,6 +144,7 @@ function buildQualityOverride(
 
 export function CustomerPage() {
   const { customerId } = useParams<{ customerId: string }>()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [loading, setLoading] = useState(true)
@@ -152,6 +176,22 @@ export function CustomerPage() {
   const [driftExposureZ, setDriftExposureZ]             = useState('')
   const [driftWbEnabled, setDriftWbEnabled]             = useState('')
   const [driftWbZ, setDriftWbZ]                         = useState('')
+  const [riskInputs, setRiskInputs] = useState<{ current: CustomerRiskInput | null; history: CustomerRiskInput[] } | null>(null)
+  const [monthlyPrice, setMonthlyPrice] = useState('')
+  const [priceEffectiveFrom, setPriceEffectiveFrom] = useState(new Date().toISOString().slice(0, 10))
+  const [priceSource, setPriceSource] = useState('customer_contract')
+  const [priceNote, setPriceNote] = useState('')
+  const [priceSaving, setPriceSaving] = useState(false)
+  const [priceError, setPriceError] = useState('')
+  const [riskProfileData, setRiskProfileData] = useState<{ validated: CustomerRiskProfile | null; pending: CustomerRiskProfile | null; history: CustomerRiskProfile[] } | null>(null)
+  const [riskForm, setRiskForm] = useState({
+    product_value_dkk: '', daily_downtime_cost_dkk: '', recreation_cost_dkk: '', contractual_penalty_dkk: '',
+    business_dependency: '3', availability_impact: '3', integrity_impact: '3', confidentiality_impact: '3',
+    recovery_objective_hours: '', max_tolerable_downtime_hours: '', personal_data_level: 'none', assumptions: '',
+  })
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileError, setProfileError] = useState('')
+  const [decisionNote, setDecisionNote] = useState('')
 
   // Nyt site form
   const [showNewSite, setShowNewSite]     = useState(false)
@@ -198,6 +238,62 @@ export function CustomerPage() {
       .catch(() => setError('Kunne ikke hente kunde'))
       .finally(() => setLoading(false))
   }, [customerId])
+
+  async function loadRiskInputs() {
+    if (!customerId || user?.role !== 'super_admin') return
+    try { setRiskInputs(await api(`/api/customer-risk/${customerId}`)) }
+    catch { setRiskInputs(null) }
+  }
+
+  useEffect(() => { loadRiskInputs() }, [customerId, user?.role])
+
+  async function loadRiskProfile() {
+    if (!customerId || !['admin', 'super_admin'].includes(user?.role || '')) return
+    try { setRiskProfileData(await api(`/api/customer-risk/profile/${customerId}`)) }
+    catch { setRiskProfileData(null) }
+  }
+
+  useEffect(() => { loadRiskProfile() }, [customerId, user?.role])
+
+  async function saveMonthlyPrice() {
+    if (!customerId) return
+    setPriceSaving(true); setPriceError('')
+    try {
+      await api(`/api/customer-risk/${customerId}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          monthly_service_price: Number(monthlyPrice), currency: 'DKK',
+          effective_from: priceEffectiveFrom, source: priceSource, note: priceNote,
+        }),
+      })
+      setMonthlyPrice(''); setPriceNote('')
+      await loadRiskInputs()
+    } catch (err) {
+      setPriceError(`Kunne ikke gemme prisversion (${String(err)})`)
+    } finally { setPriceSaving(false) }
+  }
+
+  async function submitRiskProfile() {
+    if (!customerId) return
+    setProfileSaving(true); setProfileError('')
+    try {
+      await api(`/api/customer-risk/profile/${customerId}`, { method: 'POST', body: JSON.stringify(riskForm) })
+      await loadRiskProfile()
+    } catch (err) { setProfileError(`Kunne ikke indsende risikoprofil (${String(err)})`) }
+    finally { setProfileSaving(false) }
+  }
+
+  async function decideRiskProfile(decision: 'validated' | 'rejected') {
+    if (!customerId || !riskProfileData?.pending) return
+    setProfileSaving(true); setProfileError('')
+    try {
+      await api(`/api/customer-risk/profile/${customerId}/${riskProfileData.pending.id}/decision`, {
+        method: 'POST', body: JSON.stringify({ decision, note: decisionNote }),
+      })
+      setDecisionNote(''); await loadRiskProfile()
+    } catch (err) { setProfileError(`Kunne ikke behandle risikoprofil (${String(err)})`) }
+    finally { setProfileSaving(false) }
+  }
 
   async function save() {
     setSaving(true)
@@ -357,6 +453,122 @@ export function CustomerPage() {
           </div>
         </div>
       </div>
+
+      {user?.role === 'super_admin' && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 mb-5">
+          <h2 className="text-sm font-semibold text-gray-700">Kommercielt risikoinput</h2>
+          <p className="text-xs text-gray-400 mt-1 mb-4">Månedsprisen historiseres og bruges senere som dokumenteret eksponeringsproxy i FAIR. Den er ikke i sig selv et tabsestimat.</p>
+          {riskInputs?.current ? (
+            <div className="mb-4 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded border border-emerald-100 bg-emerald-50 px-3 py-2">
+              <span className="text-lg font-semibold text-emerald-900">{riskInputs.current.monthly_service_price.toLocaleString('da-DK', { minimumFractionDigits: 2 })} DKK/md.</span>
+              <span className="text-xs text-emerald-700">Fra {riskInputs.current.effective_from} · {riskInputs.current.source} · valideret af {riskInputs.current.validated_by}</span>
+            </div>
+          ) : <p className="mb-4 text-xs text-amber-700">Der er endnu ingen valideret månedspris.</p>}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <label className="text-xs text-gray-500">Månedspris (DKK)
+              <input type="number" min="0.01" step="0.01" value={monthlyPrice} onChange={e => setMonthlyPrice(e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm" />
+            </label>
+            <label className="text-xs text-gray-500">Ikrafttrædelse
+              <input type="date" value={priceEffectiveFrom} onChange={e => setPriceEffectiveFrom(e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm" />
+            </label>
+            <label className="text-xs text-gray-500">Kilde
+              <select value={priceSource} onChange={e => setPriceSource(e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm">
+                <option value="customer_contract">Kundekontrakt</option>
+                <option value="approved_quote">Godkendt tilbud</option>
+                <option value="finance_system">Økonomisystem</option>
+              </select>
+            </label>
+            <label className="text-xs text-gray-500">Reference/note
+              <input value={priceNote} onChange={e => setPriceNote(e.target.value)} placeholder="Kontrakt eller sag" className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm" />
+            </label>
+          </div>
+          {priceError && <p className="mt-2 text-xs text-red-600">{priceError}</p>}
+          <button onClick={saveMonthlyPrice} disabled={priceSaving || !monthlyPrice || !priceEffectiveFrom} className="mt-3 px-3 py-2 rounded bg-slate-900 text-white text-xs disabled:opacity-40">
+            {priceSaving ? 'Gemmer…' : 'Opret ny prisversion'}
+          </button>
+          {(riskInputs?.history.length ?? 0) > 1 && (
+            <details className="mt-4 border-t border-gray-100 pt-3">
+              <summary className="text-xs text-sky-700 cursor-pointer">Vis prishistorik ({riskInputs?.history.length})</summary>
+              <div className="mt-2 divide-y divide-gray-100 text-xs">
+                {riskInputs?.history.map(row => (
+                  <div key={row.id} className="grid grid-cols-4 gap-3 py-2">
+                    <span>{row.monthly_service_price.toLocaleString('da-DK', { minimumFractionDigits: 2 })} {row.currency}</span>
+                    <span>{row.effective_from} – {row.effective_to || 'aktiv'}</span>
+                    <span>{row.source}</span><span>{row.validated_by}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
+
+      {['admin', 'super_admin'].includes(user?.role || '') && (
+        <div className="bg-white rounded-lg border border-gray-200 p-6 mb-5">
+          <h2 className="text-sm font-semibold text-gray-700">Kundens forretningsmæssige risikoprofil</h2>
+          <p className="text-xs text-gray-400 mt-1 mb-4">Kunden angiver værdi, afhængighed og konsekvenser. En indsendt version anvendes først som valideret FAIR-input efter platformgodkendelse.</p>
+          {riskProfileData?.validated && (
+            <div className="mb-4 rounded border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-800">
+              Valideret profil v{riskProfileData.validated.version}: produktværdi {riskProfileData.validated.product_value_dkk?.toLocaleString('da-DK') ?? 'ikke angivet'} DKK · afhængighed {riskProfileData.validated.business_dependency}/5 · tilgængelighed {riskProfileData.validated.availability_impact}/5
+            </div>
+          )}
+          {riskProfileData?.pending ? (
+            <div className="rounded border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-900">Version {riskProfileData.pending.version} afventer validering</p>
+              <p className="mt-1 text-xs text-amber-800">Indsendt af {riskProfileData.pending.submitted_by}. Produktværdi: {riskProfileData.pending.product_value_dkk?.toLocaleString('da-DK') ?? 'ikke angivet'} DKK. Afhængighed/tilgængelighed/integritet/fortrolighed: {riskProfileData.pending.business_dependency}/{riskProfileData.pending.availability_impact}/{riskProfileData.pending.integrity_impact}/{riskProfileData.pending.confidentiality_impact}.</p>
+              {user?.role === 'super_admin' && (
+                <div className="mt-3">
+                  <input value={decisionNote} onChange={e => setDecisionNote(e.target.value)} placeholder="Valideringsnote" className="w-full border border-amber-200 rounded px-3 py-2 text-sm" />
+                  <div className="mt-2 flex gap-2">
+                    <button onClick={() => decideRiskProfile('validated')} disabled={profileSaving} className="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs">Valider</button>
+                    <button onClick={() => decideRiskProfile('rejected')} disabled={profileSaving || !decisionNote.trim()} className="px-3 py-1.5 rounded border border-red-200 text-red-700 text-xs">Afvis</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                {([
+                  ['product_value_dkk', 'Produktets/projektets værdi (DKK)'], ['daily_downtime_cost_dkk', 'Nedetidsomkostning pr. dag'],
+                  ['recreation_cost_dkk', 'Genskabelsesomkostning'], ['contractual_penalty_dkk', 'Kontraktuelle bod/krav'],
+                ] as const).map(([key, label]) => (
+                  <label key={key} className="text-xs text-gray-500">{label}
+                    <input type="number" min="0" value={riskForm[key]} onChange={e => setRiskForm(v => ({ ...v, [key]: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm" />
+                  </label>
+                ))}
+                {([
+                  ['business_dependency', 'Forretningsafhængighed'], ['availability_impact', 'Tilgængelighedskonsekvens'],
+                  ['integrity_impact', 'Integritetskonsekvens'], ['confidentiality_impact', 'Fortrolighedskonsekvens'],
+                ] as const).map(([key, label]) => (
+                  <label key={key} className="text-xs text-gray-500">{label} (1-5)
+                    <select value={riskForm[key]} onChange={e => setRiskForm(v => ({ ...v, [key]: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm">
+                      {[1,2,3,4,5].map(value => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                ))}
+                <label className="text-xs text-gray-500">Recovery objective (timer)
+                  <input type="number" min="0" value={riskForm.recovery_objective_hours} onChange={e => setRiskForm(v => ({ ...v, recovery_objective_hours: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs text-gray-500">Maksimal tolerabel nedetid (timer)
+                  <input type="number" min="0" value={riskForm.max_tolerable_downtime_hours} onChange={e => setRiskForm(v => ({ ...v, max_tolerable_downtime_hours: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm" />
+                </label>
+                <label className="text-xs text-gray-500">Persondata
+                  <select value={riskForm.personal_data_level} onChange={e => setRiskForm(v => ({ ...v, personal_data_level: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm">
+                    <option value="none">Ingen</option><option value="limited">Begrænset</option><option value="significant">Betydelig</option><option value="special_category">Særlige kategorier</option>
+                  </select>
+                </label>
+                <label className="text-xs text-gray-500 md:col-span-1">Antagelser og kontekst
+                  <input value={riskForm.assumptions} onChange={e => setRiskForm(v => ({ ...v, assumptions: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded px-3 py-2 text-sm" />
+                </label>
+              </div>
+              <button onClick={submitRiskProfile} disabled={profileSaving} className="mt-3 px-3 py-2 rounded bg-slate-900 text-white text-xs disabled:opacity-40">Indsend ny risikoprofil til validering</button>
+            </>
+          )}
+          {profileError && <p className="mt-2 text-xs text-red-600">{profileError}</p>}
+          {(riskProfileData?.history.length ?? 0) > 0 && <p className="mt-3 text-[11px] text-gray-400">{riskProfileData?.history.length} version(er) bevaret som audit-evidens.</p>}
+        </div>
+      )}
 
       {/* BT PAN TOTP — kunde-lag */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">

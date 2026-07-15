@@ -41,7 +41,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from database import Device, DeviceInventory, BreakGlassAccount, PendingUpdate, get_db, now_utc
+from database import CustomerRiskInput, CustomerRiskProfile, Device, DeviceInventory, BreakGlassAccount, PendingUpdate, get_db, now_utc
 from services.fair_risk import estimate_annual_loss
 
 log = logging.getLogger(__name__)
@@ -707,6 +707,35 @@ def get_operational_context(
                "Enheden er ikke online")
     score = min(100, score)
     risk_level = "critical" if score >= 70 else "high" if score >= 45 else "medium" if score >= 20 else "low"
+    commercial_input = None
+    business_profile = None
+    if device and device.customer_id:
+        today = now_utc().date()
+        commercial_input = (db.query(CustomerRiskInput).filter(
+            CustomerRiskInput.customer_id == device.customer_id,
+            CustomerRiskInput.effective_from <= today,
+            or_(CustomerRiskInput.effective_to.is_(None), CustomerRiskInput.effective_to >= today),
+        ).order_by(CustomerRiskInput.effective_from.desc()).first())
+        business_profile = (db.query(CustomerRiskProfile).filter_by(
+            customer_id=device.customer_id, status="validated"
+        ).order_by(CustomerRiskProfile.version.desc()).first())
+    fair = estimate_annual_loss(None, device_id)
+    fair["monthly_service_price_available"] = bool(commercial_input)
+    fair["customer_risk_profile_available"] = bool(business_profile)
+    if business_profile:
+        fair["customer_risk_profile_version"] = business_profile.version
+        fair["impact_factors"] = {
+            "business_dependency": business_profile.business_dependency,
+            "availability": business_profile.availability_impact,
+            "integrity": business_profile.integrity_impact,
+            "confidentiality": business_profile.confidentiality_impact,
+            "personal_data_level": business_profile.personal_data_level,
+        }
+    from main import _is_platform_admin
+    if commercial_input and _is_platform_admin(_user):
+        fair["monthly_service_price"] = float(commercial_input.monthly_service_price)
+        fair["monthly_service_price_currency"] = commercial_input.currency
+        fair["monthly_service_price_effective_from"] = commercial_input.effective_from.isoformat()
 
     return {
         "device": {
@@ -720,7 +749,7 @@ def get_operational_context(
         },
         "priority": {"score": score, "level": risk_level, "factors": factors,
                      "method": "deterministic-operational-priority-v1", "period_hours": hours},
-        "fair": estimate_annual_loss(None, device_id),
+        "fair": fair,
         "updates": updates,
         "itim": {
             "targets": [{

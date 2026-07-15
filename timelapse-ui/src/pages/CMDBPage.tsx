@@ -87,7 +87,7 @@ interface UpdateSummary {
 
 interface OperationalContext {
   priority: { score: number; level: string; factors: Array<{ code: string; points: number; label: string }> }
-  fair: { status: 'needs_input' | 'estimated'; currency: string; missing?: string[]; annual_loss?: { p10: number; p50: number; p90: number }; assumptions?: Record<string, number[]> }
+  fair: { status: 'needs_input' | 'estimated'; currency: string; missing?: string[]; annual_loss?: { p10: number; p50: number; p90: number }; assumptions?: Record<string, number[]>; monthly_service_price_available?: boolean; monthly_service_price?: number; customer_risk_profile_available?: boolean; customer_risk_profile_version?: number }
   itim: { targets: Array<{ target_key: string; kind: string; state: string; summary: string | null }>; firing_alerts: number }
   siem: { counts_by_severity: Record<string, number>; recent: Array<{ id: number; event_type: string; severity: string; occurred_at: string }> }
 }
@@ -804,7 +804,13 @@ export function CMDBDetailPage() {
                   FAIR P50: {operational.fair.annual_loss.p50.toLocaleString('da-DK')} DKK/år
                   <div className="text-[11px] text-gray-400">P10 {operational.fair.annual_loss.p10.toLocaleString('da-DK')} · P90 {operational.fair.annual_loss.p90.toLocaleString('da-DK')}</div>
                 </div>
-              ) : <div className="text-amber-700">FAIR: mangler validerede tabsinput</div>}
+              ) : <div className="text-amber-700">
+                {operational.fair.monthly_service_price_available
+                  ? `FAIR: månedspris registreret${operational.fair.customer_risk_profile_available ? ` og risikoprofil v${operational.fair.customer_risk_profile_version} valideret` : ''}; øvrige tabsinput mangler`
+                  : operational.fair.customer_risk_profile_available
+                    ? `FAIR: risikoprofil v${operational.fair.customer_risk_profile_version} valideret; tabsinput mangler`
+                  : 'FAIR: mangler validerede tabsinput'}
+              </div>}
               <div>{operational.itim.firing_alerts} aktive driftsalarmer</div>
               <div>{Object.values(operational.siem.counts_by_severity).reduce((a, b) => a + b, 0)} SIEM-hændelser / 24 t</div>
               <div className="flex gap-3 pt-1">

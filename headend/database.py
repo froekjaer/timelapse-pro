@@ -25,7 +25,7 @@ DATABASE_URL sættes via launchd plist:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -34,9 +34,9 @@ import os
 load_dotenv()
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, Integer,
+    Boolean, CheckConstraint, Column, Date, DateTime, Float, Index, Integer,
     String, Text, create_engine, event,
-    LargeBinary, BigInteger, UniqueConstraint, JSON
+    LargeBinary, BigInteger, Numeric, UniqueConstraint, JSON, text
 )
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -742,6 +742,69 @@ class Customer(Base):
     mfa_documented_at     = Column(DateTime)
     mfa_documented_by     = Column(String(100))
     data_classification   = Column(String(30), default="internal")
+
+
+class CustomerRiskInput(Base):
+    """Versioned, business-validated economic input for later FAIR analysis."""
+    __tablename__ = "customer_risk_inputs"
+    __table_args__ = (
+        CheckConstraint("monthly_service_price > 0", name="ck_customer_risk_price_positive"),
+        CheckConstraint("effective_to IS NULL OR effective_to >= effective_from", name="ck_customer_risk_dates"),
+        Index("uq_customer_risk_inputs_active", "customer_id", unique=True,
+              postgresql_where=text("effective_to IS NULL")),
+    )
+    id                        = Column(Integer, primary_key=True)
+    customer_id               = Column(String(36), nullable=False, index=True)
+    monthly_service_price     = Column(Numeric(14, 2), nullable=False)
+    currency                  = Column(String(3), nullable=False, default="DKK")
+    effective_from            = Column(Date, nullable=False, default=date.today)
+    effective_to              = Column(Date)
+    source                    = Column(String(100), nullable=False, default="customer_contract")
+    note                      = Column(Text)
+    validated_by              = Column(String(100), nullable=False)
+    validated_at              = Column(DateTime(timezone=True), nullable=False,
+                                       default=lambda: datetime.now(timezone.utc))
+    created_at                = Column(DateTime(timezone=True), nullable=False,
+                                       default=lambda: datetime.now(timezone.utc))
+
+
+class CustomerRiskProfile(Base):
+    """Customer-submitted, governed business-impact profile; immutable after submission."""
+    __tablename__ = "customer_risk_profiles"
+    __table_args__ = (
+        CheckConstraint("business_dependency BETWEEN 1 AND 5", name="ck_risk_profile_dependency"),
+        CheckConstraint("availability_impact BETWEEN 1 AND 5", name="ck_risk_profile_availability"),
+        CheckConstraint("integrity_impact BETWEEN 1 AND 5", name="ck_risk_profile_integrity"),
+        CheckConstraint("confidentiality_impact BETWEEN 1 AND 5", name="ck_risk_profile_confidentiality"),
+        CheckConstraint("status IN ('submitted','validated','rejected','superseded')", name="ck_risk_profile_status"),
+        CheckConstraint("product_value_dkk IS NULL OR product_value_dkk >= 0", name="ck_risk_profile_product_value"),
+        CheckConstraint("daily_downtime_cost_dkk IS NULL OR daily_downtime_cost_dkk >= 0", name="ck_risk_profile_downtime"),
+        CheckConstraint("recreation_cost_dkk IS NULL OR recreation_cost_dkk >= 0", name="ck_risk_profile_recreation"),
+        CheckConstraint("contractual_penalty_dkk IS NULL OR contractual_penalty_dkk >= 0", name="ck_risk_profile_penalty"),
+        UniqueConstraint("customer_id", "version", name="uq_customer_risk_profile_version"),
+    )
+    id                           = Column(Integer, primary_key=True)
+    customer_id                  = Column(String(36), nullable=False, index=True)
+    version                      = Column(Integer, nullable=False)
+    status                       = Column(String(20), nullable=False, default="submitted")
+    product_value_dkk            = Column(Numeric(16, 2))
+    daily_downtime_cost_dkk      = Column(Numeric(16, 2))
+    recreation_cost_dkk          = Column(Numeric(16, 2))
+    contractual_penalty_dkk      = Column(Numeric(16, 2))
+    business_dependency          = Column(Integer, nullable=False)
+    availability_impact          = Column(Integer, nullable=False)
+    integrity_impact             = Column(Integer, nullable=False)
+    confidentiality_impact       = Column(Integer, nullable=False)
+    recovery_objective_hours     = Column(Float)
+    max_tolerable_downtime_hours = Column(Float)
+    personal_data_level          = Column(String(30), default="none")
+    assumptions                  = Column(Text)
+    submitted_by                 = Column(String(100), nullable=False)
+    submitted_at                 = Column(DateTime(timezone=True), nullable=False,
+                                          default=lambda: datetime.now(timezone.utc))
+    validated_by                 = Column(String(100))
+    validated_at                 = Column(DateTime(timezone=True))
+    validation_note              = Column(Text)
 
 
 class Site(Base):
