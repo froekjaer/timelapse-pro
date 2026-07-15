@@ -180,37 +180,13 @@ def _find_image_path(capture: Capture, base_path: str = "/mnt/SFTP_DATA") -> Pat
     # Hent storage roots fra env eller brug base_path
     storage_roots = os.getenv("SFTP_DATA_ROOT", base_path).split(":")
 
-    # Debug log til fil
-    try:
-        with open("/tmp/redaction_debug.log", "a") as f:
-            f.write(f"_find_image_path: device_id={device_id}, filename={filename}, roots={storage_roots}\n")
-    except:
-        pass
-
     for root in storage_roots:
         base = Path(root)
-
-        try:
-            with open("/tmp/redaction_debug.log", "a") as f:
-                f.write(f"  checking root={root}\n")
-        except:
-            pass
 
         # 1. Prøv flad struktur først: {device_id}/filename
         path_simple = base / device_id / filename
 
-        try:
-            with open("/tmp/redaction_debug.log", "a") as f:
-                f.write(f"  path_simple={path_simple}, exists={path_simple.exists()}\n")
-        except:
-            pass
-
         if path_simple.exists():
-            try:
-                with open("/tmp/redaction_debug.log", "a") as f:
-                    f.write(f"  FOUND: {path_simple}\n")
-            except:
-                pass
             return path_simple
 
         # 2. Prøv dato-struktur hvis filename har dato
@@ -221,12 +197,6 @@ def _find_image_path(capture: Capture, base_path: str = "/mnt/SFTP_DATA") -> Pat
             path_date = base / device_id / yyyy / mm / dd / filename
             if path_date.exists():
                 return path_date
-
-    try:
-        with open("/tmp/redaction_debug.log", "a") as f:
-            f.write(f"  NOT FOUND\n")
-    except:
-        pass
 
     raise HTTPException(status_code=404, detail=f"Image not found for device={device_id}, filename={filename}")
 

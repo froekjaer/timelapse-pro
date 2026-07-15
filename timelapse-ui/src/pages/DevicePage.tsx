@@ -169,6 +169,15 @@ function ModelResultsPanel({ results }: { results: any[] | null }) {
   )
 }
 
+function MetadataRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex gap-1.5 min-w-0">
+      <span className="text-white/35 shrink-0" style={{ width: '90px' }}>{label}</span>
+      <span className="text-white/75 min-w-0 truncate">{value ?? '—'}</span>
+    </div>
+  )
+}
+
 // v5.1
 // ── Lightbox ──────────────────────────────────────────────────────────────────
 export function Lightbox({ captures, index, onClose }: { captures: Capture[]; index: number; onClose: () => void }) {
@@ -191,13 +200,6 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
   const imgRef = useRef<HTMLImageElement>(null)
   const metaRef = useRef<HTMLDivElement>(null)
 
-  // Kompakt metadata række
-  const MR = ({ l, v }: { l: string; v: React.ReactNode }) => (
-    <div className="flex gap-1.5 min-w-0">
-      <span className="text-white/35 shrink-0" style={{width:'90px'}}>{l}</span>
-      <span className="text-white/75 min-w-0 truncate">{v ?? '—'}</span>
-    </div>
-  )
   const c = captures[cur]
   const metaCamera = sidecar?.camera ?? {}
   const metaLocation = sidecar?.location ?? {}
@@ -497,20 +499,20 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
               {/* Kolonne 1: Integritet + Kvalitet */}
               <div className="space-y-0.5">
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">🔒 Integritet</p>
-                <MR l="SHA-256" v={<span className="font-mono text-[9px] break-all">{sidecar.integrity?.sha256_original}</span>} />
-                <MR l="Optaget UTC" v={sidecar.integrity?.captured_at_utc?.replace('T',' ').slice(0,19)} />
-                <MR l="Lokal tid" v={sidecar.integrity?.captured_at_local?.replace('T',' ').slice(0,19)} />
-                <MR l="Tidszone" v={sidecar.integrity?.timezone} />
-                <MR l="Original uberørt" v={<span className={sidecar.integrity?.original_unmodified ? 'text-emerald-400' : 'text-red-400'}>{sidecar.integrity?.original_unmodified ? '✅ Ja' : '⚠️ Nej'}</span>} />
-                <MR l="XMP skrevet" v={<span className={sidecar.integrity?.xmp_written ? 'text-emerald-400' : 'text-white/40'}>{sidecar.integrity?.xmp_written ? '✅ Ja' : 'Nej'}</span>} />
+                <MetadataRow label="SHA-256" value={<span className="font-mono text-[9px] break-all">{sidecar.integrity?.sha256_original}</span>} />
+                <MetadataRow label="Optaget UTC" value={sidecar.integrity?.captured_at_utc?.replace('T',' ').slice(0,19)} />
+                <MetadataRow label="Lokal tid" value={sidecar.integrity?.captured_at_local?.replace('T',' ').slice(0,19)} />
+                <MetadataRow label="Tidszone" value={sidecar.integrity?.timezone} />
+                <MetadataRow label="Original uberørt" value={<span className={sidecar.integrity?.original_unmodified ? 'text-emerald-400' : 'text-red-400'}>{sidecar.integrity?.original_unmodified ? '✅ Ja' : '⚠️ Nej'}</span>} />
+                <MetadataRow label="XMP skrevet" value={<span className={sidecar.integrity?.xmp_written ? 'text-emerald-400' : 'text-white/40'}>{sidecar.integrity?.xmp_written ? '✅ Ja' : 'Nej'}</span>} />
                 {sidecar.added_metadata?.fields_added?.length > 0 && (
-                  <MR l="Tilføjede felter" v={<span className="text-amber-300/80">{sidecar.added_metadata.fields_added.join(', ')}</span>} />
+                  <MetadataRow label="Tilføjede felter" value={<span className="text-amber-300/80">{sidecar.added_metadata.fields_added.join(', ')}</span>} />
                 )}
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">📊 Kvalitet <span className="normal-case font-normal text-white/20">(🔧 Edge/OpenCV)</span></p>
-                <MR l="Blur score" v={c.blur_score != null ? `${Math.round(c.blur_score)} ${c.blur_score > 100 ? '✅' : '⚠️ lav'}` : '—'} />
-                <MR l="Lysstyrke" v={c.brightness != null ? `${Math.round(c.brightness)}/255` : '—'} />
-                <MR l="Kvalitetsflag" v={<span className={c.quality_passed ? 'text-emerald-400' : 'text-red-400'}>{c.quality_flag ?? '—'}</span>} />
-                <MR l="Størrelse" v={c.filesize_mb != null ? `${c.filesize_mb.toFixed(1)} MB` : '—'} />
+                <MetadataRow label="Blur score" value={c.blur_score != null ? `${Math.round(c.blur_score)} ${c.blur_score > 100 ? '✅' : '⚠️ lav'}` : '—'} />
+                <MetadataRow label="Lysstyrke" value={c.brightness != null ? `${Math.round(c.brightness)}/255` : '—'} />
+                <MetadataRow label="Kvalitetsflag" value={<span className={c.quality_passed ? 'text-emerald-400' : 'text-red-400'}>{c.quality_flag ?? '—'}</span>} />
+                <MetadataRow label="Størrelse" value={c.filesize_mb != null ? `${c.filesize_mb.toFixed(1)} MB` : '—'} />
 
                 {/* QA ANALYSE */}
                 {(() => {
@@ -546,11 +548,11 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                         <p className="text-white/30 text-xs italic">Ikke analyseret endnu</p>
                       ) : ai.scene_dk ? (
                         <>
-                          <MR l="Scene" v={<span className="text-white/60 text-[10px] leading-tight">{ai.scene_dk}</span>} />
-                          <MR l="Kvalitet" v={<span className={ai.quality_ok === false ? 'text-amber-400' : 'text-emerald-400'}>{ai.quality_flag ?? '—'}</span>} />
-                          <MR l="Ændring" v={ai.change_detected ? (ai.change_summary ?? 'Ja') : 'Nej'} />
-                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model ?? '—'}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
-                          <MR l="Motor" v={<span className="text-white/40 text-[10px]">{engineLabel ?? '— (før 2026-07-04)'}</span>} />
+                          <MetadataRow label="Scene" value={<span className="text-white/60 text-[10px] leading-tight">{ai.scene_dk}</span>} />
+                          <MetadataRow label="Kvalitet" value={<span className={ai.quality_ok === false ? 'text-amber-400' : 'text-emerald-400'}>{ai.quality_flag ?? '—'}</span>} />
+                          <MetadataRow label="Ændring" value={ai.change_detected ? (ai.change_summary ?? 'Ja') : 'Nej'} />
+                          <MetadataRow label="Model" value={<span className="text-white/40 text-[10px]">{ai.model ?? '—'}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          <MetadataRow label="Motor" value={<span className="text-white/40 text-[10px]">{engineLabel ?? '— (før 2026-07-04)'}</span>} />
                           {((ai.tags?.length ?? 0) > 0 || (ai.new_tags?.length ?? 0) > 0 || (c.ai_tags?.length ?? 0) > 0) && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {[...(ai.tags ?? []), ...(ai.new_tags ?? []), ...(c.ai_tags ?? [])].filter((tag, idx, arr) => arr.indexOf(tag) === idx).slice(0, 24).map((tag: string) => (
@@ -561,7 +563,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                             </div>
                           )}
                           {(c.ai_analyzed_at || ai.analyzed_at) && (
-                            <MR l="Analyseret" v={
+                            <MetadataRow label="Analyseret" value={
                               <span className="text-white/30 text-[10px]">
                                 {new Date(c.ai_analyzed_at ?? ai.analyzed_at).toLocaleString('da-DK', {timeZone: getTz(), day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}
                               </span>
@@ -578,36 +580,36 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                               en anbefaling) — det er IKKE en QA-fejl, og skal derfor ikke
                               vise ⚠️. Bløde anbefalinger vises stadig, blot uden
                               alarmfarve, i "Beskrivelse"/"Anbefaling" nedenfor. */}
-                          <MR l="Status" v={
+                          <MetadataRow label="Status" value={
                             <span className={`font-medium ${ai.alarm ? 'text-red-400' : hardFailed ? 'text-red-400' : 'text-emerald-400'}`}>
                               {ai.alarm ? '🚨 ' : hardFailed ? '⚠️ ' : '✓ '}
                               {ai.alarm || hardFailed ? (causeLabels[ai.probable_cause] ?? ai.probable_cause) : 'OK'}
                             </span>
                           } />
                           {!hardFailed && !ai.alarm && ai.is_anomaly && ai.probable_cause && ai.probable_cause !== 'ok' && (
-                            <MR l="Optimizer-tip" v={
+                            <MetadataRow label="Optimizer-tip" value={
                               <span className="text-sky-300">💡 {causeLabels[ai.probable_cause] ?? ai.probable_cause}</span>
                             } />
                           )}
-                          <MR l="Konfidence" v={`${Math.round((ai.confidence ?? 0) * 100)}%`} />
-                          <MR l="Blur" v={ai.blur_score != null ? `${Math.round(ai.blur_score)}` : '—'} />
-                          <MR l="Lys" v={ai.brightness_mean != null ? `${Math.round(ai.brightness_mean)}/255` : '—'} />
-                          {optPct != null && <MR l="Autonom score" v={`${optPct}%`} />}
-                          <MR l="Beskrivelse" v={<span className="text-white/60 text-[10px] leading-tight">{description ?? '—'}</span>} />
+                          <MetadataRow label="Konfidence" value={`${Math.round((ai.confidence ?? 0) * 100)}%`} />
+                          <MetadataRow label="Blur" value={ai.blur_score != null ? `${Math.round(ai.blur_score)}` : '—'} />
+                          <MetadataRow label="Lys" value={ai.brightness_mean != null ? `${Math.round(ai.brightness_mean)}/255` : '—'} />
+                          {optPct != null && <MetadataRow label="Autonom score" value={`${optPct}%`} />}
+                          <MetadataRow label="Beskrivelse" value={<span className="text-white/60 text-[10px] leading-tight">{description ?? '—'}</span>} />
                           {ai.action && ai.action !== 'none' && (
-                            <MR l="Handling" v={<span className="text-amber-300">{actionLabels[ai.action] ?? ai.action}</span>} />
+                            <MetadataRow label="Handling" value={<span className="text-amber-300">{actionLabels[ai.action] ?? ai.action}</span>} />
                           )}
                           {recommendation && recommendation !== description && (
-                            <MR l="Anbefaling" v={<span className="text-amber-300">{recommendation}</span>} />
+                            <MetadataRow label="Anbefaling" value={<span className="text-amber-300">{recommendation}</span>} />
                           )}
                           {ai.control_plan?.next_capture_ev_delta != null && (
-                            <MR l="EV næste" v={`${ai.control_plan.next_capture_ev_delta > 0 ? '+' : ''}${ai.control_plan.next_capture_ev_delta.toFixed(2)}`} />
+                            <MetadataRow label="EV næste" value={`${ai.control_plan.next_capture_ev_delta > 0 ? '+' : ''}${ai.control_plan.next_capture_ev_delta.toFixed(2)}`} />
                           )}
                           {ai.control_plan?.avoid_sun_window && (
-                            <MR l="Solvindue" v={<span className="text-amber-300">Undgå direkte refleks</span>} />
+                            <MetadataRow label="Solvindue" value={<span className="text-amber-300">Undgå direkte refleks</span>} />
                           )}
-                          <MR l="Model" v={<span className="text-white/40 text-[10px]">{ai.model ?? '—'}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
-                          <MR l="Motor" v={<span className="text-white/40 text-[10px]">{engineLabel ?? '— (før 2026-07-04)'}</span>} />
+                          <MetadataRow label="Model" value={<span className="text-white/40 text-[10px]">{ai.model ?? '—'}{ai.used_thumbnail ? ' · thumbnail' : ''}</span>} />
+                          <MetadataRow label="Motor" value={<span className="text-white/40 text-[10px]">{engineLabel ?? '— (før 2026-07-04)'}</span>} />
                           {c.ai_tags && c.ai_tags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {c.ai_tags.map((tag: string) => (
@@ -618,7 +620,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                             </div>
                           )}
                           {c.ai_analyzed_at && (
-                            <MR l="Analyseret" v={
+                            <MetadataRow label="Analyseret" value={
                               <span className="text-white/30 text-[10px]">
                                 {new Date(c.ai_analyzed_at).toLocaleString('da-DK', {timeZone: getTz(), day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'})}
                               </span>
@@ -635,36 +637,36 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
               {/* Kolonne 2: Kamera EXIF */}
               <div className="space-y-0.5">
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📷 Kamera EXIF</p>
-                <MR l="Model" v={metaCamera.model ?? c.camera_model} />
-                <MR l="ISO" v={metaCamera.iso ?? c.iso} />
-                <MR l="Lukker" v={metaCamera.shutter_speed ?? c.shutter_speed ?? c.exposure_time} />
-                <MR l="Blænde" v={metaCamera.aperture ?? c.aperture} />
-                <MR l="Fokustilstand" v={metaCamera.focus_mode} />
-                <MR l="USB port" v={metaCamera.gphoto2_port} />
-                <MR l="Relay GPIO" v={metaCamera.relay_gpio_pin} />
+                <MetadataRow label="Model" value={metaCamera.model ?? c.camera_model} />
+                <MetadataRow label="ISO" value={metaCamera.iso ?? c.iso} />
+                <MetadataRow label="Lukker" value={metaCamera.shutter_speed ?? c.shutter_speed ?? c.exposure_time} />
+                <MetadataRow label="Blænde" value={metaCamera.aperture ?? c.aperture} />
+                <MetadataRow label="Fokustilstand" value={metaCamera.focus_mode} />
+                <MetadataRow label="USB port" value={metaCamera.gphoto2_port} />
+                <MetadataRow label="Relay GPIO" value={metaCamera.relay_gpio_pin} />
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🏗️ Projekt</p>
-                <MR l="Kunde" v={metaProject.customer || '—'} />
-                <MR l="Site" v={metaProject.site || '—'} />
-                <MR l="Kamera" v={metaProject.camera_name || '—'} />
-                <MR l="Device ID" v={<span className="font-mono text-[10px]">{metaProject.device_id || c.device_id}</span>} />
-                <MR l="Kamera index" v={metaProject.camera_index ?? '—'} />
-                <MR l="TLP version" v={sidecar.timelapse_pro?.version} />
+                <MetadataRow label="Kunde" value={metaProject.customer || '—'} />
+                <MetadataRow label="Site" value={metaProject.site || '—'} />
+                <MetadataRow label="Kamera" value={metaProject.camera_name || '—'} />
+                <MetadataRow label="Device ID" value={<span className="font-mono text-[10px]">{metaProject.device_id || c.device_id}</span>} />
+                <MetadataRow label="Kamera index" value={metaProject.camera_index ?? '—'} />
+                <MetadataRow label="TLP version" value={sidecar.timelapse_pro?.version} />
               </div>
 
               {/* Kolonne 3: Lokation + Orientering */}
               <div className="space-y-0.5">
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📍 Lokation</p>
-                <MR l="GPS" v={metaGpsLat != null && metaGpsLon != null ? `${Number(metaGpsLat).toFixed(6)}°, ${Number(metaGpsLon).toFixed(6)}°` : '—'} />
-                <MR l="Højde" v={metaGpsAlt != null ? `${metaGpsAlt} m` : '—'} />
-                <MR l="GPS kilde" v={gpsSourceLabel} />
-                <MR l="Adresse" v={metaLocation.address || '—'} />
+                <MetadataRow label="GPS" value={metaGpsLat != null && metaGpsLon != null ? `${Number(metaGpsLat).toFixed(6)}°, ${Number(metaGpsLon).toFixed(6)}°` : '—'} />
+                <MetadataRow label="Højde" value={metaGpsAlt != null ? `${metaGpsAlt} m` : '—'} />
+                <MetadataRow label="GPS kilde" value={gpsSourceLabel} />
+                <MetadataRow label="Adresse" value={metaLocation.address || '—'} />
                 <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🧭 Orientering</p>
-                <MR l="Azimut" v={(metaLocation.azimuth_deg ?? c.azimuth_deg) != null ? `${metaLocation.azimuth_deg ?? c.azimuth_deg}°` : '—'} />
-                <MR l="Tilt" v={(metaLocation.tilt_deg ?? c.tilt_deg) != null ? `${metaLocation.tilt_deg ?? c.tilt_deg}°` : '—'} />
-                <MR l="Montagehøjde" v={(metaLocation.mount_height_m ?? c.mount_height_m) != null ? `${metaLocation.mount_height_m ?? c.mount_height_m} m` : '—'} />
-                <MR l="Horis. FOV" v={(metaLocation.fov_horizontal_deg ?? c.fov_horizontal_deg) != null ? `${metaLocation.fov_horizontal_deg ?? c.fov_horizontal_deg}°` : '—'} />
-                <MR l="Vert. FOV" v={(metaLocation.fov_vertical_deg ?? c.fov_vertical_deg) != null ? `${metaLocation.fov_vertical_deg ?? c.fov_vertical_deg}°` : '—'} />
-                <MR l="Perspektiv" v={metaLocation.perspective || c.perspective || '—'} />
+                <MetadataRow label="Azimut" value={(metaLocation.azimuth_deg ?? c.azimuth_deg) != null ? `${metaLocation.azimuth_deg ?? c.azimuth_deg}°` : '—'} />
+                <MetadataRow label="Tilt" value={(metaLocation.tilt_deg ?? c.tilt_deg) != null ? `${metaLocation.tilt_deg ?? c.tilt_deg}°` : '—'} />
+                <MetadataRow label="Montagehøjde" value={(metaLocation.mount_height_m ?? c.mount_height_m) != null ? `${metaLocation.mount_height_m ?? c.mount_height_m} m` : '—'} />
+                <MetadataRow label="Horis. FOV" value={(metaLocation.fov_horizontal_deg ?? c.fov_horizontal_deg) != null ? `${metaLocation.fov_horizontal_deg ?? c.fov_horizontal_deg}°` : '—'} />
+                <MetadataRow label="Vert. FOV" value={(metaLocation.fov_vertical_deg ?? c.fov_vertical_deg) != null ? `${metaLocation.fov_vertical_deg ?? c.fov_vertical_deg}°` : '—'} />
+                <MetadataRow label="Perspektiv" value={metaLocation.perspective || c.perspective || '—'} />
               </div>
 
               {/* Kolonne 4: Fototekniske Anbefalinger */}

@@ -89,6 +89,7 @@ if TIMELAPSE_ENV in {"prod", "production"}:
         )
 
 JWT_SECRET    = _jwt_secret_from_env or _secrets.token_hex(32)
+os.environ.setdefault("JWT_SECRET", JWT_SECRET)
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_H  = 12   # access token levetid
 COOKIE_NAME   = "tl_session"
@@ -9506,7 +9507,7 @@ def _update_flow_stage(update: PendingUpdate, artifact: UpdateArtifact | None, t
         return {"key": "rejected", "label": "Afvist"}
     if update.status == "cancelled":
         return {"key": "cancelled", "label": "Annulleret"}
-    return {"key": update.status or "unknown", "label": STATUS_LABELS.get(update.status, update.status or "Ukendt") if "STATUS_LABELS" in globals() else (update.status or "Ukendt")}
+    return {"key": update.status or "unknown", "label": update.status or "Ukendt"}
 
 
 @app.get("/api/updates/{update_id}/flow-status")
@@ -16560,7 +16561,6 @@ def get_capture_model_results_endpoint(capture_id: int, _user=require_role("view
     if not _capture_is_allowed(db, _user, cap):
         raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
     return {"capture_id": capture_id, "results": get_capture_model_results(db, capture_id)}
-    return {"status": "ok", "tags": tags}
 
 @app.get("/api/ai/qa/search")
 def qa_search(

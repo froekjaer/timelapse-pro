@@ -782,12 +782,13 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
     @ai_router.post("/alarms/{alarm_id}/acknowledge")
     def acknowledge_alarm(
         alarm_id: int,
-        payload:  dict = {},
+        payload: dict | None = None,
         db: Session = Depends(get_db_fn),
     ):
         """Kvitter en alarm som behandlet."""
         from sqlalchemy import text as _text
         from datetime import datetime, timezone
+        payload = payload or {}
         db.execute(_text("""
             UPDATE alarm_events
             SET acknowledged_at = :ts, acknowledged_by = :by, notes = :notes

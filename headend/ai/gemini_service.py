@@ -716,25 +716,26 @@ class GeminiVisionService:
         # BatchJob (Vertex-backend) kan eksponere det under forskellige feltnavne
         # afhængigt af SDK-version — prøv defensivt; None hvis intet findes (så
         # falder UI'en tilbage til kun total_count, ingen regression).
+        def _stat(stats, *names):
+            for name in names:
+                value = getattr(stats, name, None)
+                if value is None and isinstance(stats, dict):
+                    value = stats.get(name)
+                if value is not None:
+                    try:
+                        return int(value)
+                    except (TypeError, ValueError):
+                        return None
+            return None
+
         progress = None
         for _attr in ("completion_stats", "completionStats"):
             cs = getattr(job, _attr, None)
             if not cs:
                 continue
-            def _stat(*names):
-                for n in names:
-                    v = getattr(cs, n, None)
-                    if v is None and isinstance(cs, dict):
-                        v = cs.get(n)
-                    if v is not None:
-                        try:
-                            return int(v)
-                        except (TypeError, ValueError):
-                            return None
-                return None
-            succ = _stat("successful_count", "successfulCount")
-            fail = _stat("failed_count", "failedCount")
-            inc  = _stat("incomplete_count", "incompleteCount")
+            succ = _stat(cs, "successful_count", "successfulCount")
+            fail = _stat(cs, "failed_count", "failedCount")
+            inc = _stat(cs, "incomplete_count", "incompleteCount")
             if succ is not None or fail is not None:
                 progress = {"success": succ or 0, "error": fail or 0, "incomplete": inc}
                 break

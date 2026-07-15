@@ -607,9 +607,9 @@ at ramme live PostgreSQL eller en delt Headend.
 
 | Måling | Resultat |
 |---|---:|
-| Tests collected | **1.023** |
-| Serverløse unit/contract valgt | **480** |
-| Bestået | **476** |
+| Tests collected | **1.028** |
+| Serverløse unit/contract valgt | **485** |
+| Bestået | **481** |
 | Skipped | **4** (auth-afhængige live smoke-kald) |
 | Fejlet | **0** |
 | Deselecterede integration/hardware | **543** |
@@ -640,6 +640,8 @@ pytest tests headend/tests edge/ai/tests \
 | LAB `_lab_tick` state machine | **PASS (unit)** | Retry, powercycle, exhausted retries, disable-cleanup og `set_param` rapportering |
 | Arkitektur-ratchet | **PASS** | `main.py` må ikke vokse over 18.483 linjer eller 235 direkte routes |
 | Hardware target-profiler | **PASS** | 27 tidligere fejlklassificerede tests er serverløse og nu med i CI |
+| GDPR redaction session-secret | **PASS** | Router bruger samme runtime-secret som Headend; kendt dev-secret kan ikke validere forfalskede sessions |
+| Gemini batch-status | **PASS** | Object- og dict/camelCase completion stats samt manglende progress |
 
 Route-auditten fandt og rettede samtidig ubeskyttede flader, som de tidligere
 tekst-/eksistenstests ikke fangede: `/api/import/*`, `/api/timelapse/*`,
@@ -678,7 +680,7 @@ som bestået:
 - Alle trackede Pythonfiler: syntax PASS.
 - Alle trackede shellscripts: `bash -n` PASS.
 - UI TypeScript/Vite production build: PASS.
-- ESLint ratchet: PASS, uændret baseline 222 (201 fejl, 21 advarsler).
+- ESLint ratchet: PASS, baseline sænket fra 222 til 188 (167 fejl, 21 advarsler).
 - Kendt gæld: FastAPI `on_event`- og Pydantic v1-config warnings samt stor UI-chunk.
 
 ---

@@ -29,6 +29,15 @@ person vide".
 
 ## Log
 
+### Handover 2026-07-15 — Codex reel fejlrevision, tranche 1
+- **Kritisk auth-fund:** `main.py` genererede en tilfældig JWT-secret uden env-værdi, mens `redaction_api.py` uafhængigt brugte den kendte fallback `dev-secret-do-not-use-in-production`. Det kunne både afvise legitime sessions og gøre redaction-endpoints modtagelige for forfalskede tokens med den kendte secret. Runtime-secret synkroniseres nu før routerimport; regressionsvagt bekræfter identitet.
+- **GDPR/logning:** `_find_image_path` skrev device-id, filnavn og fulde storage-stier til `/tmp/redaction_debug.log`. Den ukontrollerede sensitive debugfil er fjernet og dækket af test.
+- **Python-korrekthed:** Mutabel request-default i alarm acknowledge er erstattet med `None`; Gemini batch-progress parseren er gjort stabil og dækket for SDK object/dict/camelCase; udefineret `STATUS_LABELS`-guard og uopnåelig `tags`-return er fjernet; duplikeret `ensure_utc` er fjernet.
+- **Struktur:** Den døde, ikke-importérbare patch-skabelon `headend/ai/main_endpoints.py` med 32 udefinerede navne er slettet. Git-historikken bevarer den ved behov.
+- **UI:** `MetadataRow` lå inde i `Lightbox` og blev oprettet som ny React-komponenttype ved hver render. Flyttet til modulniveau; alle 34 `react-hooks/static-components`-fund er væk. ESLint er nu **188** (167 fejl, 21 advarsler), baseline sænket fra 222; UI production build består.
+- **Ny samlet baseline:** **1.028 collected; 481 passed, 4 skipped, 0 failed; 543 integration/hardware deselected**. Fem nye regressionsprøver dækker Gemini og redaction-auth/logning.
+- **Status:** Ucommittet og ikke deployet. Næste højrisiko-tranche er auth-duplikation i routermoduler, bare `except`, Hook stale-state samt node-agent least privilege.
+
 ### Handover 2026-07-15 — Codex arkitektur-ratchet og z.ai testtriage
 - **Ny baseline:** **1.023 collected; 476 passed, 4 skipped, 0 failed; 543 integration/hardware deselected**. Hele serverløse CI-scope er genkørt fra tom SQLite-database.
 - **LAB state machine:** Fire hardwarefri tests eksekverer nu z.ai's faktiske `_lab_tick`: retry → powercycle → success, exhausted retries, LAB-disable cleanup og serialiseret `set_param` med Headend-resultat. Tidligere tests var primært tekstkontrakter og kaldte ikke funktionen.
