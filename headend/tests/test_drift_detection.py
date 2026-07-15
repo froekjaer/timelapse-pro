@@ -48,11 +48,11 @@ NOW = datetime(2026, 7, 7, 12, 0, tzinfo=timezone.utc)
 CAMERA = "cam-drift-test-1"
 
 
-def _make_capture(db, *, days_ago: float, blur=None, brightness=None, wb=None, idx=0, camera_id=None):
+def _make_capture(db, *, days_ago: float, blur=None, brightness=None, wb=None, idx=0, camera_id=None, reference_now=NOW):
     cap = database.Capture(
         device_id="TL-DRIFTTEST",
         filename=f"img_{idx:04d}.jpg",
-        captured_at=NOW - timedelta(days=days_ago),
+        captured_at=reference_now - timedelta(days=days_ago),
         camera_id=camera_id or CAMERA,
         blur_score=blur,
         brightness_mean=brightness,
@@ -64,7 +64,7 @@ def _make_capture(db, *, days_ago: float, blur=None, brightness=None, wb=None, i
 
 def _seed(db, *, baseline_n, recent_n, baseline_blur, recent_blur,
           baseline_bright=128.0, recent_bright=128.0,
-          baseline_wb=None, recent_wb=None):
+          baseline_wb=None, recent_wb=None, reference_now=NOW):
     """Seed baseline-vinduet (dag 10-30 siden) og recent-vinduet (dag 0-6
     siden), matcher DEFAULT_DIMENSION_CONFIG's window_days=7/baseline_days=30
     (baseline-perioden er window_days..window_days+baseline_days siden)."""
@@ -77,6 +77,7 @@ def _seed(db, *, baseline_n, recent_n, baseline_blur, recent_blur,
             brightness=baseline_bright + (i % 3 - 1),
             wb=baseline_wb,
             idx=idx,
+            reference_now=reference_now,
         )
         idx += 1
     for i in range(recent_n):
@@ -87,6 +88,7 @@ def _seed(db, *, baseline_n, recent_n, baseline_blur, recent_blur,
             brightness=recent_bright + (i % 3 - 1),
             wb=recent_wb,
             idx=idx,
+            reference_now=reference_now,
         )
         idx += 1
     db.commit()
@@ -352,7 +354,14 @@ def test_drift_analysis_endpoint_uses_resolved_config(db_session):
     user = _make_user(db_session, customer_id="cust-a")
 
     # Seed med mere ekstremt blur-drop for at trigge drift (baseline=600, recent=150)
-    _seed(db_session, baseline_n=10, recent_n=10, baseline_blur=600.0, recent_blur=150.0)
+    _seed(
+        db_session,
+        baseline_n=10,
+        recent_n=10,
+        baseline_blur=600.0,
+        recent_blur=150.0,
+        reference_now=datetime.now(timezone.utc),
+    )
 
     # Default config har focus.enabled=True, så vi burde se et drift-resultat
     result = main.get_camera_drift_analysis(camera_id=cam.id, _user=user, db=db_session)

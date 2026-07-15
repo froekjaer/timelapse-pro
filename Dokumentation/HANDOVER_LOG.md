@@ -29,6 +29,92 @@ person vide".
 
 ## Log
 
+### Handover 2026-07-15 — Codex arkitektur-ratchet og z.ai testtriage
+- **Ny baseline:** **1.023 collected; 476 passed, 4 skipped, 0 failed; 543 integration/hardware deselected**. Hele serverløse CI-scope er genkørt fra tom SQLite-database.
+- **LAB state machine:** Fire hardwarefri tests eksekverer nu z.ai's faktiske `_lab_tick`: retry → powercycle → success, exhausted retries, LAB-disable cleanup og serialiseret `set_param` med Headend-resultat. Tidligere tests var primært tekstkontrakter og kaldte ikke funktionen.
+- **Arkitektur:** Claudes “stop tilvæksten” er omsat til CI-ratchet i `tests/test_architecture_ratchet.py` + `tests/architecture_baseline.json`. `headend/main.py` må ikke overstige 18.483 linjer eller 235 direkte routes; baseline skal sænkes efter udtrækning.
+- **z.ai-testtriage:** `test_per_target_deployment.py` var fejlagtigt markeret integration og havde hardcodet Mac-sti. Alle 27 read-only YAML/HAL-kontrakttests består nu og er med i normal CI.
+- **ESLint-test:** Stale z.ai-forventning `.eslint-ratchet.json`/legacy config er rettet til den aktive `.eslint-baseline.json` og flat `eslint.config.js`. Den egentlige `npm run lint:gate` består fortsat.
+- **Node-agent runtime-fund:** `system/dk.froekjaer.timelapse-node-agent` er aktiv (PID 880), men kører som root. Testen ledte tidligere efter forkert plist/proces og sagde fejlagtigt “ikke kørende”; den afslører nu korrekt P0-08 least-privilege-afvigelsen. Ændr ikke servicebruger blindt: macOS unified security-log collectorens nødvendige rettigheder skal afgrænses, eventuelt via en lille privilegeret helper.
+- **Status:** Test/kode/docs er ucommittet og ikke deployet. Ingen Edge- eller Headend-service er genstartet i denne del.
+
+### Handover 2026-07-15 — Codex testbaseline, nye sikkerhedstests og fund
+- **Baseline:** Rent Python 3.12-miljø kan collect **1.017 tests**. Serverløs CI-suite: **443 passed, 4 skipped, 0 failed, 570 integration/hardware deselected**. UI build og lint-ratchet passer; Python/shell syntax passer.
+- **CI:** `.github/workflows/ci.yml` installerer nu dev+Headend+Edge dependencies og kører hele `not integration`-suiten med SQLite, samlet PYTHONPATH og importlib-mode. Før gatede CI reelt kun tre filer.
+- **Nye tests:** route-auth sweep, MFA disable/reset step-up og SIEM, CORS fail-fast, tag similarity, SIEM RAM anti-flap og Open WebUI/Ollama lifecycle. Existing multi-target/update-tests er opdateret til den nye device-auth-kontrakt.
+- **Sikkerhedsrettelser fundet af testarbejdet:** Import-, timelapse-job/download- og settings-routere manglede rolle-auth; tre node-kamera-ruter manglede device-auth. De er lukket lokalt. Både MFA-disable og superadmin-reset kræver nu frisk password/TOTP og skriver særskilte SIEM-events.
+- **SIEM:** `_breach_sustained` kræver nu reel sammenhængende varighed; ét højt RAM-sample kan ikke skabe en 60-sekunders alarm. Dette adresserer de 49 flappende RAM-events.
+- **Klassifikation:** `test_api_integration.py` og `test_weekend_features_api.py` er nu korrekt markeret integration. De tidligere 21 fejl var live-kald med forældet/manglende auth, ikke unit-regressioner.
+- **Dokumentation:** `MASTER_TEST_CHECKLIST_v1.md` §10 indeholder kommando, evidens, implementerede test-ID'er og resterende huller.
+- **Fortsat åbent:** 570 tests kræver yderligere split/provisionering; fuld LAB state machine, restore execution, thumbnail load, UI automation, DAST og hardware-E2E er ikke erklæret bestået.
+- **Status:** Ændringerne er ucommittede og ikke deployet. Ingen Edge/prod-promovering udført.
+
+### Handover 2026-07-15 — Codex review af Claudes arkitektur/risk/test
+- **Leverance:** `Dokumentation/Codex_REVIEW_Claude_Arkitektur_Risk_Test_2026-07-15.md`.
+- **Konklusion:** Claudes Platform/Payload-retning, ADR-proces, route-auth-kontrol og stop for vækst i `main.py` anbefales vedtaget som målprincip. Dokumentet er ikke endnu implementeret target architecture/go-live-evidens.
+- **Vigtig feedback:** Logiske zoner på samme Mac er ikke stærke IEC 62443-zonegrænser; reverse SSH er en bidirektionel management-conduit; payloadplugins kræver capabilities, signering, isolation og resource quotas; flere/kundestyrede headends kræver federation/release-trust design; AI-dataflows skal skelne produkt-tagging fra privilegeret Open WebUI.
+- **Risk/pentest:** R22/R23/R24 er implementeret lokalt, men først lukkede efter commit, CI, deploy og runtime-evidens. Riskregisteret bør tilføje metode, owner, deadline, evidence og SABSA business-attribute traceability. RAM/Ollama-workload lifecycle bør indgå under Availability/Manageability.
+- **Test:** Integration skal køre isoleret/ephemeral og senere gate promotion, ikke permanent som ikke-blokerende test mod delt R&D. Fuld collection har konkrete dependency/import-layout-fejl; coverage-tal skal genereres i CI og ikke stå som uverificerede estimater.
+- **Koordinering:** Ingen af Claudes tre reviewdokumenter er ændret; feedbacken ligger separat, så Claude kan indarbejde eller svare eksplicit.
+
+### Handover 2026-07-15 — Codex: RAM/SIEM, CI og Open WebUI (arbejde i gang)
+- **Koordinering:** Claudes QA/arkitektur- og risk entries nedenfor er læst. Begge agenter arbejder i samme worktree; Codex bevarer Claudes dokumenter og registrerer ændringer her.
+- **RAM root cause:** En indlæst `qwen3-vl:8b` brugte ca. 6,8 GB RSS; Open WebUI-processen ca. 9 MB. Modellen blev aflastet, og `memory_pressure` gik fra ca. 14 % til 57 % fri. Ollama-daemonen forbliver aktiv, fordi den fortsat bruges til billedtagging.
+- **SIEM-evidens:** 49 `Host RAM høj`-events de seneste 24 timer, alle resolved; tærskel `mem_pct > 92` i 60 sekunder. Efter model-unload: `mem_pct=66`, health `ok`. Swap er fortsat 97 %, hvilket på macOS ikke alene dokumenterer aktuel memory pressure.
+- **CI:** Seneste GitHub-fejl var ikke syntaks, men dobbelt `_shutil`-import. Importen er samlet top-level. CI er udvidet til alle trackede Python- og shellfiler.
+- **Claude-fund håndteret lokalt:** Review-routeren og vocabulary-mutationer er admin/super-admin-beskyttet. `/translations` er efter Claudes live-review skilt ud med autentificeret viewer-adgang, så kundernes danske labels bevares. `TagRepository._normalize_tag_for_similarity` har fået manglende `self`. Regressionstests ligger i `tests/test_ai_admin_security_contract.py`.
+- **Open WebUI under implementering:** Kontrollen flyttes til Open WebUI-siden med rød/orange/grøn status og auto-stop. Kun Open WebUI bliver on-demand; Ollama-daemonen stoppes ikke. Ved afslutning frigives modelallokering, og taggingkøen genoptages. Den gamle system-LaunchDaemon er endnu ikke migreret.
+- **QA indtil nu:** Trackede Python/shell syntax-checks, målrettede backendtests, UI build og lint-ratchet består. Fuld suite har fire collection-fejl fra testmiljø/dependency/import-layout; triage fortsætter.
+- **Status:** Ucommittet. Ingen Edge-release eller prod-promovering.
+
+### Handover 2026-07-15 (opdatering 3 — REVIEW-VERDICT + COMMIT) — fra Claude (Cowork) til Peter/Codex
+- **Opgave (Peter):** Seriøs gennemgang af hele det ucommittede træ efter z.ai-perioden; commit til main når Codex og Claude er enige.
+- **VERDICT: ✅ Grønt. Alt gennemgået og verificeret — committet til lokal `main`.**
+- **Sådan blev det verificeret (ikke bare læst):**
+  - Kørte CI-ækvivalenten: `pytest tests headend/tests edge/ai/tests -m "not integration"` mod sqlite → **447 passed, 6 skipped, 570 deselected (integration), 0 failed.**
+  - `headend/tests/` isoleret: **139 passed, 0 failed.**
+  - `py_compile` grøn på alle ændrede `.py`; alle symboler resolver (`now_utc`, `_siem_record_events`, `_verify_password`, `_shutil` nu ren top-import linje 72).
+- **Vigtig faldgrube for fremtidige sandkasse-kørsler:** verificér ALTID mod den pinnede `fastapi==0.136.1`. En nyere FastAPI (0.139.0) har en `include_router`-regression der taber routes og fik `vocab`/`review`-ruterne til at "forsvinde" — det var et versionsartefakt, IKKE en regression i vores kode. `pip install fastapi==0.136.1` før test.
+- **Codex' arbejde — gennemgået, korrekt, og lukker mine review-fund direkte:**
+  - R22/R24: `vocab_read_router` (`/translations`,`/statistics` → `require_role("viewer")`) splittet fra `vocab_router` (mutationer → admin/super_admin+MFA). Kunde-UI (`useTagLabels.ts`) virker igen.
+  - R23: `repositories.py` `_normalize_tag_for_similarity(self, …)` rettet.
+  - R25: `disable-mfa` + `reset_user_mfa` har nu step-up (password + TOTP), kun super_admin må ramme andre, og udsteder SIEM-event `mfa_disabled`/`mfa_reset`.
+  - VPEN-012: `_resolve_allowed_origin()` fail-faster i prod/staging uden `ALLOWED_ORIGIN`.
+  - Nye auth-huller lukket: `timelapse/*`, `import` (admin), `settings` (admin), `bootstrap-camera`/`list_node_cameras`/`multi-camera-config` (device-token).
+  - `itim.py` anti-flap: korrekt "sammenhængende breach-varighed"-semantik (tz-safe), dækket af `test_itim_alert_antiflap.py`.
+  - **ci.yml:** kører nu unit-subset (`-m "not integration"`, sqlite) + py_compile på ALLE trackede filer — præcis §0.5-anbefalingen. Integration-tests markeret (`pytestmark`) + `conftest` skip'er uden server.
+  - Nye tests der implementerer mine T-SEC/T-AI-forslag: `test_route_auth_coverage`, `test_disable_mfa_stepup`, `test_cors_config`, `test_tag_repository`, `test_openwebui_runtime`, `test_itim_alert_antiflap`.
+- **z.ai's arbejde (Open WebUI) — gennemgået, oprydning fuldført (var mit R27):** flag omdøbt `peter-vil-gerne-lege-med-ollama` → `openwebui_enabled` (også i `integration.py`); `_shutil`-topimport genoprettet; `start_service()` før state-commit. `@app.on_event("startup")` beholdt (husets stil, 5 forekomster — lifespan-migration er separat opgave). UI (`OpenWebUIPage.tsx`) er ren, typet mod backend-kontrakten.
+- **Én rettelse jeg lavede (Codex, bemærk venligst):** `headend/tests/test_route_auth_coverage.py:73` — tilføjet `if hasattr(route, "path")` (samme defensive mønster som testens egen linje 51), så den ikke kaster på Mount/router-objekter. Ingen adfærdsændring; testen er grøn med og uden under 0.136.1.
+- **Commit-scope:** al kode + tests + docs. **Bevidst IKKE med:** `.claude/` (min agent-config) og `z.ai/`-session-dumps (rå logs — Peter/Codex beslutter deres skæbne).
+- **IKKE pushet.** Push til `origin/main` trigger `deploy-macmini` → genstart af live rd-headend. Da Peter holder pause og ikke kan overvåge et live-deploy, er det hans/Codex' skridt: `git push origin main` når nogen kan holde øje. Alt er commit-klart og CI-grønt.
+- **Risici/pas på:** UI (`tsc`/`build`) er ikke kørt i sandkassen — CI's `ui-check`-job gater det. Ingen skemaændringer i denne omgang.
+
+### Handover 2026-07-15 (opdatering 2) — fra Claude (Cowork) til Peter/Codex/samtidig Claude-session
+- **Hvad er gjort:** Peter bad om (a) opdateret risk assessment, (b) virtuel pentest, (c) opdateret testdokument + definerede manglende tests. Leveret:
+  - **`Dokumentation/RISK_ASSESSMENT_v11_ADDENDUM_2026-07-15.md`** — additivt supplement til v10 (promoveres til v11 ved Peters ok). Nye risici R22–R27, ny pentest VPEN-2026-010…013, kontroller K1–K6.
+  - **`Dokumentation/MASTER_TEST_CHECKLIST_v1.md`** opdateret til **v1.2**: nyt §0.5 (unit vs. integration — forklarer "36 fejlende tests") + §9 (manglende tests defineret, T-SEC-01…04, T-AI/UPD/EDGE osv.).
+- **VIGTIGT — til den samtidige Claude-session:** Tak! Under mit review rettede I LIVE to af mine kritiske fund fra første runde:
+  1. ✅ `vocab_router`/`_rev_router` har nu `dependencies=[require_role("super_admin","admin")]` (R22/VPEN-2026-010) — korrekt, håndhæver også MFA.
+  2. ✅ `headend/ai/repositories.py:539` har nu `self` (R23).
+  - **MEN jeres R22-fix skabte en regression (R24):** `GET /api/ai/vocabulary/translations` kaldes af det kundevendte UI (`timelapse-ui/src/hooks/useTagLabels.ts`) og er nu låst til admin+MFA → viewer/kunde får 403, danske tag-labels falder tilbage til engelske nøgler. **Forslag:** giv de read-only ruter (`/translations`, evt. `/statistics`) viewer-adgang uden at åbne skrive-ruterne. Se R24 for detaljer.
+- **Andre åbne fund (verificeret i kode i dag):** R25 `POST /api/auth/disable-mfa` (main.py:1410) bruger kun `get_current_user`, ingen step-up/MFA-verifikation, og en admin kan nulstille andres MFA uden SIEM-alarm (bekræfter ISSUES A-04). VPEN-2026-013: CI kører kun 3/~49 testfiler; ~20 tests i `tests/` er live-integration (kræver headend på :8000, jf. conftest) — derfor "fejler" de uden server.
+- **Filer rørt:** kun de to Dokumentation-filer + denne entry. Ingen kodeændringer. `.git/index.lock` var til stede (I committer) — jeg har IKKE kørt git-write.
+- **Risici/pas på:** main.py redigeres samtidigt; linjenumre i mine docs kan skride. R22/R23 markeret "rettet live" — bekræft ved merge/deploy.
+
+### Handover 2026-07-15 — fra Claude (Cowork, QA/arkitektur-review) til Peter/Codex
+- **Hvad er gjort:** Fuld QA- og arkitekturgennemgang efter z.ai-perioden. Rapport: **`Dokumentation/Claude_QA_Arkitektur_Review_2026-07-15.md`** — læs den før næste kodesession.
+- **Kritiske fund (uddrag, detaljer + anbefalinger i rapporten):**
+  1. 🔴 **SEC:** `/api/ai/vocabulary/*` (`vocabulary_routes.py`) og `/api/review/*` (`review_api.py`) har INGEN auth — internet-eksponeret via nginx `location /api/`. `POST /api/review/escalation/approve` trigger Gemini-kørsler uautentificeret. Samme fejlklasse som SEC-001. **Codex/Peter: kør venligst denne fix først** (router-level `dependencies=[Depends(require_role(...))]`).
+  2. 🔴 **BUG:** `headend/ai/repositories.py:539` — `_normalize_tag_for_similarity` mangler `self` → `GET /api/ai/vocabulary/similar` crasher altid (TypeError).
+  3. 🟠 Ucommittet z.ai Open WebUI-arbejde i working tree (main.py +113, untracked `openwebui_runtime.py`, ci.yml). Ret 3 punkter før commit (deprecated on_event, `_shutil`-topimport fjernet, settings-nøglenavn). **Lad filerne ligge indtil Peter har besluttet.**
+  4. 🟠 CI kører kun 3/40 testfiler; 36 dokumenteret fejlende tests er utriagerede.
+- **Teknisk gæld:** main.py vokset 16.692→18.412 linjer siden gæld-analysen 07-06; `_lab_tick` nu 456 linjer. Rapportens §3.2 foreslår bindende retningsregler (ingen nye endpoints i main.py, ratchet-gates, route-auth-test m.m.) — kræver Peters vedtagelse.
+- **Arkitektur:** §4 i rapporten: Platform/Payload-snit (generisk edge-platform → vandværk/vindmølle/solcelle-verticals), IEC 62443 zone/conduit-målbillede (DMZ), PayloadDriver-interface. Forslag: ADR-proces.
+- **Dokumentation:** docs/ vs Dokumentation/ er splittet (20 z.ai-dokumenter i `docs/` som 00_START_HER ikke kender); ISSUES.md forældet (A-01..03 er reelt lukket); HANDOVER_LOG er 704 KB og bør roteres; 00_START_HER mangler pointere til PRIORITIZED_BACKLOG/MASTER_TEST_CHECKLIST. (00_START_HER er IKKE opdateret endnu — afventer Peters ok, jf. "kig og rapportér først".)
+- **Filer rørt:** KUN `Dokumentation/Claude_QA_Arkitektur_Review_2026-07-15.md` (ny) + denne entry. Ingen kodeændringer.
+- **Risici/pas på:** Fund 1 og 2 er verificeret direkte i koden på main @ 806c58fb. Linjenumre i rapporten refererer til working tree pr. 2026-07-15.
+
 ### Handover 2026-07-13 ~22:00 — fra Claude (Auto Powercycle Implementation) til Peter/Codex
 - **AUTO POWERCYCLE IMPLEMENTERET OG TESTET:**
   - ✅ **Problemer:** Kamera låste efter 503/frame push spam (min forgængers fejl)
@@ -8908,3 +8994,153 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
   - `3806b38b` — "fix: Override gphoto2 readonly flag" (REVERTED)
 - **Deploy UI:** `cd ~/projects/timelapse-pro/timelapse-ui && npm run build`
 - **Test:** Genåbn LAB UI — hover over parametre for at se tooltips, se matrix-tabellen
+
+### Handover 2026-07-13 ~23:30 — Session Start
+- **Kontekst:** Ny session starter. Læst `00_START_HER.md`, `GO_LIVE_CHECKLIST_v10.md`, `HANDOVER_LOG.md` og `LAB_MODE_TEST_GUIDE.md`
+- **Sidste session arbejde:**
+  - LAB mode 503 fixes implementeret (5 FPS, health check, camera protection)
+  - Auto powercycle når kamera ikke kan detekteres
+  - Live Video (F-013C) test PASS
+- **Åben issue:** Parameter save i LAB mode — request bliver måske ikke sendt til server
+- **Næste skridt:**
+  - Test LAB mode Camera Operations
+  - Test LAB mode Relay Toggle
+  - Test LAB mode WiFi Operations
+  - Opdatere HANDOVER_LOG med resultater
+
+
+### Handover 2026-07-14 ~00:15 — LAB Mode Parameter Save Issue (Deep Dive)
+
+- **Problem:** Parameter save i LAB mode sender ikke POST request til serveren
+- **Analyse foretaget:**
+  - ✅ API endpoint eksisterer: `/api/lab/{device_id}/set-param` (headend/main.py:12425)
+  - ✅ `setParam` funktion i client.ts ser korrekt ud med retry logic
+  - ✅ `ParamRow` component har korrekt onClick={save} på button
+  - ✅ Ingen `<form>` tags der intercepter clicks
+  - ✅ Ingen CSS pointer-events blokering
+  - ✅ States initialiseret korrekt: editing=false, saved=false, saving=false
+  - ✅ Button conditional rendering: `{saved ? "✓ Gemt!" : <button onClick={save}>}`
+
+- **Debug logs tilføjet:**
+  - `save()` funktion i LabPage.tsx: `[LAB DEBUG] save() called`
+  - `setParam()` funktion i client.ts: `[CLIENT DEBUG] setParam called`
+
+- **Hypoteser:**
+  1. **Stale closure:** `save` funktionen kunne have en lukket over `value` der er outdated
+  2. **Re-render issue:** Component re-renders med `saved=true` af en eller anden grund
+  3. **Event propagation:** Noget andet i UI'en interceptor klikket
+  4. **JavaScript error:** En silent error før onClick handler
+
+- **Næste skridt når brugeren er tilbage:**
+  1. F12 Console → se om `[LAB DEBUG] save() called` vises
+  2. Hvis ikke: onClick handler bliver ikke kaldt
+  3. Hvis ja: setParam bliver kaldt men fejler stille
+  4. Network tab → se om POST request vises overhovedet
+
+- **Midlertidig workaround:** Brug curl direkte:
+  ```bash
+  curl -X POST http://localhost:8000/api/lab/TL-C87FF9587CA0/set-param \
+    -H "Content-Type: application/json" \
+    -H "Cookie: timelapse_api_token=YOUR_TOKEN" \
+    -d '{"key":"/main/imgsettings/iso","value":"200"}'
+  ```
+
+### Handover 2026-07-14 — Codex re-entry, UI 500 root cause og QA-oprydning
+
+- **Kontekst:** Peter bad Codex overtage efter en midlertidig z.ai-session. Kilder læst/triageret: `00_START_HER.md`, `HANDOVER_LOG.md`, dokumentationsindeks, `TENKNISK_GÆLD_ANALYSE_headend_main_py_2026-07-06.md` og den store `z.ai/Hele z_ai sessionen.md` som ikke-autoritativ kontekst.
+- **Akut fejl:** `https://timelapse.froekjaer.dk/` returnerede `500 Internal Server Error - nginx/1.31.1`.
+- **Root cause:** Backend var sund (`/api/health` svarede 200). Nginx serverede statisk UI fra `timelapse-ui/dist`, men `dist/` manglede. Det gav nginx-fejlen `rewrite or internal redirection cycle while internally redirecting to "/index.html"`.
+- **Fix udført:** `cd timelapse-ui && npm run build`. Forside og LAB route svarede derefter 200 igen.
+- **QA-oprydning:** Midlertidig debug-popup og console-debug fra LAB parameter-save blev fjernet fra:
+  - `timelapse-ui/src/pages/LabPage.tsx`
+  - `timelapse-ui/src/api/client.ts`
+- **Dokumentation:** `00_START_HER.md` opdateret med UI/nginx/dist-fejlsøgning, så næste session ikke leder efter backend-fejl ved samme symptombillede.
+- **Buildstatus:** `npm run build` passer efter oprydning. Kendte ikke-blokerende warnings: Vite chunk-size warning og `INEFFECTIVE_DYNAMIC_IMPORT`.
+- **QA udført:**
+  - `npm run lint:gate` passer: 222 problemer = baseline, ingen nye lint-problemer.
+  - `git diff --check` passer.
+  - `curl -skI https://timelapse.froekjaer.dk/` svarer 200.
+  - `curl -skI https://timelapse.froekjaer.dk/devices/TL-C87FF9587CA0/lab` svarer 200.
+  - `curl -sk https://timelapse.froekjaer.dk/api/health` svarer `{"status":"ok", ...}`.
+  - `py_compile` passer for `headend/main.py`, `edge/agent.py` og `edge/camera/drivers/gphoto2_driver.py`.
+  - `pytest tests/test_smoke_suite.py -q`: 2 passed, 4 skipped pga. auth-krav.
+- **Næste QA-punkter:** Fortsæt review af z.ai-ændringer uden at behandle z.ai-sessionen som autoritativ. Næste praktiske skridt er auth-aware E2E smoke, LAB parameter-save i browser og gennemgang af teknisk gæld i `headend/main.py`.
+
+### Handover 2026-07-14 — Codex: Site Look Edge-policy og igangværende Edge-audit
+
+- **Status:** Arbejdet er lokalt i worktree og er endnu ikke committet, tagget eller lagt ud på Edge. Aktiv Edge `TL-C87FF9587CA0` må fortsat kun modtage en ny pakke som testkandidat og først efter eksplicit godkendelse.
+- **Fund 1 — Site Look var ikke reelt aktiv på Edge:** `SiteLookConfigClient` blev aldrig initialiseret af `EdgeAgent`. Den forsøgte desuden at kalde et admin-endpoint uden Edge-credential. Dermed kunne den hverken anvende konfigurationsarvningen eller fungere sikkert/offline.
+- **Fund 2 — forkert kontekst:** Den gamle optimizer brugte kunde-/site-/kameranavne som identifikatorer. Den skal anvende de stabile UUID'er fra aktiv `DeviceAssignment`, så data følger den logiske kamera-lokation ved Edge-udskiftning.
+- **Implementeret (endnu ikke release-pakket):**
+  - Ny device-autentiseret endpoint: `GET /api/edge/site-look/{device_id}/config`.
+  - Endpointet resolver global → kunde → site → aktiv kamera-binding og returnerer kun policy for den autentiserede Edge.
+  - Edge-klienten sender Bearer-token, request-signatur og Edge-attestation, bruger TLS-verifikation og skriver sin cache atomisk med mode `0600`.
+  - `EdgeAgent` initialiserer policy-klienten før QA/optimizer og stopper polling rent ved shutdown.
+  - Headend leverer nu stabile `customer_id`, `site_id` og `camera_id` i Edge-config.
+  - Site Look-cache invalideres ved konfigurationsændringer. Cacheformatet er gjort bagudkompatibelt, så ældre cacheposter fortsat kan læses og derefter opdateres normalt.
+- **Live data-check:** Aktiv Edge er bundet til kunde `0adb9d14-ec09-4d18-869a-1f07da72c89a`, site `ace36a3a-ccc7-44c3-9a67-b7af5abced37` og kamera `7bff07bc-e619-4d87-920a-8fa85409f8d9`. Policy-resolveren blev kørt mod PostgreSQL to gange; første læsning byggede policyen, anden læsning brugte cache med samme hierarki.
+- **Teststatus:**
+  - `python -m py_compile` og `git diff --check`: PASS.
+  - `pytest tests/test_edge_release_contract.py tests/test_lab_runtime_contract.py tests/test_edge_quality_qa.py -q`: **52 passed**.
+  - `pytest edge/ai/tests headend/tests/test_site_look_config_service.py -q`: **130 passed**.
+- **Igangværende audit:** Gennemgang af artifact-installation, service-restart, lokale management-porte, legacy Git/apt-kode, reverse SSH og skjulte UI-handlinger. Før næste release skal især kontrolleres, at sikkerhedsændringer i `totp-service`/captive firewall får en kontrolleret, testet service-aktivering efter artifact-installation uden at afbryde lokal nødadgang.
+
+### Handover 2026-07-14 — Codex: Edge runtime-audit og releaseforberedelse
+
+- **Faktisk Edge-status (read-only verificeret via `TL-C87FF9587CA0`):**
+  - Agenten kører som `root` i den installerede unit. Den versionerede unit var fejlagtigt sat til `timelapse`; den er nu justeret, så fremtidige artifact-opdateringer ikke ændrer denne nødvendige driftsforudsætning.
+  - `timelapse-totp` er aktiv på TCP/8443. `timelapse-captive` er enabled, men **inaktiv**, så BT-firewall-reglerne er ikke aktive.
+  - Der findes ingen `/opt/timelapse/edge/.timelapse-release.json`. Edge har dermed ikke tidligere installeret en Headend-artifact og kan ikke rapportere faktisk artifact-version korrekt.
+  - Installeret `totp-service.py` er den gamle variant, som stadig starter HTTP-redirect på TCP/8080. Det er ikke den aktuelle kildekode, men følger af den manglende artifact-deploy.
+  - TCP/80 ejes af systemets `lighttpd`, og TCP/22 af OpenSSH. De er ikke identificeret som TimeLapse-agent-processer, men skal behandles som eksplicitte platform-afhængigheder/afviklingspunkter før produktionsgo-live. De er ikke stoppet i denne session.
+- **Opdateringskø:** Aktiv Edge har fortsat kandidat `#69` (lab.3) og `#72` (lab.4) som `pending` test. Ingen er godkendt, deployet eller ændret af Codex. Næste release skal erstatte disse som nyere testkandidat, ikke automatisk installere noget.
+- **Nye hardening-rettelser, release afventer:**
+  - Artifact-installeren kopierer nu signerede `timelapse-captive`/`timelapse-totp` units til aktiv systemd-konfiguration, genindlæser systemd, starter services kontrolleret og verificerer aktiv status. Fejl udløser gendannelse af tidligere units samt application rollback.
+  - Direkte SCP-deploy-script er erstattet af en klar afvisning med henvisning til UI/update-flow.
+  - Det ubrugte legacy CMDB-executor-modul kan ikke længere udføre Git- eller apt-opdateringer.
+  - GPS/tidsscripts udfører ikke længere direkte `apt` eller Internet-NTP. Tidssynkronisering kræver GPS eller en eksplicit konfigureret HTTPS Headend-kilde; GPS-pakker leveres som Headend-signeret offline OS-bundle.
+- **Supplerende teststatus:**
+  - `pytest tests/test_edge_release_contract.py tests/test_lab_runtime_contract.py tests/test_edge_quality_qa.py -q`: **55 passed**.
+  - `pytest edge/ai/tests headend/tests/test_site_look_config_service.py -q`: **130 passed**.
+  - `npm run build`: PASS. Kendte Vite advarsler: én stor JS-chunk og ineffective dynamic import.
+  - `npm run lint:gate`: PASS mod uændret baseline på 222 fund.
+- **Release registreret:** Signeret commit `e827d45f6cdec1a5a0d7ae6a6bf379b6d7e64390`, signeret tag `v2.8.1-lab.5` og artifact `TL-ART-20260714-e827d45f6cde` er pushet og GPG-verificeret af Headend. Den aktive Edge har ny **testkandidat #75** med status `pending`; artifact-manifestet indeholder Site Look-klienten samt captive/TOTP service-units. Ingen kandidat er godkendt eller deployet.
+- **Headend runtime-smoke:** `/api/health` = HTTP 200 efter genstart. Den nye `/api/edge/site-look/TL-C87FF9587CA0/config` giver HTTP 401 uden Edge-credential som forventet.
+- **Erstattende testrelease:** Signeret commit `a96f0a6db3ad05b96ed701f21497a7cb3ae3dc87`, tag `v2.8.1-lab.6`, artifact `TL-ART-20260714-a96f0a6db3ad` og **kandidat #78** er efterfølgende oprettet. Den håndterer den aktuelle PAN-fejl (`203/EXEC` fordi installeret `timelapse-bt-pan.sh` ikke var executable): artifact-installationen genskaber PAN/PAN-agent, men ruller ikke en verificeret application-release tilbage, hvis Bluetooth stadig ikke kan starte. Captive-firewall aktiveres kun efter aktiv PAN. **Brug kun #78 til næste test; #69, #72 og #75 er ældre pending testkandidater og må ikke deployes.**
+### Codex 2026-07-14 — E2E update-test #78, LAB-poll og release trust
+
+- Peter godkendte testkandidat `#78` (`v2.8.1-lab.6`, artifact `TL-ART-20260714-a96f0a6db3ad`) til `TL-C87FF9587CA0`.
+- E2E-testen fandt to reelle blokeringer uden at omgå Edge trust policy:
+  1. LAB-mode kørte sin egen loop og kaldte ikke signed update-policy. Kandidaten stod derfor `queued`, indtil LAB-mode blev stoppet.
+  2. Edge afviste derefter korrekt artifactet med `artifact signer er ikke trusted`. CMDB havde den gamle GPG-fingerprint `EE347E3F8E89F2FFD5EC4A36F8DEEDDDC2A03552`, mens Headend signerede med den aktive nøgle `165C4D4D88F4B07487F3D7DFF75C248F694C097F`.
+- Commit `e2489990` retter flowet: LAB-mode poller fortsat signed update-policy, Headend registrerer den konfigurerede aktive release-signers offentlige identitet i CMDB med audit-event, blocked updates kan genprøves via det normale signerede godkendelsesflow, og UI viser kandidat-ID, commit/artifact, miljø og mål tydeligt.
+- Headend blev genstartet via system-LaunchDaemon og er healthy. Ny CMDB credential: `TL-KEY-20260714-release-f75c248f694c097f`. Kandidat `#78` er fortsat `blocked`/target `failed` efter den første sikre afvisning og skal nu vælges med **Genprøv** i UI. Der er fortsat ingen release receipt på Edge, og ingen artifact-filer blev installeret under den fejlede verification.
+- Verifikation: `python -m py_compile` bestået; 56 relevante Edge/LAB-tests bestået; frontend production build bestået; lint-gate uændret på baseline 222.
+- Første genprøvning efter trust-sync afslørede endnu en identitetsfejl: artifact `signed_by` anvender GPG's 64-bit key ID (`F75C248F694C097F`), mens CMDB med rette lagrer hele fingerprintet. Commit `082c01c1` matcher nu credential ID eller minimum 16 hextegn som suffix på det fulde GPG-fingerprint. 57 relevante tests består, Headend er genstartet/healthy, og direkte policy-verifikation viser `signer_fingerprint` trusted. `#78` skal genprøves igen fra blocked; ingen filer er endnu installeret.
+- Anden genprøvning passerede trust, tog og uploadede pre-update backup (`timelapse-edge-backup-TL-C87FF9587CA0-20260714_152109.tar.gz`, 3360 KB), men download af første fil blev stoppet med HTTP 409, fordi lab.6-artifactet pegede på den levende repo-rod, hvor `edge/agent.py` siden var ændret. Edge rapporterede `rolled_back`; ingen release receipt blev skrevet.
+- Commit `2e8e57b4`, signeret tag `v2.8.1-lab.7`, retter artifact-arkitekturen: tag-builderen kopierer alle signerede outputs til en artifact-specifik read-only snapshot-mappe og verificerer hashes før atomisk publicering. 58 tests består. Headend byggede `TL-ART-20260714-2e8e57b4221b` i `artifacts/update-artifacts/...` med read-only permissions; snapshot `edge/agent.py` matcher taggets SHA-256. Aktiv Edge-kandidat er nu **#81 pending/test**. Kandidat #78 må ikke genprøves igen.
+- Peter godkendte #81. Deployment passerede trust, backup, download af 80 filer, hashkontrol, installation og agent-genstart; CMDB/target rapporterede `deployed`, og alle 80 installerede Edge-filer blev efterfølgende verificeret mod manifestet uden mismatch. Nikon Z30 blev genfundet med `autofocus=True` og `remote_focus=True`. Release receipt manglede dog, så inventory viste fortsat gammel Git-version `bf8b277`; #81 er derfor teknisk installeret, men evidenskæden er ikke acceptabel som endelig QA.
+- Commit/tag `c0a2daaf` / `v2.8.1-lab.8` gør receipt-readback til en hard deployment gate efter management-servicekontrol: atomisk write, `fsync`, readback og exact payload-check før `deployed` report. 58 release/LAB/quality-tests og 130 Site Look/AI-tests består. Immutable artifact `TL-ART-20260714-c0a2daaf9d6e`; aktiv Edge-testkandidat **#85 pending**. PAN-scriptets executable-bit er installeret; manuel diagnostisk service-restart bekræftede PAN active med `br-bt`/dnsmasq. Næste skridt: Peter godkender kun #85 til test, hvorefter receipt, CMDB app_version, PAN/agent/captive/TOTP og rollback-evidens verificeres.
+
+### Codex 2026-07-14 — #85 rollback og sandbox-bootstrap til lab.9
+
+- Peter godkendte #85. Edge passerede trust, backup og artifact-download, men installationen blev korrekt rullet tilbage med `Read-only file system: /etc/systemd/system/timelapse-bt-pan.service`. Den installerede lab.7-agent kører med `ProtectSystem=strict` og havde ikke en snæver write-tilladelse til de signerede systemd-units.
+- Rollback blev verificeret mod lab.7-hashes. En lab.8 receipt, som den gamle installer nåede at skrive før den fejlede servicekontrol, blev fjernet, fordi den ikke beskrev den reelt installerede release. #85 og target står `rolled_back` og bevares som QA-evidens.
+- Signeret commit `44694b2836923a6da3198ef359c2bf688e01b28e`, tag `v2.8.1-lab.9` og immutable artifact `TL-ART-20260714-44694b283692` retter kontrakten: Edge-agenten administrerer også sin egen unit, systemd-sandboxen tillader kun write til de fem konkrete TimeLapse-unit-filer, rollback gendanner eller fjerner release receipt korrekt, og den fejlagtige kilde-unit er ændret fra uimplementeret `Type=notify`/watchdog til `Type=simple`.
+- Verifikation: 58 Edge/LAB/release/quality-tests og 130 AI/Site Look-tests består; `py_compile` og `git diff --check` består. Aktiv R&D-edge har ny **testkandidat #88 pending**. Før godkendelse kræver den kørende lab.7-unit en engangs, runtime-only systemd drop-in med de samme snævre write paths; lab.9 installerer derefter den permanente signerede unit gennem det normale update-flow.
+- Første #88-forsøg rullede tilbage, fordi den editorbaserede runtime drop-in ikke var blevet gemt (`DropInPaths=` var tom). En eventuel for tidligt skrevet receipt blev fjernet. Peter installerede derefter den verificerbare runtime drop-in under `/run/systemd/system/timelapse-edge.service.d/timelapse-update-writes.conf`; systemd viste de fem eksakte unit-write-paths.
+- Updates-UI skjulte #88 under `Rullet tilbage` uden handling, og dens polling udløste mange nginx 503-rate-limit svar ved at hente flow-status for næsten alle historiske updates hvert andet sekund. Commit `f21ed9f9` gør rollback-genprøvning eksplicit mulig i UI/API, re-queue'r eksisterende target uden at slette historikken og poller kun aktive deployments hvert femte sekund. Backend var stabil; 503-årsagen var nginx `api_general` rate limiting på UI-request-stormen. Headend blev genstartet healthy, frontend build/lint-gate og 27 kontrakt/LAB-tests bestod.
+- Anden #88-genprøvning blev `deployed/deployed`. Receipt peger på `v2.8.1-lab.9` / `44694b283692`; CMDB rapporterer samme fulde commit. **80/80 Edge-outputfiler** matcher artifact-manifestets SHA-256, og edge/PAN/BT-agent/captive/TOTP er aktive. Den gamle, allerede indlæste lab.7-installer kopierede dog ikke sin egen systemd-unit, selv om den nye lab.9-agentfil nu er installeret. Dette er en forventet én-gangs migrationsgrænse, ikke fuld slut-evidens.
+- Signeret tag `v2.8.1-lab.10`, artifact `TL-ART-20260714-f21ed9f9f39e` og aktiv Edge-testkandidat **#92 pending** er oprettet. Før #92-godkendelse skal Edge-agenten genstartes én gang, så den installerede lab.9-kode indlæses. #92 kan derefter installere den permanente signerede `timelapse-edge.service`; efter deployment skal unit og runtime-egenskaber verificeres igen.
+- Peter genstartede agenten og godkendte #92. Edge poll kl. 20:25 gennemførte backup, download, installation, receipt og agent-genstart; update/target står `deployed/deployed`. Receipt og CMDB peger begge på `v2.8.1-lab.10` / `f21ed9f9f39e...`; **80/80 Edge-filer** matcher manifestet. Den permanente unit er nu aktiv som `Type=simple`, `User=root`, `Group=root`, `ProtectSystem=strict` med de fem konkrete unit-write-paths. Edge, BT-PAN, BT-agent, captive og TOTP er alle aktive.
+- Workflowkortene stod statisk på "Afventer Edge poll", selv om target rapporterede `downloading`. Commit `18df37f1` kobler workflowkortene til target-faserne og viser det fulde femtrins-evidensflow efter deployment. Frontend build og lint-gate består. Sidste nginx 503/rate-limit hændelse var kl. 20:03:13; efter pollingrettelsen er offentlig health HTTP 200 og der er ikke registreret nye 503'er.
+- Efter deployment viste en ekspanderet terminal række fejlagtigt "Edge flow-status er ikke hentet endnu", fordi 503-rettelsen med vilje kun auto-hentede aktive flows. Commit `737e649c` tilføjer lazy loading og cache: kun den konkrete række, som brugeren folder ud, henter terminal flow-evidens én gang. Det bevarer historiske detaljer uden at genindføre request-stormen. Production build og lint-gate består.
+
+### Codex 2026-07-15 — Reboot-accept og Edge runtime-oprydning
+
+- Reboot-test af `TL-C87FF9587CA0` bestod update-platformens persistenskrav: runtime drop-in forsvandt (`DropInPaths=`), permanent `timelapse-edge.service` startede som `Type=simple`, `User=root`, `Group=root`, `ProtectSystem=strict` med de fem snævre unit-write-paths. Edge, BT-PAN, BT-agent, captive og TOTP startede aktive; receipt og CMDB overlevede reboot. Nikon Z30 blev detekteret med autofocus/remote-focus, og normal capture/API-upload lykkedes.
+- Reboot-capture fandt tre runtimeproblemer: Site Look importerede `edge.*` under `PYTHONPATH=/opt/timelapse/edge`, ufuldstændig kunde-SFTP (`username`, `remote_base` og credential tomme) blev fejlagtigt aktiv, og Canon fleet defaults gav falsk Nikon-drift (`Manual`/`Auto`).
+- Signeret `v2.8.1-lab.11`, commit `ab5fbd2e`, artifact `TL-ART-20260714-ab5fbd2e0c89`, kandidat **#95** blev test-godkendt under Peters eksplicitte tilladelse og deployet. Site Look runtime-import bruger nu `ai.*`; ufuldstændig optional SFTP ignoreres med forklarende warning. 62 Edge/release/LAB-tests og 130 AI-tests bestod før release.
+- Signeret `v2.8.1-lab.12`, commit `4aacbd54`, artifact `TL-ART-20260714-4aacbd54d40f`, kandidat **#100** blev deployet. Profilerede kameraer sammenlignes nu kun mod deres effektive enforceable værdier; Canon/generiske kameraer beholder fleet defaults. Normal Nikon-capture rapporterede efterfølgende `camera diagnostics ... drift=0`, mens eksplicitte profil-overrides fortsat drift-testes. 64 Edge/LAB-tests og 130 AI-tests bestod.
+- Site Look nåede derefter storage-init, men systemd-sandboxen blokerede den historiske DB-path `/var/lib/timelapse/site_looks`. Signeret `v2.8.1-lab.13`, commit `806c58fb`, artifact `TL-ART-20260714-806c58fb0476`, kandidat **#103** blev deployet. Legacy-pathen mappes nu deterministisk til `/data/timelapse/site_looks`; andre eksplicitte paths bevares. 66 Edge/LAB-tests og 130 AI-tests bestod.
+- Endelig normal capture efter lab.13: Site Look manager initialiserede og mappede storage uden exception; API-primary upload lykkedes; ingen falsk SFTP failure; kameradrift `0`; capture-cycle success. Billedets brightness 23,9 var korrekt under natgrænsen 25, så det blev ikke Site Look-reference. #103 står `deployed/deployed`, receipt/CMDB viser fuld commit `806c58fb047684941b5906de9ddcb375019a74a2`, og **80/80 Edge-filer** matcher det signerede manifest.

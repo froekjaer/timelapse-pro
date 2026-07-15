@@ -209,6 +209,9 @@ export default function UsersPage() {
   const [mfaCode,       setMfaCode]       = useState('')
   const [mfaErr,        setMfaErr]        = useState<string | null>(null)
   const [mfaSaving,     setMfaSaving]     = useState(false)
+  const [mfaDisableOpen, setMfaDisableOpen] = useState(false)
+  const [mfaDisablePassword, setMfaDisablePassword] = useState('')
+  const [mfaDisableCode, setMfaDisableCode] = useState('')
   const [waId,          setWaId]          = useState<number | null>(null)
   const [waDeviceName,  setWaDeviceName]  = useState('')
   const [waCredentials, setWaCredentials] = useState<any[]>([])
@@ -306,21 +309,38 @@ export default function UsersPage() {
   async function disableMfa(id: number) {
     setMfaSaving(true); setMfaErr(null)
     try {
-      await api('/api/auth/disable-mfa', { method: 'POST', body: JSON.stringify({ user_id: id }) })
-      setMfaId(null); load()
+      await api('/api/auth/disable-mfa', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: id,
+          current_password: mfaDisablePassword,
+          totp_code: mfaDisableCode,
+        }),
+      })
+      setMfaId(null)
+      setMfaDisableOpen(false)
+      setMfaDisablePassword('')
+      setMfaDisableCode('')
+      load()
     } catch (e: any) { setMfaErr(e.message) }
     finally { setMfaSaving(false) }
   }
 
   async function resetMfa(u: UserRec) {
-    const msg = u.username === me?.username
-      ? 'Nulstil din MFA? Du skal oprette en ny authenticator-kode bagefter.'
-      : `Nulstil MFA for ${u.username}? Brugeren skal selv oprette MFA igen ved næste login.`
-    if (!confirm(msg)) return
     setMfaSaving(true); setMfaErr(null)
     try {
-      await api(`/api/admin/users/${u.id}/mfa/reset`, { method: 'POST', body: JSON.stringify({}) })
-      setMfaId(null); load()
+      await api(`/api/admin/users/${u.id}/mfa/reset`, {
+        method: 'POST',
+        body: JSON.stringify({
+          current_password: mfaDisablePassword,
+          totp_code: mfaDisableCode,
+        }),
+      })
+      setMfaId(null)
+      setMfaDisableOpen(false)
+      setMfaDisablePassword('')
+      setMfaDisableCode('')
+      load()
     } catch (e: any) { setMfaErr(e.message) }
     finally { setMfaSaving(false) }
   }
@@ -622,6 +642,27 @@ export default function UsersPage() {
                         <p className="text-xs text-gray-400">Scan QR-koden i din authenticator app</p>
                       </div>
                     )}
+                    {(u.mfa_enabled || u.mfa_partial) && mfaDisableOpen && (
+                      <div className="grid sm:grid-cols-2 gap-2 rounded-md border border-red-100 bg-red-50 p-3">
+                        <input
+                          type="password"
+                          value={mfaDisablePassword}
+                          onChange={e => setMfaDisablePassword(e.target.value)}
+                          placeholder="Aktuel adgangskode"
+                          autoComplete="current-password"
+                          className="border border-gray-200 rounded-md px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-red-300"
+                        />
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={6}
+                          value={mfaDisableCode}
+                          onChange={e => setMfaDisableCode(e.target.value.replace(/[^0-9]/g, ''))}
+                          placeholder="TOTP-kode"
+                          className="border border-gray-200 rounded-md px-3 py-2 text-xs font-mono text-center tracking-widest focus:outline-none focus:ring-2 focus:ring-red-300"
+                        />
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
                       {u.username === me?.username && !u.mfa_enabled && (
                       <input type="text" inputMode="numeric" maxLength={6}
@@ -636,18 +677,22 @@ export default function UsersPage() {
                         </button>
                       ) : null}
                       {(u.mfa_enabled || u.mfa_partial || u.username !== me?.username) && (
-                        <button onClick={() => resetMfa(u)} disabled={mfaSaving}
+                        <button
+                          onClick={() => mfaDisableOpen ? resetMfa(u) : setMfaDisableOpen(true)}
+                          disabled={mfaSaving || (mfaDisableOpen && (!mfaDisablePassword || mfaDisableCode.length !== 6))}
                           className="px-3 py-1.5 bg-amber-500 text-white text-xs rounded-lg disabled:opacity-50">
-                          {mfaSaving ? 'Nulstiller…' : 'Nulstil MFA'}
+                          {mfaSaving ? 'Nulstiller…' : mfaDisableOpen ? 'Bekræft nulstilling' : 'Nulstil MFA'}
                         </button>
                       )}
-                      {u.username === me?.username && u.mfa_enabled && (
-                        <button onClick={() => disableMfa(u.id)} disabled={mfaSaving}
+                      {u.username === me?.username && u.mfa_enabled && !mfaDisableOpen && (
+                        <button
+                          onClick={() => mfaDisableOpen ? disableMfa(u.id) : setMfaDisableOpen(true)}
+                          disabled={mfaSaving || (mfaDisableOpen && (!mfaDisablePassword || mfaDisableCode.length !== 6))}
                           className="px-3 py-1.5 bg-red-500 text-white text-xs rounded-lg disabled:opacity-50">
-                          {mfaSaving ? 'Deaktiverer…' : 'Deaktiver MFA'}
+                          {mfaSaving ? 'Deaktiverer…' : mfaDisableOpen ? 'Bekræft deaktivering' : 'Deaktiver MFA'}
                         </button>
                       )}
-                      <button onClick={() => setMfaId(null)} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg">Annuller</button>
+                      <button onClick={() => { setMfaId(null); setMfaDisableOpen(false); setMfaDisablePassword(''); setMfaDisableCode('') }} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg">Annuller</button>
                     </div>
                   </div>
                 )}

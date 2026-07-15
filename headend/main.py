@@ -181,7 +181,17 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", os.getenv("BASE_URL", "http://127.0.0.1:5173"))
+def _resolve_allowed_origin(environment: str, explicit_origin: str | None, base_url: str | None) -> str:
+    if environment in {"prod", "production", "staging"} and not explicit_origin:
+        raise RuntimeError("ALLOWED_ORIGIN must be explicitly configured in staging/production")
+    return explicit_origin or base_url or "http://127.0.0.1:5173"
+
+
+ALLOWED_ORIGIN = _resolve_allowed_origin(
+    TIMELAPSE_ENV,
+    os.getenv("ALLOWED_ORIGIN"),
+    os.getenv("BASE_URL"),
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -1407,22 +1417,52 @@ def confirm_mfa(payload: dict, current_user=Depends(get_current_user), db: Sessi
     return _resp
 
 @app.post("/api/auth/disable-mfa")
-def disable_mfa(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    """Deaktiver MFA — super_admin kan deaktivere for andre brugere via user_id."""
+def disable_mfa(payload: dict, current_user=require_role("viewer"), db: Session = Depends(get_db)):
+    """Disable MFA after fresh password/TOTP step-up; only super-admin may target others."""
     if current_user is None:
         raise HTTPException(status_code=401)
     user_id = payload.get("user_id")
-    if user_id and current_user.role in ("super_admin", "admin"):
+    try:
+        targeting_other = bool(user_id and int(user_id) != int(current_user.id))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Ugyldigt user_id")
+    if targeting_other:
+        if current_user.role != "super_admin":
+            raise HTTPException(status_code=403, detail="Kun super_admin kan deaktivere MFA for andre")
         target = db.query(User).filter_by(id=user_id).first()
         if not target:
             raise HTTPException(status_code=404)
     else:
         target = current_user
+
+    _require_mfa_admin_step_up(payload, current_user)
+
     target.mfa_enabled = False
     target.totp_secret = None
     db.commit()
-    log.info("MFA deaktiveret for %s af %s", target.username, current_user.username)
+    _siem_record_events(db, "HEADEND", [{
+        "event_type": "mfa_disabled",
+        "severity": "warning",
+        "username": current_user.username,
+        "source": "auth",
+        "category": "identity_and_access",
+        "raw_message": f"MFA deaktiveret for {target.username} af {current_user.username}",
+        "occurred_at": now_utc().isoformat(),
+    }])
+    db.commit()
+    log.warning("MFA deaktiveret for %s af %s", target.username, current_user.username)
     return {"ok": True}
+
+
+def _require_mfa_admin_step_up(payload: dict, current_user: User) -> None:
+    current_password = str(payload.get("current_password") or "")
+    if not current_password or not _verify_password(current_password, current_user.password_hash):
+        raise HTTPException(status_code=403, detail="Aktuel adgangskode er påkrævet")
+    if current_user.mfa_enabled:
+        import pyotp
+        code = str(payload.get("totp_code") or "")
+        if not current_user.totp_secret or not pyotp.TOTP(current_user.totp_secret).verify(code, valid_window=1):
+            raise HTTPException(status_code=403, detail="Gyldig TOTP-kode er påkrævet")
 
 @app.post("/api/auth/verify-mfa")
 def verify_mfa(payload: dict, db: Session = Depends(get_db)):
@@ -1963,10 +2003,12 @@ def reset_user_mfa(
 ):
     """Nulstil hel eller halv TOTP MFA-state, så brugeren kan oprette MFA igen."""
     from database import User, WebAuthnCredential
+    payload = payload or {}
+    _require_mfa_admin_step_up(payload, current_user)
     u = db.query(User).filter_by(id=user_id).first()
     if not u:
         raise HTTPException(status_code=404)
-    clear_webauthn = bool((payload or {}).get("clear_webauthn", False))
+    clear_webauthn = bool(payload.get("clear_webauthn", False))
     u.mfa_enabled = False
     u.totp_secret = None
     removed_webauthn = 0
@@ -1976,6 +2018,16 @@ def reset_user_mfa(
             .filter_by(user_id=u.id)
             .delete(synchronize_session=False)
         )
+    db.commit()
+    _siem_record_events(db, "HEADEND", [{
+        "event_type": "mfa_reset",
+        "severity": "warning",
+        "username": current_user.username,
+        "source": "admin_users",
+        "category": "identity_and_access",
+        "raw_message": f"MFA nulstillet for {u.username} af {current_user.username}",
+        "occurred_at": now_utc().isoformat(),
+    }])
     db.commit()
     log.warning(
         "MFA nulstillet for %s af %s (clear_webauthn=%s, removed_webauthn=%s)",
@@ -11190,6 +11242,7 @@ def get_timelapse_frames(
     end: str,
     min_blur: float = 0,
     quality_only: bool = False,
+    _user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
     """Returner billeder i tidsinterval til timelapse preview."""
@@ -11270,7 +11323,7 @@ def get_timelapse_frames(
 
 
 @app.post("/api/timelapse/create")
-def create_timelapse(payload: dict, db: Session = Depends(get_db)):
+def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
     """Start timelapse video rendering job.
 
     payload: {
@@ -11477,7 +11530,7 @@ def _render_timelapse(job_id, image_paths, fps, resolution, codec,
 
 
 @app.get("/api/timelapse/status/{job_id}")
-def timelapse_status(job_id: str):
+def timelapse_status(job_id: str, _user=require_role("admin")):
     job = RENDER_JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job ikke fundet")
@@ -11485,7 +11538,7 @@ def timelapse_status(job_id: str):
 
 
 @app.get("/api/timelapse/download/{job_id}")
-def timelapse_download(job_id: str):
+def timelapse_download(job_id: str, _user=require_role("admin")):
     from fastapi.responses import FileResponse as _FR
     job = RENDER_JOBS.get(job_id)
     if not job or job.get("status") != "done":
@@ -11498,7 +11551,7 @@ def timelapse_download(job_id: str):
 
 
 @app.get("/api/timelapse/jobs")
-def list_timelapse_jobs():
+def list_timelapse_jobs(_user=require_role("admin")):
     return [{"job_id": k, **{kk: vv for kk, vv in v.items() if kk != "output_path"}}
             for k, v in RENDER_JOBS.items()]
 
@@ -11507,11 +11560,11 @@ def list_timelapse_jobs():
 
 
 # ── CMDB ──────────────────────────────────────────────────────────────────
-app.include_router(import_router, prefix="/api/import")
+app.include_router(import_router, prefix="/api/import", dependencies=[require_role("admin")])
 app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(itim_router, prefix="/api/itim")
-app.include_router(settings_router)
+app.include_router(settings_router, dependencies=[require_role("admin")])
 app.include_router(redaction_router)
 
 @app.post("/api/inventory/{device_id}")
@@ -12882,7 +12935,6 @@ def lab_store_result(
 #Peter import subprocess as _subprocess
 #Peter import threading as _threading
 import tempfile as _tempfile
-import shutil as _shutil
 from fastapi.responses import FileResponse as _FileResponse
 
 # ── AI INTEGRATION ──────────────────────────────────────────────────────────
@@ -14130,7 +14182,12 @@ def update_config_layer_override(
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/node/{device_id}/bootstrap-camera")
-def bootstrap_camera(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def bootstrap_camera(
+    device_id: str,
+    payload: dict,
+    _device_auth=Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
     """Auto-bootstrap et sibling kamera på samme node.
     
     Opretter et nyt device med ID: {device_id}-{camera_index}
@@ -14185,7 +14242,11 @@ def bootstrap_camera(device_id: str, payload: dict, db: Session = Depends(get_db
 
 
 @app.get("/api/node/{device_id}/cameras")
-def list_node_cameras(device_id: str, db: Session = Depends(get_db)):
+def list_node_cameras(
+    device_id: str,
+    _device_auth=Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
     """Returner alle kameraer på samme fysiske node (primary + siblings)."""
     primary = db.query(Device).filter_by(device_id=device_id).first()
     if not primary:
@@ -14210,7 +14271,12 @@ def list_node_cameras(device_id: str, db: Session = Depends(get_db)):
 
 
 @app.put("/api/node/{device_id}/multi-camera-config")
-def set_multi_camera_config(device_id: str, payload: dict, db: Session = Depends(get_db)):
+def set_multi_camera_config(
+    device_id: str,
+    payload: dict,
+    _device_auth=Depends(_verify_device_token),
+    db: Session = Depends(get_db),
+):
     """Gem multi-kamera konfiguration på primary device.
     
     payload: {
@@ -16916,9 +16982,12 @@ def change_user_password(
     return {"ok": True}
 
 
-from ai.vocabulary_routes import vocab_router; app.include_router(vocab_router)
+from ai.vocabulary_routes import vocab_read_router, vocab_router
+app.include_router(vocab_read_router, dependencies=[require_role("viewer")])
+app.include_router(vocab_router, dependencies=[require_role("super_admin", "admin")])
 
-from ai.review_api import review_router as _rev_router; app.include_router(_rev_router)
+from ai.review_api import review_router as _rev_router
+app.include_router(_rev_router, dependencies=[require_role("super_admin", "admin")])
 
 # Site-Wide Look Matching Configuration (F-012)
 from api.site_look_config_api import router as site_look_router
@@ -17277,6 +17346,74 @@ def _openwebui_user_role(user: User) -> str:
     return "admin" if user.role in ("super_admin", "admin") else "user"
 
 
+OPENWEBUI_TIMEOUT_KEY = "openwebui_play_timeout_minutes"
+OPENWEBUI_DEADLINE_KEY = "openwebui_play_deadline_utc"
+_openwebui_transition = {"state": None}
+_openwebui_transition_lock = _threading.Lock()
+
+
+def _openwebui_runtime_snapshot(db: Session, enforce_timeout: bool = True) -> dict:
+    from ai.settings_helper import get_setting, set_setting
+    from openwebui_runtime import service_status, stop_service, utc_now
+
+    try:
+        timeout_minutes = max(5, min(240, int(get_setting(db, OPENWEBUI_TIMEOUT_KEY, "30"))))
+    except (TypeError, ValueError):
+        timeout_minutes = 30
+    deadline_raw = get_setting(db, OPENWEBUI_DEADLINE_KEY, "").strip()
+    deadline = None
+    if deadline_raw:
+        try:
+            deadline = datetime.fromisoformat(deadline_raw.replace("Z", "+00:00"))
+        except ValueError:
+            deadline_raw = ""
+    expired = bool(deadline and deadline <= utc_now())
+    if enforce_timeout and expired:
+        with _openwebui_transition_lock:
+            _openwebui_transition["state"] = "stopping"
+        try:
+            stop_service()
+            set_setting(db, "openwebui_enabled", "false", "auto-timeout")
+            set_setting(db, OPENWEBUI_DEADLINE_KEY, "", "auto-timeout")
+            db.commit()
+            deadline_raw = ""
+        finally:
+            with _openwebui_transition_lock:
+                _openwebui_transition["state"] = None
+    runtime = service_status()
+    with _openwebui_transition_lock:
+        transition = _openwebui_transition["state"]
+    state = transition or ("running" if runtime["running"] else "stopped")
+    remaining_seconds = max(0, int((deadline - utc_now()).total_seconds())) if deadline and not expired else 0
+    return {
+        "state": state,
+        "running": runtime["running"],
+        "healthy": runtime["healthy"],
+        "pid": runtime["pid"],
+        "timeout_minutes": timeout_minutes,
+        "deadline_utc": deadline_raw or None,
+        "remaining_seconds": remaining_seconds,
+    }
+
+
+def _openwebui_timeout_loop() -> None:
+    while True:
+        db_gen = get_db()
+        db = next(db_gen)
+        try:
+            _openwebui_runtime_snapshot(db, enforce_timeout=True)
+        except Exception as exc:
+            log.warning("Open WebUI timeout-kontrol fejlede: %s", exc)
+        finally:
+            db_gen.close()
+        time.sleep(30)
+
+
+@app.on_event("startup")
+def _start_openwebui_timeout_control():
+    _threading.Thread(target=_openwebui_timeout_loop, name="openwebui-timeout", daemon=True).start()
+
+
 @app.get("/api/openwebui/access/status")
 def openwebui_access_status(
     request: Request,
@@ -17293,7 +17430,49 @@ def openwebui_access_status(
         "required_role": ["super_admin", "admin"],
         "expires_minutes": 30,
         "message": "Open WebUI kræver en MFA-verificeret TimeLapse Pro session.",
+        "runtime": _openwebui_runtime_snapshot(db),
     }
+
+
+@app.put("/api/openwebui/runtime")
+def set_openwebui_runtime(
+    body: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    from ai.settings_helper import set_setting
+    from openwebui_runtime import start_service, stop_service, utc_now
+
+    enabled = bool(body.get("enabled"))
+    try:
+        timeout_minutes = max(5, min(240, int(body.get("timeout_minutes", 30))))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Timeout skal være 5-240 minutter")
+    transition = "starting" if enabled else "stopping"
+    with _openwebui_transition_lock:
+        _openwebui_transition["state"] = transition
+    try:
+        if enabled:
+            start_service()
+            deadline = utc_now() + timedelta(minutes=timeout_minutes)
+            set_setting(db, OPENWEBUI_TIMEOUT_KEY, str(timeout_minutes), current_user.username)
+            set_setting(db, OPENWEBUI_DEADLINE_KEY, deadline.isoformat(), current_user.username)
+            set_setting(db, "openwebui_enabled", "true", current_user.username)
+            db.commit()
+        else:
+            stop_service()
+            set_setting(db, OPENWEBUI_TIMEOUT_KEY, str(timeout_minutes), current_user.username)
+            set_setting(db, OPENWEBUI_DEADLINE_KEY, "", current_user.username)
+            set_setting(db, "openwebui_enabled", "false", current_user.username)
+            db.commit()
+    except RuntimeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=503, detail=f"Open WebUI servicekontrol fejlede: {exc}")
+    finally:
+        with _openwebui_transition_lock:
+            _openwebui_transition["state"] = None
+    log.info("Open WebUI %s af %s; timeout=%d min", "startet" if enabled else "stoppet", current_user.username, timeout_minutes)
+    return _openwebui_runtime_snapshot(db, enforce_timeout=False)
 
 
 @app.post("/api/openwebui/access/issue")
@@ -17305,6 +17484,9 @@ def issue_openwebui_access(
     payload = _session_payload(request)
     if not _session_is_mfa_verified(payload):
         raise HTTPException(status_code=403, detail="Open WebUI kræver MFA-verificeret login")
+    runtime = _openwebui_runtime_snapshot(db)
+    if not runtime["running"]:
+        raise HTTPException(status_code=409, detail="Start Open WebUI før den åbnes")
     max_age = 30 * 60
     access_token = _create_token({
         "type": "openwebui_access",

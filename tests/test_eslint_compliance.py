@@ -24,11 +24,12 @@ import re
 from pathlib import Path
 from typing import Dict, List
 
-PROJECT_ROOT = "/Volumes/data-fast/peter-home/projects/timelapse-pro"
+PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
 UI_ROOT = os.path.join(PROJECT_ROOT, "timelapse-ui")
 
 # ESLint configuration paths
 ESLINTRC_PATHS = [
+    os.path.join(UI_ROOT, "eslint.config.js"),
     os.path.join(UI_ROOT, ".eslintrc.js"),
     os.path.join(UI_ROOT, ".eslintrc.json"),
     os.path.join(UI_ROOT, ".eslintrc"),
@@ -36,7 +37,7 @@ ESLINTRC_PATHS = [
 ]
 
 # Ratchet baseline file
-RATCHET_BASELINE = os.path.join(UI_ROOT, ".eslint-ratchet.json")
+RATCHET_BASELINE = os.path.join(UI_ROOT, ".eslint-baseline.json")
 
 
 def run_command(cmd: list, check: bool = True, cwd: str = None) -> subprocess.CompletedProcess:
@@ -213,8 +214,8 @@ def test_ratchet_baseline_valid():
         assert isinstance(baseline, dict), "Baseline skal være et objekt"
 
         # Check for issue count
-        if "issueCount" in baseline:
-            assert isinstance(baseline["issueCount"], int), "issueCount skal være et tal"
+        issue_count = baseline.get("issueCount", baseline.get("total"))
+        assert isinstance(issue_count, int), "Baseline skal indeholde et numerisk issue-tal"
 
         assert True
     except json.JSONDecodeError as e:
@@ -234,6 +235,7 @@ def test_ratchet_baseline_has_issues():
     has_issues = (
         "issues" in baseline or
         "issueCount" in baseline or
+        "total" in baseline or
         "results" in baseline
     )
 
@@ -256,7 +258,8 @@ def test_ratchet_baseline_date():
     has_date = (
         "date" in baseline or
         "timestamp" in baseline or
-        "createdAt" in baseline
+        "createdAt" in baseline or
+        "updated" in baseline
     )
 
     if not has_date:
@@ -595,7 +598,7 @@ def test_p1_06_issue_count_tracked():
     with open(RATCHET_BASELINE) as f:
         baseline = json.load(f)
 
-    issue_count = baseline.get("issueCount")
+    issue_count = baseline.get("issueCount", baseline.get("total"))
 
     if issue_count is None:
         pytest.skip("Issue count ikke i baseline")

@@ -175,14 +175,14 @@ def test_device_removed_from_cmdb_mid_rollout_does_not_prematurely_flip(db_sessi
     _make_device(db_session, "dev-3")
     update = _make_update(db_session, scope="site", scope_id="site-1")
 
-    main.report_update({"update_id": update.id, "status": "downloading", "device_id": "dev-2"}, db=db_session)
+    main.report_update({"update_id": update.id, "status": "downloading", "device_id": "dev-2"}, authenticated_device_id="dev-2", db=db_session)
 
     # dev-2 fjernes fysisk fra CMDB (fx decommission) mens rollout stadig er i gang.
     db_session.delete(dev2)
     db_session.commit()
 
-    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-1"}, db=db_session)
-    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-3"}, db=db_session)
+    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-1"}, authenticated_device_id="dev-1", db=db_session)
+    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-3"}, authenticated_device_id="dev-3", db=db_session)
 
     db_session.refresh(update)
     # KENDT RISIKO: _resolve_update_targets() ser nu kun 2 devices (dev-1, dev-3), begge

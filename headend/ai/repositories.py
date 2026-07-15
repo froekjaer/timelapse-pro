@@ -536,7 +536,7 @@ class TagRepository:
     def _clean_tag(tag: str) -> str:
         return re.sub(r"_+", "_", tag.lower().strip().replace(" ", "_").replace("-", "_")).strip("_")
 
-    def _normalize_tag_for_similarity(tag: str) -> str:
+    def _normalize_tag_for_similarity(self, tag: str) -> str:
         normalized = unicodedata.normalize("NFKD", tag.lower())
         normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
         normalized = re.sub(r"[^a-z0-9_]+", "_", normalized)

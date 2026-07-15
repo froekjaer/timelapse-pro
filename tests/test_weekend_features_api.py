@@ -31,6 +31,8 @@ from typing import Any
 import pytest
 import requests
 
+pytestmark = pytest.mark.integration
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Configuration

@@ -11,7 +11,7 @@ Tests for per-target deployment configuration:
 
 Kør: pytest tests/test_per_target_deployment.py -v
 
-Marker: integration (kræver adgang til target config filer)
+Disse er serverløse kontrakttests og kører i CI.
 """
 import os
 import pytest
@@ -20,7 +20,8 @@ import subprocess
 from typing import Dict, Any
 from pathlib import Path
 
-TARGETS_DIR = "/Volumes/data-fast/peter-home/projects/timelapse-pro/headend/tools/hardware"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TARGETS_DIR = str(PROJECT_ROOT / "headend" / "tools" / "hardware")
 
 
 def load_target_yaml(target_name: str) -> Dict[str, Any]:
@@ -50,13 +51,11 @@ def list_all_targets() -> list:
 
 # ── 1. Target Files Exist ────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_targets_directory_exists():
     """Targets directory skal eksistere."""
     assert os.path.exists(TARGETS_DIR), f"Targets directory ikke fundet: {TARGETS_DIR}"
 
 
-@pytest.mark.integration
 def test_at_least_one_target_exists():
     """Mindst én target skal eksistere."""
     targets = list_all_targets()
@@ -71,7 +70,6 @@ def test_at_least_one_target_exists():
 KNOWN_TARGETS = ["rpi4", "rpi5", "jetson-orin-nano", "orangepi4pro", "orangepi-pc-plus"]
 
 
-@pytest.mark.integration
 def test_rpi4_target_exists():
     """Raspberry Pi 4 target skal eksistere."""
     target = load_target_yaml("rpi4")
@@ -81,7 +79,6 @@ def test_rpi4_target_exists():
     assert target.get("id") == "rpi4"
 
 
-@pytest.mark.integration
 def test_rpi5_target_exists():
     """Raspberry Pi 5 target skal eksistere."""
     target = load_target_yaml("rpi5")
@@ -91,7 +88,6 @@ def test_rpi5_target_exists():
     assert target.get("id") == "rpi5"
 
 
-@pytest.mark.integration
 def test_jetson_orin_nano_target_exists():
     """Jetson Orin Nano target skal eksistere."""
     target = load_target_yaml("jetson-orin-nano")
@@ -103,7 +99,6 @@ def test_jetson_orin_nano_target_exists():
 
 # ── 3. Target Structure ────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_yaml_has_required_fields():
     """Target YAML skal have påkrævede felter."""
     targets = list_all_targets()
@@ -119,7 +114,6 @@ def test_target_yaml_has_required_fields():
                 assert field in target, f"{target_name} mangler felt: {field}"
 
 
-@pytest.mark.integration
 def test_target_id_matches_directory():
     """Target ID skal matche directory navn."""
     targets = list_all_targets()
@@ -134,7 +128,6 @@ def test_target_id_matches_directory():
 
 # ── 4. Architecture Fields ───────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_arch_is_valid():
     """Target arch skal være gyldig."""
     valid_archs = ["arm64", "amd64", "armv7", "aarch64", "armhf"]
@@ -150,7 +143,6 @@ def test_target_arch_is_valid():
             assert arch in valid_archs, f"{target_name} har ugyldig arch: {arch}"
 
 
-@pytest.mark.integration
 def test_target_docker_platform_is_valid():
     """Target docker_platform skal være gyldig."""
     valid_platforms = ["linux/arm64", "linux/amd64", "linux/arm/v7"]
@@ -168,7 +160,6 @@ def test_target_docker_platform_is_valid():
 
 # ── 5. HAL Configuration ────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_hal_class_exists():
     """Target skal have hal_class."""
     targets = list_all_targets()
@@ -183,7 +174,6 @@ def test_target_hal_class_exists():
 
 # ── 6. Base Image Configuration ─────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_has_base_image_config():
     """Target skal have base_image konfiguration."""
     targets = list_all_targets()
@@ -204,7 +194,6 @@ def test_target_has_base_image_config():
 
 # ── 7. Installation Paths ────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_agent_install_paths():
     """Target skal have agent_install paths."""
     targets = list_all_targets()
@@ -225,7 +214,6 @@ def test_target_agent_install_paths():
                 assert path in agent_install, f"{target_name} mangler path: {path}"
 
 
-@pytest.mark.integration
 def test_agent_install_paths_are_absolute():
     """Agent install paths skal være absolute."""
     targets = list_all_targets()
@@ -244,7 +232,6 @@ def test_agent_install_paths_are_absolute():
 
 # ── 8. Device Tree Detection ────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_has_device_tree_patterns():
     """Target skal have device_tree_model_patterns."""
     targets = list_all_targets()
@@ -263,7 +250,6 @@ def test_target_has_device_tree_patterns():
 
 # ── 9. Boot Method ─────────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_has_boot_method():
     """Target skal have boot_method."""
     valid_boot_methods = ["firmware", "uboot", "jetpack", "efi", "uboot_spiflash"]
@@ -281,7 +267,6 @@ def test_target_has_boot_method():
 
 # ── 10. WiFi Configuration ────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_rpi_targets_use_netplan():
     """RPI targets skal bruge netplan til WiFi."""
     for target_name in ["rpi4", "rpi5"]:
@@ -294,7 +279,6 @@ def test_rpi_targets_use_netplan():
 
 # ── 11. Capabilities ────────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_jetson_has_cuda_capability():
     """Jetson target skal have CUDA capability."""
     target = load_target_yaml("jetson-orin-nano")
@@ -308,7 +292,6 @@ def test_jetson_has_cuda_capability():
     assert capabilities.get("cuda") is True, "Jetson skal have CUDA capability"
 
 
-@pytest.mark.integration
 def test_rpi5_has_hailo_capability():
     """RPI5 target skal have Hailo capability."""
     target = load_target_yaml("rpi5")
@@ -323,7 +306,6 @@ def test_rpi5_has_hailo_capability():
 
 # ── 12. Docker Base Image ───────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_rpi_targets_have_docker_base():
     """RPI targets skal have docker_base."""
     for target_name in ["rpi4", "rpi5"]:
@@ -338,7 +320,6 @@ def test_rpi_targets_have_docker_base():
 
 # ── 13. Extra Packages ─────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_can_have_extra_packages():
     """Target kan have extra_packages."""
     targets = list_all_targets()
@@ -355,7 +336,6 @@ def test_target_can_have_extra_packages():
 
 # ── 14. Notes Field ────────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_can_have_notes():
     """Target kan have notes felt."""
     targets = list_all_targets()
@@ -373,7 +353,6 @@ def test_target_can_have_notes():
 
 # ── 15. Service Name Consistency ───────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_agent_install_service_name_consistent():
     """Agent install service_name skal være konsistent."""
     targets = list_all_targets()
@@ -393,7 +372,6 @@ def test_agent_install_service_name_consistent():
 
 # ── 16. Target YAML Validity ───────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_all_target_yamls_are_valid():
     """Alle target YAML filer skal være gyldige."""
     targets = list_all_targets()
@@ -413,7 +391,6 @@ def test_all_target_yamls_are_valid():
 
 # ── 17. Target-Specific Notes ──────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_jetson_notes_mention_jetpack():
     """Jetson notes skal nævne JetPack."""
     target = load_target_yaml("jetson-orin-nano")
@@ -428,7 +405,6 @@ def test_jetson_notes_mention_jetpack():
 
 # ── 18. CSI Lanes Configuration ────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_hardware_targets_can_have_csi_lanes():
     """Targets kan have csi_lanes konfiguration."""
     targets = list_all_targets()
@@ -448,7 +424,6 @@ def test_hardware_targets_can_have_csi_lanes():
 
 # ── 19. Boot Partition Configuration ─────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_targets_with_base_image_have_partition_info():
     """Targets med base_image skal have partition info."""
     targets = list_all_targets()
@@ -467,7 +442,6 @@ def test_targets_with_base_image_have_partition_info():
 
 # ── 20. Display Name ────────────────────────────────────────────────────────────
 
-@pytest.mark.integration
 def test_target_display_name_exists():
     """Target skal have display_name."""
     targets = list_all_targets()

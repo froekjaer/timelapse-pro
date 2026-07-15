@@ -23,10 +23,11 @@ import plistlib
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
-PROJECT_ROOT = "/Volumes/data-fast/peter-home/projects/timelapse-pro"
+PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
 
 # LaunchAgent/Daemon paths
 LAUNCH_AGENTS = [
+    "/Library/LaunchDaemons/dk.froekjaer.timelapse-node-agent.plist",
     "/Library/LaunchDaemons/timelapse-node-agent.plist",  # System-wide (root)
     "/Library/LaunchAgents/timelapse-node-agent.plist",   # System-wide (user)
     os.path.expanduser("~/Library/LaunchAgents/timelapse-node-agent.plist"),  # User-specific
@@ -34,6 +35,7 @@ LAUNCH_AGENTS = [
 
 # Node-agent binary paths
 NODE_AGENT_PATHS = [
+    "/opt/timelapse-node-agent/agent.py",
     "/opt/timelapse/node-agent/timelapse-agent",
     "/opt/timelapse/agent/timelapse-agent",
     "/usr/local/bin/timelapse-agent",
@@ -356,7 +358,7 @@ def test_node_agent_registered():
 def test_node_agent_running():
     """Node-agent skal køre."""
     # Check if process is running
-    result = run_command(["pgrep", "-f", "timelapse-agent"], check=False)
+    result = run_command(["pgrep", "-f", "/opt/timelapse-node-agent/agent.py"], check=False)
 
     if result.returncode != 0:
         pytest.skip("Node-agent kører ikke - P0-08 ikke opfyldt")
@@ -367,7 +369,7 @@ def test_node_agent_running():
 @pytest.mark.integration
 def test_node_agent_pid():
     """Node-agent skal have gyldig PID."""
-    result = run_command(["pgrep", "-f", "timelapse-agent"], check=False)
+    result = run_command(["pgrep", "-f", "/opt/timelapse-node-agent/agent.py"], check=False)
 
     if result.returncode != 0:
         pytest.skip("Node-agent kører ikke")
@@ -539,7 +541,7 @@ def test_p0_08_completion():
     """
 
     # Check if agent is running
-    result = run_command(["pgrep", "-f", "timelapse-agent"], check=False)
+    result = run_command(["pgrep", "-f", "/opt/timelapse-node-agent/agent.py"], check=False)
 
     if result.returncode != 0:
         pytest.fail("Node-agent kører ikke - P0-08 ikke opfyldt")
@@ -650,6 +652,7 @@ def test_historical_note_acknowledged():
 def test_node_agent_deploy_script_exists():
     """Deploy script til node-agent skal eksistere."""
     deploy_scripts = [
+        os.path.join(PROJECT_ROOT, "node-agent", "install", "macos.sh"),
         os.path.join(PROJECT_ROOT, "deploy", "scripts", "install-node-agent.sh"),
         os.path.join(PROJECT_ROOT, "deploy", "scripts", "setup-node-agent.sh"),
         os.path.join(PROJECT_ROOT, "deploy", "node-agent-install.sh"),

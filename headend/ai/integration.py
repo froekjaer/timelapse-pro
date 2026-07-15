@@ -117,7 +117,7 @@ def update_sidecar_with_ai(image_path: Path, ai_result: dict) -> bool:
 # til selv store batch-kørsler uden at risikere ubegrænset hukommelsesforbrug.
 _analysis_queue: queue.Queue = queue.Queue(maxsize=5000)
 _worker_thread:  Optional[threading.Thread] = None
-OLLAMA_PLAY_MODE_KEY = "peter-vil-gerne-lege-med-ollama"
+OLLAMA_PLAY_MODE_KEY = "openwebui_enabled"
 _last_play_mode_log = 0.0
 _ollama_analysis_lock = threading.Lock()
 

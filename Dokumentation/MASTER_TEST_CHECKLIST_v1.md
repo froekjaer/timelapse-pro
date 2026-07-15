@@ -1,9 +1,11 @@
 # TimeLapse Pro — Master Test Checklist
 
-**Dato:** 2026-07-12
-**Version:** 1.1
+**Dato:** 2026-07-15
+**Version:** 1.2
 **Scope:** Komplet system audit for at fange alle småfejl og mangler
-**Opdateret:** Tilføjet F-012, Drift Detection, M-05 og LAB Force Stop tests
+**Opdateret:** v1.2 (2026-07-15, Claude/Cowork): tilføjet §0.5 (unit vs. integration-split — hovedårsag til "36 fejlende tests") og §9 (manglende tests defineret, prioriteret). v1.1: F-012, Drift Detection, M-05, LAB Force Stop.
+
+> **Læs §0.5 og §9 først hvis du skal arbejde med tests.** De forklarer hvorfor CI kun kører 3 filer, hvorfor ~20 tests "fejler" uden at koden er i stykker, og definerer præcist hvilke tests der mangler.
 
 ---
 
@@ -43,6 +45,33 @@
 - Edge tools
 - Performance
 - Edge cases
+
+---
+
+## 0.5 TESTARKITEKTUR — unit vs. integration (NY, 2026-07-15, kritisk)
+
+**Dette er hovedforklaringen på "36 fejlende tests" i HANDOVER_LOG (2026-07-13).** De fejler ikke fordi koden er i stykker — de er **live-integrationstests der kræver en kørende headend** på `127.0.0.1:8000` med seedede testbrugere.
+
+### Fakta (verificeret 2026-07-15)
+
+| Kategori | Antal filer (`tests/`) | Kører i CI/sandbox uden server? |
+|---|---|---|
+| **Live-integration** (kalder `api()` mod `:8000`, se `conftest.py`) | ~20 af 38 | ❌ Nej — kræver kørende headend + seedet DB |
+| **Unit/kontrakt** (ingen server) | ~18 af 38 | ✅ Ja |
+| `headend/tests/` (unit/kontrakt) | 11 | ✅ Ja |
+| Kræver `paramiko`/edge-deps | 5 | ⚠️ Kun hvis deps installeret |
+
+- `tests/conftest.py` definerer `TEST_CREDENTIALS` (admin/super_admin/viewer/operator med faste passwords) og `BASE_URL = TIMELAPSE_TEST_BASE_URL` (default `http://127.0.0.1:8000`). Disse tests logger reelt ind mod en levende server — uden den giver de `ConnectionError`, ikke en assertion-fejl.
+- `.github/workflows/ci.yml` kører derfor **kun 3 filer** (`test_agent_integrity.py`, `test_headend_endpoints.py`, smoke) — resten ville altid være røde i en server-løs runner.
+- **Assurance-hul (VPEN-2026-013):** en reel regression i unit-testbar kode (fx et fremtidigt uautentificeret endpoint, jf. R22) fanges IKKE af CI i dag.
+
+### Anbefalet testarkitektur (skal besluttes)
+
+1. **Markér** live-integrationstests: `@pytest.mark.integration`, og tilføj en autouse-fixture i `conftest.py` der `pytest.skip()`'er hvis `BASE_URL` ikke svarer (så de bliver "skipped", ikke "failed", uden server).
+2. **Unit-subset i CI:** kør `pytest -m "not integration"` som blokerende gate mod en kendt-grøn baseline (ratchet — antal fejl må ikke stige, jf. H-02 ESLint-mønsteret).
+3. **Integrationsjob (ikke-blokerende):** kør `pytest -m integration` mod `rd`-miljøet i et separat job, så resultater ses uden at blokere merge.
+4. **Triager** de reelt knækkede unit-tests (dem der fejler MED en server, eller uden at være integration) enkeltvis: fix, `xfail` med issue-reference, eller slet. Ingen test må stå rød uden kategori.
+5. **Ryd `__pycache__`** ud af Git (fylder testlisten med støj) og tilføj `paramiko`/`cryptography` til `requirements-dev.txt` så edge-SFTP-tests kan collectes.
 
 ---
 
@@ -563,3 +592,149 @@
 
 *Signed off: Peter (TimeLapse Pro) — 2026-07-08*
 *Updated: 2026-07-12 (Claude — tilføjet F-012, drift detection, M-05 tests)*
+*Updated: 2026-07-15 (Claude/Cowork — §0.5 testarkitektur + §9 manglende tests defineret)*
+
+---
+
+## 10. CODEX BASELINE OG IMPLEMENTEREDE TESTS — 2026-07-15
+
+### 10.1 Reproducerbar baseline
+
+Codex etablerede et rent Python 3.12-testmiljø med `requirements-dev.txt`,
+`headend/requirements.txt` og `edge/requirements.txt`. Med eksplicit SQLite-test-DB,
+samlet `PYTHONPATH` og `--import-mode=importlib` kan hele inventaret nu collectes uden
+at ramme live PostgreSQL eller en delt Headend.
+
+| Måling | Resultat |
+|---|---:|
+| Tests collected | **1.023** |
+| Serverløse unit/contract valgt | **480** |
+| Bestået | **476** |
+| Skipped | **4** (auth-afhængige live smoke-kald) |
+| Fejlet | **0** |
+| Deselecterede integration/hardware | **543** |
+
+Kommandoen er nu CI-gate i `.github/workflows/ci.yml`. CI installerer alle tre
+dependency-sæt og kører:
+
+```bash
+DATABASE_URL=sqlite:////tmp/timelapse-ci.db \
+PYTHONPATH="$PWD:$PWD/headend:$PWD/edge" \
+pytest tests headend/tests edge/ai/tests \
+  --import-mode=importlib -m "not integration" -p no:randomly -q
+```
+
+### 10.2 Implementeret fra §9
+
+| ID/område | Status | Evidens |
+|---|---|---|
+| T-SEC-01 route-auth sweep | **PASS** | `headend/tests/test_route_auth_coverage.py`; eksplicit allowlist med rationale |
+| T-SEC-02 AI admin-flader | **PASS (contract)** | Mutation/review kræver role dependency; `tests/test_ai_admin_security_contract.py` |
+| T-SEC-03 MFA disable/reset step-up | **PASS** | Frisk password + TOTP; kun super-admin må ændre andre; særskilte `mfa_disabled`/`mfa_reset` SIEM-events |
+| T-SEC-04 CORS fail-fast | **PASS** | staging/prod kræver eksplicit `ALLOWED_ORIGIN` |
+| T-AI-01 tag similarity | **PASS** | Reel repository-metode med fake DB, ikke kun tekstscan |
+| T-AI-02 translations viewer | **PASS (contract)** | Separat viewer-router; mutationer forbliver admin |
+| T-UPD-01 multi-target rollup | **PASS** | Fire rollup-tests opdateret til device-auth-kontrakten |
+| SIEM RAM anti-flap | **PASS** | Enkelt sample kan ikke længere opfylde 60 sek.; tre tests |
+| Open WebUI/Ollama lifecycle | **PASS (unit)** | Status/PID, `keep_alive=0`, Ollama-daemon stoppes ikke |
+| LAB `_lab_tick` state machine | **PASS (unit)** | Retry, powercycle, exhausted retries, disable-cleanup og `set_param` rapportering |
+| Arkitektur-ratchet | **PASS** | `main.py` må ikke vokse over 18.483 linjer eller 235 direkte routes |
+| Hardware target-profiler | **PASS** | 27 tidligere fejlklassificerede tests er serverløse og nu med i CI |
+
+Route-auditten fandt og rettede samtidig ubeskyttede flader, som de tidligere
+tekst-/eksistenstests ikke fangede: `/api/import/*`, `/api/timelapse/*`,
+`/api/settings*` og tre `/api/node/{device_id}/*`-ruter. Import, timelapse og
+settings er nu rollebeskyttet; node-ruter bruger Edge device-auth.
+
+### 10.3 Testklassifikation rettet
+
+`tests/test_api_integration.py` og `tests/test_weekend_features_api.py` var live
+API-suiter uden modulmarkør og blev derfor fejlagtigt kørt som unit-tests. De er
+nu markeret `integration`. Stale update-rollup-tests sender nu det
+`authenticated_device_id`, som produktionskontrakten kræver; sikkerheden blev
+ikke omgået for at få tests grønne.
+
+### 10.4 Fortsat åbent
+
+Følgende er ikke dækket af den grønne serverløse baseline og må ikke rapporteres
+som bestået:
+
+- De 543 integration/hardware-tests skal yderligere opdeles i isoleret Headend
+  integration og serialiseret R&D Edge hardware-E2E.
+- T-EDGE-01 fuld `_lab_tick`-tilstandsmaskine og capture-cycle med mocks.
+- Backup **restore execution** på frisk/ephemeral installation; dokument-/filtests
+  er ikke restore-evidens.
+- Thumbnail idempotens/performance ved stor backlog med rigtige billedfiler.
+- Playwright/Vitest for login, RBAC, updates, LAB og Open WebUI UI-flows.
+- DAST, ekstern port/TLS-scanning og tenant-isolation mod et provisioneret,
+  destruerbart testmiljø.
+- macOS node-agenten er runtime-verificeret aktiv, men kører som root. Den stale
+  z.ai-test er rettet til korrekt plist/procesnavn og afslører nu den reelle
+  least-privilege-afvigelse. Collector-privilegier skal opdeles eller begrænses,
+  før LaunchDaemon-identiteten ændres.
+
+### 10.5 Supplerende QA
+
+- Alle trackede Pythonfiler: syntax PASS.
+- Alle trackede shellscripts: `bash -n` PASS.
+- UI TypeScript/Vite production build: PASS.
+- ESLint ratchet: PASS, uændret baseline 222 (201 fejl, 21 advarsler).
+- Kendt gæld: FastAPI `on_event`- og Pydantic v1-config warnings samt stor UI-chunk.
+
+---
+
+## 9. MANGLENDE TESTS — DEFINERET (NY, 2026-07-15)
+
+Konkret, prioriteret liste over tests der mangler, med formål og hvor de hører hjemme. Rækkefølgen følger risiko (jf. `RISK_ASSESSMENT_v11_ADDENDUM_2026-07-15.md`). Alle nye tests bør være **unit/kontrakt** (server-løse) med mindre andet er noteret, så de kan gate i CI.
+
+### 9.1 P0 — Sikkerheds-assurance (lukker fejlklasser, ikke kun enkeltfund)
+
+| ID | Test | Formål | Fil (forslag) |
+|----|------|--------|---------------|
+| **T-SEC-01** | **Route-auth sweep** (K1) | Iterér `app.routes`; fejl hvis et endpoint mangler auth-dependency. Allowlist: `/api/health`, `/api/auth/login`, `/api/auth/verify-mfa`, enrollment, `/api/ai/vocabulary/translations` (efter R24). **Havde fanget SEC-001, R15 og R22.** | `headend/tests/test_route_auth_coverage.py` |
+| **T-SEC-02** | vocabulary/review auth-regression | Bekræft at `/api/ai/vocabulary/*` (muterende) og `/api/review/escalation/approve` giver 401/403 uden admin+MFA-session (regressionsvagt for R22) | `headend/tests/test_ai_router_auth.py` |
+| **T-SEC-03** | disable-mfa step-up (R25) | Bekræft at `POST /api/auth/disable-mfa` kræver MFA-verificeret session; at `admin` ikke kan nulstille `super_admin`s MFA; at der udstedes SIEM-event | `headend/tests/test_disable_mfa_stepup.py` |
+| **T-SEC-04** | CORS/ALLOWED_ORIGIN fail-fast (VPEN-012) | Bekræft at appen nægter at starte i `prod`/`staging` uden eksplicit `ALLOWED_ORIGIN` | `headend/tests/test_cors_config.py` |
+
+### 9.2 P1 — Korrekthed & regressioner fundet i review
+
+| ID | Test | Formål | Fil (forslag) |
+|----|------|--------|---------------|
+| **T-AI-01** | `get_similar_tag_suggestions` (R23) | Regressionsvagt: kald metoden mod in-memory DB og bekræft at den returnerer grupper uden `TypeError` (buggen der crashede /similar) | `headend/tests/test_tag_repository.py` |
+| **T-AI-02** | `/translations` viewer-adgang (R24) | Bekræft at read-only translations-endpoint er tilgængeligt for `viewer` (kunde-UI via `useTagLabels.ts`) efter R24-fix | `headend/tests/test_ai_router_auth.py` |
+| **T-UPD-01** | Multi-target rollout-flip | Kontrakttest (server-løs) af `report_update`-rollup: 2+ devices, `scope=site` → status flipper korrekt til deployed/rolled_back (udbygger `test_report_update_rollup.py`; live-varianten er fortsat P1 i R06) | `headend/tests/` |
+| **T-EDGE-01** | `_lab_tick` tilstandsmaskine | Enhedstest af LAB-tick uden hardware (mock driver/api): connect-retry → powercycle → critical; frame-push health-check; disable-exit. Fanger regressioner i den 456-linjers funktion | `tests/test_lab_tick.py` |
+
+### 9.3 P1 — Dækning af utestede kernemoduler (fra §1-tabellernes "Gaps")
+
+- **User CRUD** (`PUT/DELETE /api/admin/users/*`) — server-løs kontrakttest med mock DB.
+- **Device CRUD + decommission** (`POST/PUT/DELETE /api/admin/devices/*`) — inkl. decommission-midt-i-rollout-gap'et (R06-detalje).
+- **Camera CRUD + config-validering** (`POST/DELETE /api/admin/cameras/*`).
+- **Ollama-service + AI-fallback** (`ai/ollama_service.py`, `ai/integration.py`, `ai/model_results.py`) — mock HTTP mod `:11434`.
+- **SIEM event-persistens** (`siem.py`) — bekræft at security-events (login-fejl, mfa_disabled, debug_mode, agent-lockdown) faktisk persisteres og kan hentes.
+
+### 9.4 P2 — Edge-agent (i dag ~5-8% dækning, systemets svageste område)
+
+- Capture-cyklus (`_do_capture_cycle`, 210 linjer) med mock kamera/relay.
+- Store-and-forward buffer (`edge/capture/buffer.py`) — fyld/tøm, disk-fuld, genstart-persistens.
+- Update-apply + rollback (`_run_artifact_app_update`/`_run_artifact_os_update`) — signaturverifikation, GPG-fingerprint-match, rollback ved fejl.
+- SFTP-upload (`edge/upload/sftp.py`) — kræver `paramiko` i dev-deps (mangler i dag → `test_edge_sftp_config.py` kan ikke collectes).
+- HMAC request-signering (`headend_client.py`) — freshness/afvisning af stale credentials.
+
+### 9.5 P2 — UI (i dag 0% automatiseret)
+
+- Vitest/Jest-opsætning + smoke-render af de 4 største sider (Backup 1.980, Updates 1.780, Device 1.681, Lab 1.532 linjer).
+- `useTagLabels`-hook: fald tilbage til engelske nøgler ved 403 (relateret R24).
+- Typet API-klient genereret fra FastAPI's OpenAPI-skema (fjerner håndskrevne fetch-fejl; se QA-review §4.3).
+
+### 9.6 Hygiejne (blokkerer ren testkørsel)
+
+- Fjern `tests/__pycache__` fra Git.
+- Tilføj `paramiko`, `cryptography` til `requirements-dev.txt`.
+- `test_api_integration.py::test_headend_reachable` bør skippes (ikke fejles) uden server (§0.5 pkt. 1).
+
+---
+
+### Korrektion til §7 coverage-tal (2026-07-15)
+
+Tallet "26% / 51 testfiler" bør læses med §0.5 in mente: en stor del af `tests/`-filerne er live-integration og bidrager **0% assurance i CI** i deres nuværende form. Reel CI-gate-dækning i dag = 3 filer. Efter T-SEC-01…04 + unit/integration-split vil den **blokerende** dækning stige markant uden at der skrives hundredvis af nye tests — de fleste eksisterende unit-/kontrakttests skal bare gøres CI-kørbare og gated.

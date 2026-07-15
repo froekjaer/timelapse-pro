@@ -569,17 +569,25 @@ def _latest_value(db: Session, target_id: int, metric: str) -> Optional[float]:
 
 def _breach_sustained(db: Session, target_id: int, metric: str, op, threshold: float,
                       for_seconds: int) -> bool:
-    """True hvis ALLE rå-samples i de seneste for_seconds bryder tærsklen (anti-flap)."""
-    since = _now() - timedelta(seconds=max(for_seconds, 1))
+    """True only when the latest uninterrupted breach has lasted for_seconds."""
+    now = _now()
     rows = db.execute(text("""
-        SELECT value FROM itim_metric_samples
-        WHERE target_id=:t AND metric=:m AND rollup='raw' AND ts >= :since
-        ORDER BY ts DESC
-    """), {"t": target_id, "m": metric, "since": since}).fetchall()
-    vals = [float(r[0]) for r in rows if r[0] is not None]
-    if not vals:
+        SELECT value, ts FROM itim_metric_samples
+        WHERE target_id=:t AND metric=:m AND rollup='raw'
+        ORDER BY ts DESC LIMIT 100
+    """), {"t": target_id, "m": metric}).fetchall()
+    if not rows:
         return False
-    return all(op(v, threshold) for v in vals)
+    oldest_breach_at = None
+    for value, recorded_at in rows:
+        if value is None or not op(float(value), threshold):
+            break
+        if recorded_at.tzinfo is None:
+            recorded_at = recorded_at.replace(tzinfo=timezone.utc)
+        oldest_breach_at = recorded_at
+    if oldest_breach_at is None:
+        return False
+    return (now - oldest_breach_at).total_seconds() >= max(for_seconds, 1)
 
 
 def evaluate_alerts(db: Session) -> None:

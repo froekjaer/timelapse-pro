@@ -84,15 +84,15 @@ def test_multi_target_site_rollout_waits_for_all_devices(db_session):
     _make_device(db_session, "dev-3")
     update = _make_update(db_session, scope="site", scope_id="site-1")
 
-    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-1"}, db=db_session)
-    main.report_update({"update_id": update.id, "status": "downloading", "device_id": "dev-2"}, db=db_session)
+    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-1"}, authenticated_device_id="dev-1", db=db_session)
+    main.report_update({"update_id": update.id, "status": "downloading", "device_id": "dev-2"}, authenticated_device_id="dev-2", db=db_session)
 
     db_session.refresh(update)
     assert update.status == "approved", "status skal IKKE flippe før alle targets er terminale"
     assert update.deployed_count == 1
 
-    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-2"}, db=db_session)
-    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-3"}, db=db_session)
+    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-2"}, authenticated_device_id="dev-2", db=db_session)
+    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-3"}, authenticated_device_id="dev-3", db=db_session)
 
     db_session.refresh(update)
     assert update.status == "deployed"
@@ -105,7 +105,7 @@ def test_single_device_scope_flips_immediately(db_session):
     _make_device(db_session, "dev-1")
     update = _make_update(db_session, scope="device", scope_id="dev-1")
 
-    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-1"}, db=db_session)
+    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-1"}, authenticated_device_id="dev-1", db=db_session)
 
     db_session.refresh(update)
     assert update.status == "deployed"
@@ -118,8 +118,8 @@ def test_mixed_outcome_across_targets_is_conservative_rollback(db_session):
     _make_device(db_session, "dev-2")
     update = _make_update(db_session, scope="global", scope_id=None)
 
-    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-1"}, db=db_session)
-    main.report_update({"update_id": update.id, "status": "rolled_back", "device_id": "dev-2"}, db=db_session)
+    main.report_update({"update_id": update.id, "status": "deployed", "device_id": "dev-1"}, authenticated_device_id="dev-1", db=db_session)
+    main.report_update({"update_id": update.id, "status": "rolled_back", "device_id": "dev-2"}, authenticated_device_id="dev-2", db=db_session)
 
     db_session.refresh(update)
     assert update.status == "rolled_back"
@@ -133,7 +133,7 @@ def test_progress_status_never_flips_global_status(db_session):
     update = _make_update(db_session, scope="site", scope_id="site-1")
 
     for status in ("queued", "downloading", "verifying", "backing_up", "installing"):
-        main.report_update({"update_id": update.id, "status": status, "device_id": "dev-1"}, db=db_session)
+        main.report_update({"update_id": update.id, "status": status, "device_id": "dev-1"}, authenticated_device_id="dev-1", db=db_session)
         db_session.refresh(update)
         assert update.status == "approved"
         assert update.deployed_count == 0

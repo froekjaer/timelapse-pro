@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dk.froekjaer.open-webui</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/peter/projects/openwebui-env/bin/open-webui</string>
+    <string>serve</string><string>--host</string><string>127.0.0.1</string>
+    <string>--port</string><string>8080</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/peter/projects/openwebui-env</string>
+  <key>RunAtLoad</key><false/>
+  <key>KeepAlive</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/peter</string>
+    <key>PATH</key><string>/Users/peter/projects/openwebui-env/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>DATA_DIR</key><string>/Volumes/data-fast/peter-home/open-webui-data</string>
+    <key>WEBUI_SECRET_KEY_FILE</key><string>/Volumes/data-fast/peter-home/open-webui-data/.webui_secret_key</string>
+    <key>OLLAMA_BASE_URL</key><string>http://127.0.0.1:11434</string>
+    <key>CORS_ALLOW_ORIGIN</key><string>https://openwebui.froekjaer.dk;https://timelapse.froekjaer.dk</string>
+    <key>WEBUI_AUTH_TRUSTED_EMAIL_HEADER</key><string>X-Timelapse-User-Email</string>
+    <key>WEBUI_AUTH_TRUSTED_NAME_HEADER</key><string>X-Timelapse-User-Name</string>
+    <key>WEBUI_AUTH_TRUSTED_ROLE_HEADER</key><string>X-Timelapse-User-Role</string>
+    <key>WEBUI_AUTH_COOKIE_SAME_SITE</key><string>lax</string>
+    <key>WEBUI_SESSION_COOKIE_SAME_SITE</key><string>lax</string>
+    <key>WEBUI_SESSION_COOKIE_SECURE</key><string>true</string>
+    <key>WEBUI_AUTH_SIGNOUT_REDIRECT_URL</key><string>https://timelapse.froekjaer.dk/openwebui</string>
+    <key>TOOL_SERVER_CONNECTIONS</key><string>[{"url":"http://127.0.0.1:8000","path":"/api/openwebui/tools/openapi.json","auth_type":"none","config":{"enable":true},"info":{"id":"timelapse-pro","name":"TimeLapse Pro","description":"Read-only drift, compliance, update and AI Ops context"}}]</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/peter/Library/Logs/open-webui.log</string>
+  <key>StandardErrorPath</key><string>/Users/peter/Library/Logs/open-webui.log</string>
+</dict>
+</plist>

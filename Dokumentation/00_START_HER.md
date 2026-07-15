@@ -23,6 +23,20 @@
 
 **Status i én sætning:** LAB/pre-production-klar; **ikke** Internet-facing production-klar. Største blockere: port-/proxy-migration, backup+restore-evidens, GDPR (DPIA/retention/DPA), frisk CMDB/node-agent, MFA + stale credential-cleanup, Nikon Z30 LAB/fokus/video.
 
+**Vigtigt om UI-drift (opdateret 2026-07-14):**
+
+- Nginx på `timelapse.froekjaer.dk` serverer aktuelt den statiske produktionsbuild fra `~/projects/timelapse-pro/timelapse-ui/dist`.
+- Vite dev-serveren kører også på `127.0.0.1:5173`, men offentlig `/` trafik proxyes normalt ikke direkte til den.
+- Hvis `https://timelapse.froekjaer.dk/` giver `500 Internal Server Error`, mens `https://timelapse.froekjaer.dk/api/health` svarer `200`, så er backend typisk sund, og første kontrol er om `timelapse-ui/dist/index.html` findes.
+- Kendt fejlmønster: manglende `dist/index.html` giver nginx-loggen `rewrite or internal redirection cycle while internally redirecting to "/index.html"`.
+- Standardfix efter UI-ændringer eller manglende `dist`: `cd ~/projects/timelapse-pro/timelapse-ui && npm run build`.
+- Hurtig validering:
+  ```bash
+  curl -skI https://timelapse.froekjaer.dk/
+  curl -sk https://timelapse.froekjaer.dk/api/health
+  tail -50 /opt/homebrew/var/log/nginx-timelapse-error.log
+  ```
+
 
 Tilføjet af Peter:
 
@@ -83,4 +97,3 @@ Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne b
 
 
 > **Superseded assessment-snapshots** (QA\_Pentest, QA\_SABSA\_Reassessment, VIRTUAL\_PENTEST\_STATUS, SABSA\_RISK\_ANALYSIS\_UPDATE, Sessionoverlevering, Overtagelsesnotat m.fl.) ligger nu i `Gamle versioner/` — deres indhold er foldet ind i `RISK\_ASSESSMENT\_v10.md` og `HANDOVER\_LOG.md`.
-

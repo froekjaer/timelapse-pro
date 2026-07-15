@@ -6,6 +6,7 @@ from database import get_db
 from ai.repositories import TagRepository, AnalysisRepository
 
 vocab_router = APIRouter(prefix="/api/ai/vocabulary", tags=["ai-vocabulary"])
+vocab_read_router = APIRouter(prefix="/api/ai/vocabulary", tags=["ai-vocabulary"])
 
 
 class MergeTagsPayload(BaseModel):
@@ -21,7 +22,7 @@ class UpdateTranslationPayload(BaseModel):
 def pending(db: Session = Depends(get_db)):
     return TagRepository(db).get_pending_review()
 
-@vocab_router.get("/translations")
+@vocab_read_router.get("/translations")
 def translations(db: Session = Depends(get_db)):
     """Tag → dansk visningsnavn — bruges af kundevendt UI til at vise danske
     tag-labels i stedet for de rå engelske kanoniske nøgler. Cachevenlig — ændrer

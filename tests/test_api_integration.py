@@ -10,6 +10,8 @@ import pytest
 import requests
 import os
 
+pytestmark = pytest.mark.integration
+
 BASE_URL = os.getenv("TIMELAPSE_TEST_BASE_URL", "http://127.0.0.1:8000")
 DEVICE_ID = "TL-C87FF9587CA0"
 

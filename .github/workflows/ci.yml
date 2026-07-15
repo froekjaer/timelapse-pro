@@ -21,28 +21,22 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: |
-          if [ -f requirements-dev.txt ]; then
-            pip install -r requirements-dev.txt
-          else
-            pip install pyflakes pytest
-          fi
-      - name: Syntax check edge
+          pip install -r requirements-dev.txt -r headend/requirements.txt -r edge/requirements.txt
+      - name: Syntax check all tracked Python
         run: |
-          python -m py_compile edge/agent.py
-          python -m py_compile edge/upload/headend_client.py
-          python -m py_compile edge/utils/database.py
-          echo "Edge syntax OK"
-      - name: Syntax check headend
+          git ls-files -z '*.py' | xargs -0 python -m py_compile
+          echo "All tracked Python syntax OK"
+      - name: Syntax check all tracked shell scripts
         run: |
-          python -m py_compile headend/main.py
-          python -m py_compile headend/database.py
-          echo "Headend syntax OK"
-      - name: Agent integrity tests
-        run: pytest tests/test_agent_integrity.py -v
-      - name: Headend endpoint tests
-        run: pytest tests/test_headend_endpoints.py -v
-      - name: Daily smoke suite
-        run: pytest tests/test_smoke_suite.py -m smoke -v
+          git ls-files -z '*.sh' | xargs -0 -n1 bash -n
+          echo "All tracked shell syntax OK"
+      - name: Unit and contract tests
+        env:
+          DATABASE_URL: sqlite:////tmp/timelapse-ci.db
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/headend:${{ github.workspace }}/edge
+        run: |
+          pytest tests headend/tests edge/ai/tests \
+            --import-mode=importlib -m "not integration" -p no:randomly -q
 
   ui-check:
     name: Web UI Build Check
