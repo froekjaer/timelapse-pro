@@ -27,9 +27,23 @@ jobs:
           git ls-files -z '*.py' | xargs -0 python -m py_compile
           echo "All tracked Python syntax OK"
       - name: Syntax check all tracked shell scripts
+        shell: bash
         run: |
-          git ls-files -z '*.sh' | xargs -0 -n1 bash -n
-          echo "All tracked shell syntax OK"
+          # -f follows symlinks: a regular file (or symlink that resolves) gets
+          # syntax-checked and a real syntax error fails the job (rc=1); a broken
+          # or unresolved symlink is reported and skipped instead of hard-failing.
+          # Process substitution (not a pipe) keeps rc in this shell, so a syntax
+          # error anywhere — not just the last file — is caught.
+          rc=0
+          while IFS= read -r -d '' f; do
+            if [ -f "$f" ]; then
+              bash -n "$f" || rc=1
+            else
+              echo "skip (unresolved path/symlink): $f"
+            fi
+          done < <(git ls-files -z '*.sh')
+          echo "All tracked shell syntax checked"
+          exit $rc
       - name: Unit and contract tests
         env:
           DATABASE_URL: sqlite:////tmp/timelapse-ci.db

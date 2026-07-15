@@ -67,6 +67,13 @@ person vide".
 - **QA indtil nu:** Trackede Python/shell syntax-checks, målrettede backendtests, UI build og lint-ratchet består. Fuld suite har fire collection-fejl fra testmiljø/dependency/import-layout; triage fortsætter.
 - **Status:** Ucommittet. Ingen Edge-release eller prod-promovering.
 
+### Handover 2026-07-15 (opdatering 4 — CI-fix efter push) — fra Claude (Cowork) til Peter/Codex
+- **Symptom:** Commit `3e26dcac` pushet; CI fejlede i det NYE step "Syntax check all tracked shell scripts" (`git ls-files -z '*.sh' | xargs -0 -n1 bash -n`) med `bash: deploy/backup.sh: No such file or directory` (exit 123).
+- **Rodårsag (præeksisterende, ikke fra vores commit):** `deploy/backup.sh` og `deploy/restore.sh` er **absolutte symlinks** commiteret 2026-07-10 → peger på `/Volumes/data-fast/peter-home/projects/timelapse-pro/deploy/scripts/*.sh`. De resolver KUN på Peters Mac; på CI-runneren (og enhver anden maskine, inkl. staging/prod med anden sti) er de brudte. Codex' nye shell-check-step ramte dem bare som de første.
+- **Fix (Claude, i working tree):** `.github/workflows/ci.yml` shell-check gjort robust — bruger nu `while … done < <(git ls-files -z '*.sh')` med `[ -f "$f" ]` (følger symlinks): rigtige filer/resolvende symlinks syntaks-tjekkes og en reel fejl fejler jobbet (rc=1, testet), mens brudte/uresolverbare symlinks rapporteres og springes over. YAML valideret, logik enhedstestet lokalt.
+- **Anbefalet supplerende fix (Peter kører — sandkassen må ikke ændre symlinks):** gør de to symlinks relative så de virker overalt: `ln -sfn scripts/backup.sh deploy/backup.sh` + `ln -sfn scripts/restore.sh deploy/restore.sh`. Så bliver de også reelt syntaks-tjekket i CI i stedet for skippet.
+- **Filer rørt:** `.github/workflows/ci.yml` (+ denne note). Ingen produktkode.
+
 ### Handover 2026-07-15 (opdatering 3 — REVIEW-VERDICT + COMMIT) — fra Claude (Cowork) til Peter/Codex
 - **Opgave (Peter):** Seriøs gennemgang af hele det ucommittede træ efter z.ai-perioden; commit til main når Codex og Claude er enige.
 - **VERDICT: ✅ Grønt. Alt gennemgået og verificeret — committet til lokal `main`.**
