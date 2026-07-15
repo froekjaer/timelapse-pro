@@ -262,6 +262,7 @@ def test_autonomous_optimizer_detects_direct_sun_and_ev_action(tmp_path):
     assert "avoid_direct_sun_window" in actions
     assert result["control_plan"]["next_capture_ev_delta"] < 0
     assert result["control_plan"]["avoid_window_suggestion"]["action"] == "avoid"
+    assert result["control_plan"]["autonomous_safe_to_apply"] is False
 
 
 def test_autonomous_optimizer_uses_bright_ratio_without_name_error(tmp_path):

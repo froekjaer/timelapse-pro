@@ -458,9 +458,13 @@ class AutonomousImageOptimizer:
             return False
         if quality_report.get("flag") == "hash_mismatch":
             return False
-        risky = {"maintenance", "depth_of_field"}
+        # Only a clean, high-confidence exposure recommendation may drive EV.
+        # Transient sun, focus, white-balance and maintenance signals require
+        # temporal confirmation or operator action and must never cause pumping.
+        risky = {"maintenance", "depth_of_field", "schedule", "focus", "white_balance", "framing_or_focus"}
         return all(r.kind not in risky for r in recommendations) and any(
-            r.confidence >= self._policy.confidence_floor for r in recommendations
+            r.kind == "exposure" and r.confidence >= self._policy.confidence_floor
+            for r in recommendations
         )
 
     def _score(self, features: dict[str, Any], quality_report: dict) -> dict[str, Any]:

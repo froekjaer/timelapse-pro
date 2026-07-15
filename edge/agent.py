@@ -1407,22 +1407,28 @@ class EdgeAgent:
         min_ev = float(adaptive.get("min_ev", -2.0))
         max_ev = float(adaptive.get("max_ev", 2.0))
         optimizer = (quality_report.get("autonomous_optimizer") or {}).get("control_plan") or {}
-        if optimizer and optimizer.get("autonomous_safe_to_apply", False):
-            try:
-                planned_delta = float(optimizer.get("next_capture_ev_delta", 0.0) or 0.0)
-            except Exception:
-                planned_delta = 0.0
-            if abs(planned_delta) >= 0.01:
-                self._adaptive_exposure_ev = max(
-                    min_ev,
-                    min(max_ev, self._adaptive_exposure_ev + planned_delta),
-                )
-                log.info(
-                    "Adaptive exposure EV now %.2f from autonomous optimizer delta=%.2f",
-                    self._adaptive_exposure_ev,
-                    planned_delta,
-                )
-                return
+        if optimizer:
+            if optimizer.get("autonomous_safe_to_apply", False):
+                try:
+                    planned_delta = float(optimizer.get("next_capture_ev_delta", 0.0) or 0.0)
+                except Exception:
+                    planned_delta = 0.0
+                if abs(planned_delta) >= 0.01:
+                    self._adaptive_exposure_ev = max(
+                        min_ev,
+                        min(max_ev, self._adaptive_exposure_ev + planned_delta),
+                    )
+                    log.info(
+                        "Adaptive exposure EV now %.2f from autonomous optimizer delta=%.2f",
+                        self._adaptive_exposure_ev,
+                        planned_delta,
+                    )
+            else:
+                # Do not bypass a fail-closed optimizer decision with the legacy
+                # single-frame rule. Decay gently toward the configured baseline.
+                self._adaptive_exposure_ev *= 0.75
+                log.info("Adaptive exposure held: optimizer marked plan unsafe")
+            return
         cause = str(quality_report.get("probable_cause") or quality_report.get("flag") or "")
         brightness = quality_report.get("brightness_mean")
         delta = 0.0
