@@ -12,16 +12,18 @@
 //                       download MP4
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  ArrowLeft, Film, Download, RefreshCw, X,
+  ArrowLeft, Film, Download, RefreshCw,
   Clock, Eye, EyeOff, ChevronDown, ChevronUp,
   AlertTriangle, Video, Settings2, Brain, Loader2, Sparkles
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
 import { VirtualImageGrid } from '../components/VirtualImageGrid'
+import { Lightbox } from './DevicePage'
+import type { Capture } from '../types'
 
 const apiCall = async (path: string, options?: RequestInit) => {
   const base = getApiUrl()
@@ -145,11 +147,17 @@ export default function TimelapseVideoPage() {
   // Frames
   const [frames, setFrames]             = useState<Frame[]>([])
   const [excluded, setExcluded]         = useState<Set<number>>(new Set())
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
   const [loading, setLoading]           = useState(false)
   const [loadError, setLoadError]       = useState<string | null>(null)
   const [aiQuery, setAiQuery]           = useState('')
   const [aiSelecting, setAiSelecting]   = useState(false)
   const [aiNote, setAiNote]             = useState('')
+
+  const lightboxCaptures = useMemo<Capture[]>(() => frames.map(frame => ({
+    ...frame,
+    uploaded: true,
+  })), [frames])
 
   // Indstillinger
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS)
@@ -311,6 +319,13 @@ export default function TimelapseVideoPage() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
+      {lightboxIndex !== null && (
+        <Lightbox
+          captures={lightboxCaptures}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      )}
 
       {/* Header */}
       <div className="border-b border-white/10 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-20">
@@ -720,6 +735,7 @@ export default function TimelapseVideoPage() {
                 count={frames.length}
                 minColWidth={96}
                 gap={6}
+                footerHeight={38}
                 renderItem={(idx) => {
                   const frame = frames[idx]
                   const isExcluded = excluded.has(frame.id)
@@ -732,12 +748,28 @@ export default function TimelapseVideoPage() {
                         capture={{ ...frame, uploaded: true }}
                         compact
                         selected={isExcluded}
-                        onClick={() => toggleFrame(frame.id)}
-                        overlay={isExcluded ? (
-                          <div className="absolute inset-0 flex items-center justify-center bg-red-400/15">
-                            <X className="w-6 h-6 text-red-400" />
-                          </div>
-                        ) : null}
+                        onClick={() => setLightboxIndex(idx)}
+                        overlay={(
+                          <>
+                            {isExcluded && <div className="pointer-events-none absolute inset-0 bg-red-400/15" />}
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                toggleFrame(frame.id)
+                              }}
+                              className={`absolute left-1.5 top-1.5 flex min-h-11 min-w-11 items-center justify-center rounded-lg border shadow-sm transition-colors ${
+                                isExcluded
+                                  ? 'border-red-300 bg-red-600 text-white'
+                                  : 'border-white/60 bg-black/60 text-white hover:bg-black/80'
+                              }`}
+                              title={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
+                              aria-label={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
+                            >
+                              {isExcluded ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            </button>
+                          </>
+                        )}
                       />
                     </div>
                   )
@@ -745,7 +777,7 @@ export default function TimelapseVideoPage() {
               />
 
               <p className="text-xs text-white/30 text-center">
-                Klik på et billede for at inkludere/ekskludere det fra videoen
+                Klik på et billede for fuld størrelse. Brug øje-knappen til at inkludere eller ekskludere det.
               </p>
             </>
           )}

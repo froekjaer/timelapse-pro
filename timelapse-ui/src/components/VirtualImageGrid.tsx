@@ -6,6 +6,7 @@ interface Props {
   minColWidth?: number   // px — styrer antal kolonner (auto-fill, responsivt)
   gap?: number           // px mellem celler
   aspect?: number        // celle bredde/højde (16/9 for aspect-video-kort)
+  footerHeight?: number  // fast indhold under billedfladen, fx dato/QA på capture-kort
   overscanRows?: number  // ekstra rækker over/under viewport (blødere scroll)
   className?: string
 }
@@ -16,7 +17,7 @@ interface Props {
 // så det er robust selv når layoutet ovenfor ændrer højde.
 export function VirtualImageGrid({
   count, renderItem, minColWidth = 96, gap = 6, aspect = 16 / 9,
-  overscanRows = 4, className,
+  footerHeight = 0, overscanRows = 4, className,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
@@ -52,7 +53,7 @@ export function VirtualImageGrid({
 
   const cols = Math.max(1, Math.floor((width + gap) / (minColWidth + gap)))
   const cellW = cols > 0 ? (width - (cols - 1) * gap) / cols : minColWidth
-  const cellH = cellW / aspect
+  const cellH = cellW / aspect + footerHeight
   const rowH = cellH + gap
   const rows = Math.ceil(count / Math.max(1, cols))
   const totalH = rows * rowH
