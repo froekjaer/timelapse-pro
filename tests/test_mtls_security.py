@@ -34,6 +34,15 @@ PROJECT_ROOT = "/Volumes/data-fast/peter-home/projects/timelapse-pro"
 SUPER_ADMIN_CREDS = {"username": "test-super-admin", "password": "TestSuperAdmin123!"}
 
 
+def import_headend_main_isolated(monkeypatch):
+    """Import application contracts without ever opening the operational database."""
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    import sys
+    sys.path.insert(0, os.path.join(PROJECT_ROOT, "headend"))
+    import main
+    return main
+
+
 def run_command(cmd: list, check: bool = True) -> subprocess.CompletedProcess:
     """Kør kommando og returner resultat."""
     try:
@@ -321,11 +330,9 @@ def test_expiry_grace_policy_separate():
     assert True  # Design requirement
 
 
-def test_device_pki_factory_policy_is_configurable_but_revocation_is_not():
+def test_device_pki_factory_policy_is_configurable_but_revocation_is_not(monkeypatch):
     """Expiry is configurable; no factory setting may weaken revocation."""
-    import sys
-    sys.path.insert(0, os.path.join(PROJECT_ROOT, "headend"))
-    import main
+    main = import_headend_main_isolated(monkeypatch)
 
     pki = main._FACTORY_CONFIG_DEFAULTS["system"]["device_pki"]
     assert pki["expired_certificate_policy"] == "grace_period"
@@ -333,22 +340,18 @@ def test_device_pki_factory_policy_is_configurable_but_revocation_is_not():
     assert not any("revok" in key.lower() for key in pki)
 
 
-def test_device_pki_config_rejects_revocation_override():
+def test_device_pki_config_rejects_revocation_override(monkeypatch):
     """No hierarchy layer may configure acceptance of a revoked certificate."""
-    import sys
     from fastapi import HTTPException
-    sys.path.insert(0, os.path.join(PROJECT_ROOT, "headend"))
-    import main
+    main = import_headend_main_isolated(monkeypatch)
 
     with pytest.raises(HTTPException, match="Revokerede"):
         main._validate_device_pki_config({"system": {"device_pki": {"allow_revoked": True}}})
 
 
 @pytest.mark.parametrize("policy", ["block", "grace_period", "continue_until_rotated"])
-def test_device_pki_expiry_policies_are_accepted(policy):
-    import sys
-    sys.path.insert(0, os.path.join(PROJECT_ROOT, "headend"))
-    import main
+def test_device_pki_expiry_policies_are_accepted(policy, monkeypatch):
+    main = import_headend_main_isolated(monkeypatch)
 
     main._validate_device_pki_config({"system": {"device_pki": {
         "expired_certificate_policy": policy,
