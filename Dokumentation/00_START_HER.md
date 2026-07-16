@@ -1,5 +1,10 @@
 # 00 — START HER (master-indeks & onboarding)
 
+> **GRC single source of truth:** Testcases, testkørsler, risici, fund,
+> afhjælpninger og evidens vedligeholdes i PostgreSQL og vises under
+> `Compliance -> GRC register`. Markdown-test- og riskdokumenter er
+> migreringskilder, runbooks eller genererede rapporter, ikke aktiv status.
+
 **Formål:** Indgangsdokumentet til TimeLapse Pro-dokumentationen. Læs dette først når du starter en ny session (Claude, Codex eller menneske). Det peger på den seneste, autoritative version af hvert dokument (`\*\_v10.md`), de levende arbejdsdokumenter og den underliggende empiri. **Sidst opdateret:** 2026-07-03 **Vedligeholdelsesregel:** Én seneste version pr. dokument, vedligeholdt som `.md`. Ved væsentlig opdatering hæves versionen og forgængeren flyttes til `Gamle versioner/`. Opdatér denne fil når nye autoritative dokumenter kommer til.
 
 

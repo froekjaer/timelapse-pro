@@ -175,7 +175,25 @@ interface AuditCatalog {
   reason: string
 }
 
-type Tab = 'grc' | 'regulatory' | 'approvals' | 'controls' | 'evidence'
+interface GrcRegisterItem {
+  id: number
+  item_type: 'requirement' | 'control' | 'risk' | 'test' | 'finding' | 'action'
+  external_id: string
+  title: string
+  status: string
+  priority: string | null
+  owner: string | null
+  version: number
+  updated_at: string | null
+}
+
+interface GrcRegister {
+  source_of_truth: string
+  summary: { items: number; by_type: Record<string, number>; test_results: Record<string, number>; open_findings: number }
+  items: GrcRegisterItem[]
+}
+
+type Tab = 'register' | 'grc' | 'regulatory' | 'approvals' | 'controls' | 'evidence'
 type MetricKey = 'pass' | 'warning' | 'fail' | 'approval_queue' | 'change_tickets' | 'sast_findings' | 'fleet_risk' | 'highest_device_risk' | 'security_missing' | 'blocked' | 'approved'
 
 function statusClass(status: string) {
@@ -187,6 +205,12 @@ function statusClass(status: string) {
     high: 'bg-red-50 text-red-700 border-red-200',
     medium: 'bg-amber-50 text-amber-700 border-amber-200',
     low: 'bg-gray-50 text-gray-600 border-gray-200',
+    verified: 'bg-green-50 text-green-700 border-green-200',
+    implemented: 'bg-green-50 text-green-700 border-green-200',
+    open: 'bg-red-50 text-red-700 border-red-200',
+    blocked: 'bg-red-50 text-red-700 border-red-200',
+    in_progress: 'bg-amber-50 text-amber-700 border-amber-200',
+    not_run: 'bg-gray-50 text-gray-600 border-gray-200',
   }
   return map[status] ?? 'bg-gray-50 text-gray-600 border-gray-200'
 }
@@ -212,7 +236,7 @@ function Metric({ label, value, active, onClick }: { label: string; value: numbe
 export function CompliancePage() {
   const [data, setData] = useState<Cockpit | null>(null)
   const [grc, setGrc] = useState<GrcDashboard | null>(null)
-  const [tab, setTab] = useState<Tab>('grc')
+  const [tab, setTab] = useState<Tab>('register')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -222,20 +246,24 @@ export function CompliancePage() {
   const [instruments, setInstruments] = useState<RegulatoryInstrument[]>([])
   const [auditCatalogs, setAuditCatalogs] = useState<AuditCatalog[]>([])
   const [regulatorySearch, setRegulatorySearch] = useState('')
+  const [register, setRegister] = useState<GrcRegister | null>(null)
+  const [registerFilter, setRegisterFilter] = useState('all')
 
   const load = useCallback(async () => {
     setError(null)
     try {
-      const [cockpit, grcData, regulatoryData, catalogData] = await Promise.all([
+      const [cockpit, grcData, regulatoryData, catalogData, registerData] = await Promise.all([
         api('/api/compliance/cockpit'),
         api('/api/grc/dashboard'),
         api('/api/compliance/intelligence/instruments'),
         api('/api/compliance/intelligence/audit-catalogs'),
+        api('/api/grc/register'),
       ])
       setData(cockpit)
       setGrc(grcData)
       setInstruments(regulatoryData.instruments ?? [])
       setAuditCatalogs(catalogData.catalogs ?? [])
+      setRegister(registerData)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Kunne ikke hente compliance cockpit')
     } finally {
@@ -395,6 +423,7 @@ export function CompliancePage() {
       <div className="mb-4 min-w-0 overflow-x-auto">
         <div className="flex w-max gap-1">
           {[
+          ['register', 'GRC register'],
           ['grc', 'GRC risk'],
           ['regulatory', 'Regler og standarder'],
           ['approvals', 'Godkendelser'],
@@ -411,6 +440,52 @@ export function CompliancePage() {
 
       {loading && !data ? (
         <div className="bg-white border border-gray-200 rounded-lg py-16 text-center text-sm text-gray-400">Henter compliance data...</div>
+      ) : tab === 'register' ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Metric label="Registerposter" value={register?.summary.items ?? 0} />
+            <Metric label="Testcases" value={register?.summary.by_type.test ?? 0} />
+            <Metric label="Åbne fund" value={register?.summary.open_findings ?? 0} />
+            <Metric label="Evidensbaserede runs" value={Object.values(register?.summary.test_results ?? {}).reduce((sum, value) => sum + value, 0)} />
+          </div>
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">Autoritativt GRC-register</h2>
+                <p className="text-xs text-gray-500 mt-1">PostgreSQL er single source of truth. Dokumenter og rapporter er kontrollerede eksporter.</p>
+              </div>
+              <div className="flex gap-1 overflow-x-auto">
+                {['all', 'requirement', 'control', 'risk', 'test', 'finding', 'action'].map(type => (
+                  <button key={type} type="button" onClick={() => setRegisterFilter(type)}
+                    className={`min-h-9 whitespace-nowrap px-2.5 rounded border text-xs ${registerFilter === type ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                    {type === 'all' ? 'Alle' : type}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            {(register?.items ?? []).filter(item => registerFilter === 'all' || item.item_type === registerFilter).map(item => (
+              <div key={item.id} className="p-4 border-b border-gray-100 last:border-0">
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-xs font-semibold text-gray-900">{item.external_id}</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-600 border-gray-200">{item.item_type}</span>
+                      {item.priority && <span className={`text-[11px] px-1.5 py-0.5 rounded border ${item.priority === 'P0' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>{item.priority}</span>}
+                    </div>
+                    <p className="mt-1 text-sm text-gray-700">{item.title}</p>
+                    <p className="mt-1 text-[11px] text-gray-400">{item.owner ? `Owner: ${item.owner} · ` : ''}Version {item.version} · {fmt(item.updated_at)}</p>
+                  </div>
+                  <span className={`self-start text-[11px] px-2 py-1 rounded border ${statusClass(item.status)}`}>{item.status.replaceAll('_', ' ')}</span>
+                </div>
+              </div>
+            ))}
+            {(register?.items ?? []).filter(item => registerFilter === 'all' || item.item_type === registerFilter).length === 0 && (
+              <div className="py-12 text-center text-sm text-gray-400">Ingen poster i denne kategori</div>
+            )}
+          </div>
+        </div>
       ) : tab === 'grc' ? (
         <div className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">

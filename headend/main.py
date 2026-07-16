@@ -17035,6 +17035,8 @@ app.include_router(capture_access_router)
 
 from api.customer_risk_api import router as customer_risk_router
 app.include_router(customer_risk_router)
+from api.grc_register_api import router as grc_register_router
+app.include_router(grc_register_router)
 
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,

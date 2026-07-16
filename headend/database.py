@@ -35,7 +35,7 @@ import os
 load_dotenv()
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, Column, Date, DateTime, Float, Index, Integer,
+    Boolean, CheckConstraint, Column, Date, DateTime, Float, ForeignKey, Index, Integer,
     String, Text, create_engine, event,
     LargeBinary, BigInteger, Numeric, UniqueConstraint, JSON, text
 )
@@ -1047,6 +1047,86 @@ class AiPromptTemplate(Base):
     created_at        = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     activated_by      = Column(String(100))
     activated_at      = Column(DateTime(timezone=True))
+
+
+class GrcItem(Base):
+    """Versioned GRC object: requirement, control, risk, test, finding or action."""
+    __tablename__ = "grc_items"
+    __table_args__ = (
+        UniqueConstraint("item_type", "external_id", name="uq_grc_items_type_external_id"),
+        CheckConstraint(
+            "item_type IN ('requirement','control','risk','test','finding','action')",
+            name="ck_grc_items_type",
+        ),
+    )
+
+    id = Column(BigInteger, primary_key=True)
+    item_type = Column(String(20), nullable=False, index=True)
+    external_id = Column(String(100), nullable=False)
+    title = Column(String(300), nullable=False)
+    description = Column(Text)
+    status = Column(String(30), nullable=False, default="draft", server_default="draft", index=True)
+    priority = Column(String(10), index=True)
+    owner = Column(String(100), index=True)
+    due_at = Column(DateTime(timezone=True))
+    source = Column(String(300))
+    scope = Column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    attributes = Column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+    updated_by = Column(String(100), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+
+
+class GrcLink(Base):
+    """Typed traceability edge between two GRC objects."""
+    __tablename__ = "grc_links"
+    __table_args__ = (
+        UniqueConstraint("source_item_id", "target_item_id", "relationship", name="uq_grc_links_edge"),
+    )
+
+    id = Column(BigInteger, primary_key=True)
+    source_item_id = Column(BigInteger, ForeignKey("grc_items.id"), nullable=False, index=True)
+    target_item_id = Column(BigInteger, ForeignKey("grc_items.id"), nullable=False, index=True)
+    relationship = Column(String(40), nullable=False)
+    rationale = Column(Text)
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+
+
+class GrcTestRun(Base):
+    """Immutable execution record for a GRC test object."""
+    __tablename__ = "grc_test_runs"
+
+    id = Column(BigInteger, primary_key=True)
+    test_item_id = Column(BigInteger, ForeignKey("grc_items.id"), nullable=False, index=True)
+    environment = Column(String(30), nullable=False, index=True)
+    result = Column(String(20), nullable=False, index=True)
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    completed_at = Column(DateTime(timezone=True))
+    executed_by = Column(String(100), nullable=False)
+    release_ref = Column(String(150), index=True)
+    notes = Column(Text)
+    metrics = Column(JSON, nullable=False, default=dict, server_default=text("'{}'"))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+
+
+class GrcEvidence(Base):
+    """Integrity metadata for evidence attached to an item or test run."""
+    __tablename__ = "grc_evidence"
+
+    id = Column(BigInteger, primary_key=True)
+    item_id = Column(BigInteger, ForeignKey("grc_items.id"), index=True)
+    test_run_id = Column(BigInteger, ForeignKey("grc_test_runs.id"), index=True)
+    evidence_type = Column(String(40), nullable=False)
+    title = Column(String(300), nullable=False)
+    uri = Column(String(1000))
+    sha256 = Column(String(64))
+    content = Column(JSON)
+    collected_by = Column(String(100), nullable=False)
+    collected_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+    retention_class = Column(String(50), nullable=False, default="grc_standard", server_default="grc_standard")
 
 
 def create_tables():

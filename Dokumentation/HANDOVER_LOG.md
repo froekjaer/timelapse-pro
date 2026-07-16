@@ -1,5 +1,19 @@
 # TimeLapse Pro — Handover-log
 
+## Handover 2026-07-16 - PostgreSQL GRC-register v1 (Codex)
+
+- GRC/test/risk/evidens flyttes fra markdown som statuskilde til PostgreSQL.
+- Nye tabeller: `grc_items`, `grc_links`, `grc_test_runs`, `grc_evidence` via
+  `headend/migrations/v23_grc_register.sql` og SQLAlchemy-modeller.
+- Nyt RBAC-beskyttet API: `/api/grc/register` med create/update, immutable
+  test runs, hashbar evidens og idempotent canonical bootstrap.
+- Compliance har nu fanen `GRC register`; browser-runtime verificerede 11
+  importerede poster, 8 testcases og 1 åbent fund mod ægte PostgreSQL.
+- `VERIFICATION_RISK_EVIDENCE_REGISTER_v1.md` er fremover migreringskilde og
+  rapportformat. Det må ikke vedligeholdes som parallel statuskilde.
+- Næste GRC-fase: fuld migrering af historiske aktive fund/risici, CRUD-dialoger,
+  relationsgraf, standardmapping, rapportgenerator og automatisk CI/run-evidens.
+
 Kort, kronologisk log til overleveringer mellem Peter, Claude og Codex.
 
 Kanoniske fakta om services/stier/porte ligger stadig i
