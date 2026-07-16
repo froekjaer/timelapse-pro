@@ -4,7 +4,7 @@ import {
   Brain, Camera, Settings, Database, Globe, LogOut,
   Shield, Users, Key, Terminal, Package, Server,
   ChevronDown, ClipboardCheck, Upload, Bot, Tag,
-  Wrench, Activity, EyeOff, Clock,
+  Wrench, Activity, EyeOff, Clock, Menu, X,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -13,6 +13,7 @@ export function Navbar() {
   const navigate = useNavigate()
   const { user, logout, hasRole } = useAuth()
   const [adminOpen, setAdminOpen] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -61,15 +62,15 @@ export function Navbar() {
   }
 
   return (
-    <nav className="bg-slate-900 text-white">
-      <div className="max-w-7xl mx-auto px-4 flex items-center gap-2 h-14">
+    <nav className="relative z-50 bg-slate-900 text-white">
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-4">
 
         <Link to="/" className="flex items-center gap-2 font-semibold text-white flex-shrink-0 mr-2">
           <Camera className="w-5 h-5 text-sky-400" />
           <span>TimeLapse Pro</span>
         </Link>
 
-        <div className="flex items-center gap-1">
+        <div className="hidden items-center gap-1 xl:flex">
           {links.map(({ to, label, icon: Icon, tooltip }) => {
             const active = to === '/' ? pathname === '/' : pathname.startsWith(to)
             return (
@@ -86,7 +87,7 @@ export function Navbar() {
         </div>
 
         {isAdmin && (
-          <div className="relative border-l border-slate-700 pl-2 ml-1" ref={dropdownRef}>
+          <div className="relative ml-1 hidden border-l border-slate-700 pl-2 xl:block" ref={dropdownRef}>
             <button
               onClick={() => setAdminOpen(o => !o)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors ${
@@ -122,7 +123,7 @@ export function Navbar() {
           </div>
         )}
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto hidden items-center gap-3 xl:flex">
           {user && (
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-full bg-sky-500 flex items-center justify-center flex-shrink-0">
@@ -143,7 +144,53 @@ export function Navbar() {
           </button>
         </div>
 
+        <button
+          type="button"
+          aria-label={mobileOpen ? 'Luk navigation' : 'Åbn navigation'}
+          aria-expanded={mobileOpen}
+          onClick={() => setMobileOpen(open => !open)}
+          className="ml-auto flex h-11 w-11 items-center justify-center rounded-md text-slate-200 hover:bg-slate-800 xl:hidden"
+        >
+          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+
       </div>
+
+      {mobileOpen && (
+        <div className="absolute left-0 right-0 top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto border-t border-slate-700 bg-slate-900 px-3 py-3 shadow-xl xl:hidden">
+          <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {links.map(({ to, label, icon: Icon }) => {
+              const active = to === '/' ? pathname === '/' : pathname.startsWith(to)
+              return (
+                <Link key={to} to={to} onClick={() => setMobileOpen(false)} className={`flex min-h-11 items-center gap-3 rounded-md px-3 text-sm ${active ? 'bg-slate-700 text-white' : 'text-slate-200 hover:bg-slate-800'}`}>
+                  <Icon className="h-5 w-5 flex-shrink-0" />
+                  {label}
+                </Link>
+              )
+            })}
+            {isAdmin && <div className="col-span-full my-2 border-t border-slate-700" />}
+            {isAdmin && adminLinks.map(({ to, label, icon: Icon }) => {
+              const active = pathname.startsWith(to)
+              return (
+                <Link key={to} to={to} onClick={() => setMobileOpen(false)} className={`flex min-h-11 items-center gap-3 rounded-md px-3 text-sm ${active ? 'bg-slate-700 text-white' : 'text-slate-200 hover:bg-slate-800'}`}>
+                  <Icon className="h-5 w-5 flex-shrink-0" />
+                  {label}
+                </Link>
+              )
+            })}
+          </div>
+          <div className="mt-3 flex items-center justify-between border-t border-slate-700 pt-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{user?.username}</p>
+              <p className="text-xs capitalize text-slate-400">{user?.role.replace('_', ' ')}</p>
+            </div>
+            <button onClick={handleLogout} className="flex min-h-11 items-center gap-2 rounded-md px-3 text-sm text-slate-200 hover:bg-slate-800">
+              <LogOut className="h-5 w-5" />
+              Log ud
+            </button>
+          </div>
+        </div>
+      )}
     </nav>
   )
 }

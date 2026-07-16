@@ -29,6 +29,29 @@ OPERATOR_CREDS = {"username": "test-operator", "password": "TestOperator123!"}
 VIEWER_CREDS = {"username": "test-viewer", "password": "TestViewer123!"}
 
 
+@pytest.fixture(autouse=True)
+def reset_operator_auth_state():
+    """Prevent MFA/password tests from leaking state into later integration tests."""
+    from headend.database import SessionLocal, User
+    from headend.main import _hash_password
+
+    def reset():
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.username == OPERATOR_CREDS["username"]).first()
+            if user:
+                user.password_hash = _hash_password(OPERATOR_CREDS["password"])
+                user.mfa_enabled = False
+                user.totp_secret = None
+                db.commit()
+        finally:
+            db.close()
+
+    reset()
+    yield
+    reset()
+
+
 def api(path, method="GET", **kwargs):
     """Helper til API kald."""
     url = f"{BASE_URL}/api{path}" if not path.startswith("http") else path
@@ -213,7 +236,9 @@ def test_operator_can_access_operator_endpoints():
     assert r2.status_code == 200
 
     # Operator kan tilgå captures
-    r3 = make_authenticated_request(token, "/admin/captures?device_id=TL-C87FF9587CA0&limit=1")
+    # A tenant-less test operator may list its visible captures, but must not be
+    # granted access to an arbitrary device by the test fixture.
+    r3 = make_authenticated_request(token, "/admin/captures?limit=1")
     assert r3.status_code == 200
 
 
@@ -316,6 +341,9 @@ def test_mfa_login_requires_valid_totp():
 @pytest.mark.integration
 def test_mfa_disable_requires_auth():
     """MFA disable skal kræve autentificering."""
+    unauthenticated = api("/auth/disable-mfa", method="POST", json={})
+    assert unauthenticated.status_code == 401
+
     # Login først
     r = api("/auth/login", method="POST", json=OPERATOR_CREDS)
     assert r.status_code == 200
@@ -323,8 +351,8 @@ def test_mfa_disable_requires_auth():
 
     # Disable MFA (vil fejle hvis MFA ikke er aktiveret)
     r2 = make_authenticated_request(token, "/auth/disable-mfa", method="POST", json={})
-    # Accepter både 200 (deaktiveret) og 400 (ikke aktiveret)
-    assert r2.status_code in [200, 400]
+    # Step-up hardened endpoint requires password/TOTP fields when MFA is active.
+    assert r2.status_code in [200, 400, 403, 422]
 
 
 # ── 5. Password Change ─────────────────────────────────────────────────────────
@@ -450,7 +478,7 @@ def test_csrf_like_protection_on_sensitive_endpoints():
     assert r.status_code in [401, 403], "DELETE skal kræve autentificering"
 
     # Test at PUT endpoints kræver auth
-    r2 = api("/admin/devices/TL-FAKE", method="PUT", json={})
+    r2 = api("/admin/devices/TL-FAKE/debug", method="PUT", json={})
     assert r2.status_code in [401, 403], "PUT skal kræve autentificering"
 
 

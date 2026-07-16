@@ -8,8 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_vocabulary_and_review_routers_require_admin_role():
     source = (ROOT / "headend/main.py").read_text(encoding="utf-8")
-    assert 'app.include_router(vocab_router, dependencies=[require_role("super_admin", "admin")])' in source
-    assert 'app.include_router(_rev_router, dependencies=[require_role("super_admin", "admin")])' in source
+    assert 'app.include_router(vocab_router, dependencies=[require_role("super_admin")])' in source
+    assert 'app.include_router(_rev_router, dependencies=[require_role("super_admin")])' in source
 
 
 def test_tag_translations_remain_available_to_authenticated_viewers():

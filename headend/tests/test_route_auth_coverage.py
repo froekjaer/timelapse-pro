@@ -10,6 +10,11 @@ AUTH_DEPENDENCIES = {
     "_verify_device_token",
     "_verify_payload_device_token",
     "_require_device_auth",
+    # Reviewed wrappers that call get_current_user(), enforce role/tenant scope,
+    # and require MFA when the effective user policy demands it.
+    "_current_viewer",
+    "_require_platform_admin",
+    "_require_risk_admin",
 }
 
 # Routes here are intentionally pre-auth or use an explicit in-body token/loopback

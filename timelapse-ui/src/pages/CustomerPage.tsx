@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Building2, MapPin, Save, Trash2, Plus, ChevronRight, CheckCircle, Camera } from 'lucide-react'
 import { getApiUrl } from '../api/client'
@@ -239,21 +239,21 @@ export function CustomerPage() {
       .finally(() => setLoading(false))
   }, [customerId])
 
-  async function loadRiskInputs() {
+  const loadRiskInputs = useCallback(async () => {
     if (!customerId || user?.role !== 'super_admin') return
     try { setRiskInputs(await api(`/api/customer-risk/${customerId}`)) }
     catch { setRiskInputs(null) }
-  }
+  }, [customerId, user?.role])
 
-  useEffect(() => { loadRiskInputs() }, [customerId, user?.role])
+  useEffect(() => { loadRiskInputs() }, [loadRiskInputs])
 
-  async function loadRiskProfile() {
+  const loadRiskProfile = useCallback(async () => {
     if (!customerId || !['admin', 'super_admin'].includes(user?.role || '')) return
     try { setRiskProfileData(await api(`/api/customer-risk/profile/${customerId}`)) }
     catch { setRiskProfileData(null) }
-  }
+  }, [customerId, user?.role])
 
-  useEffect(() => { loadRiskProfile() }, [customerId, user?.role])
+  useEffect(() => { loadRiskProfile() }, [loadRiskProfile])
 
   async function saveMonthlyPrice() {
     if (!customerId) return

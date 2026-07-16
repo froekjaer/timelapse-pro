@@ -158,29 +158,33 @@ export default function AIPage() {
     <div className="min-h-screen bg-gray-950 text-white">
       {/* Header */}
       <div className="border-b border-white/8 bg-gray-900/60 backdrop-blur-sm sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-6 h-14 flex items-center gap-3">
-          <Brain className="w-5 h-5 text-violet-400" />
-          <h1 className="font-semibold text-sm tracking-tight">AI Styring</h1>
-          <div className="ml-6 flex items-center gap-1">
-            {TABS.map(t => (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
-                  tab === t.id
-                    ? 'bg-violet-600 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <t.icon className="w-3.5 h-3.5" />
-                {t.label}
-              </button>
-            ))}
+        <div className="mx-auto flex max-w-7xl min-w-0 flex-col gap-2 px-4 py-2 sm:px-6 lg:h-14 lg:flex-row lg:items-center lg:gap-3 lg:py-0">
+          <div className="flex h-9 items-center gap-3">
+            <Brain className="h-5 w-5 text-violet-400" />
+            <h1 className="text-sm font-semibold tracking-tight">AI Styring</h1>
+          </div>
+          <div className="min-w-0 flex-1 overflow-x-auto lg:ml-6">
+            <div className="flex w-max items-center gap-1 pb-1 lg:pb-0">
+              {TABS.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setTab(t.id)}
+                  className={`flex min-h-10 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm transition-all ${
+                    tab === t.id
+                      ? 'bg-violet-600 text-white'
+                      : 'text-slate-400 hover:bg-white/5 hover:text-white'
+                  }`}
+                >
+                  <t.icon className="h-3.5 w-3.5" />
+                  {t.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-6">
+      <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-6">
         {tab === 'runtime'    && <AIRuntimeTab />}
         {tab === 'strategy'   && <StrategyTab />}
         {tab === 'tags'       && <TagReviewTab />}

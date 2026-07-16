@@ -92,7 +92,7 @@ function formatEV(ev: number): string {
 export function SiteLookCard({ data, cameraModel = 'Unknown', onSetReference, onRegenerateLUT }: SiteLookCardProps) {
   if (!data || !data.enabled) {
     return (
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-500">
+      <div className="rounded-md border border-zinc-700 bg-zinc-800/80 p-4 text-sm text-zinc-300">
         <div className="flex items-center gap-2">
           <Camera className="w-4 h-4" />
           <span>Site-wide look matching er deaktiveret</span>

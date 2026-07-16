@@ -105,6 +105,7 @@ from ai.settings_api import settings_router
 from siem import router as siem_router, start_headend_log_collector, record_events as _siem_record_events
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from itim import router as itim_router, start_itim_collector
+from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
 from database import (
@@ -148,7 +149,7 @@ logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _console_handle
 log = logging.getLogger("headend")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=get_remote_address, enabled=rate_limits_enabled())
 
 def _sanitize_device_id(device_id: str) -> str:
     """Sanitér device_id — afvis path traversal forsøg."""
@@ -350,7 +351,8 @@ def _debug_mode_auto_timeout_loop(interval_minutes: float = 15.0) -> None:
 @app.on_event("startup")
 def startup():
     create_tables()
-    start_headend_log_collector()
+    if background_jobs_enabled():
+        start_headend_log_collector()
     # DB migration — tilføj nye kolonner hvis de mangler
     try:
 #Peter        from sqlalchemy import text
@@ -557,7 +559,8 @@ def startup():
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
         run_ai_migration(engine)
-        setup_ai(get_db, _find_image)
+        if background_jobs_enabled():
+            setup_ai(get_db, _find_image)
         setup_ai_router(get_db, _find_image, get_current_user, _allowed_capture_device_ids)
         app.include_router(ai_router)
         log.info("AI integration klar — Ollama: http://localhost:11434")
@@ -577,6 +580,9 @@ def startup():
         log.warning("Kunne ikke initialisere tag-vokabular ved opstart: %s", _vocab_err)
 
     log.info("TimeLapse Pro Headend started — database ready")
+    if not background_jobs_enabled():
+        log.info("Testmiljø: muterende og eksterne baggrundsjobs er deaktiveret")
+        return
 
     # ── GitHub tag poller ───────────────────────────────────────────────────
     try:
@@ -3203,6 +3209,8 @@ def _ensure_configured_release_signer(db: Session) -> KeyCredential | None:
 
 @app.on_event("startup")
 def _startup_sync_release_signer():
+    if not background_jobs_enabled():
+        return
     db = SessionLocal()
     try:
         _ensure_configured_release_signer(db)
@@ -17457,6 +17465,8 @@ def _openwebui_timeout_loop() -> None:
 
 @app.on_event("startup")
 def _start_openwebui_timeout_control():
+    if not background_jobs_enabled():
+        return
     _threading.Thread(target=_openwebui_timeout_loop, name="openwebui-timeout", daemon=True).start()
 
 

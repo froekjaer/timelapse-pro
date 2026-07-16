@@ -108,7 +108,7 @@ function formatEV(ev: number): string {
 export function FotoTechnicalCard({ data, onApplyOverride, onDismissRecommendation }: FotoTechnicalCardProps) {
   if (!data || !data.enabled) {
     return (
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-500">
+      <div className="rounded-md border border-zinc-700 bg-zinc-800/80 p-4 text-sm text-zinc-300">
         <div className="flex items-center gap-2">
           <Settings className="w-4 h-4" />
           <span>Fototeknisk AI er deaktiveret</span>

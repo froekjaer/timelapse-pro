@@ -171,9 +171,9 @@ function ModelResultsPanel({ results }: { results: any[] | null }) {
 
 function MetadataRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex gap-1.5 min-w-0">
-      <span className="text-white/35 shrink-0" style={{ width: '90px' }}>{label}</span>
-      <span className="text-white/75 min-w-0 truncate">{value ?? '—'}</span>
+    <div className="grid min-w-0 grid-cols-[minmax(7.5rem,0.8fr)_minmax(0,1.2fr)] gap-x-3 py-0.5 text-[13px] leading-5">
+      <span className="font-medium text-zinc-400">{label}</span>
+      <span className="min-w-0 break-words text-zinc-100">{value ?? '—'}</span>
     </div>
   )
 }
@@ -490,15 +490,15 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
 
       {/* Metadata + integritetspanel */}
       {showMetadata && (
-        <div ref={metaRef} className="flex-shrink-0 bg-black/90 border-t border-white/10 px-4 py-3 overflow-y-auto" style={{maxHeight: '60vh', overscrollBehavior: 'contain'}} onClick={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
+        <div ref={metaRef} className="flex-shrink-0 overflow-y-auto border-t border-zinc-700 bg-zinc-950 px-4 py-4 sm:px-5" style={{maxHeight: '70vh', overscrollBehavior: 'contain'}} onClick={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}>
           {!sidecar ? (
             <p className="text-white/40 text-xs italic">Ingen sidecar — billede optaget før v2.2.0 eller ikke uploadet endnu.</p>
           ) : (
-            <div className="grid grid-cols-5 gap-x-6 gap-y-0 text-xs">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
 
               {/* Kolonne 1: Integritet + Kvalitet */}
-              <div className="space-y-0.5">
-                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">🔒 Integritet</p>
+              <div className="space-y-0.5 rounded-md border border-zinc-800 bg-zinc-900/70 p-3.5">
+                <p className="mb-2 text-xs font-semibold uppercase text-zinc-300">Integritet</p>
                 <MetadataRow label="SHA-256" value={<span className="font-mono text-[9px] break-all">{sidecar.integrity?.sha256_original}</span>} />
                 <MetadataRow label="Optaget UTC" value={sidecar.integrity?.captured_at_utc?.replace('T',' ').slice(0,19)} />
                 <MetadataRow label="Lokal tid" value={sidecar.integrity?.captured_at_local?.replace('T',' ').slice(0,19)} />
@@ -508,7 +508,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                 {sidecar.added_metadata?.fields_added?.length > 0 && (
                   <MetadataRow label="Tilføjede felter" value={<span className="text-amber-300/80">{sidecar.added_metadata.fields_added.join(', ')}</span>} />
                 )}
-                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">📊 Kvalitet <span className="normal-case font-normal text-white/20">(🔧 Edge/OpenCV)</span></p>
+                <p className="mb-2 mt-3 text-xs font-semibold uppercase text-zinc-300">Kvalitet <span className="normal-case font-normal text-zinc-500">(Edge/OpenCV)</span></p>
                 <MetadataRow label="Blur score" value={c.blur_score != null ? `${Math.round(c.blur_score)} ${c.blur_score > 100 ? '✅' : '⚠️ lav'}` : '—'} />
                 <MetadataRow label="Lysstyrke" value={c.brightness != null ? `${Math.round(c.brightness)}/255` : '—'} />
                 <MetadataRow label="Kvalitetsflag" value={<span className={c.quality_passed ? 'text-emerald-400' : 'text-red-400'}>{c.quality_flag ?? '—'}</span>} />
@@ -543,7 +543,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                           : null
                   return (
                     <div className="mt-2">
-                      <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">🔬 QA</p>
+                      <p className="mb-2 text-xs font-semibold uppercase text-zinc-300">QA</p>
                       {!ai ? (
                         <p className="text-white/30 text-xs italic">Ikke analyseret endnu</p>
                       ) : ai.scene_dk ? (
@@ -635,8 +635,8 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
               </div>
 
               {/* Kolonne 2: Kamera EXIF */}
-              <div className="space-y-0.5">
-                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📷 Kamera EXIF</p>
+              <div className="space-y-0.5 rounded-md border border-zinc-800 bg-zinc-900/70 p-3.5">
+                <p className="mb-2 text-xs font-semibold uppercase text-zinc-300">Kamera EXIF</p>
                 <MetadataRow label="Model" value={metaCamera.model ?? c.camera_model} />
                 <MetadataRow label="ISO" value={metaCamera.iso ?? c.iso} />
                 <MetadataRow label="Lukker" value={metaCamera.shutter_speed ?? c.shutter_speed ?? c.exposure_time} />
@@ -644,7 +644,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                 <MetadataRow label="Fokustilstand" value={metaCamera.focus_mode} />
                 <MetadataRow label="USB port" value={metaCamera.gphoto2_port} />
                 <MetadataRow label="Relay GPIO" value={metaCamera.relay_gpio_pin} />
-                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🏗️ Projekt</p>
+                <p className="mb-2 mt-3 text-xs font-semibold uppercase text-zinc-300">Projekt</p>
                 <MetadataRow label="Kunde" value={metaProject.customer || '—'} />
                 <MetadataRow label="Site" value={metaProject.site || '—'} />
                 <MetadataRow label="Kamera" value={metaProject.camera_name || '—'} />
@@ -654,13 +654,13 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
               </div>
 
               {/* Kolonne 3: Lokation + Orientering */}
-              <div className="space-y-0.5">
-                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-1.5">📍 Lokation</p>
+              <div className="space-y-0.5 rounded-md border border-zinc-800 bg-zinc-900/70 p-3.5">
+                <p className="mb-2 text-xs font-semibold uppercase text-zinc-300">Lokation</p>
                 <MetadataRow label="GPS" value={metaGpsLat != null && metaGpsLon != null ? `${Number(metaGpsLat).toFixed(6)}°, ${Number(metaGpsLon).toFixed(6)}°` : '—'} />
                 <MetadataRow label="Højde" value={metaGpsAlt != null ? `${metaGpsAlt} m` : '—'} />
                 <MetadataRow label="GPS kilde" value={gpsSourceLabel} />
                 <MetadataRow label="Adresse" value={metaLocation.address || '—'} />
-                <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mt-2 mb-1.5">🧭 Orientering</p>
+                <p className="mb-2 mt-3 text-xs font-semibold uppercase text-zinc-300">Orientering</p>
                 <MetadataRow label="Azimut" value={(metaLocation.azimuth_deg ?? c.azimuth_deg) != null ? `${metaLocation.azimuth_deg ?? c.azimuth_deg}°` : '—'} />
                 <MetadataRow label="Tilt" value={(metaLocation.tilt_deg ?? c.tilt_deg) != null ? `${metaLocation.tilt_deg ?? c.tilt_deg}°` : '—'} />
                 <MetadataRow label="Montagehøjde" value={(metaLocation.mount_height_m ?? c.mount_height_m) != null ? `${metaLocation.mount_height_m ?? c.mount_height_m} m` : '—'} />
@@ -670,12 +670,12 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
               </div>
 
               {/* Kolonne 4: Fototekniske Anbefalinger */}
-              <div className="space-y-0.5">
+              <div className="space-y-0.5 rounded-md border border-zinc-800 bg-zinc-900/70 p-3.5">
                 <FotoTechnicalCard data={sidecar?.ai_analysis?.autonomous_optimizer || sidecar?.autonomous_optimizer || null} />
               </div>
 
               {/* Kolonne 5: Site-Wide Look Matching */}
-              <div className="space-y-0.5">
+              <div className="space-y-0.5 rounded-md border border-zinc-800 bg-zinc-900/70 p-3.5">
                 <SiteLookCard
                   data={sidecar?.ai_analysis?.site_look_matching || null}
                   cameraModel={c.camera_model || sidecar?.camera?.model || 'Unknown'}
