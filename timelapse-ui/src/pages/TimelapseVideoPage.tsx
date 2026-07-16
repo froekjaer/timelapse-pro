@@ -15,7 +15,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
-  ArrowLeft, Film, Download, RefreshCw,
+  ArrowLeft, Film, Download, RefreshCw, X,
   Clock, Eye, EyeOff, ChevronDown, ChevronUp,
   AlertTriangle, Video, Settings2, Brain, Loader2, Sparkles
 } from 'lucide-react'
@@ -749,6 +749,11 @@ export default function TimelapseVideoPage() {
                         compact
                         selected={isExcluded}
                         onClick={() => setLightboxIndex(idx)}
+                        overlay={isExcluded ? (
+                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-red-950/10">
+                            <X className="h-10 w-10 text-red-500 drop-shadow-[0_1px_2px_rgba(255,255,255,0.9)]" strokeWidth={3} />
+                          </div>
+                        ) : null}
                         footerAction={(
                           <button
                             type="button"
@@ -756,7 +761,7 @@ export default function TimelapseVideoPage() {
                               event.stopPropagation()
                               toggleFrame(frame.id)
                             }}
-                            className={`flex h-full min-h-11 items-center justify-center gap-1 rounded-md border px-2 text-[10px] font-semibold transition-colors ${
+                            className={`flex min-h-6 w-full items-center justify-center gap-1 rounded border px-1.5 text-[10px] font-semibold leading-none transition-colors ${
                               isExcluded
                                 ? 'border-red-300 bg-red-600 text-white'
                                 : 'border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-500'

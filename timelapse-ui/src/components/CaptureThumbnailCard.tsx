@@ -155,6 +155,7 @@ export function CaptureThumbnailCard({
   const time = capture.captured_at
     ? new Date(capture.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '-'
+  const [datePart, timePart] = time.split(', ')
   const passed = capture.quality_passed !== false
   const thumbUrl = getThumbnailUrl(capture.device_id, capture.filename)
   const [imgOk, setImgOk] = useState(true)
@@ -284,10 +285,13 @@ export function CaptureThumbnailCard({
       </div>
       <div className="px-2 py-1.5">
         {footerAction ? (
-          <div className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] gap-1.5">
-            <div className="min-w-0 self-center">
-              <p className="truncate text-xs font-medium text-gray-700">{time}</p>
-              <div className="mt-0.5 flex min-w-0 items-center gap-1">
+          <div className="grid min-h-11 grid-cols-[auto_minmax(0,1fr)] gap-1.5">
+            <div className="flex min-w-[2.8rem] flex-col justify-center border-r border-gray-100 pr-1.5 text-xs font-medium leading-4 text-gray-700">
+              <span>{datePart}</span>
+              <span>{timePart ?? ''}</span>
+            </div>
+            <div className="grid min-w-0 grid-rows-[auto_auto] gap-0.5">
+              <div className="flex min-w-0 items-center justify-end gap-1">
                 {capture.blur_score != null && (
                   <p className={`shrink-0 text-xs font-medium ${capture.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>
                     ⬡ {Math.round(capture.blur_score)}
@@ -295,8 +299,8 @@ export function CaptureThumbnailCard({
                 )}
                 {qaBadge(ai, capture)}
               </div>
+              {footerAction}
             </div>
-            {footerAction}
           </div>
         ) : (
           <div className="flex items-center justify-between gap-1">
