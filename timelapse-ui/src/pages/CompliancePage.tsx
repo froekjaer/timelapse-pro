@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowLeft, CheckCircle, ClipboardCheck, FileCheck,
-  ExternalLink, Globe2, RefreshCw, Search, ShieldCheck
+  Download, ExternalLink, Globe2, RefreshCw, Search, ShieldCheck, XCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -185,6 +185,8 @@ interface GrcRegisterItem {
   owner: string | null
   version: number
   updated_at: string | null
+  source?: string | null
+  attributes?: { requirement_class?: string; quality_domains?: string[]; legacy_id?: string | null; control_type?: string }
 }
 
 interface GrcRegister {
@@ -193,7 +195,7 @@ interface GrcRegister {
   items: GrcRegisterItem[]
 }
 
-type Tab = 'register' | 'grc' | 'regulatory' | 'approvals' | 'controls' | 'evidence'
+type Tab = 'register' | 'reports' | 'grc' | 'regulatory' | 'approvals' | 'controls' | 'evidence'
 type MetricKey = 'pass' | 'warning' | 'fail' | 'approval_queue' | 'change_tickets' | 'sast_findings' | 'fleet_risk' | 'highest_device_risk' | 'security_missing' | 'blocked' | 'approved'
 
 function statusClass(status: string) {
@@ -248,6 +250,10 @@ export function CompliancePage() {
   const [regulatorySearch, setRegulatorySearch] = useState('')
   const [register, setRegister] = useState<GrcRegister | null>(null)
   const [registerFilter, setRegisterFilter] = useState('all')
+  const [reportPreview, setReportPreview] = useState('')
+  const [grcReportLoading, setGrcReportLoading] = useState<string | null>(null)
+  const [selectedGrcItem, setSelectedGrcItem] = useState<GrcRegisterItem | null>(null)
+  const [grcItemBusy, setGrcItemBusy] = useState(false)
 
   const load = useCallback(async () => {
     setError(null)
@@ -303,6 +309,47 @@ export function CompliancePage() {
       setError(e instanceof Error ? e.message : 'Kunne ikke generere rapport')
     } finally {
       setReportLoading(null)
+    }
+  }
+
+  async function generateGrcReport(reportType: string, download: boolean) {
+    setGrcReportLoading(reportType)
+    setError(null)
+    try {
+      const reportPath = reportType.startsWith('standard/') ? reportType : reportType
+      const response = await fetch(`${getApiUrl()}/api/grc/register/reports/${reportPath}`, { credentials: 'include' })
+      if (!response.ok) throw new Error(`Rapport kunne ikke genereres (HTTP ${response.status})`)
+      const content = await response.text()
+      setReportPreview(content)
+      if (download) {
+        const blobUrl = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }))
+        const link = document.createElement('a')
+        link.href = blobUrl
+        link.download = `timelapse-grc-${reportType}-${new Date().toISOString().slice(0, 10)}.md`
+        link.click()
+        URL.revokeObjectURL(blobUrl)
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Rapport kunne ikke genereres')
+    } finally {
+      setGrcReportLoading(null)
+    }
+  }
+
+  async function reviewGrcItem(status: 'approved' | 'rejected') {
+    if (!selectedGrcItem) return
+    setGrcItemBusy(true)
+    setError(null)
+    try {
+      const updated = await api(`/api/grc/register/${selectedGrcItem.id}`, {
+        method: 'PATCH', body: JSON.stringify({ status }),
+      })
+      setSelectedGrcItem(updated)
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'GRC-posten kunne ikke opdateres')
+    } finally {
+      setGrcItemBusy(false)
     }
   }
 
@@ -424,6 +471,7 @@ export function CompliancePage() {
         <div className="flex w-max gap-1">
           {[
           ['register', 'GRC register'],
+          ['reports', 'GRC rapporter'],
           ['grc', 'GRC risk'],
           ['regulatory', 'Regler og standarder'],
           ['approvals', 'Godkendelser'],
@@ -446,7 +494,7 @@ export function CompliancePage() {
             <Metric label="Registerposter" value={register?.summary.items ?? 0} />
             <Metric label="Testcases" value={register?.summary.by_type.test ?? 0} />
             <Metric label="Åbne fund" value={register?.summary.open_findings ?? 0} />
-            <Metric label="Evidensbaserede runs" value={Object.values(register?.summary.test_results ?? {}).reduce((sum, value) => sum + value, 0)} />
+            <Metric label="Krav til review" value={(register?.items ?? []).filter(item => item.item_type === 'requirement' && item.status === 'candidate_review').length} />
           </div>
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -463,26 +511,105 @@ export function CompliancePage() {
                 ))}
               </div>
             </div>
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <div className="text-xs font-semibold text-gray-700">Standardmapping</div>
+              <p className="mt-1 text-[11px] text-gray-500">Evidensbaseret engineering mapping. Ikke en fuld audit eller certificeringspåstand.</p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {['SABSA', 'COBIT', 'ISO27001', 'IEC62443', 'NIS2', 'CRA', 'GDPR', 'AI-ACT', 'NIST', 'ENISA'].map(standard => (
+                  <button key={standard} type="button" onClick={() => generateGrcReport(`standard/${standard}`, false)}
+                    className="min-h-9 px-2.5 rounded border border-gray-200 text-xs text-gray-600 hover:bg-gray-50">
+                    {standard}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
             {(register?.items ?? []).filter(item => registerFilter === 'all' || item.item_type === registerFilter).map(item => (
-              <div key={item.id} className="p-4 border-b border-gray-100 last:border-0">
+              <button type="button" key={item.id} onClick={() => setSelectedGrcItem(item)} className="block w-full text-left p-4 border-b border-gray-100 last:border-0 hover:bg-gray-50">
                 <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-xs font-semibold text-gray-900">{item.external_id}</span>
                       <span className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-600 border-gray-200">{item.item_type}</span>
+                      {item.attributes?.requirement_class && <span className={`text-[11px] px-1.5 py-0.5 rounded border ${item.attributes.requirement_class === 'functional' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-violet-50 text-violet-700 border-violet-200'}`}>{item.attributes.requirement_class === 'functional' ? 'funktionelt' : 'non-funktionelt'}</span>}
                       {item.priority && <span className={`text-[11px] px-1.5 py-0.5 rounded border ${item.priority === 'P0' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>{item.priority}</span>}
                     </div>
                     <p className="mt-1 text-sm text-gray-700">{item.title}</p>
-                    <p className="mt-1 text-[11px] text-gray-400">{item.owner ? `Owner: ${item.owner} · ` : ''}Version {item.version} · {fmt(item.updated_at)}</p>
+                    {item.attributes?.quality_domains && item.attributes.quality_domains.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">{item.attributes.quality_domains.map(domain => <span key={domain} className="text-[10px] px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-100">{domain}</span>)}</div>
+                    )}
+                    <p className="mt-1 text-[11px] text-gray-400">{item.owner ? `Owner: ${item.owner} · ` : ''}{item.source ? `${item.source} · ` : ''}Version {item.version} · {fmt(item.updated_at)}</p>
                   </div>
                   <span className={`self-start text-[11px] px-2 py-1 rounded border ${statusClass(item.status)}`}>{item.status.replaceAll('_', ' ')}</span>
                 </div>
-              </div>
+              </button>
             ))}
             {(register?.items ?? []).filter(item => registerFilter === 'all' || item.item_type === registerFilter).length === 0 && (
               <div className="py-12 text-center text-sm text-gray-400">Ingen poster i denne kategori</div>
+            )}
+          </div>
+          {selectedGrcItem && (
+            <div className="fixed inset-0 z-50 bg-black/30 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setSelectedGrcItem(null)}>
+              <div className="w-full md:max-w-2xl max-h-[85vh] overflow-auto bg-white md:rounded-lg border border-gray-200 p-5" onClick={event => event.stopPropagation()}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-mono text-xs font-semibold text-gray-500">{selectedGrcItem.external_id}</div>
+                    <h2 className="mt-1 text-base font-semibold text-gray-900">{selectedGrcItem.title}</h2>
+                  </div>
+                  <button type="button" title="Luk" onClick={() => setSelectedGrcItem(null)} className="p-2 rounded hover:bg-gray-100"><XCircle className="w-4 h-4 text-gray-500" /></button>
+                </div>
+                <dl className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div><dt className="text-gray-400">Type</dt><dd className="mt-1 text-gray-700">{selectedGrcItem.item_type}</dd></div>
+                  <div><dt className="text-gray-400">Status</dt><dd className="mt-1 text-gray-700">{selectedGrcItem.status.replaceAll('_', ' ')}</dd></div>
+                  <div><dt className="text-gray-400">Kilde</dt><dd className="mt-1 text-gray-700 break-all">{selectedGrcItem.source || '-'}</dd></div>
+                  <div><dt className="text-gray-400">Owner</dt><dd className="mt-1 text-gray-700">{selectedGrcItem.owner || 'Ikke tildelt'}</dd></div>
+                </dl>
+                {selectedGrcItem.status === 'candidate_review' && (
+                  <div className="mt-5 border-t border-gray-100 pt-4">
+                    <p className="text-xs text-gray-500">Godkend kun efter kilde, aktualitet, scope og eventuelle modstridende beslutninger er vurderet.</p>
+                    <div className="mt-3 flex gap-2 justify-end">
+                      <button type="button" disabled={grcItemBusy} onClick={() => reviewGrcItem('rejected')} className="min-h-10 px-3 rounded border border-red-200 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50">Afvis</button>
+                      <button type="button" disabled={grcItemBusy} onClick={() => reviewGrcItem('approved')} className="min-h-10 px-3 rounded bg-green-600 text-sm text-white hover:bg-green-700 disabled:opacity-50">Godkend</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : tab === 'reports' ? (
+        <div className="space-y-4">
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <h2 className="text-sm font-semibold text-gray-900">Generér fra autoritativ GRC-database</h2>
+            <p className="mt-1 text-xs text-gray-500">Rapporterne er øjebliksbilleder. Ændringer foretages i registeret, aldrig i den downloadede fil.</p>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+              {[
+                ['full', 'Samlet GRC'], ['requirements', 'Krav'], ['tests', 'Test'],
+                ['risks', 'Risici'], ['findings', 'Fund'],
+              ].map(([type, label]) => (
+                <div key={type} className="border border-gray-200 rounded-lg p-3">
+                  <div className="text-xs font-semibold text-gray-800">{label}</div>
+                  <div className="mt-3 flex gap-1">
+                    <button type="button" onClick={() => generateGrcReport(type, false)} disabled={grcReportLoading === type}
+                      className="min-h-9 flex-1 rounded border border-gray-200 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                      Vis
+                    </button>
+                    <button type="button" title={`Download ${label}`} onClick={() => generateGrcReport(type, true)} disabled={grcReportLoading === type}
+                      className="min-h-9 min-w-9 inline-flex items-center justify-center rounded bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-50">
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div className="text-xs font-semibold text-gray-700 mb-2">Rapportpreview</div>
+            {reportPreview ? (
+              <pre className="max-h-[36rem] overflow-auto whitespace-pre-wrap rounded border border-gray-100 bg-gray-50 p-4 text-xs leading-5 text-gray-700">{reportPreview}</pre>
+            ) : (
+              <div className="py-12 text-center text-sm text-gray-400">Vælg en rapport for at se den her</div>
             )}
           </div>
         </div>

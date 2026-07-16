@@ -1,5 +1,35 @@
 # TimeLapse Pro — Handover-log
 
+## Handover 2026-07-17 - GRC migration, kravudtræk og rapporter (Codex)
+
+- PostgreSQL GRC er udvidet fra første seed til et kontrolleret produktregister.
+- `headend/tools/import_grc_requirements.py` er dry-run som default og kræver
+  eksplicit `--apply`. Den bruger en reviewet allowlist af aktive produktkilder,
+  kilde-SHA-256, linjereference, idempotent import og `candidate_review`.
+- Importeret: 173 produktkrav, heraf 96 funktionelle og 77 non-funktionelle.
+- 20 forskelligt formulerede poster med genbrugt legacy-ID er forbundet med
+  `requires_decision_review`; det synliggør mulige retningsskift uden at
+  konkludere automatisk at formuleringerne er i konflikt.
+- Browser-QA fandt og fik rettet en for bred legacy-ID-regex, der fejlagtigt
+  importerede R01-R17 og ord som `REPO` som krav. De 20 fejlposter og kun deres
+  evidens blev transaktionelt fjernet; de korrekte risk-poster blev bevaret.
+- R01-R27, HLTH-001-015 og accepteret ADR-001 er migreret med kildeevidens.
+  Importerede historiske risk-statusser står `candidate_review`; en fortolket
+  historisk state gemmes separat og må ikke forveksles med aktuel runtime-risk.
+- ADR-001 dokumenterer det eksplicitte retningsskift til platform/payload,
+  samtidig med gate-styret migration og fortsat TimeLapse production-readiness.
+- Compliance -> GRC register viser klassifikation, kvalitetsdomæner, kilde og
+  reviewdialog med Godkend/Afvis. API'et håndhæver admin-RBAC.
+- Compliance -> GRC rapporter genererer samlet, krav-, test-, risk- og
+  findingrapport samt standardmapping for SABSA, COBIT, ISO27001, IEC62443,
+  NIS2, CRA, GDPR, AI Act, NIST og ENISA direkte fra PostgreSQL.
+- Rapportpreview for krav blev browsertestet mod den ægte database. Headend
+  health var 200 efter slutgenstart. Den sidste browser-reconnect var ikke
+  tilgængelig, så standardknap-runtime genprøves i næste browserpass.
+- Dokumenter slettes ikke endnu. Efter owner-review kan tidligere registre
+  flyttes til historisk evidens; runbooks/manualer og autoritative eksterne
+  kilder bevares fortsat som dokumenter.
+
 ## Handover 2026-07-16 - PostgreSQL GRC-register v1 (Codex)
 
 - GRC/test/risk/evidens flyttes fra markdown som statuskilde til PostgreSQL.

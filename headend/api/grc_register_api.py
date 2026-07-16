@@ -10,6 +10,7 @@ import hashlib
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -195,3 +196,51 @@ def bootstrap_canonical_v1(user=Depends(_writer), db: Session = Depends(get_db))
                        relationship="remediated_by", created_by=user.username))
     db.commit()
     return {"status": "ok", "created": created, "existing": len(SEED_ITEMS) - len(created)}
+
+
+@router.get("/reports/{report_type}")
+def generate_report(report_type: str, _user=Depends(_current_user), db: Session = Depends(get_db)):
+    allowed = {"full", "requirements", "tests", "risks", "findings"}
+    if report_type not in allowed:
+        raise HTTPException(status_code=404, detail="Ukendt GRC-rapport")
+    type_map = {"requirements": "requirement", "tests": "test", "risks": "risk", "findings": "finding"}
+    query = db.query(GrcItem)
+    if report_type != "full":
+        query = query.filter(GrcItem.item_type == type_map[report_type])
+    items = query.order_by(GrcItem.item_type, GrcItem.external_id).all()
+    now = datetime.now(timezone.utc)
+    lines = [f"# TimeLapse Pro GRC report - {report_type}", "",
+             f"Generated: {now.isoformat()}", "Source of truth: PostgreSQL", "",
+             "| Type | ID | Title | Status | Priority | Owner | Version |", "|---|---|---|---|---|---|---|"]
+    for row in items:
+        title = (row.title or "").replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {row.item_type} | {row.external_id} | {title} | {row.status} | {row.priority or '-'} | {row.owner or '-'} | {row.version} |")
+    lines.extend(["", "## Control statement", "",
+                  "This report is generated from the operational GRC register. It is not a certification claim."])
+    content = "\n".join(lines) + "\n"
+    return PlainTextResponse(content, media_type="text/markdown",
+                             headers={"Content-Disposition": f'attachment; filename="timelapse-grc-{report_type}-{now.date()}.md"'})
+
+
+@router.get("/reports/standard/{standard}")
+def generate_standard_report(standard: str, _user=Depends(_current_user), db: Session = Depends(get_db)):
+    standard_id = standard.upper()
+    allowed = {"SABSA", "COBIT", "ISO27001", "IEC62443", "NIS2", "CRA", "GDPR", "AI-ACT", "NIST", "ENISA"}
+    if standard_id not in allowed:
+        raise HTTPException(status_code=404, detail="Ukendt standardreference")
+    requirements = [row for row in db.query(GrcItem).filter_by(item_type="requirement").all()
+                    if standard_id in (row.attributes or {}).get("standard_refs", [])]
+    controls = [row for row in db.query(GrcItem).filter_by(item_type="control").all()
+                if standard_id in (row.attributes or {}).get("standard_refs", [])]
+    now = datetime.now(timezone.utc)
+    lines = [f"# TimeLapse Pro GRC mapping - {standard_id}", "",
+             f"Generated: {now.isoformat()}", "Source of truth: PostgreSQL", "",
+             "> Engineering mapping only. This is not a complete audit, legal opinion or certification claim.", "",
+             f"Mapped requirements: {len(requirements)}", f"Mapped controls: {len(controls)}", "",
+             "| ID | Type | Statement | Status | Source |", "|---|---|---|---|---|"]
+    for row in sorted(requirements + controls, key=lambda value: value.external_id):
+        title = (row.title or "").replace("|", "\\|").replace("\n", " ")
+        lines.append(f"| {row.external_id} | {row.item_type} | {title} | {row.status} | {row.source or '-'} |")
+    content = "\n".join(lines) + "\n"
+    return PlainTextResponse(content, media_type="text/markdown",
+                             headers={"Content-Disposition": f'attachment; filename="timelapse-grc-{standard_id.lower()}-{now.date()}.md"'})
