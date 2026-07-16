@@ -13149,29 +13149,30 @@ def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = 
         _backup_status["progress"].append(f"Backup reason: {reason}")
         _backup_status["progress"].append("Database backup (pg_dump)...")
         from urllib.parse import unquote, urlparse
-        db_url = os.environ.get(
-            "BACKUP_DATABASE_URL",
-            os.environ.get("DATABASE_URL", "postgresql://timelapse@localhost/timelapse_db"),
-        )
+        db_url = os.environ.get("BACKUP_DATABASE_URL", "postgresql://timelapse_backup@localhost/timelapse_db")
         parsed_db = urlparse(db_url)
         db_name = (parsed_db.path or "/timelapse_db").lstrip("/") or "timelapse_db"
-        db_user = unquote(parsed_db.username or "timelapse")
+        db_user = unquote(parsed_db.username or "timelapse_backup")
         db_host = parsed_db.hostname or "localhost"
         db_port = str(parsed_db.port) if parsed_db.port else None
         sql_path = f"{backup_dir}/database/timelapse_db_{date}.sql"
-        pg_dump_cmd = ["/opt/homebrew/bin/pg_dump", "-U", db_user, "-h", db_host, "--no-password", db_name]
+        sql_partial_path = f"{sql_path}.partial"
+        pg_dump_cmd = [
+            "/opt/homebrew/bin/pg_dump", "-U", db_user, "-h", db_host,
+            "--no-password", "--file", sql_partial_path, db_name,
+        ]
         if db_port:
             pg_dump_cmd[5:5] = ["-p", db_port]
         r = _subprocess.run(pg_dump_cmd, capture_output=True, text=True)
-        if r.returncode != 0 and "row-level security policy" in (r.stderr or ""):
-            _backup_status["progress"].append("pg_dump ramte RLS; forsøger med --enable-row-security")
-            r = _subprocess.run([*pg_dump_cmd, "--enable-row-security"], capture_output=True, text=True)
-        if r.returncode == 0:
-            with open(sql_path, "w") as f:
-                f.write(r.stdout)
-            _backup_status["progress"].append(f"Database OK ({len(r.stdout)//1024} KB SQL)")
-        else:
+        if r.returncode != 0:
             raise Exception(f"pg_dump fejlede: {r.stderr[:300]}")
+        from backup_integrity import validate_plain_pg_dump, publish_tar_gzip_atomically
+        dump_evidence = validate_plain_pg_dump(sql_partial_path)
+        os.replace(sql_partial_path, sql_path)
+        _backup_status["progress"].append(
+            f"Database OK ({dump_evidence['bytes']//1024} KB SQL, rolle={db_user}, "
+            f"sha256={dump_evidence['sha256'][:12]}…)"
+        )
 
         _backup_status["progress"].append("Config backup...")
         config_paths = [
@@ -13199,6 +13200,20 @@ def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = 
                 copied.append(src)
         with open(f"{backup_dir}/configs/MANIFEST.json", "w") as f:
             json.dump({"reason": reason, "copied": copied}, f, indent=2)
+        with open(f"{backup_dir}/BACKUP_MANIFEST.json", "w") as f:
+            json.dump({
+                "schema": "timelapse.headend_backup.v2",
+                "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "reason": reason,
+                "database": {
+                    "name": db_name,
+                    "role": db_user,
+                    "file": f"database/{os.path.basename(sql_path)}",
+                    **dump_evidence,
+                },
+                "configs": {"count": len(copied), "files": copied},
+                "images_included": _get_backup_include_images(),
+            }, f, indent=2)
         _backup_status["progress"].append(f"Config OK ({len(copied)} filer)")
 
         # 2026-07-04 (Claude, R09/E-01): billed-backup. Lever UDENFOR selve tar.gz'en
@@ -13218,12 +13233,12 @@ def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = 
                 if rsync_result.returncode == 0:
                     _backup_status["progress"].append(f"✅ Billed-mirror opdateret: {image_dst}")
                 else:
-                    _backup_status["progress"].append(
-                        f"⚠️ Billed-rsync fejlede (kode {rsync_result.returncode}): "
+                    raise RuntimeError(
+                        f"Billed-rsync fejlede (kode {rsync_result.returncode}): "
                         f"{(rsync_result.stderr or '')[-300:]}"
                     )
             except Exception as img_exc:
-                _backup_status["progress"].append(f"⚠️ Billed-backup fejlede: {img_exc}")
+                raise RuntimeError(f"Billed-backup fejlede: {img_exc}") from img_exc
         else:
             _backup_status["progress"].append(
                 "Billed-backup slået fra (backup_include_images=false) — kun database+config backes op"
@@ -13239,14 +13254,16 @@ def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = 
 
         _backup_status["progress"].append("Pakker backup...")
         archive = f"{base_dir}/timelapse-backup-headend-{date}.tar.gz"
-        _subprocess.run(["tar", "czf", archive, "-C", base_dir, f"timelapse-backup-headend-{date}"],
-                       check=True, capture_output=True)
+        archive_evidence = publish_tar_gzip_atomically(backup_dir, archive)
         _shutil.rmtree(backup_dir, ignore_errors=True)
         backup_dir = None
 
         _backup_status["file"] = archive
         _backup_status["running"] = False
-        _backup_status["progress"].append(f"✅ Backup komplet: {os.path.getsize(archive)//1024} KB")
+        _backup_status["progress"].append(
+            f"✅ Backup komplet: {archive_evidence['bytes']//1024} KB, "
+            f"sha256={archive_evidence['sha256'][:12]}…"
+        )
         log.info("Backup komplet: %s", archive)
         return archive
     except Exception as e:
