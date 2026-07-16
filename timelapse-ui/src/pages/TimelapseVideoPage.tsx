@@ -735,7 +735,7 @@ export default function TimelapseVideoPage() {
                 count={frames.length}
                 minColWidth={140}
                 gap={6}
-                footerHeight={58}
+                footerHeight={70}
                 renderItem={(idx) => {
                   const frame = frames[idx]
                   const isExcluded = excluded.has(frame.id)
@@ -748,6 +748,7 @@ export default function TimelapseVideoPage() {
                         capture={{ ...frame, uploaded: true }}
                         compact
                         selected={isExcluded}
+                        showFileSize={false}
                         onClick={() => setLightboxIndex(idx)}
                         overlay={isExcluded ? (
                           <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-red-950/10">

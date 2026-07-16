@@ -143,6 +143,7 @@ export function CaptureThumbnailCard({
   selected = false,
   overlay,
   footerAction,
+  showFileSize = true,
   compact = false,
 }: {
   capture: Capture
@@ -150,12 +151,16 @@ export function CaptureThumbnailCard({
   selected?: boolean
   overlay?: React.ReactNode
   footerAction?: React.ReactNode
+  showFileSize?: boolean
   compact?: boolean
 }) {
   const time = capture.captured_at
     ? new Date(capture.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     : '-'
   const [datePart, timePart] = time.split(', ')
+  const yearPart = capture.captured_at
+    ? new Date(capture.captured_at).toLocaleString('da-DK', { timeZone: getTz(), year: 'numeric' })
+    : ''
   const passed = capture.quality_passed !== false
   const thumbUrl = getThumbnailUrl(capture.device_id, capture.filename)
   const [imgOk, setImgOk] = useState(true)
@@ -277,20 +282,23 @@ export function CaptureThumbnailCard({
           // af samtidige CSS-animationer vælte browseren.
           <div className="w-full h-full bg-slate-100" />
         )}
-        <span className="absolute bottom-1.5 right-1.5 text-xs bg-black/50 text-white px-1 py-0.5 rounded">
-          {capture.filesize_mb ? `${capture.filesize_mb} MB` : '-'}
-        </span>
+        {showFileSize && (
+          <span className="absolute bottom-1.5 right-1.5 text-xs bg-black/50 text-white px-1 py-0.5 rounded">
+            {capture.filesize_mb ? `${capture.filesize_mb} MB` : '-'}
+          </span>
+        )}
         {!passed && <span className="absolute top-1.5 left-1.5 text-xs bg-red-500 text-white px-1.5 py-0.5 rounded">Fejlet</span>}
         {overlay}
       </div>
       <div className="px-2 py-1.5">
         {footerAction ? (
-          <div className="grid min-h-11 grid-cols-[auto_minmax(0,1fr)] gap-1.5">
-            <div className="flex min-w-[2.8rem] flex-col justify-center border-r border-gray-100 pr-1.5 text-xs font-medium leading-4 text-gray-700">
+          <div className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)] gap-1.5">
+            <div className="flex min-w-[2.8rem] flex-col justify-between border-r border-gray-100 pr-1.5 text-xs font-medium leading-4 text-gray-700">
               <span>{datePart}</span>
+              <span className="text-gray-400">{yearPart}</span>
               <span>{timePart ?? ''}</span>
             </div>
-            <div className="grid min-w-0 grid-rows-[auto_auto] gap-0.5">
+            <div className="grid min-w-0 grid-rows-[auto_1fr_auto] gap-0.5">
               <div className="flex min-w-0 items-center justify-end gap-1">
                 {capture.blur_score != null && (
                   <p className={`shrink-0 text-xs font-medium ${capture.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>
@@ -299,7 +307,8 @@ export function CaptureThumbnailCard({
                 )}
                 {qaBadge(ai, capture)}
               </div>
-              {footerAction}
+              <div />
+              <div>{footerAction}</div>
             </div>
           </div>
         ) : (
