@@ -1583,9 +1583,12 @@ export function UpdatesPage() {
     watchedUpdateIds.length > 0 ||
     updates.some(u => u.status === 'approved') ||
     Object.values(flowStatuses).some(isActiveFlow)
-  const activeUpdates = updates.filter(u =>
-    u.status === 'approved' && (watchedUpdateIds.includes(u.id) || isActiveFlow(flowStatuses[u.id]))
-  )
+  const activeUpdates = updates.filter(u => {
+    const flow = flowStatuses[u.id]
+    const recentlyApproved = Boolean(u.approved_at) && Date.now() - new Date(u.approved_at as string).getTime() < 6 * 60 * 60 * 1000
+    const targetStarted = flow?.targets.some(target => target.status !== 'pending')
+    return u.status === 'approved' && (watchedUpdateIds.includes(u.id) || recentlyApproved || targetStarted)
+  })
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">

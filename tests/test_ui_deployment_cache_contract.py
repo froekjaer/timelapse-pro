@@ -24,3 +24,5 @@ def test_update_approval_is_visible_and_flow_status_stays_at_the_top():
     assert 'role="dialog" aria-modal="true"' in source
     assert "Aktivt opdateringsflow" in source
     assert "sticky top-3" in source
+    assert "target.status !== 'pending'" in source
+    assert "recentlyApproved" in source
