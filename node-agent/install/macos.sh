@@ -1,19 +1,17 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════
 # TimeLapse Pro — Node Agent Install (macOS / Mac Mini)
-# Kør: sudo bash ~/Downloads/install_node_agent_macos.sh
+# Kør: sudo bash node-agent/install/macos.sh --device-id <id> --headend-url <url> --api-token-file <fil>
 # ═══════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-REPO="$HOME/projects/timelapse-pro"
-AGENT_SRC="$REPO/node-agent"
+AGENT_SRC="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALL_DIR="/opt/timelapse-node-agent"
 CONF_DIR="/etc/timelapse"
 CONF_FILE="$CONF_DIR/node-agent.conf"
 PLIST_NAME="dk.froekjaer.timelapse-node-agent"
 PLIST_PATH="/Library/LaunchDaemons/$PLIST_NAME.plist"
 LOG_FILE="/var/log/timelapse-node-agent.log"
-PYTHON="$(which python3)"
 VENV="$INSTALL_DIR/venv"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
@@ -25,8 +23,43 @@ step() { echo -e "\n${BOLD}── $1 ──${NC}"; }
 [ "$(id -u)" = "0" ] || { echo "Kør med sudo"; exit 1; }
 REAL_USER="${SUDO_USER:-$(logname)}"
 REAL_HOME=$(eval echo "~$REAL_USER")
-HEADEND_URL="https://timelapse.froekjaer.dk"
-DEVICE_ID="TL-MACMINI-HEADEND-TEST-1"
+REAL_GROUP=$(id -gn "$REAL_USER")
+DEVICE_ID=""
+HEADEND_URL=""
+API_TOKEN_FILE=""
+REPLACE_CONFIG=0
+
+usage() {
+    cat <<'EOF'
+Usage: sudo node-agent/install/macos.sh \
+  --device-id TL-HEADEND-STAGING-1 \
+  --headend-url https://staging.timelapse-pro.dk:8443 \
+  --api-token-file /secure/path/api-token [--replace-config]
+
+No environment-specific defaults are used. The token file must only be readable
+by its owner and is never copied into logs or process arguments.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --device-id) DEVICE_ID="${2:-}"; shift 2 ;;
+        --headend-url) HEADEND_URL="${2:-}"; shift 2 ;;
+        --api-token-file) API_TOKEN_FILE="${2:-}"; shift 2 ;;
+        --replace-config) REPLACE_CONFIG=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Ukendt argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+[ -n "$DEVICE_ID" ] || { echo "--device-id er påkrævet" >&2; exit 2; }
+case "$DEVICE_ID" in TL-*) ;; *) echo "Ugyldigt device-id: $DEVICE_ID" >&2; exit 2 ;; esac
+[ -n "$HEADEND_URL" ] || { echo "--headend-url er påkrævet" >&2; exit 2; }
+case "$HEADEND_URL" in https://*) ;; *) echo "--headend-url skal bruge https" >&2; exit 2 ;; esac
+[ -r "$API_TOKEN_FILE" ] || { echo "--api-token-file skal være en læsbar fil" >&2; exit 2; }
+API_TOKEN="$(tr -d '\r\n' < "$API_TOKEN_FILE")"
+[ -n "$API_TOKEN" ] || { echo "API-tokenfilen er tom" >&2; exit 2; }
+PYTHON="$(command -v python3)"
 
 echo -e "${BOLD}"
 echo "╔══════════════════════════════════════════════╗"
@@ -57,17 +90,23 @@ ok "Venv klar: $VENV"
 step "Konfigurationsfil"
 mkdir -p "$CONF_DIR"
 
-if [ -f "$CONF_FILE" ]; then
-    warn "$CONF_FILE eksisterer — springer over (slet den for at nulstille)"
+if [ -f "$CONF_FILE" ] && [ "$REPLACE_CONFIG" != "1" ]; then
+    warn "$CONF_FILE eksisterer — brug --replace-config for kontrolleret udskiftning"
+    exit 3
 else
-    cat > "$CONF_FILE" << EOF
+    CONF_TMP="$(mktemp "$CONF_DIR/node-agent.conf.XXXXXX")"
+    cat > "$CONF_TMP" << EOF
 [agent]
 device_id          = $DEVICE_ID
 headend_url        = $HEADEND_URL
+api_token          = $API_TOKEN
 inventory_interval = 300
 security_interval  = 60
 security_lookback  = 120
 EOF
+    chown root:"$REAL_GROUP" "$CONF_TMP"
+    chmod 640 "$CONF_TMP"
+    mv -f "$CONF_TMP" "$CONF_FILE"
     ok "Konfiguration skrevet: $CONF_FILE"
 fi
 
@@ -92,6 +131,10 @@ cat > "$PLIST_PATH" << EOF
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>UserName</key>
+    <string>$REAL_USER</string>
+    <key>GroupName</key>
+    <string>$REAL_GROUP</string>
     <key>StandardOutPath</key>
     <string>$LOG_FILE</string>
     <key>StandardErrorPath</key>
@@ -121,6 +164,7 @@ echo "║        Node Agent installeret! 🎉           ║"
 echo "╚══════════════════════════════════════════════╝${NC}"
 echo ""
 echo "  Device ID : $DEVICE_ID"
+echo "  Headend   : $HEADEND_URL"
 echo "  Log       : tail -f $LOG_FILE"
 echo "  Stop      : sudo launchctl stop $PLIST_NAME"
 echo "  Start     : sudo launchctl start $PLIST_NAME"

@@ -47,7 +47,7 @@ import sys
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -2151,7 +2151,7 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
         log.info("Device re-bootstrapping: %s", req.device_id)
 
     # Issue a simple test token (use proper JWT in production)
-    api_token = f"tk-{req.device_id}-{now_utc().strftime('%Y%m%d%H%M%S')}"
+    api_token = f"tk-{_secrets.token_urlsafe(32)}"
     device.api_token  = api_token
     device.last_seen  = now_utc()
     device.status     = "online"
@@ -2214,17 +2214,14 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
         config_url = config_url,
         device_id  = req.device_id,
     )
-
-
 # ── Zero-touch Enrollment ─────────────────────────────────────────────────────
-
 class EnrollRequest(BaseModel):
     bootstrap_token: str
     device_id:       str                    # af edge udledt fra MAC: TL-AABBCCDDEEFF
+    node_type:       Literal["edge", "headend"] = "edge"
     hardware_model:  Optional[str] = None   # "rpi4", "orangepi4pro", …
     ssh_pubkey:      Optional[str] = None   # ed25519 public key
     mac_address:     Optional[str] = None
-
 class EnrollResponse(BaseModel):
     device_id:        str
     api_token:        str
@@ -2294,7 +2291,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
         log.info("Zero-touch: re-enrollment: %s", req.device_id)
 
     # API-token
-    api_token = f"tk-{req.device_id}-{now_utc().strftime('%Y%m%d%H%M%S')}"
+    api_token = f"tk-{_secrets.token_urlsafe(32)}"
     device.api_token  = api_token
     device.last_seen  = now_utc()
     device.status     = "online"
@@ -2331,8 +2328,9 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
     device.device_config = json.dumps(cfg, ensure_ascii=False)
 
     # Roter evt. gamle API-credentials
-    for old in db.query(KeyCredential).filter_by(
-        entity_type="edge", entity_id=req.device_id, key_type="api", status="active"
+    for old in db.query(KeyCredential).filter(
+        KeyCredential.entity_type.in_(["edge", "headend"]), KeyCredential.entity_id == req.device_id,
+        KeyCredential.key_type == "api", KeyCredential.status == "active",
     ).all():
         old.status = "rotated"
         old.revoked_at = now_utc()
@@ -2341,7 +2339,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
 
     credential = KeyCredential(
         credential_id=f"TL-KEY-{now_utc():%Y%m%d}-{_secrets.token_hex(6)}",
-        entity_type="edge",
+        entity_type=req.node_type,
         entity_id=req.device_id,
         key_type="api",
         label=f"Zero-touch enrollment credential for {req.device_id}",
@@ -2356,6 +2354,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
         metadata_json=_canonical_json({
             "hardware_model":   req.hardware_model,
             "mac_address":      req.mac_address,
+            "node_type":        req.node_type,
             "enrollment_state": enrollment_state,
             "require_request_signature": True,
             "request_signature_policy": "required-by-default-for-device-api",
