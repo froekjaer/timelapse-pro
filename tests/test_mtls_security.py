@@ -321,6 +321,41 @@ def test_expiry_grace_policy_separate():
     assert True  # Design requirement
 
 
+def test_device_pki_factory_policy_is_configurable_but_revocation_is_not():
+    """Expiry is configurable; no factory setting may weaken revocation."""
+    import sys
+    sys.path.insert(0, os.path.join(PROJECT_ROOT, "headend"))
+    import main
+
+    pki = main._FACTORY_CONFIG_DEFAULTS["system"]["device_pki"]
+    assert pki["expired_certificate_policy"] == "grace_period"
+    assert pki["expired_certificate_grace_days"] == 7
+    assert not any("revok" in key.lower() for key in pki)
+
+
+def test_device_pki_config_rejects_revocation_override():
+    """No hierarchy layer may configure acceptance of a revoked certificate."""
+    import sys
+    from fastapi import HTTPException
+    sys.path.insert(0, os.path.join(PROJECT_ROOT, "headend"))
+    import main
+
+    with pytest.raises(HTTPException, match="Revokerede"):
+        main._validate_device_pki_config({"system": {"device_pki": {"allow_revoked": True}}})
+
+
+@pytest.mark.parametrize("policy", ["block", "grace_period", "continue_until_rotated"])
+def test_device_pki_expiry_policies_are_accepted(policy):
+    import sys
+    sys.path.insert(0, os.path.join(PROJECT_ROOT, "headend"))
+    import main
+
+    main._validate_device_pki_config({"system": {"device_pki": {
+        "expired_certificate_policy": policy,
+        "expired_certificate_grace_days": 30,
+    }}})
+
+
 # ── 7. Certificate Revocation (CRL) ───────────────────────────────────────────
 
 @pytest.mark.integration

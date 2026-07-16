@@ -13902,7 +13902,16 @@ _FACTORY_CONFIG_DEFAULTS = {
     },
     "storage": {"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"},
     "diagnostics": {"heartbeat_interval_minutes": 60, "config_poll_interval_minutes": 5, "update_poll_interval_minutes": 5, "inventory_report_interval_hours": 24},
-    "system": {"error_recovery_sleep_s": 30, "min_sleep_s": 60, "api_timeout_s": 15},
+    "system": {
+        "error_recovery_sleep_s": 30,
+        "min_sleep_s": 60,
+        "api_timeout_s": 15,
+        "device_pki": {
+            "certificate_lifetime_days": 3650,
+            "expired_certificate_policy": "grace_period",
+            "expired_certificate_grace_days": 7,
+        },
+    },
     "session_policy": {
         "session_duration_hours": 12,
         "remember_me_days": 30,
@@ -13930,6 +13939,34 @@ def _merge_missing_defaults(existing: dict, defaults: dict) -> dict:
         elif isinstance(result.get(key), dict) and isinstance(value, dict):
             result[key] = _merge_missing_defaults(result[key], value)
     return result
+
+
+_EXPIRED_CERTIFICATE_POLICIES = {"block", "grace_period", "continue_until_rotated"}
+
+
+def _validate_device_pki_config(config: dict) -> None:
+    """Validate configurable expiry handling; revocation is deliberately not configurable."""
+    system = config.get("system") if isinstance(config, dict) else None
+    if system is not None and not isinstance(system, dict):
+        raise HTTPException(status_code=400, detail="system skal være et JSON object")
+    pki = (system or {}).get("device_pki") or {}
+    if not isinstance(pki, dict):
+        raise HTTPException(status_code=400, detail="system.device_pki skal være et JSON object")
+    forbidden = {"allow_revoked", "revocation_policy", "revocation_enabled"}.intersection(pki)
+    if forbidden:
+        raise HTTPException(status_code=400, detail="Revokerede device-certifikater kan ikke tillades via konfiguration")
+    policy = pki.get("expired_certificate_policy")
+    if policy is not None and policy not in _EXPIRED_CERTIFICATE_POLICIES:
+        raise HTTPException(status_code=400, detail="Ugyldig expired_certificate_policy")
+    for key, minimum, maximum in (
+        ("certificate_lifetime_days", 1, 3650),
+        ("expired_certificate_grace_days", 0, 3650),
+    ):
+        if key not in pki:
+            continue
+        value = pki[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise HTTPException(status_code=400, detail=f"system.device_pki.{key} skal være {minimum}-{maximum}")
 
 def _get_or_create_defaults(db: Session) -> ConfigDefaults:
     d = db.query(ConfigDefaults).first()
@@ -13974,6 +14011,7 @@ def get_config_defaults(_user=require_role("admin"), db: Session = Depends(get_d
 
 @app.put("/api/admin/config-defaults")
 def update_config_defaults(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
+    _validate_device_pki_config(payload)
     d = _get_or_create_defaults(db)
     for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
         if section in payload and hasattr(d, section):
@@ -14067,6 +14105,7 @@ def update_config_layer_override(
         raise HTTPException(status_code=400, detail="config_overrides skal være et JSON object")
     mode = str(payload.get("mode") or "merge").lower()
     replace = mode == "replace"
+    _validate_device_pki_config(config_payload)
 
     if layer == "global":
         if not _is_platform_admin(_user):

@@ -219,6 +219,12 @@ const SECTIONS: { key: keyof ConfigDefaults; label: string; description: string;
         tooltip: 'Minimum søvn mellem captures i sekunder. Selv ved fejl eller hurtig retry. Sikrer at systemet hviler og ikke overbelaster kamera eller network. Typisk 30-120 sekunder. Kan sænkes ved hyppige captures.' },
       { key: 'api_timeout_s', label: 'API timeout', type: 'number', unit: 'sek', placeholder: '15', default: 15,
         tooltip: 'Timeout i sekunder for API kald til headend. Upload, heartbeat, config fetch. For kort kan give fejler på slow networks. For langt kan hænge systemet. Typisk 10-30 sekunder. Øges ved slow network.' },
+      { key: 'device_pki.certificate_lifetime_days', label: 'Device-certifikat levetid', type: 'number', unit: 'dage', placeholder: '3650', default: 3650,
+        tooltip: 'Gyldighed ved udstedelse af nye device-certifikater. Eksisterende certifikater ændres ikke. Maksimum er 3650 dage.' },
+      { key: 'device_pki.expired_certificate_policy', label: 'Udløbet device-certifikat', type: 'select', options: ['block', 'grace_period', 'continue_until_rotated'], default: 'grace_period',
+        tooltip: 'block afviser straks ved udløb. grace_period tillader kun den konfigurerede periode. continue_until_rotated holder driften i gang og alarmerer indtil rotation. Revokerede certifikater afvises altid uanset dette valg.' },
+      { key: 'device_pki.expired_certificate_grace_days', label: 'Grace ved udløb', type: 'number', unit: 'dage', placeholder: '7', default: 7,
+        tooltip: 'Antal dage et udløbet, ikke-revokeret certifikat accepteres ved grace_period. Revokering, forkert signatur, ukendt issuer og forkert device-identitet kan aldrig få grace.' },
     ],
   },
   {
@@ -425,7 +431,16 @@ export function GlobalConfigPage() {
       },
       storage: { local_path: '/data/captures', circular_buffer_gb: 50, db_path: '/data/timelapse_edge.db' },
       diagnostics: { heartbeat_interval_minutes: 60, config_poll_interval_minutes: 5, update_poll_interval_minutes: 5, inventory_report_interval_hours: 24 },
-      system: { error_recovery_sleep_s: 30, min_sleep_s: 60, api_timeout_s: 15 },
+      system: {
+        error_recovery_sleep_s: 30,
+        min_sleep_s: 60,
+        api_timeout_s: 15,
+        device_pki: {
+          certificate_lifetime_days: 3650,
+          expired_certificate_policy: 'grace_period',
+          expired_certificate_grace_days: 7,
+        },
+      },
       session_policy: {
         session_duration_hours: 12,
         remember_me_days: 30,
