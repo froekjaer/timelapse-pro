@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowLeft, CheckCircle, ClipboardCheck, FileCheck,
-  RefreshCw, ShieldCheck
+  ExternalLink, Globe2, RefreshCw, Search, ShieldCheck
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -123,6 +123,9 @@ interface GrcDashboard {
 
 interface StandardReport {
   standard: string
+  audit_type?: string
+  catalog_complete?: boolean
+  claim_limit?: string
   generated_at: string
   scope: string
   emphasis: string
@@ -148,7 +151,31 @@ interface StandardReport {
   recommended_next_steps: string[]
 }
 
-type Tab = 'grc' | 'approvals' | 'controls' | 'evidence'
+interface RegulatoryInstrument {
+  id: string
+  title: string
+  short_name: string
+  jurisdiction: string
+  kind: string
+  category: string
+  status: string
+  applicability: string
+  effective_from: string | null
+  next_deadline: string | null
+  source_url: string
+  relevance: string
+}
+
+interface AuditCatalog {
+  id: string
+  title: string
+  catalog_status: string
+  license: string
+  full_audit_available: boolean
+  reason: string
+}
+
+type Tab = 'grc' | 'regulatory' | 'approvals' | 'controls' | 'evidence'
 type MetricKey = 'pass' | 'warning' | 'fail' | 'approval_queue' | 'change_tickets' | 'sast_findings' | 'fleet_risk' | 'highest_device_risk' | 'security_missing' | 'blocked' | 'approved'
 
 function statusClass(status: string) {
@@ -192,16 +219,23 @@ export function CompliancePage() {
   const [selectedMetric, setSelectedMetric] = useState<MetricKey | null>(null)
   const [standardReport, setStandardReport] = useState<StandardReport | null>(null)
   const [reportLoading, setReportLoading] = useState<string | null>(null)
+  const [instruments, setInstruments] = useState<RegulatoryInstrument[]>([])
+  const [auditCatalogs, setAuditCatalogs] = useState<AuditCatalog[]>([])
+  const [regulatorySearch, setRegulatorySearch] = useState('')
 
   const load = useCallback(async () => {
     setError(null)
     try {
-      const [cockpit, grcData] = await Promise.all([
+      const [cockpit, grcData, regulatoryData, catalogData] = await Promise.all([
         api('/api/compliance/cockpit'),
         api('/api/grc/dashboard'),
+        api('/api/compliance/intelligence/instruments'),
+        api('/api/compliance/intelligence/audit-catalogs'),
       ])
       setData(cockpit)
       setGrc(grcData)
+      setInstruments(regulatoryData.instruments ?? [])
+      setAuditCatalogs(catalogData.catalogs ?? [])
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Kunne ikke hente compliance cockpit')
     } finally {
@@ -257,6 +291,9 @@ export function CompliancePage() {
         : selectedMetric === 'approved'
           ? (grc?.devices ?? []).filter(device => device.approved_updates > 0)
           : []
+  const visibleInstruments = regulatorySearch.trim()
+    ? instruments.filter(item => Object.values(item).join(' ').toLocaleLowerCase().includes(regulatorySearch.trim().toLocaleLowerCase()))
+    : instruments
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -358,6 +395,7 @@ export function CompliancePage() {
       <div className="flex gap-1 mb-4">
         {[
           ['grc', 'GRC risk'],
+          ['regulatory', 'Regler og standarder'],
           ['approvals', 'Godkendelser'],
           ['controls', 'Controls'],
           ['evidence', 'Evidens'],
@@ -445,6 +483,66 @@ export function CompliancePage() {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      ) : tab === 'regulatory' ? (
+        <div className="space-y-4">
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2"><Globe2 className="w-4 h-4 text-gray-500" />Regulatory intelligence</h2>
+                <p className="text-xs text-gray-500 mt-1">Versioneret register over gældende, indfaset, kommende og markedsrelevant regulering.</p>
+              </div>
+              <label className="relative block md:w-80">
+                <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-gray-400" />
+                <input value={regulatorySearch} onChange={event => setRegulatorySearch(event.target.value)} placeholder="Søg fx AI, energi, NERC eller privacy"
+                  className="w-full h-9 pl-8 pr-3 rounded border border-gray-200 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-400" />
+              </label>
+            </div>
+            <div className="mt-3 rounded border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Opdateringspolitik: autoritativ allowlist → hash og diff → administratorreview → aktiv auditbaseline. Eksternt indhold bliver aldrig automatisk til et krav.
+            </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            {visibleInstruments.map(item => (
+              <div key={item.id} className="p-4 border-b border-gray-100 last:border-0">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-900">{item.short_name}</span>
+                      <span className="text-xs text-gray-500">{item.title}</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-600 border-gray-200">{item.jurisdiction}</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded border bg-sky-50 text-sky-700 border-sky-200">{item.kind}</span>
+                      <span className={`text-[11px] px-1.5 py-0.5 rounded border ${item.status.includes('pending') || item.status.includes('future') || item.status.includes('agreement') ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-green-50 text-green-700 border-green-200'}`}>{item.status.replaceAll('_', ' ')}</span>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-600">{item.relevance}</p>
+                    <p className="mt-2 text-[11px] text-gray-400">Applicability: {item.applicability.replaceAll('_', ' ')}{item.effective_from ? ` · fra ${item.effective_from}` : ''}{item.next_deadline ? ` · næste deadline ${item.next_deadline}` : ''}</p>
+                  </div>
+                  <a href={item.source_url} target="_blank" rel="noopener noreferrer" title="Åbn autoritativ kilde" className="p-2 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700">
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                </div>
+              </div>
+            ))}
+            {visibleInstruments.length === 0 && <div className="py-12 text-center text-sm text-gray-400">Ingen matchende regler eller standarder</div>}
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <h2 className="text-sm font-semibold text-gray-900">Fuld audit - katalogberedskab</h2>
+            <p className="text-xs text-gray-500 mt-1">En audit kan først kaldes fuld, når alle relevante clauses, requirements og enhancements er versionsbundet og verificeret.</p>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2">
+              {auditCatalogs.map(catalog => (
+                <div key={catalog.id} className="rounded border border-gray-100 bg-gray-50 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-gray-900">{catalog.title}</span>
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded border ${catalog.full_audit_available ? 'bg-green-50 text-green-700 border-green-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>{catalog.full_audit_available ? 'fuldt katalog' : catalog.catalog_status.replaceAll('_', ' ')}</span>
+                  </div>
+                  <p className="mt-2 text-[11px] text-gray-600">{catalog.reason}</p>
+                  <p className="mt-2 text-[11px] text-gray-400">Licens/kilde: {catalog.license.replaceAll('_', ' ')}</p>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       ) : tab === 'approvals' ? (
@@ -549,6 +647,11 @@ export function CompliancePage() {
                   <h2 className="text-sm font-semibold text-sky-950">{standardReport.standard} rapport</h2>
                   <p className="mt-1 text-xs text-sky-700">{standardReport.emphasis}</p>
                   <p className="mt-1 text-[11px] text-sky-600">{standardReport.scope}</p>
+                  {standardReport.catalog_complete === false && (
+                    <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+                      Delvis mapping: {standardReport.claim_limit || 'Rapporten er ikke en fuld standardaudit.'}
+                    </p>
+                  )}
                 </div>
                 <span className="text-[11px] text-sky-600">{fmt(standardReport.generated_at)}</span>
               </div>

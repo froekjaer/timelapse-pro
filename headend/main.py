@@ -106,6 +106,7 @@ from siem import router as siem_router, start_headend_log_collector, record_even
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from itim import router as itim_router, start_itim_collector
 from redaction_api import router as redaction_router
+from compliance_intelligence import router as compliance_intelligence_router
 from database import (
     BootstrapToken,
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
@@ -10089,6 +10090,9 @@ def compliance_standard_report(
     }
     return {
         "standard": normalized,
+        "audit_type": "partial_mapping",
+        "catalog_complete": False,
+        "claim_limit": "This is a focused TimeLapse evidence view, not a clause-complete standard audit or certification claim.",
         "generated_at": now_utc().isoformat(),
         "scope": "TimeLapse Pro Headend, Edge devices, CMDB, update flow, key management, backup/resilience and SIEM evidence",
         "emphasis": emphasis[normalized],
@@ -11596,6 +11600,7 @@ app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(itim_router, prefix="/api/itim")
 app.include_router(settings_router, dependencies=[require_role("admin")])
 app.include_router(redaction_router)
+app.include_router(compliance_intelligence_router, dependencies=[require_role("operator")])
 
 @app.post("/api/inventory/{device_id}")
 def edge_report_inventory(

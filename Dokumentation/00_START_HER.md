@@ -65,6 +65,8 @@ Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne b
 | `TimeLapse\_Roadmap\_v10.md` | Historisk sprint-roadmap (fremadrettet plan i kravregisteret) |
 | `System\_Inventory\_v10.md` | Hardware-/pakke-inventar (historisk snapshot; levende data i CMDB) |
 | `DOKUMENTPAKKE\_OVERSIGT\_v10.md` | Oversigt + kendte uoverensstemmelser (historik → beslutning) |
+| `REGULATORISK\_OG\_STANDARD\_REFERENCE\_v1.md` | Living EU/Danmark horizon scan: AI Act, CRA, NIS2, Data Act, produktansvar, privacy/TV, NIST, ENISA og OT-standarder |
+| `SAMARBEJDSMODEL\_PETER\_CLAUDE\_CODEX\_v1.md` | Fælles samarbejds-, review- og handovermodel |
 
 
 ## 3. Levende arbejdsdokumenter (opdateres løbende — ikke versioneret)

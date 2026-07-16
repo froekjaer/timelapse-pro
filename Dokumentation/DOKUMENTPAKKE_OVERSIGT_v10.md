@@ -19,6 +19,8 @@
 | `ADMINISTRATORMANUAL_v10.md` | Administratormanual for drift, sikkerhed, update, backup, CMDB og go-live |
 | `Timelapse_pro_full_documentation_v10.md` | Samlet systemdokumentation (arkitektur, komponenter, flows) |
 | `SABSA_Architecture_v10.md` | SABSA-arkitektur (konsolideret fra .docx v3–v9) |
+| `REGULATORISK_OG_STANDARD_REFERENCE_v1.md` | Living EU/Danmark regulatory horizon og standardreference for AI, cyber, privacy, produkt og OT |
+| `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` | Fælles arbejds-, review- og handovermodel for Peter, Claude og Codex |
 
 ## Kildegrundlag
 
