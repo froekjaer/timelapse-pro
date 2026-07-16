@@ -9417,3 +9417,9 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - UI-handlingen registrerer nu seneste GPG-signerede Git-tag via den eksisterende clean-checkout builder. Knappen hedder `Registrer seneste signerede tag`; release-artifact, kandidater og testmiljø kan dermed ikke forveksles med en lokal arbejdsmappe.
 - Lokal CI-identisk gate: 583 passed, 4 auth-smoke skipped, 543 integration deselected. Arkitektur-ratchet, Python compile, TypeScript, Vite build og ESLint-ratchet 186/186 bestod.
 - Næste accept: CI/deploy af rettelsen, browser-verifikation, opret og registrer næste signerede lab-tag, godkend kun nyeste kandidat til R&D Edge, og dokumenter poll/trust/backup/install/receipt/rollback-status. Stale kandidater skal senere håndteres med eksplicit supersession frem for manuel oprydning.
+
+### Codex 2026-07-16 - UI deploy/cache-kontrakt
+
+- Efter grøn GitHub deploy serverede Nginx den nye bundle på disk, men browseren viste fortsat den gamle update-knap. Root cause: Vite/Rolldown genbrugte samme asset-filnavn på tværs af ændret kildekode, så browsercache kunne fastholde en forældet administrations-UI.
+- UI entry/chunk-filnavne indeholder nu de første 12 tegn af `GITHUB_SHA`/`VITE_BUILD_ID`. Nginx-template, Headend-generator og aktiv R&D-konfiguration sætter `Cache-Control: no-cache, must-revalidate` for SPA og assets; ukendte asset paths giver 404 og falder ikke tilbage til `index.html`.
+- Evidens: Nginx syntax/reload PASS; nyt asset `index-DDYKCiGo-40cbef1b1022.js` gav HTTP 200 med cache-policy, gammelt `index-CpYvLk5m.js` gav HTTP 404, og 4 cache-/arkitekturtests bestod. CI/deploy og frisk browseraccept følger i næste commit.

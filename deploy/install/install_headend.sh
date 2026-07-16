@@ -338,7 +338,14 @@ if _cert_exists "$TL_DOMAIN_BACKEND"; then
         root ${TL_REPO_DIR}/timelapse-ui/dist;
         index index.html;
 
-        location / { try_files \$uri \$uri/ /index.html; }
+        location / {
+            add_header Cache-Control "no-cache, must-revalidate" always;
+            try_files \$uri \$uri/ /index.html;
+        }
+        location ^~ /assets/ {
+            add_header Cache-Control "no-cache, must-revalidate" always;
+            try_files \$uri =404;
+        }
 
         location ~ ^/api/auth/login {
             limit_req zone=api_login burst=5 nodelay;
