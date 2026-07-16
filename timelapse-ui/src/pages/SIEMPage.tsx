@@ -224,7 +224,7 @@ export function SIEMPage() {
     <div className="max-w-7xl mx-auto px-4 py-8">
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Shield className="w-6 h-6 text-red-500" />
@@ -234,7 +234,7 @@ export function SIEMPage() {
             Normaliserede og redigerede drifts-, applikations- og sikkerhedslogs
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Tidsperiode */}
           <select
             value={hours}

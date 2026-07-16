@@ -381,7 +381,7 @@ export function CMDBPage() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Server className="w-6 h-6 text-sky-600" />
@@ -399,7 +399,7 @@ export function CMDBPage() {
 
       {/* Stats bar */}
       {!loading && entries.length > 0 && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
           {(['lab', 'staging', 'production'] as const).map(env => {
             const count = entries.filter(e => e.environment === env).length
             return (
@@ -460,7 +460,7 @@ export function CMDBPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="min-w-0 overflow-x-auto rounded-xl border border-gray-200 bg-white">
         {loading ? (
           <div className="py-16 text-center text-gray-400 text-sm">Indlæser…</div>
         ) : entries.length === 0 ? (
@@ -472,7 +472,7 @@ export function CMDBPage() {
             </p>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="min-w-[860px] w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Enhed</th>
