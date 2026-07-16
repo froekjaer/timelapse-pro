@@ -1460,9 +1460,9 @@ export function CMDBDetailPage() {
 
 function Row({ label, value, mono = false }: { label: string; value: string | null | undefined; mono?: boolean }) {
   return (
-    <div className="flex items-start gap-2 py-1">
-      <span className="text-xs text-gray-400 w-36 flex-shrink-0">{label}</span>
-      <span className={`text-sm ${value ? 'text-gray-900' : 'text-gray-400'} ${mono ? 'font-mono' : ''}`}>
+    <div className="grid min-w-0 grid-cols-[minmax(6rem,0.8fr)_minmax(0,1.2fr)] items-start gap-2 py-1">
+      <span className="text-xs text-gray-400">{label}</span>
+      <span className={`min-w-0 break-all text-sm ${value ? 'text-gray-900' : 'text-gray-400'} ${mono ? 'font-mono' : ''}`}>
         {value ?? '—'}
       </span>
     </div>
