@@ -1643,7 +1643,8 @@ export function DevicePage() {
           )}
         </div>
 
-        <div className="flex gap-1 mb-6 border-b border-gray-200">
+        <div className="mb-6 min-w-0 overflow-x-auto border-b border-gray-200">
+          <div className="flex w-max gap-1">
           <button onClick={() => navigate(`/devices/${routeDeviceId}/timelapse`)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-sky-600 hover:text-sky-700 border-b-2 border-transparent hover:border-sky-400 -mb-px transition-colors mr-2">
             <Film className="w-4 h-4" />Timelapse Video
@@ -1661,6 +1662,7 @@ export function DevicePage() {
               <Icon className="w-4 h-4" />{label}
             </button>
           ))}
+          </div>
         </div>
 
         {tab === 'captures' && (

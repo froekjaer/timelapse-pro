@@ -889,9 +889,9 @@ export function CMDBDetailPage() {
                 </summary>
                 <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-100">
                   {invEntries.map(([name, value]) => (
-                    <div key={name} className="flex justify-between gap-3 text-xs py-1 px-2 border-b border-gray-50 last:border-0">
+                    <div key={name} className="flex min-w-0 justify-between gap-3 text-xs py-1 px-2 border-b border-gray-50 last:border-0">
                       <span className="text-gray-600 font-medium shrink-0">{name}</span>
-                      <span className="text-gray-400 font-mono text-right break-all">{compactValue(value)}</span>
+                      <span className="min-w-0 break-all text-right font-mono text-gray-400">{compactValue(value)}</span>
                     </div>
                   ))}
                 </div>
@@ -917,8 +917,8 @@ export function CMDBDetailPage() {
                   )}
                   <span className="text-gray-400">tilgængelige opdateringer</span>
                 </summary>
-                <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-100">
-                  <table className="w-full text-xs">
+                <div className="mt-2 max-h-56 overflow-auto rounded border border-gray-100">
+                  <table className="min-w-[36rem] w-full text-xs">
                     <thead>
                       <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
                         <th className="text-left px-2 py-1">Pakke</th>
@@ -1003,8 +1003,8 @@ export function CMDBDetailPage() {
                   <div className="flex items-center justify-end gap-3 px-3 py-1.5 bg-gray-50 text-[10px] text-gray-400 border-b border-gray-100">
                     <button onClick={downloadSbom} className="text-sky-600 hover:text-sky-700">Download JSON</button>
                   </div>
-                  <div className="max-h-64 overflow-y-auto">
-                    <table className="w-full text-xs">
+                  <div className="max-h-64 overflow-auto">
+                    <table className="min-w-[34rem] w-full text-xs">
                       <thead>
                         <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
                           <th className="text-left px-2 py-1">Komponent</th>
