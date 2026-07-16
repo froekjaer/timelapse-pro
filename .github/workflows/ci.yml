@@ -46,7 +46,9 @@ jobs:
           exit $rc
       - name: Unit and contract tests
         env:
-          DATABASE_URL: sqlite:////tmp/timelapse-ci.db
+          # headend/tests/conftest.py intentionally ignores DATABASE_URL so a
+          # developer can never point pytest at the operational database.
+          TIMELAPSE_TEST_DATABASE_URL: sqlite:////tmp/timelapse-ci.db
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/headend:${{ github.workspace }}/edge
         run: |
           pytest tests headend/tests edge/ai/tests \

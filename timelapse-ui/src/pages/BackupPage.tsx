@@ -623,7 +623,7 @@ export function BackupPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Database className="w-6 h-6 text-sky-500" />
         <div className="flex-1">
           <h1 className="text-2xl font-semibold text-gray-900">Drift & Resilience</h1>
@@ -647,16 +647,18 @@ export function BackupPage() {
         </div>
       )}
 
-      <div className="flex gap-1 mb-5 border-b border-gray-200">
-        {tabs.map(({ key, label, icon: Icon }) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`flex items-center gap-2 px-4 py-2 text-sm border-b-2 transition-colors ${
-              tab === key ? 'border-sky-500 text-sky-700' : 'border-transparent text-gray-500 hover:text-gray-800'
-            }`}>
-            <Icon className="w-4 h-4" />
-            {label}
-          </button>
-        ))}
+      <div className="mb-5 min-w-0 overflow-x-auto border-b border-gray-200">
+        <div className="flex w-max gap-1">
+          {tabs.map(({ key, label, icon: Icon }) => (
+            <button key={key} onClick={() => setTab(key)}
+              className={`flex min-h-11 items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors ${
+                tab === key ? 'border-sky-500 text-sky-700' : 'border-transparent text-gray-500 hover:text-gray-800'
+              }`}>
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === 'headend' && (
