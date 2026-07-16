@@ -29,6 +29,42 @@ person vide".
 
 ## Log
 
+### Handover 2026-07-16 — Claude: staging→prod promotion-flow + 2 uoverensstemmelser i metodik-doc
+- **Ny doc:** `STAGING_TIL_PROD_PROMOTION_v1.md` — bro mellem `Release_Promotion_Methodology_2026-06-05.md` (kanal-/gate-modellen, stadig gældende) og den aktuelle rd/staging/prod-topologi + headend-generatoren. Indhold: terminologi-afstemning (metodikkens "LAB" = i dag `rd`), to promotion-spor (A: software-release, B: ny headend via generatoren mod en `prod_available`-tag), konkret rd→staging→prod-flow med gates/evidens/rollback, og standard-mapping.
+- **⚠️ 2 uoverensstemmelser i metodik-dokumentet (flagget additivt, IKKE rettet i det uden Peters ok):**
+  1. Metodikkens port-model (§Mac Headend port ownership) viser nginx som ejer af **80/443** — det gælder KUN `rd`. På `staging`/`prod` ejer **CrushFTP** 80/443; TimeLapse skal på **8443** (afgjort i PORT_AUDIT/PORTS.md/HEADEND_GENERATOR). Metodikken anerkender konflikten men konkluderer den ikke.
+  2. "LAB"-terminologien bør læses som `rd`; kanal-feltnavne (`lab_accepted`) beholdes i DB (additivt), men prosaen bør afstemmes.
+- **➡️ Codex (kode, når relevant):** `release_promotions`-tabellen (metodik §Minimum datamodel) + `channel`/`release_state` på `update_artifacts` er den manglende brik for maskinel gate'ing af `prod_available`. Koordinér med din update-flow/change-ticket-kode.
+- **➡️ Peter (beslutning):** bekræft at `staging` altid modtager `prod_available` (pilot af det prod-klare), ikke en ekstra valideringskanal før prod_available.
+- **Kontekst:** Fortsættelse af headend-generator-sporet. Codex lukkede i mellemtiden Fase 3-hullet (enroll_headend_cmdb.sh + parametriseret node-agent + autentificeret inventory) — `HEADEND_GENERATOR_v1.md` er opdateret til "Fase 0-3 implementeret og kontrakttestet".
+- **Filer rørt (docs):** `STAGING_TIL_PROD_PROMOTION_v1.md` (ny), denne note. Ingen kode. Uncommitted.
+
+### Handover 2026-07-16 — Claude: headend-generator design + tilpasset staging/prod install-guide
+- **Kontekst (Peter):** Tilpas headend-install til staging/prod (flyt VORES porte væk fra CrushFTP, rør den ikke), og lav en "headend generator" analogt til edge-generatoren — IKKE en ISO, men et script der henter fra GitHub → config-kontrol via agent → CMDB.
+- **Nye docs (mine, docs-lane):**
+  - **`HEADEND_GENERATOR_v1.md`** — fuldt design: 4-fase-livscyklus (Preflight → Stage[signeret GitHub-release] → Apply → **Enroll i CMDB/config-control**), portmodel (8443/22222/5514/loopback, CrushFTP urørt), sammenligning med edge-generatoren, sikkerhed/standarder, og reference-skitse til enroll-trinnet.
+  - **`INSTALLATION_GUIDE_HEADEND_v1.md`** — nyt §11 der integrerer bootstrap-generatoren (preflight/stage) + Fase 3 CMDB-enrollment; §9's "node-agent ikke dækket" er nu lukket/henvist.
+- **Fund:** Det meste findes allerede og virker — `bootstrap_headend_macos.sh` (preflight + signeret release-fetch + GPG-verify, afviser 21/22/80/443), `install_headend.sh`, `example-{staging,prod}.conf` (8443/DNS-01), og node-agent er **universel (edge+headend)**. Hullet er **Fase 3**: node-agent er ikke wired ind i headend-provisioning, og `node-agent/install/macos.sh` er hardcoded til R&D (`HEADEND_URL=timelapse.froekjaer.dk`, `DEVICE_ID=...TEST-1`).
+- **➡️ Codex (node-agent/provisioning — din aktive lane, jeg rørte IKKE dine filer):**
+  1. Parametrisér `node-agent/install/macos.sh`: `--device-id` + `--headend-url` (fjern hardcoded R&D-værdier; default må ikke være R&D).
+  2. Bekræft/tilføj device-token/HMAC-auth på `POST /api/inventory/{device_id}` så CMDB-inventory ikke kan forfalskes (relaterer til din `test_node_agent_privilege_contract.py`).
+  3. Implementér `deploy/install/enroll_headend_cmdb.sh` (Fase 3) jf. `HEADEND_GENERATOR_v1.md` §7: self-register + verifikation + **fail-closed**.
+  4. Evt. tynd orkestrator `deploy/install/headend_generator.sh` der kæder faserne med gates.
+- **➡️ Peter (beslutninger):** (a) device-ID-navngivning for staging/prod (`TL-HEADEND-STAGING-1`/`...PROD-1`?), (b) bekræft 8443-direkte som prod-portmodel vs. fremtidig fælles-reverse-proxy (`HEADEND_GENERATOR_v1.md` §5).
+- **Filer rørt (docs):** `HEADEND_GENERATOR_v1.md` (ny), `INSTALLATION_GUIDE_HEADEND_v1.md` (§9+§11), denne note. Ingen kode. Uncommitted — afventer Peters commit.
+
+### Handover 2026-07-16 — Claude: ADR-001 accepteret, v19 anvendt på rd, + backup-fund (R09)
+- **ADR-001 = Accepted (Peter, 2026-07-16).** Binding i `00_START_HER.md` §1; register i `ADR/README.md`. Arkitektur/ADR/samarbejdsmodel committet+pushet (`6f674582`). Dette push publicerede samtidig 20 af Codex' lokale commits til origin — CI/deploy kører nu hele stakken.
+- **v19-migration ANVENDT på live rd-PostgreSQL (Peter kørte den):** `v19_site_look_colour_parameters.sql` — 7 additive kolonner + CHECK på Kelvin-interval. Verificeret via `\d site_look_config` (neutral_kelvin/kelvin_min/max, multipliers, LAB-thresholds, constraint til stede). NOTICE om drop af ikke-eksisterende constraint = forventet. Site Look avancerede farvefelter er nu funktionelle på rd. Idempotent — sikker at gentage på staging/prod ved cutover.
+- **🔴 BACKUP-FUND (R09, reelt):** `deploy/scripts/backup.sh` fejlede FØR migrationen med `mkdir: /Volumes/data-fast/backups: Permission denied`. Årsag: default `BACKUP_BASE=/Volumes/data-fast` (scriptlinje 26) → target `/Volumes/data-fast/backups`, men volumenets ROD er ikke skrivbar for `peter` (kun `/Volumes/data-fast/peter-home/` er). **Konsekvens: backups kører ikke med default-indstilling** — det er R09-blockeren manifesteret i praksis. Migrationen gik alligevel godt (idempotent/additiv), men sikkerhedsnettet fyrede ikke.
+  - **Anbefaling:** (1) hurtigt: kør backup med en skrivbar base, fx `BACKUP_BASE=/Volumes/data-fast/peter-home bash deploy/scripts/backup.sh`, eller mod det dokumenterede backup-disk-target (`/Volumes/Backup`, jf. 00_START_HER kernefakta — bekræft det er monteret). (2) rigtigt: ret scriptets default-`BACKUP_BASE` til en skrivbar/kanonisk sti og få en grøn restore-test-evidens (R09/P0-03). Codex' tranche-2 nævner allerede "obligatorisk backup-evaluering" — dette er det konkrete blokerende fund.
+- **Filer rørt (docs):** `00_START_HER.md`, `ADR/*`, `Arkitektur/*`, `SAMARBEJDSMODEL...§13`, denne note. Ingen produktkode fra mig. v19 kørt af Peter på rd (ikke via kode).
+- **➡️ Codex: fiks venligst backup (Peter har bedt om det) — R09/P0-03:**
+  1. Ret default `BACKUP_BASE` i `deploy/scripts/backup.sh` (linje 26) væk fra den ikke-skrivbare volumen-rod `/Volumes/data-fast`. Brug den kanoniske backup-disk `/Volumes/Backup` (jf. `00_START_HER.md` kernefakta — bekræft montering) eller en skrivbar sti som `/Volumes/data-fast/peter-home`. Bekræft valget med Peter hvis der er tvivl om hvilken disk der er den rigtige destination.
+  2. Gør scriptet **fail-closed:** hvis backup-dir ikke kan oprettes/skrives, skal det logge og afslutte med non-zero — en fejlet backup må aldrig være tavs (samme princip som din tranche-2 "skjulte driftsfejl"-oprydning).
+  3. Lever **grøn restore-test-evidens** (dump → frisk DB → verificér) og noter RTO/RPO — det lukker R09/P0-03 som go-live-blocker. Se `BACKUP_RESTORE_TEST_PROCEDURE_v1.md` hvis den stadig er retvisende.
+  4. Overvej et scheduled backup-job + `SYSTEM_HEALTH_REGISTER`-indikator, så manglende/forældet backup er synlig.
+
 ### Handover 2026-07-15 — Codex reel fejlrevision, tranche 2
 - **Central auth:** GDPR-redaction ejer ikke længere JWT-secret/parser/sessionlogik. `get_required_user` delegerer runtime til Headends centrale `get_current_user`, så agent-lockdown og kommende auth-regler ikke divergerer. Mutable Pydantic-listedefaults er erstattet med factories.
 - **Skjulte driftsfejl:** Backup- og retention-settings returnerede tidligere gyldige defaults ved databasefejl. De logger og returnerer nu HTTP 500, så UI/monitorering kan se fejlen. `_get_nas_path` lukker sessionen også ved fejl. Edge LAB-disconnect og AI-backfill rollback-fejl forsvinder ikke længere lydløst.
@@ -9286,3 +9322,79 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - Revokering er bevidst IKKE konfigurerbar. Backend afviser felterne `allow_revoked`, `revocation_policy` og `revocation_enabled` på ethvert lag. Et revokeret device-certifikat skal altid afvise kommunikation straks.
 - Når den egentlige mTLS-validator bygges, må kun den præcise fejltilstand `expired` følge udløbspolitikken. Revoked, forkert signatur, ukendt issuer, forkert CN/SAN/device-binding og øvrige valideringsfejl er fail-closed. Grace/fortsat drift skal udløse SIEM-alarm og rotationsopgave.
 - Kode: `headend/main.py`, `timelapse-ui/src/pages/GlobalConfigPage.tsx`; kontrakttest tilføjet i `tests/test_mtls_security.py`. Python syntax og frontend production build valideret. Projektets separate `.venv` er efterfølgende synkroniseret med `requirements-dev.txt` (`pytest==8.3.2`); 5/5 målrettede PKI-tests består mod isoleret in-memory database. Headendens produktions-venv er bevidst holdt fri for testværktøjer.
+### Codex 2026-07-16 - P1 backup-integritet hardenet og reel restore QA bestået
+
+- Claude/Codex-fundet om RLS + shell-pipeline uden `pipefail` er verificeret som relevant: `timelapse_backup`-rollen fandtes med `BYPASSRLS`, men UI-flowet havde ingen `BACKUP_DATABASE_URL` og brugte derfor den almindelige `timelapse`-rolle samt en usikker `--enable-row-security`-fallback.
+- Nyt modul `headend/backup_integrity.py`: dump completion-marker, minimumsstørrelse, SHA-256 og atomisk tar.gz-publicering via `.partial` + `os.replace`. Trunkerede dumps og tomme/ulæselige arkiver publiceres ikke.
+- `_run_backup_archive()` streamer nu `pg_dump` direkte til fil (ikke ~900 MB i Python-RAM), bruger default `timelapse_backup`, fjerner RLS-fallbacken og fejler hele backuppen, hvis en tilvalgt billed-rsync fejler. `BACKUP_MANIFEST.json` v2 binder databasefil, rolle, størrelse og SHA-256.
+- Målrettede tests: 8/8 PASS (`test_backup_integrity.py` + PKI-policy). `py_compile` og `git diff --check` PASS.
+- Reel backup: `/Volumes/data-fast/backup/timelapse-backup-headend-20260716_094204.tar.gz`; database-dump 912.657.252 bytes, rolle `timelapse_backup`, SHA-256 `27d15298a0c0841bf2dc51702dafb41e85b9cc336246dbd4270d36ab0bc1066c`.
+- Reel isoleret PostgreSQL-restore med `ON_ERROR_STOP=1` PASS. Live/restored: captures 29.225/29.225, devices 10/10, users 9/9, customers 5/5, sites 4/4, gdpr_access_log 0/0, gdpr_detections 0/0. QA-databasen blev slettet bagefter.
+- Ældre backup-arkiver er bevaret, men skal mærkes legacy/unverified, fordi de ikke har v2-manifest og ikke alle er restoretestet. Resterende P1/P2: kryptering/nøglehåndtering, secrets/certifikater, images/sidecars/thumbnails/artifacts scope, immutable/offsite kopi, automatiseret restore-øvelse og UI-evidens.
+
+### Codex 2026-07-16 - separat Codex-konto og korrekt MFA-undtagelse
+
+- Browserarbejde udføres nu med den eksisterende `codex`-konto (`super_admin`) og ikke Peters konto. En ny lang, unik adgangskode er sat og opbevaret i macOS Keychain under service `dk.froekjaer.timelapse-pro.browser`; credentialet er ikke skrevet i repo eller dokumentation.
+- Login, `/api/auth/me` og `/api/auth/session-policy` brugte fejlagtigt den rollebaserede MFA-evaluering direkte. Dermed blev den konfigurerede brugerundtagelse for `codex` ignoreret. Alle tre paths bruger nu `_mfa_required_for_user(...)`, som medtager den eksplicitte username-exemption.
+- En ufærdig TOTP-enrollment på `codex` blev ryddet, mens `mfa_enabled=false`; brugerlisten viser derfor ikke længere `MFA halv state`.
+- Verifikation: målrettet MFA-kontrakttest samt backup-tests 6/6 PASS, `py_compile` PASS, Headend health HTTP 200, og komplet browser log ud/log ind som `codex` PASS uden MFA-prompt. Peters aktive session og credentials er ikke anvendt efter skiftet.
+
+### Codex 2026-07-16 - QA-isolation, AI HTTP 500 og responsiv browser-QA
+
+- Projektets fulde dependencies er installeret i repoets separate `.venv`. Frisk unit/contract-baseline: **572 passed, 4 skipped, 543 integration deselected**. De fire skips er live smoke-kald uden browser/session-cookie; ingen unit/contract-fejl. Frontend: TypeScript/Vite build PASS og ESLint-gate 186/186 (ingen nye fund).
+- En isoleret PostgreSQL-database og Uvicorn på port 18080 blev anvendt til integrationstest. Testopstart startede oprindeligt Git/artifact-, backup-, retention-, AI- og øvrige baggrundsjobs trods `TIMELAPSE_ENV=test`. Ny `headend/runtime_environment.py` deaktiverer muterende/eksterne jobs og rate limits i test som default; eksplicit opt-in er muligt. Testserver og engangsdatabase er slettet efter kørsel.
+- Auth-integrationssuiten er gjort state-isoleret for operatorens password/MFA og består separat: **28 passed, 3 skipped**. Den samlede legacy-integrationstestsamling kan ikke endnu køres som én proces: enkelte moduler monkeypatcher PostgreSQL-driveren globalt, flere forventer gamle endpoints/responsformer, og værtschecks antager stadig port 8443 eller `/opt`-installation. En bred, isoleret delkørsel gav 279 passed/123 skipped; resultaterne skal opdeles i API-, R&D-live- og host-policy-suiter før de kan være release-gate.
+- Browser-QA bruger `codex`-kontoen og ægte Nikon-captures. Metadata-lightboxen var fem 10-12 px kolonner ved ca. 1144 px. Den er nu responsiv 1/2/3 kolonner, mindst 13 px, med linjeombrydning, tydelig kontrast og ensartede sektioner. Verificeret visuelt med `Frøkjær_Nordre_Villavej_17c_Kamera_1_20260716_113001.jpg`; ingen syntetiske billeder anvendt og ingen billeder slettet.
+- Global Navbar havde 1220 px overflow ved 390 px. Ny mobilmenu har Menu/Luk-kontrol, scroll, alle normale/admin-routes, bruger/logout og mindst 44 px touchmål. Dashboard er browser-verificeret ved 390x844 uden horizontal overflow.
+- Mobil read-only audit af hovedroutes fandt overflow i Backup, AI, Compliance, Nøglehåndtering, Opdateringer, Change tickets, Post-processing, CMDB og Retention. AI-siden er rettet med intern scrollende tablinje og har nu 390/390 px uden body-overflow. De øvrige routes er fortsat en konkret responsiv backlog.
+- AI-menuens `GET /api/settings/ai-runtime` gav HTTP 500: `get_setting` blev kaldt uden import. Import og regressionstest er tilføjet, Headend genstartet, endpoint giver 200, installerede Ollama-modeller vises, og browseren viser ikke længere HTTP 500.
+- Host-fund fra legacy-test: installeret node-agent kører fortsat som root; `/opt/timelapse-node-agent/agent.py` er ikke executable (ikke nødvendigt når Python er ProgramArguments[0]), og loggen er ca. 8 MB. Claudes samtidige, uncommitted `node-agent/install/macos.sh` tilføjer `UserName/GroupName`, men den installerede config er root-only og scriptet skal færdiggøre ejerskab/logskrivning før deployment. Ændr ikke/revert ikke Claudes worktree-ændring.
+
+### Codex 2026-07-16 - CI grøn og mobile driftsflader rettet
+
+- GitHub CI brugte fejlagtigt `DATABASE_URL=sqlite:...`, men `headend/tests/conftest.py` overskriver med vilje den almindelige variabel for at beskytte den operationelle PostgreSQL-database. Workflowet bruger nu den eksplicitte sikkerhedsgrænse `TIMELAPSE_TEST_DATABASE_URL`. Run `29496069490` bestod Python, UI og deploy til Mac-headend; commit `7dc68686`.
+- Lokal CI-identisk gate: **572 passed, 4 skipped, 543 integration deselected**, UI production build PASS og ESLint-gate uændret 186/186. Skips er de kendte autentificerede live-smoke-kald.
+- Backup, Opdateringer, Compliance, Nøglehåndtering, Change tickets, Post-processing, CMDB, Retention og SIEM er gjort responsive med stablede mobile headers, interne scrollbare faner/tabeller og `minmax(0,1fr)` på arbejdsflader. Desktop-breakpoints er bevaret. Commits `5e49679c` og `efdc94fb`.
+- Browser-evidens før sidste batch: Backup og AI måler 390/390 px uden body-overflow. Read-only audit fandt de konkrete årsager på de øvrige routes; sidste batch skal browser-verificeres efter deploy. Observability havde fortsat 28 px overflow i en regel-tabel og er ikke rettet endnu. Redaction havde ikke body-overflow, men lange filnavne kræver fortsat visuel vurdering.
+- macOS er case-insensitive, mens Git/Linux er case-sensitive: de trackede filer hedder `CMDBPage.tsx` og `SIEMPage.tsx`. De blev derfor staged og committed eksplicit med korrekt casing i `efdc94fb`.
+
+### Codex 2026-07-16 - Timelapse frame-vælger rettet og browsertestet
+
+- Root cause for overlappende billeder/tekst: `VirtualImageGrid` reserverede kun 16:9-billedhøjden, mens `CaptureThumbnailCard` også renderede dato, blur og QA under billedet. Ny `footerHeight` indgår nu i virtuel rækkegeometri, så næste række ikke kan overskrive metadata.
+- Klik på selve kortet åbner nu den eksisterende fuldskærms-Lightbox fra kameravisningen med zoom, histogram, metadata, navigation og download. Inklusion/eksklusion styres separat via øje-knappen.
+- Øje-knappen blev efter Peters visuelle feedback flyttet fra motivet til informationsområdet under QA. Ekskluderede billeder dæmpes ikke længere, så billedkvaliteten fortsat kan vurderes; rød markering og ikon viser status.
+- Browser-QA mod 85 ægte frames på `TL-C87FF9587CA0`: 40 synlige virtuelle kort havde selection-knappen under billedets bund; ingen målt overlap. Selection-knap ændrede `Ekskluder` -> `Inkluder` uden lightbox. Klik på frame åbnede Lightbox `1 / 85` med Metadata-kontrol. Ingen billeder blev slettet eller ændret.
+- Commits: `3738b50d` og `00ade8ab`. TypeScript/Vite build PASS, ESLint-gate uændret 186/186, GitHub run `29496926656` PASS inkl. deploy for første commit; anden commit blev også live-verificeret i browser efter automatisk deploy.
+
+### Codex 2026-07-16 - komplet route-pass og responsiv UI-QA
+
+- Alle 26 beskyttede React-routes er kortlagt og åbnet med separat `codex` super-admin-session: Dashboard, device, settings, backup, global config, LAB, system admin, tags, notifications, timelapse, users, keys, SSH, updates, change tickets, compliance, retention, redaction, CMDB/list/detail, SIEM, import, AI, Open WebUI, post-processing og observability.
+- Desktop-pass: alle routes renderede forventet H1; ingen login-loop eller HTTP 500. Ens 14 px forskel mellem `innerWidth` og dokumentbredde var browserens scrollbar, ikke et komponentoverflow. `503`-tekst på Post-processing var historiske Gemini-resultater; genbesøg på Drift viste ingen aktuel 503, og browserkonsollen var ren.
+- Første komplette 390x844-pass fandt kun to body-overflows: DevicePage-faner (700 px) og CMDB-detail (526 px). Device-faner har nu lokal, touchvenlig vandret scroll. CMDB-version/SBOM-tabeller har lokale scrollrammer; lange commit/evidensværdier bruger responsivt grid og `break-all`.
+- Commits: `af54cafb` og `bbbd1fbd`. Hver ændring bestod TypeScript/Vite build, `git diff --check` og ESLint-gate 186/186 uden nye fund. Efter første deploy var Device-overflow væk; sidste CMDB hash-rettelse afventer afsluttende browser-recheck efter deploy.
+- Browsersessionen udløb under det lange mobile pass og redirectede Open WebUI-routen til login. En frisk IAB-fane havde fortsat gyldig `codex`-session og åbnede CMDB uden login; fundet er derfor session-livscyklus i testfanen, ikke dokumenteret Open WebUI-fejl.
+- Resterende UI-QA: tabletpass, komplet visuel screenshot-vurdering og funktionelle faner/søgning/modals/refresh/previews. Destruktive eller governance-bærende handlinger testes separat med før/efter-state og må ikke masseudføres som en generisk kliktest.
+
+### Codex 2026-07-16 - funktionel UI-QA afsluttet uden destruktive handlinger
+
+- Afsluttende responsiv recheck bestod: DevicePage og CMDB-detail målte begge 390/390 px på mobil efter deploy af `bbbd1fbd`. Et komplet 800x1024-tabletpass havde ingen body-overflow eller afskåret primær navigation.
+- DevicePage: Billeder, Tidslinje, Statistik og Konfiguration skiftede korrekt aktiv fane. Tagsøgning med den reelle tagværdi `#clear image 9319` returnerede 5.000 match og viste den dokumenterede 200-resultatgrænse.
+- Opdateringer: Afventer, Godkendt, Blokeret, Deployet, Afvist, Rullet tilbage og Alle skiftede korrekt. Ingen updates blev godkendt, afvist, promoveret eller installeret i denne generiske kliktest.
+- Compliance: GRC risk, Regler og standarder, Godkendelser, Controls og Evidens skiftede korrekt. Backup: Headend DR, Edge restore, Edge ISO og Compliance skiftede korrekt.
+- SIEM: Overblik, Events, Kilder og Politik skiftede korrekt; periode blev reversibelt ændret fra 24 til 1 time, og Live/Pause reagerede. Der var 7.485 events i 24-timersvisningen; SIEM- og update-artifact-kald bør profileres/pagineres særskilt som performancearbejde.
+- AI: Modeller & prompts, Strategi, Tag Review, Tag Oprydning, AI Ops, Eskalering, Daglig Review og Statistik skiftede korrekt. Ingen modelkørsel eller masseændring af tags blev startet.
+- Retention: Status, Indstillinger og Sletningslog skiftede korrekt. Der blev ikke gemt retention-politik og intet blev slettet.
+- Read-only routepass bestod for Brugerstyring, Nøglehåndtering, SSH Tunnels, Post-processing, Alarm Notifikationer, GDPR Slørings-workflow, historisk import, Indstillinger og System Administration. Alle viste forventet H1 uden login-loop eller aktuel HTTP 500/503.
+- Post-processing indeholder fortsat teksten `503` i historiske Gemini-jobresultater. Det er ikke en aktuel netværksfejl, men UI'et bør senere markere værdien tydeligt som historisk jobstatus for at undgå falsk driftsalarm.
+- Destruktive og governance-bærende flows er fortsat særskilte testcases: brugeroprettelse, key rotation/oprydning, tunnelstart, sletning/GDPR-redaktion, importskrivning, update-godkendelse/promovering og konfigurations-save kræver før/efter-state, rollback og audit-evidens.
+
+### Codex 2026-07-16 - Mac Headend generator Fase 3 implementeret
+
+- Claudes `HEADEND_GENERATOR_v1.md` blev evalueret. Fase 0/preflight og Fase 1/signeret staging var reelle; det dokumenterede hul i Fase 3 var også reelt.
+- `node-agent/install/macos.sh` har ikke længere R&D-hardcoding. Installeren kræver eksplicit device-ID, HTTPS Headend-URL og API-tokenfil, finder agentkilden relativt til den signerede release og skriver konfiguration atomisk med mode `0640`.
+- Ny `deploy/install/enroll_headend_cmdb.sh` læser bootstrap-token fra fil, enroll'er med `node_type=headend`, installerer launchd-agenten som den konkrete ikke-root bruger og fejler, hvis der ikke kommer en ny autentificeret inventory-kvittering inden 60 sekunder. TLS-verifikation omgås ikke.
+- Enrollment-API'et er bagudkompatibelt: eksisterende clients får fortsat `node_type=edge`; Mac-generatoren får en rigtig `headend` KeyCredential. Ved re-enrollment roteres aktive API-credentials på tværs af edge/headend-identitet.
+- En eksisterende svaghed blev lukket: zero-touch API-tokenet var tidligere forudsigeligt ud fra device-ID og sekundtimestamp. Det genereres nu med `secrets.token_urlsafe(32)` (256 bit kryptografisk entropy).
+- Inventory-ruten var allerede beskyttet af `_verify_device_token`; headend/service kræver Bearer-token, HMAC-SHA256 request-signatur, timestamp og nonce/replaykontrol.
+- Verifikation: zsh/bash syntax PASS, Python compile PASS, `git diff --check` PASS, 9 generator-/privilege-/enrollment-kontrakttests PASS og 2 eksisterende route-auth-tests PASS mod eksplicit `timelapse_test`.
+- Restaccept: Fase 0-3 skal køres på den nye staging-iMac med et single-use bootstrap-token; CMDB device type, inventory, SBOM, reboot-persistens og coexistence med CrushFTP skal dokumenteres før prod.
