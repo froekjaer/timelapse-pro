@@ -735,7 +735,7 @@ export default function TimelapseVideoPage() {
                 count={frames.length}
                 minColWidth={140}
                 gap={6}
-                footerHeight={70}
+                footerHeight={58}
                 renderItem={(idx) => {
                   const frame = frames[idx]
                   const isExcluded = excluded.has(frame.id)

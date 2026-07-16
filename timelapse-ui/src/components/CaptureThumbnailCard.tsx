@@ -292,13 +292,13 @@ export function CaptureThumbnailCard({
       </div>
       <div className="px-2 py-1.5">
         {footerAction ? (
-          <div className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)] gap-1.5">
-            <div className="flex min-w-[2.8rem] flex-col justify-between border-r border-gray-100 pr-1.5 text-xs font-medium leading-4 text-gray-700">
+          <div className="grid min-h-11 grid-cols-[auto_minmax(0,1fr)] gap-1.5">
+            <div className="flex min-w-[2.8rem] flex-col justify-center border-r border-gray-100 pr-1.5 text-xs font-medium leading-[14px] text-gray-700">
               <span>{datePart}</span>
               <span className="text-gray-400">{yearPart}</span>
               <span>{timePart ?? ''}</span>
             </div>
-            <div className="grid min-w-0 grid-rows-[auto_1fr_auto] gap-0.5">
+            <div className="grid min-w-0 content-center grid-rows-[auto_auto] gap-0.5">
               <div className="flex min-w-0 items-center justify-end gap-1">
                 {capture.blur_score != null && (
                   <p className={`shrink-0 text-xs font-medium ${capture.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>
@@ -307,7 +307,6 @@ export function CaptureThumbnailCard({
                 )}
                 {qaBadge(ai, capture)}
               </div>
-              <div />
               <div>{footerAction}</div>
             </div>
           </div>
