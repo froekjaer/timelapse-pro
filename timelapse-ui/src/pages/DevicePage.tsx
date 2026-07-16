@@ -113,10 +113,10 @@ function ModelResultsPanel({ results }: { results: any[] | null }) {
   }
   return (
     <div className="mt-3 border-t border-white/10 pt-3">
-      <p className="text-white/30 text-[10px] uppercase tracking-wider font-semibold mb-2">
+      <p className="mb-2 text-xs font-semibold uppercase text-white/50">
         🔬 Model-resultater (side om side) <span className="normal-case font-normal text-white/20">— {results.length} motor{results.length !== 1 ? 'er' : ''}</span>
       </p>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {results.map((r, idx) => {
           const style = ENGINE_STYLE[r.engine] ?? { ...ENGINE_FALLBACK, label: r.engine || ENGINE_FALLBACK.label }
           const highlightKeys = ['scene_dk', 'quality_flag', 'flag', 'description', 'probable_cause', 'blur_score', 'brightness_mean', 'change_detected']
@@ -126,20 +126,20 @@ function ModelResultsPanel({ results }: { results: any[] | null }) {
           return (
             <div key={`${r.engine}-${r.model}-${r.result_kind}-${idx}`} className={`border-l-2 ${style.border} bg-white/[0.03] rounded-r p-2 min-w-0`}>
               <div className="flex items-center justify-between gap-2 mb-1">
-                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${style.badge} font-medium`}>{style.icon} {style.label}</span>
+                <span className={`rounded border px-1.5 py-0.5 text-xs font-medium ${style.badge}`}>{style.icon} {style.label}</span>
                 {r.confidence != null && (
-                  <span className="text-[10px] text-white/40">{Math.round(r.confidence * (r.confidence <= 1 ? 100 : 1))}%</span>
+                  <span className="text-xs text-white/60">{Math.round(r.confidence * (r.confidence <= 1 ? 100 : 1))}%</span>
                 )}
               </div>
-              <div className="text-[10px] text-white/50 mb-1 truncate" title={r.model}>
+              <div className="mb-1 truncate text-xs text-white/70" title={r.model}>
                 {r.model || '—'}{r.model_version ? ` (${r.model_version})` : ''} · {r.result_kind}
               </div>
               {highlights.length > 0 && (
                 <div className="space-y-0.5 mb-1">
                   {highlights.map(([k, v]) => (
-                    <div key={k} className="flex gap-1 text-[10px] min-w-0">
-                      <span className="text-white/30 shrink-0">{k}:</span>
-                      <span className="text-white/60 truncate">{String(v)}</span>
+                    <div key={k} className="flex min-w-0 gap-1 text-xs leading-5">
+                      <span className="shrink-0 text-white/50">{k}:</span>
+                      <span className="break-words text-white/80">{String(v)}</span>
                     </div>
                   ))}
                 </div>
@@ -147,11 +147,11 @@ function ModelResultsPanel({ results }: { results: any[] | null }) {
               {r.tags?.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-1">
                   {r.tags.map((tag: string) => (
-                    <span key={tag} className="text-[9px] bg-white/10 text-white/50 px-1 py-0.5 rounded">#{tag}</span>
+                    <span key={tag} className="rounded bg-white/10 px-1.5 py-0.5 text-xs text-white/80">#{tag}</span>
                   ))}
                 </div>
               )}
-              <div className="flex items-center justify-between text-[9px] text-white/25">
+              <div className="flex items-center justify-between text-[11px] text-white/50">
                 <span className="truncate">{r.source ?? '—'}</span>
                 <span className="shrink-0">{r.analysed_at ? new Date(r.analysed_at).toLocaleString('da-DK', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
               </div>
@@ -556,7 +556,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                           {((ai.tags?.length ?? 0) > 0 || (ai.new_tags?.length ?? 0) > 0 || (c.ai_tags?.length ?? 0) > 0) && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {[...(ai.tags ?? []), ...(ai.new_tags ?? []), ...(c.ai_tags ?? [])].filter((tag, idx, arr) => arr.indexOf(tag) === idx).slice(0, 24).map((tag: string) => (
-                                <span key={tag} className="text-[10px] bg-white/10 text-white/60 px-1.5 py-0.5 rounded cursor-pointer hover:bg-white/20" title={`Søg på #${tag}`}>
+                <span key={tag} className="cursor-pointer rounded bg-white/10 px-2 py-1 text-xs text-white/80 hover:bg-white/20" title={`Søg på #${tag}`}>
                                   #{tagLabel(tag, tagLabels)}
                                 </span>
                               ))}
@@ -613,7 +613,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
                           {c.ai_tags && c.ai_tags.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {c.ai_tags.map((tag: string) => (
-                                <span key={tag} className="text-[10px] bg-white/10 text-white/60 px-1.5 py-0.5 rounded cursor-pointer hover:bg-white/20" title={`Søg på #${tag}`}>
+                                <span key={tag} className="cursor-pointer rounded bg-white/10 px-2 py-1 text-xs text-white/80 hover:bg-white/20" title={`Søg på #${tag}`}>
                                   #{tagLabel(tag, tagLabels)}
                                 </span>
                               ))}
