@@ -299,7 +299,7 @@ export default function KeyManagementPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-6">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Link to="/" className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
           <ArrowLeft className="w-4 h-4 text-gray-500" />
         </Link>
@@ -310,6 +310,7 @@ export default function KeyManagementPage() {
           </h1>
           <p className="text-sm text-gray-400 mt-0.5">Credential lifecycle for Headend, Edge, API, SSH og signing</p>
         </div>
+        <div className="flex flex-wrap gap-2 sm:justify-end">
         <button onClick={load} disabled={busy}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 text-gray-500 rounded-lg hover:bg-gray-50 disabled:opacity-50">
           <RefreshCw className="w-3.5 h-3.5" />
@@ -330,6 +331,7 @@ export default function KeyManagementPage() {
           <Trash2 className="w-3.5 h-3.5" />
           Ryd sekundære
         </button>
+        </div>
       </div>
 
       {error && (

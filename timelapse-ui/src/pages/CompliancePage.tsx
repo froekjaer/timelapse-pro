@@ -392,8 +392,9 @@ export function CompliancePage() {
         </p>
       </div>
 
-      <div className="flex gap-1 mb-4">
-        {[
+      <div className="mb-4 min-w-0 overflow-x-auto">
+        <div className="flex w-max gap-1">
+          {[
           ['grc', 'GRC risk'],
           ['regulatory', 'Regler og standarder'],
           ['approvals', 'Godkendelser'],
@@ -401,10 +402,11 @@ export function CompliancePage() {
           ['evidence', 'Evidens'],
         ].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key as Tab)}
-            className={`px-3 py-1.5 text-xs rounded-lg ${tab === key ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'}`}>
+            className={`min-h-11 whitespace-nowrap px-3 py-1.5 text-xs rounded-lg ${tab === key ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'}`}>
             {label}
           </button>
-        ))}
+          ))}
+        </div>
       </div>
 
       {loading && !data ? (

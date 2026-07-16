@@ -1579,7 +1579,7 @@ export function UpdatesPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-8">
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Link to="/" className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
           <ArrowLeft className="w-4 h-4 text-gray-500" />
         </Link>
@@ -1595,7 +1595,7 @@ export function UpdatesPage() {
           </h1>
           <p className="text-sm text-gray-400 mt-0.5">Godkend eller afvis software-opdateringer til edge-enheder</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
           {lastRefresh && (
             <span className="text-xs text-gray-300 flex items-center gap-1">
               <Clock className="w-3 h-3" />
@@ -1634,15 +1634,17 @@ export function UpdatesPage() {
         </p>
       </div>
 
-      <div className="flex gap-1 mb-4">
-        {FILTERS.map(f => (
+      <div className="mb-4 min-w-0 overflow-x-auto">
+        <div className="flex w-max gap-1">
+          {FILTERS.map(f => (
           <button key={f.key} onClick={() => setFilter(f.key)}
-            className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+            className={`min-h-11 whitespace-nowrap px-3 py-1.5 text-xs rounded-lg transition-colors ${
               filter === f.key ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'
             }`}>
             {f.label}
           </button>
-        ))}
+          ))}
+        </div>
       </div>
 
       <UpdateJobsPanel jobs={updateJobs} />

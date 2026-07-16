@@ -176,8 +176,9 @@ export function RetentionPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 mb-6">
-        {[
+      <div className="mb-6 min-w-0 overflow-x-auto border-b border-gray-200">
+        <div className="flex w-max">
+          {[
           { id: 'status' as Tab, label: 'Status', icon: Activity },
           { id: 'settings' as Tab, label: 'Indstillinger', icon: Settings },
           { id: 'deletion-log' as Tab, label: 'Sletningslog', icon: FileText },
@@ -194,7 +195,8 @@ export function RetentionPage() {
             <t.icon className="w-4 h-4" />
             {t.label}
           </button>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* Status tab */}

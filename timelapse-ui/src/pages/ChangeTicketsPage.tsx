@@ -173,7 +173,7 @@ export function ChangeTicketsPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-[360px_1fr] gap-5">
+      <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
         <div className="space-y-4">
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <label className="block text-xs font-medium text-gray-500 mb-1">PendingUpdate ID</label>

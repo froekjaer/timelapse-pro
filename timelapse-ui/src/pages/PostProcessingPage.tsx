@@ -269,12 +269,12 @@ export default function PostProcessingPage() {
       {/* Bemærk: advarslen ovenfor er strategi-bevidst (beregnet server-side) —
           viser IKKE en falsk Ollama-advarsel hvis I bruger cloud_only (Gemini). */}
 
-      <div className="grid lg:grid-cols-[360px_1fr] gap-5">
-        <div className="border border-slate-200 bg-white rounded-lg p-4 space-y-4">
+      <div className="grid min-w-0 gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="min-w-0 border border-slate-200 bg-white rounded-lg p-4 space-y-4">
           <div>
             <label className="text-xs font-medium text-slate-600">Enhed</label>
             <select value={deviceId} onChange={e => setDeviceId(e.target.value)}
-              className="mt-1 w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-white">
+              className="mt-1 w-full min-w-0 max-w-full border border-slate-200 rounded-md px-3 py-2 text-sm bg-white">
               <option value="">Alle synlige enheder</option>
               {devices.map(device => (
                 <option key={device.device_id} value={device.device_id}>
