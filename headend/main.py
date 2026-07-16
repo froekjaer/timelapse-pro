@@ -1155,7 +1155,7 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
     policy = _resolve_session_policy(db, current_user)
     return {
         **policy,
-        "mfa_required_effective": _mfa_required_for_role(policy, current_user.role),
+        "mfa_required_effective": _mfa_required_for_user(db, current_user),
         "mfa_verified": _session_is_mfa_verified(_session_payload(request)),
     }
 
@@ -1600,7 +1600,7 @@ def login(request: Request, req: LoginRequest, db: Session = Depends(get_db)):
     user.last_login = now_utc()
     db.commit()
     policy = _resolve_session_policy(db, user)
-    mfa_required = _mfa_required_for_role(policy, user.role)
+    mfa_required = _mfa_required_for_user(db, user)
     # MFA check: eksisterende TOTP kræves altid; policy kan også kræve enrollment.
     if _user_has_totp(user):
         mfa_token = _create_token({"sub": user.username, "type": "mfa_pending"}, expire_hours=5/60)
@@ -1939,7 +1939,7 @@ def me(request: Request, current_user=Depends(get_current_user), db: Session = D
         "email":       current_user.email,
         "role":        current_user.role,
         "customer_id": current_user.customer_id,
-        "mfa_required_effective": _mfa_required_for_role(policy, current_user.role),
+        "mfa_required_effective": _mfa_required_for_user(db, current_user),
         "mfa_verified": _session_is_mfa_verified(payload_data),
     }
     # Forny rolling session
