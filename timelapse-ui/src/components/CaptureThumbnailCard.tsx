@@ -290,11 +290,10 @@ export function CaptureThumbnailCard({
               ⬡ {Math.round(capture.blur_score)}
             </p>
           )}
-          <div className="flex shrink-0 flex-col items-end gap-1">
-            {qaBadge(ai, capture)}
-            {footerAction}
-          </div>
+          {qaBadge(ai, capture)}
         </div>
+
+        {footerAction && <div className="mt-1">{footerAction}</div>}
 
         {!compact && (
           <>

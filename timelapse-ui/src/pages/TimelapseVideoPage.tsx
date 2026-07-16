@@ -735,7 +735,7 @@ export default function TimelapseVideoPage() {
                 count={frames.length}
                 minColWidth={140}
                 gap={6}
-                footerHeight={78}
+                footerHeight={64}
                 renderItem={(idx) => {
                   const frame = frames[idx]
                   const isExcluded = excluded.has(frame.id)
@@ -756,7 +756,7 @@ export default function TimelapseVideoPage() {
                               event.stopPropagation()
                               toggleFrame(frame.id)
                             }}
-                            className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg border transition-colors ${
+                            className={`flex min-h-8 w-full items-center justify-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition-colors ${
                               isExcluded
                                 ? 'border-red-300 bg-red-600 text-white'
                                 : 'border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100'
@@ -765,6 +765,7 @@ export default function TimelapseVideoPage() {
                             aria-label={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
                           >
                             {isExcluded ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            {isExcluded ? 'Fravalgt' : 'Medtaget'}
                           </button>
                         )}
                       />
