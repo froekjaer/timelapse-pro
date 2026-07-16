@@ -19,8 +19,10 @@ from typing import Any
 
 try:
     from ai.modes import edge_ai_policy
+    from ai.model_contract import SCHEMA_VERSION, validate_label
 except Exception:  # pragma: no cover - used when imported as edge.ai.*
     from edge.ai.modes import edge_ai_policy
+    from edge.ai.model_contract import SCHEMA_VERSION, validate_label
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +100,26 @@ class NpuQualityAdapter:
             return {"engine": "edge_npu", "available": False, "error": "invalid_json"}
         if not isinstance(data, dict):
             return {"engine": "edge_npu", "available": False, "error": "json_not_object"}
+        if data.get("schema") != SCHEMA_VERSION:
+            log.warning("Edge NPU QA runner returned unsupported schema: %r", data.get("schema"))
+            return {
+                "engine": "edge_npu",
+                "available": False,
+                "accepted": False,
+                "error": "unsupported_schema",
+                "expected_schema": SCHEMA_VERSION,
+            }
+        try:
+            validate_label(str(data.get("label") or ""))
+        except ValueError:
+            log.warning("Edge NPU QA runner returned unknown label: %r", data.get("label"))
+            return {
+                "engine": "edge_npu",
+                "available": False,
+                "accepted": False,
+                "error": "unknown_label",
+                "schema": SCHEMA_VERSION,
+            }
         data.setdefault("engine", "edge_npu")
         data.setdefault("available", True)
         data.setdefault("policy", self._policy.as_dict())

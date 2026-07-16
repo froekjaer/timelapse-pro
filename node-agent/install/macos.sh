@@ -76,6 +76,12 @@ cp "$AGENT_SRC/transport.py"              "$INSTALL_DIR/"
 cp "$AGENT_SRC/collectors/inventory.py"   "$INSTALL_DIR/collectors/"
 cp "$AGENT_SRC/collectors/security.py"    "$INSTALL_DIR/collectors/"
 touch "$INSTALL_DIR/collectors/__init__.py"
+SOURCE_COMMIT="$(git -C "$AGENT_SRC/.." rev-parse HEAD 2>/dev/null || true)"
+if [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    printf '{"schema":"timelapse.node.release.v1","source_commit":"%s"}\n' \
+        "$SOURCE_COMMIT" > "$INSTALL_DIR/.timelapse-release.json"
+    chmod 0444 "$INSTALL_DIR/.timelapse-release.json"
+fi
 ok "Agent-filer kopieret til $INSTALL_DIR"
 
 # ── Venv ──────────────────────────────────────────────────────────────────

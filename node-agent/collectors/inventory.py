@@ -33,7 +33,11 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-APP_VERSION = "2.8.0"    # Opdateres ved release (TODO: læs fra VERSION-fil)
+APP_VERSION = "unknown"
+RELEASE_METADATA_FILES = (
+    Path("/opt/timelapse-node-agent/.timelapse-release.json"),
+    Path("/opt/timelapse/edge/.timelapse-release.json"),
+)
 GPG_KEY_UID = "timelapse@froekjaer.dk"  # Til fingerprint-opslag
 
 
@@ -48,6 +52,26 @@ def _cfg_value(config, key: str, default=None):
     if isinstance(config, dict):
         return config.get(key, default)
     return getattr(config, key, default)
+
+
+def _app_version() -> str:
+    """Return deployed release identity without relying on a mutable checkout."""
+    configured = os.getenv("TIMELAPSE_APP_VERSION", "").strip()
+    if configured:
+        return configured
+    for path in RELEASE_METADATA_FILES:
+        try:
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if not isinstance(receipt, dict):
+            continue
+        if receipt.get("schema") not in {"timelapse.node.release.v1", "timelapse.edge.release.v1"}:
+            continue
+        value = receipt.get("version") or receipt.get("source_commit") or receipt.get("artifact_id")
+        if value and str(value).strip():
+            return str(value).strip()
+    return APP_VERSION
 
 
 # ── Hardware-detection ────────────────────────────────────────────────────────
@@ -465,7 +489,7 @@ def _homebrew_outdated() -> list[dict[str, str]]:
 
 def _software_inventory(config=None) -> dict[str, object]:
     inventory = {
-        "timelapse_pro": APP_VERSION,
+        "timelapse_pro": _app_version(),
         "python": platform.python_version(),
     }
     if platform.system() == "Darwin":
@@ -542,7 +566,7 @@ def collect_inventory(config: dict) -> dict:
         "kernel_version":           platform.release(),
         "firmware_version":         _firmware_version(),
         "python_version":           platform.python_version(),
-        "app_version":              APP_VERSION,
+        "app_version":              _app_version(),
         "package_manager":          package_manager,
         "os_packages":              os_packages,
         "venv_packages":            _venv_packages(config),

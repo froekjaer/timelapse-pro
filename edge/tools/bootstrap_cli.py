@@ -33,6 +33,14 @@ EDGE_ROOT = Path(__file__).resolve().parents[1]
 BOOTSTRAP_FILE = "bootstrap.yaml"
 NETWORK_FILE = "local_network.yaml"
 SERVICE_NAME = os.getenv("TIMELAPSE_EDGE_SERVICE", "timelapse-edge")
+DOCTOR_SCHEMA = "timelapse.edge.doctor.v1"
+EXPECTED_SERVICES = (
+    "timelapse-edge",
+    "timelapse-bt-pan",
+    "timelapse-bt-agent",
+    "timelapse-captive",
+    "timelapse-totp",
+)
 PHOTO_SETTINGS = {
     "exposure_comp": {
         "label": "Eksponeringskompensation",
@@ -78,6 +86,7 @@ def main() -> int:
     parser.add_argument("--status", action="store_true", help="Print local network/bootstrap status")
     parser.add_argument("--test-headend", action="store_true", help="Test Headend /api/health")
     parser.add_argument("--doctor", action="store_true", help="Run local commissioning/troubleshooting checks")
+    parser.add_argument("--doctor-json", action="store_true", help="Print read-only commissioning evidence as JSON")
     parser.add_argument("--network-status", action="store_true", help="Print network interfaces, connections, routes and DNS")
     parser.add_argument("--wifi-connect", metavar="SSID", help="Connect WiFi SSID; password from TIMELAPSE_WIFI_PASSWORD")
     parser.add_argument("--ipv4-config", nargs=6, metavar=("DEVICE", "MODE", "ADDRESS", "GATEWAY", "DNS", "METRIC"), help="Configure IPv4 via NetworkManager. MODE is dhcp or static; use '-' for blank fields")
@@ -108,6 +117,10 @@ def main() -> int:
         return 0 if test_headend(base_dir) else 1
     if args.doctor:
         return 0 if run_doctor(base_dir) else 1
+    if args.doctor_json:
+        evidence = collect_doctor_evidence(base_dir)
+        print(json.dumps(evidence, indent=2, ensure_ascii=False))
+        return 0 if evidence["status"] == "ok" else 1
     if args.network_status:
         print_network_status(detailed=True)
         return 0
@@ -650,22 +663,59 @@ def print_status(base_dir: Path, detailed: bool = False) -> None:
 
 def run_doctor(base_dir: Path) -> bool:
     """Run local checks useful during Edge commissioning and support calls."""
-    checks: list[tuple[str, bool, str]] = []
+    evidence = collect_doctor_evidence(base_dir)
+
+    print()
+    print("TimeLapse Edge doctor")
+    print("---------------------")
+    for check in evidence["checks"]:
+        status = "OK" if check["ok"] else "FEJL"
+        print(f"{status:4} {check['label']:24} {check['detail']}")
+
+    failed = [check["label"] for check in evidence["checks"] if not check["ok"]]
+    if failed:
+        print()
+        print("Anbefalet naeste skridt:")
+        for label in failed[:6]:
+            print(f"- Ret/tjek: {label}")
+    return evidence["status"] == "ok"
+
+
+def collect_doctor_evidence(base_dir: Path) -> dict[str, Any]:
+    """Collect bounded, read-only commissioning evidence without secret values."""
+    checks: list[dict[str, Any]] = []
+
+    def add(check_id: str, label: str, ok: bool, detail: Any) -> None:
+        checks.append({
+            "id": check_id,
+            "label": label,
+            "ok": bool(ok),
+            "detail": str(detail),
+        })
+
     bootstrap_path = base_dir / BOOTSTRAP_FILE
     network_path = base_dir / NETWORK_FILE
     bootstrap = read_yaml(bootstrap_path)
     config = read_yaml(base_dir / "config.yaml")
     edge_ai = ((config.get("quality", {}) or {}).get("edge_ai", {}) or {})
 
-    checks.append(("config directory", base_dir.exists(), str(base_dir)))
-    checks.append(("bootstrap.yaml", bootstrap_path.exists(), str(bootstrap_path)))
-    checks.append(("bootstrap token", bool(bootstrap.get("bootstrap_token")), "sat" if bootstrap.get("bootstrap_token") else "mangler"))
-    checks.append(("headend url", bool(bootstrap.get("headend_url")), bootstrap.get("headend_url", "mangler")))
-    checks.append(("local_network.yaml", network_path.exists(), str(network_path)))
+    add("config.directory", "config directory", base_dir.exists(), base_dir)
+    add("config.bootstrap", "bootstrap.yaml", bootstrap_path.exists(), bootstrap_path)
+    add("identity.credential", "bootstrap token", bool(bootstrap.get("bootstrap_token")), "sat" if bootstrap.get("bootstrap_token") else "mangler")
+    add("config.headend_url", "headend url", bool(bootstrap.get("headend_url")), bootstrap.get("headend_url", "mangler"))
+    add("config.network", "local_network.yaml", network_path.exists(), network_path)
 
     for name in ["nmcli", "ip", "systemctl", "gphoto2"]:
         path = shutil.which(name)
-        checks.append((f"kommando: {name}", path is not None, path or "mangler"))
+        add(f"command.{name}", f"kommando: {name}", path is not None, path or "mangler")
+
+    receipt_path = base_dir / ".timelapse-release.json"
+    receipt = read_json_object(receipt_path)
+    receipt_ok = receipt.get("schema") == "timelapse.edge.release.v1" and bool(
+        receipt.get("artifact_id") and (receipt.get("source_commit") or receipt.get("version"))
+    )
+    release_detail = receipt.get("artifact_id") or "mangler/ugyldig"
+    add("release.receipt", "release receipt", receipt_ok, release_detail)
 
     runner = edge_ai.get("runner") or os.getenv("TIMELAPSE_EDGE_AI_RUNNER", "")
     model_path = edge_ai.get("model_path") or os.getenv("TIMELAPSE_EDGE_AI_MODEL", "")
@@ -678,41 +728,33 @@ def run_doctor(base_dir: Path) -> bool:
             if vendor_cmd and "/" not in vendor_cmd[0]
             else (vendor_cmd[0] if vendor_cmd else "")
         )
-        checks.append(("edge QA AI", bool(edge_ai.get("enabled", False)), "enabled" if edge_ai.get("enabled") else "disabled"))
-        checks.append(("NPU runner", bool(runner_path and Path(runner_path).exists()), runner_path or "mangler"))
-        checks.append(("NPU model", bool(model_path and Path(str(model_path)).exists()), str(model_path) or "mangler"))
-        checks.append(("VIPLite wrapper", bool(vendor_path and Path(vendor_path).exists()), str(vendor_binary) or "mangler"))
+        add("ai.enabled", "edge QA AI", bool(edge_ai.get("enabled", False)), "enabled" if edge_ai.get("enabled") else "disabled")
+        add("ai.runner", "NPU runner", bool(runner_path and Path(runner_path).exists()), runner_path or "mangler")
+        add("ai.model", "NPU model", bool(model_path and Path(str(model_path)).exists()), str(model_path) or "mangler")
+        add("ai.vendor_wrapper", "VIPLite wrapper", bool(vendor_path and Path(vendor_path).exists()), str(vendor_binary) or "mangler")
 
-    checks.append(("python", True, platform.python_version()))
-    checks.append(("platform", True, platform.platform()))
+    add("runtime.python", "python", True, platform.python_version())
+    add("runtime.platform", "platform", True, platform.platform())
 
     if command_exists("systemctl"):
-        svc = run(["systemctl", "is-active", "timelapse-edge"], check=False, timeout=5)
-        checks.append(("timelapse-edge service", svc.stdout.strip() == "active", svc.stdout.strip() or svc.stderr.strip() or "ukendt"))
+        for service in EXPECTED_SERVICES:
+            state = service_state(service)
+            active = state.get("active", "ukendt")
+            add(f"service.{service}", f"service: {service}", active == "active", active)
 
     if command_exists("ip"):
-        route = run(["ip", "route", "get", "8.8.8.8"], check=False, timeout=5)
-        checks.append(("default route", route.returncode == 0, first_line(route.stdout or route.stderr)))
+        route = run(["ip", "route", "show", "default"], check=False, timeout=5)
+        add("network.default_route", "default route", route.returncode == 0 and bool(route.stdout.strip()), first_line(route.stdout or route.stderr) or "mangler")
 
-    headend_ok = False
-    if bootstrap.get("headend_url"):
-        headend_ok = test_headend(base_dir)
-        checks.append(("headend health", headend_ok, "ok" if headend_ok else "fejl"))
-
-    print()
-    print("TimeLapse Edge doctor")
-    print("---------------------")
-    for label, ok, detail in checks:
-        status = "OK" if ok else "FEJL"
-        print(f"{status:4} {label:24} {detail}")
-
-    failed = [label for label, ok, _ in checks if not ok]
-    if failed:
-        print()
-        print("Anbefalet naeste skridt:")
-        for label in failed[:6]:
-            print(f"- Ret/tjek: {label}")
-    return not failed
+    failed_count = sum(1 for check in checks if not check["ok"])
+    return {
+        "schema": DOCTOR_SCHEMA,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "device_id": bootstrap.get("device_id") or derive_device_id_fallback(),
+        "status": "ok" if failed_count == 0 else "degraded",
+        "summary": {"passed": len(checks) - failed_count, "failed": failed_count},
+        "checks": checks,
+    }
 
 
 def qa_image(path: Path, base_dir: Path) -> bool:
@@ -1458,6 +1500,14 @@ def read_yaml(path: Path) -> dict[str, Any]:
         return json.loads(text)
     except json.JSONDecodeError:
         return parse_simple_yaml(text)
+
+
+def read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def write_yaml(path: Path, data: dict[str, Any], mode: int = 0o600) -> None:

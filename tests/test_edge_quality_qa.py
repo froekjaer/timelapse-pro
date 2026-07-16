@@ -531,6 +531,25 @@ def test_npu_adapter_accepts_runner_command_with_arguments(tmp_path):
     assert result["engine"] == "edge_npu_contract_cpu_fallback"
 
 
+def test_npu_adapter_rejects_unversioned_runner_payload(tmp_path):
+    image = _write_jpeg(tmp_path / "adapter.jpg", np.full((40, 40, 3), 128, dtype=np.uint8))
+    runner = tmp_path / "runner.py"
+    runner.write_text("import json; print(json.dumps({'label': 'ok', 'confidence': 1.0}))\n")
+    adapter = NpuQualityAdapter({
+        "quality": {"edge_ai": {
+            "enabled": True,
+            "mode": "npu_first",
+            "prefer_npu": True,
+            "runner": f"{sys.executable} {runner}",
+        }}
+    })
+
+    result = adapter.analyse(image)
+
+    assert result["accepted"] is False
+    assert result["error"] == "unsupported_schema"
+
+
 def test_edge_qa_npu_runner_normalises_vendor_binary(tmp_path):
     img = np.full((120, 180, 3), 220, dtype=np.uint8)
     image = _write_jpeg(tmp_path / "adapter.jpg", img)
