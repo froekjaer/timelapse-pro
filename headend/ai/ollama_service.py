@@ -136,6 +136,28 @@ def _db_int(key: str, default: int) -> int:
     except Exception:
         return default
 
+
+def _db_float(key: str, default: float) -> float:
+    try:
+        return float(_db_setting(key, str(default)))
+    except Exception:
+        return default
+
+
+def _render_registered_prompt(purpose: str, **values: object) -> str | None:
+    """Use an active DB prompt; return None until migration/table is available."""
+    try:
+        from database import SessionLocal
+        from ai.prompt_registry import render_prompt
+        db = SessionLocal()
+        try:
+            return render_prompt(db, purpose, **values)
+        finally:
+            db.close()
+    except Exception as exc:
+        log.warning("Kunne ikke hente prompt %s fra registry: %s", purpose, exc)
+        return None
+
 CONSTRUCTION_WORK_TAGS = {
     "byggefremskridt", "tom_grund", "udgravning", "jordarbejde", "pilotering",
     "fundamentstøbning", "kælder_støbt", "betondæk_støbt", "råhus_opførelse",
@@ -339,6 +361,8 @@ def _build_vision_prompt(vocabulary_by_category: dict[str, list[str]], context_b
     (pris/privacy).
     """
 
+    max_prompt_tags = _db_int("ollama_max_prompt_tags", MAX_PROMPT_TAGS)
+    max_per_category = _db_int("ollama_max_prompt_tags_per_category", MAX_PROMPT_TAGS_PER_CATEGORY)
     ordered_categories = list(LOCAL_PROMPT_CATEGORY_PRIORITY) + [
         cat for cat in vocabulary_by_category.keys() if cat not in LOCAL_PROMPT_CATEGORY_PRIORITY
     ]
@@ -346,15 +370,21 @@ def _build_vision_prompt(vocabulary_by_category: dict[str, list[str]], context_b
     used = 0
     for cat in ordered_categories:
         tags = vocabulary_by_category.get(cat, [])
-        if used >= MAX_PROMPT_TAGS:
+        if used >= max_prompt_tags:
             break
-        remaining = max(0, MAX_PROMPT_TAGS - used)
-        selected = tags[:min(MAX_PROMPT_TAGS_PER_CATEGORY, remaining)]
+        remaining = max(0, max_prompt_tags - used)
+        selected = tags[:min(max_per_category, remaining)]
         if selected:
             vocab_lines.append(f"{cat}: {', '.join(selected)}")
             used += len(selected)
     vocab_text = "\n".join(vocab_lines)
     context_txt = f"\nCONTEXT (background — still only describe what you actually see):\n{context_block}\n" if context_block else ""
+
+    registered = _render_registered_prompt(
+        "vision_single", context=context_txt, vocabulary=vocab_text,
+    )
+    if registered:
+        return registered
 
     return f"""Analyze this outdoor time-lapse image. Respond only with valid JSON. No markdown, no explanation.
 {context_txt}
@@ -401,6 +431,10 @@ def _build_change_prompt(vocabulary_by_category: dict[str, list[str]]) -> str:
     for cat, tags in vocabulary_by_category.items():
         vocab_lines.append(f"  [{cat}]: {', '.join(tags)}")
     vocab_text = "\n".join(vocab_lines)
+
+    registered = _render_registered_prompt("vision_change", vocabulary=vocab_text)
+    if registered:
+        return registered
 
     return f"""You are an AI system for construction site documentation.
 You receive TWO images: IMAGE 1 = reference image (previous day), IMAGE 2 = current image.
@@ -466,6 +500,9 @@ class OllamaVisionService:
         self.max_image_edge  = _db_int("ollama_max_image_edge", MAX_IMAGE_EDGE)
         self.vision_num_ctx = _db_int("ollama_vision_num_ctx", VISION_NUM_CTX)
         self.vision_num_predict = _db_int("ollama_vision_num_predict", VISION_NUM_PREDICT)
+        self.vision_temperature = _db_float("ollama_vision_temperature", 0.1)
+        self.vision_top_p = _db_float("ollama_vision_top_p", 0.8)
+        self.vision_repeat_penalty = _db_float("ollama_vision_repeat_penalty", 1.18)
         self._client         = httpx.Client(timeout=self.timeout_vision)
 
     # ── Offentlig API ─────────────────────────────────────────────────────────
@@ -550,9 +587,9 @@ class OllamaVisionService:
             "stream": False,
             "format": "json",
             "options": {
-                "temperature": 0.1,      # lav temperatur → konsistente JSON-svar
-                "top_p": 0.8,
-                "repeat_penalty": 1.18,
+                "temperature": self.vision_temperature,
+                "top_p": self.vision_top_p,
+                "repeat_penalty": self.vision_repeat_penalty,
                 "num_ctx": self.vision_num_ctx,
                 "num_predict": self.vision_num_predict,
             },

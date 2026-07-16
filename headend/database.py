@@ -25,6 +25,7 @@ DATABASE_URL sættes via launchd plist:
 from __future__ import annotations
 
 import json
+import sys
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -41,6 +42,19 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://timelapse@localhost/timelapse_db")
+
+# A test fixture must never be able to truncate the operational database. Several
+# legacy tests clean every metadata table after each case; fail closed if their
+# DATABASE_URL isolation was not established before importing this module.
+if (
+    "pytest" in sys.modules
+    and DATABASE_URL.rstrip("/").endswith("/timelapse_db")
+    and os.getenv("TIMELAPSE_ALLOW_PYTEST_PRODUCTION_DB") != "I_UNDERSTAND_DATA_WILL_BE_DESTROYED"
+):
+    raise RuntimeError(
+        "Pytest refused operational DATABASE_URL (.../timelapse_db). "
+        "Use an isolated test database; never run fixtures against Headend data."
+    )
 
 engine_kwargs = {}
 if DATABASE_URL.startswith("sqlite"):
@@ -1008,6 +1022,31 @@ class AiBatchJob(Base):
     completed_at    = Column(DateTime)
 
     error_message   = Column(Text)
+
+
+class AiPromptTemplate(Base):
+    """Immutable prompt versions; at most one active version per purpose."""
+    __tablename__ = "ai_prompt_templates"
+    __table_args__ = (
+        UniqueConstraint("purpose", "version", name="uq_ai_prompt_templates_purpose_version"),
+        Index(
+            "uq_ai_prompt_templates_active_purpose", "purpose", unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+        CheckConstraint("status IN ('draft', 'active', 'retired')", name="ck_ai_prompt_templates_status"),
+    )
+
+    id                = Column(BigInteger, primary_key=True)
+    purpose           = Column(String(60), nullable=False)
+    version           = Column(Integer, nullable=False)
+    status            = Column(String(20), nullable=False, default="draft")
+    template          = Column(Text, nullable=False)
+    allowed_variables = Column(JSON, nullable=False, default=list)
+    notes             = Column(Text)
+    created_by        = Column(String(100), nullable=False)
+    created_at        = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    activated_by      = Column(String(100))
+    activated_at      = Column(DateTime(timezone=True))
 
 
 def create_tables():

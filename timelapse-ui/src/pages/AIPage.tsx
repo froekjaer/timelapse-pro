@@ -10,7 +10,8 @@ import {
   Brain, Tags, AlertTriangle, CalendarCheck,
   BarChart3, CheckCircle, XCircle,
   Cloud, Cpu, Zap, RefreshCw, Send, Eye, ThumbsUp, ThumbsDown,
-  TrendingUp, Layers, SlidersHorizontal, Info, ShieldCheck, Database, Server
+  TrendingUp, Layers, SlidersHorizontal, Info, ShieldCheck, Database, Server,
+  Save, FileText
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
@@ -136,6 +137,7 @@ function StrategyBadge({ strategy }: { strategy: Strategy }) {
 // ── Tabs ─────────────────────────────────────────────────────────────────
 
 const TABS = [
+  { id: 'runtime',    label: 'Modeller & prompts', icon: Brain },
   { id: 'strategy',   label: 'Strategi',       icon: SlidersHorizontal },
   { id: 'tags',       label: 'Tag Review',      icon: Tags },
   { id: 'cleanup',    label: 'Tag Oprydning',   icon: Layers },
@@ -150,7 +152,7 @@ const TABS = [
 // ═════════════════════════════════════════════════════════════════════════
 
 export default function AIPage() {
-  const [tab, setTab] = useState('strategy')
+  const [tab, setTab] = useState('runtime')
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
@@ -179,6 +181,7 @@ export default function AIPage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
+        {tab === 'runtime'    && <AIRuntimeTab />}
         {tab === 'strategy'   && <StrategyTab />}
         {tab === 'tags'       && <TagReviewTab />}
         {tab === 'cleanup'    && <TagCleanupTab />}
@@ -189,6 +192,159 @@ export default function AIPage() {
       </div>
     </div>
   )
+}
+
+interface RuntimeField {
+  key: string
+  label: string
+  type: 'text' | 'model' | 'int' | 'float'
+  value: string
+  default: string
+  min?: number
+  max?: number
+  source: string
+}
+
+interface PromptVersion {
+  id: number
+  version: number
+  status: string
+  notes?: string | null
+  created_by: string
+  created_at: string
+}
+
+interface AIPrompt {
+  id: number | null
+  purpose: string
+  label: string
+  version: number
+  status: string
+  template: string
+  allowed_variables: string[]
+  source: string
+  history: PromptVersion[]
+}
+
+function AIRuntimeTab() {
+  const [fields, setFields] = useState<RuntimeField[]>([])
+  const [models, setModels] = useState<string[]>([])
+  const [prompts, setPrompts] = useState<AIPrompt[]>([])
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [notes, setNotes] = useState<Record<string, string>>({})
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const [runtime, promptData] = await Promise.all([
+        api('/api/settings/ai-runtime'),
+        api('/api/settings/ai-prompts'),
+      ])
+      setFields(runtime.fields || [])
+      setModels(runtime.installed_models || [])
+      setPrompts(promptData || [])
+      setDrafts(Object.fromEntries((promptData || []).map((p: AIPrompt) => [p.purpose, p.template])))
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Kunne ikke hente AI-konfiguration')
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const saveRuntime = async () => {
+    setBusy(true)
+    try {
+      await api('/api/settings/ai-runtime', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: Object.fromEntries(fields.map(f => [f.key, f.value])) }),
+      })
+      setMessage('AI runtime-konfiguration er gemt. Nye analyser bruger værdierne.')
+      await load()
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Konfigurationen kunne ikke gemmes')
+    } finally { setBusy(false) }
+  }
+
+  const saveDraft = async (prompt: AIPrompt) => {
+    setBusy(true)
+    try {
+      await api(`/api/settings/ai-prompts/${prompt.purpose}/draft`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template: drafts[prompt.purpose], notes: notes[prompt.purpose] || null }),
+      })
+      setMessage(`Ny kladde til ${prompt.label} er gemt. Aktiv version er uændret.`)
+      await load()
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Promptkladden kunne ikke gemmes')
+    } finally { setBusy(false) }
+  }
+
+  const activate = async (id: number) => {
+    setBusy(true)
+    try {
+      await api(`/api/settings/ai-prompts/${id}/activate`, { method: 'POST' })
+      setMessage('Promptversionen er aktiveret og bruges ved næste analyse.')
+      await load()
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Prompten kunne ikke aktiveres')
+    } finally { setBusy(false) }
+  }
+
+  return <div className="space-y-6">
+    <div className="border border-violet-800/40 bg-violet-950/30 rounded-lg p-4 flex gap-3">
+      <Info className="w-4 h-4 text-violet-400 mt-0.5 shrink-0" />
+      <div className="text-sm text-slate-300">
+        <p>Dette er den autoritative konfiguration for lokal billedanalyse og AI Ops.</p>
+        <p className="text-xs text-slate-500 mt-1">Promptændringer gemmes først som kladde og påvirker ikke drift, før en version aktiveres.</p>
+      </div>
+    </div>
+    {message && <div className="border border-white/10 bg-gray-900 rounded-lg px-4 py-3 text-sm text-slate-300">{message}</div>}
+
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div><h2 className="font-semibold">Modeller og inferens</h2><p className="text-xs text-slate-500">Installerede modeller: {models.length ? models.join(', ') : 'Ollama svarer ikke'}</p></div>
+        <button onClick={saveRuntime} disabled={busy} className="flex items-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded-lg text-sm"><Save className="w-4 h-4" />Gem alle</button>
+      </div>
+      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+        {fields.map(field => <label key={field.key} className="bg-gray-900 border border-white/8 rounded-lg p-3 block">
+          <span className="text-xs text-slate-400 block mb-1.5">{field.label}</span>
+          <input list={field.type === 'model' ? 'ollama-models' : undefined}
+            type={field.type === 'int' || field.type === 'float' ? 'number' : 'text'}
+            min={field.min} max={field.max} step={field.type === 'float' ? '0.01' : undefined}
+            value={field.value} onChange={e => setFields(all => all.map(f => f.key === field.key ? { ...f, value: e.target.value } : f))}
+            className="w-full bg-gray-800 border border-white/10 rounded-md px-3 py-2 text-sm text-white" />
+          <span className="text-[11px] text-slate-600 mt-1 block font-mono">{field.key} · default {field.default}</span>
+        </label>)}
+      </div>
+      <datalist id="ollama-models">{models.map(model => <option key={model} value={model} />)}</datalist>
+    </section>
+
+    <section className="space-y-3">
+      <div><h2 className="font-semibold">Promptversioner</h2><p className="text-xs text-slate-500">Variabler er tilladelseslistet. Ugyldige eller manglende variable afvises.</p></div>
+      {prompts.map(prompt => {
+        const newestDraft = prompt.history.find(version => version.status === 'draft')
+        return <div key={prompt.purpose} className="bg-gray-900 border border-white/8 rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <FileText className="w-4 h-4 text-violet-400" />
+            <div><h3 className="text-sm font-medium">{prompt.label}</h3><p className="text-xs text-slate-500">{prompt.purpose} · aktiv v{prompt.version} · {prompt.source}</p></div>
+            {newestDraft && <button onClick={() => activate(newestDraft.id)} disabled={busy} className="ml-auto px-3 py-1.5 border border-emerald-700 text-emerald-300 hover:bg-emerald-950 rounded-md text-xs">Aktivér kladde v{newestDraft.version}</button>}
+          </div>
+          <div className="text-xs text-slate-500">Tilladte variable: {prompt.allowed_variables.map(v => `{{${v}}}`).join(', ')}</div>
+          <textarea value={drafts[prompt.purpose] || ''} onChange={e => setDrafts(d => ({ ...d, [prompt.purpose]: e.target.value }))}
+            rows={9} className="w-full bg-gray-950 border border-white/10 rounded-md p-3 text-xs text-slate-200 font-mono resize-y" />
+          <div className="flex gap-2">
+            <input value={notes[prompt.purpose] || ''} onChange={e => setNotes(n => ({ ...n, [prompt.purpose]: e.target.value }))} placeholder="Ændringsnote (anbefalet)" className="flex-1 bg-gray-800 border border-white/10 rounded-md px-3 py-2 text-sm" />
+            <button onClick={() => saveDraft(prompt)} disabled={busy} className="px-3 py-2 border border-white/10 hover:bg-white/5 rounded-md text-sm">Gem som ny kladde</button>
+          </div>
+        </div>
+      })}
+    </section>
+  </div>
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -272,7 +428,7 @@ function AIOpsTab() {
       const data = await api('/api/ai/ops/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'llama3.2:latest' }),
+        body: JSON.stringify({}),
       })
       setSnapshot(data.snapshot)
       setAnalysis(data.analysis)
@@ -391,6 +547,7 @@ function AIOpsTab() {
 
 function StrategyTab() {
   const [configs, setConfigs] = useState<AIConfig[]>([])
+  const [localModels, setLocalModels] = useState<string[]>([])
   const [editing, setEditing] = useState<AIConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving,  setSaving]  = useState(false)
@@ -400,7 +557,12 @@ function StrategyTab() {
     api('/api/settings/config').then(d => { setConfigs(Array.isArray(d) ? d : []); setLoading(false) }).catch(() => setLoading(false))
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    load()
+    api('/api/settings/ai-runtime')
+      .then(d => setLocalModels(Array.isArray(d.installed_models) ? d.installed_models : []))
+      .catch(() => setLocalModels([]))
+  }, [load])
 
   const save = async () => {
     if (!editing) return
@@ -530,9 +692,8 @@ function StrategyTab() {
                   className="w-full bg-gray-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white"
                   title="Lokal vision model til tag analyse. qwen2.5vl:7b (anbefalet - balance mellem hastighed og kvalitet), llama3.2-vision:11b (tung men meget præcis), llava-phi3:latest (hurtig men mindre præcis). Modellen skal være pulled på Ollama server."
                 >
-                  <option value="qwen2.5vl:7b">qwen2.5vl:7b (anbefalet)</option>
-                  <option value="llama3.2-vision:11b">llama3.2-vision:11b (tung)</option>
-                  <option value="llava-phi3:latest">llava-phi3:latest (hurtig/svag)</option>
+                  {!localModels.includes(editing.local_model) && <option value={editing.local_model}>{editing.local_model} (konfigureret, ikke fundet)</option>}
+                  {localModels.map(model => <option key={model} value={model}>{model}</option>)}
                 </select>
               </div>
             )}

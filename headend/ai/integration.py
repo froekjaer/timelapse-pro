@@ -455,6 +455,17 @@ def _worker(get_db_fn, find_image_fn):
             try:
                 capture = db.query(Capture).filter_by(id=capture_id).first()
                 if capture:
+                    if not used_cloud:
+                        try:
+                            from ai.prompt_registry import get_prompt
+                            prompt_state = get_prompt(db, "vision_single")
+                            payload["prompt"] = {
+                                "purpose": "vision_single",
+                                "version": prompt_state["version"],
+                                "source": prompt_state["source"],
+                            }
+                        except Exception as prompt_exc:
+                            log.debug("AI prompt-proveniens kunne ikke gemmes: %s", prompt_exc)
                     # Bevar evt. eksisterende edge-QA under 'edge_ai', så Gemini-
                     # skrivningen ikke sletter den (data-tab undgået).
                     if capture.ai_result and "edge_ai" not in payload:
@@ -586,12 +597,28 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         if user is None:
             raise HTTPException(status_code=401, detail="Ikke autentificeret")
 
+    def _require_admin(user) -> None:
+        _require_authenticated(user)
+        if getattr(user, "role", None) not in {"admin", "super_admin"}:
+            raise HTTPException(status_code=403, detail="Kræver administrator")
+
+    def _require_platform_admin(user) -> None:
+        _require_admin(user)
+        if getattr(user, "role", None) != "super_admin" and getattr(user, "customer_id", None):
+            raise HTTPException(status_code=403, detail="Kræver platformadministrator")
+
+    def _ensure_device_access(db: Session, user, device_id: str) -> None:
+        allowed = _allowed_devices(db, user)
+        if allowed is not None and device_id not in allowed:
+            raise HTTPException(status_code=404, detail="Enhed ikke fundet")
+
     @ai_router.get("/status")
-    def ai_status():
+    def ai_status(user=Depends(auth_dep)):
         """Ollama status, tilgængelige modeller og worker-statistik.
         worker_stats viser hvad der reelt sker med køede billeder — ikke kun
         hvor mange der er sat i kø (se /api/admin/post-processing/status).
         """
+        _require_admin(user)
         svc = get_ollama_service()
         return {
             "ollama_running": len(svc.list_models()) > 0,
@@ -603,10 +630,11 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         }
 
     @ai_router.get("/ollama-priority")
-    def get_ollama_priority(db: Session = Depends(get_db_fn)):
+    def get_ollama_priority(user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """Hent driftsprioritet for lokal Ollama."""
         from ai.settings_helper import get_setting
 
+        _require_admin(user)
         enabled = _is_truthy(get_setting(db, OLLAMA_PLAY_MODE_KEY, "false"))
         return {
             "key": OLLAMA_PLAY_MODE_KEY,
@@ -617,12 +645,13 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         }
 
     @ai_router.put("/ollama-priority")
-    def set_ollama_priority(payload: dict, db: Session = Depends(get_db_fn)):
+    def set_ollama_priority(payload: dict, user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """Sæt om Open WebUI midlertidigt må prioriteres over Timelapse AI."""
         from ai.settings_helper import set_setting
 
+        _require_platform_admin(user)
         enabled = bool(payload.get("open_webui_priority", False))
-        set_setting(db, OLLAMA_PLAY_MODE_KEY, "true" if enabled else "false", "ui")
+        set_setting(db, OLLAMA_PLAY_MODE_KEY, "true" if enabled else "false", user.username)
         return {
             "key": OLLAMA_PLAY_MODE_KEY,
             "open_webui_priority": enabled,
@@ -632,13 +661,15 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         }
 
     @ai_router.post("/analyze/{capture_id}")
-    def analyze_capture(capture_id: int, db: Session = Depends(get_db_fn)):
+    def analyze_capture(capture_id: int, user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """Tving AI-analyse af et specifikt capture (synkront)."""
         from database import Capture
+        _require_admin(user)
         capture = db.query(Capture).filter_by(id=capture_id).first()
         if not capture:
             raise HTTPException(status_code=404, detail="Capture ikke fundet")
         device_id = capture.device_id
+        _ensure_device_access(db, user, device_id)
         filename = capture.filename
         blur_score = capture.blur_score
         quality_flag = capture.quality_flag
@@ -706,12 +737,14 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         }
 
     @ai_router.get("/result/{capture_id}")
-    def get_ai_result(capture_id: int, db: Session = Depends(get_db_fn)):
+    def get_ai_result(capture_id: int, user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """Hent gemt AI-resultat for et capture."""
         from database import Capture
+        _require_authenticated(user)
         capture = db.query(Capture).filter_by(id=capture_id).first()
         if not capture:
             raise HTTPException(status_code=404, detail="Capture ikke fundet")
+        _ensure_device_access(db, user, capture.device_id)
         if not capture.ai_result:
             raise HTTPException(status_code=404, detail="Ingen AI-analyse endnu")
         return {
@@ -728,6 +761,7 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         severity:     Optional[str] = None,
         acknowledged: Optional[bool] = None,
         limit:        int = 50,
+        user = Depends(auth_dep),
         db: Session = Depends(get_db_fn),
     ):
         """
@@ -736,9 +770,18 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         ?acknowledged=false → kun ubehandlede
         """
         from sqlalchemy import text as _text
+        _require_authenticated(user)
+        limit = max(1, min(int(limit), 500))
         conditions = ["1=1"]
         params     = {}
+        allowed = _allowed_devices(db, user)
+        if allowed is not None:
+            if not allowed:
+                return []
+            conditions.append("device_id = ANY(:allowed_device_ids)")
+            params["allowed_device_ids"] = list(allowed)
         if device_id:
+            _ensure_device_access(db, user, device_id)
             conditions.append("device_id = :device_id")
             params["device_id"] = device_id
         if severity:
@@ -783,12 +826,18 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
     def acknowledge_alarm(
         alarm_id: int,
         payload: dict | None = None,
+        user = Depends(auth_dep),
         db: Session = Depends(get_db_fn),
     ):
         """Kvitter en alarm som behandlet."""
         from sqlalchemy import text as _text
         from datetime import datetime, timezone
+        _require_admin(user)
         payload = payload or {}
+        alarm = db.execute(_text("SELECT device_id FROM alarm_events WHERE id=:id"), {"id": alarm_id}).fetchone()
+        if not alarm:
+            raise HTTPException(status_code=404, detail="Alarm ikke fundet")
+        _ensure_device_access(db, user, alarm[0])
         db.execute(_text("""
             UPDATE alarm_events
             SET acknowledged_at = :ts, acknowledged_by = :by, notes = :notes
@@ -796,27 +845,30 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         """), {
             "id":    alarm_id,
             "ts":    datetime.now(timezone.utc),
-            "by":    payload.get("by", "system"),
+            "by":    user.username,
             "notes": payload.get("notes"),
         })
         db.commit()
         return {"status": "ok", "alarm_id": alarm_id}
 
     @ai_router.get("/alarms/rules/{device_id}")
-    def get_alarm_rules(device_id: str, db: Session = Depends(get_db_fn)):
+    def get_alarm_rules(device_id: str, user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """Vis merged alarm-regler for en enhed (til debug og UI)."""
+        _require_authenticated(user)
+        _ensure_device_access(db, user, device_id)
         from ai.alarm_engine import AlarmEngine
         engine = AlarmEngine(db)
         rules  = engine.get_rules_for_device(device_id)
         return {"device_id": device_id, "rules": rules, "total": len(rules)}
 
     @ai_router.put("/alarms/rules/global")
-    def update_global_alarm_rules(payload: dict, db: Session = Depends(get_db_fn)):
+    def update_global_alarm_rules(payload: dict, user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """
         Opdater globale alarm-regler i config_defaults.
         Body: {"rules": [{...}, ...]}
         Regler merges med DEFAULT_ALARM_RULES per ID.
         """
+        _require_platform_admin(user)
         from database import ConfigDefaults
         from ai.alarm_engine import _merge_rules, DEFAULT_ALARM_RULES
         defaults = db.query(ConfigDefaults).first()
@@ -830,15 +882,21 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         return {"status": "ok", "rules_count": len(merged)}
 
     @ai_router.get("/alarms/summary")
-    def alarm_summary(db: Session = Depends(get_db_fn)):
+    def alarm_summary(user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """Hurtig opsummering til dashboard: antal alarmer per severity."""
         from sqlalchemy import text as _text
-        rows = db.execute(_text("""
+        _require_authenticated(user)
+        allowed = _allowed_devices(db, user)
+        if allowed is not None and not allowed:
+            return {}
+        where = "" if allowed is None else "WHERE device_id = ANY(:allowed_device_ids)"
+        rows = db.execute(_text(f"""
             SELECT severity, COUNT(*) as total,
                    SUM(CASE WHEN acknowledged_at IS NULL THEN 1 ELSE 0 END) as unacked
             FROM alarm_events
+            {where}
             GROUP BY severity
-        """)).fetchall()
+        """), {} if allowed is None else {"allowed_device_ids": list(allowed)}).fetchall()
         return {
             r[0]: {"total": r[1], "unacknowledged": r[2]}
             for r in rows
@@ -979,12 +1037,21 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
     def ai_flagged(
         limit: int = 20,
         device_id: Optional[str] = None,
+        user=Depends(auth_dep),
         db: Session = Depends(get_db_fn),
     ):
         """Captures med AI-anomalier eller alarmer."""
+        _require_authenticated(user)
         from database import Capture
+        limit = max(1, min(int(limit), 200))
         q = db.query(Capture).filter(Capture.ai_result.isnot(None))
+        allowed = _allowed_devices(db, user)
+        if allowed is not None:
+            if not allowed:
+                return {"total": 0, "results": []}
+            q = q.filter(Capture.device_id.in_(allowed))
         if device_id:
+            _ensure_device_access(db, user, device_id)
             q = q.filter_by(device_id=device_id)
         captures = q.order_by(Capture.id.desc()).limit(limit * 5).all()
 

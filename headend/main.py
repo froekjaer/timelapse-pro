@@ -16949,10 +16949,10 @@ def change_user_password(
 
 from ai.vocabulary_routes import vocab_read_router, vocab_router
 app.include_router(vocab_read_router, dependencies=[require_role("viewer")])
-app.include_router(vocab_router, dependencies=[require_role("super_admin", "admin")])
+app.include_router(vocab_router, dependencies=[require_role("super_admin")])
 
 from ai.review_api import review_router as _rev_router
-app.include_router(_rev_router, dependencies=[require_role("super_admin", "admin")])
+app.include_router(_rev_router, dependencies=[require_role("super_admin")])
 
 # Site-Wide Look Matching Configuration (F-012)
 from api.site_look_config_api import router as site_look_router
@@ -17209,19 +17209,25 @@ def _aiops_fallback(snapshot: dict) -> dict:
     }
 
 
-def _call_ollama_text(prompt: str, model: str = "llama3.2:latest") -> dict | None:
+def _call_ollama_text(prompt: str, model: str | None = None, db: Session | None = None) -> dict | None:
     try:
         import httpx
+        from ai.settings_helper import get_setting
+        model = model or (get_setting(db, "ollama_text_model", "llama3.2:latest") if db else "llama3.2:latest")
+        base_url = get_setting(db, "ollama_url", "http://127.0.0.1:11434") if db else os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
+        timeout = int(get_setting(db, "ollama_text_timeout_s", "90")) if db else 90
+        num_predict = int(get_setting(db, "ollama_text_num_predict", "1800")) if db else 1800
+        temperature = float(get_setting(db, "ollama_text_temperature", "0.1")) if db else 0.1
         resp = httpx.post(
-            f"{os.getenv('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/')}/api/generate",
+            f"{base_url.rstrip('/')}/api/generate",
             json={
                 "model": model,
                 "prompt": prompt,
                 "stream": False,
                 "format": "json",
-                "options": {"temperature": 0.1, "num_predict": 1800},
+                "options": {"temperature": temperature, "num_predict": num_predict},
             },
-            timeout=90,
+            timeout=timeout,
         )
         resp.raise_for_status()
         raw_text = resp.json().get("response", "")
@@ -17237,6 +17243,8 @@ def aiops_snapshot(
     _user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db),
 ):
+    if not _is_platform_admin(_user):
+        raise HTTPException(status_code=403, detail="Kræver platformadministrator")
     return _aiops_snapshot(db)
 
 
@@ -17246,9 +17254,10 @@ def aiops_analyze(
     _user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db),
 ):
+    if not _is_platform_admin(_user):
+        raise HTTPException(status_code=403, detail="Kræver platformadministrator")
     snapshot = _aiops_snapshot(db)
-    model = (payload or {}).get("model") or "llama3.2:latest"
-    prompt = f"""
+    prompt_fallback = f"""
 Du er TimeLapse Pro AI Ops co-pilot. Du må kun analysere read-only data.
 Du må ikke foreslå direkte ændringer uden accept, og du må ikke bede om hemmeligheder.
 Vurder CMDB, SIEM, updates, key management, resilience og SAST-signaler.
@@ -17274,7 +17283,12 @@ Returner KUN JSON:
 SNAPSHOT:
 {json.dumps(snapshot, ensure_ascii=False)[:24000]}
 """
-    analysis = _call_ollama_text(prompt, model=model) or _aiops_fallback(snapshot)
+    try:
+        from ai.prompt_registry import render_prompt
+        prompt = render_prompt(db, "aiops_assessment", snapshot=json.dumps(snapshot, ensure_ascii=False, default=str)[:24000])
+    except Exception:
+        prompt = prompt_fallback
+    analysis = _call_ollama_text(prompt, db=db) or _aiops_fallback(snapshot)
     if not isinstance(analysis, dict) or "recommendations" not in analysis:
         analysis = _aiops_fallback(snapshot)
     return {"snapshot": snapshot, "analysis": analysis}
@@ -18188,12 +18202,14 @@ def aiops_query(
     _user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db),
 ):
+    if not _is_platform_admin(_user):
+        raise HTTPException(status_code=403, detail="Kræver platformadministrator")
     question = str(payload.get("question") or "").strip()[:1200]
     if not question:
         raise HTTPException(status_code=400, detail="question mangler")
     area = str(payload.get("area") or "overview").strip()[:40] or "overview"
     snapshot = _aiops_snapshot(db)
-    prompt = f"""
+    prompt_fallback = f"""
 Du er TimeLapse Pro GRC/AI Ops co-pilot. Du må kun analysere read-only data.
 Du må ikke foreslå shell-kommandoer som allerede udført, og du må ikke bede om hemmeligheder.
 Vurder altid med SABSA, IEC 62443, ISO 27000, NIS2 og CRA i baghovedet.
@@ -18223,7 +18239,15 @@ Spørgsmål: {question}
 SNAPSHOT:
 {json.dumps(snapshot, ensure_ascii=False, default=str)[:26000]}
 """
-    analysis = _call_ollama_text(prompt, model=os.getenv("TIMELAPSE_OPS_MODEL", "llama3.2:latest"))
+    try:
+        from ai.prompt_registry import render_prompt
+        prompt = render_prompt(
+            db, "aiops_query", area=area, question=question,
+            snapshot=json.dumps(snapshot, ensure_ascii=False, default=str)[:26000],
+        )
+    except Exception:
+        prompt = prompt_fallback
+    analysis = _call_ollama_text(prompt, db=db)
     if not isinstance(analysis, dict) or "answer" not in analysis:
         analysis = _aiops_question_fallback(question, area, snapshot)
     return {
