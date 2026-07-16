@@ -283,17 +283,32 @@ export function CaptureThumbnailCard({
         {overlay}
       </div>
       <div className="px-2 py-1.5">
-        <div className="flex items-center justify-between gap-1">
-          <p className="text-xs font-medium text-gray-700">{time}</p>
-          {capture.blur_score != null && (
-            <p className={`text-xs font-medium flex-shrink-0 ${capture.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>
-              ⬡ {Math.round(capture.blur_score)}
-            </p>
-          )}
-          {qaBadge(ai, capture)}
-        </div>
-
-        {footerAction && <div className="mt-1">{footerAction}</div>}
+        {footerAction ? (
+          <div className="grid min-h-11 grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+            <div className="min-w-0 self-center">
+              <p className="truncate text-xs font-medium text-gray-700">{time}</p>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1">
+                {capture.blur_score != null && (
+                  <p className={`shrink-0 text-xs font-medium ${capture.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>
+                    ⬡ {Math.round(capture.blur_score)}
+                  </p>
+                )}
+                {qaBadge(ai, capture)}
+              </div>
+            </div>
+            {footerAction}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-1">
+            <p className="text-xs font-medium text-gray-700">{time}</p>
+            {capture.blur_score != null && (
+              <p className={`text-xs font-medium flex-shrink-0 ${capture.blur_score < 80 ? 'text-amber-500' : 'text-gray-400'}`}>
+                ⬡ {Math.round(capture.blur_score)}
+              </p>
+            )}
+            {qaBadge(ai, capture)}
+          </div>
+        )}
 
         {!compact && (
           <>

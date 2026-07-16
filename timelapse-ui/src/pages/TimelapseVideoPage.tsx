@@ -735,7 +735,7 @@ export default function TimelapseVideoPage() {
                 count={frames.length}
                 minColWidth={140}
                 gap={6}
-                footerHeight={64}
+                footerHeight={58}
                 renderItem={(idx) => {
                   const frame = frames[idx]
                   const isExcluded = excluded.has(frame.id)
@@ -756,10 +756,10 @@ export default function TimelapseVideoPage() {
                               event.stopPropagation()
                               toggleFrame(frame.id)
                             }}
-                            className={`flex min-h-8 w-full items-center justify-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition-colors ${
+                            className={`flex h-full min-h-11 items-center justify-center gap-1 rounded-md border px-2 text-[10px] font-semibold transition-colors ${
                               isExcluded
                                 ? 'border-red-300 bg-red-600 text-white'
-                                : 'border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                                : 'border-emerald-300 bg-emerald-600 text-white hover:bg-emerald-500'
                             }`}
                             title={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
                             aria-label={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
