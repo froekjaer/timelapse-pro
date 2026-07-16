@@ -382,7 +382,7 @@ class PendingUpdate(Base):
     scope       = Column(String(20))    # global|customer|site|device
     scope_id    = Column(String(36))    # customer_id, site_id eller device_id
     status      = Column(String(30), default="pending")
-    # pending|approved|rejected|deployed|rolled_back
+    # pending|approved|rejected|superseded|deployed|rolled_back
     created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     approved_at = Column(DateTime)
     approved_by = Column(String(100))

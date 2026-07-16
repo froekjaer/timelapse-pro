@@ -9423,3 +9423,10 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - Efter grøn GitHub deploy serverede Nginx den nye bundle på disk, men browseren viste fortsat den gamle update-knap. Root cause: Vite/Rolldown genbrugte samme asset-filnavn på tværs af ændret kildekode, så browsercache kunne fastholde en forældet administrations-UI.
 - UI entry/chunk-filnavne indeholder nu de første 12 tegn af `GITHUB_SHA`/`VITE_BUILD_ID`. Nginx-template, Headend-generator og aktiv R&D-konfiguration sætter `Cache-Control: no-cache, must-revalidate` for SPA og assets; ukendte asset paths giver 404 og falder ikke tilbage til `index.html`.
 - Evidens: Nginx syntax/reload PASS; nyt asset `index-DDYKCiGo-40cbef1b1022.js` gav HTTP 200 med cache-policy, gammelt `index-CpYvLk5m.js` gav HTTP 404, og 4 cache-/arkitekturtests bestod. CI/deploy og frisk browseraccept følger i næste commit.
+
+### Codex 2026-07-16 - update UX, Edge E2E og supersession
+
+- Godkendelsesvalg vises nu i en rigtig modal med update-ID, release, miljø og scope. Browser-QA åbnede og annullerede modal for `#104` uden stateændring. Aktive godkendte flows vises sticky øverst med aktuelt Headend/Edge-trin.
+- Signeret `v2.8.1-lab.14` blev registreret via UI. Kun aktiv R&D Edge-kandidat `#105` blev godkendt; Edge pull-flow gennemførte og UI viser `Deployet`, `test`, `TL-C87FF9587CA0`, commit `47505dd6`. Den er ikke automatisk prod-klar.
+- Ny domænservice markerer ældre `pending` app-kandidater for samme test-device som `superseded`, når et nyere signeret artifact opretter kandidater. Godkendte/deployede/rollback-poster ændres ikke. UI har særskilt `Erstattet`-filter; intet revisionsspor slettes.
+- Verifikation: lokal CI-identisk gate 588 passed, 4 auth-smoke skipped og 543 integration deselected; målrettede supersession/release/UI/arkitekturtests, Python compile, TypeScript, Vite og ESLint-ratchet bestod.

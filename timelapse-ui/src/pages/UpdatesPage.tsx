@@ -220,7 +220,7 @@ interface ApproveOptions {
   scope_id:         string
 }
 
-type Filter = 'pending' | 'approved' | 'blocked' | 'deployed' | 'rejected' | 'rolled_back' | 'all'
+type Filter = 'pending' | 'approved' | 'blocked' | 'deployed' | 'rejected' | 'superseded' | 'rolled_back' | 'all'
 
 const ACTIVE_FLOW_KEYS = new Set([
   'waiting_for_edge_poll',
@@ -270,6 +270,7 @@ function statusBadge(s: string) {
     blocked:     'bg-amber-50 text-amber-700 border-amber-200',
     failed:      'bg-red-50 text-red-500 border-red-200',
     rejected:    'bg-red-50 text-red-500 border-red-200',
+    superseded:  'bg-gray-100 text-gray-500 border-gray-200',
     rolled_back: 'bg-purple-50 text-purple-700 border-purple-200',
   }
   return map[s] ?? 'bg-gray-50 text-gray-500 border-gray-200'
@@ -306,6 +307,7 @@ const STATUS_LABELS: Record<string, string> = {
   blocked:     'Blokeret',
   deployed:    'Deployet',
   rejected:    'Afvist',
+  superseded:  'Erstattet',
   rolled_back: 'Rullet tilbage',
 }
 
@@ -1210,6 +1212,7 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'blocked', label: 'Blokeret' },
   { key: 'deployed', label: 'Deployet' },
   { key: 'rejected',     label: 'Afvist' },
+  { key: 'superseded',   label: 'Erstattet' },
   { key: 'rolled_back',  label: 'Rullet tilbage' },
   { key: 'all',      label: 'Alle' },
 ]

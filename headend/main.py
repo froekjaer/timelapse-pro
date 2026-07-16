@@ -106,6 +106,7 @@ from cmdb import router as cmdb_router, report_inventory as _cmdb_report_invento
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
+from services.update_supersession import supersede_pending_app_updates
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
 from database import (
@@ -8398,8 +8399,6 @@ def catalog_current_release_artifact(
     return _artifact_to_dict(artifact)
 
 
-# ── GitHub tag poller + artifact builder ──────────────────────────────────────
-
 # Track which tags we've already catalogued (survives restart via DB query on start)
 _git_tag_poller_seen: set[str] = set()
 _git_tag_poller_lock = _threading.Lock()
@@ -8428,6 +8427,7 @@ def _create_lab_update_candidates_for_artifact(db: Session, artifact: UpdateArti
         installed = str(inv.app_version or device.app_version or "").strip()
         if installed and artifact.source_commit.startswith(installed):
             continue
+        supersede_pending_app_updates(db, PendingUpdate, device.device_id, artifact.source_commit)
         existing = db.query(PendingUpdate).filter(
             PendingUpdate.update_type == "app_updates",
             PendingUpdate.version == artifact.source_commit,
