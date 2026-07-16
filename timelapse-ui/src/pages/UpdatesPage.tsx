@@ -1580,6 +1580,9 @@ export function UpdatesPage() {
     watchedUpdateIds.length > 0 ||
     updates.some(u => u.status === 'approved') ||
     Object.values(flowStatuses).some(isActiveFlow)
+  const activeUpdates = updates.filter(u =>
+    u.status === 'approved' && (watchedUpdateIds.includes(u.id) || isActiveFlow(flowStatuses[u.id]))
+  )
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -1631,6 +1634,32 @@ export function UpdatesPage() {
         </div>
       )}
 
+      {activeUpdates.length > 0 && (
+        <div className="sticky top-3 z-30 mb-4 border border-sky-200 bg-white shadow-lg rounded-lg px-4 py-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <RefreshCw className="w-4 h-4 text-sky-600 animate-spin" />
+            Aktivt opdateringsflow
+          </div>
+          <div className="mt-2 space-y-2">
+            {activeUpdates.map(update => {
+              const flow = flowStatuses[update.id]
+              return (
+                <div key={update.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-xs">
+                  <div className="font-medium text-gray-800">
+                    #{update.id} {TYPE_LABELS[update.update_type] ?? update.update_type}
+                    <span className="ml-2 font-mono text-gray-400">{shortHash(update.version)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sky-700">
+                    <span className="w-2 h-2 rounded-full bg-sky-500" />
+                    {flow?.stage?.label || 'Henter Edge flow-status...'}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="bg-sky-50 border border-sky-100 rounded-xl px-4 py-3 mb-4">
         <div className="text-sm font-medium text-sky-900">Headend-styret pull-flow</div>
         <p className="text-xs text-sky-700 mt-1 leading-5">
@@ -1669,8 +1698,9 @@ export function UpdatesPage() {
       />
 
       {approveId !== null && (
-        <div className="bg-white rounded-xl border border-green-200 p-4 mb-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-800">Godkend opdatering #{approveId}</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="approve-update-title">
+        <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto bg-white rounded-lg border border-gray-200 p-5 shadow-2xl">
+          <h3 id="approve-update-title" className="text-base font-semibold text-gray-900">Godkend opdatering #{approveId}</h3>
           {approveUpdate && (
             <div className="mt-1 mb-3 text-xs text-gray-600">
               <div>{TYPE_LABELS[approveUpdate.update_type] ?? approveUpdate.update_type} · {approveUpdate.version.startsWith('v') ? approveUpdate.version : `commit ${shortHash(approveUpdate.version)}`}</div>
@@ -1730,16 +1760,19 @@ export function UpdatesPage() {
               </div>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button onClick={() => approve(approveId)}
-              className="px-4 py-1.5 bg-green-500 text-white text-xs rounded-lg hover:bg-green-600">
-              ✓ Bekræft godkendelse
+              disabled={busy === approveId}
+              className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50">
+              {busy === approveId ? 'Godkender...' : 'Bekræft godkendelse'}
             </button>
             <button onClick={() => setApproveId(null)}
-              className="px-4 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg">
+              disabled={busy === approveId}
+              className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg disabled:opacity-50">
               Annuller
             </button>
           </div>
+        </div>
         </div>
       )}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
