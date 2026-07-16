@@ -57,7 +57,6 @@ from sqlalchemy.orm import Session
 
 from datetime import timezone as _tz
 
-#Peter:
 import re as _re
 from sqlalchemy import and_, false as _sql_false, func, or_, text
 import subprocess as _subprocess
@@ -106,6 +105,7 @@ from siem import router as siem_router, start_headend_log_collector, record_even
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
+from services.artifact_trust import is_deployable_artifact
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
 from database import (
@@ -6839,16 +6839,16 @@ def _find_artifact_for_update(db: Session, update: PendingUpdate) -> UpdateArtif
     ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
     if ticket and ticket.artifact_id:
         artifact = db.query(UpdateArtifact).filter_by(artifact_id=ticket.artifact_id).first()
-        if artifact:
+        if is_deployable_artifact(artifact):
             return artifact
     version = (update.version or "").strip()
     if not version:
         return None
     q = db.query(UpdateArtifact).order_by(UpdateArtifact.created_at.desc())
     artifact = q.filter(UpdateArtifact.source_commit == version).first()
-    if artifact:
+    if is_deployable_artifact(artifact):
         return artifact
-    return q.filter(UpdateArtifact.version == version).first()
+    return next((a for a in [q.filter(UpdateArtifact.version == version).first()] if is_deployable_artifact(a)), None)
 
 
 def _release_signer_matches(signed_by: str | None, signer: dict) -> bool:
@@ -8337,7 +8337,7 @@ def catalog_current_release_artifact(
     if not commit:
         raise HTTPException(status_code=409, detail="Kunne ikke fastslå git commit for release artifact")
     ref = _git_text(["rev-parse", "--abbrev-ref", "HEAD"]) or "unknown"
-    dirty = _release_worktree_dirty()
+    if _release_worktree_dirty(): raise HTTPException(status_code=409, detail="Release artifact kræver en ren worktree; brug et signeret Git-tag")
     created_at = now_utc()
     artifact_id = f"TL-ART-{created_at:%Y%m%d}-{commit[:12]}"
     existing = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
@@ -8353,7 +8353,7 @@ def catalog_current_release_artifact(
         "source": {
             "commit": commit,
             "ref": ref,
-            "dirty_worktree": dirty,
+            "dirty_worktree": False,
         },
         "distribution_model": "headend_signed_artifact_catalog_edge_pull",
         "edge_constraints": {
@@ -9218,6 +9218,7 @@ def bind_artifact_to_update(
     artifact = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
     if not artifact:
         raise HTTPException(status_code=404, detail="Artifact ikke fundet")
+    if not is_deployable_artifact(artifact): raise HTTPException(status_code=409, detail="Artifact er blokeret: dirty eller ugyldig release-kilde")
     if update.update_type in {"os_security", "os_updates"} and artifact.artifact_type != "os":
         raise HTTPException(status_code=400, detail="OS updates kræver OS artifact")
     if update.update_type not in {"os_security", "os_updates"} and artifact.artifact_type == "os":

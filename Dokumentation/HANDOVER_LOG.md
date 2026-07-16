@@ -9398,3 +9398,22 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - Inventory-ruten var allerede beskyttet af `_verify_device_token`; headend/service kræver Bearer-token, HMAC-SHA256 request-signatur, timestamp og nonce/replaykontrol.
 - Verifikation: zsh/bash syntax PASS, Python compile PASS, `git diff --check` PASS, 9 generator-/privilege-/enrollment-kontrakttests PASS og 2 eksisterende route-auth-tests PASS mod eksplicit `timelapse_test`.
 - Restaccept: Fase 0-3 skal køres på den nye staging-iMac med et single-use bootstrap-token; CMDB device type, inventory, SBOM, reboot-persistens og coexistence med CrushFTP skal dokumenteres før prod.
+
+### Codex 2026-07-16 - Edge commissioning-evidens og AI trust boundary
+
+- Den eksisterende `edge/tools/bootstrap_cli.py` var allerede funktionsrig med commissioning doctor, netværk, kamera, GPS, NPU og HTML-teknikerrapport. Den er udvidet frem for erstattet.
+- Ny `--doctor-json` returnerer schema `timelapse.edge.doctor.v1`, device-ID, samlet status og stabile check-ID'er. Kontrollen er bounded/read-only: ingen serviceændring, installation, `apt`, Git eller internetbaseret update-opslag. Bootstrap-tokenets værdi udstilles aldrig.
+- Doctoren kontrollerer release-receipt og hele den forventede lokale servicekæde: edge-agent, Bluetooth PAN/agent, captive portal og TOTP. Default-route kontrolleres lokalt uden et kunstigt opslag mod `8.8.8.8`.
+- Node-agentens hardcodede `2.8.0` er fjernet. CMDB-version kommer nu fra eksplicit runtime-version eller en schema-valideret deployment-receipt; macOS-installeren skriver en read-only receipt med source commit.
+- Edge NPU-adapteren accepterede tidligere vilkårlig JSON fra runneren. Den er nu fail-closed på forkert/manglende `timelapse.edge_qa.v1` schema og ukendt label, før output må påvirke QA/anbefalinger.
+- Headend AI-audit: databasevalgte Ollama/Gemini-modeller, versionsstyrede/allowlistede prompts samt model-/promptproveniens er allerede implementeret. Den gamle `_get_db_dep()` med `NotImplementedError` er en ubrugt placeholder, ikke en aktiv runtime-path; oprydning af gamle patch-/backupfiler bør ske som separat strukturgæld uden at blande det med payload/platform-migrationen.
+- Verifikation: Python/shell syntax PASS; målrettet Edge/AI/security 44/44 PASS; fuld lokal CI-identisk unit/contract gate **581 passed, 4 skipped, 543 integration deselected**. UI TypeScript/Vite build PASS og ESLint-ratchet 186/186 uden nye fund. Første system-Python-kørsel kunne ikke importere `slowapi`; gentagelse i repoets isolerede `.venv` gav ovenstående grønne resultat.
+- Resterende fysisk accept: kør `sudo /opt/timelapse/edge/tools/bootstrap_cli.py --doctor-json` på `TL-C87FF9587CA0` efter signerede deployment, bind evidensen til commissioning/change ticket, og valider den konkrete VIPLite-model med repræsentative ægte billeder. Ingen direkte filkopiering til Edge.
+
+### Codex 2026-07-16 - update supply-chain fail-closed
+
+- Browser-QA fandt, at `Registrer aktuel release` signerede den lokale worktree, selv når den var dirty. Artifact `TL-ART-20260716-261d12499c0e` er derfor ugyldigt som release og må ikke bindes eller deployes.
+- Trust-reglen er flyttet til `headend/services/artifact_trust.py`. Dirty eller ugyldige manifester filtreres nu fra automatisk artifact-opslag og afvises ved manuel binding; legacy-endpointet afviser dirty worktree med HTTP 409.
+- UI-handlingen registrerer nu seneste GPG-signerede Git-tag via den eksisterende clean-checkout builder. Knappen hedder `Registrer seneste signerede tag`; release-artifact, kandidater og testmiljø kan dermed ikke forveksles med en lokal arbejdsmappe.
+- Lokal CI-identisk gate: 583 passed, 4 auth-smoke skipped, 543 integration deselected. Arkitektur-ratchet, Python compile, TypeScript, Vite build og ESLint-ratchet 186/186 bestod.
+- Næste accept: CI/deploy af rettelsen, browser-verifikation, opret og registrer næste signerede lab-tag, godkend kun nyeste kandidat til R&D Edge, og dokumenter poll/trust/backup/install/receipt/rollback-status. Stale kandidater skal senere håndteres med eksplicit supersession frem for manuel oprydning.

@@ -988,7 +988,7 @@ function ArtifactCatalog({
           <button onClick={onCatalogCurrent} disabled={busy}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
             <Fingerprint className="w-3.5 h-3.5" />
-            Registrer aktuel release
+            Registrer seneste signerede tag
           </button>
         </div>
       </div>
@@ -1499,10 +1499,14 @@ export function UpdatesPage() {
     setRefreshing(true)
     setError(null)
     try {
-      await api('/api/updates/artifacts/catalog-current', { method: 'POST' })
+      await api('/api/updates/artifacts/catalog-from-git-tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
       await load()
     } catch (e: unknown) {
-      setError(`Kunne ikke registrere artifact (${getErrorMessage(e)})`)
+      setError(`Kunne ikke registrere signeret release-tag (${getErrorMessage(e)})`)
     } finally {
       setRefreshing(false)
     }

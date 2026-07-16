@@ -43,6 +43,25 @@ def test_release_artifacts_use_immutable_artifact_scoped_storage():
     assert 'storage_path=str(snapshot_root)' in tag_builder
 
 
+def test_dirty_worktree_artifacts_are_fail_closed_everywhere():
+    source = _source("headend/main.py")
+    current_catalog = source.split("def catalog_current_release_artifact", 1)[1].split("\n\n@app.", 1)[0]
+    finder = source.split("def _find_artifact_for_update", 1)[1].split("\n\ndef ", 1)[0]
+    binder = source.split("def bind_artifact_to_update", 1)[1].split("\n\n@app.", 1)[0]
+
+    assert 'if _release_worktree_dirty():' in current_catalog
+    assert 'status_code=409' in current_catalog
+    assert finder.count('is_deployable_artifact(') >= 3
+    assert 'if not is_deployable_artifact(artifact):' in binder
+
+
+def test_updates_ui_catalogs_only_from_signed_git_tags():
+    source = _source("timelapse-ui/src/pages/UpdatesPage.tsx")
+
+    assert "Registrer seneste signerede tag" in source
+    assert "'/api/updates/artifacts/catalog-from-git-tag'" in source
+
+
 def test_edge_artifact_download_is_scoped_to_the_authenticated_device():
     source = _source("headend/main.py")
     endpoint = source.split("def download_update_artifact_file", 1)[1].split('@app.get("/api/updates/artifacts")', 1)[0]
