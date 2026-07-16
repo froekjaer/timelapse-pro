@@ -7,6 +7,8 @@
 
 **Projektprincipper (fra CLAUDE.md):** Senior programmør-niveau. SABSA-ekspert; forstår ISO 27000, IEC 62443, CRA, GDPR. **Dobbelttjek før du udfører.** Ændringer er additive + flag-guardede; ingen skema-brud før live-verifikation; **aldrig hard-delete** (brug quarantine/reversible flyt); rør ikke den andens (Codex') ucommittede arbejde stiltiende.
 
+**Bindende arkitektur (accepterede ADR'er — se `Dokumentation/ADR/`):** Enhver session er bundet af accepterede ADR'er. **ADR-001 (Accepted 2026-07-16): Platform/Payload-snit** — den non-funktionelle kerne (identitet, config, OTA, telemetri, remote access, HAL, sikkerhed, storage) er genbrugelig platform; den funktionelle del (i dag kamera/timelapse) er en udskiftelig payload, koblet via en versioneret `PayloadDriver`-kontrakt + capability manifest med reel proces-isolation, control/data-plane-adskillelse, fail-closed privilegier og JIT-conduits. Nye endpoints hører IKKE i `headend/main.py`. Se ADR-001 + `Arkitektur/Modularisering_Platform_Payload_Plan.md`. Samarbejdsregler: `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`.
+
 **Aktuel systemtopologi:**
 
 - **Repo:** `~/projects/timelapse-pro` (= `/Volumes/data-fast/peter-home/projects/timelapse-pro`).

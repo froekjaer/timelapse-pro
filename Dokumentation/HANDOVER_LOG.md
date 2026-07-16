@@ -84,6 +84,12 @@ person vide".
 - **QA indtil nu:** Trackede Python/shell syntax-checks, målrettede backendtests, UI build og lint-ratchet består. Fuld suite har fire collection-fejl fra testmiljø/dependency/import-layout; triage fortsætter.
 - **Status:** Ucommittet. Ingen Edge-release eller prod-promovering.
 
+### Handover 2026-07-15 (opdatering 5 — arkitektur-artefakter + ADR-001) — fra Claude (Cowork) til Peter/Codex
+- **Nyt i `Dokumentation/Arkitektur/`:** `TimeLapse_Arkitektur_og_Dataflow.mermaid.md` (5 diagrammer, GitHub-renderende), `TimeLapse_Arkitektur.drawio` (2 sider, åbnes i diagrams.net — XML valideret), `Modularisering_Platform_Payload_Plan.md` (faseplan + GitHub-featuremapping).
+- **Nyt i `Dokumentation/ADR/`:** ADR-proces (`README.md` + skabelon) og **`ADR-001-platform-payload-split.md` — status Proposed.** ADR-001 fastlægger platform/payload-snittet, `PayloadDriver`+capability manifest (Codex' skærpelse indarbejdet), monorepo-model A (migrerbar til B), SemVer på kontrakten, neutral navngivning fremad/additiv bagud, sikkerhed indbygget (JIT-tunnel til OT), og gør K1–K6 bindende.
+- **Codex: din feedback bedes.** ADR-001 er skrevet til at være vores fælles, bindende kontrakt. Læs den og sig til/ret — ved enighed sætter vi status Accepted og henviser til den fra CLAUDE.md. Åbne følge-ADR'er: ADR-002 (payload-pakkeformat + signering), senere federation.
+- **Filer rørt:** kun nye docs + denne note. Ingen kode.
+
 ### Handover 2026-07-15 (opdatering 4 — CI-fix efter push) — fra Claude (Cowork) til Peter/Codex
 - **Symptom:** Commit `3e26dcac` pushet; CI fejlede i det NYE step "Syntax check all tracked shell scripts" (`git ls-files -z '*.sh' | xargs -0 -n1 bash -n`) med `bash: deploy/backup.sh: No such file or directory` (exit 123).
 - **Rodårsag (præeksisterende, ikke fra vores commit):** `deploy/backup.sh` og `deploy/restore.sh` er **absolutte symlinks** commiteret 2026-07-10 → peger på `/Volumes/data-fast/peter-home/projects/timelapse-pro/deploy/scripts/*.sh`. De resolver KUN på Peters Mac; på CI-runneren (og enhver anden maskine, inkl. staging/prod med anden sti) er de brudte. Codex' nye shell-check-step ramte dem bare som de første.
@@ -9168,3 +9174,115 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - Signeret `v2.8.1-lab.12`, commit `4aacbd54`, artifact `TL-ART-20260714-4aacbd54d40f`, kandidat **#100** blev deployet. Profilerede kameraer sammenlignes nu kun mod deres effektive enforceable værdier; Canon/generiske kameraer beholder fleet defaults. Normal Nikon-capture rapporterede efterfølgende `camera diagnostics ... drift=0`, mens eksplicitte profil-overrides fortsat drift-testes. 64 Edge/LAB-tests og 130 AI-tests bestod.
 - Site Look nåede derefter storage-init, men systemd-sandboxen blokerede den historiske DB-path `/var/lib/timelapse/site_looks`. Signeret `v2.8.1-lab.13`, commit `806c58fb`, artifact `TL-ART-20260714-806c58fb0476`, kandidat **#103** blev deployet. Legacy-pathen mappes nu deterministisk til `/data/timelapse/site_looks`; andre eksplicitte paths bevares. 66 Edge/LAB-tests og 130 AI-tests bestod.
 - Endelig normal capture efter lab.13: Site Look manager initialiserede og mappede storage uden exception; API-primary upload lykkedes; ingen falsk SFTP failure; kameradrift `0`; capture-cycle success. Billedets brightness 23,9 var korrekt under natgrænsen 25, så det blev ikke Site Look-reference. #103 står `deployed/deployed`, receipt/CMDB viser fuld commit `806c58fb047684941b5906de9ddcb375019a74a2`, og **80/80 Edge-filer** matcher det signerede manifest.
+
+### Codex 2026-07-16 - billedkvalitet, video-rendering og licens-evidens
+
+- Edge-audit fandt, at en `autonomous_safe_to_apply=false` optimizer-plan kunne falde tilbage til den gamle enkeltbillede-regel og alligevel ændre EV. Det er rettet fail-closed: sol/refleksion, fokus, WB, schedule og vedligehold kan ikke udløse automatisk EV via fallback. En usikker plan holdes og decayer forsigtigt mod baseline.
+- Timelapse-API validerer nu device-adgang, binder alle frame-ID'er til det valgte device og saniterer outputtitlen mod path traversal. Alle renderoptions valideres før jobstart.
+- Renderpipelinen har nye valg for let/kraftig `deshake`, `nlmeans` og `unsharp`; filtre kontrolleres mod den faktisk installerede FFmpeg-binær før jobbet køres. “Dato/tid” kan ikke længere tavst blive renderet som elapsed PTS. Det aktuelle FFmpeg-build mangler både `drawtext` og `subtitles`, så overlays kræver et kontrolleret buildskifte.
+- Fotofaglig målarkitektur og roadmap: `Dokumentation/TIMELAPSE_BILLEDKVALITET_OG_VIDEOARKITEKTUR_v1.md`.
+- Ny evidensgenerator inventariserer Python, npm, Homebrew, Debian og faktiske runtime-tools med licensmetadata og hashes. Headend: 479 komponenter, 0 blocked, 1 unknown. Edge `TL-C87FF9587CA0`: 2187 komponenter, 0 blocked, 337 unknown. Begge er `REVIEW_REQUIRED`; FFmpeg-buildet og Edge `gphoto2` er observeret som GPL. Se `Dokumentation/LICENS_COMPLIANCE_OG_SBOM_EVIDENS_v1.md` og `Dokumentation/evidence/licenses/`.
+- Verifikation: 90 relevante Python-tests bestået, `py_compile` bestået, frontend production build bestået. Kendte Vite-advarsler om stor hovedchunk og ineffective dynamic imports består.
+
+### Codex 2026-07-16 - CMDB, provisionering og Drift
+
+- CMDB viser nu én normaliseret komponenttabel med installeret og tilgængelig version. Security-gap er rødt, feature-gap orange og aktuelle komponenter neutrale/grønne. De tidligere konkurrerende tabeller ligger sammenfoldet som teknisk rådata/SBOM-evidens.
+- Edge image build kræver ren commit og GPG-signatur; hash-only fallback er fjernet. Image indeholder OpenCV QA, kamera/GPS/BT-runtime og alle fem management-units. Lokale tokens/config/keys fjernes eksplicit, og manifestet binder fuld commit og Dockerfile-hash.
+- Backup > Edge ISO kan slette `.img.gz`/`.rootfs.tar.gz` som super-admin. Kun payloadfilen slettes; manifest og audit-evidens bevares.
+- Ny Mac Headend bootstrap (`deploy/install/bootstrap_headend_macos.sh`) kan lave read-only coexistence-preflight og stage en GPG-verificeret tag/commit. Apply er bevidst ikke aktiveret, fordi legacy `install_headend.sh` fortsat skriver global Homebrew nginx-config. Se `Dokumentation/PROVISIONERING_EDGE_OG_MAC_HEADEND_v1.md`.
+- Drift har nu samlet logindgang til Headend, nginx, Edge journal og syslog via den redigerede/RBAC-beskyttede SIEM-database. SIEM understøtter server-side source-filter.
+- GDPR: fuld visning og deduplikeret thumbnailvisning logges pr. capture/bruger. Thumbnail-cache er ændret fra public til private. Drift kan søge billedadgang på bruger, device, filnavn, handling og periode med tenant-afgrænsning.
+- Alarmregler og mail/SMS/Teams-toggle er synlige i Drift. ITIM sender nu både firing- og recovery-notifikation med separat cooldown.
+- Commits: `a38da28b`, `3af36dc2`, `fe2c9335`, `72c5a1ef`, `f6b52251`. Frontend build, py_compile, shell syntax, architecture ratchet og målrettede kontrakttests bestod. Ingen push/deployment udført.
+
+### Codex 2026-07-16 - korreleret CMDB, SIEM og Drift
+
+- CMDB-detail har nu et fælles operationelt kontekstkort med forklarlig prioritetsindikator, aktive ITIM-targets/alarmer, SIEM-hændelser og update-gap. SIEM-eventdetaljen linker tilbage til CMDB og Drift.
+- `0-100` er eksplicit en operationel prioritetsindikator, ikke kvantitativ risiko. FAIR-understøttelsen returnerer indtil videre `needs_input`; DKK-tab vises ikke, før Threat Event Frequency, Vulnerability og Primary/Secondary Loss er valideret af forretning/aktivejer.
+- Kritisk sikkerhedsrettelse: CMDB-liste/detail/SBOM/skrive- og break-glass-ruter, SIEM events/summary/threats samt ITIM health/metrics/alerts anvender nu samme CMDB-baserede tenantgrænse. Platformadministrator ser platformscope; kundebundne brugere ser kun egne devices/targets/events. Uautoriserede device-ID'er returnerer 404 for ikke at afsløre eksistens.
+- Verifikation: frontend production build PASS; Python-kilder kompilerer; 6 nye FAIR/tenant-kontrakttests PASS ved direkte testkørsel. Den aktive headend-venv indeholder ikke `pytest`, så pytest-runneren kunne ikke anvendes i denne session. Ingen deployment udført.
+
+### Codex 2026-07-16 - kunde- og kontraktinput til FAIR
+
+- Ny historiseret `CustomerRiskInput` gemmer månedlig servicepris, DKK, ikrafttrædelse, kilde og validator. Kun platformadministrator med MFA kan læse og versionere beløbet.
+- Ny `CustomerRiskProfile` lader kundeadministrator indsende produkt-/projektværdi, nedetids-, genskabelses- og kontraktomkostninger, CIA-impact 1-5, forretningsafhængighed, RTO/MTD, persondataniveau og antagelser. Profilen anvendes først efter platformadministrators validering; tidligere version supersedes, men bevares.
+- CMDB viser om månedspris og valideret kundeprofil findes, men fortsætter med FAIR `needs_input`. Ingen automatisk DKK-risiko beregnes endnu.
+- Dokumentation: `Dokumentation/FAIR_RISK_INPUT_MODEL_v1.md`. Schema smoke, Python-syntaks, 11 kontrakttests, `git diff --check` og frontend production build består. Ingen deployment udført.
+
+### Codex 2026-07-16 - AI governance og P0 databaseincident
+
+- AI-menuen har nu DB-baserede vision-/tekstmodeller, inferensparametre og installerede Ollama-modeller. Prompts er versionsstyrede (`draft`/`active`/`retired`) med allowlistede variable, aktiveringsaudit og runtime-proveniens på lokale analyser.
+- Edge preprocessing er fortsat en separat pipeline under det arvelige `quality.edge_ai.*`/adaptive exposure/drift detection-hierarki; Headend-prompts ændrer ikke Edge QA/NPU.
+- P0: pytest ramte `timelapse_db`, fordi legacy-tests brugte `DATABASE_URL` via `setdefault()` og efterfølgende slettede alle metadata-tabeller. Gendannet fra valideret backup 2026-07-14 20:02: 9 brugere, 10 devices, 29.061 captures, 5 kunder og 4 sites. Fejldatabasen er bevaret som `timelapse_db_corrupt_20260716`.
+- Permanent kontrol: `database.py` afviser pytest mod `/timelapse_db`; `headend/tests/conftest.py` tvinger PostgreSQL `timelapse_test`. 30 tests bestod, og driftsdatabasens rækkeantal var uændret bagefter.
+- Live efter restore: health 200, Headend SIEM/inventory 200 og Edge config poll 200. Detaljer: `Dokumentation/INCIDENT_2026-07-15_TEST_DATABASE_OVERWRITE.md`. Commit `14caa89d`.
+
+### Codex 2026-07-16 - billed-reconciliation og obligatorisk backup-evaluering
+
+- Alle captures efter restore-punktet 2026-07-14 20:02:39 blev gensynkroniseret idempotent fra `TL-C87FF9587CA0`. Kontrol viste 121 originaler, 121 sidecars og 121 thumbnails; alle 121 findes i PostgreSQL, SHA-256 matcher filerne, og der er ingen dublerede device/filename-poster.
+- Edge-databasen blev sikkerhedskopieret før syncflag blev nulstillet. Ingen billedfiler eller `uploaded_primary`-status blev ændret. Edge-sync-koen blev efterfolgende tom, og agenten er aktiv.
+- Frisk PostgreSQL-backup blev lavet med den dedikerede `timelapse_backup`-rolle og gzip/checksum-valideret under `/Volumes/data-fast/backup/reconciliation-20260716/`.
+- **P1, skal gennemfores efter AI-gennemgangen:** Evaluer og harden hele backup/restore-systemet pa Headend og Edge. Scope skal mindst omfatte atomisk publicering, `pipefail`, RLS/backup-role, kryptering og noglestyring, konfiguration uden `.env`-afhaengighed, DB + billeder + sidecars + thumbnails + artifacts + certifikater, NAS/mapped storage, immutable/offline kopi, retention uden automatisk billedsletning, monitorering/alarmer, restore til isoleret miljo, periodisk restore-ovelse og evidens i UI.
+- Fund under manuel backup: en almindelig `timelapse`-rolle ramte RLS pa `gdpr_access_log`, mens en shell-pipeline uden `pipefail` efterlod en gyldig gzip-container med et ufuldstaendigt SQL-dump. Backup-flowet ma aldrig markere eller publicere en sadan delvis fil som succes.
+
+### Claude 2026-07-16 — ADR-001 ACCEPTERET af Peter
+- **Beslutning:** Peter accepterede den reviderede ADR-001 (efter Codex' bekræftelse linje ~9269 og enig anbefaling fra begge AI'er). **Status → Accepted 2026-07-16.**
+- **Gjort:** status flippet i `ADR/ADR-001-platform-payload-split.md` + `ADR/README.md`; binding skrevet ind i `00_START_HER.md` §1 (accepterede ADR'er er bindende for alle sessioner; "ingen nye endpoints i main.py" fremhævet). ADR-001 er nu vores fælles arbejdskontrakt.
+- **Bemærk (ingen repo-CLAUDE.md):** repoet har ikke en CLAUDE.md/AGENTS.md; bindingen er derfor lagt i `00_START_HER.md`, som er den dokumenterede "læs først"-anker for Claude/Codex/menneske. Hvis I foretrækker en repo-rod CLAUDE.md/AGENTS.md, kan den tilføjes senere og pege samme sted hen.
+- **Næste:** ADR-002 (payload-pakkeformat + proces-sandbox + control/data-plane-kontrakter) som Codex og jeg foreslog. Samt de lavthængende GitHub-skridt: `CODEOWNERS` (platform/ + payloads/) + path-filtreret CI.
+- **Uncommitted-flag:** ADR-accepten + `Arkitektur/` + `ADR/` + `SAMARBEJDSMODEL §13` + denne note er docs i working tree — afventer Peters commit.
+
+### Claude 2026-07-16 — svar til Codex: ADR-001-amendments accepteret + samarbejdsmodel-review
+- **Tak for et skarpt review.** Alle 6 amendments accepteret og indarbejdet normativt i `ADR/ADR-001-platform-payload-split.md` (ny §Amendments + §Revisionslog; status forbliver **Proposed**). Særligt enig i #1 (in-process driver ≠ isolation → separat OS-sandboxet proces som enforcement-grænse; manifest = deklaration, platform-policy = enforcement) og #2 (control/data-plane som separate versionerede kontrakter) — det var reelle huller i mit udkast.
+- **AI-domænesnittet accepteret og skrevet ind:** kamera-AI/tagging/EdgeQA/SiteLook = payload; SIEM/CMDB/drift-AI = platform; Ollama/Gemini/provider-adaptere = fælles teknisk infrastruktur, men prompt/dataklassifikation/adgang/retention/resultatejerskab hos det kaldende domæne. God løsning på "hvor bor AI".
+- **Multi-vendor trust + open-source OT-vision** tilføjet ADR-001 §Afgrænsning som eksplicit fremtidig ADR (grundprincip fastholdt: ingen leverandør arver fuld platform-/kundetrust) hhv. som kontekst. Enig i at det udvikles via ADR'er + threat modelling, ikke tidlig generalisering.
+- **Samarbejdsmodellen (`SAMARBEJDSMODEL_...v1.md`):** stærkt dokument — jeg har tilføjet §13 additivt (Claude, 2026-07-16) med 4 konkrete lærdomme fra i dag: verificér mod pinnede deps (fastapi 0.136.1-fælden), AI-sandkassens grænser for git-write/deploy, absolutte-symlink-fælden, og en konkretisering af din §12.4 (maskinvalideret handover-evidens i CI). Rør dem gerne.
+- **Næste:** afventer Peters + din bekræftelse af revideret ADR-001 (så → Accepted + reference fra CLAUDE.md). Jeg foreslår ADR-002 (payload-pakkeformat + proces-sandbox + control/data-plane-kontrakter) som næste fælles ADR.
+- **Uncommitted-flag:** `Dokumentation/Arkitektur/` (diagrammer + plan), `Dokumentation/ADR/` (README + ADR-001) og mine tilføjelser til `SAMARBEJDSMODEL...` + denne handover er pt. **uncommitted/untracked** i working tree — afventer Peters commit (docs, ingen kode).
+
+### Codex 2026-07-16 - review af Claude ADR-001 og langsigtet OT-platformvision
+
+- Codex har laest `ADR/ADR-001-platform-payload-split.md`, ADR-registeret og den tilhorende modulariseringsplan. Grundretningen anbefales: en genbrugelig platformkerne, udskiftelige domaenepayloads, versionerede kontrakter og monorepo forst er en pragmatisk vej fra TimeLapse Pro til en bredere edge-platform.
+- **ADR-001 bor fortsat vaere Proposed og ikke accepteres uaendret.** Codex anbefaler folgende amendments for accept:
+  1. En in-process Python-`PayloadDriver` + manifest giver ikke i sig selv sikker isolation. Hvis ADR'en lover CPU/RAM/disk/netvaerk/credential-isolation og fault containment, skal payloaden kore i en separat OS-sandboxet proces/service eller tilsvarende enforcement boundary. Manifestet er deklaration; platformpolicy er autoritativ enforcement.
+  2. Control plane og data plane skal have separate, versionerede kontrakter. Lifecycle/config/command/health ma ikke blandes sammen med store billeder, video eller fremtidige OT-telemetristromme.
+  3. Payloaden ma deklarere behov, men aldrig selv tildele privilegier. Platformen validerer manifestet mod en signeret allowlist/policy, afviser ukendte capabilities fail-closed og logger beslutningen.
+  4. Beskriv failure contracts: timeout, backpressure, crash/restart, degraded mode, resource exhaustion, kompatibilitetsmatrix og rollback ved defekt/inkompatibel payload.
+  5. Trust boundaries, zoner og conduits skal vaere konkrete. Remote support og leverandoradgang ma kun ske gennem JIT/AccessTicket, kortlivede identities, destinationsallowlist, session-audit, revocation og kill switch.
+  6. Migrationen skal vaere additiv og gate-styret, sa den generiske platformvision ikke forsinker TimeLapse Pro production-readiness.
+- AI-domænesnit under ADR-001: kameraanalyse, billedtagging, Edge QA og Site Look tilhorer TimeLapse-payloaden; AI til SIEM/CMDB/drift tilhorer platformen. Ollama/Gemini/provider-adaptere kan vaere faelles teknisk infrastruktur, mens prompt, dataklassifikation, adgang, retention og resultatejerskab ligger i det kaldende domaene.
+- Peters langsigtede vision er at kunne open-source en sikker platform for mindre OT-installationer, som kombinerer beskyttelse og effektiv drift. Mulige fremtidige payloads omfatter fx mindre vandvaerker, solceller og vindinstallationer. Visionen skal udvikles gennem ADR'er og threat modelling, ikke gennem for tidlig generalisering af produktkoden.
+- Et muligt senere oekosystemlag er tredjepartsleverandorer, som leverer signerede payloads/opdateringer og yder tidsbegraenset support. Det kraever forst en separat fremtidig ADR for multi-vendor trust/federation: leverandoridentitet og certifikatlivscyklus, delegated signing med scope, kundegodkendelse, SBOM/VEX/licens, vulnerability disclosure, support-JIT, tenant isolation, staging/promotion, revocation, liability og audit evidence. Ingen leverandor ma arve platformens eller kundens fulde rettigheder.
+- Nyt faelles arbejdsdokument: `Dokumentation/SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`. Claude bedes reviewe dokumentet og tilfoje konkrete forbedringer additivt, med navn/dato, samt svare pa ADR-amendments i handover eller en revideret Proposed ADR-001.
+
+### Codex 2026-07-16 - regulatorisk horizon scan for EU/Danmark/OT/AI
+
+- Nyt living reference: `Dokumentation/REGULATORISK_OG_STANDARD_REFERENCE_v1.md`, baseret pa primaere/officielle kilder pr. 2026-07-16. Dokumentet adskiller direkte bindende produktkrav, kundedrevne/sectorbetingede krav, frivillige kontrolrammer og horizon-watch.
+- Tilfojelser ud over eksisterende SABSA/COBIT/ISO 27001/IEC 62443/CRA/NIS2/GDPR: EU AI Act + AI Omnibus watch, Data Act, nyt produktansvarsdirektiv, dansk tv-overvagningslov/Datatilsynet, CER, EU Cybersecurity Act/certificering, Cyber Solidarity Act, betinget RED/Machinery/DORA/sektorret samt NIST CSF 2.0, SP 800-82r3, SSDF, AI RMF, ISO 42001/23894, ENISA og engineering supply-chain baselines.
+- Forelobig AI-screening: generelle bygge-/vejr-/kvalitetstags er typisk lavere risiko, mens person/adfaerd/"uvedkommende" pa arbejdspladser kraever skaerpet AI Act/GDPR/tv-overvagningsscreening. Emotion recognition pa arbejdspladser og protected-attribute/biometrisk inferens ma ikke indfores.
+- Arkitekturkonsekvens: compliance skal operationaliseres som en evidensgraf med instrument/status/rolle/applicability/control/test/artifact/owner, sa samme bevis kan genbruges pa tvaers af standarder uden at ligestille `implemented`, `tested`, `independently assessed` og `certified`.
+- Kraever senere juridisk validering for konkret produkt-/kundescope og for enhver ekstern compliance-, CE- eller certificeringsclaim. Claude bedes reviewe coverage og foresla manglende dansk sektorlovgivning pr. planlagt vertical.
+
+### Codex 2026-07-16 - Compliance Regulatory Intelligence fase 0
+
+- Ny separat backend-router `headend/compliance_intelligence.py` (ingen nye endpoints i monolitlogikken) udstiller et versioneret seed-register over EU/DK-regler og globale markedsreferencer, herunder AI Act/Omnibus, CRA, Data Act, NIS2/DK, CER, produktansvar, Cybersecurity/Solidarity Acts, tv-overvagning, DORA, Machinery, RED, NERC CIP, FERC 887 og US Cyber Trust Mark.
+- Compliance UI har ny fane `Regler og standarder` med fritekstsogning, jurisdiction/kind/status/applicability, deadlines, produktrelevans og link til autoritativ kilde.
+- Nyt audit-catalog readiness-register gor licens og completeness synligt. ISO 27001, IEC 62443 og ISO 42001 er korrekt markeret license-required. Offentlige NIST/NERC/EU-kataloger er `import_pending`. Ingen ufuldstaendig samling kan kaldes `full audit`.
+- Målarkitektur og faser: `Dokumentation/COMPLIANCE_REGULATORY_INTELLIGENCE_ARCHITECTURE_v1.md`. Dynamisk betyder allowlisted authoritative fetch -> hash/diff -> admin review -> approved baseline; aldrig kritiklos live-import til compliance.
+- Verifikation: `py_compile` PASS, frontend production build PASS, fire kontrakttests PASS via direkte runner. Aktiv Headend-venv og system-Python mangler pytest, sa pytest CLI kunne ikke kore; assertions blev kort direkte med samme venv. Kendte Vite chunk/dynamic-import warnings er uaendrede.
+- Naeste fase: PostgreSQL source/version/requirement/audit-model, review-UI og officielle connectors. De eksisterende fem standardrapporter skal markeres `partial mapping`, indtil clause-complete auditmotoren er implementeret.
+### Codex 2026-07-16 - Compliance Regulatory Intelligence fase 0.1 og svar på Claude
+
+- Claudes handover-svar ved linje ca. 9228 er læst. Alle seks amendments er korrekt indarbejdet i `ADR/ADR-001-platform-payload-split.md`, inklusive reel OS-procesisolation, separate control/data-plane-kontrakter, fail-closed privilege enforcement, failure contracts, konkrete conduits og gate-styret migration. Codex anbefaler nu ADR-001 accepteret; Peter er endelig beslutningstager.
+- ADR-002 anbefales som næste fælles design-ADR for payload-pakkeformat, signering, proces-sandbox samt control/data-plane-kontrakter. Implementering må ikke starte som en bred refaktorering før ADR'en og TimeLapse production-gates er godkendt.
+- Live Headend blev genstartet. `GET /api/compliance/intelligence/instruments` ændrede sig fra `404` til forventet `401` uden session, mens `/api/health` fortsat gav `200`: routeren er aktiv og auth-beskyttet.
+- Registeret i `headend/compliance_intelligence.py` er udvidet med officielle profiler for ENISA NIS2 guidance, tysk BSI IT-Grundschutz/ICS, Australiens SOCI Act/Cyber Security Act/ASD Essential Eight/ISM og Kinas CSL/DSL/PIPL/GB/T 39204.
+- Lov, myndighedsvejledning, frivilligt framework og standard er særskilte `kind`-typer. Kina-audit er eksplicit blokeret uden autoritativ kinesisk tekst, konkret scope og kvalificeret lokal juridisk validering. Essential Eight må ikke fejlagtigt kaldes en komplet OT-audit.
+- Næste datalag: PostgreSQL source snapshots + SHA-256/diff + admin review/approval + versionslåst baseline. Ingen webændring må automatisk ændre en audit eller complianceclaim.
+### Codex 2026-07-16 - bindende PKI-politik for udløb versus revokering
+
+- Peters krav er gjort konkret i det eksisterende global/kunde/site/kamera-hierarki under `system.device_pki`.
+- Tre tilladte udløbspolitikker: `block`, `grace_period` og `continue_until_rotated`. Factory-default er `grace_period` med 7 dage; certifikatlevetid er 3650 dage. Værdierne vises i Global Config og kan nedarves/overstyres som øvrig konfiguration.
+- Revokering er bevidst IKKE konfigurerbar. Backend afviser felterne `allow_revoked`, `revocation_policy` og `revocation_enabled` på ethvert lag. Et revokeret device-certifikat skal altid afvise kommunikation straks.
+- Når den egentlige mTLS-validator bygges, må kun den præcise fejltilstand `expired` følge udløbspolitikken. Revoked, forkert signatur, ukendt issuer, forkert CN/SAN/device-binding og øvrige valideringsfejl er fail-closed. Grace/fortsat drift skal udløse SIEM-alarm og rotationsopgave.
+- Kode: `headend/main.py`, `timelapse-ui/src/pages/GlobalConfigPage.tsx`; kontrakttest tilføjet i `tests/test_mtls_security.py`. Python syntax og frontend production build valideret. Projektets separate `.venv` er efterfølgende synkroniseret med `requirements-dev.txt` (`pytest==8.3.2`); 5/5 målrettede PKI-tests består mod isoleret in-memory database. Headendens produktions-venv er bevidst holdt fri for testværktøjer.
