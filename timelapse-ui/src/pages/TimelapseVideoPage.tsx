@@ -733,15 +733,15 @@ export default function TimelapseVideoPage() {
               {/* Virtuel grid — renderer KUN synlige frames, så 21.000+ ikke vælter browseren */}
               <VirtualImageGrid
                 count={frames.length}
-                minColWidth={96}
+                minColWidth={140}
                 gap={6}
-                footerHeight={38}
+                footerHeight={78}
                 renderItem={(idx) => {
                   const frame = frames[idx]
                   const isExcluded = excluded.has(frame.id)
                   return (
                     <div
-                      className={`w-full h-full ${isExcluded ? 'opacity-30 scale-95 transition-all' : 'transition-all'}`}
+                      className={`h-full w-full ${isExcluded ? 'scale-[0.98]' : ''} transition-transform`}
                       title={`${fmtDate(frame.captured_at)}\nFrame ${idx + 1}`}
                     >
                       <CaptureThumbnailCard
@@ -749,26 +749,23 @@ export default function TimelapseVideoPage() {
                         compact
                         selected={isExcluded}
                         onClick={() => setLightboxIndex(idx)}
-                        overlay={(
-                          <>
-                            {isExcluded && <div className="pointer-events-none absolute inset-0 bg-red-400/15" />}
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation()
-                                toggleFrame(frame.id)
-                              }}
-                              className={`absolute left-1.5 top-1.5 flex min-h-11 min-w-11 items-center justify-center rounded-lg border shadow-sm transition-colors ${
-                                isExcluded
-                                  ? 'border-red-300 bg-red-600 text-white'
-                                  : 'border-white/60 bg-black/60 text-white hover:bg-black/80'
-                              }`}
-                              title={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
-                              aria-label={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
-                            >
-                              {isExcluded ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                            </button>
-                          </>
+                        footerAction={(
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              toggleFrame(frame.id)
+                            }}
+                            className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg border transition-colors ${
+                              isExcluded
+                                ? 'border-red-300 bg-red-600 text-white'
+                                : 'border-gray-300 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                            }`}
+                            title={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
+                            aria-label={isExcluded ? 'Inkluder billedet i videoen' : 'Ekskluder billedet fra videoen'}
+                          >
+                            {isExcluded ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                          </button>
                         )}
                       />
                     </div>

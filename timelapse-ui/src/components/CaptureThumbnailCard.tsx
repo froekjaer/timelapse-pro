@@ -142,12 +142,14 @@ export function CaptureThumbnailCard({
   onClick,
   selected = false,
   overlay,
+  footerAction,
   compact = false,
 }: {
   capture: Capture
   onClick: () => void
   selected?: boolean
   overlay?: React.ReactNode
+  footerAction?: React.ReactNode
   compact?: boolean
 }) {
   const time = capture.captured_at
@@ -288,7 +290,10 @@ export function CaptureThumbnailCard({
               ⬡ {Math.round(capture.blur_score)}
             </p>
           )}
-          {qaBadge(ai, capture)}
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            {qaBadge(ai, capture)}
+            {footerAction}
+          </div>
         </div>
 
         {!compact && (
