@@ -15,7 +15,7 @@ def test_grc_register_schema_has_traceability_and_evidence_tables():
 def test_grc_register_api_is_database_backed_and_rbac_protected():
     source = (ROOT / "headend/api/grc_register_api.py").read_text()
     assert 'source_of_truth": "postgresql"' in source
-    assert "Depends(_writer)" in source
+    assert "Depends(_require_platform_admin)" in source
     assert "GrcTestRun" in source
     assert "GrcEvidence" in source
 

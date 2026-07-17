@@ -25,7 +25,7 @@ ITEM_TYPES = {"requirement", "control", "risk", "test", "finding", "action"}
 WRITE_ROLES = {"admin", "super_admin"}
 
 
-def _current_user(request: Request, db: Session = Depends(get_db)):
+def _current_viewer(request: Request, db: Session = Depends(get_db)):
     from main import get_current_user
     user = get_current_user(request, db)
     if not user:
@@ -33,7 +33,7 @@ def _current_user(request: Request, db: Session = Depends(get_db)):
     return user
 
 
-def _writer(user=Depends(_current_user)):
+def _require_platform_admin(user=Depends(_current_viewer)):
     if user.role not in WRITE_ROLES:
         raise HTTPException(status_code=403, detail="GRC-ændringer kræver administrator")
     return user
@@ -55,7 +55,7 @@ def _item(row: GrcItem) -> dict:
 @router.get("")
 def list_register(
     item_type: str | None = None, status: str | None = None,
-    _user=Depends(_current_user), db: Session = Depends(get_db),
+    _user=Depends(_current_viewer), db: Session = Depends(get_db),
 ):
     query = db.query(GrcItem)
     if item_type:
@@ -79,7 +79,7 @@ def list_register(
 
 
 @router.post("")
-def create_item(payload: dict, user=Depends(_writer), db: Session = Depends(get_db)):
+def create_item(payload: dict, user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     item_type = str(payload.get("item_type") or "")
     if item_type not in ITEM_TYPES:
         raise HTTPException(status_code=422, detail="Ukendt GRC-objekttype")
@@ -103,7 +103,7 @@ def create_item(payload: dict, user=Depends(_writer), db: Session = Depends(get_
 
 
 @router.patch("/{item_id}")
-def update_item(item_id: int, payload: dict, user=Depends(_writer), db: Session = Depends(get_db)):
+def update_item(item_id: int, payload: dict, user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     row = db.query(GrcItem).filter_by(id=item_id).with_for_update().first()
     if not row:
         raise HTTPException(status_code=404, detail="GRC-objekt ikke fundet")
@@ -122,7 +122,7 @@ def update_item(item_id: int, payload: dict, user=Depends(_writer), db: Session 
 
 
 @router.post("/{item_id}/runs")
-def record_test_run(item_id: int, payload: dict, user=Depends(_writer), db: Session = Depends(get_db)):
+def record_test_run(item_id: int, payload: dict, user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     test = db.query(GrcItem).filter_by(id=item_id, item_type="test").first()
     if not test:
         raise HTTPException(status_code=404, detail="Testcase ikke fundet")
@@ -144,7 +144,7 @@ def record_test_run(item_id: int, payload: dict, user=Depends(_writer), db: Sess
 
 
 @router.post("/{item_id}/evidence")
-def add_evidence(item_id: int, payload: dict, user=Depends(_writer), db: Session = Depends(get_db)):
+def add_evidence(item_id: int, payload: dict, user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     if not db.query(GrcItem).filter_by(id=item_id).first():
         raise HTTPException(status_code=404, detail="GRC-objekt ikke fundet")
     content = payload.get("content") if isinstance(payload.get("content"), dict) else None
@@ -179,7 +179,7 @@ SEED_ITEMS = (
 
 
 @router.post("/bootstrap/canonical-v1")
-def bootstrap_canonical_v1(user=Depends(_writer), db: Session = Depends(get_db)):
+def bootstrap_canonical_v1(user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     created = []
     for item_type, external_id, title, status, priority in SEED_ITEMS:
         row = db.query(GrcItem).filter_by(item_type=item_type, external_id=external_id).first()
@@ -202,7 +202,7 @@ def bootstrap_canonical_v1(user=Depends(_writer), db: Session = Depends(get_db))
 
 
 @router.get("/reports/{report_type}")
-def generate_report(report_type: str, _user=Depends(_current_user), db: Session = Depends(get_db)):
+def generate_report(report_type: str, _user=Depends(_current_viewer), db: Session = Depends(get_db)):
     allowed = {"full", "requirements", "tests", "risks", "findings"}
     if report_type not in allowed:
         raise HTTPException(status_code=404, detail="Ukendt GRC-rapport")
@@ -226,7 +226,7 @@ def generate_report(report_type: str, _user=Depends(_current_user), db: Session 
 
 
 @router.get("/reports/standard/{standard}")
-def generate_standard_report(standard: str, _user=Depends(_current_user), db: Session = Depends(get_db)):
+def generate_standard_report(standard: str, _user=Depends(_current_viewer), db: Session = Depends(get_db)):
     standard_id = standard.upper()
     allowed = {"SABSA", "COBIT", "ISO27001", "IEC62443", "NIS2", "CRA", "GDPR", "AI-ACT", "NIST", "ENISA"}
     if standard_id not in allowed:
@@ -261,7 +261,7 @@ def _revision(row: GrcDocumentRevision) -> dict:
 
 
 @router.get("/documents")
-def list_documents(_user=Depends(_current_user), db: Session = Depends(get_db)):
+def list_documents(_user=Depends(_current_viewer), db: Session = Depends(get_db)):
     documents = []
     for document in db.query(GrcDocument).order_by(GrcDocument.document_id).all():
         revisions = (db.query(GrcDocumentRevision).filter_by(document_id=document.id)
@@ -278,7 +278,7 @@ def list_documents(_user=Depends(_current_user), db: Session = Depends(get_db)):
 
 @router.post("/documents/from-report/{report_type}")
 def save_report_revision(
-    report_type: str, payload: dict, user=Depends(_writer), db: Session = Depends(get_db),
+    report_type: str, payload: dict, user=Depends(_require_platform_admin), db: Session = Depends(get_db),
 ):
     if report_type not in {"full", "requirements", "tests", "risks", "findings"}:
         raise HTTPException(status_code=404, detail="Ukendt GRC-rapport")
@@ -328,7 +328,7 @@ def save_report_revision(
 
 @router.post("/documents/{document_id}/revisions/{revision_id}/approve")
 def approve_revision(
-    document_id: str, revision_id: int, user=Depends(_writer), db: Session = Depends(get_db),
+    document_id: str, revision_id: int, user=Depends(_require_platform_admin), db: Session = Depends(get_db),
 ):
     if user.role != "super_admin":
         raise HTTPException(status_code=403, detail="Dokumentgodkendelse kræver super_admin")
