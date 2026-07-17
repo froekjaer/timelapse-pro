@@ -51,6 +51,47 @@ def extract_edge_payload(payload: dict[str, Any] | None) -> dict[str, Any] | Non
     return None
 
 
+def persist_edge_ai_result(
+    db,
+    capture,
+    edge_ai_result: dict[str, Any] | None,
+    edge_ai_engine: str | None,
+    *,
+    source: str,
+) -> None:
+    """Preserve Edge QA in legacy JSON and the per-engine result store."""
+    if not isinstance(edge_ai_result, dict) or not edge_ai_result:
+        return
+    if capture.id is None:
+        db.flush()
+    edge_payload = {
+        **edge_ai_result,
+        "source": "edge",
+        "edge_ai_engine": edge_ai_engine or edge_ai_result.get("engine"),
+    }
+
+    existing: dict[str, Any] = {}
+    if capture.ai_result:
+        try:
+            parsed = json.loads(capture.ai_result)
+            if isinstance(parsed, dict):
+                existing = parsed
+        except (TypeError, ValueError):
+            pass
+    if existing and existing.get("source") != "edge":
+        existing["edge_ai"] = edge_payload
+        capture.ai_result = json.dumps(existing, ensure_ascii=False)
+    else:
+        capture.ai_result = json.dumps(edge_payload, ensure_ascii=False)
+
+    upsert_edge_capture_results(
+        db,
+        capture_id=capture.id,
+        payload=edge_payload,
+        source=source,
+    )
+
+
 def upsert_edge_capture_results(
     db,
     *,

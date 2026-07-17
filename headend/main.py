@@ -100,6 +100,7 @@ def ensure_utc(dt):
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
 
 from importer import router as import_router
+from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
 from ai.settings_api import settings_router
 from siem import router as siem_router, start_headend_log_collector, record_events as _siem_record_events
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
@@ -4492,49 +4493,6 @@ def _extract_wb_cast_strength(edge_ai_result: dict | None) -> float | None:
             except (TypeError, ValueError):
                 continue
     return None
-
-
-def _persist_edge_ai_result(
-    db: Session,
-    capture: Capture,
-    edge_ai_result: dict | None,
-    edge_ai_engine: str | None,
-    *,
-    source: str,
-) -> None:
-    """Preserve Edge QA in legacy JSON and the per-engine result store."""
-    if not isinstance(edge_ai_result, dict) or not edge_ai_result:
-        return
-    if capture.id is None:
-        db.flush()
-    edge_payload = {
-        **edge_ai_result,
-        "source": "edge",
-        "edge_ai_engine": edge_ai_engine or edge_ai_result.get("engine"),
-    }
-
-    existing: dict = {}
-    if capture.ai_result:
-        try:
-            parsed = json.loads(capture.ai_result)
-            if isinstance(parsed, dict):
-                existing = parsed
-        except (TypeError, ValueError):
-            existing = {}
-    if existing and existing.get("source") != "edge":
-        existing["edge_ai"] = edge_payload
-        capture.ai_result = json.dumps(existing, ensure_ascii=False)
-    else:
-        capture.ai_result = json.dumps(edge_payload, ensure_ascii=False)
-
-    from ai.model_results import upsert_edge_capture_results
-
-    upsert_edge_capture_results(
-        db,
-        capture_id=capture.id,
-        payload=edge_payload,
-        source=source,
-    )
 
 
 @app.post("/api/captures/{device_id}")

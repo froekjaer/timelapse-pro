@@ -1,3 +1,6 @@
+import json
+from types import SimpleNamespace
+
 from ai import model_results
 
 
@@ -58,3 +61,29 @@ def test_upsert_edge_capture_results_ignores_headend_only_payload(monkeypatch):
         payload={"engine": "local", "model": "qwen2.5vl:7b"},
         source="legacy_backfill",
     ) == []
+
+
+def test_persist_edge_ai_result_preserves_headend_payload(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        model_results,
+        "upsert_edge_capture_results",
+        lambda _db, **kwargs: calls.append(kwargs),
+    )
+    capture = SimpleNamespace(
+        id=23,
+        ai_result=json.dumps({"engine": "local", "model": "qwen2.5vl:7b"}),
+    )
+
+    model_results.persist_edge_ai_result(
+        object(),
+        capture,
+        {"engine": "edge_cv_v1", "passed": True},
+        "edge_cv_v1",
+        source="edge_metadata_upload",
+    )
+
+    stored = json.loads(capture.ai_result)
+    assert stored["model"] == "qwen2.5vl:7b"
+    assert stored["edge_ai"]["source"] == "edge"
+    assert calls[0]["capture_id"] == 23
