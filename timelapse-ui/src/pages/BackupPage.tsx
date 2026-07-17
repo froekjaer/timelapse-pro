@@ -4,6 +4,7 @@ import {
   HardDrive, Package, RefreshCw, Server, ShieldCheck, Trash2, Wifi, Wrench, XCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { HeadendGeneratorTab } from '../components/HeadendGeneratorTab'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}/api${path}`, {
@@ -90,7 +91,7 @@ interface ResilienceAssessment {
   }>
 }
 
-type Tab = 'headend' | 'edge' | 'iso' | 'compliance'
+type Tab = 'headend' | 'edge' | 'iso' | 'headendgen' | 'compliance'
 
 type NetworkType = 'ethernet' | 'wifi' | 'usb_modem'
 
@@ -355,6 +356,7 @@ const tabs: { key: Tab; label: string; icon: any }[] = [
   { key: 'headend', label: 'Headend DR', icon: Server },
   { key: 'edge', label: 'Edge restore', icon: HardDrive },
   { key: 'iso', label: 'Edge ISO', icon: Wrench },
+  { key: 'headendgen', label: 'Headend generator', icon: Server },
   { key: 'compliance', label: 'Compliance', icon: ShieldCheck },
 ]
 
@@ -713,6 +715,7 @@ export function BackupPage() {
           availableTargets={availableTargets}
         />
       )}
+      {tab === 'headendgen' && <HeadendGeneratorTab />}
       {tab === 'compliance' && <ComplianceTab assessment={assessment} />}
     </div>
   )
