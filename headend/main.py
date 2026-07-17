@@ -8427,6 +8427,11 @@ def _create_lab_update_candidates_for_artifact(db: Session, artifact: UpdateArti
     ).all()
     created = 0
     for inv in lab_inventory:
+        # App artifacts produced here are consumed by the Edge pull installer.
+        # Headend application releases use a separate deployment profile and
+        # must never be left waiting for a non-existent Edge heartbeat.
+        if inv.device_id == "TL-MACMINI-HEADEND-TEST-1":
+            continue
         device = db.query(Device).filter_by(device_id=inv.device_id).first()
         if not device:
             continue

@@ -116,6 +116,7 @@ def test_signed_tag_cataloguing_creates_test_candidates_without_auto_deploying()
 
     candidate_block = source.split('def _create_lab_update_candidates_for_artifact(', 1)[1].split('def _build_artifact_from_git_tag(', 1)[0]
     assert 'DeviceInventory.environment.in_(["lab", "test", "rd"])' in candidate_block
+    assert 'if inv.device_id == "TL-MACMINI-HEADEND-TEST-1"' in candidate_block
     assert 'status="pending"' in candidate_block
     assert 'environment="test"' in candidate_block
     assert '_create_lab_update_candidates_for_artifact(db, artifact)' in source

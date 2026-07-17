@@ -1666,15 +1666,20 @@ export function UpdatesPage() {
           <div className="mt-2 space-y-2">
             {activeUpdates.map(update => {
               const flow = flowStatuses[update.id]
+              const headendScoped = isHeadendScoped(update)
+              const headendSupported = canDeployOnHeadend(update)
+              const statusLabel = headendScoped
+                ? (headendSupported ? 'Klar til Headend-installation' : 'Headend-installer mangler for denne type')
+                : (flow?.stage?.label || 'Henter Edge flow-status...')
               return (
                 <div key={update.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-xs">
                   <div className="font-medium text-gray-800">
                     #{update.id} {TYPE_LABELS[update.update_type] ?? update.update_type}
                     <span className="ml-2 font-mono text-gray-400">{shortHash(update.version)}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-sky-700">
-                    <span className="w-2 h-2 rounded-full bg-sky-500" />
-                    {flow?.stage?.label || 'Henter Edge flow-status...'}
+                  <div className={`flex items-center gap-2 ${headendScoped && !headendSupported ? 'text-amber-700' : 'text-sky-700'}`}>
+                    <span className={`w-2 h-2 rounded-full ${headendScoped && !headendSupported ? 'bg-amber-500' : 'bg-sky-500'}`} />
+                    {statusLabel}
                   </div>
                 </div>
               )

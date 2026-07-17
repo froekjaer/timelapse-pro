@@ -163,6 +163,9 @@ Disse køres separat med pytest/systemevidens og må ikke markeres PASS alene vi
 | 2026-07-16 | Godkendelsespanel var svært at opdage | Medium | Modal og sticky aktiv flowstatus |
 | 2026-07-16 | 62 gamle kandidater så stadig godkendelige ud | Høj | Eksplicit `superseded` state og Erstattet-filter |
 | 2026-07-16 | Gammel `#33` fyldte aktiv status | Medium | Aktivitet begrænset til nylige/startede flows |
+| 2026-07-17 | Signeret `lab.16` Edge app E2E | Høj | `#111` gennemførte approval, poll, trust, backup, install og receipt på `TL-C87FF9587CA0` |
+| 2026-07-17 | Edge artifact oprettede fejlagtigt Headend-kandidat | Høj | `#112` blokeret med årsag; fremtidige signed-tag Edge-kandidater ekskluderer Headenden |
+| 2026-07-17 | Inaktiv gammel Edge fik release-kandidat | Medium | `#110` afvist; fravalg bevaret i update-auditsporet |
 
 ## 8. Exit-kriterier
 
