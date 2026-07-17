@@ -4,9 +4,12 @@ Tilføj til main.py: from ai.settings_api import settings_router; app.include_ro
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
-from database import get_db
+
+from ai.ai_strategy import AIConfigManager
 from ai.settings_helper import get_all_settings, get_setting, set_setting
+from database import get_db
 
 settings_router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -29,7 +32,7 @@ class SettingUpdate(BaseModel):
 
 AI_RUNTIME_FIELDS = {
     "ollama_url": {"label": "Ollama URL", "type": "text", "default": "http://127.0.0.1:11434"},
-    "ollama_vision_model": {"label": "Teknisk fallback vision-model", "type": "model", "default": "qwen3-vl:8b"},
+    "ollama_vision_model": {"label": "Teknisk fallback vision-model", "type": "model", "default": "qwen2.5vl:7b"},
     "ollama_text_model": {"label": "Tekst/AI Ops-model", "type": "model", "default": "llama3.2:latest"},
     "ollama_fallback_models": {"label": "Vision fallback-modeller", "type": "text", "default": "qwen2.5vl:7b"},
     "ollama_keep_alive_s": {"label": "Behold model i RAM efter brug (sek.)", "type": "int", "default": "30", "min": 0, "max": 3600},
@@ -74,6 +77,23 @@ def _validate_runtime_value(key: str, value: str) -> str:
             raise HTTPException(status_code=400, detail=f"{spec['label']} skal være mellem {spec['min']} og {spec['max']}")
     return value
 
+
+def _get_runtime_value(db: Session, key: str, spec: dict) -> tuple[str, str]:
+    """Read canonical runtime config, with the pre-UI table as fallback."""
+    value = get_setting(db, key, "")
+    if value:
+        return str(value), "database"
+    try:
+        legacy = db.execute(
+            text("SELECT value FROM settings WHERE key = :key"),
+            {"key": key},
+        ).fetchone()
+        if legacy and legacy[0] not in (None, ""):
+            return str(legacy[0]), "legacy_database"
+    except Exception:
+        db.rollback()
+    return str(spec["default"]), "default"
+
 @settings_router.get("")
 def list_settings(_user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     return get_all_settings(db)
@@ -87,9 +107,9 @@ def update_setting(key: str, payload: SettingUpdate, user=Depends(_require_platf
 def get_ai_runtime(_user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     fields = []
     for key, spec in AI_RUNTIME_FIELDS.items():
-        value = get_setting(db, key, spec["default"])
+        value, source = _get_runtime_value(db, key, spec)
         fields.append({"key": key, **spec, "value": value,
-                       "source": "database" if value != spec["default"] else "database_or_default"})
+                       "source": source})
     models = []
     try:
         from ai.ollama_service import OllamaVisionService
@@ -138,8 +158,6 @@ def activate_ai_prompt(prompt_id: int, user=Depends(_require_platform_admin), db
 # Keep the legacy generic route last so it cannot shadow /ai-runtime.
 settings_router.put("/{key}")(update_setting)
 
-from ai.ai_strategy import AIConfigManager
-
 @settings_router.get("/config")
 def list_ai_configs(_user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     try:
@@ -157,7 +175,7 @@ def save_ai_config(payload: dict, user=Depends(_require_platform_admin), db: Ses
         site_id              = payload.get("site_id"),
         customer_name        = payload.get("customer_name"),
         site_name            = payload.get("site_name"),
-        local_model          = payload.get("local_model", "qwen3-vl:8b"),
+        local_model          = payload.get("local_model", "qwen2.5vl:7b"),
         cloud_model          = payload.get("cloud_model", "gemini-2.5-flash"),
         escalation_threshold = payload.get("escalation_threshold", 0.70),
         escalation_new_tags  = payload.get("escalation_new_tags", 4),

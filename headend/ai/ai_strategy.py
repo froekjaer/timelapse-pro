@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 # ── Hardcoded fallback hvis intet er konfigureret i DB ───────────────────────
 GLOBAL_DEFAULTS = {
     "strategy":              "cloud_only",      # sikreste default
-    "local_model":           "qwen3-vl:8b",
+    "local_model":           "qwen2.5vl:7b",
     "cloud_model":           "gemini-2.5-flash",
     "escalation_threshold":  0.70,              # confidence under denne → eskalér
     "escalation_new_tags":   4,                 # >N nye tags → eskalér
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS ai_config (
     site_name       TEXT,
 
     strategy        TEXT NOT NULL DEFAULT 'cloud_only',
-    local_model     TEXT DEFAULT 'qwen3-vl:8b',
+    local_model     TEXT DEFAULT 'qwen2.5vl:7b',
     cloud_model     TEXT DEFAULT 'gemini-2.5-flash',
 
     -- Eskaleringstærskler
@@ -292,7 +292,7 @@ class AIConfigManager:
         site_id:              Optional[str] = None,
         customer_name:        Optional[str] = None,
         site_name:            Optional[str] = None,
-        local_model:          str  = "qwen3-vl:8b",
+        local_model:          str  = "qwen2.5vl:7b",
         cloud_model:          str  = "gemini-2.5-flash",
         escalation_threshold: float = 0.70,
         escalation_new_tags:  int   = 4,

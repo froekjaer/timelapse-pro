@@ -135,6 +135,7 @@ _ai_stats: dict = {
     "skipped_no_cloud_credentials": 0,
     "skipped_already_done": 0,
     "skipped_queue_full":  0,
+    "recovered_after_restart": 0,
     "failed":             0,
 }
 
@@ -545,6 +546,43 @@ def queue_capture_for_analysis(capture_id: int) -> bool:
         return False
 
 
+def recover_pending_captures(get_db_fn, limit: int = 5000) -> int:
+    """Requeue unfinished analyses after a Headend restart.
+
+    The worker queue is deliberately memory-bounded. Database state remains the
+    source of truth, so captures without tags/analyse timestamp are recovered
+    automatically instead of being silently stranded when the process restarts.
+    """
+    from database import Capture
+
+    db_gen = get_db_fn()
+    db = next(db_gen)
+    try:
+        rows = (
+            db.query(Capture.id)
+            .filter(
+                Capture.filename.isnot(None),
+                Capture.ai_tags.is_(None),
+                Capture.ai_analyzed_at.is_(None),
+            )
+            .order_by(Capture.id.asc())
+            .limit(max(1, int(limit)))
+            .all()
+        )
+    finally:
+        db_gen.close()
+
+    recovered = 0
+    for row in rows:
+        capture_id = row[0] if isinstance(row, (tuple, list)) else row.id
+        if queue_capture_for_analysis(int(capture_id)):
+            recovered += 1
+            _ai_stat_inc("recovered_after_restart")
+    if recovered:
+        log.info("AI: gendannede %d uafsluttede analyser efter genstart", recovered)
+    return recovered
+
+
 def setup_ai(get_db_fn, find_image_fn) -> None:
     """
     Start AI baggrundstråd.
@@ -563,6 +601,10 @@ def setup_ai(get_db_fn, find_image_fn) -> None:
     )
     _worker_thread.start()
     log.info("AI analyse-worker klar")
+    try:
+        recover_pending_captures(get_db_fn)
+    except Exception as exc:
+        log.warning("AI: kunne ikke gendanne analysekoe efter genstart: %s", exc)
 
 
 # ── FastAPI endpoints ─────────────────────────────────────────────────────────

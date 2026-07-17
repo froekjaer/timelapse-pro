@@ -67,7 +67,7 @@ log = logging.getLogger(__name__)
 
 # ── Konfiguration ─────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL   = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-VISION_MODEL      = os.getenv("TIMELAPSE_VISION_MODEL", "qwen3-vl:8b")
+VISION_MODEL      = os.getenv("TIMELAPSE_VISION_MODEL", "qwen2.5vl:7b")
 FALLBACK_MODELS   = [
     m.strip()
     for m in os.getenv("TIMELAPSE_VISION_FALLBACK_MODELS", "qwen2.5vl:7b").split(",")
@@ -116,7 +116,10 @@ def _db_setting(key: str, default: str) -> str:
         from database import SessionLocal
         db = SessionLocal()
         try:
-            for table in ("settings", "system_settings"):
+            # system_settings is the canonical UI-managed runtime store. The
+            # older settings table remains a read-only fallback until every
+            # deployment has migrated its historical AI values.
+            for table in ("system_settings", "settings"):
                 try:
                     row = db.execute(text(f"SELECT value FROM {table} WHERE key = :k"), {"k": key}).fetchone()
                     if row and row[0]:

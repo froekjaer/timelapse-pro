@@ -21,6 +21,84 @@ ENGINE_HEADEND_OLLAMA = "headend_ollama"
 ENGINE_GEMINI_CLOUD = "gemini_cloud"
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _edge_tags(payload: dict[str, Any]) -> list[str]:
+    tags = payload.get("tags")
+    if not isinstance(tags, list):
+        tags = _dict(payload.get("autonomous_optimizer")).get("tags")
+    return [str(tag) for tag in tags] if isinstance(tags, list) else []
+
+
+def extract_edge_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return the real Edge QA payload from legacy or nested AI JSON."""
+    root = _dict(payload)
+    nested = _dict(root.get("edge_ai"))
+    if nested:
+        return nested
+    engine = str(root.get("engine") or root.get("edge_ai_engine") or "").lower()
+    if root.get("source") == "edge" or engine.startswith("edge_"):
+        return root
+    return None
+
+
+def upsert_edge_capture_results(
+    db,
+    *,
+    capture_id: int,
+    payload: dict[str, Any] | None,
+    source: str,
+) -> list[int]:
+    """Persist Edge CV and optional NPU QA without overwriting Headend AI."""
+    edge = extract_edge_payload(payload)
+    if not edge:
+        return []
+
+    edge_model = str(
+        edge.get("edge_ai_engine") or edge.get("engine") or ENGINE_EDGE_CV
+    )
+    row_ids = [
+        upsert_capture_model_result(
+            db,
+            capture_id=capture_id,
+            engine=ENGINE_EDGE_CV,
+            model=edge_model,
+            result_kind="qa",
+            result_json=edge,
+            tags=_edge_tags(edge),
+            confidence=_optional_float(edge.get("confidence")),
+            source=source,
+        )
+    ]
+
+    npu = _dict(edge.get("npu"))
+    if npu:
+        npu_model = str(npu.get("engine") or npu.get("model") or ENGINE_EDGE_NPU)
+        row_ids.append(
+            upsert_capture_model_result(
+                db,
+                capture_id=capture_id,
+                engine=ENGINE_EDGE_NPU,
+                model=npu_model,
+                result_kind="qa",
+                result_json=npu,
+                tags=_edge_tags(npu),
+                confidence=_optional_float(npu.get("confidence")),
+                source=source,
+            )
+        )
+    return row_ids
+
+
 def ensure_capture_model_results_table(db) -> None:
     """Create the additive model-result table if the migration has not run yet."""
     db.execute(text("""

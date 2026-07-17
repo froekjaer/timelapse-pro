@@ -4494,6 +4494,49 @@ def _extract_wb_cast_strength(edge_ai_result: dict | None) -> float | None:
     return None
 
 
+def _persist_edge_ai_result(
+    db: Session,
+    capture: Capture,
+    edge_ai_result: dict | None,
+    edge_ai_engine: str | None,
+    *,
+    source: str,
+) -> None:
+    """Preserve Edge QA in legacy JSON and the per-engine result store."""
+    if not isinstance(edge_ai_result, dict) or not edge_ai_result:
+        return
+    if capture.id is None:
+        db.flush()
+    edge_payload = {
+        **edge_ai_result,
+        "source": "edge",
+        "edge_ai_engine": edge_ai_engine or edge_ai_result.get("engine"),
+    }
+
+    existing: dict = {}
+    if capture.ai_result:
+        try:
+            parsed = json.loads(capture.ai_result)
+            if isinstance(parsed, dict):
+                existing = parsed
+        except (TypeError, ValueError):
+            existing = {}
+    if existing and existing.get("source") != "edge":
+        existing["edge_ai"] = edge_payload
+        capture.ai_result = json.dumps(existing, ensure_ascii=False)
+    else:
+        capture.ai_result = json.dumps(edge_payload, ensure_ascii=False)
+
+    from ai.model_results import upsert_edge_capture_results
+
+    upsert_edge_capture_results(
+        db,
+        capture_id=capture.id,
+        payload=edge_payload,
+        source=source,
+    )
+
+
 @app.post("/api/captures/{device_id}")
 def receive_capture(
     device_id: str,
@@ -4539,12 +4582,13 @@ def receive_capture(
         perspective=req.perspective,
         xmp_written=req.xmp_written,
     )
-    if req.edge_ai_result and not capture.ai_result:
-        capture.ai_result = json.dumps({
-            **req.edge_ai_result,
-            "source": "edge",
-            "edge_ai_engine": req.edge_ai_engine or req.edge_ai_result.get("engine"),
-        }, ensure_ascii=False)
+    _persist_edge_ai_result(
+        db,
+        capture,
+        req.edge_ai_result,
+        req.edge_ai_engine,
+        source="edge_metadata_upload",
+    )
 
     # wb_cast_strength (v16, drift-detection fase 1): opdateres hver gang
     # optimizeren rapporterede en ny værdi — i modsætning til ai_result ovenfor
@@ -4901,13 +4945,13 @@ async def receive_capture_files(
         sidecar_path=str(sidecar_path) if sidecar_path.exists() else None,
         **capture_values,
     )
-    if meta.get("edge_ai_result") and not capture.ai_result:
-        edge_ai = meta.get("edge_ai_result")
-        capture.ai_result = json.dumps({
-            **edge_ai,
-            "source": "edge",
-            "edge_ai_engine": meta.get("edge_ai_engine") or edge_ai.get("engine"),
-        }, ensure_ascii=False)
+    _persist_edge_ai_result(
+        db,
+        capture,
+        meta.get("edge_ai_result"),
+        meta.get("edge_ai_engine"),
+        source="edge_file_upload",
+    )
     device = db.query(Device).filter_by(device_id=device_id).first()
     if device:
         device.last_seen = now_utc()
