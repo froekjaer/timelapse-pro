@@ -172,8 +172,25 @@ Disse køres separat med pytest/systemevidens og må ikke markeres PASS alene vi
 | 2026-07-17 | `test_device_management.py` forventede gammel `{devices: [...]}` kontrakt | Medium testgæld | Moderniseret til aktuel listekontrakt og isoleret tenant-fixture: 14 PASS, 6 dokumenterede SKIP; ingen driftsdata berørt |
 | 2026-07-17 | Viewer kunne se admin-links og globale Site-Wide Look-konfigurationsfelter på `/settings` | Høj | Adminfelter og links skjules nu for viewer/operator; live browser-regression bestod, mens personlig tidszone fortsat virker |
 | 2026-07-17 | Headend var utilgængelig under ca. tre minutters genstart, men login viste en credential-fejl | Høj drift/UX | Reproduceret 22:13-22:16; startup-tid og særskilt "server utilgængelig"-fejl skal rettes og regressionsprøves |
+| 2026-07-18 | Samlet integrationstest kunne ikke importere to pakker via det logiske datadisk-link | Høj testtroværdighed | Kanonisk repo- og Headend-importsti etableret centralt; 544/544 indsamles nu |
+| 2026-07-18 | Installeret Headend node-agent kørte som root trods rettet installer-kilde | Høj least privilege | Migreret live til `peter`; inventory-kvittering og 20/20 kørte host-assertions grønne |
+| 2026-07-18 | Aktiv R&D-Nginx binder 80/443, ikke besluttet 8443 | Høj sameksistens/go-live | Åben. Eneste FAIL i den samlede integrationsmatrix; GRC `IT-MATRIX-544` |
 
-## 8. Exit-kriterier
+## 8. Samlet integrationskørsel 2026-07-18
+
+| Klasse | Total | PASS | SKIP | XFAIL | FAIL | Miljø |
+|---|---:|---:|---:|---:|---:|---|
+| Isolerede API/workflow-tests | 364 | 275 | 88 | 1 | 0 | PostgreSQL `timelapse_test`, isoleret Headend `:18080` |
+| macOS/host/offline-policy | 167 | 116 | 50 | 0 | 1 | R&D Mac mini; fejlen er Nginx-portseparation |
+| Ægte R&D API | 13 | 13 | 0 | 0 | 0 | HTTPS + `codex`, Edge `TL-C87FF9587CA0` |
+| **I alt** | **544** | **404** | **138** | **1** | **1** | GRC item `260`, run `3` |
+
+Browserbaseline: 30 routes på desktop og 390x844 mobil; ingen 500/502/503,
+konsolfejl eller vandret overflow. De 138 skips er ikke skjulte PASS-resultater:
+de skal klassificeres som miljø-N/A, fysisk/hardwarekrav eller konkret produktgab.
+MFA recovery-/backup-koder er den ene eksplicitte XFAIL.
+
+## 9. Exit-kriterier
 
 UI-QA er først komplet, når:
 

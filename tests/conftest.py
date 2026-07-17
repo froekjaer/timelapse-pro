@@ -4,6 +4,16 @@ TimeLapse Pro — pytest konfiguration
 Indeholder fixtures til integration tests med authenticated sessions.
 """
 import os
+import sys
+from pathlib import Path
+
+# Pytest resolves this repository through /Volumes/data-fast while operators use
+# the stable /Users/peter/projects symlink.  Put the canonical repository root on
+# sys.path so package imports are independent of the entry path.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+for import_root in (REPO_ROOT, REPO_ROOT / "headend"):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 # Establish the isolated database boundary before any test imports Headend
 # modules. Integration tests may still target a separately started test

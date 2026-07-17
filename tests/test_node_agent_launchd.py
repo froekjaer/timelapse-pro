@@ -50,6 +50,21 @@ def run_command(cmd: list, check: bool = True) -> subprocess.CompletedProcess:
         return e
 
 
+def node_agent_command(*extra_args: str) -> list[str] | None:
+    """Return the effective launchd command instead of executing agent.py directly."""
+    for plist_path in LAUNCH_AGENTS:
+        if not os.path.exists(plist_path):
+            continue
+        try:
+            with open(plist_path, "rb") as plist_file:
+                arguments = plistlib.load(plist_file).get("ProgramArguments", [])
+            if len(arguments) >= 2 and arguments[1].endswith("agent.py"):
+                return [arguments[0], arguments[1], *extra_args]
+        except (OSError, plistlib.InvalidFileException):
+            continue
+    return None
+
+
 # ── 1. LaunchAgent/Daemon Plist Configuration ─────────────────────────────────────
 
 @pytest.mark.integration
@@ -315,24 +330,11 @@ def test_node_agent_binary_not_root_owned():
 @pytest.mark.integration
 def test_no_sudo_required():
     """Node-agent skal ikke kræve sudo for at køre."""
-    # Check if binary requires special privileges
-    for path in NODE_AGENT_PATHS:
-        if os.path.exists(path):
-            # Check if binary is executable
-            if not os.access(path, os.X_OK):
-                pytest.fail(f"Binary er ikke eksekverbar: {path}")
-
-            # Try running as current user (without sudo)
-            result = run_command([path, "--help", "--version"], check=False)
-
-            # Should at least be able to run without sudo
-            # (might fail for other reasons, but not permission denied)
-            if "permission" in result.stderr.lower() or "denied" in result.stderr.lower():
-                pytest.fail(f"Binary kræver sudo/root: {path}")
-
-            return
-
-    pytest.skip("Node-agent binary ikke fundet")
+    command = node_agent_command("--help")
+    if not command:
+        pytest.skip("Node-agent launch command ikke fundet")
+    result = run_command(command, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 # ── 3. Service Startup and Health ───────────────────────────────────────────────
@@ -582,18 +584,12 @@ def test_p0_08_documented():
 @pytest.mark.integration
 def test_node_agent_version():
     """Node-agent skal rapportere version."""
-    for path in NODE_AGENT_PATHS:
-        if os.path.exists(path):
-            # Try getting version
-            result = run_command([path, "--version"], check=False)
-
-            if result.returncode == 0 and "version" in result.stdout.lower():
-                assert True, "Version rapporteret"
-                return
-            else:
-                pytest.skip("Node-agent version ikke tilgængelig")
-
-    pytest.skip("Node-agent binary ikke fundet")
+    command = node_agent_command("--version")
+    if not command:
+        pytest.skip("Node-agent launch command ikke fundet")
+    result = run_command(command, check=False)
+    if result.returncode != 0 or "version" not in result.stdout.lower():
+        pytest.skip("Node-agent version ikke tilgængelig")
 
 
 @pytest.mark.integration

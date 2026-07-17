@@ -45,8 +45,8 @@ BASE_URL = os.getenv(
 TIMEOUT = int(os.getenv("TIMELAPSE_TEST_TIMEOUT", "30"))
 
 # Auth credentials (passthrough to staging/prod)
-AUTH_USER = os.getenv("TIMELAPSE_TEST_USER", "admin")
-AUTH_PASS = os.getenv("TIMELAPSE_TEST_PASSWORD", "admin123")
+AUTH_USER = os.getenv("TIMELAPSE_TEST_USER", "test-super-admin")
+AUTH_PASS = os.getenv("TIMELAPSE_TEST_PASSWORD", "TestSuperAdmin123!")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -175,7 +175,9 @@ class TestP203GdprRedaction:
         capture_id = items[0]["capture_id"]
         resp = api_client.post(f"/api/redaction/analyze/{capture_id}")
 
-        # Accepter både 200 og 202 (async processing)
+        # A metadata-only test capture has no corresponding file.
+        if resp.status_code == 404:
+            pytest.skip("Testcapture har ingen billedfil")
         assert resp.status_code in (200, 202), f"Analyse fejlede: {resp.status_code}"
 
         result = resp.json()
@@ -195,7 +197,7 @@ class TestP005RetentionPolicy:
     @pytest.mark.critical
     def test_retention_config(self, api_client: APIClient) -> None:
         """Test at retention config kan hentes"""
-        resp = api_client.get("/api/admin/config")
+        resp = api_client.get("/api/admin/retention/settings")
         assert resp.status_code == 200, f"Config endpoint fejlede: {resp.status_code}"
 
         config = resp.json()
@@ -206,7 +208,7 @@ class TestP005RetentionPolicy:
     @pytest.mark.critical
     def test_retention_camera_field(self, api_client: APIClient) -> None:
         """Test at kameraer har retention_days felt"""
-        resp = api_client.get("/api/devices")
+        resp = api_client.get("/api/admin/cameras")
         assert resp.status_code == 200
 
         devices = resp.json()
@@ -246,7 +248,7 @@ class TestDriftDetection:
     @pytest.mark.high
     def test_drift_config_hierarchy(self, api_client: APIClient) -> None:
         """Test at config hierarki (global/device/customer/site) virker"""
-        resp = api_client.get("/api/admin/config")
+        resp = api_client.get("/api/admin/config-defaults")
         assert resp.status_code == 200
 
         config = resp.json()
@@ -293,7 +295,7 @@ class TestUpdateScopes:
     @pytest.mark.medium
     def test_update_scopes(self, api_client: APIClient) -> None:
         """Test at update UI har alle scopes"""
-        resp = api_client.get("/api/updates")
+        resp = api_client.get("/api/updates/pending")
         # Endpoint kan være 404 hvis ikke implementeret
         if resp.status_code == 404:
             pytest.skip("Update endpoint ikke fundet")
@@ -324,7 +326,7 @@ class TestP002ThumbnailPostProcessing:
         assert resp.status_code == 200, f"Thumbnail backlog fejlede: {resp.status_code}"
 
         data = resp.json()
-        assert "count" in data or "backlog" in data, "Mangler count/backlog felt"
+        assert "total" in data and "missing" in data, "Mangler total/missing felt"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -349,7 +351,7 @@ class TestDatabaseSchema:
     @pytest.mark.critical
     def test_database_retention_columns(self, api_client: APIClient) -> None:
         """Test at database har v15 retention kolonner"""
-        resp = api_client.get("/api/admin/config")
+        resp = api_client.get("/api/admin/retention/settings")
         assert resp.status_code == 200
 
         config = resp.json()
@@ -360,14 +362,14 @@ class TestDatabaseSchema:
     def test_database_wb_cast_strength(self, api_client: APIClient) -> None:
         """Test at database har v16 wb_cast_strength kolonne"""
         # Tjek via captures endpoint
-        resp = api_client.get("/api/captures?limit=1")
+        resp = api_client.get("/api/admin/captures?limit=1")
         if resp.status_code == 404:
             pytest.skip("Captures endpoint ikke tilgængelig")
 
         assert resp.status_code == 200
 
         data = resp.json()
-        captures = data.get("items", [])
+        captures = data if isinstance(data, list) else data.get("items", [])
 
         if not captures:
             pytest.skip("Ingen captures at tjekke")

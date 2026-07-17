@@ -265,6 +265,8 @@ def analyze_capture(
             status_code=500,
             detail=f"OpenCV ikke tilgængeligt: {e}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         log.exception(f"Analyse fejlede for capture {capture_id}")
         raise HTTPException(status_code=500, detail=f"Analyse fejlede: {e}")

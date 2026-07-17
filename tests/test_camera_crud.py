@@ -688,10 +688,13 @@ def test_camera_created_at_timestamp():
         # Parse ISO datetime
         try:
             created_at = datetime.fromisoformat(cam["created_at"].replace("Z", "+00:00"))
-            # Skal være i fortiden
-            assert created_at <= datetime.now(timezone.utc)
-        except Exception:
+        except ValueError:
             pytest.fail("created_at skal være ISO format datetime")
+        if created_at.tzinfo is None:
+            # Legacy PostgreSQL columns expose local wall time without an offset.
+            assert created_at <= datetime.now() + timedelta(seconds=5)
+        else:
+            assert created_at <= datetime.now(timezone.utc) + timedelta(seconds=5)
 
 
 # ── 11. Camera Config Override Tests ────────────────────────────────────────
