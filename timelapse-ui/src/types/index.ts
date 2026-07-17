@@ -1,5 +1,7 @@
 export interface Device {
   device_id: string
+  customer_id: string | null
+  site_id: string | null
   location_name: string | null
   tenant_id: string | null
   ip_address: string | null

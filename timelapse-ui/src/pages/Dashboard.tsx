@@ -4,6 +4,7 @@ import { RefreshCw, Camera, Building2, MapPin, ChevronRight, Plus, CheckCircle, 
 import { getStats, getDevices, getApiUrl, pathSegment } from '../api/client'
 import { StatCard } from '../components/StatCard'
 import { StatusBadge } from '../components/StatusBadge'
+import { useAuth } from '../context/AuthContext'
 import type { Stats, Device } from '../types'
 
 interface Customer {
@@ -88,10 +89,11 @@ function DeviceRow({ device }: { device: Device }) {
   )
 }
 
-function SiteCard({ site, devices }: { site: Site; devices: Device[] }) {
+function SiteCard({ site, devices, canConfigure }: { site: Site; devices: Device[]; canConfigure: boolean }) {
   const siteDevices = devices.filter(d => {
-    // Match via customer_name + site_name da vi ikke har site_id i Device type endnu
-    return d.site_name === site.name && d.customer_name === site.customer_name
+    return d.site_id === site.id || (
+      !d.site_id && d.site_name === site.name && d.customer_name === site.customer_name
+    )
   })
   const online = siteDevices.filter(d => d.status === 'online').length
   const [expanded, setExpanded] = useState(true)
@@ -133,29 +135,29 @@ function SiteCard({ site, devices }: { site: Site; devices: Device[] }) {
             siteDevices.map(d => (
               <div key={d.device_id} className="flex items-center">
                 <div className="flex-1"><DeviceRow device={d} /></div>
-                <Link to={`/cameras/${pathSegment(d.device_id)}`}
+                {canConfigure && <Link to={`/cameras/${pathSegment(d.device_id)}`}
                   className="flex-shrink-0 p-2 mr-2 text-gray-300 hover:text-sky-500 hover:bg-sky-50 rounded-lg transition-colors"
                   title="Konfigurer kamera">
                   <Settings className="w-3.5 h-3.5" />
-                </Link>
+                </Link>}
               </div>
             ))
           )}
-          <div className="px-4 py-2 flex justify-end">
+          {canConfigure && <div className="px-4 py-2 flex justify-end">
             <Link to={`/sites/${site.id}`}
               className="text-xs text-sky-500 hover:text-sky-700 flex items-center gap-1">
               Konfigurer site <ChevronRight className="w-3 h-3" />
             </Link>
-          </div>
+          </div>}
         </div>
       )}
     </div>
   )
 }
 
-function CustomerCard({ customer, sites, devices }: { customer: Customer; sites: Site[]; devices: Device[] }) {
+function CustomerCard({ customer, sites, devices, canConfigure }: { customer: Customer; sites: Site[]; devices: Device[]; canConfigure: boolean }) {
   const customerSites = sites.filter(s => s.customer_id === customer.id)
-  const customerDevices = devices.filter(d => d.customer_name === customer.name)
+  const customerDevices = devices.filter(d => d.customer_id === customer.id || (!d.customer_id && d.customer_name === customer.name))
   const online = customerDevices.filter(d => d.status === 'online').length
   const [expanded, setExpanded] = useState(true)
 
@@ -193,15 +195,15 @@ function CustomerCard({ customer, sites, devices }: { customer: Customer; sites:
             <p className="text-sm text-gray-400 italic px-1">Ingen sites oprettet</p>
           ) : (
             customerSites.map(site => (
-              <SiteCard key={site.id} site={site} devices={devices} />
+              <SiteCard key={site.id} site={site} devices={devices} canConfigure={canConfigure} />
             ))
           )}
-          <div className="flex justify-end pt-1">
+          {canConfigure && <div className="flex justify-end pt-1">
             <Link to={`/customers/${customer.id}`}
               className="text-xs text-sky-500 hover:text-sky-700 flex items-center gap-1">
               Konfigurer kunde <ChevronRight className="w-3 h-3" />
             </Link>
-          </div>
+          </div>}
         </div>
       )}
     </div>
@@ -209,6 +211,8 @@ function CustomerCard({ customer, sites, devices }: { customer: Customer; sites:
 }
 
 export function Dashboard() {
+  const { user } = useAuth()
+  const canConfigure = user?.role === 'super_admin' || user?.role === 'admin'
   const [stats, setStats]         = useState<Stats | null>(null)
   const [devices, setDevices]     = useState<Device[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -279,9 +283,9 @@ export function Dashboard() {
         <h2 className="text-lg font-semibold text-gray-900">Kunder</h2>
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-400">{customers.length} kunde{customers.length !== 1 ? 'r' : ''} · {sites.length} site{sites.length !== 1 ? 's' : ''} · {devices.length} enhed{devices.length !== 1 ? 'er' : ''}</span>
-          <Link to="/customers/new" className="flex items-center gap-1 text-xs text-sky-500 hover:text-sky-700">
+          {user?.role === 'super_admin' && <Link to="/customers/new" className="flex items-center gap-1 text-xs text-sky-500 hover:text-sky-700">
             <Plus className="w-3.5 h-3.5" /> Ny kunde
-          </Link>
+          </Link>}
         </div>
       </div>
 
@@ -291,13 +295,13 @@ export function Dashboard() {
         <div className="py-12 text-center text-gray-400 text-sm">Ingen kunder registreret</div>
       ) : (
         customers.map(customer => (
-          <CustomerCard key={customer.id} customer={customer} sites={sites} devices={devices} />
+          <CustomerCard key={customer.id} customer={customer} sites={sites} devices={devices} canConfigure={canConfigure} />
         ))
       )}
 
       {/* Enheder uden kunde/site (fallback) */}
       {(() => {
-        const orphaned = devices.filter(d => !d.customer_name && !d.site_name)
+        const orphaned = devices.filter(d => !d.customer_id && !d.site_id)
         if (!orphaned.length) return null
         return (
           <div className="bg-white rounded-xl border border-amber-200 overflow-hidden mt-4">

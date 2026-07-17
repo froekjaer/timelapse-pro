@@ -4,6 +4,17 @@ TimeLapse Pro — pytest konfiguration
 Indeholder fixtures til integration tests med authenticated sessions.
 """
 import os
+
+# Establish the isolated database boundary before any test imports Headend
+# modules. Integration tests may still target a separately started test
+# Headend through TIMELAPSE_TEST_BASE_URL, but fixtures must never mutate the
+# operational timelapse_db directly.
+os.environ["DATABASE_URL"] = os.getenv(
+    "TIMELAPSE_TEST_DATABASE_URL",
+    "postgresql://timelapse@localhost/timelapse_test",
+)
+os.environ.setdefault("TIMELAPSE_ENV", "test")
+
 import pytest
 import requests
 import uuid

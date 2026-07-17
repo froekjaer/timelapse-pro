@@ -65,7 +65,7 @@ Tidligere Codex-browserpass 2026-07-16 åbnede alle beskyttede routes på deskto
 | UI-009 | Backup `/backup` | PASS | PASS | PASS | NOT RUN jobs | Headend DR, Edge restore/ISO |
 | UI-010 | System Administration `/system-admin` | PASS | PASS | PASS | PASS read-only | Skrivehandlinger mangler |
 | UI-011 | Notifikationer `/notifications` | PASS | PASS | PASS | NOT RUN write | Mail/integrationstest mangler |
-| UI-012 | Brugere `/users` | PASS | PASS | PASS | NOT RUN CRUD | Se UI-101..UI-109 |
+| UI-012 | Brugere `/users` | PASS | PASS | PASS | PASS partial | Viewer-afvisning og QA-brugeroprettelse testet; rediger/deaktiver/slet mangler |
 | UI-013 | Nøgler `/key-management` | PASS | PASS | PASS | NOT RUN destructive | Rotation/revocation isoleres |
 | UI-014 | SSH `/ssh-tunnel` | PASS | PASS | PASS | NOT RUN live | Tunnelstart/stop kræver Edge |
 | UI-015 | Opdateringer `/updates` | PASS | PASS | PASS | PASS E2E app | Se UI-201..UI-209 |
@@ -88,10 +88,10 @@ Tidligere Codex-browserpass 2026-07-16 åbnede alle beskyttede routes på deskto
 
 | ID | Test | Forventet | Status | Pytest-reference | Evidens/resultat |
 |---|---|---|---|---|---|
-| UI-101 | Gyldigt login/logout | Sikker cookie; logout invaliderer session | NOT RUN | `test_auth_integration.py` | |
+| UI-101 | Gyldigt login/logout | Sikker cookie; logout invaliderer session | PASS | `test_auth_integration.py` | Browser-login/logout samt isoleret API-test 2026-07-17 |
 | UI-102 | Forkert login og rate limit | Generisk fejl; throttling; SIEM-event | NOT RUN | `test_auth_integration.py` | |
-| UI-103 | Viewer/operator/admin RBAC | Korrekte menuer og 403 på forbudte handlinger | NOT RUN | `test_auth_integration.py` | |
-| UI-104 | Opret `QA-` bruger | Bruger vises; auditlog oprettes | NOT RUN | `test_user_management_crud.py` | |
+| UI-103 | Viewer/operator/admin RBAC | Korrekte menuer og 403 på forbudte handlinger | PASS partial | `test_auth_integration.py` | 31/31 kørte auth/tenant-tests bestod; viewer-backend afviste brugeroprettelse og anden tenant. UI-regression af rollebaseret navigation afventer deploy. |
+| UI-104 | Opret `QA-` bruger | Bruger vises; auditlog oprettes | PASS partial | `test_user_management_crud.py` | `QA-viewer-20260717` oprettet via ægte UI; audit-verifikation og oprydning mangler. |
 | UI-105 | Rediger rolle/email/aktiv | Ændring slår igennem og auditeres | NOT RUN | `test_user_management_crud.py` | |
 | UI-106 | Passwordvalidering | Politik vises og håndhæves server-side | NOT RUN | `test_user_management_crud.py` | |
 | UI-107 | MFA enrollment | QR, TOTP, recovery og audit virker | NOT RUN | `test_mfa_ui_workflow.py` | Kræver afgrænset QA-bruger |
@@ -122,7 +122,7 @@ Tidligere Codex-browserpass 2026-07-16 åbnede alle beskyttede routes på deskto
 | UI-205 | Aktiv status øverst | Kun aktuelle flows vises med live trin | PASS | Sticky status viste `#108`; stale `#33` blev fundet og filtreret i efterfølgende fix |
 | UI-206 | Supersession | Ældre pending kandidater flyttes til Erstattet | PASS | 62 gamle kandidater; kun tre aktuelle app-kandidater tilbage |
 | UI-207 | Test til prod-klar | Kræver eksplicit testaccept; ingen auto-prod | PASS | `#105/#108` forblev test efter deploy |
-| UI-208 | Edge OS offline update | Signeret bundle fra Headend; ingen Edge-internet | NOT RUN | Næste kandidat `#91` |
+| UI-208 | Edge OS offline update | Signeret bundle fra Headend; ingen Edge-internet | PASS | `#91`: 9/9 deb-filer, signatur/trust/backup/install/receipt gennemført fra Headend uden Edge-internet |
 | UI-209 | Rollback | Backup verificeres; gammel receipt/version gendannes | NOT RUN | Skal udføres kontrolleret på R&D Edge |
 | UI-210 | Headend app/Ollama | Lab-test, backup, install, postflight og CMDB-version | NOT RUN | Ollama skal identificeres præcist først |
 
@@ -166,6 +166,10 @@ Disse køres separat med pytest/systemevidens og må ikke markeres PASS alene vi
 | 2026-07-17 | Signeret `lab.16` Edge app E2E | Høj | `#111` gennemførte approval, poll, trust, backup, install og receipt på `TL-C87FF9587CA0` |
 | 2026-07-17 | Edge artifact oprettede fejlagtigt Headend-kandidat | Høj | `#112` blokeret med årsag; fremtidige signed-tag Edge-kandidater ekskluderer Headenden |
 | 2026-07-17 | Inaktiv gammel Edge fik release-kandidat | Medium | `#110` afvist; fravalg bevaret i update-auditsporet |
+| 2026-07-17 | Viewer så skrivekontroller og kunne åbne brugeroprettelsesdialog | Høj | Backend afviste korrekt med 403; route guards og rollebaseret skjulning implementeret, afventer live regression efter deploy |
+| 2026-07-17 | Dashboard brugte navnefelter og viste en korrekt bundet enhed som “uden kunde/site” | Medium | Device-API eksponerer nu stabile `customer_id`/`site_id`; dashboard grupperer på id med legacy fallback |
+| 2026-07-17 | Topniveau-pytest kunne arve operational `DATABASE_URL` | Kritisk test-sikkerhed | `tests/conftest.py` tvinger nu `timelapse_test` før Headend-import; isoleret test-Headend på port 8011 anvendt |
+| 2026-07-17 | `test_device_management.py` forventer gammel `{devices: [...]}` kontrakt | Medium testgæld | 11 testfejl klassificeret som forældede assertions, 4 bestod og 5 blev fravalgt; modernisering er næste testarbejde |
 
 ## 8. Exit-kriterier
 

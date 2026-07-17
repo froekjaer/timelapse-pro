@@ -27,15 +27,15 @@ export function Navbar() {
   }, [])
 
   const links = [
-    { to: '/',             label: 'Enheder',       icon: Camera, tooltip: 'Oversigt over alle kameraenheder. Se status, captures, og enhedsspecifikke indstillinger. Administrer enheder og fejlfind.' },
-    { to: '/backup',       label: 'Backup',        icon: Database, tooltip: 'Backup af captures og database. Schedule og overvåg backup jobs. Restore fra backup ved behov.' },
-    { to: '/global-config',label: 'Global Config', icon: Globe, tooltip: 'Hierarkisk konfiguration: Global → Kunde → Site → Kamera. Arv og overrides for alle parametre.' },
-    { to: '/tags',         label: 'Tag søgning',   icon: Tag, tooltip: 'Søg captures på tværs af tags. Find billeder baseret på brugerdefinerede labels og metadata.' },
-    { to: '/settings',     label: 'Indstillinger', icon: Settings, tooltip: 'Personlige indstillinger og præferencer. Tilpas din brugeroplevelse og notifikationer.' },
-    { to: '/ai',           label: 'AI Styring',    icon: Brain, tooltip: 'AI-drevet billedanalyse og kvalitetskontrol. Konfigurer NPU, adaptive exposure, og drift detection.' },
-    { to: '/openwebui',    label: 'Open WebUI',    icon: Bot, tooltip: 'AI assistent interface til natural language queries. Få svar om captures, kvalitet, og system status.' },
-    { to: '/compliance',   label: 'Compliance',    icon: ClipboardCheck, tooltip: 'SABSA compliance cockpit. Audit logs, sikkerhedsrapporter, og compliance status for hele systemet.' },
-  ]
+    { to: '/',             label: 'Enheder',       icon: Camera, tooltip: 'Oversigt over alle kameraenheder. Se status, captures, og enhedsspecifikke indstillinger. Administrer enheder og fejlfind.', adminOnly: false },
+    { to: '/backup',       label: 'Backup',        icon: Database, tooltip: 'Backup af captures og database. Schedule og overvåg backup jobs. Restore fra backup ved behov.', adminOnly: true },
+    { to: '/global-config',label: 'Global Config', icon: Globe, tooltip: 'Hierarkisk konfiguration: Global → Kunde → Site → Kamera. Arv og overrides for alle parametre.', adminOnly: true },
+    { to: '/tags',         label: 'Tag søgning',   icon: Tag, tooltip: 'Søg captures på tværs af tags. Find billeder baseret på brugerdefinerede labels og metadata.', adminOnly: false },
+    { to: '/settings',     label: 'Indstillinger', icon: Settings, tooltip: 'Personlige indstillinger og præferencer. Tilpas din brugeroplevelse og notifikationer.', adminOnly: false },
+    { to: '/ai',           label: 'AI Styring',    icon: Brain, tooltip: 'AI-drevet billedanalyse og kvalitetskontrol. Konfigurer NPU, adaptive exposure, og drift detection.', adminOnly: true },
+    { to: '/openwebui',    label: 'Open WebUI',    icon: Bot, tooltip: 'AI assistent interface til natural language queries. Få svar om captures, kvalitet, og system status.', adminOnly: true },
+    { to: '/compliance',   label: 'Compliance',    icon: ClipboardCheck, tooltip: 'SABSA compliance cockpit. Audit logs, sikkerhedsrapporter, og compliance status for hele systemet.', adminOnly: false },
+  ].filter(link => !link.adminOnly || hasRole('super_admin', 'admin'))
 
   const adminLinks = [
     { to: '/system-admin',  label: 'System Admin',  icon: Shield, tooltip: 'Systemniveau administration. Service status, konfiguration, og avancerede systemindstillinger.' },

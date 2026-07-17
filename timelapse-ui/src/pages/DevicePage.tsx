@@ -23,6 +23,7 @@ import { CaptureThumbnailCard, parseCaptureQA, qaHardFailed, causeLabels } from 
 import { FotoTechnicalCard } from '../components/FotoTechnicalCard'
 import { SiteLookCard } from '../components/SiteLookCard'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
+import { useAuth } from '../context/AuthContext'
 import type { DeviceDetail, Capture } from '../types'
 
 function authFetch(url: string, opts?: RequestInit) {
@@ -1557,6 +1558,8 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
 type Tab = 'captures' | 'timeline' | 'stats' | 'config'
 
 export function DevicePage() {
+  const { user } = useAuth()
+  const canConfigure = user?.role === 'super_admin' || user?.role === 'admin'
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
   const [detail, setDetail]   = useState<DeviceDetail | null>(null)
@@ -1589,7 +1592,7 @@ export function DevicePage() {
     { key: 'captures',  label: `Billeder (${captures.length})`, icon: Camera },
     { key: 'timeline',  label: 'Tidslinje', icon: CalendarDays },
     { key: 'stats',     label: 'Statistik', icon: BarChart2 },
-    { key: 'config',    label: 'Konfiguration', icon: Settings },
+    ...(canConfigure ? [{ key: 'config' as Tab, label: 'Konfiguration', icon: Settings }] : []),
   ]
 
   return (
@@ -1645,14 +1648,14 @@ export function DevicePage() {
 
         <div className="mb-6 min-w-0 overflow-x-auto border-b border-gray-200">
           <div className="flex w-max gap-1">
-          <button onClick={() => navigate(`/devices/${routeDeviceId}/timelapse`)}
+          {canConfigure && <button onClick={() => navigate(`/devices/${routeDeviceId}/timelapse`)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-sky-600 hover:text-sky-700 border-b-2 border-transparent hover:border-sky-400 -mb-px transition-colors mr-2">
             <Film className="w-4 h-4" />Timelapse Video
-          </button>
-          <button onClick={() => navigate(`/devices/${routeDeviceId}/lab`)}
+          </button>}
+          {canConfigure && <button onClick={() => navigate(`/devices/${routeDeviceId}/lab`)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-purple-600 hover:text-purple-700 border-b-2 border-transparent hover:border-purple-400 -mb-px transition-colors mr-2">
             <FlaskConical className="w-4 h-4" />Lab
-          </button>
+          </button>}
           {tabs.map(({ key, label, icon: Icon }) => (
             <button key={key} onClick={() => setTab(key)}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${

@@ -11116,6 +11116,8 @@ def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
 
         result.append({
             "device_id":      d.device_id,
+            "customer_id":    d.customer_id,
+            "site_id":        d.site_id,
             "location_name":  d.location_name,
             "tenant_id":      d.tenant_id,
             "ip_address":     d.ip_address,
@@ -13822,6 +13824,8 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
     return {
         "device": {
             "device_id":        device.device_id,
+            "customer_id":      device.customer_id,
+            "site_id":          device.site_id,
             "location_name":    device.location_name,
             "ip_address":       device.ip_address,
             "status":           "online" if online else "offline",
