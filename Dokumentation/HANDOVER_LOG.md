@@ -9474,3 +9474,24 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
 - Signeret `v2.8.1-lab.14` blev registreret via UI. Kun aktiv R&D Edge-kandidat `#105` blev godkendt; Edge pull-flow gennemførte og UI viser `Deployet`, `test`, `TL-C87FF9587CA0`, commit `47505dd6`. Den er ikke automatisk prod-klar.
 - Ny domænservice markerer ældre `pending` app-kandidater for samme test-device som `superseded`, når et nyere signeret artifact opretter kandidater. Godkendte/deployede/rollback-poster ændres ikke. UI har særskilt `Erstattet`-filter; intet revisionsspor slettes.
 - Verifikation: lokal CI-identisk gate 588 passed, 4 auth-smoke skipped og 543 integration deselected; målrettede supersession/release/UI/arkitekturtests, Python compile, TypeScript, Vite og ESLint-ratchet bestod.
+# 2026-07-17 - Codex - GRC som autoritativt register og dokumentrevisionsstyring
+
+- GRC-registeret i PostgreSQL er nu single source of truth for krav, controls, risici,
+  tests, fund, actions, relationer, testkørsler og evidens. De importerede dokumentkrav
+  er markeret som kandidater, så import ikke sidestilles med formel godkendelse.
+- Compliance har fanerne `GRC register` og `GRC rapporter`. Rapporter kan vises,
+  downloades og gemmes som kontrollerede dokumentrevisioner.
+- Ny revisionsmodel: `grc_documents`, `grc_document_revisions` og
+  `grc_document_item_links`. Hver revision har immutable rapportindhold, SHA-256 af
+  indholdet, SHA-256 af det autoritative GRC-snapshot, ophav, ændringsresume og direkte
+  links til de inkluderede registerposter.
+- Godkendelse kræver `super_admin` og registrerer godkender/tidspunkt. En uændret
+  GRC-snapshot opretter ikke en ny revision, selv om rapportens genereringstidspunkt er
+  ændret.
+- Verificeret i ægte R&D-UI med den separate bruger `codex`: kravrapport blev oprettet
+  som `TLP-GRC-REQUIREMENTS`, revision 1, status `draft`. Gentaget gem gav beskeden
+  "Dokumentet er allerede ajour (revision 1)" og oprettede ingen dublet.
+- Verifikation: målrettede GRC-contracttests 4/4 grønne, TypeScript/Vite build grøn,
+  Headend health HTTP 200 og revisionsflowet browsertestet via offentlig nginx-route.
+- Revision 1 er med vilje ikke godkendt: godkendelse er en governance-beslutning, ikke
+  en teknisk QA-handling.

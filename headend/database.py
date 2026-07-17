@@ -1129,6 +1129,56 @@ class GrcEvidence(Base):
     retention_class = Column(String(50), nullable=False, default="grc_standard", server_default="grc_standard")
 
 
+class GrcDocument(Base):
+    """Stable identity and governance metadata for a controlled document."""
+    __tablename__ = "grc_documents"
+
+    id = Column(BigInteger, primary_key=True)
+    document_id = Column(String(100), nullable=False, unique=True, index=True)
+    title = Column(String(300), nullable=False)
+    document_type = Column(String(50), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="draft", server_default="draft", index=True)
+    owner = Column(String(100), nullable=False)
+    approver_role = Column(String(50), nullable=False, default="super_admin", server_default="super_admin")
+    classification = Column(String(30), nullable=False, default="internal", server_default="internal")
+    retention_class = Column(String(50), nullable=False, default="grc_controlled", server_default="grc_controlled")
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+
+
+class GrcDocumentRevision(Base):
+    """Immutable content revision; approval changes lifecycle metadata only."""
+    __tablename__ = "grc_document_revisions"
+    __table_args__ = (UniqueConstraint("document_id", "revision", name="uq_grc_document_revision"),)
+
+    id = Column(BigInteger, primary_key=True)
+    document_id = Column(BigInteger, ForeignKey("grc_documents.id"), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    lifecycle_status = Column(String(30), nullable=False, default="draft", server_default="draft")
+    content_sha256 = Column(String(64), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    source_uri = Column(String(1000))
+    generator = Column(String(100), nullable=False)
+    grc_snapshot_sha256 = Column(String(64), nullable=False)
+    change_summary = Column(Text)
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+    approved_by = Column(String(100))
+    approved_at = Column(DateTime(timezone=True))
+
+
+class GrcDocumentItemLink(Base):
+    """Traceability from a document revision to the included GRC objects."""
+    __tablename__ = "grc_document_item_links"
+    __table_args__ = (UniqueConstraint("revision_id", "item_id", name="uq_grc_document_item_link"),)
+
+    id = Column(BigInteger, primary_key=True)
+    revision_id = Column(BigInteger, ForeignKey("grc_document_revisions.id"), nullable=False, index=True)
+    item_id = Column(BigInteger, ForeignKey("grc_items.id"), nullable=False, index=True)
+    relationship = Column(String(40), nullable=False, default="included", server_default="included")
+
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
 

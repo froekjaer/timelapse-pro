@@ -14,7 +14,10 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from database import GrcEvidence, GrcItem, GrcLink, GrcTestRun, get_db
+from database import (
+    GrcDocument, GrcDocumentItemLink, GrcDocumentRevision, GrcEvidence,
+    GrcItem, GrcLink, GrcTestRun, get_db,
+)
 
 
 router = APIRouter(prefix="/api/grc/register", tags=["GRC Register"])
@@ -244,3 +247,103 @@ def generate_standard_report(standard: str, _user=Depends(_current_user), db: Se
     content = "\n".join(lines) + "\n"
     return PlainTextResponse(content, media_type="text/markdown",
                              headers={"Content-Disposition": f'attachment; filename="timelapse-grc-{standard_id.lower()}-{now.date()}.md"'})
+
+
+def _revision(row: GrcDocumentRevision) -> dict:
+    return {
+        "id": row.id, "revision": row.revision, "status": row.lifecycle_status,
+        "content_sha256": row.content_sha256, "grc_snapshot_sha256": row.grc_snapshot_sha256,
+        "generator": row.generator, "change_summary": row.change_summary,
+        "created_by": row.created_by, "created_at": row.created_at.isoformat(),
+        "approved_by": row.approved_by,
+        "approved_at": row.approved_at.isoformat() if row.approved_at else None,
+    }
+
+
+@router.get("/documents")
+def list_documents(_user=Depends(_current_user), db: Session = Depends(get_db)):
+    documents = []
+    for document in db.query(GrcDocument).order_by(GrcDocument.document_id).all():
+        revisions = (db.query(GrcDocumentRevision).filter_by(document_id=document.id)
+                     .order_by(GrcDocumentRevision.revision.desc()).all())
+        documents.append({
+            "id": document.id, "document_id": document.document_id, "title": document.title,
+            "document_type": document.document_type, "status": document.status,
+            "owner": document.owner, "approver_role": document.approver_role,
+            "classification": document.classification,
+            "revisions": [_revision(row) for row in revisions],
+        })
+    return {"source_of_truth": "postgresql", "documents": documents}
+
+
+@router.post("/documents/from-report/{report_type}")
+def save_report_revision(
+    report_type: str, payload: dict, user=Depends(_writer), db: Session = Depends(get_db),
+):
+    if report_type not in {"full", "requirements", "tests", "risks", "findings"}:
+        raise HTTPException(status_code=404, detail="Ukendt GRC-rapport")
+    response = generate_report(report_type, _user=user, db=db)
+    content = bytes(response.body).decode("utf-8")
+    relevant_type = {"requirements": "requirement", "tests": "test", "risks": "risk", "findings": "finding"}.get(report_type)
+    query = db.query(GrcItem)
+    if relevant_type:
+        query = query.filter(GrcItem.item_type == relevant_type)
+    items = query.order_by(GrcItem.item_type, GrcItem.external_id).all()
+    snapshot_material = [{"id": row.id, "version": row.version, "status": row.status} for row in items]
+    snapshot_sha = hashlib.sha256(json.dumps(snapshot_material, sort_keys=True).encode()).hexdigest()
+    content_sha = hashlib.sha256(content.encode()).hexdigest()
+    stable_id = f"TLP-GRC-{report_type.upper()}"
+    document = db.query(GrcDocument).filter_by(document_id=stable_id).with_for_update().first()
+    if not document:
+        document = GrcDocument(
+            document_id=stable_id, title=f"TimeLapse Pro GRC {report_type}",
+            document_type=f"grc_{report_type}", status="draft", owner=user.username,
+            created_by=user.username,
+        )
+        db.add(document); db.flush()
+    latest = db.query(func.max(GrcDocumentRevision.revision)).filter_by(document_id=document.id).scalar() or 0
+    # Rendered reports include a generation timestamp, so their content hash
+    # changes even when the authoritative GRC data has not changed. Revision
+    # identity follows the snapshot; content_sha256 still proves exact bytes.
+    existing = db.query(GrcDocumentRevision).filter_by(
+        document_id=document.id, grc_snapshot_sha256=snapshot_sha,
+    ).first()
+    if existing:
+        return {"status": "unchanged", "document_id": stable_id, "revision": _revision(existing)}
+    revision = GrcDocumentRevision(
+        document_id=document.id, revision=latest + 1, lifecycle_status="draft",
+        content_sha256=content_sha, content=content,
+        source_uri=f"grc://reports/{report_type}", generator="timelapse.grc.report.v1",
+        grc_snapshot_sha256=snapshot_sha,
+        change_summary=str(payload.get("change_summary") or "Generated from current GRC snapshot")[:4000],
+        created_by=user.username,
+    )
+    db.add(revision); db.flush()
+    for item in items:
+        db.add(GrcDocumentItemLink(revision_id=revision.id, item_id=item.id, relationship="included"))
+    document.updated_at = datetime.now(timezone.utc)
+    db.commit(); db.refresh(revision)
+    return {"status": "created", "document_id": stable_id, "revision": _revision(revision)}
+
+
+@router.post("/documents/{document_id}/revisions/{revision_id}/approve")
+def approve_revision(
+    document_id: str, revision_id: int, user=Depends(_writer), db: Session = Depends(get_db),
+):
+    if user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Dokumentgodkendelse kræver super_admin")
+    document = db.query(GrcDocument).filter_by(document_id=document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Dokument ikke fundet")
+    revision = db.query(GrcDocumentRevision).filter_by(id=revision_id, document_id=document.id).with_for_update().first()
+    if not revision:
+        raise HTTPException(status_code=404, detail="Revision ikke fundet")
+    if revision.lifecycle_status == "approved":
+        return {"status": "unchanged", "revision": _revision(revision)}
+    revision.lifecycle_status = "approved"
+    revision.approved_by = user.username
+    revision.approved_at = datetime.now(timezone.utc)
+    document.status = "approved"
+    document.updated_at = revision.approved_at
+    db.commit(); db.refresh(revision)
+    return {"status": "approved", "revision": _revision(revision)}

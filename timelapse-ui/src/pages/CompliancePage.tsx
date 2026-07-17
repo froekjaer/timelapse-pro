@@ -195,6 +195,32 @@ interface GrcRegister {
   items: GrcRegisterItem[]
 }
 
+interface GrcDocumentRevision {
+  id: number
+  revision: number
+  status: string
+  content_sha256: string
+  grc_snapshot_sha256: string
+  generator: string
+  change_summary: string | null
+  created_by: string
+  created_at: string
+  approved_by: string | null
+  approved_at: string | null
+}
+
+interface GrcDocument {
+  id: number
+  document_id: string
+  title: string
+  document_type: string
+  status: string
+  owner: string
+  approver_role: string
+  classification: string
+  revisions: GrcDocumentRevision[]
+}
+
 type Tab = 'register' | 'reports' | 'grc' | 'regulatory' | 'approvals' | 'controls' | 'evidence'
 type MetricKey = 'pass' | 'warning' | 'fail' | 'approval_queue' | 'change_tickets' | 'sast_findings' | 'fleet_risk' | 'highest_device_risk' | 'security_missing' | 'blocked' | 'approved'
 
@@ -211,7 +237,11 @@ function statusClass(status: string) {
     implemented: 'bg-green-50 text-green-700 border-green-200',
     open: 'bg-red-50 text-red-700 border-red-200',
     blocked: 'bg-red-50 text-red-700 border-red-200',
+    rejected: 'bg-red-50 text-red-700 border-red-200',
     in_progress: 'bg-amber-50 text-amber-700 border-amber-200',
+    candidate_review: 'bg-amber-50 text-amber-700 border-amber-200',
+    draft: 'bg-gray-50 text-gray-600 border-gray-200',
+    approved: 'bg-green-50 text-green-700 border-green-200',
     not_run: 'bg-gray-50 text-gray-600 border-gray-200',
   }
   return map[status] ?? 'bg-gray-50 text-gray-600 border-gray-200'
@@ -254,22 +284,27 @@ export function CompliancePage() {
   const [grcReportLoading, setGrcReportLoading] = useState<string | null>(null)
   const [selectedGrcItem, setSelectedGrcItem] = useState<GrcRegisterItem | null>(null)
   const [grcItemBusy, setGrcItemBusy] = useState(false)
+  const [grcDocuments, setGrcDocuments] = useState<GrcDocument[]>([])
+  const [revisionBusy, setRevisionBusy] = useState<string | null>(null)
+  const [documentNotice, setDocumentNotice] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setError(null)
     try {
-      const [cockpit, grcData, regulatoryData, catalogData, registerData] = await Promise.all([
+      const [cockpit, grcData, regulatoryData, catalogData, registerData, documentData] = await Promise.all([
         api('/api/compliance/cockpit'),
         api('/api/grc/dashboard'),
         api('/api/compliance/intelligence/instruments'),
         api('/api/compliance/intelligence/audit-catalogs'),
         api('/api/grc/register'),
+        api('/api/grc/register/documents'),
       ])
       setData(cockpit)
       setGrc(grcData)
       setInstruments(regulatoryData.instruments ?? [])
       setAuditCatalogs(catalogData.catalogs ?? [])
       setRegister(registerData)
+      setGrcDocuments(documentData.documents ?? [])
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Kunne ikke hente compliance cockpit')
     } finally {
@@ -350,6 +385,39 @@ export function CompliancePage() {
       setError(e instanceof Error ? e.message : 'GRC-posten kunne ikke opdateres')
     } finally {
       setGrcItemBusy(false)
+    }
+  }
+
+  async function saveReportRevision(reportType: string) {
+    setRevisionBusy(reportType)
+    setError(null)
+    setDocumentNotice(null)
+    try {
+      const result = await api(`/api/grc/register/documents/from-report/${reportType}`, {
+        method: 'POST',
+        body: JSON.stringify({ change_summary: `Genereret fra aktuel ${reportType} GRC-status` }),
+      })
+      setDocumentNotice(result.status === 'unchanged'
+        ? `Dokumentet er allerede ajour (revision ${result.revision.revision}).`
+        : `Revision ${result.revision.revision} er oprettet som kladde.`)
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Dokumentrevision kunne ikke gemmes')
+    } finally {
+      setRevisionBusy(null)
+    }
+  }
+
+  async function approveDocumentRevision(documentId: string, revisionId: number) {
+    setRevisionBusy(`${documentId}:${revisionId}`)
+    setError(null)
+    try {
+      await api(`/api/grc/register/documents/${documentId}/revisions/${revisionId}/approve`, { method: 'POST' })
+      await load()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Revisionen kunne ikke godkendes')
+    } finally {
+      setRevisionBusy(null)
     }
   }
 
@@ -580,6 +648,11 @@ export function CompliancePage() {
         </div>
       ) : tab === 'reports' ? (
         <div className="space-y-4">
+          {documentNotice && (
+            <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800" role="status">
+              {documentNotice}
+            </div>
+          )}
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <h2 className="text-sm font-semibold text-gray-900">Generér fra autoritativ GRC-database</h2>
             <p className="mt-1 text-xs text-gray-500">Rapporterne er øjebliksbilleder. Ændringer foretages i registeret, aldrig i den downloadede fil.</p>
@@ -600,6 +673,10 @@ export function CompliancePage() {
                       <Download className="w-3.5 h-3.5" />
                     </button>
                   </div>
+                  <button type="button" onClick={() => saveReportRevision(type)} disabled={revisionBusy === type}
+                    className="mt-2 min-h-9 w-full rounded bg-sky-50 text-xs text-sky-700 border border-sky-200 hover:bg-sky-100 disabled:opacity-50">
+                    {revisionBusy === type ? 'Gemmer...' : 'Gem revision'}
+                  </button>
                 </div>
               ))}
             </div>
@@ -611,6 +688,37 @@ export function CompliancePage() {
             ) : (
               <div className="py-12 text-center text-sm text-gray-400">Vælg en rapport for at se den her</div>
             )}
+          </div>
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <div className="p-4 border-b border-gray-100">
+              <h2 className="text-sm font-semibold text-gray-900">Kontrollerede dokumenter</h2>
+              <p className="mt-1 text-xs text-gray-500">Immutable revisioner med indholdshash og hash af det GRC-snapshot rapporten blev genereret fra.</p>
+            </div>
+            {grcDocuments.map(document => {
+              const latest = document.revisions[0]
+              return (
+                <div key={document.document_id} className="p-4 border-b border-gray-100 last:border-0">
+                  <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs font-semibold text-gray-900">{document.document_id}</span>
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded border ${statusClass(document.status)}`}>{document.status}</span>
+                        <span className="text-[11px] text-gray-400">{document.classification}</span>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-700">{document.title}</p>
+                      {latest && <p className="mt-1 text-[11px] text-gray-400">Rev. {latest.revision} · {fmt(latest.created_at)} · SHA-256 {latest.content_sha256.slice(0, 12)}... · GRC {latest.grc_snapshot_sha256.slice(0, 12)}...</p>}
+                    </div>
+                    {latest?.status === 'draft' && (
+                      <button type="button" onClick={() => approveDocumentRevision(document.document_id, latest.id)} disabled={revisionBusy === `${document.document_id}:${latest.id}`}
+                        className="min-h-9 px-3 rounded bg-green-600 text-xs text-white hover:bg-green-700 disabled:opacity-50">
+                        Godkend revision
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+            {grcDocuments.length === 0 && <div className="py-10 text-center text-sm text-gray-400">Ingen gemte dokumentrevisioner endnu</div>}
           </div>
         </div>
       ) : tab === 'grc' ? (
