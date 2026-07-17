@@ -1129,6 +1129,17 @@ class GrcEvidence(Base):
     retention_class = Column(String(50), nullable=False, default="grc_standard", server_default="grc_standard")
 
 
+class GrcComment(Base):
+    """Append-only discussion entry attached to a versioned GRC object."""
+    __tablename__ = "grc_comments"
+
+    id = Column(BigInteger, primary_key=True)
+    item_id = Column(BigInteger, ForeignKey("grc_items.id"), nullable=False, index=True)
+    body = Column(Text, nullable=False)
+    created_by = Column(String(100), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+
+
 class GrcDocument(Base):
     """Stable identity and governance metadata for a controlled document."""
     __tablename__ = "grc_documents"

@@ -40,3 +40,21 @@ def test_document_control_has_immutable_revisions_and_traceability():
     assert 'user.role != "super_admin"' in api
     assert "Gem revision" in ui
     assert "Kontrollerede dokumenter" in ui
+
+
+def test_grc_comments_are_append_only_and_rbac_protected():
+    migration = (ROOT / "headend/migrations/v25_grc_comments.sql").read_text()
+    api = (ROOT / "headend/api/grc_register_api.py").read_text()
+    assert "CREATE TABLE IF NOT EXISTS grc_comments" in migration
+    assert '@router.get("/{item_id}/comments")' in api
+    assert '@router.post("/{item_id}/comments")' in api
+    assert "Depends(_require_platform_admin)" in api
+
+
+def test_grc_ui_supports_search_tags_mapping_and_readable_reports():
+    ui = (ROOT / "timelapse-ui/src/pages/CompliancePage.tsx").read_text()
+    assert "registerSearch" in ui
+    assert "registerTags.every" in ui
+    assert "registerStandard" in ui
+    assert "GeneratedReport" in ui
+    assert "Tilføj kommentar" in ui

@@ -11,11 +11,11 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from database import (
-    GrcDocument, GrcDocumentItemLink, GrcDocumentRevision, GrcEvidence,
+    GrcComment, GrcDocument, GrcDocumentItemLink, GrcDocumentRevision, GrcEvidence,
     GrcItem, GrcLink, GrcTestRun, get_db,
 )
 
@@ -54,7 +54,7 @@ def _item(row: GrcItem) -> dict:
 
 @router.get("")
 def list_register(
-    item_type: str | None = None, status: str | None = None,
+    item_type: str | None = None, status: str | None = None, search: str | None = None,
     _user=Depends(_current_viewer), db: Session = Depends(get_db),
 ):
     query = db.query(GrcItem)
@@ -64,6 +64,10 @@ def list_register(
         query = query.filter(GrcItem.item_type == item_type)
     if status:
         query = query.filter(GrcItem.status == status)
+    if search and search.strip():
+        needle = f"%{search.strip()[:200]}%"
+        query = query.filter(or_(GrcItem.external_id.ilike(needle), GrcItem.title.ilike(needle),
+                                 GrcItem.description.ilike(needle), GrcItem.source.ilike(needle)))
     rows = query.order_by(GrcItem.item_type, GrcItem.priority, GrcItem.external_id).all()
     counts = dict(db.query(GrcItem.item_type, func.count(GrcItem.id)).group_by(GrcItem.item_type).all())
     result_counts = dict(db.query(GrcTestRun.result, func.count(GrcTestRun.id)).group_by(GrcTestRun.result).all())
@@ -100,6 +104,33 @@ def create_item(payload: dict, user=Depends(_require_platform_admin), db: Sessio
     )
     db.add(row); db.commit(); db.refresh(row)
     return _item(row)
+
+
+def _comment(row: GrcComment) -> dict:
+    return {"id": row.id, "item_id": row.item_id, "body": row.body,
+            "created_by": row.created_by, "created_at": row.created_at.isoformat()}
+
+
+@router.get("/{item_id}/comments")
+def list_comments(item_id: int, _user=Depends(_current_viewer), db: Session = Depends(get_db)):
+    if not db.query(GrcItem).filter_by(id=item_id).first():
+        raise HTTPException(status_code=404, detail="GRC-objekt ikke fundet")
+    rows = db.query(GrcComment).filter_by(item_id=item_id).order_by(GrcComment.created_at).all()
+    return {"comments": [_comment(row) for row in rows]}
+
+
+@router.post("/{item_id}/comments")
+def add_comment(item_id: int, payload: dict, user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
+    if not db.query(GrcItem).filter_by(id=item_id).first():
+        raise HTTPException(status_code=404, detail="GRC-objekt ikke fundet")
+    body = str(payload.get("body") or "").strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="Kommentaren må ikke være tom")
+    if len(body) > 10000:
+        raise HTTPException(status_code=422, detail="Kommentaren er for lang")
+    row = GrcComment(item_id=item_id, body=body, created_by=user.username)
+    db.add(row); db.commit(); db.refresh(row)
+    return _comment(row)
 
 
 @router.patch("/{item_id}")

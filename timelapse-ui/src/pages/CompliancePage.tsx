@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle, ArrowLeft, CheckCircle, ClipboardCheck, FileCheck,
-  Download, ExternalLink, Globe2, RefreshCw, Search, ShieldCheck, XCircle
+  Download, ExternalLink, Globe2, MessageSquare, RefreshCw, Search, ShieldCheck, XCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -186,7 +186,15 @@ interface GrcRegisterItem {
   version: number
   updated_at: string | null
   source?: string | null
-  attributes?: { requirement_class?: string; quality_domains?: string[]; legacy_id?: string | null; control_type?: string }
+  attributes?: { requirement_class?: string; quality_domains?: string[]; standard_refs?: string[]; legacy_id?: string | null; control_type?: string }
+}
+
+interface GrcComment {
+  id: number
+  item_id: number
+  body: string
+  created_by: string
+  created_at: string
 }
 
 interface GrcRegister {
@@ -265,6 +273,64 @@ function Metric({ label, value, active, onClick }: { label: string; value: numbe
   )
 }
 
+function parseReportRow(line: string) {
+  const cells: string[] = []
+  let cell = ''
+  for (let index = 1; index < line.length - 1; index += 1) {
+    if (line[index] === '\\' && line[index + 1] === '|') {
+      cell += '|'
+      index += 1
+    } else if (line[index] === '|') {
+      cells.push(cell.trim())
+      cell = ''
+    } else {
+      cell += line[index]
+    }
+  }
+  cells.push(cell.trim())
+  return cells
+}
+
+function GeneratedReport({ content }: { content: string }) {
+  const lines = content.split('\n')
+  const title = lines.find(line => line.startsWith('# '))?.slice(2) ?? 'GRC rapport'
+  const tableStart = lines.findIndex(line => line.startsWith('| '))
+  const tableEnd = tableStart < 0 ? -1 : lines.findIndex((line, index) => index > tableStart + 1 && !line.startsWith('|'))
+  const tableLines = tableStart < 0 ? [] : lines.slice(tableStart, tableEnd < 0 ? undefined : tableEnd)
+  const rows = tableLines.filter((_, index) => index !== 1).map(parseReportRow)
+  const headers = rows[0] ?? []
+  const body = rows.slice(1)
+  const metadata = lines.filter(line => line && !line.startsWith('#') && !line.startsWith('|') && !line.startsWith('>') && !line.startsWith('This report'))
+  const notice = lines.find(line => line.startsWith('>'))?.slice(1).trim()
+
+  return (
+    <article className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <header className="border-b border-gray-100 bg-gray-50 px-5 py-4">
+        <h3 className="text-base font-semibold text-gray-900">{title}</h3>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+          {metadata.slice(0, 4).map(line => <span key={line}>{line}</span>)}
+        </div>
+      </header>
+      {notice && <div className="border-b border-amber-100 bg-amber-50 px-5 py-3 text-xs leading-5 text-amber-800">{notice}</div>}
+      <div className="max-h-[42rem] overflow-auto">
+        <table className="min-w-full text-left text-xs">
+          <thead className="sticky top-0 z-10 border-b border-gray-200 bg-white text-gray-500 shadow-sm">
+            <tr>{headers.map(header => <th key={header} className="whitespace-nowrap px-4 py-3 font-medium">{header}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {body.map((row, rowIndex) => (
+              <tr key={`${row[1] ?? rowIndex}-${rowIndex}`} className="align-top hover:bg-gray-50">
+                {row.map((cell, index) => <td key={index} className={`px-4 py-3 leading-5 text-gray-700 ${index === 1 ? 'font-mono font-medium text-gray-900' : ''}`}>{cell}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {body.length === 0 && <div className="px-5 py-12 text-center text-sm text-gray-400">Rapporten indeholder ingen mappede poster</div>}
+    </article>
+  )
+}
+
 export function CompliancePage() {
   const [data, setData] = useState<Cockpit | null>(null)
   const [grc, setGrc] = useState<GrcDashboard | null>(null)
@@ -280,10 +346,16 @@ export function CompliancePage() {
   const [regulatorySearch, setRegulatorySearch] = useState('')
   const [register, setRegister] = useState<GrcRegister | null>(null)
   const [registerFilter, setRegisterFilter] = useState('all')
+  const [registerSearch, setRegisterSearch] = useState('')
+  const [registerTags, setRegisterTags] = useState<string[]>([])
+  const [registerStandard, setRegisterStandard] = useState<string | null>(null)
   const [reportPreview, setReportPreview] = useState('')
   const [grcReportLoading, setGrcReportLoading] = useState<string | null>(null)
   const [selectedGrcItem, setSelectedGrcItem] = useState<GrcRegisterItem | null>(null)
   const [grcItemBusy, setGrcItemBusy] = useState(false)
+  const [grcComments, setGrcComments] = useState<GrcComment[]>([])
+  const [commentBody, setCommentBody] = useState('')
+  const [commentBusy, setCommentBusy] = useState(false)
   const [grcDocuments, setGrcDocuments] = useState<GrcDocument[]>([])
   const [revisionBusy, setRevisionBusy] = useState<string | null>(null)
   const [documentNotice, setDocumentNotice] = useState<string | null>(null)
@@ -360,7 +432,7 @@ export function CompliancePage() {
         const blobUrl = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }))
         const link = document.createElement('a')
         link.href = blobUrl
-        link.download = `timelapse-grc-${reportType}-${new Date().toISOString().slice(0, 10)}.md`
+        link.download = `timelapse-grc-${reportType.replaceAll('/', '-')}-${new Date().toISOString().slice(0, 10)}.md`
         link.click()
         URL.revokeObjectURL(blobUrl)
       }
@@ -385,6 +457,35 @@ export function CompliancePage() {
       setError(e instanceof Error ? e.message : 'GRC-posten kunne ikke opdateres')
     } finally {
       setGrcItemBusy(false)
+    }
+  }
+
+  async function openGrcItem(item: GrcRegisterItem) {
+    setSelectedGrcItem(item)
+    setGrcComments([])
+    setCommentBody('')
+    try {
+      const result = await api(`/api/grc/register/${item.id}/comments`)
+      setGrcComments(result.comments ?? [])
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Kommentarer kunne ikke hentes')
+    }
+  }
+
+  async function addGrcComment() {
+    if (!selectedGrcItem || !commentBody.trim()) return
+    setCommentBusy(true)
+    setError(null)
+    try {
+      const comment = await api(`/api/grc/register/${selectedGrcItem.id}/comments`, {
+        method: 'POST', body: JSON.stringify({ body: commentBody }),
+      })
+      setGrcComments(current => [...current, comment])
+      setCommentBody('')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Kommentaren kunne ikke gemmes')
+    } finally {
+      setCommentBusy(false)
     }
   }
 
@@ -437,6 +538,26 @@ export function CompliancePage() {
   const visibleInstruments = regulatorySearch.trim()
     ? instruments.filter(item => Object.values(item).join(' ').toLocaleLowerCase().includes(regulatorySearch.trim().toLocaleLowerCase()))
     : instruments
+  const standardNames = ['SABSA', 'COBIT', 'ISO27001', 'IEC62443', 'NIS2', 'CRA', 'GDPR', 'AI-ACT', 'NIST', 'ENISA']
+  const itemTags = (item: GrcRegisterItem) => [
+    item.item_type, item.priority, item.status,
+    item.attributes?.requirement_class === 'functional' ? 'functional' : item.attributes?.requirement_class === 'non_functional' ? 'non-functional' : null,
+    ...(item.attributes?.quality_domains ?? []),
+  ].filter((value): value is string => Boolean(value))
+  const tagOptions = Array.from(new Set((register?.items ?? []).flatMap(itemTags))).sort((a, b) => a.localeCompare(b))
+  const standardCounts = Object.fromEntries(standardNames.map(standard => [standard,
+    (register?.items ?? []).filter(item => item.attributes?.standard_refs?.includes(standard)).length,
+  ]))
+  const searchNeedle = registerSearch.trim().toLocaleLowerCase()
+  const visibleRegisterItems = (register?.items ?? []).filter(item => {
+    if (registerFilter !== 'all' && item.item_type !== registerFilter) return false
+    if (registerStandard && !item.attributes?.standard_refs?.includes(registerStandard)) return false
+    if (registerTags.length && !registerTags.every(tag => itemTags(item).includes(tag))) return false
+    if (!searchNeedle) return true
+    return [item.external_id, item.title, item.source, item.owner, item.status, item.priority,
+      ...(item.attributes?.quality_domains ?? []), ...(item.attributes?.standard_refs ?? [])]
+      .filter(Boolean).join(' ').toLocaleLowerCase().includes(searchNeedle)
+  })
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -580,21 +701,46 @@ export function CompliancePage() {
               </div>
             </div>
             <div className="mt-4 border-t border-gray-100 pt-4">
-              <div className="text-xs font-semibold text-gray-700">Standardmapping</div>
-              <p className="mt-1 text-[11px] text-gray-500">Evidensbaseret engineering mapping. Ikke en fuld audit eller certificeringspåstand.</p>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold text-gray-700">Standardmapping</div>
+                  <p className="mt-1 text-[11px] text-gray-500">Klik for at vise de poster, der faktisk er mappet. Et nul betyder, at mappingen endnu mangler.</p>
+                </div>
+                {registerStandard && <button type="button" onClick={() => setRegisterStandard(null)} className="text-xs text-gray-500 hover:text-gray-900">Ryd standard</button>}
+              </div>
               <div className="mt-2 flex flex-wrap gap-1">
-                {['SABSA', 'COBIT', 'ISO27001', 'IEC62443', 'NIS2', 'CRA', 'GDPR', 'AI-ACT', 'NIST', 'ENISA'].map(standard => (
-                  <button key={standard} type="button" onClick={() => generateGrcReport(`standard/${standard}`, false)}
-                    className="min-h-9 px-2.5 rounded border border-gray-200 text-xs text-gray-600 hover:bg-gray-50">
-                    {standard}
+                {standardNames.map(standard => (
+                  <button key={standard} type="button" onClick={() => setRegisterStandard(current => current === standard ? null : standard)}
+                    className={`min-h-9 px-2.5 rounded border text-xs ${registerStandard === standard ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                    {standard} <span className="opacity-60">{standardCounts[standard]}</span>
                   </button>
                 ))}
               </div>
             </div>
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <label className="relative block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <input value={registerSearch} onChange={event => setRegisterSearch(event.target.value)} placeholder="Søg i ID, titel, kilde, owner, status og tags"
+                  className="min-h-11 w-full rounded-lg border border-gray-200 bg-white pl-10 pr-3 text-sm text-gray-800 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+              </label>
+              <div className="mt-3 flex items-center gap-2">
+                <span className="shrink-0 text-xs font-medium text-gray-600">Tags</span>
+                <div className="flex min-w-0 flex-wrap gap-1">
+                  {tagOptions.map(tag => (
+                    <button key={tag} type="button" onClick={() => setRegisterTags(current => current.includes(tag) ? current.filter(value => value !== tag) : [...current, tag])}
+                      className={`min-h-8 rounded border px-2 text-[11px] ${registerTags.includes(tag) ? 'border-sky-600 bg-sky-50 text-sky-800' : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}>
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+                {(registerTags.length > 0 || registerSearch) && <button type="button" onClick={() => { setRegisterTags([]); setRegisterSearch('') }} className="shrink-0 text-xs text-gray-500 hover:text-gray-900">Ryd</button>}
+              </div>
+              <p className="mt-3 text-xs text-gray-500">Viser {visibleRegisterItems.length} af {register?.summary.items ?? 0} poster. Flere valgte tags kombineres med OG.</p>
+            </div>
           </div>
           <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            {(register?.items ?? []).filter(item => registerFilter === 'all' || item.item_type === registerFilter).map(item => (
-              <button type="button" key={item.id} onClick={() => setSelectedGrcItem(item)} className="block w-full text-left p-4 border-b border-gray-100 last:border-0 hover:bg-gray-50">
+            {visibleRegisterItems.map(item => (
+              <button type="button" key={item.id} onClick={() => openGrcItem(item)} className="block w-full text-left p-4 border-b border-gray-100 last:border-0 hover:bg-gray-50">
                 <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -602,6 +748,7 @@ export function CompliancePage() {
                       <span className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-600 border-gray-200">{item.item_type}</span>
                       {item.attributes?.requirement_class && <span className={`text-[11px] px-1.5 py-0.5 rounded border ${item.attributes.requirement_class === 'functional' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-violet-50 text-violet-700 border-violet-200'}`}>{item.attributes.requirement_class === 'functional' ? 'funktionelt' : 'non-funktionelt'}</span>}
                       {item.priority && <span className={`text-[11px] px-1.5 py-0.5 rounded border ${item.priority === 'P0' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>{item.priority}</span>}
+                      {item.attributes?.standard_refs?.map(standard => <span key={standard} className="text-[11px] px-1.5 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-700">{standard}</span>)}
                     </div>
                     <p className="mt-1 text-sm text-gray-700">{item.title}</p>
                     {item.attributes?.quality_domains && item.attributes.quality_domains.length > 0 && (
@@ -613,8 +760,8 @@ export function CompliancePage() {
                 </div>
               </button>
             ))}
-            {(register?.items ?? []).filter(item => registerFilter === 'all' || item.item_type === registerFilter).length === 0 && (
-              <div className="py-12 text-center text-sm text-gray-400">Ingen poster i denne kategori</div>
+            {visibleRegisterItems.length === 0 && (
+              <div className="py-12 text-center text-sm text-gray-400">Ingen poster matcher de valgte filtre</div>
             )}
           </div>
           {selectedGrcItem && (
@@ -633,6 +780,24 @@ export function CompliancePage() {
                   <div><dt className="text-gray-400">Kilde</dt><dd className="mt-1 text-gray-700 break-all">{selectedGrcItem.source || '-'}</dd></div>
                   <div><dt className="text-gray-400">Owner</dt><dd className="mt-1 text-gray-700">{selectedGrcItem.owner || 'Ikke tildelt'}</dd></div>
                 </dl>
+                <div className="mt-5 border-t border-gray-100 pt-4">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><MessageSquare className="h-4 w-4 text-gray-400" />Kommentarer</div>
+                  <div className="mt-3 space-y-2">
+                    {grcComments.map(comment => (
+                      <div key={comment.id} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2.5">
+                        <div className="flex items-center justify-between gap-3 text-[11px] text-gray-400"><span className="font-medium text-gray-600">{comment.created_by}</span><span>{fmt(comment.created_at)}</span></div>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-gray-700">{comment.body}</p>
+                      </div>
+                    ))}
+                    {grcComments.length === 0 && <p className="text-xs text-gray-400">Ingen kommentarer endnu</p>}
+                  </div>
+                  <div className="mt-3">
+                    <label htmlFor="grc-comment" className="text-xs font-medium text-gray-600">Ny kommentar</label>
+                    <textarea id="grc-comment" value={commentBody} onChange={event => setCommentBody(event.target.value)} rows={3} maxLength={10000}
+                      className="mt-1 w-full resize-y rounded-lg border border-gray-200 p-3 text-sm text-gray-800 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" placeholder="Tilføj vurdering, beslutning eller opfølgning..." />
+                    <div className="mt-2 flex justify-end"><button type="button" onClick={addGrcComment} disabled={commentBusy || !commentBody.trim()} className="min-h-10 rounded bg-gray-900 px-4 text-sm text-white hover:bg-gray-700 disabled:opacity-40">{commentBusy ? 'Gemmer...' : 'Tilføj kommentar'}</button></div>
+                  </div>
+                </div>
                 {selectedGrcItem.status === 'candidate_review' && (
                   <div className="mt-5 border-t border-gray-100 pt-4">
                     <p className="text-xs text-gray-500">Godkend kun efter kilde, aktualitet, scope og eventuelle modstridende beslutninger er vurderet.</p>
@@ -680,11 +845,23 @@ export function CompliancePage() {
                 </div>
               ))}
             </div>
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <div className="text-xs font-semibold text-gray-700">Rapport pr. standard</div>
+              <p className="mt-1 text-[11px] text-gray-500">Viser kun evidensbaserede mappings. Et tomt resultat dokumenterer et reelt mapping-gap.</p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {standardNames.map(standard => (
+                  <button key={standard} type="button" onClick={() => generateGrcReport(`standard/${standard}`, false)} disabled={grcReportLoading === `standard/${standard}`}
+                    className="min-h-9 rounded border border-gray-200 bg-white px-2.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                    {standard} <span className="text-gray-400">{standardCounts[standard]}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <div className="text-xs font-semibold text-gray-700 mb-2">Rapportpreview</div>
             {reportPreview ? (
-              <pre className="max-h-[36rem] overflow-auto whitespace-pre-wrap rounded border border-gray-100 bg-gray-50 p-4 text-xs leading-5 text-gray-700">{reportPreview}</pre>
+              <GeneratedReport content={reportPreview} />
             ) : (
               <div className="py-12 text-center text-sm text-gray-400">Vælg en rapport for at se den her</div>
             )}

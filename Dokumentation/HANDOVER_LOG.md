@@ -9495,3 +9495,24 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
   Headend health HTTP 200 og revisionsflowet browsertestet via offentlig nginx-route.
 - Revision 1 er med vilje ikke godkendt: godkendelse er en governance-beslutning, ikke
   en teknisk QA-handling.
+
+## 2026-07-17 - Codex - GRC register UX, kommentarer og rapportvisning
+
+- GRC-registeret har nu fritekstsøgning og kombinerbare tags. Flere tags anvender
+  eksplicit OG-logik; browser-QA af `non-functional` + `P0` viste korrekt 0 poster,
+  fordi de 77 importerede non-functional kandidater endnu ikke er prioriteret.
+- Standardknapper er ikke længere kosmetiske rapportgenveje. De viser antal faktisk
+  mappede poster og filtrerer registeret på `attributes.standard_refs`. Aktuel R&D-data:
+  SABSA/COBIT/AI-ACT/ENISA har 0, ISO27001/IEC62443/NIS2/CRA/NIST har 1 og GDPR har 2.
+  Nul vises som et mapping-gap; systemet fabrikerer ikke en compliance-mapping.
+- Kommentarer er append-only poster i `grc_comments` med GRC-item, forfatter og
+  tidsstempel. Læsning kræver login; skrivning kræver platform-admin. Browser-QA blev
+  registreret som en reel kommentar på `GRC-REQ-001` af brugeren `codex`.
+- Rapportpreview vises nu som semantisk HTML med titel, metadata, notice og scrollbar
+  tabel med sticky header. Download og kontrollerede revisioner bruger fortsat det
+  originale Markdown-indhold. Parseren håndterer escaped pipe-tegn uden kolonnebrud.
+- Verifikation: 10/10 målrettede tests, Python compile, TypeScript/Vite build og
+  ESLint-ratchet 186/186 grønne. Browser-QA: søgning `backup` gav 8/227, SABSA gav
+  ærligt 0/227, kommentar blev gemt/genvist, og kravrapport rendere som HTML-tabel.
+  Browserforbindelsen faldt ud før sidste genklik på SABSA-rapporten; ingen kode- eller
+  API-fejl blev observeret før browser-pluginets timeout.
