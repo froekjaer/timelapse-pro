@@ -26,6 +26,18 @@ interface Device {
   debug_mode_enabled_at?: string | null
 }
 interface StorageRootStatus {
+  id?: number
+  logical_name?: string
+  backend_type?: string
+  access_mode?: string
+  priority?: number
+  active?: boolean
+  expected_volume_uuid?: string | null
+  actual_volume_uuid?: string | null
+  uuid_matches?: boolean | null
+  description?: string | null
+  healthy?: boolean
+  readable?: boolean
   label: string
   path: string
   configured: boolean
@@ -226,6 +238,7 @@ export function SystemAdminPage() {
   const [selectedDevice, setSelectedDevice] = useState('')
   const [settings, setSettings] = useState<Record<string,string>>({})
   const [storageRoots, setStorageRoots] = useState<StorageRootStatus[]>([])
+  const [savingStorage, setSavingStorage] = useState<number | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
   const [savedSettings, setSavedSettings] = useState(false)
   const [saving, setSaving]     = useState(false)
@@ -270,15 +283,34 @@ export function SystemAdminPage() {
 
   useEffect(() => {
     api('/api/admin/settings').then((s: any) => setSettings(s)).catch(() => {})
-    api('/api/admin/storage/status').then((s: any) => setStorageRoots(s.roots ?? [])).catch(() => {})
+    loadStorage()
   }, [])
+
+  async function loadStorage() {
+    const result = await api('/api/admin/storage/bindings').catch(() => null)
+    setStorageRoots(result?.bindings ?? [])
+  }
+
+  async function bootstrapStorage() {
+    setSavingStorage(0)
+    try { await api('/api/admin/storage/bootstrap', { method: 'POST' }); await loadStorage() }
+    finally { setSavingStorage(null) }
+  }
+
+  async function saveStorage(root: StorageRootStatus) {
+    if (!root.id) return
+    setSavingStorage(root.id)
+    try {
+      await api(`/api/admin/storage/bindings/${root.id}`, { method: 'PUT', body: JSON.stringify(root) })
+      await loadStorage()
+    } finally { setSavingStorage(null) }
+  }
 
   async function saveSettings() {
     setSavingSettings(true)
     try {
       await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(settings) })
-      const storage = await api('/api/admin/storage/status').catch(() => null)
-      if (storage?.roots) setStorageRoots(storage.roots)
+      await loadStorage()
       setSavedSettings(true)
       setTimeout(() => setSavedSettings(false), 2000)
     } catch { /* bevidst ignoreret — finally rydder UI-tilstanden uanset */ } finally { setSavingSettings(false) }
@@ -787,22 +819,45 @@ export function SystemAdminPage() {
           tooltip="Maksimal ventetid på Ollama vision model inference. Store vision modeller kan tage 10-60 sekunder. For lav værdi kan give timeout og fejlet analyse. Høj værdi kan forsinke feedback til bruger. Typisk 30-120 sekunder.">
           <Txt value={settings.ollama_vision_timeout_s ?? ''} onChange={v => setSettings(s => ({...s, ollama_vision_timeout_s: v}))} mono />
         </Field>
+        <div className="mt-5 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-800">Logiske lagerplaceringer</p>
+            <p className="text-xs text-gray-400">Skift disk eller NAS ved at rette stien her. Resten af systemet bruger det logiske navn.</p>
+          </div>
+          {storageRoots.length === 0 && <button onClick={bootstrapStorage} disabled={savingStorage !== null}
+            className="px-3 py-2 rounded-lg bg-sky-500 text-white text-xs font-medium disabled:opacity-50">
+            Opret fra nuværende opsætning
+          </button>}
+        </div>
         {storageRoots.length > 0 && (
-          <div className="mt-4 rounded-lg border border-gray-100 overflow-hidden">
+          <div className="mt-3 rounded-lg border border-gray-200 overflow-hidden">
             {storageRoots.map(root => {
-              const readOnlyOk = root.label.toLowerCase().includes('legacy')
-              const ok = (!root.required || root.configured) && root.exists && root.is_dir && (readOnlyOk || root.writable)
+              const ok = !!root.healthy
               return (
-                <div key={root.label} className="flex items-start gap-3 px-3 py-2 border-b border-gray-100 last:border-0">
+                <div key={root.id} className="px-3 py-3 border-b border-gray-100 last:border-0">
+                 <div className="flex items-start gap-3">
                   <span className={`mt-1 w-2 h-2 rounded-full ${ok ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs font-medium text-gray-700">{root.label}</p>
+                      <p className="text-xs font-semibold text-gray-700">{root.logical_name}</p>
                       <p className="text-xs text-gray-400">{fmtBytes(root.free_bytes)} fri</p>
                     </div>
-                    <p className="text-xs font-mono text-gray-500 truncate">{root.path || 'Ikke konfigureret'}</p>
-                    {!ok && <p className="text-xs text-amber-600">{root.error || (readOnlyOk ? 'Mappen mangler eller kan ikke læses' : 'Mappen mangler eller er ikke skrivbar')}</p>}
+                    <div className="flex flex-col sm:flex-row gap-2 mt-2">
+                      <input aria-label={`Sti for ${root.logical_name}`} value={root.path || ''}
+                        onChange={e => setStorageRoots(rows => rows.map(item => item.id === root.id ? {...item, path: e.target.value} : item))}
+                        className="min-w-0 flex-1 border border-gray-200 rounded-md px-2 py-1.5 text-xs font-mono" />
+                      <button onClick={() => saveStorage(root)} disabled={savingStorage !== null}
+                        className="px-3 py-1.5 rounded-md bg-gray-800 text-white text-xs disabled:opacity-50">
+                        {savingStorage === root.id ? 'Kontrollerer…' : 'Gem og kontrollér'}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs text-gray-400">{root.backend_type?.toUpperCase()} · {root.access_mode === 'read_write' ? 'Læs og skriv' : 'Kun læsning'} · prioritet {root.priority}</p>
+                    {root.expected_volume_uuid && <p className={`text-xs font-mono mt-1 ${root.uuid_matches === false ? 'text-red-600' : 'text-gray-400'}`}>
+                      Disk-ID: {root.actual_volume_uuid || 'kan ikke aflæses'} {root.uuid_matches === false ? '· forkert disk' : ''}
+                    </p>}
+                    {!ok && <p className="text-xs text-amber-600 mt-1">{root.error || 'Placeringen mangler eller har ikke de nødvendige rettigheder'}</p>}
                   </div>
+                 </div>
                 </div>
               )
             })}

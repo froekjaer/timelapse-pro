@@ -11657,10 +11657,12 @@ def _sftp_base_path(db: Session | None = None) -> _Path:
     """Canonical image root. DB setting wins, so NAS mount changes do not require restart."""
     fallback = os.getenv("SFTP_BASE", "/Volumes/data-fast")
     if db is not None:
-        return _Path(_get_setting(db, "sftp_base", fallback)).expanduser()
+        from storage_registry import CAPTURES, resolve_storage
+        return resolve_storage(db, CAPTURES, _get_setting(db, "sftp_base", fallback), writable=True)
     local_db = SessionLocal()
     try:
-        return _Path(_get_setting(local_db, "sftp_base", fallback)).expanduser()
+        from storage_registry import CAPTURES, resolve_storage
+        return resolve_storage(local_db, CAPTURES, _get_setting(local_db, "sftp_base", fallback), writable=True)
     finally:
         local_db.close()
 
@@ -13296,7 +13298,8 @@ def _get_nas_path():
         from database import SessionLocal
         db = SessionLocal()
         result = db.execute(text("SELECT value FROM settings WHERE key='backup_nas_path'")).fetchone()
-        return result[0] if result else None
+        from storage_registry import BACKUPS, resolve_storage
+        return str(resolve_storage(db, BACKUPS, result[0] if result else None, writable=True))
     except Exception as exc:
         log.exception("Kunne ikke læse backup_nas_path: %s", exc)
         return None
@@ -13360,27 +13363,6 @@ def _path_status(path_value: str | None, *, label: str, required: bool = False, 
     except Exception as exc:
         info["error"] = str(exc)
     return info
-
-
-@app.get("/api/admin/storage/status")
-def storage_status(_user=require_role("admin"), db: Session = Depends(get_db)):
-    """Runtime status for mapped disks/NAS roots used by Headend."""
-    settings = {r[0]: r[1] for r in db.execute(text(
-        "SELECT key, value FROM settings WHERE key IN "
-        "('sftp_base','sftp_legacy_roots','sftp_remote_base','backup_nas_path','edge_image_artifact_dir')"
-    )).fetchall()}
-    sftp_base = _sftp_base_path(db)
-    edge_image_root = _edge_image_storage_dir(create=False)
-    roots = [
-        _path_status(str(sftp_base), label="Canonical image root", required=True),
-        _path_status(settings.get("sftp_remote_base"), label="SFTP remote base", required=False),
-        _path_status(settings.get("backup_nas_path"), label="Backup NAS", required=False),
-        _path_status(str(edge_image_root), label="Edge image artifacts", required=True),
-    ]
-    for root in _configured_storage_roots(db)[1:]:
-        roots.append(_path_status(str(root), label="Legacy/search image root", required=False))
-    return {"roots": roots}
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -14958,6 +14940,8 @@ def _edge_image_storage_dir(*, create: bool = True) -> Path:
         db = SessionLocal()
         try:
             configured = _get_setting(db, "edge_image_artifact_dir", "")
+            from storage_registry import EDGE_ARTIFACTS, resolve_storage
+            configured = str(resolve_storage(db, EDGE_ARTIFACTS, configured or None, writable=True))
         finally:
             db.close()
     candidates = []
@@ -17033,9 +17017,10 @@ app.include_router(site_look_router, dependencies=[require_role("super_admin")])
 from api.capture_access_api import router as capture_access_router
 app.include_router(capture_access_router)
 
-from api import customer_risk_api, grc_register_api
+from api import customer_risk_api, grc_register_api, storage_api
 app.include_router(customer_risk_api.router)
 app.include_router(grc_register_api.router)
+app.include_router(storage_api.router)
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).

@@ -9539,3 +9539,24 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
   aktivering; Ollama forblev kørende, Headend health var 200 og memory-pressure viste
   72 % fri.
 - Verifikation: 8/8 AI runtime/Open WebUI/auth/arkitekturtests grønne samt Python compile.
+
+## 2026-07-17 - Codex - logisk lagerregister og enclosure-skift
+
+- Headend bruger nu logiske lagerroller i PostgreSQL frem for direkte afhængighed af
+  en bestemt disk: `captures-primary`, `backups-primary` og `edge-artifacts`.
+  Billedvisning/import/LAB, backup og edge-image artifacts resolver rollen ved runtime;
+  de tidligere settings er bevaret som kompatibel fallback.
+- `storage_bindings` understøtter local/SMB/NFS, prioritet, read/write/read-only/replica,
+  aktivering og forventet volume UUID. Flere bindings kan registreres til fremtidig NAS-
+  migration; egentlig datakopiering/replikering er ikke automatisk endnu.
+- System Administration viser logisk navn, fysisk sti, adgangstype, fri plads, health og
+  disk-ID. Administrator kan ændre stien og kontrollere den fra UI. API deaktiverer ikke
+  eller sletter eksisterende data.
+- Aktuel R&D-disk er registreret som APFS UUID
+  `CA1B8A2B-C085-42AC-9114-ECD8DD200465`; alle tre roller peger fortsat på
+  `/Volumes/data-fast`. Enclosure-skift accepteres kun som healthy, hvis mappe,
+  rettigheder og den forventede diskidentitet fortsat matcher.
+- Verifikation: databasebootstrap gennemført uden dataflytning, 4/4 lager- og
+  arkitekturtests grønne, Python compile og TypeScript/Vite build grønne, Headend
+  genstart/health HTTP 200, og de tre roller blev vist korrekt i ægte UI uden
+  browser-consolefejl.

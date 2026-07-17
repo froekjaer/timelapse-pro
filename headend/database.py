@@ -1190,6 +1190,29 @@ class GrcDocumentItemLink(Base):
     relationship = Column(String(40), nullable=False, default="included", server_default="included")
 
 
+class StorageBinding(Base):
+    """Maps a stable application storage role to a replaceable local/NAS path."""
+    __tablename__ = "storage_bindings"
+    __table_args__ = (
+        UniqueConstraint("logical_name", "path", name="uq_storage_binding_role_path"),
+        CheckConstraint("priority >= 0", name="ck_storage_binding_priority"),
+    )
+
+    id = Column(BigInteger, primary_key=True)
+    logical_name = Column(String(80), nullable=False, index=True)
+    backend_type = Column(String(20), nullable=False, default="local", server_default="local")
+    path = Column(String(1000), nullable=False)
+    access_mode = Column(String(20), nullable=False, default="read_write", server_default="read_write")
+    priority = Column(Integer, nullable=False, default=100, server_default="100")
+    active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    expected_volume_uuid = Column(String(80))
+    description = Column(String(300))
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+    updated_by = Column(String(100), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), server_default=text("CURRENT_TIMESTAMP"))
+
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
 
