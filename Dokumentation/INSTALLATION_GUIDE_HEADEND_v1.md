@@ -202,8 +202,10 @@ den fulde RBAC-model).
 - **Multi-prod-server-orkestrering** (hvis I får flere prod-servere) — scriptet understøtter det
   ved at køres flere gange med forskellige config-filer, men der er ingen central
   styring/dashboard på tværs af flere prod-instanser i denne version.
-- **Node-agent (CMDB-inventory)** — separat installation, se
-  `NODE_AGENT_USER_LAUNCHAGENT_MIGRATION_v1.md` (skrevet til R&D, men mønstret er genbrugeligt).
+- **Node-agent (CMDB-inventory)** — dækkes nu af §11 nedenfor (Fase 3) og
+  `HEADEND_GENERATOR_v1.md`. Enroll-scriptet (`enroll_headend_cmdb.sh`) og den
+  parametriserede node-agent-installer er implementeret og kontrakttestet; fysisk
+  end-to-end accept på en ny Mac mangler fortsat.
 
 ## 10. Fejlsøgning
 
@@ -219,7 +221,51 @@ den fulde RBAC-model).
 
 ---
 
-Se også: `MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` (topologi/politik),
+## 11. Headend-generator: kontrolleret provisioning + CMDB-enrollment (tilføjet 2026-07-16)
+
+Siden v1 blev skrevet, er der kommet en **generator-forfase** (`deploy/install/bootstrap_headend_macos.sh`), der gør §3–§4 mere kontrollerede, plus et **Fase 3-enrollment-trin**, der bringer maskinen i CMDB + under konfigurationskontrol. Fuldt design: `HEADEND_GENERATOR_v1.md`. Kort:
+
+**Fase 0 — Preflight (læs-only, kør FØR §4).** Beviser at værten er klar og at vi ikke rører CrushFTP:
+
+```bash
+deploy/install/bootstrap_headend_macos.sh --mode preflight --config ~/timelapse-staging.conf
+# skriver evidens-JSON; fejler hvis 8443 er optaget; bekræfter 21/22/80/443 urørt
+```
+
+**Fase 1 — Stage (hent SIGNERET GitHub-release i stedet for `git clone` i §1).** Henter et GPG-signeret tag, verificerer signatur + commit-SHA, og kører installer-dry-run:
+
+```bash
+deploy/install/bootstrap_headend_macos.sh --mode stage --config ~/timelapse-staging.conf \
+  --repo-url <github-url> --release-tag v<X.Y.Z> \
+  --expected-commit <40-char-sha> --destination ~/tl-release
+```
+
+Dette erstatter et løst `git clone` med en verificeret, immutabel release — brug den udcheckede `~/tl-release` som repo-sti i §3-§4.
+
+**Fase 2 — Apply.** Som §4–§6 (install → DNS-01-cert → install igen).
+
+**Fase 3 — Enroll i CMDB + config-control.** Efter §7 (første login). Installerer node-agent så maskinen løbende rapporterer inventory/security → CMDB og bliver synlig på linje med edge-flåden:
+
+```bash
+sudo deploy/install/enroll_headend_cmdb.sh --device-id TL-HEADEND-STAGING-1 \
+  --headend-url https://staging.timelapse-pro.dk:8443 \
+  --bootstrap-token-file /secure/bootstrap-token --repo-dir ~/tl-staging-release
+# verificér:
+curl -sk https://127.0.0.1:8443/api/cmdb/ | grep TL-HEADEND-STAGING-1
+```
+
+**Sikkerhedsmodel:** bootstrap-tokenet leveres via en rettighedsbeskyttet fil og
+kommer ikke i proceslisten. Agent-tokenet skrives atomisk til
+`/etc/timelapse/node-agent.conf` med mode `0640`. Inventory kræver Bearer-token,
+HMAC-signatur og replaybeskyttelse. Brug et backend-domæne med gyldigt certifikat;
+scriptet bruger ikke `curl -k` eller anden TLS-omgåelse.
+
+**Løbende konfigurationskontrol:** efter Fase 3 må software på en prod-headend KUN ændres via den signerede update-flow — aldrig `git pull`/manuel kopi. Node-agent + CMDB gør afvigelser synlige.
+
+---
+
+Se også: `HEADEND_GENERATOR_v1.md` (fuldt generator-design),
+`MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` (topologi/politik),
 `GO_LIVE_CHECKLIST_v10.md` §A/§M (krav før kundevendt drift),
 `Claude_Intern_CA_mTLS_Design_2026-07-05.md` (fremtidig CA/mTLS),
 `deploy/install/install_headend.sh` (selve scriptet).

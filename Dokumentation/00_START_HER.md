@@ -5,7 +5,7 @@
 > `Compliance -> GRC register`. Markdown-test- og riskdokumenter er
 > migreringskilder, runbooks eller genererede rapporter, ikke aktiv status.
 
-**Formål:** Indgangsdokumentet til TimeLapse Pro-dokumentationen. Læs dette først når du starter en ny session (Claude, Codex eller menneske). Det peger på den seneste, autoritative version af hvert dokument (`\*\_v10.md`), de levende arbejdsdokumenter og den underliggende empiri. **Sidst opdateret:** 2026-07-03 **Vedligeholdelsesregel:** Én seneste version pr. dokument, vedligeholdt som `.md`. Ved væsentlig opdatering hæves versionen og forgængeren flyttes til `Gamle versioner/`. Opdatér denne fil når nye autoritative dokumenter kommer til.
+**Formål:** Indgangsdokumentet til TimeLapse Pro-dokumentationen. Læs dette først når du starter en ny session (Claude, Codex eller menneske). Det peger på den seneste, autoritative version af hvert dokument (`\*\_v10.md`), de levende arbejdsdokumenter og den underliggende empiri. **Sidst opdateret:** 2026-07-17 (Claude: manglende pointere tilføjet, jf. `Claude_QA_Review_2026-07-17.md` §5) **Vedligeholdelsesregel:** Én seneste version pr. dokument, vedligeholdt som `.md`. Ved væsentlig opdatering hæves versionen og forgængeren flyttes til `Gamle versioner/`. Opdatér denne fil når nye autoritative dokumenter kommer til.
 
 
 ## 1. Boot en ny session — kernefakta
@@ -80,16 +80,22 @@ Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne b
 
 | Dokument | Rolle |
 | - | - |
-| `HANDOVER\_LOG.md` | Løbende session-log — hvad, hvornår, hvorfor |
+| `HANDOVER\_LOG.md` | Løbende session-log — hvad, hvornår, hvorfor. Roteret 2026-07-18: entries før 2026-07-08 ligger i `HANDOVER\_LOG\_ARKIV\_2026-06-28\_til\_2026-07-07.md` (kun historik) |
 | `HANDOVER\_Claude\_Codex\_arbejdsdeling.md` | Arbejdsdeling Claude/Codex, åbne tråde, Edge-QA-kontrakt |
 | `SERVICES\_OG\_DRIFT\_kilde\_til\_sandhed.md` | Kilde-til-sandhed for services/drift |
 | `FAQ\_og\_fejlsøgning.md` | FAQ + fejlsøgning |
 | `SYSTEM\_HEALTH\_REGISTER.md` | Health-register |
+| `../PRIORITIZED\_BACKLOG.md` (repo-rod) | Prioriteret backlog — sessions-opstart bruger denne i praksis |
+| `MASTER\_TEST\_CHECKLIST\_v1.md` | Master-testliste (unit/integration-opdeling, manglende tests) — testSTATUS ligger i GRC-registret (PostgreSQL) |
+
+> **Forældet:** `ISSUES.md` (repo-rod, sidst opdateret 2026-06-14) lister fund som åbne, der er lukket. Brug GRC-registret som statuskilde; ISSUES.md afventer flytning til `Gamle versioner/`.
+
+> **Governance-gates i koden:** `tests/test\_architecture\_ratchet.py` + `tests/architecture\_baseline.json` (main.py-linje-/route-loft, K3) og `headend/tests/test\_route\_auth\_coverage.py` (route-auth-sweep, K1). Baseline må kun sænkes — hævning kræver dokumenteret undtagelse (jf. `Claude\_QA\_Review\_2026-07-17.md` §2.2).
 
 
 ## 4. Aktuelle design-/analysenotater
 
-`Claude\_Observability\_ITIM\_Design\_2026-06-29.md` (ITIM/observability), `Codex\_Thumbnail\_503\_Analyse\_2026-06-30.md`, `Codex\_Edge\_AI\_NPU\_Modes\_2026-06-28.md` (edge NPU), `Claude\_AI\_Tagging\_Redesign\_2026-06-23.md` (tag-generering), `Nikon\_Z30\_LAB\_Profil\_og\_Fokus\_2026-06-22.md`, `Global\_Config\_og\_Kamera\_Binding\_2026-06-22.md`, `README\_CMDB.md`.
+`Claude\_QA\_Review\_2026-07-17.md` (**nyeste QA/retning: SEC-016, GOV-01, gap-analyse for platform/payload**), `Claude\_QA\_Arkitektur\_Review\_2026-07-15.md` + `Codex\_REVIEW\_Claude\_Arkitektur\_Risk\_Test\_2026-07-15.md` (arkitektur/risk/test-reviews bag ADR-001), `TENKNISK\_GÆLD\_ANALYSE\_headend\_main\_py\_2026-07-06.md` + `P2-01\_Refaktoreringsplan\_main\_py.md` (teknisk gæld/refaktorering), `STAGING\_TIL\_PROD\_PROMOTION\_v1.md` + `HEADEND\_GENERATOR\_v1.md` (promotion/provisioning), `Claude\_REVIEW\_Generatorer\_Edge\_Headend\_2026-07-17.md` (generator-review, fund GEN-01..11) + `INSTALLATIONSMANUAL\_HEADEND\_GENERATOR\_v1.md` + `INSTALLATIONSMANUAL\_EDGE\_GENERATOR\_v1.md` (trin-for-trin install: headend på kørende Mac m. CrushFTP-sameksistens; edge som image eller på eksisterende Linux), `Claude\_Observability\_ITIM\_Design\_2026-06-29.md` (ITIM/observability), `Codex\_Thumbnail\_503\_Analyse\_2026-06-30.md`, `Codex\_Edge\_AI\_NPU\_Modes\_2026-06-28.md` (edge NPU), `Claude\_AI\_Tagging\_Redesign\_2026-06-23.md` (tag-generering), `Nikon\_Z30\_LAB\_Profil\_og\_Fokus\_2026-06-22.md`, `Global\_Config\_og\_Kamera\_Binding\_2026-06-22.md`, `README\_CMDB.md`.
 
 ## 5. Reference (fortsat gældende)
 
@@ -103,6 +109,7 @@ Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne b
 | `Empiri og kilder/` | Rå kilder: chat-dumps (`Timelaps-chat.docx`, `ChatGpt-input.docx`, `Chat with Gemini.docx`), `Startkrav.docx`, Google Drive-pointere (`.gdoc`/`.gslides`: kravspecifikation, sikkerhedsanalyse v5, præsentation, Nikon Z30 debug m.fl.). |
 | `Hardware manualer/` | PDF-manualer: OrangePi 4 Pro (A733), OrangePi PC Plus, OpenClaw-deploy. |
 | `Konfig artefakter/` | `fail2ban-\*.conf/.local`, `certbot-renewal.plist`, `cmdb\_models.py`, `security-notes.md`. |
+| `../docs/` (repo-rod) | ~20 kode-nære udviklernoter fra z.ai-perioden (drift-mode, site-look, LAB-testguide, edge-arkitektur m.m.). **Beslutning om varig placering udestår** (jf. `Claude\_QA\_Review\_2026-07-17.md` §5) — tjek mappen ved arbejde på disse features. |
 
 
 > **Superseded assessment-snapshots** (QA\_Pentest, QA\_SABSA\_Reassessment, VIRTUAL\_PENTEST\_STATUS, SABSA\_RISK\_ANALYSIS\_UPDATE, Sessionoverlevering, Overtagelsesnotat m.fl.) ligger nu i `Gamle versioner/` — deres indhold er foldet ind i `RISK\_ASSESSMENT\_v10.md` og `HANDOVER\_LOG.md`.
