@@ -45,6 +45,15 @@ while IFS= read -r -d '' path; do
 done < <(
   find "$root" \
     -path "$root/.git" -prune -o \
+    -path "$root/.venv" -prune -o \
+    -path "$root/venv" -prune -o \
+    -path "$root/headend/venv" -prune -o \
+    -path "$root/node_modules" -prune -o \
+    -path "$root/timelapse-ui/node_modules" -prune -o \
+    -path "$root/timelapse-ui/dist" -prune -o \
+    -path "$root/.pytest_cache" -prune -o \
+    -path "$root/.mypy_cache" -prune -o \
+    -path "$root/.ruff_cache" -prune -o \
     -name "$icon_name" -type f -size 0 -print0 2>/dev/null
 )
 

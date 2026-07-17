@@ -104,7 +104,15 @@ jobs:
             tools/cleanup_macos_icon_files.sh .
           else
             find .git -name $'Icon\r' -type f -exec rm -f {} + 2>/dev/null || true
-            find . -path ./.git -prune -o -name $'Icon\r' -type f -size 0 -exec rm -f {} + 2>/dev/null || true
+            find . \
+              -path ./.git -prune -o \
+              -path ./.venv -prune -o \
+              -path ./venv -prune -o \
+              -path ./headend/venv -prune -o \
+              -path ./node_modules -prune -o \
+              -path ./timelapse-ui/node_modules -prune -o \
+              -path ./timelapse-ui/dist -prune -o \
+              -name $'Icon\r' -type f -size 0 -exec rm -f {} + 2>/dev/null || true
             echo "Removed macOS Icon metadata file(s) using inline fallback"
           fi
       - name: Verificér GPG-signatur på seneste tag
