@@ -70,6 +70,58 @@ def generate_test_device_id() -> str:
     return f"TL-TEST-{uuid.uuid4().hex[:8].upper()}"
 
 
+def device_list(response: requests.Response) -> list[dict]:
+    """Return the current `/api/admin/devices` list contract."""
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list), "Device API skal returnere en JSON-liste"
+    return payload
+
+
+@pytest.fixture(scope="module", autouse=True)
+def isolated_device_fixture():
+    """Seed one tenant-scoped device in timelapse_test and remove it afterwards."""
+    from headend.database import Customer, Device, SessionLocal, Site, User
+
+    customer_id = "qa-device-customer"
+    site_id = "qa-device-site"
+    device_id = "TL-QA-DEVICE-FIXTURE"
+    db = SessionLocal()
+    operator = db.query(User).filter_by(username=OPERATOR_CREDS["username"]).first()
+    previous_customer_id = operator.customer_id if operator else None
+    try:
+        if not db.query(Customer).filter_by(id=customer_id).first():
+            db.add(Customer(id=customer_id, name="QA Device Customer"))
+        if not db.query(Site).filter_by(id=site_id).first():
+            db.add(Site(id=site_id, customer_id=customer_id, name="QA Device Site"))
+        fixture_device = db.query(Device).filter_by(device_id=device_id).first()
+        if not fixture_device:
+            fixture_device = Device(device_id=device_id)
+            db.add(fixture_device)
+        fixture_device.customer_id = customer_id
+        fixture_device.site_id = site_id
+        fixture_device.customer_name = "QA Device Customer"
+        fixture_device.site_name = "QA Device Site"
+        fixture_device.camera_name = "QA Device Camera"
+        fixture_device.status = "online"
+        fixture_device.last_seen = datetime.now(timezone.utc)
+        fixture_device.device_config = "{}"
+        if operator:
+            operator.customer_id = customer_id
+        db.commit()
+        yield
+    finally:
+        db.rollback()
+        operator = db.query(User).filter_by(username=OPERATOR_CREDS["username"]).first()
+        if operator:
+            operator.customer_id = previous_customer_id
+        db.query(Device).filter_by(device_id=device_id).delete()
+        db.query(Site).filter_by(id=site_id).delete()
+        db.query(Customer).filter_by(id=customer_id).delete()
+        db.commit()
+        db.close()
+
+
 # ── 1. List Devices ───────────────────────────────────────────────────────────
 
 @pytest.mark.integration
@@ -81,9 +133,7 @@ def test_list_devices_as_admin():
 
     r = make_authenticated_request(token, "/admin/devices")
     assert r.status_code == 200
-    data = r.json()
-    assert "devices" in data
-    assert isinstance(data["devices"], list)
+    assert isinstance(device_list(r), list)
 
 
 @pytest.mark.integration
@@ -95,8 +145,7 @@ def test_list_devices_as_operator():
 
     r = make_authenticated_request(token, "/admin/devices")
     assert r.status_code == 200
-    data = r.json()
-    assert "devices" in data
+    assert isinstance(device_list(r), list)
 
 
 @pytest.mark.integration
@@ -118,10 +167,9 @@ def test_get_device_by_id():
 
     # Først list alle devices for at finde et ID
     r = make_authenticated_request(token, "/admin/devices")
-    if r.status_code != 200 or not r.json().get("devices"):
+    devices = device_list(r)
+    if not devices:
         pytest.skip("Ingen devices at teste")
-
-    devices = r.json()["devices"]
     device_id = devices[0]["device_id"]
 
     r2 = make_authenticated_request(token, f"/admin/devices/{device_id}")
@@ -229,25 +277,29 @@ def test_update_device_as_admin():
 
     # Find en eksisterende device
     r = make_authenticated_request(token, "/admin/devices")
-    if r.status_code != 200 or not r.json().get("devices"):
+    devices = device_list(r)
+    if not devices:
         pytest.skip("Ingen devices at teste")
-
-    devices = r.json()["devices"]
     device_id = devices[0]["device_id"]
 
-    payload = {
-        "name": f"Updated Device {device_id}",
-        "status": "active"
-    }
-
-    r2 = make_authenticated_request(token, f"/admin/devices/{device_id}", method="PUT", json=payload)
-
-    # PUT måske ikke implementeret
-    if r2.status_code == 405:
-        pytest.skip("PUT /admin/devices/{id} endpoint ikke implementeret")
-    elif r2.status_code in [200, 202]:
-        data = r2.json()
-        assert "device" in data or data.get("ok") is True
+    original_name = devices[0].get("camera_name")
+    try:
+        r2 = make_authenticated_request(
+            token,
+            f"/admin/devices/{device_id}/info",
+            method="PUT",
+            json={"camera_name": "QA Updated Camera"},
+        )
+        assert r2.status_code == 200
+        detail = make_authenticated_request(token, f"/admin/devices/{device_id}").json()
+        assert detail["device"]["camera_name"] == "QA Updated Camera"
+    finally:
+        make_authenticated_request(
+            token,
+            f"/admin/devices/{device_id}/info",
+            method="PUT",
+            json={"camera_name": original_name},
+        )
 
 
 @pytest.mark.integration
@@ -259,20 +311,18 @@ def test_update_device_as_operator():
 
     # Find en device
     r = make_authenticated_request(token, "/admin/devices")
-    if r.status_code != 200 or not r.json().get("devices"):
+    devices = device_list(r)
+    if not devices:
         pytest.skip("Ingen devices at teste")
-
-    devices = r.json()["devices"]
     device_id = devices[0]["device_id"]
 
-    payload = {"name": "Updated by operator"}
-
-    r2 = make_authenticated_request(token, f"/admin/devices/{device_id}", method="PUT", json=payload)
-
-    if r2.status_code == 405:
-        pytest.skip("PUT /admin/devices/{id} endpoint ikke implementeret")
-    # Operator kan måske opdatere — vi accepterer både 200 (tilladt) og 403 (nægtet)
-    assert r2.status_code in [200, 202, 403, 401]
+    r2 = make_authenticated_request(
+        token,
+        f"/admin/devices/{device_id}/info",
+        method="PUT",
+        json={"camera_name": "Must not be applied"},
+    )
+    assert r2.status_code == 403
 
 
 # ── 5. Delete Device ──────────────────────────────────────────────────────────
@@ -284,28 +334,18 @@ def test_delete_device_as_admin():
     if not token:
         pytest.skip("Kunne ikke få admin token")
 
-    # Opret en test device først (hvis POST endpoint findes)
     device_id = generate_test_device_id()
+    from headend.database import Device, SessionLocal
+    db = SessionLocal()
+    try:
+        db.add(Device(device_id=device_id, camera_name="QA delete fixture"))
+        db.commit()
+    finally:
+        db.close()
 
-    # Først prøv at oprette
-    payload = {"device_id": device_id, "name": "To be deleted"}
-    create_r = make_authenticated_request(token, "/admin/devices", method="POST", json=payload)
-
-    # Hvis POST ikke er implementeret, skip
-    if create_r.status_code == 405:
-        pytest.skip("POST /admin/devices ikke implementeret — kan ikke teste DELETE")
-
-    # Nu prøv at slette
     r = make_authenticated_request(token, f"/admin/devices/{device_id}", method="DELETE")
-
-    if r.status_code == 405:
-        pytest.skip("DELETE /admin/devices/{id} endpoint ikke implementeret")
-    elif r.status_code in [200, 204, 202]:
-        # Success
-        pass
-    else:
-        # Andet status (404 hvis ikke oprettet, etc)
-        pass
+    assert r.status_code == 200
+    assert make_authenticated_request(token, f"/admin/devices/{device_id}").status_code == 404
 
 
 @pytest.mark.integration
@@ -336,20 +376,17 @@ def test_get_device_config():
 
     # Find en device
     r = make_authenticated_request(token, "/admin/devices")
-    if r.status_code != 200 or not r.json().get("devices"):
+    devices = device_list(r)
+    if not devices:
         pytest.skip("Ingen devices at teste")
-
-    devices = r.json()["devices"]
     device_id = devices[0]["device_id"]
 
     # Tjek at device response indeholder config
     r2 = make_authenticated_request(token, f"/admin/devices/{device_id}")
     if r2.status_code == 200:
         data = r2.json()
-        # Device skal have config
         assert "device" in data
-        # device_config kan være None eller dict
-        assert "device_config" in data["device"]
+        assert isinstance(data.get("device_config"), dict)
 
 
 # ── 7. Device Status ─────────────────────────────────────────────────────────
@@ -362,15 +399,14 @@ def test_device_status_active():
         pytest.skip("Kunne ikke få admin token")
 
     r = make_authenticated_request(token, "/admin/devices")
-    if r.status_code != 200 or not r.json().get("devices"):
+    devices = device_list(r)
+    if not devices:
         pytest.skip("Ingen devices at teste")
-
-    devices = r.json()["devices"]
     # Find en device med status
     for device in devices:
         if "status" in device:
             # Status skal være en af de kendte værdier
-            assert device["status"] in ["active", "inactive", "pending", "offline"]
+            assert device["status"] in ["online", "offline", "unknown"]
             break
     else:
         pytest.skip("Ingen devices med status field")
@@ -389,11 +425,9 @@ def test_device_customer_site_relation():
     if r.status_code != 200:
         pytest.skip("Kunne ikke liste devices")
 
-    data = r.json()
-    if not data.get("devices"):
+    devices = device_list(r)
+    if not devices:
         pytest.skip("Ingen devices")
-
-    devices = data["devices"]
     # Tjek at devices kan have customer_id og site_id
     for device in devices[:3]:  # Check first 3
         # customer_id kan være None (platform devices)
@@ -411,10 +445,9 @@ def test_device_last_seen_recent():
         pytest.skip("Kunne ikke få admin token")
 
     r = make_authenticated_request(token, "/admin/devices")
-    if r.status_code != 200 or not r.json().get("devices"):
+    devices = device_list(r)
+    if not devices:
         pytest.skip("Ingen devices at teste")
-
-    devices = r.json()["devices"]
     for device in devices:
         if device.get("last_seen"):
             last_seen = device["last_seen"]
@@ -422,6 +455,8 @@ def test_device_last_seen_recent():
             try:
                 last_seen_dt = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
                 # Skal være inden for de sidste 30 dage (eller enheden er offline)
+                if last_seen_dt.tzinfo is None:
+                    last_seen_dt = last_seen_dt.replace(tzinfo=timezone.utc)
                 age = datetime.now(timezone.utc) - last_seen_dt
                 assert age.total_seconds() >= 0, "last_seen kan ikke være i fremtiden"
                 break
@@ -499,10 +534,10 @@ def test_create_duplicate_device_id():
 
     # Find en eksisterende device ID
     r = make_authenticated_request(token, "/admin/devices")
-    if r.status_code != 200 or not r.json().get("devices"):
+    devices = device_list(r)
+    if not devices:
         pytest.skip("Ingen devices at teste")
-
-    existing_id = r.json()["devices"][0]["device_id"]
+    existing_id = devices[0]["device_id"]
 
     # Prøv at oprette med samme ID
     r2 = make_authenticated_request(token, "/admin/devices", method="POST", json={
@@ -518,23 +553,12 @@ def test_create_duplicate_device_id():
 
 @pytest.mark.integration
 def test_device_filter_by_customer():
-    """Device liste kan filtreres på customer."""
-    token = get_admin_token()
+    """A tenant-scoped operator must only receive devices for that customer."""
+    token = get_operator_token()
     if not token:
         pytest.skip("Kunne ikke få admin token")
 
-    # Prøv at filtrere på customer_id parameter
-    r = make_authenticated_request(token, "/admin/devices?customer_id=test-customer")
-
-    # Dette endpoint måske ikke understøtter filtering
-    if r.status_code == 200:
-        data = r.json()
-        assert "devices" in data
-        # Hvis filtering virker, alle devices skal have denne customer
-        for device in data["devices"]:
-            # customer_id kan være None for platform devices
-            if device.get("customer_id"):
-                assert device["customer_id"] == "test-customer" or device["customer_id"] is None
-    elif r.status_code in [400, 404]:
-        # Filtering ikke understøttet
-        pass
+    r = make_authenticated_request(token, "/admin/devices")
+    data = device_list(r)
+    assert data, "Den seedede tenant-enhed skal være synlig"
+    assert all(device.get("customer_id") == "qa-device-customer" for device in data)

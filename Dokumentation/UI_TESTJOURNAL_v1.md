@@ -169,7 +169,7 @@ Disse køres separat med pytest/systemevidens og må ikke markeres PASS alene vi
 | 2026-07-17 | Viewer så skrivekontroller og kunne åbne brugeroprettelsesdialog | Høj | Backend afviste korrekt med 403; route guards og rollebaseret skjulning implementeret, afventer live regression efter deploy |
 | 2026-07-17 | Dashboard brugte navnefelter og viste en korrekt bundet enhed som “uden kunde/site” | Medium | Device-API eksponerer nu stabile `customer_id`/`site_id`; dashboard grupperer på id med legacy fallback |
 | 2026-07-17 | Topniveau-pytest kunne arve operational `DATABASE_URL` | Kritisk test-sikkerhed | `tests/conftest.py` tvinger nu `timelapse_test` før Headend-import; isoleret test-Headend på port 8011 anvendt |
-| 2026-07-17 | `test_device_management.py` forventer gammel `{devices: [...]}` kontrakt | Medium testgæld | 11 testfejl klassificeret som forældede assertions, 4 bestod og 5 blev fravalgt; modernisering er næste testarbejde |
+| 2026-07-17 | `test_device_management.py` forventede gammel `{devices: [...]}` kontrakt | Medium testgæld | Moderniseret til aktuel listekontrakt og isoleret tenant-fixture: 14 PASS, 6 dokumenterede SKIP; ingen driftsdata berørt |
 
 ## 8. Exit-kriterier
 
