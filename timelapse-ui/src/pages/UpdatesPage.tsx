@@ -415,6 +415,20 @@ function workflowForUpdate(u: Update, deployStatus?: HeadendDeployStatus, flowSt
   const phase = deployStatus?.phase || ''
   const edgeTargetStatus = flowStatus?.targets[0]?.status || ''
 
+  if (u.status === 'pending' && (u.update_type === 'os_security' || u.update_type === 'os_updates') && !flowStatus?.artifact) {
+    return {
+      title: 'Edge OS offline update-flow',
+      nextAction: 'Byg og bind et Headend-signeret offline OS artifact. Godkendelse er låst, indtil artifactet er valideret.',
+      steps: [
+        { title: 'Rapporteret', detail: 'Edge/CMDB har rapporteret den præcise pakkeliste.', state: 'done' },
+        { title: 'Byg bundle', detail: 'Headend bygger pakken i isoleret Mac-container uden Edge-internet.', state: 'current' },
+        { title: 'Signer og bind', detail: 'Manifest, sha256 og signatur bindes til change ticket.', state: 'waiting' },
+        { title: 'Godkend', detail: 'Administrator kan godkende, når artifact trust er dokumenteret.', state: 'waiting' },
+        { title: 'Edge pull', detail: 'Edge tager backup, validerer og installerer offline.', state: 'waiting' },
+      ],
+    }
+  }
+
   if (u.status === 'pending') {
     const prodReady = isProdReadyUpdate(u)
     return {
@@ -670,6 +684,8 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
   const headendDeployable = canDeployOnHeadend(u)
   const headendScoped = isHeadendScoped(u)
   const deployRunning = deployStatus?.running === true
+  const isOsUpdate = u.update_type === 'os_security' || u.update_type === 'os_updates'
+  const osArtifactMissing = isOsUpdate && !flowStatus?.artifact
 
   return (
     <div className="border-b border-gray-50 last:border-0">
@@ -714,7 +730,8 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
         {u.status === 'pending' && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             <button onClick={() => { onApprove(u.id) }}
-              disabled={isBusy}
+              disabled={isBusy || osArtifactMissing}
+              title={osArtifactMissing ? 'Byg og bind et signeret offline OS artifact først' : undefined}
               className="flex items-center gap-1 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white text-xs rounded-lg disabled:opacity-50 transition-colors">
               <CheckCircle className="w-3.5 h-3.5" />
               {prodReady ? 'Godkend prod' : 'Godkend'}
@@ -800,9 +817,9 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
           </div>
           <WorkflowStatusPanel update={u} deployStatus={deployStatus} flowStatus={flowStatus} />
           {!headendScoped && <FlowTargetsPanel flowStatus={flowStatus} />}
-          {u.status === 'blocked' && (u.update_type === 'os_security' || u.update_type === 'os_updates') && (
+          {(u.status === 'pending' || u.status === 'blocked') && isOsUpdate && osArtifactMissing && (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
-              <div className="font-medium text-amber-800">Bind signeret OS artifact</div>
+              <div className="font-medium text-amber-800">Byg og bind signeret OS artifact før godkendelse</div>
               <div className="mt-1 text-amber-700">
                 Headend bygger via Mac-container/lab-builder, registrerer artifactet og binder det til denne update. Manuel artifact-binding er kun til fejlsøgning.
               </div>

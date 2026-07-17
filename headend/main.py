@@ -49,7 +49,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -7615,6 +7615,12 @@ def _run_os_bundle_build_bind_job(job_id: str, update_id: int, payload_data: dic
         if update.update_type not in {"os_security", "os_updates"}:
             raise RuntimeError("Kun OS updates kan få bygget OS bundle")
         device_id = (update.scope_id or payload_data.get("device_id") or "").strip()
+        if str(payload_data.get("builder_mode") or "auto").strip().lower() == "auto":
+            _update_job(job_id, phase="mirror_build", progress=20, message="Henter og verificerer aktuelle OS-pakker på Headend")
+            result = _auto_build_and_bind_os_bundle(db, update, device_id, user)
+            _update_job(job_id, running=False, status="done", phase="complete", progress=100,
+                        finished_at=now_utc().isoformat(), message=f"OS artifact bygget og bundet: {result['artifact_id']}", result=result)
+            return
         plan_path_raw = str(payload_data.get("plan_path") or _plan_path_for_update(update) or "").strip()
         if not plan_path_raw:
             raise RuntimeError("Update mangler OS plan. Importér eller refresh OS-katalog fra UI først.")
@@ -8825,6 +8831,7 @@ def _auto_build_and_bind_os_bundle(
         target_os=target_os,
         source_ref=f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
         verbose=True,
+        strict_versions=False,
     )
 
     log.info(
@@ -8851,6 +8858,7 @@ def _auto_build_and_bind_os_bundle(
                 "packages_requested": result["packages_requested"],
                 "deb_files": result["deb_files"],
                 "not_found": result["not_found"],
+                "version_drifts": result["version_drifts"],
                 "ubuntu_suite": suite,
                 "architecture": architecture,
                 "triggered_from": "os_bundle_auto_poller",
@@ -8881,6 +8889,9 @@ def _auto_build_and_bind_os_bundle(
         "OS bundle auto-poller: artifact %s bundet til update #%d ✓",
         artifact_dict["artifact_id"], update.id,
     )
+    return {"update_id": update.id, "bundle_path": str(output_path), "artifact_id": artifact_dict["artifact_id"],
+            "packages_requested": result["packages_requested"], "deb_files": result["deb_files"],
+            "version_drifts": result["version_drifts"]}
 
 
 def _infer_ubuntu_suite_for_os_bundle(inv: DeviceInventory | None, packages: list[dict]) -> str:
@@ -12245,6 +12256,7 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
 
 @app.get("/api/admin/thumbnail-backlog")
 def get_thumbnail_backlog(
+    scan_limit: int = Query(500, ge=50, le=5000),
     current_user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
@@ -12272,33 +12284,18 @@ def get_thumbnail_backlog(
     missing_count = 0
     device_missing: dict[str, int] = {}
 
-    # Batch-process captures for performance (1000 ad gangen)
-    BATCH_SIZE = 1000
-    offset = 0
-    has_more = True
+    available_count = query.count()
+    batch = query.order_by(Capture.captured_at.desc()).limit(scan_limit).all()
+    for capture_id, device_id, filename in batch:
+        total_count += 1
+        image_path = _find_image(device_id, filename)
+        if not image_path:
+            continue  # Filen mangler — tæller ikke som "missing thumbnail"
 
-    while has_more:
-        batch = query.order_by(Capture.captured_at.desc()).offset(offset).limit(BATCH_SIZE).all()
-        if not batch:
-            has_more = False
-            break
-
-        for capture_id, device_id, filename in batch:
-            total_count += 1
-            image_path = _find_image(device_id, filename)
-            if not image_path:
-                continue  # Filen mangler — tæller ikke som "missing thumbnail"
-
-            thumb = _find_existing_thumbnail(image_path)
-            if not thumb:
-                missing_count += 1
-                device_missing[device_id] = device_missing.get(device_id, 0) + 1
-
-        offset += BATCH_SIZE
-        # Safety: stop efter 50k captures for at undgå meget lange responses
-        if total_count >= 50000:
-            log.info("Thumbnail backlog: nåede 50k captures — stopper scan (partial result)")
-            break
+        thumb = _find_existing_thumbnail(image_path)
+        if not thumb:
+            missing_count += 1
+            device_missing[device_id] = device_missing.get(device_id, 0) + 1
 
     elapsed = _t() - t0
     log.info("Thumbnail backlog: %d/%d mangler (%.2fs)", missing_count, total_count, elapsed)
@@ -12308,7 +12305,8 @@ def get_thumbnail_backlog(
         "missing": missing_count,
         "devices": device_missing,
         "scan_time_seconds": round(elapsed, 2),
-        "partial": total_count >= 50000,
+        "partial": available_count > total_count,
+        "available": available_count,
     }
 
 

@@ -37,6 +37,16 @@ export default function LoginPage() {
     return passwordRef.current?.value ?? password
   }
 
+  function resetMfaStep() {
+    setMfaRequired(false)
+    setMfaSetupRequired(false)
+    setMfaToken('')
+    setMfaCode('')
+    setMfaQr('')
+    setMfaSecret('')
+    setError(null)
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
@@ -148,7 +158,7 @@ export default function LoginPage() {
                 type="text"
                 autoComplete="username"
                 value={username}
-                onChange={e => setUsername(e.target.value)}
+                onChange={e => { if (mfaRequired || mfaSetupRequired) resetMfaStep(); setUsername(e.target.value) }}
                 onInput={e => setUsername(e.currentTarget.value)}
                 className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm
                            focus:outline-none focus:ring-2 focus:ring-sky-300"
@@ -168,7 +178,7 @@ export default function LoginPage() {
                 type={showPw ? 'text' : 'password'}
                 autoComplete="current-password"
                 value={password}
-                onChange={e => setPassword(e.target.value)}
+                onChange={e => { if (mfaRequired || mfaSetupRequired) resetMfaStep(); setPassword(e.target.value) }}
                 onInput={e => setPassword(e.currentTarget.value)}
                 className="w-full pl-9 pr-10 py-2.5 border border-gray-200 rounded-lg text-sm
                            focus:outline-none focus:ring-2 focus:ring-sky-300"
@@ -216,6 +226,10 @@ export default function LoginPage() {
               <p className="text-xs text-gray-400 mt-1">
                 {mfaSetupRequired ? 'Indtast første kode for at aktivere MFA på kontoen.' : 'Åbn din authenticator app og indtast den 6-cifrede kode'}
               </p>
+              <button type="button" onClick={resetMfaStep}
+                className="mt-2 text-xs font-medium text-sky-600 hover:text-sky-700">
+                Tilbage til brugernavn og adgangskode
+              </button>
             </div>
           )}
 

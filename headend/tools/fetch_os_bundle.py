@@ -38,8 +38,8 @@ from typing import Any
 # ── Ubuntu mirror configuration ──────────────────────────────────────────────
 
 # arm64 uses ports mirror; amd64 uses the regular archive
-MIRROR_ARM64 = "http://ports.ubuntu.com/ubuntu-ports"
-MIRROR_AMD64 = "http://archive.ubuntu.com/ubuntu"
+MIRROR_ARM64 = "https://ports.ubuntu.com/ubuntu-ports"
+MIRROR_AMD64 = "https://archive.ubuntu.com/ubuntu"
 HTTP_USER_AGENT = "TimeLapsePro-Headend-OSBundle/1.0"
 
 # Components and pockets to search, in priority order
@@ -451,6 +451,7 @@ def build_bundle(
 
     package_file_entries: list[dict[str, Any]] = []
     not_found: list[str] = []
+    version_drifts: list[dict[str, str]] = []
 
     for pkg in packages:
         name = str(pkg.get("name") or "").strip()
@@ -472,6 +473,7 @@ def build_bundle(
                 not_found.append(f"{name}={wanted_version}")
                 continue
             print(f"  WARNING: {message} — using index version", file=sys.stderr)
+            version_drifts.append({"name": name, "requested": wanted_version, "resolved": index_version})
 
         # Use repo base URL from entry if it came from an extra repo
         effective_mirror = entry.get("_repo_base_url") or mirror
@@ -527,6 +529,7 @@ def build_bundle(
         "packages_requested": len(packages),
         "deb_files": len(package_file_entries),
         "not_found": not_found,
+        "version_drifts": version_drifts,
     }
 
 

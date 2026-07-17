@@ -109,6 +109,7 @@ interface ThumbnailBacklog {
   devices: Record<string, number>
   scan_time_seconds: number
   partial: boolean
+  available: number
 }
 
 export default function PostProcessingPage() {
@@ -243,10 +244,12 @@ export default function PostProcessingPage() {
           <p className="text-sm text-slate-500 mt-1">Kontrolleret efterbehandling af eksisterende billeder, thumbnails og AI-tags.</p>
         </div>
         <div className="flex items-center gap-2">
-          {backlog && backlog.missing > 0 && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-50 border border-amber-200">
-              <Image className="w-4 h-4 text-amber-600" />
-              <span className="text-sm font-medium text-amber-900">{backlog.missing} manglende thumbnails</span>
+          {backlog && (
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${backlog.missing ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+              <Image className={`w-4 h-4 ${backlog.missing ? 'text-amber-600' : 'text-emerald-600'}`} />
+              <span className={`text-sm font-medium ${backlog.missing ? 'text-amber-900' : 'text-emerald-800'}`}>
+                {backlog.missing} mangler {backlog.partial ? `i seneste ${backlog.total} af ${backlog.available}` : ''}
+              </span>
             </div>
           )}
           <button
