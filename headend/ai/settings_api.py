@@ -32,6 +32,7 @@ AI_RUNTIME_FIELDS = {
     "ollama_vision_model": {"label": "Teknisk fallback vision-model", "type": "model", "default": "qwen3-vl:8b"},
     "ollama_text_model": {"label": "Tekst/AI Ops-model", "type": "model", "default": "llama3.2:latest"},
     "ollama_fallback_models": {"label": "Vision fallback-modeller", "type": "text", "default": "qwen2.5vl:7b"},
+    "ollama_keep_alive_s": {"label": "Behold model i RAM efter brug (sek.)", "type": "int", "default": "30", "min": 0, "max": 3600},
     "ollama_vision_timeout_s": {"label": "Vision timeout (sek.)", "type": "int", "default": "120", "min": 10, "max": 900},
     "ollama_max_image_bytes": {"label": "Maks. billedstørrelse (bytes)", "type": "int", "default": "1500000", "min": 100000, "max": 20000000},
     "ollama_max_image_edge": {"label": "Maks. billedkant (px)", "type": "int", "default": "1024", "min": 256, "max": 4096},

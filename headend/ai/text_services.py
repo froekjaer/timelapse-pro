@@ -91,6 +91,7 @@ class _OllamaTextBase:
     def __init__(self, base_url: str | None = None, model: str | None = None):
         self.base_url = (base_url or _db_setting("ollama_url", OLLAMA_BASE_URL)).rstrip("/")
         self.model    = model or _db_setting("ollama_text_model", TEXT_MODEL)
+        self.keep_alive_s = int(_db_setting("ollama_keep_alive_s", "30"))
         try:
             self.timeout_text = int(_db_setting("ollama_text_timeout_s", str(TIMEOUT_TEXT)))
         except Exception:
@@ -102,6 +103,7 @@ class _OllamaTextBase:
         payload: dict[str, Any] = {
             "model":  self.model,
             "stream": False,
+            "keep_alive": self.keep_alive_s,
             "options": {"temperature": 0.1, "num_predict": 800},
         }
         if system:

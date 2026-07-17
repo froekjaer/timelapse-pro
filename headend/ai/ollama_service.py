@@ -496,6 +496,7 @@ class OllamaVisionService:
         fallback_raw = _db_setting("ollama_fallback_models", ",".join(FALLBACK_MODELS))
         self.fallback_models = fallback_models if fallback_models is not None else [m.strip() for m in fallback_raw.split(",") if m.strip()]
         self.timeout_vision  = _db_int("ollama_vision_timeout_s", TIMEOUT_VISION)
+        self.keep_alive_s = _db_int("ollama_keep_alive_s", 30)
         self.max_image_bytes = _db_int("ollama_max_image_bytes", MAX_IMAGE_BYTES)
         self.max_image_edge  = _db_int("ollama_max_image_edge", MAX_IMAGE_EDGE)
         self.vision_num_ctx = _db_int("ollama_vision_num_ctx", VISION_NUM_CTX)
@@ -586,6 +587,7 @@ class OllamaVisionService:
             "images": images,
             "stream": False,
             "format": "json",
+            "keep_alive": self.keep_alive_s,
             "options": {
                 "temperature": self.vision_temperature,
                 "top_p": self.vision_top_p,

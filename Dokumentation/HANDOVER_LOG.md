@@ -9516,3 +9516,26 @@ selve `/api/auth/login` på en rigtig kørende instans, jf. docstringen i testfi
   ærligt 0/227, kommentar blev gemt/genvist, og kravrapport rendere som HTML-tabel.
   Browserforbindelsen faldt ud før sidste genklik på SABSA-rapporten; ingen kode- eller
   API-fejl blev observeret før browser-pluginets timeout.
+
+## 2026-07-17 - Codex - Headend disk- og RAM-analyse
+
+- Systemdisken har efter macOS-oprydning ca. 25 GB fri; `data-fast` har ca. 553 GB fri.
+  TimeLapse-repo, Open WebUI-miljø og Ollama-modeller er allerede symlinket korrekt til
+  `data-fast`.
+- Største flytbare lokale forbrugere: Docker Desktop ca. 21 GB faktisk plads i sparse
+  `Docker.raw` (logisk maksimum 228 GB) og Claude Desktop ca. 9,4 GB, heraf 7,7 GB
+  VM-bundle. Docker må ifølge Docker-dokumentationen kun flyttes via Settings ->
+  Resources -> Advanced -> Disk image location; manuel Finder/symlink-flytning kan
+  få Docker til at miste disken. Målmappe er oprettet som
+  `/Volumes/data-fast/peter-home/docker-desktop`. Claude-bundle er ikke flyttet, da en
+  understøttet ekstern placering ikke er dokumenteret.
+- RAM-root cause: `qwen3-vl:8b` brugte ca. 7,1 GB RSS og blev beholdt fem minutter efter
+  hver analyse. Open WebUI brugte kun ca. 40 MB, Ollama-daemon ca. 31 MB og Headend ca.
+  219 MB. SIEMs gentagne >92 % alarmer var derfor reelle, kortvarige model-residency
+  hændelser, ikke en Headend Python-memory leak.
+- Ny database/UI-indstilling `ollama_keep_alive_s`, default og aktiv R&D-værdi 30 sek.
+  Vision- og tekstkald sender værdien til Ollama. Kontinuerlig tagging genbruger modellen;
+  efter sidste kald frigives den hurtigt. Qwen blev manuelt unloadet én gang efter
+  aktivering; Ollama forblev kørende, Headend health var 200 og memory-pressure viste
+  72 % fri.
+- Verifikation: 8/8 AI runtime/Open WebUI/auth/arkitekturtests grønne samt Python compile.
