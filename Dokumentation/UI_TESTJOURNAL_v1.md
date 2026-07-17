@@ -60,12 +60,12 @@ Tidligere Codex-browserpass 2026-07-16 åbnede alle beskyttede routes på deskto
 | UI-004 | LAB `/devices/TL-C87FF9587CA0/lab` | PASS | PASS | PASS | NOT RUN full | Fysisk Nikon Z30-flow kræves |
 | UI-005 | Timelapse `/devices/TL-C87FF9587CA0/timelapse` | PASS | PASS | PASS | PASS partial | Lightbox og include/exclude testet |
 | UI-006 | Tags `/tags` | PASS | PASS | PASS | PASS partial | Søgning med ægte tag testet |
-| UI-007 | Indstillinger `/settings` | PASS | PASS | PASS | NOT RUN write | Save/rollback mangler |
+| UI-007 | Indstillinger `/settings` | PASS | PASS | PASS | PASS partial | Tidszone save/reload/restore bestod; adminfelter er rollebeskyttet |
 | UI-008 | Global config `/global-config` | PASS | PASS | PASS | NOT RUN write | Arv/override kræver matrix |
 | UI-009 | Backup `/backup` | PASS | PASS | PASS | NOT RUN jobs | Headend DR, Edge restore/ISO |
 | UI-010 | System Administration `/system-admin` | PASS | PASS | PASS | PASS read-only | Skrivehandlinger mangler |
 | UI-011 | Notifikationer `/notifications` | PASS | PASS | PASS | NOT RUN write | Mail/integrationstest mangler |
-| UI-012 | Brugere `/users` | PASS | PASS | PASS | PASS partial | Viewer-afvisning og QA-brugeroprettelse testet; rediger/deaktiver/slet mangler |
+| UI-012 | Brugere `/users` | PASS | PASS | PASS | PASS partial | QA-bruger oprettet, redigeret, deaktiveret/genaktiveret og adgangskode roteret; slet/audit mangler |
 | UI-013 | Nøgler `/key-management` | PASS | PASS | PASS | NOT RUN destructive | Rotation/revocation isoleres |
 | UI-014 | SSH `/ssh-tunnel` | PASS | PASS | PASS | NOT RUN live | Tunnelstart/stop kræver Edge |
 | UI-015 | Opdateringer `/updates` | PASS | PASS | PASS | PASS E2E app | Se UI-201..UI-209 |
@@ -90,13 +90,13 @@ Tidligere Codex-browserpass 2026-07-16 åbnede alle beskyttede routes på deskto
 |---|---|---|---|---|---|
 | UI-101 | Gyldigt login/logout | Sikker cookie; logout invaliderer session | PASS | `test_auth_integration.py` | Browser-login/logout samt isoleret API-test 2026-07-17 |
 | UI-102 | Forkert login og rate limit | Generisk fejl; throttling; SIEM-event | NOT RUN | `test_auth_integration.py` | |
-| UI-103 | Viewer/operator/admin RBAC | Korrekte menuer og 403 på forbudte handlinger | PASS partial | `test_auth_integration.py` | 31/31 kørte auth/tenant-tests bestod; viewer-backend afviste brugeroprettelse og anden tenant. UI-regression af rollebaseret navigation afventer deploy. |
+| UI-103 | Viewer/operator/admin RBAC | Korrekte menuer og 403 på forbudte handlinger | PASS partial | `test_auth_integration.py` | 31/31 kørte auth/tenant-tests bestod; viewer/operator-navigation, direkte `/users` og `/updates` samt anden tenant er live-testet. Admin/super-admin forskelle mangler. |
 | UI-104 | Opret `QA-` bruger | Bruger vises; auditlog oprettes | PASS partial | `test_user_management_crud.py` | `QA-viewer-20260717` oprettet via ægte UI; audit-verifikation og oprydning mangler. |
-| UI-105 | Rediger rolle/email/aktiv | Ændring slår igennem og auditeres | NOT RUN | `test_user_management_crud.py` | |
-| UI-106 | Passwordvalidering | Politik vises og håndhæves server-side | NOT RUN | `test_user_management_crud.py` | |
+| UI-105 | Rediger rolle/email/aktiv | Ændring slår igennem og auditeres | PASS partial | `test_user_management_crud.py` | Viewer -> operator -> viewer, emailændring/restore og aktiv-status bestod i UI; auditvisning mangler. |
+| UI-106 | Passwordvalidering | Politik vises og håndhæves server-side | PASS | `test_user_management_crud.py` | `short` blev afvist med "Mindst 8 tegn"; stærk rotation bestod, gammel adgangskode afvist og ny accepteret. |
 | UI-107 | MFA enrollment | QR, TOTP, recovery og audit virker | NOT RUN | `test_mfa_ui_workflow.py` | Kræver afgrænset QA-bruger |
 | UI-108 | WebAuthn | Register/login/remove credential | BLOCKED | `test_auth_integration.py` | Kræver kompatibel authenticator |
-| UI-109 | Deaktivér/slet QA-bruger | Login blokeres; self/primary admin beskyttes | NOT RUN | `test_user_management_crud.py` | |
+| UI-109 | Deaktivér/slet QA-bruger | Login blokeres; self/primary admin beskyttes | PASS partial | `test_user_management_crud.py` | Deaktivering gav generisk login-afvisning og genaktivering virkede. Sletning og self/primary-admin beskyttelse mangler. |
 
 ### 5.2 Kamera, billeder og LAB
 
@@ -170,6 +170,8 @@ Disse køres separat med pytest/systemevidens og må ikke markeres PASS alene vi
 | 2026-07-17 | Dashboard brugte navnefelter og viste en korrekt bundet enhed som “uden kunde/site” | Medium | Device-API eksponerer nu stabile `customer_id`/`site_id`; dashboard grupperer på id med legacy fallback |
 | 2026-07-17 | Topniveau-pytest kunne arve operational `DATABASE_URL` | Kritisk test-sikkerhed | `tests/conftest.py` tvinger nu `timelapse_test` før Headend-import; isoleret test-Headend på port 8011 anvendt |
 | 2026-07-17 | `test_device_management.py` forventede gammel `{devices: [...]}` kontrakt | Medium testgæld | Moderniseret til aktuel listekontrakt og isoleret tenant-fixture: 14 PASS, 6 dokumenterede SKIP; ingen driftsdata berørt |
+| 2026-07-17 | Viewer kunne se admin-links og globale Site-Wide Look-konfigurationsfelter på `/settings` | Høj | Adminfelter og links skjules nu for viewer/operator; live browser-regression bestod, mens personlig tidszone fortsat virker |
+| 2026-07-17 | Headend var utilgængelig under ca. tre minutters genstart, men login viste en credential-fejl | Høj drift/UX | Reproduceret 22:13-22:16; startup-tid og særskilt "server utilgængelig"-fejl skal rettes og regressionsprøves |
 
 ## 8. Exit-kriterier
 

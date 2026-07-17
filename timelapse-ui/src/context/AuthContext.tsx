@@ -65,18 +65,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null)
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        // Local storage is only a display cache. Never keep a cached role active
+        // when the authoritative server session cannot be validated.
+        localStorage.removeItem('tl_user')
+        setUser(null)
+      })
       .finally(() => setLoading(false))
   }, [])
 
   async function login(username: string, password: string) {
-    const res = await fetch(`${getApiUrl()}/api/auth/login`, {
-      method:      'POST',
-      credentials: 'include',
-      headers:     { 'Content-Type': 'application/json' },
-      body:        JSON.stringify({ username, password }),
-    })
+    let res: Response
+    try {
+      res = await fetch(`${getApiUrl()}/api/auth/login`, {
+        method:      'POST',
+        credentials: 'include',
+        headers:     { 'Content-Type': 'application/json' },
+        body:        JSON.stringify({ username, password }),
+      })
+    } catch {
+      throw new Error('Headend kan ikke kontaktes. Prøv igen om et øjeblik.')
+    }
     if (!res.ok) {
+      if ([502, 503, 504].includes(res.status)) {
+        throw new Error('Headend er midlertidigt utilgængelig. Prøv igen om et øjeblik.')
+      }
       const err = await res.json().catch(() => ({}))
       throw new Error(err.detail ?? 'Login fejlede')
     }

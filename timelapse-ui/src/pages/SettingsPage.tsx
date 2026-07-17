@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Globe, Wifi, Users, Save, Check, Terminal, Bell, Camera } from 'lucide-react'
+import { Globe, Wifi, Users, Save, Check, Terminal, Bell } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { getApiUrl } from '../api/client'
 import { SiteLookConfigPanel } from '../components/SiteLookConfigPanel'
+import { useAuth } from '../context/AuthContext'
 
 const TIMEZONES = [
   { value: 'Europe/Copenhagen', label: 'Danmark (CET/CEST)' },
@@ -15,6 +16,8 @@ const TIMEZONES = [
 const TZ_KEY = 'timelapse_timezone'
 
 export function SettingsPage() {
+  const { hasRole } = useAuth()
+  const canAdminister = hasRole('super_admin', 'admin')
   const [tz, setTz]         = useState(() => localStorage.getItem(TZ_KEY) ?? 'Europe/Copenhagen')
   const [tzSaved, setTzSaved] = useState(false)
 
@@ -53,14 +56,18 @@ export function SettingsPage() {
                 {getApiUrl()}
               </div>
             </div>
-            <p className="text-xs text-gray-400">
-              Ret Headend Base URL under System Administration, hvis Edge-enheder skal have en anden offentlig adresse.
-            </p>
-            <Link to="/system-admin"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600">
-              <Wifi className="w-4 h-4" />
-              Åbn Headend indstillinger
-            </Link>
+            {canAdminister && (
+              <>
+                <p className="text-xs text-gray-400">
+                  Ret Headend Base URL under System Administration, hvis Edge-enheder skal have en anden offentlig adresse.
+                </p>
+                <Link to="/system-admin"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600">
+                  <Wifi className="w-4 h-4" />
+                  Åbn Headend indstillinger
+                </Link>
+              </>
+            )}
           </div>
         </div>
 
@@ -98,58 +105,63 @@ export function SettingsPage() {
           </div>
         </div>
 
-        {/* System Admin */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center gap-2 mb-1">
-            <Terminal className="w-5 h-5 text-orange-500" />
-            <h2 className="text-base font-semibold text-gray-900">System Administration</h2>
-          </div>
-          <p className="text-sm text-gray-500 mb-4">GPIO, relay, timeouts og alle avancerede parametre</p>
-          <Link to="/system-admin"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-orange-500 text-white text-sm rounded-lg hover:bg-orange-600">
-            <Terminal className="w-4 h-4" />
-            Åbn System Admin
-          </Link>
-        </div>
-
-        {/* Notifikationer */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center gap-2 mb-1">
-            <Bell className="w-5 h-5 text-sky-500" />
-            <h2 className="text-base font-semibold text-gray-900">Alarm Notifikationer</h2>
-          </div>
-          <p className="text-sm text-gray-500 mb-4">Email, SMS og Teams — konfigurér hvornår og hvem der adviseres</p>
-          <Link to="/notifications"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600">
-            <Bell className="w-4 h-4" />
-            Konfigurér notifikationer
-          </Link>
-        </div>
-
-        {/* RBAC placeholder */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6 opacity-60">
-          <div className="flex items-center gap-2 mb-1">
-            <Users className="w-5 h-5 text-gray-400" />
-            <h2 className="text-base font-semibold text-gray-900">Brugerstyring (RBAC)</h2>
-          </div>
-          <p className="text-sm text-gray-500 mb-4">Roller og adgangsrettigheder</p>
-          <div className="space-y-2">
-            {['Admin — fuld adgang', 'Operatør — læs + config', 'Kunde — kun egne data'].map(r => (
-              <div key={r} className="flex items-center gap-2 text-sm text-gray-400">
-                <span className="w-2 h-2 rounded-full bg-gray-300" />
-                {r}
+        {canAdminister && (
+          <>
+            {/* System Admin */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center gap-2 mb-1">
+                <Terminal className="w-5 h-5 text-orange-500" />
+                <h2 className="text-base font-semibold text-gray-900">System Administration</h2>
               </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-400 mt-4">Kommer i Fase 3</p>
+              <p className="text-sm text-gray-500 mb-4">GPIO, relay, timeouts og alle avancerede parametre</p>
+              <Link to="/system-admin"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-orange-500 text-white text-sm rounded-lg hover:bg-orange-600">
+                <Terminal className="w-4 h-4" />
+                Åbn System Admin
+              </Link>
+            </div>
+
+            {/* Notifikationer */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6">
+              <div className="flex items-center gap-2 mb-1">
+                <Bell className="w-5 h-5 text-sky-500" />
+                <h2 className="text-base font-semibold text-gray-900">Alarm Notifikationer</h2>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">Email, SMS og Teams — konfigurér hvornår og hvem der adviseres</p>
+              <Link to="/notifications"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600">
+                <Bell className="w-4 h-4" />
+                Konfigurér notifikationer
+              </Link>
+            </div>
+
+            {/* RBAC placeholder */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6 opacity-60">
+              <div className="flex items-center gap-2 mb-1">
+                <Users className="w-5 h-5 text-gray-400" />
+                <h2 className="text-base font-semibold text-gray-900">Brugerstyring (RBAC)</h2>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">Roller og adgangsrettigheder</p>
+              <div className="space-y-2">
+                {['Admin — fuld adgang', 'Operatør — læs + config', 'Kunde — kun egne data'].map(r => (
+                  <div key={r} className="flex items-center gap-2 text-sm text-gray-400">
+                    <span className="w-2 h-2 rounded-full bg-gray-300" />
+                    {r}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400 mt-4">Kommer i Fase 3</p>
+            </div>
+          </>
+        )}
+
+      </div>
+
+      {canAdminister && (
+        <div className="mt-6">
+          <SiteLookConfigPanel />
         </div>
-
-      </div>
-
-      {/* Site-Wide Look Matching Full Panel */}
-      <div className="mt-6">
-        <SiteLookConfigPanel />
-      </div>
+      )}
     </div>
   )
 }
