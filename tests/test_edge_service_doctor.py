@@ -92,6 +92,42 @@ def test_doctor_accepts_python_plus_runner_script_command(tmp_path, monkeypatch)
     assert str(runner) in runner_check["detail"]
 
 
+def test_nikon_image_quality_fallback_is_used_when_generic_path_is_absent(monkeypatch):
+    configured = []
+    monkeypatch.setattr(
+        bootstrap_cli,
+        "gphoto_config_exists",
+        lambda path: path == "/main/capturesettings/imagequality",
+    )
+    monkeypatch.setattr(
+        bootstrap_cli,
+        "camera_set_config",
+        lambda path, value: configured.append((path, value)) or True,
+    )
+
+    assert bootstrap_cli.camera_set_photo_setting("image_format", "JPEG Fine") is True
+    assert configured == [("/main/capturesettings/imagequality", "JPEG Fine")]
+
+
+def test_camera_maintenance_restores_enabled_edge_even_if_initially_inactive(tmp_path, monkeypatch):
+    base = _commissioned_edge(tmp_path)
+    actions = []
+    monkeypatch.setenv("TIMELAPSE_CAMERA_MAINTENANCE_LOCK", str(tmp_path / "camera.lock"))
+    monkeypatch.setattr(bootstrap_cli, "is_service_active", lambda _service: False)
+    monkeypatch.setattr(bootstrap_cli, "is_service_enabled", lambda _service: True)
+    monkeypatch.setattr(bootstrap_cli, "build_relay", lambda _base: None)
+    monkeypatch.setattr(bootstrap_cli.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        bootstrap_cli,
+        "systemctl",
+        lambda action, service, timeout=30: actions.append((action, service, timeout)),
+    )
+    monkeypatch.setattr(bootstrap_cli, "wait_for_service_state", lambda *_args, **_kwargs: None)
+
+    assert bootstrap_cli.run_camera_operation(lambda: True, base, maintenance=True) is True
+    assert actions == [("start", bootstrap_cli.SERVICE_NAME, 60)]
+
+
 def test_node_inventory_prefers_deployed_release_receipt(tmp_path, monkeypatch):
     receipt = tmp_path / ".timelapse-release.json"
     receipt.write_text(json.dumps({

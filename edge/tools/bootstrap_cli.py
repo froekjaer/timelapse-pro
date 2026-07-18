@@ -75,6 +75,7 @@ PHOTO_SETTINGS = {
     "image_format": {
         "label": "Billedformat",
         "path": "/main/imgsettings/imageformat",
+        "fallback_paths": ["/main/capturesettings/imagequality"],
         "hint": "JPEG anbefales til hurtig onsite QA.",
     },
 }
@@ -806,34 +807,39 @@ def run_camera_operation(operation, base_dir: Path, maintenance: bool = False) -
     if not maintenance:
         return bool(operation())
 
-    was_active = is_service_active(SERVICE_NAME)
-    relay = None
-    print("Vedligeholdelsestilstand: pauser edge-agent og overtager kamera midlertidigt")
-    try:
-        if was_active:
-            systemctl("stop", SERVICE_NAME, timeout=120)
-            wait_for_service_state(SERVICE_NAME, "inactive", timeout_s=20)
-        relay = build_relay(base_dir)
-        if relay is not None:
-            relay.camera.power_on()
-        else:
-            print("Relæ kunne ikke initialiseres; fortsætter uden power-control")
-            time.sleep(3)
-        return bool(operation())
-    finally:
-        if relay is not None:
-            try:
-                relay.camera.force_off()
-            except Exception as exc:
-                print(f"Advarsel: kunne ikke slukke kamerarelæ: {exc}")
-            try:
-                relay.cleanup(camera=True, modem=False)
-            except Exception:
-                pass
-        if was_active:
-            systemctl("start", SERVICE_NAME, timeout=60)
-            wait_for_service_state(SERVICE_NAME, "active", timeout_s=30)
-            print("Edge-agent startet igen")
+    sys.path.insert(0, str(EDGE_ROOT))
+    from camera.maintenance import CameraMaintenanceLease
+
+    with CameraMaintenanceLease(timeout_s=45):
+        was_active = is_service_active(SERVICE_NAME)
+        should_restore_service = was_active or is_service_enabled(SERVICE_NAME)
+        relay = None
+        print("Vedligeholdelsestilstand: pauser edge-agent og overtager kamera midlertidigt")
+        try:
+            if was_active:
+                systemctl("stop", SERVICE_NAME, timeout=120)
+                wait_for_service_state(SERVICE_NAME, "inactive", timeout_s=20)
+            relay = build_relay(base_dir)
+            if relay is not None:
+                relay.camera.power_on()
+            else:
+                print("Relæ kunne ikke initialiseres; fortsætter uden power-control")
+                time.sleep(3)
+            return bool(operation())
+        finally:
+            if relay is not None:
+                try:
+                    relay.camera.force_off()
+                except Exception as exc:
+                    print(f"Advarsel: kunne ikke slukke kamerarelæ: {exc}")
+                try:
+                    relay.cleanup(camera=True, modem=False)
+                except Exception:
+                    pass
+            if should_restore_service:
+                systemctl("start", SERVICE_NAME, timeout=60)
+                wait_for_service_state(SERVICE_NAME, "active", timeout_s=30)
+                print("Edge-agent startet igen")
 
 
 def build_relay(base_dir: Path):
@@ -852,6 +858,13 @@ def is_service_active(service: str) -> bool:
         return False
     result = run(["systemctl", "is-active", service], check=False, timeout=5)
     return result.stdout.strip() == "active"
+
+
+def is_service_enabled(service: str) -> bool:
+    if not command_exists("systemctl"):
+        return False
+    result = run(["systemctl", "is-enabled", service], check=False, timeout=5)
+    return result.stdout.strip() in {"enabled", "enabled-runtime"}
 
 
 def systemctl(action: str, service: str, timeout: int = 30) -> None:
@@ -883,6 +896,7 @@ def wait_for_service_state(service: str, expected: str, timeout_s: int = 20) -> 
         if state == expected or (expected == "inactive" and state in {"inactive", "failed", "unknown"}):
             return
         time.sleep(1)
+    raise RuntimeError(f"Service {service} nåede ikke tilstand {expected} inden {timeout_s}s")
 
 
 def camera_detect() -> bool:
@@ -958,7 +972,11 @@ def print_photo_status() -> bool:
         return False
     ok = camera_detect()
     for key, spec in PHOTO_SETTINGS.items():
-        value = read_gphoto_current(spec["path"])
+        value = None
+        for path in [spec["path"], *spec.get("fallback_paths", [])]:
+            value = read_gphoto_current(path)
+            if value is not None:
+                break
         print(f"{key:16} {spec['label']}: {value if value is not None else '(ikke fundet)'}")
     return ok
 
@@ -989,7 +1007,11 @@ def camera_set_photo_setting(key: str, value: str) -> bool:
         print("Mulige keys:", ", ".join(PHOTO_SETTINGS))
         return False
     print(f"{spec['label']}: {value}")
-    return camera_set_config(spec["path"], value)
+    for path in [spec["path"], *spec.get("fallback_paths", [])]:
+        if gphoto_config_exists(path):
+            return camera_set_config(path, value)
+    print(f"Ingen understøttet config-path fundet for {spec['label']}")
+    return False
 
 
 def camera_autofocus() -> bool:

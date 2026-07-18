@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from camera.live_video import GPhoto2FrameSource
+from camera.maintenance import CameraMaintenanceLease
 from camera.relay import RelayController
 
 
@@ -125,6 +126,16 @@ class TechnicianStreamManager:
         )
         return result.stdout.strip() == "active"
 
+    def _service_is_enabled(self) -> bool:
+        result = subprocess.run(
+            ["systemctl", "is-enabled", self.service_name],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return result.stdout.strip() in {"enabled", "enabled-runtime"}
+
     def _service_action(self, action: str, timeout: int) -> None:
         subprocess.run(
             ["systemctl", action, self.service_name],
@@ -137,8 +148,12 @@ class TechnicianStreamManager:
     def _run(self) -> None:
         relay = None
         was_active = False
+        should_restore_service = False
+        lease = CameraMaintenanceLease(timeout_s=45)
         try:
+            lease.__enter__()
             was_active = self._service_is_active()
+            should_restore_service = was_active or self._service_is_enabled()
             if was_active:
                 self._service_action("stop", 120)
 
@@ -187,7 +202,7 @@ class TechnicianStreamManager:
                     relay.cleanup(camera=True, modem=False)
                 except Exception:
                     log.exception("Could not clean up camera GPIO after technician stream")
-            if was_active:
+            if should_restore_service:
                 try:
                     self._service_action("start", 60)
                 except Exception:
@@ -195,6 +210,7 @@ class TechnicianStreamManager:
                     with self._lock:
                         self._error = (self._error + "; " if self._error else "") + "Edge-agent kunne ikke genstartes"
                         self._status = "error"
+            lease.__exit__(None, None, None)
             with self._condition:
                 self._finished_at = time.monotonic()
                 if self._status != "error":

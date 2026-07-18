@@ -4,11 +4,14 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "edge"))
 
 from camera import live_video
+from camera.maintenance import CameraMaintenanceBusy, CameraMaintenanceLease
 from camera.service_stream import TechnicianStreamManager
 
 
@@ -16,10 +19,24 @@ def test_nikon_uses_true_movie_stream_while_canons_keep_preview_compatibility():
     assert live_video.stream_mode_for_model("Nikon Z30") == "movie"
     assert live_video.stream_mode_for_model("Canon EOS 1300D") == "preview"
     assert live_video.stream_mode_for_model("Canon EOS 2000D") == "preview"
+    assert live_video.profile_for_model("Nikon Z30")["config_commands"]["imageformat"]["path"] == (
+        "/main/capturesettings/imagequality"
+    )
+    assert live_video.profile_for_model("Canon EOS 2000D")["config_commands"]["imageformat"]["path"] == (
+        "/main/imgsettings/imageformat"
+    )
 
 
 def test_unknown_camera_does_not_inherit_nikon_movie_capability():
     assert live_video.stream_mode_for_model("Unknown PTP Camera") == "preview"
+
+
+def test_camera_maintenance_lease_blocks_overlapping_process_owner(tmp_path):
+    lock_path = tmp_path / "camera.lock"
+    with CameraMaintenanceLease(timeout_s=0, lock_path=lock_path):
+        with pytest.raises(CameraMaintenanceBusy):
+            with CameraMaintenanceLease(timeout_s=0, lock_path=lock_path):
+                pass
 
 
 def test_auto_detect_prefers_configured_port_without_mixing_camera_profiles():
@@ -102,6 +119,7 @@ def test_canon_preview_source_never_uses_nikon_movie_command(monkeypatch):
 
 def test_technician_stream_always_restores_relay_and_edge_service(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_text('camera:\n  gphoto2_port: "usb:"\n', encoding="utf-8")
+    monkeypatch.setenv("TIMELAPSE_CAMERA_MAINTENANCE_LOCK", str(tmp_path / "camera.lock"))
     events = []
 
     class _CameraRelay:
@@ -138,6 +156,7 @@ def test_technician_stream_always_restores_relay_and_edge_service(tmp_path, monk
         relay_factory=lambda _config: _Relay(),
     )
     monkeypatch.setattr(manager, "_service_is_active", lambda: True)
+    monkeypatch.setattr(manager, "_service_is_enabled", lambda: True)
     monkeypatch.setattr(manager, "_service_action", lambda action, _timeout: events.append(action))
 
     manager.start()

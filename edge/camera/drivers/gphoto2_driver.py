@@ -403,7 +403,7 @@ CAMERA_PROFILES = {
                 },
             },
             "colorspace": {"path": "/main/imgsettings/colorspace"},
-            "imageformat": {"path": "/main/imgsettings/imageformat"},
+            "imageformat": {"path": "/main/capturesettings/imagequality"},
             "exposurecompensation": {"path": "/main/capturesettings/exposurecompensation"},
             # Focus mode is readonly on Z30 in current firmware
             "focusmode": {"skip": True},

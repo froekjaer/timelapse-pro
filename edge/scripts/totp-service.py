@@ -87,7 +87,11 @@ PHOTO_VALUE_OPTIONS = {
     "shutter_speed": ["auto", "1/30", "1/60", "1/125", "1/250", "1/500", "1/1000"],
     "aperture": ["f/4", "f/5.6", "f/8", "f/11", "f/16"],
     "focus_mode": ["Manual", "MF", "AF-S", "AF-C", "AF-A", "One Shot", "AI Servo"],
-    "image_format": ["JPEG", "Large Fine JPEG", "RAW", "RAW + JPEG"],
+    "image_format": [
+        "JPEG", "Large Fine JPEG", "RAW", "RAW + JPEG",
+        "JPEG Basic", "JPEG Normal", "JPEG Fine", "NEF (Raw)",
+        "NEF+Basic", "NEF+Normal", "NEF+Fine",
+    ],
 }
 CAMERA_CONFIG_OPTIONS = [
     ("/main/capturesettings/exposurecompensation", "Eksponeringskompensation"),
@@ -95,10 +99,11 @@ CAMERA_CONFIG_OPTIONS = [
     ("/main/imgsettings/whitebalance", "Hvidbalance"),
     ("/main/capturesettings/shutterspeed", "Lukkertid"),
     ("/main/capturesettings/f-number", "Blænde"),
-    ("/main/capturesettings/focusmode", "Fokusmode"),
-    ("/main/imgsettings/imageformat", "Billedformat"),
-    ("/main/actions/autofocusdrive", "Autofokus action"),
-    ("/main/actions/manualfocusdrive", "Manuel focus drive"),
+    ("/main/capturesettings/focusmode", "Fokusmode (generisk/Canon; læs kun på Nikon Z30)"),
+    ("/main/imgsettings/imageformat", "Billedformat (generisk/Canon)"),
+    ("/main/capturesettings/imagequality", "Billedkvalitet (Nikon Z30)"),
+    ("/main/actions/autofocusdrive", "Autofokus action (Nikon Z30)"),
+    ("/main/actions/manualfocusdrive", "Manuel focus drive (Nikon Z30)"),
 ]
 FOCUS_DRIVE_OPTIONS = ["Near 1", "Near 2", "Near 3", "Far 1", "Far 2", "Far 3", "500", "-500", "1000", "-1000"]
 
