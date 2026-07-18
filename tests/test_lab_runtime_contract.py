@@ -145,3 +145,13 @@ def test_reverse_ssh_edge_events_are_device_authenticated():
     assert 'Depends(_verify_payload_device_token)' in ready_block
     assert 'device_id matcher ikke Edge credential' in tunnel_block
     assert 'device_id matcher ikke Edge credential' in ready_block
+
+
+def test_local_technician_live_view_polls_current_status_without_stale_fps():
+    source = (ROOT / "edge" / "scripts" / "totp-service.py").read_text(encoding="utf-8")
+
+    assert 'id="video-status-line"' in source
+    assert "fetch('/mgmt/technician/video/status'" in source
+    assert "window.setInterval(updateVideoStatus, 1500)" in source
+    assert "Number(status.fps || 0).toFixed(1)" in source
+    assert "window.location.replace('/mgmt/technician')" in source

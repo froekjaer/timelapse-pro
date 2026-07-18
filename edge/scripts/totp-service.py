@@ -1195,7 +1195,9 @@ def _technician_page(msg: str = "", output: str = "") -> str:
     video_error = html.escape(video_status.get("error", ""))
     details_prefix = "Seneste: " if video_state == "stopped" and video_details else ""
     video_status_html = (
-        f'<p class="stream-status {video_class}"><strong>{html.escape(video_state_label)}</strong>'
+        f'<p id="video-status-line" class="stream-status {video_class}" '
+        f'data-running="{str(bool(video_status.get("running"))).lower()}">'
+        f'<strong>{html.escape(video_state_label)}</strong>'
         f'{" · " + html.escape(details_prefix + video_details) if video_details else ""}'
         f'{"<br>" + video_error if video_error else ""}</p>'
     )
@@ -1367,6 +1369,47 @@ function updatePhotoValues() {{
   }});
 }}
 updatePhotoValues();
+
+const VIDEO_STATE_LABELS = {{
+  stopped: 'Stoppet', starting: 'Starter', running: 'Kører',
+  stopping: 'Stopper', error: 'Fejl'
+}};
+const VIDEO_MODE_LABELS = {{
+  movie: 'Ægte movie/live-view', preview: 'Preview-kompatibilitet'
+}};
+const videoStatusLine = document.getElementById('video-status-line');
+let videoWasRunning = videoStatusLine?.dataset.running === 'true';
+
+async function updateVideoStatus() {{
+  if (!videoStatusLine) return;
+  try {{
+    const response = await fetch('/mgmt/technician/video/status', {{
+      credentials: 'same-origin', cache: 'no-store'
+    }});
+    if (!response.ok) return;
+    const status = await response.json();
+    const details = [
+      status.model || '',
+      VIDEO_MODE_LABELS[status.mode] || status.mode || '',
+      status.frame_count ? `${{Number(status.fps || 0).toFixed(1)}} fps` : ''
+    ].filter(Boolean);
+    const prefix = status.status === 'stopped' && details.length ? 'Seneste: ' : '';
+    const label = VIDEO_STATE_LABELS[status.status] || status.status || 'Ukendt';
+    videoStatusLine.textContent = `${{label}}${{details.length ? ' · ' + prefix + details.join(' · ') : ''}}${{status.error ? ' · ' + status.error : ''}}`;
+    videoStatusLine.classList.toggle('ok', status.status === 'running');
+    videoStatusLine.classList.toggle('error', status.status === 'error');
+    videoStatusLine.dataset.running = String(Boolean(status.running));
+    if (videoWasRunning && !status.running) {{
+      window.location.replace('/mgmt/technician');
+      return;
+    }}
+    videoWasRunning = Boolean(status.running);
+  }} catch (_error) {{
+    // A transient local-network error must not replace the last known status.
+  }}
+}}
+updateVideoStatus();
+window.setInterval(updateVideoStatus, 1500);
 </script>
 </body>
 </html>"""
