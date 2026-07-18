@@ -27,6 +27,7 @@ import json
 import pty
 import select
 import sys
+import threading
 import yaml
 import pyotp
 
@@ -58,6 +59,14 @@ TECH_CLI = EDGE_ROOT / "tools" / "bootstrap_cli.py"
 TECH_CAPTURE_DIR = Path(os.getenv("TIMELAPSE_TECH_CAPTURE_DIR", "/tmp/timelapse-tech-captures"))
 VIDEO_FRAME_DIR = Path(os.getenv("TIMELAPSE_TECH_VIDEO_DIR", "/tmp/timelapse-tech-video"))
 VIDEO_MANAGER = TechnicianStreamManager(EDGE_ROOT)
+SERVICE_POLICY_LOCK = threading.RLock()
+SERVICE_POLICY_STOP = threading.Event()
+SERVICE_POLICY = {
+    "enabled": True,
+    "live_view_enabled": True,
+    "live_view_max_duration_s": 180,
+    "allow_continuous_live_view": False,
+}
 BASH_PATH = os.getenv("TIMELAPSE_TECH_SHELL", "/bin/bash")
 CLI_ALLOWED_FLAGS = {
     "--status",
@@ -126,6 +135,50 @@ def _default_config() -> dict:
             "headend_url": "",
         },
     }
+
+
+def _normalise_service_policy(raw: dict | None) -> dict:
+    raw = raw or {}
+    try:
+        max_duration = max(30, min(int(raw.get("live_view_max_duration_s", 180)), 86400))
+    except (TypeError, ValueError):
+        max_duration = 180
+    return {
+        "enabled": bool(raw.get("enabled", True)),
+        "live_view_enabled": bool(raw.get("live_view_enabled", True)),
+        "live_view_max_duration_s": max_duration,
+        "allow_continuous_live_view": bool(raw.get("allow_continuous_live_view", False)),
+    }
+
+
+def _service_policy_snapshot() -> dict:
+    with SERVICE_POLICY_LOCK:
+        return dict(SERVICE_POLICY)
+
+
+def _refresh_service_policy() -> dict:
+    headend_config = _fetch_headend_config(load_config())
+    if not headend_config or "service_access" not in headend_config:
+        return _service_policy_snapshot()
+    policy = _normalise_service_policy(headend_config.get("service_access"))
+    with SERVICE_POLICY_LOCK:
+        SERVICE_POLICY.clear()
+        SERVICE_POLICY.update(policy)
+    return policy
+
+
+def _service_policy_watch_loop() -> None:
+    while not SERVICE_POLICY_STOP.is_set():
+        try:
+            policy = _refresh_service_policy()
+            if VIDEO_MANAGER.status().get("running") and (
+                not policy["enabled"] or not policy["live_view_enabled"]
+            ):
+                log.warning("Live View stoppes af central Headend-policy")
+                VIDEO_MANAGER.stop(reason="central_policy")
+        except Exception as exc:
+            log.warning("Central service-policy kunne ikke opdateres: %s", exc)
+        SERVICE_POLICY_STOP.wait(10)
 
 
 def load_config() -> dict:
@@ -309,7 +362,19 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 @app.on_event("shutdown")
 def stop_technician_stream_on_shutdown() -> None:
     """Never leave the camera relay or Edge agent in maintenance state."""
-    VIDEO_MANAGER.stop(join_timeout_s=45)
+    SERVICE_POLICY_STOP.set()
+    VIDEO_MANAGER.stop(join_timeout_s=45, reason="service_shutdown")
+
+
+@app.on_event("startup")
+def start_service_policy_monitor() -> None:
+    """Keep local service functions under Headend policy while the agent is paused."""
+    SERVICE_POLICY_STOP.clear()
+    threading.Thread(
+        target=_service_policy_watch_loop,
+        daemon=True,
+        name="service-policy-monitor",
+    ).start()
 
 
 @app.middleware("http")
@@ -1146,6 +1211,7 @@ term.addEventListener('keydown', (event) => {
 def _technician_page(msg: str = "", output: str = "") -> str:
     status = _technician_snapshot()
     video_status = VIDEO_MANAGER.status()
+    service_policy = _service_policy_snapshot()
     generated = status.get("generated_at", "")
     photo_options = "".join(
         f'<option value="{key}">{label}</option>'
@@ -1184,6 +1250,14 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         "stopping": "Stopper",
         "error": "Fejl",
     }.get(video_state, video_state)
+    stop_reason_labels = {
+        "manual": "stoppet af tekniker",
+        "timeout": "valgt tidsgrænse nået",
+        "central_policy": "stoppet centralt fra Headenden",
+        "source_ended": "kameraets stream sluttede",
+        "service_shutdown": "lokal service blev genstartet",
+        "error": "kamerafejl",
+    }
     video_class = "error" if video_state == "error" else ("ok" if video_state == "running" else "")
     video_details = " · ".join(
         value for value in [
@@ -1193,14 +1267,35 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         ] if value
     )
     video_error = html.escape(video_status.get("error", ""))
+    stop_reason = stop_reason_labels.get(video_status.get("stop_reason", ""), "")
     details_prefix = "Seneste: " if video_state == "stopped" and video_details else ""
     video_status_html = (
         f'<p id="video-status-line" class="stream-status {video_class}" '
         f'data-running="{str(bool(video_status.get("running"))).lower()}">'
         f'<strong>{html.escape(video_state_label)}</strong>'
         f'{" · " + html.escape(details_prefix + video_details) if video_details else ""}'
+        f'{" · " + html.escape(stop_reason) if stop_reason else ""}'
         f'{"<br>" + video_error if video_error else ""}</p>'
     )
+    duration_values = [60, 180, 600, 1800, 3600, 7200, 14400, 28800, 86400]
+    duration_labels = {
+        60: "1 minut", 180: "3 minutter", 600: "10 minutter",
+        1800: "30 minutter", 3600: "1 time", 7200: "2 timer",
+        14400: "4 timer", 28800: "8 timer", 86400: "24 timer",
+    }
+    max_duration = int(service_policy["live_view_max_duration_s"])
+    allowed_durations = [value for value in duration_values if value <= max_duration]
+    if max_duration not in allowed_durations:
+        allowed_durations.append(max_duration)
+    allowed_durations = sorted(set(allowed_durations))
+    duration_options = "".join(
+        f'<option value="{value}" {"selected" if value == min(180, max_duration) else ""}>'
+        f'{html.escape(duration_labels.get(value, f"{value} sekunder" if value < 60 else f"{value // 60} minutter"))}</option>'
+        for value in allowed_durations
+    )
+    if service_policy["allow_continuous_live_view"]:
+        duration_options += '<option value="0">Kontinuerlig - indtil manuel eller central Stop</option>'
+    live_view_allowed = bool(service_policy["enabled"] and service_policy["live_view_enabled"])
     stream_image = (
         '<img id="preview-stream" class="stream" src="/mgmt/technician/video.mjpg" '
         'alt="Kamera Live View stream">'
@@ -1252,13 +1347,15 @@ def _technician_page(msg: str = "", output: str = "") -> str:
   .preview img {{ width: 100%; max-height: 520px; object-fit: contain; background: #050812; border: 1px solid #26385a; border-radius: 8px; }}
   .stream {{ width: 100%; min-height: 220px; object-fit: contain; background: #050812; border: 1px solid #26385a; border-radius: 8px; }}
   .empty-stream {{ display: grid; place-items: center; color: #64748b; }}
-  .stream-actions {{ display: grid; grid-template-columns: repeat(2, minmax(140px, 220px)); gap: 0.5rem; margin-bottom: 0.7rem; }}
+  .stream-actions {{ display: grid; grid-template-columns: minmax(180px, 260px) minmax(140px, 220px) minmax(140px, 220px); gap: 0.5rem; margin-bottom: 0.7rem; align-items: end; }}
+  .stream-start-form {{ display: contents; }}
   .stream-status {{ color: #f6c453; font-size: 0.8rem; line-height: 1.4; margin-bottom: 0.7rem; }}
   .stream-status.ok {{ color: #66bb6a; }}
   .stream-status.error {{ color: #ef5350; }}
   pre {{ white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; background: #0b1220; border-radius: 8px; padding: 0.8rem; color: #d6e4ff; max-height: 420px; overflow: auto; }}
   .msg.ok {{ color: #66bb6a; font-size: 0.85rem; margin-bottom: 1rem; }}
   .empty {{ color: #777; font-size: 0.8rem; }}
+  @media (max-width: 680px) {{ .stream-actions {{ grid-template-columns: 1fr; }} }}
 </style>
 </head>
 <body>
@@ -1345,11 +1442,16 @@ def _technician_page(msg: str = "", output: str = "") -> str:
     <div class="card wide">
       <h2>Video Live View</h2>
       <p class="hint">Nikon Z30 bruger kameraets ægte movie/live-view. Canon EOS 1300D/2000D bruger kompatibilitets-preview, når remote movie ikke understøttes. Kamera og Edge-agent frigives altid ved Stop eller automatisk timeout.</p>
+      <p class="hint">Headend-policy: maks. {max_duration // 60} minutter · kontinuerlig {"tilladt" if service_policy["allow_continuous_live_view"] else "ikke tilladt"}.</p>
       {video_status_html}
       <div class="stream-actions">
-        <form method="post" action="/mgmt/technician/video/start"><button type="submit" {"disabled" if video_status.get("running") else ""}>Start Live View</button></form>
+        <form class="stream-start-form" method="post" action="/mgmt/technician/video/start">
+          <div><label for="video-duration">Varighed</label><select id="video-duration" name="duration_s">{duration_options}</select></div>
+          <button type="submit" {"disabled" if video_status.get("running") or not live_view_allowed else ""}>Start Live View</button>
+        </form>
         <form method="post" action="/mgmt/technician/video/stop"><button class="secondary" type="submit" {"" if video_status.get("running") else "disabled"}>Stop Live View</button></form>
       </div>
+      {"<p class='stream-status error'>Live View er deaktiveret centralt fra Headenden.</p>" if not live_view_allowed else ""}
       {stream_image}
     </div>
     {output_html}
@@ -1395,7 +1497,14 @@ async function updateVideoStatus() {{
     ].filter(Boolean);
     const prefix = status.status === 'stopped' && details.length ? 'Seneste: ' : '';
     const label = VIDEO_STATE_LABELS[status.status] || status.status || 'Ukendt';
-    videoStatusLine.textContent = `${{label}}${{details.length ? ' · ' + prefix + details.join(' · ') : ''}}${{status.error ? ' · ' + status.error : ''}}`;
+    const reasons = {{
+      manual: 'stoppet af tekniker', timeout: 'valgt tidsgrænse nået',
+      central_policy: 'stoppet centralt fra Headenden',
+      source_ended: 'kameraets stream sluttede', service_shutdown: 'lokal service blev genstartet',
+      error: 'kamerafejl'
+    }};
+    const reason = reasons[status.stop_reason] || '';
+    videoStatusLine.textContent = `${{label}}${{details.length ? ' · ' + prefix + details.join(' · ') : ''}}${{reason ? ' · ' + reason : ''}}${{status.error ? ' · ' + status.error : ''}}`;
     videoStatusLine.classList.toggle('ok', status.status === 'running');
     videoStatusLine.classList.toggle('error', status.status === 'error');
     videoStatusLine.dataset.running = String(Boolean(status.running));
@@ -1532,10 +1641,17 @@ async def mgmt_technician_video_post_target_get_fallback(request: Request):
 
 
 @app.post("/mgmt/technician/video/start", response_class=HTMLResponse)
-async def mgmt_technician_video_start(request: Request):
+async def mgmt_technician_video_start(request: Request, duration_s: int = Form(180)):
     management = load_config()["management"]
+    policy = await asyncio.to_thread(_refresh_service_policy)
+    if not policy["enabled"] or not policy["live_view_enabled"]:
+        return HTMLResponse(_technician_page("Live View er deaktiveret centralt fra Headenden"), status_code=403)
+    if duration_s == 0 and not policy["allow_continuous_live_view"]:
+        return HTMLResponse(_technician_page("Kontinuerlig Live View er ikke tilladt af Headend-policy"), status_code=403)
+    if duration_s != 0:
+        duration_s = max(30, min(int(duration_s), int(policy["live_view_max_duration_s"])))
     status = VIDEO_MANAGER.start(
-        max_duration_s=int(management.get("video_max_duration_s", 180)),
+        max_duration_s=duration_s,
         preview_interval_s=float(management.get("video_preview_interval_s", 0.8)),
     )
     message = "Live View starter; kamera og relæ klargøres"
@@ -1546,7 +1662,7 @@ async def mgmt_technician_video_start(request: Request):
 
 @app.post("/mgmt/technician/video/stop", response_class=HTMLResponse)
 async def mgmt_technician_video_stop(request: Request):
-    status = await asyncio.to_thread(VIDEO_MANAGER.stop)
+    status = await asyncio.to_thread(VIDEO_MANAGER.stop, 45, "manual")
     message = "Live View stoppet; kamera er frigivet og Edge-agent genstartet"
     if status.get("status") == "error":
         message = "Live View stoppede med fejl; se status nedenfor"

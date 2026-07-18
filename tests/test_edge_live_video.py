@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -173,3 +175,55 @@ def test_technician_stream_always_restores_relay_and_edge_service(tmp_path, monk
         "start",
     ]
     assert manager.status()["frame_ready"] is False
+
+
+def test_continuous_stream_can_be_stopped_by_central_policy(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text('camera:\n  gphoto2_port: "usb:"\n', encoding="utf-8")
+    monkeypatch.setenv("TIMELAPSE_CAMERA_MAINTENANCE_LOCK", str(tmp_path / "camera.lock"))
+
+    class _CameraRelay:
+        def power_on(self):
+            pass
+
+        def force_off(self):
+            pass
+
+    class _Relay:
+        camera = _CameraRelay()
+
+        def cleanup(self, camera=True, modem=False):
+            pass
+
+    class _Source:
+        def __init__(self, *_args, **_kwargs):
+            self.stopped = threading.Event()
+
+        def detect(self):
+            return SimpleNamespace(model="Nikon Z30", port="usb:002,081", mode="movie")
+
+        def frames(self):
+            while not self.stopped.is_set():
+                yield b"jpeg"
+                self.stopped.wait(0.01)
+
+        def stop(self):
+            self.stopped.set()
+
+    manager = TechnicianStreamManager(
+        tmp_path,
+        source_factory=_Source,
+        relay_factory=lambda _config: _Relay(),
+    )
+    monkeypatch.setattr(manager, "_service_is_active", lambda: False)
+    monkeypatch.setattr(manager, "_service_is_enabled", lambda: False)
+
+    manager.start(max_duration_s=0)
+    deadline = time.monotonic() + 2
+    while manager.status()["status"] != "running" and time.monotonic() < deadline:
+        time.sleep(0.01)
+    stopped = manager.stop(reason="central_policy")
+
+    assert stopped["status"] == "stopped"
+    assert stopped["continuous"] is True
+    assert stopped["max_duration_s"] == 0
+    assert stopped["stop_reason"] == "central_policy"

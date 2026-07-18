@@ -4069,6 +4069,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             if _get_setting(db, "bt_totp_secret", "")
             else {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
         ),
+        "service_access": {"enabled": True, "live_view_enabled": True, "live_view_max_duration_s": 180, "allow_continuous_live_view": False},
     }
 
     # Apply per-device overrides from database
@@ -17027,6 +17028,7 @@ from api.capture_access_api import router as capture_access_router
 app.include_router(capture_access_router)
 
 from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
+from api.service_access_api import create_service_access_router
 app.include_router(customer_risk_api.router)
 app.include_router(grc_register_api.router)
 app.include_router(storage_api.router)
@@ -18108,6 +18110,9 @@ def _ensure_capture_device_access(db: Session, user: User | None, device_id: str
     allowed = _allowed_capture_device_ids(db, user)
     if allowed is not None and device_id not in allowed:
         raise HTTPException(status_code=403, detail="Ingen adgang til denne enhed")
+
+
+app.include_router(create_service_access_router(require_role, _ensure_capture_device_access, _siem_record_events, now_utc))
 
 
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:

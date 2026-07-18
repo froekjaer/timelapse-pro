@@ -155,3 +155,24 @@ def test_local_technician_live_view_polls_current_status_without_stale_fps():
     assert "window.setInterval(updateVideoStatus, 1500)" in source
     assert "Number(status.fps || 0).toFixed(1)" in source
     assert "window.location.replace('/mgmt/technician')" in source
+
+
+def test_local_live_view_duration_and_headend_policy_are_wired_end_to_end():
+    def source(path: str) -> str:
+        return (ROOT / path).read_text(encoding="utf-8")
+
+    totp = source("edge/scripts/totp-service.py")
+    manager = source("edge/camera/service_stream.py")
+    headend = source("headend/main.py")
+    service_api = source("headend/api/service_access_api.py")
+    ui = source("timelapse-ui/src/pages/SystemAdminPage.tsx")
+
+    assert 'name="duration_s"' in totp
+    assert 'allow_continuous_live_view' in totp
+    assert 'reason="central_policy"' in totp
+    assert 'self._max_duration_s = 0 if requested_duration == 0' in manager
+    assert 'create_service_access_router' in headend
+    assert '@router.put("/{device_id}/service-access")' in service_api
+    assert 'central_service_access_disabled' in service_api
+    assert 'Lokal serviceadgang' in ui
+    assert 'allow_continuous_live_view: continuousLiveViewAllowed' in ui

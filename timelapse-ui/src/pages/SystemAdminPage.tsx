@@ -245,6 +245,12 @@ export function SystemAdminPage() {
   const [saved, setSaved]       = useState(false)
   const [, setCfg]              = useState<any>(null)
   const [labActive, setLabActive] = useState(false)
+  const [serviceAccessEnabled, setServiceAccessEnabled] = useState(true)
+  const [localLiveViewEnabled, setLocalLiveViewEnabled] = useState(true)
+  const [liveViewMaxDurationS, setLiveViewMaxDurationS] = useState('180')
+  const [continuousLiveViewAllowed, setContinuousLiveViewAllowed] = useState(false)
+  const [savingServiceAccess, setSavingServiceAccess] = useState(false)
+  const [serviceAccessSaved, setServiceAccessSaved] = useState(false)
   const [tunnelEnabled, setTunnelEnabled] = useState(false)
   const [tunnelPrimary, setTunnelPrimary] = useState('')
   const [tunnelRemotePort, setTunnelRemotePort] = useState('2201')
@@ -329,6 +335,11 @@ export function SystemAdminPage() {
     api(`/api/admin/devices/${pathSegment(selectedDevice)}`).then((d: any) => {
       const dc = d.device_config ?? {}
       setLabActive(!!(dc.debug_mode?.enabled))
+      const serviceAccess = dc.service_access ?? {}
+      setServiceAccessEnabled(serviceAccess.enabled !== false)
+      setLocalLiveViewEnabled(serviceAccess.live_view_enabled !== false)
+      setLiveViewMaxDurationS(String(serviceAccess.live_view_max_duration_s ?? 180))
+      setContinuousLiveViewAllowed(!!serviceAccess.allow_continuous_live_view)
       setMultiCameraMode(dc.multi_camera_mode ?? 'single')
       const tun = dc.ssh_tunnel ?? {}
       setTunnelEnabled(!!tun.enabled)
@@ -394,6 +405,27 @@ export function SystemAdminPage() {
       alert('Fejl ved gemning')
     } finally {
       setSavingMultiCam(false)
+    }
+  }
+
+  async function saveServiceAccess() {
+    if (!selectedDevice) return
+    setSavingServiceAccess(true)
+    try {
+      await api(`/api/admin/devices/${pathSegment(selectedDevice)}/service-access`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          enabled: serviceAccessEnabled,
+          live_view_enabled: localLiveViewEnabled,
+          live_view_max_duration_s: parseInt(liveViewMaxDurationS),
+          allow_continuous_live_view: continuousLiveViewAllowed,
+        }),
+      })
+      if (!serviceAccessEnabled) setLabActive(false)
+      setServiceAccessSaved(true)
+      setTimeout(() => setServiceAccessSaved(false), 2500)
+    } finally {
+      setSavingServiceAccess(false)
     }
   }
 
@@ -573,6 +605,39 @@ export function SystemAdminPage() {
       <Section title="Relay test" icon={<Zap className="w-4 h-4" />}
         description="Test og toggle relay udgange manuelt — kræver LAB mode">
         {selectedDevice && <RelayTester deviceId={selectedDevice} labActive={labActive} />}
+      </Section>
+
+      <Section title="Lokal serviceadgang" icon={<Shield className="w-4 h-4" />}
+        description="Central sikkerhedsramme for LAB, debugging og serviceteknikerens Live View"
+        defaultOpen={true}>
+        <Field label="Lokal serviceadgang"
+          description="Når den slås fra, deaktiveres LAB-mode og en aktiv lokal Live View stoppes ved næste policy-kontrol.">
+          <Toggle value={serviceAccessEnabled} onChange={setServiceAccessEnabled}
+            label={serviceAccessEnabled ? 'Tilladt' : 'Centralt deaktiveret'} />
+        </Field>
+        <Field label="Live View i lokal tekniker-UI">
+          <Toggle value={localLiveViewEnabled} onChange={setLocalLiveViewEnabled}
+            label={localLiveViewEnabled ? 'Tilladt' : 'Deaktiveret'} />
+        </Field>
+        <Field label="Maksimal Live View-varighed" unit="sekunder"
+          description="Teknikeren kan lokalt vælge en kortere varighed. Gyldigt interval er 30 sekunder til 24 timer.">
+          <Num value={liveViewMaxDurationS} onChange={setLiveViewMaxDurationS} placeholder="180" />
+        </Field>
+        <Field label="Kontinuerlig Live View"
+          description="Kræver eksplicit tilladelse. Streamen fortsætter indtil lokal Stop eller centralt nødstop.">
+          <Toggle value={continuousLiveViewAllowed} onChange={setContinuousLiveViewAllowed}
+            label={continuousLiveViewAllowed ? 'Tilladt' : 'Ikke tilladt'} />
+        </Field>
+        <button onClick={saveServiceAccess} disabled={savingServiceAccess}
+          className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg disabled:opacity-50">
+          {savingServiceAccess ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          {serviceAccessSaved ? 'Gemt' : 'Gem service-policy'}
+        </button>
+        {!serviceAccessEnabled && (
+          <p className="mt-3 text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            LAB og lokal Live View er centralt deaktiveret på denne Edge.
+          </p>
+        )}
       </Section>
 
       {/* Kamera timeouts */}

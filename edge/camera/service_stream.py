@@ -49,6 +49,7 @@ class TechnicianStreamManager:
         self._frame_count = 0
         self._max_duration_s = 180
         self._preview_interval_s = 0.8
+        self._stop_reason = ""
 
     def start(self, max_duration_s: int = 180, preview_interval_s: float = 0.8) -> dict:
         with self._lock:
@@ -65,8 +66,10 @@ class TechnicianStreamManager:
             self._started_at = time.monotonic()
             self._finished_at = 0.0
             self._frame_count = 0
-            self._max_duration_s = max(30, min(int(max_duration_s), 3600))
+            requested_duration = int(max_duration_s)
+            self._max_duration_s = 0 if requested_duration == 0 else max(30, min(requested_duration, 86400))
             self._preview_interval_s = max(0.1, float(preview_interval_s))
+            self._stop_reason = ""
             self._thread = threading.Thread(
                 target=self._run,
                 daemon=True,
@@ -75,10 +78,12 @@ class TechnicianStreamManager:
             self._thread.start()
             return self.status()
 
-    def stop(self, join_timeout_s: float = 45) -> dict:
+    def stop(self, join_timeout_s: float = 45, reason: str = "manual") -> dict:
         with self._condition:
             if self._thread and self._thread.is_alive() and self._status != "error":
                 self._status = "stopping"
+                if not self._stop_reason:
+                    self._stop_reason = reason
                 self._condition.notify_all()
         self._stop.set()
         source = self._source
@@ -105,6 +110,9 @@ class TechnicianStreamManager:
                 "frame_count": self._frame_count,
                 "fps": round(fps, 1),
                 "max_duration_s": self._max_duration_s,
+                "continuous": self._max_duration_s == 0,
+                "elapsed_s": round(elapsed, 1),
+                "stop_reason": self._stop_reason,
                 "error": self._error,
             }
 
@@ -165,7 +173,7 @@ class TechnicianStreamManager:
             self._source = self.source_factory(
                 camera_config.get("gphoto2_port", "usb:"),
                 preview_interval_s=self._preview_interval_s,
-                movie_segment_s=self._max_duration_s,
+                movie_segment_s=self._max_duration_s or 300,
             )
             info = self._source.detect()
             with self._condition:
@@ -174,9 +182,12 @@ class TechnicianStreamManager:
                 self._mode = info.mode
                 self._condition.notify_all()
 
-            deadline = time.monotonic() + self._max_duration_s
+            deadline = time.monotonic() + self._max_duration_s if self._max_duration_s else None
             for frame in self._source.frames():
-                if self._stop.is_set() or time.monotonic() >= deadline:
+                if self._stop.is_set():
+                    break
+                if deadline is not None and time.monotonic() >= deadline:
+                    self._stop_reason = "timeout"
                     break
                 with self._condition:
                     self._latest_frame = frame
@@ -184,11 +195,14 @@ class TechnicianStreamManager:
                     self._frame_count += 1
                     self._status = "running"
                     self._condition.notify_all()
+            if not self._stop.is_set() and not self._stop_reason:
+                self._stop_reason = "source_ended"
         except Exception as exc:
             log.exception("Technician live stream failed")
             with self._condition:
                 self._status = "error"
                 self._error = str(exc)
+                self._stop_reason = "error"
                 self._condition.notify_all()
         finally:
             if self._source:
