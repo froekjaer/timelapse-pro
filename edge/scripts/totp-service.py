@@ -26,6 +26,7 @@ import asyncio
 import json
 import pty
 import select
+import sys
 import yaml
 import pyotp
 
@@ -48,9 +49,15 @@ CONFIG_FILE = "/etc/timelapse/bt-config.yaml"
 SESSION_COOKIE = "tl_session"
 IPTABLES_CHAIN = "TL_MGMT"
 EDGE_ROOT = Path(os.getenv("TIMELAPSE_EDGE_ROOT", "/opt/timelapse/edge"))
+if str(EDGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(EDGE_ROOT))
+
+from camera.service_stream import TechnicianStreamManager
+
 TECH_CLI = EDGE_ROOT / "tools" / "bootstrap_cli.py"
 TECH_CAPTURE_DIR = Path(os.getenv("TIMELAPSE_TECH_CAPTURE_DIR", "/tmp/timelapse-tech-captures"))
 VIDEO_FRAME_DIR = Path(os.getenv("TIMELAPSE_TECH_VIDEO_DIR", "/tmp/timelapse-tech-video"))
+VIDEO_MANAGER = TechnicianStreamManager(EDGE_ROOT)
 BASH_PATH = os.getenv("TIMELAPSE_TECH_SHELL", "/bin/bash")
 CLI_ALLOWED_FLAGS = {
     "--status",
@@ -107,6 +114,8 @@ def _default_config() -> dict:
             "https_port": 8443,
             "enable_interactive_shell": False,
             "session_timeout": 3600,
+            "video_max_duration_s": 180,
+            "video_preview_interval_s": 0.8,
             "cert_file": "/etc/timelapse/certs/mgmt.crt",
             "key_file": "/etc/timelapse/certs/mgmt.key",
             "headend_url": "",
@@ -290,6 +299,12 @@ def _success_page() -> str:
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.on_event("shutdown")
+def stop_technician_stream_on_shutdown() -> None:
+    """Never leave the camera relay or Edge agent in maintenance state."""
+    VIDEO_MANAGER.stop(join_timeout_s=45)
 
 
 @app.middleware("http")
@@ -1125,6 +1140,7 @@ term.addEventListener('keydown', (event) => {
 
 def _technician_page(msg: str = "", output: str = "") -> str:
     status = _technician_snapshot()
+    video_status = VIDEO_MANAGER.status()
     generated = status.get("generated_at", "")
     photo_options = "".join(
         f'<option value="{key}">{label}</option>'
@@ -1150,12 +1166,47 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         f'<div class="card wide"><h2>Output</h2><pre>{html.escape(output)}</pre></div>'
         if output else ""
     )
+    mode_labels = {
+        "movie": "Ægte movie/live-view",
+        "preview": "Preview-kompatibilitet",
+        "": "Afventer kamera",
+    }
+    video_state = video_status.get("status", "stopped")
+    video_class = "error" if video_state == "error" else ("ok" if video_state == "running" else "")
+    video_details = " · ".join(
+        value for value in [
+            video_status.get("model", ""),
+            mode_labels.get(video_status.get("mode", ""), video_status.get("mode", "")),
+            f'{video_status.get("fps", 0):.1f} fps' if video_status.get("frame_count") else "",
+        ] if value
+    )
+    video_error = html.escape(video_status.get("error", ""))
+    video_status_html = (
+        f'<p class="stream-status {video_class}"><strong>{html.escape(video_state)}</strong>'
+        f'{" · " + html.escape(video_details) if video_details else ""}'
+        f'{"<br>" + video_error if video_error else ""}</p>'
+    )
+    stream_image = (
+        '<img id="preview-stream" class="stream" src="/mgmt/technician/video.mjpg" '
+        'alt="Kamera Live View stream">'
+        if video_status.get("running") and video_status.get("frame_ready")
+        else '<div class="stream empty-stream">Live View er ikke startet</div>'
+    )
+    refresh_meta = (
+        '<meta http-equiv="refresh" content="3; url=/mgmt/technician">'
+        if video_status.get("running") and not video_status.get("frame_ready")
+        else (
+            '<meta http-equiv="refresh" content="45; url=/mgmt/technician">'
+            if not video_status.get("running")
+            else ""
+        )
+    )
     return f"""<!DOCTYPE html>
 <html lang="da">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="45; url=/mgmt/technician">
+{refresh_meta}
 <title>TimeLapse Pro — Tekniker</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -1184,6 +1235,11 @@ def _technician_page(msg: str = "", output: str = "") -> str:
   .hint {{ color: #8aa0bf; font-size: 0.76rem; line-height: 1.35; margin-bottom: 0.55rem; }}
   .preview img {{ width: 100%; max-height: 520px; object-fit: contain; background: #050812; border: 1px solid #26385a; border-radius: 8px; }}
   .stream {{ width: 100%; min-height: 220px; object-fit: contain; background: #050812; border: 1px solid #26385a; border-radius: 8px; }}
+  .empty-stream {{ display: grid; place-items: center; color: #64748b; }}
+  .stream-actions {{ display: grid; grid-template-columns: repeat(2, minmax(140px, 220px)); gap: 0.5rem; margin-bottom: 0.7rem; }}
+  .stream-status {{ color: #f6c453; font-size: 0.8rem; line-height: 1.4; margin-bottom: 0.7rem; }}
+  .stream-status.ok {{ color: #66bb6a; }}
+  .stream-status.error {{ color: #ef5350; }}
   pre {{ white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; background: #0b1220; border-radius: 8px; padding: 0.8rem; color: #d6e4ff; max-height: 420px; overflow: auto; }}
   .msg.ok {{ color: #66bb6a; font-size: 0.85rem; margin-bottom: 1rem; }}
   .empty {{ color: #777; font-size: 0.8rem; }}
@@ -1271,11 +1327,14 @@ def _technician_page(msg: str = "", output: str = "") -> str:
       {latest_panel}
     </div>
     <div class="card wide">
-      <h2>Video preview</h2>
-      <p class="hint">Preview bruger kameraets preview-capture gentaget som MJPEG. Stop siden eller skift væk når du er færdig, så kameraet frigives.</p>
-      <button class="secondary" type="button" onclick="document.getElementById('preview-stream').src='/mgmt/technician/video.mjpg?t='+Date.now()">Start preview</button>
-      <button class="secondary" type="button" onclick="document.getElementById('preview-stream').removeAttribute('src')">Stop preview</button>
-      <img id="preview-stream" class="stream" alt="Live preview stream">
+      <h2>Video Live View</h2>
+      <p class="hint">Nikon Z30 bruger kameraets ægte movie/live-view. Canon EOS 1300D/2000D bruger kompatibilitets-preview, når remote movie ikke understøttes. Kamera og Edge-agent frigives altid ved Stop eller automatisk timeout.</p>
+      {video_status_html}
+      <div class="stream-actions">
+        <form method="post" action="/mgmt/technician/video/start"><button type="submit">Start Live View</button></form>
+        <form method="post" action="/mgmt/technician/video/stop"><button class="secondary" type="submit">Stop Live View</button></form>
+      </div>
+      {stream_image}
     </div>
     {output_html}
   </div>
@@ -1409,27 +1468,67 @@ async def mgmt_technician_video_frame(name: str):
     return FileResponse(_safe_image_from(VIDEO_FRAME_DIR, name), media_type="image/jpeg")
 
 
+@app.get("/mgmt/technician/video/start")
+@app.get("/mgmt/technician/video/stop")
+async def mgmt_technician_video_post_target_get_fallback(request: Request):
+    return RedirectResponse("/mgmt/technician", status_code=303)
+
+
+@app.post("/mgmt/technician/video/start", response_class=HTMLResponse)
+async def mgmt_technician_video_start(request: Request):
+    management = load_config()["management"]
+    status = VIDEO_MANAGER.start(
+        max_duration_s=int(management.get("video_max_duration_s", 180)),
+        preview_interval_s=float(management.get("video_preview_interval_s", 0.8)),
+    )
+    message = "Live View starter; kamera og relæ klargøres"
+    if status.get("status") == "error":
+        message = "Live View kunne ikke startes"
+    return HTMLResponse(_technician_page(message))
+
+
+@app.post("/mgmt/technician/video/stop", response_class=HTMLResponse)
+async def mgmt_technician_video_stop(request: Request):
+    status = await asyncio.to_thread(VIDEO_MANAGER.stop)
+    message = "Live View stoppet; kamera er frigivet og Edge-agent genstartet"
+    if status.get("status") == "error":
+        message = "Live View stoppede med fejl; se status nedenfor"
+    return HTMLResponse(_technician_page(message))
+
+
+@app.get("/mgmt/technician/video/status")
+async def mgmt_technician_video_status():
+    return VIDEO_MANAGER.status()
+
+
 @app.get("/mgmt/technician/video.mjpg")
 async def mgmt_technician_video_stream():
+    initial_status = VIDEO_MANAGER.status()
+    if not initial_status.get("running"):
+        raise HTTPException(status_code=409, detail="Start Live View før streamen åbnes")
+
     async def frames():
-        VIDEO_FRAME_DIR.mkdir(parents=True, exist_ok=True)
-        frame = VIDEO_FRAME_DIR / "preview.jpg"
+        sequence = 0
         boundary = b"--frame\r\n"
         while True:
-            result = subprocess.run(
-                ["gphoto2", "--capture-preview", "--filename", str(frame), "--force-overwrite"],
-                capture_output=True,
-                text=True,
-                timeout=12,
+            new_sequence, frame, status = await asyncio.to_thread(
+                VIDEO_MANAGER.wait_for_frame,
+                sequence,
+                5,
             )
-            if result.returncode != 0 or not frame.exists():
-                error = (result.stderr or result.stdout or "preview failed").encode(errors="replace")[:400]
-                yield boundary + b"Content-Type: text/plain\r\n\r\n" + error + b"\r\n"
-                await asyncio.sleep(2)
+            if frame is not None and new_sequence > sequence:
+                sequence = new_sequence
+                yield (
+                    boundary
+                    + b"Content-Type: image/jpeg\r\nContent-Length: "
+                    + str(len(frame)).encode()
+                    + b"\r\n\r\n"
+                    + frame
+                    + b"\r\n"
+                )
                 continue
-            data = frame.read_bytes()
-            yield boundary + b"Content-Type: image/jpeg\r\nContent-Length: " + str(len(data)).encode() + b"\r\n\r\n" + data + b"\r\n"
-            await asyncio.sleep(0.8)
+            if not status.get("running"):
+                return
 
     return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 

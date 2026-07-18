@@ -7,6 +7,7 @@ the LAB UI appear to work while commands were never executed by the Edge.
 from pathlib import Path
 import stat
 import sys
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "edge"))
@@ -66,20 +67,25 @@ def test_manual_focus_stops_when_nikon_manual_context_cannot_be_set(monkeypatch)
 
 
 def test_live_streamer_marks_itself_stopped_when_camera_stream_ends(monkeypatch):
-    class _Stdout:
-        def read(self, _size):
-            return b""
+    import frame_push
 
-    class _Process:
-        pid = 42
-        stdout = _Stdout()
+    class _Source:
+        info = None
 
-        def terminate(self):
+        def __init__(self, _port):
+            pass
+
+        def detect(self):
+            self.info = SimpleNamespace(mode="movie", model="Nikon Z30", port="usb:001,007")
+            return self.info
+
+        def frames(self):
+            return iter(())
+
+        def stop(self):
             return None
 
-    # frame_push owns its own subprocess module; replace it directly.
-    import frame_push
-    monkeypatch.setattr(frame_push.subprocess, "Popen", lambda *_args, **_kwargs: _Process())
+    monkeypatch.setattr(frame_push, "GPhoto2FrameSource", _Source)
 
     streamer = LiveVideoStreamer("TL-TEST", api_client=object())
     streamer._running = True
