@@ -44,6 +44,7 @@ class TechnicianStreamManager:
         self._port = ""
         self._mode = ""
         self._started_at = 0.0
+        self._finished_at = 0.0
         self._frame_count = 0
         self._max_duration_s = 180
         self._preview_interval_s = 0.8
@@ -61,6 +62,7 @@ class TechnicianStreamManager:
             self._port = ""
             self._mode = ""
             self._started_at = time.monotonic()
+            self._finished_at = 0.0
             self._frame_count = 0
             self._max_duration_s = max(30, min(int(max_duration_s), 3600))
             self._preview_interval_s = max(0.1, float(preview_interval_s))
@@ -88,12 +90,14 @@ class TechnicianStreamManager:
 
     def status(self) -> dict:
         with self._lock:
-            elapsed = time.monotonic() - self._started_at if self._started_at else 0.0
+            end = self._finished_at or time.monotonic()
+            elapsed = end - self._started_at if self._started_at else 0.0
+            active = self._status in {"starting", "running", "stopping"}
             fps = self._frame_count / elapsed if elapsed > 0 else 0.0
             return {
                 "status": self._status,
-                "running": self._status in {"starting", "running"},
-                "frame_ready": self._latest_frame is not None,
+                "running": active,
+                "frame_ready": active and self._latest_frame is not None,
                 "model": self._model,
                 "port": self._port,
                 "mode": self._mode,
@@ -192,6 +196,7 @@ class TechnicianStreamManager:
                         self._error = (self._error + "; " if self._error else "") + "Edge-agent kunne ikke genstartes"
                         self._status = "error"
             with self._condition:
+                self._finished_at = time.monotonic()
                 if self._status != "error":
                     self._status = "stopped"
                 self._condition.notify_all()

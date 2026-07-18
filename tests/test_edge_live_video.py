@@ -79,6 +79,27 @@ def test_movie_source_uses_bounded_capture_movie_and_not_still_frames(monkeypatc
     ]]
 
 
+def test_canon_preview_source_never_uses_nikon_movie_command(monkeypatch):
+    jpeg = b"\xff\xd8" + (b"c" * 2048) + b"\xff\xd9"
+    commands = []
+
+    def fake_run(command, **_kwargs):
+        commands.append(command)
+        target = Path(command[command.index("--filename") + 1])
+        target.write_bytes(jpeg)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(live_video.subprocess, "run", fake_run)
+    source = live_video.GPhoto2FrameSource(preview_interval_s=0.1)
+    info = live_video.CameraStreamInfo("Canon EOS 2000D", "usb:001,004", "preview", True, False)
+    first_frame = next(source._preview_frames(info))
+    source.stop()
+
+    assert first_frame == jpeg
+    assert "--capture-preview" in commands[0]
+    assert not any(any("capture-movie" in part for part in command) for command in commands)
+
+
 def test_technician_stream_always_restores_relay_and_edge_service(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_text('camera:\n  gphoto2_port: "usb:"\n', encoding="utf-8")
     events = []
@@ -132,3 +153,4 @@ def test_technician_stream_always_restores_relay_and_edge_service(tmp_path, monk
         "relay_cleanup",
         "start",
     ]
+    assert manager.status()["frame_ready"] is False

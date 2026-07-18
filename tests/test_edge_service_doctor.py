@@ -1,5 +1,6 @@
-import json
 import importlib.util
+import json
+import sys
 from pathlib import Path
 
 
@@ -69,6 +70,26 @@ def test_doctor_checks_complete_local_service_chain(tmp_path, monkeypatch):
     service_ids = {c["id"] for c in evidence["checks"] if c["id"].startswith("service.")}
 
     assert service_ids == {f"service.{service}" for service in bootstrap_cli.EXPECTED_SERVICES}
+
+
+def test_doctor_accepts_python_plus_runner_script_command(tmp_path, monkeypatch):
+    base = _commissioned_edge(tmp_path)
+    runner = tmp_path / "edge_qa_runner.py"
+    runner.write_text("print('{}')\n", encoding="utf-8")
+    (base / "config.yaml").write_text(
+        "quality:\n"
+        "  edge_ai:\n"
+        "    enabled: true\n"
+        f"    runner: {sys.executable} {runner}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bootstrap_cli, "command_exists", lambda _name: False)
+
+    evidence = bootstrap_cli.collect_doctor_evidence(base)
+    runner_check = next(check for check in evidence["checks"] if check["id"] == "ai.runner")
+
+    assert runner_check["ok"] is True
+    assert str(runner) in runner_check["detail"]
 
 
 def test_node_inventory_prefers_deployed_release_receipt(tmp_path, monkeypatch):

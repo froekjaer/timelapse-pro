@@ -1172,6 +1172,13 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         "": "Afventer kamera",
     }
     video_state = video_status.get("status", "stopped")
+    video_state_label = {
+        "stopped": "Stoppet",
+        "starting": "Starter",
+        "running": "Kører",
+        "stopping": "Stopper",
+        "error": "Fejl",
+    }.get(video_state, video_state)
     video_class = "error" if video_state == "error" else ("ok" if video_state == "running" else "")
     video_details = " · ".join(
         value for value in [
@@ -1181,9 +1188,10 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         ] if value
     )
     video_error = html.escape(video_status.get("error", ""))
+    details_prefix = "Seneste: " if video_state == "stopped" and video_details else ""
     video_status_html = (
-        f'<p class="stream-status {video_class}"><strong>{html.escape(video_state)}</strong>'
-        f'{" · " + html.escape(video_details) if video_details else ""}'
+        f'<p class="stream-status {video_class}"><strong>{html.escape(video_state_label)}</strong>'
+        f'{" · " + html.escape(details_prefix + video_details) if video_details else ""}'
         f'{"<br>" + video_error if video_error else ""}</p>'
     )
     stream_image = (
@@ -1229,6 +1237,7 @@ def _technician_page(msg: str = "", output: str = "") -> str:
   button, input, select {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; }}
   button {{ background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; }}
   button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
+  button:disabled {{ cursor: not-allowed; opacity: 0.45; }}
   input, select {{ width: 100%; background: #0f3460; color: #fff; margin-bottom: 0.5rem; }}
   label {{ display: block; color: #8aa0bf; font-size: 0.76rem; margin: 0.45rem 0 0.25rem; }}
   form.inline {{ margin: 0; }}
@@ -1331,8 +1340,8 @@ def _technician_page(msg: str = "", output: str = "") -> str:
       <p class="hint">Nikon Z30 bruger kameraets ægte movie/live-view. Canon EOS 1300D/2000D bruger kompatibilitets-preview, når remote movie ikke understøttes. Kamera og Edge-agent frigives altid ved Stop eller automatisk timeout.</p>
       {video_status_html}
       <div class="stream-actions">
-        <form method="post" action="/mgmt/technician/video/start"><button type="submit">Start Live View</button></form>
-        <form method="post" action="/mgmt/technician/video/stop"><button class="secondary" type="submit">Stop Live View</button></form>
+        <form method="post" action="/mgmt/technician/video/start"><button type="submit" {"disabled" if video_status.get("running") else ""}>Start Live View</button></form>
+        <form method="post" action="/mgmt/technician/video/stop"><button class="secondary" type="submit" {"" if video_status.get("running") else "disabled"}>Stop Live View</button></form>
       </div>
       {stream_image}
     </div>

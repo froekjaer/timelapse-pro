@@ -721,7 +721,20 @@ def collect_doctor_evidence(base_dir: Path) -> dict[str, Any]:
     model_path = edge_ai.get("model_path") or os.getenv("TIMELAPSE_EDGE_AI_MODEL", "")
     vendor_binary = edge_ai.get("vendor_binary") or os.getenv("TIMELAPSE_EDGE_AI_VENDOR_BINARY", "")
     if edge_ai.get("enabled") or runner or model_path or vendor_binary:
-        runner_path = shutil.which(str(runner)) if runner and "/" not in str(runner) else str(runner)
+        runner_cmd = shlex.split(str(runner)) if runner else []
+        runner_executable = runner_cmd[0] if runner_cmd else ""
+        runner_path = (
+            shutil.which(runner_executable)
+            if runner_executable and "/" not in runner_executable
+            else runner_executable
+        )
+        runner_script = next(
+            (item for item in runner_cmd[1:] if item.endswith(".py")),
+            "",
+        )
+        runner_ok = bool(runner_path and Path(runner_path).exists())
+        if runner_script:
+            runner_ok = runner_ok and Path(runner_script).exists()
         vendor_cmd = shlex.split(str(vendor_binary)) if vendor_binary else []
         vendor_path = (
             shutil.which(vendor_cmd[0])
@@ -729,7 +742,7 @@ def collect_doctor_evidence(base_dir: Path) -> dict[str, Any]:
             else (vendor_cmd[0] if vendor_cmd else "")
         )
         add("ai.enabled", "edge QA AI", bool(edge_ai.get("enabled", False)), "enabled" if edge_ai.get("enabled") else "disabled")
-        add("ai.runner", "NPU runner", bool(runner_path and Path(runner_path).exists()), runner_path or "mangler")
+        add("ai.runner", "NPU runner", runner_ok, str(runner) or "mangler")
         add("ai.model", "NPU model", bool(model_path and Path(str(model_path)).exists()), str(model_path) or "mangler")
         add("ai.vendor_wrapper", "VIPLite wrapper", bool(vendor_path and Path(vendor_path).exists()), str(vendor_binary) or "mangler")
 
