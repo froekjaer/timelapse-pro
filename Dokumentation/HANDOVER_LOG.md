@@ -29,6 +29,24 @@
 
 ## Log
 
+### Handover 2026-07-18 (4) — Claude: Pushet, deployet og verificeret live via fil-proxyen
+
+- **Kontekst:** Peter startede fil-proxyen (`claude_proxy.py`, audit-logget) så jeg selv kunne lukke løkken. Alt herunder er kørt gennem proxyen og står i `.claude_proxy/audit.log`.
+- **Præflight (før push):** fuld `npm run build` GRØN (kun kendte chunk-size-warnings) · CI-ækvivalent pytest (`--import-mode=importlib`, PYTHONPATH, sqlite): **631 passed, 4 skipped, 0 failed** — inkl. mine 23 nye kontrakttests. (Uden importlib-flaget fejler collection på test_drift_detection-navnekollisionen — brug ALTID CI-kommandoen fra ci.yml ved lokal kørsel.)
+- **Push:** `e5c69186..f83c00ce main -> main`.
+- **CI/deploy run 29622240327:** ✓ Web UI Build Check (44s) · ✓ Python Syntax Check (53s) · ✓ Signal Deploy · ✓ **Deploy to Mac mini Headend (16s)**.
+- **Live-verifikation efter deploy:** `/api/health` 200 på både loopback og https://timelapse.froekjaer.dk · ny route `/api/headend/generator/bundles` svarer **401 uautentificeret** (mounted + auth håndhævet — præcis som designet) · "Headend generator" til stede i det deployede UI-bundle (dist-grep) · nginx-fejllog ren (kun benigne body-buffer-warnings fra TL-C87FF9587CA0's normale capture-uploads, som i øvrigt beviser at edge-flowet kørte upåvirket gennem deployet).
+- **Noter:** CI-annotation om Node 20-deprecation på actions/checkout@v4 m.fl. — lav prioritet, men bør bumpes ved lejlighed. `.claude/` og drawio-tempfilen er fortsat bevidst ucommittet.
+- **Status:** Headend-generator-featuren er LIVE på rd. Denne entry committes lokalt og rider med næste push (et docs-only-push ville blot genstarte den live headend unødigt).
+
+### Handover 2026-07-18 (3) — Claude: Alt committet til lokal main — push afventer Peter
+
+- **Committet (efter Peters ok):** `2fe9a3f6` feat(headend-generator) — UI-menupunkt, API, orkestrator, tests, main.py-wiring (+2 linjer) · `f83c00ce` docs — begge reviews, installationsmanualer, HEADEND_GENERATOR_v1, INSTALLATION_GUIDE-addendum, HANDOVER_LOG-rotation/arkiv, z.ai-omdøbninger. Forfatter: `Claude <claude@froekjaer.dk>` for sporbar attribution.
+- **Verificeret før commit:** arkitektur-ratchet 2/2 grøn oven på Codex' seneste main.py-refaktorering; 23/23 kontrakttests; tsc rent; main.py-diff = præcis de 2 wiring-linjer.
+- **BEVIDST ikke committet:** `.claude/` (agent-config, jf. beslutningen 2026-07-15) og `Dokumentation/Arkitektur/.$TimeLapse_Arkitektur.drawio.dtmp` (drawio-tempfil — slet den bare; evt. tilføj `.$*.dtmp` til .gitignore).
+- **➡️ Peter: `git push origin main` skal køres af dig** — sandkassen har (korrekt, jf. agent-lockout M-05) ingen GitHub-nøgle. Husk: push trigger `deploy-macmini` → genstart af live rd-headend, så kør den når du kan holde øje. CI's ui-check kører fuld `npm run build`, som ikke kunne køres i sandkassen (tsc var rent).
+- Denne entry er efterladt ucommittet med vilje, så den kan ryge med i næste commit (sammen med Codex' 01:30-entry nedenfor, der også landede efter f83c00ce).
+
 ### Handover 2026-07-18 01:30 — fra Codex til Claude/Peter: 544 integrationstests, browserbaseline og node-agent least privilege
 
 - **Testmatrix:** alle 544 tests markeret `integration` er indsamlet og kørt i deres
