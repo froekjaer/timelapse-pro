@@ -495,15 +495,35 @@ class OllamaVisionService:
         fallback_models: Optional[list[str]] = None,
     ):
         self.base_url        = (base_url or _db_setting("ollama_url", OLLAMA_BASE_URL)).rstrip("/")
-        self.vision_model    = vision_model or _db_setting("ollama_vision_model", VISION_MODEL)
+        configured_model = vision_model or _db_setting("ollama_vision_model", VISION_MODEL)
+        self.runtime_paused = False
+        self.runtime_low_memory = False
+        try:
+            from ai.ollama_runtime_control import OllamaRuntimePaused, vision_model_override
+            self.vision_model, self.runtime_low_memory = vision_model_override(configured_model)
+        except OllamaRuntimePaused:
+            self.vision_model = configured_model
+            self.runtime_paused = True
+        except Exception as exc:
+            log.warning("Ollama runtime-override kunne ikke læses; bruger normal model: %s", exc)
+            self.vision_model = configured_model
         fallback_raw = _db_setting("ollama_fallback_models", ",".join(FALLBACK_MODELS))
         self.fallback_models = fallback_models if fallback_models is not None else [m.strip() for m in fallback_raw.split(",") if m.strip()]
+        if self.runtime_low_memory:
+            # A fallback to the normal 6+ GB model would violate the selected
+            # memory ceiling. Low-memory mode therefore fails closed.
+            self.fallback_models = []
         self.timeout_vision  = _db_int("ollama_vision_timeout_s", TIMEOUT_VISION)
         self.keep_alive_s = _db_int("ollama_keep_alive_s", 30)
         self.max_image_bytes = _db_int("ollama_max_image_bytes", MAX_IMAGE_BYTES)
         self.max_image_edge  = _db_int("ollama_max_image_edge", MAX_IMAGE_EDGE)
         self.vision_num_ctx = _db_int("ollama_vision_num_ctx", VISION_NUM_CTX)
         self.vision_num_predict = _db_int("ollama_vision_num_predict", VISION_NUM_PREDICT)
+        if self.runtime_low_memory:
+            self.max_image_bytes = min(self.max_image_bytes, 900_000)
+            self.max_image_edge = min(self.max_image_edge, 768)
+            self.vision_num_ctx = min(self.vision_num_ctx, 4096)
+            self.vision_num_predict = min(self.vision_num_predict, 512)
         self.vision_temperature = _db_float("ollama_vision_temperature", 0.1)
         self.vision_top_p = _db_float("ollama_vision_top_p", 0.8)
         self.vision_repeat_penalty = _db_float("ollama_vision_repeat_penalty", 1.18)
@@ -555,6 +575,8 @@ class OllamaVisionService:
 
     def health_check(self) -> bool:
         """Tjek om Ollama kører og modellen er tilgængelig."""
+        if self.runtime_paused:
+            return False
         try:
             resp = self._client.get(f"{self.base_url}/api/tags", timeout=5)
             if resp.status_code != 200:

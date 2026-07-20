@@ -119,6 +119,7 @@ _analysis_queue: queue.Queue = queue.Queue(maxsize=5000)
 _worker_thread:  Optional[threading.Thread] = None
 OLLAMA_PLAY_MODE_KEY = "openwebui_enabled"
 _last_play_mode_log = 0.0
+_last_runtime_pause_log = 0.0
 _ollama_analysis_lock = threading.Lock()
 
 # Synlige tællere til /api/ai/status — gør det muligt at se om AI-workeren
@@ -132,6 +133,7 @@ _ai_stats: dict = {
     "skipped_disabled":   0,
     "skipped_technical_only": 0,
     "skipped_ollama_down": 0,
+    "deferred_ollama_paused": 0,
     "skipped_no_cloud_credentials": 0,
     "skipped_already_done": 0,
     "skipped_queue_full":  0,
@@ -300,6 +302,7 @@ def _worker(get_db_fn, find_image_fn):
       technical_only   → springes over højere oppe i loopet
     """
     from ai.ollama_service import OllamaVisionService; get_ollama_service = lambda *a, **kw: OllamaVisionService(*a, **kw)
+    from ai.ollama_runtime_control import runtime_is_paused
     from ai.alarm_engine import AlarmEngine, run_alarm_migration
 
     log.info("AI analyse-worker startet")
@@ -374,6 +377,26 @@ def _worker(get_db_fn, find_image_fn):
                 _ai_stat_inc("skipped_technical_only")
                 continue
 
+            if ai_config.strategy in {"local_only", "local_then_cloud"}:
+                runtime_db_gen = get_db_fn()
+                runtime_db = next(runtime_db_gen)
+                try:
+                    ollama_paused = runtime_is_paused(runtime_db)
+                finally:
+                    runtime_db_gen.close()
+                if ollama_paused:
+                    # Preserve the work item. Database state remains canonical,
+                    # and the queue item is rotated until the timed pause ends.
+                    queue_capture_for_analysis(capture_id)
+                    _ai_stat_inc("deferred_ollama_paused")
+                    global _last_runtime_pause_log
+                    now = time.monotonic()
+                    if now - _last_runtime_pause_log > 60:
+                        log.info("AI: lokal analyse udskudt; Ollama er tidsbegrænset pauset")
+                        _last_runtime_pause_log = now
+                    time.sleep(5)
+                    continue
+
             vocab, vocabulary_full, approved_tag_set = _load_vocabulary(get_db_fn)
             # Gemini (cloud) får HELE vokabularet — det er stort nok til at rumme
             # scene-kategorierne (structures/surroundings/building_types), så modellen
@@ -412,6 +435,7 @@ def _worker(get_db_fn, find_image_fn):
                         approved_tag_set=approved_tag_set,
                         context_block=context_block,
                     )
+                model_used = result.model
 
             else:  # local_then_cloud — Ollama først, eskalér til Gemini ved usikkerhed
                 svc = get_ollama_service(vision_model=ai_config.local_model)
@@ -426,6 +450,7 @@ def _worker(get_db_fn, find_image_fn):
                         approved_tag_set=approved_tag_set,
                         context_block=context_block,
                     )
+                model_used = result.model
                 escalate, reasons = ai_config.should_escalate(
                     confidence=0.75, new_tags=result.new_tags, tags=result.approved_tags,
                     change_detected=result.change_detected, quality_ok=result.quality_ok,
@@ -655,19 +680,21 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
             raise HTTPException(status_code=404, detail="Enhed ikke fundet")
 
     @ai_router.get("/status")
-    def ai_status(user=Depends(auth_dep)):
+    def ai_status(user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
         """Ollama status, tilgængelige modeller og worker-statistik.
         worker_stats viser hvad der reelt sker med køede billeder — ikke kun
         hvor mange der er sat i kø (se /api/admin/post-processing/status).
         """
         _require_admin(user)
         svc = get_ollama_service()
+        from ai.ollama_runtime_control import get_runtime_status
         return {
             "ollama_running": len(svc.list_models()) > 0,
             "vision_ready":   svc.health_check(),
             "models":         svc.list_models(),
             "queue_size":     _analysis_queue.qsize(),
             "open_webui_priority": _open_webui_priority_enabled(get_db_fn),
+            "runtime_control": get_runtime_status(db),
             "worker_stats":   get_ai_stats(),
         }
 

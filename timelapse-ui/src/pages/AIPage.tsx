@@ -11,7 +11,7 @@ import {
   BarChart3, CheckCircle, XCircle,
   Cloud, Cpu, Zap, RefreshCw, Send, Eye, ThumbsUp, ThumbsDown,
   TrendingUp, Layers, SlidersHorizontal, Info, ShieldCheck, Database, Server,
-  Save, FileText
+  Save, FileText, PauseCircle, Play, Gauge, Clock3
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
@@ -209,6 +209,32 @@ interface RuntimeField {
   source: string
 }
 
+interface OllamaModelInfo {
+  name: string
+  size: number
+  families: string[]
+  family: string
+}
+
+interface OllamaRuntimeControl {
+  mode: 'normal' | 'paused' | 'low_memory'
+  until: string | null
+  remaining_seconds: number | null
+  low_memory_model: string
+  recommended_low_memory_model: string
+  configured_vision_model: string
+  configured_text_model: string
+  installed_models: OllamaModelInfo[]
+  vision_models: OllamaModelInfo[]
+  low_memory_models: OllamaModelInfo[]
+  service: {
+    service_running: boolean
+    api_healthy: boolean
+    loaded_models: string[]
+    loaded_memory_gb: number
+  }
+}
+
 interface PromptVersion {
   id: number
   version: number
@@ -237,20 +263,27 @@ function AIRuntimeTab() {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
+  const [controlBusy, setControlBusy] = useState(false)
+  const [runtimeControl, setRuntimeControl] = useState<OllamaRuntimeControl | null>(null)
+  const [controlMinutes, setControlMinutes] = useState(120)
+  const [lowMemoryModel, setLowMemoryModel] = useState('llava-phi3:latest')
   const [message, setMessage] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setBusy(true)
     setMessage(null)
     try {
-      const [runtime, promptData] = await Promise.all([
+      const [runtime, promptData, control] = await Promise.all([
         api('/api/settings/ai-runtime'),
         api('/api/settings/ai-prompts'),
+        api('/api/settings/ollama-runtime-control'),
       ])
       setFields(runtime.fields || [])
       setModels(runtime.installed_models || [])
       setPrompts(promptData || [])
       setDrafts(Object.fromEntries((promptData || []).map((p: AIPrompt) => [p.purpose, p.template])))
+      setRuntimeControl(control)
+      setLowMemoryModel(control.low_memory_model || control.recommended_low_memory_model || 'llava-phi3:latest')
     } catch (e: unknown) {
       setMessage(e instanceof Error ? e.message : 'Kunne ikke hente AI-konfiguration')
     } finally {
@@ -259,6 +292,47 @@ function AIRuntimeTab() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const loadRuntimeControl = useCallback(async () => {
+    try {
+      setRuntimeControl(await api('/api/settings/ollama-runtime-control'))
+    } catch { /* Den almindelige load-fejl er allerede synlig i panelet. */ }
+  }, [])
+
+  const runtimeControlMode = runtimeControl?.mode
+  useEffect(() => {
+    if (!runtimeControlMode || runtimeControlMode === 'normal') return
+    const timer = window.setInterval(loadRuntimeControl, 5000)
+    return () => window.clearInterval(timer)
+  }, [runtimeControlMode, loadRuntimeControl])
+
+  const setOllamaMode = async (mode: OllamaRuntimeControl['mode']) => {
+    setControlBusy(true)
+    setMessage(null)
+    try {
+      const status = await api('/api/settings/ollama-runtime-control', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode,
+          duration_minutes: controlMinutes,
+          low_memory_model: lowMemoryModel,
+        }),
+      })
+      setRuntimeControl(status)
+      setModels((status.installed_models || []).map((model: OllamaModelInfo) => model.name))
+      setMessage(mode === 'paused'
+        ? `Ollama er pauset i ${controlMinutes} minutter. Lokale analyser bevares til genoptagelse.`
+        : mode === 'low_memory'
+          ? `${lowMemoryModel} bruges midlertidigt i ${controlMinutes} minutter.`
+          : 'Normal Ollama-drift er genoptaget, og den normale modelkonfiguration bruges igen.')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Ollama-driftstilstanden kunne ikke ændres')
+    } finally { setControlBusy(false) }
+  }
+
+  const remainingText = runtimeControl?.remaining_seconds == null
+    ? null
+    : `${Math.floor(runtimeControl.remaining_seconds / 3600)}t ${Math.floor((runtimeControl.remaining_seconds % 3600) / 60)}m`
 
   const saveRuntime = async () => {
     setBusy(true)
@@ -309,9 +383,76 @@ function AIRuntimeTab() {
     </div>
     {message && <div className="border border-white/10 bg-gray-900 rounded-lg px-4 py-3 text-sm text-slate-300">{message}</div>}
 
+    <section className="rounded-lg border border-white/10 bg-gray-900 p-4 sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${
+            runtimeControl?.mode === 'paused' ? 'bg-red-400' :
+              runtimeControl?.mode === 'low_memory' ? 'bg-amber-400' :
+                runtimeControl?.service.api_healthy ? 'bg-emerald-400' : 'bg-slate-500'
+          }`} />
+          <div>
+            <h2 className="font-semibold">Ollama memory-styring</h2>
+            <p className="mt-1 text-sm text-slate-400">
+              {runtimeControl?.mode === 'paused'
+                ? `Pauset${remainingText ? ` · genoptager om ${remainingText}` : ''}`
+                : runtimeControl?.mode === 'low_memory'
+                  ? `Lavt memory-forbrug · ${runtimeControl.low_memory_model}${remainingText ? ` · ${remainingText} tilbage` : ''}`
+                  : runtimeControl?.service.api_healthy ? 'Normal drift' : 'Normal profil, men Ollama-servicen svarer ikke'}
+            </p>
+          </div>
+        </div>
+        <div className="text-left text-xs text-slate-500 sm:text-right">
+          <div>Normal visionmodel: <span className="font-mono text-slate-300">{runtimeControl?.configured_vision_model || 'qwen2.5vl:7b'}</span></div>
+          <div>Indlæst: {runtimeControl?.service.loaded_models.length
+            ? `${runtimeControl.service.loaded_models.join(', ')} · ${runtimeControl.service.loaded_memory_gb} GB`
+            : 'ingen model i RAM'}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-[180px_minmax(220px,1fr)_auto] lg:items-end">
+        <label className="block">
+          <span className="mb-1.5 flex items-center gap-1.5 text-xs text-slate-400"><Clock3 className="h-3.5 w-3.5" />Varighed i minutter</span>
+          <input type="number" min="5" max="1440" step="5" value={controlMinutes}
+            onChange={event => setControlMinutes(Number(event.target.value))}
+            className="w-full rounded-md border border-white/10 bg-gray-800 px-3 py-2 text-sm text-white" />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs text-slate-400">Midlertidig lav-memory visionmodel</span>
+          <select value={lowMemoryModel} onChange={event => setLowMemoryModel(event.target.value)}
+            className="w-full rounded-md border border-white/10 bg-gray-800 px-3 py-2 text-sm text-white">
+            {(runtimeControl?.low_memory_models || []).map(model => (
+              <option key={model.name} value={model.name}>{model.name} · {(model.size / 1024 ** 3).toFixed(1)} GB</option>
+            ))}
+            {!runtimeControl?.low_memory_models.some(model => model.name === lowMemoryModel) &&
+              <option value={lowMemoryModel}>{lowMemoryModel}</option>}
+          </select>
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => setOllamaMode('paused')} disabled={controlBusy}
+            className="inline-flex min-h-10 items-center gap-2 rounded-md border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-200 hover:bg-red-950 disabled:opacity-50">
+            <PauseCircle className="h-4 w-4" />Pause
+          </button>
+          <button type="button" onClick={() => setOllamaMode('low_memory')} disabled={controlBusy || !lowMemoryModel}
+            className="inline-flex min-h-10 items-center gap-2 rounded-md border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200 hover:bg-amber-950 disabled:opacity-50">
+            <Gauge className="h-4 w-4" />Brug lav-memory
+          </button>
+          <button type="button" onClick={() => setOllamaMode('normal')} disabled={controlBusy}
+            className="inline-flex min-h-10 items-center gap-2 rounded-md border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-950 disabled:opacity-50">
+            <Play className="h-4 w-4" />Normal drift
+          </button>
+        </div>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-slate-500">
+        Pause stopper Ollama-servicen og udskyder lokale tags uden at slette billeder. Lav-memory bruger den valgte mindre model og reducerer samtidig billed- og context-budgettet. Begge tilstande udløber automatisk.
+      </p>
+    </section>
+
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <div><h2 className="font-semibold">Modeller og inferens</h2><p className="text-xs text-slate-500">Installerede modeller: {models.length ? models.join(', ') : 'Ollama svarer ikke'}</p></div>
+        <div><h2 className="font-semibold">Modeller og inferens</h2><p className="text-xs text-slate-500">{models.length
+          ? `Installerede modeller: ${models.join(', ')}`
+          : runtimeControl?.mode === 'paused' ? 'Ollama er pauset; modellerne ovenfor er hentet fra seneste inventar.' : 'Ollama svarer ikke'}</p></div>
         <button onClick={saveRuntime} disabled={busy} className="flex items-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded-lg text-sm"><Save className="w-4 h-4" />Gem alle</button>
       </div>
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">

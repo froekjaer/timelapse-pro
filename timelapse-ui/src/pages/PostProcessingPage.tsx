@@ -34,6 +34,7 @@ interface AiStatus {
   models: string[]
   queue_size: number
   open_webui_priority: boolean
+  runtime_control?: { mode: 'normal' | 'paused' | 'low_memory'; low_memory_model?: string; remaining_seconds?: number | null }
   worker_stats: {
     completed: number
     completed_cloud: number
@@ -42,6 +43,7 @@ interface AiStatus {
     skipped_disabled: number
     skipped_technical_only: number
     skipped_ollama_down: number
+    deferred_ollama_paused?: number
     skipped_no_cloud_credentials: number
     skipped_already_done: number
     skipped_queue_full: number
@@ -429,11 +431,18 @@ export default function PostProcessingPage() {
               {aiStatus.open_webui_priority && (
                 <p className="text-xs text-amber-700 mb-2">⚠ Open WebUI-prioritet er aktiv — analyse er pauset.</p>
               )}
+              {aiStatus.runtime_control?.mode === 'paused' && (
+                <p className="mb-2 text-xs text-red-700">Ollama er tidsbegrænset pauset. Lokale analyser forbliver i køen.</p>
+              )}
+              {aiStatus.runtime_control?.mode === 'low_memory' && (
+                <p className="mb-2 text-xs text-amber-700">Lav-memory er aktiv med {aiStatus.runtime_control.low_memory_model}.</p>
+              )}
               <div className="grid sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 <Stat label="Analyseret (lokal)" value={aiStatus.worker_stats.completed - aiStatus.worker_stats.completed_cloud} />
                 <Stat label="Analyseret (cloud)" value={aiStatus.worker_stats.completed_cloud} />
                 <Stat label="Allerede gjort" value={aiStatus.worker_stats.skipped_already_done} />
                 <Stat label="Ollama nede" value={aiStatus.worker_stats.skipped_ollama_down} />
+                <Stat label="Udskudt under pause" value={aiStatus.worker_stats.deferred_ollama_paused ?? 0} />
                 <Stat label="Ingen Gemini-nøgle" value={aiStatus.worker_stats.skipped_no_cloud_credentials} />
                 <Stat label="Kø fuld" value={aiStatus.worker_stats.skipped_queue_full} />
                 <Stat label="AI slået fra" value={aiStatus.worker_stats.skipped_disabled} />

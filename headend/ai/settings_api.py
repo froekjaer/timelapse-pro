@@ -2,6 +2,9 @@
 TimeLapse Pro — Settings API endpoints
 Tilføj til main.py: from ai.settings_api import settings_router; app.include_router(settings_router)
 """
+import json
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -12,6 +15,7 @@ from ai.settings_helper import get_all_settings, get_setting, set_setting
 from database import get_db
 
 settings_router = APIRouter(prefix="/api/settings", tags=["settings"])
+log = logging.getLogger(__name__)
 
 
 def _require_platform_admin(request: Request, db: Session = Depends(get_db)):
@@ -54,6 +58,12 @@ AI_RUNTIME_FIELDS = {
 
 class RuntimeUpdate(BaseModel):
     values: dict[str, str]
+
+
+class OllamaRuntimeControlUpdate(BaseModel):
+    mode: str
+    duration_minutes: int = 60
+    low_memory_model: str | None = None
 
 
 class PromptDraft(BaseModel):
@@ -127,6 +137,60 @@ def update_ai_runtime(payload: RuntimeUpdate, user=Depends(_require_platform_adm
     return {"ok": True, "updated": sorted(validated)}
 
 
+def _audit_ollama_control(db: Session, user, payload: OllamaRuntimeControlUpdate, status: dict) -> None:
+    try:
+        from siem import record_events
+        record_events(db, "HEADEND-LOCAL", [{
+            "event_type": "ollama_runtime_control",
+            "severity": "info",
+            "username": user.username,
+            "source": "headend_ui",
+            "category": "configuration_change",
+            "raw_message": json.dumps({
+                "mode": status["mode"],
+                "until": status.get("until"),
+                "duration_minutes": payload.duration_minutes,
+                "low_memory_model": status.get("low_memory_model"),
+            }, ensure_ascii=False),
+        }])
+    except Exception as exc:
+        log.warning("Ollama runtime-audit kunne ikke skrives til SIEM: %s", exc)
+
+
+@settings_router.get("/ollama-runtime-control")
+def get_ollama_runtime_control(_user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
+    from ai.ollama_runtime_control import get_runtime_status
+    status = get_runtime_status(db)
+    status["configured_vision_model"] = get_setting(db, "ollama_vision_model", "qwen2.5vl:7b")
+    status["configured_text_model"] = get_setting(db, "ollama_text_model", "llama3.2:latest")
+    return status
+
+
+@settings_router.put("/ollama-runtime-control")
+def update_ollama_runtime_control(
+    payload: OllamaRuntimeControlUpdate,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(get_db),
+):
+    from ai.ollama_runtime_control import set_control_mode
+    try:
+        status = set_control_mode(
+            db,
+            mode=payload.mode,
+            duration_minutes=payload.duration_minutes,
+            low_memory_model=payload.low_memory_model,
+            updated_by=user.username,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    _audit_ollama_control(db, user, payload, status)
+    status["configured_vision_model"] = get_setting(db, "ollama_vision_model", "qwen2.5vl:7b")
+    status["configured_text_model"] = get_setting(db, "ollama_text_model", "llama3.2:latest")
+    return status
+
+
 @settings_router.get("/ai-prompts")
 def get_ai_prompts(_user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     from ai.prompt_registry import list_prompts
@@ -157,6 +221,12 @@ def activate_ai_prompt(prompt_id: int, user=Depends(_require_platform_admin), db
 
 # Keep the legacy generic route last so it cannot shadow /ai-runtime.
 settings_router.put("/{key}")(update_setting)
+
+
+@settings_router.on_event("startup")
+def start_ollama_runtime_control_monitor():
+    from ai.ollama_runtime_control import start_runtime_monitor
+    start_runtime_monitor()
 
 @settings_router.get("/config")
 def list_ai_configs(_user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
