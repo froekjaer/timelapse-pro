@@ -10,6 +10,8 @@ DEVICE_ID=""
 HEADEND_URL=""
 BOOTSTRAP_TOKEN_FILE=""
 REPO_DIR=""
+SERVICE_USER=""
+SERVICE_GROUP=""
 REPLACE_CONFIG=0
 
 while (( $# )); do
@@ -18,12 +20,15 @@ while (( $# )); do
     --headend-url) HEADEND_URL="${2%/}"; shift 2 ;;
     --bootstrap-token-file) BOOTSTRAP_TOKEN_FILE="$2"; shift 2 ;;
     --repo-dir) REPO_DIR="$2"; shift 2 ;;
+    --service-user) SERVICE_USER="$2"; shift 2 ;;
+    --service-group) SERVICE_GROUP="$2"; shift 2 ;;
     --replace-config) REPLACE_CONFIG=1; shift ;;
     -h|--help)
       cat <<'EOF'
 Usage: sudo enroll_headend_cmdb.sh --device-id TL-HEADEND-STAGING-1 \
   --headend-url https://staging.timelapse-pro.dk:8443 \
-  --bootstrap-token-file /secure/bootstrap-token --repo-dir /path/to/signed/release
+  --bootstrap-token-file /secure/bootstrap-token --repo-dir /path/to/signed/release \
+  --service-user _timelapse --service-group _timelapse
 EOF
       exit 0 ;;
     *) die "Ukendt argument: $1" ;;
@@ -90,6 +95,8 @@ INSTALL_ARGS=(
   --headend-url "$HEADEND_URL"
   --api-token-file "$TOKEN_FILE"
 )
+[[ -n "$SERVICE_USER" ]] && INSTALL_ARGS+=(--service-user "$SERVICE_USER")
+[[ -n "$SERVICE_GROUP" ]] && INSTALL_ARGS+=(--service-group "$SERVICE_GROUP")
 (( REPLACE_CONFIG )) && INSTALL_ARGS+=(--replace-config)
 bash "$REPO_DIR/node-agent/install/macos.sh" "${INSTALL_ARGS[@]}"
 

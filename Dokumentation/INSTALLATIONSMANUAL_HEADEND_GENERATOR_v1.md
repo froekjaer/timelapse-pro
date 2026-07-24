@@ -1,17 +1,17 @@
 # TimeLapse Pro — Installationsmanual: Ny Headend (staging/prod) oven på kørende Mac
 
-**Version:** v1 · 2026-07-17 · **Forfatter:** Claude · **Status:** Klar til brug ved staging-install — ⚠️-markerede trin dækker huller, der endnu ikke er scriptet (se `Claude_REVIEW_Generatorer_Edge_Headend_2026-07-17.md`).
+**Version:** v1.1 · 2026-07-24 · **Forfattere:** Claude/Codex · **Status:** Headend-generator, release trust, least-privilege installation og dry-run er QA-testet. SFTP-listener/per-site RBAC i fase 2b er fortsat en eksplicit go-live-blokering.
 **Målgruppe:** Peter alene — ingen agent (Claude/Codex) må have adgang til staging/prod (`MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §5).
 **Princip:** Headenden installeres **oven på et kørende macOS-miljø** og skal **sameksistere med CrushFTP**, som ejer 21/22/80/443. TimeLapse rører ALDRIG disse porte. Alt TimeLapse kører på 8443 (UI/API), 22222 (SFTP-ingress), 8000/8080 (loopback), 5514 (valgfri syslog).
 **Relaterede dokumenter:** `HEADEND_GENERATOR_v1.md` (design), `INSTALLATION_GUIDE_HEADEND_v1.md` (detaljer pr. trin), `deploy/PORTS.md` (portpolitik), `STAGING_TIL_PROD_PROMOTION_v1.md` (promotion).
 
 ---
 
-## 0. Oversigt — de fire faser + to manuelle blokke
+## 0. Oversigt — de fire faser + manuelle go-live-gates
 
 ```
  Fase 0  PREFLIGHT   læs-only: er værten klar? er 8443 fri? (evidens-JSON)
- Fase 1  STAGE       hent SIGNERET GitHub-release, GPG-verify, dry-run
+ Fase 1  STAGE       vælg SIGNERET release/SHA i UI, hent, GPG-verify, dry-run
  Fase 2  APPLY       installér (venv, DB, UI, nginx:8443, launchd) + DNS-01-cert
  Fase 2b SFTP        ⚠️ MANUELT trin i dag: dedikeret sshd på 22222 + sftp-settings
  Fase 3  ENROLL      node-agent → self-register i CMDB, fail-closed
@@ -37,7 +37,12 @@ Derudover:
 - **GPG:** importér den offentlige release-signeringsnøgle, ellers fejler Fase 1's `git verify-tag`:
   `gpg --import <release-nøgle.asc>` (nøgle-ID: se `CHANGE_TICKET_GPG_KEY`/release-dokumentationen).
 - **Cloudflare API-token** med `Zone:DNS:Edit` for zonen (til DNS-01) — gemmes i `/etc/timelapse/certbot/cloudflare.ini`, chmod 600.
-- **Konfigurationsfil:** kopiér `deploy/install/example-staging.conf` (eller `-prod`) og tilpas. ⚠️ **GEN-06:** sæt `TL_REPO_DIR` til den **staged release-mappe** fra Fase 1 (fx `/Users/peter/tl-staging-release`) — IKKE en almindelig arbejdskopi. Ellers installeres der udenom GPG-verifikationen.
+- **Konfigurationsfil:** kopiér `deploy/install/example-staging.conf` (eller `-prod`) og tilpas. Sæt `TL_REPO_DIR` til den **staged release-mappe** fra Fase 1 (fx `/Users/Shared/TimeLapsePro/releases/staging`) — IKKE en almindelig arbejdskopi. Ellers installeres der udenom GPG-verifikationen.
+- **Servicekonto:** installeren opretter som standard den skjulte, ikke-administrative
+  konto `_timelapse`. Den forventer ikke, at brugeren `peter` findes på målmaskinen.
+- **Standardstier:** brug `/Users/Shared/TimeLapsePro/releases/<miljø>` og
+  `/Users/Shared/TimeLapsePro/data/canonical-images`, medmindre storage-registeret
+  foreskriver andet.
 - **Beslut device-ID:** `TL-HEADEND-STAGING-1` / `TL-HEADEND-PROD-1` (afventer formel bekræftelse, HEADEND_GENERATOR §8.5).
 - **Docker Desktop:** KUN hvis denne headend selv skal bygge edge-images (uafklaret for prod — GEN-11). Staging/prod behøver det ikke for normal drift.
 
@@ -57,6 +62,11 @@ deploy/install/bootstrap_headend_macos.sh --mode preflight --config ~/timelapse-
 
 ## 3. Fase 1 — Stage (signeret release)
 
+I R&D-Headend: **Drift & Resilience → Headend generator**. Vælg et tag i
+**Release-tag**. UI'et viser kun lokalt GPG-verificerede annotated tags og binder
+automatisk den eneste gyldige fulde commit-SHA til valget. Manuelle/frie tag- og
+SHA-værdier accepteres ikke.
+
 ```bash
 deploy/install/bootstrap_headend_macos.sh --mode stage --config ~/timelapse-staging.conf \
   --repo-url git@github.com:froekjaer/timelapse-pro.git \
@@ -74,7 +84,15 @@ deploy/install/bootstrap_headend_macos.sh --mode stage --config ~/timelapse-stag
 sudo ~/tl-staging-release/deploy/install/install_headend.sh --config ~/timelapse-staging.conf
 ```
 
-Hvad scriptet gør (idempotent): `/etc/timelapse/headend.env` med frisk 64-tegns `JWT_SECRET` + `TIMELAPSE_ENV` (eksisterende env-fil røres ALDRIG), Python-venv + requirements, PostgreSQL-rolle/DB, UI-build (`npm ci && npm run build`), launchd-service (`dk.froekjaer.timelapse-headend`), nginx **kun på 8443**.
+Hvad scriptet gør (idempotent): opretter/verificerer `_timelapse`, bygger venv
+under servicekontoens home, opretter PostgreSQL-rolle/DB, bygger UI, installerer
+LaunchDaemon og en **isoleret** nginx-instans med egen config, pid, logs og
+temp-kataloger. Global Homebrew-nginx, CrushFTP og andre apps genstartes eller
+ændres ikke.
+
+På en ny installation genererer `/etc/timelapse/headend.env` en frisk
+`JWT_SECRET` og en unik `TIMELAPSE_INITIAL_ADMIN_PASSWORD`. En eksisterende
+env-fil overskrives aldrig.
 
 **Første kørsel uden certifikat** giver et plain-HTTP-bootstrap-block på 8443 med statusbesked. Det er forventet. Fortsæt til §5.
 
@@ -100,18 +118,26 @@ sudo ~/tl-staging-release/deploy/install/install_headend.sh --config ~/timelapse
 
 Husk certbot-renewal (launchd-plist findes i `Dokumentation/Konfig artefakter/certbot-renewal.plist` som skabelon) + genkørsel af nginx-reload efter renewal.
 
-## 6. Første login — GØR DETTE FØR OFFENTLIG EKSPONERING (⚠️ GEN-07)
+## 6. Første login — GØR DETTE FØR OFFENTLIG EKSPONERING
 
-Systemet fødes med `admin`/`changeme` indtil første MFA-enrollment. **Rækkefølgen er sikkerhedskritisk:** gennemfør første login og password-skift FØR den offentlige DNS-record oprettes / firewall-porten åbnes udadtil. Test lokalt via `/etc/hosts`-indgang eller på LAN:
+`admin/changeme` er forbudt i staging/prod. Installeren genererer i stedet en
+unik initial adgangskode. **Rækkefølgen er sikkerhedskritisk:** gennemfør første
+login og password-skift FØR offentlig DNS/firewall åbnes. Test lokalt via
+`/etc/hosts` eller LAN:
 
-1. Åbn `https://<domæne>:8443/` → log ind `admin`/`changeme`
-2. Gennemfør TOTP-opsætning (super_admin kræver MFA ved første login)
-3. Skift adgangskoden STRAKS
-4. Opret evt. øvrige brugere/roller via UI'en
+1. Læs initial adgangskode lokalt:
+   `sudo grep '^TIMELAPSE_INITIAL_ADMIN_PASSWORD=' /etc/timelapse/headend.env`
+2. Åbn `https://<domæne>:8443/` og log ind som `admin`
+3. Gennemfør TOTP-opsætning (super_admin kræver MFA ved første login)
+4. Skift adgangskoden STRAKS
+5. Fjern `TIMELAPSE_INITIAL_ADMIN_PASSWORD` fra env-filen og genstart Headend
+6. Opret evt. øvrige brugere/roller via UI'en
 
 ## 7. Fase 2b — SFTP-ingress på 22222 (⚠️ MANUELT trin i dag — GEN-01/GEN-02)
 
-Uden dette trin kan headenden ikke modtage SFTP-uploads fra edges, og **kode-defaulten for `sftp_port` er i dag 22 — dvs. CrushFTP!** Gør følgende:
+Uden dette trin kan headenden ikke modtage SFTP-uploads fra edges.
+Kode-, generator- og installer-defaulten er nu **22222**, aldrig 22, men en
+default åbner ikke en listener eller opretter per-site RBAC. Gør følgende:
 
 **a) Dedikeret sshd-socket på 22222** (launchd; rører IKKE system-SSH/CrushFTP på 22):
 Opret `/Library/LaunchDaemons/ssh-2222.plist` med `Sockets → Listeners → SockServiceName = 22222` der starter `/usr/sbin/sshd -i` (samme mønster som R&D — filnavnet er historisk, porten er 22222). `sudo launchctl bootstrap system /Library/LaunchDaemons/ssh-2222.plist`.
@@ -132,7 +158,9 @@ python headend/tools/render_sftp_rbac_config.py --output /private/tmp/timelapse-
 sudo /usr/sbin/sshd -t && sudo launchctl kickstart -k system/ssh-2222  # (label jf. plist)
 ```
 
-**d) Seed settings i headend-DB'en** så config-hierarkiet peger edges på det rigtige (indtil GEN-02-kodefixet lander): sæt i Settings/UI: `sftp_host=<backend-domæne>`, **`sftp_port=22222`**, `sftp_remote_base=<TL_DATA_DIR>`. Verificér derefter i en device-config-preview at `sftp.port == 22222`.
+**d) Verificér settings i headend-DB'en:** `sftp_host=<backend-domæne>`,
+**`sftp_port=22222`**, `sftp_remote_base=<TL_DATA_DIR>`. Installeren sætter
+miljø-defaulten, men config-preview på en rigtig Edge er acceptkriteriet.
 
 **e) Opret ingen SFTP-brugere efter v10-guidens §12-opskrift** — den beskriver den udfasede chroot/port-22-model (GEN-05).
 
@@ -172,4 +200,14 @@ Al software på maskinen ændres herefter KUN via det signerede update-flow (cha
 
 ---
 
-*Kendte huller der ændrer denne manual når de lukkes: GEN-01/02 (Fase 2b scriptes + kode-default 22222), GEN-03 (tunnel-ingress-beslutning tilføjes som §7f), GEN-06 (example-confs rettes). Se reviewet fra 2026-07-17.*
+## 11. QA-evidens 2026-07-24
+
+- 61 fokuserede generator/installations/Edge-kontrakttests: bestået.
+- TypeScript + Vite production build: bestået.
+- `install_headend.sh --dry-run` på macOS: bestået efter rettelse af
+  domænevalidering og servicekonto-home-opslag.
+- Browser: betroet tag/SHA-dropdown, tunnel/servicefelter, reserveret
+  port-afvisning og gyldig prepare: bestået.
+
+*Resterende blokeringer: fase 2b skal automatiseres og testes på den nye iMac;
+DNS-01, MFA, CA/mTLS-status og restore-test kræver miljøspecifik evidens.*

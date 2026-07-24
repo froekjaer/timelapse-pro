@@ -19,7 +19,9 @@ base_image:
   # Kræver arm32v7/debian:trixie som Docker-base (Python 3.12 match).
   type: armbian
   url: "https://dl.armbian.com/orangepipcplus/Trixie_current_minimal"
-  sha256: null
+  filename: "Armbian_community_26.8.0-trunk.170_Orangepipcplus_trixie_current_6.18.35_minimal.img.xz"
+  # Rolling URL er kun tilladt, så længe den leverer præcis dette reviewede archive.
+  sha256: "7f0a35f496021e7649ae4d139a21414470645196f9a41a779092a6a1f2a3ca72"
   extract: xz
   # Armbian Allwinner layout:
   #   Sektor 0-2048:  U-Boot SPL (direkte på disk — ingen partition)

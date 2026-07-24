@@ -17,7 +17,8 @@ base_image:
   # Hentes automatisk af build-scriptet
   type: ubuntu_raspi
   url: "https://cdimage.ubuntu.com/releases/22.04/release/ubuntu-22.04.5-preinstalled-server-arm64+raspi.img.xz"
-  sha256: null   # sæt til faktisk sha256 ved pin
+  # Canonical Ubuntu 22.04.5 release archive, verificeret 2026-07-24.
+  sha256: "fd7687c5c9422a6c7ba4717c227bf6473fe4e0c954d5a9f664201dcecc63e822"
   extract: xz
   # RPi bruger MBR/GPT med to partitioner
   boot_partition: 1   # FAT32 — firmware + kernel

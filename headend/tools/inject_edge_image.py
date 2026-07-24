@@ -48,7 +48,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import urllib.request
 from datetime import datetime, timezone
@@ -80,10 +79,12 @@ def _sign_manifest(
     gpg_key_id: str | None,
     progress: Callable[[str], None],
 ) -> tuple[str, str]:
-    digest = _sha256_text(manifest_json)
     if not gpg_key_id:
-        progress("ℹ️  Ingen GPG nøgle — bruger SHA-256 hash-binding")
-        return f"sha256:{digest}", "system-hash"
+        raise RuntimeError(
+            "GPG release-nøgle mangler; flashbare Edge-images må ikke "
+            "publiceres med hash-only trust"
+        )
+    tmp = ""
     try:
         gpg_home = os.environ.get("GNUPGHOME", os.path.expanduser("~/.gnupg"))
         gpg_env = {**os.environ, "GNUPGHOME": gpg_home, "GPG_TTY": ""}
@@ -107,14 +108,77 @@ def _sign_manifest(
             capture_output=True, text=True, timeout=20,
             env=gpg_env,
         )
-        os.unlink(tmp)
         if result.returncode == 0 and result.stdout.strip():
             progress(f"✅ GPG-signatur OK (nøgle {gpg_key_id[:16]}…)")
             return result.stdout.strip(), gpg_key_id
-        progress(f"⚠️  GPG fejlede: {result.stderr[-200:]}")
+        raise RuntimeError(f"GPG-signering fejlede: {result.stderr[-300:]}")
     except Exception as exc:
-        progress(f"⚠️  GPG utilgængeligt: {exc}")
-    return f"sha256:{digest}", "system-hash"
+        if isinstance(exc, RuntimeError):
+            raise
+        raise RuntimeError(f"GPG-signering utilgængelig: {exc}") from exc
+    finally:
+        if tmp:
+            Path(tmp).unlink(missing_ok=True)
+
+
+def _require_pinned_base_image(target: dict) -> str:
+    target_id = str(target.get("id") or "unknown")
+    expected = str(target.get("base_image", {}).get("sha256") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise RuntimeError(
+            f"Base-image for target '{target_id}' mangler en valideret SHA-256. "
+            "Registrér en versionsfast fil og checksum i target.yaml før build."
+        )
+    return expected
+
+
+def _verify_base_image_archive(
+    archive_path: Path,
+    expected_sha256: str,
+    progress: Callable[[str], None],
+) -> None:
+    actual = _sha256_file(archive_path)
+    if actual != expected_sha256:
+        raise RuntimeError(
+            f"Base-image checksum matcher ikke for {archive_path.name}: "
+            f"forventet {expected_sha256}, fik {actual}"
+        )
+    progress(f"✅ Base-image SHA-256 verificeret: {actual[:16]}…")
+
+
+def _validate_bootstrap_token(token: str) -> None:
+    if token and not re.fullmatch(r"[A-Za-z0-9._~-]{8,512}", token):
+        raise ValueError(
+            "Bootstrap-token indeholder ugyldige tegn eller har ugyldig længde"
+        )
+
+
+def _validate_tunnel_settings(
+    *,
+    device_private_key: str,
+    remote_port: int,
+    headend_host: str,
+    headend_port: int,
+    headend_user: str,
+) -> None:
+    configured = bool(device_private_key or remote_port)
+    if not configured:
+        return
+    if not device_private_key or not remote_port:
+        raise ValueError("Reverse tunnel kræver både device-nøgle og remote port")
+    if not headend_host or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", headend_host):
+        raise ValueError("Reverse tunnel kræver et gyldigt Headend-hostnavn")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,31}", headend_user):
+        raise ValueError("Reverse tunnel kræver en gyldig, dedikeret Headend-bruger")
+    if not 1024 <= int(remote_port) <= 65535:
+        raise ValueError("Reverse tunnel remote port skal være mellem 1024 og 65535")
+    if int(headend_port) in {21, 22, 80, 443, 8080}:
+        raise ValueError(
+            "Headend tunnel-port må ikke bruge de reserverede porte "
+            "21, 22, 80, 443 eller 8080"
+        )
+    if not 1024 <= int(headend_port) <= 65535:
+        raise ValueError("Headend SSH-port skal være mellem 1024 og 65535")
 
 
 def _load_target(target_id: str, repo_root: Path) -> dict:
@@ -150,6 +214,7 @@ def _download_base_image(
     url  = base.get("url")
     extract = base.get("extract", "xz")   # "xz" eller "gz"
     target_id = target.get("id", "unknown")
+    expected_sha256 = _require_pinned_base_image(target)
 
     if not url:
         raise ValueError(f"Ingen base_image.url i target '{target_id}'")
@@ -174,13 +239,11 @@ def _download_base_image(
         # Google Drive download via gdown
         try:
             import gdown  # type: ignore
-        except ImportError:
-            progress("   📦 Installerer gdown...")
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--quiet", "gdown"],
-                check=True, capture_output=True,
-            )
-            import gdown  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "Python-pakken 'gdown' mangler på Headend. Installér den via "
+                "det kontrollerede Headend-release, ikke dynamisk under build."
+            ) from exc
 
         cache_subdir = cache_dir / target_id
         cache_subdir.mkdir(parents=True, exist_ok=True)
@@ -200,18 +263,25 @@ def _download_base_image(
         url_filename = gdrive_filename or f"orangepi4pro-image.img.xz"
         cached_compressed = cache_subdir / url_filename
 
-        img_name = url_filename
-        for ext in (".xz", ".gz", ".zst", ".7z"):
-            if img_name.endswith(ext):
-                img_name = img_name[:-len(ext)]
-                break
-        else:
-            img_name = img_name if img_name.endswith(".img") else img_name + ".img"
-        if not img_name.endswith(".img"):
-            img_name = img_name + ".img"
+        img_name = str(base.get("extracted_filename") or "")
+        if not img_name:
+            img_name = url_filename
+            for ext in (".xz", ".gz", ".zst", ".7z"):
+                if img_name.endswith(ext):
+                    img_name = img_name[:-len(ext)]
+                    break
+            else:
+                img_name = img_name if img_name.endswith(".img") else img_name + ".img"
+            if not img_name.endswith(".img"):
+                img_name = img_name + ".img"
         cached_img = cache_subdir / img_name
 
-        if cached_img.exists() and cached_img.stat().st_size > 10 * 1024 * 1024:
+        if (
+            cached_img.exists()
+            and cached_img.stat().st_size > 10 * 1024 * 1024
+            and cached_compressed.exists()
+        ):
+            _verify_base_image_archive(cached_compressed, expected_sha256, progress)
             progress(f"✅ Base-image cachet: {cached_img.name} ({cached_img.stat().st_size // (1024*1024)} MB)")
             return cached_img
 
@@ -270,7 +340,12 @@ def _download_base_image(
             img_name = img_name + ".img"
         cached_img = cache_subdir / img_name
 
-        if cached_img.exists() and cached_img.stat().st_size > 10 * 1024 * 1024:
+        if (
+            cached_img.exists()
+            and cached_img.stat().st_size > 10 * 1024 * 1024
+            and cached_compressed.exists()
+        ):
+            _verify_base_image_archive(cached_compressed, expected_sha256, progress)
             progress(f"✅ Base-image cachet: {cached_img.name} ({cached_img.stat().st_size // (1024*1024)} MB)")
             return cached_img
 
@@ -289,6 +364,8 @@ def _download_base_image(
             progress(f"✅ Download færdig: {cached_compressed.name}")
         else:
             progress(f"✅ Komprimeret image cachet: {cached_compressed.name}")
+
+    _verify_base_image_archive(cached_compressed, expected_sha256, progress)
 
     # Udpak — bruger Python lzma/gzip i stedet for subprocess for at undgå
     # platform-specifikke exit-kode problemer (macOS xz kræver .xz filendelse).
@@ -309,13 +386,11 @@ def _download_base_image(
     elif extract == "7z":
         try:
             import py7zr  # type: ignore
-        except ImportError:
-            progress("   📦 Installerer py7zr...")
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--quiet", "py7zr"],
-                check=True,
-            )
-            import py7zr  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "Python-pakken 'py7zr' mangler på Headend. Installér den via "
+                "det kontrollerede Headend-release, ikke dynamisk under build."
+            ) from exc
         progress(f"   Udpakker .7z (kan tage et øjeblik)...")
         with py7zr.SevenZipFile(str(cached_compressed), mode="r") as zf:
             names = zf.getnames()
@@ -539,7 +614,7 @@ if [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
     echo "[inject] Injecterer headend public key i authorized_keys..."
 
     # 1) Brugere der allerede eksisterer i /etc/passwd (Armbian, OrangePi, ældre RPi OS)
-    for USER_HOME in /mnt/root/home/pi /mnt/root/home/ubuntu /mnt/root/home/orangepi; do
+    for USER_HOME in /mnt/root/home/timelapse /mnt/root/home/pi /mnt/root/home/ubuntu /mnt/root/home/orangepi; do
         USERNAME=$(basename "$USER_HOME")
         UID_ENTRY=$(grep -E "^${USERNAME}:" /mnt/root/etc/passwd 2>/dev/null | cut -d: -f3 || true)
         if [ -n "$UID_ENTRY" ]; then
@@ -553,16 +628,7 @@ if [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
         fi
     done
 
-    # 2) root altid (bruges når PermitRootLogin=prohibit-password)
-    mkdir -p /mnt/root/root/.ssh
-    grep -qxF "${HEADEND_SSH_PUBLIC_KEY}" /mnt/root/root/.ssh/authorized_keys 2>/dev/null \
-        || echo "${HEADEND_SSH_PUBLIC_KEY}" >> /mnt/root/root/.ssh/authorized_keys
-    chmod 700 /mnt/root/root/.ssh
-    chmod 600 /mnt/root/root/.ssh/authorized_keys
-    chown -R 0:0 /mnt/root/root/.ssh
-    echo "[inject]   Key tilføjet for 'root': /mnt/root/root/.ssh/authorized_keys"
-
-    # 3) Cloud-init (Ubuntu preinstalled) — opretter ubuntu-brugeren med nøglen
+    # 2) Cloud-init (Ubuntu preinstalled) — opretter ubuntu-brugeren med nøglen
     #    ved første boot, selv om /home/ubuntu endnu ikke eksisterer i raw-imaget.
     if [ -d /mnt/root/etc/cloud ]; then
         mkdir -p /mnt/root/etc/cloud/cloud.cfg.d
@@ -577,24 +643,6 @@ users:
 CLOUDINIT_EOF
         echo "[inject]   Cloud-init 99-timelapse-ssh.cfg skrevet (ubuntu user vil få headend key ved boot)"
 
-        # 4G USB modem support — installer via apt ved første boot
-        cat > /mnt/root/etc/cloud/cloud.cfg.d/98-timelapse-modem.cfg << 'MODEM_CLOUD_EOF'
-#cloud-config
-# TimeLapse Pro — 4G USB modem support (NetworkManager + ModemManager)
-packages:
-  - network-manager
-  - modemmanager
-  - usb-modeswitch
-  - usb-modeswitch-data
-  - libqmi-utils
-  - libmbim-utils
-package_update: false
-runcmd:
-  - systemctl enable ModemManager NetworkManager
-  - systemctl start ModemManager NetworkManager || true
-MODEM_CLOUD_EOF
-        echo "[inject]   Cloud-init 98-timelapse-modem.cfg skrevet (4G modem support)"
-
         # NetworkManager: styr KUN modem-interfaces — lad netplan håndtere eth0/wlan0
         mkdir -p /mnt/root/etc/NetworkManager/conf.d
         cat > /mnt/root/etc/NetworkManager/conf.d/10-timelapse-unmanaged.conf << 'NM_CONF_EOF'
@@ -605,43 +653,12 @@ NM_CONF_EOF
     fi
 fi
 
-# ── First-boot pakkeinstallation (images uden cloud-init, fx OrangePi) ───────
-# EXTRA_PACKAGES er mellemrum-separeret liste sat af Python fra target.yaml.
-if [ -n "${EXTRA_PACKAGES:-}" ] && [ ! -d /mnt/root/etc/cloud ]; then
-    echo "[inject] Skriver timelapse-firstrun.service (pakker: ${EXTRA_PACKAGES})..."
-    PKGS_APT=$(echo "${EXTRA_PACKAGES}" | tr ' ' '\n' | sed 's/^/  - /' | tr '\n' ' ')
-    cat > /mnt/root/etc/systemd/system/timelapse-firstrun.service << FIRSTRUN_EOF
-[Unit]
-Description=TimeLapse Pro — First-boot package installation
-After=network-online.target
-Wants=network-online.target
-Before=timelapse-bootstrap.service
-ConditionPathExists=!/etc/timelapse/.firstrun-done
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-User=root
-ExecStart=/bin/bash -c 'apt-get update -qq && apt-get install -y --no-install-recommends ${EXTRA_PACKAGES} && touch /etc/timelapse/.firstrun-done'
-TimeoutStartSec=600
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=timelapse-firstrun
-
-[Install]
-WantedBy=multi-user.target
-FIRSTRUN_EOF
-
-    WANTS_DIR_FR=/mnt/root/etc/systemd/system/multi-user.target.wants
-    mkdir -p "\$WANTS_DIR_FR"
-    ln -sf /etc/systemd/system/timelapse-firstrun.service \
-        "\$WANTS_DIR_FR/timelapse-firstrun.service"
-    echo "[inject]   timelapse-firstrun.service aktiveret (${EXTRA_PACKAGES})"
-
-    # gpsd: sæt standard device til /dev/ttyUSB0 (u-blox USB GPS)
-    if echo "${EXTRA_PACKAGES}" | grep -q gpsd; then
-        mkdir -p /mnt/root/etc/default
-        cat > /mnt/root/etc/default/gpsd << 'GPSD_EOF'
+# ── Hardwarekonfiguration ────────────────────────────────────────────────────
+# Softwarepakker installeres aldrig fra internettet på Edge. Manglende pakker
+# leveres efter enrollment som Headend-signerede offline artifacts.
+if echo "${EXTRA_PACKAGES:-}" | grep -q gpsd; then
+    mkdir -p /mnt/root/etc/default
+    cat > /mnt/root/etc/default/gpsd << 'GPSD_EOF'
 # TimeLapse Pro — gpsd konfiguration
 START_DAEMON="true"
 GPSD_OPTIONS="-n"
@@ -649,8 +666,7 @@ DEVICES="/dev/ttyUSB0"
 USBAUTO="true"
 GPSD_SOCKET="/var/run/gpsd.sock"
 GPSD_EOF
-        echo "[inject]   gpsd konfigureret (/dev/ttyUSB0)"
-    fi
+    echo "[inject]   gpsd konfigureret (/dev/ttyUSB0), hvis pakken findes i base eller offline bundle"
 fi
 
 # ── Device SSH private key (edge → headend reverse tunnel) ───────────────────
@@ -660,9 +676,9 @@ if [ -n "${DEVICE_SSH_PRIVATE_KEY:-}" ] && [ -n "${SSH_TUNNEL_PORT:-}" ]; then
     printf '%s\n' "${DEVICE_SSH_PRIVATE_KEY}" > /mnt/root/etc/timelapse/device_keys/id_ed25519
     chmod 600 /mnt/root/etc/timelapse/device_keys/id_ed25519
 
-    HEADEND_HOST="${TUNNEL_HEADEND_HOST:-}"
-    HEADEND_PORT="${TUNNEL_HEADEND_PORT:-22}"
-    HEADEND_USER="${TUNNEL_HEADEND_USER:-peter}"
+    HEADEND_HOST="${TUNNEL_HEADEND_HOST}"
+    HEADEND_PORT="${TUNNEL_HEADEND_PORT}"
+    HEADEND_USER="${TUNNEL_HEADEND_USER}"
 
     echo "[inject] Skriver timelapse-ssh-tunnel.service (port ${SSH_TUNNEL_PORT} → ${HEADEND_HOST})..."
     cat > /mnt/root/etc/systemd/system/timelapse-ssh-tunnel.service << SSHSVC_EOF
@@ -675,7 +691,7 @@ Wants=network-online.target
 Type=simple
 User=root
 Environment="AUTOSSH_GATETIME=0"
-ExecStartPre=/bin/bash -c 'which autossh || (apt-get update -qq && apt-get install -y -q autossh)'
+ExecStartPre=/usr/bin/test -x /usr/bin/autossh
 ExecStart=/usr/bin/autossh -M 0 -N \
   -o ServerAliveInterval=30 \
   -o ServerAliveCountMax=3 \
@@ -699,61 +715,14 @@ SSHSVC_EOF
     echo "[inject]   timelapse-ssh-tunnel.service aktiveret (port ${SSH_TUNNEL_PORT})"
 fi
 
-# ── Debug-bruger (midlertidig adgang via password) ────────────────────────────
-# Opretter 'tl-debug' med password 'TLdebug2026' — kan bruges til fejlsøgning.
-# Ingen chroot — redigerer /etc/passwd, /etc/shadow, /etc/group direkte
-# (chroot virker ikke fra amd64 container mod arm64 image).
-echo "[inject] Opretter tl-debug bruger (direkte fil-redigering, ingen chroot)..."
-if ! grep -q "^tl-debug:" /mnt/root/etc/passwd 2>/dev/null; then
-    # Find ledigt UID (brug 1100 som default — uden for cloud-init's range)
-    TL_UID=1100
-    TL_GID=1100
-    # Tilføj gruppe
-    if ! grep -q "^tl-debug:" /mnt/root/etc/group 2>/dev/null; then
-        echo "tl-debug:x:${TL_GID}:" >> /mnt/root/etc/group
-    fi
-    # Tilføj til sudo-gruppe
-    sed -i "s/^sudo:\(.*\)/sudo:\1,tl-debug/" /mnt/root/etc/group 2>/dev/null || true
-    # Tilføj passwd-entry
-    echo "tl-debug:x:${TL_UID}:${TL_GID}:TimeLapse Debug User,,,:/home/tl-debug:/bin/bash" \
-        >> /mnt/root/etc/passwd
-    # Generer SHA-512 password hash (openssl er tilgængeligt i ubuntu:22.04 containeren)
-    TL_HASH=$(openssl passwd -6 'TLdebug2026' 2>/dev/null || echo '!')
-    # Tilføj shadow-entry
-    echo "tl-debug:${TL_HASH}:19800:0:99999:7:::" >> /mnt/root/etc/shadow
-    # Opret home-mappe fra /etc/skel
-    mkdir -p /mnt/root/home/tl-debug
-    if [ -d /mnt/root/etc/skel ]; then
-        cp -a /mnt/root/etc/skel/. /mnt/root/home/tl-debug/ 2>/dev/null || true
-    fi
-    chown -R ${TL_UID}:${TL_GID} /mnt/root/home/tl-debug
-    chmod 750 /mnt/root/home/tl-debug
-    echo "[inject]   tl-debug bruger oprettet (uid ${TL_UID}, SHA-512 password)"
-else
-    echo "[inject]   tl-debug bruger eksisterer allerede"
-fi
-
-# Fix password-udløb for ubuntu og tl-debug (cloud-init sætter dag 0 = tvungen skift)
-EPOCH_DAYS=$(( $(date +%s) / 86400 ))
-sed -i "s/^ubuntu:\([^:]*\):0:/ubuntu:\1:${EPOCH_DAYS}:/" /mnt/root/etc/shadow 2>/dev/null || true
-sed -i "s/^tl-debug:\([^:]*\):19800:/tl-debug:\1:${EPOCH_DAYS}:/" /mnt/root/etc/shadow 2>/dev/null || true
-echo "[inject]   Password-udløb nulstillet for ubuntu + tl-debug"
-
 # ── SSH hardening ─────────────────────────────────────────────────────────────
 SSHD_CONFIG=/mnt/root/etc/ssh/sshd_config
 if [ -f "$SSHD_CONFIG" ]; then
     echo "[inject] SSH hardening..."
     sed -i \
-        -e 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' \
+        -e 's/^#\?PermitRootLogin.*/PermitRootLogin no/' \
         -e 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' \
         "$SSHD_CONFIG"
-    # Tillad password-login KUN for tl-debug — alt andet kræver pubkey
-    cat >> "$SSHD_CONFIG" << 'SSHDMATCH_EOF'
-
-Match User tl-debug
-    PasswordAuthentication yes
-SSHDMATCH_EOF
-    echo "[inject]   tl-debug: password-login tilladt via Match User"
 
     # Ubuntu preinstalled image har cloud-img-override der underkender ovenstående.
     # Fjern eller overskriv den så vores sshd_config faktisk gælder.
@@ -872,8 +841,8 @@ def _inject_via_docker(
     device_ssh_privkey: str = "",
     ssh_tunnel_port: int = 0,
     tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
-    tunnel_headend_port: int = 22,
-    tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", ""),
+    tunnel_headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222")),
+    tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel"),
 ) -> None:
     """
     Injectér agent-filer i base-image via Docker --privileged.
@@ -1029,8 +998,8 @@ def inject_edge_image(
     device_ssh_privkey: str = "",
     ssh_tunnel_port: int = 0,
     tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
-    tunnel_headend_port: int = 22,
-    tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", ""),
+    tunnel_headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222")),
+    tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel"),
 ) -> dict:
     """
     Injectér edge-agent i base-image og producér flashbart .img.gz.
@@ -1052,7 +1021,7 @@ def inject_edge_image(
         device_ssh_privkey:   Device Ed25519 private key (PEM) → /etc/timelapse/device_keys/id_ed25519
         ssh_tunnel_port:      Remote port til reverse SSH tunnel (fx 2202)
         tunnel_headend_host:  Headend hostname til tunnel (default: TIMELAPSE_TUNNEL_HOST)
-        tunnel_headend_port:  Headend SSH port (default: 22)
+        tunnel_headend_port:  Dedikeret Headend SSH port (default: 22222)
         tunnel_headend_user:  Headend SSH bruger (default: TIMELAPSE_TUNNEL_USER)
 
     Returnerer dict med stier, sha256, manifest etc.
@@ -1065,6 +1034,14 @@ def inject_edge_image(
 
     if not rootfs_path.exists():
         raise FileNotFoundError(f"rootfs.tar.gz ikke fundet: {rootfs_path}")
+    _validate_bootstrap_token(bootstrap_token)
+    _validate_tunnel_settings(
+        device_private_key=device_ssh_privkey,
+        remote_port=ssh_tunnel_port,
+        headend_host=tunnel_headend_host,
+        headend_port=tunnel_headend_port,
+        headend_user=tunnel_headend_user,
+    )
 
     tgt          = _load_target(target, root)
     display_name = tgt.get("display_name", target)
@@ -1113,8 +1090,13 @@ def inject_edge_image(
     bootstrap_yaml_content = (
         f"# TimeLapse Pro bootstrap config — bagt ind i image {artifact_id}\n"
         f"# Genereret: {_now_utc()}\n"
-        f"headend_url: \"{headend_url}\"\n"
-        f"bootstrap_token: \"{effective_token}\"\n"
+        + yaml.safe_dump(
+            {
+                "headend_url": headend_url,
+                "bootstrap_token": effective_token,
+            },
+            sort_keys=False,
+        )
     )
     if not bootstrap_token:
         bootstrap_yaml_content += (
@@ -1181,7 +1163,16 @@ def inject_edge_image(
             "sha256":     sha256,
             "size_bytes": gz_path.stat().st_size,
         },
-        "source_rootfs": rootfs_path.name,
+        "base_image": {
+            "source": tgt.get("base_image", {}).get("url"),
+            "filename": tgt.get("base_image", {}).get("filename"),
+            "archive_sha256": tgt.get("base_image", {}).get("sha256"),
+            "checksum_verified": True,
+        },
+        "source_rootfs": {
+            "filename": rootfs_path.name,
+            "sha256": _sha256_file(rootfs_path),
+        },
         "headend_url":   headend_url,
         "token_baked_in": bool(bootstrap_token),
         "flash_instructions": {
@@ -1246,6 +1237,7 @@ def patch_token_in_image(
     Bruges hvis image blev bygget uden token (placeholder).
     Kræver Docker --privileged.
     """
+    _validate_bootstrap_token(new_token)
     out = img_gz.parent / img_gz.name.replace(".img.gz", f"-token.img.gz")
     work_dir = Path(tempfile.mkdtemp(prefix="timelapse-patch-"))
     try:

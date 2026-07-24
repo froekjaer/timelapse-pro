@@ -22,8 +22,10 @@ base_image:
   # Download-side: https://drive.google.com/drive/folders/1TcFAGTblG_gbDhwFotEWS0y78LwHA-VG
   type: orangepi
   url: "https://drive.google.com/file/d/1apQbbhY-uUAG8495FMkarRTDK-B6UTbw/view?usp=share_link"
-  filename: null   # gdown auto-detekterer filnavn fra Google Drive metadata
-  sha256: null
+  filename: "Orangepi4pro_1.0.6_ubuntu_jammy_server_linux5.15.147.7z"
+  extracted_filename: "orangepi4pro-image.img"
+  # Verificeret mod den versionsfaste leverandørfil 2026-07-24.
+  sha256: "db89a5743e2d9f2f2a55f862e83a7a3a20ea8d219ef60be7b8a9c5da6ec697cb"
   extract: 7z
   # OrangePi 4 Pro Linux-image har KUN én partition (ext4 rootfs).
   # Ingen separat boot-partition — kernel + dtb ligger i /boot på rootfs.

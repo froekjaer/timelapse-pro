@@ -23,13 +23,15 @@ from __future__ import annotations
 
 import gzip
 import os
+import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+
+import yaml
 
 
 # ── Inject-script der kører inde i Docker-containeren ────────────────────────
@@ -119,14 +121,18 @@ mount "$LOOP" /mnt/root
 # ── SSH authorized_keys (headend → edge) ─────────────────────────────────────
 if [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
     echo "[ssh-inject] Injecterer headend public key..."
-    for USER_HOME in /mnt/root/home/orangepi /mnt/root/home/ubuntu /mnt/root/home/pi /mnt/root/root; do
+    for USER_HOME in /mnt/root/home/timelapse /mnt/root/home/orangepi /mnt/root/home/ubuntu /mnt/root/home/pi; do
         if [ -d "$USER_HOME" ]; then
+            USERNAME=$(basename "$USER_HOME")
+            UID_ENTRY=$(grep -E "^${USERNAME}:" /mnt/root/etc/passwd 2>/dev/null | cut -d: -f3 || true)
+            GID_ENTRY=$(grep -E "^${USERNAME}:" /mnt/root/etc/passwd 2>/dev/null | cut -d: -f4 || true)
+            [ -n "$UID_ENTRY" ] || continue
             mkdir -p "$USER_HOME/.ssh"
             grep -qxF "${HEADEND_SSH_PUBLIC_KEY}" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null \
                 || echo "${HEADEND_SSH_PUBLIC_KEY}" >> "$USER_HOME/.ssh/authorized_keys"
             chmod 700 "$USER_HOME/.ssh"
             chmod 600 "$USER_HOME/.ssh/authorized_keys"
-            [ "$USER_HOME" = "/mnt/root/root" ] && chown -R 0:0 "$USER_HOME/.ssh" || chown -R 1000:1000 "$USER_HOME/.ssh" || true
+            chown -R "${UID_ENTRY}:${GID_ENTRY:-$UID_ENTRY}" "$USER_HOME/.ssh" || true
             echo "[ssh-inject]   Key tilføjet: $USER_HOME/.ssh/authorized_keys"
         fi
     done
@@ -139,9 +145,9 @@ if [ -n "${SSH_PRIVATE_KEY:-}" ] && [ -n "${TUNNEL_PORT:-}" ]; then
     printf '%s' "${SSH_PRIVATE_KEY}" > /mnt/root/etc/timelapse/ssh/tunnel_id_ed25519
     chmod 600 /mnt/root/etc/timelapse/ssh/tunnel_id_ed25519
 
-    HEADEND_HOST="${HEADEND_HOST:-}"
-    HEADEND_PORT="${HEADEND_PORT:-22}"
-    HEADEND_USER="${HEADEND_USER:-peter}"
+    HEADEND_HOST="${HEADEND_HOST}"
+    HEADEND_PORT="${HEADEND_PORT}"
+    HEADEND_USER="${HEADEND_USER}"
 
     cat > /mnt/root/etc/timelapse/ssh/tunnel.conf << CONF_EOF
 TUNNEL_PORT=${TUNNEL_PORT}
@@ -161,11 +167,11 @@ StartLimitIntervalSec=0
 Type=simple
 User=root
 Environment="AUTOSSH_GATETIME=0"
-ExecStartPre=/bin/bash -c 'which autossh || apt-get install -y -q autossh'
+ExecStartPre=/usr/bin/test -x /usr/bin/autossh
 ExecStart=/usr/bin/autossh -M 0 -N \
   -o ServerAliveInterval=30 \
   -o ServerAliveCountMax=3 \
-  -o StrictHostKeyChecking=no \
+  -o StrictHostKeyChecking=accept-new \
   -o ExitOnForwardFailure=yes \
   -o BatchMode=yes \
   -i /etc/timelapse/ssh/tunnel_id_ed25519 \
@@ -202,17 +208,46 @@ def _find_repo_root() -> Path:
 
 def _load_target_yaml(target_id: str, repo_root: Path) -> dict:
     """Indlæs target.yaml for et givet target."""
-    try:
-        import yaml
-    except ImportError:
-        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "pyyaml"], check=True)
-        import yaml  # type: ignore
-
     yaml_path = repo_root / "headend" / "tools" / "hardware" / target_id / "target.yaml"
     if not yaml_path.exists():
         raise FileNotFoundError(f"target.yaml ikke fundet: {yaml_path}")
     with open(yaml_path, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _validate_inputs(
+    *,
+    wifi_ssid: str,
+    wifi_password: str,
+    wifi_country: str,
+    wifi_method: str,
+    ssh_private_key: str | None,
+    reverse_tunnel_port: int | None,
+    headend_host: str,
+    headend_port: int,
+    headend_user: str,
+) -> None:
+    if not wifi_ssid or len(wifi_ssid) > 32 or any(c in wifi_ssid for c in "\r\n\""):
+        raise ValueError("WiFi SSID er tomt eller kan ikke serialiseres sikkert")
+    if len(wifi_password) < 8 or len(wifi_password) > 63 or any(c in wifi_password for c in "\r\n\""):
+        raise ValueError("WiFi adgangskode skal være 8-63 tegn uden linjeskift eller dobbelte citationstegn")
+    if not re.fullmatch(r"[A-Z]{2}", wifi_country):
+        raise ValueError("WiFi landekode skal være to store bogstaver")
+    if wifi_method not in {"auto", "netplan", "wpa_supplicant"}:
+        raise ValueError("Ukendt WiFi-metode")
+    configured = bool(ssh_private_key or reverse_tunnel_port)
+    if not configured:
+        return
+    if not ssh_private_key or not reverse_tunnel_port:
+        raise ValueError("Reverse tunnel kræver både device-nøgle og remote port")
+    if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", headend_host):
+        raise ValueError("Reverse tunnel kræver et gyldigt Headend-hostnavn")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,31}", headend_user):
+        raise ValueError("Reverse tunnel kræver en gyldig, dedikeret Headend-bruger")
+    if not 1024 <= int(reverse_tunnel_port) <= 65535:
+        raise ValueError("Reverse tunnel remote port skal være mellem 1024 og 65535")
+    if not 1024 <= int(headend_port) <= 65535 or int(headend_port) in {21, 22, 80, 443, 8080}:
+        raise ValueError("Headend tunnel-port er ugyldig eller reserveret")
 
 
 def _read_partition_offset(img_path: Path, part_num: int, log: Callable[[str], None] = lambda _: None) -> int:
@@ -262,8 +297,8 @@ def inject_wifi_image(
     headend_ssh_public_key: str | None = None,
     reverse_tunnel_port: int | None = None,
     headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
-    headend_port: int = 22,
-    headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", ""),
+    headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222")),
+    headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel"),
 ) -> dict:
     """
     Injectér WiFi-konfiguration (og valgfrit SSH-nøgler + reverse tunnel) i et eksisterende flashbart image.
@@ -283,7 +318,7 @@ def inject_wifi_image(
         headend_ssh_public_key: Headend public key — tilføjes device's authorized_keys
         reverse_tunnel_port:    Port på headend til reverse tunnel (fx 2202)
         headend_host:           Headend hostname (default: TIMELAPSE_TUNNEL_HOST)
-        headend_port:           Headend SSH port (default: 22)
+        headend_port:           Dedikeret Headend SSH port (default: 22222)
         headend_user:           Headend SSH bruger (default: TIMELAPSE_TUNNEL_USER)
 
     Returnerer dict med:
@@ -292,6 +327,17 @@ def inject_wifi_image(
     gz_path = Path(gz_path)
     if not gz_path.exists():
         raise FileNotFoundError(f"Input-fil ikke fundet: {gz_path}")
+    _validate_inputs(
+        wifi_ssid=wifi_ssid,
+        wifi_password=wifi_password,
+        wifi_country=wifi_country,
+        wifi_method=wifi_method,
+        ssh_private_key=ssh_private_key,
+        reverse_tunnel_port=reverse_tunnel_port,
+        headend_host=headend_host,
+        headend_port=headend_port,
+        headend_user=headend_user,
+    )
     is_compressed = gz_path.suffix in (".gz",) or gz_path.name.endswith(".img.gz")
 
     root = Path(repo_root or _find_repo_root())

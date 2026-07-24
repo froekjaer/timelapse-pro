@@ -59,6 +59,12 @@ Konfigurationsfilen skal sætte som minimum:
   TL_DATA_DIR=/Volumes/data-fast/timelapse-incoming/canonical-images
   TL_DB_NAME=timelapse_db
   TL_DB_USER=timelapse
+  TL_SERVICE_USER=_timelapse                    # oprettes skjult uden login hvis den mangler
+  TL_SERVICE_GROUP=_timelapse
+  TL_SERVICE_HOME=/var/lib/timelapse
+  TL_TUNNEL_HOST=backend.timelapse-pro.dk
+  TL_TUNNEL_PORT=22222
+  TL_TUNNEL_USER=tunnel
 
 TL_BACKEND_PORT: staging- og prod-maskinerne kører allerede CrushFTP på 21/22/80/443
   — TimeLapse Pro's nginx må ALDRIG binde til disse. Default er derfor 8443 (bekræftet
@@ -92,6 +98,13 @@ source "$CONFIG_FILE"
 : "${TL_DB_NAME:=timelapse_db}"
 : "${TL_DB_USER:=timelapse}"
 : "${TL_BACKEND_PORT:=8443}"
+: "${TL_SERVICE_USER:=_timelapse}"
+: "${TL_SERVICE_GROUP:=_timelapse}"
+: "${TL_SERVICE_HOME:=/var/lib/timelapse}"
+: "${TL_POSTGRES_ADMIN_USER:=${SUDO_USER:-}}"
+: "${TL_TUNNEL_HOST:=$TL_DOMAIN_BACKEND}"
+: "${TL_TUNNEL_PORT:=22222}"
+: "${TL_TUNNEL_USER:=tunnel}"
 
 if [[ "$TL_BACKEND_PORT" =~ ^(21|22|80|443)$ ]]; then
   die "TL_BACKEND_PORT=$TL_BACKEND_PORT er forbudt — CrushFTP ejer 21/22/80/443 på staging/prod (se PORT_AUDIT_og_WEBSITE_v10.md §3)."
@@ -101,6 +114,31 @@ case "$TL_ENV" in
   rd|staging|prod) ;;
   *) die "TL_ENV skal være rd, staging eller prod — fik: '$TL_ENV'" ;;
 esac
+
+[[ "$TL_BACKEND_PORT" == <-> ]] && (( TL_BACKEND_PORT >= 1024 && TL_BACKEND_PORT <= 65535 )) \
+  || die "TL_BACKEND_PORT skal være et heltal mellem 1024 og 65535"
+[[ "$TL_DOMAIN_BACKEND" =~ ^[A-Za-z0-9.-]+$ && "$TL_DOMAIN_BACKEND" == *.* ]] \
+  || die "TL_DOMAIN_BACKEND er ugyldigt"
+[[ "$TL_SERVICE_USER" =~ ^_?[a-z][a-z0-9_-]{0,30}$ ]] \
+  || die "TL_SERVICE_USER er ugyldig"
+[[ "$TL_SERVICE_GROUP" =~ ^_?[a-z][a-z0-9_-]{0,30}$ ]] \
+  || die "TL_SERVICE_GROUP er ugyldig"
+[[ "$TL_TUNNEL_HOST" =~ ^[A-Za-z0-9.-]{1,253}$ ]] \
+  || die "TL_TUNNEL_HOST er ugyldigt"
+[[ "$TL_TUNNEL_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]] \
+  || die "TL_TUNNEL_USER er ugyldig"
+[[ "$TL_TUNNEL_PORT" == <-> ]] && (( TL_TUNNEL_PORT >= 1024 && TL_TUNNEL_PORT <= 65535 )) \
+  || die "TL_TUNNEL_PORT skal være et heltal mellem 1024 og 65535"
+[[ "$TL_TUNNEL_PORT" != 21 && "$TL_TUNNEL_PORT" != 22 && "$TL_TUNNEL_PORT" != 80 \
+   && "$TL_TUNNEL_PORT" != 443 && "$TL_TUNNEL_PORT" != 8080 ]] \
+  || die "TL_TUNNEL_PORT bruger en reserveret port"
+[[ "$TL_DB_NAME" =~ ^[a-z][a-z0-9_]{0,62}$ && "$TL_DB_USER" =~ ^[a-z][a-z0-9_]{0,62}$ ]] \
+  || die "TL_DB_NAME/TL_DB_USER er ugyldig"
+[[ "$TL_REPO_DIR" == /* && "$TL_DATA_DIR" == /* && "$TL_SERVICE_HOME" == /* ]] \
+  || die "TL_REPO_DIR, TL_DATA_DIR og TL_SERVICE_HOME skal være absolutte stier"
+if [[ "$DRY_RUN" != "1" && "$(id -u)" != "0" ]]; then
+  die "Kør apply med sudo. --dry-run kan køres uden sudo."
+fi
 
 log "Miljø: $TL_ENV"
 log "Backend-domæne: $TL_DOMAIN_BACKEND (port $TL_BACKEND_PORT — se PORT_AUDIT_og_WEBSITE_v10.md §4)"
@@ -116,7 +154,55 @@ run() {
   fi
 }
 
-# ── 1. Forudsætninger ────────────────────────────────────────────────────────
+# ── 1. Serviceidentitet (least privilege; aldrig implicit peter/root) ─────────
+_next_directory_id() {
+  local node="$1" field="$2" minimum="${3:-450}"
+  /usr/bin/dscl . -list "$node" "$field" 2>/dev/null \
+    | /usr/bin/awk -v min="$minimum" '$2 >= min && $2 < 500 { used[$2]=1 } END { for (i=min; i<500; i++) if (!used[i]) { print i; exit } }'
+}
+
+ensure_service_identity() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "  [dry-run] ville verificere/oprette skjult servicekonto $TL_SERVICE_USER:$TL_SERVICE_GROUP"
+    return
+  fi
+
+  local group_gid user_uid
+  if ! /usr/bin/dscl . -read "/Groups/$TL_SERVICE_GROUP" >/dev/null 2>&1; then
+    group_gid="$(_next_directory_id /Groups PrimaryGroupID)"
+    [[ -n "$group_gid" ]] || die "Kunne ikke finde et ledigt lokalt service-GID"
+    log "Opretter skjult servicegruppe '$TL_SERVICE_GROUP' (GID $group_gid)..."
+    /usr/bin/dscl . -create "/Groups/$TL_SERVICE_GROUP"
+    /usr/bin/dscl . -create "/Groups/$TL_SERVICE_GROUP" PrimaryGroupID "$group_gid"
+    /usr/bin/dscl . -create "/Groups/$TL_SERVICE_GROUP" RealName "TimeLapse Pro services"
+  fi
+  group_gid="$(/usr/bin/dscl . -read "/Groups/$TL_SERVICE_GROUP" PrimaryGroupID | /usr/bin/awk '{print $2}')"
+
+  if ! /usr/bin/id "$TL_SERVICE_USER" >/dev/null 2>&1; then
+    user_uid="$(_next_directory_id /Users UniqueID)"
+    [[ -n "$user_uid" ]] || die "Kunne ikke finde et ledigt lokalt service-UID"
+    log "Opretter skjult, ikke-administrativ servicekonto '$TL_SERVICE_USER' (UID $user_uid)..."
+    /usr/bin/dscl . -create "/Users/$TL_SERVICE_USER"
+    /usr/bin/dscl . -create "/Users/$TL_SERVICE_USER" UniqueID "$user_uid"
+    /usr/bin/dscl . -create "/Users/$TL_SERVICE_USER" PrimaryGroupID "$group_gid"
+    /usr/bin/dscl . -create "/Users/$TL_SERVICE_USER" NFSHomeDirectory "$TL_SERVICE_HOME"
+    /usr/bin/dscl . -create "/Users/$TL_SERVICE_USER" UserShell /usr/bin/false
+    /usr/bin/dscl . -create "/Users/$TL_SERVICE_USER" RealName "TimeLapse Pro service"
+    /usr/bin/dscl . -create "/Users/$TL_SERVICE_USER" IsHidden 1
+  else
+    [[ "$(id -u "$TL_SERVICE_USER")" != "0" ]] || die "TL_SERVICE_USER må aldrig være root"
+    log "Genbruger eksisterende lokal konto '$TL_SERVICE_USER'."
+  fi
+
+  /usr/sbin/dseditgroup -o edit -a "$TL_SERVICE_USER" -t user "$TL_SERVICE_GROUP" >/dev/null
+  /bin/mkdir -p "$TL_SERVICE_HOME"
+  /usr/sbin/chown "$TL_SERVICE_USER:$TL_SERVICE_GROUP" "$TL_SERVICE_HOME"
+  /bin/chmod 750 "$TL_SERVICE_HOME"
+}
+
+ensure_service_identity
+
+# ── 2. Forudsætninger ────────────────────────────────────────────────────────
 log "Tjekker forudsætninger..."
 
 [[ "$(uname)" == "Darwin" ]] || die "Dette script er macOS-only (jf. Peters bekræftelse 2026-07-05). Linux-understøttelse er ikke bygget endnu."
@@ -126,48 +212,67 @@ command -v python3 >/dev/null 2>&1 || die "python3 mangler"
 command -v psql    >/dev/null 2>&1 || die "psql (PostgreSQL client) mangler — 'brew install postgresql@17'"
 command -v nginx   >/dev/null 2>&1 || die "nginx mangler — 'brew install nginx'"
 command -v npm     >/dev/null 2>&1 || die "npm mangler (til UI-build) — 'brew install node'"
+command -v openssl >/dev/null 2>&1 || die "openssl mangler"
 
 [[ -d "$TL_REPO_DIR" ]] || die "TL_REPO_DIR findes ikke: $TL_REPO_DIR (klon repoet dertil først)"
 [[ -f "$TL_REPO_DIR/headend/main.py" ]] || die "Finder ikke headend/main.py under $TL_REPO_DIR — forkert sti?"
 
 log "Forudsætninger OK."
 
-# ── 2. Kataloger (data + config UDENFOR repoet, jf. eksisterende konvention) ──
+# ── 3. Kataloger (data + config UDENFOR repoet, jf. eksisterende konvention) ──
 # /etc/timelapse/ holder secrets/config, adskilt fra Git-repoet — samme mønster
 # som det eksisterende headend.env på rd-systemet (se SERVICES_OG_DRIFT-dokumentet).
 ENV_DIR="/etc/timelapse"
 ENV_FILE="$ENV_DIR/headend.env"
-VENV_DIR="${TL_VENV_DIR:-$HOME/.venvs/timelapse-headend}"
+VENV_DIR="${TL_VENV_DIR:-$TL_SERVICE_HOME/.venvs/timelapse-headend}"
+LOG_DIR="/var/log/timelapse"
+HEADEND_LOG="$LOG_DIR/headend.log"
 
 log "Opretter $ENV_DIR (kræver sudo)..."
 run "sudo mkdir -p '$ENV_DIR'"
-run "sudo chown root:staff '$ENV_DIR'"
+run "sudo chown root:'$TL_SERVICE_GROUP' '$ENV_DIR'"
 run "sudo chmod 750 '$ENV_DIR'"
 
 run "mkdir -p '$TL_DATA_DIR'"
+run "sudo mkdir -p '$LOG_DIR'"
+run "sudo touch '$HEADEND_LOG'"
+run "sudo chown '$TL_SERVICE_USER:$TL_SERVICE_GROUP' '$HEADEND_LOG'"
+run "sudo chmod 640 '$HEADEND_LOG'"
+if [[ "$DRY_RUN" != "1" ]]; then
+  if [[ "$(stat -f '%Su' "$TL_DATA_DIR")" == "root" && -z "$(ls -A "$TL_DATA_DIR")" ]]; then
+    chown "$TL_SERVICE_USER:$TL_SERVICE_GROUP" "$TL_DATA_DIR"
+    chmod 750 "$TL_DATA_DIR"
+  fi
+  sudo -u "$TL_SERVICE_USER" test -w "$TL_DATA_DIR" \
+    || die "Servicekontoen $TL_SERVICE_USER kan ikke skrive til TL_DATA_DIR=$TL_DATA_DIR. Ret ejerskab/ACL uden at ændre andre data."
+fi
 
-# ── 3. Python venv + dependencies ───────────────────────────────────────────
+# ── 4. Python venv + dependencies ───────────────────────────────────────────
 log "Opsætter Python venv ($VENV_DIR)..."
-run "python3 -m venv '$VENV_DIR'"
-run "'$VENV_DIR/bin/pip' install --upgrade pip"
-run "'$VENV_DIR/bin/pip' install -r '$TL_REPO_DIR/headend/requirements.txt'"
+run "sudo -u '$TL_SERVICE_USER' env HOME='$TL_SERVICE_HOME' python3 -m venv '$VENV_DIR'"
+run "sudo -u '$TL_SERVICE_USER' env HOME='$TL_SERVICE_HOME' '$VENV_DIR/bin/pip' install --disable-pip-version-check -r '$TL_REPO_DIR/headend/requirements.txt'"
 
-# ── 4. PostgreSQL: DB + bruger (idempotent) ─────────────────────────────────
+# ── 5. PostgreSQL: DB + bruger (idempotent) ─────────────────────────────────
 log "Sikrer PostgreSQL-database '$TL_DB_NAME' og bruger '$TL_DB_USER'..."
 if [[ "$DRY_RUN" != "1" ]]; then
-  if ! psql -U "$(whoami)" -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='$TL_DB_USER'" | grep -q 1; then
-    log "Opretter DB-rolle '$TL_DB_USER' (login + createdb, IKKE superuser)..."
-    createuser --login --createdb "$TL_DB_USER" || warn "Kunne ikke oprette rolle — findes den måske allerede under et andet navn?"
+  if [[ -z "$TL_POSTGRES_ADMIN_USER" ]]; then
+    TL_POSTGRES_ADMIN_USER="$(stat -f '%Su' "$(brew --prefix)/var/postgresql@17" 2>/dev/null || true)"
   fi
-  if ! psql -U "$(whoami)" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$TL_DB_NAME'" | grep -q 1; then
+  [[ -n "$TL_POSTGRES_ADMIN_USER" && "$TL_POSTGRES_ADMIN_USER" != "root" ]] \
+    || die "Kunne ikke bestemme PostgreSQL-administrator. Sæt TL_POSTGRES_ADMIN_USER i config."
+  if ! sudo -u "$TL_POSTGRES_ADMIN_USER" psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='$TL_DB_USER'" | grep -q 1; then
+    log "Opretter DB-rolle '$TL_DB_USER' (login + createdb, IKKE superuser)..."
+    sudo -u "$TL_POSTGRES_ADMIN_USER" createuser --login --createdb "$TL_DB_USER"
+  fi
+  if ! sudo -u "$TL_POSTGRES_ADMIN_USER" psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$TL_DB_NAME'" | grep -q 1; then
     log "Opretter database '$TL_DB_NAME'..."
-    createdb -U "$(whoami)" -O "$TL_DB_USER" "$TL_DB_NAME"
+    sudo -u "$TL_POSTGRES_ADMIN_USER" createdb -O "$TL_DB_USER" "$TL_DB_NAME"
   fi
 else
   echo "  [dry-run] ville oprette rolle/DB $TL_DB_USER/$TL_DB_NAME hvis de ikke findes"
 fi
 
-# ── 5. /etc/timelapse/headend.env — generér KUN hvis den ikke findes ────────
+# ── 6. /etc/timelapse/headend.env — generér KUN hvis den ikke findes ────────
 if [[ -f "$ENV_FILE" ]]; then
   warn "$ENV_FILE findes allerede — rører den IKKE (for at undgå at overskrive en"
   warn "produktions-JWT_SECRET eller anden allerede-live konfiguration). Sammenlign"
@@ -175,6 +280,7 @@ if [[ -f "$ENV_FILE" ]]; then
 else
   log "Genererer $ENV_FILE (nyt JWT_SECRET, aldrig genbrugt fra et andet miljø)..."
   JWT_SECRET_VALUE="$(openssl rand -hex 32)"
+  INITIAL_ADMIN_PASSWORD_VALUE="$(openssl rand -base64 24 | tr -d '\n')"
   BASE_URL="https://${TL_DOMAIN_BACKEND}:${TL_BACKEND_PORT}"
   ENV_CONTENT="# TimeLapse Pro headend — genereret af install_headend.sh $(date -u +%Y-%m-%dT%H:%M:%SZ)
 # Miljø: $TL_ENV. Denne fil ligger BEVIDST udenfor Git-repoet (/etc/timelapse/),
@@ -183,9 +289,15 @@ else
 
 TIMELAPSE_ENV=${TL_ENV}
 JWT_SECRET=${JWT_SECRET_VALUE}
+TIMELAPSE_INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}
 DATABASE_URL=postgresql://${TL_DB_USER}@localhost/${TL_DB_NAME}
 SFTP_BASE=${TL_DATA_DIR}
+SFTP_PORT=22222
 BASE_URL=${BASE_URL}
+EDGE_PUBLIC_HEADEND_URL=${BASE_URL}/api
+TIMELAPSE_TUNNEL_HOST=${TL_TUNNEL_HOST}
+TIMELAPSE_TUNNEL_PORT=${TL_TUNNEL_PORT}
+TIMELAPSE_TUNNEL_USER=${TL_TUNNEL_USER}
 ALLOWED_ORIGIN=${BASE_URL}
 COOKIE_SECURE=true
 
@@ -196,10 +308,12 @@ COOKIE_SECURE=true
 "
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "  [dry-run] ville skrive følgende til $ENV_FILE (secrets udeladt her):"
-    echo "$ENV_CONTENT" | sed 's/JWT_SECRET=.*/JWT_SECRET=<genereret>/'
+    echo "$ENV_CONTENT" \
+      | sed 's/JWT_SECRET=.*/JWT_SECRET=<genereret>/' \
+      | sed 's/TIMELAPSE_INITIAL_ADMIN_PASSWORD=.*/TIMELAPSE_INITIAL_ADMIN_PASSWORD=<genereret>/'
   else
     echo "$ENV_CONTENT" | sudo tee "$ENV_FILE" >/dev/null
-    sudo chown root:staff "$ENV_FILE"
+    sudo chown "root:$TL_SERVICE_GROUP" "$ENV_FILE"
     sudo chmod 640 "$ENV_FILE"
   fi
   log "TIMELAPSE_ENV=${TL_ENV} sat — bemærk: koden i main.py kræver i dag en eksplicit,"
@@ -207,11 +321,17 @@ COOKIE_SECURE=true
   log "det er allerede opfyldt her (openssl rand -hex 32 = 64 tegn)."
 fi
 
-# ── 6. UI-build ──────────────────────────────────────────────────────────────
+# ── 7. UI-build ──────────────────────────────────────────────────────────────
 log "Bygger UI (npm ci && npm run build)..."
-run "cd '$TL_REPO_DIR/timelapse-ui' && npm ci && npm run build"
+INSTALLER_USER="${SUDO_USER:-$TL_SERVICE_USER}"
+if [[ "$DRY_RUN" == "1" && -z "${SUDO_USER:-}" ]]; then
+  INSTALLER_USER="$(id -un)"
+fi
+INSTALLER_HOME="$(/usr/bin/dscl . -read "/Users/$INSTALLER_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}' || true)"
+[[ -n "$INSTALLER_HOME" ]] || INSTALLER_HOME="$TL_SERVICE_HOME"
+run "sudo -u '$INSTALLER_USER' env HOME='$INSTALLER_HOME' /bin/zsh -c \"cd '$TL_REPO_DIR/timelapse-ui' && npm ci && npm run build\""
 
-# ── 7. launchd — headend-service ────────────────────────────────────────────
+# ── 8. launchd — headend-service ────────────────────────────────────────────
 STARTER_SCRIPT="/usr/local/sbin/timelapse-headend-start"
 log "Installerer starter-script ($STARTER_SCRIPT) og launchd-plist..."
 
@@ -220,7 +340,7 @@ set -euo pipefail
 ENV_FILE=\"\${TIMELAPSE_HEADEND_ENV_FILE:-$ENV_FILE}\"
 WORKDIR=\"\${TIMELAPSE_HEADEND_WORKDIR:-$TL_REPO_DIR/headend}\"
 UVICORN=\"\${TIMELAPSE_HEADEND_UVICORN:-$VENV_DIR/bin/uvicorn}\"
-export HOME=\"\${HOME:-$HOME}\"
+export HOME=\"\${HOME:-$TL_SERVICE_HOME}\"
 export PATH=\"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}\"
 if [[ -r \"\$ENV_FILE\" ]]; then
   set -a; source \"\$ENV_FILE\"; set +a
@@ -242,16 +362,17 @@ PLIST_CONTENT="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <plist version=\"1.0\">
 <dict>
   <key>Label</key><string>${PLIST_LABEL}</string>
-  <key>UserName</key><string>$(whoami)</string>
+  <key>UserName</key><string>${TL_SERVICE_USER}</string>
+  <key>GroupName</key><string>${TL_SERVICE_GROUP}</string>
   <key>ProgramArguments</key><array><string>${STARTER_SCRIPT}</string></array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>HOME</key><string>$HOME</string>
+    <key>HOME</key><string>$TL_SERVICE_HOME</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>TIMELAPSE_HEADEND_ENV_FILE</key><string>${ENV_FILE}</string>
   </dict>
-  <key>StandardOutPath</key><string>$HOME/Library/Logs/timelapse-headend.log</string>
-  <key>StandardErrorPath</key><string>$HOME/Library/Logs/timelapse-headend.log</string>
+  <key>StandardOutPath</key><string>$HEADEND_LOG</string>
+  <key>StandardErrorPath</key><string>$HEADEND_LOG</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
@@ -267,28 +388,41 @@ else
   sudo launchctl kickstart -k "system/${PLIST_LABEL}"
 fi
 
-# ── 8. nginx ─────────────────────────────────────────────────────────────────
-NGINX_CONF_DIR="/opt/homebrew/etc/nginx"
-NGINX_CONF="$NGINX_CONF_DIR/nginx.conf"
-log "Genererer nginx-config: kun backend-vhost på port ${TL_BACKEND_PORT} (marketingsite hostes separat, se §5.3)."
+# ── 9. Dedikeret nginx-instans (rører aldrig global nginx/CrushFTP) ───────────
+BREW_PREFIX="$(brew --prefix)"
+NGINX_BIN="$(command -v nginx)"
+NGINX_CONF="$ENV_DIR/nginx-headend.conf"
+NGINX_RUNTIME_DIR="$TL_SERVICE_HOME/nginx"
+NGINX_PID="/var/run/timelapse-nginx-headend.pid"
+NGINX_PLIST_LABEL="dk.froekjaer.timelapse-nginx"
+NGINX_PLIST="/Library/LaunchDaemons/${NGINX_PLIST_LABEL}.plist"
+run "sudo mkdir -p '$NGINX_RUNTIME_DIR/client-body' '$NGINX_RUNTIME_DIR/proxy' '$NGINX_RUNTIME_DIR/fastcgi'"
+run "sudo chown -R '$TL_SERVICE_USER:$TL_SERVICE_GROUP' '$NGINX_RUNTIME_DIR'"
+log "Genererer isoleret nginx-config på port ${TL_BACKEND_PORT}; andre nginx-instanser røres ikke."
 
 # Fælles fundament (rate limiting, security headers) — matcher den nuværende,
 # afprøvede rd-config (deploy/nginx/timelapse.froekjaer.dk.conf).
-read -r -d '' NGINX_BASE <<'NGINXEOF' || true
+read -r -d '' NGINX_BASE <<NGINXEOF || true
+pid ${NGINX_PID};
+error_log ${LOG_DIR}/nginx-error.log warn;
+user ${TL_SERVICE_USER} ${TL_SERVICE_GROUP};
+
 events { worker_connections 1024; }
 http {
-    include       mime.types;
+    include       ${BREW_PREFIX}/etc/nginx/mime.types;
     default_type  application/octet-stream;
     sendfile      on;
+    client_body_temp_path ${NGINX_RUNTIME_DIR}/client-body;
+    proxy_temp_path       ${NGINX_RUNTIME_DIR}/proxy;
+    fastcgi_temp_path     ${NGINX_RUNTIME_DIR}/fastcgi;
 
-    log_format timelapse '$remote_addr - $remote_user [$time_local] '
-                         '"$request" $status $body_bytes_sent '
-                         '"$http_referer" "$http_user_agent"';
-    access_log /opt/homebrew/var/log/nginx-timelapse-access.log timelapse;
-    error_log  /opt/homebrew/var/log/nginx-timelapse-error.log warn;
+    log_format timelapse '\$remote_addr - \$remote_user [\$time_local] '
+                         '"\$request" \$status \$body_bytes_sent '
+                         '"\$http_referer" "\$http_user_agent"';
+    access_log ${LOG_DIR}/nginx-access.log timelapse;
 
-    limit_req_zone $binary_remote_addr zone=api_login:10m rate=10r/m;
-    limit_req_zone $binary_remote_addr zone=api_general:10m rate=120r/m;
+    limit_req_zone \$binary_remote_addr zone=api_login:10m rate=10r/m;
+    limit_req_zone \$binary_remote_addr zone=api_general:10m rate=120r/m;
 
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
@@ -321,7 +455,7 @@ NGINXEOF
 
 _cert_exists() {
   local domain="$1"
-  [[ -f "/opt/homebrew/etc/nginx/ssl/${domain}/fullchain.pem" && -f "/opt/homebrew/etc/nginx/ssl/${domain}/privkey.pem" ]]
+  [[ -f "${BREW_PREFIX}/etc/nginx/ssl/${domain}/fullchain.pem" && -f "${BREW_PREFIX}/etc/nginx/ssl/${domain}/privkey.pem" ]]
 }
 
 if _cert_exists "$TL_DOMAIN_BACKEND"; then
@@ -329,8 +463,8 @@ if _cert_exists "$TL_DOMAIN_BACKEND"; then
   BACKEND_BLOCK="    server {
         listen ${TL_BACKEND_PORT} ssl;
         server_name ${TL_DOMAIN_BACKEND};
-        ssl_certificate     /opt/homebrew/etc/nginx/ssl/${TL_DOMAIN_BACKEND}/fullchain.pem;
-        ssl_certificate_key /opt/homebrew/etc/nginx/ssl/${TL_DOMAIN_BACKEND}/privkey.pem;
+        ssl_certificate     ${BREW_PREFIX}/etc/nginx/ssl/${TL_DOMAIN_BACKEND}/fullchain.pem;
+        ssl_certificate_key ${BREW_PREFIX}/etc/nginx/ssl/${TL_DOMAIN_BACKEND}/privkey.pem;
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_ciphers HIGH:!aNULL:!MD5;
         add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;
@@ -404,18 +538,43 @@ ${BACKEND_BLOCK}
 "
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  echo "  [dry-run] ville skrive $NGINX_CONF (se ovenfor for indhold-skitse)"
+  echo "  [dry-run] ville validere og skrive den isolerede config $NGINX_CONF"
+  echo "  [dry-run] ville installere LaunchDaemon $NGINX_PLIST_LABEL"
 else
-  [[ -f "$NGINX_CONF" ]] && sudo cp "$NGINX_CONF" "${NGINX_CONF}.bak-$(date +%Y%m%d%H%M%S)"
-  echo "$FULL_NGINX_CONF" | sudo tee "$NGINX_CONF" >/dev/null
-  sudo nginx -t -c "$NGINX_CONF" || die "nginx -t fejlede — se output ovenfor, ret config før du fortsætter. En backup af den gamle config ligger ved siden af."
-  if pgrep -x nginx >/dev/null 2>&1; then
-    sudo nginx -s reload
-    log "nginx genindlæst med den nye config."
-  else
-    sudo nginx
-    log "nginx startet."
-  fi
+  NGINX_TMP="$(mktemp /private/tmp/timelapse-nginx.XXXXXX)"
+  echo "$FULL_NGINX_CONF" > "$NGINX_TMP"
+  "$NGINX_BIN" -t -c "$NGINX_TMP" \
+    || die "nginx -t fejlede. Den aktive TimeLapse-config er ikke ændret."
+  [[ -f "$NGINX_CONF" ]] && cp "$NGINX_CONF" "${NGINX_CONF}.bak-$(date +%Y%m%d%H%M%S)"
+  install -o root -g "$TL_SERVICE_GROUP" -m 640 "$NGINX_TMP" "$NGINX_CONF"
+  rm -f "$NGINX_TMP"
+
+  cat > "$NGINX_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${NGINX_PLIST_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${NGINX_BIN}</string>
+    <string>-c</string><string>${NGINX_CONF}</string>
+    <string>-g</string><string>daemon off;</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>${LOG_DIR}/nginx-launchd.log</string>
+  <key>StandardErrorPath</key><string>${LOG_DIR}/nginx-launchd.log</string>
+</dict>
+</plist>
+EOF
+  chmod 644 "$NGINX_PLIST"
+  launchctl bootout system "$NGINX_PLIST" 2>/dev/null || true
+  launchctl bootstrap system "$NGINX_PLIST"
+  launchctl kickstart -k "system/${NGINX_PLIST_LABEL}"
+  log "Dedikeret TimeLapse-nginx startet; øvrige nginx-processer/configs er urørte."
   if _cert_exists "$TL_DOMAIN_BACKEND"; then
     log "Certifikat fundet — nginx kører nu med fuld HTTPS på :${TL_BACKEND_PORT}."
   else
@@ -424,7 +583,7 @@ else
   fi
 fi
 
-# ── 9. Sundhedstjek (kun HTTP-laget, TLS/cert kommer i et senere trin) ───────
+# ── 10. Sundhedstjek ─────────────────────────────────────────────────────────
 log "Venter på at headend svarer på 127.0.0.1:8000/api/health..."
 if [[ "$DRY_RUN" != "1" ]]; then
   for i in $(seq 1 24); do
@@ -433,11 +592,11 @@ if [[ "$DRY_RUN" != "1" ]]; then
       break
     fi
     sleep 5
-    [[ "$i" == "24" ]] && warn "Headend svarede stadig ikke efter 2 minutter — tjek $HOME/Library/Logs/timelapse-headend.log"
+    [[ "$i" == "24" ]] && die "Headend svarede ikke efter 2 minutter — tjek $HEADEND_LOG"
   done
 fi
 
-# ── 10. Afsluttende, MANUELLE trin (kan ikke og bør ikke scriptes) ──────────
+# ── 11. Afsluttende, manuelle sikkerhedsgates ────────────────────────────────
 cat <<EOF
 
 $LOG_PREFIX ══════════════════════════════════════════════════════════════════
@@ -455,16 +614,18 @@ Resterende trin — SKAL gøres af dig manuelt, kan ikke og bør ikke scriptes:
      KØR DEREFTER DETTE SCRIPT IGEN (samme kommando) — det opdager automatisk
      at certifikatet nu findes og aktiverer SSL på :${TL_BACKEND_PORT}.
 
-  2. FØRSTE LOGIN — kan IKKE scriptes (systemet kræver MFA-enrollment for
+  2. FØRSTE LOGIN — systemet kræver MFA-enrollment for
      super_admin ved allerførste login, jf. main.py's mfa_required_by_role):
        a. Åbn https://${TL_DOMAIN_BACKEND}:${TL_BACKEND_PORT}/ i en browser
-       b. Log ind som admin / changeme
+       b. Log ind som admin med den unikke initiale adgangskode:
+          sudo grep '^TIMELAPSE_INITIAL_ADMIN_PASSWORD=' ${ENV_FILE}
        c. Gennemfør TOTP-opsætning (scan QR-koden med en autenticator-app)
        d. Skift adgangskoden STRAKS bagefter (Indstillinger → Skift adgangskode)
+       e. Fjern derefter TIMELAPSE_INITIAL_ADMIN_PASSWORD fra ${ENV_FILE}
      Se INSTALLATION_GUIDE_HEADEND_v1.md §7 for flere detaljer.
 
-  3. CA/mTLS til edge-enheder er IKKE en del af dette script — koden findes
-     endnu ikke (se opgave #52 i HANDOVER_LOG.md). Tilføjes i en senere runde.
+  3. Verificér CA/mTLS-status og certifikatpolitikken i UI før offentlig
+     eksponering. Installeren udsteder ikke selv device-certifikater.
 
   4. Yderligere brugere/roller oprettes via UI'en (Brugere-siden) af den
      nyoprettede super_admin — ikke af dette script.
@@ -474,6 +635,6 @@ Resterende trin — SKAL gøres af dig manuelt, kan ikke og bør ikke scriptes:
      PORT_AUDIT_og_WEBSITE_v10.md §5.3. Login-knapperne på det site skal pege
      på https://${TL_DOMAIN_BACKEND}:${TL_BACKEND_PORT}/ (med portnummer).
 
-$LOG_PREFIX Log: $HOME/Library/Logs/timelapse-headend.log
+$LOG_PREFIX Log: $HEADEND_LOG
 $LOG_PREFIX Env-fil: $ENV_FILE (IKKE i Git — backup den et sikkert sted separat)
 EOF

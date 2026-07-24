@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Server, Download, KeyRound, AlertTriangle, CheckCircle, Loader2, Archive, Trash2 } from 'lucide-react'
+import {
+  Server, Download, KeyRound, AlertTriangle, CheckCircle, Loader2, Archive, Trash2, RefreshCw,
+} from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
 interface StoredBundle {
@@ -24,6 +26,14 @@ interface PrepareResult {
   warnings: string[]
 }
 
+interface TrustedRelease {
+  tag: string
+  commit: string
+  created_at: string
+  subject: string
+  signature_status: 'trusted'
+}
+
 const inputCls =
   'w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
 const labelCls = 'block text-sm font-medium text-gray-700 mb-1'
@@ -33,9 +43,17 @@ export function HeadendGeneratorTab() {
   const [domain, setDomain] = useState('staging.timelapse-pro.dk')
   const [backendPort, setBackendPort] = useState('8443')
   const [deviceId, setDeviceId] = useState('')
-  const [dataDir, setDataDir] = useState('/Users/peter/timelapse-data/canonical-images')
+  const [dataDir, setDataDir] = useState('/Users/Shared/TimeLapsePro/data/canonical-images')
+  const [repoDir, setRepoDir] = useState('/Users/Shared/TimeLapsePro/releases/staging')
+  const [serviceUser, setServiceUser] = useState('_timelapse')
+  const [serviceHome, setServiceHome] = useState('/var/lib/timelapse')
+  const [tunnelHost, setTunnelHost] = useState('staging.timelapse-pro.dk')
+  const [tunnelPort, setTunnelPort] = useState('22222')
+  const [tunnelUser, setTunnelUser] = useState('tunnel')
   const [releaseTag, setReleaseTag] = useState('')
   const [expectedCommit, setExpectedCommit] = useState('')
+  const [releases, setReleases] = useState<TrustedRelease[]>([])
+  const [releaseBusy, setReleaseBusy] = useState(true)
   const [busy, setBusy] = useState(false)
   const [downloadBusy, setDownloadBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -53,7 +71,36 @@ export function HeadendGeneratorTab() {
     } catch { /* listen er ikke kritisk */ }
   }, [])
 
-  useEffect(() => { loadBundles() }, [loadBundles])
+  const loadReleases = useCallback(async () => {
+    setReleaseBusy(true)
+    try {
+      const res = await fetch(`${getApiUrl()}/api/headend/generator/releases`, { credentials: 'include' })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(data?.detail || `Release-kataloget fejlede (${res.status})`)
+      const trusted = (data?.releases ?? []) as TrustedRelease[]
+      setReleases(trusted)
+      if (trusted.length > 0) {
+        const current = trusted.find(release => release.tag === releaseTag) ?? trusted[0]
+        setReleaseTag(current.tag)
+        setExpectedCommit(current.commit)
+      } else {
+        setReleaseTag('')
+        setExpectedCommit('')
+        setError('Ingen lokalt betroede signerede releases er tilgængelige')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setReleaseBusy(false)
+    }
+  }, [releaseTag])
+
+  useEffect(() => {
+    loadBundles()
+    loadReleases()
+  // Catalog load is intentionally once on mount; the refresh button reloads it explicitly.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadBundles])
 
   const downloadStored = async (filename: string) => {
     try {
@@ -93,8 +140,14 @@ export function HeadendGeneratorTab() {
     backend_port: Number(backendPort),
     device_id: deviceId || undefined,
     data_dir: dataDir,
-    release_tag: releaseTag || undefined,
-    expected_commit: expectedCommit || undefined,
+    repo_dir: repoDir,
+    service_user: serviceUser,
+    service_home: serviceHome,
+    tunnel_host: tunnelHost,
+    tunnel_port: Number(tunnelPort),
+    tunnel_user: tunnelUser,
+    release_tag: releaseTag,
+    expected_commit: expectedCommit,
   })
 
   const prepare = async () => {
@@ -164,14 +217,18 @@ export function HeadendGeneratorTab() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className={labelCls}>Miljø</label>
+            <label htmlFor="headend-environment" className={labelCls}>Miljø</label>
             <select
+              id="headend-environment"
               className={inputCls}
               value={environment}
               onChange={e => {
                 const env = e.target.value as 'staging' | 'prod'
                 setEnvironment(env)
                 setDomain(env === 'prod' ? 'backend.timelapse-pro.dk' : 'staging.timelapse-pro.dk')
+                setTunnelHost(env === 'prod' ? 'backend.timelapse-pro.dk' : 'staging.timelapse-pro.dk')
+                setRepoDir(`/Users/Shared/TimeLapsePro/releases/${env}`)
+                setResult(null)
               }}
             >
               <option value="staging">staging</option>
@@ -179,16 +236,17 @@ export function HeadendGeneratorTab() {
             </select>
           </div>
           <div>
-            <label className={labelCls}>Backend-domæne</label>
-            <input className={inputCls} value={domain} onChange={e => setDomain(e.target.value)} />
+            <label htmlFor="headend-domain" className={labelCls}>Backend-domæne</label>
+            <input id="headend-domain" className={inputCls} value={domain} onChange={e => setDomain(e.target.value)} />
           </div>
           <div>
-            <label className={labelCls}>Port (aldrig 21/22/80/443 — CrushFTP)</label>
-            <input className={inputCls} value={backendPort} onChange={e => setBackendPort(e.target.value)} />
+            <label htmlFor="headend-backend-port" className={labelCls}>Port (aldrig 21/22/80/443 — CrushFTP)</label>
+            <input id="headend-backend-port" className={inputCls} value={backendPort} onChange={e => setBackendPort(e.target.value)} />
           </div>
           <div>
-            <label className={labelCls}>Device-ID (tomt = TL-HEADEND-{environment.toUpperCase()}-1)</label>
+            <label htmlFor="headend-device-id" className={labelCls}>Device-ID (tomt = TL-HEADEND-{environment.toUpperCase()}-1)</label>
             <input
+              id="headend-device-id"
               className={inputCls}
               placeholder={`TL-HEADEND-${environment.toUpperCase()}-1`}
               value={deviceId}
@@ -196,27 +254,98 @@ export function HeadendGeneratorTab() {
             />
           </div>
           <div>
-            <label className={labelCls}>Data-katalog på den nye maskine</label>
-            <input className={inputCls} value={dataDir} onChange={e => setDataDir(e.target.value)} />
+            <label htmlFor="headend-data-dir" className={labelCls}>Data-katalog på den nye maskine</label>
+            <input id="headend-data-dir" className={inputCls} value={dataDir} onChange={e => setDataDir(e.target.value)} />
           </div>
           <div>
-            <label className={labelCls}>Release-tag (signeret, fx v1.4.0)</label>
-            <input className={inputCls} placeholder="v<X.Y.Z>" value={releaseTag} onChange={e => setReleaseTag(e.target.value)} />
+            <label htmlFor="headend-repo-dir" className={labelCls}>Release-katalog på den nye maskine</label>
+            <input id="headend-repo-dir" className={inputCls} value={repoDir} onChange={e => setRepoDir(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="headend-service-user" className={labelCls}>Servicebruger</label>
+            <input id="headend-service-user" className={inputCls} value={serviceUser} onChange={e => setServiceUser(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="headend-service-home" className={labelCls}>Servicekontoens hjemmekatalog</label>
+            <input id="headend-service-home" className={inputCls} value={serviceHome} onChange={e => setServiceHome(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="headend-tunnel-host" className={labelCls}>Tunnel-host</label>
+            <input id="headend-tunnel-host" className={inputCls} value={tunnelHost} onChange={e => setTunnelHost(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="headend-tunnel-port" className={labelCls}>Tunnel-port (dedikeret SSH-ingress)</label>
+            <input id="headend-tunnel-port" className={inputCls} value={tunnelPort} onChange={e => setTunnelPort(e.target.value)} />
+          </div>
+          <div>
+            <label htmlFor="headend-tunnel-user" className={labelCls}>Tunnel-bruger</label>
+            <input id="headend-tunnel-user" className={inputCls} value={tunnelUser} onChange={e => setTunnelUser(e.target.value)} />
+          </div>
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <label htmlFor="headend-release-tag" className="block text-sm font-medium text-gray-700">Release-tag</label>
+              <button
+                type="button"
+                onClick={loadReleases}
+                disabled={releaseBusy}
+                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${releaseBusy ? 'animate-spin' : ''}`} />
+                Opdatér liste
+              </button>
+            </div>
+            <select
+              id="headend-release-tag"
+              className={inputCls}
+              value={releaseTag}
+              disabled={releaseBusy || releases.length === 0}
+              onChange={e => {
+                const release = releases.find(item => item.tag === e.target.value)
+                setReleaseTag(e.target.value)
+                setExpectedCommit(release?.commit ?? '')
+                setResult(null)
+              }}
+            >
+              {releases.length === 0 && <option value="">Ingen signerede releases</option>}
+              {releases.map(release => (
+                <option key={release.tag} value={release.tag}>
+                  {release.tag} · {new Date(release.created_at).toLocaleDateString('da-DK')}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="md:col-span-2">
-            <label className={labelCls}>Forventet commit-SHA (fuld, 40 tegn)</label>
-            <input
+            <label htmlFor="headend-release-commit" className={labelCls}>Forventet commit-SHA (fuld, 40 tegn)</label>
+            <select
+              id="headend-release-commit"
               className={`${inputCls} font-mono`}
-              placeholder="40-tegns SHA fra release-dokumentationen"
               value={expectedCommit}
-              onChange={e => setExpectedCommit(e.target.value)}
-            />
+              disabled={releaseBusy || releases.length === 0}
+              onChange={e => {
+                const release = releases.find(item => item.commit === e.target.value)
+                setExpectedCommit(e.target.value)
+                if (release) setReleaseTag(release.tag)
+                setResult(null)
+              }}
+            >
+              {releases.length === 0 && <option value="">Ingen verificerede commits</option>}
+              {releases.map(release => (
+                <option key={`${release.tag}-${release.commit}`} value={release.commit}>
+                  {release.commit} · {release.tag}
+                </option>
+              ))}
+            </select>
+            {releaseTag && (
+              <p className="mt-1 text-xs text-emerald-700">
+                GPG-signaturen er verificeret lokalt · {releases.find(item => item.tag === releaseTag)?.subject}
+              </p>
+            )}
           </div>
         </div>
 
         <button
           onClick={prepare}
-          disabled={busy}
+          disabled={busy || releaseBusy || !releaseTag || !expectedCommit}
           className="mt-4 inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg"
         >
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}

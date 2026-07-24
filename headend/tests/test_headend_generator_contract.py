@@ -8,7 +8,13 @@ reviewed _current_viewer/_require_platform_admin pattern).
 import pytest
 
 from api.headend_generator_api import (
-    _bundle_storage_dir, _render_conf, _render_readme, _safe_bundle_name, _validate_request,
+    _bundle_storage_dir,
+    _render_commands,
+    _render_conf,
+    _render_readme,
+    _safe_bundle_name,
+    _validate_release_selection,
+    _validate_request,
 )
 
 
@@ -27,6 +33,12 @@ def test_defaults_are_filled_in():
     assert spec["device_id"] == "TL-HEADEND-STAGING-1"
     assert spec["backend_port"] == 8443
     assert spec["db_name"] == "timelapse_db"
+    assert spec["service_user"] == "_timelapse"
+    assert spec["service_home"] == "/var/lib/timelapse"
+    assert spec["tunnel_host"] == "staging.timelapse-pro.dk"
+    assert spec["tunnel_port"] == 22222
+    assert spec["tunnel_user"] == "tunnel"
+    assert spec["repo_dir"] == "/Users/Shared/TimeLapsePro/releases/staging"
     assert 1 <= spec["expires_hours"] <= 24 * 14
 
 
@@ -58,7 +70,65 @@ def test_conf_renders_environment_and_forbidden_port_note():
     conf = _render_conf(spec)
     assert "TL_ENV=prod" in conf
     assert "TL_BACKEND_PORT=8443" in conf
+    assert "TL_SERVICE_USER=_timelapse" in conf
+    assert "TL_SERVICE_HOME=/var/lib/timelapse" in conf
+    assert "TL_TUNNEL_PORT=22222" in conf
     assert "21/22/80/443" in conf  # coexistence warning present
+
+
+def test_release_selection_is_bound_to_trusted_full_commit():
+    commit = "a" * 40
+    spec = _validate_request(_base_payload(release_tag="v1.4.0", expected_commit=commit))
+    selected = _validate_release_selection(
+        spec,
+        [{"tag": "v1.4.0", "commit": commit, "signature_status": "trusted"}],
+    )
+    assert selected["expected_commit"] == commit
+
+
+@pytest.mark.parametrize(
+    ("tag", "commit", "message"),
+    [
+        ("", "a" * 40, "release-tag"),
+        ("v1.4.0", "abc", "40-tegns"),
+        ("v9.9.9", "a" * 40, "betroede"),
+        ("v1.4.0", "b" * 40, "matcher ikke"),
+    ],
+)
+def test_release_selection_rejects_invalid_pairs(tag, commit, message):
+    spec = _validate_request(_base_payload(release_tag=tag, expected_commit=commit))
+    with pytest.raises(ValueError, match=message):
+        _validate_release_selection(
+            spec,
+            [{"tag": "v1.4.0", "commit": "a" * 40, "signature_status": "trusted"}],
+        )
+
+
+def test_shell_values_are_quoted_in_conf_and_commands():
+    spec = _validate_request(
+        _base_payload(
+            data_dir="/Users/Shared/TimeLapse Pro/data",
+            repo_dir="/Users/Shared/TimeLapse Pro/release",
+            repo_url="git@github.com:froekjaer/timelapse-pro.git",
+            release_tag="v1.4.0",
+            expected_commit="a" * 40,
+        )
+    )
+    assert "TL_DATA_DIR='/Users/Shared/TimeLapse Pro/data'" in _render_conf(spec)
+    command = _render_commands(spec)[1]
+    assert "--destination '/Users/Shared/TimeLapse Pro/release'" in command
+
+
+@pytest.mark.parametrize("field", ["service_user", "service_group", "tunnel_user"])
+def test_invalid_local_account_names_are_rejected(field):
+    with pytest.raises(ValueError, match=field):
+        _validate_request(_base_payload(**{field: "bad;name"}))
+
+
+@pytest.mark.parametrize("port", [21, 22, 80, 443, 8080])
+def test_tunnel_rejects_reserved_ports(port):
+    with pytest.raises(ValueError, match="tunnel_port"):
+        _validate_request(_base_payload(tunnel_port=port))
 
 
 def test_readme_flags_manual_sftp_step():

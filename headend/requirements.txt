@@ -21,3 +21,6 @@ qrcode[pil]==8.2
 google-genai==2.3.0
 google-cloud-storage==3.10.1
 slowapi==0.1.9
+# Kontrolleret Headend-side download/udpakning af versionspinnede Edge-base-images.
+gdown==6.1.0
+py7zr==1.1.0

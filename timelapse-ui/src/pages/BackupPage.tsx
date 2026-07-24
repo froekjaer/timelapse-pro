@@ -22,6 +22,16 @@ interface BackupStatus {
   filename: string | null
 }
 
+interface EdgeBuildTarget {
+  id: string
+  display_name: string
+  arch: string
+  flashable: boolean
+  install_script: boolean
+  base_image_pinned?: boolean
+  blocked_reason?: string | null
+}
+
 interface ResilienceAssessment {
   generated_at: string
   summary: {
@@ -391,22 +401,34 @@ export function BackupPage() {
   const [diskBuildWifiPassword, setDiskBuildWifiPassword] = useState('')
   const [diskBuildWifiCountry, setDiskBuildWifiCountry] = useState('DK')
   const [diskBuildCameraId, setDiskBuildCameraId] = useState('')
-  const STATIC_TARGETS: Array<{ id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean }> = [
-    { id: 'orangepi4pro',    display_name: 'OrangePi 4 Pro',           arch: 'arm64', flashable: true,  install_script: false },
-    { id: 'orangepi-pc-plus',display_name: 'OrangePi PC Plus',         arch: 'armhf', flashable: true,  install_script: false },
-    { id: 'rpi4',            display_name: 'Raspberry Pi 4 Model B',   arch: 'arm64', flashable: true,  install_script: false },
-    { id: 'rpi5',            display_name: 'Raspberry Pi 5',           arch: 'arm64', flashable: true,  install_script: false },
-    { id: 'jetson-orin-nano',display_name: 'NVIDIA Jetson Orin Nano',  arch: 'arm64', flashable: false, install_script: true  },
-  ]
-  const [availableTargets, setAvailableTargets] = useState<Array<{
-    id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean
-  }>>(STATIC_TARGETS)
+  const [availableTargets, setAvailableTargets] = useState<EdgeBuildTarget[]>([])
+  const [targetsLoading, setTargetsLoading] = useState(true)
+  const [targetsError, setTargetsError] = useState<string | null>(null)
 
   const fetchTargets = () => {
+    setTargetsLoading(true)
+    setTargetsError(null)
     api('/admin/edge-provisioning/targets')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.targets?.length) setAvailableTargets(d.targets) })
-      .catch(() => {})
+      .then(async r => {
+        if (!r.ok) throw new Error(`Hardwareprofiler kunne ikke hentes (${r.status})`)
+        return r.json()
+      })
+      .then(d => {
+        if (!Array.isArray(d?.targets) || d.targets.length === 0) {
+          throw new Error('Headend returnerede ingen hardwareprofiler')
+        }
+        setAvailableTargets(d.targets)
+        setDiskBuildTarget(current =>
+          d.targets.some((target: EdgeBuildTarget) => target.id === current)
+            ? current
+            : d.targets[0].id
+        )
+      })
+      .catch(error => {
+        setAvailableTargets([])
+        setTargetsError(error instanceof Error ? error.message : 'Hardwareprofiler kunne ikke hentes')
+      })
+      .finally(() => setTargetsLoading(false))
   }
   useEffect(() => { fetchTargets() }, [])
   const [provisioningForm, setProvisioningForm] = useState<EdgeProvisioningForm>({
@@ -713,6 +735,9 @@ export function BackupPage() {
           diskBuildCameraId={diskBuildCameraId}
           setDiskBuildCameraId={setDiskBuildCameraId}
           availableTargets={availableTargets}
+          targetsLoading={targetsLoading}
+          targetsError={targetsError}
+          retryTargets={fetchTargets}
         />
       )}
       {tab === 'headendgen' && <HeadendGeneratorTab />}
@@ -1085,6 +1110,9 @@ function IsoTab({
   diskBuildCameraId,
   setDiskBuildCameraId,
   availableTargets,
+  targetsLoading,
+  targetsError,
+  retryTargets,
 }: {
   assessment: ResilienceAssessment | null
   form: EdgeProvisioningForm
@@ -1111,13 +1139,19 @@ function IsoTab({
   setDiskBuildWifiCountry: (v: string) => void
   diskBuildCameraId: string
   setDiskBuildCameraId: (v: string) => void
-  availableTargets: Array<{ id: string; display_name: string; arch: string; flashable: boolean; install_script: boolean }>
+  availableTargets: EdgeBuildTarget[]
+  targetsLoading: boolean
+  targetsError: string | null
+  retryTargets: () => void
 }) {
   const blueprint = assessment?.iso_blueprint
   const canPrepare = form.device_id.trim().length >= 3 && !busy
   const edges = assessment?.edge_restore ?? []
   const latestImage = blueprint?.latest_image
   const hasImage = !!latestImage
+  const selectedBuildTarget = availableTargets.find(target => target.id === diskBuildTarget)
+  const canBuildDiskImage = Boolean(selectedBuildTarget) &&
+    (diskBuildMode !== 'flashable' || selectedBuildTarget?.flashable)
 
   // Kamera-liste til SSH-injection ved disk image build
   const [allCameras, setAllCameras] = useState<Array<{ id: string; camera_name: string; ssh_public_key: string | null; reverse_tunnel_port: number | null }>>([])
@@ -1368,33 +1402,64 @@ function IsoTab({
             {/* Target + mode selectors */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
               <div>
-                <label className="text-xs text-gray-500 block mb-1">Hardware target</label>
+                <label htmlFor="edge-build-target" className="text-xs text-gray-500 block mb-1">
+                  Hardware target
+                </label>
                 <select
+                  id="edge-build-target"
                   value={diskBuildTarget}
-                  onChange={e => setDiskBuildTarget(e.target.value)}
-                  disabled={diskBuildStatus?.running}
+                  onChange={e => {
+                    const nextTarget = availableTargets.find(target => target.id === e.target.value)
+                    setDiskBuildTarget(e.target.value)
+                    if (diskBuildMode === 'flashable' && !nextTarget?.flashable) {
+                      setDiskBuildMode('rootfs')
+                    }
+                  }}
+                  disabled={diskBuildStatus?.running || targetsLoading || availableTargets.length === 0}
                   className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 disabled:opacity-50"
                 >
+                  {targetsLoading && <option value="">Henter hardwareprofiler...</option>}
                   {availableTargets.filter(t => !t.install_script).map(t => (
                     <option key={t.id} value={t.id}>
-                      {t.display_name} ({t.arch})
+                      {t.display_name} ({t.arch}){t.flashable ? '' : ' · kun rootfs'}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
-                <label className="text-xs text-gray-500 block mb-1">Output type</label>
+                <label htmlFor="edge-build-mode" className="text-xs text-gray-500 block mb-1">
+                  Output type
+                </label>
                 <select
+                  id="edge-build-mode"
                   value={diskBuildMode}
                   onChange={e => setDiskBuildMode(e.target.value as 'rootfs' | 'flashable')}
                   disabled={diskBuildStatus?.running}
                   className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 disabled:opacity-50"
                 >
                   <option value="rootfs">rootfs.tar.gz — hurtig (~5 min), kræver manuel flash</option>
-                  <option value="flashable">Flashbart .img.gz — klar til dd/balenaEtcher (~20 min)</option>
+                  <option value="flashable" disabled={!selectedBuildTarget?.flashable}>
+                    Flashbart .img.gz — klar til dd/balenaEtcher (~20 min)
+                  </option>
                 </select>
               </div>
             </div>
+
+            {targetsError && (
+              <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                <span>{targetsError}. Build er deaktiveret, så en lokal fallback ikke kan omgå trust-kontrollen.</span>
+                <button type="button" onClick={retryTargets} className="shrink-0 font-semibold hover:underline">
+                  Prøv igen
+                </button>
+              </div>
+            )}
+
+            {selectedBuildTarget?.blocked_reason && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                <span className="font-semibold">Flash-image ikke tilgængeligt:</span>{' '}
+                {selectedBuildTarget.blocked_reason}. Et rootfs-build kan stadig anvendes til validering.
+              </div>
+            )}
 
             {diskBuildMode === 'flashable' && (
               <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3">
@@ -1495,7 +1560,7 @@ function IsoTab({
 
             <button
               onClick={buildDiskImage}
-              disabled={diskBuildStatus?.running}
+              disabled={diskBuildStatus?.running || !canBuildDiskImage}
               className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm rounded-lg hover:bg-gray-800 disabled:opacity-50"
             >
               {diskBuildStatus?.running

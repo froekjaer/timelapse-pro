@@ -22,6 +22,8 @@ import json
 import os
 import re
 import secrets as _secrets
+import shlex
+import subprocess
 import tarfile
 import time
 from datetime import datetime, timedelta, timezone
@@ -41,6 +43,10 @@ _ENVIRONMENTS = {"staging", "prod"}
 _ADMIN_ROLES = {"admin", "super_admin"}
 _BUNDLE_SCRIPTS = ("bootstrap_headend_macos.sh", "headend_generator.sh")
 _BUNDLE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$")
+_FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+_DEVICE_ID_RE = re.compile(r"^TL-[A-Za-z0-9][A-Za-z0-9._-]{2,95}$")
+_ACCOUNT_RE = re.compile(r"^_?[a-z][a-z0-9_-]{0,30}$")
+_DB_IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 
 def _safe_bundle_name(name: str) -> str:
@@ -100,6 +106,82 @@ def _require_platform_admin(user=Depends(_current_viewer)):
     return user
 
 
+def _signed_release_catalog() -> list[dict]:
+    """Return annotated tags whose signature is trusted by this Headend.
+
+    The generator deliberately uses the already controlled local checkout.
+    Fetching or trusting new release material remains part of the update and
+    promotion flow; opening this UI never performs a network operation.
+    """
+    refs = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(_REPO_ROOT),
+            "for-each-ref",
+            "--sort=-creatordate",
+            "--format=%(refname:short)%09%(objecttype)%09%(*objectname)%09%(creatordate:iso8601-strict)%09%(subject)",
+            "refs/tags",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if refs.returncode != 0:
+        raise RuntimeError((refs.stderr or "Kunne ikke læse lokale release-tags").strip())
+
+    releases: list[dict] = []
+    for line in refs.stdout.splitlines():
+        fields = line.split("\t", 4)
+        if len(fields) != 5:
+            continue
+        tag, object_type, commit, created_at, subject = fields
+        # Lightweight/archive tags are not release artifacts.
+        if object_type != "tag" or not _FULL_COMMIT_RE.fullmatch(commit.lower()):
+            continue
+        verification = subprocess.run(
+            ["git", "-C", str(_REPO_ROOT), "verify-tag", tag],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if verification.returncode != 0:
+            continue
+        releases.append(
+            {
+                "tag": tag,
+                "commit": commit.lower(),
+                "created_at": created_at,
+                "subject": subject,
+                "signature_status": "trusted",
+            }
+        )
+    return releases
+
+
+def _validate_release_selection(spec: dict, releases: list[dict] | None = None) -> dict:
+    """Bind a requested tag to its single trusted full commit SHA."""
+    tag = spec["release_tag"]
+    commit = spec["expected_commit"].lower()
+    if not tag:
+        raise ValueError("Vælg et signeret release-tag")
+    if not _FULL_COMMIT_RE.fullmatch(commit):
+        raise ValueError("Vælg den fulde 40-tegns commit-SHA for releasen")
+
+    catalog = releases if releases is not None else _signed_release_catalog()
+    selected = next((release for release in catalog if release["tag"] == tag), None)
+    if not selected:
+        raise ValueError("Release-tagget findes ikke i Headendens katalog over betroede signerede releases")
+    if selected["commit"] != commit:
+        raise ValueError(
+            f"Commit-SHA matcher ikke {tag}; den verificerede SHA er {selected['commit']}"
+        )
+    spec["expected_commit"] = commit
+    return spec
+
+
 def _validate_request(payload: dict) -> dict:
     """Ren valideringshjælper — testbar uden DB/FastAPI."""
     environment = str(payload.get("environment") or "").strip().lower()
@@ -117,16 +199,26 @@ def _validate_request(payload: dict) -> dict:
     if not (1024 <= backend_port <= 65535):
         raise ValueError("backend_port skal være 1024-65535")
     device_id = str(payload.get("device_id") or "").strip() or f"TL-HEADEND-{environment.upper()}-1"
-    if not device_id.startswith("TL-"):
-        raise ValueError("device_id skal starte med 'TL-'")
+    if not _DEVICE_ID_RE.fullmatch(device_id):
+        raise ValueError("device_id skal starte med 'TL-' og kun indeholde bogstaver, tal, punktum, _ og -")
     expires_hours = max(1, min(int(payload.get("expires_hours") or 48), 24 * 14))
-    return {
+    spec = {
         "environment": environment,
         "domain": domain,
         "backend_port": backend_port,
         "device_id": device_id,
-        "data_dir": str(payload.get("data_dir") or "/Users/peter/timelapse-data/canonical-images").strip(),
-        "repo_dir": str(payload.get("repo_dir") or f"/Users/peter/tl-{environment}-release").strip(),
+        "data_dir": str(
+            payload.get("data_dir") or "/Users/Shared/TimeLapsePro/data/canonical-images"
+        ).strip(),
+        "repo_dir": str(
+            payload.get("repo_dir") or f"/Users/Shared/TimeLapsePro/releases/{environment}"
+        ).strip(),
+        "service_user": str(payload.get("service_user") or "_timelapse").strip(),
+        "service_group": str(payload.get("service_group") or "_timelapse").strip(),
+        "service_home": str(payload.get("service_home") or "/var/lib/timelapse").strip(),
+        "tunnel_host": str(payload.get("tunnel_host") or domain).strip().lower(),
+        "tunnel_port": int(payload.get("tunnel_port") or 22222),
+        "tunnel_user": str(payload.get("tunnel_user") or "tunnel").strip(),
         "db_name": str(payload.get("db_name") or "timelapse_db").strip(),
         "db_user": str(payload.get("db_user") or "timelapse").strip(),
         "repo_url": str(payload.get("repo_url") or "").strip(),
@@ -134,34 +226,61 @@ def _validate_request(payload: dict) -> dict:
         "expected_commit": str(payload.get("expected_commit") or "").strip(),
         "expires_hours": expires_hours,
     }
+    for field in ("service_user", "service_group", "tunnel_user"):
+        if not _ACCOUNT_RE.fullmatch(spec[field]):
+            raise ValueError(f"{field} er ikke et gyldigt lokalt macOS-kontonavn")
+    for field in ("db_name", "db_user"):
+        if not _DB_IDENTIFIER_RE.fullmatch(spec[field]):
+            raise ValueError(f"{field} er ikke et gyldigt PostgreSQL-navn")
+    for field in ("data_dir", "repo_dir", "service_home"):
+        value = spec[field]
+        if not value.startswith("/") or "\n" in value or "\r" in value:
+            raise ValueError(f"{field} skal være en absolut sti uden linjeskift")
+    if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", spec["tunnel_host"]):
+        raise ValueError("tunnel_host skal være et gyldigt hostnavn")
+    if not 1024 <= spec["tunnel_port"] <= 65535 or spec["tunnel_port"] in _FORBIDDEN_PORTS | {8080}:
+        raise ValueError("tunnel_port skal være 1024-65535 og må ikke være reserveret")
+    return spec
 
 
 def _render_conf(spec: dict) -> str:
+    def assignment(name: str, value: object) -> str:
+        return f"{name}={shlex.quote(str(value))}"
+
     return f"""# TimeLapse Pro — miljøkonfiguration ({spec['environment']})
 # Genereret af Headend Generator {datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}
 # CrushFTP ejer 21/22/80/443 på denne maskine — TimeLapse rører dem ALDRIG.
 
-TL_ENV={spec['environment']}
-TL_DOMAIN_BACKEND={spec['domain']}
-TL_BACKEND_PORT={spec['backend_port']}
+{assignment('TL_ENV', spec['environment'])}
+{assignment('TL_DOMAIN_BACKEND', spec['domain'])}
+{assignment('TL_BACKEND_PORT', spec['backend_port'])}
 
 # Peger BEVIDST på den GPG-verificerede release (stage-fasen) — ikke en arbejdskopi.
-TL_REPO_DIR={spec['repo_dir']}
+{assignment('TL_REPO_DIR', spec['repo_dir'])}
 
-TL_DATA_DIR={spec['data_dir']}
-TL_DB_NAME={spec['db_name']}
-TL_DB_USER={spec['db_user']}
+{assignment('TL_DATA_DIR', spec['data_dir'])}
+{assignment('TL_DB_NAME', spec['db_name'])}
+{assignment('TL_DB_USER', spec['db_user'])}
+{assignment('TL_SERVICE_USER', spec['service_user'])}
+{assignment('TL_SERVICE_GROUP', spec['service_group'])}
+{assignment('TL_SERVICE_HOME', spec['service_home'])}
+{assignment('TL_TUNNEL_HOST', spec['tunnel_host'])}
+{assignment('TL_TUNNEL_PORT', spec['tunnel_port'])}
+{assignment('TL_TUNNEL_USER', spec['tunnel_user'])}
 """
 
 
 def _render_commands(spec: dict) -> list[str]:
-    tag = spec["release_tag"] or "v<X.Y.Z>"
-    commit = spec["expected_commit"] or "<fuld-40-tegns-sha>"
+    values = {
+        key: shlex.quote(str(spec[key]))
+        for key in ("repo_url", "release_tag", "expected_commit", "repo_dir", "device_id")
+    }
     return [
         "tar -xzf timelapse-headend-installer-*.tar.gz && cd headend-installer",
         f"./headend_generator.sh --config ./{spec['environment']}.conf "
-        f"--repo-url {spec['repo_url']} --release-tag {tag} --expected-commit {commit} "
-        f"--destination {spec['repo_dir']} --device-id {spec['device_id']} "
+        f"--repo-url {values['repo_url']} --release-tag {values['release_tag']} "
+        f"--expected-commit {values['expected_commit']} "
+        f"--destination {values['repo_dir']} --device-id {values['device_id']} "
         "--bootstrap-token-file ./bootstrap-token",
     ]
 
@@ -198,7 +317,8 @@ denne pakke.
 
 ## ⚠️ Manuelle trin pakken IKKE dækker (manual §5-§7)
 1. DNS-01-certifikat (certbot-dns-cloudflare) + genkør apply for fuldt SSL.
-2. FØRSTE LOGIN (admin/changeme → MFA + nyt password) FØR offentlig eksponering.
+2. FØRSTE LOGIN med installerens unikke initiale adgangskode → MFA + nyt
+   password FØR offentlig eksponering. `admin/changeme` er forbudt i staging/prod.
 3. SFTP-ingress på 22222 (Fase 2b — GEN-01/GEN-02): dedikeret sshd-socket,
    hardening-profil, per-site RBAC-regler OG DB-settings `sftp_port=22222`.
    Uden dette trin peger edge-upload-fallback på port 22 = CrushFTP!
@@ -213,12 +333,26 @@ def _apply_db_defaults(spec: dict) -> dict:
     return spec
 
 
+@router.get("/releases")
+def list_trusted_releases(_user=Depends(_require_platform_admin)):
+    """Valid release/commit pairs for the generator dropdowns."""
+    try:
+        releases = _signed_release_catalog()
+    except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=f"Release-kataloget kunne ikke læses: {exc}")
+    return {
+        "source": "local_trusted_git_tags",
+        "repo": str(_REPO_ROOT),
+        "releases": releases,
+    }
+
+
 @router.post("/prepare")
 def prepare_headend(payload: dict, user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     """Validér ønsket miljø, udsted one-time bootstrap-token og returnér conf + kommandoer."""
     try:
-        spec = _apply_db_defaults(_validate_request(payload or {}))
-    except ValueError as exc:
+        spec = _validate_release_selection(_apply_db_defaults(_validate_request(payload or {})))
+    except (ValueError, OSError, subprocess.SubprocessError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
     # Revokér tidligere åbne tokens for samme headend-identitet (samme princip som edge-prepare).
@@ -261,8 +395,8 @@ def prepare_headend(payload: dict, user=Depends(_require_platform_admin), db: Se
 def download_bundle(payload: dict, user=Depends(_require_platform_admin), db: Session = Depends(get_db)):
     """Byg installationspakken (.tar.gz), persistér i headend-images og returnér download."""
     try:
-        spec = _apply_db_defaults(_validate_request(payload or {}))
-    except ValueError as exc:
+        spec = _validate_release_selection(_apply_db_defaults(_validate_request(payload or {})))
+    except (ValueError, OSError, subprocess.SubprocessError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
     token_value = str(payload.get("token") or "").strip()
@@ -270,6 +404,13 @@ def download_bundle(payload: dict, user=Depends(_require_platform_admin), db: Se
         record = db.query(BootstrapToken).filter_by(token=token_value, revoked=False).first()
         if not record or record.used_at is not None:
             raise HTTPException(status_code=422, detail="Tokenet er ukendt, brugt eller revokeret — kør 'Klargør' igen")
+        expires_at = record.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=422, detail="Tokenet er udløbet — kør 'Klargør' igen")
+        if record.device_label != spec["device_id"]:
+            raise HTTPException(status_code=422, detail="Tokenet tilhører en anden Headend-identitet")
     else:
         raise HTTPException(status_code=422, detail="token mangler — kør 'Klargør ny headend' først")
 

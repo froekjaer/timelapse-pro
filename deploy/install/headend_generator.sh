@@ -54,6 +54,8 @@ source "$CONFIG"
 : "${TL_ENV:?TL_ENV mangler i config}"
 : "${TL_DOMAIN_BACKEND:?TL_DOMAIN_BACKEND mangler i config}"
 : "${TL_BACKEND_PORT:=8443}"
+: "${TL_SERVICE_USER:=_timelapse}"
+: "${TL_SERVICE_GROUP:=_timelapse}"
 
 gate() {
   local msg="$1"
@@ -72,6 +74,8 @@ run_preflight() {
 run_stage() {
   [[ -n "$REPO_URL" && -n "$RELEASE_TAG" && -n "$EXPECTED_COMMIT" && -n "$DESTINATION" ]] \
     || die "stage kræver --repo-url, --release-tag, --expected-commit og --destination"
+  [[ "${TL_REPO_DIR:A}" == "${DESTINATION:A}" ]] \
+    || die "TL_REPO_DIR i config skal være identisk med --destination (signeret release)"
   log "── Fase 1: STAGE (signeret release → $DESTINATION) ──"
   "$SCRIPT_DIR/bootstrap_headend_macos.sh" --mode stage --config "$CONFIG" \
     --repo-url "$REPO_URL" --release-tag "$RELEASE_TAG" \
@@ -79,15 +83,21 @@ run_stage() {
 }
 
 require_verified_release() {
-  [[ -n "$DESTINATION" ]] || die "--destination (den verificerede release) er påkrævet for denne fase"
+  [[ -n "$DESTINATION" && -n "$RELEASE_TAG" && -n "$EXPECTED_COMMIT" ]] \
+    || die "--destination, --release-tag og --expected-commit er påkrævet for muterende faser"
   [[ -x "$DESTINATION/deploy/install/install_headend.sh" ]] \
     || die "Ingen verificeret release i $DESTINATION — kør stage-fasen først"
-  if [[ -n "$EXPECTED_COMMIT" ]]; then
-    local actual
-    actual="$(git -C "$DESTINATION" rev-parse HEAD 2>/dev/null || true)"
-    [[ "$actual" == "$EXPECTED_COMMIT" ]] \
-      || die "Release i $DESTINATION er ikke på forventet commit ($actual ≠ $EXPECTED_COMMIT)"
-  fi
+  [[ "${TL_REPO_DIR:A}" == "${DESTINATION:A}" ]] \
+    || die "TL_REPO_DIR må kun pege på den verificerede --destination"
+  git -C "$DESTINATION" verify-tag "$RELEASE_TAG" >/dev/null \
+    || die "Release-taggets signatur kan ikke længere verificeres: $RELEASE_TAG"
+  local actual tag_commit
+  actual="$(git -C "$DESTINATION" rev-parse HEAD 2>/dev/null || true)"
+  tag_commit="$(git -C "$DESTINATION" rev-list -n1 "$RELEASE_TAG" 2>/dev/null || true)"
+  [[ "$actual" == "$EXPECTED_COMMIT" && "$tag_commit" == "$EXPECTED_COMMIT" ]] \
+    || die "Release trust-check fejlede (HEAD=$actual, tag=$tag_commit, forventet=$EXPECTED_COMMIT)"
+  [[ -z "$(git -C "$DESTINATION" status --porcelain --untracked-files=no)" ]] \
+    || die "Den verificerede release har ændrede tracked filer"
 }
 
 run_apply() {
@@ -110,7 +120,9 @@ run_enroll() {
     --device-id "$DEVICE_ID" \
     --headend-url "https://$TL_DOMAIN_BACKEND:$TL_BACKEND_PORT" \
     --bootstrap-token-file "$BOOTSTRAP_TOKEN_FILE" \
-    --repo-dir "$DESTINATION"
+    --repo-dir "$DESTINATION" \
+    --service-user "$TL_SERVICE_USER" \
+    --service-group "$TL_SERVICE_GROUP"
 }
 
 case "$PHASE" in

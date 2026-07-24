@@ -224,7 +224,15 @@ def _sign_manifest(
 
 def _git_provenance(root: Path) -> dict[str, str]:
     """Bind image buildet til rene, reviewbare Edge-inputs."""
-    paths = ["edge", "headend/tools/Dockerfile.edge", "headend/tools/requirements.edge-base.txt"]
+    paths = [
+        "edge",
+        "headend/tools/Dockerfile.edge",
+        "headend/tools/Dockerfile.edge.armhf",
+        "headend/tools/requirements.edge-base.txt",
+        "headend/tools/inject_edge_image.py",
+        "headend/tools/inject_wifi_image.py",
+        "headend/tools/hardware",
+    ]
     dirty = subprocess.run(
         ["git", "status", "--porcelain", "--", *paths], cwd=root,
         capture_output=True, text=True, check=True,
@@ -263,18 +271,22 @@ def _dockerfile_for_target(target: dict, repo_root: Path, progress: Callable[[st
     if arch != "armhf":
         return std_df
 
-    # Generer armhf-variant med arm32v7 base
-    armhf_df = repo_root / "headend" / "tools" / "Dockerfile.edge.armhf"
-    if not armhf_df.exists():
-        progress("📄 Genererer Dockerfile.edge.armhf (arm32v7 base)...")
-        content = std_df.read_text()
-        content = content.replace(
-            "FROM arm64v8/ubuntu:22.04",
-            "FROM arm32v7/ubuntu:22.04",
-        )
-        armhf_df.write_text(content)
-        progress(f"✅ Dockerfile.edge.armhf genereret")
-    return armhf_df
+    # Generer en midlertidig, reproducerbar armhf-variant. Buildet må ikke
+    # ændre det signerede Git-worktree som sideeffekt.
+    progress("📄 Genererer midlertidig Dockerfile.edge.armhf (arm32v7 base)...")
+    content = std_df.read_text().replace(
+        "FROM arm64v8/ubuntu:22.04",
+        "FROM arm32v7/ubuntu:22.04",
+        1,
+    )
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        prefix="Dockerfile.edge.armhf.",
+        delete=False,
+    )
+    with handle:
+        handle.write(content)
+    return Path(handle.name)
 
 
 # ── Build pipeline ────────────────────────────────────────────────────────────
@@ -293,7 +305,7 @@ def build_edge_image(
     Args:
         target:      Hardware target ID (se hardware/ directory)
         headend_url: URL til headend API (None = TIMELAPSE_HEADEND_URL eller lokal bootstrap)
-        gpg_key_id:  GPG-nøgle til signering (None = hash-binding)
+        gpg_key_id:  GPG-nøgle til signering (påkrævet)
         progress_cb: Callback for build-output (stream til UI/log)
         repo_root:   Sti til git-repo root (None = auto-detect)
         output_dir:  Output-mappe (None = tmp)
@@ -414,7 +426,7 @@ def build_edge_image(
                 })
         progress_cb(f"   {len(sbom_packages)} OS-pakker i SBOM")
     except Exception as exc:
-        progress_cb(f"   ⚠️  SBOM dpkg fejlede: {exc}")
+        raise RuntimeError(f"SBOM for OS-pakker kunne ikke genereres: {exc}") from exc
 
     pip_packages: list[dict] = []
     try:
@@ -426,7 +438,10 @@ def build_edge_image(
         pip_packages = json.loads(pip_out)
         progress_cb(f"   {len(pip_packages)} Python-pakker (venv) i SBOM")
     except Exception as exc:
-        progress_cb(f"   ⚠️  SBOM pip fejlede: {exc}")
+        raise RuntimeError(f"SBOM for Python-pakker kunne ikke genereres: {exc}") from exc
+
+    if not sbom_packages or not pip_packages:
+        raise RuntimeError("SBOM er tom; Edge-image må ikke signeres uden komplet pakkeevidens")
 
     # ── Step 4: Manifest + signatur ────────────────────────────────────────
     progress_cb(f"\n🔏 Step 4/4: Bygger og signerer manifest...")
@@ -479,6 +494,7 @@ def build_edge_image(
             "edge_requires_direct_internet": False,
             "edge_requires_direct_github":   False,
             "headend_is_update_authority":   True,
+            "required_offline_os_packages":  tgt.get("extra_packages", []),
         },
         "controls":   ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
         "created_at": _now_utc(),

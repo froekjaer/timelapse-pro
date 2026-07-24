@@ -67,14 +67,14 @@ RUN mkdir -p \
 # Et nyt image skal kunne udføre samme QA som en opdateret Edge fra første boot.
 COPY edge/requirements.txt /tmp/requirements.edge.txt
 # Build-deps installeres midlertidigt og fjernes igen i samme RUN-lag.
-# libsodium23 (runtime) beholdes — pynacl linker mod det dynamisk.
-# SODIUM_INSTALL=system: pynacl bruger system-libsodium (sparer kompileringstid).
+# PyNaCl bygges med sin medfølgende libsodium, så venv'en ikke afhænger af,
+# at et leverandør-image allerede har præcis samme systembibliotek.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         gcc libffi-dev python3-dev make \
-        libsodium23 libsodium-dev \
+        libsodium-dev \
     && python3 -m venv /opt/timelapse/venv \
-    && SODIUM_INSTALL=system /opt/timelapse/venv/bin/pip install --quiet --no-cache-dir \
+    && /opt/timelapse/venv/bin/pip install --quiet --no-cache-dir \
         -r /tmp/requirements.edge.txt \
     && apt-get remove -y gcc libffi-dev python3-dev make libsodium-dev \
     && apt-get autoremove -y \

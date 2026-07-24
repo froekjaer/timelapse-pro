@@ -21,9 +21,8 @@ step() { echo -e "\n${BOLD}── $1 ──${NC}"; }
 
 # Kræver root
 [ "$(id -u)" = "0" ] || { echo "Kør med sudo"; exit 1; }
-REAL_USER="${SUDO_USER:-$(logname)}"
-REAL_HOME=$(eval echo "~$REAL_USER")
-REAL_GROUP=$(id -gn "$REAL_USER")
+SERVICE_USER=""
+SERVICE_GROUP=""
 DEVICE_ID=""
 HEADEND_URL=""
 API_TOKEN_FILE=""
@@ -34,7 +33,8 @@ usage() {
 Usage: sudo node-agent/install/macos.sh \
   --device-id TL-HEADEND-STAGING-1 \
   --headend-url https://staging.timelapse-pro.dk:8443 \
-  --api-token-file /secure/path/api-token [--replace-config]
+  --api-token-file /secure/path/api-token \
+  --service-user _timelapse --service-group _timelapse [--replace-config]
 
 No environment-specific defaults are used. The token file must only be readable
 by its owner and is never copied into logs or process arguments.
@@ -46,6 +46,8 @@ while [ "$#" -gt 0 ]; do
         --device-id) DEVICE_ID="${2:-}"; shift 2 ;;
         --headend-url) HEADEND_URL="${2:-}"; shift 2 ;;
         --api-token-file) API_TOKEN_FILE="${2:-}"; shift 2 ;;
+        --service-user) SERVICE_USER="${2:-}"; shift 2 ;;
+        --service-group) SERVICE_GROUP="${2:-}"; shift 2 ;;
         --replace-config) REPLACE_CONFIG=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Ukendt argument: $1" >&2; usage >&2; exit 2 ;;
@@ -57,6 +59,19 @@ case "$DEVICE_ID" in TL-*) ;; *) echo "Ugyldigt device-id: $DEVICE_ID" >&2; exit
 [ -n "$HEADEND_URL" ] || { echo "--headend-url er påkrævet" >&2; exit 2; }
 case "$HEADEND_URL" in https://*) ;; *) echo "--headend-url skal bruge https" >&2; exit 2 ;; esac
 [ -r "$API_TOKEN_FILE" ] || { echo "--api-token-file skal være en læsbar fil" >&2; exit 2; }
+if [ -z "$SERVICE_USER" ]; then
+    if id _timelapse >/dev/null 2>&1; then
+        SERVICE_USER="_timelapse"
+    else
+        SERVICE_USER="${SUDO_USER:-}"
+    fi
+fi
+[ -n "$SERVICE_USER" ] && id "$SERVICE_USER" >/dev/null 2>&1 \
+    || { echo "--service-user skal være en eksisterende, ikke-root konto" >&2; exit 2; }
+[ "$(id -u "$SERVICE_USER")" != "0" ] || { echo "Node-agent må ikke køre som root" >&2; exit 2; }
+[ -n "$SERVICE_GROUP" ] || SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+dscl . -read "/Groups/$SERVICE_GROUP" >/dev/null 2>&1 \
+    || { echo "--service-group findes ikke: $SERVICE_GROUP" >&2; exit 2; }
 API_TOKEN="$(tr -d '\r\n' < "$API_TOKEN_FILE")"
 [ -n "$API_TOKEN" ] || { echo "API-tokenfilen er tom" >&2; exit 2; }
 PYTHON="$(command -v python3)"
@@ -82,6 +97,10 @@ if [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
         "$SOURCE_COMMIT" > "$INSTALL_DIR/.timelapse-release.json"
     chmod 0444 "$INSTALL_DIR/.timelapse-release.json"
 fi
+chown -R "root:$SERVICE_GROUP" "$INSTALL_DIR"
+find "$INSTALL_DIR" -type d -exec chmod 0750 {} +
+find "$INSTALL_DIR" -type f -exec chmod 0640 {} +
+chmod 0750 "$INSTALL_DIR/venv/bin/"* 2>/dev/null || true
 ok "Agent-filer kopieret til $INSTALL_DIR"
 
 # ── Venv ──────────────────────────────────────────────────────────────────
@@ -89,7 +108,7 @@ step "Python venv"
 if [ ! -d "$VENV" ]; then
     "$PYTHON" -m venv "$VENV"
 fi
-"$VENV/bin/pip" install --quiet --upgrade pip
+chown -R "root:$SERVICE_GROUP" "$VENV"
 ok "Venv klar: $VENV"
 
 # ── Konfiguration ─────────────────────────────────────────────────────────
@@ -110,7 +129,7 @@ inventory_interval = 300
 security_interval  = 60
 security_lookback  = 120
 EOF
-    chown root:"$REAL_GROUP" "$CONF_TMP"
+    chown root:"$SERVICE_GROUP" "$CONF_TMP"
     chmod 640 "$CONF_TMP"
     mv -f "$CONF_TMP" "$CONF_FILE"
     ok "Konfiguration skrevet: $CONF_FILE"
@@ -138,9 +157,9 @@ cat > "$PLIST_PATH" << EOF
     <key>KeepAlive</key>
     <true/>
     <key>UserName</key>
-    <string>$REAL_USER</string>
+    <string>$SERVICE_USER</string>
     <key>GroupName</key>
-    <string>$REAL_GROUP</string>
+    <string>$SERVICE_GROUP</string>
     <key>StandardOutPath</key>
     <string>$LOG_FILE</string>
     <key>StandardErrorPath</key>
@@ -150,15 +169,19 @@ cat > "$PLIST_PATH" << EOF
 </dict>
 </plist>
 EOF
+touch "$LOG_FILE"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$LOG_FILE"
+chmod 0640 "$LOG_FILE"
 ok "Plist skrevet: $PLIST_PATH"
 
 # ── Start service ─────────────────────────────────────────────────────────
 step "Starter node agent"
-launchctl unload "$PLIST_PATH" 2>/dev/null || true
-launchctl load   "$PLIST_PATH"
+launchctl bootout system "$PLIST_PATH" 2>/dev/null || true
+launchctl bootstrap system "$PLIST_PATH"
+launchctl kickstart -k "system/$PLIST_NAME"
 sleep 3
 
-if launchctl list | grep -q "$PLIST_NAME"; then
+if launchctl print "system/$PLIST_NAME" 2>/dev/null | grep -q "state = running"; then
     ok "Node agent kører"
 else
     warn "Node agent kører muligvis ikke — tjek: tail -f $LOG_FILE"
