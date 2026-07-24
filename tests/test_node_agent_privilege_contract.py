@@ -10,9 +10,10 @@ def test_macos_node_agent_installer_drops_root_privileges():
     source = INSTALLER.read_text(encoding="utf-8")
 
     assert "<key>UserName</key>" in source
-    assert "<string>$REAL_USER</string>" in source
+    assert "<string>$SERVICE_USER</string>" in source
     assert "<key>GroupName</key>" in source
-    assert "<string>$REAL_GROUP</string>" in source
+    assert "<string>$SERVICE_GROUP</string>" in source
+    assert '"$(id -u "$SERVICE_USER")" != "0"' in source
 
 
 def test_macos_node_agent_remains_boot_managed():

@@ -78,17 +78,19 @@ def test_edge_injection_has_no_default_debug_credential_or_online_install() -> N
 
 
 def test_wifi_reconfiguration_requires_signed_artifact() -> None:
-    source = (ROOT / "headend" / "main.py").read_text()
+    source = (ROOT / "headend" / "edge_provisioning_security.py").read_text()
     assert "Kilde-artifact {artifact_id} mangler signatur eller manifest" in source
     assert '"schema": "timelapse.flashable_image.reconfiguration.v1"' in source
-    assert "signature=signature" in source
-    assert "signed_by=signed_by" in source
+    assert '"signature": signature' in source
+    assert '"signed_by": signed_by' in source
 
 
 def test_edge_target_catalog_uses_the_module_imported_by_main() -> None:
-    source = (ROOT / "headend" / "main.py").read_text()
-    assert "base_pinned = bool(_re.fullmatch" in source
-    assert "base_pinned = bool(re.fullmatch" not in source
+    source = (ROOT / "headend" / "edge_provisioning_security.py").read_text()
+    assert "base_pinned = bool(re.fullmatch" in source
+    assert "_edge_provisioning.load_hardware_targets(hw_dir, log)" in (
+        ROOT / "headend" / "main.py"
+    ).read_text()
 
 
 def test_edge_target_ui_has_no_unauthoritative_static_fallback() -> None:

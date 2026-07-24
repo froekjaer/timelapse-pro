@@ -69,6 +69,8 @@ import lzma as _lzma
 import urllib.request as _urlrequest
 import functools as _functools
 import shutil as _shutil
+import edge_provisioning_security as _edge_provisioning
+from services.bootstrap_security import resolve_initial_admin_password
 # ── Auth imports (Sprint C) ───────────────────────────────────────────────
 from jose import JWTError, jwt as _jwt
 import bcrypt as _bcrypt_lib
@@ -1005,18 +1007,9 @@ def _ensure_super_admin(db):
     """Opretter standard super_admin hvis ingen brugere findes."""
     from database import User
     if db.query(User).count() == 0:
-        initial_password = os.getenv("TIMELAPSE_INITIAL_ADMIN_PASSWORD", "").strip()
-        if not initial_password and TIMELAPSE_ENV in _AGENT_LOCKED_ENVIRONMENTS:
-            raise RuntimeError(
-                "TIMELAPSE_INITIAL_ADMIN_PASSWORD mangler; staging/prod må ikke "
-                "oprette en super_admin med en kendt standardadgangskode"
-            )
-        if not initial_password:
-            initial_password = "changeme"
-            log.critical(
-                "R&D fallback: initial super_admin oprettes med kendt testpassword. "
-                "Dette er forbudt i staging/prod."
-            )
+        initial_password = resolve_initial_admin_password(
+            TIMELAPSE_ENV, _AGENT_LOCKED_ENVIRONMENTS, log
+        )
         admin = User(
             username      = "admin",
             email         = "admin@timelapse.local",
@@ -15173,14 +15166,7 @@ def _run_edge_disk_image_build(
                     ) from _keygen_err
             _headend_ssh_pubkey = _headend_pubkey_path.read_text().strip()
             progress(f"   🔑 Headend pubkey hentet: {_headend_pubkey_path.name}")
-            from urllib.parse import urlparse as _urlparse
-            _tunnel_host = (
-                os.getenv("TIMELAPSE_TUNNEL_HOST")
-                or _urlparse(headend_url).hostname
-                or ""
-            )
-            _tunnel_port = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222"))
-            _tunnel_user = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel")
+            _tunnel_host, _tunnel_port, _tunnel_user = _edge_provisioning.resolve_tunnel_settings(headend_url)
 
             inject_result = inject_edge_image(
                 target=target,
@@ -15338,34 +15324,8 @@ def edge_disk_image_status(_user=require_role("super_admin", "admin")):
 @app.get("/api/admin/edge-provisioning/targets")
 def list_edge_targets(_user=require_role("super_admin", "admin")):
     """List tilgængelige hardware targets til edge image build."""
-    import yaml as _yaml
     hw_dir = _repo_root() / "headend" / "tools" / "hardware"
-    targets = []
-    for target_yaml in sorted(hw_dir.glob("*/target.yaml")):
-        try:
-            tgt = _yaml.safe_load(target_yaml.read_text()) or {}
-            base = tgt.get("base_image", {})
-            is_script = base.get("type") == "install_script"
-            base_sha = str(base.get("sha256") or "")
-            base_pinned = bool(_re.fullmatch(r"[0-9a-fA-F]{64}", base_sha))
-            targets.append({
-                "id":           tgt.get("id", target_yaml.parent.name),
-                "display_name": tgt.get("display_name", target_yaml.parent.name),
-                "arch":         tgt.get("arch", "arm64"),
-                "soc":          tgt.get("soc"),
-                "hal_class":    tgt.get("hal_class"),
-                "flashable":    not is_script and base_pinned,
-                "install_script": is_script,
-                "base_image_pinned": base_pinned,
-                "blocked_reason": (
-                    None
-                    if is_script or base_pinned
-                    else "Base-image mangler en valideret SHA-256 i target.yaml"
-                ),
-            })
-        except Exception as exc:
-            log.warning("Kunne ikke læse %s: %s", target_yaml, exc)
-    return {"targets": targets}
+    return {"targets": _edge_provisioning.load_hardware_targets(hw_dir, log)}
 
 
 @app.get("/api/admin/edge-provisioning/disk-images")
@@ -15507,38 +15467,10 @@ def _run_wifi_inject(
             sys.path.insert(0, str(_repo_root() / "headend"))
             from tools.inject_wifi_image import inject_wifi_image  # type: ignore
 
-        source_artifact_id = ""
-        source_sha256 = ""
-        # Kun registrerede, signerede artifacts må danne grundlag for et nyt image.
-        if artifact_id.startswith("/") or artifact_id.startswith("~"):
-            raise ValueError(
-                "Direkte filstier er ikke tilladt i UI-flowet. Registrér og signér "
-                "kilde-imaget i artifact-kataloget først."
-            )
-        else:
-            # Hent artifact-info i kortlivet session — luk FØR lang operation
-            # så PostgreSQL ikke dropper idle-forbindelsen.
-            db_read = db_factory()
-            try:
-                artifact = db_read.query(UpdateArtifact).filter(
-                    UpdateArtifact.artifact_id == artifact_id,
-                    UpdateArtifact.artifact_type.in_(["edge_disk_image", "flashable_disk_image"]),
-                ).first()
-                if not artifact:
-                    raise ValueError(f"Artifact ikke fundet: {artifact_id}")
-                if not artifact.storage_path or not os.path.exists(artifact.storage_path):
-                    raise FileNotFoundError(f"Image-fil ikke tilgængelig: {artifact.storage_path}")
-                if not artifact.signature or not artifact.signed_by or not artifact.manifest_json:
-                    raise ValueError(
-                        f"Kilde-artifact {artifact_id} mangler signatur eller manifest"
-                    )
-                fname = artifact.filename or ""
-                gz_path = artifact.storage_path
-                output_dir = os.path.dirname(gz_path)
-                source_artifact_id = artifact.artifact_id
-                source_sha256 = artifact.sha256 or ""
-            finally:
-                db_read.close()
+        source = _edge_provisioning.require_signed_source_artifact(artifact_id, db_factory)
+        fname = source["filename"]
+        gz_path = source["storage_path"]
+        output_dir = source["output_dir"]
 
         target_id: str | None = None
         for known in ["orangepi4pro", "orangepi-pc-plus", "rpi4", "rpi5", "jetson-orin-nano"]:
@@ -15571,19 +15503,12 @@ def _run_wifi_inject(
 
         if ssh_private_key:
             progress(f"   🔑 SSH inject aktiveret (tunnel port {reverse_tunnel_port})")
-        from urllib.parse import urlparse as _urlparse
         db_url = db_factory()
         try:
             edge_url = _headend_api_url(db_url, os.getenv("TIMELAPSE_HEADEND_URL"))
         finally:
             db_url.close()
-        tunnel_host = (
-            os.getenv("TIMELAPSE_TUNNEL_HOST")
-            or _urlparse(edge_url).hostname
-            or ""
-        )
-        tunnel_port = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222"))
-        tunnel_user = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel")
+        tunnel_host, tunnel_port, tunnel_user = _edge_provisioning.resolve_tunnel_settings(edge_url)
 
         # Lang operation — ingen åben DB-session
         result = inject_wifi_image(
@@ -15604,46 +15529,20 @@ def _run_wifi_inject(
             headend_user=tunnel_user,
         )
 
-        # Ny DB-session til INSERT (den gamle er timed out)
-        from datetime import datetime, timezone as _tz
-        try:
-            from headend.tools.inject_edge_image import _sign_manifest as _sign_image_manifest
-        except ImportError:
-            from tools.inject_edge_image import _sign_manifest as _sign_image_manifest  # type: ignore
-        created_at = datetime.now(_tz.utc)
-        new_artifact_id = f"TL-FLASH-WIFI-{artifact_id[-8:]}-{created_at.strftime('%Y%m%d%H%M%S')}"
-        manifest = {
-            "schema": "timelapse.flashable_image.reconfiguration.v1",
-            "artifact_id": new_artifact_id,
-            "artifact_type": "flashable_disk_image",
-            "source_artifact_id": source_artifact_id,
-            "source_sha256": source_sha256,
-            "image": {
-                "filename": result["filename"],
-                "sha256": result["sha256"],
-                "size_bytes": result["size_bytes"],
-            },
-            "configuration": {
-                "wifi_configured": True,
-                "wifi_country": wifi_country,
-                "wifi_method": result["wifi_method"],
-                "reverse_tunnel_configured": bool(ssh_private_key),
-            },
-            "created_at": created_at.isoformat(),
-        }
-        unsigned_manifest_json = json.dumps(
-            manifest, ensure_ascii=False, sort_keys=True, indent=2
+        signed_manifest = _edge_provisioning.create_signed_wifi_manifest(
+            artifact_id=artifact_id,
+            source_artifact_id=source["artifact_id"],
+            source_sha256=source["sha256"],
+            result=result,
+            output_dir=output_dir,
+            wifi_country=wifi_country,
+            ssh_configured=bool(ssh_private_key),
+            progress=progress,
         )
-        gpg_key_id = os.getenv("CHANGE_TICKET_GPG_KEY") or os.getenv("TIMELAPSE_GPG_KEY")
-        signature, signed_by = _sign_image_manifest(
-            unsigned_manifest_json, gpg_key_id, progress
-        )
-        manifest["signature"] = signature
-        manifest["signed_by"] = signed_by
-        manifest_json = json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2)
-        manifest_path = os.path.join(output_dir, f"{new_artifact_id}.manifest.json")
-        Path(manifest_path).write_text(manifest_json, encoding="utf-8")
+        new_artifact_id = signed_manifest["artifact_id"]
+        created_at = signed_manifest["created_at"]
 
+        # Ny DB-session til INSERT (den gamle er timed out)
         db_write = db_factory()
         try:
             new_artifact = UpdateArtifact(
@@ -15653,11 +15552,11 @@ def _run_wifi_inject(
                 storage_path=result["output_path"],
                 size_bytes=result["size_bytes"],
                 sha256=result["sha256"],
-                signature=signature,
-                signed_by=signed_by,
+                signature=signed_manifest["signature"],
+                signed_by=signed_manifest["signed_by"],
                 signed_at=created_at,
                 created_at=created_at,
-                manifest_json=manifest_json,
+                manifest_json=signed_manifest["manifest_json"],
             )
             db_write.add(new_artifact)
             db_write.commit()
