@@ -79,3 +79,9 @@ def test_installer_configures_non_reserved_tunnel_ingress() -> None:
     assert "TL_TUNNEL_PORT:=22222" in source
     assert "TIMELAPSE_TUNNEL_USER=${TL_TUNNEL_USER}" in source
     assert "SFTP_PORT=22222" in source
+
+
+def test_installer_validation_is_bash_syntax_check_compatible() -> None:
+    source = INSTALLER.read_text()
+    assert "<->" not in source
+    assert r"=~ ^[0-9]+$" in source

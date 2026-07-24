@@ -115,7 +115,7 @@ case "$TL_ENV" in
   *) die "TL_ENV skal være rd, staging eller prod — fik: '$TL_ENV'" ;;
 esac
 
-[[ "$TL_BACKEND_PORT" == <-> ]] && (( TL_BACKEND_PORT >= 1024 && TL_BACKEND_PORT <= 65535 )) \
+[[ "$TL_BACKEND_PORT" =~ ^[0-9]+$ ]] && (( TL_BACKEND_PORT >= 1024 && TL_BACKEND_PORT <= 65535 )) \
   || die "TL_BACKEND_PORT skal være et heltal mellem 1024 og 65535"
 [[ "$TL_DOMAIN_BACKEND" =~ ^[A-Za-z0-9.-]+$ && "$TL_DOMAIN_BACKEND" == *.* ]] \
   || die "TL_DOMAIN_BACKEND er ugyldigt"
@@ -127,7 +127,7 @@ esac
   || die "TL_TUNNEL_HOST er ugyldigt"
 [[ "$TL_TUNNEL_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]] \
   || die "TL_TUNNEL_USER er ugyldig"
-[[ "$TL_TUNNEL_PORT" == <-> ]] && (( TL_TUNNEL_PORT >= 1024 && TL_TUNNEL_PORT <= 65535 )) \
+[[ "$TL_TUNNEL_PORT" =~ ^[0-9]+$ ]] && (( TL_TUNNEL_PORT >= 1024 && TL_TUNNEL_PORT <= 65535 )) \
   || die "TL_TUNNEL_PORT skal være et heltal mellem 1024 og 65535"
 [[ "$TL_TUNNEL_PORT" != 21 && "$TL_TUNNEL_PORT" != 22 && "$TL_TUNNEL_PORT" != 80 \
    && "$TL_TUNNEL_PORT" != 443 && "$TL_TUNNEL_PORT" != 8080 ]] \

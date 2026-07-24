@@ -202,7 +202,7 @@ Al software på maskinen ændres herefter KUN via det signerede update-flow (cha
 
 ## 11. QA-evidens 2026-07-24
 
-- 61 fokuserede generator/installations/Edge-kontrakttests: bestået.
+- 62 fokuserede generator/installations/Edge-kontrakttests: bestået.
 - TypeScript + Vite production build: bestået.
 - `install_headend.sh --dry-run` på macOS: bestået efter rettelse af
   domænevalidering og servicekonto-home-opslag.
