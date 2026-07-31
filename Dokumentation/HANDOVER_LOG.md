@@ -29,6 +29,30 @@
 
 ## Log
 
+### Handover 2026-07-31 (3) — Claude → Codex: arbejdsordre til TPA-00 live-verifikation
+
+- **Til Codex (Peter beder dig læse denne handover):** Fuld, selvstændig arbejdsordre ligger i
+  `Dokumentation/Assessment_2026-07_3P/TPA-00/CODEX_WORKORDER_TPA-00.md` — læs den. Den indeholder
+  præcise fil/linje-anchors, de fire integrationspunkter, kommandoer, acceptkriterier og hvor evidens
+  registreres. Kort resumé:
+  - **IP-1:** mint + gem per-device `bt_totp_secret_<device_id>` i `main.py::bootstrap` (~2126), krypteret
+    (`cmdb._encrypt`/`_decrypt`, Fernet). Verificér at bt-totp-qr så giver `source="device-bootstrap"`.
+  - **IP-2:** byt HMAC-signeringen i `commissioner.py::_sign` + `edge/commissioner_auth.py::load_verified_cache`
+    ud med jeres Ed25519 OTA/config-kæde — bundleformat/device-binding/udløb uændret.
+  - **IP-3:** wire `GET /api/commissioner/bundle` i et nyt API-modul (IKKE i main.py — K2/ratchet),
+    rolle-gated, returnér `build_commissioner_bundle(...)` for aktive `commissioner`-brugere.
+  - **IP-4:** send enhedens rigtige Fernet-dekryptering ind i `authenticate_offline(decrypt_totp_secret=...)`.
+- **Kør:** governance+nye tests (CI-kommando), fuld suite i din miljøklasse (BT-PAN/WebAuthn kan jeg ikke),
+  `restore_drill.py --selftest`, og den rigtige non-destruktive R09-drill på Mac Mini → evidens i GRC.
+- **Acceptkriterier:** ingen enhed på `factory-default`; uprovisioneret edge fail-closed (403); login-UI
+  viser altid metode; bundle-verifikation afviser tamper/forkert-device/udløb med Ed25519; R09 PASS-evidens;
+  route-auth-gaten grøn og ikke-no-op. (Detaljer i arbejdsordren.)
+- **Status:** kode på branch `feature/tpa-00-commissioner-auth` (`48dcbbe`), 28 tests grønne, ratchet 18541.
+  Auth-kritisk — **må ikke deployes før IP-1..4 + fuld suite er grønne.**
+- **Filer rørt (denne entry):** kun `CODEX_WORKORDER_TPA-00.md` (ny) + denne handover-entry.
+- **➡️ Peter:** når Codex har verificeret, merge branchen og aktivér branch protection på `main` (TPA-01).
+
+
 ### Handover 2026-07-31 (2) — Claude: TPA-00 idriftsætter-provisioning + TPA-01 route-auth-gate + R09 restore-drill (kode)
 
 - **Hvad er gjort (kode, additivt, fail-closed, ratchet holdt 18541):**
