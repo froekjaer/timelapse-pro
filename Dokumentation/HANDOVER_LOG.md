@@ -29,6 +29,26 @@
 
 ## Log
 
+### Handover 2026-07-31 — Claude: Uafhængig 3.-parts assessment (nyt docs-spor) + branch/handover-review
+
+- **Hvad er gjort:** Efter Peters anmodning om en minutiøs uafhængig 3.-parts assessment før staging-test/prod-headend/ny edge er der oprettet et nyt dokumentationsspor: `Dokumentation/Assessment_2026-07_3P/` (00_README + 01–09). Metode: fuld automatiseret sweep af hele kodebasen (100% tracked filer) + kørsel af projektets egne gates i rent miljø + målrettede manuelle dybdegennemgange + dokumentgennemgang. Assessment-commit: HEAD `eed9e3c8`.
+- **Vigtigste fund:**
+  - 🔴 **TPA-00 (KRITISK, = SEC-016 stadig åben):** Kendt fabriksstandard-TOTP-secret `JBSWY3DPEHPK3PXP` som fail-OPEN fallback (`main.py:4075/5270`, `database.py:333`, `edge/scripts/totp-service.py:123`). CRA Annex I / IEC 62443-4-2 CR 1.5-overtrædelse. Go-live-blocker. Skal gøres fail-closed + per-device secret + CI-scan.
+  - 🟠 **TPA-01:** route-auth-sweep (K1-gaten) fejler på HEAD i rent miljø (stale `/api/settings/config`, testlinje 70) — kontrollen mod projektets mest gentagne fejlklasse er reelt ude af drift. CI ikke kørt på HEAD (seneste run 2026-07-24). Ret test + aktivér branch protection.
+  - 🟠 **TPA-10/11/12:** monolit 18.541 l/234 routes består; 12+ usuperviserede daemon-tråde (bl.a. retention → "stille manglende sletning" = GDPR-risiko); tråd-pr-exif-enrich uden pulje (reel burst-memory-risiko).
+  - **Hardkodede variable (03):** H-01..H-07 + drifts-env-vars der bør i DB/UI jf. reglen; foreslået CI-sweep-gate. Legitim .env-kontrakt dokumenteret.
+  - **UI (04):** 21 flade menupunkter → foreslået 4 sektioner; da/en-sprogblanding + i18n; stavefejl "Bildemanipulation"→"Billedbehandling" (`Navbar.tsx:47`); sitemap-doc mangler.
+  - **Compliance (05):** to hårde blokkere = TPA-00 (CRA) + R09 restore-evidens (ISO 27001 A.8.13). GDPR tættest, kræver DPA + rolleafklaring.
+  - **Generatorer (09):** edge-generator stærk (git-provenance-guard) men arver TPA-00 (E-01); headend-generator "virker næsten" — SFTP-ingress (GEN-01) er stadig et manuelt trin = modtagersiden af edge-uploads mangler automatisering.
+- **Branch-review (08):** `timelapse-pro` har KUN `origin/main` — intet forældreløst kodespor i dette repo. "Uden for main" = (a) evt. ucommittede working-tree-ændringer på Peters maskiner (kan ikke ses fra GitHub — **➡️ Peter: kør `git status`/`git stash list` på Mac Mini + arbejdsmaskine**), (b) tre foundation-branches i Mission-Platform (framework-empiri, hører IKKE i timelapse-pro main).
+- **Handover-review (08 del C):** verificeret at repositories.py `self`-bug er RETTET; SEC-016/GEN-01/GOV-01/R09/R20 stadig åbne. Skabelonen mangler felt for GRC-registrering + post-deploy-verifikation (foreslået tilføjet).
+- **Hvad mangler / næste skridt:** Prioriteret handlingsplan i `07_...md`. Gate 0 (TPA-00, R09, TPA-01) blokerer al eksponering; Gate 1 (generator-SFTP + per-device edge) før staging. Framework v1-vej i `06_...md` (contracts-first, tests-only, headend før edge).
+- **➡️ Codex (anmodning om kryds-review):** Peter beder dig læse denne handover. Vil du (a) verificere TPA-00-fixets fail-closed-adfærd + generere per-device secret ved provisionering, (b) tage GEN-01 (scriptet SFTP-Fase 2b) da det ligger i din provisionerings-lane, og (c) sanity-checke mine linjereferencer mod dit aktuelle working tree (linjenumre er pr. HEAD `eed9e3c8`)? Jeg har bevidst IKKE rørt kode — kun tilføjet docs.
+- **Kommandoer kørt:** fuld grep/AST-sweep; `pytest tests/test_architecture_ratchet.py` (2 passed); `pytest headend/tests/test_route_auth_coverage.py` (1 failed — TPA-01, 1 passed) mod midlertidig sqlite; GitHub Actions API for CI-historik.
+- **Filer rørt:** KUN nye docs under `Dokumentation/Assessment_2026-07_3P/` + denne handover-entry. Ingen kode, ingen skemaændringer.
+- **Risici / pas på:** Assessment er statisk (ingen kørende-system/pentest, ikke alle 234 routes linje-læst, ingen 48t soak-test endnu — anbefalet som opfølgning, se 00_README dækningsafsnit). Linjenumre er pr. HEAD `eed9e3c8`. Leveret på branch `assessment/2026-07-3p-review` — **➡️ Peter: merge til main efter gennemsyn** (docs-only, trigger deploy men er harmløs).
+
+
 ### Handover 2026-07-18 (4) — Claude: Pushet, deployet og verificeret live via fil-proxyen
 
 - **Kontekst:** Peter startede fil-proxyen (`claude_proxy.py`, audit-logget) så jeg selv kunne lukke løkken. Alt herunder er kørt gennem proxyen og står i `.claude_proxy/audit.log`.
