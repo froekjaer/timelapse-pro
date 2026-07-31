@@ -48,4 +48,21 @@ Korte, nummererede beslutningsnotater. Én ADR = én arkitekturbeslutning, der e
 
 | ADR | Titel | Status |
 |-----|-------|--------|
+| [ADR-0007](ADR-0007-Evolution-from-Product-to-Platform.md) | Evolution from Product to Platform | **Proposed 2026-07-22** |
 | [ADR-001](ADR-001-platform-payload-split.md) | Platform/Payload-snit for edge-arkitekturen | **Accepted 2026-07-16** |
+
+## Kandidater under owner-review
+
+`../Arkitektur/TimeLapse_Core_Design_Principles_v1.md` er et **Proposed**
+arkitekturgrundlag, ikke en ADR. Dokumentets følgende beslutningsemner er store nok
+til at blive egne ADR'er, når Peter vælger at bringe dem til beslutning. De er ikke
+bindende og må ikke implementeres som accepterede beslutninger endnu.
+
+| Foreslået ADR | Afgrænsning |
+|---|---|
+| Local Service Gateway | Fælles platformgateway for lokal service frem for payload-specifik Bluetooth-service |
+| Physical Presence Requirement | Fysisk aktivering før pairing og privilegeret lokal service |
+| Bluetooth as Bootstrap Transport | BLE til discovery/bootstrap; krypteret lokal IP til dataintensiv service |
+| Capability-based Service Authorization | Versioneret capability/rolle/policy-håndhævelse for serviceoperationer |
+| No General-purpose Shell | Ingen vilkårlig shell eller command execution i normal service-mode |
+| Retain until Explicit Disposition | Projektdata-lifecycle og eksplicit disposition; kræver afstemning med eksisterende retention/circular-buffer-policy |

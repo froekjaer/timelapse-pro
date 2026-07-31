@@ -2,6 +2,7 @@
 
 **Version:** 10 (konsolideret)
 **Dato:** 2026-07-02
+**Suppleret:** 2026-07-31 (Codex: proposed Core Design Principles og registrerede policy-/målarkitekturkonflikter)
 **Formål:** Pege på de gældende (v10-konsoliderede) dokumenter efter dokumentgennemgang, risk assessment og port-/go-live-plan.
 **Konsoliderer:** `DOKUMENTPAKKE_OVERSIGT_2026-06-23.md`, `Codex_DOKUMENTPAKKE_OVERSIGT_2026-06-23.md` (arkiveret i `Gamle versioner/`).
 
@@ -19,6 +20,7 @@
 | `ADMINISTRATORMANUAL_v10.md` | Administratormanual for drift, sikkerhed, update, backup, CMDB og go-live |
 | `Timelapse_pro_full_documentation_v10.md` | Samlet systemdokumentation (arkitektur, komponenter, flows) |
 | `SABSA_Architecture_v10.md` | SABSA-arkitektur (konsolideret fra .docx v3–v9) |
+| `Arkitektur/TimeLapse_Core_Design_Principles_v1.md` | **Proposed** tværgående arkitekturgrundlag for evidence/lifecycle, platform/payload og sikker lokal service |
 | `REGULATORISK_OG_STANDARD_REFERENCE_v1.md` | Living EU/Danmark regulatory horizon og standardreference for AI, cyber, privacy, produkt og OT |
 | `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` | Fælles arbejds-, review- og handovermodel for Peter, Claude og Codex |
 
@@ -50,6 +52,8 @@ De nyeste/gældende dokumenter er vægtet højest.
 | Node-agent | CMDB/GRC kræver frisk inventory; reassessment viser node-agent stoppet | Genetabler node-agent før go-live |
 | Open WebUI | UI/link findes, men service/rolle uklar | Beslut lab-only eller prod-komponent med launchd, health, RBAC, non-standard loopback port |
 | Storage | Ældre paths peger på `/Volumes/data`; aktiv storage er `/Volumes/data-fast` | `/Volumes/data-fast` er canonical; startup-preflight og single source of truth mangler |
+| Projektdata-retention | V10-manualer beskriver automatisk retention-cleanup; Core Design Principles foreslår kun eksplicit, autoriseret disposition | **Åben policy-/ADR-afgørelse.** Afgræns original evidens, cache og afledte data; afstem GDPR, lagerpres, lifecycle og uforanderlig audit før adfærd ændres |
+| Lokal service | Aktuel Bluetooth-/TOTP-service er ikke dokumenteret som fysisk aktiveret, tidsbegrænset platformgateway | Core Design Principles beskriver target-arkitektur; beslut samlet Local Service Access ADR før ny Bluetooth-/portalimplementering |
 
 ## Samlet status
 

@@ -23,6 +23,8 @@
 > konsoliderede dokument er IKKE opdateret linje-for-linje til at følge med (det er en stor,
 > historisk konsolidering fra 2026-07-02), så brug de nyere dokumenter ved enhver uoverensstemmelse.
 
+> **Proposed arkitekturgrundlag 2026-07-31:** `Arkitektur/TimeLapse_Core_Design_Principles_v1.md` er den tværgående designretning for evidence/lifecycle, AI-governance, platform/payload og sikker lokal service. Det er ikke en implementeringspåstand og superseder ikke accepterede ADR'er. Dokumentets foreslåede *Retain until Explicit Disposition* står i spænd med denne konsoliderings automatiske retention-/bufferbeskrivelser og kræver særskilt owner-/ADR-afgørelse.
+
 ---
 
 ## Indholdsfortegnelse

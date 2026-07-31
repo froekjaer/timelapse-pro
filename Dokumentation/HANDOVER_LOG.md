@@ -29,6 +29,103 @@
 
 ## Log
 
+### Handover 2026-07-31 — fra Codex til Claude/Peter: Core Design Principles integreret som proposed target architecture
+
+- **Hvad er gjort:**
+  - Oprettet `Dokumentation/Arkitektur/TimeLapse_Core_Design_Principles_v1.md` som
+    det samlede, danske arkitektur- og designgrundlag. Placeringen er bevidst
+    `Arkitektur/`: dokumentet beskriver tværgående målarkitektur og er hverken en
+    driftsmanual eller en enkelt ADR.
+  - Status er tydeligt **Proposed**. Kun accepterede ADR'er er bindende, så
+    dokumentet kan ikke stiltiende ændre runtime-adfærd eller supersede ADR-001.
+  - Indsat reviewbare pointere fra `00_START_HER.md`,
+    `DOKUMENTPAKKE_OVERSIGT_v10.md`, `SABSA_Architecture_v10.md`,
+    `Timelapse_pro_full_documentation_v10.md`,
+    `Arkitektur/Modularisering_Platform_Payload_Plan.md` og `ADR/README.md`.
+    ADR-registeret var samtidig ufuldstændigt; den eksisterende proposed
+    `ADR-0007-Evolution-from-Product-to-Platform.md` er nu synlig i registeret.
+  - Ingen funktionel kode, konfiguration eller deploy-adfærd er ændret.
+
+- **Kritisk arkitekturreview:**
+  - **Konsistent med ADR-001:** Local Service Gateway, identitet, RBAC, audit,
+    policy, update, storage og HAL hører til platformen. Kamera, preview, fokus,
+    capture og TimeLapse-specifik AI er payload-capabilities. Dette er den rigtige
+    videreudvikling af ADR-001 — ikke et alternativ til den.
+  - **Direkte åben policykonflikt:** Det nye princip om ingen automatisk sletning
+    kolliderer med de autoritative v10-manualers `retention_days`-cleanup og med
+    SABSA's 50 GB circular-buffer-beskrivelse. Det er registreret både i det nye
+    dokument (§1.1) og dokumentpakkeoversigten som en **åben ADR-/ownerbeslutning**.
+    Dokumentet påstår derfor ikke, at retention er ændret eller at GDPR-spørgsmålet
+    er løst. Før accept skal der skelnes mellem original evidens, cache/temporære
+    data, afledte artefakter og sikkerhedslogs samt træffes eksplicit beslutning om
+    lagerpres og lovlig disposition.
+  - **Lokal service er target, ikke as-is:** Den beskrevne fysisk aktiverede,
+    capability-/rollebaserede gateway må ikke forveksles med nuværende Bluetooth/
+    TOTP-service. Den eksisterende service skal gennemgås som en migrations- og
+    security-gap før implementering; ingen Bluetooth-kode er ændret her.
+  - **Projektmodel mangler afgrænsning:** Den nuværende domænemodel er
+    Customer → Site → Camera → Device/Capture. Før "project lifecycle" bliver
+    bindende, skal Peter beslutte om et project er et site, et nyt aggregate eller
+    en tværgående relation.
+  - **HAL/capability er målretning:** ADR-001 har allerede besluttet capability
+    manifest som princip. Det nye hardwaremanifest konkretiserer retningen, men
+    må ikke beskrives som fuldt implementeret, før ADR-002/kontrakt-spiken findes.
+    Et runtime capability manifest er en teknisk autorisations-/isolationskontrakt
+    og må ikke forveksles med Mission Frameworks kanoniske Capability-begreb.
+  - **Andre dokumenter der kræver senere, styret afstemning:**
+    `BRUGERMANUAL_v10.md`, `ADMINISTRATORMANUAL_v10.md`,
+    `DPIA_SKABELON_OG_RETENTION_POLICY_v1.md` og `docs/edge-architecture.md`
+    beskriver dagens retention/buffer og må opdateres *efter* retention-ADR'en —
+    ikke omskrives forud. `ADR-0007` bør før accept afstemmes med ADR-001's
+    AI-domænesnit: AI-infrastruktur kan være fælles, men prompt, data, retention
+    og resultatejerskab er domæneansvar.
+
+- **ADR-vurdering — anbefaling, ikke oprettelse:**
+  1. Behold capability manifest, procesisolation, signering og control/data-plane
+     i den allerede reserverede **ADR-002**; opret ikke en konkurrerende ADR for
+     samme beslutning.
+  2. Saml Local Service Gateway, fysisk aktivering, Bluetooth som bootstrap,
+     session-livscyklus og no-general-purpose-shell i **én Proposed ADR:
+     Controlled Local Service Access**. De udgør én maintenance-conduit-beslutning.
+  3. Opret separat **Proposed ADR: Evidence Retention and Explicit Disposition**
+     for projektlivscyklus, retention, lagerpres, audit, GDPR og sletning. Dette
+     er for tværgående og konsekvensfuldt til at blive accepteret indirekte.
+  4. Konkrete timeouts, BLE-parringsmetode og portal-UI bliver i designgrundlaget
+     og efterfølgende detaljerspecifikationer, ikke i ADR'er.
+
+- **Mission Timelapse / Mission Framework:**
+  - Behold i TimeLapse: BLE/PAN-transport, serviceknap, token-flow,
+    kamera/modem/GPIO-capabilities, konkret diagnostic-bundle-format og
+    GDPR-/kunde-/capture-specifik retention.
+  - Kandidater til fremtidige Framework Findings, **først efter reel
+    implementeringsevidens**: (a) observation, fortolkning, beslutning, handling
+    og outcome som separate sporbare artefakter; (b) irreversible handlinger
+    kræver eksplicit autoritet, evidens og audit; (c) capability manifests kan
+    omsætte modularitet til least privilege; (d) transport, autentifikation,
+    autorisation og domænehandling er særskilte trust boundaries; (e) "ukendt
+    tilstand → bevar evidens" kræver en eksplicit, testbar skelnen mellem evidens,
+    cache og temporære data.
+  - Ingen Framework Finding er registreret som faktum endnu, fordi dette er et
+    designreview og Mission Framework-evalueringen kræver praktisk evidens. Den
+    eksisterende Framework-semantik for observation/evidens/fortolkning,
+    menneskelig accountability, delegation og engineering continuity er snarere
+    valideret end erstattet. En Mission Core-ændring bør afvente dokumenteret
+    behov på tværs af flere væsentligt forskellige domæner.
+
+- **Filer rørt:**
+  - `Dokumentation/Arkitektur/TimeLapse_Core_Design_Principles_v1.md` (ny)
+  - `Dokumentation/00_START_HER.md`
+  - `Dokumentation/DOKUMENTPAKKE_OVERSIGT_v10.md`
+  - `Dokumentation/ADR/README.md`
+  - `Dokumentation/Arkitektur/Modularisering_Platform_Payload_Plan.md`
+  - `Dokumentation/SABSA_Architecture_v10.md`
+  - `Dokumentation/Timelapse_pro_full_documentation_v10.md`
+  - `Dokumentation/HANDOVER_LOG.md` (denne entry)
+
+- **Næste skridt (kræver Peter-beslutning):** Vælg om de to foreslåede ADR-spor
+  skal oprettes som Proposed. Indtil da bruges dokumentet som reviewgrundlag og
+  ikke som mandat til retention- eller Bluetooth-implementering.
+
 ### Handover 2026-07-18 (4) — Claude: Pushet, deployet og verificeret live via fil-proxyen
 
 - **Kontekst:** Peter startede fil-proxyen (`claude_proxy.py`, audit-logget) så jeg selv kunne lukke løkken. Alt herunder er kørt gennem proxyen og står i `.claude_proxy/audit.log`.

@@ -5,7 +5,7 @@
 > `Compliance -> GRC register`. Markdown-test- og riskdokumenter er
 > migreringskilder, runbooks eller genererede rapporter, ikke aktiv status.
 
-**Formål:** Indgangsdokumentet til TimeLapse Pro-dokumentationen. Læs dette først når du starter en ny session (Claude, Codex eller menneske). Det peger på den seneste, autoritative version af hvert dokument (`\*\_v10.md`), de levende arbejdsdokumenter og den underliggende empiri. **Sidst opdateret:** 2026-07-17 (Claude: manglende pointere tilføjet, jf. `Claude_QA_Review_2026-07-17.md` §5) **Vedligeholdelsesregel:** Én seneste version pr. dokument, vedligeholdt som `.md`. Ved væsentlig opdatering hæves versionen og forgængeren flyttes til `Gamle versioner/`. Opdatér denne fil når nye autoritative dokumenter kommer til.
+**Formål:** Indgangsdokumentet til TimeLapse Pro-dokumentationen. Læs dette først når du starter en ny session (Claude, Codex eller menneske). Det peger på den seneste, autoritative version af hvert dokument (`\*\_v10.md`), de levende arbejdsdokumenter og den underliggende empiri. **Sidst opdateret:** 2026-07-31 (Codex: pointer til proposed Core Design Principles og deres åbne policykonflikt tilføjet). **Vedligeholdelsesregel:** Én seneste version pr. dokument, vedligeholdt som `.md`. Ved væsentlig opdatering hæves versionen og forgængeren flyttes til `Gamle versioner/`. Opdatér denne fil når nye autoritative dokumenter kommer til.
 
 
 ## 1. Boot en ny session — kernefakta
@@ -13,6 +13,8 @@
 **Projektprincipper (fra CLAUDE.md):** Senior programmør-niveau. SABSA-ekspert; forstår ISO 27000, IEC 62443, CRA, GDPR. **Dobbelttjek før du udfører.** Ændringer er additive + flag-guardede; ingen skema-brud før live-verifikation; **aldrig hard-delete** (brug quarantine/reversible flyt); rør ikke den andens (Codex') ucommittede arbejde stiltiende.
 
 **Bindende arkitektur (accepterede ADR'er — se `Dokumentation/ADR/`):** Enhver session er bundet af accepterede ADR'er. **ADR-001 (Accepted 2026-07-16): Platform/Payload-snit** — den non-funktionelle kerne (identitet, config, OTA, telemetri, remote access, HAL, sikkerhed, storage) er genbrugelig platform; den funktionelle del (i dag kamera/timelapse) er en udskiftelig payload, koblet via en versioneret `PayloadDriver`-kontrakt + capability manifest med reel proces-isolation, control/data-plane-adskillelse, fail-closed privilegier og JIT-conduits. Nye endpoints hører IKKE i `headend/main.py`. Se ADR-001 + `Arkitektur/Modularisering_Platform_Payload_Plan.md`. Samarbejdsregler: `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`.
+
+**Foreslåede, tværgående designprincipper (2026-07-31):** `Arkitektur/TimeLapse_Core_Design_Principles_v1.md` samler den normative retning for projektdata/evidens, lifecycle, AI-governance, lokal service og platform/payload. Dokumentet har status **Proposed**: brug det som reviewgrundlag nu, men en accepteret ADR har fortsat forrang. Især *Retain until Explicit Disposition* er en åben policykonflikt med eksisterende automatisk retention og circular-buffer-beskrivelser; den må ikke anses for implementeret eller accepteret uden separat ADR/owner-beslutning.
 
 **Aktuel systemtopologi:**
 
@@ -66,6 +68,7 @@ Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne b
 | `Update\_Flow\_v10.md` | Update-flow: E2E QA, brugermanual, gates, API, OS offline-bundle |
 | `RBAC\_Remote\_Operational\_v10.md` | RBAC-design, auth, JWT, MFA, reverse SSH, kommando-whitelist, DB-schema |
 | `SABSA\_Architecture\_v10.md` | SABSA enterprise-arkitektur (business attributes, trust boundaries, backup) |
+| `Arkitektur/TimeLapse\_Core\_Design\_Principles\_v1.md` | **Proposed** tværgående designprincipper og sikker lokal servicearkitektur; kandidatgrundlag for nye ADR'er |
 | `TimeLapse\_Security\_Compliance\_v10.md` | Dybdegående security/compliance (STRIDE, DFD, IEC 62443, CRA) |
 | `TimeLapse\_Configuration\_Guide\_v10.md` | System- & konfigurationsguide (config-hierarki, edge, video) |
 | `TimeLapse\_Edge\_Runbook\_v10.md` | Edge node-runbook (drift, backup, fejlfinding) |

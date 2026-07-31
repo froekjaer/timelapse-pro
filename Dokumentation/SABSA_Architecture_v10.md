@@ -7,6 +7,8 @@
 
 > **Bemærk — arkitekturens udvikling:** Denne SABSA-arkitektur blev formet i Canon/Raspberry Pi-æraen (Sprint A–C). Systemet er siden udviklet: aktivt kamera er nu **Nikon Z30** (ikke Canon EOS 1300D/1000D), production-headend er **Mac Mini med PostgreSQL + nginx + HTTPS** (ikke RPi5/SQLite/HTTP), transport er hærdet (JWT/HMAC, SFTP port 22222), og RBAC/CMDB/update-flow er implementeret. SABSA-rygraden (forretningsmål → attributter → kontroller) er uændret gældende; de fysiske/komponent-lag skal læses sammen med `Timelapse_pro_full_documentation_v10.md` og `RISK_ASSESSMENT_v10.md` for aktuel tilstand.
 
+> **Proposed principgrundlag (2026-07-31):** `Arkitektur/TimeLapse_Core_Design_Principles_v1.md` udvider SABSA-læsningen med Longevity, explicit disposition, Local Service Gateway og yderligere trust boundaries. Det erstatter ikke denne arkitektur eller accepterede ADR'er. Særligt den her beskrevne 50 GB circular buffer skal afstemmes med dokumentets foreslåede princip om ingen automatisk sletning af projektdata, før der træffes en eksplicit policy-/ADR-beslutning.
+
 ## 1. SABSA-framework — overblik
 
 SABSA sikrer at alle sikkerhedsbeslutninger kan traceres tilbage til forretningsmål. TimeLapse Pro er designet med SABSA som arkitektonisk rygrad fra forretningsmål til systemkomponenter.

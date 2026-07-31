@@ -3,6 +3,8 @@
 **Dato:** 2026-07-15 · **Forfatter:** Claude (Cowork) · **Status:** Oplæg til fælles beslutning (Peter + Claude + Codex)
 **Bygger på:** `Claude_QA_Arkitektur_Review_2026-07-15.md` §4, `Codex_REVIEW_Claude_Arkitektur_Risk_Test_2026-07-15.md`, `RISK_ASSESSMENT_v11_ADDENDUM_2026-07-15.md`. Diagrammer: `TimeLapse_Arkitektur_og_Dataflow.mermaid.md` + `TimeLapse_Arkitektur.drawio`.
 
+> **Supplerende principgrundlag (2026-07-31):** [TimeLapse Core Design Principles v1](TimeLapse_Core_Design_Principles_v1.md) konkretiserer bl.a. Local Service Gateway som platformfunktion, HAL via logiske capabilities og AI som rådgivende evidens. Det er konsistent med ADR-001's snit, men har status **Proposed**. Den foreslåede retention-/dispositionspolitik kræver særskilt ADR, fordi den kolliderer med nuværende automatisk retention/circular-buffer-adfærd.
+
 ---
 
 ## 1. Målet i én sætning
