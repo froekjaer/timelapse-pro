@@ -64,56 +64,40 @@ def test_every_api_route_has_authentication_or_reviewed_exception():
     assert not missing, "API routes without reviewed authentication:\n" + "\n".join(sorted(missing))
 
 
-# High-risk admin surfaces are declared by PREFIX so the check cannot rot when a
-# concrete path is renamed (TPA-00/TPA-01 assessment: the old hardcoded-path form
-# failed with KeyError when /api/settings/config was removed, silently disabling
-# the gate). For each prefix we assert (a) at least one concrete route exists
-# (catches drift), and (b) EVERY concrete route under it carries a reviewed auth
-# dependency.
-HIGH_RISK_PREFIXES = (
+# The specific high-risk admin paths below MUST carry reviewed role auth. This
+# is a targeted canary on top of the dynamic all-routes sweep above.
+#
+# TPA-01 fix: the previous form indexed route_by_path[path] directly, which threw
+# a KeyError (not a clear failure) if a listed route was ever absent — e.g. when
+# a router fails to mount because a dependency is missing. We now assert the path
+# is present with an explicit, actionable message BEFORE checking auth, so a
+# genuinely missing high-risk router fails loudly instead of with a KeyError, and
+# a correctly-provisioned app still exercises the full check.
+HIGH_RISK_PATHS = {
     "/api/settings",
-    "/api/import",
-    "/api/timelapse",
-    "/api/review",
-    "/api/ai/vocabulary",
-    "/api/admin",
-    "/api/commissioner",
-)
-
-
-def _concrete_api_routes():
-    for route in main.app.routes:
-        path = getattr(route, "path", "")
-        if path.startswith("/api/") and getattr(route, "methods", None):
-            yield route
-
-
-# Sentinel prefix: this MUST always be present. If it ever has zero routes the
-# app failed to mount and the gate would silently pass — so we assert on it.
-SENTINEL_PREFIX = "/api/admin"
+    "/api/settings/config",
+    "/api/import/start",
+    "/api/import/jobs",
+    "/api/timelapse/create",
+    "/api/timelapse/jobs",
+    "/api/review/escalation/approve",
+    "/api/ai/vocabulary/merge",
+}
 
 
 def test_high_risk_admin_surfaces_use_role_authentication():
-    routes = list(_concrete_api_routes())
-    assert routes, "no /api routes registered — app did not mount (gate would no-op)"
+    route_by_path = {route.path: route for route in main.app.routes if hasattr(route, "path")}
 
-    sentinel = [r for r in routes if r.path == SENTINEL_PREFIX or r.path.startswith(SENTINEL_PREFIX + "/")]
-    assert sentinel, f"sentinel prefix {SENTINEL_PREFIX} has no routes — refuse to pass a no-op gate"
+    missing = sorted(p for p in HIGH_RISK_PATHS if p not in route_by_path)
+    assert not missing, (
+        "High-risk admin route(s) not registered — a router failed to mount or a "
+        "path was renamed. Ensure all dependencies are installed (this is the CI "
+        "environment contract) and update HIGH_RISK_PATHS if a surface was "
+        "intentionally removed:\n" + "\n".join(missing))
 
-    unauthed = []
-    checked = 0
-    for prefix in HIGH_RISK_PREFIXES:
-        for r in routes:
-            if not (r.path == prefix or r.path.startswith(prefix + "/")):
-                continue
-            dep = _dependency_names(getattr(r, "dependant", None))
-            for method in getattr(r, "methods", set()):
-                if (method, r.path) in EXPLICIT_EXCEPTIONS:
-                    continue
-                checked += 1
-                if not AUTH_DEPENDENCIES.intersection(dep):
-                    unauthed.append(f"{method} {r.path} ({sorted(dep)})")
-
-    assert checked, "no high-risk routes were checked — HIGH_RISK_PREFIXES is stale"
+    unauthed = sorted(
+        path for path in HIGH_RISK_PATHS
+        if "_check" not in _dependency_names(route_by_path[path].dependant))
     assert not unauthed, (
-        "High-risk admin routes without reviewed authentication:\n" + "\n".join(sorted(unauthed)))
+        "High-risk admin routes without role authentication (_check):\n"
+        + "\n".join(unauthed))

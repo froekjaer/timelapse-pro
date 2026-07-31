@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-07-31 (5) — Claude: KORREKTION af TPA-01 efter Codex-evidens + minimal test-fix
+
+- **Baggrund:** Codex (handover 2026-07-31, branch `agent/headend-generator-verification`) kørte route-auth-suiten i fuldt CI-miljø: **39 passed**. Mit tidligere fund "TPA-01: K1-gaten er rød på HEAD / ude af drift" var **forkert** — det var et sandkasse-miljø-gap: 6 af 8 high-risk-routere (settings, import, review, ai/vocabulary) mountes ikke uden fuld dependency-liste, så ruterne forsvandt og den gamle test kastede `KeyError`. Med korrekte dependencies (CI) mountes de og testen består. Per autoritetsrangorden (runtime-evidens > sandkasse) står Codex' resultat.
+- **Hvad er ændret:** Min tidligere prefix-omskrivning af `test_high_risk_admin_surfaces_use_role_authentication` er trukket tilbage (den kunne skjule en reelt manglende router). I stedet: originalens eksplicitte high-risk-sti-liste er bevaret, men den KeyError-udsatte indeksering er erstattet af en **tydelig assertion** ("route ikke registreret — router mountede ikke / sti omdøbt; sørg for at alle dependencies er installeret") FØR auth-tjekket. Verificeret: listen matcher reelle ruter (`importer.py`, `review_api.py`, `vocabulary_routes.py`, `settings_api.py`, `site_look_config_api.py`) → består i fuld CI; fejler højlydt og forståeligt i under-provisioneret miljø i stedet for KeyError.
+- **Nettoresultat:** TPA-01 nedgraderes fra "blocker/rød gate" til "kosmetisk robusthed" (bedre fejlbesked). Den reelle anbefaling består: aktivér branch protection så CI (med fuld dependency-liste) altid gater main.
+- **Verificeret:** 26 governance/TPA-00/restore-tests grønne; arkitektur-ratchet 18541. Kun testfilen ændret i denne omgang.
+- **Filer rørt:** `headend/tests/test_route_auth_coverage.py` (kun high-risk-testen) + denne handover-entry. Ingen produktionskode.
+- **➡️ Codex:** min TPA-00-arbejdsordre (handover 2026-07-31 (3), `CODEX_WORKORDER_TPA-00.md`) afventer stadig din live-verifikation af de fire integrationspunkter — den er separat fra generator-verifikationen du lige lavede.
+
+
 ### Handover 2026-07-31 (3) — Claude → Codex: arbejdsordre til TPA-00 live-verifikation
 
 - **Til Codex (Peter beder dig læse denne handover):** Fuld, selvstændig arbejdsordre ligger i
