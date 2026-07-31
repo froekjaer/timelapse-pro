@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mission-platform/contracts/manifest-v1.schema.json",
+  "title": "Mission Platform payload capability manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "payload", "contracts", "capabilities", "quotas", "filesystem", "channels"],
+  "properties": {
+    "manifest_version": {"const": 1},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+        "version": {"type": "string"}
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["control", "data"],
+      "properties": {"control": {"type": "string"}, "data": {"type": "string"}}
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {"enum": ["camera.usb", "gpio.read", "modbus.read", "sdr.rx"]},
+      "uniqueItems": true
+    },
+    "quotas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu_pct", "mem_mb", "disk_mb", "net_kbps"],
+      "properties": {
+        "cpu_pct": {"type": "integer", "minimum": 0},
+        "mem_mb": {"type": "integer", "minimum": 0},
+        "disk_mb": {"type": "integer", "minimum": 0},
+        "net_kbps": {"type": "integer", "minimum": 0}
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["readwrite"],
+      "properties": {"readwrite": {"type": "array", "items": {"type": "string"}}}
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind", "classification", "retention_class"],
+        "properties": {
+          "name": {"type": "string"},
+          "kind": {"enum": ["blob", "timeseries", "event"]},
+          "classification": {"enum": ["personal-images", "personal-other", "process-telemetry", "operational", "public"]},
+          "retention_class": {"type": "string"}
+        }
+      }
+    }
+  }
+}

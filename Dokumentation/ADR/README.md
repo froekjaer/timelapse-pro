@@ -49,3 +49,5 @@ Korte, nummererede beslutningsnotater. Én ADR = én arkitekturbeslutning, der e
 | ADR | Titel | Status |
 |-----|-------|--------|
 | [ADR-001](ADR-001-platform-payload-split.md) | Platform/Payload-snit for edge-arkitekturen | **Accepted 2026-07-16** |
+| [ADR-002](ADR-002-contract-set-v1.md) | Kontraktsæt v1 (control/data/manifest) — modulært framework-seam | Proposed (tests-only) |
+| [ADR-0007](ADR-0007-Evolution-from-Product-to-Platform.md) | Evolution from Product to Platform | Proposed |

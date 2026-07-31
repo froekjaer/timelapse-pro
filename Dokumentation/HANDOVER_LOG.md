@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-07-31 (4) — Claude: Modulært framework v1 — kontraktsæt landet (tests-only, ADR-002)
+
+- **Hvad er gjort (additivt, nul runtime-kobling):** Landet `contracts/`-pakken — den flade ADR-001 lovede men som aldrig blev skrevet (ADR-002). Tre SemVer'ede kontrakter: control (`PayloadDriver`), data (`DataSink` + blob/timeseries/event med klassifikation+retention), manifest (fail-closed, ingen aktuator-capability i v1). Intet i produktion importerer pakken endnu — den er målet som P2-01-udtræk migrerer mod.
+- **To nye CI-gates:**
+  - `tests/test_contracts_architecture.py` — `contracts/` er ren (importerer intet fra headend/edge/main), manifest fejler closed (6 cases), ingen aktuator i v1.
+  - `tests/test_hardcoded_ratchet.py` + `tests/hardcoded_baseline.json` (baseline **105**) — hardkodede infra-værdier må kun falde; håndhæver konfig-reglen "alt i UI+DB, kun opstartsparametre i .env" (3P-assessment dok. 03). Sænk baseline i samme commit når værdier flyttes til settings.
+- **Docs:** `Dokumentation/ADR/ADR-002-contract-set-v1.md` (+ register opdateret med ADR-002 og ADR-0007), `contracts/README.md`.
+- **Verificeret:** 11 nye tests + arkitektur-ratchet 2/2 grønne under CI-kommandoen (`--import-mode=importlib`). Alle contracts py_compile-OK. Ren additiv — kan fjernes uden at røre kørende kode.
+- **Hvad mangler / næste skridt:** implementér `SpoolDataSink` + supervisor og wrap den faktiske kameralogik bag `PayloadDriver` som vertical slice (bevist muligt i REVIEW-001, 20/20 — skal genimplementeres mod rigtig capture-kode). Derefter auth/RBAC-udtræk fra `main.py` mod `contracts`-grænsen (jf. arkitekturvej dok. 06).
+- **Filer rørt:** nye: `contracts/` (5 filer), `tests/test_contracts_architecture.py`, `tests/test_hardcoded_ratchet.py`, `tests/hardcoded_baseline.json`, `Dokumentation/ADR/ADR-002-contract-set-v1.md`. Ændret: `Dokumentation/ADR/README.md` (register). Ingen eksisterende kode rørt.
+- **Risici / pas på:** Ratchet-baseline 105 er beregnet med en deterministisk scan (loopback-IP, /Volumes, /opt/homebrew, projekt-domæner) — hvis I ændrer scan-mønsteret, genberegn baseline. Branch: `feature/framework-v1-contracts` (uafhængig af TPA-00-branchen). **➡️ Peter:** merge når du er klar; aktivér branch protection så de nye gates ikke kan omgås.
+
+
 ### Handover 2026-07-18 (4) — Claude: Pushet, deployet og verificeret live via fil-proxyen
 
 - **Kontekst:** Peter startede fil-proxyen (`claude_proxy.py`, audit-logget) så jeg selv kunne lukke løkken. Alt herunder er kørt gennem proxyen og står i `.claude_proxy/audit.log`.
