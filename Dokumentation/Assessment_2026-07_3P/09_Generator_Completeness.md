@@ -10,6 +10,8 @@ Peters mål: headend- og edge-generatorerne skal have ALT med, så det bare virk
 
 | ID | Gap | Evidens |
 |---|---|---|
+> **Codex-verifikation 2026-07-31:** GEN-02 er bekræftet lukket — `sftp_port` bruger DB-setting med 22222-fallback, og generatorens artefaktmappe/repo-URL er UI-redigerbare settings (`headend_image_artifact_dir`, `headend_repo_url`). GEN-01 (SFTP-ingress som automatiseret trin) og GEN-10 (`_headend_api_url()`s `127.0.0.1:8000`-fallback) forbliver åbne. Konklusionen nedenfor står.
+
 | GEN-01 | **SFTP-ingress (22222) er ikke et generator-trin.** Uden det kan en ny headend ikke modtage edge-uploads — kernefunktionen. Kaldet returnerer eksplicit "Fase 2b (SFTP 22222) er et manuelt trin". | `headend_generator_api.py:388`, README-render §3 |
 | GEN-03 | Reverse-tunnel-ingress-port på staging/prod udefineret (edge-fallback = 22) | handover; kræver Peter-beslutning |
 | GEN-04 | Tunnel-port-allokator (2201++) kolliderer med reserveret 2222 ved enhed nr. 22 | handover |

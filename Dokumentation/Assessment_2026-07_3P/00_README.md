@@ -33,3 +33,11 @@ Kodebasen er ~95.000 linjer Python (headend/edge/tests/tools), ~28.000 linjer Ty
 **Kritisk** = blokerer forsvarlig prod-eksponering. **Høj** = skal løses før/under staging. **Mellem** = planlægges, skal ikke blokere staging. **Lav** = hygiejne.
 
 Alle fund er formuleret så de kan importeres i GRC-registret (id, severity, evidens, anbefaling, ejer-felt tomt til Peter).
+
+## Korrektioner efter Codex-evidens (2026-07-31)
+
+Efter Codex kørte suiten i fuldt CI-miljø er tre fund justeret, jf. autoritetsrangordenen (verificeret runtime-evidens > sandkasse):
+
+- **TPA-01** nedgraderet Høj → **Lav**: route-auth-gaten er IKKE rød i CI (Codex: 39 passed); min oprindelige KeyError skyldtes et sandkasse-dependency-gap. Testen er forbedret til at fejle højlydt i stedet for KeyError (`feature/tpa-00-commissioner-auth`).
+- **H-02** nedgraderet Mellem → **Lav**: `edge_image_artifact_dir` er en UI-setting; `/Volumes`-stierne er kun fallback.
+- **GEN-02** **lukket**: `sftp_port` bruger DB-setting med 22222-fallback (Codex-verificeret).

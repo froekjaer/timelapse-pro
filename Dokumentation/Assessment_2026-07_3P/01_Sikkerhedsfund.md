@@ -10,13 +10,15 @@ Commit: `eed9e3c8`. Evidens angivet som fil:linje. Severity jf. 00_README.
 
 **Anbefaling (fail-closed):** (1) Generér en unik secret pr. enhed ved provisionering, gem i CMDB/DB. (2) Fjern den hardkodede fallback fuldstændigt — uden enrolled secret skal BT PAN-funktionen **nægte** (fail closed), ikke falde tilbage på en default. (3) Tilføj en CI-gate der fejler ved forekomst af kendte demo-secrets i kildekoden. (4) Roter/afvis alle enheder der pt. kører på factory-default før prod. Bør registreres i GRC som Kritisk med det samme.
 
-## TPA-01 · **Høj** · K1-gaten (route-auth-sweep) fejler på HEAD og er ikke kørt i CI siden 2026-07-24
+## TPA-01 · **Lav** (nedgraderet 2026-07-31 efter Codex-evidens) · Route-auth-canary kaster KeyError i under-provisioneret miljø
 
-**Evidens:** `headend/tests/test_route_auth_coverage.py::test_high_risk_admin_surfaces_use_role_authentication` fejler på HEAD i rent miljø med `KeyError: '/api/settings/config'` (testens liste, linje 70, refererer en route der ikke længere findes i app'en — `settings/config` optræder kun i testfilen). Seneste CI-kørsel på `main` er 2026-07-24 (success); HEAD-committen er nyere og har ingen kørsel. CI kører ellers netop denne test (`.github/workflows/ci.yml` → `pytest tests headend/tests …`).
+> **KORREKTION 2026-07-31:** Dette fund var oprindeligt klassificeret **Høj** ("K1-gaten er rød på HEAD / ude af drift"). Det var **forkert**. Codex kørte suiten i fuldt CI-miljø (`agent/headend-generator-verification`, handover 2026-07-31): **39 passed**. Ruten `/api/settings/config` findes faktisk (`headend/ai/settings_api.py:231`, settings-routerens `/config` under prefix `/api/settings`). Årsagen til min oprindelige `KeyError` var et **sandkasse-dependency-gap**: uden den fulde requirements-liste mountes 6 af 8 high-risk-routere ikke (settings, import, review, ai/vocabulary), så deres ruter var fraværende. Per autoritetsrangordenen (verificeret runtime-evidens > sandkasse) står Codex' resultat: **gaten er IKKE rød i CI.**
 
-**Risiko:** Selve kontrollen der skal forhindre projektets historisk mest gentagne fejlklasse (routere uden auth — SEC-001, R15, R22) er i praksis ude af drift. Når gaten er rød af en "uskyldig" grund (stale test), opdages en ægte auth-mangel ikke.
+**Reelt (lille) problem:** den gamle test indekserede `route_by_path[path]` direkte og kastede en kryptisk `KeyError` frem for en klar fejl, hvis en rute var fraværende (fx pga. manglende dependency eller omdøbt rute).
 
-**Anbefaling:** (1) Opdatér teststien til den faktiske settings-route (eller fjern posten med kommentar). (2) Aktivér branch protection på `main` med krav om grøn CI før push/merge, så CI aldrig kan springes over. (3) Tilføj en "testen må ikke referere ikke-eksisterende routes"-selvtest, så sweep-listen fail'er tydeligt i stedet for med KeyError.
+**Rettet (branch `feature/tpa-00-commissioner-auth`, commit `d266eb1`):** high-risk-sti-listen bevaret, men indekseringen erstattet af en tydelig assertion ("route ikke registreret — sørg for at alle dependencies er installeret") FØR auth-tjekket. Består i fuld CI; fejler højlydt og forståeligt i under-provisioneret miljø.
+
+**Anbefaling (uændret, stadig relevant):** aktivér branch protection på `main` med krav om grøn CI (fuld dependency-liste) før push/merge — det er den reelle beskyttelse mod at en ægte auth-mangel slipper igennem.
 
 ## TPA-02 · **Mellem** · Edge-signering bruger Bearer-token som HMAC-nøgle (transitional), og mTLS/enheds-CA mangler fortsat
 

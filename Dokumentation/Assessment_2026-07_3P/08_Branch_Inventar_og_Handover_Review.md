@@ -29,7 +29,7 @@ Systematisk gennemgang af `HANDOVER_LOG.md` (1417 linjer) for markører (➡️,
 | **SEC-016** | Default TOTP-secret `JBSWY3DPEHPK3PXP` fail-open | **STADIG ÅBEN** → eskaleret til TPA-00 KRITISK (verificeret `main.py:4075/5270`, `database.py:333`, `edge/scripts/totp-service.py:123`) |
 | **GOV-01** | Ratchet-baseline hævet 18.483→18.549 uden dokumenteret undtagelse (K3 fejlede i praksis) | Baseline nu 18.541; undtagelsesregel stadig ikke vedtaget. **➡️ Peter:** vedtag RATCHET-EXCEPTION-regel |
 | **GEN-01** | SFTP-ingress (22222) er IKKE et trin i headend-generatoren | **STADIG ÅBEN** → se dok. 09; generatoren siger selv "Fase 2b er manuelt trin" |
-| **GEN-02** | `sftp_port`-default 22→22222 | Bør verificeres; lille fix |
+| **GEN-02** | `sftp_port`-default 22→22222 | **LUKKET 2026-07-31 (Codex-verificeret):** `sftp_port` bruger DB-setting med sikker fallback 22222 (ikke CrushFTP-22); artefaktmappe/repo-URL er også UI-settings (`headend_image_artifact_dir`, `headend_repo_url`) |
 | **GEN-03/04/11** | Tunnel-port-beslutning, allokator-range-kollision (2201++→2222 ved enhed 22), hvor prod-edge-images bygges | **➡️ Peter-beslutninger** — udestår |
 | **R09 / P0-03** | Off-site backup + restore-test-evidens | Go-live-blocker; ikke evidenseret |
 | **R20** | Incident Response-procedure | Mangler |

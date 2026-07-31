@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-07-31 (6) — Claude: Assessment-korrektioner efter Codex-evidens
+
+- **Hvad er gjort:** Rettet tre fund i `Dokumentation/Assessment_2026-07_3P/` efter Codex' generator-verifikation (fuldt CI-miljø). Autoritetsrangorden fulgt (runtime-evidens > sandkasse):
+  - **TPA-01** nedgraderet Høj → Lav i `01_Sikkerhedsfund.md` (+ KORREKTION-boks): gaten er IKKE rød i CI (Codex 39 passed); min KeyError var sandkasse-dependency-gap. Handlingsplan (`07`) flyttet: item 3 er nu "branch protection", ikke "ret rød gate".
+  - **H-02** nedgraderet Mellem → Lav i `03_Hardkodede_Variable_Inventar.md`: `edge_image_artifact_dir` er UI-setting; `/Volumes`-stier kun fallback.
+  - **GEN-02** lukket i `08` + note i `09`: `sftp_port` bruger DB-setting m. 22222-fallback (Codex-verificeret); artefaktmappe/repo-URL er også settings.
+  - Tilføjet "Korrektioner"-afsnit i `00_README.md`.
+- **Uændret/stadig gældende:** TPA-00 (KRITISK) og R09 (restore-evidens) er de reelle blockers; GEN-01 (SFTP som automatiseret trin) og GEN-10 forbliver åbne.
+- **Filer rørt:** docs 00/01/03/07/08/09 + denne entry. Ingen kode (kode-fix til TPA-01-testen ligger separat på `feature/tpa-00-commissioner-auth`, commit `d266eb1`).
+- **➡️ Peter:** assessment-branch `assessment/2026-07-3p-review` opdateret; merge når du er klar.
+
+
 ### Handover 2026-07-31 — Claude: Uafhængig 3.-parts assessment (nyt docs-spor) + branch/handover-review
 
 - **Hvad er gjort:** Efter Peters anmodning om en minutiøs uafhængig 3.-parts assessment før staging-test/prod-headend/ny edge er der oprettet et nyt dokumentationsspor: `Dokumentation/Assessment_2026-07_3P/` (00_README + 01–09). Metode: fuld automatiseret sweep af hele kodebasen (100% tracked filer) + kørsel af projektets egne gates i rent miljø + målrettede manuelle dybdegennemgange + dokumentgennemgang. Assessment-commit: HEAD `eed9e3c8`.

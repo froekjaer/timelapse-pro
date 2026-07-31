@@ -6,7 +6,7 @@ Rækkefølge mod: (A) staging-test, (B) headend på rigtig prod-server, (C) ny e
 
 1. **TPA-00** — Fjern default TOTP-secret; per-device secret; fail-closed uden secret; CI-scan for kendte demo-secrets. *(CRA/62443 blocker)*
 2. **R09 / P0-03** — Kør og evidensér restore-drill (headend-DB + billedstore). *(ISO 27001 A.8.13, go-live-blocker)*
-3. **TPA-01** — Ret route-auth-sweep-testen (stale `/api/settings/config`), aktivér branch protection så CI ikke kan springes over.
+3. **Branch protection på `main`** — krav om grøn CI (fuld dependency-liste) før push/merge. *(Bemærk: TPA-01 er nedgraderet til Lav — route-auth-gaten er IKKE rød i CI, jf. Codex-evidens; testens KeyError er rettet på `feature/tpa-00-commissioner-auth`. Branch protection er stadig den reelle beskyttelse.)*
 
 ## Gate 1 — Før staging-test (Høj)
 

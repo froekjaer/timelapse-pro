@@ -9,7 +9,7 @@
 | # | Evidens | Værdi | Vurdering |
 |---|---|---|---|
 | H-01 | `headend/tools/backfill_capture_metadata.py:22` | `CANONICAL_BASE = /Volumes/data-fast/timelapse-incoming/canonical-images` | Modul-konstant uden DB-opslag; øvrige tools bruger korrekt `setting(db,"sftp_base",…)` — inkonsistent |
-| H-02 | `headend/main.py:14966-14967` | To hardkodede edge-image-artefaktstier (`/Volumes/data-fast/...`) | Skal være settings (`edge_image_dirs`) — prod-serveren har næppe samme volume-layout |
+| H-02 | `headend/main.py:14966-14967` | To `/Volumes/data-fast/...` edge-image-stier | **Nedgraderet til Lav 2026-07-31 (Codex-evidens):** den UI-redigerbare setting `edge_image_artifact_dir` + `resolve_storage` tager forrang; `/Volumes`-stierne er kun macOS-specifikke *fallback-kandidater*, ikke eneste kilde. Anbefaling: overvej at droppe/nedtone dem, men ikke en config-regel-overtrædelse |
 | H-03 | `headend/itim.py:304,328,359` | `127.0.0.1:<port>`-health-URL'er + storage-fallbackstier | Porte findes delvist i settings; fallbacks omgår dem |
 | H-04 | `headend/main.py:5713,5719` | `/opt/homebrew/opt/postgresql@17/bin/pg_isready` | Homebrew-sti hardkodet → brækker på enhver ikke-Mac/anden pg-version; skal være setting med PATH-fallback |
 | H-05 | `headend/main.py:5867,5954,17672,17701` | `127.0.0.1:11434` (Ollama), `:8080`, `:8000` fallbacks | `OLLAMA_URL` findes som env — fallback bør læse settings, ikke konstant |
