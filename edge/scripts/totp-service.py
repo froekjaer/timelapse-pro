@@ -45,6 +45,16 @@ logging.basicConfig(
 )
 log = logging.getLogger("totp")
 
+# TPA-00/SEC-016: publicly known demo secrets must never authenticate.
+KNOWN_WEAK_TOTP_SECRETS = {"JBSWY3DPEHPK3PXP", "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"}
+
+def _secret_is_usable(secret: str) -> bool:
+    if not secret:
+        return False
+    if secret.strip().upper() in KNOWN_WEAK_TOTP_SECRETS:
+        return False
+    return True
+
 # ── Konfiguration ─────────────────────────────────────────────────────────────
 CONFIG_FILE = "/etc/timelapse/bt-config.yaml"
 SESSION_COOKIE = "tl_session"
@@ -120,8 +130,10 @@ FOCUS_DRIVE_OPTIONS = ["Near 1", "Near 2", "Near 3", "Far 1", "Far 2", "Far 3", 
 def _default_config() -> dict:
     return {
         "totp": {
-            "secret": "JBSWY3DPEHPK3PXP",
-            "sid": "factory-default",
+            # TPA-00/SEC-016: ingen verdenskendt fabriksstandard. Tom => uprovisioneret
+            # (edge nægter login indtil per-device secret er sat via enrollment/sync).
+            "secret": "",
+            "sid": "unprovisioned",
             "valid_window": 3,
         },
         "management": {
@@ -413,6 +425,13 @@ async def verify(request: Request, code: str = Form(...)):
 
     if not totp_cfg.get("enabled", True):
         return RedirectResponse("/mgmt/", status_code=303)
+
+    if not _secret_is_usable(totp_cfg.get("secret", "")):
+        log.error("TOTP-verificering nægtet: enheden er uprovisioneret eller bruger en "
+                  "kendt svag secret (TPA-00/SEC-016). Sæt per-device secret via enrollment.")
+        return HTMLResponse(_login_page(
+            error="Enheden er ikke idriftsat (mangler per-device sikkerhedskode). Kontakt headend."),
+            status_code=403)
 
     totp = pyotp.TOTP(totp_cfg["secret"])
     valid_window = totp_cfg.get("valid_window", 1)

@@ -2066,7 +2066,7 @@ def create_user(
     from database import User
     if db.query(User).filter_by(username=req.username).first():
         raise HTTPException(status_code=400, detail="Brugernavn findes allerede")
-    if req.role not in ("super_admin", "admin", "operator", "viewer"):
+    if req.role not in ("super_admin", "admin", "operator", "viewer", "commissioner"):
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Adgangskode skal være mindst 8 tegn")
@@ -2092,7 +2092,7 @@ def update_user(
     u = db.query(User).filter_by(id=user_id).first()
     if not u:
         raise HTTPException(status_code=404)
-    if req.role and req.role not in ("super_admin", "admin", "operator", "viewer"):
+    if req.role and req.role not in ("super_admin", "admin", "operator", "viewer", "commissioner"):
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
     for field in ["email", "role", "customer_id", "is_active"]:
         val = getattr(req, field)
@@ -4072,7 +4072,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         "bt_totp": (
             {"secret": _get_setting(db, "bt_totp_secret", ""), "sid": _get_setting(db, "bt_totp_sid", "global")}
             if _get_setting(db, "bt_totp_secret", "")
-            else {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
+            else {"secret": "", "sid": "unprovisioned"}  # TPA-00: fail closed, ingen verdenskendt default
         ),
         "service_access": {"enabled": True, "live_view_enabled": True, "live_view_max_duration_s": 180, "allow_continuous_live_view": False},
     }
@@ -5184,7 +5184,7 @@ def create_camera(
         model       = payload.get("model"),
         notes       = payload.get("notes"),
         config      = _json.dumps(payload.get("config", {})),
-        # bt_totp_secret + bt_totp_sid: NULL = fabriksstandard JBSWY3DPEHPK3PXP
+        # bt_totp_secret + bt_totp_sid: NULL = uprovisioneret (fail closed, TPA-00) — sæt per-device secret ved enrollment
     )
     db.add(cam); db.commit()
     log.info("Kamera oprettet: %s (%s)", cam.camera_name, cam.id)
@@ -5266,10 +5266,10 @@ def get_camera_bt_totp_qr(
     if not cam:
         raise HTTPException(status_code=404, detail="Kamera ikke fundet")
 
-    # Fabriksstandard som udgangspunkt
-    secret = "JBSWY3DPEHPK3PXP"
-    sid    = "factory-default"
-    source = "factory-default"
+    from bt_totp_security import resolve_bt_totp_base  # TPA-00/SEC-016: fail closed, per-device secret
+    _dev = getattr(cam, "device_id", None)
+    secret = resolve_bt_totp_base(db, _dev, getter=lambda _d, _x: _get_setting(_d, f"bt_totp_secret_{_x}", "")) or ""
+    sid = source = "device-bootstrap" if secret else "unprovisioned"
 
     # Lag 1: global override (Settings-tabel)
     _g_secret = _get_setting(db, "bt_totp_secret", "")

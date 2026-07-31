@@ -29,6 +29,26 @@
 
 ## Log
 
+### Handover 2026-07-31 (2) — Claude: TPA-00 idriftsætter-provisioning + TPA-01 route-auth-gate + R09 restore-drill (kode)
+
+- **Hvad er gjort (kode, additivt, fail-closed, ratchet holdt 18541):**
+  - **TPA-00 / SEC-016 lukket:** den verdenskendte fabriks-TOTP `JBSWY3DPEHPK3PXP` er fjernet som funktionel fallback overalt (`main.py` base-secret ×2 → fail closed per-device, `edge/scripts/totp-service.py` default tømt + `/verify` nægter ved svag/tom secret, `database.py`-kommentar). Optræder nu KUN i en denylist der aktivt afviser den.
+  - **Ny RBAC-rolle `commissioner` (idriftsætter)** tilføjet whitelists (`main.py:2069/2095`).
+  - **Ny idriftsætter-provisioning:** `headend/bt_totp_security.py` (per-device secret + fail-closed resolver + weak-secret-denylist), `headend/commissioner.py` (byg/verificér signeret, device-bundet, udløbende offline idriftsætter-cache), `edge/commissioner_auth.py` (login-metode-resolver: WebAuthn-online > TOTP-online > offline-cache > per-device bootstrap > DENY, med obligatorisk login-besked om hvilken metode/online-status; + offline dobbelt-faktor-verifikation).
+  - **TPA-01 repareret:** stale `/api/settings/config` (KeyError) fjernet; `test_route_auth_coverage.py::test_high_risk_admin_surfaces_use_role_authentication` omskrevet prefix-baseret med 3 selvforsvar (fejler ved 0 /api-routes, ved tomt sentinel-prefix `/api/admin`, og ved 0 tjekkede high-risk-routes). Begge auth-tests grønne nu.
+  - **R09 non-destruktiv restore-drill:** `headend/tools/restore_drill.py` gendanner backup til kasserbart scratch-mål + verificerer tabeller/row-counts/billed-sha256, fail-closed guard (nægter hvis scratch==prod eller ikke matcher allowlist). Selvtest kørt grøn (fanger korruption + afviser prod-mål). CI-wrapper `test_restore_drill.py`.
+- **Verificeret:** 28 nye/berørte tests grønne (20 TPA-00 + 4 restore + 2 route-auth + 2 ratchet) mod midlertidig sqlite; alle ændrede filer py_compile-OK; ratchet på 18541 (kondenserede egne edits for ikke at hæve baseline — GOV-01-disciplin).
+- **Design/proces:** `Dokumentation/Assessment_2026-07_3P/TPA-00/ADR-CL-TPA00-commissioner-provisioning.md` + `PROCES_Idriftsaettelse_og_R09.md` (runbook, integrationspunkter, produktions-pg_restore-kommando).
+- **Hvad mangler / næste skridt (åbne integrationspunkter — kunne IKKE køre systemet herfra):**
+  - Byt reference-HMAC-signering ud med den eksisterende asymmetriske OTA/config-signeringskæde (Ed25519) i `commissioner.py`/`edge/commissioner_auth.py`.
+  - Wire `GET /api/commissioner/bundle`-router (bevidst ikke wired i main.py for ikke at sprænge ratchet — tag den ved auth/RBAC-udtræk).
+  - Verificér i den rigtige enrollment-sti at per-device `bt_totp_secret_<device_id>` faktisk sættes; brug enhedens Fernet til `decrypt_totp_secret`.
+  - Kør R09-drill på Mac Mini mod et rigtigt arkiv → evidens i GRC.
+- **➡️ Codex (anmodning om kryds-review — Peter beder dig læse denne handover):** (a) live-verificér de fire integrationspunkter ovenfor, (b) kør fuld integrations-suite (BT-PAN-hardware + WebAuthn-online kan jeg ikke teste), (c) sanity-check mine `main.py`/`totp-service.py`-edits mod dit working tree. Jeg har rørt så lidt som muligt i eksisterende filer.
+- **Filer rørt:** nye: `headend/bt_totp_security.py`, `headend/commissioner.py`, `edge/commissioner_auth.py`, `headend/tools/restore_drill.py`, `headend/tests/test_tpa00_commissioner.py`, `headend/tests/test_restore_drill.py`, 2 docs. Ændrede: `headend/main.py`, `headend/database.py`, `edge/scripts/totp-service.py`.
+- **Risici / pas på:** Ændringer i auth-kritisk kode — MÅ IKKE deployes før Codex' live-verifikation + fuld suite. Eksisterende enheder på factory-default skal re-provisioneres (engangs). Branch: `feature/tpa-00-commissioner-auth`. **➡️ Peter: merge efter Codex-review; aktivér branch protection på main (TPA-01).**
+
+
 ### Handover 2026-07-31 — Claude: Uafhængig 3.-parts assessment (nyt docs-spor) + branch/handover-review
 
 - **Hvad er gjort:** Efter Peters anmodning om en minutiøs uafhængig 3.-parts assessment før staging-test/prod-headend/ny edge er der oprettet et nyt dokumentationsspor: `Dokumentation/Assessment_2026-07_3P/` (00_README + 01–09). Metode: fuld automatiseret sweep af hele kodebasen (100% tracked filer) + kørsel af projektets egne gates i rent miljø + målrettede manuelle dybdegennemgange + dokumentgennemgang. Assessment-commit: HEAD `eed9e3c8`.
