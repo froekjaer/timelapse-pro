@@ -1,0 +1,12 @@
+{
+  "manifest_version": 1,
+  "payload": {"name": "timelapse", "version": "1.0.0"},
+  "contracts": {"control": "1.x", "data": "1.x"},
+  "capabilities": ["camera.usb"],
+  "quotas": {"cpu_pct": 50, "mem_mb": 512, "disk_mb": 512, "net_kbps": 0},
+  "filesystem": {"readwrite": ["/var/spool/mission/timelapse"]},
+  "channels": [
+    {"name": "images", "kind": "blob", "classification": "personal-images", "retention_class": "project-evidence-explicit-disposition"},
+    {"name": "capture-metrics", "kind": "timeseries", "classification": "operational", "retention_class": "ops-1y"}
+  ]
+}

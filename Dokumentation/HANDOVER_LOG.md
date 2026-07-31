@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-07-31 (8) — Claude: Vertical slice — timelapse-payload wrapper den rigtige CameraBase (ADR-002)
+
+- **Hvad er gjort (additivt, tests-only, nul runtime-kobling):** Bygget ADR-002-vertical-slicen mod den *faktiske* kameralogik i stedet for en legetøjskopi:
+  - `payloads/timelapse/driver.py` — `TimelapsePayloadDriver` implementerer `PayloadDriver` og wrapper den eksisterende `edge/camera/base.py::CameraBase` (inject `GPhoto2Driver` i produktion, fake i test). Capture-loop, health, kommandoer (capture_now/get_stats/run_autofocus) og fejlhåndtering spejler det rigtige capture-flow. Publicerer captures som klassificerede `images`-blobs (retention_class `project-evidence-explicit-disposition` — binder til Codex' Evidence-Retention-princip) + capture-metrics som timeseries.
+  - `platform_host/` — reference-host: `SpoolDataSink` (declared-channel/kvote/backpressure-håndhævelse), `Supervisor` (fail-closed manifest/policy-admission, lifecycle, health restart/quarantine), signeret nodepolicy.
+  - `payloads/timelapse/manifest.json`.
+- **Verificeret:** 7 nye slice-tests grønne + de 11 kontrakt/ratchet-tests + arkitektur-ratchet 2/2 = 20 grønne under CI-kommandoen. Anti-kobling testet på de rigtige kildefiler (platform_host importerer ikke payloads; payloads/timelapse importerer contracts, ikke platform_host). End-to-end: capture → klassificeret evidens i spool med rigtige kamerametadata; manglende kamera, capture-fejl, backpressure og ukendt kommando alle fail-safe.
+- **Docs:** `platform_host/README.md`; ADR-002 §Valideringsvej opdateret (slice nu implementeret).
+- **Hvad mangler / næste skridt:** P2-01 auth/RBAC-udtræk fra `main.py` mod kontrakt-grænsen (arkitekturvej dok. 06). Wiring i edge/agent-runtime er bevidst IKKE gjort — det er et senere, separat skridt med hardware-verifikation (gphoto2/Nikon).
+- **Filer rørt:** nye: `platform_host/` (4 filer + README), `payloads/` (timelapse driver/manifest/init), `tests/test_vertical_slice.py`. Ændret: `Dokumentation/ADR/ADR-002-contract-set-v1.md`. Ingen eksisterende kode rørt; `edge/camera/base.py` kun importeret (typer), ikke ændret.
+- **Risici / pas på:** Slicen kører mod en fake CameraBase; wrappen matcher det rigtige interface, men gphoto2/Nikon-adfærd skal verificeres på hardware før runtime-wiring. Branch: `feature/framework-v1-contracts` (samme som ADR-002).
+
+
 ### Handover 2026-07-31 (7) — Claude: Review af Core Design Principles + ADR-002/003-reconciliation + samlet spor-oversigt
 
 **Review-dom (Codex' `TimeLapse_Core_Design_Principles_v1.md`, PR #5 / `320281b`):** Stærkt og godkendt som **Proposed**. Rigtig videreudvikling af ADR-001, ikke et alternativ. De 25 principper er konsistente og standard-forankrede; as-is→target-adskillelsen (§1.1) er forbilledlig. Hovedfundet (ingen-auto-sletning vs. nuværende retention/circular-buffer) er korrekt registreret som åben policybeslutning uden kodeændring. Ingen indvendinger mod indholdet.

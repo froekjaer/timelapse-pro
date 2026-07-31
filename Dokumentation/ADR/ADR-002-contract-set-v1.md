@@ -34,7 +34,7 @@ Positive: fælles, versioneret, maskin-bevogtet flade fra dag ét; to nye CI-gat
 
 ## Valideringsvej
 
-11 tests grønne (kontrakt-renhed, manifest fail-closed ×6, policy-check, ingen-aktuator, versioner, hardkodet-ratchet). Næste skridt (separat): implementér en `SpoolDataSink` + supervisor og wrap den eksisterende kameralogik bag `PayloadDriver` som vertical slice — bevist muligt i REVIEW-001 (20/20 tests), skal genimplementeres mod den faktiske capture-kode. **➡️ Peter:** aktivér branch protection så de nye gates ikke kan omgås.
+11 tests grønne på kontrakterne (kontrakt-renhed, manifest fail-closed ×6, policy-check, ingen-aktuator, versioner, hardkodet-ratchet). **Vertical slice nu implementeret** (2026-07-31): `payloads/timelapse/driver.py` wrapper den faktiske `edge/camera/base.py::CameraBase` bag `PayloadDriver`, kørt af en reference-`Supervisor` + `SpoolDataSink` (`platform_host/`) — 7 slice-tests grønne (end-to-end capture med klassificeret evidens, anti-kobling, manglende kamera, capture-fejl, backpressure, ukendt kommando). Stadig tests-only; ikke wired i edge/agent-runtime. Næste skridt: P2-01 auth/RBAC-udtræk mod kontrakt-grænsen. **➡️ Peter:** aktivér branch protection så de nye gates ikke kan omgås.
 
 ## Afgrænsning og forhold til andre spor (tilføjet 2026-07-31)
 
