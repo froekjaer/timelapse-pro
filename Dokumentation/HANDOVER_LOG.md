@@ -29,6 +29,39 @@
 
 ## Log
 
+### Handover 2026-07-31 — fra Codex til Claude/Peter: Verifikation af Headend Generator (Claude-opfølgning 2026-07-18)
+
+- **Formål:** Lukke den konkrete QA-opfølgning fra Claude: medtage generatorruter i
+  route-auth-suiten og kontrollere GEN-02/DB-variabelreglen før yderligere arbejde.
+- **Verificeret:**
+  - `headend/tests/test_route_auth_coverage.py` scanner alle `/api/`-ruter dynamisk.
+    Generatorrouterens ruter er derfor omfattet og bruger den reviewede
+    `_current_viewer` → `_require_platform_admin`-kæde.
+  - **GEN-02 er allerede implementeret:** Edge-konfigurationens `sftp_port` bruger
+    DB-settingen med sikker fallback `22222`, ikke CrushFTP-port 22. Generatorens
+    artefaktmappe og repository-URL kan tilsvarende hentes fra de UI-redigerbare
+    settings `headend_image_artifact_dir` og `headend_repo_url`.
+  - **GEN-10 er ikke lukket af denne verifikation:** `_headend_api_url()` prioriterer
+    eksplicit URL, miljøvariabel og DB-settings (`edge_public_headend_url`/`base_url`),
+    men har fortsat `http://127.0.0.1:8000/api` som sidste, lokal fallback. Den er
+    acceptabel for lokal udvikling, men må ikke være den valgte produktionsværdi;
+    behold GEN-10 som åbent, indtil en eksplicit deployments-/settingskontrakt er
+    besluttet og testet.
+- **Kommandoer og resultat:**
+  - `PYTHONPATH=headend pytest -q headend/tests/test_headend_generator_contract.py`
+    → **37 passed**.
+  - I isoleret miljø med CI's `requirements-dev.txt` + `headend/requirements.txt`:
+    `TIMELAPSE_TEST_DATABASE_URL=sqlite:////tmp/timelapse-codex-generator-auth.db PYTHONPATH="$PWD:$PWD/headend:$PWD/edge" pytest -q --import-mode=importlib -p no:randomly headend/tests/test_headend_generator_contract.py headend/tests/test_route_auth_coverage.py`
+    → **39 passed**.
+- **Miljønote:** Første lokale forsøg på route-auth-sweepet stoppede ved manglende
+  `slowapi`; afhængigheden er korrekt pinnet i `headend/requirements.txt`. Den
+  isolerede CI-lignende kørsel ovenfor bekræfter, at det var et sessionsmiljø-gap,
+  ikke en produktfejl.
+- **Filer rørt:** Kun `Dokumentation/HANDOVER_LOG.md` (denne entry).
+- **Næste skridt:** Claude/Peter kan behandle GEN-10 som en separat, lille
+  konfigurationsbeslutning. Ingen kodeændring er nødvendig for GEN-02 eller
+  route-auth-dækningen.
+
 ### Handover 2026-07-18 (4) — Claude: Pushet, deployet og verificeret live via fil-proxyen
 
 - **Kontekst:** Peter startede fil-proxyen (`claude_proxy.py`, audit-logget) så jeg selv kunne lukke løkken. Alt herunder er kørt gennem proxyen og står i `.claude_proxy/audit.log`.
