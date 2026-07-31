@@ -50,4 +50,7 @@ Korte, nummererede beslutningsnotater. Én ADR = én arkitekturbeslutning, der e
 |-----|-------|--------|
 | [ADR-001](ADR-001-platform-payload-split.md) | Platform/Payload-snit for edge-arkitekturen | **Accepted 2026-07-16** |
 | [ADR-002](ADR-002-contract-set-v1.md) | Kontraktsæt v1 (control/data/manifest) — modulært framework-seam | Proposed (tests-only) |
+| ADR-003 (reserveret) | Payload-pakkeformat, signering, proces-isolation, control/data-plane-transport | Ikke skrevet endnu |
 | [ADR-0007](ADR-0007-Evolution-from-Product-to-Platform.md) | Evolution from Product to Platform | Proposed |
+
+> **Note (2026-07-31):** `../Arkitektur/TimeLapse_Core_Design_Principles_v1.md` (Proposed) er policy-laget ovenpå ADR-001/002. Foreslåede policy-ADR'er derfra: **Controlled Local Service Access** og **Evidence Retention and Explicit Disposition**. ADR-002 ejer kontrakterne; ADR-003 (reserveret) ejer signering/isolation. Se ADR-002 §Afgrænsning.

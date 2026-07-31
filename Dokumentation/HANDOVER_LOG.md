@@ -29,6 +29,28 @@
 
 ## Log
 
+### Handover 2026-07-31 (7) — Claude: Review af Core Design Principles + ADR-002/003-reconciliation + samlet spor-oversigt
+
+**Review-dom (Codex' `TimeLapse_Core_Design_Principles_v1.md`, PR #5 / `320281b`):** Stærkt og godkendt som **Proposed**. Rigtig videreudvikling af ADR-001, ikke et alternativ. De 25 principper er konsistente og standard-forankrede; as-is→target-adskillelsen (§1.1) er forbilledlig. Hovedfundet (ingen-auto-sletning vs. nuværende retention/circular-buffer) er korrekt registreret som åben policybeslutning uden kodeændring. Ingen indvendinger mod indholdet.
+
+**ADR-002/003-beslutning (Peter tiltrådt 2026-07-31):** For at undgå scope-kollision — Codex forventede ADR-002 til også at eje signering/isolation, men ADR-002 er allerede skrevet som kontraktsættet:
+- **ADR-002 = kontrakter** (control `PayloadDriver` / data `DataSink`+klassificerede kanaler / manifest fail-closed). `feature/framework-v1-contracts`.
+- **ADR-003 (reserveret) = payload-pakkeformat, signering, proces-isolation, control/data-plane-transport.** Endnu ikke skrevet.
+- Registeret + ADR-002 §Afgrænsning opdateret i denne branch.
+
+**Spor-binding (komplementære, ikke konkurrerende):**
+- Codex' **Controlled Local Service Access** (Del II, Local Service Gateway) er målarkitekturen; mit **TPA-00 commissioner-fix** (`feature/tpa-00-commissioner-auth`, `d266eb1`: fail-closed BT-PAN-TOTP, per-device secret, login-metode-resolver, ny `commissioner`-rolle) er første konkrete increment af den. Designforskel at afklare senere: Codex foretrækker BLE LE Secure Connections/OOB frem for TOTP-over-BT-PAN — rimelig trapning.
+- Codex' **Evidence Retention and Explicit Disposition** enables af ADR-002's data-plane-klassifikation (`personal-images`/`operational`/`process-telemetry` + `retention_class`): projekt-evidens = behold til eksplicit disposition; personlige/afledte/cache = tidsbegrænset. Det opløser også spændet med mit assessment-fund (dok. 05/TPA-11 gjaldt tidsbegrænsede klasser, ikke projekt-evidens).
+
+**Samlet oversigt over det arbejde der ligger klar (så alle har det):**
+- `assessment/2026-07-3p-review` (`4766eef`, opr. `89cc1c2`) — **3.-parts assessment**, docs-spor `Dokumentation/Assessment_2026-07_3P/`: 00_README (metode + ærlig dækning) + 01 sikkerhed, 02 kodekvalitet/teknisk gæld, 03 hardkodede variable, 04 UI/UX, 05 compliance, 06 arkitekturvej framework v1, 07 prioriteret handlingsplan, 08 branch-/handover-review, 09 generator-completeness. Rettet efter Codex-evidens: TPA-01→Lav, H-02→Lav, GEN-02 lukket.
+- `feature/tpa-00-commissioner-auth` (`d266eb1`) — TPA-00/SEC-016 fail-closed + commissioner-provisioning + TPA-01-testfix + R09 non-destruktiv restore-drill. Afventer Codex live-verifikation (4 integrationspunkter, `CODEX_WORKORDER_TPA-00.md`).
+- `feature/framework-v1-contracts` (denne branch) — ADR-002 kontraktsæt v1 + 2 CI-gates, tests-only, nul runtime-risiko.
+
+**➡️ Peter:** tre branches klar til merge (framework kan merges straks; TPA-00 efter Codex-verifikation; assessment når som helst). Begge nye branches redigerer `ADR/README.md` → triviel merge-reconciliation. Aktivér branch protection så CI-gatene ikke kan omgås.
+**➡️ Codex:** din TPA-00-arbejdsordre (`CODEX_WORKORDER_TPA-00.md`) afventer stadig; og bekræft gerne ADR-002/003-snittet.
+
+
 ### Handover 2026-07-31 (4) — Claude: Modulært framework v1 — kontraktsæt landet (tests-only, ADR-002)
 
 - **Hvad er gjort (additivt, nul runtime-kobling):** Landet `contracts/`-pakken — den flade ADR-001 lovede men som aldrig blev skrevet (ADR-002). Tre SemVer'ede kontrakter: control (`PayloadDriver`), data (`DataSink` + blob/timeseries/event med klassifikation+retention), manifest (fail-closed, ingen aktuator-capability i v1). Intet i produktion importerer pakken endnu — den er målet som P2-01-udtræk migrerer mod.

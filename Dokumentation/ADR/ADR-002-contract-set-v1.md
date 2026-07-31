@@ -35,3 +35,14 @@ Positive: fælles, versioneret, maskin-bevogtet flade fra dag ét; to nye CI-gat
 ## Valideringsvej
 
 11 tests grønne (kontrakt-renhed, manifest fail-closed ×6, policy-check, ingen-aktuator, versioner, hardkodet-ratchet). Næste skridt (separat): implementér en `SpoolDataSink` + supervisor og wrap den eksisterende kameralogik bag `PayloadDriver` som vertical slice — bevist muligt i REVIEW-001 (20/20 tests), skal genimplementeres mod den faktiske capture-kode. **➡️ Peter:** aktivér branch protection så de nye gates ikke kan omgås.
+
+## Afgrænsning og forhold til andre spor (tilføjet 2026-07-31)
+
+Denne ADR ejer **kun kontrakt-fladen**: control-plane (`PayloadDriver`), data-plane (`DataSink` + klassificerede kanaler) og capability-manifestets *struktur* + fail-closed-validering. For at undgå scope-kollision (koordineret med Codex, jf. `Arkitektur/TimeLapse_Core_Design_Principles_v1.md`):
+
+- **ADR-003 (reserveret, endnu ikke skrevet):** payload-pakkeformat, **signering**, proces-**isolation**/sandbox og control/data-plane-*transport*. Det er en tungere, separat beslutning (svarer til den udskudte ADR i REVIEW-001) og hører ikke i ADR-002.
+- **Policy-laget ligger uden for begge:** `TimeLapse_Core_Design_Principles_v1.md` (Proposed) er *hvorfor og hvilke regler*; denne ADR er *den maskin-håndhævede grænse reglerne lever på*. De to foreslåede policy-ADR'er — **Controlled Local Service Access** og **Evidence Retention and Explicit Disposition** — bygger ovenpå:
+  - Data-plane-klassifikationen her (`personal-images` / `operational` / `process-telemetry`, hver med `retention_class`) er den mekanisme der lader "Evidence Retention" skelne mellem projekt-evidens (behold til eksplicit disposition) og tidsbegrænsede/afledte data (retention). Kontrakten er enableren; policy-beslutningen er stadig Peters.
+  - Capability-manifestet + fail-closed-valideringen her er håndhævelsespunktet for "Controlled Local Service Access" (least privilege, eksplicit autoritet).
+
+Kort: ADR-002 = kontrakter, ADR-003 = signering/isolation/pakkeformat, Core Design Principles + de to policy-ADR'er = reglerne ovenpå.
