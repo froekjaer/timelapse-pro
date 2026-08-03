@@ -1654,3 +1654,11 @@ person vide".
 - **Logisk datarod aktiveret:** `/data-fast -> /Volumes/data-fast` blev oprettet ved boot via `/etc/synthetic.conf`.
 - **Backup og restore bestaaet:** Restic snapshot `2018d0cb` (8.049 GiB) blev oprettet, kontrolleret og spejlet til OneDrive. Restore til den isolerede testmappe lykkedes; aktiv og gendannet TimeLapse Pro har begge commit `eed9e3c8c67369e1924c25a11908616220c3c753`.
 - **Bevar testdata:** Restore-verifikation ligger paa `/data-fast/backup/project-snapshots/restore-verification-20260803` og maa kun slettes ved en eksplicit administrativ beslutning.
+
+### Handover 2026-08-03 15:47 — Codex: offline OS-update-flow repareret og bevist paa aktiv R&D-Edge
+- **Scope:** Aktiv Edge `TL-C87FF9587CA0`; LAB-only. Edge brugte ikke internet, `apt update`, `apt upgrade` eller GitHub.
+- **Fund og rettelse:** Den tidligere OS-artefakt brugte en enkelt `dpkg -i`-kommando. Den efterlod PipeWire-pakker udpakkede, men ikke konfigurerede. Builderen bruger nu en signeret, to-faset dpkg-transaction: `dpkg --unpack packages/*.deb`, `dpkg --configure --pending`, og et Bash-kørt versionscheck. Det løser både afhængighedsrækkefølge og manglende execute-bit på downloadede scripts.
+- **E2E-evidens:** Update `#136` startede som 126 OS-sikkerhedspakker. Efter recovery er `#136` og dens target registreret som `deployed`; artifact `TL-OS-20260803-b721741294b2`; pre-update Edge-backup uploadet; Edge `systemd-run` returkode 0; `dpkg --audit` uden fund; PipeWire- og PAM-afhængigheder verificeret med forventede versioner.
+- **Audit:** De tidligere signerede artefakter beholdes som revisionsspor. Kun den sidste signerede artefakt er bundet til den deployede target.
+- **Næste skridt:** Byg, test og godkend `#134` (20 funktionelle OS-pakker) separat i LAB. Start ikke production-promotion før dokumenteret postflight/LAB-test.
+- **Commits:** `201ba59c`, `074b8dc3`, `89b4ccc5`, `08bd6234` på `codex/os-catalog-refresh` (PR #8). Lokale tests: `tests/test_fetch_os_bundle.py` og `tests/test_architecture_ratchet.py` passerede efter hver kodeændring.

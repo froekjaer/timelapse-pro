@@ -43,7 +43,7 @@ Komponenter uden en troværdig advisory-kilde markeres som et dækningsgab, ikke
 
 ## Aktuel statusopdatering 2026-08-03
 
-Dette afsnit erstatter ældre udsagn i dokumentet om, at den aktive Edge havde nul OS-opdateringer. En Headend-baseret CMDB-katalogkørsel for `TL-C87FF9587CA0` har identificeret **126 sikkerhedsopdateringer** og **20 funktionelle OS-opdateringer**. Begge kandidater er oprettet som blokerede LAB-poster og afventer offline bundle-build, test og signering.
+Dette afsnit erstatter ældre udsagn i dokumentet om, at den aktive Edge havde nul OS-opdateringer. En Headend-baseret CMDB-katalogkørsel for `TL-C87FF9587CA0` identificerede først **126 sikkerhedsopdateringer** og **20 funktionelle OS-opdateringer**. Sikkerhedsopdateringen `#136` blev den 2026-08-03 afsluttet i LAB med pre-update-backup og signerede offline artifacts. Den sidste recovery-transaction bestod af de to manglende afhængigheder `libasound2-data` og `libpam-modules`, der konfigurerede en tidligere afbrudt PipeWire-transaktion korrekt. `#134` (20 funktionelle OS-opdateringer) er fortsat blokeret og er **ikke** installeret.
 
 Katalogopdagelsen er rettet til at køre på Headend med dagligt interval og til at gemme planer/artifacts permanent under det logiske dataområde `/data-fast`. Den næste konkrete opgave er at færdiggøre og verificere den natlige SBOM-/advisory-kontrol beskrevet ovenfor.
 
@@ -81,10 +81,12 @@ tilbage** er drift-, fejlsøgnings- og auditspor, ikke den normale kø.
 
 For `TL-C87FF9587CA0` er den aktuelle kø:
 
-1. **OS sikkerhed - 126 pakker**: kandidat `#136` i LAB.
-2. **OS opdatering - 20 pakker**: kandidat `#134` i LAB.
-3. Headend bygger og binder automatisk de signerede offline artifacts. Når det
-   er færdigt, ligger begge under **Afventer**.
+1. **OS sikkerhed - oprindeligt 126 pakker**: `#136` er **Deployet** i LAB.
+   Evidens: artifact `TL-OS-20260803-b721741294b2`, pre-update backup og Edge-
+   rapport med installation returkode 0.
+2. **OS opdatering - 20 pakker**: kandidat `#134` er **Blokeret** i LAB og
+   afventer separat offline artifact-build, test og godkendelse.
+3. Når et artifact er bygget og bundet, ligger kandidaten under **Afventer**.
 4. Administratoren godkender derfra til LAB. Under **Godkendt** ses femtrins-
    flowet: godkendelse, Edge-poll, trust-check, pre-update backup og
    installation/rollback.
