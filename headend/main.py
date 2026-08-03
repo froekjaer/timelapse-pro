@@ -8141,13 +8141,17 @@ def _upsert_blocked_os_updates_from_plan(
         severity = decision.get("severity") or ("high" if update_type == "os_security" else "low")
         label = "sikkerhedsopdatering(er)" if update_type == "os_security" else "funktionelle OS-opdatering(er)"
         version = f"{count} pakker"
+        # Reuse only a current CMDB-generated preparation record. Historical
+        # Edge reports and prior failed attempts remain immutable audit history
+        # and must never be overwritten by a fresh catalog refresh.
         existing = (
             db.query(PendingUpdate)
             .filter(
                 PendingUpdate.update_type == update_type,
                 PendingUpdate.scope == "device",
                 PendingUpdate.scope_id == device_id,
-                PendingUpdate.status.in_(["pending", "approved", "blocked"]),
+                PendingUpdate.status == "blocked",
+                PendingUpdate.description.contains("Headend lab-katalog"),
             )
             .order_by(PendingUpdate.created_at.desc())
             .first()
@@ -8155,7 +8159,7 @@ def _upsert_blocked_os_updates_from_plan(
         description = (
             f"{count} {label} klar via Headend lab-katalog ({catalog_source or 'unknown source'}).\n"
             f"Plan: {plan_path}\n"
-            "Blocked: afventer lab-bygget, testet og Headend-signeret offline OS artifact. "
+            "Forbereder Headend-signeret offline OS artifact før den vises til godkendelse. "
             "Edge må ikke bruge direkte apt/internet."
         )
         if existing:
@@ -8163,8 +8167,6 @@ def _upsert_blocked_os_updates_from_plan(
             existing.description = description
             existing.severity = severity
             existing.environment = environment
-            if existing.status != "approved":
-                existing.status = "blocked"
             changes.append({"update_type": update_type, "status": "updated", "id": existing.id})
             continue
         update = PendingUpdate(
@@ -8843,7 +8845,7 @@ def _os_bundle_auto_poller_loop(interval_minutes: float = 10.0) -> None:
 
 def _os_bundle_auto_build_pending() -> None:
     """
-    Finder alle pending OS-updates uden artifact og bygger et offline .deb bundle
+    Finder alle CMDB-forberedte OS-updates uden artifact og bygger et offline .deb bundle
     via fetch_os_bundle.py (Python-mode, kræver ikke Docker).
 
     Bruger første super_admin som systembruger til artifact-signering.
@@ -8852,12 +8854,14 @@ def _os_bundle_auto_build_pending() -> None:
 
     db = SessionLocal()
     try:
-        # Find pending OS-updates uden artifact
+        # Only current CMDB candidates are prepared automatically. Historic
+        # blocked/failed updates remain audit evidence and are never retried.
         pending = (
             db.query(PendingUpdate)
             .filter(
                 PendingUpdate.update_type.in_(["os_security", "os_updates"]),
-                PendingUpdate.status.in_(["pending"]),
+                PendingUpdate.status == "blocked",
+                PendingUpdate.description.contains("Headend lab-katalog"),
             )
             .order_by(PendingUpdate.created_at)
             .all()
