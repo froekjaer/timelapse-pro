@@ -632,20 +632,9 @@ def startup():
     except Exception as _obp_err:
         log.warning("Kunne ikke starte OS bundle auto-poller: %s", _obp_err)
 
-    # ── OS-katalogopdagelse fra CMDB ─────────────────────────────────────────
-    # Edge har ikke direkte internetadgang. Headend sammenligner derfor det
-    # senest rapporterede package inventory med det godkendte Linux-katalog og
-    # opretter kun blokerede LAB-kandidater til efterfølgende artifact-build.
     try:
-        interval_h = float(os.getenv("TIMELAPSE_OS_CATALOG_REFRESH_INTERVAL_HOURS", "24"))
-        t_catalog = _threading.Thread(
-            target=_os_catalog_refresh_loop,
-            args=(interval_h,),
-            name="os-catalog-refresh",
-            daemon=True,
-        )
-        t_catalog.start()
-        log.info("OS-katalogopdagelse startet (interval=%.1fh)", interval_h)
+        from services.os_catalog_refresh import start_os_catalog_refresh
+        start_os_catalog_refresh()
     except Exception as _ocr_err:
         log.warning("Kunne ikke starte OS-katalogopdagelse: %s", _ocr_err)
 
@@ -7368,13 +7357,7 @@ def _os_bundle_requests(device_id: str, environment: str, decisions: dict, catal
 
 
 def _write_update_json(folder: str, filename: str, payload: dict) -> str:
-    configured = os.getenv("TIMELAPSE_UPDATE_STORE")
-    if configured:
-        root = Path(configured).expanduser()
-    elif sys.platform == "darwin" and Path("/data-fast").is_dir():
-        root = Path("/data-fast/backup/timelapse-artifacts/update-store")
-    else:
-        root = Path("/var/lib/timelapse")
+    root = Path(os.getenv("TIMELAPSE_UPDATE_STORE") or ("/data-fast/backup/timelapse-artifacts/update-store" if sys.platform == "darwin" and Path("/data-fast").is_dir() else "/var/lib/timelapse")).expanduser()
     path = root / folder / filename
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -7396,9 +7379,7 @@ def _os_bundle_store_root() -> Path:
     configured = os.getenv("TIMELAPSE_OS_BUNDLE_STORE")
     if configured:
         return Path(configured).expanduser()
-    if sys.platform == "darwin" and Path("/data-fast").is_dir():
-        return Path("/data-fast/backup/timelapse-artifacts/os-bundles")
-    return Path("/Users/Shared/TimeLapsePro/os-bundles") if sys.platform == "darwin" else Path("/var/lib/timelapse/os-bundles")
+    return Path("/data-fast/backup/timelapse-artifacts/os-bundles") if sys.platform == "darwin" and Path("/data-fast").is_dir() else (Path("/Users/Shared/TimeLapsePro/os-bundles") if sys.platform == "darwin" else Path("/var/lib/timelapse/os-bundles"))
 
 
 def _docker_available() -> tuple[bool, str | None]:
@@ -8752,69 +8733,6 @@ def _git_tag_poller_loop(interval_hours: float = 1.0) -> None:
         except Exception as _poll_err:
             log.warning("Git tag poller fejl: %s", _poll_err)
 
-        _time.sleep(interval_s)
-
-
-# ── CMDB-baseret OS-katalogopdagelse ─────────────────────────────────────────
-
-def _refresh_os_catalogs_from_cmdb() -> None:
-    """Refresh OS-kandidater for aktuelle Edge-inventarer på Headend.
-
-    Headend må bruge Docker og upstream-kataloget; Edge rapporterer kun
-    installerede versioner og henter senere et signeret offline artifact.
-    """
-    db = SessionLocal()
-    try:
-        system_user = (
-            db.query(User)
-            .filter(User.role == "super_admin")
-            .order_by(User.id)
-            .first()
-        )
-        if not system_user:
-            log.warning("OS-katalogopdagelse: ingen super_admin fundet — springer over")
-            return
-        inventories = (
-            db.query(DeviceInventory)
-            .filter(DeviceInventory.package_manager.ilike("%apt%"))
-            .order_by(DeviceInventory.device_id)
-            .all()
-        )
-        for inv in inventories:
-            if not inv.os_packages:
-                continue
-            try:
-                refresh_os_catalog_from_mac_builder(
-                    OsCatalogBuilderPayload(
-                        device_id=inv.device_id,
-                        environment=inv.environment or "lab",
-                        image="ubuntu:24.04",
-                        architecture="arm64",
-                        source=f"headend-scheduled-cmdb-refresh:{now_utc():%Y-%m-%d}",
-                        create_updates=True,
-                    ),
-                    system_user,
-                    db,
-                )
-                log.info("OS-katalogopdagelse: opdateret for %s", inv.device_id)
-            except Exception as exc:
-                db.rollback()
-                log.warning("OS-katalogopdagelse: %s fejlede: %s", inv.device_id, exc)
-    finally:
-        db.close()
-
-
-def _os_catalog_refresh_loop(interval_hours: float = 24.0) -> None:
-    """Kør én refresh efter opstart og derefter mindst hver time/døgn."""
-    import time as _time
-
-    interval_s = max(3600, interval_hours * 3600)
-    _time.sleep(60)
-    while True:
-        try:
-            _refresh_os_catalogs_from_cmdb()
-        except Exception as exc:
-            log.warning("OS-katalogopdagelse fejlede: %s", exc)
         _time.sleep(interval_s)
 
 
