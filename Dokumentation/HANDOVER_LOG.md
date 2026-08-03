@@ -1670,3 +1670,9 @@ person vide".
 - **E2E-evidens:** LAB-update `#149` til `TL-C87FF9587CA0` er `deployed`. Pre-update backup blev uploadet, artifact-receipt på Edge viser `v2.8.1-lab.28`, CMDB-target har status `deployed` uden fejl, `timelapse-edge` og `timelapse-totp` er aktive, og lokal portal `/mgmt/cli` svarer HTTP 200.
 - **Test:** `python3 -W error::SyntaxWarning -m py_compile edge/scripts/totp-service.py` og `pytest -q tests/test_edge_release_contract.py` — 31 passed.
 - **GitHub:** Direkte push til beskyttet `main` blev korrekt afvist. Commit og tag er pushet på review-branch `codex/edge-terminal-renderer`; den skal PR-godkendes og merges til `main` efter CI.
+
+### Handover 2026-08-03 17:11 — Codex: GPG-signeret Orange Pi 4 Pro Edge-base
+- **Fund og rettelse:** Headendens system-LaunchDaemon indlæste `/etc/timelapse/headend.env`, men filen manglede `TIMELAPSE_GPG_KEY`. Det kunne få nye generatorartefakter til at falde tilbage til `system-hash`. Den aktive, Edge-trustede GPG-nøgle `165C4D4D88F4B07487F3D7DFF75C248F694C097F` er nu konfigureret i den beskyttede miljøfil. Headend blev genstartet kontrolleret; `/api/health` returnerede OK.
+- **Bygget og verificeret:** Ren worktree fra GPG-signeret tag `v2.8.1-lab.28` / commit `b25703ed6942c9b013293fc6d6f84f637f795201`. Artifact `TL-EDGE-IMG-ORANGEPI4PRO-20260803150902` er registreret i kataloget. Rootfs `timelapse-edge-orangepi4pro-20260803150902.rootfs.tar.gz` er 153 MB, SHA-256 `4ddcf5f3b9e0b13bc4e2009692b17018f66d56d43391e8ab25e0dfae389984a4`.
+- **Evidens:** Manifestets detached OpenPGP-signatur er verificeret lokalt med `gpg --verify`; signer er `165C…C097F`. SBOM indeholder 249 OS-pakker og 19 Python/venv-pakker.
+- **Afventer bevidst:** Den flashbare `.img.gz` bygges først efter valg af ny fysisk Edge-ID/QR og kameralokation. De værdier skaber unik lokal TLS, QR/TOTP og bootstrap-binding; den aktive Edges identitet genbruges aldrig.
