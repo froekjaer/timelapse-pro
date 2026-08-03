@@ -472,6 +472,7 @@ echo "[inject] Opretter timelapse mappestruktur..."
 mkdir -p /mnt/root/opt/timelapse/edge
 mkdir -p /mnt/root/opt/timelapse/venv
 mkdir -p /mnt/root/etc/timelapse/device_keys
+mkdir -p /mnt/root/etc/timelapse/certs
 mkdir -p /mnt/root/data
 mkdir -p /mnt/root/run/timelapse
 
@@ -489,7 +490,11 @@ for TAR_PATH in \
     "opt/timelapse" \
     "etc/timelapse" \
     "etc/systemd/system/timelapse-edge.service" \
-    "etc/systemd/system/timelapse-bootstrap.service"
+    "etc/systemd/system/timelapse-bootstrap.service" \
+    "etc/systemd/system/timelapse-bt-pan.service" \
+    "etc/systemd/system/timelapse-bt-agent.service" \
+    "etc/systemd/system/timelapse-captive.service" \
+    "etc/systemd/system/timelapse-totp.service"
 do
     echo "[inject] Udpakker: $TAR_PATH"
     tar -xzf "$ROOTFS_TAR" -C /mnt/root \
@@ -502,6 +507,33 @@ done
 echo "[inject] Injicerer bootstrap.yaml..."
 cp "$BOOTSTRAP_YAML" /mnt/root/etc/timelapse/bootstrap.yaml
 chmod 600 /mnt/root/etc/timelapse/bootstrap.yaml
+
+# The image receives a unique, camera-bound break-glass TOTP secret. There is
+# deliberately no shared factory default.
+cat > /mnt/root/etc/timelapse/bt-config.yaml << EOF
+totp:
+  secret: ${BT_TOTP_SECRET:?missing unique device TOTP secret}
+  sid: ${BT_TOTP_SID:?missing device TOTP identifier}
+management:
+  enable_interactive_shell: ${INTERACTIVE_SHELL_ENABLED:-false}
+  cert_file: /etc/timelapse/certs/mgmt.crt
+  key_file: /etc/timelapse/certs/mgmt.key
+EOF
+chmod 600 /mnt/root/etc/timelapse/bt-config.yaml
+
+# Local management is issued by the central Edge CA before the image leaves
+# the office.  The private key is copied through the privileged build
+# container as a temporary file, never exposed as a Docker environment value.
+if [[ -n "${LOCAL_MGMT_HOSTNAME:-}" ]]; then
+    test -s /work/local-mgmt.crt
+    test -s /work/local-mgmt.key
+    test -s /work/edge-local-ca.crt
+    install -m 0644 /work/local-mgmt.crt /mnt/root/etc/timelapse/certs/mgmt.crt
+    install -m 0600 /work/local-mgmt.key /mnt/root/etc/timelapse/certs/mgmt.key
+    install -m 0644 /work/edge-local-ca.crt /mnt/root/etc/timelapse/certs/edge-local-ca.crt
+    echo "${LOCAL_MGMT_HOSTNAME%.local}" > /mnt/root/etc/hostname
+    echo "[inject] CA-udstedt lokal TLS installeret for ${LOCAL_MGMT_HOSTNAME}"
+fi
 
 # ── Timelapse bruger ──────────────────────────────────────────────────────────
 if ! grep -q "^timelapse:" /mnt/root/etc/passwd 2>/dev/null; then
@@ -552,6 +584,17 @@ EOF
     ln -sf /etc/systemd/system/timelapse-bootstrap.service \
         "$WANTS_DIR/timelapse-bootstrap.service"
 fi
+
+# First boot must include the complete local technician surface. Previously
+# these signed unit files were built but not copied into flashable images.
+for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-captive.service timelapse-totp.service; do
+    if [ -f "/mnt/root/etc/systemd/system/$UNIT" ]; then
+        ln -sf "/etc/systemd/system/$UNIT" "$WANTS_DIR/$UNIT"
+        echo "[inject]   $UNIT aktiveret"
+    else
+        echo "[inject]   ADVARSEL: $UNIT mangler i rootfs"
+    fi
+done
 
 # ── WiFi konfiguration ───────────────────────────────────────────────────────
 # WIFI_METHOD, WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY sættes via env-vars fra Python
@@ -843,6 +886,13 @@ def _inject_via_docker(
     tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
     tunnel_headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222")),
     tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel"),
+    interactive_shell_enabled: bool = False,
+    bt_totp_secret: str = "",
+    bt_totp_sid: str = "",
+    local_mgmt_hostname: str = "",
+    local_mgmt_cert_pem: str = "",
+    local_mgmt_key_pem: str = "",
+    edge_local_ca_pem: str = "",
 ) -> None:
     """
     Injectér agent-filer i base-image via Docker --privileged.
@@ -883,6 +933,10 @@ def _inject_via_docker(
         "-e", f"TUNNEL_HEADEND_HOST={tunnel_headend_host}",
         "-e", f"TUNNEL_HEADEND_PORT={tunnel_headend_port}",
         "-e", f"TUNNEL_HEADEND_USER={tunnel_headend_user}",
+        "-e", f"INTERACTIVE_SHELL_ENABLED={'true' if interactive_shell_enabled else 'false'}",
+        "-e", f"BT_TOTP_SECRET={bt_totp_secret}",
+        "-e", f"BT_TOTP_SID={bt_totp_sid}",
+        "-e", f"LOCAL_MGMT_HOSTNAME={local_mgmt_hostname}",
         "ubuntu:22.04", "sleep", "3600",
     ]
     start = subprocess.run(
@@ -922,6 +976,27 @@ def _inject_via_docker(
             )
         finally:
             os.unlink(_bstp_tmp)
+
+        # TLS material is deliberately transferred as short-lived files rather
+        # than Docker environment variables, which are inspectable by local
+        # Docker users for the lifetime of a container.
+        for filename, content in {
+            "local-mgmt.crt": local_mgmt_cert_pem,
+            "local-mgmt.key": local_mgmt_key_pem,
+            "edge-local-ca.crt": edge_local_ca_pem,
+        }.items():
+            if not content:
+                continue
+            with tempfile.NamedTemporaryFile("w", suffix=f"-{filename}", delete=False, encoding="ascii") as temp_file:
+                temp_file.write(content)
+                temp_name = temp_file.name
+            try:
+                subprocess.run(
+                    ["docker", "cp", temp_name, f"{container_id}:/work/{filename}"],
+                    check=True, capture_output=True,
+                )
+            finally:
+                os.unlink(temp_name)
 
         # ── 3. Kør inject-script via stdin ────────────────────────────────────
         progress(f"   Kører inject-script...")
@@ -1000,6 +1075,14 @@ def inject_edge_image(
     tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
     tunnel_headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222")),
     tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel"),
+    interactive_shell_enabled: bool = False,
+    bt_totp_secret: str = "",
+    bt_totp_sid: str = "",
+    local_mgmt_hostname: str = "",
+    local_mgmt_cert_pem: str = "",
+    local_mgmt_key_pem: str = "",
+    edge_local_ca_pem: str = "",
+    expected_device_id: str = "",
 ) -> dict:
     """
     Injectér edge-agent i base-image og producér flashbart .img.gz.
@@ -1042,6 +1125,20 @@ def inject_edge_image(
         headend_port=tunnel_headend_port,
         headend_user=tunnel_headend_user,
     )
+    if not bt_totp_secret or not bt_totp_sid:
+        raise ValueError("Flashable image kræver en unik, provisioneret BT TOTP-secret og identifikator")
+    tls_values = (local_mgmt_hostname, local_mgmt_cert_pem, local_mgmt_key_pem, edge_local_ca_pem)
+    if any(tls_values) and not all(tls_values):
+        raise ValueError("Lokal TLS skal indeholde hostname, certifikat, nøgle og CA-certifikat samlet")
+    if not all(tls_values):
+        raise ValueError("Flashable image kræver et centralt CA-udstedt lokalt TLS-certifikat")
+    if not expected_device_id.strip():
+        raise ValueError("Flashable image kræver forventet fysisk Edge-ID til MAC-binding")
+    normalized_device_id = "".join(ch for ch in expected_device_id.lower() if ch.isalnum())
+    if normalized_device_id.startswith("tl"):
+        normalized_device_id = normalized_device_id[2:]
+    if local_mgmt_hostname != f"tl-{normalized_device_id}.local":
+        raise ValueError("Lokalt TLS-hostname matcher ikke den forventede Edge-ID")
 
     tgt          = _load_target(target, root)
     display_name = tgt.get("display_name", target)
@@ -1094,6 +1191,7 @@ def inject_edge_image(
             {
                 "headend_url": headend_url,
                 "bootstrap_token": effective_token,
+                "expected_device_id": expected_device_id.strip(),
             },
             sort_keys=False,
         )
@@ -1131,6 +1229,14 @@ def inject_edge_image(
         tunnel_headend_host  = tunnel_headend_host,
         tunnel_headend_port  = tunnel_headend_port,
         tunnel_headend_user  = tunnel_headend_user,
+        interactive_shell_enabled = interactive_shell_enabled,
+        bt_totp_secret       = bt_totp_secret,
+        bt_totp_sid          = bt_totp_sid,
+        local_mgmt_hostname  = local_mgmt_hostname,
+        local_mgmt_cert_pem  = local_mgmt_cert_pem,
+        local_mgmt_key_pem   = local_mgmt_key_pem,
+        edge_local_ca_pem    = edge_local_ca_pem,
+        expected_device_id   = expected_device_id,
     )
 
     # Ryd midlertidig work_img
@@ -1174,6 +1280,11 @@ def inject_edge_image(
             "sha256": _sha256_file(rootfs_path),
         },
         "headend_url":   headend_url,
+        "local_management": {
+            "hostname": local_mgmt_hostname,
+            "certificate_authority": "TimeLapse Pro Edge Local CA",
+            "expected_device_id": expected_device_id,
+        },
         "token_baked_in": bool(bootstrap_token),
         "flash_instructions": {
             "linux_mac": f"gunzip -c {gz_name} | sudo dd of=/dev/sdX bs=4M status=progress",

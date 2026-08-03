@@ -206,9 +206,11 @@ export function CameraPage() {
   const [locationExpanded, setLocationExpanded] = useState(false)
 
   // ── BT TOTP QR ───────────────────────────────────────────────────────────
-  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,source:string,qr_code:string,is_factory_default:boolean}|null>(null)
+  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,source:string,uri:string,qr_code:string,account_name:string,device_id:string|null,is_factory_default:boolean}|null>(null)
   const [btTotpLoading, setBtTotpLoading] = useState(false)
   const [btTotpRegen, setBtTotpRegen]     = useState(false)
+  const [btTotpError, setBtTotpError]     = useState<string | null>(null)
+  const [btTotpCopied, setBtTotpCopied]   = useState(false)
 
   // ── Drift-analyse (fase 1, 2026-07-07) ─────────────────────────────────────
   const [driftData, setDriftData]         = useState<DriftAnalysis | null>(null)
@@ -383,28 +385,55 @@ export function CameraPage() {
   async function loadBtTotp() {
     if (!cameraLocation?.id) return
     setBtTotpLoading(true)
+    setBtTotpError(null)
     try {
       const r = await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-qr`, {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       })
-      if (r.ok) setBtTotp(await r.json())
-    } catch { /* silent */ }
+      if (r.ok) {
+        setBtTotp(await r.json())
+      } else {
+        const body = await r.json().catch(() => ({}))
+        setBtTotpError(body.detail ?? 'Kunne ikke hente lokal adgang')
+      }
+    } catch { setBtTotpError('Netværksfejl ved hentning af lokal adgang') }
     finally { setBtTotpLoading(false) }
   }
 
-  async function regenerateBtTotp() {
-    if (!cameraLocation?.id || !confirm('Generér nyt TOTP secret? Det nuværende QR-code bliver ugyldigt.')) return
+  async function provisionBtTotp(rotate = false) {
+    if (!cameraLocation?.id) return
+    if (rotate && !confirm('Rotér lokal adgang? Den eksisterende QR-kode og TOTP-registrering bliver ugyldig.')) return
     setBtTotpRegen(true)
+    setBtTotpError(null)
     try {
-      await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-regenerate`, {
+      const r = await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-regenerate`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       })
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}))
+        throw new Error(body.detail ?? 'Kunne ikke oprette lokal adgang')
+      }
       await loadBtTotp()
-    } catch { /* silent */ }
+    } catch (error) { setBtTotpError(error instanceof Error ? error.message : 'Kunne ikke oprette lokal adgang') }
     finally { setBtTotpRegen(false) }
+  }
+
+  function addBtTotpToAuthenticator() {
+    if (btTotp?.uri) window.location.assign(btTotp.uri)
+  }
+
+  async function copyBtTotpSetupKey() {
+    if (!btTotp?.secret) return
+    try {
+      await navigator.clipboard.writeText(btTotp.secret)
+      setBtTotpCopied(true)
+      window.setTimeout(() => setBtTotpCopied(false), 5000)
+    } catch {
+      setBtTotpError('Browseren kunne ikke kopiere opsætningsnøglen')
+    }
   }
 
   async function reassignToCamera() {
@@ -765,34 +794,41 @@ export function CameraPage() {
               <p className="text-xs text-gray-400">QR-kode til lokal management adgang via Bluetooth</p>
             </div>
             <div className="flex gap-2">
-              {!btTotp && (
+              {!btTotp && !btTotpError && (
                 <button onClick={loadBtTotp} disabled={btTotpLoading}
                   className="px-3 py-1.5 text-xs bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50">
                   {btTotpLoading ? 'Henter…' : 'Vis QR-kode'}
                 </button>
               )}
               {btTotp && (
-                <button onClick={regenerateBtTotp} disabled={btTotpRegen}
+                <button onClick={() => provisionBtTotp(true)} disabled={btTotpRegen}
                   className="px-3 py-1.5 text-xs bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50">
-                  {btTotpRegen ? 'Genererer…' : 'Regenerér'}
+                  {btTotpRegen ? 'Roterer…' : 'Rotér adgang'}
                 </button>
               )}
             </div>
           </div>
+          {btTotpError && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs text-amber-900">{btTotpError}</p>
+              <button onClick={() => provisionBtTotp(false)} disabled={btTotpRegen}
+                className="mt-2 px-3 py-1.5 text-xs bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50">
+                {btTotpRegen ? 'Opretter…' : 'Opret unik lokal adgang'}
+              </button>
+            </div>
+          )}
           {btTotp && (
-            <div className="flex gap-4 items-start">
+            <div className="flex flex-col sm:flex-row gap-4 items-start">
               <img src={btTotp.qr_code} alt="TOTP QR" className="w-36 h-36 rounded-lg border border-gray-100" />
               <div className="flex-1 text-xs space-y-2">
                 {(() => {
                   const srcLabel: Record<string,string> = {
-                    'factory-default': '🔑 Fabriksstandard',
                     'global':          '🌐 Global',
                     'kunde':           '🏢 Kunde',
                     'site':            '📍 Site',
                     'kamera':          '📷 Kamera',
                   }
                   const srcColor: Record<string,string> = {
-                    'factory-default': 'bg-gray-50 text-gray-600 border-gray-200',
                     'global':          'bg-purple-50 text-purple-700 border-purple-200',
                     'kunde':           'bg-blue-50 text-blue-700 border-blue-200',
                     'site':            'bg-teal-50 text-teal-700 border-teal-200',
@@ -800,20 +836,28 @@ export function CameraPage() {
                   }
                   const src = btTotp!.source
                   return (
-                    <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium border ${srcColor[src] ?? srcColor['factory-default']}`}>
+                    <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium border ${srcColor[src] ?? srcColor['kamera']}`}>
                       {srcLabel[src] ?? src}
                     </div>
                   )
                 })()}
                 <p className="text-gray-500 mt-1">
-                  Scan med Google Authenticator eller tilsvarende.
-                  {btTotp!.source === 'factory-default' && ' Gælder alle enheder — ændres i config_defaults eller hierarki-overrides.'}
+                  QR-koden er kun til lokal Edge-adgang for denne binding.
                   {btTotp!.source === 'kunde' && ' Gælder alle kameraer hos denne kunde.'}
                   {btTotp!.source === 'site' && ' Gælder alle kameraer på dette site.'}
                   {btTotp!.source === 'kamera' && ' Specifik for dette kamera.'}
                 </p>
                 <p className="text-gray-400 font-mono">SID: {btTotp.sid}</p>
-                <p className="text-gray-300 text-xs break-all">Secret: {btTotp.secret}</p>
+                <p className="text-gray-500 font-medium">Authenticator-navn: {btTotp.account_name}</p>
+                <button onClick={addBtTotpToAuthenticator}
+                  className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700">
+                  Åbn i Apple Adgangskoder
+                </button>
+                <button onClick={copyBtTotpSetupKey}
+                  className="ml-2 inline-flex items-center px-3 py-1.5 text-xs font-medium text-sky-700 border border-sky-200 rounded-lg hover:bg-sky-50">
+                  {btTotpCopied ? 'Opsætningsnøgle kopieret' : 'Kopiér opsætningsnøgle'}
+                </button>
+                <p className="text-gray-400">På iPhone åbner standardlinket Apple Adgangskoder. Til en anden app vælges “indtast opsætningsnøgle” i appen og den kopierede nøgle indsættes. iOS tillader ikke, at en webside vælger authenticator-app for brugeren.</p>
               </div>
             </div>
           )}

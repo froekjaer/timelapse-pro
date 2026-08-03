@@ -458,11 +458,22 @@ function AIRuntimeTab() {
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
         {fields.map(field => <label key={field.key} className="bg-gray-900 border border-white/8 rounded-lg p-3 block">
           <span className="text-xs text-slate-400 block mb-1.5">{field.label}</span>
-          <input list={field.type === 'model' ? 'ollama-models' : undefined}
+          {field.type === 'model' ? (
+            <select
+              value={field.value}
+              onChange={e => setFields(all => all.map(f => f.key === field.key ? { ...f, value: e.target.value } : f))}
+              className="w-full bg-gray-800 border border-white/10 rounded-md px-3 py-2 text-sm text-white">
+              <option value="">— Vælg model —</option>
+              {models.map(m => <option key={m} value={m}>{m}</option>)}
+              {field.value && !models.includes(field.value) && <option value={field.value}>{field.value} (ikke installeret)</option>}
+            </select>
+          ) : (
+          <input
             type={field.type === 'int' || field.type === 'float' ? 'number' : 'text'}
             min={field.min} max={field.max} step={field.type === 'float' ? '0.01' : undefined}
             value={field.value} onChange={e => setFields(all => all.map(f => f.key === field.key ? { ...f, value: e.target.value } : f))}
             className="w-full bg-gray-800 border border-white/10 rounded-md px-3 py-2 text-sm text-white" />
+          )}
           <span className="text-[11px] text-slate-600 mt-1 block font-mono">{field.key} · default {field.default}</span>
         </label>)}
       </div>

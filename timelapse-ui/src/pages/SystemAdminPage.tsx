@@ -237,6 +237,7 @@ export function SystemAdminPage() {
   const [devices, setDevices]   = useState<Device[]>([])
   const [selectedDevice, setSelectedDevice] = useState('')
   const [settings, setSettings] = useState<Record<string,string>>({})
+  const [installedModels, setInstalledModels] = useState<{name:string; size:number}[]>([])
   const [storageRoots, setStorageRoots] = useState<StorageRootStatus[]>([])
   const [savingStorage, setSavingStorage] = useState<number | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
@@ -249,6 +250,7 @@ export function SystemAdminPage() {
   const [localLiveViewEnabled, setLocalLiveViewEnabled] = useState(true)
   const [liveViewMaxDurationS, setLiveViewMaxDurationS] = useState('180')
   const [continuousLiveViewAllowed, setContinuousLiveViewAllowed] = useState(false)
+  const [interactiveShellEnabled, setInteractiveShellEnabled] = useState(false)
   const [savingServiceAccess, setSavingServiceAccess] = useState(false)
   const [serviceAccessSaved, setServiceAccessSaved] = useState(false)
   const [tunnelEnabled, setTunnelEnabled] = useState(false)
@@ -289,6 +291,7 @@ export function SystemAdminPage() {
 
   useEffect(() => {
     api('/api/admin/settings').then((s: any) => setSettings(s)).catch(() => {})
+    api('/api/ai/settings').then((s: any) => setInstalledModels(s.installed_models || [])).catch(() => {})
     loadStorage()
   }, [])
 
@@ -340,6 +343,7 @@ export function SystemAdminPage() {
       setLocalLiveViewEnabled(serviceAccess.live_view_enabled !== false)
       setLiveViewMaxDurationS(String(serviceAccess.live_view_max_duration_s ?? 180))
       setContinuousLiveViewAllowed(!!serviceAccess.allow_continuous_live_view)
+      setInteractiveShellEnabled(!!serviceAccess.interactive_shell_enabled)
       setMultiCameraMode(dc.multi_camera_mode ?? 'single')
       const tun = dc.ssh_tunnel ?? {}
       setTunnelEnabled(!!tun.enabled)
@@ -419,6 +423,7 @@ export function SystemAdminPage() {
           live_view_enabled: localLiveViewEnabled,
           live_view_max_duration_s: parseInt(liveViewMaxDurationS),
           allow_continuous_live_view: continuousLiveViewAllowed,
+          interactive_shell_enabled: interactiveShellEnabled,
         }),
       })
       if (!serviceAccessEnabled) setLabActive(false)
@@ -627,6 +632,11 @@ export function SystemAdminPage() {
           description="Kræver eksplicit tilladelse. Streamen fortsætter indtil lokal Stop eller centralt nødstop.">
           <Toggle value={continuousLiveViewAllowed} onChange={setContinuousLiveViewAllowed}
             label={continuousLiveViewAllowed ? 'Tilladt' : 'Ikke tilladt'} />
+        </Field>
+        <Field label="Interaktiv shell i lokal tekniker-UI"
+          description="Giver en autentificeret servicetekniker en lokal bash-session. Brug kun under kontrolleret service og slå fra efter arbejdet.">
+          <Toggle value={interactiveShellEnabled} onChange={setInteractiveShellEnabled}
+            label={interactiveShellEnabled ? 'Tilladt' : 'Deaktiveret'} />
         </Field>
         <button onClick={saveServiceAccess} disabled={savingServiceAccess}
           className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg disabled:opacity-50">
@@ -874,11 +884,79 @@ export function SystemAdminPage() {
         </Field>
         <Field label="Ollama vision model" description="Standard lokal vision-model"
           tooltip="Standard Ollama vision model til billedanalyse. Fx qwen2.5vl:7b eller llama3.2-vision:11b. Skal være pulled på Ollama server. Mindre modeller = hurtigere men mindre præcis. Større = bedre kvalitet men langsommere.">
-          <Txt value={settings.ollama_vision_model ?? ''} onChange={v => setSettings(s => ({...s, ollama_vision_model: v}))} mono />
+          <select
+            value={settings.ollama_vision_model ?? ''}
+            onChange={e => setSettings(s => ({...s, ollama_vision_model: e.target.value}))}
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 bg-white font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="">{installedModels.length === 0 ? 'Ingen modeller fundet...' : '— Vælg model —'}</option>
+            {installedModels.map(m => (
+              <option key={m.name} value={m.name}>
+                {m.name} ({(m.size / 1024 / 1024 / 1024).toFixed(1)} GB)
+              </option>
+            ))}
+            {settings.ollama_vision_model && !installedModels.find(m => m.name === settings.ollama_vision_model) && (
+              <option value={settings.ollama_vision_model}>{settings.ollama_vision_model} (ikke installeret)</option>
+            )}
+          </select>
         </Field>
         <Field label="Ollama tekstmodel" description="Standard lokal tekstmodel til SIEM/CMDB"
           tooltip="Standard Ollama tekstmodel til SIEM log analyse og CMDB queries. Fx llama3.2:latest. Skal være pulled på Ollama server. Mindre modeller = hurtigere men mindre smarte. Større = bedre reasoning men langsommere.">
-          <Txt value={settings.ollama_text_model ?? ''} onChange={v => setSettings(s => ({...s, ollama_text_model: v}))} mono />
+          <select
+            value={settings.ollama_text_model ?? ''}
+            onChange={e => setSettings(s => ({...s, ollama_text_model: e.target.value}))}
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 bg-white font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="">{installedModels.length === 0 ? 'Ingen modeller fundet...' : '— Vælg model —'}</option>
+            {installedModels.map(m => (
+              <option key={m.name} value={m.name}>
+                {m.name} ({(m.size / 1024 / 1024 / 1024).toFixed(1)} GB)
+              </option>
+            ))}
+            {settings.ollama_text_model && !installedModels.find(m => m.name === settings.ollama_text_model) && (
+              <option value={settings.ollama_text_model}>{settings.ollama_text_model} (ikke installeret)</option>
+            )}
+          </select>
+        </Field>
+        <Field label="Vision fallback-modeller" description="Midlertidig lav-memory visionmodel (kommasepareret)"
+          tooltip="Vision-modeller der prøves hvis standardmodellen fejler eller ved lav memory-mode. Kommasepareret liste, fx qwen3-vl:8b,minicpm-v:8b. Vælges fra installede modeller — du kan også tilføje/fjerne manuelt.">
+          <select
+            value=""
+            onChange={e => {
+              if (!e.target.value) return
+              const current = (settings.ollama_fallback_models ?? '').split(',').map(s => s.trim()).filter(Boolean)
+              if (!current.includes(e.target.value)) {
+                setSettings(s => ({...s, ollama_fallback_models: [...current, e.target.value].join(',')}))
+              }
+            }}
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 bg-white font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="">— Tilføj fallback model —</option>
+            {installedModels
+              .filter(m => !(settings.ollama_fallback_models ?? '').split(',').map(s => s.trim()).includes(m.name))
+              .map(m => (
+                <option key={m.name} value={m.name}>
+                  {m.name} ({(m.size / 1024 / 1024 / 1024).toFixed(1)} GB)
+                </option>
+              ))}
+          </select>
+          {(settings.ollama_fallback_models ?? '').split(',').filter(Boolean).length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {(settings.ollama_fallback_models ?? '').split(',').map(s => s.trim()).filter(Boolean).map(name => (
+                <span key={name} className="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-50 text-blue-700 text-xs font-mono">
+                  {name}
+                  <button
+                    type="button"
+                    onClick={() => setSettings(s => ({
+                      ...s,
+                      ollama_fallback_models: (s.ollama_fallback_models ?? '').split(',').map(x => x.trim()).filter(x => x && x !== name).join(',')
+                    }))}
+                    className="text-blue-400 hover:text-red-500"
+                  >✕</button>
+                </span>
+              ))}
+            </div>
+          )}
         </Field>
         <Field label="Ollama vision timeout" unit="sekunder"
           tooltip="Maksimal ventetid på Ollama vision model inference. Store vision modeller kan tage 10-60 sekunder. For lav værdi kan give timeout og fejlet analyse. Høj værdi kan forsinke feedback til bruger. Typisk 30-120 sekunder.">

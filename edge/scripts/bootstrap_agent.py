@@ -325,7 +325,15 @@ def main() -> None:
 
     # 3. MAC → device_id
     mac = _primary_mac()
-    device_id = cfg.get("device_id") or _derive_device_id(mac)
+    derived_device_id = _derive_device_id(mac)
+    expected_device_id = str(cfg.get("expected_device_id") or "").strip()
+    if expected_device_id and expected_device_id != derived_device_id:
+        log.critical(
+            "MAC-binding afvist: forventet %s, men denne Edge er %s. Enrollment stoppes.",
+            expected_device_id, derived_device_id,
+        )
+        sys.exit(1)
+    device_id = cfg.get("device_id") or expected_device_id or derived_device_id
     log.info("Device ID: %s", device_id)
 
     # 4. SSH-nøglepar

@@ -31,7 +31,7 @@ import threading
 import yaml
 import pyotp
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, Request, Form, Response, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, StreamingResponse
@@ -67,6 +67,15 @@ SERVICE_POLICY = {
     "live_view_max_duration_s": 180,
     "allow_continuous_live_view": False,
 }
+# A broader TOTP tolerance is only acceptable with a local brute-force guard.
+# State intentionally remains in memory: reboot clears attempts, but local
+# physical access is still required and the normal firewall/session controls
+# remain in force.
+AUTH_FAILURES: dict[str, dict[str, float | int]] = {}
+AUTH_FAILURES_LOCK = threading.Lock()
+AUTH_FAILURE_LIMIT = 5
+AUTH_FAILURE_WINDOW_S = 15 * 60
+AUTH_LOCKOUT_S = 15 * 60
 BASH_PATH = os.getenv("TIMELAPSE_TECH_SHELL", "/bin/bash")
 CLI_ALLOWED_FLAGS = {
     "--status",
@@ -120,8 +129,10 @@ FOCUS_DRIVE_OPTIONS = ["Near 1", "Near 2", "Near 3", "Far 1", "Far 2", "Far 3", 
 def _default_config() -> dict:
     return {
         "totp": {
-            "secret": "JBSWY3DPEHPK3PXP",
-            "sid": "factory-default",
+            # Flashable images receive a unique secret during injection. There
+            # is deliberately no shared factory credential fallback.
+            "secret": "",
+            "sid": "unprovisioned",
             "valid_window": 3,
         },
         "management": {
@@ -148,6 +159,12 @@ def _normalise_service_policy(raw: dict | None) -> dict:
         "live_view_enabled": bool(raw.get("live_view_enabled", True)),
         "live_view_max_duration_s": max_duration,
         "allow_continuous_live_view": bool(raw.get("allow_continuous_live_view", False)),
+        # Retain an explicitly injected first-boot value until Headend has an
+        # explicit setting. Existing devices therefore remain fail-closed.
+        "interactive_shell_enabled": bool(raw.get(
+            "interactive_shell_enabled",
+            load_config()["management"].get("enable_interactive_shell", False),
+        )),
     }
 
 
@@ -164,6 +181,10 @@ def _refresh_service_policy() -> dict:
     with SERVICE_POLICY_LOCK:
         SERVICE_POLICY.clear()
         SERVICE_POLICY.update(policy)
+    cfg = load_config()
+    if cfg["management"].get("enable_interactive_shell", False) != policy["interactive_shell_enabled"]:
+        cfg["management"]["enable_interactive_shell"] = policy["interactive_shell_enabled"]
+        save_config(cfg)
     return policy
 
 
@@ -269,24 +290,65 @@ def _iptables_remove(ip: str) -> None:
         pass
 
 
+def _totp_login_allowed(client_ip: str) -> tuple[bool, int]:
+    """Return whether another local TOTP attempt is allowed and wait seconds."""
+    now = time.time()
+    with AUTH_FAILURES_LOCK:
+        state = AUTH_FAILURES.get(client_ip)
+        if not state:
+            return True, 0
+        locked_until = float(state.get("locked_until", 0))
+        if locked_until > now:
+            return False, max(1, int(locked_until - now))
+        if now - float(state.get("first_failure", now)) > AUTH_FAILURE_WINDOW_S:
+            AUTH_FAILURES.pop(client_ip, None)
+    return True, 0
+
+
+def _record_totp_failure(client_ip: str) -> None:
+    now = time.time()
+    with AUTH_FAILURES_LOCK:
+        state = AUTH_FAILURES.get(client_ip, {"count": 0, "first_failure": now, "locked_until": 0})
+        if now - float(state["first_failure"]) > AUTH_FAILURE_WINDOW_S:
+            state = {"count": 0, "first_failure": now, "locked_until": 0}
+        state["count"] = int(state["count"]) + 1
+        if int(state["count"]) >= AUTH_FAILURE_LIMIT:
+            state["locked_until"] = now + AUTH_LOCKOUT_S
+            log.warning("Lokal TOTP låst i %ds efter gentagne fejl fra %s", AUTH_LOCKOUT_S, client_ip)
+        AUTH_FAILURES[client_ip] = state
+
+
+def _clear_totp_failures(client_ip: str) -> None:
+    with AUTH_FAILURES_LOCK:
+        AUTH_FAILURES.pop(client_ip, None)
+
+
 # ── HTML templates ────────────────────────────────────────────────────────────
 def _login_page(error: str = "") -> str:
     err_html = f'<p class="error">{error}</p>' if error else ""
-    # Vis TOTP-kilde badge — factory-default = gul advarsel, CMDB = grøn
+    # A missing secret is a provisioning fault, not a usable factory fallback.
     try:
         _cfg = load_config()
-        _sid = _cfg["totp"].get("sid", "factory-default")
+        _sid = _cfg["totp"].get("sid", "unprovisioned")
+        _is_unprovisioned = not bool(_cfg["totp"].get("secret", ""))
     except Exception:
-        _sid = "factory-default"
-    _is_factory = (_sid == "factory-default")
+        _sid = "unprovisioned"
+        _is_unprovisioned = True
     _badge_color = "#4fc3f7"   # blå/neutral
-    if _is_factory:
-        _badge_text = "🔑 Fabriksstandard QR-kode"
-        _badge_hint = "Brug den medfølgende QR-kode fra kameraæsken eller CMDB"
+    if _is_unprovisioned:
+        _badge_color = "#ef5350"
+        _badge_text = "Lokal adgang er ikke provisioneret"
+        _badge_hint = "Kontakt administratoren. Enheden har ikke en delt fabriksadgangskode."
     else:
         _badge_text = f"🔑 QR-kode: {_sid}"
         _badge_hint = "Brug den QR-kode fra CMDB der svarer til dette kamera/site/kunde"
 
+    form_html = "" if _is_unprovisioned else """
+  <form method="post" action="/verify">
+    <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}"
+           maxlength="6" placeholder="000000" autocomplete="off" autofocus required>
+    <button type="submit">Log ind</button>
+  </form>"""
     return f"""<!DOCTYPE html>
 <html lang="da">
 <head>
@@ -316,15 +378,11 @@ def _login_page(error: str = "") -> str:
 <body>
 <div class="card">
   <h1>TimeLapse Pro</h1>
-  <p>Indtast din 6-cifrede TOTP-kode for at få adgang til lokal management</p>
+  <p>{"Indtast din 6-cifrede TOTP-kode for at få adgang til lokal management" if not _is_unprovisioned else "Lokal management er låst, indtil enheden er provisioneret."}</p>
   <div class="badge">{_badge_text}</div>
   <p class="badge-hint">{_badge_hint}</p>
   {err_html}
-  <form method="post" action="/verify">
-    <input type="text" name="code" inputmode="numeric" pattern="[0-9]{{6}}"
-           maxlength="6" placeholder="000000" autocomplete="off" autofocus required>
-    <button type="submit">Log ind</button>
-  </form>
+  {form_html}
   <div class="hostname">{os.uname().nodename}</div>
 </div>
 </body>
@@ -409,7 +467,16 @@ async def index():
 async def verify(request: Request, code: str = Form(...)):
     cfg = load_config()
     totp_cfg = cfg["totp"]
+    if not totp_cfg.get("secret"):
+        log.error("Lokal management-login afvist: Edge er ikke TOTP-provisioneret")
+        return HTMLResponse(_login_page("Lokal adgang er ikke provisioneret"), status_code=503)
     client_ip = request.client.host
+    allowed, wait_s = _totp_login_allowed(client_ip)
+    if not allowed:
+        return HTMLResponse(
+            _login_page(f"For mange forsøg. Prøv igen om ca. {wait_s // 60 + 1} minutter"),
+            status_code=429,
+        )
 
     if not totp_cfg.get("enabled", True):
         return RedirectResponse("/mgmt/", status_code=303)
@@ -418,10 +485,12 @@ async def verify(request: Request, code: str = Form(...)):
     valid_window = totp_cfg.get("valid_window", 1)
 
     if not totp.verify(code, valid_window=valid_window):
+        _record_totp_failure(client_ip)
         log.warning(f"TOTP fejl fra {client_ip}")
         return HTMLResponse(_login_page(error="Forkert kode — prøv igen"), status_code=401)
 
     # Success — opret session og whitelist IP
+    _clear_totp_failures(client_ip)
     token = _make_token(client_ip)
     timeout = cfg["management"].get("session_timeout", 3600)
     _sessions[token] = {
@@ -468,6 +537,32 @@ def _get_time_status() -> dict:
     except Exception:
         result["source"] = "NTP (systemd)" if _systemd_ntp_active() else "Ingen"
     return result
+
+
+def _set_local_time(local_time: str, timezone_name: str) -> tuple[bool, str]:
+    """Set Edge time from an authenticated technician's local-time input."""
+    from zoneinfo import ZoneInfo
+
+    try:
+        parsed = datetime.strptime(local_time, "%Y-%m-%dT%H:%M")
+        localized = parsed.replace(tzinfo=ZoneInfo(timezone_name))
+    except (ValueError, TypeError) as exc:
+        return False, f"Ugyldig dato, tid eller tidszone: {exc}"
+    try:
+        utc_value = localized.astimezone(timezone.utc)
+        result = subprocess.run(
+            ["timedatectl", "set-time", utc_value.strftime("%Y-%m-%d %H:%M:%S UTC")],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if result.returncode != 0:
+            return False, result.stderr.strip() or "timedatectl afviste tidsændringen"
+        log.warning("Lokal tid rettet af tekniker: %s (%s)", local_time, timezone_name)
+        return True, "Dato og tid er opdateret. GPS/Headend synk kan derefter finjustere uret."
+    except Exception as exc:
+        return False, f"Kunne ikke sætte tid: {exc}"
 
 
 def _systemd_ntp_active() -> bool:
@@ -675,6 +770,18 @@ def _mgmt_page(section: str = "time", headend_cfg: dict = None, time_status: dic
         <input type="text" name="ntp_servers" value="{ntp_srv}">
       </div>
       <button type="submit">Gem kamera-overrides</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Ret dato og tid manuelt</h2>
+    <p class="meta">Bruges kun når Edge-uret er forkert. Angiv den lokale tid for den valgte tidszone. Ændringen logges lokalt.</p>
+    <form method="post" action="/mgmt/time/set">
+      <div class="field">
+        <label>Aktuel lokal dato og tid <span class="source">tekniker</span></label>
+        <input type="datetime-local" name="local_time" value="{datetime.now().strftime('%Y-%m-%dT%H:%M')}" required>
+      </div>
+      <button type="submit" style="background:#f59e0b;color:#000" onclick="return confirm('Sæt Edge-uret til den indtastede tid?')">Opdatér dato og tid</button>
     </form>
   </div>
 
@@ -1110,11 +1217,11 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
     if shell_enabled:
         shell_panel = """
     <div class=\"card wide\">
-      <h2>SSH bash</h2>
-      <p class=\"hint\">Interaktiv lokal shell på edgen bag TOTP-sessionen. Luk terminalen når du er færdig.</p>
+      <h2>Terminal og SSH-klient</h2>
+      <p class=\"hint\">Interaktiv lokal shell på Edge. Den indbyggede OpenSSH-klient kan anvendes herfra med en godkendt nøgle og verificeret host key. Luk terminalen når du er færdig.</p>
       <div class=\"actions\">
-        <button type=\"button\" onclick=\"openShell()\">Åbn bash</button>
-        <button class=\"secondary\" type=\"button\" onclick=\"closeShell()\">Luk bash</button>
+        <button type=\"button\" onclick=\"openShell()\">Åbn terminal</button>
+        <button class=\"secondary\" type=\"button\" onclick=\"closeShell()\">Luk terminal</button>
       </div>
       <textarea id=\"term\" spellcheck=\"false\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\"></textarea>
     </div>"""
@@ -1846,7 +1953,7 @@ async def mgmt_time_save(request: Request,
 
     # Opdater bt-config.yaml (kamera-niveau override)
     cfg = load_config()
-    cfg["totp"]["valid_window"] = totp_valid_window
+    cfg["totp"]["valid_window"] = max(0, min(int(totp_valid_window), 10))
     if "time" not in cfg:
         cfg["time"] = {}
     cfg["time"]["timezone"] = timezone
@@ -1861,6 +1968,18 @@ async def mgmt_time_save(request: Request,
 
     hcfg = _fetch_headend_config(cfg)
     return HTMLResponse(_mgmt_page("time", hcfg, _get_time_status(), msg="✓ Gemt"))
+
+
+@app.post("/mgmt/time/set", response_class=HTMLResponse)
+async def mgmt_time_set(request: Request, local_time: str = Form(...)):
+    cfg = load_config()
+    timezone_name = str((cfg.get("time") or {}).get("timezone") or "Europe/Copenhagen")
+    ok, message = _set_local_time(local_time, timezone_name)
+    hcfg = _fetch_headend_config(cfg)
+    return HTMLResponse(
+        _mgmt_page("time", hcfg, _get_time_status(), msg=("✓ " if ok else "Fejl: ") + message),
+        status_code=200 if ok else 400,
+    )
 
 
 @app.get("/mgmt/system", response_class=HTMLResponse)

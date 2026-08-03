@@ -29,6 +29,223 @@
 
 ## Log
 
+### Handover 2026-08-03 13:50 — fra Codex til Claude/Peter: central Edge Local CA, RBAC og offline lokal TLS
+
+- **Implementeret:** Den centrale `TimeLapse Pro Edge Local CA` er oprettet med ECDSA P-256. Rodnøglen ligger med `0600`-rettigheder under `/data-fast/backup/timelapse-artifacts/pki/edge-local-ca/`; den private nøgle eksponeres aldrig gennem API eller UI. CA'en signerer kun lokale Edge-servercertifikater til `tl-<edge-id-uden-TL-prefix>.local` (fx `tl-c87ff9587ca0.local`) samt lokal Bluetooth-IP `192.168.42.1`.
+- **RBAC og audit:** `super_admin` kan initialisere/verificere CA'en. `admin` kan se status og bygge en Edge, hvor leaf-certifikat udstedes internt. Teknikere med capability `On-site idriftsættelse og service` kan hente den offentlige Apple-trustprofil efter normal login/MFA. Nøgleceremonien er logget i SIEM som `edge_local_ca_initialized`; private nøgler returneres aldrig.
+- **Image-binding:** Flashable image kræver nu kamera, central CA og fysisk Edge-ID. Certifikatet, hostname og bootstrap-konfigurationen er bundet til samme Edge-ID. Bootstrap-agenten afviser MAC-mismatch før enrollment. Det beskytter mod, at et klonet eller forkert SD-image får en legitim identitet.
+- **mDNS:** Den aktive Orange Pi `TL-C87FF9587CA0` har `avahi-daemon` installeret og aktiveret. Nye image-targets medbringer Avahi/mDNS-runtime. Der er stadig en fysisk accepttest tilbage: flash en ny, korrekt bundet Edge og bekræft fra iPhone, at `https://tl-c87ff9587ca0.local:8443` ikke giver browseradvarsel, når trustprofilen er installeret.
+- **Backup-evidens:** Krypteret Restic-snapshot `4808b12a` er oprettet efter CA-ceremonien. `restic check --read-data-subset=1/100` bestod, og repository blev spejlet til OneDrive. Den almindelige Headend driftsbackup indeholder kun CA-certifikatet, ikke rodnøglen.
+- **Evidens:** 51 fokuserede PKI/image/release-kontrakter PASS, Python compile PASS, UI-build PASS, Headend `/api/health` og ekstern UI HTTP 200. CA-testudstedelse for `TL-C87FF9587CA0` PASS.
+- **Vigtig rest:** Den eksisterende kørende Edge bruger fortsat sit gamle selvsignerede certifikat. Den skal modtage den signerede Edge-release eller re-flashes med et nyt device-bound image; først derefter må teknikere bruge det nye `.local`-navn som normal vej. Normal tekniker-login via Headend QR/MFA-bro er fortsat ikke end-to-end integreret; den lokale, unikke TOTP er fortsat offline nødadgang.
+- **Filer:** `headend/services/edge_local_pki.py`, `headend/api/edge_local_pki_api.py`, `headend/tools/inject_edge_image.py`, `edge/scripts/bootstrap_agent.py`, `edge/scripts/gen-bt-cert.sh`, `headend/main.py`, `timelapse-ui/src/pages/BackupPage.tsx`, relevante kontrakttests.
+
+### Handover 2026-08-03 14:45 — fra Codex til Claude/Peter: lokal Edge-TLS uden browseradvarsel
+
+- **Live evidens:** Aktiv Edge `192.168.86.134:8443` serverer et selvsigneret certifikat (`CN=timelapse-local`) med SAN kun for `192.168.42.1`, `timelapse0101` og `timelapse.local`. Safari-advarslen er derfor korrekt: både trust chain og navnematch fejler på WiFi-IP-adressen.
+- **Beslutning:** Rå IP-adresser må ikke være den normale teknikervej, og teknikere må ikke instrueres i at omgå browseradvarsler. Målarkitektur: intern TimeLapse Edge CA, unikt leaf-certifikat pr. Edge for stabilt `tl-<device-id>.local`-navn, mDNS på lokalnet og én installeret teknikerprofil med CA-trust + senere personlig serviceidentitet.
+- **Offline-egenskab:** Certifikatvalidering og mDNS er lokale og kræver ikke internet eller Headend-forbindelse. Profilen installeres én gang på telefonen efter Headend-MFA, før site-besøg. Første onboarding uden profil skal fortsat have en kontrolleret bootstrapvej, ikke advarselsomgåelse.
+- **Status:** Intern CA/mTLS er dokumenteret men ikke implementeret. Selvsigned certifikat er fortsat R&D-mekanisme og en go-live-blokker (R05/R08/TV-008).
+
+### Handover 2026-08-03 14:25 — fra Codex til Claude/Peter: lokal manuel tidsretning
+
+- **Implementeret:** Den lokale Edge-portal har nu under tidssiden et felt til manuel indtastning af lokal dato og tid. Den bruger den konfigurerede tidszone, sætter systemtid via `timedatectl`, viser resultatet og logger ændringen.
+- **Afgrænsning:** Funktionen kræver en gyldig lokal session. Den kommer derfor på Edge via signerede update-flow og er ikke en åben endpoint. GPS/Headend-synk kan derefter korrigere finere offset.
+- **Rest:** Helt forkert ur før login kræver den planlagte, særskilte recovery-credential eller den fremtidige personlige mobilcertifikat-løsning. Det må ikke løses ved at gøre almindelig management uautentificeret.
+- **Evidens:** Python-kompilering PASS; 44 generator-/releasekontrakter PASS.
+
+### Handover 2026-08-03 14:05 — fra Codex til Claude/Peter: offline adgang og forkert tid
+
+- **TOTP-tolerance:** Edge begrænser fortsat konfigurationen til højst `±10` TOTP-vinduer á 30 sekunder. Der er tilføjet lokal brute-force-beskyttelse: fem fejl fra samme klient-IP låser nye forsøg i 15 minutter. Tolerance og låsning gælder først på næste signerede Edge-release.
+- **Sikkerhedsvurdering:** En teknikers almindelige Headend-TOTP-secret må ikke caches på Edge for offline validering. Kompromittering af én Edge ville ellers kompromittere teknikerens Headend-MFA. Offline personlig adgang kræver i stedet en separat, ikke-genanvendelig credential, helst en hardware-beskyttet nøgle med challenge-response, som ikke afhænger af ur.
+- **Næste design:** Normal online adgang = Headend QR/MFA-bro. Offline = unik enheds-nødadgang med auditeret brug. Tidsrecovery skal være en begrænset lokal funktion: GPS-synk først, derefter en særskilt recovery-credential for manuel tidsretning; den må ikke åbne øvrig management eller shell.
+- **Evidens:** 43 målrettede generator-/releasekontrakter PASS.
+
+### Handover 2026-08-03 13:45 — fra Codex til Claude/Peter: lokal MFA-model
+
+- **Beslutning:** Enhedsbundet TOTP er alene offline nødadgang. Den skalerer ikke som normal serviceteknikeradgang. Normal lokal Edge-adgang skal færdiggøres med den eksisterende QR/MFA-bro til teknikerens personlige Headend-konto og capability `On-site idriftsættelse og service`.
+- **QR-identitet:** Kameraets nød-QR indeholder nu aktivt Edge-ID og kameranavn som authenticator-kontonavn, eksempelvis `TL-C87FF9587CA0 - Kamera 1`, frem for kun produktnavnet `TimeLapse Pro`.
+- **Mobil-flow:** UI tilbyder Apple Adgangskoder via standard `otpauth` samt kopi af setup-nøgle til en anden valgt authenticator-app. iOS kan ikke åbne en system-appvælger for `otpauth`; det er en platformbegrænsning.
+- **Evidens:** UI-build PASS, 42 generator-/releasekontrakter PASS, Headend health HTTP 200.
+
+### Handover 2026-08-03 13:10 — fra Codex til Claude/Peter: lokal Edge-adgang og første flashable image
+
+- **Lokal portal:** HTTPS-portalen på `8443` lytter på Bluetooth PAN, WiFi og Ethernet. Den lokale terminal er Headend-styret og har den installerede OpenSSH-klient til rådighed. Der er bevidst ikke et frit SSH-værtsfelt; en senere destinationsliste skal være Headend-styret og anvende pinned host keys.
+- **P0 lukket for nye images:** Den kendte, delte TOTP-fabrikshemmelighed er fjernet fra runtime-default. Flashable image-build afvises nu uden valgt kameralokation. Ved build oprettes eller genbruges kameraets unikke TOTP-secret og den injiceres som root-only konfiguration i imaget.
+- **Brugerstyring:** Capability `On-site idriftsættelse og service` giver ingen ny rolle; den bevarer RBAC-rolle og kundeafgrænsning. Den kontrolleres i Headend technician-auth.
+- **Evidens:** Python-kompilering PASS, 41 generator-/releasekontrakter PASS og UI-build PASS. Headend blev genstartet og `/api/health` returnerer HTTP 200.
+- **Åben restopgave:** QR/MFA-broen til den lokale portal er fortsat ikke integreret end-to-end. En tekniker kan derfor allerede bruge den unikke lokale TOTP, mens normal Headend-login via QR skal færdiggøres før det markedsføres som færdigt.
+- **Filer:** `edge/scripts/totp-service.py`, `headend/main.py`, `headend/tools/inject_edge_image.py`, generator-/release-tests og `EDGE_GENERATOR_REVIEW_2026-08-03.md`.
+
+### Handover 2026-08-03 12:00 — fra Codex til Claude/Peter: Edge-generator og lokal serviceadgang
+
+- **Generator:** Flashable injection kopierer og aktiverer nu alle lokale serviceenheder (`bt-pan`, `bt-agent`, `captive`, `totp`) ved første boot. Tidligere var de bygget i rootfs men ikke udpakket i det flashbare image.
+- **Serviceadgang:** Edge-generatoren har et eksplicit R&D-valg for interaktiv lokal terminal. Headend kan slå den til/fra under Systemadministration. Kilde-default er fortsat fail-closed; generatorformularen er markeret for første testenhed.
+- **IAM:** Tilføjet `users.on_site_service` capability, additiv migration, Brugerstyring-UI og kontrol i Headend technician-auth. Capability ændrer ikke brugerens RBAC-rolle eller kundeafgrænsning.
+- **Image-minimering:** Runtime-image udelader AI-tests, træning, NPU-kilde, datasetværktøjer, cache/bytecode og macOS `Icon`. ARM64 runtime-image `timelapse-edge:generator-qa` er bygget og Python-valideret.
+- **Evidens:** Dockerfile check, ARM64 runtime-Python, UI-build og 40 målrettede generator-/releasekontrakter bestået.
+- **Åben restopgave:** QR technician-auth er endnu ikke integreret i den lokale HTTPS-portal. Den må ikke omtales som færdig normal account-login før QR/MFA-broen er bygget. TOTP er fortsat offline nødadgang.
+- **Se:** `EDGE_GENERATOR_REVIEW_2026-08-03.md` for inklusion/eksklusion og testflow.
+
+### Handover 2026-08-03 01:20 — fra Codex til Claude/Peter: kodegennemgang, testgrænse og UI-hjælp
+
+- **Review:** Separat, evidensbaseret review ligger i `Codex_Kodereview_2026-08/` med fund, testbevis, UI-audit og afhjælpningsplan. Tre P0-fund er registreret: fælles BT-PAN TOTP-fabrikshemmelighed, ukontrolleret OS-bundlebuilder-input i Docker/shell-kontekst og integrationstest, der kan pege mod aktiv Headend.
+- **Test:** Python-syntaks PASS. Ikke-integration: 371 PASS, 4 forventede SKIP, 544 deselected. Fokuserede release/image/backup/drift-kontrakter: 39 PASS. UI-build PASS. `pip check` har versionskonflikt for `requests`; `npm audit` har 5 advisories; ESLint-gate har 185 historiske fund og Ruff 2.103 fund.
+- **Sikker testgrænse:** De 544 integrationstests er ikke kørt mod aktiv R&D, fordi deres default-URL er port 8000, mens DB-fixtures bruger testdatabase. Der skal etableres særskilt test-Headend, port, storage og fail-closed testkonfiguration før fuld kørsel.
+- **UI:** Navbar har nu ens hover-hjælp i desktop/mobil samt hjælpetekst/tilgængelige navne for Admin-menu og logout. Resterende UI-matrix er dokumenteret og afventer autentificeret browser-E2E mod isoleret miljø.
+- **Backup-dokumentation:** `00_START_HER.md` og `PROJECT_SNAPSHOT_BACKUP.md` dokumenterer `/data-fast` samt OneDrive-spejlet `/Users/peter/Library/CloudStorage/OneDrive-Personligt/Filer/Projektbackups/restic-repository`.
+- **Pas paa:** Ingen eksisterende ucommittede aendringer fra andre arbejdsforloeb er ændret eller committet. P0-fund maa ikke "løses" ved direkte ændring af den aktive Edge uden migrations- og regressionstest.
+
+### Handover 2026-08-02 23:30 — fra Codex til Claude/Peter: Headend-stabilisering og Google Drive-diagnose
+
+- **Drift fund og rettelser:**
+  - Fjernet den duplikerede `dk.froekjaer.timelapse-nginx` LaunchDaemon. Den
+    forsøgte at binde 80/443 hvert tiende sekund, mens den korrekte
+    `homebrew.mxcl.nginx` allerede ejede portene. Den tidligere plist er
+    bevaret under `/Library/LaunchDaemons/timelapse-disabled/` som reversibel
+    backup. API og HTTPS var `200` efter ændringen.
+  - Erstattet en ugyldig certbot-plist (ukorrekt XML-escaping af `&&`) og
+    fjernet Peters bruger-cron, der forsøgte at anvende interaktiv `sudo` kl.
+    03:00. Certifikatfornyelse kører nu som gyldig root LaunchDaemon kl. 03:30
+    og 15:30 og reloader kun Nginx efter succesfuld fornyelse.
+  - Tilføjet `dk.froekjaer.timelapse-nightly-maintenance` kl. 03:00. Den
+    verificerer datadisk, frigiver indlæste Ollama-modeller, genstarter
+    Headend kontrolleret, tester `/api/health` og reloader kun en gyldig
+    Nginx-konfiguration. Manuel prøve bestod: Headend/API og HTTPS kom op med
+    HTTP 200.
+  - Tilføjet `dk.froekjaer.timelapse-headend-watchdog` hvert 60. sekund.
+    Den reparerer kun fejltilstande efter forsinket USB-mount/DB-start og
+    efterlader raske tjenester urørte.
+- **Vigtig beslutning om genstart:** FileVault er aktivt. En ubemandet fuld
+  Mac-genstart kan derfor ende på FileVault-oplåsningsskærmen, hvor hverken
+  netværk eller Headend kan fuldføre opstart. Daglig fuld reboot er derfor
+  ikke konfigureret; den kontrollerede vedligeholdelse er den sikre løsning.
+- **Google Drive:** DriveFS brugte ca. 2,6 GB lokalt. Den aktuelle fejl er den
+  ene konfigurerede synkroniseringsmappe `~/projects` (18,3 GB), som er et
+  symlink til `/Volumes/data-fast/peter-home/projects`. Drive forsøgte at
+  uploade TimeLapse-venv'er, `node_modules`, modelartefakter og symlinks og
+  producerede 54 fejl samt høj CPU/RAM. Afsluttede Drive-logfiler blev ryddet
+  sikkert (409 MB -> 20 MB), uden at metadata eller brugerfiler blev rørt.
+  Drive blev derefter stoppet, da processen voksede til over 1 GB RAM og fuld
+  CPU. Den rigtige permanente løsning er at fjerne `projects` fra Google
+  Drives "Min Mac"-synkronisering; GitHub og den eksisterende backup er de
+  korrekte mekanismer for projektet. Slet ikke DriveFS metadata manuelt.
+- **Status:** `http://127.0.0.1:8000/api/health` = 200,
+  `https://timelapse.froekjaer.dk/` = 200. Systemhukommelse var 72% fri efter
+  vedligeholdelseskørslen. `data-fast` har ca. 531 GB fri; `Backup` er 91%
+  fuld og skal have kapacitetsalarm/plan, men ingen data er slettet.
+- **Filer/konfiguration rørt uden for repo:**
+  - `/usr/local/sbin/timelapse-nightly-maintenance`
+  - `/Library/LaunchDaemons/dk.froekjaer.timelapse-nightly-maintenance.plist`
+  - `/usr/local/sbin/timelapse-headend-watchdog`
+  - `/Library/LaunchDaemons/dk.froekjaer.timelapse-headend-watchdog.plist`
+  - `/Library/LaunchDaemons/dk.froekjaer.certbot-renewal.plist`
+
+
+### Handover 2026-07-24 23:20 — fra Codex til Claude/Peter: Headend/Edge-generator hardening og QA
+
+- **Headend-generator:** UI/API viser kun lokalt GPG-verificerede annotated
+  release-tags og deres bundne fulde 40-tegns SHA. Servicekonto, home,
+  release/data-sti og dedikeret tunnel-host/port/bruger er med i generatoren.
+- **macOS-installation:** implicit `peter` er fjernet. Installeren
+  opretter/verificerer `_timelapse` som skjult, ikke-administrativ konto,
+  installerer venv/logs/LaunchDaemon med least privilege og bruger en isoleret
+  nginx-instans, som ikke rører CrushFTP/global nginx. Dry-run på den rigtige
+  Mac afslørede og fik rettet domæne-regex samt servicekonto-home-opslag.
+- **Første admin:** staging/prod opretter ikke længere `admin/changeme`.
+  Installeren genererer `TIMELAPSE_INITIAL_ADMIN_PASSWORD`; første login kræver
+  MFA/passwordskift, hvorefter den initiale hemmelighed fjernes.
+- **Edge image trust:** flash-image-signering er fail-closed GPG; hash-only
+  fallback er fjernet. OrangePi 4 Pro, OrangePi PC Plus og RPi 4 base-archives
+  er checksum-pinnet. RPi 5 er bevidst blokeret indtil valideret checksum.
+  OrangePi 4 Pro lokal cache blev fysisk hash-verificeret
+  (`db89a574…`). Manifestet indeholder base- og rootfs-provenance.
+- **Kritiske Edge-fund lukket:** hardcoded `tl-debug/TLdebug2026` med sudo er
+  fjernet; root SSH key/login er fjernet; port 22/brugeren `peter` er fjernet
+  som tunnel-default; first-boot `apt`/dynamisk `pip` er fjernet; WiFi-reinject
+  kræver signeret kilde og producerer nyt GPG-signeret manifest.
+- **Jetson:** gammel internetinstaller er erstattet af fail-closed offline-flow:
+  GPG-verificeret release+SHA, tokenfil og lokalt wheelhouse (`--no-index`).
+- **QA:** 689 non-integration-tests bestået (4 autentificerede smoke-tests
+  skipped), heraf 68 fokuserede generator/Edge/arkitekturtests.
+  Python/shell-syntax og UI production-build bestået, macOS installer dry-run
+  bestået. Browser-E2E
+  bestod tag/SHA-dropdown, nye felter, port-22-afvisning og gyldig prepare.
+  Test-token blev revokeret. UI-labels blev bundet til felter for
+  tastatur/automation.
+- **Arkitektur/CI:** Edge image trust og bootstrap-passwordpolitik er flyttet
+  ud af `main.py` til separate services; arkitektur-ratchet er sænket fra
+  18.549 til 18.541 linjer. GitHub CI + automatisk Mac-deploy er grøn på
+  commit `eed9e3c8`, signeret release `v2.8.1-lab.23`.
+- **Resterende gates:** SFTP listener/per-site RBAC på 22222 er stadig fase 2b
+  og skal automatiseres/testes på staging-iMac. Jetson-wheelhouse-builder
+  mangler. RPi 5 checksum mangler. Et fuldt flash-image-build kræver clean,
+  committed release og køres efter nyt signeret lab-tag.
+- **Autoritative manualer:** `INSTALLATIONSMANUAL_HEADEND_GENERATOR_v1.md`
+  v1.1 og `INSTALLATIONSMANUAL_EDGE_GENERATOR_v1.md` v1.1.
+
+### Handover 2026-07-20 23:58 — fra Codex til Claude/Peter: memory-root cause og tidsbegrænset Ollama-styring
+
+- **Root cause på Mac Headend:** Headend/Uvicorn er stabil omkring 120 MB og er ikke den observerede memory-læk. Google Drive-processen (inkl. dens ansvarlige WebKit-proces) har efter godt to døgn et samlet fysisk footprint på cirka 26,7 GB; cirka 25,6 GB er swapped out. Drive-loggen viser samtidig løbende Photos Library-scanning/upload-events. Google Drive blev derfor ikke genstartet midt i aktiv synkronisering. Den vedvarende belastning kombineres med `qwen2.5vl:7b`, som ved hvert lokalt capture-analysis loadede cirka 5,7-6,5 GB og gav RAM-spidser op mod 89-93 %.
+- **Ny kontrolleret drift:** AI Styring -> Modeller & prompts har nu audit-logget, databasebaseret `Normal drift`, tidsbegrænset `Pause` og tidsbegrænset `Brug lav-memory`. Varighed er 5-1440 minutter. State overlever Headend-genstart og gendannes automatisk ved udløb. Pause stopper LaunchAgenten og frigiver modeller; lokale analysejob bevares/udskydes i køen og billeder slettes ikke.
+- **Lav-memory fail-closed:** kun installerede visionmodeller under 4 GB kan vælges. I dette miljø er det `llava-phi3:latest`. Profilen reducerer også billedkant, billedbytes, context og outputtokens og må ikke falde tilbage til en stor model. Modelnavnet registreres som faktisk provenance i modelresultatet.
+- **Fysisk test på ægte capture `30535`:** `llava-phi3:latest` brugte cirka 3,0 GB VRAM, 4096 context og svarede på 3,7 sekunder. Det er markant mindre end Qwen, men beskrivelsen var kvalitativt ringere; lav-memory er derfor nød-/arbejdsprofil, ikke anbefalet permanent tagmodel.
+- **Browser-E2E:** logget ind med den dedikerede `codex`-konto. Normal drift, statusopdatering og Pause blev udført fra UI. Pause viser countdown, ingen indlæst model og cached modelinventar. Kun `llava-phi3:latest` vises i lav-memory-listen. Slutstate er Pause i 120 minutter, hvorefter normal Qwen-drift genoptages automatisk.
+- **Test:** 11 målrettede backendtests PASS; bredere AI/OpenWebUI-regression 31 PASS; Python compile PASS; UI production build PASS; ESLint ratchet PASS med 184 fund mod baseline 186. Live `/api/health` er HTTP 200 efter Headend-restart.
+- **Næste:** Afklar i Google Drive UI om Photos Library overhovedet skal sikkerhedskopieres. Når Drive viser synkronisering færdig, genstart Google Drive kontrolleret og mål om footprint/swap nulstilles. Overvej derefter en automatisk memory-pressure guard før lokal vision-inference.
+- **Filer:** `headend/ai/ollama_runtime_control.py`, `headend/ai/settings_api.py`, `headend/ai/ollama_service.py`, `headend/ai/integration.py`, `headend/tests/test_ollama_runtime_control.py`, `timelapse-ui/src/pages/AIPage.tsx`, `timelapse-ui/src/pages/PostProcessingPage.tsx`, denne entry.
+
+### Handover 2026-07-18 18:30 — fra Codex til Claude/Peter: konfigurerbar Live View og centralt nødstop
+
+- **Årsag til observeret 30-sekunders stop:** Codex stoppede den fælles lokale stream manuelt under browser-regression. Edge havde ingen skjult 30-sekunders timeout; den tidligere standard var 180 sekunder.
+- **Lokal varighed:** Tekniker-UI tilbyder nu varighed ved Start (1/3/10/30 minutter og længere valg op til Headend-maksimum). `Kontinuerlig` vises kun, når Headend-policyen eksplicit tillader det. Manageren understøtter `max_duration_s=0` som kontinuerlig drift og beholder sikker manuel cleanup.
+- **Central styring:** ny modulær route `headend/api/service_access_api.py` og UI-sektion **System Administration → Lokal serviceadgang** styrer master enable, Live View enable, maksimum 30 sekunder-24 timer og kontinuerlig tilladelse. Master Off deaktiverer samtidig LAB, nulstiller camera-ready og auditeres i SIEM.
+- **Nødstop mens agenten er frigivet:** TOTP-servicen henter signeret device-config direkte fra Headenden hvert 10. sekund. En aktiv lokal stream stoppes med årsagen `central_policy`, selv mens den normale Edge-agent er stoppet for at frigive kameraet. Ved tab af Headend-forbindelse bruges seneste kendte policy; lokal timeout/Stop virker fortsat.
+- **Tydelig status:** lokal UI/API viser `manual`, `timeout`, `central_policy`, `source_ended`, `service_shutdown` eller `error`, så en afslutning ikke længere ligner en uforklaret fejl.
+- **Arkitektur:** første implementation voksede `headend/main.py` og blev korrekt afvist af arkitektur-ratchet. Endpointet blev flyttet til eget APIRouter-modul; `main.py` er præcis 18.549 linjer og ratchet er grøn.
+- **Test:** målrettet Live View/service-policy/mTLS/arkitektur: 53 PASS og 12 dokumenterede mTLS-miljø-SKIP. Normal ikke-integration-suite i Headend-venv: **352 PASS, 4 auth-smoke SKIP, 544 integration deselected**. UI-build og GitHub Actions run `29651853860` er grønne. Signeret release `v2.8.1-lab.20`, artifact `TL-ART-20260718-bec9b44c75d0` og update `#124` blev installeret på `TL-C87FF9587CA0` med pre-update-backup og uden rollback. En fysisk kontinuerlig Nikon Z30-stream nåede cirka 23,7 fps; Headend master Off stoppede den inden for en policy-cyklus med `stop_reason=central_policy`. Slutpolicy er maks. 60 minutter og kontinuerlig drift deaktiveret. Autoritativ GRC-evidens: `TV-EDGE-CAMERA-01`, run `9`, evidence `241`.
+- **Filer:** `edge/camera/service_stream.py`, `edge/scripts/totp-service.py`, `headend/api/service_access_api.py`, `headend/main.py`, `timelapse-ui/src/pages/SystemAdminPage.tsx`, `tests/test_edge_live_video.py`, `tests/test_lab_runtime_contract.py`, `tests/test_service_access_policy.py`, denne entry og `UI_TESTJOURNAL_v1.md`.
+
+### Handover 2026-07-18 17:55 — fra Codex til Claude/Peter: Nikon Live View, Canon-kompatibilitet og fysisk Edge-E2E
+
+- **Kamerastrategi implementeret:** capability-baseret live-kilde i `edge/camera/live_video.py`. Nikon Z30 bruger kameraets rigtige `--capture-movie --stdout`; Canon EOS 1300D/2000D bruger isoleret lavfrekvent `--capture-preview`. En Canon-profil kan derfor ikke degradere eller blokere Nikon-streaming.
+- **Sikker kameraejer:** ny proces-sikker `CameraMaintenanceLease` (`edge/camera/maintenance.py`) serialiserer lokal service-UI, CLI, LAB og live-view. En afsluttet/crashet proces frigiver låsen, og den enabled Edge-service genetableres. Dette lukker et observeret overlap, der tidligere kunne efterlade agenten stoppet.
+- **Nikon-profil rettet:** Z30 billedkvalitet bruger nu `/main/capturesettings/imagequality`; Canon beholder `/main/imgsettings/imageformat`. UI-labels viser tydeligt generisk/Canon kontra Nikon. Fysisk Z30-probe og CMDB-refresh bekræftede `JPEG Normal` samt den korrekte profilvej.
+- **Signerede releases:** commits `e2e779e7`, `66023ddf`, `21cba0e6`, `e985e624` er pushet til `main`; GitHub-runs `29648746090`, `29649616231`, `29649931093`, `29650997359` er grønne. Seneste GPG-signerede tag `v2.8.1-lab.19`, artifact `TL-ART-20260718-e985e624b2ad`, change `TL-CHG-20260718-00122`, update `#122` blev godkendt kun til R&D-Edge `TL-C87FF9587CA0`/test.
+- **Update-E2E bestået:** Edge pull -> signatur/trust -> pre-update backup (3.441 KB) -> 83 artifactfiler -> install -> release receipt -> genstart. Status `deployed`, attempt 1, ingen fejl/rollback. Receipt peger på commit `21cba0e6...`, og begge services er aktive.
+- **Fysisk Nikon-evidens:** lokal service-UI leverede 8 sekunders MJPEG: 11.679.445 bytes, 345 komplette JPEG-frames, `movie`, stabilt 24,3 fps. Stop gav `frame_ready=false`, Edge-agent blev genetableret, og relæet blev slukket. Autofokus bestod. `image_format=JPEG Normal` blev sat/læst via Nikon-stien. Ét ægte QA-testbillede bestod (`blur=1902,5`, `brightness=121,2`, ingen EV-korrektion).
+- **Browser-regression af status:** browseren viste selve Z30-videobilledet. En fundet stale opstarts-FPS blev rettet i `e985e624`; statuslinjen opdaterede derefter uden reload fra 17,6 til 23,2 fps. Stop fra browseren gav stopped/`frame_ready=false`, seneste 25,5 fps og begge services aktive.
+- **LAB-state ryddet:** en stale `set_param test=test` fra 2026-07-17 blev opdaget som kommandoblokering, behandlet/ryddet gennem Edge-flowet og erstattet af frisk `get_params`. LAB blev derefter deaktiveret igen; CMDB viser disabled/ready=false, Edge-log viser FORCE OFF, og services er aktive.
+- **Test:** lokal fuld ikke-integration-suite: **641 passed, 4 auth-smoke skipped, 544 integration deselected**. Canon 1300D/2000D har automatiseret capability-, profil- og kommandoisolation, men **ingen fysisk Canon-enhed var tilsluttet**; fysisk Canon-preview er derfor fortsat en særskilt hardwaretest.
+- **GRC-evidens:** testcase `TV-EDGE-CAMERA-01` (item `263`) er oprettet; runs `7` og `8` er PASS for det afgrænsede Nikon-/profilisolerings- og browserstatusscope, og fysisk evidens er registreret som evidence `240`. Attributten `physical_canon=false` bevarer den åbne hardwaregrænse eksplicit. Lang Edge-shutdown er registreret åbent som `FIND-EDGE-STOP-001` (item `264`, P1).
+- **Lokal service-UI gennemgået:** Tid, Netværk, Tekniker, CLI og System render/funktioner testet. Sikker status/diagnostik, kamera, foto, autofokus, QA-capture og Live View bestod. Connectivity-muteringer (nyt WiFi/statisk IP/ruter), reboot og focus-drive blev bevidst ikke udført under denne kørsel for ikke at afbryde Edge eller flytte den validerede fokusposition.
+- **Åbne reelle fund:** Edge-agentens graceful shutdown tager gentagne gange cirka 60 sekunder; `local_network.yaml` mangler og falder tilbage til dokumenterede defaults; NPU-model/VIPLite-runtime mangler; fysisk Canon-test mangler. Den lokale UI anvender forventet self-signed certifikat og kræver lokal trust på serviceteknikerens enhed.
+- **Filer:** `edge/camera/live_video.py`, `edge/camera/service_stream.py`, `edge/camera/maintenance.py`, `edge/frame_push.py`, `edge/scripts/totp-service.py`, `edge/tools/bootstrap_cli.py`, `edge/camera/drivers/gphoto2_driver.py`, `tests/test_edge_live_video.py`, `tests/test_lab_runtime_contract.py`, `Dokumentation/UI_TESTJOURNAL_v1.md`, denne entry.
+
+### Handover 2026-07-18 (6) — Claude: Uafhængig test-audit + egne runs registreret i GRC
+
+- **Opgave (Peter):** Audit af al test sidste par uger (alle parter): hvad er udført/mangler, er manglerne dokumenteret, hvorfor sprunget over. Registrér egne test i GRC.
+- **Leverance:** `Dokumentation/Claude_TEST_AUDIT_2026-07-18.md` (fuld rapport).
+- **Kernefund:** Peters antagelse ("det meste flyttet ind i GRC, væk fra dokumenter") er halvt rigtig. GRC har **rammen** (10 test-items, 16 findings, 174 krav, 27 risici, ADR-001) men **kun 6 test-runs** — mens der reelt er kørt ~1.175 tests (631 unit + 544 integration + 27 UI-routes + ~40 funktionelle UI-cases). Testudførelsen lever i `UI_TESTJOURNAL_v1.md`/`MASTER_TEST_CHECKLIST_v1.md`/`HANDOVER_LOG`/CI, ikke i GRC. **GRC er skelettet, dokumenterne er kødet** — så GRC kan ikke i dag alene bære "single source of truth" for teststatus.
+- **Status:** Funktionelt kernesystem grønt (auth/RBAC, UI-render 27 routes × 3 viewports, update-flow E2E med ægte Edge-deploys, integrationsmatrix 404/544 pass). Én reel FAIL: `IT-MATRIX-544` — R&D-Nginx binder 80/443 ikke 8443 (CrushFTP-sameksistens, go-live-blocker). Ingen skjulte/glemte mangler fundet.
+- **Mangler + ærlig årsag (mønster):** PROC-BKP-01 blokeret af ægte R09-backup-bug · TV-008 mTLS = kode findes ikke endnu (#52) · LAB/kamera = fysisk Nikon Z30 · GDPR/retention = destruktiv+afgrænset data · MFA/WebAuthn = authenticator · IT-G2 = isolations-infra (nu delvist løst med :18080). Alle huller er dokumenteret.
+- **Registreret i GRC (med Peters tilladelse):** nyt item **TV-GEN-01** (verified) + 2 runs (23 kontrakttests ci-sandbox; live deploy-verifikation R&D run 29622240327). Nyt run under **TV-001** (uafhængig CI-genkørsel 631 passed). Alle `executed_by=claude`.
+- **➡️ Peter/Codex-anbefalinger:** (1) luk sporbarhedshullet — lad CI/integrationskørsler auto-skrive et sammenfattende run pr. suite til GRC (`POST /api/grc/register/{id}/runs` findes); (2) fix R09-backup (låser PROC-BKP-01 P0-gate op); (3) unblock IT-G2; (4) triager 15 HLTH-findings ud af `candidate_review`.
+- **Filer rørt:** `Claude_TEST_AUDIT_2026-07-18.md` (ny) + GRC-database (3 runs, 1 item) + denne entry. Ingen kode.
+
+### Handover 2026-07-18 (5) — Claude: Branch-oprydning — 11 forældede grene arkiveret som tags og slettet
+
+- **Opgave (Peter):** 12 branches på GitHub — hvad bruges de til, er noget spildt arbejde?
+- **Analyse (verificeret fil/symbol/endpoint-niveau):** De 12 = `main` + 11 forældede arbejdsgrene (juni–7. juli, før direkte-på-main-perioden). **Intet spildt arbejde** — alt af substans er landet på main ad andre veje:
+  - 5 var allerede fuldt merget i main (`claude/qa-drift-detection-*`, `claude/m05-agent-lockdown-*`, `claude/capture-camera-location-*`, `claude/security-hardening-*`, `codex/edge-npu-qa`).
+  - 2 store edge-AI-grene (`codex/edge-ai-npu-modes` 11 commits/7.417 linjer, `codex/edge-ai-v1-smoke`): **hver fil findes i main i dag**; 54/55 tilføjede main.py-funktioner findes ordret, den ene (`storage_status`) er ikke væk men flyttet til `headend/api/storage_api.py` som `/api/storage/status` (ADR-001-modularisering).
+  - 2 hardening-grene overhalet: `codex/cmdb-rbac-hardening` (main har `_require_cmdb_role` overalt i dag) og `claude/siem-cmdb-optimizations` (main har SIEM-ingest + senere anti-flap grenen ikke havde).
+  - 2 rene doc-grene (`codex/itim-live-verification`, `codex/shared-handover-docs`) foldet ind i nuværende docs.
+- **Handling (aldrig hard-delete):** Hver gren tagget `archive/<gren-med-bindestreg>` og pushet til origin (11 tags, verificeret at hver peger på branch-tip), DERNÆST slettet på origin. Nu kun `main` tilbage. Commits er bevaret for evigt via tags — gendan med `git checkout -b <navn> archive/<navn>`.
+- **Proxy-læring (vigtig for fremtidige git-ops via proxyen):** repoet har `tag.gpgsign=true` → `git tag` uden override åbner GPG-passphrase/editor-prompt og HÆNGER (timeout rc=124). Brug **`git -c tag.gpgsign=false tag`** for lette arkivtags. Desuden: cmd_in.json skal bygges med `json.dumps` (skråstreger/citationstegn i kommandoen ødelægger ellers JSON'en); poll på et unikt echo-token i cmd_out (den gamle fil kan ikke slettes fra sandkassen). En præeksisterende junk-ref `refs/tags/archive/Icon?` (macOS Icon-fil) giver en harmløs advarsel ved tag-push.
+- **Filer rørt:** Ingen kode/filer i repoet — kun remote refs (tags oprettet, branches slettet) + denne entry.
+- **Efterspil — `Icon?`-junk-ref ryddet:** Advarslen `refs/tags/archive/Icon?` ved tag-push kom fra en LOKAL junk-tag (`archive/Icon` med et carriage-return i navnet, macOS Icon-artefakt) — origin var altid ren. Fjernet (loose ref + packed-refs + re-pack); `git for-each-ref` giver nu ingen warnings. `.gitignore` dækkede allerede Icon-filer grundigt (linje 43-57) + `tools/cleanup_macos_icon_files.sh` findes, så ingen rigtige Icon-filer er trackede — det var kun den ene gamle ref.
+
 ### Handover 2026-07-18 (4) — Claude: Pushet, deployet og verificeret live via fil-proxyen
 
 - **Kontekst:** Peter startede fil-proxyen (`claude_proxy.py`, audit-logget) så jeg selv kunne lukke løkken. Alt herunder er kørt gennem proxyen og står i `.claude_proxy/audit.log`.
@@ -1415,3 +1632,25 @@ person vide".
 - **Filer rørt:**
   - `PRIORITIZED_BACKLOG.md` — opdateret med fase 2/3 status
   - `Dokumentation/HANDOVER_LOG.md` — denne entry
+
+### Handover 2026-08-03 00:15 — Codex: krypteret projektbackup og restore
+- **Implementeret:** Restic-baseret, krypteret og deduplikeret backup af projektarbejdsomraadet. Live-projekter synkroniseres ikke direkte med Google Drive.
+- **Lokal repository:** `/data-fast/backup/project-snapshots/restic-repository`.
+- **Off-site spejling:** OneDrive `Filer/Projektbackups/restic-repository`, beskyttet af markerfil inden den afgraensede `rsync --delete` anvendes.
+- **Restore:** `/usr/local/sbin/timelapse-project-snapshot-restore` kan liste eller gendanne snapshots fra lokal repository eller OneDrive, men afviser altid at skrive til den aktive projektmappe.
+- **Logisk datarod:** `/etc/synthetic.conf` indeholder `data-fast -> /Volumes/data-fast`. macOS opretter `/data-fast` ved naeste genstart; `timelapse-mount-data` validerer herefter stien ved boot.
+- **Afventer:** Genstart for at aktivere `/data-fast`, derefter foerste snapshot samt dokumenteret restoretest til en ny, tom mappe. Ingen eksisterende data eller gamle backups er slettet.
+- **Filer:** `deploy/scripts/project_snapshot_backup.sh`, `deploy/scripts/project_snapshot_restore.sh`, `deploy/launchd/dk.froekjaer.project-snapshot-backup.plist`, `Dokumentation/PROJECT_SNAPSHOT_BACKUP.md`.
+
+### Handover 2026-08-03 00:30 — Codex: boot uden brugerlogin
+- **Kernevej verificeret:** PostgreSQL, data-mount, Headend, Nginx og node-agent er LaunchDaemons. Headend health, HTTPS-forside og Edge-heartbeats virker uden afhængighed af browser eller brugeragent.
+- **Ollama fejl rettet:** En gammel brugeragent og systemagent konkurrerede om TCP 11434. Brugeragenten er deaktiveret; kun `system/com.froekjaer.ollama` kører nu. Model-API og Headend health returnerer HTTP 200.
+- **Driftsoprydning:** Den overflødige `npm run dev`/Vite LaunchDaemon er deaktiveret. Nginx serverer allerede den byggede UI direkte fra `dist`; HTTPS blev verificeret med HTTP 200 før og efter.
+- **FileVault-begrænsning:** Efter et totalt strømtab eller en kold opstart kan macOS ikke starte nogen tjeneste, netværk eller SSH før FileVault-disken er låst op lokalt. Det er forventet sikkerhedsadfaerd, ikke en TimeLapse-fejl. Natlig drift maa derfor anvende den eksisterende kontrollerede servicevedligeholdelse, ikke en ubemandet reboot.
+- **Afventer:** En kontrolleret fysisk reboot-test, hvor maskinen genstarter fra en aktiv session og derpaa valideres Headend/HTTPS/Edge uden efterfoelgende brugerlogin.
+
+### Handover 2026-08-03 00:50 — Codex: FileVault Wi-Fi boot og backup-evidens
+- **FileVault remote unlock bestaaet:** Efter reboot blev denne Apple M4/macOS 26-headend laast op via SSH over Wi-Fi uden lokal macOS-login. Headend, HTTPS, Ollama og Edge-heartbeat kom derefter op automatisk.
+- **Logisk datarod aktiveret:** `/data-fast -> /Volumes/data-fast` blev oprettet ved boot via `/etc/synthetic.conf`.
+- **Backup og restore bestaaet:** Restic snapshot `2018d0cb` (8.049 GiB) blev oprettet, kontrolleret og spejlet til OneDrive. Restore til den isolerede testmappe lykkedes; aktiv og gendannet TimeLapse Pro har begge commit `eed9e3c8c67369e1924c25a11908616220c3c753`.
+- **Bevar testdata:** Restore-verifikation ligger paa `/data-fast/backup/project-snapshots/restore-verification-20260803` og maa kun slettes ved en eksplicit administrativ beslutning.

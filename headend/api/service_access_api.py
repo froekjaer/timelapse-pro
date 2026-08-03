@@ -60,6 +60,10 @@ def create_service_access_router(
                 "allow_continuous_live_view",
                 previous.get("allow_continuous_live_view", False),
             )),
+            "interactive_shell_enabled": bool(payload.get(
+                "interactive_shell_enabled",
+                previous.get("interactive_shell_enabled", False),
+            )),
             "updated_at": now_utc().isoformat(),
             "updated_by": user.username,
         }
@@ -88,7 +92,8 @@ def create_service_access_router(
                 "raw_message": (
                     f"Lokal service-policy ændret for {device_id}: enabled={enabled}, "
                     f"live_view={policy['live_view_enabled']}, max={max_duration_s}s, "
-                    f"continuous={policy['allow_continuous_live_view']}"
+                    f"continuous={policy['allow_continuous_live_view']}, "
+                    f"interactive_shell={policy['interactive_shell_enabled']}"
                 ),
                 "occurred_at": now_utc().isoformat(),
             }])

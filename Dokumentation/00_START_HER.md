@@ -18,9 +18,9 @@
 
 - **Repo:** `~/projects/timelapse-pro` (= `/Volumes/data-fast/peter-home/projects/timelapse-pro`).
 
-- **Headend (prod):** Mac Mini — FastAPI/uvicorn på `127.0.0.1:8000`, PostgreSQL `timelapse\_db`, nginx, UI på `127.0.0.1:5173`, Ollama `127.0.0.1:11434`. Kritiske services kører som system-LaunchDaemons: `dk.froekjaer.timelapse-headend`, `dk.froekjaer.timelapse-postgresql`, `dk.froekjaer.timelapse-nginx`, `dk.froekjaer.timelapse-ui`, `dk.froekjaer.timelapse-wifi-ensure`. Venv `~/.venvs/timelapse-headend`.
+- **Headend (R&D):** Mac Mini — FastAPI/uvicorn på `127.0.0.1:8000`, PostgreSQL `timelapse\_db`, nginx og Ollama på `127.0.0.1:11434`. Nginx serverer den byggede UI statisk; Vite-devserveren er ikke en driftsafhængighed. Kritiske services kører som system-LaunchDaemons: `dk.froekjaer.timelapse-headend`, `dk.froekjaer.timelapse-postgresql`, `dk.froekjaer.timelapse-nginx`, `dk.froekjaer.ollama` og `dk.froekjaer.timelapse-wifi-ensure`. Venv `~/.venvs/timelapse-headend`.
 
-- **Storage:** `/Volumes/data-fast` (canonical). Billed-rod = `sftp\_base` fra DB-settings (`/Volumes/data-fast/timelapse-incoming/canonical-images`). Backup-target `/Volumes/Backup`.
+- **Storage:** Den logiske datarod er `/data-fast`, oprettet af macOS `synthetic.conf` og aktuelt pegende paa den monterede data-disk. Ny drift/backup skal bruge den logiske sti, saa enclosure/NAS kan skiftes uden kodeændringer. Eksisterende Nginx-medier kan fortsat bruge valideret fysisk sti, indtil en separat TCC- og regressionstest er gennemført. Billed-rod styres af `sftp\_base` i DB-settings. Krypteret projektbackup: lokal `/data-fast/backup/project-snapshots/restic-repository`; OneDrive-spejl `/Users/peter/Library/CloudStorage/OneDrive-Personligt/Filer/Projektbackups/restic-repository`. Se `PROJECT_SNAPSHOT_BACKUP.md`.
 
 - **Aktiv edge:** `TL-C87FF9587CA0` (Orange Pi 4 Pro, Nikon Z30). Stale/legacy: `TL-DCA63234D813`.
 
@@ -33,7 +33,7 @@
 **Vigtigt om UI-drift (opdateret 2026-07-14):**
 
 - Nginx på `timelapse.froekjaer.dk` serverer aktuelt den statiske produktionsbuild fra `~/projects/timelapse-pro/timelapse-ui/dist`.
-- Vite dev-serveren kører også på `127.0.0.1:5173`, men offentlig `/` trafik proxyes normalt ikke direkte til den.
+- Vite dev-serveren er deaktiveret som driftsservice; offentlig `/` trafik kommer fra den statiske build.
 - Hvis `https://timelapse.froekjaer.dk/` giver `500 Internal Server Error`, mens `https://timelapse.froekjaer.dk/api/health` svarer `200`, så er backend typisk sund, og første kontrol er om `timelapse-ui/dist/index.html` findes.
 - Kendt fejlmønster: manglende `dist/index.html` giver nginx-loggen `rewrite or internal redirection cycle while internally redirecting to "/index.html"`.
 - Standardfix efter UI-ændringer eller manglende `dist`: `cd ~/projects/timelapse-pro/timelapse-ui && npm run build`.
@@ -87,6 +87,8 @@ Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne b
 | `SYSTEM\_HEALTH\_REGISTER.md` | Health-register |
 | `../PRIORITIZED\_BACKLOG.md` (repo-rod) | Prioriteret backlog — sessions-opstart bruger denne i praksis |
 | `MASTER\_TEST\_CHECKLIST\_v1.md` | Master-testliste (unit/integration-opdeling, manglende tests) — testSTATUS ligger i GRC-registret (PostgreSQL) |
+| `PROJECT\_SNAPSHOT\_BACKUP.md` | Krypteret Restic-projektbackup, OneDrive-spejl og restore-evidens |
+| `Codex_Kodereview_2026-08/` | Evidensbaseret review, testbevis, UI-audit og afhjælpningsplan (aabne P0-fund) |
 
 > **Forældet:** `ISSUES.md` (repo-rod, sidst opdateret 2026-06-14) lister fund som åbne, der er lukket. Brug GRC-registret som statuskilde; ISSUES.md afventer flytning til `Gamle versioner/`.
 

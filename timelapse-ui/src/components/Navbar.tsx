@@ -90,6 +90,9 @@ export function Navbar() {
           <div className="relative ml-1 hidden border-l border-slate-700 pl-2 xl:block" ref={dropdownRef}>
             <button
               onClick={() => setAdminOpen(o => !o)}
+              title="Åbn eller luk administrationsmenuen"
+              aria-label="Åbn eller luk administrationsmenuen"
+              aria-expanded={adminOpen}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors ${
                 adminActive || adminOpen
                   ? 'bg-slate-700 text-white'
@@ -138,6 +141,7 @@ export function Navbar() {
             </div>
           )}
           <button onClick={handleLogout}
+            title="Log ud af TimeLapse Pro"
             className="flex items-center gap-1.5 px-3 py-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md text-sm transition-colors">
             <LogOut className="w-4 h-4" />
             <span className="hidden sm:inline">Log ud</span>
@@ -159,20 +163,20 @@ export function Navbar() {
       {mobileOpen && (
         <div className="absolute left-0 right-0 top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto border-t border-slate-700 bg-slate-900 px-3 py-3 shadow-xl xl:hidden">
           <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-            {links.map(({ to, label, icon: Icon }) => {
+            {links.map(({ to, label, icon: Icon, tooltip }) => {
               const active = to === '/' ? pathname === '/' : pathname.startsWith(to)
               return (
-                <Link key={to} to={to} onClick={() => setMobileOpen(false)} className={`flex min-h-11 items-center gap-3 rounded-md px-3 text-sm ${active ? 'bg-slate-700 text-white' : 'text-slate-200 hover:bg-slate-800'}`}>
+                <Link key={to} to={to} onClick={() => setMobileOpen(false)} title={tooltip} className={`flex min-h-11 items-center gap-3 rounded-md px-3 text-sm ${active ? 'bg-slate-700 text-white' : 'text-slate-200 hover:bg-slate-800'}`}>
                   <Icon className="h-5 w-5 flex-shrink-0" />
                   {label}
                 </Link>
               )
             })}
             {isAdmin && <div className="col-span-full my-2 border-t border-slate-700" />}
-            {isAdmin && adminLinks.map(({ to, label, icon: Icon }) => {
+            {isAdmin && adminLinks.map(({ to, label, icon: Icon, tooltip }) => {
               const active = pathname.startsWith(to)
               return (
-                <Link key={to} to={to} onClick={() => setMobileOpen(false)} className={`flex min-h-11 items-center gap-3 rounded-md px-3 text-sm ${active ? 'bg-slate-700 text-white' : 'text-slate-200 hover:bg-slate-800'}`}>
+                <Link key={to} to={to} onClick={() => setMobileOpen(false)} title={tooltip} className={`flex min-h-11 items-center gap-3 rounded-md px-3 text-sm ${active ? 'bg-slate-700 text-white' : 'text-slate-200 hover:bg-slate-800'}`}>
                   <Icon className="h-5 w-5 flex-shrink-0" />
                   {label}
                 </Link>
@@ -184,7 +188,7 @@ export function Navbar() {
               <p className="truncate text-sm font-medium">{user?.username}</p>
               <p className="text-xs capitalize text-slate-400">{user?.role.replace('_', ' ')}</p>
             </div>
-            <button onClick={handleLogout} className="flex min-h-11 items-center gap-2 rounded-md px-3 text-sm text-slate-200 hover:bg-slate-800">
+            <button onClick={handleLogout} title="Log ud af TimeLapse Pro" className="flex min-h-11 items-center gap-2 rounded-md px-3 text-sm text-slate-200 hover:bg-slate-800">
               <LogOut className="h-5 w-5" />
               Log ud
             </button>

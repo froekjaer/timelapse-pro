@@ -105,10 +105,10 @@ Tidligere Codex-browserpass 2026-07-16 åbnede alle beskyttede routes på deskto
 | UI-121 | Captures og pagination | Ægte billeder vises uden synkron thumbnail-generering | PASS partial | `test_api_integration.py`, `test_e2e_workflows.py` | 85 frames/lightbox testet 2026-07-16 |
 | UI-122 | Manglende thumbnail | Baggrundsjob opretter fil; refresh viser den | NOT RUN | `test_thumbnail_generation.py` | Kendt fejl skal genprøves |
 | UI-123 | Billedadgang audit | Visning/download registrerer bruger og billede | NOT RUN | capture access tests | |
-| UI-124 | LAB start/stop real state | UI må først vise aktiv efter Edge-kvittering | NOT RUN | LAB contract tests | Nikon Z30 fysisk test |
-| UI-125 | Preview/full capture | Resultat vises i LAB; metadata gemmes | NOT RUN | `test_api_integration.py` | |
-| UI-126 | Live stream | Reel stream, ikke serie af stills | NOT RUN | LAB runtime tests | Reverse SSH kræves |
-| UI-127 | Fokus/parameterændring | Nikon-værdier gemmes og læses tilbage | NOT RUN | camera tests | |
+| UI-124 | LAB start/stop real state | UI må først vise aktiv efter Edge-kvittering | PASS | LAB contract tests | 2026-07-18: Headend enable -> fysisk Edge ready; disable -> ready=false, relay FORCE OFF og services aktive. |
+| UI-125 | Preview/full capture | Resultat vises i LAB; metadata gemmes | PASS partial | `test_api_integration.py` | Lokal service-UI tog og viste ægte Z30 QA-preview; Headend LAB full-capture-visning skal stadig genprøves separat. |
+| UI-126 | Live stream | Reel stream, ikke serie af stills | PASS Nikon / pending Canon hardware | `test_edge_live_video.py`, LAB runtime tests | Z30 fysisk: `movie`, 24,3 fps, 345 komplette frames/8 s. Canon 1300D/2000D isoleret preview-kontrakt bestod; fysisk Canon mangler. |
+| UI-127 | Fokus/parameterændring | Nikon-værdier gemmes og læses tilbage | PASS partial | camera tests | Autofokus bestod fysisk; `JPEG Normal` sat/læst på `/main/capturesettings/imagequality`. Focus-drive bevidst ikke kørt for at bevare valideret fokus. |
 | UI-128 | Edge AI quality/autoadjust | Anbefaling, guardrails og audit vises | NOT RUN | Edge AI tests | Ægte billeder kræves |
 
 ### 5.3 Update-flow
@@ -118,7 +118,7 @@ Tidligere Codex-browserpass 2026-07-16 åbnede alle beskyttede routes på deskto
 | UI-201 | Dirty worktree artifact | Registrering/binding afvises fail-closed | PASS | Rettet i `40cbef1b`; dirty artifact bevaret som evidens |
 | UI-202 | Signeret Git-tag | Clean snapshot, GPG, SHA og kandidater | PASS | `v2.8.1-lab.14` og `.15` registreret via UI |
 | UI-203 | Godkendelsesmodal | ID, release, miljø og scope er synlige | PASS | `#104` åbnet/annulleret uden stateændring |
-| UI-204 | Edge app E2E | poll, trust, backup, install, receipt, report | PASS | `#105` lab.14 og `#108` lab.15 deployet til aktiv Edge i test |
+| UI-204 | Edge app E2E | poll, trust, backup, install, receipt, report | PASS | Senest `#122`/`v2.8.1-lab.19`: poll, trust, backup, install, receipt og genstart; attempt 1 uden fejl. |
 | UI-205 | Aktiv status øverst | Kun aktuelle flows vises med live trin | PASS | Sticky status viste `#108`; stale `#33` blev fundet og filtreret i efterfølgende fix |
 | UI-206 | Supersession | Ældre pending kandidater flyttes til Erstattet | PASS | 62 gamle kandidater; kun tre aktuelle app-kandidater tilbage |
 | UI-207 | Test til prod-klar | Kræver eksplicit testaccept; ingen auto-prod | PASS | `#105/#108` forblev test efter deploy |
@@ -175,6 +175,12 @@ Disse køres separat med pytest/systemevidens og må ikke markeres PASS alene vi
 | 2026-07-18 | Samlet integrationstest kunne ikke importere to pakker via det logiske datadisk-link | Høj testtroværdighed | Kanonisk repo- og Headend-importsti etableret centralt; 544/544 indsamles nu |
 | 2026-07-18 | Installeret Headend node-agent kørte som root trods rettet installer-kilde | Høj least privilege | Migreret live til `peter`; inventory-kvittering og 20/20 kørte host-assertions grønne |
 | 2026-07-18 | Aktiv R&D-Nginx binder 80/443, ikke besluttet 8443 | Høj sameksistens/go-live | Åben. Eneste FAIL i den samlede integrationsmatrix; GRC `IT-MATRIX-544` |
+| 2026-07-18 | Lokale kamerahandlinger kunne overlappe og efterlade Edge-agenten stoppet | Høj drift | Proces-sikker fælles vedligeholdelseslås og service-recovery i `21cba0e6`; unit- og fysisk regression bestået. |
+| 2026-07-18 | Nikon Z30 arvede Canon-sti for billedformat | Medium funktion | Z30 bruger nu `/main/capturesettings/imagequality`; frisk fysisk profil gemt i CMDB. Canon-stien er isoleret. |
+| 2026-07-18 | Stale LAB-kommando blokerede nye handlinger | Medium drift/UX | Gammel testkommando ryddet gennem Edge-flowet; frisk `get_params` bestod. Der bør senere tilføjes alder/timeout og synlig stale-command-advarsel. |
+| 2026-07-18 | Live View-status viste opstarts-FPS, mens streamen var hurtigere | Medium UX | Status poller nu hver 1,5 s; browser viste ændring fra 17,6 til 23,2 fps uden reload. `v2.8.1-lab.19` deployet. |
+| 2026-07-18 | Lokal Live View manglede valgbar varighed og centralt nødstop | Høj drift/sikkerhed | PASS: `v2.8.1-lab.20` installeret via signeret update `#124`. Lokal kontinuerlig Nikon Z30-stream nåede cirka 23,7 fps og blev stoppet centralt inden for en policy-cyklus med `stop_reason=central_policy`. Headend-browseren viste den aktive Edge med 3600 sekunders maksimum og kontinuerlig drift deaktiveret; layout og felter var læsbare. GRC run `9`, evidence `241`. |
+| 2026-07-18 | Edge-agent graceful shutdown tager cirka 60 sekunder | Medium/Høj drift | Åben som GRC `FIND-EDGE-STOP-001` item `264`; ingen datatab eller rollback observeret. |
 
 ## 8. Samlet integrationskørsel 2026-07-18
 
@@ -189,6 +195,29 @@ Browserbaseline: 30 routes på desktop og 390x844 mobil; ingen 500/502/503,
 konsolfejl eller vandret overflow. De 138 skips er ikke skjulte PASS-resultater:
 de skal klassificeres som miljø-N/A, fysisk/hardwarekrav eller konkret produktgab.
 MFA recovery-/backup-koder er den ene eksplicitte XFAIL.
+
+### 8.1 Fysisk lokal Edge service-UI, 2026-07-18
+
+Den signerede release `v2.8.1-lab.19` blev installeret via update `#122` på
+`TL-C87FF9587CA0`. Browser og fysisk hardware viste den lokale Tekniker-side,
+Nikon Z30 Live View, ægte QA-preview, kamera-/fotostatus og relevante handlinger.
+Tid, Netværk, CLI og System blev desuden route- og funktionsprøvet med sikre
+read-only/idempotente handlinger. Nyt WiFi, statisk IP, ruter, reboot og focus-drive
+blev bevidst fravalgt, fordi de kan afbryde den aktive R&D-Edge eller flytte den
+validerede fokusposition.
+
+| Kontrol | Resultat | Evidens |
+|---|---|---|
+| Signeret Edge app-update | PASS | Artifact `TL-ART-20260718-e985e624b2ad`, attempt 1, backup, receipt, services aktive |
+| Nikon Z30 Live View | PASS | `movie`, 24,3 fps, 345 komplette JPEG-frames og 11.679.445 bytes på 8 sekunder |
+| Stop/cleanup | PASS | `frame_ready=false`, Edge/TOTP aktive, relay FORCE OFF efter LAB-stop |
+| Autofokus | PASS | Fysisk `/main/actions/autofocusdrive = 1`, UI viste OK |
+| Billedkvalitet | PASS | `JPEG Normal` sat og læst på `/main/capturesettings/imagequality` |
+| Ægte QA-capture | PASS | blur 1902,46; brightness 121,25; anbefalet EV delta 0,0 |
+| Canon EOS 1300D/2000D isolation | PASS contract | Profiler vælger preview og Canon-sti uden at påvirke Z30 movie/sti |
+| Fysisk Canon-preview | NOT RUN | Ingen Canon-enhed tilsluttet; skal køres som særskilt hardwaretest |
+
+Autoritativ GRC-reference: `TV-EDGE-CAMERA-01`, item `263`, runs `7`/`8`, evidence `240`.
 
 ## 9. Exit-kriterier
 

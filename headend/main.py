@@ -429,6 +429,22 @@ def startup():
     except Exception as _exc_auth:
         log.warning("DB migration auth fejl: %s", _exc_auth)
 
+    # On-site idriftsættelse/service er en capability og ikke en særskilt
+    # privilegeret rolle. Additiv migration for eksisterende PostgreSQL-data.
+    try:
+        _eng_user_cap = __import__('database').engine
+        with _eng_user_cap.connect() as _conn_user_cap:
+            try:
+                _conn_user_cap.execute(text(
+                    "ALTER TABLE users ADD COLUMN on_site_service BOOLEAN NOT NULL DEFAULT FALSE"
+                ))
+                _conn_user_cap.commit()
+                log.info("DB migration: users.on_site_service tilføjet")
+            except Exception:
+                pass
+    except Exception as _exc_user_cap:
+        log.warning("DB migration users.on_site_service fejl: %s", _exc_user_cap)
+
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:
         _eng_v9 = __import__('database').engine
@@ -1551,12 +1567,14 @@ class UserCreateRequest(BaseModel):
     password:    str
     role:        str = "viewer"
     customer_id: Optional[str] = None
+    on_site_service: bool = False
 
 class UserUpdateRequest(BaseModel):
     email:       Optional[str] = None
     role:        Optional[str] = None
     customer_id: Optional[str] = None
     is_active:   Optional[bool] = None
+    on_site_service: Optional[bool] = None
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────
@@ -1767,7 +1785,12 @@ def technician_auth_start(req: TechnicianAuthStartRequest, request: Request, db:
 
 @app.post("/api/technician/auth/confirm")
 @limiter.limit("30/minute")
-def technician_auth_confirm(request: Request, req: TechnicianAuthConfirmRequest, current_user=Depends(get_current_user)):
+def technician_auth_confirm(
+    request: Request,
+    req: TechnicianAuthConfirmRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Confirm technician auth after successful headend login.
 
@@ -1776,6 +1799,15 @@ def technician_auth_confirm(request: Request, req: TechnicianAuthConfirmRequest,
     """
     import time
     from database import Device
+
+    if current_user is None or not current_user.is_active:
+        raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
+    if not bool(getattr(current_user, "on_site_service", False)):
+        raise HTTPException(
+            status_code=403,
+            detail="Brugeren mangler capability: On-site idriftsættelse og service",
+        )
+    _ensure_capture_device_access(db, current_user, req.device_id)
 
     with _pending_sessions_lock:
         session = _pending_technician_sessions.get(req.session_id)
@@ -2003,6 +2035,7 @@ def list_users(
             "mfa_partial": _user_has_partial_mfa(u),
             "mfa_required": _mfa_required_for_user(db, u),
             "webauthn_count": int(cred_counts.get(u.id, 0)),
+            "on_site_service": bool(getattr(u, "on_site_service", False)),
         }
         for u in users
     ]
@@ -2076,6 +2109,7 @@ def create_user(
         password_hash = _hash_password(req.password),
         role          = req.role,
         customer_id   = req.customer_id,
+        on_site_service = req.on_site_service,
     )
     db.add(u); db.commit(); db.refresh(u)
     log.info("Bruger oprettet: %s (%s)", u.username, u.role)
@@ -2094,7 +2128,7 @@ def update_user(
         raise HTTPException(status_code=404)
     if req.role and req.role not in ("super_admin", "admin", "operator", "viewer"):
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
-    for field in ["email", "role", "customer_id", "is_active"]:
+    for field in ["email", "role", "customer_id", "is_active", "on_site_service"]:
         val = getattr(req, field)
         if val is not None:
             setattr(u, field, val)
@@ -5251,25 +5285,32 @@ def update_camera(
 @app.get("/api/admin/cameras/{camera_id}/bt-totp-qr")
 def get_camera_bt_totp_qr(
     camera_id: str,
-    _user=require_role("super_admin", "admin"),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Returner QR-kode (data-URI) til BT PAN TOTP for dette kamera.
     Beregner det gældende secret ved at gå op i hierarkiet:
-      fabriksstandard → global (Settings) → kunde.config_overrides.bt_totp
+      global (Settings) → kunde.config_overrides.bt_totp
       → site.config_overrides.bt_totp → kamera.bt_totp_secret (højeste prioritet)
     """
     import pyotp as _pyotp, qrcode as _qrcode, io as _io, base64 as _b64
-    from database import Camera, Site, Customer
+    from database import Camera, Site, Customer, Device, DeviceAssignment
 
     cam = db.query(Camera).filter_by(id=camera_id).first()
     if not cam:
         raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+    if current_user is None or not current_user.is_active:
+        raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
+    is_admin = current_user.role in {"super_admin", "admin"}
+    if not is_admin:
+        if not bool(getattr(current_user, "on_site_service", False)):
+            raise HTTPException(status_code=403, detail="On-site idriftsættelse og service kræves")
+        if current_user.customer_id and str(cam.customer_id) != str(current_user.customer_id):
+            raise HTTPException(status_code=403, detail="Kameraet ligger uden for din kundeafgrænsning")
 
-    # Fabriksstandard som udgangspunkt
-    secret = "JBSWY3DPEHPK3PXP"
-    sid    = "factory-default"
-    source = "factory-default"
+    secret = ""
+    sid = ""
+    source = ""
 
     # Lag 1: global override (Settings-tabel)
     _g_secret = _get_setting(db, "bt_totp_secret", "")
@@ -5295,9 +5336,26 @@ def get_camera_bt_totp_qr(
     if cam.bt_totp_secret:
         secret, sid, source = cam.bt_totp_secret, cam.bt_totp_sid or "kamera", "kamera"
 
-    issuer = "TimeLapse Pro"
-    label  = f"{issuer}:{cam.camera_name or camera_id}"
-    uri    = _pyotp.TOTP(secret).provisioning_uri(name=label, issuer_name=issuer)
+    if not secret:
+        raise HTTPException(
+            status_code=409,
+            detail="Lokal adgang er ikke provisioneret for dette kamera. En administrator skal oprette den før brug.",
+        )
+
+    assignment = (
+        db.query(DeviceAssignment)
+        .filter_by(camera_id=cam.id, unassigned_at=None)
+        .first()
+    )
+    device = db.query(Device).filter_by(device_id=assignment.device_id).first() if assignment else None
+    device_label = (device.device_id if device else "ikke-tildelt Edge")
+    camera_label = cam.camera_name or str(camera_id)
+    # Authenticator apps display the account name more reliably than an issuer.
+    # The device ID must therefore be part of the account label, never just a
+    # generic product name.
+    issuer = "TimeLapse Pro Local Edge"
+    account_name = f"{device_label} - {camera_label}"
+    uri = _pyotp.TOTP(secret).provisioning_uri(name=account_name, issuer_name=issuer)
 
     buf = _io.BytesIO()
     _qrcode.make(uri).save(buf, format="PNG")
@@ -5306,9 +5364,11 @@ def get_camera_bt_totp_qr(
         "secret":   secret,
         "sid":      sid,
         "source":   source,    # hvilket lag der gælder: factory-default|global|kunde|site|kamera
+        "account_name": account_name,
+        "device_id": device.device_id if device else None,
         "uri":      uri,
         "qr_code":  f"data:image/png;base64,{qr_b64}",
-        "is_factory_default": (source == "factory-default"),
+        "is_factory_default": False,
     }
 
 
@@ -5318,7 +5378,7 @@ def regenerate_camera_bt_totp(
     _user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db)
 ):
-    """Sæt et nyt kamera-specifikt TOTP secret (kamera-laget — højeste prioritet
+    """Opret eller rotér et kamera-specifikt TOTP secret (kamera-laget — højeste prioritet
     i hierarkiet). Overrider eventuelle global/kunde/site-lag for dette kamera.
     Edge skal eksplicit synkronisere (knappen 'Opdater TOTP fra CMDB' i mgmt-UI)
     før det træder i kraft — sker ALDRIG automatisk.
@@ -13206,6 +13266,9 @@ def _run_backup_archive(reason: str = "manual", extra_paths: list[str] | None = 
             "/opt/timelapse/headend/.env",
             "/opt/timelapse/deploy/headend_poller.sh",
             "/home/peter/timelapse-pro/deploy/headend_poller.sh",
+            # Public CA only. The matching private key lives in the encrypted
+            # Restic repository under /data-fast/backup/timelapse-artifacts.
+            "/data-fast/backup/timelapse-artifacts/pki/edge-local-ca/edge-local-ca.crt",
         ]
         config_paths.extend(extra_paths or [])
         for f in ["timelapse-headend.service", "timelapse-deploy.service", "timelapse-deploy.timer"]:
@@ -14947,6 +15010,8 @@ class DiskImageBuildRequest(BaseModel):
     wifi_password: str = ""       # WiFi adgangskode
     wifi_country: str = "DK"      # WiFi landekode
     camera_id: Optional[str] = None  # UUID til Camera → SSH keys + tunnel port hentes fra DB
+    expected_device_id: str = ""  # fysisk Edge-ID fra mærkat/QR, bundet til lokal TLS-identitet
+    interactive_shell_enabled: bool = False  # Explicit R&D/local technician shell bootstrap policy
 
 
 def _edge_image_storage_dir(*, create: bool = True) -> Path:
@@ -15068,6 +15133,8 @@ def _run_edge_disk_image_build(
     wifi_password: str = "",
     wifi_country: str = "DK",
     camera_id: Optional[str] = None,
+    expected_device_id: str = "",
+    interactive_shell_enabled: bool = False,
 ) -> None:
     """Background thread: bygger edge disk image og registrerer artifact.
 
@@ -15120,24 +15187,50 @@ def _run_edge_disk_image_build(
             _headend_ssh_pubkey = ""
             _device_ssh_privkey = ""
             _ssh_tunnel_port    = 0
-            if camera_id:
+            _bt_totp_secret = ""
+            _bt_totp_sid = ""
+            _local_tls: dict[str, str] = {}
+            if not camera_id:
+                raise RuntimeError("Flashbart Edge-image kræver en valgt kameralokation for unik lokal adgang")
+            try:
+                import pyotp as _pyotp
+                from database import Camera as _Camera
+                _db_ssh = db_factory()
                 try:
-                    from database import Camera as _Camera
-                    _db_ssh = db_factory()
+                    _cam = _db_ssh.query(_Camera).filter_by(id=camera_id).first()
+                    if not _cam:
+                        raise RuntimeError(f"Kameralokation findes ikke: {camera_id}")
+                    _device_ssh_privkey = getattr(_cam, "ssh_private_key", "") or ""
+                    _ssh_tunnel_port = int(getattr(_cam, "reverse_tunnel_port", 0) or 0)
+                    _cam_name = getattr(_cam, "camera_name", camera_id)
+                    if not getattr(_cam, "bt_totp_secret", None):
+                        _cam.bt_totp_secret = _pyotp.random_base32()
+                        _cam.bt_totp_sid = f"camera-{str(camera_id)[:8]}"
+                        _db_ssh.commit()
+                        progress(f"   🔐 Kamera '{_cam_name}': unik lokal nødadgang oprettet")
+                    _bt_totp_secret = _cam.bt_totp_secret
+                    _bt_totp_sid = _cam.bt_totp_sid or f"camera-{str(camera_id)[:8]}"
+                    _assigned = _db_ssh.query(DeviceAssignment).filter(
+                        DeviceAssignment.camera_id == camera_id,
+                        DeviceAssignment.unassigned_at.is_(None),
+                    ).order_by(DeviceAssignment.assigned_at.desc()).first()
+                    _resolved_device_id = (expected_device_id or (_assigned.device_id if _assigned else "")).strip()
+                    if not _resolved_device_id:
+                        raise RuntimeError("Flashbart image kræver fysisk Edge-ID fra mærkat eller QR-kode")
                     try:
-                        _cam = _db_ssh.query(_Camera).filter_by(id=camera_id).first()
-                        if _cam:
-                            _device_ssh_privkey = getattr(_cam, "ssh_private_key", "") or ""
-                            _ssh_tunnel_port    = int(getattr(_cam, "reverse_tunnel_port", 0) or 0)
-                            _cam_name = getattr(_cam, "camera_name", camera_id)
-                            if _device_ssh_privkey:
-                                progress(f"   📷 Kamera '{_cam_name}': SSH privkey hentet, tunnel port {_ssh_tunnel_port}")
-                            else:
-                                progress(f"   ⚠️  Kamera '{_cam_name}' har ingen SSH privkey — kald /prepare først")
-                    finally:
-                        _db_ssh.close()
-                except Exception as _e:
-                    progress(f"   ⚠️  Kunne ikke hente kamera SSH keys: {_e}")
+                        from headend.services.edge_local_pki import issue_local_edge_server_certificate
+                    except (ImportError, ModuleNotFoundError):
+                        from services.edge_local_pki import issue_local_edge_server_certificate
+                    _local_tls = issue_local_edge_server_certificate(_resolved_device_id)
+                    progress(f"   🔐 Lokal TLS udstedt: {_local_tls['hostname']} (Edge-ID {_resolved_device_id})")
+                    if _device_ssh_privkey:
+                        progress(f"   📷 Kamera '{_cam_name}': SSH privkey hentet, tunnel port {_ssh_tunnel_port}")
+                    else:
+                        progress(f"   ⚠️  Kamera '{_cam_name}' har ingen SSH privkey — kald /prepare først")
+                finally:
+                    _db_ssh.close()
+            except Exception as _e:
+                raise RuntimeError(f"Kunne ikke provisionere kameraets lokale adgang: {_e}") from _e
 
             # Headend public key fra ~/.ssh/timelapse_headend_ed25519.pub
             # Auto-generer nøglen hvis den ikke findes — nødvendig for SSH adgang til device.
@@ -15186,6 +15279,14 @@ def _run_edge_disk_image_build(
                 tunnel_headend_host=_tunnel_host,
                 tunnel_headend_port=_tunnel_port,
                 tunnel_headend_user=_tunnel_user,
+                interactive_shell_enabled=interactive_shell_enabled,
+                bt_totp_secret=_bt_totp_secret,
+                bt_totp_sid=_bt_totp_sid,
+                local_mgmt_hostname=_local_tls["hostname"],
+                local_mgmt_cert_pem=_local_tls["certificate_pem"],
+                local_mgmt_key_pem=_local_tls["private_key_pem"],
+                edge_local_ca_pem=_local_tls["ca_certificate_pem"],
+                expected_device_id=_resolved_device_id,
             )
             # Merge injection-resultater ind i result
             result.update({
@@ -15266,6 +15367,21 @@ def trigger_edge_disk_image_build(
     available_targets = sorted(p.parent.name for p in hw_dir.glob("*/target.yaml"))
     if body.target not in available_targets:
         raise HTTPException(status_code=400, detail=f"Ukendt target '{body.target}'. Tilgængelige: {available_targets}")
+    if body.mode == "flashable" and not body.camera_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Flashbart image kræver en valgt kameralokation, så en unik lokal adgang kan provisioneres",
+        )
+    if body.mode == "flashable" and not body.expected_device_id:
+        active_assignment = db.query(DeviceAssignment).filter(
+            DeviceAssignment.camera_id == body.camera_id,
+            DeviceAssignment.unassigned_at.is_(None),
+        ).first() if body.camera_id else None
+        if not active_assignment:
+            raise HTTPException(
+                status_code=400,
+                detail="Angiv fysisk Edge-ID fra mærkat eller QR-kode, før et flashbart image kan bygges.",
+            )
 
     if not _edge_disk_build_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Et edge disk image build kører allerede")
@@ -15293,6 +15409,8 @@ def trigger_edge_disk_image_build(
             "wifi_password": body.wifi_password,
             "wifi_country": body.wifi_country or "DK",
             "camera_id": body.camera_id,
+            "expected_device_id": body.expected_device_id.strip(),
+            "interactive_shell_enabled": body.interactive_shell_enabled,
         },
         daemon=True,
         name="edge-disk-image-build",
@@ -17021,6 +17139,7 @@ app.include_router(capture_access_router)
 
 from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
 from api.service_access_api import create_service_access_router
+from api.edge_local_pki_api import create_edge_local_pki_router
 app.include_router(customer_risk_api.router)
 app.include_router(grc_register_api.router)
 app.include_router(storage_api.router)
@@ -18105,6 +18224,7 @@ def _ensure_capture_device_access(db: Session, user: User | None, device_id: str
 
 
 app.include_router(create_service_access_router(require_role, _ensure_capture_device_access, _siem_record_events, now_utc))
+app.include_router(create_edge_local_pki_router(require_role, _siem_record_events, now_utc))
 
 
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:
