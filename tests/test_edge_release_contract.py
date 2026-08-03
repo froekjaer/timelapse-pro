@@ -214,6 +214,13 @@ def test_local_management_is_totp_https_only_and_has_no_interactive_shell_by_def
     assert '--dport "$HTTPS_PORT"' in start_block
 
 
+def test_edge_cli_exposes_a_visible_terminal_navigation_entry():
+    service = _source("edge/scripts/totp-service.py")
+
+    assert 'href="/mgmt/cli#terminal">Terminal</a>' in service
+    assert 'id="terminal"' in service
+
+
 def test_flashable_edge_rejects_a_mac_that_does_not_match_its_bound_identity() -> None:
     bootstrap = _source("edge/scripts/bootstrap_agent.py")
 

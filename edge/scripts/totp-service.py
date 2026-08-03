@@ -1213,10 +1213,14 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
     )
     allowed = " ".join(sorted(CLI_ALLOWED_FLAGS))
     shell_enabled = bool(load_config()["management"].get("enable_interactive_shell", False))
-    shell_panel = ""
+    shell_panel = """
+    <div id="terminal" class="card wide">
+      <h2>Terminal</h2>
+      <p class="hint">Interaktiv shell er centralt deaktiveret. Aktivér den under Headend → Systemadministration → Lokal serviceadgang, og vent på næste Edge config-poll.</p>
+    </div>"""
     if shell_enabled:
         shell_panel = """
-    <div class=\"card wide\">
+    <div id=\"terminal\" class=\"card wide\">
       <h2>Terminal og SSH-klient</h2>
       <p class=\"hint\">Interaktiv lokal shell på Edge. Den indbyggede OpenSSH-klient kan anvendes herfra med en godkendt nøgle og verificeret host key. Luk terminalen når du er færdig.</p>
       <div class=\"actions\">
@@ -1288,6 +1292,7 @@ term.addEventListener('keydown', (event) => {
   <a href="/mgmt/network">Netværk</a>
   <a href="/mgmt/technician">Tekniker</a>
   <a href="/mgmt/cli" class="active">CLI</a>
+  <a href="/mgmt/cli#terminal">Terminal</a>
   <a href="/mgmt/system">System</a>
 </nav>
 <div class="content">
