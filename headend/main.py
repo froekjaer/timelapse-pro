@@ -6404,18 +6404,12 @@ def _update_requires_headend_artifact(update_type: str | None) -> bool:
 def _default_os_bundle_commands() -> list[dict]:
     return [
         {
-            "name": "offline dpkg install",
+            "name": "offline APT install from signed bundle",
             "argv": [
                 "/bin/bash",
-                "-lc",
-                "dpkg -i {bundle}/packages/*.deb || apt-get --no-download -f install -y",
+                "{bundle}/install-offline.sh",
             ],
             "timeout_s": 1800,
-        },
-        {
-            "name": "post install package audit",
-            "argv": ["/bin/bash", "{bundle}/verify-installed.sh"],
-            "timeout_s": 300,
         },
     ]
 

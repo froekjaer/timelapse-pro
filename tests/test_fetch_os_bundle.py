@@ -34,3 +34,33 @@ def test_version_drift_is_recorded_when_current_security_version_is_used(tmp_pat
     assert result["deb_files"] == 1
     assert result["version_drifts"] == [{"name": "demo", "requested": "1.0", "resolved": "2.0"}]
     assert "2.0" in (tmp_path / "bundle" / "verify-installed.sh").read_text()
+
+
+def test_bundle_installer_uses_offline_apt_with_exact_versions(tmp_path, monkeypatch):
+    entries = {
+        "demo": {"Package": "demo", "Version": "2.0", "Filename": "pool/demo.deb", "Architecture": "arm64", "SHA256": ""},
+        "helper": {"Package": "helper", "Version": "3.0", "Filename": "pool/helper.deb", "Architecture": "arm64", "SHA256": ""},
+    }
+    monkeypatch.setattr(fetch, "fetch_all_indices", lambda *_args, **_kwargs: entries)
+
+    def fake_download(entry, dest, _mirror, verbose=False):
+        path = dest / f"{entry['Package']}_{entry['Version']}_arm64.deb"
+        path.write_bytes(b"deb")
+        return path
+
+    monkeypatch.setattr(fetch, "download_deb", fake_download)
+    fetch.build_bundle(
+        [
+            {"name": "demo", "available_version": "2.0"},
+            {"name": "helper", "available_version": "3.0"},
+        ],
+        tmp_path / "bundle",
+        "TL-TEST",
+    )
+
+    installer = (tmp_path / "bundle" / "install-offline.sh").read_text()
+    assert "cp -f packages/*.deb /var/cache/apt/archives/" in installer
+    assert "apt-get --no-download" in installer
+    assert "'demo=2.0'" in installer
+    assert "'helper=3.0'" in installer
+    assert "dpkg -i" not in installer

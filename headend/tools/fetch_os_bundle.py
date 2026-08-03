@@ -350,20 +350,28 @@ def deb_metadata_from_index(entry: dict, deb_path: Path) -> dict[str, Any]:
 
 # ── Bundle file writers ───────────────────────────────────────────────────────
 
-def install_script() -> str:
-    return """#!/bin/bash
+def install_script(package_file_entries: list[dict[str, Any]]) -> str:
+    """Generate the signed, offline-only installer for a bundle.
+
+    Installing a glob of deb files through ``dpkg`` leaves package ordering to
+    chance.  That can unpack a coherent bundle but leave it half configured.
+    Put the signed files in APT's local cache and let APT resolve the order,
+    while ``--no-download`` makes an attempted network fetch fail closed.
+    """
+    requested = " ".join(
+        _shell_quote(f"{entry['name']}={entry['version']}")
+        for entry in package_file_entries
+    )
+    return f"""#!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-# Trin 1: Installer alle .deb-filer. dpkg kan returnere rc=1 ved dependency-
-# konflikter i batch-install (packages/*.deb er usorteret), men pakkerne
-# extraheres alligevel. apt-get -f retter op på manglende afhængigheder
-# offline (--no-download). Vi ignorerer exit-koden fra begge trin og lader
-# verify-installed.sh afgøre om installationen reelt lykkedes.
-dpkg -i packages/*.deb 2>&1 || true
-apt-get --no-download -f install -y 2>&1 || true
-# Trin 2: Verificer at alle pakker er installeret med de forventede versioner.
-# verify-installed.sh afslutter med rc!=0 hvis noget mangler — det er den
-# eneste authoritative fejlkilde.
+# Kun pakker i dette signerede bundle gøres tilgængelige for APT. Der foretages
+# ingen ``apt update`` eller netværksdownload på Edgen.
+install -d -m 0755 /var/cache/apt/archives
+cp -f packages/*.deb /var/cache/apt/archives/
+apt-get --no-download --no-install-recommends --allow-downgrades \\
+  --allow-change-held-packages -y install {requested}
+# Verificer de faktiske versioner efter APT har afsluttet transaktionen.
 ./verify-installed.sh
 """
 
@@ -506,13 +514,13 @@ def build_bundle(
         "mirror": mirror,
         "packages_requested": packages,
         "package_files": package_file_entries,
-        "install_model": "offline dpkg; apt-get --no-download -f install only",
+        "install_model": "signed local APT cache; apt-get --no-download exact-version install",
         "fetch_tool": "fetch_os_bundle.py",
     }
     write_json(output / "package-manifest.json", package_manifest)
 
     install_sh = output / "install-offline.sh"
-    install_sh.write_text(install_script())
+    install_sh.write_text(install_script(package_file_entries))
     install_sh.chmod(0o755)
 
     verify_sh = output / "verify-installed.sh"
@@ -670,13 +678,13 @@ def main() -> int:
         "mirror": mirror,
         "packages_requested": packages,
         "package_files": package_file_entries,
-        "install_model": "offline dpkg; apt-get --no-download -f install only",
+        "install_model": "signed local APT cache; apt-get --no-download exact-version install",
         "fetch_tool": "fetch_os_bundle.py",
     }
     write_json(output / "package-manifest.json", package_manifest)
 
     install_sh = output / "install-offline.sh"
-    install_sh.write_text(install_script())
+    install_sh.write_text(install_script(package_file_entries))
     install_sh.chmod(0o755)
 
     verify_sh = output / "verify-installed.sh"
