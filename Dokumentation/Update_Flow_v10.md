@@ -45,6 +45,53 @@ Dette afsnit erstatter ældre udsagn i dokumentet om, at den aktive Edge havde n
 
 Katalogopdagelsen er rettet til at køre på Headend med dagligt interval og til at gemme planer/artifacts permanent under det logiske dataområde `/data-fast`. Den næste konkrete opgave er at færdiggøre og verificere den natlige SBOM-/advisory-kontrol beskrevet ovenfor.
 
+## Sådan bruges Update-menuen
+
+Hele den normale proces styres i UI under **Opdateringer**. En administrator
+skal normalt kun arbejde med fanerne **Afventer**, **Godkendt** og
+**Deployet**. Fanerne **Blokeret**, **Erstattet**, **Afvist** og **Rullet
+tilbage** er drift-, fejlsøgnings- og auditspor, ikke den normale kø.
+
+| UI-område | Hvad det bruges til | Normal brugerhandling |
+|---|---|---|
+| **CMDB → enhed/SBOM** | Installerede OS-pakker, applikationer, biblioteker og rapporteringstidspunkt. | Kontrollér at den aktive enhed har frisk inventar. |
+| **Opdateringer → Afventer** | Nye, signerede og test-klare kandidater. | Fold rækken ud og vælg **Godkend** til LAB. |
+| **Opdateringer → Godkendt** | Godkendt til en konkret Edge eller Headend og venter på næste pull/poll. | Følg den udfoldede flow-status. |
+| **Opdateringer → Deployet** | Gennemført installation med målstatus, backup og rapportering. | Verificér testresultatet og beslut eventuel promovering. |
+| **Opdateringer → Blokeret** | En konkret afvigelse eller en kortvarig automatisk artifact-forberedelse. | Læs årsagen; brug ikke **Genprøv** på historiske poster. |
+| **Opdateringer → Erstattet** | Tidligere kandidater, der er afløst af nyere kandidater. | Audit/reference; ingen udrulning. |
+| **Opdateringer → Afvist / Rullet tilbage** | Afvist change eller mislykket/tilbageført installation. | Fejlsøgning eller formel change-beslutning. |
+| **Compliance / GRC og SIEM** | Risiko, kontroller, alarmer og evidens. | Følg op på kritiske fund og dokumentér disposition. |
+
+### Statusmodel
+
+| Status | Betydning | Næste trin |
+|---|---|---|
+| **Afventer** | Artifact, hash, signatur og change-oplysninger er klar. Kandidaten er klar til menneskelig godkendelse til LAB-test. | Godkend. |
+| **Godkendt** | Godkendt til målmiljøet. Headend venter på Edge-heartbeat/poll eller Headend-installationsflow. | Følg den udfoldede flow-status. |
+| **Deployet** | Mål-enheden har rapporteret gennemført installation. | Udfør og dokumentér test; promover kun beståede LAB-kandidater. |
+| **Blokeret** | Artifact, forudsætning eller konkret fejl mangler. Ved automatisk OS-forberedelse kan status være kortvarig, mens Headend bygger bundle. | Læs årsagen eller afvent det automatiske build. |
+| **Erstattet** | En nyere kandidat repræsenterer samme ændring bedre. Posten bevares for sporbarhed. | Ingen handling. |
+| **Afvist** | Change er bevidst fravalgt med begrundelse. | Opret eller afvent en ny kandidat ved fortsat behov. |
+| **Rullet tilbage** | Installationen er tilbageført eller kræver kontrolleret recovery. | Undersøg SIEM, backup og change ticket. |
+
+### Konkret eksempel: aktiv R&D-Edge
+
+For `TL-C87FF9587CA0` er den aktuelle kø:
+
+1. **OS sikkerhed - 126 pakker**: kandidat `#136` i LAB.
+2. **OS opdatering - 20 pakker**: kandidat `#134` i LAB.
+3. Headend bygger og binder automatisk de signerede offline artifacts. Når det
+   er færdigt, ligger begge under **Afventer**.
+4. Administratoren godkender derfra til LAB. Under **Godkendt** ses femtrins-
+   flowet: godkendelse, Edge-poll, trust-check, pre-update backup og
+   installation/rollback.
+5. Efter en succesfuld installation vises kandidaten under **Deployet**.
+   Først efter dokumenteret LAB-test kan den promoveres til staging eller prod.
+
+De tidligere poster fra juli ligger under **Erstattet**. De slettes ikke, fordi
+de er change- og revisionshistorik, men de må ikke bruges som nye kandidater.
+
 ## Executive summary
 
 Den friske E2E-kørsel viser, at Headend-medieret app/artifact-update virker end-to-end på den aktive Edge `TL-C87FF9587CA0`.
