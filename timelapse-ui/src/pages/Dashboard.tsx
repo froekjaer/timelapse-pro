@@ -146,7 +146,7 @@ function SiteCard({ site, devices, cameras, canConfigure }: { site: Site; device
       {expanded && (
         <div className="divide-y divide-gray-100">
           {siteCameras.map(camera => (
-            <div key={camera.id} className="flex items-center gap-3 px-4 py-3 bg-sky-50/40">
+            <Link key={camera.id} to={`/camera-locations/${pathSegment(camera.id)}`} className="flex items-center gap-3 px-4 py-3 bg-sky-50/40 hover:bg-sky-50 transition-colors group">
               <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center flex-shrink-0">
                 <Camera className="w-4 h-4 text-sky-600" />
               </div>
@@ -157,7 +157,8 @@ function SiteCard({ site, devices, cameras, canConfigure }: { site: Site; device
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                 camera.current_device_id ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
               }`}>{camera.current_device_id ? 'Edge tildelt' : 'Afventer Edge'}</span>
-            </div>
+              <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-sky-500" />
+            </Link>
           ))}
           {siteDevices.length === 0 ? (
             <p className="px-4 py-3 text-sm text-gray-400 italic">Ingen fysisk Edge er tildelt dette site endnu</p>

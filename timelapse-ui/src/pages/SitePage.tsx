@@ -657,7 +657,7 @@ export function SitePage() {
             {cameraLocations.map(camera => {
               const assigned = Boolean(camera.current_device_id)
               return (
-                <div key={camera.id} className="flex items-center gap-3 px-3 py-2.5 bg-gray-50 rounded-lg">
+                <Link key={camera.id} to={`/camera-locations/${pathSegment(camera.id)}`} className="flex items-center gap-3 px-3 py-2.5 bg-gray-50 rounded-lg hover:bg-sky-50 transition-colors group">
                   <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center flex-shrink-0">
                     <Camera className="w-4 h-4 text-sky-600" />
                   </div>
@@ -671,7 +671,8 @@ export function SitePage() {
                     }`}>{assigned ? 'Edge tildelt' : 'Afventer Edge'}</span>
                     {assigned && <p className="font-mono text-gray-400 mt-1">{camera.current_device_id}</p>}
                   </div>
-                </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-sky-500" />
+                </Link>
               )
             })}
           </div>

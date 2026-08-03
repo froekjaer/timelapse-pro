@@ -12,6 +12,7 @@ import { BackupPage } from './pages/BackupPage'
 import { SitePage } from './pages/SitePage'
 import { CustomerPage } from './pages/CustomerPage'
 import { CameraPage } from './pages/CameraPage'
+import { CameraLocationGalleryPage } from './pages/CameraLocationGalleryPage'
 import { GlobalConfigPage } from './pages/GlobalConfigPage'
 import LabPage from './pages/LabPage'
 import { SystemAdminPage } from './pages/SystemAdminPage'
@@ -98,6 +99,7 @@ function AppRoutes() {
                 <Route path="/customers/new" element={<RequireRole minimum="super_admin"><NewCustomerPage /></RequireRole>} />
                 <Route path="/customers/:customerId" element={<CustomerPage />} />
                 <Route path="/cameras/:deviceId" element={<RequireRole minimum="admin"><CameraPage /></RequireRole>} />
+                <Route path="/camera-locations/:cameraId" element={<CameraLocationGalleryPage />} />
                 <Route path="/global-config" element={<RequireRole minimum="admin"><GlobalConfigPage /></RequireRole>} />
                 <Route path="/lab/:deviceId" element={<RequireRole minimum="admin"><LabPage /></RequireRole>} />
                 <Route path="/devices/:deviceId/lab" element={<RequireRole minimum="admin"><LabPage /></RequireRole>} />
