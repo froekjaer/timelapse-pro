@@ -221,6 +221,13 @@ def test_edge_cli_exposes_a_visible_terminal_navigation_entry():
     assert 'id="terminal"' in service
 
 
+def test_edge_terminal_translates_common_control_keys_to_ansi():
+    service = _source("edge/scripts/totp-service.py")
+
+    for sequence in ("\\x1b[A", "\\x1b[B", "\\x1b[C", "\\x1b[D", "\\x1b[3~", "\\x1b[H", "\\x1b[F"):
+        assert sequence in service
+
+
 def test_flashable_edge_rejects_a_mac_that_does_not_match_its_bound_identity() -> None:
     bootstrap = _source("edge/scripts/bootstrap_agent.py")
 

@@ -1298,7 +1298,15 @@ term.addEventListener('keydown', (event) => {
   let data = null;
   if (event.key === 'Enter') data = '\\n';
   else if (event.key === 'Backspace') data = '\\x7f';
+  else if (event.key === 'Delete') data = '\\x1b[3~';
   else if (event.key === 'Tab') data = '\\t';
+  else if (event.key === 'Escape') data = '\\x1b';
+  else if (event.key === 'ArrowUp') data = '\\x1b[A';
+  else if (event.key === 'ArrowDown') data = '\\x1b[B';
+  else if (event.key === 'ArrowRight') data = '\\x1b[C';
+  else if (event.key === 'ArrowLeft') data = '\\x1b[D';
+  else if (event.key === 'Home') data = '\\x1b[H';
+  else if (event.key === 'End') data = '\\x1b[F';
   else if (event.ctrlKey && event.key.length === 1) data = String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64);
   else if (!event.metaKey && !event.altKey && event.key.length === 1) data = event.key;
   if (data !== null) {
