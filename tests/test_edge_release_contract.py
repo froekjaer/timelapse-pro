@@ -235,6 +235,15 @@ def test_edge_terminal_uses_a_controlling_pty_without_ansi_noise():
     assert '"TERM": "dumb"' in service
 
 
+def test_edge_terminal_renders_shell_editing_controls_in_the_browser():
+    service = _source("edge/scripts/totp-service.py")
+
+    assert "function appendTerminal(output)" in service
+    assert "char === '\\b' || char === '\\x7f'" in service
+    assert "terminalCursor = lineStart" in service
+    assert "appendTerminal(result.output)" in service
+
+
 def test_flashable_edge_rejects_a_mac_that_does_not_match_its_bound_identity() -> None:
     bootstrap = _source("edge/scripts/bootstrap_agent.py")
 

@@ -1275,6 +1275,40 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
 let shellOpen = false;
 let shellPollTimer = null;
 const term = document.getElementById('term');
+let terminalText = '';
+let terminalCursor = 0;
+
+function appendTerminal(output) {
+  // Bash echoes editing as control sequences. Render the common terminal
+  // controls locally rather than exposing their raw characters in the textarea.
+  output = output
+    .replace(/\x1b\\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\\[[0-?]*[ -/]*[@-~]/g, '');
+  for (const char of output) {
+    const lineStart = terminalText.lastIndexOf('\n', terminalCursor - 1) + 1;
+    if (char === '\r') {
+      terminalCursor = lineStart;
+    } else if (char === '\n') {
+      terminalText = terminalText.slice(0, terminalCursor) + '\n' + terminalText.slice(terminalCursor);
+      terminalCursor += 1;
+    } else if (char === '\b' || char === '\x7f') {
+      if (terminalCursor > lineStart) {
+        terminalText = terminalText.slice(0, terminalCursor - 1) + terminalText.slice(terminalCursor);
+        terminalCursor -= 1;
+      }
+    } else if (char >= ' ') {
+      if (terminalCursor < terminalText.length && terminalText[terminalCursor] !== '\n') {
+        terminalText = terminalText.slice(0, terminalCursor) + char + terminalText.slice(terminalCursor + 1);
+      } else {
+        terminalText = terminalText.slice(0, terminalCursor) + char + terminalText.slice(terminalCursor);
+      }
+      terminalCursor += 1;
+    }
+  }
+  term.value = terminalText;
+  term.scrollTop = term.scrollHeight;
+}
+
 async function shellRequest(path, options = {}) {
   const response = await fetch(path, options);
   if (!response.ok) throw new Error(await response.text());
@@ -1284,22 +1318,22 @@ async function pollShell() {
   if (!shellOpen) return;
   try {
     const result = await shellRequest('/mgmt/cli/bash/output');
-    if (result.output) { term.value += result.output; term.scrollTop = term.scrollHeight; }
-    if (!result.running) { shellOpen = false; term.value += '\\n[closed]\\n'; return; }
-  } catch (_) { shellOpen = false; term.value += '\\n[closed]\\n'; return; }
+    if (result.output) appendTerminal(result.output);
+    if (!result.running) { shellOpen = false; appendTerminal('\\n[closed]\\n'); return; }
+  } catch (_) { shellOpen = false; appendTerminal('\\n[closed]\\n'); return; }
   shellPollTimer = setTimeout(pollShell, 120);
 }
 async function openShell() {
   if (shellOpen) return;
   try {
     await shellRequest('/mgmt/cli/bash/start', {method: 'POST'});
-    shellOpen = true; term.value += '\\n[connected]\\n'; term.focus(); pollShell();
-  } catch (_) { term.value += '\\n[connection failed]\\n'; }
+    shellOpen = true; appendTerminal('\\n[connected]\\n'); term.focus(); pollShell();
+  } catch (_) { appendTerminal('\\n[connection failed]\\n'); }
 }
 async function closeShell() {
   shellOpen = false; if (shellPollTimer) clearTimeout(shellPollTimer);
   try { await shellRequest('/mgmt/cli/bash/close', {method: 'POST'}); } catch (_) {}
-  term.value += '\\n[closed]\\n';
+  appendTerminal('\\n[closed]\\n');
 }
 term.addEventListener('keydown', (event) => {
   if (!shellOpen) return;
