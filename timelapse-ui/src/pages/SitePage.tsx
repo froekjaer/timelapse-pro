@@ -39,6 +39,15 @@ interface Device {
   last_seen?: string
 }
 
+interface CameraLocation {
+  id: string
+  camera_name?: string
+  model?: string
+  serial_number?: string
+  current_device_id?: string | null
+  assigned_at?: string | null
+}
+
 const TZ = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
 
 function triFrom(value: unknown) {
@@ -127,6 +136,7 @@ export function SitePage() {
   const { siteId } = useParams<{ siteId: string }>()
   const navigate = useNavigate()
   const [site, setSite] = useState<Site | null>(null)
+  const [cameraLocations, setCameraLocations] = useState<CameraLocation[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -165,9 +175,13 @@ export function SitePage() {
 
   useEffect(() => {
     if (!siteId) return
-    api(`/api/admin/sites/${siteId}`)
-      .then(d => {
+    Promise.all([
+      api(`/api/admin/sites/${siteId}`),
+      api(`/api/admin/cameras?site_id=${encodeURIComponent(siteId)}`),
+    ])
+      .then(([d, cameras]) => {
         setSite(d)
+        setCameraLocations(Array.isArray(cameras) ? cameras : [])
         setName(d.name ?? '')
         setAddress(d.address ?? '')
         setGpsLat(d.gps_lat ?? '')
@@ -626,14 +640,47 @@ export function SitePage() {
         )}
       </div>
 
-      {/* Kameraer på dette site */}
+      {/* Fysiske Edge-enheder og logiske kameralokationer er forskellige ting.
+          En kameralokation skal derfor være synlig, også før en Edge er tildelt. */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-gray-700">Kameraer</h2>
-          <span className="text-xs text-gray-400">{site.devices.length} enhed{site.devices.length !== 1 ? 'er' : ''}</span>
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Kameraer og Edge-enheder</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Kameralokationer bevares, også når de endnu ikke har en Edge.</p>
+          </div>
+          <span className="text-xs text-gray-400">{cameraLocations.length} kamera{cameraLocations.length !== 1 ? 'er' : ''} · {site.devices.length} Edge</span>
         </div>
+        {cameraLocations.length === 0 ? (
+          <p className="text-sm text-gray-400 italic">Ingen kameralokationer registreret på dette site</p>
+        ) : (
+          <div className="space-y-2 mb-4">
+            {cameraLocations.map(camera => {
+              const assigned = Boolean(camera.current_device_id)
+              return (
+                <div key={camera.id} className="flex items-center gap-3 px-3 py-2.5 bg-gray-50 rounded-lg">
+                  <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center flex-shrink-0">
+                    <Camera className="w-4 h-4 text-sky-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{camera.camera_name || 'Unavngivet kamera'}</p>
+                    <p className="text-xs text-gray-400 font-mono truncate">{camera.id}</p>
+                  </div>
+                  <div className="text-right text-xs">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full font-medium ${
+                      assigned ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                    }`}>{assigned ? 'Edge tildelt' : 'Afventer Edge'}</span>
+                    {assigned && <p className="font-mono text-gray-400 mt-1">{camera.current_device_id}</p>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        <div className="border-t border-gray-100 pt-4">
+          <p className="text-xs font-medium text-gray-500 mb-2">Fysiske Edge-enheder</p>
         {site.devices.length === 0 ? (
-          <p className="text-sm text-gray-400 italic">Ingen kameraer registreret på dette site</p>
+          <p className="text-sm text-gray-400 italic">Ingen Edge er tildelt endnu. Klargør en ny Edge i Backup → Generer Edge, og bind den derefter til den ønskede kameralokation.</p>
         ) : (
           <div className="space-y-2">
             {site.devices.map(d => {
@@ -666,6 +713,7 @@ export function SitePage() {
             })}
           </div>
         )}
+        </div>
       </div>
 
       {/* Gem og slet */}
