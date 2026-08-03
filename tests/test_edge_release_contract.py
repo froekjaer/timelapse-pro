@@ -228,6 +228,13 @@ def test_edge_terminal_translates_common_control_keys_to_ansi():
         assert sequence in service
 
 
+def test_edge_terminal_uses_a_controlling_pty_without_ansi_noise():
+    service = _source("edge/scripts/totp-service.py")
+
+    assert "termios.TIOCSCTTY" in service
+    assert '"TERM": "dumb"' in service
+
+
 def test_flashable_edge_rejects_a_mac_that_does_not_match_its_bound_identity() -> None:
     bootstrap = _source("edge/scripts/bootstrap_agent.py")
 

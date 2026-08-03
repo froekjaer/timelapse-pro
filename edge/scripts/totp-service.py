@@ -28,6 +28,8 @@ import pty
 import select
 import sys
 import threading
+import fcntl
+import termios
 import yaml
 import pyotp
 
@@ -285,6 +287,12 @@ def _close_shell_session(token: str) -> None:
         os.close(session["master_fd"])
     except OSError:
         pass
+
+
+def _attach_controlling_terminal(slave_fd: int) -> None:
+    """Give the child shell a real controlling PTY, including job control."""
+    os.setsid()
+    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
 
 
 def _require_shell_session(request: Request) -> str:
@@ -1743,9 +1751,10 @@ async def mgmt_cli_bash_start(request: Request):
     _close_shell_session(token)
     master_fd, slave_fd = pty.openpty()
     env = os.environ.copy()
-    env.update({"TERM": "xterm-256color", "TIMELAPSE_EDGE_ROOT": str(EDGE_ROOT)})
+    env.update({"TERM": "dumb", "TIMELAPSE_EDGE_ROOT": str(EDGE_ROOT)})
     process = subprocess.Popen([BASH_PATH, "-l"], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
-                               cwd=str(EDGE_ROOT), env=env, close_fds=True)
+                               cwd=str(EDGE_ROOT), env=env, close_fds=True,
+                               preexec_fn=lambda: _attach_controlling_terminal(slave_fd))
     os.close(slave_fd)
     with SHELL_SESSIONS_LOCK:
         SHELL_SESSIONS[token] = {"process": process, "master_fd": master_fd}
