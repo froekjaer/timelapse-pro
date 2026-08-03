@@ -28,6 +28,14 @@ interface Site {
   devices_count: number
 }
 
+interface CameraLocation {
+  id: string
+  customer_id?: string
+  site_id?: string
+  camera_name?: string
+  current_device_id?: string | null
+}
+
 function api(path: string) {
   return fetch(`${getApiUrl()}${path}`, {
     credentials: 'include',
@@ -89,13 +97,15 @@ function DeviceRow({ device }: { device: Device }) {
   )
 }
 
-function SiteCard({ site, devices, canConfigure }: { site: Site; devices: Device[]; canConfigure: boolean }) {
+function SiteCard({ site, devices, cameras, canConfigure }: { site: Site; devices: Device[]; cameras: CameraLocation[]; canConfigure: boolean }) {
   const siteDevices = devices.filter(d => {
     return d.site_id === site.id || (
       !d.site_id && d.site_name === site.name && d.customer_name === site.customer_name
     )
   })
   const online = siteDevices.filter(d => d.status === 'online').length
+  const siteCameras = cameras.filter(camera => camera.site_id === site.id)
+  const unassignedCameras = siteCameras.filter(camera => !camera.current_device_id)
   const [expanded, setExpanded] = useState(true)
 
   return (
@@ -123,14 +133,34 @@ function SiteCard({ site, devices, canConfigure }: { site: Site; devices: Device
               : <Clock className="w-3.5 h-3.5" />}
             {online}/{siteDevices.length} online
           </span>
+          {unassignedCameras.length > 0 && (
+            <span className="hidden sm:inline-flex items-center gap-1 text-amber-700">
+              <Clock className="w-3.5 h-3.5" />
+              {unassignedCameras.length} afventer Edge
+            </span>
+          )}
           <ChevronRight className={`w-3.5 h-3.5 text-gray-300 transition-transform ${expanded ? 'rotate-90' : ''}`} />
         </div>
       </button>
 
       {expanded && (
         <div className="divide-y divide-gray-100">
+          {siteCameras.map(camera => (
+            <div key={camera.id} className="flex items-center gap-3 px-4 py-3 bg-sky-50/40">
+              <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center flex-shrink-0">
+                <Camera className="w-4 h-4 text-sky-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-800">{camera.camera_name || 'Unavngivet kamera'}</p>
+                <p className="text-xs text-gray-400 font-mono truncate">{camera.id}</p>
+              </div>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                camera.current_device_id ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+              }`}>{camera.current_device_id ? 'Edge tildelt' : 'Afventer Edge'}</span>
+            </div>
+          ))}
           {siteDevices.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-gray-400 italic">Ingen enheder på dette site</p>
+            <p className="px-4 py-3 text-sm text-gray-400 italic">Ingen fysisk Edge er tildelt dette site endnu</p>
           ) : (
             siteDevices.map(d => (
               <div key={d.device_id} className="flex items-center">
@@ -155,7 +185,7 @@ function SiteCard({ site, devices, canConfigure }: { site: Site; devices: Device
   )
 }
 
-function CustomerCard({ customer, sites, devices, canConfigure }: { customer: Customer; sites: Site[]; devices: Device[]; canConfigure: boolean }) {
+function CustomerCard({ customer, sites, devices, cameras, canConfigure }: { customer: Customer; sites: Site[]; devices: Device[]; cameras: CameraLocation[]; canConfigure: boolean }) {
   const customerSites = sites.filter(s => s.customer_id === customer.id)
   const customerDevices = devices.filter(d => d.customer_id === customer.id || (!d.customer_id && d.customer_name === customer.name))
   const online = customerDevices.filter(d => d.status === 'online').length
@@ -195,7 +225,7 @@ function CustomerCard({ customer, sites, devices, canConfigure }: { customer: Cu
             <p className="text-sm text-gray-400 italic px-1">Ingen sites oprettet</p>
           ) : (
             customerSites.map(site => (
-              <SiteCard key={site.id} site={site} devices={devices} canConfigure={canConfigure} />
+              <SiteCard key={site.id} site={site} devices={devices} cameras={cameras} canConfigure={canConfigure} />
             ))
           )}
           {canConfigure && <div className="flex justify-end pt-1">
@@ -217,22 +247,25 @@ export function Dashboard() {
   const [devices, setDevices]     = useState<Device[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [sites, setSites]         = useState<Site[]>([])
+  const [cameras, setCameras]     = useState<CameraLocation[]>([])
   const [loading, setLoading]     = useState(true)
   const [lastRefresh, setLastRefresh] = useState(new Date())
 
   const load = async () => {
     setLoading(true)
     try {
-      const [s, d, c, si] = await Promise.all([
+      const [s, d, c, si, ca] = await Promise.all([
         getStats(),
         getDevices(),
         api('/api/admin/customers'),
         api('/api/admin/sites'),
+        api('/api/admin/cameras'),
       ])
       setStats(s)
       setDevices(d)
       setCustomers(c)
       setSites(si)
+      setCameras(ca)
       setLastRefresh(new Date())
     } catch (e) {
       console.error(e)
@@ -295,7 +328,7 @@ export function Dashboard() {
         <div className="py-12 text-center text-gray-400 text-sm">Ingen kunder registreret</div>
       ) : (
         customers.map(customer => (
-          <CustomerCard key={customer.id} customer={customer} sites={sites} devices={devices} canConfigure={canConfigure} />
+              <CustomerCard key={customer.id} customer={customer} sites={sites} devices={devices} cameras={cameras} canConfigure={canConfigure} />
         ))
       )}
 
