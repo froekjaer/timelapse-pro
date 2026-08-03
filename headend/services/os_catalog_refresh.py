@@ -6,6 +6,7 @@ import logging
 import os
 import threading
 import time
+from datetime import timedelta
 
 
 log = logging.getLogger("headend.os_catalog_refresh")
@@ -47,6 +48,8 @@ def refresh_os_catalogs_from_cmdb() -> None:
         if not system_user:
             log.warning("OS-katalogopdagelse: ingen super_admin fundet — springer over")
             return
+        max_age_hours = float(os.getenv("TIMELAPSE_OS_CATALOG_MAX_INVENTORY_AGE_HOURS", "72"))
+        freshness_cutoff = now_utc() - timedelta(hours=max(1, max_age_hours))
         inventories = (
             db.query(DeviceInventory)
             .filter(DeviceInventory.package_manager.ilike("%apt%"))
@@ -55,6 +58,13 @@ def refresh_os_catalogs_from_cmdb() -> None:
         )
         for inventory in inventories:
             if not inventory.os_packages:
+                continue
+            if not inventory.inventory_reported_at or inventory.inventory_reported_at < freshness_cutoff:
+                log.info(
+                    "OS-katalogopdagelse: springer stale inventory over for %s (%s)",
+                    inventory.device_id,
+                    inventory.inventory_reported_at,
+                )
                 continue
             try:
                 refresh_os_catalog_from_mac_builder(

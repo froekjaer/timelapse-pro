@@ -8122,16 +8122,13 @@ def _upsert_blocked_os_updates_from_plan(
         severity = decision.get("severity") or ("high" if update_type == "os_security" else "low")
         label = "sikkerhedsopdatering(er)" if update_type == "os_security" else "funktionelle OS-opdatering(er)"
         version = f"{count} pakker"
-        # Reuse only a current CMDB-generated preparation record. Historical
-        # Edge reports and prior failed attempts remain immutable audit history
-        # and must never be overwritten by a fresh catalog refresh.
         existing = (
             db.query(PendingUpdate)
             .filter(
                 PendingUpdate.update_type == update_type,
                 PendingUpdate.scope == "device",
                 PendingUpdate.scope_id == device_id,
-                PendingUpdate.status == "blocked",
+                PendingUpdate.status.in_(["pending", "approved", "blocked"]),
                 PendingUpdate.description.contains("Headend lab-katalog"),
             )
             .order_by(PendingUpdate.created_at.desc())
@@ -8144,6 +8141,9 @@ def _upsert_blocked_os_updates_from_plan(
             "Edge må ikke bruge direkte apt/internet."
         )
         if existing:
+            if existing.status in {"pending", "approved"}:
+                changes.append({"update_type": update_type, "status": "unchanged", "id": existing.id})
+                continue
             existing.version = version
             existing.description = description
             existing.severity = severity

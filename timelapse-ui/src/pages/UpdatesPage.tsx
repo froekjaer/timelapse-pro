@@ -215,7 +215,7 @@ interface UpdateArtifact {
 }
 
 interface ApproveOptions {
-  environment:      'test' | 'production'
+  environment:      'lab' | 'test' | 'production'
   scope:            'global' | 'device' | 'customer' | 'site'
   scope_id:         string
 }
@@ -710,8 +710,8 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
               {prodReady ? 'Prod-klar' : (STATUS_LABELS[u.status] ?? u.status)}
             </span>
             {u.environment && (
-              <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${u.environment === 'test' ? 'bg-purple-50 text-purple-700 border-purple-200' : prodReady ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                {u.environment === 'test' ? 'test' : prodReady ? 'prod-klar' : 'prod'}
+              <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${u.environment === 'lab' ? 'bg-sky-50 text-sky-700 border-sky-200' : u.environment === 'test' ? 'bg-purple-50 text-purple-700 border-purple-200' : prodReady ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
+                {u.environment === 'lab' ? 'lab' : u.environment === 'test' ? 'test' : prodReady ? 'prod-klar' : 'prod'}
               </span>
             )}
             {u.scope !== 'global' && (
