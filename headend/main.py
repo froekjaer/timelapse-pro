@@ -8178,6 +8178,9 @@ def import_os_catalog_from_lab_apt_list(
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="CMDB inventory ikke fundet for device_id")
+    from services.os_inventory_freshness import stale_os_inventory_reason
+    if stale_reason := stale_os_inventory_reason(inv.inventory_reported_at):
+        raise HTTPException(status_code=409, detail=stale_reason)
     try:
         installed = json.loads(inv.os_packages or "{}")
     except Exception:
