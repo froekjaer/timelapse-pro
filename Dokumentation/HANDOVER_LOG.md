@@ -1662,3 +1662,11 @@ person vide".
 - **Audit:** De tidligere signerede artefakter beholdes som revisionsspor. Kun den sidste signerede artefakt er bundet til den deployede target.
 - **Næste skridt:** Byg, test og godkend `#134` (20 funktionelle OS-pakker) separat i LAB. Start ikke production-promotion før dokumenteret postflight/LAB-test.
 - **Commits:** `201ba59c`, `074b8dc3`, `89b4ccc5`, `08bd6234` på `codex/os-catalog-refresh` (PR #8). Lokale tests: `tests/test_fetch_os_bundle.py` og `tests/test_architecture_ratchet.py` passerede efter hver kodeændring.
+
+### Handover 2026-08-03 17:05 — Codex: lokal Edge-terminal, kontroltegn og LAB-deployment
+- **Problem løst:** Den lokale tekniker-terminal viste Bash' kontroltegn bogstaveligt (f.eks. `^[[`, backspace og redraw-sekvenser), selv om shell-forbindelsen fungerede.
+- **Rettelse:** Browserdelen har nu en lille terminalrenderer, der tolker Backspace, carriage return, linjeskift og almindelige ANSI/OSC-sekvenser. Terminalen kan derfor redigere kommandoer visuelt med Backspace og pile uden synlige kontroltegn.
+- **Release:** Commit `b25703ed6942c9b013293fc6d6f84f637f795201`, GPG-signeret tag `v2.8.1-lab.28`, artifact `TL-ART-20260803-b25703ed6942`.
+- **E2E-evidens:** LAB-update `#149` til `TL-C87FF9587CA0` er `deployed`. Pre-update backup blev uploadet, artifact-receipt på Edge viser `v2.8.1-lab.28`, CMDB-target har status `deployed` uden fejl, `timelapse-edge` og `timelapse-totp` er aktive, og lokal portal `/mgmt/cli` svarer HTTP 200.
+- **Test:** `python3 -W error::SyntaxWarning -m py_compile edge/scripts/totp-service.py` og `pytest -q tests/test_edge_release_contract.py` — 31 passed.
+- **GitHub:** Direkte push til beskyttet `main` blev korrekt afvist. Commit og tag er pushet på review-branch `codex/edge-terminal-renderer`; den skal PR-godkendes og merges til `main` efter CI.
