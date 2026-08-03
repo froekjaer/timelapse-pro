@@ -8963,6 +8963,7 @@ def _auto_build_and_bind_os_bundle(
     if not packages:
         raise RuntimeError(f"Ingen gyldige pakker at downloade for update #{update.id}")
 
+    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
     suite = _infer_ubuntu_suite_for_os_bundle(inv, packages)
     architecture = _infer_architecture_for_os_bundle(packages)
     target_os = f"ubuntu-{_ubuntu_version_label_for_suite(suite)}/orangepi"
