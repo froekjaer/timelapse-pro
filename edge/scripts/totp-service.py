@@ -34,7 +34,7 @@ import pyotp
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, Request, Form, Response, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, StreamingResponse, JSONResponse
 from typing import Optional
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -77,6 +77,8 @@ AUTH_FAILURE_LIMIT = 5
 AUTH_FAILURE_WINDOW_S = 15 * 60
 AUTH_LOCKOUT_S = 15 * 60
 BASH_PATH = os.getenv("TIMELAPSE_TECH_SHELL", "/bin/bash")
+SHELL_SESSIONS: dict[str, dict] = {}
+SHELL_SESSIONS_LOCK = threading.RLock()
 CLI_ALLOWED_FLAGS = {
     "--status",
     "--test-headend",
@@ -263,6 +265,36 @@ def _valid_token(token: str, ip: str) -> bool:
         _iptables_remove(ip)
         return False
     return True
+
+
+def _close_shell_session(token: str) -> None:
+    """Terminate the local technician shell bound to one authenticated session."""
+    with SHELL_SESSIONS_LOCK:
+        session = SHELL_SESSIONS.pop(token, None)
+    if not session:
+        return
+    try:
+        session["process"].terminate()
+        session["process"].wait(timeout=1)
+    except Exception:
+        try:
+            session["process"].kill()
+        except Exception:
+            pass
+    try:
+        os.close(session["master_fd"])
+    except OSError:
+        pass
+
+
+def _require_shell_session(request: Request) -> str:
+    if not load_config()["management"].get("enable_interactive_shell", False):
+        raise HTTPException(status_code=403, detail="Interaktiv shell er centralt deaktiveret")
+    token = request.cookies.get(SESSION_COOKIE, "")
+    client_ip = request.client.host if request.client else ""
+    if not _valid_token(token, client_ip):
+        raise HTTPException(status_code=401, detail="Lokal session er udløbet")
+    return token
 
 
 # ── iptables helpers ──────────────────────────────────────────────────────────
@@ -1232,24 +1264,47 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
     shell_script = ""
     if shell_enabled:
         shell_script = """
-let shellWs = null;
+let shellOpen = false;
+let shellPollTimer = null;
 const term = document.getElementById('term');
-function openShell() {
-  if (shellWs && shellWs.readyState === WebSocket.OPEN) return;
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  shellWs = new WebSocket(proto + '//' + location.host + '/mgmt/cli/bash/ws');
-  shellWs.onopen = () => { term.value += '\\n[connected]\\n'; term.focus(); };
-  shellWs.onmessage = (event) => { term.value += event.data; term.scrollTop = term.scrollHeight; };
-  shellWs.onclose = () => { term.value += '\\n[closed]\\n'; };
+async function shellRequest(path, options = {}) {
+  const response = await fetch(path, options);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
 }
-function closeShell() { if (shellWs) shellWs.close(); }
+async function pollShell() {
+  if (!shellOpen) return;
+  try {
+    const result = await shellRequest('/mgmt/cli/bash/output');
+    if (result.output) { term.value += result.output; term.scrollTop = term.scrollHeight; }
+    if (!result.running) { shellOpen = false; term.value += '\\n[closed]\\n'; return; }
+  } catch (_) { shellOpen = false; term.value += '\\n[closed]\\n'; return; }
+  shellPollTimer = setTimeout(pollShell, 120);
+}
+async function openShell() {
+  if (shellOpen) return;
+  try {
+    await shellRequest('/mgmt/cli/bash/start', {method: 'POST'});
+    shellOpen = true; term.value += '\\n[connected]\\n'; term.focus(); pollShell();
+  } catch (_) { term.value += '\\n[connection failed]\\n'; }
+}
+async function closeShell() {
+  shellOpen = false; if (shellPollTimer) clearTimeout(shellPollTimer);
+  try { await shellRequest('/mgmt/cli/bash/close', {method: 'POST'}); } catch (_) {}
+  term.value += '\\n[closed]\\n';
+}
 term.addEventListener('keydown', (event) => {
-  if (!shellWs || shellWs.readyState !== WebSocket.OPEN) return;
-  if (event.key === 'Enter') { shellWs.send('\\n'); event.preventDefault(); }
-  else if (event.key === 'Backspace') { shellWs.send('\\x7f'); event.preventDefault(); }
-  else if (event.key === 'Tab') { shellWs.send('\\t'); event.preventDefault(); }
-  else if (event.ctrlKey && event.key.length === 1) { shellWs.send(String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64)); event.preventDefault(); }
-  else if (!event.metaKey && !event.altKey && event.key.length === 1) { shellWs.send(event.key); event.preventDefault(); }
+  if (!shellOpen) return;
+  let data = null;
+  if (event.key === 'Enter') data = '\\n';
+  else if (event.key === 'Backspace') data = '\\x7f';
+  else if (event.key === 'Tab') data = '\\t';
+  else if (event.ctrlKey && event.key.length === 1) data = String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64);
+  else if (!event.metaKey && !event.altKey && event.key.length === 1) data = event.key;
+  if (data !== null) {
+    event.preventDefault();
+    shellRequest('/mgmt/cli/bash/input', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'data=' + encodeURIComponent(data)}).catch(() => closeShell());
+  }
 });"""
     return f"""<!DOCTYPE html>
 <html lang="da">
@@ -1672,6 +1727,63 @@ async def mgmt_cli_run(request: Request, command: str = Form(...)):
     ok, output = _run_tech_cli(*args, timeout=120)
     rendered = f"$ bootstrap_cli.py {' '.join(args)}\n\n{output}"
     return HTMLResponse(_cli_page("OK" if ok else "Fejl", rendered, command))
+
+
+@app.post("/mgmt/cli/bash/start")
+async def mgmt_cli_bash_start(request: Request):
+    token = _require_shell_session(request)
+    _close_shell_session(token)
+    master_fd, slave_fd = pty.openpty()
+    env = os.environ.copy()
+    env.update({"TERM": "xterm-256color", "TIMELAPSE_EDGE_ROOT": str(EDGE_ROOT)})
+    process = subprocess.Popen([BASH_PATH, "-l"], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+                               cwd=str(EDGE_ROOT), env=env, close_fds=True)
+    os.close(slave_fd)
+    with SHELL_SESSIONS_LOCK:
+        SHELL_SESSIONS[token] = {"process": process, "master_fd": master_fd}
+    return JSONResponse({"ok": True})
+
+
+@app.post("/mgmt/cli/bash/input")
+async def mgmt_cli_bash_input(request: Request, data: str = Form(...)):
+    token = _require_shell_session(request)
+    if len(data) > 4096:
+        raise HTTPException(status_code=400, detail="Terminalinput er for langt")
+    with SHELL_SESSIONS_LOCK:
+        session = SHELL_SESSIONS.get(token)
+        if not session or session["process"].poll() is not None:
+            raise HTTPException(status_code=409, detail="Terminalen er ikke åben")
+        os.write(session["master_fd"], data.encode())
+    return JSONResponse({"ok": True})
+
+
+@app.get("/mgmt/cli/bash/output")
+async def mgmt_cli_bash_output(request: Request):
+    token = _require_shell_session(request)
+    with SHELL_SESSIONS_LOCK:
+        session = SHELL_SESSIONS.get(token)
+        if not session:
+            return JSONResponse({"running": False, "output": ""})
+        process, master_fd = session["process"], session["master_fd"]
+        chunks = []
+        while len(chunks) < 16:
+            readable, _, _ = select.select([master_fd], [], [], 0)
+            if not readable:
+                break
+            data = os.read(master_fd, 4096)
+            if not data:
+                break
+            chunks.append(data.decode(errors="replace"))
+        running = process.poll() is None
+    if not running:
+        _close_shell_session(token)
+    return JSONResponse({"running": running, "output": "".join(chunks)})
+
+
+@app.post("/mgmt/cli/bash/close")
+async def mgmt_cli_bash_close(request: Request):
+    _close_shell_session(_require_shell_session(request))
+    return JSONResponse({"ok": True})
 
 
 @app.websocket("/mgmt/cli/bash/ws")
