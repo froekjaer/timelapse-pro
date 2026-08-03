@@ -61,4 +61,5 @@ def test_bundle_installer_uses_two_phase_offline_dpkg_transaction(tmp_path, monk
     installer = (tmp_path / "bundle" / "install-offline.sh").read_text()
     assert "dpkg --force-confold --unpack packages/*.deb" in installer
     assert "dpkg --configure --pending" in installer
+    assert "/bin/bash ./verify-installed.sh" in installer
     assert "apt-get" not in installer

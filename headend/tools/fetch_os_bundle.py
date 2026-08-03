@@ -366,7 +366,7 @@ cd "$(dirname "$0")"
 dpkg --force-confold --unpack packages/*.deb
 dpkg --configure --pending
 # Verificer de faktiske versioner efter den samlede dpkg-transaktion.
-./verify-installed.sh
+/bin/bash ./verify-installed.sh
 """
 
 
