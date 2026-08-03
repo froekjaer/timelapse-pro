@@ -5551,6 +5551,56 @@ def assign_camera_to_device(
     log.info("Kamera %s tildelt device %s", camera_id, device_id)
     return {"ok": True, "camera_id": camera_id, "device_id": device_id}
 
+
+@app.delete("/api/admin/cameras/{camera_id}")
+def retire_empty_camera_location(
+    camera_id: str,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Retire an unused logical camera location without touching image data.
+
+    A location with captures or a live physical Edge cannot be retired through
+    the UI. This prevents accidental loss of historic image navigation.
+    """
+    from database import Camera, DeviceAssignment
+
+    camera = db.query(Camera).filter_by(id=camera_id).first()
+    if not camera:
+        raise HTTPException(status_code=404, detail="Kameralokation ikke fundet")
+    if camera.site_id:
+        _ensure_site_access(db, current_user, camera.site_id)
+    elif camera.customer_id:
+        _ensure_customer_access(current_user, camera.customer_id)
+
+    active_assignment = (
+        db.query(DeviceAssignment)
+        .filter_by(camera_id=camera_id)
+        .filter(DeviceAssignment.unassigned_at.is_(None))
+        .first()
+    )
+    if active_assignment:
+        raise HTTPException(
+            status_code=409,
+            detail="Kameralokationen har en aktiv Edge-binding og kan ikke slettes.",
+        )
+    capture_count = db.query(Capture).filter(Capture.camera_id == camera_id).count()
+    if capture_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Kameralokationen har {capture_count} billeder og kan ikke slettes.",
+        )
+
+    camera.retired_at = now_utc()
+    db.add(Event(
+        level="INFO",
+        category="camera_location_retired",
+        message=f"Empty camera location retired: {camera.camera_name or camera_id}",
+        extra=json.dumps({"camera_id": camera_id, "retired_by": current_user.username}),
+    ))
+    db.commit()
+    return {"ok": True, "camera_id": camera_id, "message": "Tom kameralokation fjernet"}
+
 @app.get("/api/admin/cameras/{camera_id}/history")
 def camera_assignment_history(
     camera_id: str,

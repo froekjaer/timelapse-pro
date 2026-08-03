@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Camera, Image as ImageIcon, Loader2 } from 'lucide-react'
+import { ArrowLeft, Camera, Image as ImageIcon, Loader2, Trash2 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { useAuth } from '../context/AuthContext'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
 import { Lightbox } from './DevicePage'
 import type { Capture } from '../types'
@@ -15,10 +16,11 @@ type CameraLocation = {
   current_device_id?: string | null
 }
 
-function api(path: string) {
+function api(path: string, options?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
+    ...options,
   }).then(async response => {
     if (!response.ok) throw new Error(`${response.status}`)
     return response.json()
@@ -27,11 +29,14 @@ function api(path: string) {
 
 export function CameraLocationGalleryPage() {
   const { cameraId } = useParams<{ cameraId: string }>()
+  const { user } = useAuth()
   const [camera, setCamera] = useState<CameraLocation | null>(null)
   const [captures, setCaptures] = useState<Capture[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!cameraId) return
@@ -47,6 +52,21 @@ export function CameraLocationGalleryPage() {
   }, [cameraId])
 
   const backUrl = camera?.site_id ? `/sites/${camera.site_id}` : '/'
+  const canDelete = Boolean(user && ['super_admin', 'admin'].includes(user.role) && camera && !camera.current_device_id && captures.length === 0)
+
+  async function deleteEmptyLocation() {
+    if (!cameraId || !camera || !confirm(`Fjern den tomme kameralokation "${camera.camera_name ?? cameraId}"? Dette påvirker ikke billeder.`)) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api(`/api/admin/cameras/${encodeURIComponent(cameraId)}`, { method: 'DELETE' })
+      window.location.assign(backUrl)
+    } catch {
+      setDeleteError('Kameralokationen kunne ikke fjernes. Den kan have billeder eller en aktiv Edge-binding.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -63,6 +83,13 @@ export function CameraLocationGalleryPage() {
             {[camera?.customer_name, camera?.site_name].filter(Boolean).join(' · ')}
             {camera?.current_device_id ? ` · Edge ${camera.current_device_id}` : ' · Ingen aktiv Edge tildelt'}
           </p>
+          {canDelete && (
+            <button onClick={deleteEmptyLocation} disabled={deleting} className="mt-3 inline-flex items-center gap-1.5 border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 rounded-lg px-3 py-2 text-sm">
+              {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              Fjern tom kameralokation
+            </button>
+          )}
+          {deleteError && <p className="mt-2 text-sm text-red-600">{deleteError}</p>}
         </div>
       </div>
 
