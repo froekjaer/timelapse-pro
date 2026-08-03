@@ -632,6 +632,23 @@ def startup():
     except Exception as _obp_err:
         log.warning("Kunne ikke starte OS bundle auto-poller: %s", _obp_err)
 
+    # ── OS-katalogopdagelse fra CMDB ─────────────────────────────────────────
+    # Edge har ikke direkte internetadgang. Headend sammenligner derfor det
+    # senest rapporterede package inventory med det godkendte Linux-katalog og
+    # opretter kun blokerede LAB-kandidater til efterfølgende artifact-build.
+    try:
+        interval_h = float(os.getenv("TIMELAPSE_OS_CATALOG_REFRESH_INTERVAL_HOURS", "24"))
+        t_catalog = _threading.Thread(
+            target=_os_catalog_refresh_loop,
+            args=(interval_h,),
+            name="os-catalog-refresh",
+            daemon=True,
+        )
+        t_catalog.start()
+        log.info("OS-katalogopdagelse startet (interval=%.1fh)", interval_h)
+    except Exception as _ocr_err:
+        log.warning("Kunne ikke starte OS-katalogopdagelse: %s", _ocr_err)
+
     # ── AI batch-job poller (Gemini Batch API) ───────────────────────────────
     try:
         interval_m = float(os.getenv("TIMELAPSE_AI_BATCH_POLL_MINUTES", "5"))
@@ -7351,7 +7368,13 @@ def _os_bundle_requests(device_id: str, environment: str, decisions: dict, catal
 
 
 def _write_update_json(folder: str, filename: str, payload: dict) -> str:
-    root = Path(os.getenv("TIMELAPSE_UPDATE_STORE", "/var/lib/timelapse")).expanduser()
+    configured = os.getenv("TIMELAPSE_UPDATE_STORE")
+    if configured:
+        root = Path(configured).expanduser()
+    elif sys.platform == "darwin" and Path("/data-fast").is_dir():
+        root = Path("/data-fast/backup/timelapse-artifacts/update-store")
+    else:
+        root = Path("/var/lib/timelapse")
     path = root / folder / filename
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -7373,6 +7396,8 @@ def _os_bundle_store_root() -> Path:
     configured = os.getenv("TIMELAPSE_OS_BUNDLE_STORE")
     if configured:
         return Path(configured).expanduser()
+    if sys.platform == "darwin" and Path("/data-fast").is_dir():
+        return Path("/data-fast/backup/timelapse-artifacts/os-bundles")
     return Path("/Users/Shared/TimeLapsePro/os-bundles") if sys.platform == "darwin" else Path("/var/lib/timelapse/os-bundles")
 
 
@@ -7796,7 +7821,6 @@ def _generate_apt_list_from_mac_builder(
         )
     build_root = (_os_bundle_store_root().expanduser().resolve() / "_catalog-builder")
     build_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(build_root, 0o777)
     safe_device = _re.sub(r"[^A-Za-z0-9_.-]+", "-", device_id)
     input_path = build_root / f"{safe_device}.installed.tsv"
     output_path = build_root / f"{safe_device}.apt-list.txt"
@@ -7809,22 +7833,27 @@ def _generate_apt_list_from_mac_builder(
         lines.append(f"{name_s}\t{version_s}")
     input_path.write_text("\n".join(lines) + "\n")
     output_path.write_text("")
-    os.chmod(input_path, 0o666)
-    os.chmod(output_path, 0o666)
+    # One `apt-cache policy` invocation for all packages is materially faster
+    # than starting it once for each of the ~1,800 CMDB package rows.
     shell = (
         "set -euo pipefail; "
         "apt-get update >/dev/null; "
-        "while IFS=$'\\t' read -r name installed; do "
-        "[ -n \"$name\" ] || continue; "
-        "candidate=$(apt-cache policy \"$name\" | awk '/Candidate:/ {print $2; exit}'); "
-        "[ -n \"$candidate\" ] && [ \"$candidate\" != '(none)' ] || continue; "
+        "apt-cache policy $(cut -f1 /out/" + input_path.name + ") > /tmp/policy.txt; "
+        "awk '"
+        "BEGIN { OFS = \"\\t\" } "
+        "function emit() { if (pkg != \"\" && candidate != \"\" && candidate != \"(none)\") "
+        "print pkg, candidate, (candidate_security ? \"noble-security\" : \"noble-updates\"); } "
+        "/^[^[:space:]].*:$/{emit(); pkg=substr($0,1,length($0)-1); candidate=\"\"; candidate_version=\"\"; candidate_security=0; next} "
+        "/^  Candidate:/{candidate=$2; next} "
+        "/^[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]+$/{candidate_version=$1; next} "
+        "/^[[:space:]]+[0-9]+ http/{if (candidate_version == candidate && $0 ~ /security/) candidate_security=1} "
+        "END{emit()}' /tmp/policy.txt | sort -k1,1 > /tmp/candidates.tsv; "
+        "sort -k1,1 /out/" + input_path.name + " | "
+        "join -t $'\\t' -1 1 -2 1 - /tmp/candidates.tsv | "
+        "while IFS=$'\\t' read -r name installed candidate repo_label; do "
         "if dpkg --compare-versions \"$candidate\" gt \"$installed\"; then "
-        "repos=$(apt-cache policy \"$name\" | awk -v cand=\"$candidate\" '$1 == cand {getline; print $3; exit}'); "
-        "[ -n \"$repos\" ] || repos=ubuntu-builder; "
-        "case \"$repos\" in *security*) repo_label=noble-security ;; *updates*) repo_label=noble-updates ;; *) repo_label=\"$repos\" ;; esac; "
         f"printf '%s/%s %s {architecture} [upgradable from: %s]\\n' \"$name\" \"$repo_label\" \"$candidate\" \"$installed\"; "
-        "fi; "
-        "done < /out/" + input_path.name + " > /out/" + output_path.name
+        "fi; done > /out/" + output_path.name
     )
     result = _subprocess.run(
         [
@@ -8724,6 +8753,69 @@ def _git_tag_poller_loop(interval_hours: float = 1.0) -> None:
         _time.sleep(interval_s)
 
 
+# ── CMDB-baseret OS-katalogopdagelse ─────────────────────────────────────────
+
+def _refresh_os_catalogs_from_cmdb() -> None:
+    """Refresh OS-kandidater for aktuelle Edge-inventarer på Headend.
+
+    Headend må bruge Docker og upstream-kataloget; Edge rapporterer kun
+    installerede versioner og henter senere et signeret offline artifact.
+    """
+    db = SessionLocal()
+    try:
+        system_user = (
+            db.query(User)
+            .filter(User.role == "super_admin")
+            .order_by(User.id)
+            .first()
+        )
+        if not system_user:
+            log.warning("OS-katalogopdagelse: ingen super_admin fundet — springer over")
+            return
+        inventories = (
+            db.query(DeviceInventory)
+            .filter(DeviceInventory.package_manager.ilike("%apt%"))
+            .order_by(DeviceInventory.device_id)
+            .all()
+        )
+        for inv in inventories:
+            if not inv.os_packages:
+                continue
+            try:
+                refresh_os_catalog_from_mac_builder(
+                    OsCatalogBuilderPayload(
+                        device_id=inv.device_id,
+                        environment=inv.environment or "lab",
+                        image="ubuntu:24.04",
+                        architecture="arm64",
+                        source=f"headend-scheduled-cmdb-refresh:{now_utc():%Y-%m-%d}",
+                        create_updates=True,
+                    ),
+                    system_user,
+                    db,
+                )
+                log.info("OS-katalogopdagelse: opdateret for %s", inv.device_id)
+            except Exception as exc:
+                db.rollback()
+                log.warning("OS-katalogopdagelse: %s fejlede: %s", inv.device_id, exc)
+    finally:
+        db.close()
+
+
+def _os_catalog_refresh_loop(interval_hours: float = 24.0) -> None:
+    """Kør én refresh efter opstart og derefter mindst hver time/døgn."""
+    import time as _time
+
+    interval_s = max(3600, interval_hours * 3600)
+    _time.sleep(60)
+    while True:
+        try:
+            _refresh_os_catalogs_from_cmdb()
+        except Exception as exc:
+            log.warning("OS-katalogopdagelse fejlede: %s", exc)
+        _time.sleep(interval_s)
+
+
 # ── Automatisk OS bundle builder ──────────────────────────────────────────────
 
 def _os_bundle_auto_poller_loop(interval_minutes: float = 10.0) -> None:
@@ -8831,54 +8923,38 @@ def _auto_build_and_bind_os_bundle(
     _fb_mod = _importlib_util.module_from_spec(_spec)
     _spec.loader.exec_module(_fb_mod)  # type: ignore[union-attr]
 
-    # Hent pakkeliste fra inventory (soft_inventory JSON i DB)
-    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
-    packages_raw: list[dict] = []
-    if inv and inv.software_inventory:
-        try:
-            sw = json.loads(inv.software_inventory) if isinstance(inv.software_inventory, str) else inv.software_inventory
-            apt_data = sw.get("_os_updates_available") or {}
-            packages_raw = apt_data.get("packages") or []
-        except Exception:
-            pass
-
-    if not packages_raw:
+    # Build precisely what the CMDB reconciliation presented in the UI. Using
+    # the Edge's old `os_updates_available` report here could produce an
+    # artifact different from the approved update plan.
+    plan_path_raw = _plan_path_for_update(update)
+    if not plan_path_raw:
         raise RuntimeError(
-            f"Ingen pakker i inventory for {device_id} — "
-            "kan ikke bygge OS bundle uden pakkeliste"
+            f"Update #{update.id} mangler en permanent CMDB-plan — refresh OS-kataloget først"
         )
+    plan_path = Path(plan_path_raw).expanduser().resolve()
+    if not plan_path.is_file():
+        raise RuntimeError(f"CMDB-plan findes ikke på Headend: {plan_path}")
+    try:
+        plan = json.loads(plan_path.read_text())
+        plan_device = str(plan.get("device_id") or "")
+        decision = (plan.get("decisions") or {}).get(update.update_type) or {}
+        packages_raw = decision.get("packages") or []
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"CMDB-plan kan ikke læses: {exc}") from exc
+    if plan_device != device_id or not isinstance(packages_raw, list):
+        raise RuntimeError("CMDB-plan matcher ikke update-enheden eller mangler pakkeliste")
 
-    # Konverter inventory-format (name + new_ver) til fetch_os_bundle-format (name + available_version)
-    # Filtrer til den relevante update_type (security vs. non-security)
-    want_security = (update.update_type == "os_security")
     packages = [
         {
-            "name":               p["name"],
-            "available_version":  p.get("new_ver") or p.get("available_version") or "",
-            "installed_version":  p.get("old_ver") or p.get("installed_version") or "",
-            "source_repo":        p.get("source_repo") or "",
-            "category":           update.update_type,
+            "name": str(p.get("name") or ""),
+            "available_version": str(p.get("available_version") or ""),
+            "installed_version": str(p.get("installed_version") or ""),
+            "source_repo": str(p.get("source_repo") or ""),
+            "category": update.update_type,
         }
         for p in packages_raw
-        if bool(p.get("security")) == want_security
-        and (p.get("new_ver") or p.get("available_version"))
+        if p.get("name") and p.get("available_version") and p.get("installed_version")
     ]
-
-    if not packages and not any("security" in p for p in packages_raw):
-        # Legacy inventory uden security-flag: brug hele listen som fallback.
-        # Hvis security-flag findes og ingen pakker matcher, må vi ikke bygge et
-        # funktionelt OS-bundle som om det var en security-update.
-        packages = [
-            {
-                "name":               p["name"],
-                "available_version":  p.get("new_ver") or p.get("available_version") or "",
-                "installed_version":  p.get("old_ver") or p.get("installed_version") or "",
-                "source_repo":        p.get("source_repo") or "",
-                "category":           update.update_type,
-            }
-            for p in packages_raw
-            if p.get("new_ver") or p.get("available_version")
-        ]
 
     if not packages:
         raise RuntimeError(f"Ingen gyldige pakker at downloade for update #{update.id}")
