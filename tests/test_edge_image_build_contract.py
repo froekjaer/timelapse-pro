@@ -96,6 +96,15 @@ def test_flashable_image_binds_the_public_build_api_to_the_expected_edge_identit
     assert "expected_device_id   = expected_device_id" in source
 
 
+def test_flashable_injection_passes_the_expected_edge_identity_to_docker() -> None:
+    source = Path("headend/tools/inject_edge_image.py").read_text(encoding="utf-8")
+    helper = source.split("def _inject_via_docker(", 1)[1].split("def inject_edge_image(", 1)[0]
+
+    assert 'expected_device_id: str = ""' in helper
+    assert 'f"EXPECTED_DEVICE_ID={expected_device_id}"' in helper
+    assert 'bootstrap.yaml matcher ikke forventet fysisk Edge-ID' in source
+
+
 def test_flashable_image_credentials_are_owned_by_the_physical_edge() -> None:
     source = (ROOT / "headend" / "main.py").read_text()
     request = source.split("class DiskImageBuildRequest", 1)[1].split("def _edge_image_storage_dir", 1)[0]

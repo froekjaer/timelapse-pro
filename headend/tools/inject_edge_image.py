@@ -505,6 +505,14 @@ done
 
 # ── Bootstrap config ──────────────────────────────────────────────────────────
 echo "[inject] Injicerer bootstrap.yaml..."
+if [[ -z "${EXPECTED_DEVICE_ID:-}" ]]; then
+    echo "[inject] FEJL: forventet fysisk Edge-ID mangler"
+    exit 1
+fi
+if ! grep -Fqx "expected_device_id: ${EXPECTED_DEVICE_ID}" "$BOOTSTRAP_YAML"; then
+    echo "[inject] FEJL: bootstrap.yaml matcher ikke forventet fysisk Edge-ID"
+    exit 1
+fi
 cp "$BOOTSTRAP_YAML" /mnt/root/etc/timelapse/bootstrap.yaml
 chmod 600 /mnt/root/etc/timelapse/bootstrap.yaml
 
@@ -893,6 +901,7 @@ def _inject_via_docker(
     local_mgmt_cert_pem: str = "",
     local_mgmt_key_pem: str = "",
     edge_local_ca_pem: str = "",
+    expected_device_id: str = "",
 ) -> None:
     """
     Injectér agent-filer i base-image via Docker --privileged.
@@ -937,6 +946,7 @@ def _inject_via_docker(
         "-e", f"BT_TOTP_SECRET={bt_totp_secret}",
         "-e", f"BT_TOTP_SID={bt_totp_sid}",
         "-e", f"LOCAL_MGMT_HOSTNAME={local_mgmt_hostname}",
+        "-e", f"EXPECTED_DEVICE_ID={expected_device_id}",
         "ubuntu:22.04", "sleep", "3600",
     ]
     start = subprocess.run(
