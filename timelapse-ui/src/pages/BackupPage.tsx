@@ -400,7 +400,6 @@ export function BackupPage() {
   const [diskBuildWifiSsid, setDiskBuildWifiSsid] = useState('')
   const [diskBuildWifiPassword, setDiskBuildWifiPassword] = useState('')
   const [diskBuildWifiCountry, setDiskBuildWifiCountry] = useState('DK')
-  const [diskBuildCameraId, setDiskBuildCameraId] = useState('')
   const [diskBuildExpectedDeviceId, setDiskBuildExpectedDeviceId] = useState('')
   const [diskBuildInteractiveShellEnabled, setDiskBuildInteractiveShellEnabled] = useState(true)
   const [availableTargets, setAvailableTargets] = useState<EdgeBuildTarget[]>([])
@@ -573,7 +572,6 @@ export function BackupPage() {
           wifi_ssid: diskBuildWifiSsid,
           wifi_password: diskBuildWifiPassword,
           wifi_country: diskBuildWifiCountry || 'DK',
-          camera_id: diskBuildCameraId || undefined,
           expected_device_id: diskBuildExpectedDeviceId.trim() || undefined,
           interactive_shell_enabled: diskBuildInteractiveShellEnabled,
         }),
@@ -736,8 +734,6 @@ export function BackupPage() {
           setDiskBuildWifiPassword={setDiskBuildWifiPassword}
           diskBuildWifiCountry={diskBuildWifiCountry}
           setDiskBuildWifiCountry={setDiskBuildWifiCountry}
-          diskBuildCameraId={diskBuildCameraId}
-          setDiskBuildCameraId={setDiskBuildCameraId}
           diskBuildExpectedDeviceId={diskBuildExpectedDeviceId}
           setDiskBuildExpectedDeviceId={setDiskBuildExpectedDeviceId}
           diskBuildInteractiveShellEnabled={diskBuildInteractiveShellEnabled}
@@ -1115,8 +1111,6 @@ function IsoTab({
   setDiskBuildWifiPassword,
   diskBuildWifiCountry,
   setDiskBuildWifiCountry,
-  diskBuildCameraId,
-  setDiskBuildCameraId,
   diskBuildExpectedDeviceId,
   setDiskBuildExpectedDeviceId,
   diskBuildInteractiveShellEnabled,
@@ -1149,8 +1143,6 @@ function IsoTab({
   setDiskBuildWifiPassword: (v: string) => void
   diskBuildWifiCountry: string
   setDiskBuildWifiCountry: (v: string) => void
-  diskBuildCameraId: string
-  setDiskBuildCameraId: (v: string) => void
   diskBuildExpectedDeviceId: string
   setDiskBuildExpectedDeviceId: (v: string) => void
   diskBuildInteractiveShellEnabled: boolean
@@ -1167,17 +1159,14 @@ function IsoTab({
   const hasImage = !!latestImage
   const selectedBuildTarget = availableTargets.find(target => target.id === diskBuildTarget)
 
-  // Kamera-liste til SSH-injection ved disk image build
-  const [allCameras, setAllCameras] = useState<Array<{ id: string; camera_name: string; ssh_public_key: string | null; reverse_tunnel_port: number | null }>>([])
   const [localCa, setLocalCa] = useState<{ initialized: boolean; healthy: boolean; detail: string; subject?: string; not_after?: string } | null>(null)
   const [initializingLocalCa, setInitializingLocalCa] = useState(false)
   const [localCaError, setLocalCaError] = useState<string | null>(null)
   const canBuildDiskImage = Boolean(selectedBuildTarget) &&
     (diskBuildMode !== 'flashable' || (
-      selectedBuildTarget?.flashable && diskBuildCameraId && localCa?.initialized && localCa.healthy
+      selectedBuildTarget?.flashable && diskBuildExpectedDeviceId.trim().length >= 3 && localCa?.initialized && localCa.healthy
     ))
   useEffect(() => {
-    api('/admin/cameras').then(r => r.ok ? r.json() : []).then(setAllCameras).catch(() => {})
     api('/admin/edge-local-ca/status').then(r => r.ok ? r.json() : null).then(setLocalCa).catch(() => setLocalCaError('CA-status kunne ikke hentes'))
   }, [])
 
@@ -1201,6 +1190,7 @@ function IsoTab({
   // WiFi B: post-process inject state (lokal til IsoTab)
   const [wifiInjectOpen, setWifiInjectOpen] = useState(false)
   const [wifiInjectArtifactId, setWifiInjectArtifactId] = useState('')
+  const [wifiInjectDeviceId, setWifiInjectDeviceId] = useState('')
   const [wifiInjectSsid, setWifiInjectSsid] = useState('')
   const [wifiInjectPassword, setWifiInjectPassword] = useState('')
   const [wifiInjectCountry, setWifiInjectCountry] = useState('DK')
@@ -1284,8 +1274,9 @@ function IsoTab({
     try {
       const r = await api('/admin/edge-provisioning/inject-wifi', {
         method: 'POST',
-        body: JSON.stringify({
-          artifact_id: wifiInjectArtifactId,
+      body: JSON.stringify({
+        artifact_id: wifiInjectArtifactId,
+        expected_device_id: wifiInjectDeviceId.trim() || undefined,
           wifi_ssid: wifiInjectSsid,
           wifi_password: wifiInjectPassword,
           wifi_country: wifiInjectCountry || 'DK',
@@ -1594,27 +1585,12 @@ function IsoTab({
               <div className="mb-4 rounded-lg bg-violet-50 border border-violet-200 p-3">
                 <div className="flex items-center gap-1.5 mb-2">
                   <span className="text-violet-600 text-xs">🔑</span>
-                  <p className="text-xs text-violet-800 font-medium">Kamerabinding og lokal adgang</p>
+                  <p className="text-xs text-violet-800 font-medium">Edge-identitet og lokal adgang</p>
                 </div>
                 <p className="text-xs text-violet-700 mb-2">
-                  Vælg den kameralokation, imaget skal bindes til. Det opretter en unik lokal nødadgang og bager den ind i imaget.
-                  SSH-nøgler og reverse tunnel tages med, når kameraet er forberedt.
+                  Imaget bindes kun til den fysiske Edge. Det opretter unik lokal TLS, TOTP, SSH-nøgle og reverse-tunnel-port.
+                  Kamera og lokation kan bindes eller ændres efter første opstart uden ny provisionering.
                 </p>
-                <select
-                  value={diskBuildCameraId}
-                  onChange={e => setDiskBuildCameraId(e.target.value)}
-                  disabled={diskBuildStatus?.running}
-                  className="w-full text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 disabled:opacity-50"
-                >
-                  <option value="">— vælg kameralokation (påkrævet) —</option>
-                  {allCameras.map(c => (
-                    <option key={c.id} value={c.id}>
-                      {c.camera_name}
-                      {c.ssh_public_key ? ` ✓ SSH` : ' ⚠ ingen nøgle'}
-                      {c.reverse_tunnel_port ? ` · port ${c.reverse_tunnel_port}` : ''}
-                    </option>
-                  ))}
-                </select>
                 <div className="mt-3">
                   <label htmlFor="edge-build-device-id" className="block text-xs font-medium text-violet-900 mb-1">Fysisk Edge-ID</label>
                   <input id="edge-build-device-id" value={diskBuildExpectedDeviceId}
@@ -1645,7 +1621,7 @@ function IsoTab({
 
             <p className="text-xs text-gray-400 mb-3">
               {diskBuildMode === 'flashable'
-                ? 'Bygger rootfs via Docker buildx og injicerer i et base-image. En valgt kameralokation, fysisk Edge-ID og central CA giver unik lokal adgang. Output: .img.gz, klar til SSD/SD-kort.'
+                ? 'Bygger rootfs via Docker buildx og injicerer i et base-image. Fysisk Edge-ID og central CA giver unik lokal adgang. Output: .img.gz, klar til SSD/SD-kort.'
                 : 'Bygger rootfs via Docker buildx. Output: .tar.gz tarball der kan injiceres manuelt eller bruges som depot til manuel flash.'
               }
             </p>
@@ -1813,7 +1789,7 @@ function IsoTab({
                   <button onClick={() => setWifiInjectOpen(false)} className="text-blue-400 hover:text-blue-700 text-xs">✕</button>
                 </div>
                 <p className="text-blue-700 mb-3">
-                  Producerer et nyt .img.gz med WiFi-config bagt ind — originalen bevares urørt.
+                  Producerer et nyt .img.gz med WiFi-config bagt ind. Angiv samme fysiske Edge-ID som image'et er klargjort til; originalen bevares urørt.
                 </p>
 
                 {/* Image-vælger */}
@@ -1871,6 +1847,17 @@ function IsoTab({
                   </div>
                 </div>
 
+                <div className="mb-3">
+                  <label className="block text-blue-700 font-medium mb-1">Fysisk Edge-ID</label>
+                  <input
+                    value={wifiInjectDeviceId}
+                    onChange={e => setWifiInjectDeviceId(e.target.value)}
+                    placeholder="TL-..."
+                    disabled={wifiInjectRunning}
+                    className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-blue-300 disabled:opacity-50"
+                  />
+                </div>
+
                 {/* WiFi-felter */}
                 <div className="grid grid-cols-2 gap-2 mb-2">
                   <div>
@@ -1908,7 +1895,7 @@ function IsoTab({
                 </div>
                 <button
                   onClick={submitWifiInject}
-                  disabled={wifiInjectRunning || !wifiInjectSsid || !wifiInjectPassword || !wifiInjectArtifactId}
+                  disabled={wifiInjectRunning || !wifiInjectSsid || !wifiInjectPassword || !wifiInjectArtifactId || !wifiInjectDeviceId.trim()}
                   className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-xs rounded-lg hover:bg-blue-800 disabled:opacity-50"
                 >
                   {wifiInjectRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}

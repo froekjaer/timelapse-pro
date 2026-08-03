@@ -1676,3 +1676,16 @@ person vide".
 - **Bygget og verificeret:** Ren worktree fra GPG-signeret tag `v2.8.1-lab.28` / commit `b25703ed6942c9b013293fc6d6f84f637f795201`. Artifact `TL-EDGE-IMG-ORANGEPI4PRO-20260803150902` er registreret i kataloget. Rootfs `timelapse-edge-orangepi4pro-20260803150902.rootfs.tar.gz` er 153 MB, SHA-256 `4ddcf5f3b9e0b13bc4e2009692b17018f66d56d43391e8ab25e0dfae389984a4`.
 - **Evidens:** Manifestets detached OpenPGP-signatur er verificeret lokalt med `gpg --verify`; signer er `165C…C097F`. SBOM indeholder 249 OS-pakker og 19 Python/venv-pakker.
 - **Afventer bevidst:** Den flashbare `.img.gz` bygges først efter valg af ny fysisk Edge-ID/QR og kameralokation. De værdier skaber unik lokal TLS, QR/TOTP og bootstrap-binding; den aktive Edges identitet genbruges aldrig.
+
+### Handover 2026-08-03 21:16 — Codex: Edge-identitet flyttet fra kamera til fysisk device
+- **Arkitekturrettelse:** Lokal TLS, TOTP, reverse-tunnel-port og Edge SSH-nøgle ejes nu af `Device`. Kamera/site er en udskiftelig drifts- og optagelsesbinding og indgår ikke længere som krav for et flashbart image.
+- **Database:** Additiv `devices`-migration for device-specifikke credentials. Den aktive Edge `TL-C87FF9587CA0` ved Nordre Villavej 17c, Kamera 1 beholder sin TOTP-hemmelighed, men bruger nu device-label `edge-TL-C87FF9587CA0`. Kameraernes gamle Edge-credential-felter er nulstillet.
+- **Oprydning:** Fuldt PostgreSQL-backup før ændring: `/Volumes/data-fast/backup/project-snapshots/database/pre-device-identity-cleanup-complete-20260803-211422.dump`, SHA-256 `d12698b28ba4fe0522e132095b3073071f775aa0a5fdc916ea6e5ecb32d4b09a`. Otte gamle/test/import-Edges med tilhørende device-scopede credentials, inventory, assignments, events, update-targets og bootstrap-tokens er fjernet. Headend og aktiv Edge bevares. Alle 31.277 capture-rækker er bevaret.
+- **Verifikation:** 51 generator-/releasekontrakttests bestået; UI production build bestået. Aktiv Edge-agent og lokal TOTP-portal er aktive, portal svarer HTTP 200.
+
+### Handover 2026-08-03 21:35 — Codex: afsluttet device-only adgangsmodel
+- **Ingen kamerafallback:** Edge-konfigurationssync bruger nu kun `Device.bt_totp_secret`; et kamera, site eller en kunde kan ikke længere levere eller overskrive en fysisk Edges lokale login.
+- **UI/API:** QR/TOTP i enhedsvisningen bruger `/api/admin/devices/{device_id}/...`, og QR-kodens kontonavn er det unikke fysiske Edge-ID. WiFi-efterbehandling kræver samme Edge-ID som det forberedte image, så afledte images ikke kan blandes mellem enheder.
+- **Legacy-data:** De tidligere credential-kolonner på `Camera` er markeret som historiske og anvendes ikke af den fremadrettede kode. De beholdes fysisk i databasen alene for at undgå unødigt skemaindgreb i den eksisterende PostgreSQL-installation.
+- **Verifikation:** 51 image-/releasekontrakttests og UI production-build passerer; Python-syntaks for `headend/main.py` og `headend/database.py` passerer. UI-build advarer kun om eksisterende bundle-størrelse/dynamiske imports.
+- **Aktiv R&D-Edge migreret:** `TL-C87FF9587CA0` har nu beholdt sin eksisterende device-TOTP. Den allerede kørende Ed25519-tunnelnøgle er registreret som Edge-enhedens CMDB-nøgle, med tilhørende public key og den unikke reverse-tunnel-port `2201`; ingen ny nøgle er lagt på den kørende Edge. Headend health er OK efter kontrolleret genstart.

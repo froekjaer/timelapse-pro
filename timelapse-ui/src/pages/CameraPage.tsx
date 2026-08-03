@@ -383,11 +383,11 @@ export function CameraPage() {
   }
 
   async function loadBtTotp() {
-    if (!cameraLocation?.id) return
+    if (!deviceId) return
     setBtTotpLoading(true)
     setBtTotpError(null)
     try {
-      const r = await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-qr`, {
+      const r = await fetch(`${getApiUrl()}/api/admin/devices/${encodeURIComponent(deviceId)}/bt-totp-qr`, {
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
       })
@@ -402,12 +402,12 @@ export function CameraPage() {
   }
 
   async function provisionBtTotp(rotate = false) {
-    if (!cameraLocation?.id) return
+    if (!deviceId) return
     if (rotate && !confirm('Rotér lokal adgang? Den eksisterende QR-kode og TOTP-registrering bliver ugyldig.')) return
     setBtTotpRegen(true)
     setBtTotpError(null)
     try {
-      const r = await fetch(`${getApiUrl()}/api/admin/cameras/${encodeURIComponent(cameraLocation.id)}/bt-totp-regenerate`, {
+      const r = await fetch(`${getApiUrl()}/api/admin/devices/${encodeURIComponent(deviceId)}/bt-totp-regenerate`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },

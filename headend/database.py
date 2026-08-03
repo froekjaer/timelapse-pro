@@ -121,6 +121,12 @@ class Device(Base):
     hardware_model    = Column(String(50))    # "rpi4", "orangepi4pro", "rpi5", "jetson-orin-nano", …
     enrollment_state  = Column(String(20), default="active")  # "unassigned" | "active"
     ssh_pubkey        = Column(Text)          # ed25519 public key genereret ved first-boot
+    # Device identity and local service access. These belong to the physical
+    # Edge, not to its replaceable camera/site assignment.
+    ssh_private_key     = Column(Text)
+    reverse_tunnel_port = Column(Integer)
+    bt_totp_secret      = Column(String(64))
+    bt_totp_sid         = Column(String(100))
 
 
 class Capture(Base):
@@ -326,12 +332,11 @@ class Camera(Base):
     wifi_ssid     = Column(String(200))
     wifi_password = Column(String(200))
     wifi_country  = Column(String(2), default="DK")
-    # SSH keypair + reverse tunnel (v8 migration) — unik per enhed, genereret ved provisioning
+    # Legacy identity columns. They are intentionally unused: local access
+    # credentials belong to Device, because a camera location is replaceable.
     ssh_private_key     = Column(Text,    default=None)
     ssh_public_key      = Column(Text,    default=None)
     reverse_tunnel_port = Column(Integer, default=None)
-    # BT PAN TOTP (v9 migration) — device-specifikt secret genereret ved enrollment
-    # Factory default bruges indtil enrolled: JBSWY3DPEHPK3PXP / sid=factory-default
     bt_totp_secret      = Column(String(64), default=None)
     bt_totp_sid         = Column(String(100), default=None)
     # ── Retention policy (v15 migration, 2026-07-06) ───────────────────────

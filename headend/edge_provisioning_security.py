@@ -84,6 +84,7 @@ def require_signed_source_artifact(artifact_id: str, db_factory) -> dict:
             "storage_path": artifact.storage_path,
             "output_dir": os.path.dirname(artifact.storage_path),
             "sha256": artifact.sha256 or "",
+            "manifest_json": artifact.manifest_json,
         }
     finally:
         db.close()
@@ -98,6 +99,7 @@ def create_signed_wifi_manifest(
     output_dir: str,
     wifi_country: str,
     ssh_configured: bool,
+    expected_device_id: str,
     progress,
 ) -> dict:
     """Create and persist the provenance manifest for a reconfigured image."""
@@ -126,6 +128,7 @@ def create_signed_wifi_manifest(
             "wifi_country": wifi_country,
             "wifi_method": result["wifi_method"],
             "reverse_tunnel_configured": ssh_configured,
+            "expected_device_id": expected_device_id,
         },
         "created_at": created_at.isoformat(),
     }

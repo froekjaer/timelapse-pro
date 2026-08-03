@@ -463,6 +463,27 @@ def startup():
     except Exception as _exc_v9:
         log.warning("DB migration v9 fejl: %s", _exc_v9)
 
+    # ── Device identity: local service credentials must follow hardware ──
+    # Camera/location assignments can change without re-provisioning an Edge.
+    try:
+        _eng_device_identity = __import__('database').engine
+        _device_identity_cols = [
+            ("devices", "ssh_private_key", "TEXT"),
+            ("devices", "reverse_tunnel_port", "INTEGER"),
+            ("devices", "bt_totp_secret", "VARCHAR(64)"),
+            ("devices", "bt_totp_sid", "VARCHAR(100)"),
+        ]
+        with _eng_device_identity.connect() as _conn_device_identity:
+            for _tbl, _col, _typ in _device_identity_cols:
+                try:
+                    _conn_device_identity.execute(text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
+                    _conn_device_identity.commit()
+                    log.info("DB migration device identity: %s.%s tilføjet", _tbl, _col)
+                except Exception:
+                    pass  # eksisterende database har allerede kolonnen
+    except Exception as _exc_device_identity:
+        log.warning("DB migration device identity fejl: %s", _exc_device_identity)
+
     # ── DB migration v10: AI-kontekst/baseline per kamera ────────────────
     try:
         _eng_v10 = __import__('database').engine
@@ -4201,22 +4222,16 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     except Exception as exc:
         log.warning("Hierarkisk config merge fejl for %s: %s", device_id, exc)
 
-    # Lag 5: kamera-specifik bt_totp override — højeste prioritet i hierarkiet.
-    # Slår op via aktiv DeviceAssignment (device_id → camera_id).
+    # Local access credentials are solely owned by the physical Edge. Camera,
+    # site and customer assignment must never change the Edge identity.
     try:
-        from database import Camera as _Camera_btt, DeviceAssignment as _DA_btt
-        _da_btt = (
-            db.query(_DA_btt)
-            .filter_by(device_id=device_id)
-            .filter(_DA_btt.unassigned_at.is_(None))
-            .order_by(_DA_btt.assigned_at.desc())
-            .first()
-        )
-        _cam_btt = db.query(_Camera_btt).filter_by(id=_da_btt.camera_id).first() if _da_btt else None
-        if _cam_btt and _cam_btt.bt_totp_secret:
-            cfg["bt_totp"] = {"secret": _cam_btt.bt_totp_secret, "sid": _cam_btt.bt_totp_sid or "kamera"}
+        if getattr(device, "bt_totp_secret", None):
+            cfg["bt_totp"] = {
+                "secret": device.bt_totp_secret,
+                "sid": device.bt_totp_sid or f"edge-{device_id}",
+            }
     except Exception as _exc_btt:
-        log.warning("bt_totp kamera-lag fejl for %s: %s", device_id, _exc_btt)
+        log.warning("bt_totp device-lag fejl for %s: %s", device_id, _exc_btt)
 
     # Tilføj felter fra device_config til edge-config
     try:
@@ -5179,6 +5194,78 @@ def download_camera_ssh_key(
         content=pk,
         headers={"Content-Disposition": f'attachment; filename="timelapse_{safe_name}.pem"'},
     )
+
+
+@app.get("/api/admin/devices/{device_id}/bt-totp-qr")
+def get_device_bt_totp_qr(
+    device_id: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the local-access TOTP enrollment for one physical Edge.
+
+    This deliberately uses Device only. A device can be reassigned to another
+    camera location without rotating a technician's local-access enrollment.
+    """
+    import base64 as _b64
+    import io as _io
+    import pyotp as _pyotp
+    import qrcode as _qrcode
+
+    device = db.query(Device).filter_by(device_id=_sanitize_device_id(device_id)).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Edge ikke fundet")
+    if current_user is None or not current_user.is_active:
+        raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
+    is_admin = current_user.role in {"super_admin", "admin"}
+    if not is_admin:
+        if not bool(getattr(current_user, "on_site_service", False)):
+            raise HTTPException(status_code=403, detail="On-site idriftsættelse og service kræves")
+        if current_user.customer_id and str(device.customer_id) != str(current_user.customer_id):
+            raise HTTPException(status_code=403, detail="Edge ligger uden for din kundeafgrænsning")
+
+    identity = _ensure_device_provisioning_credentials(db, device)
+    db.commit()
+    secret = str(identity["bt_totp_secret"])
+    sid = str(identity["bt_totp_sid"])
+    account_name = str(identity["device_id"])
+    uri = _pyotp.TOTP(secret).provisioning_uri(
+        name=account_name, issuer_name="TimeLapse Pro Local Edge"
+    )
+    buf = _io.BytesIO()
+    _qrcode.make(uri).save(buf, format="PNG")
+    return {
+        "secret": secret,
+        "sid": sid,
+        "source": "device",
+        "account_name": account_name,
+        "device_id": account_name,
+        "uri": uri,
+        "qr_code": f"data:image/png;base64,{_b64.b64encode(buf.getvalue()).decode()}",
+        "is_factory_default": False,
+    }
+
+
+@app.post("/api/admin/devices/{device_id}/bt-totp-regenerate")
+def regenerate_device_bt_totp(
+    device_id: str,
+    _user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Rotate local TOTP for one physical Edge; the next config sync applies it."""
+    import pyotp as _pyotp
+
+    device = db.query(Device).filter_by(device_id=_sanitize_device_id(device_id)).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Edge ikke fundet")
+    device.bt_totp_secret = _pyotp.random_base32()
+    device.bt_totp_sid = f"edge-{device.device_id}"
+    db.commit()
+    log.info("BT TOTP regenerated for physical Edge %s", device.device_id)
+    return {
+        "sid": device.bt_totp_sid,
+        "message": "Ny Edge-specifik lokal adgang er oprettet og anvendes ved næste konfigurationssync.",
+    }
 
 
 @app.get("/api/admin/headend/ssh-public-key")
@@ -14889,34 +14976,6 @@ def prepare_edge_provisioning(
                 cam_rec.wifi_country = payload.wifi_country or "DK"
             log.info("Netværksconfig opdateret for kamera %s: %s", camera_id, payload.network_type)
 
-    # Generér SSH keypair + tildel reverse tunnel port (v8)
-    if camera_id:
-        from database import Camera as _Camera
-        cam_rec = db.query(_Camera).filter_by(id=camera_id).first()
-        if cam_rec and not getattr(cam_rec, "ssh_private_key", None):
-            # Generer unik Ed25519 nøgle til denne enhed
-            import tempfile, subprocess as _sp, os as _os
-            with tempfile.TemporaryDirectory() as _td:
-                _kpath = _os.path.join(_td, "id_ed25519")
-                _sp.run(
-                    ["ssh-keygen", "-t", "ed25519", "-f", _kpath, "-N", "",
-                     "-C", f"timelapse-{camera_id[:8]}"],
-                    check=True, capture_output=True,
-                )
-                cam_rec.ssh_private_key = open(_kpath).read()
-                cam_rec.ssh_public_key  = open(_kpath + ".pub").read().strip()
-            log.info("SSH keypair genereret for kamera %s", camera_id)
-        if cam_rec and not getattr(cam_rec, "reverse_tunnel_port", None):
-            # Tildel næste ledige port fra 2201
-            from database import Camera as _Camera2
-            existing_ports = [
-                r[0] for r in db.query(_Camera2.reverse_tunnel_port)
-                .filter(_Camera2.reverse_tunnel_port.isnot(None)).all()
-            ]
-            cam_rec.reverse_tunnel_port = max(existing_ports, default=2200) + 1
-            log.info("Reverse tunnel port tildelt: %d for kamera %s",
-                     cam_rec.reverse_tunnel_port, camera_id)
-
     token_rec = BootstrapToken(
         token=token_str,
         device_label=location_name,
@@ -14942,6 +15001,9 @@ def prepare_edge_provisioning(
     device.site_name = payload.site_name or device.site_name
     device.camera_name = payload.camera_name or device.camera_name
     device.location_name = payload.location_name or location_name
+    # Local credentials follow the physical Edge. A camera/site assignment may
+    # be changed later without changing the device's TLS/TOTP/tunnel identity.
+    device_identity = _ensure_device_provisioning_credentials(db, device)
     try:
         cfg = json.loads(device.device_config or "{}")
     except Exception:
@@ -14953,6 +15015,10 @@ def prepare_edge_provisioning(
         "headend_url": headend_url,
         "note": payload.note or "",
         "status": "awaiting_bootstrap",
+        "identity": {
+            "totp_sid": device_identity["bt_totp_sid"],
+            "reverse_tunnel_port": device_identity["reverse_tunnel_port"],
+        },
     }
     device.device_config = json.dumps(cfg, ensure_ascii=False)
 
@@ -15004,9 +15070,55 @@ class DiskImageBuildRequest(BaseModel):
     wifi_ssid: str = ""           # bages ind i image (valgfrit)
     wifi_password: str = ""       # WiFi adgangskode
     wifi_country: str = "DK"      # WiFi landekode
-    camera_id: Optional[str] = None  # UUID til Camera → SSH keys + tunnel port hentes fra DB
     expected_device_id: str = ""  # fysisk Edge-ID fra mærkat/QR, bundet til lokal TLS-identitet
     interactive_shell_enabled: bool = False  # Explicit R&D/local technician shell bootstrap policy
+
+
+def _ensure_device_provisioning_credentials(db: Session, device: Device) -> dict[str, str | int]:
+    """Create or return credentials owned by one physical Edge device.
+
+    A device can be moved between camera locations. Local HTTPS/TOTP, the
+    reverse-tunnel key and its reserved port must therefore never be owned by
+    the camera/location record.
+    """
+    import pyotp as _pyotp
+    import subprocess as _subprocess
+    import tempfile as _tempfile
+
+    device_id = _sanitize_device_id(device.device_id)
+    if not device.bt_totp_secret:
+        device.bt_totp_secret = _pyotp.random_base32()
+        device.bt_totp_sid = f"edge-{device_id}"
+
+    if not device.ssh_private_key:
+        with _tempfile.TemporaryDirectory() as temp_dir:
+            key_path = Path(temp_dir) / "id_ed25519"
+            _subprocess.run(
+                ["ssh-keygen", "-t", "ed25519", "-f", str(key_path), "-N", "", "-C", f"timelapse-{device_id}"],
+                check=True,
+                capture_output=True,
+            )
+            device.ssh_private_key = key_path.read_text(encoding="utf-8")
+            device.ssh_pubkey = key_path.with_suffix(".pub").read_text(encoding="utf-8").strip()
+
+    if not device.reverse_tunnel_port:
+        allocated_ports = {
+            int(port) for (port,) in db.query(Device.reverse_tunnel_port)
+            .filter(Device.reverse_tunnel_port.isnot(None)).all()
+        }
+        next_port = 2201
+        while next_port in allocated_ports:
+            next_port += 1
+        device.reverse_tunnel_port = next_port
+
+    db.flush()
+    return {
+        "device_id": device_id,
+        "ssh_private_key": device.ssh_private_key or "",
+        "reverse_tunnel_port": int(device.reverse_tunnel_port or 0),
+        "bt_totp_secret": device.bt_totp_secret or "",
+        "bt_totp_sid": device.bt_totp_sid or f"edge-{device_id}",
+    }
 
 
 def _edge_image_storage_dir(*, create: bool = True) -> Path:
@@ -15127,7 +15239,6 @@ def _run_edge_disk_image_build(
     wifi_ssid: str = "",
     wifi_password: str = "",
     wifi_country: str = "DK",
-    camera_id: Optional[str] = None,
     expected_device_id: str = "",
     interactive_shell_enabled: bool = False,
 ) -> None:
@@ -15178,54 +15289,41 @@ def _run_edge_disk_image_build(
 
             progress(f"\n💉 Mode=flashable — starter image injection...")
 
-            # ── Hent SSH-nøgler fra kamera-DB ────────────────────────────────
+            # ── Hent credentials fra den fysiske Edge-identitet ──────────────
             _headend_ssh_pubkey = ""
             _device_ssh_privkey = ""
             _ssh_tunnel_port    = 0
             _bt_totp_secret = ""
             _bt_totp_sid = ""
             _local_tls: dict[str, str] = {}
-            if not camera_id:
-                raise RuntimeError("Flashbart Edge-image kræver en valgt kameralokation for unik lokal adgang")
+            if not expected_device_id:
+                raise RuntimeError("Flashbart Edge-image kræver fysisk Edge-ID fra mærkat eller QR-kode")
             try:
-                import pyotp as _pyotp
-                from database import Camera as _Camera
                 _db_ssh = db_factory()
                 try:
-                    _cam = _db_ssh.query(_Camera).filter_by(id=camera_id).first()
-                    if not _cam:
-                        raise RuntimeError(f"Kameralokation findes ikke: {camera_id}")
-                    _device_ssh_privkey = getattr(_cam, "ssh_private_key", "") or ""
-                    _ssh_tunnel_port = int(getattr(_cam, "reverse_tunnel_port", 0) or 0)
-                    _cam_name = getattr(_cam, "camera_name", camera_id)
-                    if not getattr(_cam, "bt_totp_secret", None):
-                        _cam.bt_totp_secret = _pyotp.random_base32()
-                        _cam.bt_totp_sid = f"camera-{str(camera_id)[:8]}"
-                        _db_ssh.commit()
-                        progress(f"   🔐 Kamera '{_cam_name}': unik lokal nødadgang oprettet")
-                    _bt_totp_secret = _cam.bt_totp_secret
-                    _bt_totp_sid = _cam.bt_totp_sid or f"camera-{str(camera_id)[:8]}"
-                    _assigned = _db_ssh.query(DeviceAssignment).filter(
-                        DeviceAssignment.camera_id == camera_id,
-                        DeviceAssignment.unassigned_at.is_(None),
-                    ).order_by(DeviceAssignment.assigned_at.desc()).first()
-                    _resolved_device_id = (expected_device_id or (_assigned.device_id if _assigned else "")).strip()
-                    if not _resolved_device_id:
-                        raise RuntimeError("Flashbart image kræver fysisk Edge-ID fra mærkat eller QR-kode")
+                    _resolved_device_id = _sanitize_device_id(expected_device_id)
+                    _device = _db_ssh.query(Device).filter_by(device_id=_resolved_device_id).first()
+                    if not _device:
+                        raise RuntimeError(
+                            f"Edge-ID {_resolved_device_id} er ikke klargjort. Klargør først enheden i UI'en."
+                        )
+                    _identity = _ensure_device_provisioning_credentials(_db_ssh, _device)
+                    _db_ssh.commit()
+                    _device_ssh_privkey = str(_identity["ssh_private_key"])
+                    _ssh_tunnel_port = int(_identity["reverse_tunnel_port"])
+                    _bt_totp_secret = str(_identity["bt_totp_secret"])
+                    _bt_totp_sid = str(_identity["bt_totp_sid"])
                     try:
                         from headend.services.edge_local_pki import issue_local_edge_server_certificate
                     except (ImportError, ModuleNotFoundError):
                         from services.edge_local_pki import issue_local_edge_server_certificate
                     _local_tls = issue_local_edge_server_certificate(_resolved_device_id)
                     progress(f"   🔐 Lokal TLS udstedt: {_local_tls['hostname']} (Edge-ID {_resolved_device_id})")
-                    if _device_ssh_privkey:
-                        progress(f"   📷 Kamera '{_cam_name}': SSH privkey hentet, tunnel port {_ssh_tunnel_port}")
-                    else:
-                        progress(f"   ⚠️  Kamera '{_cam_name}' har ingen SSH privkey — kald /prepare først")
+                    progress(f"   🔑 Device-credentials klar: reverse tunnel-port {_ssh_tunnel_port}")
                 finally:
                     _db_ssh.close()
             except Exception as _e:
-                raise RuntimeError(f"Kunne ikke provisionere kameraets lokale adgang: {_e}") from _e
+                raise RuntimeError(f"Kunne ikke provisionere Edge-enhedens lokale adgang: {_e}") from _e
 
             # Headend public key fra ~/.ssh/timelapse_headend_ed25519.pub
             # Auto-generer nøglen hvis den ikke findes — nødvendig for SSH adgang til device.
@@ -15362,21 +15460,18 @@ def trigger_edge_disk_image_build(
     available_targets = sorted(p.parent.name for p in hw_dir.glob("*/target.yaml"))
     if body.target not in available_targets:
         raise HTTPException(status_code=400, detail=f"Ukendt target '{body.target}'. Tilgængelige: {available_targets}")
-    if body.mode == "flashable" and not body.camera_id:
+    if body.mode == "flashable" and not body.expected_device_id:
         raise HTTPException(
             status_code=400,
-            detail="Flashbart image kræver en valgt kameralokation, så en unik lokal adgang kan provisioneres",
+            detail="Angiv fysisk Edge-ID fra mærkat eller QR-kode, før et flashbart image kan bygges.",
         )
-    if body.mode == "flashable" and not body.expected_device_id:
-        active_assignment = db.query(DeviceAssignment).filter(
-            DeviceAssignment.camera_id == body.camera_id,
-            DeviceAssignment.unassigned_at.is_(None),
-        ).first() if body.camera_id else None
-        if not active_assignment:
-            raise HTTPException(
-                status_code=400,
-                detail="Angiv fysisk Edge-ID fra mærkat eller QR-kode, før et flashbart image kan bygges.",
-            )
+    if body.mode == "flashable" and not db.query(Device).filter_by(
+        device_id=_sanitize_device_id(body.expected_device_id)
+    ).first():
+        raise HTTPException(
+            status_code=400,
+            detail="Edge-ID er ikke klargjort. Opret først den nye Edge i 'Klargør ny Edge'.",
+        )
 
     if not _edge_disk_build_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Et edge disk image build kører allerede")
@@ -15403,7 +15498,6 @@ def trigger_edge_disk_image_build(
             "wifi_ssid": body.wifi_ssid,
             "wifi_password": body.wifi_password,
             "wifi_country": body.wifi_country or "DK",
-            "camera_id": body.camera_id,
             "expected_device_id": body.expected_device_id.strip(),
             "interactive_shell_enabled": body.interactive_shell_enabled,
         },
@@ -15547,7 +15641,7 @@ class InjectWifiRequest(BaseModel):
     wifi_password: str
     wifi_country: str = "DK"
     wifi_method: str = "auto"   # "auto" | "netplan" | "wpa_supplicant"
-    camera_id: Optional[str] = None  # bruges til at hente SSH-nøgler fra DB
+    expected_device_id: str = ""  # validates that the derived image remains bound to one physical Edge
 
 
 _wifi_inject_status: dict = {
@@ -15563,7 +15657,7 @@ def _run_wifi_inject(
     wifi_country: str,
     wifi_method: str,
     db_factory,
-    camera_id: str | None = None,
+    expected_device_id: str = "",
 ) -> None:
     """Background thread: injectér WiFi i eksisterende flashbart image."""
     global _wifi_inject_status
@@ -15581,6 +15675,19 @@ def _run_wifi_inject(
             from tools.inject_wifi_image import inject_wifi_image  # type: ignore
 
         source = _edge_provisioning.require_signed_source_artifact(artifact_id, db_factory)
+        if not expected_device_id:
+            raise RuntimeError("WiFi-ændring kræver det fysiske Edge-ID, som image'et er klargjort til")
+        try:
+            source_manifest = json.loads(source["manifest_json"])
+            source_device_id = str(
+                source_manifest.get("local_management", {}).get("expected_device_id", "")
+            )
+        except (TypeError, ValueError, AttributeError) as exc:
+            raise RuntimeError("Kilde-imagets signerede manifest kan ikke læses") from exc
+        if not source_device_id:
+            raise RuntimeError("Kilde-imaget er ikke bundet til en fysisk Edge og må ikke WiFi-ændres")
+        if _sanitize_device_id(source_device_id) != _sanitize_device_id(expected_device_id):
+            raise RuntimeError("Det valgte Edge-ID matcher ikke kilde-imagets signerede device-binding")
         fname = source["filename"]
         gz_path = source["storage_path"]
         output_dir = source["output_dir"]
@@ -15591,18 +15698,22 @@ def _run_wifi_inject(
                 target_id = known
                 break
 
-        # Hent SSH-parametre fra Camera hvis camera_id er angivet
+        # Credentials belong to the physical Edge, never to the camera/site.
         ssh_private_key: str | None = None
         headend_ssh_public_key: str | None = None
         reverse_tunnel_port: int | None = None
-        if camera_id:
+        if expected_device_id:
             db_ssh = db_factory()
             try:
-                from database import Camera as _Camera
-                cam_ssh = db_ssh.query(_Camera).filter_by(id=camera_id).first()
-                if cam_ssh:
-                    ssh_private_key    = getattr(cam_ssh, "ssh_private_key", None)
-                    reverse_tunnel_port = getattr(cam_ssh, "reverse_tunnel_port", None)
+                device_ssh = db_ssh.query(Device).filter_by(
+                    device_id=_sanitize_device_id(expected_device_id)
+                ).first()
+                if not device_ssh:
+                    raise RuntimeError("Den valgte fysiske Edge er ikke klargjort")
+                identity = _ensure_device_provisioning_credentials(db_ssh, device_ssh)
+                db_ssh.commit()
+                ssh_private_key = str(identity["ssh_private_key"])
+                reverse_tunnel_port = int(identity["reverse_tunnel_port"])
             finally:
                 db_ssh.close()
             # Hent headend public key
@@ -15650,6 +15761,7 @@ def _run_wifi_inject(
             output_dir=output_dir,
             wifi_country=wifi_country,
             ssh_configured=bool(ssh_private_key),
+            expected_device_id=_sanitize_device_id(expected_device_id),
             progress=progress,
         )
         new_artifact_id = signed_manifest["artifact_id"]
@@ -15715,7 +15827,7 @@ def inject_wifi_endpoint(
         target=_run_wifi_inject,
         args=(body.artifact_id, body.wifi_ssid, body.wifi_password,
               body.wifi_country, body.wifi_method, _SessionLocal,
-              body.camera_id),
+              body.expected_device_id),
         daemon=True,
         name="wifi-inject",
     )

@@ -96,6 +96,18 @@ def test_flashable_image_binds_the_public_build_api_to_the_expected_edge_identit
     assert "expected_device_id   = expected_device_id" in source
 
 
+def test_flashable_image_credentials_are_owned_by_the_physical_edge() -> None:
+    source = (ROOT / "headend" / "main.py").read_text()
+    request = source.split("class DiskImageBuildRequest", 1)[1].split("def _edge_image_storage_dir", 1)[0]
+    build = source.split("def _run_edge_disk_image_build", 1)[1].split("@app.post(\"/api/admin/edge-provisioning/build-disk-image\")", 1)[0]
+    endpoint = source.split("def trigger_edge_disk_image_build", 1)[1].split("@app.get(\"/api/admin/edge-provisioning/disk-image-status\")", 1)[0]
+
+    assert "camera_id" not in request
+    assert "_ensure_device_provisioning_credentials" in build
+    assert "_db_ssh.query(Device).filter_by(device_id=_resolved_device_id)" in build
+    assert "body.mode == \"flashable\" and not body.camera_id" not in endpoint
+
+
 def test_dockerfile_removes_device_credentials_from_build_context() -> None:
     source = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
     for sensitive in ("api_token.txt", "bootstrap.yaml", "config.yaml", "keys"):
@@ -130,6 +142,14 @@ def test_wifi_reconfiguration_requires_signed_artifact() -> None:
     assert '"schema": "timelapse.flashable_image.reconfiguration.v1"' in source
     assert '"signature": signature' in source
     assert '"signed_by": signed_by' in source
+    assert '"expected_device_id": expected_device_id' in source
+
+
+def test_wifi_reconfiguration_keeps_the_original_physical_edge_binding() -> None:
+    source = (ROOT / "headend" / "main.py").read_text()
+    wifi = source.split("def _run_wifi_inject", 1)[1].split("@app.post(\"/api/admin/edge-provisioning/inject-wifi\")", 1)[0]
+    assert "source_manifest.get(\"local_management\", {}).get(\"expected_device_id\", \"\")" in wifi
+    assert "matcher ikke kilde-imagets signerede device-binding" in wifi
 
 
 def test_edge_target_catalog_uses_the_module_imported_by_main() -> None:
