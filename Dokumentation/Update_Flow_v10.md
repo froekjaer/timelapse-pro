@@ -1,12 +1,49 @@
 # TimeLapse Pro — Update-flow (v10, konsolideret): E2E QA, brugermanual, gates og OS-bundle
 
-**Version:** 10 (konsolideret)
-**Dato:** 2026-07-02
+**Version:** 10 (konsolideret, revideret)
+**Dato:** 2026-08-03
 **Konsoliderer:** `Update_Flow_E2E_QA_og_Brugermanual_2026-06-21.md` (backbone), `Update_Approval_Deploy_Flow_2026-06-05.md` (API + OS offline bundle), `Update_Flow_Guide_2026-06-03.md` (reconcile-kommandoer), `Update_Flow_Testplan_2026-06-12.md` (gates). Tidligere versioner arkiveret i `Gamle versioner/`. Styrende metodik: `Release_Promotion_Methodology_2026-06-05.md`.
 
 Oprindelig scope-note (backbone):
 Scope: Headend Mac mini, aktiv Edge `TL-C87FF9587CA0` (Nikon/Orange Pi 4 Pro), update-flow, artifact-katalog, change ticket, Edge pull/install/report og operatørmanual.  
 Status: Pre-production QA. Systemet er ikke sat i egentlig produktion.
+
+## Kort forklaret: sådan holder vi systemet sikkert
+
+Tænk på TimeLapse Pro som et system med en central kvalitetskontrol og en eller flere kameraenheder i marken.
+
+1. Edgen fortæller Headend, hvad der faktisk er installeret: operativsystem, programmer og biblioteker. Den behøver ikke internet for at gøre dette.
+2. Headend sammenligner listen med sine kontrollerede kataloger. Det foregår på Headend, som er systemets godkendte forbindelse til leverandører og sikkerhedsinformation.
+3. Hvis der findes noget nyt, opretter systemet en kandidat. Den installeres ikke endnu. Kandidaten beskriver præcist, hvilke versioner der skal fra og til, og om der er tale om sikkerhed eller funktion.
+4. I laboratoriet henter Headend de nødvendige filer, tester dem og pakker dem i en lukket pakke. Pakken får indholdsfortegnelse, hash og digital signatur.
+5. En administrator godkender pakken til test, staging eller produktion efter den relevante testplan.
+6. Edgen henter kun den godkendte pakke fra Headend. Før installation tages en backup. Edgen kontrollerer underskrift og indhold og rapporterer resultatet tilbage. Ved fejl bliver resultatet synligt i UI og SIEM.
+
+Det betyder i praksis, at en Orange Pi ikke selv kører `apt upgrade`, ikke henter fra GitHub og ikke behøver direkte internet. Headend er den eneste kontrollerede distributionskanal.
+
+### Hvad er en SBOM?
+
+En SBOM er systemets varedeklaration: en maskinlæsbar liste over de programmer og biblioteker, som er installeret på en given Headend eller Edge. Den gør det muligt at svare på: "Har vi denne berørte komponent, hvilken version har vi, og hvor er den anvendt?"
+
+### Natlig kontrol af SBOM og opdateringer
+
+Målprocessen er en daglig, natlig kontrol på Headend. Den skal validere, at hver registreret enhed har et friskt og læsbart SBOM/inventar; sammenligne OS-pakker, applikationer og biblioteker med relevante, kontrollerede opdaterings- og sårbarhedskilder; og gemme et dateret, hash-beskyttet resultat.
+
+Komponenter uden en troværdig advisory-kilde markeres som et dækningsgab, ikke som fejlfrie. E-mail sendes ved advarsler, SMS ved nye kritiske fund, og en fejlet kontrol er selv et alarmerbart fund. Kontrollen installerer aldrig noget automatisk; den skaber kun evidens og kontrollerede kandidater.
+
+### Forklaring til forskellige modtagere
+
+**Til en makker:** Vi arbejder med en software supply-chain: inventar → katalogsammenligning → testet og signeret artifact → godkendelse → Edge-pull → backup, verificering og statusrapportering. Ingen Edge har en implicit internetvej for updates.
+
+**Til en kunde:** Vi ved løbende, hvilken software der bruges på kundens enheder. Når en sikkerhedsopdatering er relevant, testes og godkendes den før udrulning. Kunden kan vælge, hvilke kategorier der må opdateres automatisk.
+
+**Til en auditør:** Der etableres sporbar evidens fra installeret komponent til SBOM, sårbarheds-/opdateringsvurdering, testresultat, signeret artifact, change ticket, godkendelse, backup og faktisk installationsrapport. Et kontrolsvigt er i sig selv et alarmerbart fund.
+
+## Aktuel statusopdatering 2026-08-03
+
+Dette afsnit erstatter ældre udsagn i dokumentet om, at den aktive Edge havde nul OS-opdateringer. En Headend-baseret CMDB-katalogkørsel for `TL-C87FF9587CA0` har identificeret **126 sikkerhedsopdateringer** og **20 funktionelle OS-opdateringer**. Begge kandidater er oprettet som blokerede LAB-poster og afventer offline bundle-build, test og signering.
+
+Katalogopdagelsen er rettet til at køre på Headend med dagligt interval og til at gemme planer/artifacts permanent under det logiske dataområde `/data-fast`. Den næste konkrete opgave er at færdiggøre og verificere den natlige SBOM-/advisory-kontrol beskrevet ovenfor.
 
 ## Executive summary
 
