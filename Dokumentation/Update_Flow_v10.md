@@ -19,7 +19,7 @@ Tænk på TimeLapse Pro som et system med en central kvalitetskontrol og en elle
 5. En administrator godkender pakken til test, staging eller produktion efter den relevante testplan.
 6. Edgen henter kun den godkendte pakke fra Headend. Før installation tages en backup. Edgen kontrollerer underskrift og indhold og rapporterer resultatet tilbage. Ved fejl bliver resultatet synligt i UI og SIEM.
 
-For OS-pakker lægger Edgen kun de signerede `.deb`-filer fra artefaktet i sin **lokale** APT-cache. Derefter styrer APT installationsrækkefølgen med præcise versionskrav og `--no-download`. Edgen kan dermed hverken hente en manglende afhængighed eller kontakte internettet; mangler der noget i pakken, stopper installationen med en tydelig fejl og kan rulles tilbage fra backup.
+For OS-pakker pakker Edgen først hele det signerede `.deb`-sæt ud og konfigurerer derefter den samlede `dpkg`-transaktion. Edgen bruger hverken APT-indeks, `apt update` eller netværk; mangler der noget i pakken, stopper konfigurationen med en tydelig fejl og kan rulles tilbage fra backup.
 
 Det betyder i praksis, at en Orange Pi ikke selv kører `apt upgrade`, ikke henter fra GitHub og ikke behøver direkte internet. Headend er den eneste kontrollerede distributionskanal.
 

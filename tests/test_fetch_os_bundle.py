@@ -36,7 +36,7 @@ def test_version_drift_is_recorded_when_current_security_version_is_used(tmp_pat
     assert "2.0" in (tmp_path / "bundle" / "verify-installed.sh").read_text()
 
 
-def test_bundle_installer_uses_offline_apt_with_exact_versions(tmp_path, monkeypatch):
+def test_bundle_installer_uses_two_phase_offline_dpkg_transaction(tmp_path, monkeypatch):
     entries = {
         "demo": {"Package": "demo", "Version": "2.0", "Filename": "pool/demo.deb", "Architecture": "arm64", "SHA256": ""},
         "helper": {"Package": "helper", "Version": "3.0", "Filename": "pool/helper.deb", "Architecture": "arm64", "SHA256": ""},
@@ -59,8 +59,6 @@ def test_bundle_installer_uses_offline_apt_with_exact_versions(tmp_path, monkeyp
     )
 
     installer = (tmp_path / "bundle" / "install-offline.sh").read_text()
-    assert "cp -f packages/*.deb /var/cache/apt/archives/" in installer
-    assert "apt-get --no-download" in installer
-    assert "'demo=2.0'" in installer
-    assert "'helper=3.0'" in installer
-    assert "dpkg -i" not in installer
+    assert "dpkg --force-confold --unpack packages/*.deb" in installer
+    assert "dpkg --configure --pending" in installer
+    assert "apt-get" not in installer

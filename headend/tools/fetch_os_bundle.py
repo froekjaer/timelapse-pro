@@ -353,25 +353,19 @@ def deb_metadata_from_index(entry: dict, deb_path: Path) -> dict[str, Any]:
 def install_script(package_file_entries: list[dict[str, Any]]) -> str:
     """Generate the signed, offline-only installer for a bundle.
 
-    Installing a glob of deb files through ``dpkg`` leaves package ordering to
-    chance.  That can unpack a coherent bundle but leave it half configured.
-    Put the signed files in APT's local cache and let APT resolve the order,
-    while ``--no-download`` makes an attempted network fetch fail closed.
+    APT's local package index cannot discover arbitrary bundle versions.  Split
+    the native dpkg transaction into unpack and configure phases instead: dpkg
+    accepts the complete signed set first, then configures it only once all
+    dependencies are present.  No APT command or network access is involved.
     """
-    requested = " ".join(
-        _shell_quote(f"{entry['name']}={entry['version']}")
-        for entry in package_file_entries
-    )
     return f"""#!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-# Kun pakker i dette signerede bundle gøres tilgængelige for APT. Der foretages
-# ingen ``apt update`` eller netværksdownload på Edgen.
-install -d -m 0755 /var/cache/apt/archives
-cp -f packages/*.deb /var/cache/apt/archives/
-apt-get --no-download --no-install-recommends --allow-downgrades \\
-  --allow-change-held-packages -y install {requested}
-# Verificer de faktiske versioner efter APT har afsluttet transaktionen.
+# Pak hele det signerede sæt ud før nogen pakke konfigureres. Lokale
+# konfigurationsfiler bevares ved eventuelle dpkg-spørgsmål.
+dpkg --force-confold --unpack packages/*.deb
+dpkg --configure --pending
+# Verificer de faktiske versioner efter den samlede dpkg-transaktion.
 ./verify-installed.sh
 """
 
@@ -514,7 +508,7 @@ def build_bundle(
         "mirror": mirror,
         "packages_requested": packages,
         "package_files": package_file_entries,
-        "install_model": "signed local APT cache; apt-get --no-download exact-version install",
+        "install_model": "signed dpkg two-phase transaction: unpack all; configure pending",
         "fetch_tool": "fetch_os_bundle.py",
     }
     write_json(output / "package-manifest.json", package_manifest)
@@ -678,7 +672,7 @@ def main() -> int:
         "mirror": mirror,
         "packages_requested": packages,
         "package_files": package_file_entries,
-        "install_model": "signed local APT cache; apt-get --no-download exact-version install",
+        "install_model": "signed dpkg two-phase transaction: unpack all; configure pending",
         "fetch_tool": "fetch_os_bundle.py",
     }
     write_json(output / "package-manifest.json", package_manifest)
