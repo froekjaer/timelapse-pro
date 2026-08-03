@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server openssh-client \
         iproute2 iputils-ping dnsutils \
         rsync autossh gphoto2 libgphoto2-6 libgphoto2-port12 \
-        gpsd gpsd-clients bluez \
+        gpsd gpsd-clients bluez avahi-daemon libnss-mdns \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Service user ─────────────────────────────────────────────────
@@ -81,8 +81,17 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Agent source ─────────────────────────────────────────────────
+# Training data, test suites, native source and offline authoring tools are not
+# runtime dependencies. They remain in Git and are delivered only as explicit
+# signed artifacts when a future maintenance case needs them.
 COPY edge/ /opt/timelapse/edge/
-RUN rm -rf /opt/timelapse/edge/__pycache__ /opt/timelapse/edge/**/__pycache__ \
+RUN find /opt/timelapse/edge -type d \( -name __pycache__ -o -name .pytest_cache \) -prune -exec rm -rf {} + \
+    && find /opt/timelapse/edge -type f \( -name '*.pyc' -o -name '*.pyo' -o -name 'Icon' \) -delete \
+    && rm -rf /opt/timelapse/edge/ai/tests \
+              /opt/timelapse/edge/training \
+              /opt/timelapse/edge/npu_viplite \
+              /opt/timelapse/edge/technician_ui.py \
+    && find /opt/timelapse/edge/tools -maxdepth 1 -type f ! -name bootstrap_cli.py -delete \
     && rm -f /opt/timelapse/edge/api_token.txt /opt/timelapse/edge/bootstrap.yaml \
              /opt/timelapse/edge/config.yaml /opt/timelapse/edge/sftp_cache.yaml \
              /opt/timelapse/edge/siem_journal.cursor \

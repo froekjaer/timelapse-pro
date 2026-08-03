@@ -1,11 +1,13 @@
 #!/bin/bash
-# gen-bt-cert.sh — Generer self-signed TLS cert til lokal management portal
-# Kører én gang ved deploy, eller ved cert-udløb (5 år)
+# gen-bt-cert.sh — kontrollerer lokal TLS til management-portalen.
+# Flashbare produktions-images leveres med et certifikat fra Headendens Edge
+# Local CA. Self-signed fallback er kun for allerede eksisterende R&D-enheder,
+# så en gammel enhed ikke gøres utilgængelig før den har modtaget migreringen.
 set -euo pipefail
 
-CERT_DIR="/etc/timelapse/tls"
-CERT="$CERT_DIR/server.crt"
-KEY="$CERT_DIR/server.key"
+CERT_DIR="/etc/timelapse/certs"
+CERT="$CERT_DIR/mgmt.crt"
+KEY="$CERT_DIR/mgmt.key"
 DAYS=1825  # 5 år
 BT_IP="192.168.42.1"
 HOSTNAME=$(hostname -s)
@@ -19,7 +21,7 @@ mkdir -p "$CERT_DIR"
 chmod 700 "$CERT_DIR"
 
 # Tjek om eksisterende cert stadig er gyldigt (mere end 30 dage tilbage)
-if [[ -f "$CERT" ]]; then
+if [[ -f "$CERT" && -f "$KEY" ]]; then
     EXPIRY=$(openssl x509 -enddate -noout -in "$CERT" | cut -d= -f2)
     EXPIRY_EPOCH=$(date -d "$EXPIRY" +%s 2>/dev/null || date -j -f "%b %d %H:%M:%S %Y %Z" "$EXPIRY" +%s)
     NOW_EPOCH=$(date +%s)
@@ -30,6 +32,13 @@ if [[ -f "$CERT" ]]; then
     fi
     echo "Cert udløber om $DAYS_LEFT dage — fornyer"
 fi
+
+if [[ "${TIMELAPSE_ALLOW_SELF_SIGNED_LOCAL_TLS:-true}" != "true" ]]; then
+    echo "Mangler gyldigt CA-udstedt lokalt TLS-certifikat" >&2
+    exit 1
+fi
+
+echo "ADVARSEL: bruger midlertidigt self-signed TLS (R&D migration)" >&2
 
 openssl req -x509 -newkey rsa:2048 -nodes \
     -keyout "$KEY" \

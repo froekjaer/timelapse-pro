@@ -285,6 +285,7 @@ class User(Base):
     customer_id   = Column(String(36))
     totp_secret   = Column(String(64))
     mfa_enabled   = Column(Boolean, default=False)                     # null = adgang til alle kunder
+    on_site_service = Column(Boolean, default=False, nullable=False)  # explicit capability, independent of RBAC role
     is_active     = Column(Boolean, default=True)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login    = Column(DateTime)

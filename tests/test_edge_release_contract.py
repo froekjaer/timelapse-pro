@@ -203,6 +203,8 @@ def test_local_management_is_totp_https_only_and_has_no_interactive_shell_by_def
 
     assert '"https_port": 8443' in service
     assert '"enable_interactive_shell": False' in service
+    assert '"sid": "unprovisioned"' in service
+    assert '"secret": "JBSWY3DPEHPK3PXP"' not in service
     assert 'if not load_config()["management"].get("enable_interactive_shell", False):' in service
     assert "HTTPServer" not in service
     assert 'http_port = 8080' not in service
@@ -210,6 +212,81 @@ def test_local_management_is_totp_https_only_and_has_no_interactive_shell_by_def
     start_block = captive.split("start)", 1)[1].split("stop)", 1)[0]
     assert "-t nat -A PREROUTING" not in start_block
     assert '--dport "$HTTPS_PORT"' in start_block
+
+
+def test_flashable_edge_rejects_a_mac_that_does_not_match_its_bound_identity() -> None:
+    bootstrap = _source("edge/scripts/bootstrap_agent.py")
+
+    assert "expected_device_id" in bootstrap
+    assert "MAC-binding afvist" in bootstrap
+    assert "Enrollment stoppes" in bootstrap
+
+
+def test_broad_local_totp_tolerance_has_a_bruteforce_lockout() -> None:
+    service = _source("edge/scripts/totp-service.py")
+
+    assert "AUTH_FAILURE_LIMIT = 5" in service
+    assert "AUTH_LOCKOUT_S = 15 * 60" in service
+    assert "_totp_login_allowed(client_ip)" in service
+    assert "_record_totp_failure(client_ip)" in service
+    assert "max(0, min(int(totp_valid_window), 10))" in service
+
+
+def test_authenticated_local_portal_can_set_date_and_time() -> None:
+    service = _source("edge/scripts/totp-service.py")
+
+    assert 'async def mgmt_time_set' in service
+    assert '"/mgmt/time/set"' in service
+    assert "def _set_local_time" in service
+    assert '["timedatectl", "set-time"' in service
+    assert "Ret dato og tid manuelt" in service
+
+
+def test_service_shell_is_explicitly_centrally_controllable() -> None:
+    router = _source("headend/api/service_access_api.py")
+    admin_ui = _source("timelapse-ui/src/pages/SystemAdminPage.tsx")
+    portal = _source("edge/scripts/totp-service.py")
+
+    assert '"interactive_shell_enabled"' in router
+    assert "interactive_shell_enabled: interactiveShellEnabled" in admin_ui
+    assert 'cfg["management"]["enable_interactive_shell"]' in portal
+    shell_handler = portal.split('async def mgmt_cli_bash_ws', 1)[1].split('@app.get("/mgmt/technician/image', 1)[0]
+    assert shell_handler.count("await websocket.accept()") == 1
+
+
+def test_local_management_portal_serves_bluetooth_wifi_and_ethernet_interfaces() -> None:
+    service = _source("edge/scripts/totp-service.py")
+    captive = _source("edge/scripts/timelapse-captive.sh")
+
+    assert 'host="0.0.0.0"' in service
+    assert 'HTTPS_PORT="8443"' in captive
+    assert 'BT_BRIDGE="br-bt"' in captive
+    assert "Terminal og SSH-klient" in service
+
+
+def test_on_site_service_is_a_capability_not_a_new_role() -> None:
+    database = _source("headend/database.py")
+    headend = _source("headend/main.py")
+    users_ui = _source("timelapse-ui/src/pages/UsersPage.tsx")
+
+    assert "on_site_service = Column(Boolean" in database
+    assert "on_site_service: Optional[bool]" in headend
+    assert "On-site idriftsættelse og service" in users_ui
+    assert "Brugeren mangler capability: On-site idriftsættelse og service" in headend
+
+
+def test_local_totp_qr_never_returns_a_shared_factory_secret() -> None:
+    headend = _source("headend/main.py")
+    camera_ui = _source("timelapse-ui/src/pages/CameraPage.tsx")
+    endpoint = headend.split("def get_camera_bt_totp_qr", 1)[1].split("def regenerate_camera_bt_totp", 1)[0]
+
+    assert 'secret = "JBSWY3DPEHPK3PXP"' not in endpoint
+    assert "Lokal adgang er ikke provisioneret" in endpoint
+    assert "on_site_service" in endpoint
+    assert "account_name = f\"{device_label} - {camera_label}\"" in endpoint
+    assert "Åbn i Apple Adgangskoder" in camera_ui
+    assert "Kopiér opsætningsnøgle" in camera_ui
+    assert "window.location.assign(btTotp.uri)" in camera_ui
 
 
 def test_legacy_local_http_technician_surfaces_cannot_be_started():

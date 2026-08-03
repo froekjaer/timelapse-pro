@@ -694,6 +694,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
         setOpen(nextOpen)
         if (nextOpen && !flowStatus) onRequestFlow(u.id)
       }}
+        title={open ? 'Luk opdateringsdetaljer' : 'Vis opdateringsdetaljer og aktuel flow-status'}
         className="w-full flex items-center gap-3 px-5 py-4 hover:bg-gray-50 transition-colors text-left">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -737,6 +738,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
               {prodReady ? 'Godkend prod' : 'Godkend'}
             </button>
             <button onClick={() => onReject(u.id)} disabled={isBusy}
+              title="Afvis opdateringen. Den distribueres ikke; begrundelsen registreres i change-flowet."
               className="flex items-center gap-1 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg border border-red-200 disabled:opacity-50 transition-colors">
               <XCircle className="w-3.5 h-3.5" />
               Afvis
@@ -746,6 +748,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
         {(u.status === 'blocked' || u.status === 'rolled_back') && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             <button onClick={() => onApprove(u.id)} disabled={isBusy}
+              title="Genåbn den blokerede eller tilbagekaldte opdatering til fornyet godkendelse."
               className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-lg disabled:opacity-50">
               <RefreshCw className="w-3.5 h-3.5" />
               Genprøv
@@ -761,10 +764,12 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
             ) : (
               <>
                 <button onClick={() => onPromote(u.id, 'staging')} disabled={isBusy}
+                  title="Opret en staging-promotion. Installeres først efter staging-godkendelse."
                   className="flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-700 text-xs rounded-lg border border-gray-200 disabled:opacity-50">
                   Promovér til staging
                 </button>
                 <button onClick={() => onPromote(u.id, 'production')} disabled={isBusy}
+                  title="Marker som klar til produktionsgodkendelse. Det installerer ikke noget endnu."
                   className="flex items-center gap-1 px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white text-xs rounded-lg disabled:opacity-50">
                   Markér prod-klar
                 </button>
@@ -775,6 +780,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
         {u.status === 'deployed' && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             <button onClick={() => onRollback(u.id)} disabled={isBusy}
+              title="Anmod Edge eller Headend om kontrolleret rollback til forrige verificerede release."
               className="flex items-center gap-1 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs rounded-lg border border-amber-200 disabled:opacity-50">
               ↩ Rollback
             </button>
@@ -784,6 +790,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
           headendDeployable ? (
             <div className="flex items-center gap-1.5 mr-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
               <button onClick={() => onHeadendDeploy(u.id)} disabled={isBusy || deployRunning}
+                title={u.environment === 'production' ? 'Aktivér den allerede godkendte release på Headend.' : 'Installer den godkendte release på test-Headend.'}
                 className="flex items-center gap-1 px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-white text-xs rounded-lg disabled:opacity-50">
                 <Package className="w-3.5 h-3.5" />
                 {deployRunning ? 'Kører...' : u.environment === 'production' ? 'Aktivér prod' : 'Installer på Headend'}
@@ -825,13 +832,16 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
               </div>
               <div className="mt-3 flex flex-col sm:flex-row gap-2">
                 <button onClick={() => onBuildOsBundle(u.id)} disabled={isBusy}
+                  title="Byg, signér, registrér og bind et offline OS-artifact fra Headend. Edge henter det ved næste poll."
                   className="px-3 py-2 rounded-lg bg-gray-900 text-white text-xs disabled:opacity-50">
                   Byg artifact og bind
                 </button>
                 <input value={artifactId} onChange={e => setArtifactId(e.target.value)}
                   placeholder="TL-OS-YYYYMMDD-..."
+                  title="ID på et allerede lab-testet og signeret OS-artifact. Brug kun ved kontrolleret fejlsøgning."
                   className="flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 font-mono text-[11px] text-gray-800" />
                 <button onClick={() => onBindArtifact(u.id, artifactId.trim())} disabled={!artifactId.trim() || isBusy}
+                  title="Bind det angivne, signerede artifact til opdateringen."
                   className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs disabled:opacity-50">
                   Bind artifact
                 </button>
@@ -1000,11 +1010,13 @@ function ArtifactCatalog({
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setOsOpen(o => !o)} disabled={busy}
+            title="Vis eller skjul manuel registrering af et allerede bygget OS-bundle."
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white text-gray-700 border border-gray-200 rounded-lg disabled:opacity-50">
             <Package className="w-3.5 h-3.5" />
             OS bundle
           </button>
           <button onClick={onCatalogCurrent} disabled={busy}
+            title="Verificér det seneste signerede Git-tag og registrér det som release-artifact."
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
             <Fingerprint className="w-3.5 h-3.5" />
             Registrer seneste signerede tag
@@ -1015,17 +1027,17 @@ function ArtifactCatalog({
         <div className="px-5 py-4 border-b border-gray-100 bg-gray-50">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
             <div>
-              <label className="block text-gray-500 mb-1">Bundle-sti på Headend</label>
+              <label className="block text-gray-500 mb-1" title="Eksisterende mappe med et lab-testet offline OS-bundle på Headend.">Bundle-sti på Headend</label>
               <input value={osPath} onChange={e => setOsPath(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono" />
             </div>
             <div>
-              <label className="block text-gray-500 mb-1">Version</label>
+              <label className="block text-gray-500 mb-1" title="Entydig, menneskelæsbar version for artifactet.">Version</label>
               <input value={osVersion} onChange={e => setOsVersion(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono" />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-gray-500 mb-1">Install commands JSON</label>
+              <label className="block text-gray-500 mb-1" title="Strukturerede, offline installkommandoer. Må kun pege på filer inde i det signerede bundle.">Install commands JSON</label>
               <textarea value={osCommands} onChange={e => setOsCommands(e.target.value)}
                 className="w-full min-h-20 border border-gray-200 rounded-lg px-3 py-2 font-mono" />
               <p className="mt-1 text-[11px] text-gray-400">
@@ -1038,6 +1050,7 @@ function ArtifactCatalog({
             version: osVersion,
             commands_json: osCommands,
           })} disabled={busy}
+            title="Valider bundleindholdet, opret manifest og signér artifactet."
             className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
             <FileCheck className="w-3.5 h-3.5" />
             Registrer signeret OS artifact
@@ -1123,6 +1136,7 @@ function LabCatalogImport({
           </p>
         </div>
         <button onClick={() => setOpen(o => !o)} disabled={busy}
+          title="Vis eller skjul import af OS-katalog fra lab eller Headend-builder."
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white text-gray-700 border border-gray-200 rounded-lg disabled:opacity-50">
           <Package className="w-3.5 h-3.5" />
           Importér katalog
@@ -1132,12 +1146,12 @@ function LabCatalogImport({
         <div className="px-5 py-4 bg-gray-50">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
             <div>
-              <label className="block text-gray-500 mb-1">Device ID</label>
+              <label className="block text-gray-500 mb-1" title="Den Edge, hvis CMDB-inventory danner grundlag for kataloget.">Device ID</label>
               <input value={deviceId} onChange={e => setDeviceId(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono" />
             </div>
             <div>
-              <label className="block text-gray-500 mb-1">Miljø</label>
+              <label className="block text-gray-500 mb-1" title="Miljøet som kataloget og de oprettede update-poster hører til.">Miljø</label>
               <select value={environment} onChange={e => setEnvironment(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2">
                 <option value="lab">Lab</option>
@@ -1146,12 +1160,12 @@ function LabCatalogImport({
               </select>
             </div>
             <div>
-              <label className="block text-gray-500 mb-1">Kilde</label>
+              <label className="block text-gray-500 mb-1" title="Sporbar reference til den lab-builder eller mirror, der leverede kataloget.">Kilde</label>
               <input value={source} onChange={e => setSource(e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 font-mono" />
             </div>
             <div className="md:col-span-3">
-              <label className="block text-gray-500 mb-1">Lab-output fra apt list --upgradable</label>
+              <label className="block text-gray-500 mb-1" title="Pakkekatalog fra en godkendt lab/mirror-host. Edge må aldrig selv hente denne liste fra internettet.">Lab-output fra apt list --upgradable</label>
               <textarea value={aptText} onChange={e => setAptText(e.target.value)}
                 placeholder={'Listing...\\nlibssl3/noble-security 3.0.13-0ubuntu3.5 arm64 [upgradable from: 3.0.13-0ubuntu3.4]'}
                 className="w-full min-h-36 border border-gray-200 rounded-lg px-3 py-2 font-mono text-[11px]" />
@@ -1167,6 +1181,7 @@ function LabCatalogImport({
             apt_list_text: aptText,
             create_updates: true,
           })} disabled={busy || !deviceId.trim() || !aptText.trim()}
+            title="Sammenlign lab-kataloget med CMDB og opret blokerede updates, indtil et signeret artifact findes."
             className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gray-900 text-white rounded-lg disabled:opacity-50">
             <FileCheck className="w-3.5 h-3.5" />
             Reconcile og opret blokerede updates
@@ -1179,6 +1194,7 @@ function LabCatalogImport({
             architecture: 'arm64',
             create_updates: true,
           })} disabled={busy || !deviceId.trim()}
+            title="Lad Headend generere et kandidatkatalog i den kontrollerede Mac Docker-builder."
             className="mt-3 ml-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white text-gray-700 border border-gray-200 rounded-lg disabled:opacity-50">
             <RefreshCw className="w-3.5 h-3.5" />
             Refresh fra CMDB/Mac-builder
@@ -1639,6 +1655,7 @@ export function UpdatesPage() {
             </span>
           )}
           <button onClick={() => load(true)} disabled={refreshing}
+            title="Hent seneste opdateringer, artifacts og flow-status fra Headend."
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50">
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             Opdatér
@@ -1699,6 +1716,7 @@ export function UpdatesPage() {
         <div className="flex w-max gap-1">
           {FILTERS.map(f => (
           <button key={f.key} onClick={() => setFilter(f.key)}
+            title={`Vis opdateringer med status: ${f.label}`}
             className={`min-h-11 whitespace-nowrap px-3 py-1.5 text-xs rounded-lg transition-colors ${
               filter === f.key ? 'bg-gray-900 text-white' : 'text-gray-500 hover:bg-gray-100'
             }`}>
@@ -1737,7 +1755,7 @@ export function UpdatesPage() {
           )}
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
-              <label className="text-xs text-gray-500 block mb-1">Miljø</label>
+              <label className="text-xs text-gray-500 block mb-1" title="Vælg test før produktion, medmindre en dokumenteret undtagelse er godkendt.">Miljø</label>
               <select value={approveOpts.environment}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => setApproveOpts(o => ({...o, environment: e.target.value as ApproveOptions['environment']}))}
                 className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
@@ -1746,7 +1764,7 @@ export function UpdatesPage() {
               </select>
             </div>
             <div>
-              <label className="text-xs text-gray-500 block mb-1">Scope</label>
+              <label className="text-xs text-gray-500 block mb-1" title="Afgræns hvilke enheder den godkendte opdatering må gælde for.">Scope</label>
               <select value={approveOpts.scope}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => setApproveOpts(o => ({...o, scope: e.target.value as ApproveOptions['scope'], scope_id: ''}))}
                 className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
@@ -1758,7 +1776,7 @@ export function UpdatesPage() {
             </div>
             {approveOpts.scope === 'device' && (
               <div>
-                <label className="text-xs text-gray-500 block mb-1">Device ID</label>
+                <label className="text-xs text-gray-500 block mb-1" title="Vælg kun den konkrete R&D- eller produktions-Edge, som skal modtage ændringen.">Device ID</label>
                 <input value={approveOpts.scope_id}
                   onChange={e => setApproveOpts(o => ({...o, scope_id: e.target.value}))}
                   placeholder="fx TL-C87FF9587CA0"
@@ -1791,11 +1809,13 @@ export function UpdatesPage() {
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button onClick={() => approve(approveId)}
               disabled={busy === approveId}
+              title="Godkend med det viste miljø og scope. Næste flowtrin starter først efter policy og Edge-poll."
               className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50">
               {busy === approveId ? 'Godkender...' : 'Bekræft godkendelse'}
             </button>
             <button onClick={() => setApproveId(null)}
               disabled={busy === approveId}
+              title="Luk dialogen uden at ændre opdateringens status."
               className="px-4 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg disabled:opacity-50">
               Annuller
             </button>

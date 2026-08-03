@@ -54,12 +54,59 @@ def test_dockerfile_contains_edge_qa_and_management_runtime() -> None:
     assert "gphoto2" in source
     for unit in ("timelapse-edge", "timelapse-bt-pan", "timelapse-bt-agent", "timelapse-captive", "timelapse-totp"):
         assert f"{unit}.service" in source
+    assert "avahi-daemon" in source
+    assert "libnss-mdns" in source
+
+
+def test_flashable_injection_copies_and_enables_all_local_management_units() -> None:
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    for unit in (
+        "timelapse-bt-pan.service",
+        "timelapse-bt-agent.service",
+        "timelapse-captive.service",
+        "timelapse-totp.service",
+    ):
+        assert f'"etc/systemd/system/{unit}"' in source
+        assert unit in source
+    assert "INTERACTIVE_SHELL_ENABLED" in source
+    assert "/etc/timelapse/bt-config.yaml" in source
+    assert "BT_TOTP_SECRET" in source
+    assert "BT_TOTP_SID" in source
+    assert "LOCAL_MGMT_HOSTNAME" in source
+    assert "local-mgmt.key" in source
+    assert "centralt CA-udstedt lokalt TLS-certifikat" in source
+    assert "forventet fysisk Edge-ID til MAC-binding" in source
+    assert "expected_device_id" in source
+
+
+def test_flashable_image_refuses_shared_or_unprovisioned_local_access() -> None:
+    injector_source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    portal_source = (ROOT / "edge" / "scripts" / "totp-service.py").read_text()
+
+    assert "Flashable image kræver en unik, provisioneret BT TOTP-secret" in injector_source
+    assert '"secret": "JBSWY3DPEHPK3PXP"' not in portal_source
+    assert '"sid": "unprovisioned"' in portal_source
+
+
+def test_flashable_image_binds_the_public_build_api_to_the_expected_edge_identity() -> None:
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    public_api = source.split("def inject_edge_image(", 1)[1].split("    \"\"\"", 1)[0]
+    assert "expected_device_id: str" in public_api
+    assert '"expected_device_id": expected_device_id.strip()' in source
+    assert "expected_device_id   = expected_device_id" in source
 
 
 def test_dockerfile_removes_device_credentials_from_build_context() -> None:
     source = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
     for sensitive in ("api_token.txt", "bootstrap.yaml", "config.yaml", "keys"):
         assert sensitive in source
+
+
+def test_dockerfile_excludes_training_and_development_only_edge_content() -> None:
+    source = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
+    for excluded in ("/ai/tests", "/training", "/npu_viplite", "technician_ui.py"):
+        assert excluded in source
+    assert "! -name bootstrap_cli.py -delete" in source
 
 
 def test_edge_injection_has_no_default_debug_credential_or_online_install() -> None:

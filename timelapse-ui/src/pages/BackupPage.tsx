@@ -401,6 +401,8 @@ export function BackupPage() {
   const [diskBuildWifiPassword, setDiskBuildWifiPassword] = useState('')
   const [diskBuildWifiCountry, setDiskBuildWifiCountry] = useState('DK')
   const [diskBuildCameraId, setDiskBuildCameraId] = useState('')
+  const [diskBuildExpectedDeviceId, setDiskBuildExpectedDeviceId] = useState('')
+  const [diskBuildInteractiveShellEnabled, setDiskBuildInteractiveShellEnabled] = useState(true)
   const [availableTargets, setAvailableTargets] = useState<EdgeBuildTarget[]>([])
   const [targetsLoading, setTargetsLoading] = useState(true)
   const [targetsError, setTargetsError] = useState<string | null>(null)
@@ -572,6 +574,8 @@ export function BackupPage() {
           wifi_password: diskBuildWifiPassword,
           wifi_country: diskBuildWifiCountry || 'DK',
           camera_id: diskBuildCameraId || undefined,
+          expected_device_id: diskBuildExpectedDeviceId.trim() || undefined,
+          interactive_shell_enabled: diskBuildInteractiveShellEnabled,
         }),
       })
       if (!r.ok) {
@@ -734,6 +738,10 @@ export function BackupPage() {
           setDiskBuildWifiCountry={setDiskBuildWifiCountry}
           diskBuildCameraId={diskBuildCameraId}
           setDiskBuildCameraId={setDiskBuildCameraId}
+          diskBuildExpectedDeviceId={diskBuildExpectedDeviceId}
+          setDiskBuildExpectedDeviceId={setDiskBuildExpectedDeviceId}
+          diskBuildInteractiveShellEnabled={diskBuildInteractiveShellEnabled}
+          setDiskBuildInteractiveShellEnabled={setDiskBuildInteractiveShellEnabled}
           availableTargets={availableTargets}
           targetsLoading={targetsLoading}
           targetsError={targetsError}
@@ -1109,6 +1117,10 @@ function IsoTab({
   setDiskBuildWifiCountry,
   diskBuildCameraId,
   setDiskBuildCameraId,
+  diskBuildExpectedDeviceId,
+  setDiskBuildExpectedDeviceId,
+  diskBuildInteractiveShellEnabled,
+  setDiskBuildInteractiveShellEnabled,
   availableTargets,
   targetsLoading,
   targetsError,
@@ -1139,6 +1151,10 @@ function IsoTab({
   setDiskBuildWifiCountry: (v: string) => void
   diskBuildCameraId: string
   setDiskBuildCameraId: (v: string) => void
+  diskBuildExpectedDeviceId: string
+  setDiskBuildExpectedDeviceId: (v: string) => void
+  diskBuildInteractiveShellEnabled: boolean
+  setDiskBuildInteractiveShellEnabled: (value: boolean) => void
   availableTargets: EdgeBuildTarget[]
   targetsLoading: boolean
   targetsError: string | null
@@ -1150,14 +1166,37 @@ function IsoTab({
   const latestImage = blueprint?.latest_image
   const hasImage = !!latestImage
   const selectedBuildTarget = availableTargets.find(target => target.id === diskBuildTarget)
-  const canBuildDiskImage = Boolean(selectedBuildTarget) &&
-    (diskBuildMode !== 'flashable' || selectedBuildTarget?.flashable)
 
   // Kamera-liste til SSH-injection ved disk image build
   const [allCameras, setAllCameras] = useState<Array<{ id: string; camera_name: string; ssh_public_key: string | null; reverse_tunnel_port: number | null }>>([])
+  const [localCa, setLocalCa] = useState<{ initialized: boolean; healthy: boolean; detail: string; subject?: string; not_after?: string } | null>(null)
+  const [initializingLocalCa, setInitializingLocalCa] = useState(false)
+  const [localCaError, setLocalCaError] = useState<string | null>(null)
+  const canBuildDiskImage = Boolean(selectedBuildTarget) &&
+    (diskBuildMode !== 'flashable' || (
+      selectedBuildTarget?.flashable && diskBuildCameraId && localCa?.initialized && localCa.healthy
+    ))
   useEffect(() => {
     api('/admin/cameras').then(r => r.ok ? r.json() : []).then(setAllCameras).catch(() => {})
+    api('/admin/edge-local-ca/status').then(r => r.ok ? r.json() : null).then(setLocalCa).catch(() => setLocalCaError('CA-status kunne ikke hentes'))
   }, [])
+
+  async function initializeLocalCa() {
+    setInitializingLocalCa(true)
+    setLocalCaError(null)
+    try {
+      const response = await api('/admin/edge-local-ca/initialize', { method: 'POST' })
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: response.statusText }))
+        throw new Error(error.detail || 'CA kunne ikke initialiseres')
+      }
+      setLocalCa(await response.json())
+    } catch (error) {
+      setLocalCaError(error instanceof Error ? error.message : 'CA kunne ikke initialiseres')
+    } finally {
+      setInitializingLocalCa(false)
+    }
+  }
 
   // WiFi B: post-process inject state (lokal til IsoTab)
   const [wifiInjectOpen, setWifiInjectOpen] = useState(false)
@@ -1524,14 +1563,42 @@ function IsoTab({
             )}
 
             {diskBuildMode === 'flashable' && (
+              <div className={`mb-4 rounded-lg border p-3 ${localCa?.initialized && localCa.healthy ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-medium text-gray-900">Lokal Edge-CA</p>
+                    <p className="mt-1 text-xs text-gray-700">
+                      {localCa?.initialized && localCa.healthy
+                        ? `Klar. Dette image får et unikt certifikat til tl-&lt;edge-id&gt;.local${localCa.not_after ? ` (CA udløber ${new Date(localCa.not_after).toLocaleDateString('da-DK')})` : ''}.`
+                        : (localCa?.detail || 'CA-status hentes. Et flashbart image kan ikke bygges, før den centrale lokale CA er klar.')}
+                    </p>
+                    {localCa?.initialized && localCa.healthy && (
+                      <a href={`${getApiUrl()}/api/admin/edge-local-ca/apple-profile`}
+                        className="mt-2 inline-block text-xs font-medium text-emerald-800 underline underline-offset-2">
+                        Hent Apple/iPhone trustprofil
+                      </a>
+                    )}
+                  </div>
+                  {(!localCa || !localCa.initialized) && (
+                    <button type="button" onClick={initializeLocalCa} disabled={initializingLocalCa}
+                      className="shrink-0 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
+                      {initializingLocalCa ? 'Initialiserer...' : 'Initialisér CA'}
+                    </button>
+                  )}
+                </div>
+                {localCaError && <p className="mt-2 text-xs text-red-700">{localCaError}</p>}
+              </div>
+            )}
+
+            {diskBuildMode === 'flashable' && (
               <div className="mb-4 rounded-lg bg-violet-50 border border-violet-200 p-3">
                 <div className="flex items-center gap-1.5 mb-2">
                   <span className="text-violet-600 text-xs">🔑</span>
-                  <p className="text-xs text-violet-800 font-medium">SSH + Reverse tunnel (valgfri)</p>
+                  <p className="text-xs text-violet-800 font-medium">Kamerabinding og lokal adgang</p>
                 </div>
                 <p className="text-xs text-violet-700 mb-2">
-                  Vælg kamera for at bage SSH-nøgler ind — headend kan SSH direkte ind, og enheden åbner omvendt tunnel automatisk.
-                  Kald <span className="font-mono">/prepare</span> på kameraet først for at generere nøgler.
+                  Vælg den kameralokation, imaget skal bindes til. Det opretter en unik lokal nødadgang og bager den ind i imaget.
+                  SSH-nøgler og reverse tunnel tages med, når kameraet er forberedt.
                 </p>
                 <select
                   value={diskBuildCameraId}
@@ -1539,7 +1606,7 @@ function IsoTab({
                   disabled={diskBuildStatus?.running}
                   className="w-full text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-800 disabled:opacity-50"
                 >
-                  <option value="">— ingen SSH-injection —</option>
+                  <option value="">— vælg kameralokation (påkrævet) —</option>
                   {allCameras.map(c => (
                     <option key={c.id} value={c.id}>
                       {c.camera_name}
@@ -1548,12 +1615,37 @@ function IsoTab({
                     </option>
                   ))}
                 </select>
+                <div className="mt-3">
+                  <label htmlFor="edge-build-device-id" className="block text-xs font-medium text-violet-900 mb-1">Fysisk Edge-ID</label>
+                  <input id="edge-build-device-id" value={diskBuildExpectedDeviceId}
+                    onChange={e => setDiskBuildExpectedDeviceId(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
+                    placeholder="TL-C87FF9587CA0"
+                    disabled={diskBuildStatus?.running}
+                    className="w-full text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-violet-300 disabled:opacity-50" />
+                  <p className="mt-1 text-xs text-violet-700">Læs fra mærkat eller QR-kode på den fysiske Edge. Den bindes til certifikat og mDNS-navn, før enheden forlader kontoret.</p>
+                </div>
               </div>
+            )}
+
+            {diskBuildMode === 'flashable' && (
+              <label className="mb-4 flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={diskBuildInteractiveShellEnabled}
+                  onChange={e => setDiskBuildInteractiveShellEnabled(e.target.checked)}
+                  disabled={diskBuildStatus?.running}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block text-xs font-medium text-amber-900">Aktivér lokal service-shell ved første opstart</span>
+                  <span className="mt-1 block text-xs text-amber-800">Kun til denne R&D-testenhed. Den lokale tekniker-login kræves fortsat, og Headend kan senere deaktivere adgang under Systemadministration.</span>
+                </span>
+              </label>
             )}
 
             <p className="text-xs text-gray-400 mb-3">
               {diskBuildMode === 'flashable'
-                ? 'Bygger rootfs via Docker buildx + injicerer i base-image via Docker --privileged. Output: .img.gz der flashes direkte på SSD/SD-kort med dd eller balenaEtcher.'
+                ? 'Bygger rootfs via Docker buildx og injicerer i et base-image. En valgt kameralokation, fysisk Edge-ID og central CA giver unik lokal adgang. Output: .img.gz, klar til SSD/SD-kort.'
                 : 'Bygger rootfs via Docker buildx. Output: .tar.gz tarball der kan injiceres manuelt eller bruges som depot til manuel flash.'
               }
             </p>

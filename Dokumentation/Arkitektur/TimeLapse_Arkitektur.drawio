@@ -1,146 +1,206 @@
-<mxfile host="app.diagrams.net" agent="Claude-Cowork" version="24.0.0">
+<mxfile host="Electron" agent="Claude-Cowork" pages="2">
   <diagram name="1 - Nuvaerende arkitektur og dataflow" id="page1">
-    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+    <mxGraphModel dx="1245" dy="976" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-
-        <mxCell id="lane_edge" value="EDGE-node (felt)" style="rounded=1;fillColor=#f1f8e9;strokeColor=#2e7d32;verticalAlign=top;fontStyle=1;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="40" y="60" width="280" height="560" as="geometry" />
+        <mxCell id="lane_edge" parent="1" style="rounded=1;fillColor=#f1f8e9;strokeColor=#2e7d32;verticalAlign=top;fontStyle=1;fontSize=13;fontColor=#000000;" value="EDGE-node (felt)" vertex="1">
+          <mxGeometry height="560" width="280" x="40" y="60" as="geometry" />
         </mxCell>
-        <mxCell id="cam" value="Kamera (Nikon Z30) / gphoto2" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;" vertex="1" parent="1">
-          <mxGeometry x="70" y="110" width="220" height="40" as="geometry" />
+        <mxCell id="cam" parent="1" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;fontColor=#000000;" value="Kamera (Nikon Z30) / gphoto2" vertex="1">
+          <mxGeometry height="40" width="220" x="70" y="110" as="geometry" />
         </mxCell>
-        <mxCell id="relay" value="Relae / GPIO (stromstyring)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;" vertex="1" parent="1">
-          <mxGeometry x="70" y="170" width="220" height="40" as="geometry" />
+        <mxCell id="relay" parent="1" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;fontColor=#000000;" value="Relae / GPIO (stromstyring)" vertex="1">
+          <mxGeometry height="40" width="220" x="70" y="170" as="geometry" />
         </mxCell>
-        <mxCell id="qa" value="Capture + lokal QA (NPU/CV: blur, eksp., WB)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;" vertex="1" parent="1">
-          <mxGeometry x="70" y="230" width="220" height="50" as="geometry" />
+        <mxCell id="qa" parent="1" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;fontColor=#000000;" value="Capture + lokal QA (NPU/CV: blur, eksp., WB)" vertex="1">
+          <mxGeometry height="50" width="220" x="70" y="230" as="geometry" />
         </mxCell>
-        <mxCell id="buf" value="Store-and-forward buffer" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;" vertex="1" parent="1">
-          <mxGeometry x="70" y="300" width="220" height="40" as="geometry" />
+        <mxCell id="buf" parent="1" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;fontColor=#000000;" value="Store-and-forward buffer" vertex="1">
+          <mxGeometry height="40" width="220" x="70" y="300" as="geometry" />
         </mxCell>
-        <mxCell id="up" value="Uploader (SFTP)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;" vertex="1" parent="1">
-          <mxGeometry x="70" y="360" width="220" height="40" as="geometry" />
+        <mxCell id="up" parent="1" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;fontColor=#000000;" value="Uploader (SFTP)" vertex="1">
+          <mxGeometry height="40" width="220" x="70" y="360" as="geometry" />
         </mxCell>
-        <mxCell id="ag" value="Agent (HTTPS, JWT + HMAC)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;" vertex="1" parent="1">
-          <mxGeometry x="70" y="420" width="220" height="40" as="geometry" />
+        <mxCell id="ag" parent="1" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;fontColor=#000000;" value="Agent (HTTPS, JWT + HMAC)" vertex="1">
+          <mxGeometry height="40" width="220" x="70" y="420" as="geometry" />
         </mxCell>
-        <mxCell id="tun" value="Reverse SSH tunnel (autossh)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;" vertex="1" parent="1">
-          <mxGeometry x="70" y="480" width="220" height="40" as="geometry" />
+        <mxCell id="tun" parent="1" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;fontColor=#000000;" value="Reverse SSH tunnel (autossh)" vertex="1">
+          <mxGeometry height="40" width="220" x="70" y="480" as="geometry" />
         </mxCell>
-        <mxCell id="hal" value="HAL (orangepi/rpi/jetson)" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;dashed=1;" vertex="1" parent="1">
-          <mxGeometry x="70" y="540" width="220" height="40" as="geometry" />
+        <mxCell id="hal" parent="1" style="rounded=1;fillColor=#e8f5e9;strokeColor=#2e7d32;dashed=1;fontColor=#000000;" value="HAL (orangepi/rpi/jetson)" vertex="1">
+          <mxGeometry height="40" width="220" x="70" y="540" as="geometry" />
         </mxCell>
-
-        <mxCell id="lane_t" value="Transport" style="rounded=1;fillColor=#ede7f6;strokeColor=#5e35b1;verticalAlign=top;fontStyle=1;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="380" y="60" width="240" height="560" as="geometry" />
+        <mxCell id="lane_t" parent="1" style="rounded=1;fillColor=#ede7f6;strokeColor=#5e35b1;verticalAlign=top;fontStyle=1;fontSize=13;fontColor=#000000;" value="Transport" vertex="1">
+          <mxGeometry height="560" width="240" x="380" y="60" as="geometry" />
         </mxCell>
-        <mxCell id="t1" value="SFTP :22222 (billeder)" style="rounded=1;fillColor=#ede7f6;strokeColor=#5e35b1;" vertex="1" parent="1">
-          <mxGeometry x="410" y="360" width="180" height="40" as="geometry" />
+        <mxCell id="t1" parent="1" style="rounded=1;fillColor=#ede7f6;strokeColor=#5e35b1;fontColor=#000000;" value="SFTP :22222 (billeder)" vertex="1">
+          <mxGeometry height="40" width="180" x="410" y="360" as="geometry" />
         </mxCell>
-        <mxCell id="t2" value="HTTPS/JWT (config, heartbeat, updates, metadata)" style="rounded=1;fillColor=#ede7f6;strokeColor=#5e35b1;" vertex="1" parent="1">
-          <mxGeometry x="410" y="420" width="180" height="50" as="geometry" />
+        <mxCell id="t2" parent="1" style="rounded=1;fillColor=#ede7f6;strokeColor=#5e35b1;fontColor=#000000;" value="HTTPS/JWT (config, heartbeat, updates, metadata)" vertex="1">
+          <mxGeometry height="50" width="180" x="410" y="420" as="geometry" />
         </mxCell>
-        <mxCell id="t3" value="Reverse SSH (management-conduit)" style="rounded=1;fillColor=#ede7f6;strokeColor=#5e35b1;" vertex="1" parent="1">
-          <mxGeometry x="410" y="490" width="180" height="40" as="geometry" />
+        <mxCell id="t3" parent="1" style="rounded=1;fillColor=#ede7f6;strokeColor=#5e35b1;fontColor=#000000;" value="Reverse SSH (management-conduit)" vertex="1">
+          <mxGeometry height="40" width="180" x="410" y="490" as="geometry" />
         </mxCell>
-
-        <mxCell id="lane_head" value="HEADEND (Mac Mini)" style="rounded=1;fillColor=#e3f2fd;strokeColor=#1565c0;verticalAlign=top;fontStyle=1;fontSize=13;" vertex="1" parent="1">
-          <mxGeometry x="680" y="60" width="420" height="640" as="geometry" />
+        <mxCell id="lane_head" parent="1" style="rounded=1;fillColor=#e3f2fd;strokeColor=#1565c0;verticalAlign=top;fontStyle=1;fontSize=13;fontColor=#000000;" value="HEADEND (Mac Mini)" vertex="1">
+          <mxGeometry height="640" width="420" x="680" y="60" as="geometry" />
         </mxCell>
-        <mxCell id="nginx" value="nginx (DMZ): TLS, rate-limit, fail2ban" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1">
-          <mxGeometry x="710" y="110" width="360" height="40" as="geometry" />
+        <mxCell id="nginx" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="nginx (DMZ): TLS, rate-limit, fail2ban" vertex="1">
+          <mxGeometry height="40" width="360" x="710" y="110" as="geometry" />
         </mxCell>
-        <mxCell id="api" value="FastAPI (main.py): RBAC, JWT, MFA" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1">
-          <mxGeometry x="710" y="180" width="360" height="40" as="geometry" />
+        <mxCell id="api" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="FastAPI (main.py): RBAC, JWT, MFA" vertex="1">
+          <mxGeometry height="40" width="360" x="710" y="180" as="geometry" />
         </mxCell>
-        <mxCell id="ai" value="AI-tagging: Ollama (lokal) + Gemini (cloud)" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1">
-          <mxGeometry x="710" y="240" width="360" height="40" as="geometry" />
+        <mxCell id="ai" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="AI-tagging: Ollama (lokal) + Gemini (cloud)" vertex="1">
+          <mxGeometry height="40" width="360" x="710" y="240" as="geometry" />
         </mxCell>
-        <mxCell id="cfg" value="Config-hierarki (global-customer-site-device), signeret pull" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1">
-          <mxGeometry x="710" y="300" width="360" height="40" as="geometry" />
+        <mxCell id="cfg" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Config-hierarki (global-customer-site-device), signeret pull" vertex="1">
+          <mxGeometry height="40" width="360" x="710" y="300" as="geometry" />
         </mxCell>
-        <mxCell id="upd" value="Update/OTA: signerede artifacts, change tickets, rollback" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1">
-          <mxGeometry x="710" y="360" width="360" height="40" as="geometry" />
+        <mxCell id="upd" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Update/OTA: signerede artifacts, change tickets, rollback" vertex="1">
+          <mxGeometry height="40" width="360" x="710" y="360" as="geometry" />
         </mxCell>
-        <mxCell id="obs" value="Observability: SIEM, CMDB, ITIM, node-agent" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1">
-          <mxGeometry x="710" y="420" width="360" height="40" as="geometry" />
+        <mxCell id="obs" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Observability: SIEM, CMDB, ITIM, node-agent" vertex="1">
+          <mxGeometry height="40" width="360" x="710" y="420" as="geometry" />
         </mxCell>
-        <mxCell id="gdpr" value="GDPR: redaction, retention, access-log" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1">
-          <mxGeometry x="710" y="480" width="360" height="40" as="geometry" />
+        <mxCell id="gdpr" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="GDPR: redaction, retention, access-log" vertex="1">
+          <mxGeometry height="40" width="360" x="710" y="480" as="geometry" />
         </mxCell>
-        <mxCell id="db" value="PostgreSQL (captures: camera/customer/site)" style="rounded=1;fillColor=#f8bbd0;strokeColor=#c2185b;" vertex="1" parent="1">
-          <mxGeometry x="710" y="550" width="175" height="50" as="geometry" />
+        <mxCell id="db" parent="1" style="rounded=1;fillColor=#f8bbd0;strokeColor=#c2185b;fontColor=#000000;" value="PostgreSQL (captures: camera/customer/site)" vertex="1">
+          <mxGeometry height="50" width="175" x="710" y="550" as="geometry" />
         </mxCell>
-        <mxCell id="store" value="Storage /Volumes/data-fast (billeder + backup)" style="rounded=1;fillColor=#f8bbd0;strokeColor=#c2185b;" vertex="1" parent="1">
-          <mxGeometry x="895" y="550" width="175" height="50" as="geometry" />
+        <mxCell id="store" parent="1" style="rounded=1;fillColor=#f8bbd0;strokeColor=#c2185b;fontColor=#000000;" value="Storage /Volumes/data-fast (billeder + backup)" vertex="1">
+          <mxGeometry height="50" width="175" x="895" y="550" as="geometry" />
         </mxCell>
-
-        <mxCell id="ui" value="Web-UI (React/Vite)" style="rounded=1;fillColor=#fff9c4;strokeColor=#f9a825;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="800" y="640" width="180" height="40" as="geometry" />
+        <mxCell id="ui" parent="1" style="rounded=1;fillColor=#fff9c4;strokeColor=#f9a825;fontStyle=1;fontColor=#000000;" value="Web-UI (React/Vite)" vertex="1">
+          <mxGeometry height="40" width="180" x="800" y="640" as="geometry" />
         </mxCell>
-        <mxCell id="gem" value="Gemini / Vertex AI (europe-west1, batch)" style="rounded=1;fillColor=#ffe0b2;strokeColor=#ef6c00;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="1150" y="240" width="200" height="50" as="geometry" />
+        <mxCell id="gem" parent="1" style="rounded=1;fillColor=#ffe0b2;strokeColor=#ef6c00;fontStyle=1;fontColor=#000000;" value="Gemini / Vertex AI (europe-west1, batch)" vertex="1">
+          <mxGeometry height="50" width="200" x="1150" y="240" as="geometry" />
         </mxCell>
-
-        <mxCell id="f_camqa" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="cam" target="qa"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_qabuf" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="qa" target="buf"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_bufup" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="buf" target="up"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_qaag" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;" edge="1" parent="1" source="qa" target="ag"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_upt1" value="billeder" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="up" target="t1"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_agt2" value="metadata/api" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="ag" target="t2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_tunt3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="tun" target="t3"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_t1store" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="t1" target="store"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_t2nginx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="t2" target="nginx"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_t3nginx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="t3" target="api"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_nginxapi" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="nginx" target="api"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_apidb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="api" target="db"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_apiai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="api" target="ai"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_aigem" value="eskalering" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="ai" target="gem"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_cfgt2" value="policy" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;" edge="1" parent="1" source="cfg" target="t2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_updt2" value="OTA" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;" edge="1" parent="1" source="upd" target="t2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_uinginx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="ui" target="nginx"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="f_gdprstore" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="gdpr" target="store"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="f_camqa" edge="1" parent="1" source="cam" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="qa">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_qabuf" edge="1" parent="1" source="qa" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="buf">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_bufup" edge="1" parent="1" source="buf" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="up">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_qaag" edge="1" parent="1" source="qa" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;fontColor=#000000;" target="ag">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_upt1" edge="1" parent="1" source="up" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="t1" value="billeder">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_agt2" edge="1" parent="1" source="ag" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="t2" value="metadata/api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_tunt3" edge="1" parent="1" source="tun" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="t3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_t1store" edge="1" parent="1" source="t1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_t2nginx" edge="1" parent="1" source="t2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="nginx">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_t3nginx" edge="1" parent="1" source="t3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_nginxapi" edge="1" parent="1" source="nginx" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_apidb" edge="1" parent="1" source="api" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_apiai" edge="1" parent="1" source="api" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="ai">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_aigem" edge="1" parent="1" source="ai" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="gem" value="eskalering">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_cfgt2" edge="1" parent="1" source="cfg" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;fontColor=#000000;" target="t2" value="policy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_updt2" edge="1" parent="1" source="upd" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;fontColor=#000000;" target="t2" value="OTA">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_uinginx" edge="1" parent="1" source="ui" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="nginx">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f_gdprstore" edge="1" parent="1" source="gdpr" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
-
   <diagram name="2 - Maalbillede platform og payload" id="page2">
-    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+    <mxGraphModel dx="1437" dy="1126" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-
-        <mxCell id="platform" value="EDGE-PLATFORM — genbrugelig, non-funktionel kerne (udvikles i EET spor)" style="rounded=1;fillColor=#e3f2fd;strokeColor=#1565c0;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
-          <mxGeometry x="60" y="60" width="1000" height="230" as="geometry" />
+        <mxCell id="platform" parent="1" style="rounded=1;fillColor=#e3f2fd;strokeColor=#1565c0;verticalAlign=top;fontStyle=1;fontSize=14;fontColor=#000000;" value="EDGE-PLATFORM — genbrugelig, non-funktionel kerne (udvikles i EET spor)" vertex="1">
+          <mxGeometry height="230" width="1000" x="60" y="60" as="geometry" />
         </mxCell>
-        <mxCell id="pi1" value="Identitet &amp; Enrollment (device-token, HMAC, mTLS)" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1"><mxGeometry x="90" y="100" width="220" height="50" as="geometry" /></mxCell>
-        <mxCell id="pi2" value="Config &amp; Policy (hierarki, signeret pull)" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1"><mxGeometry x="330" y="100" width="220" height="50" as="geometry" /></mxCell>
-        <mxCell id="pi3" value="Update / OTA (signerede artifacts, rollback)" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1"><mxGeometry x="570" y="100" width="220" height="50" as="geometry" /></mxCell>
-        <mxCell id="pi4" value="Telemetri &amp; Observability (SIEM, CMDB, ITIM)" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1"><mxGeometry x="810" y="100" width="220" height="50" as="geometry" /></mxCell>
-        <mxCell id="pi5" value="Remote Access (tunnel + JIT/AccessTicket)" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1"><mxGeometry x="90" y="170" width="220" height="50" as="geometry" /></mxCell>
-        <mxCell id="pi6" value="HAL (orangepi/rpi/jetson/generic)" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1"><mxGeometry x="330" y="170" width="220" height="50" as="geometry" /></mxCell>
-        <mxCell id="pi7" value="Sikkerhed &amp; RBAC (auth, MFA, GRC)" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1"><mxGeometry x="570" y="170" width="220" height="50" as="geometry" /></mxCell>
-        <mxCell id="pi8" value="Storage / Backup" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;" vertex="1" parent="1"><mxGeometry x="810" y="170" width="220" height="50" as="geometry" /></mxCell>
-
-        <mxCell id="iface" value="PayloadDriver-kontrakt: configure, tick, collect_telemetry, handle_command&#10;+ capability manifest, signeret payload-pakke, resource quota, fil-/net-allowlist" style="rhombus;fillColor=#ede7f6;strokeColor=#5e35b1;fontStyle=1;verticalAlign=middle;" vertex="1" parent="1">
-          <mxGeometry x="360" y="330" width="400" height="90" as="geometry" />
+        <mxCell id="pi1" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Identitet &amp; Enrollment (device-token, HMAC, mTLS)" vertex="1">
+          <mxGeometry height="50" width="220" x="90" y="100" as="geometry" />
         </mxCell>
-
-        <mxCell id="payloads" value="PAYLOADS — funktionel, udskiftelig del (udvikles i PARALLELT spor)" style="rounded=1;fillColor=#f1f8e9;strokeColor=#2e7d32;verticalAlign=top;fontStyle=1;fontSize=14;" vertex="1" parent="1">
-          <mxGeometry x="60" y="470" width="1000" height="180" as="geometry" />
+        <mxCell id="pi2" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Config &amp; Policy (hierarki, signeret pull)" vertex="1">
+          <mxGeometry height="50" width="220" x="330" y="100" as="geometry" />
         </mxCell>
-        <mxCell id="pay1" value="Kamera/Timelapse (Nikon/gphoto2 + billed-QA + AI-tagging) = I DAG" style="rounded=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="90" y="520" width="220" height="90" as="geometry" /></mxCell>
-        <mxCell id="pay2" value="Vandvaerk (Modbus/OPC-UA: pumper, tryk, niveau)" style="rounded=1;fillColor=#dcedc8;strokeColor=#7cb342;dashed=1;" vertex="1" parent="1"><mxGeometry x="330" y="520" width="220" height="90" as="geometry" /></mxCell>
-        <mxCell id="pay3" value="Vindmoelle (vibration, ydelse)" style="rounded=1;fillColor=#dcedc8;strokeColor=#7cb342;dashed=1;" vertex="1" parent="1"><mxGeometry x="570" y="520" width="220" height="90" as="geometry" /></mxCell>
-        <mxCell id="pay4" value="Solcelle (inverter-data)" style="rounded=1;fillColor=#dcedc8;strokeColor=#7cb342;dashed=1;" vertex="1" parent="1"><mxGeometry x="810" y="520" width="220" height="90" as="geometry" /></mxCell>
-
-        <mxCell id="e_pf_if" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="platform" target="iface"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e_if_p1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;" edge="1" parent="1" source="iface" target="pay1"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e_if_p2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;" edge="1" parent="1" source="iface" target="pay2"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e_if_p3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;" edge="1" parent="1" source="iface" target="pay3"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e_if_p4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;" edge="1" parent="1" source="iface" target="pay4"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="pi3" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Update / OTA (signerede artifacts, rollback)" vertex="1">
+          <mxGeometry height="50" width="220" x="570" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="pi4" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Telemetri &amp; Observability (SIEM, CMDB, ITIM)" vertex="1">
+          <mxGeometry height="50" width="220" x="810" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="pi5" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Remote Access (tunnel + JIT/AccessTicket)" vertex="1">
+          <mxGeometry height="50" width="220" x="90" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="pi6" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="HAL (orangepi/rpi/jetson/generic)" vertex="1">
+          <mxGeometry height="50" width="220" x="330" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="pi7" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Sikkerhed &amp; RBAC (auth, MFA, GRC)" vertex="1">
+          <mxGeometry height="50" width="220" x="570" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="pi8" parent="1" style="rounded=1;fillColor=#bbdefb;strokeColor=#1565c0;fontColor=#000000;" value="Storage / Backup" vertex="1">
+          <mxGeometry height="50" width="220" x="810" y="170" as="geometry" />
+        </mxCell>
+        <mxCell id="iface" parent="1" style="rhombus;fillColor=#ede7f6;strokeColor=#5e35b1;fontStyle=1;verticalAlign=middle;fontColor=#000000;" value="PayloadDriver-kontrakt: configure, tick, collect_telemetry, handle_command&#xa;+ capability manifest, signeret payload-pakke, resource quota, fil-/net-allowlist" vertex="1">
+          <mxGeometry height="90" width="400" x="360" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="payloads" parent="1" style="rounded=1;fillColor=#f1f8e9;strokeColor=#2e7d32;verticalAlign=top;fontStyle=1;fontSize=14;fontColor=#000000;" value="PAYLOADS — funktionel, udskiftelig del (udvikles i PARALLELT spor)" vertex="1">
+          <mxGeometry height="180" width="1000" x="60" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="pay1" parent="1" style="rounded=1;fillColor=#c8e6c9;strokeColor=#2e7d32;fontStyle=1;fontColor=#000000;" value="Kamera/Timelapse (Nikon/gphoto2 + &#xa;billed-QA + AI-tagging) = I DAG" vertex="1">
+          <mxGeometry height="90" width="220" x="90" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="pay2" parent="1" style="rounded=1;fillColor=#dcedc8;strokeColor=#7cb342;dashed=1;fontColor=#000000;" value="Vandvaerk (Modbus/OPC-UA:&#xa; pumper, tryk, niveau)" vertex="1">
+          <mxGeometry height="90" width="220" x="330" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="pay3" parent="1" style="rounded=1;fillColor=#dcedc8;strokeColor=#7cb342;dashed=1;fontColor=#000000;" value="Vindmoelle (vibration, ydelse)" vertex="1">
+          <mxGeometry height="90" width="220" x="570" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="pay4" parent="1" style="rounded=1;fillColor=#dcedc8;strokeColor=#7cb342;dashed=1;fontColor=#000000;" value="Solcelle (inverter-data)" vertex="1">
+          <mxGeometry height="90" width="220" x="810" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="e_pf_if" edge="1" parent="1" source="platform" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="iface">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_if_p1" edge="1" parent="1" source="iface" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;fontColor=#000000;" target="pay1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_if_p2" edge="1" parent="1" source="iface" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;fontColor=#000000;" target="pay2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_if_p3" edge="1" parent="1" source="iface" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;fontColor=#000000;" target="pay3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_if_p4" edge="1" parent="1" source="iface" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;dashed=1;fontColor=#000000;" target="pay4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
       </root>
     </mxGraphModel>
   </diagram>
