@@ -1,7 +1,8 @@
 [Unit]
 Description=TimeLapse Pro — TOTP captive portal (local management)
-After=network.target timelapse-bt-pan.service
+After=network.target timelapse-bt-pan.service var-log.hdd.mount
 Wants=timelapse-bt-pan.service
+RequiresMountsFor=/var/log.hdd
 
 [Service]
 Type=simple

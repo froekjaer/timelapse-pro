@@ -75,7 +75,7 @@ def get_adapter() -> HardwareAdapter:
 
     if any(kw in hw_str for kw in ("orangepi", "orange pi", "rk3399",
                                     "allwinner", "sun8i", "h3", "h5", "h6",
-                                    "rockchip")):
+                                    "rockchip", "a733", "sun60i")):
         log.info("HAL: OrangePi detekteret — model=%r", hw_str)
         return OrangePiAdapter(model_string=hw_str)
 

@@ -206,11 +206,12 @@ export function CameraPage() {
   const [locationExpanded, setLocationExpanded] = useState(false)
 
   // ── BT TOTP QR ───────────────────────────────────────────────────────────
-  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,source:string,uri:string,qr_code:string,account_name:string,device_id:string|null,is_factory_default:boolean}|null>(null)
+  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,source:string,uri:string,qr_code:string,account_name:string,device_id:string|null,is_factory_default:boolean,current_code?:string,period_s?:number,expires_in_s?:number}|null>(null)
   const [btTotpLoading, setBtTotpLoading] = useState(false)
   const [btTotpRegen, setBtTotpRegen]     = useState(false)
   const [btTotpError, setBtTotpError]     = useState<string | null>(null)
   const [btTotpCopied, setBtTotpCopied]   = useState(false)
+  const [btTotpCountdown, setBtTotpCountdown] = useState(0)
 
   // ── Drift-analyse (fase 1, 2026-07-07) ─────────────────────────────────────
   const [driftData, setDriftData]         = useState<DriftAnalysis | null>(null)
@@ -392,7 +393,9 @@ export function CameraPage() {
         headers: { 'Content-Type': 'application/json' },
       })
       if (r.ok) {
-        setBtTotp(await r.json())
+        const body = await r.json()
+        setBtTotp(body)
+        setBtTotpCountdown(body.expires_in_s ?? 0)
       } else {
         const body = await r.json().catch(() => ({}))
         setBtTotpError(body.detail ?? 'Kunne ikke hente lokal adgang')
@@ -400,6 +403,19 @@ export function CameraPage() {
     } catch { setBtTotpError('Netværksfejl ved hentning af lokal adgang') }
     finally { setBtTotpLoading(false) }
   }
+
+  // Indbygget TOTP-klient: tæl ned lokalt, og genhent en frisk kode fra
+  // serveren når vinduet skifter (samme mønster som DevicePage.tsx).
+  useEffect(() => {
+    if (!btTotp?.current_code) return
+    const tick = setInterval(() => setBtTotpCountdown(s => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(tick)
+  }, [Boolean(btTotp?.current_code)])
+
+  useEffect(() => {
+    if (!btTotp?.current_code || btTotpCountdown > 0) return
+    loadBtTotp()
+  }, [btTotpCountdown, Boolean(btTotp?.current_code)])
 
   async function provisionBtTotp(rotate = false) {
     if (!deviceId) return
@@ -819,7 +835,17 @@ export function CameraPage() {
           )}
           {btTotp && (
             <div className="flex flex-col sm:flex-row gap-4 items-start">
-              <img src={btTotp.qr_code} alt="TOTP QR" className="w-36 h-36 rounded-lg border border-gray-100" />
+              <div className="flex flex-col items-center gap-2">
+                <img src={btTotp.qr_code} alt="TOTP QR" className="w-36 h-36 rounded-lg border border-gray-100" />
+                {btTotp.current_code && (
+                  <div className="text-center">
+                    <div className="text-2xl font-mono font-bold tracking-widest text-gray-900">
+                      {btTotp.current_code.slice(0, 3)} {btTotp.current_code.slice(3)}
+                    </div>
+                    <p className="text-xs text-gray-400">Skifter om {btTotpCountdown}s</p>
+                  </div>
+                )}
+              </div>
               <div className="flex-1 text-xs space-y-2">
                 {(() => {
                   const srcLabel: Record<string,string> = {

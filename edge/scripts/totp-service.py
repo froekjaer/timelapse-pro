@@ -1282,8 +1282,8 @@ function appendTerminal(output) {
   // Bash echoes editing as control sequences. Render the common terminal
   // controls locally rather than exposing their raw characters in the textarea.
   output = output
-    .replace(/\x1b\\][^\x07]*(?:\x07|\x1b\\)/g, '')
-    .replace(/\x1b\\[[0-?]*[ -/]*[@-~]/g, '');
+    .replace(/\\x1b\\][^\\x07]*(?:\\x07|\\x1b\\\\)/g, '')
+    .replace(/\\x1b\\[[0-?]*[ -/]*[@-~]/g, '');
   for (const char of output) {
     const lineStart = terminalText.lastIndexOf('\n', terminalCursor - 1) + 1;
     if (char === '\r') {

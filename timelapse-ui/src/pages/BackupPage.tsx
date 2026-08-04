@@ -964,7 +964,9 @@ function randomSuffix(n = 4): string {
 function suggestDeviceId(cameraName: string, siteName: string): string {
   const parts = [cameraName, siteName].filter(Boolean).map(slugify).filter(Boolean)
   const base = parts.length ? parts[0] : 'tl'
-  return `${base}-${randomSuffix(4)}`
+  // Uppercase for at matche den fysiske MAC-afledte device_id-konvention
+  // (TL-<UPPERCASE MAC>) og backendens normaliserede _sanitize_device_id().
+  return `${base}-${randomSuffix(4)}`.toUpperCase()
 }
 
 /** Device ID felt med auto-forslag og ↺ regenerér knap */
@@ -1013,10 +1015,10 @@ function DeviceIdPicker({
         <input
           className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-sky-300"
           value={value}
-          placeholder="tl-kamera1-a3f2"
+          placeholder="TL-KAMERA1-A3F2"
           onChange={e => {
             setIsAuto(false)
-            onChange(e.target.value)
+            onChange(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))
           }}
         />
         <button

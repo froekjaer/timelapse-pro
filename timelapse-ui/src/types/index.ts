@@ -13,6 +13,10 @@ export interface Device {
   camera_name: string | null
   installed_date: string | null
   installed_time: string | null
+  has_own_bt_totp?: boolean
+  factory_totp_disabled?: boolean
+  has_own_ssh_key?: boolean
+  shared_ssh_key_disabled?: boolean
 }
 
 export interface DeviceInfo {

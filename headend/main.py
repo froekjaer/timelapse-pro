@@ -156,10 +156,17 @@ log = logging.getLogger("headend")
 limiter = Limiter(key_func=get_remote_address, enabled=rate_limits_enabled())
 
 def _sanitize_device_id(device_id: str) -> str:
-    """Sanitér device_id — afvis path traversal forsøg."""
+    """Sanitér device_id — afvis path traversal forsøg.
+
+    Normaliseres til uppercase, så samme fysiske Edge-ID matcher uanset
+    hvilken bogstavstørrelse en bruger/UI-felt indtaster det med (Postgres
+    device_id-opslag er case-sensitivt). Matcher den fysiske MAC-afledte
+    konvention "TL-<UPPERCASE MAC>" fra edge/scripts/bootstrap_agent.py.
+    """
     import re as _re2
     if not device_id:
         raise HTTPException(status_code=400, detail="Ugyldigt device_id")
+    device_id = device_id.strip().upper()
     # Kun tilladte tegn: bogstaver, tal, bindestreg, underscore
     if not _re2.match(r'^[A-Za-z0-9_-]{3,60}$', device_id):
         raise HTTPException(status_code=400, detail="Ugyldigt device_id format")
@@ -376,7 +383,7 @@ def startup():
                     conn.commit()
                     log.info("DB migration: captures.%s tilføjet", col)
                 except Exception:
-                    pass  # Kolonnen findes allerede
+                    conn.rollback()  # frigør transaktionen, ellers fejler alle EFTERFØLGENDE kolonner i loopet
     except Exception as exc:
         log.warning("DB migration fejl (ikke kritisk): %s", exc)
 
@@ -407,7 +414,7 @@ def startup():
                     conn.commit()
                     log.info("DB migration v3: %s.%s tilføjet", table, col)
                 except Exception:
-                    pass  # Kolonnen findes allerede
+                    conn.rollback()  # frigør transaktionen, ellers fejler alle EFTERFØLGENDE kolonner i loopet
     except Exception as exc_v3:
         log.warning("DB migration v3 fejl (ikke kritisk): %s", exc_v3)
 
@@ -425,7 +432,7 @@ def startup():
                     _conn_auth.commit()
                     log.info("DB migration auth: %s.%s tilføjet", _tbl, _col)
                 except Exception:
-                    pass
+                    _conn_auth.rollback()  # frigør transaktionen, ellers fejler alle EFTERFØLGENDE kolonner i loopet
     except Exception as _exc_auth:
         log.warning("DB migration auth fejl: %s", _exc_auth)
 
@@ -441,7 +448,7 @@ def startup():
                 _conn_user_cap.commit()
                 log.info("DB migration: users.on_site_service tilføjet")
             except Exception:
-                pass
+                _conn_user_cap.rollback()
     except Exception as _exc_user_cap:
         log.warning("DB migration users.on_site_service fejl: %s", _exc_user_cap)
 
@@ -459,7 +466,7 @@ def startup():
                     _conn_v9.commit()
                     log.info("DB migration v9: %s.%s tilføjet", _tbl, _col)
                 except Exception:
-                    pass  # allerede der
+                    _conn_v9.rollback()  # frigør transaktionen, ellers fejler alle EFTERFØLGENDE kolonner i loopet
     except Exception as _exc_v9:
         log.warning("DB migration v9 fejl: %s", _exc_v9)
 
@@ -472,6 +479,8 @@ def startup():
             ("devices", "reverse_tunnel_port", "INTEGER"),
             ("devices", "bt_totp_secret", "VARCHAR(64)"),
             ("devices", "bt_totp_sid", "VARCHAR(100)"),
+            ("devices", "factory_totp_disabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("devices", "shared_ssh_key_disabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ]
         with _eng_device_identity.connect() as _conn_device_identity:
             for _tbl, _col, _typ in _device_identity_cols:
@@ -480,7 +489,7 @@ def startup():
                     _conn_device_identity.commit()
                     log.info("DB migration device identity: %s.%s tilføjet", _tbl, _col)
                 except Exception:
-                    pass  # eksisterende database har allerede kolonnen
+                    _conn_device_identity.rollback()  # frigør transaktionen, ellers fejler alle EFTERFØLGENDE kolonner i loopet
     except Exception as _exc_device_identity:
         log.warning("DB migration device identity fejl: %s", _exc_device_identity)
 
@@ -498,7 +507,7 @@ def startup():
                     _conn_v10.commit()
                     log.info("DB migration v10: %s.%s tilføjet", _tbl, _col)
                 except Exception:
-                    pass  # allerede der
+                    _conn_v10.rollback()  # frigør transaktionen, ellers fejler alle EFTERFØLGENDE kolonner i loopet
     except Exception as _exc_v10:
         log.warning("DB migration v10 fejl: %s", _exc_v10)
 
@@ -517,7 +526,7 @@ def startup():
                     _conn_v11.commit()
                     log.info("DB migration v11: %s.%s tilføjet", _tbl, _col)
                 except Exception:
-                    pass
+                    _conn_v11.rollback()  # frigør transaktionen, ellers fejler alle EFTERFØLGENDE kolonner i loopet
     except Exception as _exc_v11:
         log.warning("DB migration v11 fejl: %s", _exc_v11)
 
@@ -540,7 +549,7 @@ def startup():
                     _conn_v12.commit()
                     log.info("DB migration v12: %s.%s tilføjet", _tbl, _col)
                 except Exception:
-                    pass  # allerede der
+                    _conn_v12.rollback()  # frigør transaktionen, ellers fejler alle EFTERFØLGENDE kolonner i loopet
             for _idx_name, _idx_sql in [
                 ("ix_captures_camera_id",   "CREATE INDEX IF NOT EXISTS ix_captures_camera_id ON captures (camera_id)"),
                 ("ix_captures_customer_id", "CREATE INDEX IF NOT EXISTS ix_captures_customer_id ON captures (customer_id)"),
@@ -549,7 +558,7 @@ def startup():
                     _conn_v12.execute(text(_idx_sql))
                     _conn_v12.commit()
                 except Exception:
-                    pass
+                    _conn_v12.rollback()
     except Exception as _exc_v12:
         log.warning("DB migration v12 fejl: %s", _exc_v12)
 
@@ -568,14 +577,14 @@ def startup():
                 _conn_v13.commit()
                 log.info("DB migration v13: captures.site_id tilføjet")
             except Exception:
-                pass  # allerede der
+                _conn_v13.rollback()  # frigør transaktionen, ellers fejler det efterfølgende CREATE INDEX
             try:
                 _conn_v13.execute(text(
                     "CREATE INDEX IF NOT EXISTS ix_captures_site_id ON captures (site_id)"
                 ))
                 _conn_v13.commit()
             except Exception:
-                pass
+                _conn_v13.rollback()
     except Exception as _exc_v13:
         log.warning("DB migration v13 fejl: %s", _exc_v13)
 
@@ -593,7 +602,7 @@ def startup():
                 _conn_v14.commit()
                 log.info("DB migration v14: diagnostics.cam_non_enforceable_json tilføjet")
             except Exception:
-                pass  # allerede der
+                _conn_v14.rollback()
     except Exception as _exc_v14:
         log.warning("DB migration v14 fejl (ikke kritisk): %s", _exc_v14)
 
@@ -4130,10 +4139,19 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         # BT PAN TOTP — prioritet: fabriksstandard < global (Settings) <
         # kunde/site/device (config_overrides, sat i hierarki-merge nedenfor) <
         # kamera (Camera.bt_totp_secret, sat efter merge — se nedenfor)
+        # Fabriksstandarden er bevidst enabled som default (R&D/idriftsættelse),
+        # men en admin kan deaktivere den pr. enhed via
+        # POST /api/admin/devices/{device_id}/factory-totp, når enheden har
+        # modtaget rigtig konfiguration. Deaktiveret betyder tomt secret —
+        # edge'ens lokale TOTP-service fejler allerede fail-closed på det.
         "bt_totp": (
             {"secret": _get_setting(db, "bt_totp_secret", ""), "sid": _get_setting(db, "bt_totp_sid", "global")}
             if _get_setting(db, "bt_totp_secret", "")
-            else {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
+            else (
+                {"secret": "", "sid": "factory-default-disabled"}
+                if getattr(device, "factory_totp_disabled", False)
+                else {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
+            )
         ),
         "service_access": {"enabled": True, "live_view_enabled": True, "live_view_max_duration_s": 180, "allow_continuous_live_view": False},
     }
@@ -5229,11 +5247,12 @@ def get_device_bt_totp_qr(
     secret = str(identity["bt_totp_secret"])
     sid = str(identity["bt_totp_sid"])
     account_name = str(identity["device_id"])
-    uri = _pyotp.TOTP(secret).provisioning_uri(
-        name=account_name, issuer_name="TimeLapse Pro Local Edge"
-    )
+    totp = _pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=account_name, issuer_name="TimeLapse Pro Local Edge")
     buf = _io.BytesIO()
     _qrcode.make(uri).save(buf, format="PNG")
+    period_s = totp.interval
+    now_s = time.time()
     return {
         "secret": secret,
         "sid": sid,
@@ -5243,6 +5262,11 @@ def get_device_bt_totp_qr(
         "uri": uri,
         "qr_code": f"data:image/png;base64,{_b64.b64encode(buf.getvalue()).decode()}",
         "is_factory_default": False,
+        # Built-in TOTP client: lader en indlogget admin/tekniker se den aktuelle
+        # kode direkte i Headend uden en separat authenticator-app.
+        "current_code": totp.now(),
+        "period_s": period_s,
+        "expires_in_s": period_s - (int(now_s) % period_s),
     }
 
 
@@ -14044,6 +14068,10 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
             "app_version":      d_cfg.get("app_version"),
             "config_overrides": json.loads(device.config_overrides or "{}") if hasattr(device, "config_overrides") else {},
             "site_id":          device.site_id if hasattr(device, "site_id") else None,
+            "has_own_bt_totp":         bool(getattr(device, "bt_totp_secret", None)),
+            "factory_totp_disabled":   bool(getattr(device, "factory_totp_disabled", False)),
+            "has_own_ssh_key":         bool(getattr(device, "ssh_private_key", None)),
+            "shared_ssh_key_disabled": bool(getattr(device, "shared_ssh_key_disabled", False)),
         },
         "diagnostics": diagnostics,
         "device_config": d_cfg,
@@ -15341,6 +15369,7 @@ def _run_edge_disk_image_build(
 
             # ── Hent credentials fra den fysiske Edge-identitet ──────────────
             _headend_ssh_pubkey = ""
+            _device_ssh_pubkey = ""
             _device_ssh_privkey = ""
             _ssh_tunnel_port    = 0
             _bt_totp_secret = ""
@@ -15360,6 +15389,7 @@ def _run_edge_disk_image_build(
                     _identity = _ensure_device_provisioning_credentials(_db_ssh, _device)
                     _db_ssh.commit()
                     _device_ssh_privkey = str(_identity["ssh_private_key"])
+                    _device_ssh_pubkey = str(_device.ssh_pubkey or "")
                     _ssh_tunnel_port = int(_identity["reverse_tunnel_port"])
                     _bt_totp_secret = str(_identity["bt_totp_secret"])
                     _bt_totp_sid = str(_identity["bt_totp_sid"])
@@ -15417,6 +15447,7 @@ def _run_edge_disk_image_build(
                 wifi_password=wifi_password,
                 wifi_country=wifi_country,
                 headend_ssh_pubkey=_headend_ssh_pubkey,
+                device_ssh_pubkey=_device_ssh_pubkey,
                 device_ssh_privkey=_device_ssh_privkey,
                 ssh_tunnel_port=_ssh_tunnel_port,
                 tunnel_headend_host=_tunnel_host,
@@ -17297,6 +17328,8 @@ app.include_router(capture_access_router)
 from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
+from api.device_security_api import create_device_security_router
+from api.device_ssh_access_api import create_device_ssh_access_router
 app.include_router(customer_risk_api.router)
 app.include_router(grc_register_api.router)
 app.include_router(storage_api.router)
@@ -18382,6 +18415,8 @@ def _ensure_capture_device_access(db: Session, user: User | None, device_id: str
 
 app.include_router(create_service_access_router(require_role, _ensure_capture_device_access, _siem_record_events, now_utc))
 app.include_router(create_edge_local_pki_router(require_role, _siem_record_events, now_utc))
+app.include_router(create_device_security_router(require_role))
+app.include_router(create_device_ssh_access_router(require_role))
 
 
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:

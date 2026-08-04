@@ -485,7 +485,9 @@ echo "[inject] Udpakker TimeLapse filer fra rootfs..."
 echo "[inject] Rootfs indhold (timelapse-relaterede stier):"
 tar -tzf "$ROOTFS_TAR" 2>/dev/null | grep -E "^(opt/timelapse|etc/timelapse|etc/systemd/system/timelapse)" | head -30 || true
 
-# Udpak timelapse-specifikke stier
+# Udpak timelapse-specifikke stier + gphoto2 (kamerastyring — installeret i
+# Docker-rootfs'en via Dockerfile.edge, men aldrig tidligere kopieret over på
+# selve det flashede base-image; findes kun på arm64-builds i dag).
 for TAR_PATH in \
     "opt/timelapse" \
     "etc/timelapse" \
@@ -494,7 +496,16 @@ for TAR_PATH in \
     "etc/systemd/system/timelapse-bt-pan.service" \
     "etc/systemd/system/timelapse-bt-agent.service" \
     "etc/systemd/system/timelapse-captive.service" \
-    "etc/systemd/system/timelapse-totp.service"
+    "etc/systemd/system/timelapse-totp.service" \
+    "usr/bin/gphoto2" \
+    "usr/lib/aarch64-linux-gnu/libgphoto2.so.6" \
+    "usr/lib/aarch64-linux-gnu/libgphoto2.so.6.1.0" \
+    "usr/lib/aarch64-linux-gnu/libgphoto2_port.so.12" \
+    "usr/lib/aarch64-linux-gnu/libgphoto2_port.so.12.0.0" \
+    "usr/lib/aarch64-linux-gnu/libgphoto2" \
+    "usr/lib/aarch64-linux-gnu/libgphoto2_port" \
+    "lib/udev/rules.d/60-libgphoto2-6.rules" \
+    "lib/udev/hwdb.d/20-libgphoto2-6.hwdb"
 do
     echo "[inject] Udpakker: $TAR_PATH"
     tar -xzf "$ROOTFS_TAR" -C /mnt/root \
@@ -660,9 +671,14 @@ else
     echo "[inject] Ingen WiFi konfiguration (WIFI_SSID ikke sat)"
 fi
 
-# ── SSH authorized_keys (headend → edge) ─────────────────────────────────────
-if [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
-    echo "[inject] Injecterer headend public key i authorized_keys..."
+# ── SSH authorized_keys (device → sig selv + headend → edge) ────────────────
+# Enhedens EGEN nøgle (DEVICE_SSH_PUBLIC_KEY) er den primære adgangsvej — et
+# lækket download rammer kun denne ene enhed. Den delte Headend-operatørnøgle
+# (HEADEND_SSH_PUBLIC_KEY) er bevidst injiceret som default-enabled nødadgang
+# på tværs af flåden; en admin kan deaktivere den pr. enhed senere via
+# /api/admin/devices/{id}/shared-ssh-key, når enhedens egen nøgle virker.
+if [ -n "${DEVICE_SSH_PUBLIC_KEY:-}${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
+    echo "[inject] Injecterer SSH public keys i authorized_keys..."
 
     # 1) Brugere der allerede eksisterer i /etc/passwd (Armbian, OrangePi, ældre RPi OS)
     for USER_HOME in /mnt/root/home/timelapse /mnt/root/home/pi /mnt/root/home/ubuntu /mnt/root/home/orangepi; do
@@ -670,29 +686,33 @@ if [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ]; then
         UID_ENTRY=$(grep -E "^${USERNAME}:" /mnt/root/etc/passwd 2>/dev/null | cut -d: -f3 || true)
         if [ -n "$UID_ENTRY" ]; then
             mkdir -p "$USER_HOME/.ssh"
-            grep -qxF "${HEADEND_SSH_PUBLIC_KEY}" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null \
-                || echo "${HEADEND_SSH_PUBLIC_KEY}" >> "$USER_HOME/.ssh/authorized_keys"
+            for PUBKEY in "${DEVICE_SSH_PUBLIC_KEY:-}" "${HEADEND_SSH_PUBLIC_KEY:-}"; do
+                [ -z "$PUBKEY" ] && continue
+                grep -qxF "${PUBKEY}" "$USER_HOME/.ssh/authorized_keys" 2>/dev/null \
+                    || echo "${PUBKEY}" >> "$USER_HOME/.ssh/authorized_keys"
+            done
             chmod 700 "$USER_HOME/.ssh"
             chmod 600 "$USER_HOME/.ssh/authorized_keys"
             chown -R "${UID_ENTRY}:${UID_ENTRY}" "$USER_HOME/.ssh" 2>/dev/null || true
-            echo "[inject]   Key tilføjet for '${USERNAME}' (uid ${UID_ENTRY}): $USER_HOME/.ssh/authorized_keys"
+            echo "[inject]   Keys tilføjet for '${USERNAME}' (uid ${UID_ENTRY}): $USER_HOME/.ssh/authorized_keys"
         fi
     done
 
-    # 2) Cloud-init (Ubuntu preinstalled) — opretter ubuntu-brugeren med nøglen
+    # 2) Cloud-init (Ubuntu preinstalled) — opretter ubuntu-brugeren med nøglerne
     #    ved første boot, selv om /home/ubuntu endnu ikke eksisterer i raw-imaget.
     if [ -d /mnt/root/etc/cloud ]; then
         mkdir -p /mnt/root/etc/cloud/cloud.cfg.d
-        cat > /mnt/root/etc/cloud/cloud.cfg.d/99-timelapse-ssh.cfg << CLOUDINIT_EOF
-#cloud-config
-# Tilføjet af TimeLapse Pro inject — giver headend SSH adgang til ubuntu-bruger
-users:
-  - default
-  - name: ubuntu
-    ssh_authorized_keys:
-      - ${HEADEND_SSH_PUBLIC_KEY}
-CLOUDINIT_EOF
-        echo "[inject]   Cloud-init 99-timelapse-ssh.cfg skrevet (ubuntu user vil få headend key ved boot)"
+        {
+            echo "#cloud-config"
+            echo "# Tilføjet af TimeLapse Pro inject — giver SSH adgang til ubuntu-bruger"
+            echo "users:"
+            echo "  - default"
+            echo "  - name: ubuntu"
+            echo "    ssh_authorized_keys:"
+            [ -n "${DEVICE_SSH_PUBLIC_KEY:-}" ] && echo "      - ${DEVICE_SSH_PUBLIC_KEY}"
+            [ -n "${HEADEND_SSH_PUBLIC_KEY:-}" ] && echo "      - ${HEADEND_SSH_PUBLIC_KEY}"
+        } > /mnt/root/etc/cloud/cloud.cfg.d/99-timelapse-ssh.cfg
+        echo "[inject]   Cloud-init 99-timelapse-ssh.cfg skrevet (ubuntu user vil få nøglerne ved boot)"
 
         # NetworkManager: styr KUN modem-interfaces — lad netplan håndtere eth0/wlan0
         mkdir -p /mnt/root/etc/NetworkManager/conf.d
@@ -889,6 +909,7 @@ def _inject_via_docker(
     wifi_password: str = "",
     wifi_country: str = "DK",
     headend_ssh_pubkey: str = "",
+    device_ssh_pubkey: str = "",
     device_ssh_privkey: str = "",
     ssh_tunnel_port: int = 0,
     tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
@@ -937,6 +958,7 @@ def _inject_via_docker(
         "-e", f"WIFI_PASSWORD={wifi_password}",
         "-e", f"WIFI_COUNTRY={wifi_country or 'DK'}",
         "-e", f"HEADEND_SSH_PUBLIC_KEY={headend_ssh_pubkey}",
+        "-e", f"DEVICE_SSH_PUBLIC_KEY={device_ssh_pubkey}",
         "-e", f"DEVICE_SSH_PRIVATE_KEY={device_ssh_privkey}",
         "-e", f"SSH_TUNNEL_PORT={ssh_tunnel_port}",
         "-e", f"TUNNEL_HEADEND_HOST={tunnel_headend_host}",
@@ -1080,6 +1102,7 @@ def inject_edge_image(
     wifi_password: str = "",
     wifi_country: str = "DK",
     headend_ssh_pubkey: str = "",
+    device_ssh_pubkey: str = "",
     device_ssh_privkey: str = "",
     ssh_tunnel_port: int = 0,
     tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
@@ -1110,7 +1133,8 @@ def inject_edge_image(
         wifi_ssid:            WiFi netværksnavn (bages ind hvis sat)
         wifi_password:        WiFi adgangskode
         wifi_country:         WiFi landekode (default: DK)
-        headend_ssh_pubkey:   Headend Ed25519 public key → device authorized_keys
+        headend_ssh_pubkey:   Headend Ed25519 public key → device authorized_keys (delt fallback-adgang)
+        device_ssh_pubkey:    Device Ed25519 public key → device authorized_keys (primær, enheds-specifik adgang)
         device_ssh_privkey:   Device Ed25519 private key (PEM) → /etc/timelapse/device_keys/id_ed25519
         ssh_tunnel_port:      Remote port til reverse SSH tunnel (fx 2202)
         tunnel_headend_host:  Headend hostname til tunnel (default: TIMELAPSE_TUNNEL_HOST)
@@ -1219,8 +1243,10 @@ def inject_edge_image(
     progress_cb(f"\n🔨 Step 3/4: Injecterer agent via Docker --privileged...")
     if wifi_ssid:
         progress_cb(f"   WiFi: {wifi_ssid} ({tgt.get('wifi_method', 'wpa_supplicant')} / {wifi_country})")
+    if device_ssh_pubkey:
+        progress_cb(f"   SSH authorized_keys: enhedens egen pubkey bages ind (primær adgang)")
     if headend_ssh_pubkey:
-        progress_cb(f"   SSH authorized_keys: headend pubkey bages ind")
+        progress_cb(f"   SSH authorized_keys: headend pubkey bages ind (delt nødadgang)")
     if device_ssh_privkey and ssh_tunnel_port:
         progress_cb(f"   SSH reverse tunnel: port {ssh_tunnel_port} → {tunnel_headend_host}")
     _inject_via_docker(
@@ -1234,6 +1260,7 @@ def inject_edge_image(
         wifi_password        = wifi_password,
         wifi_country         = wifi_country,
         headend_ssh_pubkey   = headend_ssh_pubkey,
+        device_ssh_pubkey    = device_ssh_pubkey,
         device_ssh_privkey   = device_ssh_privkey,
         ssh_tunnel_port      = ssh_tunnel_port,
         tunnel_headend_host  = tunnel_headend_host,

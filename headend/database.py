@@ -127,6 +127,18 @@ class Device(Base):
     reverse_tunnel_port = Column(Integer)
     bt_totp_secret      = Column(String(64))
     bt_totp_sid         = Column(String(100))
+    # Enabled by default so a device without its own bt_totp_secret can still
+    # be reached via the shared/global fallback while it is being configured.
+    # An admin can flip this once the device has picked up real config, to
+    # stop it accepting the well-known factory-default TOTP fallback.
+    factory_totp_disabled = Column(Boolean, default=False, nullable=False)
+    # Every device's own SSH keypair (ssh_private_key/ssh_pubkey above) is
+    # injected into its own authorized_keys at build time. The shared Headend
+    # operator key is ALSO injected as a break-glass fallback (default
+    # enabled). An admin can disable it per-device once the device's own key
+    # is confirmed working, so a single leaked operator key no longer opens
+    # every Edge in the fleet.
+    shared_ssh_key_disabled = Column(Boolean, default=False, nullable=False)
 
 
 class Capture(Base):

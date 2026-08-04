@@ -1,6 +1,7 @@
 [Unit]
 Description=TimeLapse Pro — tidssynkronisering (GPS/headend fallback)
-After=network.target
+After=network.target var-log.hdd.mount
+RequiresMountsFor=/var/log.hdd
 Before=timelapse-totp.service
 
 [Service]

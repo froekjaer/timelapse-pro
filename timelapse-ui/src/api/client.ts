@@ -78,6 +78,21 @@ export const requestThumbnailGeneration = (deviceId: string, filename: string) =
 export const updateDeviceInfo = (deviceId: string, info: import('../types').DeviceInfo) =>
   getClient().put(`/api/admin/devices/${pathSegment(deviceId)}/info`, info).then(r => r.data)
 
+export const setFactoryTotpDisabled = (deviceId: string, disabled: boolean) =>
+  getClient().post(`/api/admin/devices/${pathSegment(deviceId)}/factory-totp`, { disabled }).then(r => r.data)
+
+export const getDeviceBtTotpQr = (deviceId: string) =>
+  getClient().get(`/api/admin/devices/${pathSegment(deviceId)}/bt-totp-qr`).then(r => r.data)
+
+export const backfillDeviceSshKey = (deviceId: string, ipOverride?: string) =>
+  getClient().post(`/api/admin/devices/${pathSegment(deviceId)}/backfill-ssh-key`, { ip_override: ipOverride || '' }).then(r => r.data)
+
+export const setSharedSshKeyDisabled = (deviceId: string, disabled: boolean, ipOverride?: string) =>
+  getClient().post(`/api/admin/devices/${pathSegment(deviceId)}/shared-ssh-key`, { disabled, ip_override: ipOverride || '' }).then(r => r.data)
+
+export const deviceSshPrivateKeyUrl = (deviceId: string) =>
+  `${getApiUrl()}/api/admin/devices/${pathSegment(deviceId)}/ssh-private-key`
+
 export const testConnection = () =>
   getClient().get('/api/health').then(r => r.data)
 

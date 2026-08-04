@@ -14,9 +14,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
+import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays, ShieldAlert, QrCode, KeyRound, Download } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, ReferenceLine } from 'recharts'
-import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setParam, pathSegment, getApiUrl } from '../api/client'
+import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setFactoryTotpDisabled, getDeviceBtTotpQr, backfillDeviceSshKey, setSharedSshKeyDisabled, deviceSshPrivateKeyUrl, setParam, pathSegment, getApiUrl } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaptureThumbnailCard, parseCaptureQA, qaHardFailed, causeLabels } from '../components/CaptureThumbnailCard'
@@ -24,7 +24,7 @@ import { FotoTechnicalCard } from '../components/FotoTechnicalCard'
 import { SiteLookCard } from '../components/SiteLookCard'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import { useAuth } from '../context/AuthContext'
-import type { DeviceDetail, Capture } from '../types'
+import type { DeviceDetail, Capture, Device } from '../types'
 
 function authFetch(url: string, opts?: RequestInit) {
   return fetch(url, { credentials: 'include', ...opts })
@@ -825,11 +825,17 @@ function CameraParamRow({ param, deviceId }: {
   )
 }
 
-function ConfigTab({ deviceId }: { deviceId: string }) {
+function ConfigTab({ deviceId, device, onDeviceRefresh }: { deviceId: string; device: Device; onDeviceRefresh: () => void }) {
   const [cfg, setCfg]       = useState<any>(null)
   const [info, setInfo]     = useState<any>(null)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg]       = useState<string | null>(null)
+  const [totpBusy, setTotpBusy] = useState(false)
+  const [ownTotp, setOwnTotp] = useState<{ current_code: string; qr_code: string; sid: string; account_name: string; expires_in_s: number; period_s: number } | null>(null)
+  const [ownTotpVisible, setOwnTotpVisible] = useState(false)
+  const [ownTotpCountdown, setOwnTotpCountdown] = useState(0)
+  const [sshBusy, setSshBusy] = useState(false)
+  const [sshIpOverride, setSshIpOverride] = useState('')
 
   useEffect(() => {
     getConfig(deviceId).then(d => { setCfg(d); setInfo(d?.device ?? {}) })
@@ -851,6 +857,69 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
       setMsg('Enhedsinfo gemt ✓')
     } catch { setMsg('Fejl ved gemning') }
     setSaving(false)
+  }
+
+  async function toggleFactoryTotp(disabled: boolean) {
+    setTotpBusy(true); setMsg(null)
+    try {
+      await setFactoryTotpDisabled(deviceId, disabled)
+      onDeviceRefresh()
+      setMsg(disabled ? 'Fabriksstandard TOTP deaktiveret ✓' : 'Fabriksstandard TOTP aktiveret ✓')
+    } catch { setMsg('Fejl ved ændring af fabriksstandard TOTP') }
+    setTotpBusy(false)
+  }
+
+  async function loadOwnTotp() {
+    try {
+      const r = await getDeviceBtTotpQr(deviceId)
+      setOwnTotp(r)
+      setOwnTotpCountdown(r.expires_in_s)
+    } catch { setMsg('Kunne ikke hente lokal TOTP-kode') }
+  }
+
+  function toggleOwnTotp() {
+    const next = !ownTotpVisible
+    setOwnTotpVisible(next)
+    if (next) loadOwnTotp()
+  }
+
+  // Indbygget TOTP-klient: tæl ned lokalt hvert sekund.
+  useEffect(() => {
+    if (!ownTotpVisible) return
+    const tick = setInterval(() => setOwnTotpCountdown(s => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(tick)
+  }, [ownTotpVisible])
+
+  // Genhent en frisk kode fra serveren, når det lokale nedtællingsur løber ud
+  // — koden skifter hvert 30. sekund på serveren, så vi må ikke vise en stale.
+  useEffect(() => {
+    if (!ownTotpVisible || ownTotpCountdown > 0) return
+    loadOwnTotp()
+  }, [ownTotpVisible, ownTotpCountdown])
+
+  function sshErrorDetail(e: unknown, fallback: string): string {
+    const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+    return detail || fallback
+  }
+
+  async function backfillSshKey() {
+    setSshBusy(true); setMsg(null)
+    try {
+      const r = await backfillDeviceSshKey(deviceId, sshIpOverride)
+      onDeviceRefresh()
+      setMsg(`Enhedens egen SSH-nøgle tilføjet (bruger ${r.username}@${r.host}) ✓`)
+    } catch (e) { setMsg(sshErrorDetail(e, 'Kunne ikke efterinstallere SSH-nøgle')) }
+    setSshBusy(false)
+  }
+
+  async function toggleSharedSshKey(disabled: boolean) {
+    setSshBusy(true); setMsg(null)
+    try {
+      const r = await setSharedSshKeyDisabled(deviceId, disabled, sshIpOverride)
+      onDeviceRefresh()
+      setMsg(disabled ? `Delt SSH-nøgle deaktiveret (bruger ${r.username}@${r.host}) ✓` : `Delt SSH-nøgle aktiveret (bruger ${r.username}@${r.host}) ✓`)
+    } catch (e) { setMsg(sshErrorDetail(e, 'Kunne ikke ændre delt SSH-nøgle')) }
+    setSshBusy(false)
   }
 
   if (!cfg) return <div className="text-center py-12 text-gray-400">Indlæser konfiguration…</div>
@@ -888,6 +957,114 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
             className="mt-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
             Gem enhedsinfo
           </button>
+        </div>
+      </div>
+
+      {/* Lokal adgang — fabriksstandard TOTP */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-amber-500" />Lokal adgang — fabriksstandard TOTP
+        </h3>
+        <p className="text-xs text-gray-400 mb-4">
+          Enheder uden egen enrolled TOTP-secret bruger et delt fabriksstandard-secret til lokal Bluetooth PAN-adgang, så du altid kan komme ind under idriftsættelse.
+          Så snart enheden er konfigureret (har hentet config fra headend), kan fabriksstandarden lukkes af for netop denne enhed.
+        </p>
+        {device.has_own_bt_totp ? (
+          <p className="text-sm text-emerald-600 font-medium">✓ Enheden har sin egen unikke lokale TOTP-secret — fabriksstandarden er ikke i brug.</p>
+        ) : (
+          <div className="flex items-center gap-3">
+            <span className={`text-sm font-medium ${device.factory_totp_disabled ? 'text-red-600' : 'text-amber-600'}`}>
+              {device.factory_totp_disabled ? 'Fabriksstandard TOTP er deaktiveret for denne enhed (ingen lokal BT-adgang)' : 'Fabriksstandard TOTP er aktiv (standard lige nu)'}
+            </span>
+            <button
+              onClick={() => toggleFactoryTotp(!device.factory_totp_disabled)}
+              disabled={totpBusy || !device.last_seen}
+              title={!device.last_seen ? 'Enheden skal have hentet konfiguration fra headend mindst én gang først' : undefined}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg border disabled:opacity-50 ${
+                device.factory_totp_disabled
+                  ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                  : 'border-red-200 text-red-700 hover:bg-red-50'
+              }`}
+            >
+              {device.factory_totp_disabled ? 'Aktivér fabriksstandard igen' : 'Deaktivér fabriksstandard'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Lokal adgang — enhedens egen TOTP (indbygget klient, ingen mobil-app krævet) */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+            <QrCode className="w-4 h-4 text-sky-500" />Lokal adgang — enhedens egen TOTP
+          </h3>
+          <button onClick={toggleOwnTotp}
+            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+            {ownTotpVisible ? 'Skjul' : 'Vis kode / QR'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-400 mb-4">
+          Koden opdateres automatisk her — du behøver ikke en separat authenticator-app for at logge ind lokalt på enheden. Scan QR-koden i stedet, hvis du hellere vil bruge din mobil.
+        </p>
+        {ownTotpVisible && (
+          ownTotp ? (
+            <div className="flex flex-col sm:flex-row items-center gap-6">
+              <div className="text-center">
+                <div className="text-3xl font-mono font-bold tracking-widest text-gray-900">
+                  {ownTotp.current_code.slice(0, 3)} {ownTotp.current_code.slice(3)}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Skifter om {ownTotpCountdown}s · {ownTotp.sid}</p>
+              </div>
+              <img src={ownTotp.qr_code} alt="TOTP QR-kode" className="w-32 h-32 border border-gray-200 rounded-lg" />
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">Indlæser…</p>
+          )
+        )}
+      </div>
+
+      {/* Lokal adgang — SSH */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
+          <KeyRound className="w-4 h-4 text-sky-500" />Lokal adgang — SSH
+        </h3>
+        <p className="text-xs text-gray-400 mb-4">
+          Enhedens egen SSH-nøgle er den primære adgangsvej — et lækket download rammer kun denne ene enhed.
+          Den delte Headend-nøgle er bevidst bagt ind som nødadgang på tværs af flåden og kan lukkes af pr. enhed, når du har bekræftet at enhedens egen nøgle virker.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">IP-adresse (kun nødvendigt hvis enheden ikke har rapporteret en endnu)</label>
+            <input value={sshIpOverride} onChange={e => setSshIpOverride(e.target.value)} placeholder={device.ip_address || '192.168.x.x'}
+              className="w-48 border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-mono" />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {device.has_own_ssh_key ? (
+              <a href={deviceSshPrivateKeyUrl(deviceId)} download={`${deviceId}_id_ed25519`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-sky-200 text-sky-700 hover:bg-sky-50">
+                <Download className="w-3.5 h-3.5" />Download SSH-nøgle
+              </a>
+            ) : (
+              <span className="text-xs text-gray-400">Enheden har ikke en genereret SSH-nøgle endnu.</span>
+            )}
+            <button onClick={backfillSshKey} disabled={sshBusy || !device.has_own_ssh_key}
+              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+              Efterinstallér enhedens egen nøgle
+            </button>
+            <button onClick={() => toggleSharedSshKey(!device.shared_ssh_key_disabled)}
+              disabled={sshBusy || !device.has_own_ssh_key}
+              className={`px-3 py-1.5 text-xs font-medium rounded-lg border disabled:opacity-50 ${
+                device.shared_ssh_key_disabled
+                  ? 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                  : 'border-red-200 text-red-700 hover:bg-red-50'
+              }`}
+            >
+              {device.shared_ssh_key_disabled ? 'Aktivér delt nødadgang igen' : 'Deaktivér delt nødadgang'}
+            </button>
+          </div>
+          <p className="text-xs text-gray-400">
+            {device.shared_ssh_key_disabled ? '✓ Delt Headend-nøgle er deaktiveret for denne enhed.' : 'Delt Headend-nøgle er aktiv (nødadgang) for denne enhed.'}
+          </p>
         </div>
       </div>
 
@@ -1681,7 +1858,7 @@ export function DevicePage() {
 
         {tab === 'timeline' && id && <TimelineNavigator deviceId={id} captures={captures} onSelect={i => { setLightbox(i) }} />}
         {tab === 'stats' && id && <StatsTab captures={captures} diagnostics={diagnostics} deviceId={id} />}
-        {tab === 'config' && id && <ConfigTab deviceId={id} />}
+        {tab === 'config' && id && <ConfigTab deviceId={id} device={device} onDeviceRefresh={load} />}
       </div>
     </>
   )

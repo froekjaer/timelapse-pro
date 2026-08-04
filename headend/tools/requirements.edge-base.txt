@@ -24,3 +24,11 @@ tzdata>=2024.1
 
 # Technician authentication (QR code login)
 qrcode>=7.4.0
+
+# Local management portal (edge/scripts/totp-service.py — FastAPI/uvicorn HTTPS
+# service on port 8443, TOTP login via pyotp, /verify uses Form() which needs
+# python-multipart). Pinned to match headend/requirements.txt.
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+pyotp==2.9.0
+python-multipart==0.0.27
