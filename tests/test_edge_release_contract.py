@@ -221,27 +221,101 @@ def test_edge_cli_exposes_a_visible_terminal_navigation_entry():
     assert 'id="terminal"' in service
 
 
-def test_edge_terminal_translates_common_control_keys_to_ansi():
+def test_edge_terminal_uses_xterm_js_instead_of_hand_rolled_parsing():
+    """2026-08-05 (Peter): after TWO separate escaping bugs in the
+    hand-rolled terminal renderer (2026-08-04's ANSI-strip regex, then a
+    second instance in appendTerminal's own character comparisons found
+    live on TL-C87FF9587CA0 on 2026-08-05), replaced the whole custom
+    parser with the vendored, industry-standard xterm.js instead of
+    continuing to hand-fix control-sequence edge cases. See
+    edge/scripts/static/xterm/ (vendored library, not CDN-loaded — this
+    portal must keep working with no internet access) and
+    test_edge_terminal_javascript_is_syntactically_valid, which actually
+    parses the served script with a real JS engine (node --check) rather
+    than pattern-matching Python source text — that gap is what let the
+    2026-08-05 bug slip through undetected in the first place. A deeper
+    jsdom+canvas rendering test (actually driving xterm.js's Terminal
+    through open/write/onData) was run manually before this change shipped
+    but deliberately isn't kept as a permanent test here: canvas's native
+    bindings are fragile across CI/platform combinations, and node --check
+    already closes the specific bug class this project has hit twice."""
     service = _source("edge/scripts/totp-service.py")
 
-    for sequence in ("\\x1b[A", "\\x1b[B", "\\x1b[C", "\\x1b[D", "\\x1b[3~", "\\x1b[H", "\\x1b[F"):
-        assert sequence in service
+    assert "/mgmt/static/xterm/xterm.css" in service
+    assert "/mgmt/static/xterm/xterm.js" in service
+    assert "new Terminal(" in service
+    assert "term.open(document.getElementById('term'))" in service
+    assert "term.onData(" in service
+    assert "term.write(" in service
+    # The old hand-rolled parser must be gone, not just unused dead code —
+    # its presence would mean a future edit could silently start calling it
+    # again instead of xterm.js's term.write().
+    assert "function appendTerminal" not in service
+
+    xterm_js = _source("edge/scripts/static/xterm/xterm.js")
+    assert "Terminal" in xterm_js and len(xterm_js) > 100_000, (
+        "vendored xterm.js looks truncated/corrupted"
+    )
 
 
-def test_edge_terminal_uses_a_controlling_pty_without_ansi_noise():
+def test_edge_terminal_uses_a_controlling_pty_with_a_real_terminal_type():
     service = _source("edge/scripts/totp-service.py")
 
     assert "termios.TIOCSCTTY" in service
-    assert '"TERM": "dumb"' in service
+    # TERM=dumb was only ever a workaround for the previous renderer not
+    # being able to safely display escape codes — xterm.js is a real
+    # terminal emulator, so the shell should report itself as one too.
+    assert '"TERM": "xterm-256color"' in service
+    assert '"TERM": "dumb"' not in service
+    # PTY window size should be set explicitly to match what xterm.js
+    # actually renders (80x24 default), not left at the kernel's default —
+    # otherwise programs that query terminal size (less, vim) misbehave.
+    assert "termios.TIOCSWINSZ" in service
 
 
-def test_edge_terminal_renders_shell_editing_controls_in_the_browser():
+def test_edge_terminal_javascript_is_syntactically_valid():
+    """Actually parse the served <script> block with a real JS engine.
+
+    Motivation (2026-08-05): a substring/text assertion on the Python
+    source (like the test above) can only ever check what the developer
+    remembered to assert — it can't catch "this Python string, once
+    Python's own escape processing runs, produces invalid JavaScript",
+    which is exactly the bug class that slipped through TWICE (2026-08-04's
+    fix covered the ANSI-strip regex lines; a second, separate instance in
+    appendTerminal's own \\n/\\r/\\b/\\x7f character comparisons was found
+    live on TL-C87FF9587CA0 on 2026-08-05, undetected by any existing test
+    or by curl-based API testing, since curl never executes JavaScript).
+    """
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node")
+    if not node:
+        import pytest
+        pytest.skip("node not available in this environment")
+
     service = _source("edge/scripts/totp-service.py")
+    match = re.search(r'shell_script = """(.*?)"""', service, re.DOTALL)
+    assert match, "could not locate the shell_script triple-quoted string in totp-service.py"
 
-    assert "function appendTerminal(output)" in service
-    assert "char === '\\b' || char === '\\x7f'" in service
-    assert "terminalCursor = lineStart" in service
-    assert "appendTerminal(result.output)" in service
+    # Reproduce exactly what Python's own string-literal parser does to
+    # this block at runtime, the same as when totp-service.py actually
+    # executes it to build the served page.
+    rendered_js = eval('"""' + match.group(1) + '"""')
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".js", delete=False) as f:
+        f.write(rendered_js)
+        js_path = f.name
+    try:
+        result = subprocess.run([node, "--check", js_path], capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, (
+            f"appendTerminal/shell_script JavaScript is not syntactically valid:\n{result.stderr}"
+        )
+    finally:
+        import os
+        os.unlink(js_path)
 
 
 def test_flashable_edge_rejects_a_mac_that_does_not_match_its_bound_identity() -> None:
@@ -340,8 +414,13 @@ def test_totp_configuration_writes_are_atomic_and_root_only():
 
 
 def test_thumbnail_display_paths_never_generate_images_synchronously():
+    # 2026-08-06 (Claude): get_thumbnail() moved to headend/api/thumbnails_api.py
+    # during the thumbnail-subsystem extraction (see
+    # tests/test_architecture_ratchet.py) — get_preview_thumb() (a separate,
+    # unrelated LAB-mode preview feature) was not touched and stays in main.py.
     source = _source("headend/main.py")
-    thumbnail_endpoint = source.split("def get_thumbnail", 1)[1].split("def request_thumbnail_generation", 1)[0]
+    thumbnails_api_source = _source("headend/api/thumbnails_api.py")
+    thumbnail_endpoint = thumbnails_api_source.split("def get_thumbnail", 1)[1].split("def request_thumbnail_generation", 1)[0]
     preview_endpoint = source.split("def get_preview_thumb", 1)[1].split("@app.post(\"/api/admin/devices/{device_id}/lab-clear-command\")", 1)[0]
 
     assert "_lazy_generate_thumbnail" not in thumbnail_endpoint

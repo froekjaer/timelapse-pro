@@ -1,0 +1,28 @@
+[Unit]
+Description=TimeLapse Pro — Break-glass emergency account provisioning (first boot)
+Documentation=https://timelapse.froekjaer.dk
+After=var-log.hdd.mount
+RequiresMountsFor=/var/log.hdd
+# Deliberately NOT gated on enrollment (no Before=/After= relative to
+# timelapse-bootstrap.service) — break-glass must exist independently of
+# whether normal enrollment ever succeeds. Runs once, tracked by its own
+# marker file, not by the shared .enrolled marker.
+ConditionPathExists=!/etc/timelapse/.breakglass-provisioned
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/opt/timelapse/edge/scripts/timelapse-breakglass-setup.sh
+TimeoutStartSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=timelapse-breakglass-setup
+
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

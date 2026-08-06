@@ -29,6 +29,7 @@ import select
 import sys
 import threading
 import fcntl
+import struct
 import termios
 import yaml
 import pyotp
@@ -37,6 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, Request, Form, Response, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, StreamingResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from typing import Optional
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -255,17 +257,38 @@ def _make_token(ip: str) -> str:
 
 
 def _valid_token(token: str, ip: str) -> bool:
+    """
+    Deliberately NOT pinned to a single client IP (changed 2026-08-05, see
+    HANDOVER_LOG same date — Peter: the Edge must stay reachable across
+    Bluetooth PAN, WiFi, Ethernet and routed networks, and a technician's
+    apparent source IP can legitimately change mid-session on any of those
+    paths: BT-PAN reconnect on screen-lock hands out a new DHCP address
+    from timelapse-bt-pan.sh's pool, WiFi roams between APs, a routed path
+    can NAT differently across a reconnect). The token itself is what
+    actually authenticates: a 256-bit HMAC-derived value, unguessable, only
+    ever issued after a correct TOTP code — with per-device TOTP secrets and
+    per-device SSH keys already in place (2026-08-04 hardening), that's the
+    real access-control boundary, not the source IP. Every IP a valid
+    session is seen from is still tracked (audit logging, and so BT-PAN
+    relay whitelisting in _iptables_add follows the session rather than
+    only its original login IP) and all of them are un-whitelisted /
+    cleaned up together on expiry.
+    """
     if token not in _sessions:
         return False
     sess = _sessions[token]
-    if sess["ip"] != ip:
-        return False
     cfg = load_config()
     timeout = cfg["management"].get("session_timeout", 3600)
     if timeout > 0 and time.time() > sess["expires"]:
         _sessions.pop(token, None)
-        _iptables_remove(ip)
+        for seen_ip in sess["ips"]:
+            _iptables_remove(seen_ip)
+        _close_shell_session(token)
         return False
+    if ip not in sess["ips"]:
+        log.info(f"Session {token[:8]}… set fra ny IP {ip} (tidligere: {sorted(sess['ips'])})")
+        sess["ips"].add(ip)
+        _iptables_add(ip)
     return True
 
 
@@ -456,6 +479,16 @@ def _success_page() -> str:
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
+# Vendored xterm.js (2026-08-05, Peter: "standard plug-in der virker" — after
+# two rounds of subtle escaping bugs in the hand-rolled terminal renderer,
+# replaced with the industry-standard terminal emulator instead of continuing
+# to hand-fix control-sequence parsing). Fetched from the official npm
+# package @xterm/xterm@5.5.0 (MIT licensed), vendored locally under
+# edge/scripts/static/xterm/ — NOT loaded from a CDN, since this portal must
+# keep working with no internet access (BT-PAN/isolated site networks).
+# sha256 at vendoring time: xterm.js=1f991ac3b4b2..., xterm.css=ba8e698566...
+app.mount("/mgmt/static", StaticFiles(directory=str(EDGE_ROOT / "scripts" / "static")), name="mgmt-static")
+
 
 @app.on_event("shutdown")
 def stop_technician_stream_on_shutdown() -> None:
@@ -534,7 +567,7 @@ async def verify(request: Request, code: str = Form(...)):
     token = _make_token(client_ip)
     timeout = cfg["management"].get("session_timeout", 3600)
     _sessions[token] = {
-        "ip": client_ip,
+        "ips": {client_ip},
         "expires": time.time() + timeout if timeout > 0 else float("inf"),
     }
     _iptables_add(client_ip)
@@ -1260,6 +1293,7 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
     </div>"""
     if shell_enabled:
         shell_panel = """
+    <link rel=\"stylesheet\" href=\"/mgmt/static/xterm/xterm.css\">
     <div id=\"terminal\" class=\"card wide\">
       <h2>Terminal og SSH-klient</h2>
       <p class=\"hint\">Interaktiv lokal shell på Edge. Den indbyggede OpenSSH-klient kan anvendes herfra med en godkendt nøgle og verificeret host key. Luk terminalen når du er færdig.</p>
@@ -1267,94 +1301,74 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
         <button type=\"button\" onclick=\"openShell()\">Åbn terminal</button>
         <button class=\"secondary\" type=\"button\" onclick=\"closeShell()\">Luk terminal</button>
       </div>
-      <textarea id=\"term\" spellcheck=\"false\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\"></textarea>
-    </div>"""
+      <div id=\"term\" class=\"term-container\"></div>
+    </div>
+    <script src=\"/mgmt/static/xterm/xterm.js\"></script>"""
     shell_script = ""
     if shell_enabled:
         shell_script = """
 let shellOpen = false;
 let shellPollTimer = null;
-const term = document.getElementById('term');
-let terminalText = '';
-let terminalCursor = 0;
 
-function appendTerminal(output) {
-  // Bash echoes editing as control sequences. Render the common terminal
-  // controls locally rather than exposing their raw characters in the textarea.
-  output = output
-    .replace(/\\x1b\\][^\\x07]*(?:\\x07|\\x1b\\\\)/g, '')
-    .replace(/\\x1b\\[[0-?]*[ -/]*[@-~]/g, '');
-  for (const char of output) {
-    const lineStart = terminalText.lastIndexOf('\n', terminalCursor - 1) + 1;
-    if (char === '\r') {
-      terminalCursor = lineStart;
-    } else if (char === '\n') {
-      terminalText = terminalText.slice(0, terminalCursor) + '\n' + terminalText.slice(terminalCursor);
-      terminalCursor += 1;
-    } else if (char === '\b' || char === '\x7f') {
-      if (terminalCursor > lineStart) {
-        terminalText = terminalText.slice(0, terminalCursor - 1) + terminalText.slice(terminalCursor);
-        terminalCursor -= 1;
-      }
-    } else if (char >= ' ') {
-      if (terminalCursor < terminalText.length && terminalText[terminalCursor] !== '\n') {
-        terminalText = terminalText.slice(0, terminalCursor) + char + terminalText.slice(terminalCursor + 1);
-      } else {
-        terminalText = terminalText.slice(0, terminalCursor) + char + terminalText.slice(terminalCursor);
-      }
-      terminalCursor += 1;
-    }
-  }
-  term.value = terminalText;
-  term.scrollTop = term.scrollHeight;
-}
+// Real terminal emulator (xterm.js, vendored — see the <script src> tag
+// above) instead of hand-rolled character-by-character parsing. xterm.js
+// handles ALL control sequences (CR/LF/backspace/ANSI colors/cursor
+// movement) and ALL keyboard-to-escape-sequence translation correctly and
+// robustly — this is the entire point of switching to it: that whole class
+// of parsing bugs (two separate escaping incidents, 2026-08-04 and
+// 2026-08-05) is now handled by a library millions of people depend on
+// (VS Code's integrated terminal, among others), not by us.
+const term = new Terminal({
+  cursorBlink: true,
+  fontSize: 13,
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  theme: { background: '#050812', foreground: '#d6e4ff' },
+  convertEol: false,
+  scrollback: 5000,
+});
+term.open(document.getElementById('term'));
 
 async function shellRequest(path, options = {}) {
   const response = await fetch(path, options);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    let detail = await response.text();
+    try { detail = JSON.parse(detail).detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
   return response.json();
 }
 async function pollShell() {
   if (!shellOpen) return;
   try {
     const result = await shellRequest('/mgmt/cli/bash/output');
-    if (result.output) appendTerminal(result.output);
-    if (!result.running) { shellOpen = false; appendTerminal('\\n[closed]\\n'); return; }
-  } catch (_) { shellOpen = false; appendTerminal('\\n[closed]\\n'); return; }
+    if (result.output) term.write(result.output);
+    if (!result.running) { shellOpen = false; term.write('\\r\\n[closed]\\r\\n'); return; }
+  } catch (err) {
+    shellOpen = false;
+    // A 401 here almost always means the client IP changed (WiFi roam,
+    // BT-PAN reconnect on screen-lock) and the session was dropped
+    // server-side — reloading and logging in again is the actual fix,
+    // not retrying, so say so instead of a bare "[closed]".
+    term.write('\\r\\n[closed: ' + (err && err.message ? err.message : 'ukendt fejl') + ' — genindlæs siden og log ind igen]\\r\\n');
+    return;
+  }
   shellPollTimer = setTimeout(pollShell, 120);
 }
 async function openShell() {
   if (shellOpen) return;
   try {
     await shellRequest('/mgmt/cli/bash/start', {method: 'POST'});
-    shellOpen = true; appendTerminal('\\n[connected]\\n'); term.focus(); pollShell();
-  } catch (_) { appendTerminal('\\n[connection failed]\\n'); }
+    shellOpen = true; term.reset(); term.write('[connected]\\r\\n'); term.focus(); pollShell();
+  } catch (err) { term.write('\\r\\n[connection failed: ' + (err && err.message ? err.message : 'ukendt fejl') + ']\\r\\n'); }
 }
 async function closeShell() {
   shellOpen = false; if (shellPollTimer) clearTimeout(shellPollTimer);
   try { await shellRequest('/mgmt/cli/bash/close', {method: 'POST'}); } catch (_) {}
-  appendTerminal('\\n[closed]\\n');
+  term.write('\\r\\n[closed]\\r\\n');
 }
-term.addEventListener('keydown', (event) => {
+term.onData((data) => {
   if (!shellOpen) return;
-  let data = null;
-  if (event.key === 'Enter') data = '\\n';
-  else if (event.key === 'Backspace') data = '\\x7f';
-  else if (event.key === 'Delete') data = '\\x1b[3~';
-  else if (event.key === 'Tab') data = '\\t';
-  else if (event.key === 'Escape') data = '\\x1b';
-  else if (event.key === 'ArrowUp') data = '\\x1b[A';
-  else if (event.key === 'ArrowDown') data = '\\x1b[B';
-  else if (event.key === 'ArrowRight') data = '\\x1b[C';
-  else if (event.key === 'ArrowLeft') data = '\\x1b[D';
-  else if (event.key === 'Home') data = '\\x1b[H';
-  else if (event.key === 'End') data = '\\x1b[F';
-  else if (event.ctrlKey && event.key.length === 1) data = String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64);
-  else if (!event.metaKey && !event.altKey && event.key.length === 1) data = event.key;
-  if (data !== null) {
-    event.preventDefault();
-    shellRequest('/mgmt/cli/bash/input', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'data=' + encodeURIComponent(data)}).catch(() => closeShell());
-  }
+  shellRequest('/mgmt/cli/bash/input', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: 'data=' + encodeURIComponent(data)}).catch(() => closeShell());
 });"""
     return f"""<!DOCTYPE html>
 <html lang="da">
@@ -1379,6 +1393,8 @@ term.addEventListener('keydown', (event) => {
   label {{ display: block; color: #8aa0bf; font-size: 0.76rem; margin: 0.55rem 0 0.25rem; }}
   input {{ width: 100%; background: #0f3460; color: #fff; border: 1px solid #334; border-radius: 7px; padding: 0.58rem 0.65rem; font-size: 0.85rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
   textarea {{ width: 100%; min-height: 360px; background: #050812; color: #d6e4ff; border: 1px solid #26385a; border-radius: 8px; padding: 0.8rem; font-size: 0.82rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+  .term-container {{ width: 100%; height: 420px; background: #050812; border: 1px solid #26385a; border-radius: 8px; padding: 0.5rem; overflow: hidden; }}
+  .term-container .xterm-viewport {{ border-radius: 6px; }}
   .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 0.5rem; }}
   button {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; margin-top: 0.7rem; }}
   button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
@@ -1784,8 +1800,19 @@ async def mgmt_cli_bash_start(request: Request):
     token = _require_shell_session(request)
     _close_shell_session(token)
     master_fd, slave_fd = pty.openpty()
+    # 80x24 matches the xterm.js default on the frontend (edge/scripts
+    # static/xterm) — without this, programs that query terminal size
+    # (less, vim, wrapping shell prompts) render against whatever default
+    # winsize the kernel happens to give a freshly-opened pty, which is
+    # not guaranteed to match what's actually displayed.
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     env = os.environ.copy()
-    env.update({"TERM": "dumb", "TIMELAPSE_EDGE_ROOT": str(EDGE_ROOT)})
+    # xterm-256color, not dumb: the frontend is now a real terminal emulator
+    # (xterm.js, 2026-08-05) that correctly handles colors and cursor
+    # movement, so there's no more reason to suppress them at the shell
+    # level — TERM=dumb was only ever a workaround for the previous
+    # hand-rolled renderer not being able to safely display escape codes.
+    env.update({"TERM": "xterm-256color", "TIMELAPSE_EDGE_ROOT": str(EDGE_ROOT)})
     process = subprocess.Popen([BASH_PATH, "-l"], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
                                cwd=str(EDGE_ROOT), env=env, close_fds=True,
                                preexec_fn=lambda: _attach_controlling_terminal(slave_fd))
