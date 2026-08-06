@@ -54,21 +54,32 @@ AUTH_PASS = os.getenv("TIMELAPSE_TEST_PASSWORD", "TestSuperAdmin123!")
 # ═══════════════════════════════════════════════════════════════════════════
 
 class APIClient:
-    """HTTP client til TimeLapse Pro API."""
+    """HTTP client til TimeLapse Pro API.
+
+    2026-08-06 (Claude): denne klasse loggede reelt aldrig ind — login sætter
+    en `tl_session`-cookie (ikke et `access_token`-felt i JSON-body'en, som
+    denne klasse antog), og cookien er markeret `Secure`. `requests`' egen
+    cookie-jar overholder korrekt `Secure`-flaget og NÆGTER at sende den
+    tilbage over almindelig http (som test-serveren kører på — ingen TLS på
+    et engangs-testinstans). Resultatet var et deterministisk 401 på ALLE
+    tests i denne fil, uanset seed/rækkefølge — ikke delt test-tilstand, som
+    det først lignede. Samme rodårsag og løsning som allerede dokumenteret i
+    tests/conftest.py's AuthenticatedSession: send cookien manuelt som en
+    `Cookie`-header i stedet for at stole på cookie-jar'ets håndhævelse."""
 
     def __init__(self, base_url: str = BASE_URL, timeout: int = TIMEOUT):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()
-        self.token: str | None = None
+        self.session_token: str | None = None
 
     def _url(self, path: str) -> str:
         return urljoin(self.base_url, path)
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        if self.session_token:
+            headers["Cookie"] = f"tl_session={self.session_token}"
         return headers
 
     def get(self, path: str, **kwargs) -> requests.Response:
@@ -88,15 +99,17 @@ class APIClient:
         )
 
     def login(self, username: str = AUTH_USER, password: str = AUTH_PASS) -> bool:
-        """Login og gem JWT token."""
+        """Login og gem session-cookien (sendes manuelt herefter, se klassens docstring)."""
         resp = self.post(
             "/api/auth/login",
             json={"username": username, "password": password}
         )
         if resp.status_code == 200:
-            data = resp.json()
-            self.token = data.get("access_token")
-            return True
+            for cookie in resp.cookies:
+                if cookie.name == "tl_session":
+                    self.session_token = cookie.value
+                    break
+            return self.session_token is not None
         return False
 
 
