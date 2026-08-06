@@ -24,7 +24,8 @@ interface DayCount {
   year: number; month: number; day: number; count: number
 }
 interface Props {
-  deviceId: string
+  deviceId?: string
+  cameraId?: string
   captures: Capture[]
   onSelect: (index: number) => void
   onDeleted?: () => void
@@ -32,7 +33,12 @@ interface Props {
 
 const MONTHS = ['Jan','Feb','Mar','Apr','Maj','Jun','Jul','Aug','Sep','Okt','Nov','Dec']
 
-export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: Props) {
+// 2026-08-06 (Claude, Peter): deviceId var oprindeligt påkrævet, hvilket
+// gjorde Tidslinje-fanen permanent utilgængelig for en kamera-lokation uden
+// aktiv Edge — netop det tilfælde camera_id-arkitekturen findes for. cameraId
+// er nu et alternativ; se timeline-endepunktets tilsvarende device_id/
+// camera_id-branch i headend/main.py.
+export function TimelineNavigator({ deviceId, cameraId, captures, onSelect, onDeleted }: Props) {
   const [dayCounts, setDayCounts]     = useState<DayCount[]>([])
   const [dayCaptures, setDayCaptures] = useState<Capture[]>([])
   const [selected, setSelected]       = useState<{ year?: number; month?: number; day?: number }>({})
@@ -47,11 +53,11 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
   const [naturalNote, setNaturalNote] = useState('')
   const [naturalLoading, setNaturalLoading] = useState(false)
   const skipNextDayLoad = useRef(false)
-  const queryDeviceId = encodeURIComponent(deviceId)
+  const scopeParam = deviceId ? `device_id=${encodeURIComponent(deviceId)}` : `camera_id=${encodeURIComponent(cameraId ?? '')}`
 
   useEffect(() => {
-    if (!deviceId) return
-    authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${encodeURIComponent(deviceId)}`)
+    if (!deviceId && !cameraId) return
+    authFetch(`${getApiUrl()}/api/admin/captures/timeline?${scopeParam}`)
       .then(r => r.json())
       .then((data: DayCount[]) => {
         setDayCounts(data)
@@ -60,7 +66,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
           setSelected({ year: last.year, month: last.month, day: last.day })
         }
       }).catch(() => {})
-  }, [deviceId])
+  }, [deviceId, cameraId])
 
   useEffect(() => {
     if (!selected.year || !selected.month || !selected.day) return
@@ -69,11 +75,11 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
       return
     }
     setLoading(true)
-    authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${queryDeviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
+    authFetch(`${getApiUrl()}/api/admin/captures/timeline?${scopeParam}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
       .then(r => r.json())
       .then((data: Capture[]) => { setDayCaptures(data); setLoading(false) })
       .catch(() => setLoading(false))
-  }, [deviceId, selected.year, selected.month, selected.day])
+  }, [deviceId, cameraId, selected.year, selected.month, selected.day])
 
   function normalizeNaturalCapture(item: any): Capture {
     return {
@@ -99,7 +105,7 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
       const data = await authJson('/api/ai/captures/natural-search', {
         query: naturalQuery,
         purpose: 'timeline',
-        device_id: deviceId,
+        ...(deviceId ? { device_id: deviceId } : {}),
         limit: 200,
       })
       const results = (data.results ?? []).map(normalizeNaturalCapture)
@@ -164,10 +170,10 @@ export function TimelineNavigator({ deviceId, captures, onSelect, onDeleted }: P
       // Genindlæs dag-captures
       if (selected.year && selected.month && selected.day) {
         setLoading(true)
-        authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${queryDeviceId}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
+        authFetch(`${getApiUrl()}/api/admin/captures/timeline?${scopeParam}&year=${selected.year}&month=${selected.month}&day=${selected.day}`)
           .then(r => r.json()).then((data: Capture[]) => { setDayCaptures(data); setLoading(false) })
           .catch(() => setLoading(false))
-        authFetch(`${getApiUrl()}/api/admin/captures/timeline?device_id=${queryDeviceId}`)
+        authFetch(`${getApiUrl()}/api/admin/captures/timeline?${scopeParam}`)
           .then(r => r.json()).then((data: DayCount[]) => setDayCounts(data)).catch(() => {})
       }
       onDeleted?.()

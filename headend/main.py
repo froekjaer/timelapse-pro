@@ -11451,6 +11451,14 @@ def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
             "camera_name":    d.camera_name,
             "debug_mode_enabled":    debug_mode_enabled,
             "debug_mode_enabled_at": debug_mode_enabled_at,
+            # 2026-08-06 (Claude, Peter): TL-MACMINI-HEADEND-TEST-1 (the
+            # node-agent test fixture running on the headend host itself,
+            # see _PLACEHOLDER_DEVICE_IDS) was showing up in Dashboard's
+            # "Enheder uden kunde/site" fallback alongside genuinely
+            # orphaned customer devices — already excluded from risk/
+            # compliance/inventory views via _is_placeholder_device(), just
+            # never surfaced here so the UI could do the same.
+            "is_placeholder": _is_placeholder_device(d.device_id),
                                 })
     return result
 
@@ -16590,7 +16598,8 @@ async def get_live_stream(
 
 @app.get("/api/admin/captures/timeline")
 def captures_timeline(
-    device_id: str,
+    device_id: Optional[str] = None,
+    camera_id: Optional[str] = None,
     year:  Optional[int] = None,
     month: Optional[int] = None,
     day:   Optional[int] = None,
@@ -16601,12 +16610,29 @@ def captures_timeline(
     Hent captures til timeline navigation.
     - Uden parametre: returner antal captures per dag (alle tider)
     - Med year+month+day: returner alle captures den dag
+
+    2026-08-06 (Claude, Peter): camera_id tilføjet som alternativ til
+    device_id — Tidslinje-fanen krævede indtil nu altid et fysisk device,
+    hvilket gjorde den permanent utilgængelig for en kamera-lokation uden en
+    aktiv Edge (netop det tilfælde camera_id-arkitekturen findes for). Samme
+    adgangskontrol-mønster som list_captures() ovenfor.
     """
-    _ensure_capture_device_access(db, _user, device_id)
-    q = db.query(Capture).filter(
-        Capture.device_id == device_id,
-        Capture.captured_at.isnot(None)
-    )
+    if not device_id and not camera_id:
+        raise HTTPException(status_code=400, detail="device_id eller camera_id påkrævet")
+    if device_id:
+        _ensure_capture_device_access(db, _user, device_id)
+        base_filter = Capture.device_id == device_id
+    else:
+        cam = db.query(Camera).filter_by(id=camera_id).first()
+        if not cam:
+            raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+        if cam.site_id:
+            _ensure_site_access(db, _user, cam.site_id)
+        elif cam.customer_id:
+            _ensure_customer_access(_user, cam.customer_id)
+        base_filter = Capture.camera_id == camera_id
+
+    q = db.query(Capture).filter(base_filter, Capture.captured_at.isnot(None))
 
     if year and month and day:
         # Hent alle captures på en specifik dag
@@ -16648,9 +16674,7 @@ def captures_timeline(
             func.extract("month", local_ts).label("month"),
             func.extract("day",   local_ts).label("day"),
             func.count(Capture.id).label("count")
-        ).filter(
-            Capture.device_id == device_id,
-            Capture.captured_at.isnot(None)
+        ).filter(base_filter, Capture.captured_at.isnot(None)
         ).group_by("year", "month", "day").order_by("year", "month", "day").all()
         return [
             {"year": int(r.year), "month": int(r.month), "day": int(r.day), "count": r.count}

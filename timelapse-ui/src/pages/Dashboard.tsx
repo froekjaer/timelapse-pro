@@ -144,37 +144,70 @@ function SiteCard({ site, devices, cameras, canConfigure }: { site: Site; device
       </button>
 
       {expanded && (
-        <div className="divide-y divide-gray-100">
-          {siteCameras.map(camera => (
-            <Link key={camera.id} to={`/camera-locations/${pathSegment(camera.id)}`} className="flex items-center gap-3 px-4 py-3 bg-sky-50/40 hover:bg-sky-50 transition-colors group">
-              <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center flex-shrink-0">
-                <Camera className="w-4 h-4 text-sky-600" />
+        <div className="p-2 space-y-2">
+          {siteCameras.map(camera => {
+            // 2026-08-06 (Peter): "den øverste er kamera lokationen, der
+            // holder billederne, og den nederste er edge devicet hvor det
+            // fysiske kamera er tilsluttet" — grupperet visuelt herefter i
+            // stedet for to flade, adskilte lister, så forældre/barn-
+            // forholdet er tydeligt uden at skulle læse to id'er og gætte.
+            const matchedDevices = siteDevices.filter(d => d.device_id === camera.current_device_id)
+            return (
+              <div key={camera.id} className="border border-sky-200 bg-sky-50 rounded-lg overflow-hidden">
+                <Link to={`/camera-locations/${pathSegment(camera.id)}`}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-sky-50 transition-colors group">
+                  <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center flex-shrink-0">
+                    <Camera className="w-4 h-4 text-sky-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{camera.camera_name || 'Unavngivet kamera'}</p>
+                    <p className="text-xs text-gray-400 font-mono truncate">{camera.id}</p>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                    camera.current_device_id ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                  }`}>{camera.current_device_id ? 'Edge tildelt' : 'Afventer Edge'}</span>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-sky-500" />
+                </Link>
+                {matchedDevices.length > 0 && (
+                  <div className="border-t border-sky-100 pl-6 py-1">
+                    {matchedDevices.map(d => (
+                      <div key={d.device_id} className="flex items-center border-l-2 border-sky-200">
+                        <div className="flex-1"><DeviceRow device={d} /></div>
+                        {canConfigure && <Link to={`/cameras/${pathSegment(d.device_id)}`}
+                          className="flex-shrink-0 p-2 mr-2 text-gray-300 hover:text-sky-500 hover:bg-sky-50 rounded-lg transition-colors"
+                          title="Konfigurer kamera">
+                          <Settings className="w-3.5 h-3.5" />
+                        </Link>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-800">{camera.camera_name || 'Unavngivet kamera'}</p>
-                <p className="text-xs text-gray-400 font-mono truncate">{camera.id}</p>
+            )
+          })}
+          {(() => {
+            const unmatchedDevices = siteDevices.filter(d => !siteCameras.some(c => c.current_device_id === d.device_id))
+            if (!unmatchedDevices.length) return null
+            return (
+              <div className="border border-dashed border-gray-200 rounded-lg overflow-hidden">
+                <p className="px-4 pt-2 text-xs text-gray-400">Fysiske enheder uden aktiv kamera-tildeling:</p>
+                {unmatchedDevices.map(d => (
+                  <div key={d.device_id} className="flex items-center">
+                    <div className="flex-1"><DeviceRow device={d} /></div>
+                    {canConfigure && <Link to={`/cameras/${pathSegment(d.device_id)}`}
+                      className="flex-shrink-0 p-2 mr-2 text-gray-300 hover:text-sky-500 hover:bg-sky-50 rounded-lg transition-colors"
+                      title="Konfigurer kamera">
+                      <Settings className="w-3.5 h-3.5" />
+                    </Link>}
+                  </div>
+                ))}
               </div>
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                camera.current_device_id ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
-              }`}>{camera.current_device_id ? 'Edge tildelt' : 'Afventer Edge'}</span>
-              <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-sky-500" />
-            </Link>
-          ))}
-          {siteDevices.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-gray-400 italic">Ingen fysisk Edge er tildelt dette site endnu</p>
-          ) : (
-            siteDevices.map(d => (
-              <div key={d.device_id} className="flex items-center">
-                <div className="flex-1"><DeviceRow device={d} /></div>
-                {canConfigure && <Link to={`/cameras/${pathSegment(d.device_id)}`}
-                  className="flex-shrink-0 p-2 mr-2 text-gray-300 hover:text-sky-500 hover:bg-sky-50 rounded-lg transition-colors"
-                  title="Konfigurer kamera">
-                  <Settings className="w-3.5 h-3.5" />
-                </Link>}
-              </div>
-            ))
+            )
+          })()}
+          {siteCameras.length === 0 && siteDevices.length === 0 && (
+            <p className="px-4 py-3 text-sm text-gray-400 italic">Ingen kameraer eller fysiske enheder på dette site endnu</p>
           )}
-          {canConfigure && <div className="px-4 py-2 flex justify-end">
+          {canConfigure && <div className="px-2 pt-1 flex justify-end">
             <Link to={`/sites/${site.id}`}
               className="text-xs text-sky-500 hover:text-sky-700 flex items-center gap-1">
               Konfigurer site <ChevronRight className="w-3 h-3" />
@@ -335,7 +368,13 @@ export function Dashboard() {
 
       {/* Enheder uden kunde/site (fallback) */}
       {(() => {
-        const orphaned = devices.filter(d => !d.customer_id && !d.site_id)
+        // is_placeholder (2026-08-06): udelader interne test-fixtures som
+        // TL-MACMINI-HEADEND-TEST-1 (node-agent'en der kører på selve
+        // headend-værten) — allerede udelukket fra risiko/compliance/
+        // inventory-visninger via _is_placeholder_device(), skal heller ikke
+        // dukke op her som var det et rigtigt kunde-device der mangler
+        // tildeling.
+        const orphaned = devices.filter(d => !d.customer_id && !d.site_id && !d.is_placeholder)
         if (!orphaned.length) return null
         return (
           <div className="bg-white rounded-xl border border-amber-200 overflow-hidden mt-4">
@@ -344,6 +383,39 @@ export function Dashboard() {
             </div>
             <div className="p-2">
               {orphaned.map(d => <DeviceRow key={d.device_id} device={d} />)}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Kamera-lokationer uden site (fallback) */}
+      {(() => {
+        // 2026-08-06 (Peter): "jeg vil gerne at de bliver synlige, så jeg kan
+        // slette dem, hvis der kommer nogen i fremtiden" — opdaget da et
+        // forsøg på at slette en kunde fejlede med "Fjern kamera-lokationer
+        // først" uden nogen måde at finde dem i UI'en (site_id null betyder
+        // de aldrig vises inde i et SiteCard ovenfor).
+        const orphaned = cameras.filter(c => !c.site_id)
+        if (!orphaned.length) return null
+        return (
+          <div className="bg-white rounded-xl border border-amber-200 overflow-hidden mt-4">
+            <div className="px-5 py-3 bg-amber-50 border-b border-amber-100">
+              <p className="text-sm font-medium text-amber-700">Kamera-lokationer uden site</p>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {orphaned.map(camera => (
+                <Link key={camera.id} to={`/camera-locations/${pathSegment(camera.id)}`}
+                  className="flex items-center gap-3 px-4 py-3 hover:bg-amber-50/60 transition-colors group">
+                  <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center flex-shrink-0">
+                    <Camera className="w-4 h-4 text-amber-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{camera.camera_name || 'Unavngivet kamera'}</p>
+                    <p className="text-xs text-gray-400 font-mono truncate">{camera.id}</p>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-amber-500" />
+                </Link>
+              ))}
             </div>
           </div>
         )

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, ArrowRightLeft, Camera, CheckSquare, ChevronDown, ChevronUp, Download, Film, HardDrive, Image as ImageIcon, Loader2, Settings, ShieldAlert, Square, Trash2 } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { AlertTriangle, ArrowLeft, ArrowRightLeft, BarChart2, CalendarDays, Camera, CheckSquare, ChevronDown, ChevronUp, Download, Film, HardDrive, Image as ImageIcon, Loader2, ShieldAlert, Square, Trash2 } from 'lucide-react'
 import { deleteCapturesBulk, getApiUrl, getDevices, pathSegment } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
-import { Lightbox } from './DevicePage'
+import { TimelineNavigator } from '../components/TimelineNavigator'
+import { Lightbox, StatsTab } from './DevicePage'
 import type { Capture, Device } from '../types'
 
 type ExportVolume = { path: string; name: string; free_gb: number; total_gb: number }
@@ -33,6 +34,7 @@ function api(path: string, options?: RequestInit) {
 
 export function CameraLocationGalleryPage() {
   const { cameraId } = useParams<{ cameraId: string }>()
+  const navigate = useNavigate()
   const { user } = useAuth()
   const [camera, setCamera] = useState<CameraLocation | null>(null)
   const [otherCameras, setOtherCameras] = useState<CameraLocation[]>([])
@@ -41,6 +43,7 @@ export function CameraLocationGalleryPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  const [tab, setTab] = useState<'captures' | 'timeline' | 'stats'>('captures')
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [manageOpen, setManageOpen] = useState(false)
@@ -76,6 +79,10 @@ export function CameraLocationGalleryPage() {
     ]).then(([allCameras, cameraCaptures, allDevices]) => {
       const list: CameraLocation[] = Array.isArray(allCameras) ? allCameras : []
       const foundCamera = list.find(entry => entry.id === cameraId) ?? null
+      if (foundCamera?.current_device_id) {
+        navigate(`/devices/${pathSegment(foundCamera.current_device_id)}`, { replace: true })
+        return
+      }
       setCamera(foundCamera)
       // Flyt-mål: samme kunde, ikke sig selv — flytning på tværs af kunder ville
       // være en tenant-lækage, ikke oprydning (håndhæves også i backend).
@@ -99,14 +106,13 @@ export function CameraLocationGalleryPage() {
   const canDelete = Boolean(isAdmin && camera && !camera.current_device_id && captures.length === 0)
   const canGenerateTimelapse = isAdmin
 
-  // 2026-08-06 (Peter): kameralokationen er den PERMANENTE enhed — billeder og
-  // timelapse-generering skal altid være tilgængelige her, uanset om der aktuelt
-  // er et Edge-device tilknyttet. Devices flyttes/udskiftes; lokationen og dens
-  // optagelseshistorik (nu bundet til camera_id, ikke device_id) består. Denne
-  // side redirecter derfor ALDRIG væk længere — se HANDOVER_LOG.md 2026-08-06.
-  // Er der aktuelt et tilsluttet device, tilbydes et link til dets side som en
-  // ekstra, valgfri indgang til device-specifik hardware-administration (SSH,
-  // live diagnostik, netværkskonfig) — ikke som en påkrævet omvej.
+  // 2026-08-06 (Peter): reverted same-day — DevicePage.tsx is the page Peter
+  // actually uses (LAB mode, live diagnostics, SSH, network config, and
+  // thumbnails the way he wants them); this gallery is a stripped-down
+  // fallback for the rare case a location has no device at all. So: redirect
+  // straight to /devices/:current_device_id in reload() above whenever one
+  // exists — this component's own JSX below only ever renders for the
+  // no-device case, where there is nothing to redirect to.
 
   async function deleteEmptyLocation() {
     if (!cameraId || !camera || !confirm(`Fjern den tomme kameralokation "${camera.camera_name ?? cameraId}"? Dette påvirker ikke billeder.`)) return
@@ -296,22 +302,11 @@ export function CameraLocationGalleryPage() {
                 Generér timelapse
               </Link>
             )}
-            {camera?.current_device_id && (
-              <Link to={`/devices/${pathSegment(camera.current_device_id)}`}
-                className="inline-flex items-center gap-1.5 border border-gray-200 hover:border-sky-300 hover:bg-sky-50 text-gray-700 hover:text-sky-700 rounded-lg px-3 py-1.5 text-sm font-medium"
-                title="Enhedsadministration: live diagnostik, SSH, netværkskonfig">
-                <Settings className="w-4 h-4" />
-                Administrér Edge-enhed
-              </Link>
-            )}
           </div>
           <p className="text-sm text-gray-400 mt-1">
-            {[camera?.customer_name, camera?.site_name].filter(Boolean).join(' · ')}
-            {camera?.current_device_id ? (
-              <> · Edge <Link to={`/devices/${pathSegment(camera.current_device_id)}`} className="text-sky-600 hover:underline font-medium">{camera.current_device_id}</Link></>
-            ) : ' · Ingen aktiv Edge tildelt'}
+            {[camera?.customer_name, camera?.site_name].filter(Boolean).join(' · ')} · Ingen aktiv Edge tildelt
           </p>
-          {!camera?.current_device_id && siteDevices.length > 0 && (
+          {siteDevices.length > 0 && (
             <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
               <span className="text-gray-400">Fysiske enheder på dette site (endnu ikke tildelt dette kamera):</span>
               {siteDevices.map(d => (
@@ -470,60 +465,88 @@ export function CameraLocationGalleryPage() {
         <div className="py-20 text-center text-gray-400"><ImageIcon className="w-8 h-8 mx-auto mb-3 text-gray-300" />Ingen billeder er endnu registreret på denne kameralokation.</div>
       ) : (
         <>
-          <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
-            <p className="text-sm text-gray-500">
-              {selectMode
-                ? `${selectedIds.size} af ${captures.length} billeder valgt`
-                : `Viser de seneste ${captures.length} billeder. Klik på et billede for fuld størrelse og metadata.`}
-            </p>
-            <div className="flex items-center gap-2 flex-wrap">
-              {selectMode && selectedIds.size > 0 && isAdmin && (
-                <>
-                  <button onClick={exportSelection} disabled={exporting}
-                    className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 text-sm font-medium">
-                    {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    Eksportér valgte
-                  </button>
-                  <button onClick={gdprDeleteSelected} disabled={bulkBusy}
-                    className="inline-flex items-center gap-1.5 bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 text-sm font-medium">
-                    {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldAlert className="w-4 h-4" />}
-                    GDPR-slet valgte
-                  </button>
-                </>
-              )}
-              {isAdmin && (
-                <button onClick={() => { setSelectMode(m => !m); setSelectedIds(new Set()) }}
-                  className="inline-flex items-center gap-1.5 border border-gray-200 hover:border-sky-300 hover:bg-sky-50 text-gray-600 hover:text-sky-700 rounded-lg px-3 py-1.5 text-sm font-medium">
-                  <CheckSquare className="w-4 h-4" />
-                  {selectMode ? 'Afslut valg' : 'Vælg billeder'}
+          {/* 2026-08-06 (Peter): samme fane-opsæt som DevicePage.tsx (Billeder/
+              Tidslinje/Statistik) — den forenklede rist-visning alene var ikke
+              nok, Tidslinje er den visning der faktisk bruges i praksis. */}
+          <div className="mb-4 border-b border-gray-200">
+            <div className="flex gap-1">
+              {([
+                { key: 'captures', label: `Billeder (${captures.length})`, icon: Camera },
+                { key: 'timeline', label: 'Tidslinje', icon: CalendarDays },
+                { key: 'stats',    label: 'Statistik', icon: BarChart2 },
+              ] as const).map(({ key, label, icon: Icon }) => (
+                <button key={key} onClick={() => setTab(key)}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                    tab === key ? 'border-sky-500 text-sky-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}>
+                  <Icon className="w-4 h-4" />{label}
                 </button>
-              )}
+              ))}
             </div>
           </div>
-          {bulkError && <p className="mb-3 text-sm text-red-600">{bulkError}</p>}
-          {selectMode && exportDest === 'volume' && exportVolumes.length === 0 && (
-            <p className="mb-3 text-xs text-gray-400">Tip: åbn "Administrér kameralokation" ovenfor for at vælge eksport-destination.</p>
+
+          {tab === 'captures' && (
+            <>
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+                <p className="text-sm text-gray-500">
+                  {selectMode
+                    ? `${selectedIds.size} af ${captures.length} billeder valgt`
+                    : `Viser de seneste ${captures.length} billeder. Klik på et billede for fuld størrelse og metadata.`}
+                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {selectMode && selectedIds.size > 0 && isAdmin && (
+                    <>
+                      <button onClick={exportSelection} disabled={exporting}
+                        className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 text-sm font-medium">
+                        {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                        Eksportér valgte
+                      </button>
+                      <button onClick={gdprDeleteSelected} disabled={bulkBusy}
+                        className="inline-flex items-center gap-1.5 bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white rounded-lg px-3 py-1.5 text-sm font-medium">
+                        {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldAlert className="w-4 h-4" />}
+                        GDPR-slet valgte
+                      </button>
+                    </>
+                  )}
+                  {isAdmin && (
+                    <button onClick={() => { setSelectMode(m => !m); setSelectedIds(new Set()) }}
+                      className="inline-flex items-center gap-1.5 border border-gray-200 hover:border-sky-300 hover:bg-sky-50 text-gray-600 hover:text-sky-700 rounded-lg px-3 py-1.5 text-sm font-medium">
+                      <CheckSquare className="w-4 h-4" />
+                      {selectMode ? 'Afslut valg' : 'Vælg billeder'}
+                    </button>
+                  )}
+                </div>
+              </div>
+              {bulkError && <p className="mb-3 text-sm text-red-600">{bulkError}</p>}
+              {selectMode && exportDest === 'volume' && exportVolumes.length === 0 && (
+                <p className="mb-3 text-xs text-gray-400">Tip: åbn "Administrér kameralokation" ovenfor for at vælge eksport-destination.</p>
+              )}
+              {exportError && selectMode && <p className="mb-3 text-sm text-red-600">{exportError}</p>}
+              {exportResult && selectMode && <p className="mb-3 text-sm text-emerald-700">{exportResult}</p>}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                {captures.map((capture, index) => (
+                  <CaptureThumbnailCard
+                    key={capture.id}
+                    capture={capture}
+                    selected={selectMode && selectedIds.has(capture.id)}
+                    onClick={() => selectMode ? toggleSelect(capture.id) : setLightboxIndex(index)}
+                    overlay={selectMode ? (
+                      <div className="pointer-events-none absolute top-1.5 left-1.5">
+                        {selectedIds.has(capture.id)
+                          ? <CheckSquare className="w-5 h-5 text-sky-600 drop-shadow-[0_1px_2px_rgba(255,255,255,0.9)]" />
+                          : <Square className="w-5 h-5 text-white/70 drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]" />}
+                      </div>
+                    ) : null}
+                  />
+                ))}
+              </div>
+            </>
           )}
-          {exportError && selectMode && <p className="mb-3 text-sm text-red-600">{exportError}</p>}
-          {exportResult && selectMode && <p className="mb-3 text-sm text-emerald-700">{exportResult}</p>}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-            {captures.map((capture, index) => (
-              <CaptureThumbnailCard
-                key={capture.id}
-                capture={capture}
-                compact
-                selected={selectMode && selectedIds.has(capture.id)}
-                onClick={() => selectMode ? toggleSelect(capture.id) : setLightboxIndex(index)}
-                overlay={selectMode ? (
-                  <div className="pointer-events-none absolute top-1.5 left-1.5">
-                    {selectedIds.has(capture.id)
-                      ? <CheckSquare className="w-5 h-5 text-sky-600 drop-shadow-[0_1px_2px_rgba(255,255,255,0.9)]" />
-                      : <Square className="w-5 h-5 text-white/70 drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]" />}
-                  </div>
-                ) : null}
-              />
-            ))}
-          </div>
+
+          {tab === 'timeline' && cameraId && (
+            <TimelineNavigator cameraId={cameraId} captures={captures} onSelect={setLightboxIndex} onDeleted={reload} />
+          )}
+          {tab === 'stats' && <StatsTab captures={captures} diagnostics={null} />}
         </>
       )}
       {lightboxIndex !== null && <Lightbox captures={captures} index={lightboxIndex} onClose={() => setLightboxIndex(null)} />}

@@ -17,6 +17,7 @@ export interface Device {
   factory_totp_disabled?: boolean
   has_own_ssh_key?: boolean
   shared_ssh_key_disabled?: boolean
+  is_placeholder?: boolean
 }
 
 export interface DeviceInfo {

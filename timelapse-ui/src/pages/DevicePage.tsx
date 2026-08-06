@@ -1280,9 +1280,14 @@ function DriftBadge({ param, expected, actual }: { param: string; expected: stri
   )
 }
 
-function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; diagnostics: any; deviceId: string }) {
+export function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; diagnostics: any; deviceId?: string }) {
   const [diagHistory, setDiagHistory] = useState<any[]>([])
   useEffect(() => {
+    // 2026-08-06 (Peter): kamera-lokationer uden aktiv Edge har intet
+    // deviceId at hente hardware-diagnostik-historik for — de resterende
+    // billed-baserede grafer nedenfor (kvalitet, upload, sløring) virker
+    // fint uden.
+    if (!deviceId) return
     const apiUrl = getApiUrl()
     authFetch(`${apiUrl}/api/admin/devices/${pathSegment(deviceId)}/diagnostics/history?days=7&limit=500`)
       .then(r => r.ok ? r.json() : [])
