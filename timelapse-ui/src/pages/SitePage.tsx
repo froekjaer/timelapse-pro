@@ -10,8 +10,11 @@ function api(path: string, opts?: RequestInit) {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     ...opts
-  }).then(r => {
-    if (!r.ok) throw new Error(`${r.status}`)
+  }).then(async r => {
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}))
+      throw new Error(body.detail || `${r.status}`)
+    }
     return r.json()
   })
 }
@@ -281,7 +284,7 @@ export function SitePage() {
       await api(`/api/admin/sites/${siteId}`, { method: 'DELETE' })
       navigate('/')
     } catch (e: any) {
-      setError(e.message === '400' ? 'Kan ikke slette — enheder eksisterer på dette site' : 'Sletning fejlede')
+      setError(e.message && e.message !== '400' ? `Kan ikke slette — ${e.message}` : 'Sletning fejlede')
       setConfirmDelete(false)
     } finally {
       setDeleting(false)

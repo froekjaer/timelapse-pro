@@ -11,8 +11,11 @@ function api(path: string, opts?: RequestInit) {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     ...opts
-  }).then(r => {
-    if (!r.ok) throw new Error(`${r.status}`)
+  }).then(async r => {
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}))
+      throw new Error(body.detail || `${r.status}`)
+    }
     return r.json()
   })
 }
@@ -342,7 +345,7 @@ export function CustomerPage() {
       await api(`/api/admin/customers/${customerId}`, { method: 'DELETE' })
       navigate('/')
     } catch (e: any) {
-      setError(e.message === '400' ? 'Kan ikke slette — sites eksisterer under denne kunde' : 'Sletning fejlede')
+      setError(e.message && e.message !== '400' ? `Kan ikke slette — ${e.message}` : 'Sletning fejlede')
       setConfirmDelete(false)
     }
   }
