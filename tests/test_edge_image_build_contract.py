@@ -129,6 +129,46 @@ def test_dockerfile_pins_gphoto2_to_a_specific_version() -> None:
     assert "libgphoto2-port12=2.5.27-1ubuntu0.1" in dockerfile
 
 
+def test_inject_edge_image_extracts_gphoto2s_cli_dependencies() -> None:
+    """Regression test (2026-08-06): first real boot test of LAB mode on
+    physical hardware (TL-043EB9E72EFD) showed gphoto2 could not even start —
+    "error while loading shared libraries: libcdk.so.5" — because the
+    hand-picked file list injecting gphoto2 into the flashed image (see
+    inject_edge_image.py, right after the timelapse-specific TAR_PATH loop)
+    copied libgphoto2's own libraries but missed libcdk.so.5, a transitive
+    dependency of the gphoto2 CLI binary itself (distinct from the
+    libgphoto2 library) — already apt-installed inside the Docker rootfs as
+    a declared dependency of the gphoto2 package, just never selected for
+    extraction into the final image. Same failure class Dockerfile.edge's
+    own comment predicted ("Treat any noble-target boot failure around
+    camera detection as the first place to look"). Fixing libcdk alone only
+    revealed the next missing library (libaa.so.1), so `ldd
+    /usr/bin/gphoto2` was run inside the cached Docker image to get gphoto2's
+    complete non-glibc dependency closure — all 15 must be present, or the
+    same whack-a-mole recurs on the next device/re-flash."""
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    assert "--wildcards" in source
+    for lib in [
+        "libcdk.so.5",
+        "libaa.so.1",
+        "libjpeg.so.8",
+        "libexif.so.12",
+        "libreadline.so.8",
+        "libpopt.so.0",
+        "libltdl.so.7",
+        "libslang.so.2",
+        "libX11.so.6",
+        "libgpm.so.2",
+        "libxcb.so.1",
+        "libXau.so.6",
+        "libXdmcp.so.6",
+        "libbsd.so.0",
+        "libmd.so.0",
+        "libncurses.so.6",
+    ]:
+        assert lib in source, f"{lib} missing from gphoto2 CLI dependency extraction list"
+
+
 def test_dockerfile_copies_watchdog_and_timesync_units() -> None:
     dockerfile = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
     for unit in (

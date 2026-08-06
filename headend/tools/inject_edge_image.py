@@ -518,6 +518,51 @@ do
         echo "[inject]   (ikke fundet i tar — springer over)"
 done
 
+# 2026-08-06 (Claude, Peter — MOD-BAGGARD-DLVC/TL-043EB9E72EFD's LAB mode kunne
+# ikke finde kameraet): første rigtige boot-test af dette (allerede advarede
+# — se Dockerfile.edge's kommentar om "Treat any noble-target boot failure
+# around camera detection as the first place to look") viste at den ovenstående
+# hånd-plukkede filliste kun kopierede libgphoto2's EGNE biblioteker — ikke de
+# biblioteker selve `gphoto2`-KOMMANDOEN (adskilt fra `libgphoto2`-BIBLIOTEKET)
+# er linket mod. `gphoto2 --auto-detect` fejlede først med
+# "libcdk.so.5: cannot open shared object file", og da den blev rettet
+# manuelt live, dukkede "libaa.so.1" op som næste manglende — samme
+# whack-a-mole-mønster fortsatte. I stedet for at rette dem én for én, blev
+# HELE den faktiske afhængighedskæde hentet direkte fra det allerede byggede
+# jammy Docker-image (`docker run ... ldd /usr/bin/gphoto2`) og verificeret
+# live på fysisk hardware (Canon EOS 1300D fundet efter alle 15 blev
+# installeret manuelt) — denne liste ER den fulde, bekræftede kæde, ikke endnu
+# et gæt. Alle pakker var allerede installeret inde i Docker-rootfs'en (apt
+# løste dem automatisk som gphoto2-pakkens afhængigheder) — de manglede kun i
+# denne udtræknings-liste. glibc-kernebiblioteker (libc/libpthread/libm/
+# ld-linux) er bevidst UDELADT — de er garanteret til stede på enhver
+# kompatibel base, og er ikke gphoto2-specifikke. Wildcard (`--wildcards`) da
+# de præcise patch-version-suffikser ikke er verificeret på tværs af
+# Ubuntu-udgivelser.
+for GPHOTO2_LIB in \
+    libcdk.so.5 \
+    libaa.so.1 \
+    libjpeg.so.8 \
+    libexif.so.12 \
+    libreadline.so.8 \
+    libpopt.so.0 \
+    libltdl.so.7 \
+    libslang.so.2 \
+    libX11.so.6 \
+    libgpm.so.2 \
+    libxcb.so.1 \
+    libXau.so.6 \
+    libXdmcp.so.6 \
+    libbsd.so.0 \
+    libmd.so.0 \
+    libncurses.so.6
+do
+    echo "[inject] Udpakker: usr/lib/aarch64-linux-gnu/${GPHOTO2_LIB}* (gphoto2-CLI afhængighed)"
+    tar -xzf "$ROOTFS_TAR" -C /mnt/root --wildcards \
+        "usr/lib/aarch64-linux-gnu/${GPHOTO2_LIB}*" 2>/dev/null && echo "[inject]   OK: ${GPHOTO2_LIB}*" || \
+        echo "[inject]   (ikke fundet i tar — springer over)"
+done
+
 # ── Bootstrap config ──────────────────────────────────────────────────────────
 echo "[inject] Injicerer bootstrap.yaml..."
 if [[ -z "${EXPECTED_DEVICE_ID:-}" ]]; then

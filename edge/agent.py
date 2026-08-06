@@ -910,75 +910,98 @@ class EdgeAgent:
         self._last_capture_result = None
 
         try:
-            # 1. Power camera on and connect
-            self._camera_power_on("capture cycle")
-            try:
-                self._driver.connect()
-                self._check_camera_profile_known("capture_cycle")
-            except Exception as exc:
-                log.error("Camera connect failed: %s", exc)
-                self._emit_siem_event(
-                    "camera_detection_failed",
-                    "ERROR",
-                    f"Camera connect failed: {exc}",
-                    details={"context": "capture_cycle", "power_mode": self._camera_power_mode()},
-                )
-                self._db.log_event(
-                    self._device_id, "ERROR", "camera",
-                    f"Camera connect failed: {exc}"
-                )
-                return False
-
-            # 2. Apply configuration commands
-            #    Byg commands fra camera config_overrides (hierarkisk model)
-            #    Override erstatter initial_commands for de parametre der er sat
+            # 1-4. Power on, connect, configure, health-check and capture —
+            # with automatic relay power-cycle recovery on failure.
+            #
+            # 2026-08-06 (Claude, Peter): en fastfrosset/uresponsiv kamera-USB-
+            # stack (fx PTP busy, "I/O error" fra gphoto2) krævede tidligere et
+            # manuelt relæ-sluk/tænd for at komme videre. Kun LAB-mode's egen
+            # "gør kamera klar"-trin (se _lab_tick's forbindelsesloop) havde
+            # en tilsvarende power-cycle-og-retry — den dækkede aldrig selve
+            # connect()/capture_image()-kaldene som BÅDE almindelige planlagte
+            # captures OG LAB's "Tag billede"-kommando (der kalder denne
+            # metode direkte) rent faktisk bruger. Samme mønster som LAB-mode:
+            # ét ekstra forsøg efter tvunget relæ-sluk + genopvarmning, før vi
+            # giver op og rapporterer fejl.
+            max_attempts = 2
             commands = self._build_camera_commands()
-            if commands:
-                log.info("Applying %d camera commands", len(commands))
-                failed = self._driver.apply_initial_commands(commands)
-                if failed:
-                    log.warning("Some camera commands failed: %s", failed)
-                else:
-                    log.info("Camera commands applied OK")
-
-            # 3. Health check before capture
-            if not self._driver.health_check():
-                log.error("Camera health check failed — aborting capture")
-                self._db.log_event(
-                    self._device_id, "ERROR", "camera",
-                    "Health check failed before capture"
-                )
-                return False
-
-            # 4. Capture image — wait for precise moment if fixed mode
-            schedule = self._cfg.get("schedule", {})
-            if schedule.get("capture_mode") == "fixed":
-                from zoneinfo import ZoneInfo
-                import time as _time
-                tz_name   = schedule.get("timezone", "UTC")
-                tz        = ZoneInfo(tz_name)
-                now_local = datetime.now(tz)
-                for t_str in schedule.get("capture_times", []):
+            result   = None
+            for attempt in range(max_attempts):
+                if attempt > 0:
+                    log.warning(
+                        "Capture cycle attempt %d/%d fejlede — power-cycler kamera-relæ før nyt forsøg",
+                        attempt, max_attempts
+                    )
                     try:
-                        h, m   = map(int, t_str.split(":"))
-                        target = now_local.replace(hour=h, minute=m, second=0, microsecond=0)
-                        diff   = (target - now_local).total_seconds()
-                        if -5 < diff < 30:
-                            if diff > 0:
-                                log.info("Precise wait %.2fs before trigger at %s", diff, t_str)
-                                _time.sleep(diff)
-                            break
+                        self._driver.disconnect()
                     except Exception:
                         pass
-            dest_dir = self._buffer.path
-            try:
-                result = self._driver.capture_image(dest_dir)
-            except Exception as exc:
-                log.error("Capture failed: %s", exc)
-                self._db.log_event(
-                    self._device_id, "ERROR", "capture", f"Capture error: {exc}"
-                )
-                return False
+                    self._camera_power_off("capture cycle recovery", force=True)
+                    time.sleep(5)
+                    self._camera_power_on("capture cycle recovery")
+                    warmup_s = self._camera_warmup_seconds()
+                    if warmup_s:
+                        time.sleep(warmup_s)
+                else:
+                    self._camera_power_on("capture cycle")
+
+                try:
+                    self._driver.connect()
+                    self._check_camera_profile_known("capture_cycle")
+
+                    # Apply configuration commands — byg commands fra camera
+                    # config_overrides (hierarkisk model). Override erstatter
+                    # initial_commands for de parametre der er sat
+                    if commands:
+                        log.info("Applying %d camera commands", len(commands))
+                        failed = self._driver.apply_initial_commands(commands)
+                        if failed:
+                            log.warning("Some camera commands failed: %s", failed)
+                        else:
+                            log.info("Camera commands applied OK")
+
+                    # Health check before capture
+                    if not self._driver.health_check():
+                        raise RuntimeError("Health check failed before capture")
+
+                    # Capture image — wait for precise moment if fixed mode
+                    schedule = self._cfg.get("schedule", {})
+                    if schedule.get("capture_mode") == "fixed":
+                        from zoneinfo import ZoneInfo
+                        import time as _time
+                        tz_name   = schedule.get("timezone", "UTC")
+                        tz        = ZoneInfo(tz_name)
+                        now_local = datetime.now(tz)
+                        for t_str in schedule.get("capture_times", []):
+                            try:
+                                h, m   = map(int, t_str.split(":"))
+                                target = now_local.replace(hour=h, minute=m, second=0, microsecond=0)
+                                diff   = (target - now_local).total_seconds()
+                                if -5 < diff < 30:
+                                    if diff > 0:
+                                        log.info("Precise wait %.2fs before trigger at %s", diff, t_str)
+                                        _time.sleep(diff)
+                                    break
+                            except Exception:
+                                pass
+                    dest_dir = self._buffer.path
+                    result = self._driver.capture_image(dest_dir)
+                    break
+                except Exception as exc:
+                    log.error("Capture cycle attempt %d/%d failed: %s", attempt + 1, max_attempts, exc)
+                    if attempt < max_attempts - 1:
+                        continue
+                    self._emit_siem_event(
+                        "camera_detection_failed",
+                        "ERROR",
+                        f"Capture cycle failed after {max_attempts} attempts (incl. relay power-cycle): {exc}",
+                        details={"context": "capture_cycle", "power_mode": self._camera_power_mode()},
+                    )
+                    self._db.log_event(
+                        self._device_id, "ERROR", "camera",
+                        f"Capture cycle failed after {max_attempts} attempts: {exc}"
+                    )
+                    return False
 
             log.info(
                 "Captured: %s (%.1f MB) sha256=%s…",

@@ -50,3 +50,19 @@ def test_camera_ready_signal_sent():
     content = read_agent()
     assert "camera-ready" in content, \
         "FEJL: camera-ready signal mangler!"
+
+def test_capture_cycle_retries_with_relay_power_cycle_on_failure():
+    """Regression test (2026-08-06): a wedged camera (PTP busy, USB I/O
+    error) required a manual relay toggle to recover — only LAB mode's own
+    "prepare camera" step had this retry, never _do_capture_cycle() itself
+    (used by both scheduled production captures and LAB's "Tag billede").
+    """
+    content = read_agent()
+    idx_method = content.find("def _do_capture_cycle")
+    assert idx_method > 0, "FEJL: _do_capture_cycle metode mangler!"
+    idx_next_method = content.find("\n    def ", idx_method + 1)
+    body = content[idx_method:idx_next_method if idx_next_method > 0 else None]
+    assert "max_attempts" in body, \
+        "FEJL: _do_capture_cycle mangler retry-loop!"
+    assert 'force=True' in body and "capture cycle recovery" in body, \
+        "FEJL: _do_capture_cycle power-cycler ikke relæet ved gentagne fejl!"
