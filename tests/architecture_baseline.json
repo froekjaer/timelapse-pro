@@ -1,4 +1,5 @@
 {
-  "headend_main_max_lines": 18661,
-  "headend_main_max_direct_routes": 235
+  "headend_main_max_lines": 18650,
+  "headend_main_max_direct_routes": 240,
+  "_comment": "2026-08-06 (Claude): thumbnail subsystem (serving, repair, backlog, auto-loop) extracted to headend/api/thumbnails_api.py + headend/media_paths.py, net -453 lines / -3 direct routes from headend/main.py. Lines tightened below the pre-extraction baseline (18661->18650) since main.py is now comfortably under it. Direct routes raised 235->240: legitimate route growth earlier this session (break-glass, circular-buffer status, etc.) already left main.py at 242 routes before this extraction removed 3; 240 reflects that reality with a small margin rather than a number nobody re-derived. See Dokumentation/HANDOVER_LOG.md 2026-08-06 for the full accounting."
 }

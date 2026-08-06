@@ -872,6 +872,10 @@ class ConfigDefaults(Base):
     diagnostics = Column(Text)
     system      = Column(Text)
     session_policy = Column(Text)
+    break_glass_policy = Column(Text)
+    # Hierarchical enable/disable for break-glass access — resolved global
+    # -> customer -> site -> camera, same pattern as session_policy. See
+    # main.py::_resolve_break_glass_policy. Added 2026-08-05 (Peter).
 
 
 class Settings(Base):
@@ -1259,3 +1263,19 @@ def ensure_utc(dt) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def _get_setting(db: Session, key: str, default: str = "") -> str:
+    """Hent en setting fra databasen.
+
+    2026-08-06 (Claude): flyttet hertil fra headend/main.py — en ren,
+    afhængighedsfri hjælpefunktion, som både main.py og udtrukne
+    domæne-moduler (fx media_paths.py) skal kunne bruge uden cirkulær import.
+    main.py importerer den blot tilbage (`from database import _get_setting`),
+    så alle eksisterende kaldsteder er uændrede.
+    """
+    try:
+        row = db.execute(text("SELECT value FROM settings WHERE key = :k"), {"k": key}).fetchone()
+        return row[0] if row else default
+    except Exception:
+        return default

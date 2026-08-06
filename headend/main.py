@@ -83,10 +83,18 @@ _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=Fal
 
 TIMELAPSE_ENV = os.getenv("TIMELAPSE_ENV", "lab").strip().lower()
 _jwt_secret_from_env = os.getenv("JWT_SECRET")
-if TIMELAPSE_ENV in {"prod", "production"}:
+# Same set as _AGENT_LOCKED_ENVIRONMENTS below (can't reference it yet at
+# this point in module execution) — staging was missing here until
+# 2026-08-05 despite being treated as production-adjacent everywhere else
+# in this file. A staging Headend with a broken/unloaded env file used to
+# fail closed nowhere: it silently fell back to a fresh random JWT_SECRET on
+# every restart, invalidating every session with no warning (the exact bug
+# class that was already fixed for lab->prod headend.env loading once, on
+# 2026-08-04 — this was the one remaining gap in the same family).
+if TIMELAPSE_ENV in {"staging", "prod", "production"}:
     if not _jwt_secret_from_env or len(_jwt_secret_from_env) < 32:
         raise RuntimeError(
-            "JWT_SECRET must be explicitly set to at least 32 characters in production"
+            "JWT_SECRET must be explicitly set to at least 32 characters in staging/production"
         )
 
 JWT_SECRET    = _jwt_secret_from_env or _secrets.token_hex(32)
@@ -606,6 +614,24 @@ def startup():
     except Exception as _exc_v14:
         log.warning("DB migration v14 fejl (ikke kritisk): %s", _exc_v14)
 
+    # ── DB migration v15: break_glass_policy hierarki-toggle (2026-08-05) ──
+    # Additiv/nullable, samme mønster som v9-v14. Se
+    # main.py::_resolve_break_glass_policy og HANDOVER_LOG 2026-08-05 (Peter:
+    # global/kunde/site/kameralag-parameter for om break-glass må være muligt).
+    try:
+        _eng_v15 = __import__('database').engine
+        with _eng_v15.connect() as _conn_v15:
+            try:
+                _conn_v15.execute(text(
+                    "ALTER TABLE config_defaults ADD COLUMN break_glass_policy TEXT"
+                ))
+                _conn_v15.commit()
+                log.info("DB migration v15: config_defaults.break_glass_policy tilføjet")
+            except Exception:
+                _conn_v15.rollback()
+    except Exception as _exc_v15:
+        log.warning("DB migration v15 fejl (ikke kritisk): %s", _exc_v15)
+
     # ── AI SETUP ──────────────────────────────────────────────────────────
     try:
         run_ai_migration(engine)
@@ -989,6 +1015,81 @@ def _resolve_session_policy(
     except Exception as exc:
         log.warning("session_policy hierarki resolver fejl: %s", exc)
     return _normalise_session_policy(policy)
+
+
+# ── Break-glass policy (2026-08-05) ─────────────────────────────────────────
+# Hierarchical enable/disable for break-glass access, global -> customer ->
+# site -> camera — same shape and resolution order as session_policy above,
+# but keyed by device location (customer/site/camera), not by user, since
+# break-glass is a property of the DEVICE being granted emergency access,
+# not of who's granting it. See HANDOVER_LOG 2026-08-05 (Peter).
+_BREAK_GLASS_POLICY_DEFAULTS = {
+    "enabled": True,
+    # Default ON: break-glass is meant to "just work" as an emergency
+    # fallback (Peter's explicit instruction). A customer/site/camera that
+    # contractually or operationally must never allow it can turn it off at
+    # whichever level applies — the resolved value always wins over
+    # whatever's in BreakGlassAccount, so disabling here revokes delivered
+    # keys within one config-poll cycle (see get_config()).
+}
+
+
+def _normalise_break_glass_policy(policy: dict | None) -> dict:
+    merged = _deep_merge(_BREAK_GLASS_POLICY_DEFAULTS, policy or {})
+    merged["enabled"] = bool(merged.get("enabled", True))
+    return merged
+
+
+def _merge_break_glass_policy(policy: dict, overrides_raw: object) -> dict:
+    overrides = _policy_from_json(overrides_raw)
+    bg_policy = overrides.get("break_glass_policy") if isinstance(overrides, dict) else None
+    if isinstance(bg_policy, dict):
+        return _normalise_break_glass_policy(_deep_merge(policy, bg_policy))
+    return _normalise_break_glass_policy(policy)
+
+
+def _resolve_break_glass_policy(
+    db: Session,
+    *,
+    customer_id: str | None = None,
+    site_id: str | None = None,
+    camera_id: str | None = None,
+) -> dict:
+    policy = _normalise_break_glass_policy({})
+    try:
+        defaults = db.query(ConfigDefaults).first()
+        if defaults and getattr(defaults, "break_glass_policy", None):
+            policy = _normalise_break_glass_policy(_deep_merge(policy, _policy_from_json(defaults.break_glass_policy)))
+    except Exception as exc:
+        log.warning("break_glass_policy global resolver fejl: %s", exc)
+
+    effective_customer_id = customer_id
+    site = None
+    camera = None
+
+    try:
+        if camera_id:
+            camera = db.query(Camera).filter_by(id=camera_id).first()
+            if camera:
+                site_id = site_id or camera.site_id
+                effective_customer_id = effective_customer_id or camera.customer_id
+        if site_id:
+            site = db.query(Site).filter_by(id=site_id).first()
+            if site:
+                effective_customer_id = effective_customer_id or site.customer_id
+        if effective_customer_id:
+            customer = db.query(Customer).filter_by(id=effective_customer_id).first()
+            if customer:
+                policy = _merge_break_glass_policy(policy, customer.config_overrides)
+        if site:
+            policy = _merge_break_glass_policy(policy, site.config_overrides)
+        if camera and camera.config:
+            cam_cfg = _policy_from_json(camera.config)
+            if isinstance(cam_cfg.get("break_glass_policy"), dict):
+                policy = _normalise_break_glass_policy(_deep_merge(policy, cam_cfg["break_glass_policy"]))
+    except Exception as exc:
+        log.warning("break_glass_policy hierarki resolver fejl: %s", exc)
+    return _normalise_break_glass_policy(policy)
 
 
 def _mfa_required_for_role(policy: dict, role: str | None) -> bool:
@@ -1386,17 +1487,26 @@ def webauthn_login_complete(payload: dict, db: Session = Depends(get_db)):
     db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").delete()
     db.commit()
 
+    # Was hardcoded to JWT_EXPIRE_H (12h) regardless of the admin-configured
+    # session_duration_hours policy — only the password-login path respected
+    # it. Fixed 2026-08-05 so tightening session policy actually applies to
+    # WebAuthn logins too (embedded in the token's own "max_age" claim, not
+    # just the cookie header, since /api/auth/me's rolling-renewal reads
+    # max_age back OUT of the existing token to preserve it across renewals
+    # — see HANDOVER_LOG same date).
+    _session_max_age = int(_resolve_session_policy(db, user).get("session_duration_hours", JWT_EXPIRE_H)) * 3600
     session_token = _create_token({
         "sub": user.username,
         "role": user.role,
         "cid": user.customer_id,
+        "max_age": _session_max_age,
         "amr": ["webauthn"],
         "mfa_verified": True,
     })
     log.info("WebAuthn login OK: %s", user.username)
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={"ok": True, "role": user.role, "username": user.username, "customer_id": user.customer_id})
-    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, JWT_EXPIRE_H * 3600))
+    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, _session_max_age))
     return _resp
 
 @app.get("/api/auth/webauthn/credentials")
@@ -1465,10 +1575,14 @@ def confirm_mfa(payload: dict, current_user=Depends(get_current_user), db: Sessi
     current_user.mfa_enabled = True
     db.commit()
     log.info("MFA aktiveret for %s", current_user.username)
+    # Same session-policy fix as webauthn_login_complete above — see there
+    # for the full rationale.
+    _session_max_age = int(_resolve_session_policy(db, current_user).get("session_duration_hours", JWT_EXPIRE_H)) * 3600
     session_token = _create_token({
         "sub": current_user.username,
         "role": current_user.role,
         "cid": current_user.customer_id,
+        "max_age": _session_max_age,
         "amr": ["password", "totp"],
         "mfa_verified": True,
     })
@@ -1479,7 +1593,7 @@ def confirm_mfa(payload: dict, current_user=Depends(get_current_user), db: Sessi
         "username": current_user.username,
         "customer_id": current_user.customer_id,
     })
-    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, JWT_EXPIRE_H * 3600))
+    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, _session_max_age))
     return _resp
 
 @app.post("/api/auth/disable-mfa")
@@ -1548,17 +1662,21 @@ def verify_mfa(payload: dict, db: Session = Depends(get_db)):
     totp = pyotp.TOTP(user.totp_secret)
     if not totp.verify(code, valid_window=1):
         raise HTTPException(status_code=400, detail="Forkert kode")
+    # Same session-policy fix as webauthn_login_complete above — see there
+    # for the full rationale.
+    _session_max_age = int(_resolve_session_policy(db, user).get("session_duration_hours", JWT_EXPIRE_H)) * 3600
     session_token = _create_token({
         "sub": user.username,
         "role": user.role,
         "cid": user.customer_id,
+        "max_age": _session_max_age,
         "amr": ["password", "totp"],
         "mfa_verified": True,
     })
     log.info("MFA login OK: %s", user.username)
     from fastapi.responses import JSONResponse as _JR
     _resp = _JR(content={"ok": True, "role": user.role, "username": user.username, "customer_id": user.customer_id})
-    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, JWT_EXPIRE_H * 3600))
+    _resp.headers.append("Set-Cookie", _cookie_header(COOKIE_NAME, session_token, _session_max_age))
     return _resp
 
 # ── Auth models ───────────────────────────────────────────────────────────
@@ -3948,6 +4066,45 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     )
     edge_signal_signing_required = _get_setting(db, "edge_signal_signing_required", "false").lower() == "true"
 
+    # Break-glass public keys (2026-08-05): delivered to the device via this
+    # same authenticated config-poll channel rather than requiring Headend
+    # to reach IN to the device — see HANDOVER_LOG same date. Password-based
+    # break-glass access (BreakGlassAccount.password_enc) is intentionally
+    # NOT wired to any delivery path; only public_key accounts are
+    # deliverable this way (a password would need Headend to push IN to a
+    # device that, by definition, might not otherwise be reachable — the
+    # same circularity documented in cmdb.py's "TODO Sprint CMDB-2").
+    from database import BreakGlassAccount as _BreakGlassAccount
+    _bg_accounts = (
+        db.query(_BreakGlassAccount)
+        .filter(
+            _BreakGlassAccount.device_id == device_id,
+            _BreakGlassAccount.is_active.is_(True),
+            _BreakGlassAccount.public_key.isnot(None),
+        )
+        .all()
+    )
+    from database import DeviceAssignment as _DeviceAssignment
+    _active_assignment = (
+        db.query(_DeviceAssignment)
+        .filter(_DeviceAssignment.device_id == device_id, _DeviceAssignment.unassigned_at.is_(None))
+        .first()
+    )
+    _break_glass_policy = _resolve_break_glass_policy(
+        db, customer_id=device.customer_id, site_id=device.site_id,
+        camera_id=_active_assignment.camera_id if _active_assignment else None,
+    )
+    break_glass_public_keys = [
+        {"admin_username": acc.admin_username, "public_key": acc.public_key}
+        for acc in _bg_accounts
+        if not acc.expires_at or acc.expires_at > now_utc()
+    ] if _break_glass_policy.get("enabled", True) else []
+    # ^ Resolved policy always wins over whatever's in BreakGlassAccount —
+    # disabling break-glass anywhere in the global/customer/site/camera
+    # hierarchy revokes any already-delivered keys within one config-poll
+    # cycle, regardless of what accounts still exist in CMDB. See
+    # HANDOVER_LOG 2026-08-05.
+
     sftp_enabled = _get_setting(db, "sftp_enabled", os.getenv("SFTP_ENABLED", "false")).lower() == "true"
     sftp_host = _get_setting(db, "sftp_host", os.getenv("SFTP_HOST", "")) if sftp_enabled else ""
     sftp_user = _get_setting(db, "sftp_user", os.getenv("SFTP_USER", "")) if sftp_enabled else ""
@@ -4010,6 +4167,12 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                 "credential_id": signing_credential.credential_id if signing_credential else None,
                 "note": "Next agent step: sign heartbeat/inventory/update-result payloads with the Edge signing key.",
             },
+            # Break-glass — see comment above `break_glass_public_keys` for
+            # why this is pubkey-only. Empty list is the normal state (no
+            # active break-glass grant); agent.py clears authorized_keys
+            # when this is empty, so revoking here takes effect within one
+            # config-poll cycle.
+            "break_glass_public_keys": break_glass_public_keys,
         },
         "modem": {
             "modem_relay_gpio_pin":        361,
@@ -4046,6 +4209,22 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         "storage": {
             "local_path":         "/data/captures",
             "circular_buffer_gb": 50,
+            # Percentage-based circular-buffer deletion (2026-08-05, Peter):
+            # delete the OLDEST captures with uploaded_primary=1 (headend has
+            # independently verified the SHA-256 before ever acknowledging
+            # the upload — see headend/main.py::receive_capture_files) once
+            # disk usage reaches circular_buffer_delete_at_pct, cleaning back
+            # down to that SAME trigger level. circular_buffer_min_free_pct
+            # is a separate, stricter hard floor (never a cleanup target) —
+            # it only fires a CRITICAL alarm if the confirmed-uploaded
+            # backlog runs out before even that floor is reached. A capture
+            # that isn't confirmed uploaded is NEVER deleted regardless of
+            # disk pressure — see edge/capture/buffer.py::enforce(). Already
+            # hierarchy-overridable global -> customer -> site -> camera via
+            # the same generic config_overrides.storage merge as every other
+            # storage.* field.
+            "circular_buffer_delete_at_pct": 70,
+            "circular_buffer_min_free_pct":  20,
             "db_path":            "/data/timelapse_edge.db",
         },
         "location": {
@@ -4178,7 +4357,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         defaults = db.query(ConfigDefaults).first()
         # Lag 1: config_defaults
         if defaults:
-            for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
+            for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy", "break_glass_policy"]:
                 if hasattr(defaults, section):
                     val = getattr(defaults, section)
                     if val:
@@ -11624,7 +11803,19 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
         ffmpeg_filter_capabilities,
         validate_filter_capabilities,
     )
-    device_id  = _sanitize_device_id(payload.get("device_id"))
+    # 2026-08-06 (Claude, Peter fik 404 på Travbyen): _sanitize_device_id() force-
+    # uppercaser (rigtigt for fysiske MAC-afledte device_id'er som TL-C87FF9587CA0,
+    # som ALTID allerede er uppercase — et no-op for dem). Men "virtuelle" import-
+    # device_id'er (TL-IMPORT-{Kunde}-{Site}-{Kamera}, se headend/importer.py) er
+    # BEVIDST mixed-case (menneskelæsbare navne) og gemt SÅDAN i captures-tabellen.
+    # Kaldes her kun for validering (format/path-traversal) — den ORIGINALE streng
+    # bruges til selve opslaget, ligesom get_thumbnail()/get_timelapse_frames()
+    # allerede gør korrekt. Den tidligere version overskrev device_id med det
+    # uppercase-resultat, hvilket fik capture-opslaget til stille at matche 0
+    # billeder (case-sensitiv Postgres-sammenligning) og returnere en vildledende
+    # "billeder findes ikke"-404, selvom om billederne rent faktisk fandtes.
+    _sanitize_device_id(payload.get("device_id"))
+    device_id  = str(payload.get("device_id") or "").strip()
     _ensure_capture_device_access(db, _user, device_id)
     frame_ids  = payload.get("frame_ids", [])
     options = RenderOptions.from_payload(payload)
@@ -11648,6 +11839,19 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
     ).order_by(Capture.captured_at.asc()).all()
 
     if len(frames) != len(set(frame_ids)):
+        # 2026-08-06 (Claude): denne 404 var tidligere tavs om ÅRSAGEN — fandt kun
+        # via denne logning at et device_id-case-mismatch var den reelle fejl (se
+        # ovenfor). Beholdt permanent: billig, og næste gang noget rammer denne
+        # gren, viser loggen præcis hvilke frame_ids der ikke matchede i stedet
+        # for at kræve endnu en manuel undersøgelsesrunde.
+        missing_ids = set(frame_ids) - {f.id for f in frames}
+        log.warning(
+            "timelapse/create 404: device_id=%s frame_ids_count=%d matched=%d missing_ids=%s",
+            device_id, len(frame_ids), len(frames), sorted(missing_ids)[:20],
+        )
+        if missing_ids:
+            mismatched = db.query(Capture.id, Capture.device_id).filter(Capture.id.in_(list(missing_ids)[:20])).all()
+            log.warning("timelapse/create 404 detail: missing frame device_ids=%s", mismatched)
         raise HTTPException(status_code=404, detail="Et eller flere valgte billeder findes ikke på den valgte enhed")
 
     # Find billedstier
@@ -11895,235 +12099,30 @@ def api_time():
 
 from pathlib import Path as _Path
 from fastapi.responses import FileResponse
-def _sftp_base_path(db: Session | None = None) -> _Path:
-    """Canonical image root. DB setting wins, so NAS mount changes do not require restart."""
-    fallback = os.getenv("SFTP_BASE", "/Volumes/data-fast")
-    if db is not None:
-        from storage_registry import CAPTURES, resolve_storage
-        return resolve_storage(db, CAPTURES, _get_setting(db, "sftp_base", fallback), writable=True)
-    local_db = SessionLocal()
-    try:
-        from storage_registry import CAPTURES, resolve_storage
-        return resolve_storage(local_db, CAPTURES, _get_setting(local_db, "sftp_base", fallback), writable=True)
-    finally:
-        local_db.close()
 
-
-def _configured_storage_roots(db: Session | None = None) -> list[_Path]:
-    """Primary image root plus optional legacy/search roots for NAS migrations."""
-    close_db = False
-    if db is None:
-        db = SessionLocal()
-        close_db = True
-    try:
-        roots = [_sftp_base_path(db)]
-        raw = _get_setting(db, "sftp_legacy_roots", os.getenv("SFTP_LEGACY_ROOTS", ""))
-        for item in _re.split(r"[\n,]+", raw or ""):
-            item = item.strip()
-            if item:
-                roots.append(_Path(item).expanduser())
-        deduped: list[_Path] = []
-        seen: set[str] = set()
-        for root in roots:
-            key = str(root)
-            if key not in seen:
-                seen.add(key)
-                deduped.append(root)
-        return deduped
-    finally:
-        if close_db:
-            db.close()
-
-#Peter import re as _re
-
-@_functools.lru_cache(maxsize=100_000)
-def _find_image_cached(device_id: str, filename: str, roots_key: tuple[str, ...]) -> str:
-    """
-    Find image — håndterer flere strukturer:
-      1. Canonical data root: SFTP_BASE/{customer}/{site}/{camera}/YYYY/MM/DD/filename
-      2. Legacy chroot:      SFTP_BASE/timelapse-incoming/{sftp_user}/data/{customer}/{site}/{camera}/YYYY/MM/DD/filename
-      3. Legacy site:        SFTP_BASE/{customer}/{site}/YYYY/MM/DD/filename
-      4. Flad/device:        SFTP_BASE/{device_id}/filename eller SFTP_BASE/{device_id}/YYYY/MM/DD/filename
-    """
-    m = _re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
-    for root in roots_key:
-        sftp_base = _Path(root)
-        if m:
-            yyyy, mm, dd = m.group(1), m.group(2), m.group(3)
-            date_parts = [(yyyy, mm, dd)]
-            try:
-                filename_day = datetime(int(yyyy), int(mm), int(dd))
-                for delta_days in (-1, 1):
-                    adjacent = filename_day + timedelta(days=delta_days)
-                    adjacent_parts = (f"{adjacent.year:04d}", f"{adjacent.month:02d}", f"{adjacent.day:02d}")
-                    if adjacent_parts not in date_parts:
-                        date_parts.append(adjacent_parts)
-            except Exception:
-                pass
-
-            for yyyy, mm, dd in date_parts:
-
-                # Struktur 1 — canonical: customer/site/camera/YYYY/MM/DD/
-                canonical_glob = f"*/*/*/{yyyy}/{mm}/{dd}/{filename}"
-                matches = list(sftp_base.glob(canonical_glob))
-                if matches:
-                    return str(matches[0])
-
-                # Struktur 2 — legacy chroot under timelapse-incoming/sftp_user/data/
-                legacy_chroot_glob = f"timelapse-incoming/*/data/*/*/*/{yyyy}/{mm}/{dd}/{filename}"
-                matches = list(sftp_base.glob(legacy_chroot_glob))
-                if matches:
-                    return str(matches[0])
-
-                legacy_site_chroot_glob = f"timelapse-incoming/*/data/*/*/{yyyy}/{mm}/{dd}/{filename}"
-                matches = list(sftp_base.glob(legacy_site_chroot_glob))
-                if matches:
-                    return str(matches[0])
-
-                # Struktur 3 — gammel hierarkisk: customer/site/YYYY/MM/DD/
-                old_glob = f"*/*/{yyyy}/{mm}/{dd}/{filename}"
-                matches = list(sftp_base.glob(old_glob))
-                if matches:
-                    return str(matches[0])
-
-                # Struktur 4 — device_id/YYYY/MM/DD/
-                p = sftp_base / device_id / yyyy / mm / dd / filename
-                if p.exists():
-                    return str(p)
-
-        # Flad struktur sftp_base/device_id/filename
-        flat = sftp_base / device_id / filename
-        if flat.exists():
-            return str(flat)
-
-    # Sidste udvej. Rekursiv søgning på NAS-roots er dyr og kan gøre
-    # thumbnail-grids meget langsomme, så den er opt-in når strukturerne ovenfor
-    # ikke dækker en særlig import.
-    if os.getenv("TIMELAPSE_IMAGE_R_GLOB_FALLBACK", "false").lower() in {"1", "true", "yes", "on"}:
-        for root in roots_key:
-            matches = list(_Path(root).rglob(filename))
-            if matches:
-                return str(matches[0])
-
-    return ""
-
-
-def _find_image(device_id: str, filename: str) -> Optional[_Path]:
-    roots_key = tuple(str(root) for root in _configured_storage_roots())
-    found = _find_image_cached(device_id, filename, roots_key)
-    return _Path(found) if found else None
-
-def _thumbs_dir_for(image_path: _Path) -> _Path:
-    """Return .thumbs directory next to the image."""
-    return image_path.parent / ".thumbs"
-
-
-def _generated_thumbs_dir_for(image_path: _Path) -> _Path:
-    """Return headend-owned fallback thumbnail directory."""
-    return image_path.parent / ".headend-thumbs"
-
-
-_thumbnail_generation_lock = _threading.Lock()
-_thumbnail_generation_active: set[str] = set()
-
-
-def _is_valid_jpeg(path: _Path) -> bool:
-    try:
-        if not path.exists() or path.stat().st_size < 256:
-            return False
-        if os.getenv("TIMELAPSE_STRICT_THUMBNAIL_VERIFY", "0").lower() in {"1", "true", "yes"}:
-            from PIL import Image
-            with Image.open(path) as existing:
-                existing.verify()
-        return True
-    except Exception:
-        return False
-
-
-def _thumbnail_candidates_for(image_path: _Path) -> list[_Path]:
-    stem = image_path.stem
-    suffix = image_path.suffix or ".jpg"
-    return [
-        image_path.parent / ".thumbs" / image_path.name,
-        image_path.parent / ".headend-thumbs" / image_path.name,
-        image_path.parent / "thumbs" / image_path.name,
-        image_path.parent / "thumbnails" / image_path.name,
-        image_path.parent / f"thumb_{image_path.name}",
-        image_path.parent / f"thumbnail_{image_path.name}",
-        image_path.parent / f"{stem}_thumb{suffix}",
-        image_path.parent / f"{stem}.thumb{suffix}",
-    ]
-
-
-def _find_existing_thumbnail(image_path: _Path) -> _Path | None:
-    for candidate in _thumbnail_candidates_for(image_path):
-        if _is_valid_jpeg(candidate):
-            return candidate
-    return None
-
-
-def _generate_edge_thumbnail(src: _Path, thumb: _Path) -> tuple[bool, str | None]:
-    key = str(thumb)
-    try:
-        from PIL import Image, ImageFile
-        ImageFile.LOAD_TRUNCATED_IMAGES = os.getenv("TIMELAPSE_THUMBNAIL_ALLOW_TRUNCATED", "true").lower() in {"1", "true", "yes", "on"}
-        thumb.parent.mkdir(parents=True, exist_ok=True)
-        tmp_thumb = thumb.parent / f".{thumb.name}.{_secrets.token_hex(8)}.tmp"
-        try:
-            with Image.open(src) as original:
-                img = original.convert("RGB")
-                img.thumbnail((320, 180), Image.LANCZOS)
-                canvas = Image.new("RGB", (320, 180), (15, 15, 15))
-                offset = ((320 - img.width) // 2, (180 - img.height) // 2)
-                canvas.paste(img, offset)
-                canvas.save(str(tmp_thumb), "JPEG", quality=78)
-            os.replace(tmp_thumb, thumb)
-            log.info("Thumbnail repair generated: %s", thumb)
-            return True, None
-        finally:
-            tmp_thumb.unlink(missing_ok=True)
-    except Exception as exc:
-        error = str(exc)
-        log.warning("Thumbnail repair failed for %s: %s", src, error)
-        return False, error
-    finally:
-        with _thumbnail_generation_lock:
-            _thumbnail_generation_active.discard(key)
-
-
-# Global samtidigheds-grænse for thumbnail-generering. Beskytter data-fast mod
-# "thundering herd": et galleri med mange manglende thumbnails fyrede før 100+
-# samtidige genereringer (hver læser et fuldopløst billede) → volumenet druknede
-# og de fleste timeout'ede. Nu serialiseres de til N ad gangen.
-_thumb_gen_semaphore = _threading.BoundedSemaphore(
-    int(os.getenv("TIMELAPSE_THUMBNAIL_GEN_CONCURRENCY", "3")))
-
-
-def _bounded_generate_thumbnail(src: _Path, thumb: _Path) -> tuple[bool, str | None]:
-    """_generate_edge_thumbnail med global samtidigheds-grænse."""
-    acquired = _thumb_gen_semaphore.acquire(
-        timeout=float(os.getenv("TIMELAPSE_THUMBNAIL_GEN_TIMEOUT_S", "20")))
-    if not acquired:
-        with _thumbnail_generation_lock:
-            _thumbnail_generation_active.discard(str(thumb))
-        return False, "concurrency_limit"
-    try:
-        return _generate_edge_thumbnail(src, thumb)
-    finally:
-        _thumb_gen_semaphore.release()
-
-
-def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
-    deleted = False
-    for directory in (_thumbs_dir_for(image_path), _generated_thumbs_dir_for(image_path)):
-        try:
-            thumb = directory / filename
-            if thumb.exists():
-                thumb.unlink(missing_ok=True)
-                deleted = True
-        except Exception as exc:
-            log.warning("Kunne ikke slette thumbnail i %s: %s", directory, exc)
-    return deleted
+# 2026-08-06 (Claude): billed-lokation (_sftp_base_path, _configured_storage_roots,
+# _find_image_cached, _find_image) og thumbnail-specifik logik (generering, backlog,
+# auto-reparation) udtrukket til headend/media_paths.py hhv. headend/api/thumbnails_api.py
+# — se tests/test_architecture_ratchet.py. Billed-lokation ligger i sin egen, lavniveau
+# fil fordi den bruges langt ud over thumbnails (download, eksport, retention) og derfor
+# ikke hører naturligt til i selve thumbnail-modulet.
+from media_paths import _configured_storage_roots, _find_image, _find_image_cached, _sftp_base_path
+from api.thumbnails_api import (
+    _bounded_generate_thumbnail,
+    _find_existing_thumbnail,
+    _generate_edge_thumbnail,
+    _generated_thumbs_dir_for,
+    _is_valid_jpeg,
+    _thumb_gen_semaphore,
+    _thumbnail_auto_loop,
+    _thumbnail_candidates_for,
+    _thumbnail_generation_active,
+    _thumbnail_generation_lock,
+    _thumbs_dir_for,
+    _unlink_thumbnail_variants,
+    router as _thumbnails_router,
+)
+app.include_router(_thumbnails_router)
 
 
 def _xaccel_redirect(path: _Path, media_type: str, cache_control: str = ""):
@@ -12178,74 +12177,6 @@ def get_image(
     if xr is not None:
         return xr
     return FileResponse(str(path), media_type="image/jpeg")
-
-@app.get("/api/thumbnails/{device_id}/{filename}")
-def get_thumbnail(
-    device_id: str,
-    filename: str,
-    _user=require_role("viewer"),
-    db: Session = Depends(get_db),
-):
-    from urllib.parse import unquote as _unquote
-    _sanitize_device_id(device_id)
-    filename = _unquote(filename)
-    capture = _ensure_capture_file_access(db, _user, device_id, filename)
-    src = _find_image(device_id, filename)
-    if not src:
-        raise HTTPException(status_code=404, detail="Image not found")
-    _log_capture_access_deduplicated(db, _user, capture, action="thumbnail_view")
-    _thumb_cache = "private, max-age=86400"
-    thumb = _find_existing_thumbnail(src)
-    if thumb:
-        xr = _xaccel_redirect(thumb, "image/jpeg", _thumb_cache)
-        if xr is not None:
-            return xr
-        return FileResponse(
-            str(thumb),
-            media_type="image/jpeg",
-            headers={
-                "Cache-Control": _thumb_cache,
-                "X-Thumbnail-Source": "edge",
-            },
-        )
-
-    # Never generate inside a display request. The UI queues a bounded
-    # background repair after a 404, while normal uploads generate thumbnails
-    # on the Edge before transfer.
-    raise HTTPException(
-        status_code=404,
-        detail="Thumbnail missing; Edge/backfill must generate and upload thumbnails",
-    )
-
-
-@app.post("/api/thumbnails/{device_id}/{filename}/generate")
-def request_thumbnail_generation(
-    device_id: str,
-    filename: str,
-    _user=require_role("viewer"),
-    db: Session = Depends(get_db),
-):
-    from urllib.parse import unquote as _unquote
-    _sanitize_device_id(device_id)
-    filename = _unquote(filename)
-    _ensure_capture_file_access(db, _user, device_id, filename)
-    src = _find_image(device_id, filename)
-    if not src:
-        raise HTTPException(status_code=404, detail="Image not found")
-
-    existing = _find_existing_thumbnail(src)
-    if existing:
-        return {"status": "ready", "source": "edge", "thumbnail": str(existing)}
-
-    thumb = _thumbs_dir_for(src) / src.name
-    key = str(thumb)
-    with _thumbnail_generation_lock:
-        if key in _thumbnail_generation_active:
-            return {"status": "queued", "thumbnail": str(thumb)}
-        _thumbnail_generation_active.add(key)
-
-    _threading.Thread(target=_bounded_generate_thumbnail, args=(src, thumb), daemon=True).start()
-    return {"status": "queued", "thumbnail": str(thumb)}
 
 
 _post_processing_lock = _threading.Lock()
@@ -12484,61 +12415,6 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
     ).start()
     return _post_processing_snapshot()
 
-
-@app.get("/api/admin/thumbnail-backlog")
-def get_thumbnail_backlog(
-    scan_limit: int = Query(500, ge=50, le=5000),
-    current_user=require_role("admin"),
-    db: Session = Depends(get_db),
-):
-    """Returner status på thumbnails der mangler.
-
-    P2-02 (2026-07-07): API endpoint til thumbnail backlog.
-    Beregner antal captures der mangler thumbnails (med device_id filter).
-    Resultatet cachelives kort (5s) for at undgå tunge scans ved gentagne kald.
-    """
-    from time import time as _t
-    device_id_param = None  # TODO: understøt ?device_id= filter i fremtiden
-
-    # Brug samme device-id filtrering som post-processing
-    allowed_device_ids = _allowed_capture_device_ids(db, current_user)
-    query = db.query(Capture.id, Capture.device_id, Capture.filename).filter(
-        Capture.filename.isnot(None)
-    )
-    if allowed_device_ids is not None:
-        if not allowed_device_ids:
-            return {"total": 0, "missing": 0, "devices": {}}
-        query = query.filter(Capture.device_id.in_(allowed_device_ids))
-
-    t0 = _t()
-    total_count = 0
-    missing_count = 0
-    device_missing: dict[str, int] = {}
-
-    available_count = query.count()
-    batch = query.order_by(Capture.captured_at.desc()).limit(scan_limit).all()
-    for capture_id, device_id, filename in batch:
-        total_count += 1
-        image_path = _find_image(device_id, filename)
-        if not image_path:
-            continue  # Filen mangler — tæller ikke som "missing thumbnail"
-
-        thumb = _find_existing_thumbnail(image_path)
-        if not thumb:
-            missing_count += 1
-            device_missing[device_id] = device_missing.get(device_id, 0) + 1
-
-    elapsed = _t() - t0
-    log.info("Thumbnail backlog: %d/%d mangler (%.2fs)", missing_count, total_count, elapsed)
-
-    return {
-        "total": total_count,
-        "missing": missing_count,
-        "devices": device_missing,
-        "scan_time_seconds": round(elapsed, 2),
-        "partial": available_count > total_count,
-        "available": available_count,
-    }
 
 
 # ── Gemini Batch API — bulk AI-genanalyse til ~50% af normal pris ────────────
@@ -13275,84 +13151,6 @@ def _retention_cleanup_loop() -> None:
         _t.sleep(600)
 
 
-def _thumbnail_auto_loop() -> None:
-    """2026-07-06 (Claude, P2-02): Auto thumbnail generation loop.
-    Løbende tjek for captures der mangler thumbnails og genererer dem automatisk.
-    Tjekker hvert 15. minut for nye captures uden thumbnails.
-    """
-    import time as _t
-    from datetime import datetime as _dt, timedelta as _timedelta
-    from pathlib import Path as _Path
-
-    CHECK_INTERVAL_SECONDS = 900  # 15 minutter
-    MAX_THUMBNAILS_PER_RUN = 100  # Maksimalt antal thumbnails per run (for at undgå lange runs)
-
-    _t.sleep(180)  # 3 minutters forsinkelse efter opstart
-    log.info("Thumbnail auto loop startet (tjekker hvert 15. min for manglende thumbnails)")
-
-    while True:
-        try:
-            from database import SessionLocal as _SL, Capture
-
-            db = _SL()
-            try:
-                # Find captures der mangler thumbnails
-                # Vi tjekker om filen eksisterer og om .thumbs/{filename} mangler
-                captures_missing_thumbs = []
-                query = db.query(Capture).filter(
-                    Capture.filename.isnot(None)
-                ).order_by(Capture.captured_at.desc()).limit(500)
-
-                for capture in query.all():
-                    image_path = _find_image(capture.device_id, capture.filename)
-                    if not image_path:
-                        continue  # Filen mangler — spring over
-
-                    thumb = _find_existing_thumbnail(image_path)
-                    if not thumb:
-                        captures_missing_thumbs.append((capture.id, capture.device_id, capture.filename, image_path))
-                        if len(captures_missing_thumbs) >= MAX_THUMBNAILS_PER_RUN:
-                            break
-
-                if captures_missing_thumbs:
-                    log.info("Thumbnail auto loop: fundet %d captures uden thumbnails (max %d per run)",
-                             len(captures_missing_thumbs), MAX_THUMBNAILS_PER_RUN)
-
-                    generated = 0
-                    failed = 0
-
-                    for capture_id, device_id, filename, image_path in captures_missing_thumbs:
-                        if _thumbnail_generation_lock.locked():
-                            log.info("Thumbnail generation allerede i gang — springer resten over")
-                            break
-
-                        try:
-                            target = _thumbs_dir_for(image_path) / filename
-                            ok, error = _generate_edge_thumbnail(image_path, target)
-                            if ok and _is_valid_jpeg(target):
-                                generated += 1
-                                if generated % 10 == 0:
-                                    log.info("Thumbnail auto loop: genereret %d thumbnails så langt", generated)
-                            else:
-                                failed += 1
-                                log.warning("Thumbnail auto loop: fejlede for %s: %s", filename, error)
-                        except Exception as _thumb_err:
-                            failed += 1
-                            log.error("Thumbnail auto loop: exception for %s: %s", filename, _thumb_err)
-
-                    log.info("Thumbnail auto loop: færdig — %d genereret, %d fejlet", generated, failed)
-                else:
-                    log.debug("Thumbnail auto loop: ingen manglende thumbnails (sampled 500 seneste captures)")
-
-            finally:
-                db.close()
-
-        except Exception as _loop_err:
-            log.warning("Thumbnail auto loop fejl: %s", _loop_err)
-
-        _t.sleep(CHECK_INTERVAL_SECONDS)
-
-
 def _run_retention_cleanup(reason: str = "manual") -> dict:
     """Audit retention candidates without deleting immutable captures."""
     global _retention_status
@@ -13671,7 +13469,7 @@ def _get_path(data: dict, path: str) -> object:
 def _defaults_dict(db: Session) -> dict:
     defaults = _get_or_create_defaults(db)
     result = {}
-    for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
+    for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy", "break_glass_policy"]:
         if hasattr(defaults, section):
             result[section] = _json_dict(getattr(defaults, section, None))
     return result
@@ -14145,7 +13943,7 @@ _FACTORY_CONFIG_DEFAULTS = {
             "direct_sun_detection_enabled": True,
         },
     },
-    "storage": {"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"},
+    "storage": {"local_path": "/data/captures", "circular_buffer_gb": 50, "circular_buffer_delete_at_pct": 70, "circular_buffer_min_free_pct": 20, "db_path": "/data/timelapse_edge.db"},
     "diagnostics": {"heartbeat_interval_minutes": 60, "config_poll_interval_minutes": 5, "update_poll_interval_minutes": 5, "inventory_report_interval_hours": 24},
     "system": {
         "error_recovery_sleep_s": 30,
@@ -14251,6 +14049,7 @@ def get_config_defaults(_user=require_role("admin"), db: Session = Depends(get_d
         "diagnostics": json.loads(d.diagnostics or "{}"),
         "system":      json.loads(d.system      or "{}") if hasattr(d, "system") else {},
         "session_policy": json.loads(d.session_policy or "{}") if hasattr(d, "session_policy") else {},
+        "break_glass_policy": json.loads(d.break_glass_policy or "{}") if hasattr(d, "break_glass_policy") else {},
     }
 
 
@@ -14258,7 +14057,7 @@ def get_config_defaults(_user=require_role("admin"), db: Session = Depends(get_d
 def update_config_defaults(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
     _validate_device_pki_config(payload)
     d = _get_or_create_defaults(db)
-    for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
+    for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy", "break_glass_policy"]:
         if section in payload and hasattr(d, section):
             setattr(d, section, json.dumps(payload[section]))
     db.commit()
@@ -14358,7 +14157,7 @@ def update_config_layer_override(
         defaults = _get_or_create_defaults(db)
         existing = _defaults_dict(db)
         new_config = config_payload if replace else _deep_merge_delete(existing, config_payload)
-        for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
+        for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy", "break_glass_policy"]:
             if section in new_config and hasattr(defaults, section):
                 setattr(defaults, section, json.dumps(new_config[section], ensure_ascii=False))
         db.commit()
