@@ -115,10 +115,26 @@ async def ssh_tunnel_terminal(websocket: WebSocket, device_id: str, db: Session 
         await websocket.close(code=1011)
         return
 
+    # 2026-08-07 (Claude, Peter — Kamera 1's terminal): trying all 4 candidate
+    # usernames back-to-back (3 of which are guaranteed-wrong guesses on any
+    # single device) sends 4 failed-publickey lines to the device's sshd
+    # within under a second. Reproduced live: Kamera 1 authenticated cleanly
+    # twice in a row, then every attempt through THIS endpoint failed —
+    # including with the username that had just worked — and stayed broken
+    # for the rest of the night. That matches a fail2ban-style burst ban on
+    # the tunnel's forwarded source, not an actual key/config problem; it's
+    # very likely what caused the original "Authentication failed for all 4
+    # usernames" Peter saw on Kamera 1 much earlier, and it will recur on any
+    # device whose real username isn't first in the list. Spacing attempts
+    # out keeps them inside a normal "mistyped once or twice" pattern instead
+    # of a burst — typical jails ban on rate within a findtime window, not on
+    # total attempts over minutes.
     channel = None
     connected_username = None
     last_exc: Exception | None = None
-    for username in _TERMINAL_USERNAMES:
+    for attempt_index, username in enumerate(_TERMINAL_USERNAMES):
+        if attempt_index > 0:
+            await asyncio.sleep(1.5)
         try:
             client.connect(
                 "localhost", port=int(device.reverse_tunnel_port), username=username,

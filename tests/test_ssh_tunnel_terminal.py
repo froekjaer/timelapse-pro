@@ -40,6 +40,19 @@ def test_terminal_router_is_included_from_main() -> None:
     assert "app.include_router(_ssh_tunnel_terminal_router)" in MAIN
 
 
+def test_username_retry_loop_spaces_out_attempts() -> None:
+    """Regression test (2026-08-07): trying all 4 candidate usernames
+    back-to-back sent 4 failed-publickey lines to the device's sshd within
+    under a second — reproduced live against TL-C87FF9587CA0 (Kamera 1),
+    which authenticated cleanly twice then failed on every subsequent
+    attempt (including with the username that had just worked) for the rest
+    of the night, matching a fail2ban-style burst ban on the tunnel's
+    forwarded source. Spacing attempts out keeps retries inside a normal
+    "mistyped once or twice" pattern instead of a burst."""
+    assert "asyncio.sleep(1.5)" in SOURCE
+    assert "attempt_index > 0" in SOURCE
+
+
 def test_nginx_proxies_websocket_upgrade_for_the_terminal_endpoint() -> None:
     # 2026-08-06: the general 'location /api/' blocks do not forward Upgrade/
     # Connection headers (only the openwebui :8080 blocks did) — without a
