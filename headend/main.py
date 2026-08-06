@@ -184,6 +184,37 @@ def _sanitize_device_id(device_id: str) -> str:
     return device_id
 
 
+def _validate_physical_device_id(device_id: str) -> str:
+    """Håndhæv det STRENGE MAC-udledte format (TL-<12 HEX>) for et
+    "Fysisk Edge-ID" — brugt hvor id'et bages ind som en hård binding, som
+    bootstrap_agent.py tjekker det fysiske boards RIGTIGE MAC-udledte ID
+    imod ved første boot (edge/scripts/bootstrap_agent.py: "MAC-binding
+    afvist").
+
+    2026-08-06 (Claude, Peter): _sanitize_device_id() ovenfor tillader ethvert
+    sikkert tegn-sæt (3-60 tegn) — nødvendigt fordi det bruges bredt, også for
+    bevidst frie CMDB-kladde-navne (fra "Klargør ny Edge") og virtuelle
+    import-device_id'er (TL-IMPORT-*). Et sådant løst navn kan aldrig matche
+    et rigtigt MAC-udledt ID, og bruges det fejlagtigt som "Fysisk Edge-ID" i
+    et flashbart image, crash-looper enheden uendeligt ved første boot uden
+    nogen synlig fejl i headend — kun i enhedens egen systemd-log. Denne
+    strengere validering fanger fejlen her, før flashning, i stedet for
+    bagefter på fysisk hardware.
+    """
+    normalized = _sanitize_device_id(device_id)
+    if not _re.match(r'^TL-[0-9A-F]{12}$', normalized):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'Ugyldigt fysisk Edge-ID: "{device_id}". Skal være det MAC-udledte format '
+                "TL- efterfulgt af 12 hex-tegn (fx TL-C87FF9587CA0), læst fra mærkat eller "
+                "QR-kode på selve enheden — ikke et selvvalgt navn eller CMDB-kladdenavn. "
+                "Et forkert ID her får enheden til at afvise sig selv ved første boot."
+            ),
+        )
+    return normalized
+
+
 def _sanitize_filename(filename: str) -> str:
     """Sanitér filnavn til lokal lagring."""
     import re as _re2
@@ -5755,129 +5786,17 @@ def assign_camera_to_device(
     return {"ok": True, "camera_id": camera_id, "device_id": device_id}
 
 
-@app.delete("/api/admin/cameras/{camera_id}")
-def retire_empty_camera_location(
-    camera_id: str,
-    current_user=require_role("super_admin", "admin"),
-    db: Session = Depends(get_db),
-):
-    """Retire an unused logical camera location without touching image data.
+# 2026-08-06 (Claude): camera-location lifecycle (retire/move/force-delete/
+# GDPR-delete/assignment-history) and cold-backup export extracted to
+# headend/api/camera_locations_api.py + headend/api/export_api.py — see
+# tests/test_architecture_ratchet.py and those modules' docstrings.
+from api.camera_locations_api import router as _camera_locations_router
+from api.export_api import router as _export_router
+from api.ssh_tunnel_terminal_api import router as _ssh_tunnel_terminal_router
+app.include_router(_camera_locations_router)
+app.include_router(_export_router)
+app.include_router(_ssh_tunnel_terminal_router)
 
-    A location with captures or a live physical Edge cannot be retired through
-    the UI. This prevents accidental loss of historic image navigation.
-    """
-    from database import Camera, DeviceAssignment
-
-    camera = db.query(Camera).filter_by(id=camera_id).first()
-    if not camera:
-        raise HTTPException(status_code=404, detail="Kameralokation ikke fundet")
-    if camera.site_id:
-        _ensure_site_access(db, current_user, camera.site_id)
-    elif camera.customer_id:
-        _ensure_customer_access(current_user, camera.customer_id)
-
-    active_assignment = (
-        db.query(DeviceAssignment)
-        .filter_by(camera_id=camera_id)
-        .filter(DeviceAssignment.unassigned_at.is_(None))
-        .first()
-    )
-    if active_assignment:
-        raise HTTPException(
-            status_code=409,
-            detail="Kameralokationen har en aktiv Edge-binding og kan ikke slettes.",
-        )
-    capture_count = db.query(Capture).filter(Capture.camera_id == camera_id).count()
-    if capture_count:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Kameralokationen har {capture_count} billeder og kan ikke slettes.",
-        )
-
-    camera.retired_at = now_utc()
-    db.add(Event(
-        level="INFO",
-        category="camera_location_retired",
-        message=f"Empty camera location retired: {camera.camera_name or camera_id}",
-        extra=json.dumps({"camera_id": camera_id, "retired_by": current_user.username}),
-    ))
-    db.commit()
-    return {"ok": True, "camera_id": camera_id, "message": "Tom kameralokation fjernet"}
-
-@app.get("/api/admin/cameras/{camera_id}/history")
-def camera_assignment_history(
-    camera_id: str,
-    _user=require_role("super_admin", "admin"),
-    db: Session = Depends(get_db)
-):
-    """Historik over alle device-assignments for et kamera."""
-    from database import DeviceAssignment
-    entries = (
-        db.query(DeviceAssignment)
-        .filter_by(camera_id=camera_id)
-        .order_by(DeviceAssignment.assigned_at.desc())
-        .all()
-    )
-    return [
-        {
-            "device_id":     e.device_id,
-            "assigned_at":   e.assigned_at.isoformat() if e.assigned_at else None,
-            "unassigned_at": e.unassigned_at.isoformat() if e.unassigned_at else None,
-            "assigned_by":   e.assigned_by,
-            "assignment_type": getattr(e, "assignment_type", "manual"),
-            "notes":         e.notes,
-            "active":        e.unassigned_at is None,
-        }
-        for e in entries
-    ]
-
-
-@app.get("/api/admin/devices/{device_id}/camera-location")
-def get_device_camera_location(
-    device_id: str,
-    _user=require_role("super_admin", "admin", "operator"),
-    db: Session = Depends(get_db)
-):
-    """Returnerer den aktive kamera-lokation (Camera) som en device er tildelt."""
-    from database import Camera, DeviceAssignment, Customer, Site
-    assignment = (
-        db.query(DeviceAssignment)
-        .filter_by(device_id=device_id)
-        .filter(DeviceAssignment.unassigned_at.is_(None))
-        .order_by(DeviceAssignment.assigned_at.desc())
-        .first()
-    )
-    if not assignment:
-        return {"assignment": None, "camera": None}
-
-    cam = db.query(Camera).filter_by(id=assignment.camera_id).first()
-    if not cam:
-        return {"assignment": None, "camera": None}
-
-    customer = db.query(Customer).filter_by(id=cam.customer_id).first() if cam.customer_id else None
-    site = db.query(Site).filter_by(id=cam.site_id).first() if cam.site_id else None
-
-    return {
-        "assignment": {
-            "camera_id":    assignment.camera_id,
-            "assigned_at":  assignment.assigned_at.isoformat() if assignment.assigned_at else None,
-            "assigned_by":  assignment.assigned_by,
-            "assignment_type": getattr(assignment, "assignment_type", "manual"),
-        },
-        "camera": {
-            "id":            cam.id,
-            "camera_name":   cam.camera_name,
-            "site_id":       cam.site_id,
-            "site_name":     site.name if site else None,
-            "customer_id":   cam.customer_id,
-            "customer_name": customer.name if customer else None,
-            "model":         cam.model,
-            "notes":         cam.notes,
-            "baseline_description": getattr(cam, "baseline_description", None),
-            "context_notes":        getattr(cam, "context_notes", None),
-            "retention_days":       getattr(cam, "retention_days", 99999),
-        },
-    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -11694,16 +11613,29 @@ RENDER_OUTPUT_DIR.mkdir(exist_ok=True)
 @app.get("/api/timelapse/frames")
 def get_timelapse_frames(
     request: Request,
-    device_id: str,
     start: str,
     end: str,
+    device_id: str | None = None,
+    camera_id: str | None = None,
     min_blur: float = 0,
     quality_only: bool = False,
     _user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
-    """Returner billeder i tidsinterval til timelapse preview."""
-    _ensure_capture_device_access(db, _user, device_id)
+    """Returner billeder i tidsinterval til timelapse preview.
+
+    2026-08-06 (Claude, Peter): camera_id spænder en kameralokations FULDE
+    optagelseshistorik, uanset hvilket Edge-device der tog det enkelte billede
+    (device kan udskiftes/flyttes uden at lokationen mister adgang til sine
+    billeder). device_id bevares for bagudkompatibilitet og til device-specifikke
+    visninger (fx DevicePage), men foretræk camera_id for kameralokations-siden.
+    """
+    if not device_id and not camera_id:
+        raise HTTPException(status_code=400, detail="device_id eller camera_id skal angives")
+    if camera_id:
+        _ensure_capture_camera_access(db, _user, camera_id)
+    else:
+        _ensure_capture_device_access(db, _user, device_id)
     from datetime import datetime as _dt
     try:
         start_dt = _dt.fromisoformat(start.replace("Z", "+00:00"))
@@ -11712,11 +11644,23 @@ def get_timelapse_frames(
         raise HTTPException(status_code=400, detail="Ugyldigt datoformat")
 
     q = db.query(Capture).filter(
-        Capture.device_id == device_id,
+        (Capture.camera_id == camera_id) if camera_id else (Capture.device_id == device_id),
         Capture.captured_at >= start_dt,
         Capture.captured_at <= end_dt,
         Capture.captured_at.isnot(None),
-    ).order_by(Capture.captured_at.asc())
+    )
+    # 2026-08-06 (Claude, Peter): _ensure_capture_device_access() ovenfor tjekker kun
+    # om DENNE BRUGER pt. må se DETTE device — ikke om HVERT ENKELT billede blev taget
+    # mens device'et rent faktisk tilhørte brugerens kunde. Et device der er blevet
+    # gen-tildelt til en anden kunde ville ellers "tage sin billedhistorik med sig":
+    # device_id alene matcher også captures taget for den FORRIGE ejer. Samme
+    # sårbarhedsklasse som _capture_tenant_clause() (se ovenfor) allerede lukker for
+    # andre capture-flader — genbrug den her, filtreret på capture.customer_id
+    # (frosset ved optagelsestidspunktet), ikke et live device→kunde-opslag.
+    allowed_ids = _allowed_capture_device_ids(db, _user)
+    if allowed_ids is not None:
+        q = q.filter(_capture_tenant_clause(_user, allowed_ids))
+    q = q.order_by(Capture.captured_at.asc())
 
     if quality_only:
         q = q.filter(Capture.quality_passed == True)
@@ -11814,9 +11758,16 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
     # uppercase-resultat, hvilket fik capture-opslaget til stille at matche 0
     # billeder (case-sensitiv Postgres-sammenligning) og returnere en vildledende
     # "billeder findes ikke"-404, selvom om billederne rent faktisk fandtes.
-    _sanitize_device_id(payload.get("device_id"))
-    device_id  = str(payload.get("device_id") or "").strip()
-    _ensure_capture_device_access(db, _user, device_id)
+    camera_id = str(payload.get("camera_id") or "").strip() or None
+    device_id = ""
+    if camera_id:
+        # 2026-08-06 (Claude, Peter): camera_id spænder lokationens fulde
+        # optagelseshistorik uanset device — se _ensure_capture_camera_access().
+        _ensure_capture_camera_access(db, _user, camera_id)
+    else:
+        _sanitize_device_id(payload.get("device_id"))
+        device_id = str(payload.get("device_id") or "").strip()
+        _ensure_capture_device_access(db, _user, device_id)
     frame_ids  = payload.get("frame_ids", [])
     options = RenderOptions.from_payload(payload)
     validate_filter_capabilities(
@@ -11834,9 +11785,19 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
         raise HTTPException(status_code=422, detail="Ugyldig eller for stor frame-liste")
 
     # Hent billeder fra DB
-    frames = db.query(Capture).filter(
-        Capture.id.in_(frame_ids), Capture.device_id == device_id
-    ).order_by(Capture.captured_at.asc()).all()
+    frames_q = db.query(Capture).filter(
+        Capture.id.in_(frame_ids),
+        (Capture.camera_id == camera_id) if camera_id else (Capture.device_id == device_id),
+    )
+    # 2026-08-06 (Claude, Peter): se identisk begrundelse i get_timelapse_frames()
+    # ovenfor — device_id alene matcher også billeder taget mens device'et tilhørte
+    # en TIDLIGERE kunde. Håndhæv capture.customer_id (frosset ved optagelsestidspunktet)
+    # her også, så en genanvendt/gen-tildelt Edge-enhed ikke lækker forrige kundes
+    # billeder ind i en video renderet for den nye kunde.
+    allowed_ids = _allowed_capture_device_ids(db, _user)
+    if allowed_ids is not None:
+        frames_q = frames_q.filter(_capture_tenant_clause(_user, allowed_ids))
+    frames = frames_q.order_by(Capture.captured_at.asc()).all()
 
     if len(frames) != len(set(frame_ids)):
         # 2026-08-06 (Claude): denne 404 var tidligere tavs om ÅRSAGEN — fandt kun
@@ -11846,13 +11807,13 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
         # for at kræve endnu en manuel undersøgelsesrunde.
         missing_ids = set(frame_ids) - {f.id for f in frames}
         log.warning(
-            "timelapse/create 404: device_id=%s frame_ids_count=%d matched=%d missing_ids=%s",
-            device_id, len(frame_ids), len(frames), sorted(missing_ids)[:20],
+            "timelapse/create 404: camera_id=%s device_id=%s frame_ids_count=%d matched=%d missing_ids=%s",
+            camera_id, device_id, len(frame_ids), len(frames), sorted(missing_ids)[:20],
         )
         if missing_ids:
-            mismatched = db.query(Capture.id, Capture.device_id).filter(Capture.id.in_(list(missing_ids)[:20])).all()
-            log.warning("timelapse/create 404 detail: missing frame device_ids=%s", mismatched)
-        raise HTTPException(status_code=404, detail="Et eller flere valgte billeder findes ikke på den valgte enhed")
+            mismatched = db.query(Capture.id, Capture.device_id, Capture.camera_id).filter(Capture.id.in_(list(missing_ids)[:20])).all()
+            log.warning("timelapse/create 404 detail: missing frames=%s", mismatched)
+        raise HTTPException(status_code=404, detail="Et eller flere valgte billeder findes ikke på den valgte kameralokation")
 
     # Find billedstier
     image_paths = []
@@ -13688,6 +13649,12 @@ def delete_customer(customer_id: str, _user=require_role("super_admin"), db: Ses
         raise HTTPException(status_code=404)
     if db.query(Site).filter_by(customer_id=customer_id).count():
         raise HTTPException(status_code=400, detail="Slet sites først")
+    # 2026-08-06 (Claude, Peter — fuld hierarki-gennemgang): create_camera() tillader
+    # en kamera-lokation med customer_id sat men site_id NULL (kunde-niveau kamera
+    # uden site) — det ville ikke fanges af Site-tjekket ovenfor. Samme begrundelse
+    # som delete_site(): intet DB-niveau foreign key beskytter mod orphanede rækker.
+    if db.query(Camera).filter_by(customer_id=customer_id).count():
+        raise HTTPException(status_code=400, detail="Fjern kamera-lokationer først")
     db.delete(c); db.commit()
     return {"status": "ok"}
 
@@ -13781,6 +13748,15 @@ def delete_site(site_id: str, _user=require_role("super_admin"), db: Session = D
         raise HTTPException(status_code=404)
     if db.query(Device).filter_by(site_id=site_id).count():
         raise HTTPException(status_code=400, detail="Flyt enheder først")
+    # 2026-08-06 (Claude, Peter — fuld hierarki-gennemgang): der findes ingen DB-
+    # niveau foreign key mellem cameras.site_id og sites.id (hele Global→Kunde→Site→
+    # Kamera-lokation→Device-hierarkiet er udelukkende soft-linket via UUID-kolonner,
+    # ingen ON DELETE-håndhævelse noget sted). Uden dette tjek kunne et site med
+    # historiske/retirerede kamera-lokationer (ingen live device, men stadig
+    # billeder) slettes, og efterlade dets Camera-rækker pegende på et site_id der
+    # ikke længere findes — usynligt indtil et sted forsøger at slå sitet op igen.
+    if db.query(Camera).filter_by(site_id=site_id).count():
+        raise HTTPException(status_code=400, detail="Fjern eller flyt kamera-lokationer først")
     db.delete(s); db.commit()
     return {"status": "ok"}
 
@@ -13870,6 +13846,13 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
             "factory_totp_disabled":   bool(getattr(device, "factory_totp_disabled", False)),
             "has_own_ssh_key":         bool(getattr(device, "ssh_private_key", None)),
             "shared_ssh_key_disabled": bool(getattr(device, "shared_ssh_key_disabled", False)),
+            # 2026-08-06 (Claude, Peter): allokeret unikt pr. device ved zero-touch
+            # enrollment (_ensure_device_provisioning_credentials()) og bagt ind i
+            # flashable images' timelapse-ssh-tunnel.service. Eksponeret her så
+            # SystemAdminPage's manuelle "SSH Tunnel"-panel kan foreslå denne
+            # allerede-allokerede værdi i stedet for en statisk "2201" for alle
+            # enheder — hvilket ville kollidere, da porten skal være unik.
+            "reverse_tunnel_port": getattr(device, "reverse_tunnel_port", None),
         },
         "diagnostics": diagnostics,
         "device_config": d_cfg,
@@ -13882,10 +13865,33 @@ def get_device_detail(device_id: str, _user=require_role("viewer"), db: Session 
 
 @app.delete("/api/admin/devices/{device_id}")
 def delete_device(device_id: str, _user=require_role("super_admin"), db: Session = Depends(get_db)):
+    # 2026-08-06 (Claude, Peter): denne route bulk-slettede tidligere ubetinget
+    # ALLE Capture-rækker for device_id'et FØR den slettede selve device-rækken
+    # — dvs. et enkelt klik på "Slet kamera" i CameraPage.tsx
+    # (kun beskyttet af en svag "kan ikke fortrydes"-genbekræftelse, ingen nævnelse
+    # af billeder) destruerede permanent ALLE capture-rækker for enheden. Det
+    # modsiger direkte hele formålet med camera_id-arkitekturen indført samme dag
+    # (se HANDOVER_LOG.md): en kameralokations billedhistorik skal overleve at dens
+    # device udskiftes/fjernes, ikke forsvinde fordi nogen rydder op i device-listen.
+    # En "Device" er nu bevidst kun en udskiftelig hardware-registrering — dens
+    # captures lever videre via det frosne camera_id/customer_id, uafhængigt af om
+    # device-rækken består. Diagnostics/Events er ren driftstelemetri og renses
+    # fortsat væk sammen med device'et.
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)
-    db.query(Capture).filter_by(device_id=device_id).delete()
+    orphaned = db.query(Capture).filter(
+        Capture.device_id == device_id, Capture.camera_id.is_(None)
+    ).count()
+    if orphaned:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Enheden har {orphaned} billede(r) uden en kamera-lokations-binding. "
+                "De ville blive util­gængelige hvis enheden slettes. Bind billederne til "
+                "en kamera-lokation (eller slet dem eksplicit) før enheden fjernes."
+            ),
+        )
     db.query(Diagnostic).filter_by(device_id=device_id).delete()
     db.query(Event).filter_by(device_id=device_id).delete()
     db.delete(device); db.commit()
@@ -15346,7 +15352,7 @@ def trigger_edge_disk_image_build(
             detail="Angiv fysisk Edge-ID fra mærkat eller QR-kode, før et flashbart image kan bygges.",
         )
     if body.mode == "flashable" and not db.query(Device).filter_by(
-        device_id=_sanitize_device_id(body.expected_device_id)
+        device_id=_validate_physical_device_id(body.expected_device_id)
     ).first():
         raise HTTPException(
             status_code=400,
@@ -15692,6 +15698,8 @@ def inject_wifi_endpoint(
     _user=require_role("super_admin", "admin"),
 ):
     """Injectér WiFi-konfiguration i et eksisterende flashbart image."""
+    if body.expected_device_id:
+        _validate_physical_device_id(body.expected_device_id)
     with _wifi_inject_lock:
         if _wifi_inject_status.get("running"):
             raise HTTPException(status_code=409, detail="En WiFi-injektion kører allerede")
@@ -18210,6 +18218,48 @@ def _ensure_capture_device_access(db: Session, user: User | None, device_id: str
     allowed = _allowed_capture_device_ids(db, user)
     if allowed is not None and device_id not in allowed:
         raise HTTPException(status_code=403, detail="Ingen adgang til denne enhed")
+
+
+def _ensure_capture_camera_access(db: Session, user: User | None, camera_id: str) -> None:
+    # 2026-08-06 (Claude, Peter): kamera-lokationen — ikke det tilsluttede Edge-device
+    # — er den permanente enhed billeder og timelapse skal knyttes til (device kan
+    # udskiftes/flyttes). Camera.customer_id er sat direkte ved oprettelse, så
+    # tjekket her kan ske uden et live device→kunde-opslag (samme begrundelse som
+    # _capture_tenant_clause() ovenfor: et device-baseret opslag ville fejlagtigt
+    # følge et gen-tildelt device til en ny kunde).
+    if _is_platform_admin(user):
+        return
+    if not user or not getattr(user, "customer_id", None):
+        raise HTTPException(status_code=403, detail="Ingen adgang til denne kameralokation")
+    camera = db.query(Camera).filter(Camera.id == camera_id).first()
+    if not camera or camera.customer_id != user.customer_id:
+        raise HTTPException(status_code=403, detail="Ingen adgang til denne kameralokation")
+
+
+@app.get("/api/admin/ssh-tunnel/defaults")
+def ssh_tunnel_defaults(request: Request, _user=require_role("admin")):
+    """Foreslåede standardværdier for den manuelle 'SSH Tunnel'-konfiguration
+    i System Administration (device_config.ssh_tunnel), afledt af de samme
+    governed settings og den samme sti som flashable-images allerede bruger
+    (inject_edge_image.py: TIMELAPSE_TUNNEL_HOST/_PORT/_USER,
+    /etc/timelapse/device_keys/id_ed25519) — så et flashet image og det
+    dynamisk-styrede tunnel-panel peger på PRÆCIS samme nøgle/endpoint i
+    stedet for at kræve manuel genindtastning af værdier der allerede findes.
+
+    2026-08-06 (Claude, Peter): "de nødvendige felter burde egentligt blive
+    udfyldt automatisk med de nøgler/konti/porte der skal konfigureres i
+    indstillinger -> system administration" — remote_port er bevidst IKKE
+    med her, da den er unik PR. DEVICE (device.reverse_tunnel_port, se
+    get_device_detail()), ikke en global værdi.
+    """
+    host, port, user = _edge_provisioning.resolve_tunnel_settings(str(request.base_url))
+    return {
+        "primary":  f"{user}@{host}:{port}" if host else "",
+        "host":     host,
+        "port":     port,
+        "user":     user,
+        "key_file": "/etc/timelapse/device_keys/id_ed25519",
+    }
 
 
 app.include_router(create_service_access_router(require_role, _ensure_capture_device_access, _siem_record_events, now_utc))

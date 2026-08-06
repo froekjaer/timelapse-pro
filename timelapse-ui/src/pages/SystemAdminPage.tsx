@@ -255,9 +255,10 @@ export function SystemAdminPage() {
   const [serviceAccessSaved, setServiceAccessSaved] = useState(false)
   const [tunnelEnabled, setTunnelEnabled] = useState(false)
   const [tunnelPrimary, setTunnelPrimary] = useState('')
-  const [tunnelRemotePort, setTunnelRemotePort] = useState('2201')
+  const [tunnelRemotePort, setTunnelRemotePort] = useState('')
   const [tunnelLocalPort, setTunnelLocalPort] = useState('22')
   const [tunnelKeyFile, setTunnelKeyFile] = useState('')
+  const [tunnelDefaults, setTunnelDefaults] = useState<{ primary: string; key_file: string } | null>(null)
   const [tunnelAutoOnApiLoss, setTunnelAutoOnApiLoss] = useState(true)
   const [tunnelAutoOnApiLossThresholdS, setTunnelAutoOnApiLossThresholdS] = useState('300')
   const [tunnelDeny, setTunnelDeny] = useState(false)
@@ -292,6 +293,10 @@ export function SystemAdminPage() {
   useEffect(() => {
     api('/api/admin/settings').then((s: any) => setSettings(s)).catch(() => {})
     api('/api/ai/settings').then((s: any) => setInstalledModels(s.installed_models || [])).catch(() => {})
+    // 2026-08-06 (Claude, Peter): samme nøgle/endpoint som allerede bages ind i
+    // flashable images (inject_edge_image.py) — hentes én gang og bruges til at
+    // foreslå værdier i "SSH Tunnel"-panelet i stedet for tomme felter.
+    api('/api/admin/ssh-tunnel/defaults').then((t: any) => setTunnelDefaults(t)).catch(() => {})
     loadStorage()
   }, [])
 
@@ -335,7 +340,10 @@ export function SystemAdminPage() {
 
   useEffect(() => {
     if (!selectedDevice) return
-    api(`/api/admin/devices/${pathSegment(selectedDevice)}`).then((d: any) => {
+    Promise.all([
+      api(`/api/admin/devices/${pathSegment(selectedDevice)}`),
+      api('/api/admin/ssh-tunnel/defaults').catch(() => tunnelDefaults ?? { primary: '', key_file: '' }),
+    ]).then(([d, defaults]: any[]) => {
       const dc = d.device_config ?? {}
       setLabActive(!!(dc.debug_mode?.enabled))
       const serviceAccess = dc.service_access ?? {}
@@ -345,12 +353,17 @@ export function SystemAdminPage() {
       setContinuousLiveViewAllowed(!!serviceAccess.allow_continuous_live_view)
       setInteractiveShellEnabled(!!serviceAccess.interactive_shell_enabled)
       setMultiCameraMode(dc.multi_camera_mode ?? 'single')
+      // 2026-08-06 (Claude, Peter): tomme felter foreslås fra allerede-kendte
+      // værdier (device.reverse_tunnel_port, allokeret unikt ved zero-touch
+      // enrollment; primary/key_file fra samme kilde som flashable images
+      // bruger) — kun hvis feltet aldrig er gemt før. Et allerede gemt
+      // ssh_tunnel-config for dette device har altid forrang.
       const tun = dc.ssh_tunnel ?? {}
       setTunnelEnabled(!!tun.enabled)
-      setTunnelPrimary(tun.primary ?? '')
-      setTunnelRemotePort(String(tun.remote_port ?? '2201'))
+      setTunnelPrimary(tun.primary || defaults.primary || '')
+      setTunnelRemotePort(String(tun.remote_port || d.device?.reverse_tunnel_port || ''))
       setTunnelLocalPort(String(tun.local_port ?? '22'))
-      setTunnelKeyFile(tun.key_file ?? '')
+      setTunnelKeyFile(tun.key_file || defaults.key_file || '')
       setTunnelAutoOnApiLoss(tun.auto_on_api_loss !== false)
       setTunnelAutoOnApiLossThresholdS(String(tun.auto_on_api_loss_threshold_s ?? '300'))
       setTunnelDeny(!!tun.deny)
@@ -1090,21 +1103,21 @@ export function SystemAdminPage() {
 
       {/* SSH Tunnel */}
       <Section title="SSH Tunnel" icon={<Terminal className="w-4 h-4" />}
-        description="Reverse SSH tunnel til remote adgang — edge initierer forbindelsen">
+        description="Reverse SSH tunnel til remote adgang — edge initierer forbindelsen. Felterne nedenfor er forudfyldt fra enhedens allerede allokerede nøgle/port — normalt ikke nødvendigt at ændre.">
         <Field label="Aktiver tunnel"
           description="Edge åbner tunnel til headend ved næste config-poll"
           tooltip="Aktiver reverse SSH tunnel fra edge til headend for remote adgang. Edge initierer forbindelsen (firewall friendly). Tunnel oprettes ved næste config poll. Kræver gyldig endpoint og nøglefil.">
           <Toggle value={tunnelEnabled} onChange={setTunnelEnabled} />
         </Field>
         <Field label="Primær endpoint"
-          description="Bruger og host som edge forbinder til (user@host:port)"
-          tooltip="SSH endpoint som edge forbinder til i formatet user@host:port. Edge authenticerer med key_file. Headend skal have tilsvarende public key i authorized_keys. Forkerte credentials giver connection timeout.">
+          description="Bruger og host som edge forbinder til (user@host:port) — forudfyldt fra governed tunnel-settings"
+          tooltip="SSH endpoint som edge forbinder til i formatet user@host:port. Edge authenticerer med key_file. Headend skal have tilsvarende public key i authorized_keys. Forudfyldt fra samme TIMELAPSE_TUNNEL_HOST/_PORT/_USER som bruges ved flashable image-build.">
           <Txt value={tunnelPrimary} onChange={setTunnelPrimary} mono placeholder="user@headend.example:22" />
         </Field>
         <Field label="Remote port"
-          description="Port der åbnes på headend — unik pr. device"
-          tooltip="Port på headend der åbnes for tunnel ind til edge SSH. Skal være unik pr. device for at undgå konflikter. Fx 2201, 2202, osv. Skal være åben i headend firewall. Forkert port kan forårsage port conflict.">
-          <Num value={tunnelRemotePort} onChange={setTunnelRemotePort} placeholder="2201" />
+          description="Port der åbnes på headend — unik pr. device, forudfyldt fra enhedens allerede allokerede reverse_tunnel_port"
+          tooltip="Port på headend der åbnes for tunnel ind til edge SSH. Skal være unik pr. device for at undgå konflikter — forudfyldt fra device.reverse_tunnel_port (allokeret automatisk ved zero-touch enrollment, samme værdi som bages ind i et evt. flashable image). Undlad at skrive samme port ind manuelt for flere devices.">
+          <Num value={tunnelRemotePort} onChange={setTunnelRemotePort} placeholder="Endnu ikke allokeret — vælg en ledig port" />
         </Field>
         <Field label="Lokal port på Edge"
           description="Port på Edge som tunnelen videresender til"
@@ -1112,9 +1125,9 @@ export function SystemAdminPage() {
           <Num value={tunnelLocalPort} onChange={setTunnelLocalPort} placeholder="22" />
         </Field>
         <Field label="Nøglefil (edge)"
-          description="Sti til SSH privat nøgle på edge-enheden"
-          tooltip="Sti til SSH privat nøgle på edge enhed til tunnel authentication. Fx /root/.ssh/tunnel_key. Nøglen skal være tilgængelig på edge og matching public key skal være på headend. Forkert sti kan forhindre tunnel oprettelse.">
-          <Txt value={tunnelKeyFile} onChange={setTunnelKeyFile} mono placeholder="/path/to/tunnel_key" />
+          description="Sti til SSH privat nøgle på edge-enheden — forudfyldt til den sti flashable images allerede skriver nøglen til"
+          tooltip="Sti til SSH privat nøgle på edge enhed til tunnel authentication. Forudfyldt til /etc/timelapse/device_keys/id_ed25519 — nøjagtig samme sti inject_edge_image.py skriver den auto-genererede device-nøgle til ved image-build. Kun nødvendigt at ændre ved en ikke-standard opsætning.">
+          <Txt value={tunnelKeyFile} onChange={setTunnelKeyFile} mono placeholder="/etc/timelapse/device_keys/id_ed25519" />
         </Field>
         <Field label="Auto-start ved API-tab"
           description="Start tunnel automatisk hvis headend API er utilgængeligt"

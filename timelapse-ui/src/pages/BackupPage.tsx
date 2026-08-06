@@ -14,6 +14,17 @@ function api(path: string, opts?: RequestInit) {
   })
 }
 
+// 2026-08-06 (Claude, Peter — MOD-BAGGARD-DLVC crash-loopede evigt fra første
+// boot): "Fysisk Edge-ID" ("expected_device_id") er IKKE det samme som CMDB-
+// kladde-navnet fra "Klargør ny Edge" ovenfor (som bevidst må være et frit
+// navn — det endelige device_id sættes fra MAC ved tilmelding). Dette felt
+// bages derimod ind i imaget som en hård binding, som bootstrap_agent.py
+// tjekker det fysiske boards RIGTIGE MAC-udledte ID imod ved første boot —
+// et menneskeligt navn her kan ALDRIG matche og medfører en uendelig
+// crash-loop, kun synlig i systemd-loggen på selve enheden. Håndhæv formatet
+// her, hvor en fejltagelse er billig at rette, i stedet for efter flashning.
+const PHYSICAL_DEVICE_ID_PATTERN = /^TL-[0-9A-F]{12}$/
+
 interface BackupStatus {
   running: boolean
   progress: string[]
@@ -641,6 +652,19 @@ export function BackupPage() {
       })
       if (!r.ok) throw new Error(await r.text())
       setProvisioningResult(await r.json())
+      // 2026-08-06 (Claude, Peter spurgte om sammenhængen): WiFi SSID/kode her
+      // og i "flashable disk image"-sektionen nedenfor er to helt separate
+      // felter i to separate requests (denne gemmer på kamera-lokationen til
+      // CMDB-bogføring; det andet bages ind i selve imaget) — intet krævede
+      // dem tidligere til at stemme overens, og en bruger skulle taste samme
+      // SSID/kode ind to gange for samme fysiske enhed. Overfør dem her ÉN
+      // gang, kun hvis disk-build-felterne stadig er tomme, så vi aldrig
+      // overskriver noget brugeren allerede selv har tastet ind dernede.
+      if (provisioningForm.network_type === 'wifi' && provisioningForm.wifi_ssid.trim()) {
+        if (!diskBuildWifiSsid) setDiskBuildWifiSsid(provisioningForm.wifi_ssid.trim())
+        if (!diskBuildWifiPassword) setDiskBuildWifiPassword(provisioningForm.wifi_password)
+        if (!diskBuildWifiCountry || diskBuildWifiCountry === 'DK') setDiskBuildWifiCountry(provisioningForm.wifi_country || 'DK')
+      }
       await loadAssessment()
     } finally {
       setProvisioningBusy(false)
@@ -1166,7 +1190,7 @@ function IsoTab({
   const [localCaError, setLocalCaError] = useState<string | null>(null)
   const canBuildDiskImage = Boolean(selectedBuildTarget) &&
     (diskBuildMode !== 'flashable' || (
-      selectedBuildTarget?.flashable && diskBuildExpectedDeviceId.trim().length >= 3 && localCa?.initialized && localCa.healthy
+      selectedBuildTarget?.flashable && PHYSICAL_DEVICE_ID_PATTERN.test(diskBuildExpectedDeviceId.trim()) && localCa?.initialized && localCa.healthy
     ))
   useEffect(() => {
     api('/admin/edge-local-ca/status').then(r => r.ok ? r.json() : null).then(setLocalCa).catch(() => setLocalCaError('CA-status kunne ikke hentes'))
@@ -1599,8 +1623,20 @@ function IsoTab({
                     onChange={e => setDiskBuildExpectedDeviceId(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
                     placeholder="TL-C87FF9587CA0"
                     disabled={diskBuildStatus?.running}
-                    className="w-full text-xs border border-violet-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-violet-300 disabled:opacity-50" />
-                  <p className="mt-1 text-xs text-violet-700">Læs fra mærkat eller QR-kode på den fysiske Edge. Den bindes til certifikat og mDNS-navn, før enheden forlader kontoret.</p>
+                    className={`w-full text-xs border rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-violet-300 disabled:opacity-50 ${
+                      diskBuildExpectedDeviceId.trim() && !PHYSICAL_DEVICE_ID_PATTERN.test(diskBuildExpectedDeviceId.trim())
+                        ? 'border-red-300 focus:outline-red-400' : 'border-violet-200'
+                    }`} />
+                  {diskBuildExpectedDeviceId.trim() && !PHYSICAL_DEVICE_ID_PATTERN.test(diskBuildExpectedDeviceId.trim()) ? (
+                    <p className="mt-1 text-xs text-red-600">
+                      Dette skal være det fysiske MAC-udledte ID (format TL- efterfulgt af 12 hex-tegn) — IKKE et
+                      selvvalgt navn eller CMDB-kladdenavn fra "Klargør ny Edge" ovenfor. Et navn her kan aldrig
+                      matche brættets rigtige MAC-adresse og giver en uendelig opstarts-crash-loop, der kun ses i
+                      systemd-loggen på selve enheden.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-violet-700">Læs fra mærkat eller QR-kode på den fysiske Edge. Den bindes til certifikat og mDNS-navn, før enheden forlader kontoret.</p>
+                  )}
                 </div>
               </div>
             )}
@@ -1853,11 +1889,19 @@ function IsoTab({
                   <label className="block text-blue-700 font-medium mb-1">Fysisk Edge-ID</label>
                   <input
                     value={wifiInjectDeviceId}
-                    onChange={e => setWifiInjectDeviceId(e.target.value)}
-                    placeholder="TL-..."
+                    onChange={e => setWifiInjectDeviceId(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
+                    placeholder="TL-C87FF9587CA0"
                     disabled={wifiInjectRunning}
-                    className="w-full text-xs border border-blue-200 rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-blue-300 disabled:opacity-50"
+                    className={`w-full text-xs border rounded-lg px-2.5 py-1.5 bg-white font-mono placeholder-blue-300 disabled:opacity-50 ${
+                      wifiInjectDeviceId.trim() && !PHYSICAL_DEVICE_ID_PATTERN.test(wifiInjectDeviceId.trim())
+                        ? 'border-red-300 focus:outline-red-400' : 'border-blue-200'
+                    }`}
                   />
+                  {wifiInjectDeviceId.trim() && !PHYSICAL_DEVICE_ID_PATTERN.test(wifiInjectDeviceId.trim()) && (
+                    <p className="mt-1 text-xs text-red-600">
+                      Skal være det fysiske MAC-udledte ID (TL- + 12 hex-tegn) fra mærkat/QR-kode — ikke et selvvalgt navn.
+                    </p>
+                  )}
                 </div>
 
                 {/* WiFi-felter */}
@@ -1897,7 +1941,7 @@ function IsoTab({
                 </div>
                 <button
                   onClick={submitWifiInject}
-                  disabled={wifiInjectRunning || !wifiInjectSsid || !wifiInjectPassword || !wifiInjectArtifactId || !wifiInjectDeviceId.trim()}
+                  disabled={wifiInjectRunning || !wifiInjectSsid || !wifiInjectPassword || !wifiInjectArtifactId || !PHYSICAL_DEVICE_ID_PATTERN.test(wifiInjectDeviceId.trim())}
                   className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-xs rounded-lg hover:bg-blue-800 disabled:opacity-50"
                 >
                   {wifiInjectRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}

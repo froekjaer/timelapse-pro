@@ -100,6 +100,7 @@ function AppRoutes() {
                 <Route path="/customers/:customerId" element={<CustomerPage />} />
                 <Route path="/cameras/:deviceId" element={<RequireRole minimum="admin"><CameraPage /></RequireRole>} />
                 <Route path="/camera-locations/:cameraId" element={<CameraLocationGalleryPage />} />
+                <Route path="/camera-locations/:cameraId/timelapse" element={<RequireRole minimum="admin"><TimelapseVideoPage /></RequireRole>} />
                 <Route path="/global-config" element={<RequireRole minimum="admin"><GlobalConfigPage /></RequireRole>} />
                 <Route path="/lab/:deviceId" element={<RequireRole minimum="admin"><LabPage /></RequireRole>} />
                 <Route path="/devices/:deviceId/lab" element={<RequireRole minimum="admin"><LabPage /></RequireRole>} />

@@ -38,10 +38,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
-from database import Capture, Customer, Device, Site, get_db, now_utc
+from database import Camera, Capture, Customer, Device, DeviceAssignment, Site, get_db, now_utc
 
 log = logging.getLogger(__name__)
 
@@ -468,6 +468,7 @@ def _run_import(
 
 @router.post("/start")
 async def start_import(
+    request:      Request,
     customer_id:  str           = Form(...),
     site_id:      str           = Form(...),
     camera_name:  str           = Form(...),
@@ -481,6 +482,20 @@ async def start_import(
 
     Enten `local_path` (sti på Mac Mini) eller `zip_file` (upload fra browser).
     """
+    # 2026-08-06 (Claude, Peter — fuld hierarki-gennemgang): routeren er kun
+    # gated af `require_role("admin")` ved include_router() i main.py — det
+    # dækker IKKE kunde-skoperede admin-brugere (role="admin" MED customer_id
+    # sat, se _is_platform_admin()). Uden dette tjek kunne en kunde-admin for
+    # Kunde A importere billeder ind under Kunde B's site, blot ved at sende
+    # Kunde B's customer_id/site_id — samme sårbarhedsklasse som Peter fangede
+    # på timelapse-generering tidligere i dag, blot skrive- i stedet for
+    # læse-vejen. Deferred import for at undgå cirkulær import med main.py
+    # (samme mønster som _sftp_base_path/_resolve_capture_camera_customer
+    # nedenfor).
+    from main import _ensure_customer_access, get_current_user
+    current_user = get_current_user(request, db)
+    _ensure_customer_access(current_user, customer_id)
+
     # Hent kunde og site
     customer = db.query(Customer).filter_by(id=customer_id).first()
     if not customer:
@@ -521,6 +536,43 @@ async def start_import(
         db.add(device)
         db.commit()
         log.info("Import device oprettet: %s", device_id)
+
+    # 2026-08-06 (Claude, Peter — fuld hierarki-gennemgang): historisk manglede
+    # importen en Camera-lokation + DeviceAssignment-binding for det virtuelle
+    # import-device. Uden det forbliver capture.camera_id NULL for hver eneste
+    # importeret billede (_resolve_capture_camera_customer() finder ingen aktiv
+    # DeviceAssignment) — nøjagtig det gab der krævede en manuel backfill for
+    # Kamera 1 (Nordre Villavej) tidligere i dag, se HANDOVER_LOG.md 2026-08-06.
+    # Find-eller-opret begge dele her, så hvert importeret billede får camera_id
+    # sat med det samme, uden at afhænge af en efterfølgende backfill-kørsel.
+    camera = db.query(Camera).filter_by(site_id=site_id, camera_name=camera_name).first()
+    if not camera:
+        camera = Camera(
+            id=str(uuid.uuid4()), site_id=site_id, customer_id=customer_id,
+            camera_name=camera_name,
+        )
+        db.add(camera)
+        db.commit()
+        log.info("Import kamera-lokation oprettet: %s (%s)", camera_name, camera.id)
+
+    active_assignment = (
+        db.query(DeviceAssignment)
+        .filter_by(device_id=device_id, camera_id=camera.id)
+        .filter(DeviceAssignment.unassigned_at.is_(None))
+        .first()
+    )
+    if not active_assignment:
+        # Sat langt før enhver plausibel optagelse i en historisk import — modsat
+        # "nu" (som ville gentage nøjagtig samme retroaktive-assigned_at-bug som
+        # blev rettet for Kamera 1 i dag: assigned_at skal aldrig postdatere de
+        # billeder den er ment at dække).
+        db.add(DeviceAssignment(
+            device_id=device_id, camera_id=camera.id,
+            assigned_at=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            assigned_by="import",
+        ))
+        db.commit()
+        log.info("Import device-assignment oprettet: %s -> %s", device_id, camera.id)
 
     # Find billeder
     image_files: list[Path] = []
@@ -590,6 +642,7 @@ async def start_import(
             "finished_at": None,
             "device_id":   device_id,
             "customer":    customer.name,
+            "customer_id": customer_id,
             "site":        site.name,
             "camera_name": camera_name,
         }
@@ -621,12 +674,19 @@ async def start_import(
 
 
 @router.get("/status/{job_id}")
-def get_import_status(job_id: str):
+def get_import_status(job_id: str, request: Request, db: Session = Depends(get_db)):
     """Hent status for import job — polles af UI."""
     with _jobs_lock:
         job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job ikke fundet")
+    # 2026-08-06 (Claude, Peter — fuld hierarki-gennemgang): se begrundelse i
+    # start_import() ovenfor — samme kunde-skopering skal håndhæves når status
+    # slås op, ellers kan en kunde-admin gætte/observere et andet kunde-jobs
+    # 8-tegns job_id og se dets fremdrift/kunde-/site-/kameranavn.
+    from main import _ensure_customer_access, get_current_user
+    current_user = get_current_user(request, db)
+    _ensure_customer_access(current_user, job.get("customer_id"))
     pct = round(job["processed"] / job["total"] * 100) if job["total"] else 0
     # job_id SKAL med — UI'et poller /status/{activeJob.job_id}, og _jobs-dicten
     # indeholder ikke selv job_id. Uden dette bliver activeJob.job_id undefined
@@ -635,10 +695,19 @@ def get_import_status(job_id: str):
 
 
 @router.get("/jobs")
-def list_import_jobs():
-    """Liste alle import jobs (seneste først)."""
+def list_import_jobs(request: Request, db: Session = Depends(get_db)):
+    """Liste alle import jobs (seneste først), skoperet til brugerens kunde."""
+    # 2026-08-06 (Claude, Peter — fuld hierarki-gennemgang): uden dette tjek
+    # returnerede endpointet ALLE kunders import-jobs (kundenavn, site, kamera)
+    # til enhver admin-bruger, uanset kunde-skopering — samme klasse tenant-leak
+    # som start_import()/get_import_status() ovenfor.
+    from main import _is_platform_admin, get_current_user
+    current_user = get_current_user(request, db)
     with _jobs_lock:
         jobs = list(_jobs.items())
+    if not _is_platform_admin(current_user):
+        user_customer_id = getattr(current_user, "customer_id", None)
+        jobs = [(jid, j) for jid, j in jobs if j.get("customer_id") == user_customer_id]
     return [
         {"job_id": jid, **{k: v for k, v in j.items() if k != "log"}}
         for jid, j in reversed(jobs)

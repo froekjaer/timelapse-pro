@@ -9,6 +9,7 @@ import {
   Wifi, WifiOff, Clock, Activity, Copy, CheckCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { SshTerminalModal } from '../components/SshTerminalModal'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -146,6 +147,7 @@ export function SshTunnelPage() {
   const [loading, setLoading]       = useState(true)
   const [lastRefresh, setLast]      = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [terminalDeviceId, setTerminalDeviceId] = useState<string | null>(null)
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true)
@@ -163,7 +165,14 @@ export function SshTunnelPage() {
     return () => clearInterval(t)
   }, [load])
 
-  const sshCmd = (t: ActiveTunnel) => `ssh -p ${t.remote_port} orangepi@localhost`
+  // 2026-08-06 (Claude, Peter): manglede -i her — uden den prøver ssh brugerens
+  // egen standard-identitet, som edge-billedet aldrig har fået den offentlige
+  // nøgle til (kun ~/.ssh/timelapse_headend_ed25519.pub bliver bagt ind som
+  // autoriseret nøgle for "orangepi"-brugeren ved billed-generering, se
+  // headend/main.py's _headend_key_path). Gav "Permission denied (publickey)"
+  // ved første forsøg.
+  const sshCmd = (t: ActiveTunnel) =>
+    `ssh -p ${t.remote_port} -i ~/.ssh/timelapse_headend_ed25519 orangepi@localhost`
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -234,14 +243,27 @@ export function SshTunnelPage() {
                   <p className="text-sm font-mono font-semibold text-gray-800">{t.local_port ?? '—'}</p>
                 </div>
               </div>
+              <div className="flex items-center gap-2 mb-1">
+                <button
+                  onClick={() => setTerminalDeviceId(t.device_id)}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-medium rounded-lg transition-colors"
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  Åbn terminal i browser
+                </button>
+              </div>
               <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between">
                 <code className="text-xs text-green-400 font-mono">{sshCmd(t)}</code>
                 <CopyBtn text={sshCmd(t)} />
               </div>
+              <p className="text-[10px] text-gray-300 mt-1">eller kopiér kommandoen ovenfor og forbind fra din egen terminal</p>
               <TunnelLog deviceId={t.device_id} />
             </div>
           ))}
         </div>
+      )}
+      {terminalDeviceId && (
+        <SshTerminalModal deviceId={terminalDeviceId} onClose={() => setTerminalDeviceId(null)} />
       )}
     </div>
   )

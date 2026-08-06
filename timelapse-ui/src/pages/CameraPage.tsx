@@ -302,6 +302,25 @@ export function CameraPage() {
     loadCameraLocation()
   }, [deviceId])
 
+  // 2026-08-06 (Claude, Peter fik React error #310 ved klik på tandhjulet):
+  // disse to hooks lå tidligere EFTER "if (loading) return"/"if (!device) return"
+  // nedenfor — et brud på Reglerne for Hooks (hooks skal kaldes ubetinget, i
+  // samme rækkefølge, på hvert render). Så snart data var hentet og komponenten
+  // rendered forbi de tidlige returns, kaldte den to hooks MERE end på det
+  // foregående (indlæser-)render, hvilket React opdager og krascher på. Flyttet
+  // her, før alle early returns — den interne null-guard (`if (!btTotp?.
+  // current_code) return`) sikrer at de forbliver no-op indtil btTotp er hentet.
+  useEffect(() => {
+    if (!btTotp?.current_code) return
+    const tick = setInterval(() => setBtTotpCountdown(s => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(tick)
+  }, [Boolean(btTotp?.current_code)])
+
+  useEffect(() => {
+    if (!btTotp?.current_code || btTotpCountdown > 0) return
+    loadBtTotp()
+  }, [btTotpCountdown, Boolean(btTotp?.current_code)])
+
   function setParam(path: string, value: string) {
     setOverrides(prev => setNestedValue(prev, path, value === '' ? null : value))
   }
@@ -354,10 +373,23 @@ export function CameraPage() {
   async function deleteDevice() {
     if (!confirmDelete) { setConfirmDelete(true); return }
     try {
-      await api(`/api/admin/devices/${pathSegment(deviceId ?? '')}`, { method: 'DELETE' })
+      const res = await fetch(`${getApiUrl()}/api/admin/devices/${pathSegment(deviceId ?? '')}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.detail || `HTTP ${res.status}`)
+      }
       navigate('/')
-    } catch {
-      setError('Sletning fejlede')
+    } catch (e: any) {
+      // 2026-08-06 (Claude, Peter): denne knap sletter kun enhedens hardware-
+      // registrering — billeder tilhører kamera-lokationen og forsvinder ikke
+      // (se _ensure_capture_camera_access()/camera_id-arkitekturen). Backend
+      // blokerer dog sletning hvis enheden har billeder UDEN en kamera-lokations-
+      // binding (ville blive utilgængelige) — vis den forklaring i stedet for en
+      // generisk fejl.
+      setError(e?.message || 'Sletning fejlede')
       setConfirmDelete(false)
     }
   }
@@ -403,19 +435,6 @@ export function CameraPage() {
     } catch { setBtTotpError('Netværksfejl ved hentning af lokal adgang') }
     finally { setBtTotpLoading(false) }
   }
-
-  // Indbygget TOTP-klient: tæl ned lokalt, og genhent en frisk kode fra
-  // serveren når vinduet skifter (samme mønster som DevicePage.tsx).
-  useEffect(() => {
-    if (!btTotp?.current_code) return
-    const tick = setInterval(() => setBtTotpCountdown(s => Math.max(0, s - 1)), 1000)
-    return () => clearInterval(tick)
-  }, [Boolean(btTotp?.current_code)])
-
-  useEffect(() => {
-    if (!btTotp?.current_code || btTotpCountdown > 0) return
-    loadBtTotp()
-  }, [btTotpCountdown, Boolean(btTotp?.current_code)])
 
   async function provisionBtTotp(rotate = false) {
     if (!deviceId) return
@@ -924,12 +943,13 @@ export function CameraPage() {
             confirmDelete ? 'bg-red-500 text-white border-red-500' : 'text-red-400 border-red-200 hover:bg-red-50'
           }`}>
           <Trash2 className="w-4 h-4" />
-          {confirmDelete ? 'Bekræft sletning' : 'Slet kamera'}
+          {confirmDelete ? 'Bekræft sletning af enhed' : 'Fjern Edge-enhed'}
         </button>
       </div>
       {confirmDelete && (
         <p className="text-xs text-red-400 mt-2 text-right">
-          Klik igen for at bekræfte — dette kan ikke fortrydes!
+          Klik igen for at bekræfte — dette kan ikke fortrydes! Fjerner kun denne enheds hardware-registrering.
+          Billeder tilhører kamera-lokationen og bevares.
         </p>
       )}
     </div>

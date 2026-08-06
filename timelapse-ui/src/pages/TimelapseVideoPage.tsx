@@ -136,7 +136,14 @@ function fmtDate(iso: string | null): string {
 // ── Hoved komponent ──────────────────────────────────────────────────────────
 
 export default function TimelapseVideoPage() {
-  const { id: deviceId } = useParams<{ id: string }>()
+  // 2026-08-06 (Claude, Peter): siden nås enten via /devices/:id/timelapse
+  // (device-centreret, bruges fra DevicePage) eller /camera-locations/:cameraId/timelapse
+  // (kamera-lokations-centreret — den permanente indgang, virker uanset om et
+  // Edge-device aktuelt er tilsluttet lokationen). Kun ét af de to route-params
+  // er sat afhængig af hvilken rute der matchede.
+  const { id: deviceId, cameraId } = useParams<{ id?: string; cameraId?: string }>()
+  const backHref = cameraId ? `/camera-locations/${pathSegment(cameraId)}` : `/devices/${pathSegment(deviceId ?? '')}`
+  const headerLabel = cameraId ?? deviceId
 
   // Tidsinterval
   const now = new Date()
@@ -176,7 +183,7 @@ export default function TimelapseVideoPage() {
   // ── Hent frames ────────────────────────────────────────────────────────────
 
   const loadFrames = useCallback(async () => {
-    if (!deviceId) return
+    if (!deviceId && !cameraId) return
     setLoading(true)
     setLoadError(null)
     setFrames([])
@@ -185,7 +192,7 @@ export default function TimelapseVideoPage() {
       const start = new Date(startTime).toISOString()
       const end   = new Date(endTime).toISOString()
       const params = new URLSearchParams({
-        device_id: deviceId!,
+        ...(cameraId ? { camera_id: cameraId } : { device_id: deviceId! }),
         start, end,
         min_blur: String(settings.min_blur),
         quality_only: String(settings.quality_only),
@@ -207,7 +214,7 @@ export default function TimelapseVideoPage() {
     } finally {
       setLoading(false)
     }
-  }, [deviceId, startTime, endTime, settings.min_blur, settings.quality_only, settings.day_night, settings.min_brightness, settings.max_brightness])
+  }, [deviceId, cameraId, startTime, endTime, settings.min_blur, settings.quality_only, settings.day_night, settings.min_brightness, settings.max_brightness])
 
   // ── Toggle frame ───────────────────────────────────────────────────────────
 
@@ -238,6 +245,7 @@ export default function TimelapseVideoPage() {
           query: aiQuery,
           purpose: 'timelapse',
           device_id: deviceId,
+          camera_id: cameraId,
           candidate_ids: frames.map(f => f.id),
           limit: Math.min(frames.length, 500),
         }),
@@ -272,7 +280,7 @@ export default function TimelapseVideoPage() {
       const result = await apiCall('/api/timelapse/create', {
         method: 'POST',
         body: JSON.stringify({
-          device_id:          deviceId,
+          ...(cameraId ? { camera_id: cameraId } : { device_id: deviceId }),
           frame_ids:          selectedFrames.map(f => f.id),
           fps:                settings.fps,
           resolution:         settings.resolution,
@@ -330,12 +338,12 @@ export default function TimelapseVideoPage() {
       {/* Header */}
       <div className="border-b border-white/10 bg-gray-900/80 backdrop-blur-sm sticky top-0 z-20">
         <div className="max-w-screen-2xl mx-auto px-4 h-14 flex items-center gap-3">
-          <Link to={`/devices/${pathSegment(deviceId ?? '')}`} className="text-white/40 hover:text-white transition-colors">
+          <Link to={backHref} className="text-white/40 hover:text-white transition-colors">
             <ArrowLeft className="w-4 h-4" />
           </Link>
           <Film className="w-5 h-5 text-sky-400" />
           <h1 className="font-semibold text-sm">Timelapse Video</h1>
-          <span className="text-white/30 text-xs font-mono">{deviceId}</span>
+          <span className="text-white/30 text-xs font-mono">{headerLabel}</span>
         </div>
       </div>
 
