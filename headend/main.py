@@ -5793,9 +5793,11 @@ def assign_camera_to_device(
 from api.camera_locations_api import router as _camera_locations_router
 from api.export_api import router as _export_router
 from api.ssh_tunnel_terminal_api import router as _ssh_tunnel_terminal_router
+from api.captures_timeline_api import router as _captures_timeline_router
 app.include_router(_camera_locations_router)
 app.include_router(_export_router)
 app.include_router(_ssh_tunnel_terminal_router)
+app.include_router(_captures_timeline_router)
 
 
 
@@ -16596,90 +16598,8 @@ async def get_live_stream(
     )
 
 
-@app.get("/api/admin/captures/timeline")
-def captures_timeline(
-    device_id: Optional[str] = None,
-    camera_id: Optional[str] = None,
-    year:  Optional[int] = None,
-    month: Optional[int] = None,
-    day:   Optional[int] = None,
-    _user=require_role("viewer"),
-    db: Session = Depends(get_db),
-):
-    """
-    Hent captures til timeline navigation.
-    - Uden parametre: returner antal captures per dag (alle tider)
-    - Med year+month+day: returner alle captures den dag
-
-    2026-08-06 (Claude, Peter): camera_id tilføjet som alternativ til
-    device_id — Tidslinje-fanen krævede indtil nu altid et fysisk device,
-    hvilket gjorde den permanent utilgængelig for en kamera-lokation uden en
-    aktiv Edge (netop det tilfælde camera_id-arkitekturen findes for). Samme
-    adgangskontrol-mønster som list_captures() ovenfor.
-    """
-    if not device_id and not camera_id:
-        raise HTTPException(status_code=400, detail="device_id eller camera_id påkrævet")
-    if device_id:
-        _ensure_capture_device_access(db, _user, device_id)
-        base_filter = Capture.device_id == device_id
-    else:
-        cam = db.query(Camera).filter_by(id=camera_id).first()
-        if not cam:
-            raise HTTPException(status_code=404, detail="Kamera ikke fundet")
-        if cam.site_id:
-            _ensure_site_access(db, _user, cam.site_id)
-        elif cam.customer_id:
-            _ensure_customer_access(_user, cam.customer_id)
-        base_filter = Capture.camera_id == camera_id
-
-    q = db.query(Capture).filter(base_filter, Capture.captured_at.isnot(None))
-
-    if year and month and day:
-        # Hent alle captures på en specifik dag
-        from datetime import date
-        from sqlalchemy import func
-        tz = "Europe/Copenhagen"
-        local_ts = func.timezone(tz, Capture.captured_at)
-        captures = q.filter(
-            func.extract("year",  local_ts) == year,
-            func.extract("month", local_ts) == month,
-            func.extract("day",   local_ts) == day,
-        ).order_by(Capture.captured_at.asc()).all()
-        return [
-            {
-                "id":           c.id,
-                "device_id":    c.device_id,
-                "filename":     c.filename,
-                "captured_at":  c.captured_at.isoformat() if c.captured_at else None,
-                "quality_flag": c.quality_flag,
-                "quality_passed": c.quality_passed,
-                "blur_score":   round(c.blur_score, 1) if c.blur_score else None,
-                "brightness":   round(c.brightness_mean, 1) if c.brightness_mean else None,
-                "filesize_mb":  round(c.filesize / 1e6, 1) if c.filesize else None,
-                "uploaded":     c.uploaded,
-                "ai_result":      c.ai_result if hasattr(c, 'ai_result') else None,
-                "ai_analyzed_at": c.ai_analyzed_at.isoformat() if hasattr(c, 'ai_analyzed_at') and c.ai_analyzed_at else None,
-                "ai_tags":        json.loads(c.ai_tags) if hasattr(c, 'ai_tags') and c.ai_tags else None,
-            }
-            for c in captures
-        ]
-    else:
-        # Returner daglig tæller for hele historikken
-        from sqlalchemy import func
-        from sqlalchemy import func as _func, text as _text
-        tz = "Europe/Copenhagen"
-        local_ts = func.timezone(tz, Capture.captured_at)
-        rows = db.query(
-            func.extract("year",  local_ts).label("year"),
-            func.extract("month", local_ts).label("month"),
-            func.extract("day",   local_ts).label("day"),
-            func.count(Capture.id).label("count")
-        ).filter(base_filter, Capture.captured_at.isnot(None)
-        ).group_by("year", "month", "day").order_by("year", "month", "day").all()
-        return [
-            {"year": int(r.year), "month": int(r.month), "day": int(r.day), "count": r.count}
-            for r in rows
-        ]
+# /api/admin/captures/timeline moved to api/captures_timeline_api.py (2026-08-07,
+# architecture ratchet extraction — see that module's docstring).
 
 
 # ═══════════════════════════════════════════════════════════════════════════
