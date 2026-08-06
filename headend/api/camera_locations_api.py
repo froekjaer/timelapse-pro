@@ -113,6 +113,7 @@ def retire_empty_camera_location(
 
     camera.retired_at = now_utc()
     db.add(Event(
+        device_id="HEADEND",
         level="INFO",
         category="camera_location_retired",
         message=f"Empty camera location retired: {camera.camera_name or camera_id}",
@@ -174,6 +175,7 @@ def move_camera_captures(
         )
     )
     db.add(Event(
+        device_id="HEADEND",
         level="INFO",
         category="camera_location_captures_moved",
         message=f"{moved} billeder flyttet: {source.camera_name or camera_id} → {target.camera_name or to_camera_id}",
@@ -240,6 +242,7 @@ def force_delete_camera_location(
     db.query(Capture).filter(Capture.camera_id == camera_id).delete(synchronize_session=False)
     db.query(DeviceAssignment).filter_by(camera_id=camera_id).delete(synchronize_session=False)
     db.add(Event(
+        device_id="HEADEND",
         level="WARNING",
         category="camera_location_force_deleted",
         message=f"Kamera-lokation PERMANENT slettet inkl. {capture_count} billed-rækker: {expected_name}",

@@ -68,3 +68,25 @@ def test_camera_locations_router_is_included_from_main() -> None:
     main_source = (ROOT / "headend" / "main.py").read_text(encoding="utf-8")
     assert "from api.camera_locations_api import router as _camera_locations_router" in main_source
     assert "app.include_router(_camera_locations_router)" in main_source
+
+
+def test_all_events_in_this_module_set_device_id() -> None:
+    """Regression test (2026-08-06): force_delete_camera_location() returned
+    HTTP 500 on first live use — Event.device_id is NOT NULL in the schema,
+    but none of the three Event(...) calls in this module (retire, move,
+    force-delete) set it, since none of these actions are about a specific
+    physical device. The failed commit rolled the whole transaction back
+    cleanly (get_db()'s finally: db.rollback()), so no data was lost, but the
+    request still 500'd. Fixed by using the same "HEADEND" sentinel
+    device_id already used elsewhere in main.py for headend-originated
+    events not tied to a device (see main.py's device_id="HEADEND" usage and
+    siem.py's "HEADEND-LOCAL" convention)."""
+    import re
+    for match in re.finditer(r"Event\(\s*\n", SOURCE):
+        block_start = match.end()
+        block_end = SOURCE.index("))", block_start)
+        block = SOURCE[block_start:block_end]
+        assert "device_id=" in block, (
+            f"Event(...) call near offset {match.start()} is missing device_id "
+            "(NOT NULL column) — will 500 on commit"
+        )
