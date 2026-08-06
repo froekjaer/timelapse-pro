@@ -1,12 +1,23 @@
 # TimeLapse Pro — Hardware target: OrangePi 4 Pro
-# SoC: Rockchip RK3399 (2x Cortex-A72 + 4x Cortex-A53 @ 2.0GHz / 1.5GHz)
-# GPU: Mali-T860MP4
-# NPU: ingen
+# SoC: Allwinner A733 (sun60iw2), NOT Rockchip RK3399 — this comment block
+#   previously described the older RK3399-based "Orange Pi 4"/"Orange Pi 4
+#   LTS" (likely copy-paste from that board's docs). Confirmed on real
+#   hardware via `platform.platform()` -> "Linux-5.15.147-sun60iw2-aarch64"
+#   and device-tree model "sun60iw2" on both fielded units
+#   (TL-C87FF9587CA0, TL-043EB9E72EFD), and via
+#   edge/scripts/timelapse-bt-pan.sh:4 ("OrangePi 4 Pro (Allwinner
+#   A733/sun60iw2, AIC8800 BT chip)"). See
+#   Dokumentation/Claude_Findings_Edge_Generator_og_TL-043EB9E72EFD_2026-08-04.md
+#   F-05 for full evidence.
+# NPU: present (Allwinner A733 NPU, up to 3 TOPS INT8/INT16/FP16/BF16) — NOT
+#   absent as previously documented. See edge/npu_viplite/ for the existing
+#   VIPLite wrapper/runtime work for this exact chip.
 # Arch: arm64 (aarch64)
 # Boot: SPI Flash (U-Boot) → NVMe SSD (via nand-sata-install)
 # Base OS: OrangePi official Ubuntu Jammy Server
 #
-# VIGTIGT: Brug officielt OrangePi-image — Armbian mangler RK3399-NPU-support.
+# VIGTIGT: Brug officielt OrangePi-image — det er den eneste kilde med
+# understøttelse for denne Allwinner A733/sun60iw2-variant.
 
 id: orangepi4pro
 display_name: "OrangePi 4 Pro"
@@ -14,7 +25,7 @@ arch: arm64
 docker_platform: linux/arm64
 docker_base: arm64v8/ubuntu:22.04
 hal_class: orangepi
-soc: RK3399
+soc: "Allwinner A733 (sun60iw2)"
 
 base_image:
   # Officielt OrangePi Ubuntu Server image — kun tilgængeligt via Google Drive.
@@ -63,7 +74,8 @@ extra_packages:
 device_tree_model_patterns:
   - "orangepi 4 pro"
   - "orange pi 4 pro"
-  - "rk3399"
+  - "sun60iw2"
+  - "a733"
 
 agent_install:
   agent_dir: /opt/timelapse/edge
@@ -73,8 +85,11 @@ agent_install:
   service_name: timelapse-edge
 
 notes: |
-  OrangePi 4 Pro (RK3399) — officielt OrangePi Ubuntu Jammy Server image.
-  Kernel: linux5.15.x (RK3399 BSP — vendor-specifik fra OrangePi).
+  OrangePi 4 Pro (Allwinner A733/sun60iw2) — officielt OrangePi Ubuntu Jammy
+  Server image. Kernel: linux5.15.x (A733/sun60iw2 BSP — vendor-specifik fra
+  OrangePi). Se target orangepi4pro-noble for en checksum-pinnet Ubuntu
+  24.04 (Noble) variant af samme base — det er den OS-version der reelt har
+  kørt stabilt i produktion i månedsvis (TL-C87FF9587CA0).
   GPIO relay pins: sysfs 356 (Kamera), 361 (Modem). Pin 2=VCC, Pin 6=GND.
   NVMe flash-workflow: flash til SD → boot → sudo nand-sata-install → boot fra NVMe.
   Image: https://drive.google.com/drive/folders/1TcFAGTblG_gbDhwFotEWS0y78LwHA-VG

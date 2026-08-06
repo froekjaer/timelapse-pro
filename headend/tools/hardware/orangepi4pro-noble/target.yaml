@@ -1,0 +1,147 @@
+# TimeLapse Pro — Hardware target: OrangePi 4 Pro (Ubuntu 24.04 Noble variant)
+#
+# SoC: Allwinner A733 (sun60iw2). Same physical hardware/kernel/u-boot/dtb as
+# target `orangepi4pro` — see that target.yaml for the full SoC/NPU note.
+#
+# WHY THIS TARGET EXISTS: the only Orange Pi 4 Pro that has actually run
+# stably in production for months (TL-C87FF9587CA0) is NOT running the plain
+# vendor Jammy image that `orangepi4pro`'s base_image downloads — it was
+# manually upgraded to Ubuntu 24.04 (Noble) via the OS's own
+# `do-release-upgrade` on 2026-02-27 (proof: /var/log/dist-upgrade/20260227-1848
+# on that device). The generator had therefore never actually built+validated
+# an image matching the one real-world proven-good configuration.
+#
+# HOW THIS BASE IMAGE WAS BUILT (2026-08-05, Claude + Peter):
+#   Started from the same checksum-pinned vendor Jammy .img that `orangepi4pro`
+#   uses (headend/tools/hardware/orangepi4pro/target.yaml, sha256
+#   db89a574...), then reproduced the jammy->noble transition offline:
+#     1. `apt-mark hold` on linux-image-current-sun60iw2,
+#        linux-dtb-current-sun60iw2, linux-u-boot-orangepi4pro-current —
+#        these are OrangePi's own vendor-built kernel/dtb/u-boot packages,
+#        not present in Ubuntu's own archives, and MUST survive untouched:
+#        a stock Ubuntu/generic arm64 kernel does not have Allwinner
+#        A733/sun60iw2 support.
+#     2. Grew the working copy's single ext4 partition by 6G (the vendor
+#        image's 3.4G partition is sized for a minimal Jammy SD-card seed
+#        image, not for the ~800-package churn of a full release upgrade;
+#        on real hardware this never matters because nand-sata-install
+#        migrates the rootfs to a big NVMe before anyone upgrades it). The
+#        resulting image is therefore bigger than the plain Jammy one
+#        (~9.4G raw / ~1.7G xz vs. ~3.6G raw) — deliberately not shrunk back,
+#        to avoid the risk of a partition-shrink step corrupting the image.
+#     3. In a privileged chroot (native arm64, no qemu needed — bind-mounted
+#        /dev, /proc, /sys, policy-rc.d blocking service (re)starts):
+#        rewrote /etc/apt/sources.list jammy->noble, `apt-get update`, then
+#        `apt-get full-upgrade` with `--force-confdef --force-confold` (keep
+#        OrangePi's vendor-modified conffiles over incoming Debian defaults —
+#        the same choice a human gets as the interactive default).
+#     4. Verified after upgrade: /etc/os-release reports Ubuntu 24.04.4 LTS
+#        (matches TL-C87FF9587CA0 exactly), glibc 2.39-0ubuntu8.8 (matches
+#        exactly), the 3 held vendor packages are untouched at their original
+#        1.0.6 version, `dpkg --audit` and `apt-get check` both clean.
+#   Full build script: headend/tools/hardware/orangepi4pro-noble/build_noble_base.sh
+#   (git-tracked for reproducibility — NOT part of the automated generator
+#   pipeline; run manually, against a --privileged Docker container, whenever
+#   this base needs rebuilding, e.g. for a future Noble point release).
+#
+# NOT YET DONE / Peter decision needed:
+#   - This artifact is only in the LOCAL .base_image_cache on this Mac right
+#     now (gitignored, not in git, not yet in any external backup/Drive
+#     mirror). It builds fine on THIS machine because the cache is
+#     pre-populated with a file matching the sha256 below, but the `url`
+#     below is a placeholder, NOT a working download link — a fresh
+#     checkout/machine cannot self-bootstrap this target yet. Needs hosting
+#     (e.g. alongside the existing vendor image on Google Drive) before this
+#     stops being single-machine-only.
+#   - NOT flashed to any real hardware yet. NOT boot-tested. Contract tests
+#     (tests/test_edge_image_build_contract.py etc.) validate the *pipeline*
+#     wiring, not that this specific rootfs boots on real Allwinner
+#     A733/sun60iw2 silicon. Before flashing Kamera 2 with this, do at least
+#     one supervised build+flash+boot cycle.
+#
+# Arch: arm64 (aarch64)
+# Boot: SPI Flash (U-Boot) → NVMe SSD (via nand-sata-install) — unchanged
+# Base OS: Ubuntu 24.04 (Noble) — upgraded from OrangePi official Jammy Server
+
+id: orangepi4pro-noble
+display_name: "OrangePi 4 Pro (Ubuntu 24.04 Noble)"
+arch: arm64
+docker_platform: linux/arm64
+docker_base: ubuntu:24.04
+hal_class: orangepi
+soc: "Allwinner A733 (sun60iw2)"
+
+base_image:
+  # NOT a working download URL yet — see "Peter decision needed" above.
+  # `.invalid` is the RFC 2606 TLD reserved for exactly this ("known not to
+  # resolve") — the filename suffix must still match the cached artifact's
+  # name below, since the downloader derives the cache filename from the
+  # URL's last path segment. Locally cached copy already matches the pinned
+  # sha256 below, so builds on this Headend machine work today without ever
+  # touching this URL (the cache-hit path never makes a network call).
+  type: orangepi
+  url: "https://not-yet-hosted.invalid/orangepi4pro-noble.img.xz"
+  filename: "orangepi4pro-noble.img.xz"
+  extracted_filename: "orangepi4pro-noble.img"
+  # sha256 of the locally-built, offline-upgraded image — computed 2026-08-05.
+  sha256: "056f00ed466c26504cba982c0774d04a86ffe84c08f9efd0e08972f00a7b43e8"
+  extract: xz
+  # Same single-partition layout as the Jammy base — the offline upgrade only
+  # rewrote packages inside the existing ext4 partition (grown, not
+  # repartitioned into multiple partitions).
+  boot_partition: null
+  root_partition: 1
+
+wifi_method: netplan
+# Ubuntu Noble still uses netplan + networkd for WiFi (unchanged from Jammy).
+
+boot_method: uboot_spiflash
+# U-Boot i SPI Flash (128Mb onboard). System på NVMe SSD.
+# Flash-workflow:
+#   1. Flash dette image til SD-kort med balenaEtcher
+#   2. Boot fra SD → sudo nand-sata-install → "Boot from SPI - system on NVMe"
+#   3. Bootloader til SPI Flash, rootfs til NVMe
+#   4. Fjern SD, boot fra NVMe
+
+extra_packages:
+  # Kamera (Canon EOS 1300D, Nikon m.fl.) via USB PTP/MTP
+  - gphoto2
+  - libgphoto2-6
+  - libgphoto2-port12
+  # GPS (u-blox og andre NMEA USB-enheder)
+  - gpsd
+  - gpsd-clients
+  - python3-gps
+  # SSH reverse tunnel (edge → headend) — note: F-02/E-2 finding
+  # (Claude_Findings_Edge_Generator_og_TL-043EB9E72EFD_2026-08-04.md) shows
+  # autossh is absent even on the stable TL-C87FF9587CA0 and unused in
+  # practice (the real tunnel is the config-driven SshTunnelManager inside
+  # timelapse-edge). Kept here for parity with the orangepi4pro target
+  # rather than silently dropping it.
+  - autossh
+  # Bluetooth remote management
+  - bluez
+  - bluez-tools
+  - python3-dbus
+
+device_tree_model_patterns:
+  - "orangepi 4 pro"
+  - "orange pi 4 pro"
+  - "sun60iw2"
+  - "a733"
+
+agent_install:
+  agent_dir: /opt/timelapse/edge
+  venv_dir:  /opt/timelapse/venv
+  data_dir:  /data
+  config_dir: /etc/timelapse
+  service_name: timelapse-edge
+
+notes: |
+  OrangePi 4 Pro (Allwinner A733/sun60iw2) — same hardware as target
+  `orangepi4pro`, but with the base image pre-upgraded to Ubuntu 24.04
+  (Noble) to match the one real-world proven-stable device (TL-C87FF9587CA0,
+  months of production uptime). See the file header above for the full
+  build method and open follow-ups.
+  GPIO relay pins: sysfs 356 (Kamera), 361 (Modem). Pin 2=VCC, Pin 6=GND.
+  NVMe flash-workflow: flash til SD → boot → sudo nand-sata-install → boot fra NVMe.

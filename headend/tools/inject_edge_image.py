@@ -497,6 +497,10 @@ for TAR_PATH in \
     "etc/systemd/system/timelapse-bt-agent.service" \
     "etc/systemd/system/timelapse-captive.service" \
     "etc/systemd/system/timelapse-totp.service" \
+    "etc/systemd/system/timelapse-breakglass-setup.service" \
+    "etc/systemd/system/timelapse-watchdog.service" \
+    "etc/systemd/system/timelapse-timesync.service" \
+    "etc/systemd/system/timelapse-timesync.timer" \
     "usr/bin/gphoto2" \
     "usr/lib/aarch64-linux-gnu/libgphoto2.so.6" \
     "usr/lib/aarch64-linux-gnu/libgphoto2.so.6.1.0" \
@@ -606,7 +610,16 @@ fi
 
 # First boot must include the complete local technician surface. Previously
 # these signed unit files were built but not copied into flashable images.
-for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-captive.service timelapse-totp.service; do
+#
+# 2026-08-06 (Claude): timelapse-edge.service (selve capture-agenten) og
+# timelapse-watchdog.service (genstarter agenten + sikrer relæet, hvis den
+# hænger) manglede HELT fra denne liste — et frisk-flashet device ville aldrig
+# selv begynde at capture, og ville ALDRIG kunne nå frem til sin første
+# artifact-opdatering (som er den normale vej watchdog/timesync ellers ville
+# være kommet med), fordi netop den agent der henter opdateringer aldrig var
+# startet. TL-C87FF9587CA0 fik dem kun fordi den blev sat op manuelt, uden om
+# denne pipeline.
+for UNIT in timelapse-edge.service timelapse-bt-pan.service timelapse-bt-agent.service timelapse-captive.service timelapse-totp.service timelapse-breakglass-setup.service timelapse-watchdog.service; do
     if [ -f "/mnt/root/etc/systemd/system/$UNIT" ]; then
         ln -sf "/etc/systemd/system/$UNIT" "$WANTS_DIR/$UNIT"
         echo "[inject]   $UNIT aktiveret"
@@ -614,6 +627,19 @@ for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-captiv
         echo "[inject]   ADVARSEL: $UNIT mangler i rootfs"
     fi
 done
+
+# timelapse-timesync er en .timer, ikke en almindelig service — aktiveres via
+# timers.target.wants, ikke multi-user.target.wants (matcher dens eget
+# [Install] WantedBy=timers.target).
+TIMERS_WANTS_DIR=/mnt/root/etc/systemd/system/timers.target.wants
+mkdir -p "$TIMERS_WANTS_DIR"
+if [ -f "/mnt/root/etc/systemd/system/timelapse-timesync.timer" ]; then
+    ln -sf "/etc/systemd/system/timelapse-timesync.timer" \
+        "$TIMERS_WANTS_DIR/timelapse-timesync.timer"
+    echo "[inject]   timelapse-timesync.timer aktiveret"
+else
+    echo "[inject]   ADVARSEL: timelapse-timesync.timer mangler i rootfs"
+fi
 
 # ── WiFi konfiguration ───────────────────────────────────────────────────────
 # WIFI_METHOD, WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY sættes via env-vars fra Python

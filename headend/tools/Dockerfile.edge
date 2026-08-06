@@ -27,12 +27,32 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1
 
 # ── Base packages ───────────────────────────────────────────────
+# gphoto2/libgphoto2 pinned (2026-08-06, Claude). IMPORTANT CAVEAT, found by
+# actually attempting this build (a pin picked without testing would have
+# been silently wrong): TL-C87FF9587CA0 runs 2.5.28, but this Dockerfile
+# builds on Ubuntu 22.04 (jammy) — jammy's repo doesn't carry 2.5.28 at all
+# (2.5.28 is a noble/24.04-era version; `apt-cache policy` on a clean jammy
+# image confirms the candidate is 2.5.27-1). Pinned to jammy's actual
+# available version instead of a version that can never resolve here.
+#
+# This is a symptom of a bigger, unresolved architecture question: the
+# orangepi4pro-noble target injects THIS (jammy-built) app layer onto a
+# NOBLE (24.04) base image (see headend/tools/hardware/orangepi4pro-noble/
+# build_noble_base.sh) — an OS-version mismatch between where gphoto2 is
+# built and where it runs. Almost certainly fine in practice (glibc is
+# backward-compatible; a jammy-built binary + its co-shipped libs generally
+# run fine on a newer glibc), and inject_edge_image.py already copies the
+# gphoto2 binary WITH its associated shared libraries (not just the binary
+# alone) for exactly this reason — but this has only been verified by
+# reasoning about it, not by an actual boot test on real hardware. Treat
+# any noble-target boot failure around camera detection as the first place
+# to look.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv \
         ca-certificates curl gnupg2 \
         openssh-server openssh-client \
         iproute2 iputils-ping dnsutils \
-        rsync autossh gphoto2 libgphoto2-6 libgphoto2-port12 \
+        rsync autossh gphoto2=2.5.27-1 libgphoto2-6=2.5.27-1ubuntu0.1 libgphoto2-port12=2.5.27-1ubuntu0.1 \
         gpsd gpsd-clients bluez avahi-daemon libnss-mdns \
     && rm -rf /var/lib/apt/lists/*
 
@@ -116,8 +136,15 @@ COPY edge/scripts/timelapse-bt-pan.service /etc/systemd/system/timelapse-bt-pan.
 COPY edge/scripts/timelapse-bt-agent.service /etc/systemd/system/timelapse-bt-agent.service
 COPY edge/scripts/timelapse-captive.service /etc/systemd/system/timelapse-captive.service
 COPY edge/scripts/timelapse-totp.service /etc/systemd/system/timelapse-totp.service
+COPY edge/scripts/timelapse-breakglass-setup.service /etc/systemd/system/timelapse-breakglass-setup.service
+# 2026-08-06 (Claude): watchdog + timesync kørte allerede live på TL-C87FF9587CA0
+# (manuelt tilføjet ved den maskines oprindelige, ikke-pipeline opsætning) men
+# manglede helt fra denne pipeline — en frisk-flashet enhed ville aldrig få dem.
+COPY edge/scripts/timelapse-watchdog.service /etc/systemd/system/timelapse-watchdog.service
+COPY edge/scripts/timelapse-timesync.service /etc/systemd/system/timelapse-timesync.service
+COPY edge/scripts/timelapse-timesync.timer /etc/systemd/system/timelapse-timesync.timer
 COPY edge/scripts/bootstrap_agent.py /opt/timelapse/edge/scripts/bootstrap_agent.py
-RUN chmod 0644 /etc/systemd/system/timelapse-*.service \
+RUN chmod 0644 /etc/systemd/system/timelapse-*.service /etc/systemd/system/timelapse-*.timer \
     && chmod 0755 /opt/timelapse/edge/scripts/*.sh
 
 EXPOSE 22

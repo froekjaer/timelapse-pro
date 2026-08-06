@@ -79,6 +79,66 @@ def test_flashable_injection_copies_and_enables_all_local_management_units() -> 
     assert "expected_device_id" in source
 
 
+def test_flashable_injection_enables_the_core_capture_agent_and_watchdog() -> None:
+    """Regression test (2026-08-06): timelapse-edge.service — the actual capture
+    agent — was extracted from the rootfs tar but never symlinked into
+    multi-user.target.wants, so a freshly-flashed device would never start
+    capturing and could never reach its first artifact-based update (the
+    normal channel watchdog/timesync would otherwise arrive through).
+    timelapse-watchdog.service and timelapse-timesync.timer had the same
+    gap — present only on TL-C87FF9587CA0 because that device was set up
+    manually, outside this pipeline."""
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+
+    # Extracted from the rootfs tar.
+    for path in (
+        "etc/systemd/system/timelapse-edge.service",
+        "etc/systemd/system/timelapse-watchdog.service",
+        "etc/systemd/system/timelapse-timesync.service",
+        "etc/systemd/system/timelapse-timesync.timer",
+    ):
+        assert f'"{path}"' in source
+
+    # Enabled — services into multi-user.target.wants, the timer into
+    # timers.target.wants (matches each unit's own [Install] WantedBy=).
+    enable_loop = source.split("for UNIT in ", 1)[1].split("done\n", 1)[0]
+    assert "timelapse-edge.service" in enable_loop
+    assert "timelapse-watchdog.service" in enable_loop
+    assert "timers.target.wants" in source
+    assert 'TIMERS_WANTS_DIR/timelapse-timesync.timer"' in source
+
+    # The unit file itself must exist in the repo (it didn't, previously —
+    # only watchdog.sh and the timesync units were tracked).
+    assert (ROOT / "edge" / "scripts" / "timelapse-watchdog.service").is_file()
+
+
+def test_dockerfile_pins_gphoto2_to_a_specific_version() -> None:
+    """Regression test (2026-08-06): gphoto2/libgphoto2 were installed
+    unpinned (repo-default), risking a silent camera-compatibility drift
+    between images built at different times.
+
+    NOT pinned to 2.5.28 (the version field-proven on TL-C87FF9587CA0) —
+    that version doesn't exist in this Dockerfile's Ubuntu 22.04 (jammy)
+    repos at all (confirmed via `apt-cache policy` against a clean jammy
+    image: candidate is 2.5.27-1). Pinned to jammy's actual available
+    version instead — see the Dockerfile comment for the deeper jammy vs.
+    noble base-image mismatch this surfaces."""
+    dockerfile = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
+    assert "gphoto2=2.5.27-1 " in dockerfile
+    assert "libgphoto2-6=2.5.27-1ubuntu0.1" in dockerfile
+    assert "libgphoto2-port12=2.5.27-1ubuntu0.1" in dockerfile
+
+
+def test_dockerfile_copies_watchdog_and_timesync_units() -> None:
+    dockerfile = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
+    for unit in (
+        "timelapse-watchdog.service",
+        "timelapse-timesync.service",
+        "timelapse-timesync.timer",
+    ):
+        assert f"edge/scripts/{unit} /etc/systemd/system/{unit}" in dockerfile
+
+
 def test_flashable_image_refuses_shared_or_unprovisioned_local_access() -> None:
     injector_source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
     portal_source = (ROOT / "edge" / "scripts" / "totp-service.py").read_text()

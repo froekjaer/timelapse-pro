@@ -1,0 +1,12 @@
+[Unit]
+Description=TimeLapse Watchdog
+After=timelapse-edge.service
+
+[Service]
+User=root
+ExecStart=/opt/timelapse/edge/scripts/watchdog.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
