@@ -8,14 +8,43 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from database import get_db
 from services.site_look_config_service import SiteLookConfigService
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin/site-look", tags=["site-look-config"])
+
+
+def _actor_username(request: Request, db: Session = Depends(get_db)) -> str:
+    """Resolve the actual logged-in username for audit attribution, AND
+    re-check the super_admin role directly on the mutating endpoints as
+    defense in depth.
+
+    The router is currently mounted with
+    `dependencies=[require_role("super_admin")]` (headend/main.py), which
+    already enforces the role/MFA check — but that mount-level dependency
+    doesn't inject the resolved user into individual endpoints (so every
+    mutation here was writing the literal string 'admin' as
+    updated_by/deleted_by/reset_by regardless of which admin actually made
+    the change — see HANDOVER_LOG 2026-08-05), and it's a single point of
+    failure: if this router is ever re-mounted, split into a sub-app, or the
+    `dependencies=[...]` line is dropped in a future edit, site-look config
+    for every customer/site/camera silently reverts to unauthenticated
+    read/write. Re-checking here on the write paths means that mistake can't
+    silently reopen this router.
+    """
+    from main import get_current_user
+    user = get_current_user(request, db)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Ikke autentificeret")
+    if user.role != "super_admin":
+        raise HTTPException(status_code=403, detail="Kræver rolle: super_admin")
+    return user.username
 
 
 # ============================================================================
@@ -95,6 +124,7 @@ def get_config(
 def upsert_config(
     data: ConfigUpsert,
     service: SiteLookConfigService = Depends(get_config_service),
+    actor: str = Depends(_actor_username),
 ):
     """Create or update configuration at a hierarchy level."""
     if data.level not in ['global', 'customer', 'site', 'camera']:
@@ -129,7 +159,7 @@ def upsert_config(
         customer_id=data.customer_id,
         site_id=data.site_id,
         camera_id=data.camera_id,
-        updated_by='admin',  # TODO: get from auth context
+        updated_by=actor,
     )
     return result
 
@@ -141,6 +171,7 @@ def delete_config(
     site_id: Optional[str] = Query(None),
     camera_id: Optional[str] = Query(None),
     service: SiteLookConfigService = Depends(get_config_service),
+    actor: str = Depends(_actor_username),
 ):
     """Delete configuration at a hierarchy level (fallback to parent)."""
     if level == 'global':
@@ -151,7 +182,7 @@ def delete_config(
         customer_id=customer_id,
         site_id=site_id,
         camera_id=camera_id,
-        deleted_by='admin',  # TODO: get from auth context
+        deleted_by=actor,
     )
 
     if success:
@@ -164,6 +195,7 @@ def delete_config(
 def reset_config(
     data: ConfigReset,
     service: SiteLookConfigService = Depends(get_config_service),
+    actor: str = Depends(_actor_username),
 ):
     """Reset configuration at a level to defaults."""
     result = service.reset_to_defaults(
@@ -171,7 +203,7 @@ def reset_config(
         customer_id=data.customer_id,
         site_id=data.site_id,
         camera_id=data.camera_id,
-        reset_by='admin',  # TODO: get from auth context
+        reset_by=actor,
     )
     return result
 

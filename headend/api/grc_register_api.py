@@ -26,10 +26,19 @@ WRITE_ROLES = {"admin", "super_admin"}
 
 
 def _current_viewer(request: Request, db: Session = Depends(get_db)):
-    from main import get_current_user
+    """Any authenticated user, with the same MFA-policy enforcement as
+    main.require_role(). This router used to skip that check entirely —
+    grc_register_api/storage_api/headend_generator_api had each hand-rolled
+    their own auth dependency instead of using the shared require_role(),
+    and only this MFA line was missing from the copy. See HANDOVER_LOG
+    2026-08-05. _require_platform_admin below builds on this, so fixing it
+    here is sufficient for both."""
+    from main import _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
     user = get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")
+    if _mfa_required_for_user(db, user) and not _session_is_mfa_verified(_session_payload(request)):
+        raise HTTPException(status_code=403, detail="MFA kræves for denne rolle")
     return user
 
 

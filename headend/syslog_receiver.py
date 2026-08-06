@@ -211,13 +211,24 @@ class RateLimiter:
 
 class SyslogReceiver:
     def __init__(self, host: str, port: int, protocols: set[str], allowlist: list[ipaddress._BaseNetwork],
-                 lab_accept_all: bool, rate_per_source_per_minute: int):
+                 lab_accept_all: bool, rate_per_source_per_minute: int,
+                 global_rate_per_minute: int = 6000, dos_alert_cooldown_s: int = 900):
         self.host = host
         self.port = port
         self.protocols = protocols
         self.allowlist = allowlist
         self.lab_accept_all = lab_accept_all
         self.rate = RateLimiter(rate_per_source_per_minute)
+        # Per-source limiting alone is weak DoS protection: UDP source IPs
+        # are trivially spoofable, so a flood spread across many fake
+        # sources sails straight through it. This global cap is the actual
+        # DoS backstop (2026-08-05, Peter: interim measure while
+        # lab_accept_all still defaults to accepting any source — see
+        # HANDOVER_LOG same date and Del B of
+        # Claude_Findings_Hidden_Config_Audit_2026-08-05.md).
+        self.global_rate = RateLimiter(global_rate_per_minute)
+        self.dos_alert_cooldown_s = dos_alert_cooldown_s
+        self._last_dos_alert = 0.0
         self.selector = selectors.DefaultSelector()
         self.running = True
 
@@ -271,8 +282,13 @@ class SyslogReceiver:
         if not _source_allowed(source_ip, self.allowlist, self.lab_accept_all):
             LOG.warning("Dropped syslog from non-allowlisted source=%s", source_ip)
             return
+        if not self.global_rate.allow("__global__"):
+            LOG.error("GLOBAL syslog rate limit exceeded — dropping (mulig DoS)")
+            self._maybe_alert_dos("global", source_ip)
+            return
         if not self.rate.allow(source_ip):
             LOG.warning("Rate limited syslog source=%s", source_ip)
+            self._maybe_alert_dos("per_source", source_ip)
             return
         try:
             parsed = parse_syslog(data, source_ip)
@@ -283,6 +299,38 @@ class SyslogReceiver:
                 db.close()
         except Exception as exc:
             LOG.warning("Syslog ingest failed source=%s error=%s", source_ip, exc)
+
+    def _maybe_alert_dos(self, kind: str, source_ip: str) -> None:
+        """Send én email/SMS/Teams-alarm pr. cooldown-vindue, ikke én pr.
+        droppet pakke — under en reel flod ville sidstnævnte selv blive en
+        slags DoS mod jeres postkasse/telefon."""
+        now = time.monotonic()
+        if now - self._last_dos_alert < self.dos_alert_cooldown_s:
+            return
+        self._last_dos_alert = now
+        try:
+            from ai.notify import notify
+            db = SessionLocal()
+            try:
+                notify({
+                    "rule_name": "SIEM syslog rate-grænse overskredet (muligt DoS-forsøg)",
+                    "severity": "critical",
+                    "device_id": source_ip,
+                    "triggered_at": datetime.now(timezone.utc).isoformat(),
+                    "description": (
+                        f"Syslog-modtageren har overskredet sin "
+                        f"{'globale' if kind == 'global' else 'kilde-'}rate-grænse og dropper nu events "
+                        f"(seneste kilde-IP: {source_ip}). Dette kan være et forsøg på at overbelaste "
+                        f"SIEM-indtaget (DoS), eller en fejlkonfigureret enhed der spammer logs. "
+                        f"IP-allowlisten (Del B-1, Claude_Findings_Hidden_Config_Audit_2026-08-05.md) "
+                        f"er stadig ikke håndhævet — dette er den interimistiske beskyttelse."
+                    ),
+                    "matched_on": [], "confidence": 1.0, "capture_id": "—",
+                }, db)
+            finally:
+                db.close()
+        except Exception as exc:
+            LOG.warning("DoS-alarm-forsøg fejlede: %s", exc)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -296,6 +344,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--rate-per-source-per-minute",
         type=int,
         default=int(os.getenv("TIMELAPSE_SYSLOG_RATE_PER_SOURCE_PER_MINUTE", "600")),
+    )
+    parser.add_argument(
+        "--global-rate-per-minute",
+        type=int,
+        default=int(os.getenv("TIMELAPSE_SYSLOG_GLOBAL_RATE_PER_MINUTE", "6000")),
+        help="Total events/min across ALL sources — the real DoS backstop, since per-source "
+             "limiting alone is defeated by UDP source-IP spoofing.",
+    )
+    parser.add_argument(
+        "--dos-alert-cooldown-s",
+        type=int,
+        default=int(os.getenv("TIMELAPSE_SYSLOG_DOS_ALERT_COOLDOWN_S", "900")),
+        help="Minimum seconds between DoS email/SMS/Teams alerts, so a sustained flood sends "
+             "one alert per window instead of one per dropped packet.",
     )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args(argv)
@@ -317,6 +379,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         allowlist=_parse_allowlist(args.allowlist),
         lab_accept_all=args.lab_accept_all,
         rate_per_source_per_minute=args.rate_per_source_per_minute,
+        global_rate_per_minute=args.global_rate_per_minute,
+        dos_alert_cooldown_s=args.dos_alert_cooldown_s,
     )
     signal.signal(signal.SIGTERM, receiver.stop)
     signal.signal(signal.SIGINT, receiver.stop)

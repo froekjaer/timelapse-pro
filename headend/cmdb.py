@@ -903,6 +903,30 @@ def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmd
     if not admin_username:
         raise HTTPException(status_code=400, detail="admin_username påkrævet")
 
+    # Global/kunde/site/kameralag-toggle (2026-08-05, Peter) — nægt at
+    # oprette en konto, som alligevel aldrig kan leveres til enheden, jf.
+    # main.py::get_config()'s samme policy-opslag der styrer faktisk
+    # nøgle-levering. Klarere for admin end en konto der stille aldrig virker.
+    from main import _resolve_break_glass_policy
+    device_row = db.query(Device).filter_by(device_id=device_id).first()
+    if device_row:
+        from database import DeviceAssignment
+        active_assignment = (
+            db.query(DeviceAssignment)
+            .filter(DeviceAssignment.device_id == device_id, DeviceAssignment.unassigned_at.is_(None))
+            .first()
+        )
+        bg_policy = _resolve_break_glass_policy(
+            db, customer_id=device_row.customer_id, site_id=device_row.site_id,
+            camera_id=active_assignment.camera_id if active_assignment else None,
+        )
+        if not bg_policy.get("enabled", True):
+            raise HTTPException(
+                status_code=403,
+                detail="Break-glass er deaktiveret for denne enhed i konfigurationshierarkiet "
+                       "(global/kunde/site/kamera). Se Global Config eller enhedens overrides.",
+            )
+
     # Tjek om der allerede eksisterer en aktiv konto
     existing = db.query(BreakGlassAccount).filter_by(
         device_id=device_id, admin_username=admin_username, is_active=True

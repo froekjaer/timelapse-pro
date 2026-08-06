@@ -71,14 +71,21 @@ def _setting(key: str, default: str = "") -> str:
 def _bundle_storage_dir(*, create: bool = True) -> Path:
     """`headend-images` — søskendekatalog til edge-images (samme opløsningsprincip).
 
-    1. `TIMELAPSE_HEADEND_IMAGE_DIR` (env) hvis sat.
-    2. DB-settingen `headend_image_artifact_dir` (UI-redigerbar, spejler
+    1. DB-settingen `headend_image_artifact_dir` (UI-redigerbar, spejler
        edge-pendantens `edge_image_artifact_dir`).
+    2. `TIMELAPSE_HEADEND_IMAGE_DIR` (env) — kun som bootstrap-fallback FØR
+       nogen admin har sat DB-værdien, aldrig som en stille override af den.
+       (Rettet 2026-08-05: env vandt tidligere over DB uanset hvad — en admin
+       der ændrede stien via UI'et fik ingen effekt og ingen fejl, hvis
+       env-variablen stod tilbage fra en tidligere deploy/systemd-unit. Samme
+       fejlklasse som den historiske JWT_SECRET-fallback-bug. Husreglen står
+       lige her i koden: "variable i DB, ikke i kode" — env skal derfor tabe,
+       ikke vinde, når DB-værdien findes.)
     3. Ellers: forælderen til den aktive edge-image-mappe + `headend-images`,
        så pakkerne altid ligger VED SIDEN AF edge-images uanset hvor de bor
        (R&D-stier, lagerregisterets `edge-artifacts`-rolle eller repo-fallback).
     """
-    configured = os.getenv("TIMELAPSE_HEADEND_IMAGE_DIR") or _setting("headend_image_artifact_dir", "")
+    configured = _setting("headend_image_artifact_dir", "") or os.getenv("TIMELAPSE_HEADEND_IMAGE_DIR") or ""
     if configured:
         candidate = Path(configured).expanduser()
     else:
@@ -93,10 +100,19 @@ def _bundle_storage_dir(*, create: bool = True) -> Path:
 
 
 def _current_viewer(request: Request, db: Session = Depends(get_db)):
-    from main import get_current_user
+    """Any authenticated user, with the same MFA-policy enforcement as
+    main.require_role() — see grc_register_api.py's _current_viewer for the
+    full rationale (HANDOVER_LOG 2026-08-05). This router in particular
+    issues bootstrap tokens and downloadable install bundles containing SSH
+    bootstrap material, so the missing MFA check here was one of the
+    higher-value gaps; _require_platform_admin below builds on this, so
+    fixing it here is sufficient for both."""
+    from main import _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
     user = get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")
+    if _mfa_required_for_user(db, user) and not _session_is_mfa_verified(_session_payload(request)):
+        raise HTTPException(status_code=403, detail="MFA kræves for denne rolle")
     return user
 
 
