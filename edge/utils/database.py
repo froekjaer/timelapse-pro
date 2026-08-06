@@ -20,7 +20,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-DB_VERSION = 2
+DB_VERSION = 3
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS captures (
     -- Sync to headend API
     synced_to_headend  INTEGER DEFAULT 0,
     synced_at          TEXT,
+
+    -- Circular-buffer local deletion (2026-08-05). NULL = file still present
+    -- locally. Only ever set for captures with uploaded_primary=1 (headend
+    -- has independently verified the SHA-256 before acknowledging the
+    -- upload — see headend/main.py::receive_capture_files) — kept as a
+    -- timestamp rather than deleting the row outright, for accountability
+    -- (SABSA: full audit trail of every capture, per this file's header).
+    deleted_at      TEXT,
 
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
@@ -155,6 +163,8 @@ class EdgeDatabase:
         }
         if "uploaded_tertiary" not in columns:
             conn.execute("ALTER TABLE captures ADD COLUMN uploaded_tertiary INTEGER DEFAULT 0")
+        if "deleted_at" not in columns:
+            conn.execute("ALTER TABLE captures ADD COLUMN deleted_at TEXT")
         conn.execute(
             "UPDATE captures SET uploaded_secondary=1 "
             "WHERE uploaded_primary=1 AND uploaded_secondary=0"
@@ -239,6 +249,29 @@ class EdgeDatabase:
                 (filepath,)
             ).fetchone()
             return bool(row and row["uploaded_primary"])
+
+    def get_confirmed_uploaded_captures_oldest_first(self, limit: int = 500) -> list[dict]:
+        """Return captures eligible for circular-buffer local deletion:
+        uploaded_primary=1 (headend independently verified SHA-256 before
+        acknowledging — see headend/main.py::receive_capture_files) AND not
+        already deleted locally. Oldest first, so the circular buffer always
+        frees the oldest confirmed-safe capture before a newer one."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM captures WHERE uploaded_primary=1 AND deleted_at IS NULL "
+                "ORDER BY captured_at ASC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_deleted(self, capture_id: int) -> None:
+        """Record that a capture's local file was removed by the circular
+        buffer. The row itself is kept (not deleted) for audit purposes."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE captures SET deleted_at=? WHERE id=?",
+                (_now(), capture_id)
+            )
 
     def get_pending_uploads(self, target: str = "primary", limit: int = 50) -> list[dict]:
         """Return captures not yet uploaded to the given target."""

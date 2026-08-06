@@ -186,6 +186,15 @@ class EdgeAgent:
         self._siem_cursor_path = self._cfg_mgr.base_dir / "siem_journal.cursor"
         self._adaptive_exposure_ev = 0.0
         self._last_capture_skip_until: datetime | None = None
+        # 2026-08-06 (Claude, Peter fandt manglende billeder): _should_capture()'s
+        # gamle logik trigger'ede KUN i et smalt ~lead_s-sekunders vindue lige FØR
+        # hver interval-grænse. Var loopet optaget lige da (fx blokerende
+        # upload-retries under en nginx-fejl i aften), sprang det vinduet helt
+        # over og ventede stille et HELT interval mere — ingen indhentning. Dette
+        # tracker hvilken cyklus der senest er FORSØGT capturet, så et overset
+        # vindue bliver indhentet med det samme i stedet for at koste et fuldt
+        # interval — se _should_capture().
+        self._last_attempted_capture_cycle: int | None = None
 
         # Signal handling for graceful shutdown
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -624,6 +633,63 @@ class EdgeAgent:
                 cfg.get("mode"),
             )
 
+    def _forward_breakglass_events(self) -> None:
+        """Forward queued break-glass session events
+        (edge/scripts/breakglass_shell_wrapper.sh) to Headend SIEM via the
+        agent's existing authenticated channel — see HANDOVER_LOG
+        2026-08-05. Uses a rename-then-process pattern so a concurrent
+        session appending new events never races with us reading; if
+        sending fails, the renamed file is left in place for retry next
+        cycle (at-least-once delivery — harmless duplication for such rare
+        events, better than silently dropping them)."""
+        events_file = Path("/var/log.hdd/timelapse/breakglass/pending_events.jsonl")
+        processing_file = events_file.with_suffix(".jsonl.processing")
+
+        target = processing_file if processing_file.exists() else None
+        if target is None:
+            if not events_file.exists() or events_file.stat().st_size == 0:
+                return
+            try:
+                events_file.rename(processing_file)
+                target = processing_file
+            except Exception as exc:
+                log.debug("Break-glass event-fil kunne ikke omdøbes: %s", exc)
+                return
+
+        try:
+            lines = [ln for ln in target.read_text().splitlines() if ln.strip()]
+        except Exception as exc:
+            log.warning("Break-glass event-fil kunne ikke læses: %s", exc)
+            return
+        if not lines:
+            target.unlink(missing_ok=True)
+            return
+
+        all_ok = True
+        for line in lines:
+            try:
+                ev = json.loads(line)
+            except Exception:
+                log.warning("Break-glass event er ikke gyldig JSON, springer over: %s", line[:200])
+                continue
+            try:
+                self._emit_siem_event(
+                    ev.get("event_type", "breakglass_event"),
+                    ev.get("severity", "critical"),
+                    f"Break-glass {ev.get('event_type')} (session={ev.get('session_id')})",
+                    details=ev,
+                    min_interval_s=0,
+                )
+            except Exception as exc:
+                log.warning("Break-glass event kunne ikke sendes til SIEM: %s", exc)
+                all_ok = False
+
+        if all_ok:
+            target.unlink(missing_ok=True)
+            log.warning("SIKKERHED: %d break-glass-hændelse(r) sendt til SIEM", len(lines))
+        else:
+            log.warning("Break-glass: nogle hændelser fejlede, prøver igen næste cyklus")
+
     def _check_camera_profile_known(self, context: str) -> None:
         if not hasattr(self._driver, "get_profile_summary"):
             return
@@ -756,6 +822,12 @@ class EdgeAgent:
         # Check capture schedule
         capture_due = self._should_capture(now, mode)
         if capture_due:
+            if mode == "interval":
+                interval_s = int(self._cfg.get("schedule", {}).get("interval_minutes", 60)) * 60
+                # Marker cyklussen som forsøgt FØR selve capture-forsøget, så en
+                # eventuel uventet exception ikke får indhentnings-logikken i
+                # _should_capture() til at forsøge samme cyklus i ring.
+                self._last_attempted_capture_cycle = int(now.timestamp()) // interval_s
             suppressed = self._capture_suppressed_by_headend_signal(now)
             if suppressed:
                 log.info("Capture udsat/sprunget over: %s", suppressed)
@@ -805,6 +877,13 @@ class EdgeAgent:
         siem_interval = timedelta(seconds=int(self._siem_cfg().get("forward_interval_s", 300)))
         if now - self._last_siem_forward >= siem_interval:
             self._forward_siem_logs()
+
+        # Break-glass session events — checked every loop iteration (cheap:
+        # just a file-existence check most of the time), NOT gated on the
+        # SIEM forward interval, because these are rare, high-value security
+        # events that should reach Headend as close to immediately as
+        # possible, not held back up to forward_interval_s (default 300s).
+        self._forward_breakglass_events()
 
         # Calculate sleep until next event
         sleep_s = self._seconds_until_next_event(now, mode)
@@ -1047,8 +1126,21 @@ class EdgeAgent:
         if mode == "interval":
             interval_s   = int(schedule.get("interval_minutes", 60)) * 60
             epoch_s      = int(now.timestamp())
-            pos_in_cycle = epoch_s % interval_s
-            return (interval_s - pos_in_cycle) <= lead_s
+            cycle_index  = epoch_s // interval_s
+            pos_in_cycle = epoch_s - cycle_index * interval_s
+            in_lead_window = (interval_s - pos_in_cycle) <= lead_s
+            # Indhent et overset vindue: hvis vi er kommet ind i en NY cyklus uden
+            # nogensinde at have forsøgt en capture i den forrige, gør det nu — i
+            # stedet for at vente stille et helt ekstra interval (se State-init
+            # for baggrund). `_tick()` sætter `_last_attempted_capture_cycle` for
+            # hver forsøgt cyklus, uanset succes/fejl, så dette kun trigger ÉN
+            # gang pr. overset cyklus, ikke ved hvert tick derefter.
+            missed_previous_cycle = (
+                self._last_attempted_capture_cycle is not None
+                and cycle_index > self._last_attempted_capture_cycle
+                and not in_lead_window
+            )
+            return in_lead_window or missed_previous_cycle
         if mode == "fixed":
             tz_name   = schedule.get("timezone", "UTC")
             local_now = self._to_local(now, tz_name)
@@ -1305,6 +1397,71 @@ class EdgeAgent:
         except Exception:
             pass
 
+        # Break-glass public keys (2026-08-05) — delivers CMDB-issued
+        # break-glass keys via the same authenticated config-poll channel
+        # already used for per-device operator SSH keys, rather than
+        # requiring Headend to reach IN to the device (which is circular
+        # for a device that actually needs break-glass access). See
+        # HANDOVER_LOG 2026-08-05 and
+        # edge/scripts/timelapse-breakglass-setup.sh.
+        try:
+            self._apply_break_glass_keys(data.get("security", {}).get("break_glass_public_keys", []))
+        except Exception as exc:
+            log.warning("Break-glass nøgle-anvendelse fejl: %s", exc)
+
+    def _apply_break_glass_keys(self, keys: list) -> None:
+        """Write CMDB-issued break-glass public keys into the emergency
+        account's authorized_keys. No-op (not an error) if the account
+        doesn't exist yet — either the device predates this feature and
+        hasn't been re-flashed/OTA-updated, or timelapse-breakglass-setup
+        hasn't run yet this boot."""
+        import pwd
+
+        try:
+            emergency = pwd.getpwnam("emergency")
+        except KeyError:
+            return
+        ssh_dir = Path(emergency.pw_dir) / ".ssh"
+        authorized_keys = ssh_dir / "authorized_keys"
+        if not ssh_dir.is_dir():
+            log.debug("Break-glass: emergency-konto findes, men .ssh mangler — springer over")
+            return
+
+        lines = []
+        for entry in keys or []:
+            if isinstance(entry, dict):
+                pub = str(entry.get("public_key") or "").strip()
+                admin = str(entry.get("admin_username") or "unknown").strip()
+            else:
+                pub, admin = str(entry).strip(), "unknown"
+            if not pub:
+                continue
+            lines.append(f"{pub} breakglass:{admin}")
+        new_content = ("\n".join(lines) + "\n") if lines else ""
+
+        try:
+            current_content = authorized_keys.read_text() if authorized_keys.exists() else ""
+        except Exception:
+            current_content = None  # unreadable — treat as "must rewrite"
+
+        if current_content == new_content:
+            return
+
+        authorized_keys.write_text(new_content)
+        os.chmod(authorized_keys, 0o600)
+        os.chown(authorized_keys, emergency.pw_uid, emergency.pw_gid)
+        admins = sorted({ln.rsplit("breakglass:", 1)[-1] for ln in lines}) if lines else []
+        log.warning(
+            "SIKKERHED: break-glass authorized_keys opdateret — %d aktiv(e) nøgle(r) (admins: %s)",
+            len(lines), ", ".join(admins) or "ingen",
+        )
+        self._emit_siem_event(
+            "break_glass_keys_updated", "warning",
+            f"Break-glass authorized_keys updated: {len(lines)} active key(s)",
+            details={"admins": admins, "key_count": len(lines)},
+            min_interval_s=0,
+        )
+
     def _build_camera_commands(self) -> list[str]:
         """Byg kamera kommandoliste fra hierarkisk config.
 
@@ -1478,9 +1635,17 @@ class EdgeAgent:
         update_requested = self._cfg.get("update_requested", False)
         if not update_requested:
             return
+        # Tightened + unified with _run_update()'s gate 2026-08-05 (was `or`,
+        # so the env var ALONE was enough — no Headend visibility required
+        # at all; and had no TIMELAPSE_ENV restriction, unlike the newer
+        # _run_update() legacy path). Now requires all three: the
+        # Headend-config flag (central visibility/control), the local env
+        # var (device operator opts in), and TIMELAPSE_ENV being a
+        # lab/dev/rd environment. See HANDOVER_LOG 2026-08-05.
         legacy_enabled = (
             self._cfg.get("legacy_git_update_enabled") is True
-            or os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") == "1"
+            and os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") == "1"
+            and os.getenv("TIMELAPSE_ENV", "").strip().lower() in {"lab", "dev", "development", "rd"}
         )
         if not legacy_enabled:
             log.warning(
@@ -1497,6 +1662,14 @@ class EdgeAgent:
             return
         version = self._cfg.get("update_version", "unknown")
         log.info("Opdatering anmodet — version %s", version)
+        log.warning("SIKKERHED: kører UNSIGNERET legacy git-update (version %s)", version)
+        self._emit_siem_event(
+            "legacy_unsigned_update_executed", "warning",
+            f"Unsigned legacy git update path executed (version={version}, "
+            "bypasses Headend artifact signature verification)",
+            details={"version": version},
+            min_interval_s=0,
+        )
         repo = "/opt/timelapse"
         try:
             git = "/usr/bin/git"
@@ -1586,8 +1759,18 @@ class EdgeAgent:
             if artifact:
                 self._run_artifact_app_update(update_id, artifact)
                 return
+            # Dual-gated 2026-08-05 (was env-var-only, invisible to Headend —
+            # same bug class as the historical JWT_SECRET fallback: a
+            # security-critical control degrading based on local, unaudited
+            # state. Now ALSO requires the Headend-config flag
+            # legacy_git_update_enabled, matching what _check_update()
+            # already required — so this path can no longer fire on a
+            # device Headend never explicitly opted in, even if a stale env
+            # var is left set in its systemd unit. See HANDOVER_LOG
+            # 2026-08-05, Claude_Findings-style audit.)
             legacy_allowed = (
-                _os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") == "1"
+                self._cfg.get("legacy_git_update_enabled") is True
+                and _os.getenv("TIMELAPSE_ENABLE_LEGACY_GIT_UPDATE") == "1"
                 and _os.getenv("TIMELAPSE_ENV", "").strip().lower()
                 in {"lab", "dev", "development", "rd"}
             )
@@ -1596,6 +1779,18 @@ class EdgeAgent:
                 self._report_update(update_id, "blocked", "headend_signed_artifact_required")
                 return
             # LAB/dev/rd-only emergency path. Production Edge updates must use Headend artifacts.
+            log.warning(
+                "SIKKERHED: kører UNSIGNERET legacy git-update %d via edge_update.sh — "
+                "kun tilladt fordi legacy_git_update_enabled=true OG lokal env-flag OG "
+                "TIMELAPSE_ENV=lab/dev/rd er sat samtidig.", update_id,
+            )
+            self._emit_siem_event(
+                "legacy_unsigned_update_executed", "warning",
+                f"Unsigned legacy git update path executed for update {update_id} "
+                "(bypasses Headend artifact signature verification)",
+                details={"update_id": update_id, "update_type": update_type},
+                min_interval_s=0,
+            )
             script = Path("/opt/timelapse/deploy/edge_update.sh")
             if not script.exists():
                 log.warning("edge_update.sh ikke fundet")
