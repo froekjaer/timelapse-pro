@@ -25,6 +25,7 @@ interface ConfigDefaults {
   diagnostics: ConfigObject
   system: ConfigObject
   session_policy: ConfigObject
+  break_glass_policy: ConfigObject
 }
 
 interface EntityOption {
@@ -187,8 +188,12 @@ const SECTIONS: { key: keyof ConfigDefaults; label: string; description: string;
     fields: [
       { key: 'local_path', label: 'Capture sti', type: 'text', placeholder: '/data/captures', default: '/data/captures',
         tooltip: 'Lokal sti til billedlagring på edge-enheden. Billeder gemmes her før upload til headend. Skal have tilstrækkelig plads (se buffer). Standard: /data/captures. Ændres kun ved custom filsystem layout.' },
-      { key: 'circular_buffer_gb', label: 'Buffer', type: 'number', unit: 'GB', placeholder: '50', default: 50,
-        tooltip: 'Maksimal plads i GB før circular buffer sletter gamle uploaded billeder. Ældre uploaded filer slettes først for at make plads. Større buffer = mere offline tolerance. Minimum 20-30 GB anbefales.' },
+      { key: 'circular_buffer_gb', label: 'Buffer (legacy, GB)', type: 'number', unit: 'GB', placeholder: '50', default: 50,
+        tooltip: 'Historisk fast GB-grænse — bruges kun til visning/statistik i dag. Selve sletningen styres af de to procent-felter nedenfor.' },
+      { key: 'circular_buffer_delete_at_pct', label: 'Slet ved diskforbrug', type: 'number', unit: '% af disk', placeholder: '70', default: 70,
+        tooltip: 'Når edge-diskens forbrug når denne procent, begynder circular buffer at slette de ÆLDSTE billeder, der er 100% bekræftet overført til headend (verificeret SHA-256 på headend-siden), og rydder op tilbage til netop dette niveau. Aldrig-uploadede billeder slettes aldrig, uanset diskforbrug. Standard 70%.' },
+      { key: 'circular_buffer_min_free_pct', label: 'Minimum fri diskplads (hård grænse)', type: 'number', unit: '% af disk', placeholder: '20', default: 20,
+        tooltip: 'Ikke sletningens mål, men en separat og strengere garanti der ALDRIG må overskrides. Rammes normalt aldrig, da oprydning stopper ved feltet ovenfor. Hvis der ikke er nok bekræftet-uploadede billeder til at holde sig inden for denne grænse, logges en kritisk SIEM-alarm i stedet for at slette ikke-bekræftede billeder. Standard 20%.' },
       { key: 'db_path', label: 'DB sti', type: 'text', placeholder: '/data/timelapse_edge.db', default: '/data/timelapse_edge.db',
         tooltip: 'Sti til SQLite database med capture metadata, logs og lokal state. Database backupes sammen med billeder. Ændres kun ved custom setup. Standard path er normalt fin.' },
     ],
@@ -250,6 +255,15 @@ const SECTIONS: { key: keyof ConfigDefaults; label: string; description: string;
         tooltip: 'Kræv MFA for viewer rolle. Viewer har read-only adgang. MFA typisk ikke nødvendig for read-only. Kan aktiveres for compliance eller highly sensitive data.' },
       { key: 'mfa_exempt_usernames', label: 'MFA-undtagelser', type: 'user_multiselect', description: 'Udvalgte admin/super_admin brugere undtages på dette lag.',
         tooltip: 'Udvalgte admin/super_admin brugere der undtages fra MFA krav. Backup adgang ved MFA system fejl. Should be minimal og begrænset til trusted personer. Review regelmæssigt.' },
+    ],
+  },
+  {
+    key: 'break_glass_policy',
+    label: 'Break-glass nødadgang',
+    description: 'Om nøglebaseret emergency-adgang (emergency-kontoen på selve enheden) må være mulig. Kan overstyres pr. kunde/site/kameralokation via config-overrides (nøgle "break_glass_policy").',
+    fields: [
+      { key: 'enabled', label: 'Break-glass tilladt', type: 'boolean', default: true,
+        tooltip: 'Styrer om break-glass-nøgler nogensinde leveres til enheden, uanset hvad der findes i CMDB. Slået fra her (eller på kunde/site/kamera-lag) fjerner allerede-leverede nøgler fra enheden inden for én config-poll-cyklus. Selve emergency-kontoen findes stadig på enheden (bages ind ved første boot) — dette styrer kun om den nogensinde får en gyldig nøgle. Standard: aktiveret, da break-glass er tiltænkt at virke uden forudsætninger som en reel nødvej.' },
     ],
   },
 ]
@@ -334,7 +348,7 @@ export function GlobalConfigPage() {
         api('/api/admin/cameras'),
       ])
       const users = await api('/api/admin/users').catch(() => [])
-      setDefaults({ system: {}, session_policy: {}, ...d })
+      setDefaults({ system: {}, session_policy: {}, break_glass_policy: {}, ...d })
       setCustomers(Array.isArray(c) ? c : [])
       setSites(Array.isArray(s) ? s : [])
       setCameras(Array.isArray(cams) ? cams : [])
@@ -429,7 +443,7 @@ export function GlobalConfigPage() {
           vendor_binary: '',
         },
       },
-      storage: { local_path: '/data/captures', circular_buffer_gb: 50, db_path: '/data/timelapse_edge.db' },
+      storage: { local_path: '/data/captures', circular_buffer_gb: 50, circular_buffer_delete_at_pct: 70, circular_buffer_min_free_pct: 20, db_path: '/data/timelapse_edge.db' },
       diagnostics: { heartbeat_interval_minutes: 60, config_poll_interval_minutes: 5, update_poll_interval_minutes: 5, inventory_report_interval_hours: 24 },
       system: {
         error_recovery_sleep_s: 30,
@@ -456,6 +470,9 @@ export function GlobalConfigPage() {
           viewer: false,
         },
         mfa_exempt_usernames: [],
+      },
+      break_glass_policy: {
+        enabled: true,
       },
     }
     setEditLayer('global')

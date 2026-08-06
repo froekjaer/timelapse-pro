@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Camera, HardDrive, Image as ImageIcon, Loader2, Trash2 } from 'lucide-react'
 import { getApiUrl, getDevices, pathSegment } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -63,6 +63,19 @@ export function CameraLocationGalleryPage() {
 
   const backUrl = camera?.site_id ? `/sites/${camera.site_id}` : '/'
   const canDelete = Boolean(user && ['super_admin', 'admin'].includes(user.role) && camera && !camera.current_device_id && captures.length === 0)
+
+  // 2026-08-06 (Peter fandt fejlen): ALLE links til en kameralokation (fra Sites-
+  // siden, Dashboard'ets kameralokations-liste osv.) peger her, uanset om
+  // lokationen har en aktiv Edge-enhed. For en lokation UDEN Edge er denne enkle
+  // galleri-visning den rigtige (der er intet device at administrere). Men for en
+  // lokation MED en aktiv Edge (fx Kamera 1 på Nordre Villavej 17c) gav det en
+  // vilkårligt forarmet oplevelse — ingen faner, ingen indstillinger, ingen
+  // diagnostik — udelukkende fordi man klikkede sig ind via kameralokationen i
+  // stedet for enhedslisten. Videresend i stedet til den fulde DevicePage, så
+  // resultatet er konsistent uanset hvilken vej man kom ind.
+  if (camera?.current_device_id) {
+    return <Navigate to={`/devices/${pathSegment(camera.current_device_id)}`} replace />
+  }
 
   async function deleteEmptyLocation() {
     if (!cameraId || !camera || !confirm(`Fjern den tomme kameralokation "${camera.camera_name ?? cameraId}"? Dette påvirker ikke billeder.`)) return
