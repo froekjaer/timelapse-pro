@@ -563,6 +563,44 @@ do
         echo "[inject]   (ikke fundet i tar — springer over)"
 done
 
+# 2026-08-07 (Claude, Peter — bootstrap_cli.py --gps-status meldte "gpspipe
+# mangler" på TL-043EB9E72EFD): Dockerfile.edge har altid bedt om `gpsd
+# gpsd-clients`, og en direkte test af selve apt-get-linjen mod en frisk
+# arm64v8/ubuntu:22.04-container installerede gpsd-clients korrekt inkl.
+# /usr/bin/gpspipe — men den cachede rootfs-tar der faktisk driver
+# billed-injektionen manglede den (kun `gpsd`/`gpsd-tools`/`libgps28` var
+# installeret, ikke `gpsd-clients` selv). Årsagen er ukendt (formentlig et
+# Docker build-cache- eller mirror-øjebliksbillede-uheld fra dengang det
+# blev bygget) og kan ikke fastslås med sikkerhed uden en ny build — men
+# efter gphoto2-sagaen samme uge er den rigtige løsning under alle
+# omstændigheder at gøre udtrækningen EKSPLICIT, ikke stole på at
+# rootfs-taren nødvendigvis indeholder alt Dockerfile.edge beder om.
+# gpspipe kaldes kun som CLI-subprocess (edge/tools/bootstrap_cli.py) —
+# ingen Python gps-modul-afhængighed, så kun selve binæren + dens native
+# lib-lukning er nødvendig, ikke resten af gpsd-clients' tunge GUI/Python-
+# afhængigheder (matplotlib, gtk, cairo mv., pakkens Depends til xgps).
+# Verificeret live på TL-043EB9E72EFD: alle 8 nedenstående biblioteker var
+# allerede til stede på enheden — kun selve gpspipe-binæren manglede.
+echo "[inject] Udpakker: usr/bin/gpspipe (bootstrap_cli.py --gps-status afhængighed)"
+tar -xzf "$ROOTFS_TAR" -C /mnt/root \
+    "usr/bin/gpspipe" 2>/dev/null && echo "[inject]   OK: usr/bin/gpspipe" || \
+    echo "[inject]   (ikke fundet i tar — springer over)"
+for GPSPIPE_LIB in \
+    libdbus-1.so.3 \
+    libsystemd.so.0 \
+    liblzma.so.5 \
+    libzstd.so.1 \
+    liblz4.so.1 \
+    libcap.so.2 \
+    libgcrypt.so.20 \
+    libgpg-error.so.0
+do
+    echo "[inject] Udpakker: usr/lib/aarch64-linux-gnu/${GPSPIPE_LIB}* (gpspipe-afhængighed)"
+    tar -xzf "$ROOTFS_TAR" -C /mnt/root --wildcards \
+        "usr/lib/aarch64-linux-gnu/${GPSPIPE_LIB}*" 2>/dev/null && echo "[inject]   OK: ${GPSPIPE_LIB}*" || \
+        echo "[inject]   (ikke fundet i tar — springer over)"
+done
+
 # ── Bootstrap config ──────────────────────────────────────────────────────────
 echo "[inject] Injicerer bootstrap.yaml..."
 if [[ -z "${EXPECTED_DEVICE_ID:-}" ]]; then

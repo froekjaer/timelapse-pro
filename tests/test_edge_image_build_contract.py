@@ -169,6 +169,39 @@ def test_inject_edge_image_extracts_gphoto2s_cli_dependencies() -> None:
         assert lib in source, f"{lib} missing from gphoto2 CLI dependency extraction list"
 
 
+def test_inject_edge_image_extracts_gpspipe_and_its_dependencies() -> None:
+    """Regression test (2026-08-07): bootstrap_cli.py --gps-status reported
+    "gpspipe mangler" on TL-043EB9E72EFD. Dockerfile.edge has always
+    requested `gpsd gpsd-clients`, and a direct test of that exact apt-get
+    line against a fresh arm64v8/ubuntu:22.04 container installed
+    gpsd-clients correctly including /usr/bin/gpspipe — but the cached
+    rootfs tar actually driving image injection was missing it (only
+    gpsd/gpsd-tools/libgps28 were present, not gpsd-clients itself; cause
+    unconfirmed, likely a stale Docker build cache or mirror snapshot from
+    when that image was built). Same lesson as the gphoto2 CLI dependency
+    saga the same week: don't trust that the rootfs tar contains everything
+    Dockerfile.edge asked for — extract explicitly. gpspipe is only ever
+    invoked as a CLI subprocess (edge/tools/bootstrap_cli.py), so only the
+    binary + its native library closure is needed, not gpsd-clients' GUI/
+    Python dependencies (matplotlib, gtk, cairo — pulled in for xgps, which
+    this project never uses). Verified live on TL-043EB9E72EFD: all 8
+    libraries below were already present on the device; only the gpspipe
+    binary itself was missing."""
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    assert "usr/bin/gpspipe" in source
+    for lib in [
+        "libdbus-1.so.3",
+        "libsystemd.so.0",
+        "liblzma.so.5",
+        "libzstd.so.1",
+        "liblz4.so.1",
+        "libcap.so.2",
+        "libgcrypt.so.20",
+        "libgpg-error.so.0",
+    ]:
+        assert lib in source, f"{lib} missing from gpspipe dependency extraction list"
+
+
 def test_dockerfile_copies_watchdog_and_timesync_units() -> None:
     dockerfile = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
     for unit in (
