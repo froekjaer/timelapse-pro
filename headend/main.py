@@ -6900,7 +6900,11 @@ class OsCatalogImportPayload(BaseModel):
 class OsCatalogBuilderPayload(BaseModel):
     device_id: str
     environment: Optional[str] = "lab"
-    image: Optional[str] = "ubuntu:24.04"
+    # 2026-08-07 (Claude, Peter): was hardcoded "ubuntu:24.04" — see
+    # _resolve_os_catalog_image's docstring for why that caused a real
+    # incident. None means "derive from this device's own CMDB inventory";
+    # an explicit value here is now logged and overridden, not trusted.
+    image: Optional[str] = None
     architecture: Optional[str] = "arm64"
     source: Optional[str] = None
     create_updates: Optional[bool] = True
@@ -7572,10 +7576,46 @@ def _reconcile_os_catalog(installed: dict, catalog_packages: list[dict]) -> dict
             "category": category,
         })
 
+    # 2026-08-07 (Claude, Peter — TL-043EB9E72EFD OS-update-incident): a
+    # real security-patch batch touches a small fraction of installed
+    # packages. Comparing a device against the wrong Ubuntu release (see
+    # _resolve_os_catalog_image's docstring) instead makes nearly every
+    # installed package look "upgradable" — this device's incident produced
+    # 503 "updates" out of ~750 installed packages (67%). Reject as
+    # implausible rather than silently creating a catalog that size; a
+    # genuine catalog this large needs a human to build/approve it
+    # deliberately (e.g. via the manual apt-list import path), not the
+    # automatic nightly refresh.
+    total_installed = max(1, len(installed))
+    implausible_threshold = float(os.getenv("TIMELAPSE_OS_CATALOG_MAX_UPGRADABLE_FRACTION", "0.25"))
+
     decisions = {}
     for category, packages in grouped.items():
         severities = {p["severity"] for p in packages}
         severity = "high" if "high" in severities else "medium" if "medium" in severities else "low"
+        fraction = len(packages) / total_installed
+        if fraction > implausible_threshold:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "implausible_upgrade_fraction",
+                    "message": (
+                        f"{len(packages)} af {total_installed} installerede pakker "
+                        f"({fraction:.0%}) fremstår som '{category}'-opdateringer — det "
+                        f"overstiger sikkerhedsgrænsen på {implausible_threshold:.0%}. "
+                        "Dette er det signaturmønster for release-mismatch (fx et Noble-"
+                        "katalog sammenlignet mod en Jammy-enhed), ikke et reelt patch-"
+                        "sæt. Kataloget er IKKE oprettet. Undersøg device_inventory."
+                        "os_name mod de faktisk installerede pakkeversioner før du "
+                        "prøver igen."
+                    ),
+                    "category": category,
+                    "package_count": len(packages),
+                    "total_installed": total_installed,
+                    "fraction": round(fraction, 4),
+                    "threshold": implausible_threshold,
+                },
+            )
         decisions[category] = {
             "package_count": len(packages),
             "severity": severity,
@@ -7865,19 +7905,20 @@ def _run_refresh_catalog_job(job_id: str, payload_data: dict, username: str) -> 
             installed = {}
         if not isinstance(installed, dict) or not installed:
             raise RuntimeError("CMDB mangler OS package inventory for device")
+        resolved_image = _resolve_os_catalog_image(db, device_id, payload.image)
         _update_job(job_id, phase="docker_catalog", progress=20, message=f"Scanner {len(installed)} CMDB-pakker via Mac Docker-builder")
         generated = _generate_os_update_catalog_candidates(
             installed=installed,
             device_id=device_id,
             architecture=payload.architecture or "arm64",
-            image=payload.image or "ubuntu:24.04",
+            image=resolved_image,
         )
         _update_job(job_id, phase="reconcile", progress=80, message=f"Reconciler {generated['upgradable_lines']} kandidater mod CMDB")
         result = import_os_catalog_from_lab_apt_list(
             OsCatalogImportPayload(
                 device_id=device_id,
                 apt_list_text=generated["apt_list_text"],
-                source=payload.source or f"mac-docker-builder:{payload.image or 'ubuntu:24.04'}:{device_id}",
+                source=payload.source or f"mac-docker-builder:{resolved_image}:{device_id}",
                 environment=payload.environment or "lab",
                 create_updates=payload.create_updates,
             ),
@@ -7964,7 +8005,7 @@ def _run_os_bundle_build_bind_job(job_id: str, update_id: int, payload_data: dic
         output_path = output_root / f"update-{update.id}-{safe_type}-{created_at:%Y%m%d-%H%M%S}"
         architecture = str(payload_data.get("architecture") or "arm64")
         source_ref = str(payload_data.get("source_ref") or f"headend-mac-container:{created_at:%Y%m%dT%H%M%SZ}")
-        image = str(payload_data.get("image") or "ubuntu:24.04")
+        image = _resolve_os_catalog_image(db, device_id, payload_data.get("image"))
         _update_job(job_id, phase="docker_build", progress=20, message="Bygger offline OS bundle i Linux/arm64 Docker-container")
         build = _build_os_bundle_in_mac_container(
             plan_path=plan_path,
@@ -8332,6 +8373,64 @@ def _generate_apt_list_from_ubuntu_metadata(
     }
 
 
+def _resolve_os_catalog_image(db: Session, device_id: str, requested_image: str | None = None) -> str:
+    """Determine which Ubuntu release image to compare a device's installed
+    packages against when generating an OS-update catalog.
+
+    2026-08-07 (Claude, Peter — TL-043EB9E72EFD OS-update-incident): every
+    call site (the nightly scheduled refresh, the manual "Refresh fra CMDB/
+    Mac-builder" UI button, and the Pydantic payload default) previously
+    hardcoded "ubuntu:24.04" regardless of the target device's actual OS
+    release. TL-043EB9E72EFD is Jammy underneath (glibc 2.35-0ubuntu3.10,
+    base-files 12ubuntu4.7, both installed and configured cleanly since
+    2025-06-12) — comparing it against Noble's live package index made
+    almost every installed package look "upgradable" purely from release-
+    line drift, producing a 503-package catalog that wasn't real patches.
+    The device's own auto-approval policy then waved it straight through,
+    and it partially unpacked ~90 Noble packages before dpkg aborted on
+    libacl1 (Noble's build needs glibc 2.38), breaking cp/mv/tar/rsync —
+    all of which dynamically link libacl.so.1 — on a live device.
+
+    Derives the release from the device's own CMDB inventory (os_name /
+    PRETTY_NAME, read directly from /etc/os-release by the edge agent) —
+    never from a hardcoded default, and any client-supplied `image` is
+    logged and overridden rather than trusted, since trusting the caller is
+    exactly what let the UI's own hardcoded default through. Fails loudly
+    when inventory doesn't clearly state a release rather than guessing —
+    a wrong guess here is the entire failure mode this incident was.
+
+    Known residual risk (documented, not fixed by this function): this
+    device's *own* /etc/os-release claims "Ubuntu 24.04.4 LTS" despite
+    being Jammy underneath — a mislabeled base image from whenever it was
+    built, not an edge agent reporting bug (_os_name() in
+    edge/utils/inventory.py reads PRETTY_NAME faithfully). Resolving
+    "ubuntu:24.04" for this specific device from its own inventory would
+    reproduce the same failure — _reconcile_os_catalog's implausible-
+    upgrade-fraction gate is the actual backstop for that case, not this
+    function. See FIND-OS-CATALOG-CROSS-RELEASE-001.
+    """
+    from database import DeviceInventory
+    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    os_name = (inv.os_name if inv else "") or ""
+    match = _re.search(r"(\d{2})\.(\d{2})", os_name)
+    if not match:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Kan ikke bestemme OS-release for {device_id} fra CMDB inventory "
+                f"(os_name={os_name!r}). Et OS-katalog kan ikke genereres sikkert "
+                "uden at kende target-releasen — se FIND-OS-CATALOG-CROSS-RELEASE-001."
+            ),
+        )
+    resolved = f"ubuntu:{match.group(1)}.{match.group(2)}"
+    if requested_image and requested_image != resolved:
+        log.warning(
+            "OS-katalog: ignorerer klient-anmodet image=%s for %s — bruger CMDB-udledt %s i stedet",
+            requested_image, device_id, resolved,
+        )
+    return resolved
+
+
 def _generate_os_update_catalog_candidates(
     *,
     installed: dict,
@@ -8533,17 +8632,18 @@ def refresh_os_catalog_from_mac_builder(
         installed = {}
     if not isinstance(installed, dict) or not installed:
         raise HTTPException(status_code=409, detail="CMDB mangler OS package inventory for device")
+    resolved_image = _resolve_os_catalog_image(db, device_id, payload.image)
     generated = _generate_os_update_catalog_candidates(
         installed=installed,
         device_id=device_id,
         architecture=payload.architecture or "arm64",
-        image=payload.image or "ubuntu:24.04",
+        image=resolved_image,
     )
     result = import_os_catalog_from_lab_apt_list(
         OsCatalogImportPayload(
             device_id=device_id,
             apt_list_text=generated["apt_list_text"],
-            source=payload.source or f"mac-docker-builder:{payload.image or 'ubuntu:24.04'}:{device_id}",
+            source=payload.source or f"mac-docker-builder:{resolved_image}:{device_id}",
             environment=payload.environment or "lab",
             create_updates=payload.create_updates,
         ),
@@ -9466,7 +9566,7 @@ def build_catalog_and_bind_os_bundle(
     output_path = output_root / f"update-{update.id}-{safe_type}-{created_at:%Y%m%d-%H%M%S}"
     architecture = str(payload.get("architecture") or "arm64")
     source_ref = str(payload.get("source_ref") or f"headend-mac-container:{created_at:%Y%m%dT%H%M%SZ}")
-    image = str(payload.get("image") or "ubuntu:24.04")
+    image = _resolve_os_catalog_image(db, device_id, payload.get("image"))
 
     build = _build_os_bundle_in_mac_container(
         plan_path=plan_path,

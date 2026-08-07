@@ -67,11 +67,18 @@ def refresh_os_catalogs_from_cmdb() -> None:
                 )
                 continue
             try:
+                # 2026-08-07 (Claude, Peter — TL-043EB9E72EFD OS-update-incident):
+                # was hardcoded image="ubuntu:24.04" here, applied to EVERY
+                # device's nightly refresh regardless of its actual OS release —
+                # the unattended, no-human-in-the-loop entry point that produced
+                # a 503-package cross-release catalog for a Jammy device. Leave
+                # image unset so refresh_os_catalog_from_mac_builder derives it
+                # from this device's own CMDB inventory (see
+                # _resolve_os_catalog_image's docstring for the full incident).
                 refresh_os_catalog_from_mac_builder(
                     OsCatalogBuilderPayload(
                         device_id=inventory.device_id,
                         environment=inventory.environment or "lab",
-                        image="ubuntu:24.04",
                         architecture="arm64",
                         source=f"headend-scheduled-cmdb-refresh:{now_utc():%Y-%m-%d}",
                         create_updates=True,

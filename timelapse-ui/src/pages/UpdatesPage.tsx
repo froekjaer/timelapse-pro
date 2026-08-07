@@ -1190,7 +1190,11 @@ function LabCatalogImport({
             device_id: deviceId.trim(),
             environment,
             source: `mac-docker-builder:${deviceId.trim()}`,
-            image: 'ubuntu:24.04',
+            // 2026-08-07 (Peter, Claude): was hardcoded 'ubuntu:24.04' regardless
+            // of the target device's actual OS release — see backend
+            // _resolve_os_catalog_image's docstring for the incident this
+            // caused. Headend now derives the correct release from this
+            // device's own CMDB inventory; omit it here rather than override.
             architecture: 'arm64',
             create_updates: true,
           })} disabled={busy || !deviceId.trim()}
@@ -1487,7 +1491,8 @@ export function UpdatesPage() {
         body: JSON.stringify({
           builder_mode: 'auto',
           architecture: 'arm64',
-          image: 'ubuntu:24.04',
+          // 2026-08-07: image omitted deliberately — Headend derives the
+          // correct release from the target device's own CMDB inventory.
         }),
       })
       setUpdateJobs(jobs => ({ ...jobs, [started.job_id]: started.status }))
