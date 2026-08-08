@@ -51,6 +51,30 @@ interface CameraLocation {
 
 interface CameraOption { id: string; camera_name: string; site_name?: string; customer_name?: string; customer_id?: string; site_id?: string }
 
+interface CameraHardwareInfo {
+  camera_id: string
+  model: string | null
+  serial_number: string | null
+  firmware_version: string | null
+  battery_level_pct: number | null
+  storage_free_mb: number | null
+  storage_free_images_est: number | null
+  shutter_count: number | null
+  shutter_count_source: string | null
+  hardware_inventory_at: string | null
+  known_capture_count: number
+  firmware: {
+    known: boolean
+    update_available: boolean | null
+    latest_version: string | null
+    rated_shutter_actuations?: number | null
+    notes?: string | null
+    source_url?: string | null
+  }
+  observed_settings: Record<string, string | null> | null
+  observed_settings_at: string | null
+}
+
 interface ConfigResolutionLayer {
   key: 'global' | 'customer' | 'site' | 'camera'
   config: Record<string, unknown>
@@ -205,6 +229,10 @@ export function CameraPage() {
   const [creatingLocation, setCreatingLocation] = useState(false)
   const [locationExpanded, setLocationExpanded] = useState(false)
 
+  // ── Kamera-hardware CMDB ─────────────────────────────────────────────────
+  const [hwInfo, setHwInfo] = useState<CameraHardwareInfo | null>(null)
+  const [hwLoading, setHwLoading] = useState(false)
+
   // ── BT TOTP QR ───────────────────────────────────────────────────────────
   const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,source:string,uri:string,qr_code:string,account_name:string,device_id:string|null,is_factory_default:boolean,current_code?:string,period_s?:number,expires_in_s?:number}|null>(null)
   const [btTotpLoading, setBtTotpLoading] = useState(false)
@@ -265,6 +293,25 @@ export function CameraPage() {
       setOverrides({})
     }
   }
+
+  async function loadHardwareInfo(cameraId: string) {
+    setHwLoading(true)
+    try {
+      const data: CameraHardwareInfo = await api(`/api/admin/cameras/${encodeURIComponent(cameraId)}/hardware`)
+      setHwInfo(data)
+    } catch (e) {
+      console.error('Failed to load camera hardware info:', e)
+      setHwInfo(null)
+    } finally {
+      setHwLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (cameraLocation?.id) {
+      loadHardwareInfo(cameraLocation.id)
+    }
+  }, [cameraLocation?.id])
 
   async function loadDriftAnalysis(cameraId: string) {
     setDriftLoading(true)
@@ -819,6 +866,95 @@ export function CameraPage() {
           </div>
         </div>
       ))}
+
+      {/* ── Kamera-hardware CMDB ─────────────────────────────────────────── */}
+      {cameraLocation && (
+        <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold text-gray-700">Kamera-hardware</h3>
+            <p className="text-xs text-gray-400">Læst direkte fra selve kameraet — opdateres ca. dagligt, eller ved en tekniker-session</p>
+          </div>
+          {hwLoading && !hwInfo && <p className="text-xs text-gray-400">Henter…</p>}
+          {!hwLoading && !hwInfo?.hardware_inventory_at && (
+            <p className="text-xs text-gray-400">Intet hardware-inventar modtaget endnu — kommer automatisk ved næste optagelse med kamera tilsluttet.</p>
+          )}
+          {hwInfo?.hardware_inventory_at && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+              <div>
+                <div className="text-gray-400">Model</div>
+                <div className="font-medium text-gray-900">{hwInfo.model || '—'}</div>
+              </div>
+              <div>
+                <div className="text-gray-400">Serienummer</div>
+                <div className="font-medium text-gray-900">{hwInfo.serial_number || '—'}</div>
+              </div>
+              <div>
+                <div className="text-gray-400">Firmware</div>
+                <div className="font-medium text-gray-900 flex items-center gap-1.5">
+                  {hwInfo.firmware_version || '—'}
+                  {hwInfo.firmware.update_available && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-800 rounded">
+                      opdatering tilgængelig{hwInfo.firmware.latest_version ? ` (${hwInfo.firmware.latest_version})` : ''}
+                    </span>
+                  )}
+                  {hwInfo.firmware.known && hwInfo.firmware.update_available === false && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-800 rounded">opdateret</span>
+                  )}
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-400">Batteri</div>
+                <div className="font-medium text-gray-900">{hwInfo.battery_level_pct != null ? `${hwInfo.battery_level_pct}%` : 'ukendt'}</div>
+              </div>
+              <div>
+                <div className="text-gray-400">Ledig lagerplads</div>
+                <div className="font-medium text-gray-900">
+                  {hwInfo.storage_free_mb != null ? `${(hwInfo.storage_free_mb / 1024).toFixed(1)} GB` : 'ukendt'}
+                  {hwInfo.storage_free_images_est != null && ` (~${hwInfo.storage_free_images_est} billeder)`}
+                </div>
+              </div>
+              <div>
+                <div className="text-gray-400">Lukkertæller</div>
+                <div className="font-medium text-gray-900">
+                  {hwInfo.shutter_count != null ? hwInfo.shutter_count.toLocaleString('da-DK') : 'ukendt'}
+                  {hwInfo.firmware.rated_shutter_actuations && hwInfo.shutter_count != null && (
+                    <span className="text-gray-400 font-normal"> ({Math.round(100 * hwInfo.shutter_count / hwInfo.firmware.rated_shutter_actuations)}% af vurderet levetid)</span>
+                  )}
+                </div>
+                {hwInfo.shutter_count_source && (
+                  <div className="text-[10px] text-gray-400 mt-0.5">
+                    {{
+                      canon_ptp_shuttercounter: 'live tæller fra kameraet',
+                      nikon_exif_mechanical: 'fra seneste billede, kun mekanisk lukker',
+                      nikon_exif_total: 'fra seneste billede, elektronisk + mekanisk',
+                    }[hwInfo.shutter_count_source] || hwInfo.shutter_count_source}
+                  </div>
+                )}
+              </div>
+              <div>
+                <div className="text-gray-400">Optagelser via TimeLapse Pro</div>
+                <div className="font-medium text-gray-900">{hwInfo.known_capture_count.toLocaleString('da-DK')}</div>
+                {hwInfo.shutter_count != null && hwInfo.shutter_count > hwInfo.known_capture_count * 1.2 && (
+                  <div className="text-[10px] text-amber-600 mt-0.5">Kamerets tæller er markant højere — brugt uden for TimeLapse Pro også?</div>
+                )}
+              </div>
+            </div>
+          )}
+          {hwInfo?.observed_settings && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="text-xs text-gray-400 mb-1">
+                Sidst læst manuelt fra kameraet under en tekniker-session
+                {hwInfo.observed_settings_at && ` (${new Date(hwInfo.observed_settings_at).toLocaleString('da-DK')})`}:
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-700">
+                {Object.entries(hwInfo.observed_settings).map(([key, value]) => (
+                  <span key={key}>{key}: <span className="font-medium">{value ?? '—'}</span></span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── BT PAN TOTP QR-kode ──────────────────────────────────────────── */}
       {cameraLocation && (

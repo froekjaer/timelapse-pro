@@ -563,6 +563,41 @@ def _run_external(args: list[str], timeout: int, label: str) -> subprocess.Compl
     return result
 
 
+def _read_shutter_count_from_exif(image_path: Path) -> tuple[Optional[int], Optional[str]]:
+    """Read shutter count from a captured image's MakerNotes via exiftool.
+
+    Nikon embeds this per-file (unlike Canon's live PTP counter) — prefer
+    MechanicalShutterCount when present (excludes electronic-shutter-only
+    frames, which don't wear the mechanical shutter), fall back to the
+    combined ShutterCount. Returns (count, source) or (None, None) if
+    exiftool isn't installed or this camera doesn't embed either tag.
+    """
+    result = _run_external(
+        ["exiftool", "-j", "-ShutterCount", "-MechanicalShutterCount", str(image_path)],
+        timeout=15, label="exiftool-shuttercount",
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None, None
+    try:
+        parsed = json.loads(result.stdout)
+    except (ValueError, json.JSONDecodeError):
+        return None, None
+    if not parsed:
+        return None, None
+    tags = parsed[0]
+    if tags.get("MechanicalShutterCount") is not None:
+        try:
+            return int(tags["MechanicalShutterCount"]), "nikon_exif_mechanical"
+        except (TypeError, ValueError):
+            pass
+    if tags.get("ShutterCount") is not None:
+        try:
+            return int(tags["ShutterCount"]), "nikon_exif_total"
+        except (TypeError, ValueError):
+            pass
+    return None, None
+
+
 # ── Driver ────────────────────────────────────────────────────────────────────
 
 def _parse_gphoto2_config(output: str) -> list[dict]:
@@ -1052,6 +1087,82 @@ class GPhoto2Driver(CameraBase):
                 storage_free_mb=None,
                 error_message = str(exc),
             )
+
+    def collect_hardware_inventory(self, latest_capture_path: Optional[Path] = None) -> dict:
+        """Read live hardware telemetry from the camera for the Headend CMDB.
+
+        Best-effort by design: field availability varies a lot by vendor/
+        model over PTP, so any field the camera doesn't report is left as
+        None rather than raising. Model/serial/firmware come from the
+        standard PTP DeviceInfo dataset (via `gphoto2 --summary`), which is
+        generic across brands. Shutter count is NOT standard PTP — Canon
+        exposes a live counter at /main/status/shuttercounter, but Nikon
+        bodies (including the Z30) only embed it in each image's MakerNotes,
+        so it's read via exiftool from the most recently captured file
+        instead (pass `latest_capture_path` when called right after a
+        capture — no extra relay/USB round-trip needed).
+        See headend/migrations/v27_camera_hardware_inventory.sql for the
+        research this is grounded in.
+        """
+        info: dict = {
+            "model": None,
+            "serial_number": None,
+            "firmware_version": None,
+            "battery_level_pct": None,
+            "storage_free_mb": None,
+            "storage_free_images_est": None,
+            "shutter_count": None,
+            "shutter_count_source": None,
+        }
+
+        summary = _run(
+            [GPHOTO2_CMD, "--port", self._port, "--summary"],
+            timeout=STATUS_TIMEOUT_S, check=False,
+        )
+        if summary.returncode == 0:
+            text = summary.stdout
+            info["battery_level_pct"] = self._parse_battery(text)
+            model_match = re.search(r"^Model:\s*(.+)$", text, re.MULTILINE)
+            if model_match:
+                info["model"] = model_match.group(1).strip() or None
+            fw_match = re.search(r"^[Dd]evice [Vv]ersion:\s*(.+)$", text, re.MULTILINE)
+            if fw_match:
+                info["firmware_version"] = fw_match.group(1).strip() or None
+            serial_match = re.search(r"^[Ss]erial [Nn]umber:\s*(.+)$", text, re.MULTILINE)
+            if serial_match:
+                value = serial_match.group(1).strip()
+                if value and value.lower() not in ("none", "(null)", "0"):
+                    info["serial_number"] = value
+
+        storage = _run(
+            [GPHOTO2_CMD, "--port", self._port, "--storage-info"],
+            timeout=STATUS_TIMEOUT_S, check=False,
+        )
+        if storage.returncode == 0:
+            mb_match = re.search(r"Free Space \(Bytes\):.*\((\d+)\s*MB\)", storage.stdout)
+            if mb_match:
+                info["storage_free_mb"] = int(mb_match.group(1))
+            images_match = re.search(r"Free Space \(Images\):\s*(-?\d+)", storage.stdout)
+            if images_match:
+                count = int(images_match.group(1))
+                if count >= 0:   # -1 means "camera doesn't report this"
+                    info["storage_free_images_est"] = count
+
+        shutter = self.get_config_param("/main/status/shuttercounter")
+        raw_shutter = shutter.get("current") if shutter else None
+        if raw_shutter not in (None, ""):
+            try:
+                info["shutter_count"] = int(str(raw_shutter).strip())
+                info["shutter_count_source"] = "canon_ptp_shuttercounter"
+            except ValueError:
+                pass
+        elif latest_capture_path and Path(latest_capture_path).exists():
+            count, source = _read_shutter_count_from_exif(Path(latest_capture_path))
+            if count is not None:
+                info["shutter_count"] = count
+                info["shutter_count_source"] = source
+
+        return info
 
     def health_check(self) -> bool:
         """Quick check: can gphoto2 see the camera?"""

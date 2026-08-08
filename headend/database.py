@@ -357,6 +357,47 @@ class Camera(Base):
     #   config-hierarkiet (retention.days i camera config). Default 365 dage.
     #   Hvis 0 eller NULL, ingen automatisk sletning (manuel styring).
     retention_days      = Column(Integer, default=365)
+    # ── Fysisk kamera-hardware CMDB (v27 migration, 2026-08-08) ─────────────
+    # model/serial_number ovenfor fandtes allerede men blev aldrig udfyldt —
+    # disse felter udfyldes nu reelt fra selve kameraet over PTP/gphoto2 (se
+    # edge/camera/hardware_inventory.py). shutter_count_source fortæller
+    # hvilken kilde tallet kommer fra ('canon_ptp_shuttercounter' |
+    # 'nikon_exif_mechanical' | 'nikon_exif_total') — de er ikke direkte
+    # sammenlignelige på tværs af kilder.
+    firmware_version         = Column(String(50))
+    battery_level_pct        = Column(Integer)
+    storage_free_mb          = Column(Integer)
+    storage_free_images_est  = Column(Integer)
+    shutter_count             = Column(Integer)
+    shutter_count_source      = Column(String(40))
+    hardware_inventory_at     = Column(DateTime(timezone=True))
+    # ── Config-inheritance (v28 migration, 2026-08-08) ──────────────────────
+    # observed_settings: hvad en teknikers kamera-session faktisk læste fra
+    # kameraet ved session-slut — kan afvige fra `config` hvis nogen justerede
+    # kameraet manuelt. IKKE anvendt automatisk, se api/camera_hardware_api.py.
+    observed_settings         = Column(Text)
+    observed_settings_at      = Column(DateTime(timezone=True))
+
+
+class CameraFirmwareReference(Base):
+    """Håndholdt reference: nyeste kendte firmware pr. kameramodel.
+
+    Bevidst IKKE hentet automatisk fra internettet — der findes ingen
+    pålidelig, stabil API hos hverken Canon eller Nikon til dette. Se
+    headend/migrations/v27_camera_hardware_inventory.sql for seed-data og
+    kilder.
+    """
+    __tablename__ = "camera_firmware_reference"
+
+    id                        = Column(Integer, primary_key=True)
+    manufacturer              = Column(String(50), nullable=False)
+    model                     = Column(String(100), nullable=False)
+    latest_version            = Column(String(50), nullable=False)
+    rated_shutter_actuations  = Column(Integer)
+    notes                     = Column(Text)
+    source_url                = Column(String(500))
+    updated_by                = Column(String(100), nullable=False)
+    updated_at                = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class DeviceAssignment(Base):

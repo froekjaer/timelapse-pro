@@ -988,6 +988,23 @@ def _safe_image_from(root: Path, name: str) -> Path:
     return path
 
 
+def _camera_session_snapshot() -> dict:
+    """Status of the shared camera-relay session — see
+    camera/technician_session.py. Tolerant of failure: an inactive/unknown
+    session should never break the technician page."""
+    ok, output = _run_tech_cli("--camera-session", "status", timeout=15)
+    if not ok:
+        return {"active": False}
+    try:
+        # _run_tech_cli merges stdout+stderr — only the leading JSON object
+        # (the CLI's own print()) is ours; raw_decode ignores trailing noise
+        # instead of requiring the whole string to be valid JSON.
+        obj, _end = json.JSONDecoder().raw_decode(output)
+        return obj if isinstance(obj, dict) else {"active": False}
+    except (ValueError, TypeError):
+        return {"active": False}
+
+
 def _technician_snapshot() -> dict:
     """Use bootstrap_cli's shared status collector when available."""
     try:
@@ -1444,6 +1461,7 @@ term.onData((data) => {
 def _technician_page(msg: str = "", output: str = "") -> str:
     status = _technician_snapshot()
     video_status = VIDEO_MANAGER.status()
+    camera_session = _camera_session_snapshot()
     service_policy = _service_policy_snapshot()
     generated = status.get("generated_at", "")
     photo_options = "".join(
@@ -1470,6 +1488,32 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         f'<div class="card wide"><h2>Output</h2><pre>{html.escape(output)}</pre></div>'
         if output else ""
     )
+    session_minutes_options = "".join(
+        f'<option value="{m}">{label}</option>'
+        for m, label in [(30, "30 minutter"), (60, "1 time"), (180, "3 timer"), (1440, "Hele dagen (24 timer)")]
+    )
+    if camera_session.get("active"):
+        remaining_min = max(1, camera_session.get("remaining_s", 0) // 60)
+        camera_session_html = f"""
+        <p class="stream-status ok"><strong>Kamera-strøm er tændt</strong> — {remaining_min} minutter tilbage. Kommandoer virker med det samme, ingen ventetid pr. handling.</p>
+        <div class="stream-actions">
+          <form method="post" action="/mgmt/technician/camera-session/extend">
+            <div><label for="extend-minutes">Forlæng med</label><select id="extend-minutes" name="minutes">{session_minutes_options}</select></div>
+            <button type="submit">Forlæng</button>
+          </form>
+          <form method="post" action="/mgmt/technician/camera-session/stop"><button class="secondary" type="submit">Afslut session — sluk strøm</button></form>
+        </div>
+        """
+    else:
+        camera_session_html = f"""
+        <p class="hint">Vil du tænde strøm til kameraet manuelt, så du kan arbejde i menuen og evt. også fysisk på selve kameraet — uden at vente 10 sek. opvarmning ved hver enkelt handling? Slukkes automatisk når tiden løber ud, eller når du afslutter selv.</p>
+        <div class="stream-actions">
+          <form method="post" action="/mgmt/technician/camera-session/start">
+            <div><label for="session-minutes">Varighed</label><select id="session-minutes" name="minutes">{session_minutes_options}</select></div>
+            <button type="submit">Tænd strøm til kamera</button>
+          </form>
+        </div>
+        """
     mode_labels = {
         "movie": "Ægte movie/live-view",
         "preview": "Preview-kompatibilitet",
@@ -1605,6 +1649,10 @@ def _technician_page(msg: str = "", output: str = "") -> str:
 </nav>
 <div class="content">
   {msg_html}
+  <div class="card wide">
+    <h2>Kamera-strøm</h2>
+    {camera_session_html}
+  </div>
   <div class="grid">
     <div class="card"><h2>Device</h2>{_kv_table(status.get("device", {}))}</div>
     <div class="card"><h2>Service</h2>{_kv_table(status.get("service", {}))}</div>
@@ -1938,8 +1986,32 @@ async def mgmt_technician_video_frame(name: str):
 
 @app.get("/mgmt/technician/video/start")
 @app.get("/mgmt/technician/video/stop")
+@app.get("/mgmt/technician/camera-session/start")
+@app.get("/mgmt/technician/camera-session/stop")
+@app.get("/mgmt/technician/camera-session/extend")
 async def mgmt_technician_video_post_target_get_fallback(request: Request):
     return RedirectResponse("/mgmt/technician", status_code=303)
+
+
+@app.post("/mgmt/technician/camera-session/start", response_class=HTMLResponse)
+async def mgmt_technician_camera_session_start(request: Request, minutes: int = Form(30)):
+    ok, output = await asyncio.to_thread(_run_tech_cli, "--camera-session", "start", "--minutes", str(minutes), timeout=60)
+    message = f"Kamera-strøm tændt i op til {minutes} minutter" if ok else "Kunne ikke tænde kamera-strøm — se output nedenfor"
+    return HTMLResponse(_technician_page(message, output if not ok else ""))
+
+
+@app.post("/mgmt/technician/camera-session/extend", response_class=HTMLResponse)
+async def mgmt_technician_camera_session_extend(request: Request, minutes: int = Form(30)):
+    ok, output = await asyncio.to_thread(_run_tech_cli, "--camera-session", "extend", "--minutes", str(minutes), timeout=30)
+    message = f"Session forlænget med {minutes} minutter" if ok else "Kunne ikke forlænge — ingen aktiv session?"
+    return HTMLResponse(_technician_page(message, output if not ok else ""))
+
+
+@app.post("/mgmt/technician/camera-session/stop", response_class=HTMLResponse)
+async def mgmt_technician_camera_session_stop(request: Request):
+    ok, output = await asyncio.to_thread(_run_tech_cli, "--camera-session", "stop", timeout=60)
+    message = "Kamera-strøm slukket" if ok else "Fejl ved afslutning af session — se output nedenfor"
+    return HTMLResponse(_technician_page(message, output if not ok else ""))
 
 
 @app.post("/mgmt/technician/video/start", response_class=HTMLResponse)

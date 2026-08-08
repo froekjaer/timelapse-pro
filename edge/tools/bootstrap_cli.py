@@ -108,6 +108,8 @@ def main() -> int:
     parser.add_argument("--gps-status", action="store_true", help="Print gpsd/gpspipe status")
     parser.add_argument("--npu-status", action="store_true", help="Print Edge AI/NPU status")
     parser.add_argument("--maintenance", action="store_true", help="Pause edge service and manage camera relay for camera commands")
+    parser.add_argument("--camera-session", choices=["start", "stop", "status", "extend"], help="Start/stop/extend a shared camera-relay session — relay stays on across multiple commands instead of power-cycling per command")
+    parser.add_argument("--minutes", type=int, default=30, help="Duration in minutes for --camera-session start/extend (default 30)")
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir)
@@ -147,6 +149,8 @@ def main() -> int:
     if args.serve_ui:
         print("Lokal tekniker-UI er erstattet af TOTP-portalen: https://192.168.42.1:8443")
         return 2
+    if args.camera_session:
+        return 0 if handle_camera_session(args.camera_session, args.minutes, base_dir) else 1
     if args.camera_detect:
         return 0 if run_camera_operation(lambda: camera_detect(), base_dir, args.maintenance) else 1
     if args.camera_summary:
@@ -803,7 +807,17 @@ def qa_image(path: Path, base_dir: Path) -> bool:
 
 
 def run_camera_operation(operation, base_dir: Path, maintenance: bool = False) -> bool:
-    """Run a direct gphoto2 operation, optionally pausing agent and powering camera."""
+    """Run a direct gphoto2 operation, optionally pausing agent and powering camera.
+
+    2026-08-08: if a --camera-session is currently open (relay already on,
+    edge service already paused — see handle_camera_session()), just run the
+    operation directly, --maintenance or not. Only fall through to the old
+    power-cycle-per-command behaviour when no session owns the camera.
+    """
+    sys.path.insert(0, str(EDGE_ROOT))
+    from camera.technician_session import CameraSession
+    if CameraSession().is_active():
+        return bool(operation())
     if not maintenance:
         return bool(operation())
 
@@ -840,6 +854,74 @@ def run_camera_operation(operation, base_dir: Path, maintenance: bool = False) -
                 systemctl("start", SERVICE_NAME, timeout=60)
                 wait_for_service_state(SERVICE_NAME, "active", timeout_s=30)
                 print("Edge-agent startet igen")
+
+
+def handle_camera_session(action: str, minutes: int, base_dir: Path) -> bool:
+    """--camera-session start/stop/status/extend — see
+    camera/technician_session.py for the session-file design rationale."""
+    sys.path.insert(0, str(EDGE_ROOT))
+    from camera.technician_session import CameraSession
+    session = CameraSession()
+
+    if action == "status":
+        print(json.dumps(session.status(), indent=2, ensure_ascii=False))
+        return True
+
+    if action == "extend":
+        try:
+            status = session.extend(minutes * 60)
+        except RuntimeError as exc:
+            print(str(exc))
+            return False
+        print(f"Session forlænget — {status['remaining_s'] // 60} minutter tilbage")
+        return True
+
+    if action == "start":
+        if session.is_active():
+            print("En tekniker-session er allerede aktiv")
+            print(json.dumps(session.status(), indent=2, ensure_ascii=False))
+            return True
+        relay = build_relay(base_dir)
+        if relay is None:
+            print("Relæ kunne ikke initialiseres — se fejl ovenfor")
+            return False
+        if is_service_active(SERVICE_NAME):
+            print("Pauser edge-agent...")
+            systemctl("stop", SERVICE_NAME, timeout=120)
+            wait_for_service_state(SERVICE_NAME, "inactive", timeout_s=20)
+        status = session.start(relay, minutes * 60, started_by=os.getenv("USER", "cli"))
+        print(f"Tekniker-session startet — kamera-relæ tændt i op til {minutes} minutter")
+        print("Kommandoer uden --maintenance rammer nu kameraet direkte, ingen ekstra ventetid pr. kommando")
+        print(json.dumps(status, indent=2, ensure_ascii=False))
+        return True
+
+    if action == "stop":
+        # Læs de 7 fototekniske indstillinger FØR relæet slukkes — det er
+        # det en tekniker evt. selv har justeret manuelt på kameraet mens
+        # sessionen var åben. Kun rapporteret her ind til logs/output;
+        # rapportering til Headend (headend/api/camera_hardware_api.py's
+        # observed_settings-felt, se v28-migrationen) sker i dag via
+        # agent.py's daglige hardware-rapportering, ikke direkte herfra —
+        # bevidst ikke bygget i aften uden et fysisk kamera at teste imod.
+        observed = {
+            key: read_gphoto_current(spec["path"])
+            for key, spec in PHOTO_SETTINGS.items()
+        }
+        if any(v is not None for v in observed.values()):
+            print("Indstillinger læst fra kameraet ved session-slut:")
+            for key, value in observed.items():
+                print(f"  {PHOTO_SETTINGS[key]['label']}: {value if value is not None else '(ikke fundet)'}")
+        relay = build_relay(base_dir)
+        if relay is not None:
+            session.stop(relay)
+        if is_service_enabled(SERVICE_NAME) and not is_service_active(SERVICE_NAME):
+            systemctl("start", SERVICE_NAME, timeout=60)
+            wait_for_service_state(SERVICE_NAME, "active", timeout_s=30)
+            print("Edge-agent startet igen")
+        print("Tekniker-session afsluttet — kamera-relæ slukket")
+        return True
+
+    return False
 
 
 def build_relay(base_dir: Path):

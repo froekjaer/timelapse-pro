@@ -36,8 +36,16 @@ SyslogIdentifier=timelapse-edge
 # Security hardening
 NoNewPrivileges=yes
 PrivateTmp=yes
+# 2026-08-08 (Claude, Peter): was 0755 (root:root, this service's own
+# User=/Group=), which meant `bootstrap_cli.py --maintenance` — the ONLY way
+# to reliably test camera commands, since it's what powers the relay —
+# crashed with a raw PermissionError on CameraMaintenanceLease's lock file
+# whenever run as the interactive orangepi user without sudo. This directory
+# only ever holds lock/status/voltage-cache files, never secrets, so 0777 is
+# an acceptable trade for technicians not needing root for routine camera
+# work. tmpfs, recreated on every boot — not a persistent permission change.
 RuntimeDirectory=timelapse
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0777
 ProtectSystem=strict
 ReadWritePaths=/data /opt/timelapse /opt/timelapse/edge /run/timelapse
 ReadWritePaths=/etc/systemd/system/timelapse-edge.service /etc/systemd/system/timelapse-bt-pan.service /etc/systemd/system/timelapse-bt-agent.service /etc/systemd/system/timelapse-captive.service /etc/systemd/system/timelapse-totp.service

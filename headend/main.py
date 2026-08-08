@@ -5794,6 +5794,7 @@ from api.camera_locations_api import router as _camera_locations_router
 from api.export_api import router as _export_router
 from api.ssh_tunnel_terminal_api import router as _ssh_tunnel_terminal_router
 from api.captures_timeline_api import router as _captures_timeline_router
+from api.camera_hardware_api import _active_camera_for_device, report_camera_hardware_inventory
 app.include_router(_camera_locations_router)
 app.include_router(_export_router)
 app.include_router(_ssh_tunnel_terminal_router)
@@ -12137,6 +12138,19 @@ def edge_report_inventory(
     return _cmdb_report_inventory(device_id=device_id, payload=payload, db=db)
 
 
+@app.post("/api/inventory/{device_id}/camera-hardware")
+def edge_report_camera_hardware(
+    device_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+    _auth: None = Depends(_verify_device_token),
+):
+    """Live kamera-telemetri (model/serienummer/firmware/batteri/lager/
+    lukkertæller) — se edge/camera/drivers/gphoto2_driver.py::
+    collect_hardware_inventory og headend/api/camera_hardware_api.py."""
+    return report_camera_hardware_inventory(db, device_id, payload)
+
+
 @app.get("/health")
 @app.get("/api/health")
 def health():
@@ -13544,17 +13558,6 @@ def _defaults_dict(db: Session) -> dict:
         if hasattr(defaults, section):
             result[section] = _json_dict(getattr(defaults, section, None))
     return result
-
-
-def _active_camera_for_device(db: Session, device_id: str) -> Camera | None:
-    assignment = (
-        db.query(DeviceAssignment)
-        .filter_by(device_id=device_id)
-        .filter(DeviceAssignment.unassigned_at.is_(None))
-        .order_by(DeviceAssignment.assigned_at.desc())
-        .first()
-    )
-    return db.query(Camera).filter_by(id=assignment.camera_id).first() if assignment else None
 
 
 def _resolve_config_hierarchy(
@@ -17181,10 +17184,12 @@ from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
 from api.device_security_api import create_device_security_router
 from api.device_ssh_access_api import create_device_ssh_access_router
+from api.camera_hardware_api import create_camera_hardware_router
 app.include_router(customer_risk_api.router)
 app.include_router(grc_register_api.router)
 app.include_router(storage_api.router)
 app.include_router(headend_generator_api.router)
+app.include_router(create_camera_hardware_router())
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).

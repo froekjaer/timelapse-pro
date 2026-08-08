@@ -180,6 +180,7 @@ class EdgeAgent:
         self._last_config_pull:  datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._last_update_check: datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._last_inventory:    datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._last_camera_hw_inventory: datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._stop_event = threading.Event()
         self._last_siem_emit: dict[str, datetime] = {}
         self._last_siem_forward: datetime = datetime.min.replace(tzinfo=timezone.utc)
@@ -1009,6 +1010,8 @@ class EdgeAgent:
                 result.filesize / 1e6,
                 result.sha256[:12]
             )
+
+            self._maybe_report_camera_hardware(result.filepath)
 
             # 5. Quality check
             quality_report = self._quality_report(result.filepath, None)  # sha256 pre-XMP — skip disk re-verify
@@ -2314,6 +2317,35 @@ class EdgeAgent:
                      hal_caps.get("hal_id", "unknown"))
         except Exception as exc:
             log.warning("Inventar-rapportering fejlede: %s", exc)
+
+    def _maybe_report_camera_hardware(self, latest_capture_path) -> None:
+        """Rapportér kamera-hardware-CMDB (model/serienummer/firmware/
+        batteri/lager/lukkertæller) til Headend. Dagligt — piggybacker på en
+        capture der allerede har kameraet forbundet og tændt, så det ikke
+        koster en ekstra relæ-cyklus. Se
+        edge/camera/drivers/gphoto2_driver.py::collect_hardware_inventory
+        og headend/api/camera_hardware_api.py.
+        """
+        now = datetime.now(timezone.utc)
+        interval_h = float(self._cfg.get("diagnostics", {}).get("camera_hardware_report_interval_hours", 24))
+        if (now - self._last_camera_hw_inventory).total_seconds() < interval_h * 3600:
+            return
+        try:
+            if not hasattr(self._driver, "collect_hardware_inventory"):
+                return
+            info = self._driver.collect_hardware_inventory(latest_capture_path)
+            ok, _resp = self._api._post(f"/inventory/{self._device_id}/camera-hardware", info)
+            if ok:
+                self._last_camera_hw_inventory = now
+                log.info(
+                    "Kamera-hardware rapporteret: model=%s firmware=%s lukkertæller=%s (kilde=%s)",
+                    info.get("model"), info.get("firmware_version"),
+                    info.get("shutter_count"), info.get("shutter_count_source"),
+                )
+            else:
+                log.warning("Kamera-hardware-rapportering fejlede (headend svarede ikke)")
+        except Exception as exc:
+            log.warning("Kamera-hardware-rapportering fejlede: %s", exc)
 
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""
