@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS edge_credential_inventory (
     private_key_location     VARCHAR(300),
     public_key_location      VARCHAR(300),
     storage                  VARCHAR(200),
+    secret_hash              VARCHAR(128),
+    fingerprint              VARCHAR(128),
+    source_table             VARCHAR(80),
+    source_id                VARCHAR(120),
     lifetime                 VARCHAR(120),
     scope                    TEXT,
     audience                 VARCHAR(200),
@@ -52,6 +56,13 @@ CREATE TABLE IF NOT EXISTS edge_credential_inventory (
     compromise_procedure     TEXT,
     lifecycle_state_created  VARCHAR(40),
     metadata_json            TEXT,
+    issued_at                TIMESTAMPTZ,
+    activated_at             TIMESTAMPTZ,
+    rotated_at               TIMESTAMPTZ,
+    revoked_at               TIMESTAMPTZ,
+    retired_at               TIMESTAMPTZ,
+    expires_at               TIMESTAMPTZ,
+    consumed_at              TIMESTAMPTZ,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT uq_edge_credential_inventory_path UNIQUE (device_id, trust_path, credential_id)
@@ -62,6 +73,9 @@ CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_trust_path ON edge_cred
 CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_key_type ON edge_credential_inventory(key_type);
 CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_status ON edge_credential_inventory(status);
 CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_legacy ON edge_credential_inventory(legacy_path);
+CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_secret_hash ON edge_credential_inventory(secret_hash);
+CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_fingerprint ON edge_credential_inventory(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_expires ON edge_credential_inventory(expires_at);
 
 GRANT ALL PRIVILEGES ON TABLE edge_lifecycle_records TO timelapse;
 GRANT ALL PRIVILEGES ON TABLE edge_credential_inventory TO timelapse;

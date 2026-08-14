@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -11,13 +12,17 @@ ROOT = Path(__file__).resolve().parents[1]
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 sys.path.insert(0, str(ROOT / "headend"))
 
-from database import Base, Camera, Device, DeviceAssignment, EdgeCredentialInventory, KeyCredential  # noqa: E402
+from database import Base, BootstrapToken, Camera, Device, DeviceAssignment, EdgeCredentialInventory, KeyCredential, now_utc  # noqa: E402
 from services.edge_lifecycle import (  # noqa: E402
     LifecycleTransitionError,
     advance_lifecycle_to,
+    credential_state_allows_use,
     get_or_create_lifecycle_record,
     hardware_fingerprint,
+    issue_inventory_api_credential,
     legacy_credential_paths_remaining,
+    mark_bootstrap_consumed,
+    migrate_legacy_api_token_to_inventory,
     reconcile_device_credentials,
     transition_lifecycle,
 )
@@ -140,3 +145,161 @@ def test_device_auth_fails_closed_for_revoked_lifecycle_state():
     assert "EdgeLifecycleRecord" in verify_block
     assert '{"quarantined", "revoked", "retired"}' in verify_block
     assert "Edge lifecycle state afviser API-adgang" in verify_block
+    assert "find_active_api_credential" in verify_block
+    assert "migrate_legacy_api_token_to_inventory" in verify_block
+
+
+def test_retired_lifecycle_state_rejects_device_api_auth():
+    source = (ROOT / "headend" / "main.py").read_text(encoding="utf-8")
+    verify_block = source.split("async def _verify_device_token(", 1)[1].split("async def _verify_payload_device_token(", 1)[0]
+
+    assert '"retired"' in verify_block
+    assert "raise HTTPException(status_code=401" in verify_block
+
+
+def test_consumed_bootstrap_credential_cannot_be_reused(db):
+    token = BootstrapToken(
+        token="bootstrap-once",
+        device_label="Nordre Villavej",
+        expires_at=now_utc() + timedelta(hours=1),
+    )
+    db.add(token)
+    db.flush()
+
+    row = mark_bootstrap_consumed(
+        db,
+        token_id=token.id,
+        token_hash="hash-bootstrap-once",
+        device_id="TL-BOOTSTRAP01",
+    )
+    token.used_at = now_utc()
+    token.used_by_device = "TL-BOOTSTRAP01"
+    token.revoked = True
+    db.flush()
+
+    assert row.status == "consumed"
+    assert row.consumed_at is not None
+    assert token.revoked is True
+
+
+def test_credential_scopes_remain_isolated_and_api_cannot_become_tunnel(db):
+    device = Device(device_id="TL-SCOPE01")
+    db.add(device)
+    db.flush()
+
+    row = issue_inventory_api_credential(
+        db,
+        device,
+        credential_id="TL-KEY-API-SCOPE",
+        token_hash="api-token-hash",
+        fingerprint="api-fingerprint",
+        actor="test",
+        scopes_json='["capture:write"]',
+    )
+
+    assert row.trust_path == "device_api"
+    assert row.key_type == "api"
+    assert row.scope == '["capture:write"]'
+    assert row.audience == "Headend Edge API"
+    assert db.query(EdgeCredentialInventory).filter_by(
+        device_id=device.device_id,
+        trust_path="device_support_tunnel",
+        credential_id=row.credential_id,
+    ).first() is None
+
+
+def test_credential_rotation_leaves_exactly_one_active_successor(db):
+    device = Device(device_id="TL-ROTATE01")
+    db.add(device)
+    db.flush()
+
+    first = issue_inventory_api_credential(
+        db,
+        device,
+        credential_id="TL-KEY-API-OLD",
+        token_hash="old-hash",
+        fingerprint="old-fingerprint",
+        actor="test",
+        scopes_json="[]",
+    )
+    second = issue_inventory_api_credential(
+        db,
+        device,
+        credential_id="TL-KEY-API-NEW",
+        token_hash="new-hash",
+        fingerprint="new-fingerprint",
+        actor="test",
+        scopes_json="[]",
+    )
+    db.flush()
+
+    assert first.status == "rotated"
+    assert first.rotated_at is not None
+    assert second.status == "active"
+    assert db.query(EdgeCredentialInventory).filter_by(
+        device_id=device.device_id,
+        trust_path="device_api",
+        key_type="api",
+        status="active",
+    ).count() == 1
+
+
+def test_unknown_credential_state_fails_closed(db):
+    row = EdgeCredentialInventory(
+        device_id="TL-UNKNOWN01",
+        trust_path="device_api",
+        credential_id="TL-KEY-UNKNOWN",
+        key_type="api",
+        status="unknown",
+    )
+    db.add(row)
+    db.flush()
+
+    assert credential_state_allows_use(row) is False
+    row.status = "active"
+    assert credential_state_allows_use(row) is True
+
+
+def test_legacy_api_migration_is_idempotent(db):
+    device = Device(device_id="TL-LEGACY01", api_token="legacy-token")
+    db.add(device)
+    db.flush()
+
+    first = migrate_legacy_api_token_to_inventory(
+        db,
+        device,
+        token_hash="legacy-hash",
+        actor="test",
+    )
+    second = migrate_legacy_api_token_to_inventory(
+        db,
+        device,
+        token_hash="legacy-hash",
+        actor="test",
+    )
+    db.flush()
+
+    assert first.id == second.id
+    assert db.query(EdgeCredentialInventory).filter_by(
+        device_id=device.device_id,
+        trust_path="device_api",
+        credential_id="legacy-api:legacy-hash",
+    ).count() == 1
+
+
+def test_existing_enrolled_edge_can_migrate_without_losing_capture_upload_scope(db):
+    device = Device(device_id="TL-MIGRATE01", api_token="legacy-token", status="online")
+    db.add(device)
+    db.flush()
+
+    row = migrate_legacy_api_token_to_inventory(
+        db,
+        device,
+        token_hash="legacy-hash",
+        actor="test",
+    )
+
+    assert device.api_token == "legacy-token"
+    assert row.status == "active"
+    assert "capture:write" in row.scope
+    assert row.legacy_path is True
