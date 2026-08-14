@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-08-15 00:05 — fra Codex til Peter/Claude: WP-1 canonical credential authority slice
+
+- Hvad er gjort: `edge_credential_inventory` er udvidet fra inventory-katalog til runtime authority for Edge API credentials med `secret_hash`, `fingerprint`, source, lifecycle timestamps og fail-closed state semantics. Nye bootstrap/enroll/admin API credentials gemmer ikke længere plaintext token i `devices.api_token`; token returneres én gang, mens Headend bruger inventory-hash. Legacy `devices.api_token` accepteres kun via idempotent migration adapter. Bootstrap credentials markeres consumed/revoked efter successful enrollment. SSH/TOTP/SFTP/local TLS compatibility paths registreres med owner/storage/status metadata uden at starte EdgeServiceGrant, Local Service Gateway, browser terminal, generator split eller CSR/PKI redesign.
+- Acceptance dækket: duplicate identity rejected, invalid lifecycle transition rejected, revoked/retired API auth fail-closed, consumed bootstrap credential cannot be reused, credential scopes isolated, API credential cannot become tunnel credential, rotation leaves exactly one active successor, unknown credential state fails closed, legacy migration idempotent, existing enrolled Edge keeps capture/upload scope during legacy migration.
+- Resterende gaps: Kamera-båret SSH private key og TOTP seed er stadig legacy compatibility storage; local TLS expiry er kun synlig når eksisterende metadata findes; site SFTP er registreret som Edge-consumed/site-RBAC-owned compatibility credential; egentlig CSR/PKI lifecycle, EdgeServiceGrant og service access hører til senere WP.
+- Kommandoer kørt eller skal køres: `pytest tests/test_edge_lifecycle_contract.py tests/test_edge_image_build_contract.py tests/test_edge_sftp_config.py tests/test_headend_bootstrap_contract.py tests/test_edge_release_contract.py tests/test_credential_rotation.py -q`; `python -m py_compile headend/services/edge_lifecycle.py headend/database.py headend/main.py`.
+- Forventet/faktisk output: 85 passed, 14 skipped i fokuseret suite; skipped er eksisterende miljø/admin-token/HMAC-not-implemented skips i `test_credential_rotation.py`. Python compile PASS.
+- Filer rørt: `headend/database.py`, `headend/main.py`, `headend/migrations/v29_edge_lifecycle_credentials.sql`, `headend/services/edge_lifecycle.py`, `tests/test_edge_lifecycle_contract.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Nye Edges får ikke længere plaintext `devices.api_token`. Rollout skal sikre, at Edge gemmer returned token lokalt ved enrollment, og at inventory migration køres før gamle tokens fjernes. Batch bootstrap tokens bliver behandlet som one-purpose/consumed i WP-1; bred image-envelope redesign er stadig WP-4.
+
 ### Handover 2026-08-14 23:25 — fra Codex til Peter/Claude: WP-0/WP-1 release convergence baseline isoleret
 
 - Hvad er gjort: Draft PR #12 release convergence-planen er hentet ind som styrende baseline. Første WP-1-slice etablerer `edge_lifecycle_records` og `edge_credential_inventory`, lifecycle service, migration og hooks i bootstrap, zero-touch enrollment, site assignment, provisioning, key-management reconcile og revoke/retire. API-auth afviser `quarantined`, `revoked` og `retired` lifecycle states fail-closed før legacy token fallback.

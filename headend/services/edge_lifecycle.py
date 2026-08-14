@@ -17,6 +17,8 @@ from database import (
     EdgeCredentialInventory,
     EdgeLifecycleRecord,
     KeyCredential,
+    Settings,
+    Site,
     now_utc,
 )
 
@@ -40,6 +42,8 @@ STATES: tuple[str, ...] = (
 )
 
 TERMINAL_STATES = {"revoked", "retired"}
+USABLE_CREDENTIAL_STATES = {"active"}
+BLOCKED_CREDENTIAL_STATES = {"unknown", "not_present", "rotated", "revoked", "retired", "expired", "consumed"}
 
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "manufactured": {"prepared", "quarantined", "retired"},
@@ -117,6 +121,170 @@ def hardware_fingerprint(device_id: str, evidence: dict[str, Any] | None = None)
 
 def _json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _setting(db: Session, key: str, default: str = "") -> str:
+    row = db.query(Settings).filter_by(key=key).first()
+    return row.value if row and row.value is not None else default
+
+
+def credential_state_allows_use(row: EdgeCredentialInventory | None) -> bool:
+    """Fail closed unless a credential inventory row is explicitly active."""
+    return bool(row and (row.status or "unknown") in USABLE_CREDENTIAL_STATES)
+
+
+def find_active_api_credential(
+    db: Session,
+    *,
+    device_id: str,
+    token_hash: str,
+) -> EdgeCredentialInventory | None:
+    row = (
+        db.query(EdgeCredentialInventory)
+        .filter_by(
+            device_id=device_id,
+            trust_path="device_api",
+            key_type="api",
+            secret_hash=token_hash,
+        )
+        .order_by(EdgeCredentialInventory.activated_at.desc(), EdgeCredentialInventory.created_at.desc())
+        .first()
+    )
+    return row if credential_state_allows_use(row) else None
+
+
+def mark_bootstrap_consumed(
+    db: Session,
+    *,
+    token_id: Any,
+    token_hash: str,
+    device_id: str,
+    status: str = "consumed",
+) -> EdgeCredentialInventory:
+    now = now_utc()
+    return _upsert_inventory(
+        db,
+        device_id=device_id,
+        trust_path="bootstrap",
+        credential_id=f"bootstrap:{token_id}",
+        key_type="bootstrap",
+        subject=f"edge:{device_id}",
+        issuer="headend",
+        owner="headend provisioning",
+        private_key_location="not stored",
+        public_key_location="",
+        storage="bootstrap_tokens.token plus inventory hash",
+        secret_hash=token_hash,
+        fingerprint=hashlib.sha256(token_hash.encode()).hexdigest(),
+        source_table="bootstrap_tokens",
+        source_id=str(token_id),
+        lifetime="short-lived one-purpose enrollment credential",
+        scope='["edge:bootstrap:enroll-once"]',
+        audience="Headend enrollment/bootstrap endpoints",
+        rotation="create a new bootstrap token; never reuse consumed token",
+        revocation="bootstrap_tokens.revoked=true and edge_credential_inventory.status=revoked",
+        status=status,
+        legacy_path=False,
+        compromise_procedure="revoke token, retire any device enrolled with uncertain provenance, issue a new envelope",
+        lifecycle_state_created="bootstrap_authenticated",
+        issued_at=now,
+        activated_at=now if status == "active" else None,
+        consumed_at=now if status == "consumed" else None,
+        metadata={"purpose": "one-purpose bootstrap/enrollment", "consumed_by_device": device_id},
+    )
+
+
+def migrate_legacy_api_token_to_inventory(
+    db: Session,
+    device: Device,
+    *,
+    token_hash: str,
+    actor: str,
+) -> EdgeCredentialInventory:
+    now = now_utc()
+    return _upsert_inventory(
+        db,
+        device_id=device.device_id,
+        trust_path="device_api",
+        credential_id=f"legacy-api:{token_hash[:16]}",
+        key_type="api",
+        subject=f"edge:{device.device_id}",
+        issuer="legacy devices.api_token adapter",
+        owner="headend-governed edge",
+        private_key_location="/opt/timelapse/edge/api_token.txt",
+        public_key_location="",
+        storage="edge_credential_inventory.secret_hash; migrated from devices.api_token",
+        secret_hash=token_hash,
+        fingerprint=hashlib.sha256(token_hash.encode()).hexdigest(),
+        source_table="devices",
+        source_id=device.device_id,
+        lifetime="legacy compatibility until explicit rotation",
+        scope='["config:read","heartbeat:write","capture:write","updates:poll"]',
+        audience="Headend Edge API",
+        rotation="issue managed inventory API credential and clear devices.api_token after Edge confirms",
+        revocation="edge_credential_inventory.status=revoked and clear devices.api_token",
+        status="active",
+        legacy_path=True,
+        compromise_procedure="revoke inventory row, clear devices.api_token, re-enroll or rotate device",
+        lifecycle_state_created=canonical_state_for_device(device),
+        issued_at=device.created_at or now,
+        activated_at=now,
+        metadata={"source": "devices.api_token", "actor": actor, "migration_adapter": True},
+    )
+
+
+def issue_inventory_api_credential(
+    db: Session,
+    device: Device,
+    *,
+    credential_id: str,
+    token_hash: str,
+    fingerprint: str,
+    actor: str,
+    scopes_json: str,
+    source_table: str = "key_credentials",
+) -> EdgeCredentialInventory:
+    """Install a single active canonical API credential in inventory."""
+    now = now_utc()
+    for row in (
+        db.query(EdgeCredentialInventory)
+        .filter_by(device_id=device.device_id, trust_path="device_api", key_type="api", status="active")
+        .all()
+    ):
+        if row.credential_id == credential_id:
+            continue
+        row.status = "rotated"
+        row.rotated_at = now
+        row.updated_at = now
+    return _upsert_inventory(
+        db,
+        device_id=device.device_id,
+        trust_path="device_api",
+        credential_id=credential_id,
+        key_type="api",
+        subject=f"edge:{device.device_id}",
+        issuer=actor,
+        owner="headend-governed edge",
+        private_key_location="edge local token file only; headend stores hash in inventory",
+        public_key_location="",
+        storage="edge_credential_inventory.secret_hash",
+        secret_hash=token_hash,
+        fingerprint=fingerprint,
+        source_table=source_table,
+        source_id=credential_id,
+        lifetime="until rotation/revocation/retirement",
+        scope=scopes_json,
+        audience="Headend Edge API",
+        rotation="edge_credential_inventory successor row; previous active row becomes rotated",
+        revocation="edge_credential_inventory.status=revoked",
+        status="active",
+        legacy_path=False,
+        compromise_procedure="revoke inventory row, quarantine lifecycle if identity integrity is uncertain",
+        lifecycle_state_created=canonical_state_for_device(device),
+        issued_at=now,
+        activated_at=now,
+        metadata={"actor": actor, "canonical_authority": True},
+    )
 
 
 def get_or_create_lifecycle_record(
@@ -272,15 +440,26 @@ def _upsert_inventory(
     private_key_location: str,
     public_key_location: str,
     storage: str,
-    lifetime: str,
-    scope: str,
-    audience: str,
-    rotation: str,
-    revocation: str,
-    status: str,
-    legacy_path: bool,
-    compromise_procedure: str,
-    lifecycle_state_created: str,
+    secret_hash: str | None = None,
+    fingerprint: str | None = None,
+    source_table: str = "",
+    source_id: str = "",
+    lifetime: str = "",
+    scope: str = "",
+    audience: str = "",
+    rotation: str = "",
+    revocation: str = "",
+    status: str = "active",
+    legacy_path: bool = False,
+    compromise_procedure: str = "",
+    lifecycle_state_created: str = "",
+    issued_at: Any = None,
+    activated_at: Any = None,
+    rotated_at: Any = None,
+    revoked_at: Any = None,
+    retired_at: Any = None,
+    expires_at: Any = None,
+    consumed_at: Any = None,
     metadata: dict[str, Any] | None = None,
 ) -> EdgeCredentialInventory:
     lookup_id = credential_id or f"legacy:{trust_path}"
@@ -299,6 +478,10 @@ def _upsert_inventory(
     row.private_key_location = private_key_location
     row.public_key_location = public_key_location
     row.storage = storage
+    row.secret_hash = secret_hash
+    row.fingerprint = fingerprint
+    row.source_table = source_table
+    row.source_id = source_id
     row.lifetime = lifetime
     row.scope = scope
     row.audience = audience
@@ -308,6 +491,13 @@ def _upsert_inventory(
     row.legacy_path = bool(legacy_path)
     row.compromise_procedure = compromise_procedure
     row.lifecycle_state_created = lifecycle_state_created
+    row.issued_at = issued_at
+    row.activated_at = activated_at
+    row.rotated_at = rotated_at
+    row.revoked_at = revoked_at
+    row.retired_at = retired_at
+    row.expires_at = expires_at
+    row.consumed_at = consumed_at
     row.metadata_json = _json(metadata or {})
     row.updated_at = now_utc()
     return row
@@ -327,6 +517,9 @@ def reconcile_device_credentials(
         .first()
     )
     camera = db.query(Camera).filter_by(id=assignment.camera_id).first() if assignment else None
+    site = db.query(Site).filter_by(id=device.site_id).first() if device.site_id else None
+    if not site and camera and camera.site_id:
+        site = db.query(Site).filter_by(id=camera.site_id).first()
     for stale in db.query(EdgeCredentialInventory).filter_by(device_id=device.device_id).all():
         stale.status = "not_present"
         stale.updated_at = now_utc()
@@ -337,6 +530,10 @@ def reconcile_device_credentials(
         .order_by(KeyCredential.created_at.desc())
         .all()
     ):
+        try:
+            credential_metadata = json.loads(credential.metadata_json or "{}")
+        except Exception:
+            credential_metadata = {}
         trust_path = {
             "api": "device_api",
             "ssh": "device_support_tunnel",
@@ -356,6 +553,10 @@ def reconcile_device_credentials(
             private_key_location="not stored in key_credentials" if not credential.secret_hash else "edge local secret; hash in headend",
             public_key_location="key_credentials.public_key" if credential.public_key else "",
             storage="key_credentials",
+            secret_hash=credential.secret_hash,
+            fingerprint=credential.fingerprint,
+            source_table="key_credentials",
+            source_id=credential.credential_id,
             lifetime=credential.expires_at.isoformat() if credential.expires_at else "not-explicit",
             scope=credential.scopes_json or "[]",
             audience=f"timelapse:{trust_path}",
@@ -365,7 +566,18 @@ def reconcile_device_credentials(
             legacy_path='"migrated_from_legacy_device_api_token":true' in (credential.metadata_json or ""),
             compromise_procedure="revoke credential, rotate trust path, quarantine device if identity integrity is uncertain",
             lifecycle_state_created=record.state,
-            metadata={"source": "key_credentials", "actor": actor},
+            issued_at=credential.created_at,
+            activated_at=credential.created_at if credential.status == "active" else None,
+            rotated_at=credential.revoked_at if credential.status == "rotated" else None,
+            revoked_at=credential.revoked_at if credential.status == "revoked" else None,
+            retired_at=credential.revoked_at if credential.status == "retired" else None,
+            expires_at=credential.expires_at,
+            metadata={
+                **credential_metadata,
+                "source": "key_credentials",
+                "actor": actor,
+                "canonical_authority": credential.key_type == "api",
+            },
         ))
 
     if device.api_token:
@@ -381,6 +593,10 @@ def reconcile_device_credentials(
             private_key_location="/opt/timelapse/edge/api_token.txt",
             public_key_location="",
             storage="devices.api_token plus Edge file",
+            secret_hash=hashlib.sha256(device.api_token.encode()).hexdigest(),
+            fingerprint=hashlib.sha256(hashlib.sha256(device.api_token.encode()).hexdigest().encode()).hexdigest(),
+            source_table="devices",
+            source_id=device.device_id,
             lifetime="not-explicit",
             scope='["config:read","heartbeat:write","capture:write","updates:poll"]',
             audience="Headend Edge API",
@@ -390,6 +606,8 @@ def reconcile_device_credentials(
             legacy_path=True,
             compromise_procedure="revoke matching KeyCredential, clear devices.api_token, re-enroll or rotate device",
             lifecycle_state_created=record.state,
+            issued_at=device.created_at,
+            activated_at=now_utc(),
             metadata={"source": "devices.api_token", "actor": actor},
         ))
     ssh_private_key = getattr(camera, "ssh_private_key", None) if camera else None
@@ -408,6 +626,9 @@ def reconcile_device_credentials(
             private_key_location=f"cameras.ssh_private_key:{camera.id}; injected to /etc/timelapse/device_keys/id_ed25519",
             public_key_location=f"cameras.ssh_public_key:{camera.id}" if ssh_public_key else "",
             storage="Headend Camera DB + Edge filesystem",
+            fingerprint=hashlib.sha256((ssh_public_key or ssh_private_key).encode()).hexdigest(),
+            source_table="cameras",
+            source_id=camera.id,
             lifetime="not-explicit",
             scope='["ssh:reverse-tunnel"]',
             audience=f"Headend reverse tunnel:{reverse_tunnel_port or 'unassigned-port'}",
@@ -417,6 +638,8 @@ def reconcile_device_credentials(
             legacy_path=True,
             compromise_procedure="quarantine device, revoke tunnel access, rotate Headend and Edge SSH identities",
             lifecycle_state_created=record.state,
+            issued_at=getattr(camera, "created_at", None),
+            activated_at=getattr(assignment, "assigned_at", None),
             metadata={"source": "cameras.ssh_private_key", "actor": actor, "camera_id": camera.id},
         ))
     bt_totp_secret = getattr(camera, "bt_totp_secret", None) if camera else None
@@ -434,6 +657,10 @@ def reconcile_device_credentials(
             private_key_location=f"cameras.bt_totp_secret:{camera.id}; injected to /etc/timelapse/bt-config.yaml",
             public_key_location="technician authenticator seed/QR",
             storage="Headend Camera DB + Edge filesystem",
+            secret_hash=hashlib.sha256(bt_totp_secret.encode()).hexdigest(),
+            fingerprint=hashlib.sha256(hashlib.sha256(bt_totp_secret.encode()).hexdigest().encode()).hexdigest(),
+            source_table="cameras",
+            source_id=camera.id,
             lifetime="not-explicit",
             scope='["local-service:offline-compat"]',
             audience="Edge local management portal",
@@ -443,7 +670,91 @@ def reconcile_device_credentials(
             legacy_path=True,
             compromise_procedure="disable local service, rotate TOTP seed, review service audit",
             lifecycle_state_created=record.state,
+            issued_at=getattr(camera, "created_at", None),
+            activated_at=getattr(assignment, "assigned_at", None),
             metadata={"source": "cameras.bt_totp_secret", "actor": actor, "camera_id": camera.id, "sid": bt_totp_sid},
+        ))
+    try:
+        device_config = json.loads(device.device_config or "{}")
+    except Exception:
+        device_config = {}
+    local_tls = (
+        device_config.get("provisioning", {}).get("local_tls")
+        or device_config.get("provisioning", {}).get("identity", {}).get("local_tls")
+        or {}
+    )
+    local_tls_fingerprint = (
+        local_tls.get("fingerprint")
+        or local_tls.get("certificate_fingerprint")
+        or local_tls.get("cert_sha256")
+        or ""
+    )
+    if local_tls or local_tls_fingerprint:
+        expires_at = None
+        rows.append(_upsert_inventory(
+            db,
+            device_id=device.device_id,
+            trust_path="local_tls",
+            credential_id=local_tls.get("credential_id") or f"local-tls:{device.device_id}",
+            key_type="mtls_device_cert",
+            subject=local_tls.get("subject") or local_tls.get("hostname") or f"edge:{device.device_id}",
+            issuer=local_tls.get("issuer") or "TimeLapse Pro Edge Local CA",
+            owner="physical edge local service",
+            private_key_location=local_tls.get("private_key_location") or "/opt/timelapse/edge/tls/local-mgmt.key",
+            public_key_location=local_tls.get("certificate_location") or "/opt/timelapse/edge/tls/local-mgmt.crt",
+            storage="Edge filesystem; Headend inventory metadata only",
+            fingerprint=local_tls_fingerprint or hashlib.sha256(_json(local_tls).encode()).hexdigest(),
+            source_table="devices.device_config",
+            source_id=device.device_id,
+            lifetime=local_tls.get("expires_at") or "not-visible",
+            scope='["local-service:tls"]',
+            audience="Edge local technician HTTPS endpoint",
+            rotation="WP-2/WP-4 CSR/PKI lifecycle",
+            revocation="not fully automated until CSR/PKI lifecycle",
+            status=local_tls.get("status") or "active",
+            legacy_path=True,
+            compromise_procedure="reissue local leaf certificate/key via signed update or reflash",
+            lifecycle_state_created=record.state,
+            issued_at=None,
+            expires_at=expires_at,
+            metadata={"source": "device_config.local_tls", "actor": actor, "remaining_gap": "CSR/PKI lifecycle is WP-2/WP-4"},
+        ))
+    sftp_enabled = (_setting(db, "sftp_enabled", "false") or "").lower() == "true"
+    sftp_password = _setting(db, "sftp_password", "")
+    if sftp_enabled and site and getattr(site, "sftp_user", None):
+        rows.append(_upsert_inventory(
+            db,
+            device_id=device.device_id,
+            trust_path="site_sftp_upload",
+            credential_id=f"site-sftp:{site.id}:{site.sftp_user}",
+            key_type="sftp_password",
+            subject=f"site:{site.id}:edge:{device.device_id}",
+            issuer="site RBAC compatibility",
+            owner=f"site:{site.id}",
+            private_key_location="not a private key; password delivered in Edge config",
+            public_key_location="/opt/timelapse/edge/ssh/known_hosts",
+            storage="settings.sftp_password + sites.sftp_user + Edge config",
+            secret_hash=hashlib.sha256(sftp_password.encode()).hexdigest() if sftp_password else None,
+            fingerprint=hashlib.sha256(f"{site.id}:{site.sftp_user}".encode()).hexdigest(),
+            source_table="sites/settings",
+            source_id=str(site.id),
+            lifetime="site RBAC compatibility credential",
+            scope='["upload:sftp:site"]',
+            audience=f"SFTP site chroot for {site.sftp_user}",
+            rotation="site RBAC SFTP password/user rotation",
+            revocation="disable site SFTP user or rotate site SFTP credential",
+            status="active" if sftp_password else "unknown",
+            legacy_path=True,
+            compromise_procedure="rotate site SFTP credential, verify chroot, reconcile assigned Edge configs",
+            lifecycle_state_created=record.state,
+            activated_at=now_utc(),
+            metadata={
+                "source": "site_sftp_compatibility",
+                "actor": actor,
+                "site_id": site.id,
+                "site_rbac_owned": True,
+                "edge_lifecycle_owned": False,
+            },
         ))
     return rows
 
