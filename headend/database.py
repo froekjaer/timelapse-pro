@@ -648,6 +648,66 @@ class KeyAuditEvent(Base):
     occurred_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class EdgeLifecycleRecord(Base):
+    """Canonical WP-1 lifecycle state for one logical/physical Edge identity.
+
+    This table is additive while WP-1 migrates individual trust paths. It gives
+    enrollment, credential and revoke/retire flows one state machine to enforce.
+    """
+    __tablename__ = "edge_lifecycle_records"
+
+    id                    = Column(Integer, primary_key=True)
+    device_id             = Column(String(50), unique=True, nullable=False, index=True)
+    state                 = Column(String(40), nullable=False, default="manufactured", index=True)
+    hardware_fingerprint  = Column(String(128), index=True)
+    hardware_evidence_json = Column(Text)
+    prepared_at           = Column(DateTime(timezone=True))
+    bootstrapped_at       = Column(DateTime(timezone=True))
+    hardware_verified_at  = Column(DateTime(timezone=True))
+    enrolled_at           = Column(DateTime(timezone=True))
+    credentialed_at       = Column(DateTime(timezone=True))
+    assigned_at           = Column(DateTime(timezone=True))
+    commissioned_at       = Column(DateTime(timezone=True))
+    revoked_at            = Column(DateTime(timezone=True))
+    retired_at            = Column(DateTime(timezone=True))
+    transition_reason     = Column(Text)
+    metadata_json         = Column(Text)
+    created_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class EdgeCredentialInventory(Base):
+    """WP-1 normalized inventory for Edge-consumed trust paths."""
+    __tablename__ = "edge_credential_inventory"
+    __table_args__ = (
+        UniqueConstraint("device_id", "trust_path", "credential_id", name="uq_edge_credential_inventory_path"),
+    )
+
+    id                    = Column(Integer, primary_key=True)
+    device_id             = Column(String(50), nullable=False, index=True)
+    trust_path            = Column(String(50), nullable=False, index=True)
+    credential_id         = Column(String(80), index=True)
+    key_type              = Column(String(30), index=True)
+    subject               = Column(String(120))
+    issuer                = Column(String(120))
+    owner                 = Column(String(120))
+    private_key_location  = Column(String(300))
+    public_key_location   = Column(String(300))
+    storage               = Column(String(200))
+    lifetime              = Column(String(120))
+    scope                 = Column(Text)
+    audience              = Column(String(200))
+    rotation              = Column(String(200))
+    revocation            = Column(String(200))
+    status                = Column(String(30), nullable=False, default="active", index=True)
+    legacy_path           = Column(Boolean, nullable=False, default=False, index=True)
+    compromise_procedure  = Column(Text)
+    lifecycle_state_created = Column(String(40))
+    metadata_json         = Column(Text)
+    created_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
 class CaptureAccessLog(Base):
     """GDPR-adgangslog pr. billede (GO_LIVE_CHECKLIST_v10.md §G-05).
 

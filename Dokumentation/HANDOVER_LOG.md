@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-14 23:25 — fra Codex til Peter/Claude: WP-0/WP-1 release convergence baseline isoleret
+
+- Hvad er gjort: Draft PR #12 release convergence-planen er hentet ind som styrende baseline. Første WP-1-slice etablerer `edge_lifecycle_records` og `edge_credential_inventory`, lifecycle service, migration og hooks i bootstrap, zero-touch enrollment, site assignment, provisioning, key-management reconcile og revoke/retire. API-auth afviser `quarantined`, `revoked` og `retired` lifecycle states fail-closed før legacy token fallback.
+- Hvad mangler / næste skridt: Fortsæt kun WP-1 mod canonical authority. Legacy `devices.api_token`, kamera-baseret reverse tunnel SSH/TOTP, local TLS leaf material, bootstrap/envelope og Edge-consumed site SFTP skal migreres fra compatibility paths til lifecycle-managed credentials. EdgeServiceGrant, Local Service Gateway, browser terminal og generator split hører ikke til denne slice.
+- Kommandoer kørt eller skal køres: `pytest tests/test_edge_lifecycle_contract.py tests/test_edge_image_build_contract.py tests/test_edge_sftp_config.py -q`; `python -m py_compile headend/services/edge_lifecycle.py headend/database.py headend/main.py`.
+- Forventet/faktisk output: 27 fokuserede tests PASS; Python compile PASS.
+- Filer rørt: `Dokumentation/TIMELAPSE_PRO_RELEASE_CONVERGENCE_PLAN_2026-08.md`, `headend/database.py`, `headend/main.py`, `headend/migrations/v29_edge_lifecycle_credentials.sql`, `headend/services/edge_lifecycle.py`, `tests/test_edge_lifecycle_contract.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Migrationen er additiv, men nye endpoints kan ændre revoke/retire-adfærd ved at rydde aktive Edge credentials og `devices.api_token`. Rollback er at fjerne hooks/endpoints og droppe de to nye tabeller, men revokerede credentials/token-rydning skal genskabes fra backup/audit hvis operationen allerede er kørt.
+
 ### Handover 2026-08-03 13:50 — fra Codex til Claude/Peter: central Edge Local CA, RBAC og offline lokal TLS
 
 - **Implementeret:** Den centrale `TimeLapse Pro Edge Local CA` er oprettet med ECDSA P-256. Rodnøglen ligger med `0600`-rettigheder under `/data-fast/backup/timelapse-artifacts/pki/edge-local-ca/`; den private nøgle eksponeres aldrig gennem API eller UI. CA'en signerer kun lokale Edge-servercertifikater til `tl-<edge-id-uden-TL-prefix>.local` (fx `tl-c87ff9587ca0.local`) samt lokal Bluetooth-IP `192.168.42.1`.
