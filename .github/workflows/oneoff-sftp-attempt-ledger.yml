@@ -1,0 +1,55 @@
+name: One-off SFTP retry ledger patch
+
+on:
+  push:
+    branches:
+      - fix/sftp-upload-attempt-ledger
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: fix/sftp-upload-attempt-ledger
+      - name: Apply exact retry-ledger patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, label: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one exact match, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'edge/utils/database.py',
+              'persistent upload attempt method',
+              '''            return [dict(r) for r in rows]\n\n    def get_capture(self, capture_id: int) -> Optional[dict]:\n''',
+              '''            return [dict(r) for r in rows]\n\n    def increment_upload_attempts(self, capture_id: int) -> int:\n        """Atomically record one real SFTP retry attempt and return the new count."""\n        with self._connect() as conn:\n            conn.execute(\n                "UPDATE captures SET upload_attempts=upload_attempts+1 WHERE id=?",\n                (capture_id,),\n            )\n            row = conn.execute(\n                "SELECT upload_attempts FROM captures WHERE id=?",\n                (capture_id,),\n            ).fetchone()\n            if row is None:\n                raise KeyError(f"Capture {capture_id} not found")\n            return int(row["upload_attempts"] or 0)\n\n    def get_capture(self, capture_id: int) -> Optional[dict]:\n''',
+          )
+
+          replace_once(
+              'edge/upload/sftp.py',
+              'retry loop attempt increment',
+              '''                filepath = Path(row["filepath"])\n                if not filepath.exists():\n                    continue\n                success = self._upload_to_target(target, row["id"], filepath, camera_id)\n''',
+              '''                filepath = Path(row["filepath"])\n                if not filepath.exists():\n                    continue\n                attempt_number = self._db.increment_upload_attempts(row["id"])\n                log.debug(\n                    "SFTP retry attempt %d/%d for capture %s to %s",\n                    attempt_number, MAX_UPLOAD_ATTEMPTS, row["id"], target.name,\n                )\n                success = self._upload_to_target(target, row["id"], filepath, camera_id)\n''',
+          )
+          PY
+          python -m py_compile edge/utils/database.py edge/upload/sftp.py
+          git config user.name "TimeLapse Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/oneoff-sftp-attempt-ledger.yml
+          git add edge/utils/database.py edge/upload/sftp.py
+          git diff --cached --check
+          git commit -m "Persist SFTP retry attempts and enforce cap"
+          git push origin HEAD:fix/sftp-upload-attempt-ledger
