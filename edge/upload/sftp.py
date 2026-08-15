@@ -183,9 +183,6 @@ class UploadManager:
         filepath:   Path,
         camera_id:  str,
     ) -> bool:
-        # Build directory structure: remote_base/customer/site/YYYY/MM/DD/
-        # Extract date from filename: KundeA_SiteB_Kamera1_20260331_120000.jpg
-        # Fallback to flat camera_id structure if filename doesn't match pattern
         remote_dir = self._build_remote_dir(target.remote_base, camera_id, filepath.name)
         remote_path = str(PurePosixPath(remote_dir) / filepath.name)
 
@@ -198,7 +195,6 @@ class UploadManager:
                 )
                 sftp.put(str(filepath), remote_path)
 
-                # Upload sidecar JSON hvis den findes
                 sidecar_local  = filepath.with_suffix('.json')
                 sidecar_remote = str(PurePosixPath(remote_dir) / sidecar_local.name)
                 if sidecar_local.exists():
@@ -258,9 +254,6 @@ class UploadManager:
         def _safe(s):
             return _re.sub(r"[^A-Za-z0-9æøåÆØÅ_-]", "_", s).strip("_")
         camera = _safe(camera_id)
-        # camera_id currently carries the assigned device id in legacy callers.
-        # Prefer camera/location name from config when available so replacements
-        # keep uploading into the same logical camera-location folder.
         try:
             camera = _safe(getattr(self, "_camera_name", "") or camera_id)
         except Exception:
@@ -343,25 +336,13 @@ class _SFTPContext:
             "TIMELAPSE_SFTP_KNOWN_HOSTS",
             "/opt/timelapse/edge/ssh/known_hosts",
         ))
-        if known_hosts.exists():
-            self._ssh.load_host_keys(str(known_hosts))
-            self._ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            allow_auto_add = os.getenv(
-                "TIMELAPSE_SFTP_ALLOW_AUTO_ADD_HOSTKEY",
-                "0",
-            ).lower() in {"1", "true", "yes", "on"}
-            if not allow_auto_add:
-                raise RuntimeError(
-                    f"SFTP known_hosts file missing: {known_hosts}. "
-                    "Refusing to auto-trust host keys; set "
-                    "TIMELAPSE_SFTP_ALLOW_AUTO_ADD_HOSTKEY=1 only for LAB."
-                )
-            log.warning(
-                "LAB ONLY: auto-adding SFTP host key because "
-                "TIMELAPSE_SFTP_ALLOW_AUTO_ADD_HOSTKEY is enabled"
+        if not known_hosts.is_file():
+            raise RuntimeError(
+                f"SFTP known_hosts file missing: {known_hosts}. "
+                "SFTP host identity must be provisioned before upload; automatic host-key trust is forbidden."
             )
-            self._ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        self._ssh.load_host_keys(str(known_hosts))
+        self._ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
 
         connect_kwargs = dict(
             hostname       = t.host,
@@ -373,7 +354,6 @@ class _SFTPContext:
             allow_agent    = False,
         )
 
-        # Password takes priority over key_file if both are set
         if t.password:
             connect_kwargs["password"] = t.password
         elif t.key_file and str(t.key_file).strip():
