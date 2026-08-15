@@ -15,6 +15,8 @@ def _safe_component(value: str, *, label: str) -> str:
     decoded = unquote(raw)
     if not decoded or "\x00" in decoded:
         raise UnsafePath(f"invalid {label}")
+    if "/" in decoded or "\\" in decoded:
+        raise UnsafePath(f"invalid {label}")
     if decoded in {".", ".."} or Path(decoded).name != decoded:
         raise UnsafePath(f"invalid {label}")
     if Path(decoded).is_absolute():
