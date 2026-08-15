@@ -20,7 +20,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-DB_VERSION = 2
+DB_VERSION = 3
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -117,6 +117,22 @@ CREATE TABLE IF NOT EXISTS upload_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_queue_pending ON upload_queue(completed, attempts);
+
+-- One attempt per scheduled capture slot, regardless of success/failure.
+CREATE TABLE IF NOT EXISTS capture_slots (
+    slot_id       TEXT PRIMARY KEY,
+    device_id     TEXT NOT NULL,
+    mode          TEXT NOT NULL,
+    scheduled_at  TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    claimed_at    TEXT NOT NULL,
+    completed_at  TEXT,
+    capture_id    INTEGER,
+    result        TEXT,
+    error         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_capture_slots_scheduled ON capture_slots(scheduled_at);
 """
 
 
@@ -155,6 +171,21 @@ class EdgeDatabase:
         }
         if "uploaded_tertiary" not in columns:
             conn.execute("ALTER TABLE captures ADD COLUMN uploaded_tertiary INTEGER DEFAULT 0")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS capture_slots (
+                slot_id       TEXT PRIMARY KEY,
+                device_id     TEXT NOT NULL,
+                mode          TEXT NOT NULL,
+                scheduled_at  TEXT NOT NULL,
+                status        TEXT NOT NULL,
+                claimed_at    TEXT NOT NULL,
+                completed_at  TEXT,
+                capture_id    INTEGER,
+                result        TEXT,
+                error         TEXT
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_capture_slots_scheduled ON capture_slots(scheduled_at)")
         conn.execute(
             "UPDATE captures SET uploaded_secondary=1 "
             "WHERE uploaded_primary=1 AND uploaded_secondary=0"
@@ -218,6 +249,45 @@ class EdgeDatabase:
                 blur_score, brightness,
             ))
             return cur.lastrowid
+
+    def claim_capture_slot(self, *, slot_id: str, device_id: str, mode: str, scheduled_at: datetime) -> bool:
+        """Return True only for the first attempt against a scheduled slot."""
+        with self._connect() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO capture_slots (slot_id, device_id, mode, scheduled_at, status, claimed_at)
+                    VALUES (?, ?, ?, ?, 'claimed', ?)
+                    """,
+                    (slot_id, device_id, mode, scheduled_at.isoformat(), _now()),
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def complete_capture_slot(
+        self,
+        *,
+        slot_id: str,
+        status: str,
+        capture_id: int | None = None,
+        result: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE capture_slots
+                SET status=?, completed_at=?, capture_id=?, result=?, error=?
+                WHERE slot_id=?
+                """,
+                (status, _now(), capture_id, result, error, slot_id),
+            )
+
+    def capture_slot(self, slot_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM capture_slots WHERE slot_id=?", (slot_id,)).fetchone()
+            return dict(row) if row else None
 
     def mark_uploaded(
         self,
