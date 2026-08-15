@@ -229,8 +229,22 @@ def verify_update_artifact(update: dict, security_cfg: dict) -> tuple[bool, str]
     """
     update_type = str(update.get("update_type") or "")
     code_update_types = {
-        "app_security", "app_updates", "app_update", "timelapse_update",
-        "timelapse_pro_update", "os_security", "os_updates",
+        "app_security",
+        "app_updates",
+        "app_update",
+        "timelapse_update",
+        "timelapse_pro_update",
+        "timelapse_security",
+        "timelapse_pro_security",
+        "application_security",
+        "application_update",
+        "application_updates",
+        "dependency_security",
+        "dependency_updates",
+        "third_party_security",
+        "third_party_updates",
+        "os_security",
+        "os_updates",
     }
     if update_type not in code_update_types:
         return True, "non-code update"
