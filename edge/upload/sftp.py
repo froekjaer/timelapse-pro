@@ -168,6 +168,11 @@ class UploadManager:
                 filepath = Path(row["filepath"])
                 if not filepath.exists():
                     continue
+                attempt_number = self._db.increment_upload_attempts(row["id"])
+                log.debug(
+                    "SFTP retry attempt %d/%d for capture %s to %s",
+                    attempt_number, MAX_UPLOAD_ATTEMPTS, row["id"], target.name,
+                )
                 success = self._upload_to_target(target, row["id"], filepath, camera_id)
                 if success:
                     self._db.mark_uploaded(row["id"], target.name)
