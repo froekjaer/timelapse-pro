@@ -1723,3 +1723,12 @@ person vide".
 - **Implementation:** Trust Service provisioning boundary for generic signed image manifest, signed provisioning envelope, one-time bootstrap consume/replay protection, Edge-owned SSH public-key enrollment, Edge-owned TLS CSR issuance, credential lifecycle inventory, revocation/re-enrollment intent, replacement hardware flow og legacy per-device image migration adapter.
 - **Private-key rule:** Permanente Edge SSH/TLS private keys genereres på Edge og returneres ikke fra first-boot payloads. Headend/Trust Service gemmer public key, CSR/cert metadata, fingerprint og lifecycle state.
 - **Tests:** `PYTHONPATH=headend:. pytest tests/test_wp4_provisioning_contract.py -q` passerer lokalt med 13 tests.
+
+### Handover 2026-08-15 — Codex: WP-4 exit-gate completion for PR #21
+- **Scope:** Lukket WP-4 acceptance uden generator-UI redesign, browser terminal eller nye technician servicefeatures.
+- **Acceptance udvidet:** Fresh Edge integration contract dækker generic image verify → signed envelope → first boot → hardware binding → atomic bootstrap consume → Edge-genereret SSH/TLS key → SSH public-key enrollment → TLS CSR signing → credential inventory active → assignment → reboot/idempotent auth.
+- **Failure cases:** Kontrakter dækker replay/consumed bootstrap, expired/revoked envelope, wrong hardware binding, power loss før bootstrap consume, power loss efter key generation før enrollment, enrollment retry, duplicate CSR og revoked/retired cert-denial uden explicit recovery transition.
+- **Legacy boundary:** Per-device image injection, image-injected TLS, Headend-held SSH private keys, legacy Edge key files, bootstrap YAML/token og `devices.api_token` er dokumenteret som read/migrate-only compatibility paths. Nye Edges må kun skrive credentials gennem WP-4 Trust Service provisioning path.
+- **Rotate-out:** Existing image-injected TLS og Headend-held SSH credentials kan markeres rotated, så de ikke længere står som parallel authority efter successor credentials er aktive.
+- **Dokumentation:** `Dokumentation/WP4_EDGE_IMAGE_PROVISIONING_PKI_CONVERGENCE_2026-08.md` opdateret med exit-gate, remaining legacy writer paths og rollback.
+- **Tests:** Syntax check OK. Fokuseret WP-4/Edge lifecycle/image/mTLS suite: 79 passed, 12 eksisterende mTLS skips. CI-lignende suite: 795 passed, 4 eksisterende smoke skips, 544 deselected.

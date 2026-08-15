@@ -87,6 +87,26 @@ def build_generic_release_artifact_manifest(
     return manifest
 
 
+def verify_generic_release_artifact_manifest(
+    manifest: dict[str, Any],
+    *,
+    expected_hardware_target: str,
+    expected_rootfs_sha256: str,
+) -> dict[str, Any]:
+    if manifest.get("schema") != GENERIC_IMAGE_SCHEMA:
+        raise ProvisioningError("invalid generic image manifest schema")
+    assert_no_private_key_material(manifest)
+    if manifest.get("device_specific") is not False:
+        raise ProvisioningError("generic image manifest is device-specific")
+    if manifest.get("contains_operational_private_keys") is not False:
+        raise ProvisioningError("generic image manifest contains operational private keys")
+    if manifest.get("hardware_target") != expected_hardware_target:
+        raise ProvisioningError("generic image hardware target mismatch")
+    if manifest.get("rootfs_sha256") != expected_rootfs_sha256:
+        raise ProvisioningError("generic image digest mismatch")
+    return {"ok": True, "artifact_id": manifest.get("artifact_id"), "verified_at": now_utc().isoformat()}
+
+
 def create_signing_key() -> ed25519.Ed25519PrivateKey:
     return ed25519.Ed25519PrivateKey.generate()
 
@@ -151,6 +171,8 @@ def verify_provisioning_envelope(
     payload = envelope.get("payload") if isinstance(envelope, dict) else None
     if not isinstance(payload, dict) or payload.get("schema") != ENVELOPE_SCHEMA:
         raise ProvisioningError("invalid provisioning envelope schema")
+    if envelope.get("revoked") or payload.get("revoked"):
+        raise ProvisioningError("provisioning envelope revoked")
     assert_no_private_key_material(payload)
     try:
         public_key.verify(base64.b64decode(envelope.get("signature", "")), canonical_json(payload))
@@ -201,6 +223,7 @@ def consume_bootstrap_envelope(
         device = Device(device_id=device_id, status="provisioning")
         db.add(device)
         db.flush()
+    _apply_assignment(device, payload.get("assignment") or {})
     record = get_or_create_lifecycle_record(db, device, actor=actor, hardware_evidence=actual_hardware_evidence)
     for target in ("prepared", "media_written", "bootstrap_pending", "bootstrap_authenticated"):
         if record.state != target:
@@ -221,6 +244,7 @@ def consume_bootstrap_envelope(
     token.used_by_device = device_id
     token.revoked = True
     token.use_count = (token.use_count or 0) + 1
+    db.flush()
     return mark_bootstrap_consumed(
         db,
         token_id=token.id,
@@ -237,6 +261,16 @@ def register_edge_ssh_public_key(
     actor: str = "edge-first-boot",
 ) -> EdgeCredentialInventory:
     fingerprint = sha256_text(public_key)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if device is not None:
+        device.ssh_pubkey = public_key
+    existing = db.query(EdgeCredentialInventory).filter_by(
+        device_id=device_id,
+        trust_path="device_support_tunnel",
+        credential_id=f"ssh:{fingerprint[:16]}",
+    ).first()
+    if existing and existing.status == "active":
+        return existing
     return _upsert_inventory(
         db,
         device_id=device_id,
@@ -308,6 +342,16 @@ def issue_tls_certificate_from_csr(
     normalized = "".join(ch for ch in device_id.lower() if ch.isalnum())
     if not any(normalized in item.replace("-", "").replace(".", "").lower() for item in names):
         raise ProvisioningError("CSR device binding rejected")
+    csr_hash = sha256_text(csr_pem)
+    duplicate = _active_credential_by_metadata(
+        db,
+        device_id=device_id,
+        trust_path="local_tls",
+        metadata_key="csr_sha256",
+        metadata_value=csr_hash,
+    )
+    if duplicate:
+        raise ProvisioningError("duplicate CSR rejected")
 
     ca_cert = x509.load_pem_x509_certificate(ca_cert_pem.encode("ascii"))
     ca_key = serialization.load_pem_private_key(ca_key_pem.encode("ascii"), password=None)
@@ -347,9 +391,35 @@ def issue_tls_certificate_from_csr(
         status="active",
         legacy_path=False,
         expires_at=certificate.not_valid_after_utc,
-        metadata={"actor": actor, "csr_sha256": sha256_text(csr_pem), "private_key_exported": False},
+        metadata={"actor": actor, "csr_sha256": csr_hash, "private_key_exported": False},
     )
     return certificate_pem, inventory
+
+
+def allow_reenrollment_recovery_transition(
+    db: Session,
+    *,
+    device_id: str,
+    recovery_ticket: str,
+    actor: str,
+    reason: str,
+) -> EdgeLifecycleRecord:
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if device is None:
+        raise ProvisioningError("device not found")
+    record = get_or_create_lifecycle_record(db, device, actor=actor)
+    if record.state not in {"revoked", "retired", "quarantined"}:
+        raise ProvisioningError("recovery transition only applies to revoked, retired or quarantined devices")
+    record.state = "prepared"
+    record.transition_reason = reason
+    record.metadata_json = json.dumps({
+        **_record_metadata(record),
+        "recovery_ticket": recovery_ticket,
+        "recovery_actor": actor,
+        "requires_new_edge_generated_keys": True,
+    }, sort_keys=True, ensure_ascii=False)
+    record.updated_at = now_utc()
+    return record
 
 
 def revoke_edge_credential(
@@ -421,8 +491,63 @@ def legacy_image_provisioning_adapter_plan(*, device_id: str, image_artifact_id:
         "mode": "legacy-per-device-image-adapter",
         "target_mode": "generic-image-plus-envelope",
         "compatible": True,
+        "read_existing_state_only": True,
+        "may_create_new_credentials": False,
         "must_not_create_new_operational_private_keys_on_headend": True,
     }
+
+
+def legacy_edge_migration_plan(
+    *,
+    device_id: str,
+    capture_upload_scope: str = '["capture:write","upload:sftp:site"]',
+) -> dict[str, Any]:
+    return {
+        "device_id": device_id,
+        "mode": "legacy-edge-single-device-migration",
+        "capture_upload_continuity": "preserve existing API/SFTP credentials until WP-4 successor credentials are active",
+        "legacy_paths_read_only": True,
+        "may_create_new_credentials_via_legacy_path": False,
+        "successor_paths": ["device_support_tunnel", "local_tls", "bootstrap"],
+        "scope_preserved": capture_upload_scope,
+    }
+
+
+def rotate_out_legacy_private_key_authority(
+    db: Session,
+    *,
+    device_id: str,
+    actor: str,
+    reason: str,
+) -> list[EdgeCredentialInventory]:
+    now = now_utc()
+    rows = (
+        db.query(EdgeCredentialInventory)
+        .filter(
+            EdgeCredentialInventory.device_id == device_id,
+            EdgeCredentialInventory.legacy_path.is_(True),
+            EdgeCredentialInventory.trust_path.in_([
+                "device_support_tunnel_legacy_headend_private_key",
+                "local_tls_legacy_image_injected",
+                "local_tls",
+            ]),
+        )
+        .all()
+    )
+    for row in rows:
+        if row.trust_path == "local_tls" and row.legacy_path is not True:
+            continue
+        row.status = "rotated"
+        row.rotated_at = now
+        metadata = _metadata(row)
+        metadata.update({
+            "rotated_out_by": actor,
+            "rotation_reason": reason,
+            "parallel_authority": False,
+            "legacy_path_read_only": True,
+        })
+        row.metadata_json = json.dumps(metadata, sort_keys=True, ensure_ascii=False)
+    return rows
 
 
 def assert_no_private_key_material(data: dict[str, Any]) -> None:
@@ -512,6 +637,44 @@ def _metadata(row: EdgeCredentialInventory) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _record_metadata(row: EdgeLifecycleRecord) -> dict[str, Any]:
+    try:
+        data = json.loads(row.metadata_json or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _active_credential_by_metadata(
+    db: Session,
+    *,
+    device_id: str,
+    trust_path: str,
+    metadata_key: str,
+    metadata_value: str,
+) -> EdgeCredentialInventory | None:
+    for row in db.query(EdgeCredentialInventory).filter_by(
+        device_id=device_id,
+        trust_path=trust_path,
+        status="active",
+    ):
+        if _metadata(row).get(metadata_key) == metadata_value:
+            return row
+    return None
+
+
+def _apply_assignment(device: Device, assignment: dict[str, Any]) -> None:
+    if not assignment:
+        return
+    if assignment.get("customer_id"):
+        device.customer_id = str(assignment["customer_id"])
+    if assignment.get("site_id"):
+        device.site_id = str(assignment["site_id"])
+    if assignment.get("camera_id"):
+        device.camera_name = str(assignment["camera_id"])
+    device.enrollment_state = "active"
 
 
 def _ensure_utc(value: datetime) -> datetime:
