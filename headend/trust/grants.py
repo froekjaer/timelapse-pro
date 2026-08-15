@@ -29,15 +29,17 @@ class TrustServiceConfigurationError(RuntimeError):
 
 def _is_explicit_test_or_lab_environment() -> bool:
     env = (os.getenv("TIMELAPSE_ENV") or "").strip().lower()
+    if env in {"prod", "production", "staging"}:
+        return False
     return env in {"test", "testing", "lab", "development", "dev", "rd"} or "pytest" in sys.modules
 
 
 def _secret() -> bytes:
     """Return a Trust-Service-specific signing secret.
 
-    Grant signing is a separate trust purpose from Headend browser sessions.  It
-    must therefore not silently reuse JWT_SECRET.  Production/staging fail
-    closed when no dedicated signer secret exists.  A deterministic development
+    Grant signing is a separate trust purpose from Headend browser sessions. It
+    must therefore not silently reuse JWT_SECRET. Production/staging fail
+    closed when no dedicated signer secret exists. A deterministic development
     secret is available only when the process is explicitly running as test/LAB.
     """
     configured = os.getenv("TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET")
@@ -90,7 +92,7 @@ def issue_edge_service_grant(db: Session, request: GrantRequest) -> tuple[str, E
     if not request.capabilities:
         raise GrantDenied("grant requires at least one capability")
 
-    # Every requested capability must independently pass the PDP.  Validating
+    # Every requested capability must independently pass the PDP. Validating
     # only the lexicographically first capability would let additional scopes be
     # smuggled into the signed grant without policy evidence.
     decisions = []
