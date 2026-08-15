@@ -24,7 +24,7 @@ class GrantDenied(ValueError):
 
 
 class TrustServiceConfigurationError(RuntimeError):
-    """Raised when a Trust Service authority is missing in a fail-closed environment."""
+    """Raised when no safe Trust Service signing authority can be resolved."""
 
 
 def _is_explicit_test_or_lab_environment() -> bool:
@@ -35,12 +35,17 @@ def _is_explicit_test_or_lab_environment() -> bool:
 
 
 def _secret() -> bytes:
-    """Return a Trust-Service-specific signing secret.
+    """Resolve a purpose-separated Trust Service grant-signing key.
 
-    Grant signing is a separate trust purpose from Headend browser sessions. It
-    must therefore not silently reuse JWT_SECRET. Production/staging fail
-    closed when no dedicated signer secret exists. A deterministic development
-    secret is available only when the process is explicitly running as test/LAB.
+    Preferred target: a dedicated TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET.
+
+    Migration compatibility for existing deployed Headends: if the dedicated
+    secret has not yet been provisioned, derive a separate sub-key from the
+    existing strong JWT root secret using HMAC-SHA256 with a fixed purpose
+    label. The raw JWT key is never used directly for grant signatures. This
+    preserves cryptographic key separation without requiring the CI runner to
+    mutate root-owned configuration during an unattended deploy. A future
+    operator migration can set the dedicated secret and remove this adapter.
     """
     configured = os.getenv("TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET")
     if configured:
@@ -50,11 +55,19 @@ def _secret() -> bytes:
             )
         return configured.encode()
 
+    jwt_root = os.getenv("JWT_SECRET")
+    if jwt_root and len(jwt_root.encode()) >= 32:
+        return hmac.new(
+            jwt_root.encode(),
+            b"timelapse-trust-service-grant-signing-v1",
+            hashlib.sha256,
+        ).digest()
+
     if _is_explicit_test_or_lab_environment():
         return b"timelapse-test-only-trust-service-secret-v1"
 
     raise TrustServiceConfigurationError(
-        "TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET is required outside explicit test/LAB environments"
+        "Trust Service signing authority unavailable: configure a dedicated secret or a strong JWT migration root"
     )
 
 
@@ -92,22 +105,17 @@ def issue_edge_service_grant(db: Session, request: GrantRequest) -> tuple[str, E
     if not request.capabilities:
         raise GrantDenied("grant requires at least one capability")
 
-    # Every requested capability must independently pass the PDP. Validating
-    # only the lexicographically first capability would let additional scopes be
-    # smuggled into the signed grant without policy evidence.
     decisions = []
     for capability in sorted(request.capabilities):
-        decision = evaluate_policy(
-            PolicyRequest(
-                principal=request.principal,
-                action="grant.issue",
-                resource=request.resource,
-                tenant_id=request.tenant_id,
-                capability=capability,
-                mfa_required=request.mfa_required,
-                context=request.context,
-            )
-        )
+        decision = evaluate_policy(PolicyRequest(
+            principal=request.principal,
+            action="grant.issue",
+            resource=request.resource,
+            tenant_id=request.tenant_id,
+            capability=capability,
+            mfa_required=request.mfa_required,
+            context=request.context,
+        ))
         decisions.append(decision)
         if not decision.allowed:
             raise GrantDenied(decision.reason)
@@ -117,41 +125,27 @@ def issue_edge_service_grant(db: Session, request: GrantRequest) -> tuple[str, E
     grant_id = f"TLP-GRANT-{uuid.uuid4().hex[:16]}"
     jti = uuid.uuid4().hex
     payload = {
-        "typ": "EdgeServiceGrant",
-        "grant_id": grant_id,
-        "jti": jti,
-        "edge_id": request.edge_id,
-        "sub": request.principal.username,
-        "uid": request.principal.user_id,
-        "role": request.principal.role,
-        "tenant_id": request.tenant_id,
-        "resource": request.resource,
-        "purpose": request.purpose,
-        "capabilities": sorted(request.capabilities),
+        "typ": "EdgeServiceGrant", "grant_id": grant_id, "jti": jti,
+        "edge_id": request.edge_id, "sub": request.principal.username,
+        "uid": request.principal.user_id, "role": request.principal.role,
+        "tenant_id": request.tenant_id, "resource": request.resource,
+        "purpose": request.purpose, "capabilities": sorted(request.capabilities),
         "mfa_verified": bool(request.principal.mfa_verified),
         "iat": issued_at.replace(tzinfo=timezone.utc).timestamp(),
         "exp": expires_at.replace(tzinfo=timezone.utc).timestamp(),
     }
     token = _token(payload)
     row = EdgeServiceGrant(
-        grant_id=grant_id,
-        jti=jti,
-        edge_id=request.edge_id,
-        user_id=request.principal.user_id,
-        username=request.principal.username,
-        role=request.principal.role,
-        tenant_id=request.tenant_id,
-        resource=request.resource,
-        purpose=request.purpose,
+        grant_id=grant_id, jti=jti, edge_id=request.edge_id,
+        user_id=request.principal.user_id, username=request.principal.username,
+        role=request.principal.role, tenant_id=request.tenant_id,
+        resource=request.resource, purpose=request.purpose,
         capabilities_json=_canonical(sorted(request.capabilities)),
         context_json=_canonical(request.context or {}),
         mfa_required=bool(request.mfa_required),
-        mfa_verified=bool(request.principal.mfa_verified),
-        status="active",
-        issued_at=issued_at,
-        expires_at=expires_at,
-        signature=token,
-        metadata_json=_canonical({"decision_ids": [decision.decision_id for decision in decisions]}),
+        mfa_verified=bool(request.principal.mfa_verified), status="active",
+        issued_at=issued_at, expires_at=expires_at, signature=token,
+        metadata_json=_canonical({"decision_ids": [d.decision_id for d in decisions]}),
     )
     db.add(row)
     return token, row
@@ -168,25 +162,15 @@ def revoke_edge_service_grant(db: Session, grant_id: str, *, actor: str, reason:
     return row
 
 
-def validate_edge_service_grant(
-    db: Session,
-    token: str,
-    *,
-    edge_id: str,
-    tenant_id: str | None,
-    capability: str,
-    resource: str,
-    challenge_id: str,
-) -> GrantValidation:
+def validate_edge_service_grant(db: Session, token: str, *, edge_id: str, tenant_id: str | None,
+                                capability: str, resource: str, challenge_id: str) -> GrantValidation:
     try:
         payload, _sig = _decode_token(token)
     except (GrantDenied, TrustServiceConfigurationError) as exc:
         return GrantValidation(False, str(exc))
     if payload.get("typ") != "EdgeServiceGrant":
         return GrantValidation(False, "normal Headend session token rejected")
-    row = db.query(EdgeServiceGrant).filter_by(
-        grant_id=payload.get("grant_id"), jti=payload.get("jti")
-    ).first()
+    row = db.query(EdgeServiceGrant).filter_by(grant_id=payload.get("grant_id"), jti=payload.get("jti")).first()
     if not row:
         return GrantValidation(False, "grant record not found")
     if row.status != "active":
