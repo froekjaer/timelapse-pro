@@ -109,6 +109,9 @@ def main() -> int:
     parser.add_argument("--npu-status", action="store_true", help="Print Edge AI/NPU status")
     parser.add_argument("--maintenance", action="store_true", help="Pause edge service and manage camera relay for camera commands")
     parser.add_argument("--service-status", action="store_true", help="Print unified local Service Session status")
+    parser.add_argument("--service-operation", help="Run a canonical Service Operation through the shared backend")
+    parser.add_argument("--service-param", action="append", default=[], metavar="KEY=VALUE", help="Parameter for --service-operation")
+    parser.add_argument("--commissioning-report", action="store_true", help="Run CommissioningReport v1 through Service Operations")
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir)
@@ -153,10 +156,10 @@ def main() -> int:
     if args.camera_summary:
         return 0 if run_camera_operation("camera.diagnostics", lambda: camera_summary(base_dir), base_dir, args.maintenance) else 1
     if args.camera_config:
-        return 0 if run_camera_operation("camera.config.read", lambda: camera_get_config(args.camera_config), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.config.read", lambda: camera_get_config(args.camera_config), base_dir, args.maintenance, {"path": args.camera_config}) else 1
     if args.set_camera_config:
         path, value = args.set_camera_config
-        return 0 if run_camera_operation("camera.config.set_temporary", lambda: camera_set_config(path, value), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.config.set_temporary", lambda: camera_set_config(path, value), base_dir, args.maintenance, {"path": path, "value": value}) else 1
     if args.photo_setting:
         key, value = args.photo_setting
         return 0 if run_camera_operation("camera.config.set_temporary", lambda: camera_set_photo_setting(key, value), base_dir, args.maintenance) else 1
@@ -165,10 +168,10 @@ def main() -> int:
     if args.autofocus:
         return 0 if run_camera_operation("camera.focus.auto", lambda: camera_autofocus(), base_dir, args.maintenance) else 1
     if args.focus_drive:
-        return 0 if run_camera_operation("camera.focus.manual", lambda: camera_focus_drive(args.focus_drive), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.focus.manual", lambda: camera_focus_drive(args.focus_drive), base_dir, args.maintenance, {"value": args.focus_drive}) else 1
     if args.capture_test is not None:
         out_dir = Path(args.capture_test or "/tmp/timelapse-tech-captures")
-        return 0 if run_camera_operation("camera.capture.test", lambda: capture_test(out_dir, base_dir), base_dir, True) else 1
+        return 0 if run_camera_operation("camera.capture.test", lambda: capture_test(out_dir, base_dir), base_dir, True, {"out_dir": str(out_dir)}) else 1
     if args.gps_status:
         print_gps_status()
         return 0
@@ -178,6 +181,10 @@ def main() -> int:
     if args.service_status:
         print_service_session_status()
         return 0
+    if args.commissioning_report:
+        return 0 if print_service_operation("commissioning.run", base_dir, {"capture": False}) else 1
+    if args.service_operation:
+        return 0 if print_service_operation(args.service_operation, base_dir, parse_service_params(args.service_param)) else 1
     return menu(base_dir)
 
 
@@ -806,7 +813,7 @@ def qa_image(path: Path, base_dir: Path) -> bool:
     return bool(report.get("flag") != "error")
 
 
-def run_camera_operation(operation_name: str, operation=None, base_dir: Path | None = None, maintenance: bool = False) -> bool:
+def run_camera_operation(operation_name: str, operation=None, base_dir: Path | None = None, maintenance: bool = False, operation_kwargs: dict[str, Any] | None = None) -> bool:
     """Run a camera operation through the shared Service Operations backend."""
     if callable(operation_name):
         operation, operation_name, base_dir = operation_name, "camera.diagnostics", operation
@@ -817,23 +824,16 @@ def run_camera_operation(operation_name: str, operation=None, base_dir: Path | N
 
     sys.path.insert(0, str(EDGE_ROOT))
     from camera.maintenance import CameraMaintenanceLease
-    from service_platform import ServicePlatform
+    from service_operations import create_service_platform
 
     with CameraMaintenanceLease(timeout_s=45):
         state_dir = os.getenv("TIMELAPSE_SERVICE_STATE_DIR")
-        platform = ServicePlatform(state_dir=Path(state_dir) if state_dir else None)
+        platform = create_service_platform(base_dir=base_dir, state_dir=Path(state_dir) if state_dir else None)
         session = platform.current_session()
         if not session:
             print("Service Session kræver en aktiv EdgeServiceGrant eller eksplicit offline-recovery session.")
             return False
-        already_powered_before = bool(platform.status().get("camera_relay_on"))
-        platform.register_handler(
-            operation_name,
-            lambda _platform, _session, _kwargs: {
-                "ok": _run_camera_maintenance_callback(operation, base_dir, already_powered_before)
-            },
-        )
-        result = platform.call(operation_name, session=session, release_after=True)
+        result = platform.call(operation_name, session=session, release_after=True, **(operation_kwargs or {}))
         return bool(result.get("ok", True))
 
 
@@ -891,6 +891,35 @@ def print_service_session_status() -> None:
     print("---------------")
     for label, value in rows:
         print(f"{label}: {value}")
+
+
+def print_service_operation(operation: str, base_dir: Path, params: dict[str, Any] | None = None) -> bool:
+    sys.path.insert(0, str(EDGE_ROOT))
+    from service_operations import create_service_platform
+
+    state_dir = os.getenv("TIMELAPSE_SERVICE_STATE_DIR")
+    platform = create_service_platform(base_dir=base_dir, state_dir=Path(state_dir) if state_dir else None)
+    session = platform.current_session()
+    if not session:
+        print("Service Session kræver en aktiv EdgeServiceGrant eller eksplicit offline-recovery session.")
+        return False
+    result = platform.call(operation, session=session, release_after=True, **(params or {}))
+    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    return bool(result.get("ok", True) or result.get("result") in {"PASS", "PASS WITH DEVIATIONS"})
+
+
+def parse_service_params(raw: list[str]) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    for item in raw or []:
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        lowered = value.lower()
+        if lowered in {"true", "false"}:
+            params[key] = lowered == "true"
+        else:
+            params[key] = value
+    return params
 
 
 def _format_seconds(value, suffix: str = "") -> str:

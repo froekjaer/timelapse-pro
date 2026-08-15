@@ -120,16 +120,15 @@ def test_camera_maintenance_restores_enabled_edge_even_if_initially_inactive(tmp
 
     ServicePlatform(state_dir=service_state_dir).start_offline_recovery_session()
     monkeypatch.setenv("TIMELAPSE_CAMERA_MAINTENANCE_LOCK", str(tmp_path / "camera.lock"))
-    monkeypatch.setattr(bootstrap_cli, "is_service_active", lambda _service: False)
-    monkeypatch.setattr(bootstrap_cli, "is_service_enabled", lambda _service: True)
-    monkeypatch.setattr(bootstrap_cli, "build_relay", lambda _base: None)
+    import service_operations
+
+    monkeypatch.setattr(service_operations.ServiceOperations, "_service_state", lambda self, service: {"active": "inactive"})
+    monkeypatch.setattr(service_operations.ServiceOperations, "_service_is_enabled", lambda self, service: True)
+    monkeypatch.setattr(service_operations.ServiceOperations, "_relay", lambda self: None)
+    monkeypatch.setattr(service_operations.ServiceOperations, "_gphoto", lambda self, *args, **kwargs: {"ok": True, "stdout": "usb:", "stderr": "", "returncode": 0})
+    monkeypatch.setattr(service_operations.ServiceOperations, "_read_gphoto_current", lambda self, path: "ok")
+    monkeypatch.setattr(service_operations.ServiceOperations, "_systemctl", lambda self, action, service, timeout=30: actions.append((action, service, timeout)) or {"ok": True})
     monkeypatch.setattr(bootstrap_cli.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(
-        bootstrap_cli,
-        "systemctl",
-        lambda action, service, timeout=30: actions.append((action, service, timeout)),
-    )
-    monkeypatch.setattr(bootstrap_cli, "wait_for_service_state", lambda *_args, **_kwargs: None)
 
     assert bootstrap_cli.run_camera_operation(lambda: True, base, maintenance=True) is True
     assert actions == [("start", bootstrap_cli.SERVICE_NAME, 60)]

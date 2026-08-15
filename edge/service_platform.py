@@ -86,6 +86,8 @@ LEASE_TYPES = {
 
 OPERATION_CAPABILITIES = {
     "camera.status": "camera.read",
+    "camera.detect": "camera.hardware",
+    "camera.ptp.diagnostics": "camera.diagnostics",
     "camera.power.acquire": "camera.power",
     "camera.power.release": "camera.power",
     "camera.power.cycle": "camera.power",
@@ -101,15 +103,24 @@ OPERATION_CAPABILITIES = {
     "camera.focus.manual": "camera.focus",
     "camera.focus.auto": "camera.focus",
     "camera.exposure.test": "camera.exposure",
+    "image.quality.diagnostics": "camera.diagnostics",
     "camera.reset": "camera.reset",
     "camera.diagnostics": "camera.diagnostics",
     "modem.status": "modem.read",
     "modem.signal": "modem.read",
+    "modem.registration": "modem.read",
+    "modem.reconnect_history": "modem.read",
     "modem.power.cycle": "modem.power",
     "network.status": "network.read",
+    "network.diagnostics": "network.read",
     "storage.status": "storage.read",
     "system.status": "system.read",
     "system.logs": "system.logs",
+    "timelapse.service.status": "system.read",
+    "timelapse.service.restart": "system.service.restart",
+    "certificate.trust.status": "trust.read",
+    "software.update.status": "software.read",
+    "diagnostic.bundle": "system.logs",
     "system.reboot": "system.reboot",
     "commissioning.run": "commissioning.run",
     "commissioning.validate": "commissioning.validate",
@@ -117,16 +128,25 @@ OPERATION_CAPABILITIES = {
 
 
 OPERATION_LEASES = {
+    "camera.status": "CameraPowerLease",
+    "camera.detect": "CameraPowerLease",
+    "camera.ptp.diagnostics": "CameraPowerLease",
     "camera.power.acquire": "CameraPowerLease",
     "camera.power.cycle": "CameraPowerLease",
     "camera.capture.test": "CameraPowerLease",
     "camera.live.start": "LiveViewLease",
+    "camera.config.read": "CameraPowerLease",
+    "camera.config.diff": "DiagnosticLease",
     "camera.config.set_temporary": "TemporaryConfigLease",
+    "camera.usb.rediscover": "CameraPowerLease",
+    "camera.driver.reconnect": "CameraPowerLease",
+    "camera.hardware.inventory": "CameraPowerLease",
     "camera.focus.manual": "CameraPowerLease",
     "camera.focus.auto": "CameraPowerLease",
     "camera.exposure.test": "CameraPowerLease",
+    "image.quality.diagnostics": "DiagnosticLease",
     "camera.reset": "CameraPowerLease",
-    "camera.diagnostics": "DiagnosticLease",
+    "camera.diagnostics": "CameraPowerLease",
     "modem.power.cycle": "ModemMaintenanceLease",
 }
 
@@ -147,11 +167,18 @@ TECHNICIAN_CAPABILITIES = frozenset({
     "storage.read",
     "system.read",
     "system.logs",
+    "trust.read",
+    "software.read",
     "commissioning.validate",
 })
 
 
-SENIOR_TECHNICIAN_CAPABILITIES = TECHNICIAN_CAPABILITIES | frozenset({"modem.power", "camera.reset", "commissioning.run"})
+SENIOR_TECHNICIAN_CAPABILITIES = TECHNICIAN_CAPABILITIES | frozenset({
+    "modem.power",
+    "camera.reset",
+    "system.service.restart",
+    "commissioning.run",
+})
 ENGINEER_CAPABILITIES = SENIOR_TECHNICIAN_CAPABILITIES | frozenset({"system.reboot"})
 BREAK_GLASS_CAPABILITIES = ENGINEER_CAPABILITIES | frozenset({"break_glass"})
 LAB_CAPABILITIES = SENIOR_TECHNICIAN_CAPABILITIES | frozenset({"lab"})
@@ -163,6 +190,7 @@ class ServicePlatform:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = self.state_dir / "service_session.json"
         self.audit_path = audit_path or (self.state_dir / "service_audit.jsonl")
+        self.acquire_handlers: dict[str, Callable[["ServicePlatform", ServiceSession, str], None]] = {}
         self.cleanup_handlers: dict[str, Callable[["ServicePlatform", ServiceSession, str], None]] = {}
         self.operations = {
             name: OperationSpec(name, capability, OPERATION_LEASES.get(name), self._default_handler)
@@ -277,6 +305,15 @@ class ServicePlatform:
             raise KeyError(f"unknown lease type: {lease_type}")
         self.cleanup_handlers[lease_type] = handler
 
+    def register_acquire_handler(
+        self,
+        lease_type: str,
+        handler: Callable[["ServicePlatform", ServiceSession, str], None],
+    ) -> None:
+        if lease_type not in LEASE_TYPES:
+            raise KeyError(f"unknown lease type: {lease_type}")
+        self.acquire_handlers[lease_type] = handler
+
     def call(self, operation: str, session: ServiceSession | None = None, **kwargs) -> dict[str, Any]:
         session = session or self.current_session()
         if not session:
@@ -305,6 +342,9 @@ class ServicePlatform:
                 if operation == "camera.live.stop":
                     self.release_lease(session, "CameraPowerLease", operation)
             elif kwargs.get("release_after") and spec.lease_type:
+                cleanup = self.cleanup_handlers.get(spec.lease_type)
+                if cleanup:
+                    cleanup(self, session, operation)
                 self.release_lease(session, spec.lease_type, operation)
             session.touch()
             self._update_session(session)
@@ -322,6 +362,7 @@ class ServicePlatform:
         lease = leases.get(lease_type)
         if lease and lease.get("session_id") != session.session_id:
             raise PermissionError(f"{lease_type} is owned by another ServiceSession")
+        was_active = bool(lease and lease.get("active"))
         lease = lease or {
             "lease_id": f"TLP-LEASE-{uuid.uuid4().hex[:16]}",
             "lease_type": lease_type,
@@ -331,6 +372,10 @@ class ServicePlatform:
         lease.update({"active": True, "reason": reason, "last_activity": _iso(time.time())})
         leases[lease_type] = lease
         self._save(state)
+        if not was_active:
+            handler = self.acquire_handlers.get(lease_type)
+            if handler:
+                handler(self, session, reason)
         return lease
 
     def release_lease(self, session: ServiceSession, lease_type: str, reason: str) -> None:
@@ -372,6 +417,12 @@ class ServicePlatform:
             if handler:
                 handler(self, session, reason)
             self.release_lease(session, lease_type, reason)
+
+    def record_temporary_config_change(self, change: dict[str, Any]) -> None:
+        state = self._load()
+        dirty = state.setdefault("camera_config_dirty", [])
+        dirty.append({"timestamp": _iso(time.time()), **change})
+        self._save(state)
 
     def status(self) -> dict[str, Any]:
         state = self._load()
