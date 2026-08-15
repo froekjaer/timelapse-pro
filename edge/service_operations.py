@@ -15,6 +15,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from cryptography import x509
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519, ed448, padding, rsa
+from cryptography.x509.oid import ExtensionOID
+
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover
@@ -321,13 +327,63 @@ class ServiceOperations:
         restart = self._systemctl("restart", SERVICE_NAME, timeout=60)
         return {"ok": restart["ok"], "restart": restart, "service": self._service_state(SERVICE_NAME)}
 
-    def certificate_trust_status(self, _platform, _session, _kwargs):
-        paths = [
+    def certificate_trust_status(self, _platform, _session, kwargs: dict[str, Any]):
+        cert_path = self._first_existing_path(
+            kwargs.get("cert_path"),
+            self.base_dir / "certs" / "mgmt.crt",
+            Path("/etc/timelapse/certs/mgmt.crt"),
             Path("/etc/timelapse/edge/tls.crt"),
             Path("/etc/timelapse/edge/client.crt"),
-            self.base_dir / "ssh" / "known_hosts",
-        ]
-        return {"ok": True, "artifacts": {str(path): {"exists": path.exists(), "size": path.stat().st_size if path.exists() else 0} for path in paths}}
+        )
+        ca_path = self._first_existing_path(
+            kwargs.get("ca_path"),
+            self.base_dir / "certs" / "edge-local-ca.crt",
+            self.base_dir / "headend_ca.crt",
+            Path("/etc/timelapse/certs/edge-local-ca.crt"),
+            Path("/etc/timelapse/edge/headend_ca.crt"),
+            Path("/etc/timelapse/ca/root/ca-cert.pem"),
+            Path("/opt/timelapse/ca/root/ca-cert.pem"),
+        )
+        known_hosts = self.base_dir / "ssh" / "known_hosts"
+        if cert_path is None:
+            return {
+                "ok": False,
+                "error": "management certificate missing",
+                "certificate": None,
+                "trust_anchor": str(ca_path) if ca_path else None,
+                "known_hosts": {"path": str(known_hosts), "exists": known_hosts.exists()},
+            }
+        try:
+            cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            now = datetime.now(timezone.utc)
+            cert_info = self._certificate_info(cert, cert_path)
+            cert_info["expired"] = cert.not_valid_after_utc <= now
+            cert_info["not_yet_valid"] = cert.not_valid_before_utc > now
+            chain = self._verify_certificate_chain(cert, ca_path)
+            ok = not cert_info["expired"] and not cert_info["not_yet_valid"] and chain["ok"]
+            error = None
+            if cert_info["expired"]:
+                error = "management certificate expired"
+            elif cert_info["not_yet_valid"]:
+                error = "management certificate not yet valid"
+            elif not chain["ok"]:
+                error = chain.get("error") or "management certificate trust verification failed"
+            return {
+                "ok": ok,
+                "error": error,
+                "certificate": cert_info,
+                "chain": chain,
+                "trust_anchor": str(ca_path) if ca_path else None,
+                "known_hosts": {"path": str(known_hosts), "exists": known_hosts.exists(), "size": known_hosts.stat().st_size if known_hosts.exists() else 0},
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"management certificate invalid: {exc}",
+                "certificate": {"path": str(cert_path)},
+                "trust_anchor": str(ca_path) if ca_path else None,
+                "known_hosts": {"path": str(known_hosts), "exists": known_hosts.exists()},
+            }
 
     def software_update_status(self, _platform, _session, _kwargs):
         receipt = self._read_json(self.base_dir / ".timelapse-release.json")
@@ -621,9 +677,7 @@ class ServiceOperations:
 
     def _deviations(self, sections: dict[str, Any]) -> list[dict[str, str]]:
         deviations = []
-        for name, value in sections.items():
-            if isinstance(value, dict) and value.get("ok") is False:
-                deviations.append({"section": name, "severity": "fail", "message": str(value.get("error") or "check failed")})
+        self._collect_deviations(sections, "", deviations)
         camera = sections.get("camera", {})
         if isinstance(camera, dict) and camera.get("status", {}).get("detected") is False:
             deviations.append({"section": "camera", "severity": "fail", "message": "camera not detected"})
@@ -632,6 +686,79 @@ class ServiceOperations:
         if isinstance(backlog, int) and backlog > 0:
             deviations.append({"section": "storage", "severity": "deviation", "message": f"{backlog} captures pending upload"})
         return deviations
+
+    def _collect_deviations(self, value: Any, path: str, deviations: list[dict[str, str]]) -> None:
+        if not isinstance(value, dict):
+            return
+        if value.get("ok") is False:
+            deviations.append({
+                "section": path or "root",
+                "severity": str(value.get("severity") or "fail"),
+                "message": str(value.get("error") or value.get("message") or "check failed"),
+            })
+        for key, child in value.items():
+            if key in {"before", "after"}:
+                continue
+            if isinstance(child, dict):
+                child_path = f"{path}.{key}" if path else str(key)
+                self._collect_deviations(child, child_path, deviations)
+
+    def _first_existing_path(self, *paths: Any) -> Path | None:
+        for item in paths:
+            if not item:
+                continue
+            path = Path(str(item))
+            if path.exists():
+                return path
+        return None
+
+    def _certificate_info(self, cert: x509.Certificate, path: Path) -> dict[str, Any]:
+        san = []
+        try:
+            ext = cert.extensions.get_extension_for_oid(ExtensionOID.SUBJECT_ALTERNATIVE_NAME).value
+            san.extend(ext.get_values_for_type(x509.DNSName))
+            san.extend(str(ip) for ip in ext.get_values_for_type(x509.IPAddress))
+        except x509.ExtensionNotFound:
+            pass
+        return {
+            "path": str(path),
+            "subject": cert.subject.rfc4514_string(),
+            "issuer": cert.issuer.rfc4514_string(),
+            "serial_number": format(cert.serial_number, "x"),
+            "san": san,
+            "fingerprint_sha256": cert.fingerprint(hashes.SHA256()).hex(),
+            "not_valid_before": cert.not_valid_before_utc.isoformat(),
+            "not_valid_after": cert.not_valid_after_utc.isoformat(),
+        }
+
+    def _verify_certificate_chain(self, cert: x509.Certificate, ca_path: Path | None) -> dict[str, Any]:
+        if ca_path is None:
+            return {"ok": False, "error": "trust anchor missing"}
+        try:
+            ca_cert = x509.load_pem_x509_certificate(ca_path.read_bytes())
+            now = datetime.now(timezone.utc)
+            if ca_cert.not_valid_after_utc <= now:
+                return {"ok": False, "error": "trust anchor expired", "ca": self._certificate_info(ca_cert, ca_path)}
+            if ca_cert.not_valid_before_utc > now:
+                return {"ok": False, "error": "trust anchor not yet valid", "ca": self._certificate_info(ca_cert, ca_path)}
+            if cert.issuer != ca_cert.subject:
+                return {"ok": False, "error": "issuer does not match trust anchor", "ca": self._certificate_info(ca_cert, ca_path)}
+            self._verify_signature(ca_cert.public_key(), cert)
+            return {"ok": True, "verified_by": str(ca_path), "ca": self._certificate_info(ca_cert, ca_path)}
+        except InvalidSignature:
+            return {"ok": False, "error": "certificate signature does not verify against trust anchor"}
+        except Exception as exc:
+            return {"ok": False, "error": f"trust anchor invalid: {exc}"}
+
+    def _verify_signature(self, public_key: Any, cert: x509.Certificate) -> None:
+        if isinstance(public_key, rsa.RSAPublicKey):
+            public_key.verify(cert.signature, cert.tbs_certificate_bytes, padding.PKCS1v15(), cert.signature_hash_algorithm)
+        elif isinstance(public_key, ec.EllipticCurvePublicKey):
+            public_key.verify(cert.signature, cert.tbs_certificate_bytes, ec.ECDSA(cert.signature_hash_algorithm))
+        elif isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+            public_key.verify(cert.signature, cert.tbs_certificate_bytes)
+        else:
+            raise ValueError("unsupported trust anchor public key type")
 
 
 def _now() -> str:

@@ -147,6 +147,14 @@ Required sections:
 - technician
 - deviations
 
+Aggregation rules:
+
+- nested section failures propagate to the top-level result, including `modem_network.modem` and `modem_network.network`
+- failed checks produce `FAIL`
+- deviations without failed checks produce `PASS WITH DEVIATIONS`
+- upload backlog alone is a deviation, not a fail
+- certificate/trust status parses the existing management certificate and trust anchor read-only, reports subject, SAN, SHA-256 fingerprint, validity/expiry and verifies the chain where the existing Edge-local PKI material is present
+
 ## Technician Experience Completion Gate
 
 Covered operations:
@@ -154,7 +162,7 @@ Covered operations:
 - camera status, power acquire/release/cycle, detect, reconnect, USB/PTP diagnostics, hardware inventory, live view, test capture, config read/temporary set/diff, autofocus/manual focus/exposure test, image quality diagnostics
 - modem status, signal, registration, reconnect history and power-cycle
 - network diagnostics, storage/backlog, system health, TimeLapse service status/restart, trust/certificate status, software/update status, diagnostic bundle and controlled reboot
-- CommissioningReport v1 and validation
+- CommissioningReport v1 and validation, including nested modem/network failure propagation and certificate missing/invalid/expired/valid coverage
 
 Missing or deferred operations:
 
