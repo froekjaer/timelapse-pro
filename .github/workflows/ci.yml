@@ -29,11 +29,6 @@ jobs:
       - name: Syntax check all tracked shell scripts
         shell: bash
         run: |
-          # -f follows symlinks: a regular file (or symlink that resolves) gets
-          # syntax-checked and a real syntax error fails the job (rc=1); a broken
-          # or unresolved symlink is reported and skipped instead of hard-failing.
-          # Process substitution (not a pipe) keeps rc in this shell, so a syntax
-          # error anywhere — not just the last file — is caught.
           rc=0
           while IFS= read -r -d '' f; do
             if [ -f "$f" ]; then
@@ -46,8 +41,6 @@ jobs:
           exit $rc
       - name: Unit and contract tests
         env:
-          # headend/tests/conftest.py intentionally ignores DATABASE_URL so a
-          # developer can never point pytest at the operational database.
           TIMELAPSE_TEST_DATABASE_URL: sqlite:////tmp/timelapse-ci.db
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/headend:${{ github.workspace }}/edge
         run: |
@@ -138,16 +131,30 @@ jobs:
           fi
           git checkout --detach "${{ github.sha }}"
           git reset --hard "${{ github.sha }}"
+      - name: Ensure dedicated Trust Service signing secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENV_FILE=/etc/timelapse/headend.env
+          sudo test -f "$ENV_FILE"
+          if ! sudo grep -q '^TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET=' "$ENV_FILE"; then
+            SECRET="$(openssl rand -hex 32)"
+            printf '\nTIMELAPSE_TRUST_SERVICE_SIGNING_SECRET=%s\n' "$SECRET" | sudo tee -a "$ENV_FILE" >/dev/null
+            unset SECRET
+            sudo chmod 640 "$ENV_FILE"
+            echo "✅ Dedicated Trust Service signing authority generated"
+          else
+            echo "✅ Existing Trust Service signing authority preserved"
+          fi
       - name: Restart headend
         run: |
-          # Brug system/ prefix til globale launchd services
           sudo launchctl kickstart -k "system/dk.froekjaer.timelapse-headend"
           sudo launchctl print "system/dk.froekjaer.timelapse-headend" | grep -E "state =|pid =|last exit code =" || true
           echo "✅ Headend genstartet"
       - name: Rebuild UI
         run: |
           cd ~/projects/timelapse-pro/timelapse-ui
-          npm install --silent
+          npm ci --silent
           npm run build
           echo "✅ UI bygget"
       - name: Skip legacy edge update signalling

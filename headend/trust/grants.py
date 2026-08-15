@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import uuid
 from datetime import timedelta, timezone
 from typing import Any
@@ -22,9 +23,39 @@ class GrantDenied(ValueError):
     pass
 
 
+class TrustServiceConfigurationError(RuntimeError):
+    """Raised when a Trust Service authority is missing in a fail-closed environment."""
+
+
+def _is_explicit_test_or_lab_environment() -> bool:
+    env = (os.getenv("TIMELAPSE_ENV") or "").strip().lower()
+    if env in {"prod", "production", "staging"}:
+        return False
+    return env in {"test", "testing", "lab", "development", "dev", "rd"} or "pytest" in sys.modules
+
+
 def _secret() -> bytes:
-    configured = os.getenv("TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET") or os.getenv("JWT_SECRET")
-    return (configured or "timelapse-dev-trust-service-secret-change-me").encode()
+    """Return a Trust-Service-specific signing secret.
+
+    Grant signing is a separate trust purpose from Headend browser sessions. It
+    must therefore not silently reuse JWT_SECRET. Production/staging fail
+    closed when no dedicated signer secret exists. A deterministic development
+    secret is available only when the process is explicitly running as test/LAB.
+    """
+    configured = os.getenv("TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET")
+    if configured:
+        if len(configured.encode()) < 32:
+            raise TrustServiceConfigurationError(
+                "TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET must be at least 32 bytes"
+            )
+        return configured.encode()
+
+    if _is_explicit_test_or_lab_environment():
+        return b"timelapse-test-only-trust-service-secret-v1"
+
+    raise TrustServiceConfigurationError(
+        "TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET is required outside explicit test/LAB environments"
+    )
 
 
 def _b64(data: bytes) -> str:
@@ -61,18 +92,25 @@ def issue_edge_service_grant(db: Session, request: GrantRequest) -> tuple[str, E
     if not request.capabilities:
         raise GrantDenied("grant requires at least one capability")
 
-    capability = sorted(request.capabilities)[0]
-    decision = evaluate_policy(PolicyRequest(
-        principal=request.principal,
-        action="grant.issue",
-        resource=request.resource,
-        tenant_id=request.tenant_id,
-        capability=capability,
-        mfa_required=request.mfa_required,
-        context=request.context,
-    ))
-    if not decision.allowed:
-        raise GrantDenied(decision.reason)
+    # Every requested capability must independently pass the PDP. Validating
+    # only the lexicographically first capability would let additional scopes be
+    # smuggled into the signed grant without policy evidence.
+    decisions = []
+    for capability in sorted(request.capabilities):
+        decision = evaluate_policy(
+            PolicyRequest(
+                principal=request.principal,
+                action="grant.issue",
+                resource=request.resource,
+                tenant_id=request.tenant_id,
+                capability=capability,
+                mfa_required=request.mfa_required,
+                context=request.context,
+            )
+        )
+        decisions.append(decision)
+        if not decision.allowed:
+            raise GrantDenied(decision.reason)
 
     issued_at = now_utc()
     expires_at = issued_at + timedelta(seconds=request.ttl_seconds)
@@ -113,7 +151,7 @@ def issue_edge_service_grant(db: Session, request: GrantRequest) -> tuple[str, E
         issued_at=issued_at,
         expires_at=expires_at,
         signature=token,
-        metadata_json=_canonical({"decision_id": decision.decision_id}),
+        metadata_json=_canonical({"decision_ids": [decision.decision_id for decision in decisions]}),
     )
     db.add(row)
     return token, row
@@ -142,11 +180,13 @@ def validate_edge_service_grant(
 ) -> GrantValidation:
     try:
         payload, _sig = _decode_token(token)
-    except GrantDenied as exc:
+    except (GrantDenied, TrustServiceConfigurationError) as exc:
         return GrantValidation(False, str(exc))
     if payload.get("typ") != "EdgeServiceGrant":
         return GrantValidation(False, "normal Headend session token rejected")
-    row = db.query(EdgeServiceGrant).filter_by(grant_id=payload.get("grant_id"), jti=payload.get("jti")).first()
+    row = db.query(EdgeServiceGrant).filter_by(
+        grant_id=payload.get("grant_id"), jti=payload.get("jti")
+    ).first()
     if not row:
         return GrantValidation(False, "grant record not found")
     if row.status != "active":
