@@ -119,7 +119,6 @@ jobs:
             echo "Verificerer tag: $LATEST_TAG"
             git tag -v "$LATEST_TAG" && echo "✅ GPG signatur OK: $LATEST_TAG" || { echo "❌ FEJL: Ugyldig GPG signatur på $LATEST_TAG"; exit 1; }
           fi
-
       - name: Checkout deployed revision
         run: |
           cd ~/projects/timelapse-pro
@@ -131,21 +130,6 @@ jobs:
           fi
           git checkout --detach "${{ github.sha }}"
           git reset --hard "${{ github.sha }}"
-      - name: Ensure dedicated Trust Service signing secret
-        shell: bash
-        run: |
-          set -euo pipefail
-          ENV_FILE=/etc/timelapse/headend.env
-          sudo test -f "$ENV_FILE"
-          if ! sudo grep -q '^TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET=' "$ENV_FILE"; then
-            SECRET="$(openssl rand -hex 32)"
-            printf '\nTIMELAPSE_TRUST_SERVICE_SIGNING_SECRET=%s\n' "$SECRET" | sudo tee -a "$ENV_FILE" >/dev/null
-            unset SECRET
-            sudo chmod 640 "$ENV_FILE"
-            echo "✅ Dedicated Trust Service signing authority generated"
-          else
-            echo "✅ Existing Trust Service signing authority preserved"
-          fi
       - name: Restart headend
         run: |
           sudo launchctl kickstart -k "system/dk.froekjaer.timelapse-headend"
