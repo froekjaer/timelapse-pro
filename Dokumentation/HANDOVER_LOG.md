@@ -1716,3 +1716,10 @@ person vide".
 - **Certificate/trust status:** `certificate.trust.status` parser eksisterende local management certificate/trust-anchor read-only, rapporterer subject, SAN, SHA-256 fingerprint, validity/expiry og verificerer chain når Edge-local PKI materialet findes. Missing/invalid/expired certificate fejler deterministisk.
 - **Safety:** CameraPowerLease har acquire/cleanup hooks, så kamera-relæ aktiveres gennem lease-manageren og slukkes ved `release_after`/invalidation. Grant revoke/expiry cleanup-kontrakten er bevaret.
 - **Acceptance gate:** Se `Dokumentation/WP3_UNIFIED_TECHNICIAN_PLATFORM_2026-08.md` for dækkede/manglende operations, capability matrix, UI/CLI parity og safety cleanup status.
+
+### Handover 2026-08-15 — Codex: WP-4 Edge Image, Provisioning & PKI baseline
+- **Scope:** Genoptaget WP-4 i ren worktree `/Volumes/data-fast/peter-home/projects/timelapse-pro-wp4` baseret på `origin/main` efter PR #19/#20. Mac mini deploy-checkouten blev ikke brugt som development worktree.
+- **Restore:** Selektiv restore fra `wp4-in-progress-before-ci-hotfix`: `edge/provisioning_first_boot.py`, `headend/trust/provisioning.py`, `tests/test_wp4_provisioning_contract.py`. PR #9 safety backup/stash blev ikke rørt.
+- **Implementation:** Trust Service provisioning boundary for generic signed image manifest, signed provisioning envelope, one-time bootstrap consume/replay protection, Edge-owned SSH public-key enrollment, Edge-owned TLS CSR issuance, credential lifecycle inventory, revocation/re-enrollment intent, replacement hardware flow og legacy per-device image migration adapter.
+- **Private-key rule:** Permanente Edge SSH/TLS private keys genereres på Edge og returneres ikke fra first-boot payloads. Headend/Trust Service gemmer public key, CSR/cert metadata, fingerprint og lifecycle state.
+- **Tests:** `PYTHONPATH=headend:. pytest tests/test_wp4_provisioning_contract.py -q` passerer lokalt med 13 tests.
