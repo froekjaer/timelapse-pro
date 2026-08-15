@@ -1,4 +1,4 @@
-"""SEC-ZAI-01: LAB preview files must remain inside the device LAB root."""
+"""SEC-ZAI-01: LAB preview route paths must remain inside the device LAB root."""
 
 from pathlib import Path
 
