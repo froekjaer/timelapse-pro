@@ -753,41 +753,19 @@ class EdgeAgent:
             self._check_update()
             self._check_and_apply_updates_if_due()
 
-        # Check capture schedule
-        capture_due = self._should_capture(now, mode)
-        if capture_due:
-            suppressed = self._capture_suppressed_by_headend_signal(now)
-            if suppressed:
-                log.info("Capture udsat/sprunget over: %s", suppressed)
-                self._db.log_event(self._device_id, "INFO", "capture", f"Capture suppressed: {suppressed}")
+        # Check capture schedule by scheduled slot, not by current wall-clock cycle.
+        capture_slot = self._scheduled_capture_slot(now, mode)
+        if capture_slot:
+            slot_id = capture_slot["slot_id"]
+            if not self._db.claim_capture_slot(
+                slot_id=slot_id,
+                device_id=self._device_id,
+                mode=mode,
+                scheduled_at=capture_slot["scheduled_at"],
+            ):
+                log.debug("Capture slot already attempted: %s", slot_id)
             else:
-                # 2026-07-04 (Peter): læs GPS HER, lige før relæet tænder --
-                # ikke løbende under idle-ventetiden. Relæet dræber fix'et
-                # med det samme, og der går lang tid efter relæet slukkes
-                # før et fix er tilbage. `_should_capture()` returnerer True
-                # `lead_s` (~13s) sekunder før relæet rent faktisk tænder
-                # (se _camera_warmup_seconds/_do_capture_cycle), så dette er
-                # det sidste og bedste tidspunkt at læse på — maksimal tid
-                # siden sidste relæ-slukning er gået, og GPS'en har haft
-                # bedst mulig chance for at nå et fix, inden relæet dræber
-                # det igen om et øjeblik.
-                try:
-                    if hasattr(self._driver, "refresh_gps_cache"):
-                        self._driver.refresh_gps_cache()
-                except Exception as _gps_exc:
-                    log.debug("GPS-cache opdatering sprunget over: %s", _gps_exc)
-
-                node_cameras = self._cfg.get('node_cameras', [])
-                multi_mode   = self._cfg.get('multi_camera_mode', 'single')
-                if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
-                    cameras = self._discover_cameras()
-                    if len(cameras) > 1:
-                        self._do_multi_capture_cycle(cameras)
-                    else:
-                        log.info("Kun %d kamera fundet — single mode", len(cameras))
-                        self._do_capture_cycle()
-                else:
-                    self._do_capture_cycle()
+                self._run_capture_slot(now, mode, capture_slot)
 
         # Upload pending large files only inside the Headend-assigned slot.
         # This runs after capture checks so upload backlog cannot delay capture.
@@ -815,6 +793,54 @@ class EdgeAgent:
         # Default 300s (5 min) - configurable via system.max_idle_sleep_s
         max_idle_sleep = int(self._cfg.get("system", {}).get("max_idle_sleep_s", 300))
         self._stop_event.wait(min(sleep_s, max_idle_sleep))  # wake at least every max_idle_sleep_s
+
+    def _run_capture_slot(self, now: datetime, mode: str, capture_slot: dict) -> None:
+        slot_id = capture_slot["slot_id"]
+        try:
+            suppressed = self._capture_suppressed_by_headend_signal(now)
+            if suppressed:
+                log.info("Capture udsat/sprunget over: %s", suppressed)
+                self._db.log_event(self._device_id, "INFO", "capture", f"Capture suppressed: {suppressed}")
+                self._db.complete_capture_slot(slot_id=slot_id, status="skipped", result=suppressed)
+                return
+            else:
+                # 2026-07-04 (Peter): læs GPS HER, lige før relæet tænder --
+                # ikke løbende under idle-ventetiden. Relæet dræber fix'et
+                # med det samme, og der går lang tid efter relæet slukkes
+                # før et fix er tilbage. `_should_capture()` returnerer True
+                # `lead_s` (~13s) sekunder før relæet rent faktisk tænder
+                # (se _camera_warmup_seconds/_do_capture_cycle), så dette er
+                # det sidste og bedste tidspunkt at læse på — maksimal tid
+                # siden sidste relæ-slukning er gået, og GPS'en har haft
+                # bedst mulig chance for at nå et fix, inden relæet dræber
+                # det igen om et øjeblik.
+                try:
+                    if hasattr(self._driver, "refresh_gps_cache"):
+                        self._driver.refresh_gps_cache()
+                except Exception as _gps_exc:
+                    log.debug("GPS-cache opdatering sprunget over: %s", _gps_exc)
+
+                node_cameras = self._cfg.get('node_cameras', [])
+                multi_mode   = self._cfg.get('multi_camera_mode', 'single')
+                if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
+                    cameras = self._discover_cameras()
+                    if len(cameras) > 1:
+                        ok = self._do_multi_capture_cycle(cameras)
+                    else:
+                        log.info("Kun %d kamera fundet — single mode", len(cameras))
+                        ok = self._do_capture_cycle()
+                else:
+                    ok = self._do_capture_cycle()
+                capture_id = (getattr(self, "_last_capture_result", None) or {}).get("capture_id")
+                self._db.complete_capture_slot(
+                    slot_id=slot_id,
+                    status="success" if ok else "failed",
+                    capture_id=capture_id,
+                    result="capture_cycle",
+                )
+        except Exception as exc:
+            self._db.complete_capture_slot(slot_id=slot_id, status="failed", error=str(exc))
+            raise
 
     # ── Capture cycle ───────────────────────────────────────────────────────
 
@@ -1033,9 +1059,14 @@ class EdgeAgent:
 
     def _should_capture(self, now: datetime, mode: str) -> bool:
         """Return True if relay should power ON now (warmup-adjusted)."""
+        return self._scheduled_capture_slot(now, mode) is not None
+
+    def _scheduled_capture_slot(self, now: datetime, mode: str) -> dict | None:
+        """Return the planned capture slot due now, including lead-window and catch-up."""
         schedule = self._cfg.get("schedule", {})
         warmup_s = self._camera_warmup_seconds()
         lead_s   = warmup_s + 3
+        catchup_s = int(schedule.get("capture_catchup_seconds", max(60, lead_s + 60)))
         active_hours = schedule.get("active_hours")
         if active_hours and len(active_hours) == 2:
             tz_name   = schedule.get("timezone", "UTC")
@@ -1043,12 +1074,18 @@ class EdgeAgent:
             start_t   = self._parse_time(active_hours[0])
             end_t     = self._parse_time(active_hours[1])
             if not (start_t <= local_now.time() <= end_t):
-                return False
+                return None
         if mode == "interval":
             interval_s   = int(schedule.get("interval_minutes", 60)) * 60
             epoch_s      = int(now.timestamp())
             pos_in_cycle = epoch_s % interval_s
-            return (interval_s - pos_in_cycle) <= lead_s
+            if (interval_s - pos_in_cycle) <= lead_s:
+                scheduled_at = datetime.fromtimestamp(epoch_s - pos_in_cycle + interval_s, timezone.utc)
+                return self._slot_payload("interval", scheduled_at)
+            if 0 <= pos_in_cycle <= catchup_s:
+                scheduled_at = datetime.fromtimestamp(epoch_s - pos_in_cycle, timezone.utc)
+                return self._slot_payload("interval", scheduled_at)
+            return None
         if mode == "fixed":
             tz_name   = schedule.get("timezone", "UTC")
             local_now = self._to_local(now, tz_name)
@@ -1057,11 +1094,19 @@ class EdgeAgent:
                     h, m   = map(int, t_str.split(":"))
                     target = local_now.replace(hour=h, minute=m, second=0, microsecond=0)
                     diff   = (target - local_now).total_seconds()
-                    if lead_s - 2 <= diff <= lead_s + 2:
-                        return True
+                    if -catchup_s <= diff <= lead_s:
+                        return self._slot_payload("fixed", target.astimezone(timezone.utc))
                 except Exception:
                     pass
-        return False
+        return None
+
+    def _slot_payload(self, mode: str, scheduled_at: datetime) -> dict:
+        scheduled_utc = scheduled_at.astimezone(timezone.utc).replace(microsecond=0)
+        return {
+            "slot_id": f"{self._device_id}:{mode}:{scheduled_utc.isoformat()}",
+            "scheduled_at": scheduled_utc,
+            "mode": mode,
+        }
 
     def _capture_suppressed_by_headend_signal(self, now: datetime) -> str | None:
         """Return a reason if Headend asked Edge to avoid captures right now."""
