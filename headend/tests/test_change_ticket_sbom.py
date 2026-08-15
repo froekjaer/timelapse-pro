@@ -93,6 +93,7 @@ def _make_artifact(session, artifact_id="art-1", sbom_ref="sbom:dev-1:2026-07-05
         source_ref="ci-run-1",
         sha256="a" * 64,
         sbom_ref=sbom_ref,
+        signature="-----BEGIN PGP SIGNATURE-----\nci-test-signature\n-----END PGP SIGNATURE-----",
         signed_by="ci-signer",
     )
     session.add(artifact)

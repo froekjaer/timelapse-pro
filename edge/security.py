@@ -132,6 +132,11 @@ def verify_update_artifact(update: dict, security_cfg: dict) -> tuple[bool, str]
     if not sha256 or not actual_sha or not hmac.compare_digest(str(sha256), actual_sha):
         return False, "artifact manifest SHA-256 matcher ikke"
 
+    if str(artifact.get("signed_by") or "").strip() == "system-hash":
+        return False, "artifact er kun hash-bundet og ikke release-signeret"
+    if str(artifact.get("signature") or "").strip().startswith("sha256:"):
+        return False, "artifact signatur er hash-only og ikke deployerbar"
+
     signer_fingerprint = artifact.get("signer_fingerprint")
     trusted = trusted_signer_fingerprints(security_cfg)
     if trusted and signer_fingerprint not in trusted:

@@ -108,7 +108,7 @@ from siem import router as siem_router, start_headend_log_collector, record_even
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
-from services.artifact_trust import is_deployable_artifact
+from services.artifact_trust import is_deployable_artifact, sign_release_artifact_payload
 from services.update_supersession import supersede_pending_app_updates
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
@@ -6920,18 +6920,10 @@ def _artifact_for_edge_policy(db: Session, artifact: UpdateArtifact | None) -> d
     if not artifact:
         return None
     signer_fingerprint = None
-    headend_fingerprint = None  # fallback: headend's own signing identity
     for signer in _trusted_release_signers(db):
         if _release_signer_matches(artifact.signed_by, signer):
             signer_fingerprint = signer.get("fingerprint")
             break
-        # Gem headend-identitet som fallback for system-hash signerede artifacts
-        if signer.get("entity_id") == "headend" and not headend_fingerprint:
-            headend_fingerprint = signer.get("fingerprint")
-    # system-hash = headend har signeret via hash-binding (ingen GPG-nøgle sat).
-    # Behandles som headend-signeret og får headend-identitetens fingerprint.
-    if signer_fingerprint is None and artifact.signed_by == "system-hash" and headend_fingerprint:
-        signer_fingerprint = headend_fingerprint
     return {
         "artifact_id": artifact.artifact_id,
         "artifact_type": artifact.artifact_type,
@@ -8429,7 +8421,7 @@ def catalog_current_release_artifact(
     }
     manifest_json = _canonical_json(manifest)
     manifest_sha = _sha256_text(manifest_json)
-    signature, signed_by = _sign_payload(manifest_json)
+    signature, signed_by = sign_release_artifact_payload(manifest_json)
     snapshot_root = _materialize_release_snapshot(root, artifact_id, outputs)
     artifact = UpdateArtifact(
         artifact_id=artifact_id,
@@ -8610,7 +8602,7 @@ def _build_artifact_from_git_tag(
         }
         manifest_json = _canonical_json(manifest)
         manifest_sha = _sha256_text(manifest_json)
-        signature, signed_by = _sign_payload(manifest_json)
+        signature, signed_by = sign_release_artifact_payload(manifest_json)
         snapshot_root = _materialize_release_snapshot(tmp_path, artifact_id, outputs)
         artifact = UpdateArtifact(
             artifact_id=artifact_id,
@@ -9117,7 +9109,7 @@ def catalog_os_update_artifact(
     }
     manifest_json = _canonical_json(manifest)
     manifest_sha = _sha256_text(manifest_json)
-    signature, signed_by = _sign_payload(manifest_json)
+    signature, signed_by = sign_release_artifact_payload(manifest_json)
     artifact = UpdateArtifact(
         artifact_id=artifact_id,
         artifact_type="os",
@@ -15821,7 +15813,7 @@ def build_edge_bootstrap_image(
     }
     manifest_json = _canonical_json(manifest)
     manifest_sha = _sha256_text(manifest_json)
-    signature, signed_by = _sign_payload(manifest_json)
+    signature, signed_by = sign_release_artifact_payload(manifest_json)
 
     artifact = UpdateArtifact(
         artifact_id=artifact_id,
