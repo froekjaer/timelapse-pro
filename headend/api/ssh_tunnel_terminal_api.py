@@ -21,6 +21,7 @@ from database import (
     get_db,
     now_utc,
 )
+from services.ssh_host_trust_migration import migrate_legacy_known_host_trust
 from trust.grants import GrantDenied, issue_edge_service_grant, validate_edge_service_grant
 from trust.models import GrantRequest
 from trust.policy import evaluate_legacy_role_capability_check, principal_from_legacy_user
@@ -63,6 +64,8 @@ def _trusted_host_key(db: Session, device_id: str) -> SshHostKeyTrust | None:
 
 def terminal_trust_status(db: Session, device_id: str) -> dict:
     trusted = _trusted_host_key(db, device_id)
+    if not trusted:
+        trusted = migrate_legacy_known_host_trust(db, device_id)
     if not trusted:
         return {
             "allowed": False,
@@ -143,6 +146,8 @@ def create_ssh_tunnel_terminal_router(
         if not tunnel:
             raise HTTPException(status_code=409, detail="No active reverse SSH tunnel")
         trusted = _trusted_host_key(db, device_id)
+        if not trusted:
+            trusted = migrate_legacy_known_host_trust(db, device_id)
         if not trusted:
             raise HTTPException(status_code=403, detail="untrusted or mismatched SSH host key denied")
 
