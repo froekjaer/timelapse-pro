@@ -112,6 +112,7 @@ from services.artifact_trust import is_deployable_artifact
 from services.update_supersession import supersede_pending_app_updates
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
+from services.edge_lifecycle import LifecycleTransitionError as EdgeLifecycleError, key_management_lifecycle_summary, mark_bootstrap_consumed, reconcile_edge_lifecycle as _reconcile_edge_lifecycle, resolve_device_api_credential
 from database import (
     BootstrapToken,
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
@@ -2178,6 +2179,7 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
         # Marker som brugt
         token_record.used_at = now_utc()
         token_record.used_by_device = req.device_id
+        token_record.revoked = True
     # DEV-mode fjernet — alle tokens skal være i DB
     else:
         raise HTTPException(status_code=401, detail="Ugyldigt eller ukendt bootstrap token")
@@ -2191,9 +2193,7 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     else:
         log.info("Device re-bootstrapping: %s", req.device_id)
 
-    # Issue a simple test token (use proper JWT in production)
     api_token = f"tk-{_secrets.token_urlsafe(32)}"
-    device.api_token  = api_token
     device.last_seen  = now_utc()
     device.status     = "online"
     if token_record:
@@ -2245,6 +2245,8 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     )
     db.add(credential)
     _audit_key_event(db, credential, "created_by_bootstrap", "bootstrap", {"device_id": req.device_id})
+    mark_bootstrap_consumed(db, token_id=token_record.id, token_hash=_secret_hash(req.bootstrap_token), device_id=req.device_id)
+    _reconcile_edge_lifecycle(db, device, actor="bootstrap", target_state="assigned" if (device.site_id or device.customer_id or device.camera_name) else "credentialed", reason="Legacy bootstrap issued API credential", hardware_evidence={"bootstrap_token_id": token_record.id if token_record else None})
     db.commit()
 
     base_url   = _headend_api_url(db).removesuffix("/api")
@@ -2320,6 +2322,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
         # Sæt used_at og used_by_device første gang
         token_record.used_at       = _now
         token_record.used_by_device = req.device_id
+    token_record.revoked = True
 
     # Find eller opret device
     device = db.query(Device).filter_by(device_id=req.device_id).first()
@@ -2331,9 +2334,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
     else:
         log.info("Zero-touch: re-enrollment: %s", req.device_id)
 
-    # API-token
     api_token = f"tk-{_secrets.token_urlsafe(32)}"
-    device.api_token  = api_token
     device.last_seen  = now_utc()
     device.status     = "online"
 
@@ -2404,6 +2405,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
     db.add(credential)
     _audit_key_event(db, credential, "created_by_zero_touch_enroll", "zero_touch_enroll",
                      {"device_id": req.device_id, "hardware_model": req.hardware_model})
+    mark_bootstrap_consumed(db, token_id=token_record.id, token_hash=_secret_hash(req.bootstrap_token), device_id=req.device_id)
 
     # ── Auto-opret DeviceAssignment hvis token er bundet til en kamera-lokation ──
     token_camera_id = getattr(token_record, "camera_id", None)
@@ -2437,6 +2439,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
             device.customer_id = cam.customer_id or device.customer_id
         log.info("Auto DeviceAssignment: %s → kamera %s", req.device_id, token_camera_id)
 
+    _reconcile_edge_lifecycle(db, device, actor="zero_touch_enroll", target_state="assigned" if (device.site_id or device.customer_id or device.camera_name) else "credentialed", reason="Zero-touch enrollment issued API credential", hardware_evidence={"hardware_model": req.hardware_model, "mac_address": req.mac_address, "ssh_pubkey_fingerprint": _fingerprint_material(req.ssh_pubkey or "") if req.ssh_pubkey else ""})
     db.commit()
 
     base_url   = _headend_api_url(db).removesuffix("/api")
@@ -2521,6 +2524,7 @@ def assign_device_to_site(
     prov["enrollment_state"] = "active"
     cfg["provisioning"] = prov
     device.device_config = json.dumps(cfg, ensure_ascii=False)
+    _reconcile_edge_lifecycle(db, device, actor=getattr(current_user, "username", "assign-site"), target_state="assigned", reason="Device assigned to site")
 
     db.commit()
     log.info("Device %s tildelt site %s (%s)", device_id, site_id, site.name)
@@ -2550,53 +2554,22 @@ async def _verify_device_token(
     if scheme.lower() != "bearer" or not provided:
         raise HTTPException(status_code=401, detail="Manglende Bearer token")
     token_hash = _secret_hash(provided)
-    credential = (
-        db.query(KeyCredential)
-        .filter(
-            KeyCredential.entity_type.in_(["edge", "headend", "service"]),
-            KeyCredential.entity_id == device_id,
-            KeyCredential.key_type == "api",
-            KeyCredential.secret_hash == token_hash,
+    try:
+        inventory_credential = resolve_device_api_credential(
+            db, device_id=device_id, provided_token=provided, token_hash=token_hash
         )
-        .first()
-    )
-    active_secret = None
-    if credential:
-        if credential.status != "active":
-            raise HTTPException(status_code=401, detail="API token er ikke aktiv")
-        if credential.expires_at and ensure_utc(credential.expires_at) < now_utc():
-            credential.status = "expired"
-            db.commit()
-            raise HTTPException(status_code=401, detail="API token er udløbet")
-        active_secret = provided
-        require_signature = False
-        try:
-            credential_meta = json.loads(credential.metadata_json or "{}")
-            require_signature = bool(credential_meta.get("require_request_signature"))
-        except Exception:
-            require_signature = False
-        if credential.entity_type in {"headend", "service"}:
-            require_signature = True
-        await _verify_edge_request_signature(request, active_secret, required=require_signature)
-        await _verify_edge_attestation_signature(request, device_id, db)
-        credential.last_used_at = now_utc()
-        credential.last_used_from = request.client.host if request.client else None
-        credential.use_count = (credential.use_count or 0) + 1
+    except EdgeLifecycleError as exc:
         db.commit()
-        return
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device or not device.api_token:
-        raise HTTPException(status_code=401, detail="Ukendt device eller token ikke sat")
-    if not hmac.compare_digest(provided, device.api_token):
-        raise HTTPException(status_code=401, detail="Ugyldig API token for dette device")
-    await _verify_edge_request_signature(request, provided)
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    try:
+        inventory_metadata = json.loads(inventory_credential.metadata_json or "{}")
+    except Exception:
+        inventory_metadata = {}
+    require_signature = bool(inventory_metadata.get("require_request_signature")) and not inventory_credential.legacy_path
+    await _verify_edge_request_signature(request, provided, required=require_signature)
     await _verify_edge_attestation_signature(request, device_id, db)
-    migrated = _upsert_legacy_device_api_credential(db, device, actor="legacy-auth")
-    if migrated:
-        migrated.last_used_at = now_utc()
-        migrated.last_used_from = request.client.host if request.client else None
-        migrated.use_count = (migrated.use_count or 0) + 1
-        db.commit()
+    inventory_credential.updated_at = now_utc()
+    db.commit()
 
 
 async def _verify_payload_device_token(
@@ -3386,6 +3359,8 @@ def list_key_management(
         "auto_revoke_candidates": 0,
         "trusted_release_signers": 0,
     }
+    lifecycle_summary = key_management_lifecycle_summary(db)
+    counts.update(lifecycle_summary["counts"])
     trusted_release_signers = _trusted_release_signers(db)
     counts["trusted_release_signers"] = len(trusted_release_signers)
     cleanup_candidates = _credential_cleanup_candidates(db, older_than_days=14)
@@ -3469,6 +3444,8 @@ def list_key_management(
     return {
         "credentials": rows,
         "devices": device_rows,
+        "edge_lifecycle": lifecycle_summary["edge_lifecycle"],
+        "edge_credential_inventory": lifecycle_summary["edge_credential_inventory"],
         "summary": counts,
         "controls": controls,
         "cleanup_candidates": cleanup_candidates,
@@ -3575,10 +3552,6 @@ def create_key_credential(
         secret_once = f"tlp_{entity_type}_{_secrets.token_urlsafe(32)}"
         secret_hash = _secret_hash(secret_once)
         algorithm = "sha256-token-hash"
-        if entity_type == "edge":
-            device = db.query(Device).filter_by(device_id=payload.entity_id).first()
-            if device:
-                device.api_token = secret_once
     elif key_type in {"ssh", "signing"} and not public_key:
         raise HTTPException(status_code=400, detail="SSH/signing credential kræver public_key eller generate_keypair")
 
@@ -3622,6 +3595,10 @@ def create_key_credential(
             old.revoked_by = current_user.username
             old.revoke_reason = f"Rotated to {credential_id}"
             _audit_key_event(db, old, "rotated", current_user.username, {"rotated_to": credential_id})
+    if entity_type == "edge":
+        device = db.query(Device).filter_by(device_id=payload.entity_id).first()
+        if device:
+            _reconcile_edge_lifecycle(db, device, actor=current_user.username, reason="Edge credential created")
     db.commit()
     data = _credential_to_dict(credential)
     if secret_once:
@@ -3649,6 +3626,8 @@ def revoke_key_credential(
         device = db.query(Device).filter_by(device_id=credential.entity_id).first()
         if device and device.api_token and credential.secret_hash == _secret_hash(device.api_token):
             device.api_token = None
+        if device:
+            _reconcile_edge_lifecycle(db, device, actor=current_user.username, reason="Edge API credential revoked")
     _audit_key_event(db, credential, "revoked", current_user.username, {"reason": credential.revoke_reason})
     db.commit()
     return {"ok": True, "credential_id": credential.credential_id}
@@ -14947,6 +14926,7 @@ def prepare_edge_provisioning(
     device.site_name = payload.site_name or device.site_name
     device.camera_name = payload.camera_name or device.camera_name
     device.location_name = payload.location_name or location_name
+    lifecycle_summary = _reconcile_edge_lifecycle(db, device, actor=current_user.username, target_state="prepared", reason="Edge provisioning prepared")
     try:
         cfg = json.loads(device.device_config or "{}")
     except Exception:
@@ -14958,6 +14938,7 @@ def prepare_edge_provisioning(
         "headend_url": headend_url,
         "note": payload.note or "",
         "status": "awaiting_bootstrap",
+        "lifecycle_state": lifecycle_summary["state"],
     }
     device.device_config = json.dumps(cfg, ensure_ascii=False)
 
@@ -17140,10 +17121,12 @@ app.include_router(capture_access_router)
 from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
+from api.edge_lifecycle_api import create_edge_lifecycle_router
 app.include_router(customer_risk_api.router)
 app.include_router(grc_register_api.router)
 app.include_router(storage_api.router)
 app.include_router(headend_generator_api.router)
+app.include_router(create_edge_lifecycle_router(require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle))
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).
