@@ -3862,6 +3862,20 @@ def revoke_provisioning_token(
     return {"status": "revoked"}
 
 
+def _enforce_local_service_totp_provisioning(cfg: dict) -> None:
+    """Fail closed when local technician access has no provisioned TOTP seed."""
+    bt_totp = cfg.get("bt_totp") if isinstance(cfg.get("bt_totp"), dict) else {}
+    if bt_totp.get("secret"):
+        return
+    cfg["bt_totp"] = {"secret": "", "sid": "unprovisioned"}
+    service_access = cfg.setdefault("service_access", {})
+    if isinstance(service_access, dict):
+        service_access["enabled"] = False
+        service_access["live_view_enabled"] = False
+        service_access["allow_continuous_live_view"] = False
+        service_access["disabled_reason"] = "local_totp_unprovisioned"
+
+
 @app.get("/api/config/{device_id}")
 def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: Session = Depends(get_db)):
     """Return operational config for a device.
@@ -4080,13 +4094,13 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "totp_valid_window": 3,
             "timezone": "Europe/Copenhagen",
         },
-        # BT PAN TOTP — prioritet: fabriksstandard < global (Settings) <
+        # BT PAN TOTP — prioritet: unprovisioned < global (Settings) <
         # kunde/site/device (config_overrides, sat i hierarki-merge nedenfor) <
         # kamera (Camera.bt_totp_secret, sat efter merge — se nedenfor)
         "bt_totp": (
             {"secret": _get_setting(db, "bt_totp_secret", ""), "sid": _get_setting(db, "bt_totp_sid", "global")}
             if _get_setting(db, "bt_totp_secret", "")
-            else {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
+            else {"secret": "", "sid": "unprovisioned"}
         ),
         "service_access": {"enabled": True, "live_view_enabled": True, "live_view_max_duration_s": 180, "allow_continuous_live_view": False},
     }
@@ -4236,7 +4250,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     except Exception:
         cfg["config_version"] = device.config_version or ""
 
-    # bt_totp er sat som base + overrides via hierarkiet — intet ekstra her.
+    _enforce_local_service_totp_provisioning(cfg)
 
     return cfg
 
@@ -5198,7 +5212,7 @@ def create_camera(
         model       = payload.get("model"),
         notes       = payload.get("notes"),
         config      = _json.dumps(payload.get("config", {})),
-        # bt_totp_secret + bt_totp_sid: NULL = fabriksstandard JBSWY3DPEHPK3PXP
+        # bt_totp_secret + bt_totp_sid: NULL = lokal service ikke provisioneret
     )
     db.add(cam); db.commit()
     log.info("Kamera oprettet: %s (%s)", cam.camera_name, cam.id)
@@ -5343,7 +5357,7 @@ def get_camera_bt_totp_qr(
     return {
         "secret":   secret,
         "sid":      sid,
-        "source":   source,    # hvilket lag der gælder: factory-default|global|kunde|site|kamera
+        "source":   source,    # hvilket lag der gælder: global|kunde|site|kamera
         "account_name": account_name,
         "device_id": device.device_id if device else None,
         "uri":      uri,
