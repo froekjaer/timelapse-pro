@@ -163,6 +163,7 @@ class ServicePlatform:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = self.state_dir / "service_session.json"
         self.audit_path = audit_path or (self.state_dir / "service_audit.jsonl")
+        self.cleanup_handlers: dict[str, Callable[["ServicePlatform", ServiceSession, str], None]] = {}
         self.operations = {
             name: OperationSpec(name, capability, OPERATION_LEASES.get(name), self._default_handler)
             for name, capability in OPERATION_CAPABILITIES.items()
@@ -191,6 +192,49 @@ class ServicePlatform:
         self.audit(session, "session.start", "edge:local-service", None, self.status(), "success")
         return session
 
+    def start_session_from_edge_service_grant(
+        self,
+        *,
+        username: str,
+        role: str,
+        grant_id: str,
+        expires_at: float,
+        capabilities: set[str] | frozenset[str] | list[str] | tuple[str, ...],
+        idle_timeout_s: int = 900,
+        absolute_timeout_s: int = 3600,
+    ) -> ServiceSession:
+        """Start a normal ServiceSession from a WP-2 EdgeServiceGrant."""
+        if not grant_id or grant_id.startswith(("local-", "lab-", "offline-recovery-")):
+            raise PermissionError("valid EdgeServiceGrant required")
+        if time.time() >= float(expires_at):
+            raise PermissionError("EdgeServiceGrant expired")
+        caps = frozenset(capabilities)
+        if not caps:
+            raise PermissionError("EdgeServiceGrant has no service capabilities")
+        return self.start_session(
+            principal=Principal(username=username, role=role, capabilities=caps),
+            grant=EdgeServiceGrantRef(grant_id=grant_id, expires_at=float(expires_at)),
+            idle_timeout_s=idle_timeout_s,
+            absolute_timeout_s=absolute_timeout_s,
+        )
+
+    def start_lab_session(self) -> ServiceSession:
+        """Start the explicit LAB authority adapter."""
+        return self.start_session(
+            principal=Principal(username="lab", role="lab", capabilities=LAB_CAPABILITIES),
+            grant=EdgeServiceGrantRef(grant_id=f"lab-{uuid.uuid4().hex[:16]}", expires_at=time.time() + 3600),
+        )
+
+    def start_offline_recovery_session(self, username: str = "offline-recovery") -> ServiceSession:
+        """Start the explicit offline/break-glass TOTP compatibility authority."""
+        return self.start_session(
+            principal=Principal(username=username, role="offline_recovery", capabilities=BREAK_GLASS_CAPABILITIES),
+            grant=EdgeServiceGrantRef(
+                grant_id=f"offline-recovery-{uuid.uuid4().hex[:16]}",
+                expires_at=time.time() + 3600,
+            ),
+        )
+
     def current_session(self) -> ServiceSession | None:
         state = self._load()
         raw = state.get("session")
@@ -208,17 +252,30 @@ class ServicePlatform:
         existing = self.current_session()
         if existing:
             return existing
-        caps = {
-            "technician": TECHNICIAN_CAPABILITIES,
-            "senior_technician": SENIOR_TECHNICIAN_CAPABILITIES,
-            "engineer": ENGINEER_CAPABILITIES,
-            "break_glass": BREAK_GLASS_CAPABILITIES,
-            "lab": LAB_CAPABILITIES,
-        }.get(role, TECHNICIAN_CAPABILITIES)
-        return self.start_session(
-            principal=Principal(username=role, role=role, capabilities=caps),
-            grant=EdgeServiceGrantRef(grant_id=f"local-{role}", expires_at=time.time() + 3600),
-        )
+        if role == "lab":
+            return self.start_lab_session()
+        if role in {"offline_recovery", "break_glass"}:
+            return self.start_offline_recovery_session(role)
+        raise PermissionError("active EdgeServiceGrant-backed ServiceSession required")
+
+    def register_handler(
+        self,
+        operation: str,
+        handler: Callable[["ServicePlatform", ServiceSession, dict[str, Any]], dict[str, Any]],
+    ) -> None:
+        spec = self.operations.get(operation)
+        if not spec:
+            raise KeyError(f"unknown service operation: {operation}")
+        self.operations[operation] = OperationSpec(spec.name, spec.capability, spec.lease_type, handler)
+
+    def register_cleanup_handler(
+        self,
+        lease_type: str,
+        handler: Callable[["ServicePlatform", ServiceSession, str], None],
+    ) -> None:
+        if lease_type not in LEASE_TYPES:
+            raise KeyError(f"unknown lease type: {lease_type}")
+        self.cleanup_handlers[lease_type] = handler
 
     def call(self, operation: str, session: ServiceSession | None = None, **kwargs) -> dict[str, Any]:
         session = session or self.current_session()
@@ -239,16 +296,23 @@ class ServicePlatform:
             self.acquire_lease(session, "CameraPowerLease", operation)
         if spec.lease_type:
             self.acquire_lease(session, spec.lease_type, operation)
-        result = (spec.handler or self._default_handler)(self, session, kwargs)
-        if operation in {"camera.power.release", "camera.live.stop"}:
-            lease = "LiveViewLease" if operation == "camera.live.stop" else "CameraPowerLease"
-            self.release_lease(session, lease, operation)
-            if operation == "camera.live.stop":
-                self.release_lease(session, "CameraPowerLease", operation)
-        session.touch()
-        self._update_session(session)
-        self.audit(session, operation, kwargs.get("resource", "edge:local-service"), before, self.status(), "success")
-        return result
+        call_args = {"operation": operation, **kwargs}
+        try:
+            result = (spec.handler or self._default_handler)(self, session, call_args)
+            if operation in {"camera.power.release", "camera.live.stop"}:
+                lease = "LiveViewLease" if operation == "camera.live.stop" else "CameraPowerLease"
+                self.release_lease(session, lease, operation)
+                if operation == "camera.live.stop":
+                    self.release_lease(session, "CameraPowerLease", operation)
+            elif kwargs.get("release_after") and spec.lease_type:
+                self.release_lease(session, spec.lease_type, operation)
+            session.touch()
+            self._update_session(session)
+            self.audit(session, operation, kwargs.get("resource", "edge:local-service"), before, self.status(), "success")
+            return result
+        except Exception:
+            self.audit(session, operation, kwargs.get("resource", "edge:local-service"), before, self.status(), "failed")
+            raise
 
     def acquire_lease(self, session: ServiceSession, lease_type: str, reason: str) -> dict:
         if lease_type not in LEASE_TYPES:
@@ -280,8 +344,9 @@ class ServicePlatform:
         state = self._load()
         session = session or (self._session_from_dict(state["session"]) if state.get("session") else None)
         before = self.status()
-        for lease in state.get("leases", {}).values():
-            lease.update({"active": False, "released_at": _iso(time.time()), "release_reason": reason})
+        if session:
+            self.release_all(session, reason)
+            state = self._load()
         state["temporary_state"] = {}
         state["live_view"] = {"running": False, "stop_reason": reason}
         if state.get("session"):
@@ -292,6 +357,21 @@ class ServicePlatform:
             session.invalidate(reason)
             self.audit(session, "session.invalidate", "edge:local-service", before, self.status(), "success")
         return self.status()
+
+    def release_all(self, session: ServiceSession, reason: str) -> None:
+        state = self._load()
+        leases = state.get("leases", {})
+        active_leases = [
+            lease_type for lease_type, lease in leases.items()
+            if lease.get("session_id") == session.session_id and lease.get("active")
+        ]
+        for lease_type in ("LiveViewLease", "CameraPowerLease", "TemporaryConfigLease", "DiagnosticLease", "ModemMaintenanceLease"):
+            if lease_type not in active_leases:
+                continue
+            handler = self.cleanup_handlers.get(lease_type)
+            if handler:
+                handler(self, session, reason)
+            self.release_lease(session, lease_type, reason)
 
     def status(self) -> dict[str, Any]:
         state = self._load()

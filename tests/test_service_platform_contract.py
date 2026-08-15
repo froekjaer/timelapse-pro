@@ -93,3 +93,69 @@ def test_expired_grant_fails_closed_and_releases_leases(tmp_path):
         platform.call("camera.status", session=session)
 
     assert platform.status()["logged_in"] is False
+
+
+def test_normal_technician_session_requires_edge_service_grant(tmp_path):
+    platform = _platform(tmp_path)
+
+    with pytest.raises(PermissionError, match="EdgeServiceGrant-backed"):
+        platform.shared_or_lab_session("technician")
+
+    session = platform.start_session_from_edge_service_grant(
+        username="tech",
+        role="technician",
+        grant_id="grant-real-1",
+        expires_at=time.time() + 600,
+        capabilities=TECHNICIAN_CAPABILITIES,
+    )
+
+    assert session.grant.grant_id == "grant-real-1"
+    assert platform.current_session().principal.username == "tech"
+
+
+def test_lab_and_offline_recovery_are_explicit_authority_adapters(tmp_path):
+    lab = _platform(tmp_path / "lab").shared_or_lab_session("lab")
+    offline = _platform(tmp_path / "offline").start_offline_recovery_session()
+
+    assert lab.grant.grant_id.startswith("lab-")
+    assert offline.grant.grant_id.startswith("offline-recovery-")
+    assert offline.principal.role == "offline_recovery"
+
+
+def test_operation_handlers_execute_hardware_callbacks(tmp_path):
+    platform = _platform(tmp_path)
+    session = _session(platform)
+    calls = []
+
+    def handler(_platform, _session, kwargs):
+        calls.append(kwargs["operation"])
+        return {"ok": True, "from_handler": True}
+
+    platform.register_handler("camera.capture.test", handler)
+
+    result = platform.call("camera.capture.test", session=session, release_after=True)
+
+    assert result == {"ok": True, "from_handler": True}
+    assert calls == ["camera.capture.test"]
+    assert platform.status()["camera_relay_on"] is False
+
+
+def test_invalidate_runs_handler_aware_release_all(tmp_path):
+    platform = _platform(tmp_path)
+    session = _session(platform)
+    cleanup = []
+    platform.register_cleanup_handler(
+        "LiveViewLease",
+        lambda _platform, _session, reason: cleanup.append(("live", reason)),
+    )
+    platform.register_cleanup_handler(
+        "CameraPowerLease",
+        lambda _platform, _session, reason: cleanup.append(("camera", reason)),
+    )
+
+    platform.call("camera.live.start", session=session)
+    platform.invalidate(session, reason="grant_revoked")
+
+    assert cleanup == [("live", "grant_revoked"), ("camera", "grant_revoked")]
+    assert platform.status()["camera_relay_on"] is False
+    assert platform.status()["live_view"] == "OFF"

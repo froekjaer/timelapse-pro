@@ -807,7 +807,7 @@ def qa_image(path: Path, base_dir: Path) -> bool:
 
 
 def run_camera_operation(operation_name: str, operation=None, base_dir: Path | None = None, maintenance: bool = False) -> bool:
-    """Run a direct gphoto2 operation, optionally pausing agent and powering camera."""
+    """Run a camera operation through the shared Service Operations backend."""
     if callable(operation_name):
         operation, operation_name, base_dir = operation_name, "camera.diagnostics", operation
     if operation is None or base_dir is None:
@@ -820,42 +820,55 @@ def run_camera_operation(operation_name: str, operation=None, base_dir: Path | N
     from service_platform import ServicePlatform
 
     with CameraMaintenanceLease(timeout_s=45):
-        platform = ServicePlatform()
-        session = platform.shared_or_lab_session("technician")
-        already_powered = bool(platform.status().get("camera_relay_on"))
-        platform.call(operation_name, session=session)
-        was_active = is_service_active(SERVICE_NAME)
-        should_restore_service = was_active or is_service_enabled(SERVICE_NAME)
-        relay = None
-        print("Vedligeholdelsestilstand: pauser edge-agent og overtager kamera midlertidigt")
-        try:
-            if was_active:
-                systemctl("stop", SERVICE_NAME, timeout=120)
-                wait_for_service_state(SERVICE_NAME, "inactive", timeout_s=20)
-            relay = build_relay(base_dir)
-            if relay is not None and not already_powered:
-                relay.camera.power_on()
-            elif already_powered:
-                print("Service Session: kamera er allerede tændt — ingen ny warmup")
-            else:
-                print("Relæ kunne ikke initialiseres; fortsætter uden power-control")
-                time.sleep(3)
-            return bool(operation())
-        finally:
-            if relay is not None and not already_powered:
-                try:
-                    relay.camera.force_off()
-                except Exception as exc:
-                    print(f"Advarsel: kunne ikke slukke kamerarelæ: {exc}")
-                platform.call("camera.power.release", session=session)
-                try:
-                    relay.cleanup(camera=True, modem=False)
-                except Exception:
-                    pass
-            if should_restore_service:
-                systemctl("start", SERVICE_NAME, timeout=60)
-                wait_for_service_state(SERVICE_NAME, "active", timeout_s=30)
-                print("Edge-agent startet igen")
+        state_dir = os.getenv("TIMELAPSE_SERVICE_STATE_DIR")
+        platform = ServicePlatform(state_dir=Path(state_dir) if state_dir else None)
+        session = platform.current_session()
+        if not session:
+            print("Service Session kræver en aktiv EdgeServiceGrant eller eksplicit offline-recovery session.")
+            return False
+        already_powered_before = bool(platform.status().get("camera_relay_on"))
+        platform.register_handler(
+            operation_name,
+            lambda _platform, _session, _kwargs: {
+                "ok": _run_camera_maintenance_callback(operation, base_dir, already_powered_before)
+            },
+        )
+        result = platform.call(operation_name, session=session, release_after=True)
+        return bool(result.get("ok", True))
+
+
+def _run_camera_maintenance_callback(operation, base_dir: Path, already_powered: bool) -> bool:
+    was_active = is_service_active(SERVICE_NAME)
+    should_restore_service = was_active or is_service_enabled(SERVICE_NAME)
+    relay = None
+    print("Vedligeholdelsestilstand: pauser edge-agent og overtager kamera midlertidigt")
+    try:
+        if was_active:
+            systemctl("stop", SERVICE_NAME, timeout=120)
+            wait_for_service_state(SERVICE_NAME, "inactive", timeout_s=20)
+        relay = build_relay(base_dir)
+        if relay is not None and not already_powered:
+            relay.camera.power_on()
+        elif already_powered:
+            print("Service Session: kamera er allerede tændt — ingen ny warmup")
+        else:
+            print("Relæ kunne ikke initialiseres; fortsætter uden power-control")
+            time.sleep(3)
+        return bool(operation())
+    finally:
+        if relay is not None and not already_powered:
+            try:
+                relay.camera.force_off()
+            except Exception as exc:
+                print(f"Advarsel: kunne ikke slukke kamerarelæ: {exc}")
+            try:
+                relay.cleanup(camera=True, modem=False)
+            except Exception:
+                pass
+        if should_restore_service:
+            systemctl("start", SERVICE_NAME, timeout=60)
+            wait_for_service_state(SERVICE_NAME, "active", timeout_s=30)
+            print("Edge-agent startet igen")
 
 
 def print_service_session_status() -> None:

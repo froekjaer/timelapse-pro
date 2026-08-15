@@ -14,6 +14,7 @@ def test_cli_routes_camera_service_work_through_service_platform():
     assert "from service_platform import ServicePlatform" in cli
     assert "platform.call(operation_name" in cli
     assert "--service-status" in cli
+    assert 'shared_or_lab_session("technician")' not in cli
 
 
 def test_local_technician_ui_uses_unified_service_status():
@@ -23,6 +24,8 @@ def test_local_technician_ui_uses_unified_service_status():
     assert "_service_session_panel()" in ui
     assert "camera.live.start" in ui
     assert "camera.live.stop" in ui
+    assert "start_offline_recovery_session" in ui
+    assert 'shared_or_lab_session("technician")' not in ui
 
 
 def test_lab_mode_acquires_service_platform_camera_lease():
@@ -31,6 +34,7 @@ def test_lab_mode_acquires_service_platform_camera_lease():
     assert "from service_platform import ServicePlatform" in agent
     assert 'self._service_platform.call("camera.power.acquire"' in agent
     assert 'self._service_platform.invalidate(reason="lab_disabled")' in agent
+    assert 'register_handler("camera.power.acquire"' in agent
 
 
 def test_no_ui_or_cli_gpio_writes_bypass_service_platform():

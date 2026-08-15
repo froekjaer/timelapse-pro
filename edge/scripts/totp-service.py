@@ -182,6 +182,38 @@ def _service_session_snapshot() -> dict:
         return {"logged_in": False, "error": str(exc)}
 
 
+def _service_platform_with_ui_handlers():
+    from service_platform import ServicePlatform
+
+    platform = ServicePlatform()
+
+    def live_start(_platform, _session, kwargs):
+        status = VIDEO_MANAGER.start(
+            max_duration_s=int(kwargs.get("max_duration_s", 180)),
+            preview_interval_s=float(kwargs.get("preview_interval_s", 0.8)),
+        )
+        if status.get("status") == "error":
+            raise RuntimeError(status.get("error") or "Live View kunne ikke startes")
+        return {"ok": True, "status": status}
+
+    def live_stop(_platform, _session, kwargs):
+        status = VIDEO_MANAGER.stop(
+            join_timeout_s=float(kwargs.get("join_timeout_s", 45)),
+            reason=str(kwargs.get("reason", "manual")),
+        )
+        if status.get("status") == "error":
+            raise RuntimeError(status.get("error") or "Live View kunne ikke stoppes")
+        return {"ok": True, "status": status}
+
+    def cleanup_live(_platform, _session, reason):
+        VIDEO_MANAGER.stop(join_timeout_s=45, reason=reason)
+
+    platform.register_handler("camera.live.start", live_start)
+    platform.register_handler("camera.live.stop", live_stop)
+    platform.register_cleanup_handler("LiveViewLease", cleanup_live)
+    return platform
+
+
 def _service_session_panel() -> str:
     status = _service_session_snapshot()
     rows = {
@@ -456,7 +488,10 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 def stop_technician_stream_on_shutdown() -> None:
     """Never leave the camera relay or Edge agent in maintenance state."""
     SERVICE_POLICY_STOP.set()
-    VIDEO_MANAGER.stop(join_timeout_s=45, reason="service_shutdown")
+    try:
+        _service_platform_with_ui_handlers().invalidate(reason="service_shutdown")
+    except Exception:
+        VIDEO_MANAGER.stop(join_timeout_s=45, reason="service_shutdown")
 
 
 @app.on_event("startup")
@@ -532,6 +567,13 @@ async def verify(request: Request, code: str = Form(...)):
         "ip": client_ip,
         "expires": time.time() + timeout if timeout > 0 else float("inf"),
     }
+    try:
+        from service_platform import ServicePlatform
+        platform = ServicePlatform()
+        if not platform.current_session():
+            platform.start_offline_recovery_session("totp-offline-recovery")
+    except Exception as exc:
+        log.warning("Kunne ikke oprette offline-recovery ServiceSession: %s", exc)
     _iptables_add(client_ip)
     log.info(f"TOTP verificeret fra {client_ip} (sid={totp_cfg.get('sid', '?')})")
 
@@ -1793,23 +1835,23 @@ async def mgmt_technician_video_start(request: Request, duration_s: int = Form(1
         return HTMLResponse(_technician_page("Kontinuerlig Live View er ikke tilladt af Headend-policy"), status_code=403)
     if duration_s != 0:
         duration_s = max(30, min(int(duration_s), int(policy["live_view_max_duration_s"])))
-    service_session = None
     try:
-        from service_platform import ServicePlatform
-        service_platform = ServicePlatform()
-        service_session = service_platform.shared_or_lab_session("technician")
-        service_platform.call("camera.live.start", session=service_session)
+        service_platform = _service_platform_with_ui_handlers()
+        service_session = service_platform.shared_or_lab_session("offline_recovery")
+        result = service_platform.call(
+            "camera.live.start",
+            session=service_session,
+            max_duration_s=duration_s,
+            preview_interval_s=float(management.get("video_preview_interval_s", 0.8)),
+        )
     except Exception as exc:
         return HTMLResponse(_technician_page("Live View session kunne ikke oprettes", str(exc)), status_code=403)
-    status = VIDEO_MANAGER.start(
-        max_duration_s=duration_s,
-        preview_interval_s=float(management.get("video_preview_interval_s", 0.8)),
-    )
+    status = result.get("status", {})
     message = "Live View starter; kamera og relæ klargøres"
     if status.get("status") == "error":
         message = "Live View kunne ikke startes"
         try:
-            service_platform.call("camera.live.stop", session=service_session)
+            service_platform.call("camera.live.stop", session=service_session, reason="start_failed")
         except Exception:
             pass
     return HTMLResponse(_technician_page(message))
@@ -1817,15 +1859,17 @@ async def mgmt_technician_video_start(request: Request, duration_s: int = Form(1
 
 @app.post("/mgmt/technician/video/stop", response_class=HTMLResponse)
 async def mgmt_technician_video_stop(request: Request):
-    status = await asyncio.to_thread(VIDEO_MANAGER.stop, 45, "manual")
+    status = {}
     try:
-        from service_platform import ServicePlatform
-        platform = ServicePlatform()
+        platform = _service_platform_with_ui_handlers()
         session = platform.current_session()
         if session:
-            platform.call("camera.live.stop", session=session)
+            result = await asyncio.to_thread(platform.call, "camera.live.stop", session=session, reason="manual")
+            status = result.get("status", {})
+        else:
+            status = await asyncio.to_thread(VIDEO_MANAGER.stop, 45, "manual")
     except Exception:
-        pass
+        status = await asyncio.to_thread(VIDEO_MANAGER.stop, 45, "manual")
     message = "Live View stoppet; kamera er frigivet og Edge-agent genstartet"
     if status.get("status") == "error":
         message = "Live View stoppede med fejl; se status nedenfor"
