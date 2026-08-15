@@ -31,10 +31,22 @@ class _Db:
         self.added.append(row)
 
 
-def test_trust_signing_does_not_fallback_to_jwt_in_production(monkeypatch):
+def test_trust_signing_derives_separate_migration_key_from_jwt_root(monkeypatch):
     monkeypatch.setenv("TIMELAPSE_ENV", "production")
     monkeypatch.delenv("TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET", raising=False)
-    monkeypatch.setenv("JWT_SECRET", "this-jwt-secret-must-not-be-reused-for-trust-signing")
+    jwt = "this-is-a-strong-jwt-root-secret-used-only-as-migration-root"
+    monkeypatch.setenv("JWT_SECRET", jwt)
+    first = grants._secret()
+    second = grants._secret()
+    assert first == second
+    assert first != jwt.encode()
+    assert len(first) == 32
+
+
+def test_trust_signing_fails_closed_without_any_strong_authority(monkeypatch):
+    monkeypatch.setenv("TIMELAPSE_ENV", "production")
+    monkeypatch.delenv("TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET", raising=False)
+    monkeypatch.delenv("JWT_SECRET", raising=False)
     with pytest.raises(grants.TrustServiceConfigurationError):
         grants._secret()
 
@@ -57,13 +69,10 @@ def test_all_requested_capabilities_are_checked(monkeypatch):
     monkeypatch.setattr(grants, "evaluate_policy", fake_policy)
     request = GrantRequest(
         principal=Principal(username="u", role="admin", mfa_verified=True),
-        edge_id="TL-1",
-        tenant_id="customer-a",
-        resource="edge:TL-1:local-service",
-        purpose="test",
+        edge_id="TL-1", tenant_id="customer-a",
+        resource="edge:TL-1:local-service", purpose="test",
         capabilities=frozenset({"edge.service.diagnostics", "edge.shell.remote"}),
-        ttl_seconds=60,
-        mfa_required=True,
+        ttl_seconds=60, mfa_required=True,
     )
     with pytest.raises(grants.GrantDenied, match="shell denied"):
         grants.issue_edge_service_grant(_Db(None), request)
