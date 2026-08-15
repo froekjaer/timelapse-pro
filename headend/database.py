@@ -502,6 +502,55 @@ class AccessTicket(Base):
     created_at               = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class EdgeServiceGrant(Base):
+    """WP-2 short-lived, signed local/remote Edge service authorization grant."""
+    __tablename__ = "edge_service_grants"
+
+    id                 = Column(Integer, primary_key=True)
+    grant_id           = Column(String(80), unique=True, nullable=False, index=True)
+    jti                = Column(String(80), unique=True, nullable=False, index=True)
+    edge_id            = Column(String(50), nullable=False, index=True)
+    user_id            = Column(Integer, index=True)
+    username           = Column(String(100), nullable=False, index=True)
+    role               = Column(String(50), nullable=False)
+    tenant_id          = Column(String(36), index=True)
+    resource           = Column(String(200), nullable=False)
+    purpose            = Column(String(120), nullable=False)
+    capabilities_json  = Column(Text, nullable=False)
+    context_json       = Column(Text)
+    mfa_required       = Column(Boolean, default=True, nullable=False)
+    mfa_verified       = Column(Boolean, default=False, nullable=False)
+    status             = Column(String(20), default="active", nullable=False, index=True)
+    issued_at          = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    expires_at         = Column(DateTime(timezone=True), nullable=False, index=True)
+    revoked_at         = Column(DateTime(timezone=True))
+    revoked_by         = Column(String(100))
+    revoke_reason      = Column(Text)
+    signature          = Column(Text, nullable=False)
+    last_challenge_id  = Column(String(120))
+    use_count          = Column(Integer, default=0, nullable=False)
+    last_used_at       = Column(DateTime(timezone=True))
+    metadata_json      = Column(Text)
+
+
+class TrustPolicyDecisionAudit(Base):
+    """Append-only WP-2 PDP decision evidence."""
+    __tablename__ = "trust_policy_decision_audit"
+
+    id             = Column(Integer, primary_key=True)
+    decision_id    = Column(String(80), unique=True, nullable=False, index=True)
+    principal      = Column(String(120), nullable=False, index=True)
+    role           = Column(String(50))
+    tenant_id      = Column(String(36), index=True)
+    resource       = Column(String(200), nullable=False)
+    action         = Column(String(120), nullable=False)
+    capability     = Column(String(120))
+    allowed        = Column(Boolean, nullable=False, index=True)
+    reason         = Column(Text, nullable=False)
+    context_json   = Column(Text)
+    decided_at     = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class UpdateArtifact(Base):
     """Release artifact eller OS/app update manifest distribueret via Headend."""
     __tablename__ = "update_artifacts"

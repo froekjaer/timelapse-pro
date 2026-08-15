@@ -54,7 +54,7 @@ def test_master_switch_disables_lab_and_records_audit_event():
     result = _endpoint(events)(
         "TL-TEST",
         {"enabled": False, "live_view_max_duration_s": 600},
-        user=SimpleNamespace(username="admin"),
+        user=SimpleNamespace(username="admin", role="admin", id=1, customer_id=None, on_site_service=False),
         db=db,
     )
 
@@ -77,7 +77,7 @@ def test_continuous_live_view_requires_explicit_policy_but_is_configurable():
             "live_view_max_duration_s": 3600,
             "allow_continuous_live_view": True,
         },
-        user=SimpleNamespace(username="admin"),
+        user=SimpleNamespace(username="admin", role="admin", id=1, customer_id=None, on_site_service=False),
         db=_Db(device),
     )
 
@@ -92,7 +92,7 @@ def test_invalid_live_view_maximum_is_rejected(value):
         _endpoint([])(
             "TL-TEST",
             {"live_view_max_duration_s": value},
-            user=SimpleNamespace(username="admin"),
+            user=SimpleNamespace(username="admin", role="admin", id=1, customer_id=None, on_site_service=False),
             db=_Db(device),
         )
     assert error.value.status_code == 400
