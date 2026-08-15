@@ -17,7 +17,7 @@ from trust.audit import record_policy_decision  # noqa: E402
 from trust.dmz import SECURE_SERVICE_DMZ_SPEC, dmz_can_issue_trust_material, is_conduit_allowed  # noqa: E402
 from trust.grants import GrantDenied, issue_edge_service_grant, revoke_edge_service_grant, validate_edge_service_grant  # noqa: E402
 from trust.models import GrantRequest, PolicyRequest, Principal  # noqa: E402
-from trust.policy import evaluate_policy  # noqa: E402
+from trust.policy import evaluate_legacy_role_capability_check, evaluate_policy  # noqa: E402
 
 
 @pytest.fixture()
@@ -209,3 +209,47 @@ def test_grant_record_is_persisted(db):
     _token, row = issue(db, principal=technician())
     assert row.grant_id
     assert db.query(EdgeServiceGrant).filter_by(grant_id=row.grant_id).count() == 1
+
+
+def test_legacy_role_capability_checks_route_through_pdp_compatibility_layer():
+    user = type("User", (), {
+        "username": "legacy-admin",
+        "role": "admin",
+        "id": 10,
+        "customer_id": "cust-a",
+        "on_site_service": False,
+    })()
+
+    decision = evaluate_legacy_role_capability_check(
+        user,
+        action="grant.issue",
+        resource="edge:TL-EDGE-A:local-service",
+        capability="edge.service.local_view",
+        tenant_id="cust-a",
+        mfa_verified=True,
+    )
+
+    assert decision.allowed is True
+    assert decision.reason == "allowed by Trust Service PDP"
+
+
+def test_legacy_role_capability_compatibility_fails_closed_for_unknown_action():
+    user = type("User", (), {
+        "username": "legacy-admin",
+        "role": "admin",
+        "id": 10,
+        "customer_id": "cust-a",
+        "on_site_service": True,
+    })()
+
+    decision = evaluate_legacy_role_capability_check(
+        user,
+        action="browser-terminal.spawn",
+        resource="edge:TL-EDGE-A:local-service",
+        capability="edge.service.local_view",
+        tenant_id="cust-a",
+        mfa_verified=True,
+    )
+
+    assert decision.allowed is False
+    assert "unknown action denied" in decision.reason

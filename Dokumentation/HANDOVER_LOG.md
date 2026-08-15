@@ -1692,3 +1692,11 @@ person vide".
 - **Logisk datarod aktiveret:** `/data-fast -> /Volumes/data-fast` blev oprettet ved boot via `/etc/synthetic.conf`.
 - **Backup og restore bestaaet:** Restic snapshot `2018d0cb` (8.049 GiB) blev oprettet, kontrolleret og spejlet til OneDrive. Restore til den isolerede testmappe lykkedes; aktiv og gendannet TimeLapse Pro har begge commit `eed9e3c8c67369e1924c25a11908616220c3c753`.
 - **Bevar testdata:** Restore-verifikation ligger paa `/data-fast/backup/project-snapshots/restore-verification-20260803` og maa kun slettes ved en eksplicit administrativ beslutning.
+
+### Handover 2026-08-15 — Codex: WP-2 Trust Service og EdgeServiceGrant migration
+- **Merge-ready sequence:** PR #12 og PR #13 blev merged i korrekt rækkefølge. Den tidligere stacked PR #14 kunne ikke genåbnes efter base-branch deletion; WP-2 fortsætter som draft PR #15 mod `main`.
+- **CI/rehearsal:** PR #15 checks passerede efter rebase til `main`. Lokal v30 rehearsal bestod på dump/restore-kopi med v29+v30 og rollback af `edge_lifecycle_records`, `edge_credential_inventory`, `edge_service_grants` og `trust_policy_decision_audit`.
+- **WP-2 implementeret:** technician-auth confirm udsteder nu EdgeServiceGrant; Edge gemmer grant metadata og purger legacy `headend_session_token`; service-access og Trust Service admin API bruger PDP compatibility layer.
+- **Revocation/expiry propagation:** `/api/config/{device_id}` leverer read-only EdgeServiceGrant status snapshot; Edge technician sessionstore kan anvende snapshot til at revoke lokale sessions og fail-closer på grant expiry.
+- **Boundary:** Secure Service DMZ er fortsat validation/routing only. Ingen Local Service Gateway, browser terminal, generator split eller CSR/PKI redesign er startet.
+- **Restliste:** `Dokumentation/WP2_AD_HOC_AUTHORIZATION_PATHS_2026-08.md` enumererer resterende lokale role/access checks til senere PDP-migration.

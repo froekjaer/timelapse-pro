@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import Device, get_db
+from trust.policy import evaluate_legacy_role_capability_check
 
 
 log = logging.getLogger(__name__)
@@ -31,8 +32,19 @@ def create_service_access_router(
         payload: dict,
         user=require_role("admin"),
         db: Session = Depends(get_db),
-    ):
+        ):
         ensure_device_access(db, user, device_id)
+        decision = evaluate_legacy_role_capability_check(
+            user,
+            action="grant.issue",
+            resource=f"edge:{device_id}:local-service",
+            capability="edge.service.local_view",
+            tenant_id=getattr(user, "customer_id", None),
+            mfa_verified=True,
+            context={"route": "set_service_access_policy"},
+        )
+        if not decision.allowed:
+            raise HTTPException(status_code=403, detail=decision.reason)
         device = db.query(Device).filter_by(device_id=device_id).first()
         if not device:
             raise HTTPException(status_code=404, detail="Device not found")

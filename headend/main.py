@@ -1829,21 +1829,20 @@ def technician_auth_confirm(
         log.warning("Technician auth confirm device mismatch: %s", req.session_id[:8])
         raise HTTPException(status_code=400, detail="Device ID mismatch")
 
-    # Generate edge session token
     import secrets
-    edge_token = secrets.token_urlsafe(32)
-
-    # Update session
-    session["status"] = "confirmed"
-    session["technician_user_id"] = str(current_user.id)
-    session["technician_username"] = current_user.username
-    session["technician_role"] = current_user.role
-    session["technician_customer_id"] = str(current_user.customer_id) if current_user.customer_id else None
-    session["confirmed_at"] = time.time()
-    session["edge_token"] = edge_token
+    from trust.grants import GrantDenied
+    from trust.technician import confirm_technician_auth_session
+    if _mfa_required_for_user(db, current_user) and not _session_is_mfa_verified(_session_payload(request)):
+        raise HTTPException(status_code=403, detail="MFA kræves for lokal Edge-service")
+    callback_secret = secrets.token_urlsafe(32)
+    try:
+        response = confirm_technician_auth_session(db, user=current_user, session=session, edge_id=req.device_id, session_id=req.session_id, callback_secret=callback_secret)
+    except GrantDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     with _pending_sessions_lock:
         _pending_technician_sessions[req.session_id] = session
+    db.commit()
 
     log.info(
         "Technician auth confirmed: %s by %s (%s) for device %s",
@@ -1853,11 +1852,7 @@ def technician_auth_confirm(
         req.device_id,
     )
 
-    return {
-        "ok": True,
-        "edge_token": edge_token,
-        "edge_callback_url": f"/api/technician/auth/callback",
-    }
+    return response
 
 @app.post("/api/technician/auth/callback")
 def technician_auth_callback(req: TechnicianAuthCallbackRequest):
@@ -1884,18 +1879,22 @@ def technician_auth_callback(req: TechnicianAuthCallbackRequest):
     if session.get("device_id") != req.device_id:
         raise HTTPException(status_code=400, detail="Device ID mismatch")
 
-    # Verify headend token matches
     if session.get("edge_token") != req.headend_token:
         raise HTTPException(status_code=400, detail="Token mismatch")
 
-    # Return confirmed session data
-    return {
+    response = {
         "ok": True,
         "technician_user_id": session.get("technician_user_id"),
         "technician_username": session.get("technician_username"),
         "technician_role": session.get("technician_role"),
         "technician_customer_id": session.get("technician_customer_id"),
+        "edge_service_grant": session.get("edge_service_grant"),
+        "edge_service_grant_id": session.get("edge_service_grant_id"),
+        "edge_service_grant_expires_at": session.get("edge_service_grant_expires_at"),
     }
+    with _pending_sessions_lock:
+        _pending_technician_sessions.pop(req.session_id, None)
+    return response
 
 @app.get("/technician/auth/{session_id}")
 def technician_auth_page(session_id: str, db: Session = Depends(get_db)):
@@ -3889,6 +3888,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         .order_by(KeyCredential.created_at.desc())
         .first()
     )
+    from trust.technician import edge_service_grant_status_snapshot
     edge_signal_signing_required = _get_setting(db, "edge_signal_signing_required", "false").lower() == "true"
 
     sftp_enabled = _get_setting(db, "sftp_enabled", os.getenv("SFTP_ENABLED", "false")).lower() == "true"
@@ -3953,6 +3953,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                 "credential_id": signing_credential.credential_id if signing_credential else None,
                 "note": "Next agent step: sign heartbeat/inventory/update-result payloads with the Edge signing key.",
             },
+            "edge_service_grants": edge_service_grant_status_snapshot(db, device_id),
         },
         "modem": {
             "modem_relay_gpio_pin":        361,

@@ -21,7 +21,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-import qrcode
+try:
+    import qrcode
+except ImportError:  # pragma: no cover - QR rendering is optional for session-store tests.
+    qrcode = None
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +40,9 @@ class AuthSession:
     status: str  # pending, confirmed, expired
     technician_user_id: Optional[str] = None
     technician_username: Optional[str] = None
-    headend_session_token: Optional[str] = None
+    edge_service_grant: Optional[str] = None
+    edge_service_grant_id: Optional[str] = None
+    edge_service_grant_expires_at: Optional[float] = None
 
 
 class TechnicianAuth:
@@ -74,9 +79,23 @@ class TechnicianAuth:
                 technician_user_id TEXT,
                 technician_username TEXT,
                 headend_session_token TEXT,
+                edge_service_grant TEXT,
+                edge_service_grant_id TEXT,
+                edge_service_grant_expires_at REAL,
                 confirmed_at REAL
             )
         """)
+        for ddl in (
+            "ALTER TABLE technician_sessions ADD COLUMN edge_service_grant TEXT",
+            "ALTER TABLE technician_sessions ADD COLUMN edge_service_grant_id TEXT",
+            "ALTER TABLE technician_sessions ADD COLUMN edge_service_grant_expires_at REAL",
+        ):
+            try:
+                conn.execute(ddl)
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        conn.execute("UPDATE technician_sessions SET headend_session_token = NULL WHERE headend_session_token IS NOT NULL")
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_status_expires
             ON technician_sessions(status, expires_at)
@@ -140,7 +159,7 @@ class TechnicianAuth:
 
         URL format: {headend_url}/technician/auth/{session_id}?challenge={challenge}
         """
-        return f"{self._headend_url}/technician/auth/{session['session_id']}?challenge={session['challenge']}"
+        return f"{self._headend_url}/technician/auth/{session.session_id}?challenge={session.challenge}"
 
     def generate_qr_code(self, session: AuthSession) -> tuple[str, str]:
         """
@@ -151,6 +170,8 @@ class TechnicianAuth:
         """
         import io
 
+        if qrcode is None:
+            raise RuntimeError("qrcode package is required to render technician auth QR codes")
         auth_url = self.get_auth_url(session)
 
         # Generate QR code
@@ -181,7 +202,9 @@ class TechnicianAuth:
         expected_challenge: str,
         technician_user_id: str,
         technician_username: str,
-        headend_token: str,
+        edge_service_grant: str,
+        edge_service_grant_id: str | None = None,
+        edge_service_grant_expires_at: float | None = None,
     ) -> bool:
         """
         Confirm an auth session from headend callback.
@@ -236,7 +259,9 @@ class TechnicianAuth:
             session.status = "confirmed"
             session.technician_user_id = technician_user_id
             session.technician_username = technician_username
-            session.headend_session_token = headend_token
+            session.edge_service_grant = edge_service_grant
+            session.edge_service_grant_id = edge_service_grant_id
+            session.edge_service_grant_expires_at = edge_service_grant_expires_at
 
             # Persist to DB
             conn = sqlite3.connect(str(self._db_path), timeout=30.0)
@@ -246,11 +271,22 @@ class TechnicianAuth:
                 SET status = 'confirmed',
                     technician_user_id = ?,
                     technician_username = ?,
-                    headend_session_token = ?,
+                    headend_session_token = NULL,
+                    edge_service_grant = ?,
+                    edge_service_grant_id = ?,
+                    edge_service_grant_expires_at = ?,
                     confirmed_at = ?
                 WHERE session_id = ?
                 """,
-                (technician_user_id, technician_username, headend_token, time.time(), session_id),
+                (
+                    technician_user_id,
+                    technician_username,
+                    edge_service_grant,
+                    edge_service_grant_id,
+                    edge_service_grant_expires_at,
+                    time.time(),
+                    session_id,
+                ),
             )
             conn.commit()
             conn.close()
@@ -268,6 +304,22 @@ class TechnicianAuth:
         with self._lock:
             session = self._sessions.get(session_id)
             if session:
+                if session.status == "confirmed" and session.edge_service_grant_expires_at:
+                    if time.time() > float(session.edge_service_grant_expires_at):
+                        session.status = "expired"
+                        session.edge_service_grant = None
+                        conn = sqlite3.connect(str(self._db_path), timeout=30.0)
+                        conn.execute(
+                            """
+                            UPDATE technician_sessions
+                            SET status = 'expired', edge_service_grant = NULL, headend_session_token = NULL
+                            WHERE session_id = ?
+                            """,
+                            (session_id,),
+                        )
+                        conn.commit()
+                        conn.close()
+                        return None
                 return session
 
             # Load from DB
@@ -286,6 +338,20 @@ class TechnicianAuth:
 
             if not row:
                 return None
+            if row["status"] == "confirmed" and row["edge_service_grant_expires_at"]:
+                if time.time() > float(row["edge_service_grant_expires_at"]):
+                    conn = sqlite3.connect(str(self._db_path), timeout=30.0)
+                    conn.execute(
+                        """
+                        UPDATE technician_sessions
+                        SET status = 'expired', edge_service_grant = NULL, headend_session_token = NULL
+                        WHERE session_id = ?
+                        """,
+                        (session_id,),
+                    )
+                    conn.commit()
+                    conn.close()
+                    return None
 
             return AuthSession(
                 session_id=row["session_id"],
@@ -296,8 +362,60 @@ class TechnicianAuth:
                 status=row["status"],
                 technician_user_id=row["technician_user_id"],
                 technician_username=row["technician_username"],
-                headend_session_token=row["headend_session_token"],
+                edge_service_grant=row["edge_service_grant"],
+                edge_service_grant_id=row["edge_service_grant_id"],
+                edge_service_grant_expires_at=row["edge_service_grant_expires_at"],
             )
+
+    def revoke_session(self, session_id: str, *, reason: str = "revoked") -> bool:
+        """Revoke a local technician session after central grant revocation or expiry."""
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session:
+                session.status = "revoked"
+                session.edge_service_grant = None
+            conn = sqlite3.connect(str(self._db_path), timeout=30.0)
+            cursor = conn.execute(
+                """
+                UPDATE technician_sessions
+                SET status = ?, edge_service_grant = NULL, headend_session_token = NULL
+                WHERE session_id = ?
+                """,
+                (reason, session_id),
+            )
+            changed = cursor.rowcount > 0
+            conn.commit()
+            conn.close()
+            return changed
+
+    def apply_grant_status_snapshot(self, grants: list[dict[str, Any]]) -> int:
+        """Apply central EdgeServiceGrant revoke/expiry state to local sessions."""
+        revoked_ids = {
+            str(item.get("grant_id"))
+            for item in grants
+            if item.get("grant_id") and str(item.get("status", "")).lower() != "active"
+        }
+        if not revoked_ids:
+            return 0
+        placeholders = ",".join("?" for _ in revoked_ids)
+        conn = sqlite3.connect(str(self._db_path), timeout=30.0)
+        cursor = conn.execute(
+            f"""
+            UPDATE technician_sessions
+            SET status = 'revoked', edge_service_grant = NULL, headend_session_token = NULL
+            WHERE edge_service_grant_id IN ({placeholders})
+            """,
+            tuple(revoked_ids),
+        )
+        changed = cursor.rowcount
+        conn.commit()
+        conn.close()
+        with self._lock:
+            for session in self._sessions.values():
+                if session.edge_service_grant_id in revoked_ids:
+                    session.status = "revoked"
+                    session.edge_service_grant = None
+        return changed
 
     def cleanup_expired(self, days: int = 7) -> int:
         """Remove old expired sessions from database."""

@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from database import get_db
 from trust.dmz import SECURE_SERVICE_DMZ_SPEC
 from trust.grants import GrantDenied, issue_edge_service_grant, revoke_edge_service_grant
-from trust.models import GrantRequest, Principal
+from trust.models import GrantRequest
+from trust.policy import principal_from_legacy_user
 
 
 class EdgeServiceGrantPayload(BaseModel):
@@ -41,14 +42,7 @@ def create_trust_service_router(require_role: Callable) -> APIRouter:
         user=require_role("admin"),
         db: Session = Depends(get_db),
     ):
-        principal = Principal(
-            username=user.username,
-            role=user.role,
-            user_id=user.id,
-            tenant_id=user.customer_id,
-            capabilities=frozenset({"edge.service.local_view"} if getattr(user, "on_site_service", False) else set()),
-            mfa_verified=True,
-        )
+        principal = principal_from_legacy_user(user, mfa_verified=True)
         try:
             token, row = issue_edge_service_grant(db, GrantRequest(
                 principal=principal,

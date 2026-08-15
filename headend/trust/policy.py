@@ -56,3 +56,41 @@ def evaluate_policy(request: PolicyRequest) -> PolicyDecision:
         if request.capability not in capabilities:
             return PolicyDecision(False, f"missing capability: {request.capability}", decision_id)
     return PolicyDecision(True, "allowed by Trust Service PDP", decision_id)
+
+
+def principal_from_legacy_user(user, *, mfa_verified: bool = False, capabilities: set[str] | None = None) -> Principal:
+    """Build a Trust Service principal from the existing Headend user model."""
+    derived_capabilities = set(capabilities or set())
+    if bool(getattr(user, "on_site_service", False)):
+        derived_capabilities.add("edge.service.local_view")
+        derived_capabilities.add("edge.service.diagnostics")
+    return Principal(
+        username=getattr(user, "username", ""),
+        role=getattr(user, "role", ""),
+        user_id=getattr(user, "id", None),
+        tenant_id=getattr(user, "customer_id", None),
+        capabilities=frozenset(derived_capabilities),
+        mfa_verified=mfa_verified,
+    )
+
+
+def evaluate_legacy_role_capability_check(
+    user,
+    *,
+    action: str,
+    resource: str,
+    capability: str | None,
+    tenant_id: str | None = None,
+    mfa_verified: bool = False,
+    context: dict | None = None,
+) -> PolicyDecision:
+    """Compatibility entrypoint for old role/capability checks during WP-2 migration."""
+    return evaluate_policy(PolicyRequest(
+        principal=principal_from_legacy_user(user, mfa_verified=mfa_verified),
+        action=action,
+        resource=resource,
+        tenant_id=tenant_id,
+        capability=capability,
+        mfa_required=mfa_verified,
+        context={"compatibility_layer": "legacy_role_capability", **(context or {})},
+    ))
