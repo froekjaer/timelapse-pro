@@ -14,9 +14,9 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Install dependencies
@@ -63,9 +63,9 @@ jobs:
       run:
         working-directory: timelapse-ui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '24'
       - name: Install dependencies
@@ -127,10 +127,17 @@ jobs:
             git tag -v "$LATEST_TAG" && echo "✅ GPG signatur OK: $LATEST_TAG" || { echo "❌ FEJL: Ugyldig GPG signatur på $LATEST_TAG"; exit 1; }
           fi
 
-      - name: Pull latest code
+      - name: Checkout deployed revision
         run: |
           cd ~/projects/timelapse-pro
-          git pull origin main
+          git fetch --prune origin main
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "❌ Lokal deploy-repo har tracked ændringer. Stopper før checkout."
+            git status --short --untracked-files=no
+            exit 1
+          fi
+          git checkout -B main "${{ github.sha }}"
+          git reset --hard "${{ github.sha }}"
       - name: Restart headend
         run: |
           # Brug system/ prefix til globale launchd services
