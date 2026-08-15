@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -133,6 +134,13 @@ def credential_state_allows_use(row: EdgeCredentialInventory | None) -> bool:
     return bool(row and (row.status or "unknown") in USABLE_CREDENTIAL_STATES)
 
 
+def _ensure_utc(value: Any) -> Any:
+    if value is None or getattr(value, "tzinfo", None) is not None:
+        return value
+    from datetime import timezone
+    return value.replace(tzinfo=timezone.utc)
+
+
 def find_active_api_credential(
     db: Session,
     *,
@@ -151,6 +159,49 @@ def find_active_api_credential(
         .first()
     )
     return row if credential_state_allows_use(row) else None
+
+
+def resolve_device_api_credential(
+    db: Session,
+    *,
+    device_id: str,
+    provided_token: str,
+    token_hash: str,
+    actor: str = "device-auth",
+) -> EdgeCredentialInventory:
+    lifecycle = db.query(EdgeLifecycleRecord).filter_by(device_id=device_id).first()
+    if lifecycle and lifecycle.state in {"quarantined", "revoked", "retired"}:
+        raise LifecycleTransitionError(f"Edge lifecycle state afviser API-adgang: {lifecycle.state}")
+
+    inventory_credential = find_active_api_credential(db, device_id=device_id, token_hash=token_hash)
+    if not inventory_credential:
+        device = db.query(Device).filter_by(device_id=device_id).first()
+        if device and device.api_token and hmac.compare_digest(provided_token, device.api_token):
+            inventory_credential = migrate_legacy_api_token_to_inventory(
+                db, device, token_hash=token_hash, actor="legacy-auth"
+            )
+        else:
+            credential = (
+                db.query(KeyCredential)
+                .filter(
+                    KeyCredential.entity_type.in_(["edge", "headend", "service"]),
+                    KeyCredential.entity_id == device_id,
+                    KeyCredential.key_type == "api",
+                    KeyCredential.secret_hash == token_hash,
+                    KeyCredential.status == "active",
+                )
+                .first()
+            )
+            if credential and device:
+                reconcile_device_credentials(db, device, actor=f"{actor}-adapter")
+                inventory_credential = find_active_api_credential(db, device_id=device_id, token_hash=token_hash)
+
+    if not inventory_credential:
+        raise LifecycleTransitionError("Ukendt device eller token ikke sat i credential inventory")
+    if inventory_credential.expires_at and _ensure_utc(inventory_credential.expires_at) < now_utc():
+        inventory_credential.status = "expired"
+        raise LifecycleTransitionError("API token er udløbet")
+    return inventory_credential
 
 
 def mark_bootstrap_consumed(
@@ -757,6 +808,74 @@ def reconcile_device_credentials(
             },
         ))
     return rows
+
+
+def reconcile_edge_lifecycle(
+    db: Session,
+    device: Device,
+    *,
+    actor: str,
+    target_state: str | None = None,
+    reason: str = "WP-1 compatibility reconciliation",
+    hardware_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    record = get_or_create_lifecycle_record(db, device, actor=actor, hardware_evidence=hardware_evidence)
+    transitions = []
+    if target_state:
+        transitions = advance_lifecycle_to(
+            db,
+            record,
+            target_state,
+            actor=actor,
+            reason=reason,
+            hardware_evidence=hardware_evidence,
+        )
+    inventory = reconcile_device_credentials(db, device, actor=actor)
+    return {
+        "state": record.state,
+        "transitions": [f"{t.from_state}->{t.to_state}" for t in transitions],
+        "inventory_rows": len(inventory),
+        "legacy_paths": sum(1 for row in inventory if row.legacy_path),
+    }
+
+
+def key_management_lifecycle_summary(db: Session) -> dict[str, Any]:
+    return {
+        "counts": {
+            "lifecycle_records": db.query(EdgeLifecycleRecord).count(),
+            "legacy_credential_paths": db.query(EdgeCredentialInventory).filter(
+                EdgeCredentialInventory.legacy_path.is_(True),
+                EdgeCredentialInventory.status != "not_present",
+            ).count(),
+        },
+        "edge_lifecycle": [
+            {
+                "device_id": record.device_id,
+                "state": record.state,
+                "hardware_fingerprint": record.hardware_fingerprint,
+                "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+                "transition_reason": record.transition_reason,
+            }
+            for record in db.query(EdgeLifecycleRecord).order_by(EdgeLifecycleRecord.device_id).all()
+        ],
+        "edge_credential_inventory": [
+            {
+                "device_id": row.device_id,
+                "trust_path": row.trust_path,
+                "credential_id": row.credential_id,
+                "key_type": row.key_type,
+                "status": row.status,
+                "legacy_path": bool(row.legacy_path),
+                "private_key_location": row.private_key_location,
+                "storage": row.storage,
+                "revocation": row.revocation,
+            }
+            for row in db.query(EdgeCredentialInventory).order_by(
+                EdgeCredentialInventory.device_id,
+                EdgeCredentialInventory.trust_path,
+            ).all()
+        ],
+    }
 
 
 def reconcile_all_devices(db: Session, *, actor: str = "wp1-reconcile") -> dict[str, Any]:
