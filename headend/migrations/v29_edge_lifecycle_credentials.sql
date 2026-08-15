@@ -68,6 +68,18 @@ CREATE TABLE IF NOT EXISTS edge_credential_inventory (
     CONSTRAINT uq_edge_credential_inventory_path UNIQUE (device_id, trust_path, credential_id)
 );
 
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS secret_hash VARCHAR(128);
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS fingerprint VARCHAR(128);
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS source_table VARCHAR(80);
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS source_id VARCHAR(120);
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS issued_at TIMESTAMPTZ;
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ;
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS rotated_at TIMESTAMPTZ;
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS retired_at TIMESTAMPTZ;
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE edge_credential_inventory ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_device ON edge_credential_inventory(device_id);
 CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_trust_path ON edge_credential_inventory(trust_path);
 CREATE INDEX IF NOT EXISTS idx_edge_credential_inventory_key_type ON edge_credential_inventory(key_type);
