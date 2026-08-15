@@ -136,7 +136,7 @@ jobs:
             git status --short --untracked-files=no
             exit 1
           fi
-          git checkout -B main "${{ github.sha }}"
+          git checkout --detach "${{ github.sha }}"
           git reset --hard "${{ github.sha }}"
       - name: Restart headend
         run: |
