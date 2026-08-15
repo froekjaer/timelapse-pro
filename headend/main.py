@@ -17122,11 +17122,13 @@ from api import customer_risk_api, grc_register_api, headend_generator_api, stor
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
 from api.edge_lifecycle_api import create_edge_lifecycle_router
+from api.trust_service_api import create_trust_service_router
 app.include_router(customer_risk_api.router)
 app.include_router(grc_register_api.router)
 app.include_router(storage_api.router)
 app.include_router(headend_generator_api.router)
 app.include_router(create_edge_lifecycle_router(require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle))
+app.include_router(create_trust_service_router(require_role))
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).

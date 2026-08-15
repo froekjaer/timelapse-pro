@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-08-15 11:55 — fra Codex til Peter/Claude: WP-2 Trust Service, PDP, EdgeServiceGrant og Secure Service DMZ foundation
+
+- Hvad er gjort: WP-2 er startet på stacked branch oven på PR #13. Der er oprettet `headend/trust/` som TimeLapse Trust Service module boundary med central PDP (`Principal + Role + Capability + Tenant + Resource + MFA + Context -> Allow/Deny + reason`), signed/stateful EdgeServiceGrant issuance/validation/revocation, replay-beskyttelse via challenge-id, policy audit helper og en testbar Secure Service DMZ conduit spec. `headend/api/trust_service_api.py` eksponerer admin-only grant issuance/revoke og DMZ spec. Ingen Local Service Gateway, browser terminal, generator split eller normal technician shell er startet.
+- Migrations: `headend/migrations/v30_trust_service_grants.sql` opretter `edge_service_grants` og `trust_policy_decision_audit`.
+- Acceptance dækket: grant kan ikke bruges på anden Edge, krydse tenant boundary eller overstige capability scope; expired/revoked/missing-MFA grants nægtes; normal Headend session token accepteres ikke som EdgeServiceGrant; replayed challenge nægtes; viewer/technician uden capability nægtes; admin issue er explicit og auditérbar; unknown action/resource nægtes; alle decisions har reason; DMZ er ikke trust authority og har ingen direkte data-zone/CA-private-key adgang i spec.
+- Kommandoer kørt eller skal køres: `pytest tests/test_trust_service_contract.py tests/test_service_access_policy.py tests/test_edge_lifecycle_contract.py tests/test_architecture_ratchet.py -q`; `python -m py_compile headend/trust/models.py headend/trust/policy.py headend/trust/grants.py headend/trust/audit.py headend/trust/dmz.py headend/api/trust_service_api.py headend/database.py headend/main.py`.
+- Forventet/faktisk output: 34 tests PASS; Python compile PASS; architecture ratchet PASS (`headend/main.py` 18646 linjer, 234 direct routes).
+- Filer rørt: `headend/trust/*`, `headend/api/trust_service_api.py`, `headend/database.py`, `headend/migrations/v30_trust_service_grants.sql`, `tests/test_trust_service_contract.py`, `headend/main.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Grant signing bruger `TIMELAPSE_TRUST_SERVICE_SIGNING_SECRET` eller fallback til `JWT_SECRET`; produktion skal have eksplicit Trust Service signing secret før aktiv brug. API'en er Headend-hosted foundation, ikke DMZ production routing.
+
 ### Handover 2026-08-15 11:35 — fra Codex til Peter/Claude: PR #12/#13 merge readiness, v29 rehearsal og source-to-decision traceability
 
 - Hvad er gjort: PR #13 er rettet mod architecture-ratchet ved at flytte WP-1 Edge lifecycle admin endpoints fra direct `main.py` routes til `headend/api/edge_lifecycle_api.py`. `main.py` er nu under baseline og har færre direct routes end baseline. PR #12's låste build-order og architecture decisions er absorberet i PR #13 sammen med et nyt source-to-decision traceability dokument, så PR #5/#6/#8/#9/#10/#11/#12/#13 har explicit disposition.
