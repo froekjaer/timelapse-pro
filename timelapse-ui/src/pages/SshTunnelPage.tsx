@@ -248,20 +248,26 @@ export function SshTunnelPage() {
                   </p>
                 </div>
               </div>
-              <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between gap-2">
+              <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between gap-3">
                 <code className="text-xs text-green-400 font-mono break-all">{sshCmd(t)}</code>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   <CopyBtn text={sshCmd(t)} />
                   <button
                     onClick={() => setTerminalDevice(t.device_id)}
                     disabled={!t.terminal?.allowed}
-                    className="p-1 rounded hover:bg-gray-800 transition-colors text-gray-400 hover:text-green-300 disabled:opacity-40 disabled:hover:text-gray-400 disabled:cursor-not-allowed"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-green-700/50 text-green-300 hover:bg-green-900/30 disabled:border-gray-700 disabled:text-gray-500 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors"
                     title={t.terminal?.allowed ? 'Åbn terminal i browser' : (t.terminal?.reason ?? 'SSH host identity er ikke trusted')}
                   >
                     <KeyRound className="w-3.5 h-3.5" />
+                    Åbn terminal
                   </button>
                 </div>
               </div>
+              {!t.terminal?.allowed && (
+                <p className="mt-2 text-xs text-amber-600">
+                  Browserterminal er deaktiveret: {t.terminal?.reason ?? 'SSH host identity er ikke trusted/verified'}
+                </p>
+              )}
               <TunnelLog deviceId={t.device_id} />
             </div>
           ))}
