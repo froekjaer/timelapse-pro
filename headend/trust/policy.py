@@ -14,12 +14,21 @@ ROLE_CAPABILITIES: dict[str, set[str]] = {
         "edge.service.diagnostics",
         "edge.service.local_view",
         "edge.service.break_glass",
+        "edge.shell.remote",
     },
     "admin": {
         "edge.service.grant.issue",
         "edge.service.grant.revoke",
         "edge.service.diagnostics",
         "edge.service.local_view",
+        "edge.shell.remote",
+    },
+    "engineer": {
+        "edge.service.grant.issue",
+        "edge.service.grant.revoke",
+        "edge.service.diagnostics",
+        "edge.service.local_view",
+        "edge.shell.remote",
     },
     "operator": {
         "edge.service.diagnostics",

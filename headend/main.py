@@ -5043,6 +5043,10 @@ def ssh_tunnel_active(
             "remote_port": r[1],
             "local_port":  r[2],
             "connected_at": r[3],
+            "ssh_user": "orangepi",
+            "ssh_identity_path": os.getenv("TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY", "~/.ssh/timelapse_headend_ed25519"),
+            "ssh_command": f"ssh -p {r[1]} -i {os.getenv('TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY', '~/.ssh/timelapse_headend_ed25519')} orangepi@localhost",
+            "terminal": terminal_trust_status(db, r[0]),
         }
         for r in rows
     ]
@@ -17122,6 +17126,7 @@ app.include_router(capture_access_router)
 from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
+from api.ssh_tunnel_terminal_api import create_ssh_tunnel_terminal_router, terminal_trust_status
 from api.edge_lifecycle_api import create_edge_lifecycle_router
 from api.trust_service_api import create_trust_service_router
 app.include_router(customer_risk_api.router)
@@ -18211,6 +18216,7 @@ def _ensure_capture_device_access(db: Session, user: User | None, device_id: str
 
 app.include_router(create_service_access_router(require_role, _ensure_capture_device_access, _siem_record_events, now_utc))
 app.include_router(create_edge_local_pki_router(require_role, _siem_record_events, now_utc))
+app.include_router(create_ssh_tunnel_terminal_router(get_current_user, _ensure_capture_device_access, _session_payload, _session_is_mfa_verified))
 
 
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:

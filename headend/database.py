@@ -371,6 +371,58 @@ class SshTunnelLog(Base):
     extra        = Column(Text)          # JSON: fejlbesked, IP osv.
 
 
+class SshHostKeyTrust(Base):
+    """Explicit SSH server host-key trust registry for browser terminal access.
+
+    This table records keys that have already been verified out of band or via
+    authenticated Edge evidence. It is evidence and policy state only; it must
+    not rewrite known_hosts or auto-trust unauthenticated keyscan output.
+    """
+    __tablename__ = "ssh_host_key_trust"
+    __table_args__ = (
+        UniqueConstraint("device_id", "key_type", "fingerprint_sha256", name="uq_ssh_host_key_trust_device_key"),
+    )
+
+    id                 = Column(Integer, primary_key=True)
+    device_id          = Column(String(50), nullable=False, index=True)
+    hostname           = Column(String(255))
+    port               = Column(Integer)
+    key_type           = Column(String(40), nullable=False, index=True)
+    fingerprint_sha256 = Column(String(128), nullable=False, index=True)
+    public_key_path    = Column(String(300))
+    trusted_state      = Column(String(30), nullable=False, default="untrusted_observed", index=True)
+    evidence_source    = Column(String(120), nullable=False)
+    observed_at        = Column(DateTime(timezone=True))
+    trusted_at         = Column(DateTime(timezone=True))
+    trusted_by         = Column(String(100))
+    trust_reason       = Column(Text)
+    created_at         = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at         = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class SshTerminalSessionAudit(Base):
+    """Audit lifecycle for short-lived browser SSH terminal sessions."""
+    __tablename__ = "ssh_terminal_session_audit"
+
+    id                 = Column(Integer, primary_key=True)
+    session_id         = Column(String(80), unique=True, nullable=False, index=True)
+    grant_id           = Column(String(80), nullable=False, index=True)
+    device_id          = Column(String(50), nullable=False, index=True)
+    principal          = Column(String(120), nullable=False, index=True)
+    role               = Column(String(50))
+    capability         = Column(String(120), nullable=False)
+    remote_port        = Column(Integer)
+    identity_key_path  = Column(String(300))
+    host_fingerprint   = Column(String(128))
+    status             = Column(String(30), nullable=False, default="created", index=True)
+    reason             = Column(Text)
+    started_at         = Column(DateTime(timezone=True))
+    ended_at           = Column(DateTime(timezone=True))
+    expires_at         = Column(DateTime(timezone=True), nullable=False, index=True)
+    created_at         = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    updated_at         = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
 class PendingUpdate(Base):
     """Opdateringer der afventer godkendelse eller deployment."""
     __tablename__ = "pending_updates"
