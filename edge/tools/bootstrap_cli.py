@@ -108,6 +108,7 @@ def main() -> int:
     parser.add_argument("--gps-status", action="store_true", help="Print gpsd/gpspipe status")
     parser.add_argument("--npu-status", action="store_true", help="Print Edge AI/NPU status")
     parser.add_argument("--maintenance", action="store_true", help="Pause edge service and manage camera relay for camera commands")
+    parser.add_argument("--service-status", action="store_true", help="Print unified local Service Session status")
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir)
@@ -148,31 +149,34 @@ def main() -> int:
         print("Lokal tekniker-UI er erstattet af TOTP-portalen: https://192.168.42.1:8443")
         return 2
     if args.camera_detect:
-        return 0 if run_camera_operation(lambda: camera_detect(), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.hardware.inventory", lambda: camera_detect(), base_dir, args.maintenance) else 1
     if args.camera_summary:
-        return 0 if run_camera_operation(lambda: camera_summary(base_dir), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.diagnostics", lambda: camera_summary(base_dir), base_dir, args.maintenance) else 1
     if args.camera_config:
-        return 0 if run_camera_operation(lambda: camera_get_config(args.camera_config), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.config.read", lambda: camera_get_config(args.camera_config), base_dir, args.maintenance) else 1
     if args.set_camera_config:
         path, value = args.set_camera_config
-        return 0 if run_camera_operation(lambda: camera_set_config(path, value), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.config.set_temporary", lambda: camera_set_config(path, value), base_dir, args.maintenance) else 1
     if args.photo_setting:
         key, value = args.photo_setting
-        return 0 if run_camera_operation(lambda: camera_set_photo_setting(key, value), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.config.set_temporary", lambda: camera_set_photo_setting(key, value), base_dir, args.maintenance) else 1
     if args.photo_status:
-        return 0 if run_camera_operation(lambda: print_photo_status(), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.config.read", lambda: print_photo_status(), base_dir, args.maintenance) else 1
     if args.autofocus:
-        return 0 if run_camera_operation(lambda: camera_autofocus(), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.focus.auto", lambda: camera_autofocus(), base_dir, args.maintenance) else 1
     if args.focus_drive:
-        return 0 if run_camera_operation(lambda: camera_focus_drive(args.focus_drive), base_dir, args.maintenance) else 1
+        return 0 if run_camera_operation("camera.focus.manual", lambda: camera_focus_drive(args.focus_drive), base_dir, args.maintenance) else 1
     if args.capture_test is not None:
         out_dir = Path(args.capture_test or "/tmp/timelapse-tech-captures")
-        return 0 if run_camera_operation(lambda: capture_test(out_dir, base_dir), base_dir, True) else 1
+        return 0 if run_camera_operation("camera.capture.test", lambda: capture_test(out_dir, base_dir), base_dir, True) else 1
     if args.gps_status:
         print_gps_status()
         return 0
     if args.npu_status:
         print_npu_status(base_dir)
+        return 0
+    if args.service_status:
+        print_service_session_status()
         return 0
     return menu(base_dir)
 
@@ -802,15 +806,24 @@ def qa_image(path: Path, base_dir: Path) -> bool:
     return bool(report.get("flag") != "error")
 
 
-def run_camera_operation(operation, base_dir: Path, maintenance: bool = False) -> bool:
+def run_camera_operation(operation_name: str, operation=None, base_dir: Path | None = None, maintenance: bool = False) -> bool:
     """Run a direct gphoto2 operation, optionally pausing agent and powering camera."""
+    if callable(operation_name):
+        operation, operation_name, base_dir = operation_name, "camera.diagnostics", operation
+    if operation is None or base_dir is None:
+        raise TypeError("run_camera_operation requires an operation and base_dir")
     if not maintenance:
         return bool(operation())
 
     sys.path.insert(0, str(EDGE_ROOT))
     from camera.maintenance import CameraMaintenanceLease
+    from service_platform import ServicePlatform
 
     with CameraMaintenanceLease(timeout_s=45):
+        platform = ServicePlatform()
+        session = platform.shared_or_lab_session("technician")
+        already_powered = bool(platform.status().get("camera_relay_on"))
+        platform.call(operation_name, session=session)
         was_active = is_service_active(SERVICE_NAME)
         should_restore_service = was_active or is_service_enabled(SERVICE_NAME)
         relay = None
@@ -820,18 +833,21 @@ def run_camera_operation(operation, base_dir: Path, maintenance: bool = False) -
                 systemctl("stop", SERVICE_NAME, timeout=120)
                 wait_for_service_state(SERVICE_NAME, "inactive", timeout_s=20)
             relay = build_relay(base_dir)
-            if relay is not None:
+            if relay is not None and not already_powered:
                 relay.camera.power_on()
+            elif already_powered:
+                print("Service Session: kamera er allerede tændt — ingen ny warmup")
             else:
                 print("Relæ kunne ikke initialiseres; fortsætter uden power-control")
                 time.sleep(3)
             return bool(operation())
         finally:
-            if relay is not None:
+            if relay is not None and not already_powered:
                 try:
                     relay.camera.force_off()
                 except Exception as exc:
                     print(f"Advarsel: kunne ikke slukke kamerarelæ: {exc}")
+                platform.call("camera.power.release", session=session)
                 try:
                     relay.cleanup(camera=True, modem=False)
                 except Exception:
@@ -840,6 +856,36 @@ def run_camera_operation(operation, base_dir: Path, maintenance: bool = False) -
                 systemctl("start", SERVICE_NAME, timeout=60)
                 wait_for_service_state(SERVICE_NAME, "active", timeout_s=30)
                 print("Edge-agent startet igen")
+
+
+def print_service_session_status() -> None:
+    sys.path.insert(0, str(EDGE_ROOT))
+    from service_platform import ServicePlatform
+
+    status = ServicePlatform().status()
+    rows = [
+        ("logged in", status.get("logged_in")),
+        ("camera relay", "ON" if status.get("camera_relay_on") else "OFF"),
+        ("camera detected", status.get("camera_detected")),
+        ("PTP connected", status.get("ptp_connected")),
+        ("Live View", status.get("live_view")),
+        ("Config dirty", f"{status.get('config_dirty_count', 0)} changes"),
+        ("Session expires", _format_seconds(status.get("session_expires_in_s"))),
+        ("Grant expires", _format_seconds(status.get("grant_expires_in_s"))),
+        ("Last activity", _format_seconds(status.get("last_activity_s"), suffix="ago")),
+    ]
+    print("Service Session")
+    print("---------------")
+    for label, value in rows:
+        print(f"{label}: {value}")
+
+
+def _format_seconds(value, suffix: str = "") -> str:
+    if value is None:
+        return "n/a"
+    minutes = max(0, int(value)) // 60
+    rendered = f"{minutes} min" if minutes else f"{max(0, int(value))} sec"
+    return f"{rendered} {suffix}".strip()
 
 
 def build_relay(base_dir: Path):

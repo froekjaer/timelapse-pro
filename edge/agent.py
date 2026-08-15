@@ -99,6 +99,13 @@ except ImportError:
     stop_frame_push = None
     frame_push_is_running = None
 
+try:
+    from service_platform import ServicePlatform
+    _SERVICE_PLATFORM_AVAILABLE = True
+except ImportError:
+    ServicePlatform = None
+    _SERVICE_PLATFORM_AVAILABLE = False
+
 # ── HAL (Hardware Abstraction Layer) ──────────────────────────────────────────
 try:
     from hal import get_adapter as _hal_get_adapter
@@ -174,6 +181,7 @@ class EdgeAgent:
 
         # Frame Push Live View (LAB mode)
         self._live_frame_enabled = False
+        self._service_platform = ServicePlatform() if _SERVICE_PLATFORM_AVAILABLE else None
 
         # State
         self._last_heartbeat:    datetime = datetime.min.replace(tzinfo=timezone.utc)
@@ -2278,6 +2286,10 @@ class EdgeAgent:
         # Ensure camera is ready
         if not getattr(self, "_lab_relay_on", False):
             log.info("LAB MODE — preparing camera (power_mode=%s)", self._camera_power_mode())
+            lab_session = None
+            if getattr(self, "_service_platform", None):
+                lab_session = self._service_platform.shared_or_lab_session("lab")
+                self._service_platform.call("camera.power.acquire", session=lab_session)
 
             # Initialize relay flag for this initialization cycle
             self._lab_relay_on = False
@@ -2397,6 +2409,8 @@ class EdgeAgent:
                     log.warning("LAB MODE — camera disconnect after disable failed: %s", exc)
                 self._camera_power_off("lab disabled", force=True)
                 self._lab_relay_on = False
+                if getattr(self, "_service_platform", None):
+                    self._service_platform.invalidate(reason="lab_disabled")
                 # Save updated config
                 self._cfg_mgr.save_config(cfg_data)
                 self._cfg = self._cfg_mgr.load()

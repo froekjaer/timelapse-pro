@@ -97,6 +97,7 @@ CLI_ALLOWED_FLAGS = {
     "--npu-status",
     "--qa-image",
     "--maintenance",
+    "--service-status",
 }
 PHOTO_VALUE_OPTIONS = {
     "exposure_comp": ["-2", "-1.7", "-1.3", "-1", "-0.7", "-0.3", "0", "+0.3", "+0.7", "+1", "+1.3", "+1.7", "+2"],
@@ -171,6 +172,40 @@ def _normalise_service_policy(raw: dict | None) -> dict:
 def _service_policy_snapshot() -> dict:
     with SERVICE_POLICY_LOCK:
         return dict(SERVICE_POLICY)
+
+
+def _service_session_snapshot() -> dict:
+    try:
+        from service_platform import ServicePlatform
+        return ServicePlatform().status()
+    except Exception as exc:
+        return {"logged_in": False, "error": str(exc)}
+
+
+def _service_session_panel() -> str:
+    status = _service_session_snapshot()
+    rows = {
+        "logged in": "yes" if status.get("logged_in") else "no",
+        "camera relay": "ON" if status.get("camera_relay_on") else "OFF",
+        "camera detected": "yes" if status.get("camera_detected") else "no",
+        "PTP connected": "yes" if status.get("ptp_connected") else "no",
+        "Live View": status.get("live_view", "OFF"),
+        "Config dirty": f"{status.get('config_dirty_count', 0)} changes",
+        "Session expires": _format_duration(status.get("session_expires_in_s")),
+        "Grant expires": _format_duration(status.get("grant_expires_in_s")),
+        "Last activity": _format_duration(status.get("last_activity_s"), suffix="ago"),
+    }
+    if status.get("error"):
+        rows["error"] = status["error"]
+    return _kv_table(rows)
+
+
+def _format_duration(value, suffix: str = "") -> str:
+    if value is None:
+        return "n/a"
+    seconds = max(0, int(value))
+    rendered = f"{seconds // 60} min" if seconds >= 60 else f"{seconds} sec"
+    return f"{rendered} {suffix}".strip()
 
 
 def _refresh_service_policy() -> dict:
@@ -1480,6 +1515,7 @@ def _technician_page(msg: str = "", output: str = "") -> str:
 <div class="content">
   {msg_html}
   <div class="grid">
+    <div class="card wide"><h2>Service Session</h2>{_service_session_panel()}</div>
     <div class="card"><h2>Device</h2>{_kv_table(status.get("device", {}))}</div>
     <div class="card"><h2>Service</h2>{_kv_table(status.get("service", {}))}</div>
     <div class="card"><h2>Netvaerk</h2>{_kv_table(status.get("network", {}))}</div>
@@ -1757,6 +1793,14 @@ async def mgmt_technician_video_start(request: Request, duration_s: int = Form(1
         return HTMLResponse(_technician_page("Kontinuerlig Live View er ikke tilladt af Headend-policy"), status_code=403)
     if duration_s != 0:
         duration_s = max(30, min(int(duration_s), int(policy["live_view_max_duration_s"])))
+    service_session = None
+    try:
+        from service_platform import ServicePlatform
+        service_platform = ServicePlatform()
+        service_session = service_platform.shared_or_lab_session("technician")
+        service_platform.call("camera.live.start", session=service_session)
+    except Exception as exc:
+        return HTMLResponse(_technician_page("Live View session kunne ikke oprettes", str(exc)), status_code=403)
     status = VIDEO_MANAGER.start(
         max_duration_s=duration_s,
         preview_interval_s=float(management.get("video_preview_interval_s", 0.8)),
@@ -1764,12 +1808,24 @@ async def mgmt_technician_video_start(request: Request, duration_s: int = Form(1
     message = "Live View starter; kamera og relæ klargøres"
     if status.get("status") == "error":
         message = "Live View kunne ikke startes"
+        try:
+            service_platform.call("camera.live.stop", session=service_session)
+        except Exception:
+            pass
     return HTMLResponse(_technician_page(message))
 
 
 @app.post("/mgmt/technician/video/stop", response_class=HTMLResponse)
 async def mgmt_technician_video_stop(request: Request):
     status = await asyncio.to_thread(VIDEO_MANAGER.stop, 45, "manual")
+    try:
+        from service_platform import ServicePlatform
+        platform = ServicePlatform()
+        session = platform.current_session()
+        if session:
+            platform.call("camera.live.stop", session=session)
+    except Exception:
+        pass
     message = "Live View stoppet; kamera er frigivet og Edge-agent genstartet"
     if status.get("status") == "error":
         message = "Live View stoppede med fejl; se status nedenfor"
