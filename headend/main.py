@@ -4238,7 +4238,6 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
 
     from services.local_service_security import enforce_local_service_totp_provisioning
     enforce_local_service_totp_provisioning(cfg)
-
     return cfg
 
 
