@@ -4080,13 +4080,13 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             "totp_valid_window": 3,
             "timezone": "Europe/Copenhagen",
         },
-        # BT PAN TOTP — prioritet: fabriksstandard < global (Settings) <
+        # BT PAN TOTP — prioritet: unprovisioned < global (Settings) <
         # kunde/site/device (config_overrides, sat i hierarki-merge nedenfor) <
         # kamera (Camera.bt_totp_secret, sat efter merge — se nedenfor)
         "bt_totp": (
             {"secret": _get_setting(db, "bt_totp_secret", ""), "sid": _get_setting(db, "bt_totp_sid", "global")}
             if _get_setting(db, "bt_totp_secret", "")
-            else {"secret": "JBSWY3DPEHPK3PXP", "sid": "factory-default"}
+            else {"secret": "", "sid": "unprovisioned"}
         ),
         "service_access": {"enabled": True, "live_view_enabled": True, "live_view_max_duration_s": 180, "allow_continuous_live_view": False},
     }
@@ -4236,7 +4236,8 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     except Exception:
         cfg["config_version"] = device.config_version or ""
 
-    # bt_totp er sat som base + overrides via hierarkiet — intet ekstra her.
+    from services.local_service_security import enforce_local_service_totp_provisioning
+    enforce_local_service_totp_provisioning(cfg)
 
     return cfg
 
@@ -16068,7 +16069,11 @@ async def receive_lab_preview_file(
 def get_preview_image(device_id: str, filename: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """Serve a preview image."""
     _ensure_capture_device_access(db, _user, device_id)
-    path = _sftp_base_path() / "_lab" / device_id / filename
+    from services.path_security import UnsafePath, resolve_lab_preview_path
+    try:
+        path = resolve_lab_preview_path(_sftp_base_path(), device_id, filename)
+    except UnsafePath:
+        raise HTTPException(status_code=400, detail="Invalid preview path")
     if not path.exists():
         raise HTTPException(status_code=404, detail="Preview not found")
     return FileResponse(str(path), media_type="image/jpeg")
@@ -16078,11 +16083,15 @@ def get_preview_image(device_id: str, filename: str, _user=require_role("viewer"
 def get_preview_thumb(device_id: str, filename: str, _user=require_role("viewer"), db: Session = Depends(get_db)):
     """Serve an existing LAB preview thumbnail, or the preview as a cheap fallback."""
     _ensure_capture_device_access(db, _user, device_id)
+    from services.path_security import UnsafePath, resolve_lab_preview_path
     sftp_base = _sftp_base_path()
-    src = sftp_base / "_lab" / device_id / filename
+    try:
+        src = resolve_lab_preview_path(sftp_base, device_id, filename)
+    except UnsafePath:
+        raise HTTPException(status_code=400, detail="Invalid preview path")
     if not src.exists():
         raise HTTPException(status_code=404, detail="Preview not found")
-    thumb = sftp_base / "_lab" / device_id / ".thumbs" / filename
+    thumb = resolve_lab_preview_path(sftp_base, device_id, filename, thumbnail=True)
     if thumb.exists():
         return FileResponse(str(thumb), media_type="image/jpeg")
     return FileResponse(
