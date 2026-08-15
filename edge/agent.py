@@ -99,6 +99,13 @@ except ImportError:
     stop_frame_push = None
     frame_push_is_running = None
 
+try:
+    from service_platform import ServicePlatform
+    _SERVICE_PLATFORM_AVAILABLE = True
+except ImportError:
+    ServicePlatform = None
+    _SERVICE_PLATFORM_AVAILABLE = False
+
 # ── HAL (Hardware Abstraction Layer) ──────────────────────────────────────────
 try:
     from hal import get_adapter as _hal_get_adapter
@@ -174,6 +181,9 @@ class EdgeAgent:
 
         # Frame Push Live View (LAB mode)
         self._live_frame_enabled = False
+        self._service_platform = ServicePlatform() if _SERVICE_PLATFORM_AVAILABLE else None
+        self._lab_service_session = None
+        self._register_lab_service_handlers()
 
         # State
         self._last_heartbeat:    datetime = datetime.min.replace(tzinfo=timezone.utc)
@@ -445,6 +455,42 @@ class EdgeAgent:
             return
         detail = f" ({reason})" if reason else ""
         log.info("Camera power mode=%s — relay power_off skipped%s", self._camera_power_mode(), detail)
+
+    def _register_lab_service_handlers(self) -> None:
+        if not getattr(self, "_service_platform", None):
+            return
+
+        def power_acquire(_platform, _session, _kwargs):
+            if not getattr(self, "_lab_relay_on", False):
+                self._camera_power_on("lab service operation")
+                self._lab_relay_on = True
+                warmup_s = self._camera_warmup_seconds()
+                if warmup_s:
+                    time.sleep(warmup_s)
+            return {"ok": True, "camera_relay_on": True}
+
+        def power_release(_platform, _session, _kwargs):
+            self._camera_power_off("lab service operation", force=True)
+            self._lab_relay_on = False
+            return {"ok": True, "camera_relay_on": False}
+
+        def power_cycle(platform, session, kwargs):
+            power_release(platform, session, kwargs)
+            time.sleep(5)
+            return power_acquire(platform, session, kwargs)
+
+        def cleanup_camera(_platform, _session, reason):
+            try:
+                self._driver.disconnect()
+            except Exception:
+                pass
+            self._camera_power_off(reason, force=True)
+            self._lab_relay_on = False
+
+        self._service_platform.register_handler("camera.power.acquire", power_acquire)
+        self._service_platform.register_handler("camera.power.release", power_release)
+        self._service_platform.register_handler("camera.power.cycle", power_cycle)
+        self._service_platform.register_cleanup_handler("CameraPowerLease", cleanup_camera)
 
     def _emit_siem_event(
         self,
@@ -2278,9 +2324,15 @@ class EdgeAgent:
         # Ensure camera is ready
         if not getattr(self, "_lab_relay_on", False):
             log.info("LAB MODE — preparing camera (power_mode=%s)", self._camera_power_mode())
+            lab_session = None
+            if getattr(self, "_service_platform", None):
+                lab_session = self._service_platform.shared_or_lab_session("lab")
+                self._lab_service_session = lab_session
+                self._service_platform.call("camera.power.acquire", session=lab_session)
 
             # Initialize relay flag for this initialization cycle
-            self._lab_relay_on = False
+            if not getattr(self, "_service_platform", None):
+                self._lab_relay_on = False
 
             # Track consecutive camera connection failures for auto-powercycle
             conn_failures = getattr(self, "_lab_cam_connect_failures", 0)
@@ -2397,6 +2449,8 @@ class EdgeAgent:
                     log.warning("LAB MODE — camera disconnect after disable failed: %s", exc)
                 self._camera_power_off("lab disabled", force=True)
                 self._lab_relay_on = False
+                if getattr(self, "_service_platform", None):
+                    self._service_platform.invalidate(reason="lab_disabled")
                 # Save updated config
                 self._cfg_mgr.save_config(cfg_data)
                 self._cfg = self._cfg_mgr.load()

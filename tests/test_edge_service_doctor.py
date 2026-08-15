@@ -112,6 +112,13 @@ def test_nikon_image_quality_fallback_is_used_when_generic_path_is_absent(monkey
 def test_camera_maintenance_restores_enabled_edge_even_if_initially_inactive(tmp_path, monkeypatch):
     base = _commissioned_edge(tmp_path)
     actions = []
+    service_state_dir = tmp_path / "service-state"
+    monkeypatch.setenv("TIMELAPSE_SERVICE_STATE_DIR", str(service_state_dir))
+    if str(ROOT / "edge") not in sys.path:
+        sys.path.insert(0, str(ROOT / "edge"))
+    from service_platform import ServicePlatform
+
+    ServicePlatform(state_dir=service_state_dir).start_offline_recovery_session()
     monkeypatch.setenv("TIMELAPSE_CAMERA_MAINTENANCE_LOCK", str(tmp_path / "camera.lock"))
     monkeypatch.setattr(bootstrap_cli, "is_service_active", lambda _service: False)
     monkeypatch.setattr(bootstrap_cli, "is_service_enabled", lambda _service: True)

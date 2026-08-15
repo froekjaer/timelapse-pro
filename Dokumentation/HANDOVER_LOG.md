@@ -1700,3 +1700,10 @@ person vide".
 - **Revocation/expiry propagation:** `/api/config/{device_id}` leverer read-only EdgeServiceGrant status snapshot; Edge technician sessionstore kan anvende snapshot til at revoke lokale sessions og fail-closer på grant expiry.
 - **Boundary:** Secure Service DMZ er fortsat validation/routing only. Ingen Local Service Gateway, browser terminal, generator split eller CSR/PKI redesign er startet.
 - **Restliste:** `Dokumentation/WP2_AD_HOC_AUTHORIZATION_PATHS_2026-08.md` enumererer resterende lokale role/access checks til senere PDP-migration.
+
+### Handover 2026-08-15 — Codex: WP-3 Unified Technician Platform
+- **Platform:** `edge/service_platform.py` introducerer canonical `ServiceSession`, EdgeServiceGrant-reference, capability-enforced Service Operations registry, hardware leases, shared status og JSONL audit.
+- **Leases:** `CameraPowerLease`, `LiveViewLease`, `TemporaryConfigLease`, `DiagnosticLease` og `ModemMaintenanceLease` er canonical lease-typer. Service operations kan ikke tage hardware-ejerskab uden lease.
+- **Klienter:** `edge/tools/bootstrap_cli.py` routes maintenance camera work gennem `ServicePlatform.call(operation_name, ...)`; `/mgmt/technician` viser den samme shared Service Session status og bruger live-view operations; LAB Mode acquires camera power lease og invalidates session ved LAB disable.
+- **Status:** UI og CLI viser samme Service Session felter: login, camera relay, camera detected, PTP, Live View, config dirty, session/grant expiry og last activity.
+- **Tests:** WP-3 contract/routing/LAB/live-video/release regressions passerer lokalt. Dokumenteret i `Dokumentation/WP3_UNIFIED_TECHNICIAN_PLATFORM_2026-08.md`.

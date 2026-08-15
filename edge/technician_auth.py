@@ -56,10 +56,11 @@ class TechnicianAuth:
       4. Technician gains local access
     """
 
-    def __init__(self, db_path: Path | str, device_id: str, headend_url: str):
+    def __init__(self, db_path: Path | str, device_id: str, headend_url: str, service_platform: Any | None = None):
         self._db_path = Path(db_path)
         self._device_id = device_id
         self._headend_url = headend_url.rstrip("/")
+        self._service_platform = service_platform
         self._lock = threading.Lock()
         self._sessions: dict[str, AuthSession] = {}
         self._init_db()
@@ -306,6 +307,7 @@ class TechnicianAuth:
             if session:
                 if session.status == "confirmed" and session.edge_service_grant_expires_at:
                     if time.time() > float(session.edge_service_grant_expires_at):
+                        expired_grant_id = session.edge_service_grant_id
                         session.status = "expired"
                         session.edge_service_grant = None
                         conn = sqlite3.connect(str(self._db_path), timeout=30.0)
@@ -319,6 +321,7 @@ class TechnicianAuth:
                         )
                         conn.commit()
                         conn.close()
+                        self._invalidate_service_platform_for_grant(expired_grant_id, "grant_expired")
                         return None
                 return session
 
@@ -340,6 +343,7 @@ class TechnicianAuth:
                 return None
             if row["status"] == "confirmed" and row["edge_service_grant_expires_at"]:
                 if time.time() > float(row["edge_service_grant_expires_at"]):
+                    expired_grant_id = row["edge_service_grant_id"]
                     conn = sqlite3.connect(str(self._db_path), timeout=30.0)
                     conn.execute(
                         """
@@ -351,6 +355,7 @@ class TechnicianAuth:
                     )
                     conn.commit()
                     conn.close()
+                    self._invalidate_service_platform_for_grant(expired_grant_id, "grant_expired")
                     return None
 
             return AuthSession(
@@ -372,9 +377,18 @@ class TechnicianAuth:
         with self._lock:
             session = self._sessions.get(session_id)
             if session:
+                grant_id = session.edge_service_grant_id
                 session.status = "revoked"
                 session.edge_service_grant = None
+            else:
+                grant_id = None
             conn = sqlite3.connect(str(self._db_path), timeout=30.0)
+            if grant_id is None:
+                row = conn.execute(
+                    "SELECT edge_service_grant_id FROM technician_sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                grant_id = row[0] if row else None
             cursor = conn.execute(
                 """
                 UPDATE technician_sessions
@@ -386,6 +400,8 @@ class TechnicianAuth:
             changed = cursor.rowcount > 0
             conn.commit()
             conn.close()
+            if changed:
+                self._invalidate_service_platform_for_grant(grant_id, reason)
             return changed
 
     def apply_grant_status_snapshot(self, grants: list[dict[str, Any]]) -> int:
@@ -415,7 +431,22 @@ class TechnicianAuth:
                 if session.edge_service_grant_id in revoked_ids:
                     session.status = "revoked"
                     session.edge_service_grant = None
+        self._invalidate_service_platform_for_grants(revoked_ids, "grant_revoked")
         return changed
+
+    def _invalidate_service_platform_for_grants(self, grant_ids: set[str], reason: str) -> None:
+        for grant_id in grant_ids:
+            self._invalidate_service_platform_for_grant(grant_id, reason)
+
+    def _invalidate_service_platform_for_grant(self, grant_id: str | None, reason: str) -> None:
+        if not grant_id or self._service_platform is None:
+            return
+        try:
+            session = self._service_platform.current_session()
+            if session and session.grant.grant_id == grant_id:
+                self._service_platform.invalidate(session, reason=reason)
+        except Exception:
+            log.exception("Could not invalidate ServiceSession for EdgeServiceGrant %s", grant_id)
 
     def cleanup_expired(self, days: int = 7) -> int:
         """Remove old expired sessions from database."""
