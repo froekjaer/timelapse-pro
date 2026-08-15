@@ -79,7 +79,7 @@ jobs:
       - name: Deploy signal
         run: |
           echo "✅ Alle checks OK"
-          echo "📦 Commit: ${{ github.sha }}"
+          echo "📦 Exact deploy commit: ${{ github.sha }}"
           echo "🕐 Tidspunkt: $(date -u)"
           echo "Headend deployes af self-hosted Mac mini runner"
           echo "Edge-opdateringer håndteres via signerede artifacts/change tickets"
@@ -108,19 +108,11 @@ jobs:
               -name $'Icon\r' -type f -size 0 -exec rm -f {} + 2>/dev/null || true
             echo "Removed macOS Icon metadata file(s) using inline fallback"
           fi
-      - name: Verificér GPG-signatur på seneste tag
+
+      - name: Record previous revision and checkout exact workflow SHA
+        shell: bash
         run: |
-          cd ~/projects/timelapse-pro
-          git fetch --tags
-          LATEST_TAG=$(git tag --sort=-version:refname | head -1)
-          if [ -z "$LATEST_TAG" ]; then
-            echo "⚠️  Ingen tags fundet — springer signaturcheck over"
-          else
-            echo "Verificerer tag: $LATEST_TAG"
-            git tag -v "$LATEST_TAG" && echo "✅ GPG signatur OK: $LATEST_TAG" || { echo "❌ FEJL: Ugyldig GPG signatur på $LATEST_TAG"; exit 1; }
-          fi
-      - name: Checkout deployed revision
-        run: |
+          set -euo pipefail
           cd ~/projects/timelapse-pro
           git fetch --prune origin main
           if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
@@ -128,19 +120,74 @@ jobs:
             git status --short --untracked-files=no
             exit 1
           fi
+          PREVIOUS_SHA="$(git rev-parse HEAD)"
+          printf '%s\n' "$PREVIOUS_SHA" > "$RUNNER_TEMP/timelapse-previous-sha"
+          git cat-file -e "${{ github.sha }}^{commit}"
           git checkout --detach "${{ github.sha }}"
           git reset --hard "${{ github.sha }}"
-      - name: Restart headend
-        run: |
-          sudo launchctl kickstart -k "system/dk.froekjaer.timelapse-headend"
-          sudo launchctl print "system/dk.froekjaer.timelapse-headend" | grep -E "state =|pid =|last exit code =" || true
-          echo "✅ Headend genstartet"
-      - name: Rebuild UI
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_SHA" != "${{ github.sha }}" ]; then
+            echo "❌ Checkout mismatch: expected ${{ github.sha }}, got $ACTUAL_SHA"
+            exit 1
+          fi
+          echo "✅ Deploy target bound exactly to workflow SHA $ACTUAL_SHA"
+          echo "ℹ️ Previous deploy revision: $PREVIOUS_SHA"
+
+      - name: Build UI for target revision before backend restart
         run: |
           cd ~/projects/timelapse-pro/timelapse-ui
           npm ci --silent
           npm run build
-          echo "✅ UI bygget"
+          echo "✅ UI built for exact target revision"
+
+      - name: Restart Headend and verify health or rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO="$HOME/projects/timelapse-pro"
+          PREVIOUS_SHA="$(cat "$RUNNER_TEMP/timelapse-previous-sha")"
+          TARGET_SHA="${{ github.sha }}"
+
+          restart_headend() {
+            sudo launchctl kickstart -k "system/dk.froekjaer.timelapse-headend"
+            sudo launchctl print "system/dk.froekjaer.timelapse-headend" \
+              | grep -E "state =|pid =|last exit code =" || true
+          }
+
+          health_ok() {
+            for attempt in 1 2 3 4 5 6; do
+              if curl --fail --silent --show-error --max-time 5 \
+                   http://127.0.0.1:8000/api/health >/dev/null; then
+                return 0
+              fi
+              echo "Health check attempt $attempt/6 failed; waiting..."
+              sleep 2
+            done
+            return 1
+          }
+
+          restart_headend
+          if health_ok; then
+            echo "✅ Headend health verified on exact deploy revision $TARGET_SHA"
+            exit 0
+          fi
+
+          echo "❌ Target revision failed Headend health check; rolling back application code to $PREVIOUS_SHA"
+          cd "$REPO"
+          git checkout --detach "$PREVIOUS_SHA"
+          git reset --hard "$PREVIOUS_SHA"
+          cd "$REPO/timelapse-ui"
+          npm ci --silent
+          npm run build
+          restart_headend
+
+          if health_ok; then
+            echo "✅ Automatic application rollback succeeded; restored $PREVIOUS_SHA"
+          else
+            echo "❌ CRITICAL: rollback revision also failed health check"
+          fi
+          exit 1
+
       - name: Skip legacy edge update signalling
         run: |
           echo "ℹ️ Legacy git-baseret Edge update-signalering er deaktiveret."
