@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 # Pytest resolves this repository through /Volumes/data-fast while operators use
-# the stable /Users/peter/projects symlink.  Put the canonical repository root on
+# the stable /Users/peter/projects symlink. Put the canonical repository root on
 # sys.path so package imports are independent of the entry path.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 for import_root in (REPO_ROOT, REPO_ROOT / "headend"):
@@ -16,8 +16,8 @@ for import_root in (REPO_ROOT, REPO_ROOT / "headend"):
         sys.path.insert(0, str(import_root))
 
 # Establish the isolated database boundary before any test imports Headend
-# modules. Integration tests may still target a separately started test
-# Headend through TIMELAPSE_TEST_BASE_URL, but fixtures must never mutate the
+# modules. Integration tests may target a separately started test Headend only
+# through an explicit TIMELAPSE_TEST_BASE_URL; fixtures must never mutate the
 # operational timelapse_db directly.
 os.environ["DATABASE_URL"] = os.getenv(
     "TIMELAPSE_TEST_DATABASE_URL",
@@ -27,11 +27,34 @@ os.environ.setdefault("TIMELAPSE_ENV", "test")
 
 import pytest
 import requests
-import uuid
 
-BASE_URL = os.getenv("TIMELAPSE_TEST_BASE_URL", "http://127.0.0.1:8000")
+BASE_URL = os.getenv("TIMELAPSE_TEST_BASE_URL", "").rstrip("/")
+TEST_TARGET_ACK = os.getenv("TIMELAPSE_TEST_TARGET_ACK", "")
+_REQUIRED_TEST_TARGET_ACK = "I_UNDERSTAND_THIS_IS_A_TEST_TARGET"
 
-# Test credentials
+
+def require_explicit_test_target() -> str:
+    """Return the integration-test target only after explicit operator opt-in.
+
+    There is deliberately no localhost/port default. A missing variable must
+    fail before any HTTP request so pytest cannot accidentally discover and
+    exercise an operational Headend listening on a developer machine.
+    """
+    if not BASE_URL:
+        raise RuntimeError(
+            "Integration test target is unset; set TIMELAPSE_TEST_BASE_URL explicitly"
+        )
+    if not BASE_URL.startswith(("http://", "https://")):
+        raise RuntimeError("TIMELAPSE_TEST_BASE_URL must be an absolute HTTP(S) URL")
+    if TEST_TARGET_ACK != _REQUIRED_TEST_TARGET_ACK:
+        raise RuntimeError(
+            "Integration HTTP disabled; set TIMELAPSE_TEST_TARGET_ACK="
+            + _REQUIRED_TEST_TARGET_ACK
+        )
+    return BASE_URL
+
+
+# Test credentials — only valid in a deliberately prepared isolated test target.
 TEST_CREDENTIALS = {
     "admin": {
         "username": "admin",
@@ -53,21 +76,19 @@ TEST_CREDENTIALS = {
 
 
 class AuthenticatedSession:
-    """Custom session that manually handles authentication cookies.
-
-    Workaround for cookie domain mismatch between localhost and 127.0.0.1
-    """
+    """Custom session that manually handles authentication cookies."""
 
     def __init__(self, username: str, password: str):
         self.username = username
         self.password = password
+        self.base_url = require_explicit_test_target()
         self.session_token = None
         self._login()
 
     def _login(self):
         """Login og gem session token."""
         response = requests.post(
-            f"{BASE_URL}/api/auth/login",
+            f"{self.base_url}/api/auth/login",
             json={"username": self.username, "password": self.password},
             timeout=10
         )
@@ -75,7 +96,6 @@ class AuthenticatedSession:
         if response.status_code != 200:
             raise Exception(f"Login fejlede: {response.status_code}")
 
-        # Hent cookie fra response
         for cookie in response.cookies:
             if cookie.name == "tl_session":
                 self.session_token = cookie.value
@@ -86,9 +106,11 @@ class AuthenticatedSession:
 
     def request(self, method, path, **kwargs):
         """Make authenticated request."""
-        url = f"{BASE_URL}{path}" if not path.startswith("http") else path
+        # Re-evaluate the explicit gate before every network operation. This
+        # prevents a test from mutating the module-global target after login.
+        base_url = require_explicit_test_target()
+        url = f"{base_url}{path}" if not path.startswith("http") else path
 
-        # Send cookie som Cookie header i stedet for at rely på cookie jar
         headers = kwargs.pop("headers", {})
         headers["Cookie"] = f"tl_session={self.session_token}"
 
@@ -109,10 +131,7 @@ class AuthenticatedSession:
 
 @pytest.fixture(scope="session")
 def admin_session():
-    """Authenticated session med admin adgang (bruger operator rolle).
-
-    Bruger: test-operator / TestOperator123!
-    """
+    """Authenticated session med admin adgang (bruger operator rolle)."""
     try:
         return AuthenticatedSession(
             TEST_CREDENTIALS["operator"]["username"],
@@ -124,10 +143,7 @@ def admin_session():
 
 @pytest.fixture(scope="session")
 def viewer_session():
-    """Authenticated session med viewer rolle.
-
-    Bruger: test-viewer / TestViewer123!
-    """
+    """Authenticated session med viewer rolle."""
     try:
         return AuthenticatedSession(
             TEST_CREDENTIALS["viewer"]["username"],
@@ -139,10 +155,7 @@ def viewer_session():
 
 @pytest.fixture(scope="session")
 def operator_session():
-    """Authenticated session med operator rolle.
-
-    Bruger: test-operator / TestOperator123!
-    """
+    """Authenticated session med operator rolle."""
     try:
         return AuthenticatedSession(
             TEST_CREDENTIALS["operator"]["username"],
@@ -154,39 +167,34 @@ def operator_session():
 
 @pytest.fixture(scope="session")
 def super_admin_session():
-    """Authenticated session med super_admin rolle.
-
-    Opretter test-super-admin user hvis den ikke findes.
-    Bruger: test-super-admin / TestSuperAdmin123!
-    """
+    """Authenticated session med super_admin adgang på det eksplicitte test-target."""
     from database import get_db, User
 
-    # Prøv at logge ind først
+    # Fail before any HTTP or DB mutation unless the operator explicitly opted
+    # into a test target for this pytest process.
+    require_explicit_test_target()
+
     try:
         return AuthenticatedSession(
             TEST_CREDENTIALS["super_admin"]["username"],
             TEST_CREDENTIALS["super_admin"]["password"]
         )
     except Exception:
-        # User findes ikke - opret via database
         pass
 
-    # Opret user i database
+    db = None
     try:
         db_gen = get_db()
         db = next(db_gen)
 
-        # Tjek om user allerede findes
         existing = db.query(User).filter_by(
             username=TEST_CREDENTIALS["super_admin"]["username"]
         ).first()
 
         if existing:
-            # User findes men login fejlede - slet og genskab
             db.delete(existing)
             db.commit()
 
-        # Opret ny super_admin user
         from headend.main import _hash_password
         new_user = User(
             username=TEST_CREDENTIALS["super_admin"]["username"],
@@ -199,7 +207,6 @@ def super_admin_session():
         db.commit()
         db.refresh(new_user)
 
-        # Log ind med nye credentials
         return AuthenticatedSession(
             TEST_CREDENTIALS["super_admin"]["username"],
             TEST_CREDENTIALS["super_admin"]["password"]
@@ -208,15 +215,13 @@ def super_admin_session():
     except Exception as e:
         pytest.skip(f"Kunne ikke oprette super_admin session: {e}")
     finally:
-        try:
+        if db is not None:
             db.close()
-        except:
-            pass
 
 
 def pytest_configure(config):
     config.addinivalue_line(
-        "markers", "integration: kræver live headend på TIMELAPSE_TEST_BASE_URL"
+        "markers", "integration: kræver eksplicit TIMELAPSE_TEST_BASE_URL + test-target acknowledgement"
     )
     config.addinivalue_line(
         "markers", "smoke: hurtig daglig/CI smoke-test for kernefunktionalitet"
