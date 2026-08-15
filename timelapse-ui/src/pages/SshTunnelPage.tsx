@@ -6,9 +6,10 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, Terminal, RefreshCw, ChevronDown, ChevronRight,
-  Wifi, WifiOff, Clock, Activity, Copy, CheckCircle
+  Wifi, WifiOff, Clock, Activity, Copy, CheckCircle, KeyRound
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { SshTerminalModal } from '../components/SshTerminalModal'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -24,6 +25,15 @@ interface ActiveTunnel {
   remote_port:  number
   local_port:   number | null
   connected_at: string
+  ssh_user?: string
+  ssh_identity_path?: string
+  ssh_command?: string
+  terminal?: {
+    allowed: boolean
+    reason?: string
+    fingerprint?: string
+    trusted_state?: string
+  }
 }
 
 interface TunnelLogEntry {
@@ -146,6 +156,7 @@ export function SshTunnelPage() {
   const [loading, setLoading]       = useState(true)
   const [lastRefresh, setLast]      = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [terminalDevice, setTerminalDevice] = useState<string | null>(null)
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true)
@@ -163,7 +174,8 @@ export function SshTunnelPage() {
     return () => clearInterval(t)
   }, [load])
 
-  const sshCmd = (t: ActiveTunnel) => `ssh -p ${t.remote_port} orangepi@localhost`
+  const sshCmd = (t: ActiveTunnel) =>
+    t.ssh_command ?? `ssh -p ${t.remote_port} -i ${t.ssh_identity_path ?? '~/.ssh/timelapse_headend_ed25519'} ${t.ssh_user ?? 'orangepi'}@localhost`
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -230,18 +242,33 @@ export function SshTunnelPage() {
                   <p className="text-sm font-mono font-semibold text-gray-800">{t.remote_port}</p>
                 </div>
                 <div className="bg-gray-50 rounded-lg px-3 py-2.5">
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Local port</p>
-                  <p className="text-sm font-mono font-semibold text-gray-800">{t.local_port ?? '—'}</p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Identity</p>
+                  <p className="text-sm font-mono font-semibold text-gray-800 truncate" title={t.ssh_identity_path ?? '~/.ssh/timelapse_headend_ed25519'}>
+                    {t.ssh_identity_path ?? '~/.ssh/timelapse_headend_ed25519'}
+                  </p>
                 </div>
               </div>
-              <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between">
-                <code className="text-xs text-green-400 font-mono">{sshCmd(t)}</code>
-                <CopyBtn text={sshCmd(t)} />
+              <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between gap-2">
+                <code className="text-xs text-green-400 font-mono break-all">{sshCmd(t)}</code>
+                <div className="flex items-center gap-1">
+                  <CopyBtn text={sshCmd(t)} />
+                  <button
+                    onClick={() => setTerminalDevice(t.device_id)}
+                    disabled={!t.terminal?.allowed}
+                    className="p-1 rounded hover:bg-gray-800 transition-colors text-gray-400 hover:text-green-300 disabled:opacity-40 disabled:hover:text-gray-400 disabled:cursor-not-allowed"
+                    title={t.terminal?.allowed ? 'Åbn terminal i browser' : (t.terminal?.reason ?? 'SSH host identity er ikke trusted')}
+                  >
+                    <KeyRound className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
               <TunnelLog deviceId={t.device_id} />
             </div>
           ))}
         </div>
+      )}
+      {terminalDevice && (
+        <SshTerminalModal deviceId={terminalDevice} onClose={() => setTerminalDevice(null)} />
       )}
     </div>
   )
