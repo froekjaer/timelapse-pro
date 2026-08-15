@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-15 16:45 — fra Codex til Peter/Claude: read-only Edge convergence recovery
+
+- Hvad er gjort: Headend er fastholdt på `bc367d4dc328dea6bc22aa71bcbc887d89c577c8`. Edge 1 `TL-C87FF9587CA0` er kun inspiceret read-only, og der er oprettet fuld runtime/config/systemd/state-backup plus capture-manifest under `/Volumes/data-fast/peter-home/projects/timelapse-pro-edge-recovery/20260815_163111_TL-C87FF9587CA0`. Edge 2 `TL-043EB9E72EFD` er behandlet som SSH host-key security event; der er ikke ændret `known_hosts`, ikke accepteret ny key og ikke kørt SSH-kommandoer mod Edge 2.
+- Hvad mangler / næste skridt: Følg `Dokumentation/EDGE_RUNTIME_CONVERGENCE_PLAN_2026-08.md` før nogen Edge-deployment. Edge 1 skal konvergeres via side-by-side immutable release og bevist rollback, ikke via `git pull/reset` i dirty `/opt/timelapse`. Edge 2 må ikke opgraderes før SSH host-key-identiteten er verificeret via trusted channel, fysisk konsol eller eksplicit ejerbekræftelse.
+- Kommandoer kørt eller skal køres: Kørte read-only backup/evidence collection på Edge 1 og Headend/API/DB-baseret evidence collection for Edge 2. Næste sikre kommandoer er kun backup-hash/archive-readability check og trusted host-key evidence collection.
+- Forventet/faktisk output: Edge 1 backup `runtime_config_units_state.tar.gz` SHA256 `6a1f39e1e4dac426fbb4180763516058e655730e91a3b54fb25b59bea8427b4b`; capture manifest SHA256 `067cbb8652531ffd95815bf227e83b1e6337522ae770b13a805e599728b8da9d`. Edge 1 har 28 modified tracked files og 130 untracked paths; 23 tracked changes matcher current main, 5 adskiller sig og er klassificeret i recovery-planen. Edge 2 current unauthenticated SSH keyscan matcher ikke eksisterende trusted fingerprints, mens Headend/API viser device online men med gentagne `camera_detection_failed`.
+- Filer rørt: `Dokumentation/EDGE_RUNTIME_CONVERGENCE_PLAN_2026-08.md`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Ingen Edge-deployment endnu. Ingen reprovisioning, credential/key deletion, destructive rotation, GPIO mapping change, known_hosts housekeeping eller host verification bypass. Edge 2 kamerafejl må fortsat kun undersøges read-only indtil SSH trust og recovery-veje er afklaret.
+
 ### Handover 2026-08-15 11:55 — fra Codex til Peter/Claude: WP-2 Trust Service, PDP, EdgeServiceGrant og Secure Service DMZ foundation
 
 - Hvad er gjort: WP-2 er startet på stacked branch oven på PR #13. Der er oprettet `headend/trust/` som TimeLapse Trust Service module boundary med central PDP (`Principal + Role + Capability + Tenant + Resource + MFA + Context -> Allow/Deny + reason`), signed/stateful EdgeServiceGrant issuance/validation/revocation, replay-beskyttelse via challenge-id, policy audit helper og en testbar Secure Service DMZ conduit spec. `headend/api/trust_service_api.py` eksponerer admin-only grant issuance/revoke og DMZ spec. Ingen Local Service Gateway, browser terminal, generator split eller normal technician shell er startet.
