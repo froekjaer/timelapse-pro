@@ -1,90 +1,95 @@
 #!/usr/bin/env bash
-# TimeLapse Pro — Deploy + End-to-end test
-# Kør fra Mac Mini: bash e2e_test.sh
-# ─────────────────────────────────────────
+# TimeLapse Pro — read-only Edge/Headend end-to-end diagnostics
+#
+# Security contract:
+#   - no passwords or production URLs are embedded in the repository
+#   - SSH host verification is mandatory
+#   - SSH uses an explicitly supplied private-key path
+#   - TLS certificate verification is mandatory
+#   - this script NEVER deploys, pulls code, stashes changes or restarts services
+#
+# Example (run on the Headend, where the reverse tunnel and support key exist):
+#   E2E_EDGE_PORT=2201 \
+#   E2E_SSH_KEY="$HOME/.ssh/timelapse_headend_ed25519" \
+#   E2E_HEADEND_URL="https://backend.example.invalid:8443/api" \
+#   bash e2e_test.sh
 set -euo pipefail
 
-EDGE_SSH="ssh -p 2201 -o StrictHostKeyChecking=no orangepi@localhost"
-EDGE_PASS="orangepi"
-PROJECT="/Users/peter/projects/timelapse-pro"
-HEADEND_URL="https://timelapse-api.froekjaer.dk:10443/api"
+: "${E2E_EDGE_PORT:?Set E2E_EDGE_PORT to the active reverse-tunnel port}"
+: "${E2E_SSH_KEY:?Set E2E_SSH_KEY to the authorised support private-key path}"
+: "${E2E_HEADEND_URL:?Set E2E_HEADEND_URL to the HTTPS Headend API base URL}"
+
+E2E_EDGE_HOST="${E2E_EDGE_HOST:-localhost}"
+E2E_EDGE_USER="${E2E_EDGE_USER:-orangepi}"
+E2E_KNOWN_HOSTS="${E2E_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"
+
+[[ "$E2E_EDGE_PORT" =~ ^[0-9]+$ ]] || { echo "Invalid E2E_EDGE_PORT" >&2; exit 2; }
+[[ -r "$E2E_SSH_KEY" ]] || { echo "SSH key not readable: $E2E_SSH_KEY" >&2; exit 2; }
+[[ -r "$E2E_KNOWN_HOSTS" ]] || { echo "known_hosts not readable: $E2E_KNOWN_HOSTS" >&2; exit 2; }
+[[ "$E2E_HEADEND_URL" == https://* ]] || { echo "E2E_HEADEND_URL must use https://" >&2; exit 2; }
+
+SSH=(
+  ssh
+  -p "$E2E_EDGE_PORT"
+  -i "$E2E_SSH_KEY"
+  -o BatchMode=yes
+  -o IdentitiesOnly=yes
+  -o StrictHostKeyChecking=yes
+  -o "UserKnownHostsFile=$E2E_KNOWN_HOSTS"
+  "$E2E_EDGE_USER@$E2E_EDGE_HOST"
+)
 
 ok()  { echo "  ✓ $*"; }
-err() { echo "  ✗ $*"; }
+err() { echo "  ✗ $*" >&2; }
 sep() { echo; echo "══ $* ══════════════════════════════════════════"; }
 
-# ── Hjælpefunktion: kør sudo-kommando på edge ─────────────────────────────
-edge() {
-    $EDGE_SSH "echo '$EDGE_PASS' | sudo -S $*" 2>/dev/null
+remote() {
+  "${SSH[@]}" "$@"
 }
 
-# ── 1. SSH-forbindelse til edge ────────────────────────────────────────────
-sep "1. SSH til edge"
-if $EDGE_SSH "echo ok" &>/dev/null; then
-    ok "SSH forbundet til edge"
+sep "1. Verified SSH tunnel"
+if remote "printf '%s\\n' ok" >/dev/null; then
+  ok "SSH connected with strict host-key verification"
 else
-    err "Kan ikke forbinde til edge på localhost:2201"
-    exit 1
+  err "Cannot connect through verified tunnel on $E2E_EDGE_HOST:$E2E_EDGE_PORT"
+  exit 1
 fi
 
-# ── 2. Synk kode til edge ─────────────────────────────────────────────────
-sep "2. Git pull på edge"
-edge "git -C /opt/timelapse pull --ff-only 2>&1" && ok "git pull ok" || {
-    echo "  Prøver med stash..."
-    edge "git -C /opt/timelapse stash && git -C /opt/timelapse pull --ff-only 2>&1"
-}
-EDGE_COMMIT=$(edge "git -C /opt/timelapse rev-parse --short HEAD 2>/dev/null")
-echo "  Edge commit: $EDGE_COMMIT"
-
-# ── 3. Test inventory lokalt på edge ──────────────────────────────────────
-sep "3. Inventory-test på edge"
-INV_OUT=$($EDGE_SSH "cd /opt/timelapse && echo '$EDGE_PASS' | sudo -S python3 -c \"
-import sys, json
-sys.path.insert(0, 'edge')
-from edge.utils.inventory import collect_inventory
-inv = collect_inventory({'storage': {'base_dir': '/data'}})
-print('MODEL:', inv.get('hardware_model','?'))
-print('OS:', inv.get('os_name','?'))
-print('APP:', inv.get('app_version','?'), 'git:', inv.get('git_commit','?'))
-print('USERS:', [u['username'] for u in inv.get('local_users',[])])
-print('SERVICES:', len(inv.get('services',[])))
-print('OS_UPDATES:', inv.get('os_updates_available',{}).get('total',0), 'total,', inv.get('os_updates_available',{}).get('security',0), 'security')
-\" 2>/dev/null")
-echo "$INV_OUT" | sed 's/^/  /'
-
-# ── 4. Genstart edge agent ─────────────────────────────────────────────────
-sep "4. Genstart timelapse-edge"
-edge "systemctl restart timelapse-edge" && ok "Genstartet" || err "Genstart fejlede"
-sleep 5
-
-# ── 5. Tjek edge logs ─────────────────────────────────────────────────────
-sep "5. Edge agent logs (seneste 30 linjer)"
-$EDGE_SSH "echo '$EDGE_PASS' | sudo -S journalctl -u timelapse-edge -n 30 --no-pager 2>/dev/null" | \
-    grep -E "inventory|CMDB|heartbeat|update|NTP|ERROR|WARNING" | sed 's/^/  /' || \
-    $EDGE_SSH "echo '$EDGE_PASS' | sudo -S journalctl -u timelapse-edge -n 20 --no-pager 2>/dev/null" | tail -20 | sed 's/^/  /'
-
-# ── 6. Hent HEADEND_TOKEN ─────────────────────────────────────────────────
-sep "6. Headend API test"
-# Prøv at hente token fra edge's konfiguration
-EDGE_TOKEN=$($EDGE_SSH "cat /etc/timelapse/bootstrap.yaml 2>/dev/null | grep -A1 'api_token' | tail -1 | tr -d ' ' || cat /run/timelapse/api_token 2>/dev/null || echo ''" 2>/dev/null || echo "")
-DEVICE_ID=$($EDGE_SSH "cat /etc/timelapse/bootstrap.yaml 2>/dev/null | grep 'device_id' | awk '{print \$2}' | tr -d \"'\" || echo 'TL-C87FF9587CA0'" 2>/dev/null || echo "TL-C87FF9587CA0")
+sep "2. Runtime identity (read-only)"
+DEVICE_ID="$(remote "sed -n 's/^[[:space:]]*device_id:[[:space:]]*[\"'\"']*\\([^\"'\"']*\\)[\"'\"']*.*/\\1/p' /etc/timelapse/bootstrap.yaml 2>/dev/null | head -1" || true)"
+APP_VERSION="$(remote "python3 - <<'PY'
+from pathlib import Path
+for path in (Path('/opt/timelapse/VERSION'), Path('/etc/timelapse/release-version')):
+    if path.is_file():
+        print(path.read_text().strip())
+        break
+PY" || true)"
+[[ -n "$DEVICE_ID" ]] || DEVICE_ID="unknown"
 echo "  Device ID: $DEVICE_ID"
+echo "  App/release: ${APP_VERSION:-unknown}"
 
-if [[ -n "$EDGE_TOKEN" && "$EDGE_TOKEN" != "" ]]; then
-    ok "Token fundet"
+sep "3. Services and storage (read-only)"
+remote "systemctl is-active timelapse-edge 2>/dev/null || true; df -h / /data 2>/dev/null || df -h /" | sed 's/^/  /'
 
-    # CMDB status
-    CMDB=$(curl -sk -H "Authorization: Bearer $EDGE_TOKEN" "$HEADEND_URL/cmdb/$DEVICE_ID" 2>/dev/null || echo "{}")
-    INV_AT=$(echo "$CMDB" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('inventory_reported_at','aldrig'))" 2>/dev/null || echo "?")
-    echo "  Seneste CMDB inventory: $INV_AT"
+sep "4. Camera/USB evidence (read-only)"
+remote "printf '%s\\n' 'USB:'; lsusb 2>/dev/null || true; printf '%s\\n' 'PTP:'; gphoto2 --auto-detect 2>/dev/null || true" | sed 's/^/  /'
 
-    # Pending updates
-    PENDING=$(curl -sk -H "Authorization: Bearer $EDGE_TOKEN" "$HEADEND_URL/updates/policy/$DEVICE_ID" 2>/dev/null || echo "{}")
-    N=$(echo "$PENDING" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('pending_updates',[])))" 2>/dev/null || echo "?")
-    echo "  Godkendte opdateringer til edge: $N"
+sep "5. Recent Edge logs (read-only)"
+remote "journalctl -u timelapse-edge -n 40 --no-pager 2>/dev/null || true" \
+  | grep -E "camera|Camera|PTP|capture|upload|heartbeat|ERROR|WARNING" \
+  | tail -30 \
+  | sed 's/^/  /' || true
+
+sep "6. Headend TLS/API reachability"
+# No -k/--insecure: a certificate failure is a test failure.
+HEALTH_URL="${E2E_HEADEND_URL%/api}/api/health"
+if curl --fail --silent --show-error --max-time 15 "$HEALTH_URL" >/dev/null; then
+  ok "Headend HTTPS certificate and health endpoint verified"
 else
-    echo "  (ingen token — tjek CMDB manuelt i UI'en)"
+  err "Headend HTTPS/API health verification failed"
+  exit 1
 fi
 
 sep "Færdig"
-echo "  Kig i UI'en under CMDB for $DEVICE_ID for at se inventory-data"
+echo "  Read-only E2E diagnostics passed for $DEVICE_ID"
+echo "  No code, credentials, services, GPIO or capture data were changed."
