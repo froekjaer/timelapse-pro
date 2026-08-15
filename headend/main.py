@@ -112,11 +112,12 @@ from services.artifact_trust import is_deployable_artifact
 from services.update_supersession import supersede_pending_app_updates
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
+from services.edge_lifecycle import LifecycleTransitionError as EdgeLifecycleError, key_management_lifecycle_summary, mark_bootstrap_consumed, reconcile_edge_lifecycle as _reconcile_edge_lifecycle, resolve_device_api_credential
 from database import (
     BootstrapToken,
     ChangeApproval, ChangeTicket, UpdateArtifact, UpdateTarget,
     Capture, CaptureAccessLog, Camera, Customer, ConfigDefaults, Device, DeviceAssignment,
-    DeviceInventory, Diagnostic, EdgeCredentialInventory, EdgeLifecycleRecord, Event, KeyAuditEvent, KeyCredential,
+    DeviceInventory, Diagnostic, Event, KeyAuditEvent, KeyCredential,
     PendingUpdate, Settings, Site, SshTunnelLog, UpdateJobRecord, User,
     AiBatchJob,
     SessionLocal, create_tables, get_db, now_utc
@@ -2244,21 +2245,8 @@ def bootstrap(req: BootstrapRequest, db: Session = Depends(get_db)):
     )
     db.add(credential)
     _audit_key_event(db, credential, "created_by_bootstrap", "bootstrap", {"device_id": req.device_id})
-    from services.edge_lifecycle import mark_bootstrap_consumed
-    mark_bootstrap_consumed(
-        db,
-        token_id=token_record.id,
-        token_hash=_secret_hash(req.bootstrap_token),
-        device_id=req.device_id,
-    )
-    _reconcile_edge_lifecycle(
-        db,
-        device,
-        actor="bootstrap",
-        target_state="assigned" if (device.site_id or device.customer_id or device.camera_name) else "credentialed",
-        reason="Legacy bootstrap issued API credential",
-        hardware_evidence={"bootstrap_token_id": token_record.id if token_record else None},
-    )
+    mark_bootstrap_consumed(db, token_id=token_record.id, token_hash=_secret_hash(req.bootstrap_token), device_id=req.device_id)
+    _reconcile_edge_lifecycle(db, device, actor="bootstrap", target_state="assigned" if (device.site_id or device.customer_id or device.camera_name) else "credentialed", reason="Legacy bootstrap issued API credential", hardware_evidence={"bootstrap_token_id": token_record.id if token_record else None})
     db.commit()
 
     base_url   = _headend_api_url(db).removesuffix("/api")
@@ -2417,13 +2405,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
     db.add(credential)
     _audit_key_event(db, credential, "created_by_zero_touch_enroll", "zero_touch_enroll",
                      {"device_id": req.device_id, "hardware_model": req.hardware_model})
-    from services.edge_lifecycle import mark_bootstrap_consumed
-    mark_bootstrap_consumed(
-        db,
-        token_id=token_record.id,
-        token_hash=_secret_hash(req.bootstrap_token),
-        device_id=req.device_id,
-    )
+    mark_bootstrap_consumed(db, token_id=token_record.id, token_hash=_secret_hash(req.bootstrap_token), device_id=req.device_id)
 
     # ── Auto-opret DeviceAssignment hvis token er bundet til en kamera-lokation ──
     token_camera_id = getattr(token_record, "camera_id", None)
@@ -2457,18 +2439,7 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
             device.customer_id = cam.customer_id or device.customer_id
         log.info("Auto DeviceAssignment: %s → kamera %s", req.device_id, token_camera_id)
 
-    _reconcile_edge_lifecycle(
-        db,
-        device,
-        actor="zero_touch_enroll",
-        target_state="assigned" if (device.site_id or device.customer_id or device.camera_name) else "credentialed",
-        reason="Zero-touch enrollment issued API credential",
-        hardware_evidence={
-            "hardware_model": req.hardware_model,
-            "mac_address": req.mac_address,
-            "ssh_pubkey_fingerprint": _fingerprint_material(req.ssh_pubkey or "") if req.ssh_pubkey else "",
-        },
-    )
+    _reconcile_edge_lifecycle(db, device, actor="zero_touch_enroll", target_state="assigned" if (device.site_id or device.customer_id or device.camera_name) else "credentialed", reason="Zero-touch enrollment issued API credential", hardware_evidence={"hardware_model": req.hardware_model, "mac_address": req.mac_address, "ssh_pubkey_fingerprint": _fingerprint_material(req.ssh_pubkey or "") if req.ssh_pubkey else ""})
     db.commit()
 
     base_url   = _headend_api_url(db).removesuffix("/api")
@@ -2553,13 +2524,7 @@ def assign_device_to_site(
     prov["enrollment_state"] = "active"
     cfg["provisioning"] = prov
     device.device_config = json.dumps(cfg, ensure_ascii=False)
-    _reconcile_edge_lifecycle(
-        db,
-        device,
-        actor=getattr(current_user, "username", "assign-site"),
-        target_state="assigned",
-        reason="Device assigned to site",
-    )
+    _reconcile_edge_lifecycle(db, device, actor=getattr(current_user, "username", "assign-site"), target_state="assigned", reason="Device assigned to site")
 
     db.commit()
     log.info("Device %s tildelt site %s (%s)", device_id, site_id, site.name)
@@ -2589,47 +2554,13 @@ async def _verify_device_token(
     if scheme.lower() != "bearer" or not provided:
         raise HTTPException(status_code=401, detail="Manglende Bearer token")
     token_hash = _secret_hash(provided)
-    lifecycle = db.query(EdgeLifecycleRecord).filter_by(device_id=device_id).first()
-    if lifecycle and lifecycle.state in {"quarantined", "revoked", "retired"}:
-        raise HTTPException(status_code=401, detail=f"Edge lifecycle state afviser API-adgang: {lifecycle.state}")
-    from services.edge_lifecycle import (
-        find_active_api_credential,
-        migrate_legacy_api_token_to_inventory,
-        reconcile_device_credentials,
-    )
-    inventory_credential = find_active_api_credential(db, device_id=device_id, token_hash=token_hash)
-    if not inventory_credential:
-        device = db.query(Device).filter_by(device_id=device_id).first()
-        if device and device.api_token and hmac.compare_digest(provided, device.api_token):
-            inventory_credential = migrate_legacy_api_token_to_inventory(
-                db,
-                device,
-                token_hash=token_hash,
-                actor="legacy-auth",
-            )
-        else:
-            credential = (
-                db.query(KeyCredential)
-                .filter(
-                    KeyCredential.entity_type.in_(["edge", "headend", "service"]),
-                    KeyCredential.entity_id == device_id,
-                    KeyCredential.key_type == "api",
-                    KeyCredential.secret_hash == token_hash,
-                    KeyCredential.status == "active",
-                )
-                .first()
-            )
-            if credential:
-                device = device or db.query(Device).filter_by(device_id=device_id).first()
-                if device:
-                    reconcile_device_credentials(db, device, actor="inventory-auth-adapter")
-                    inventory_credential = find_active_api_credential(db, device_id=device_id, token_hash=token_hash)
-    if not inventory_credential:
-        raise HTTPException(status_code=401, detail="Ukendt device eller token ikke sat i credential inventory")
-    if inventory_credential.expires_at and ensure_utc(inventory_credential.expires_at) < now_utc():
-        inventory_credential.status = "expired"
+    try:
+        inventory_credential = resolve_device_api_credential(
+            db, device_id=device_id, provided_token=provided, token_hash=token_hash
+        )
+    except EdgeLifecycleError as exc:
         db.commit()
-        raise HTTPException(status_code=401, detail="API token er udløbet")
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     try:
         inventory_metadata = json.loads(inventory_credential.metadata_json or "{}")
     except Exception:
@@ -2832,16 +2763,6 @@ class EdgeSigningEnrollmentPayload(BaseModel):
     public_key: str
     label: Optional[str] = None
     algorithm: Optional[str] = "ed25519"
-
-
-class EdgeLifecycleTransitionPayload(BaseModel):
-    state: Literal[
-        "manufactured", "prepared", "media_written", "bootstrap_pending",
-        "bootstrap_authenticated", "hardware_verified", "enrolled",
-        "credentialed", "assigned", "commissioned", "active", "degraded",
-        "quarantined", "revoked", "retired",
-    ]
-    reason: str
 
 
 def _secret_hash(secret: str) -> str:
@@ -3133,51 +3054,6 @@ def _upsert_legacy_device_api_credential(
         "legacy_token_retained": True,
     })
     return credential
-
-
-def _reconcile_edge_lifecycle(
-    db: Session,
-    device: Device,
-    *,
-    actor: str,
-    target_state: str | None = None,
-    reason: str = "WP-1 compatibility reconciliation",
-    hardware_evidence: dict | None = None,
-) -> dict:
-    """Record canonical WP-1 lifecycle/inventory while preserving legacy wire flows."""
-    from services.edge_lifecycle import (
-        LifecycleTransitionError,
-        advance_lifecycle_to,
-        get_or_create_lifecycle_record,
-        reconcile_device_credentials,
-    )
-
-    record = get_or_create_lifecycle_record(
-        db,
-        device,
-        actor=actor,
-        hardware_evidence=hardware_evidence,
-    )
-    transitions = []
-    if target_state:
-        try:
-            transitions = advance_lifecycle_to(
-                db,
-                record,
-                target_state,
-                actor=actor,
-                reason=reason,
-                hardware_evidence=hardware_evidence,
-            )
-        except LifecycleTransitionError:
-            raise
-    inventory = reconcile_device_credentials(db, device, actor=actor)
-    return {
-        "state": record.state,
-        "transitions": [f"{t.from_state}->{t.to_state}" for t in transitions],
-        "inventory_rows": len(inventory),
-        "legacy_paths": sum(1 for row in inventory if row.legacy_path),
-    }
 
 
 def _credential_to_dict(credential: KeyCredential) -> dict:
@@ -3482,12 +3358,9 @@ def list_key_management(
         "cleanup_candidates": 0,
         "auto_revoke_candidates": 0,
         "trusted_release_signers": 0,
-        "lifecycle_records": db.query(EdgeLifecycleRecord).count(),
-        "legacy_credential_paths": db.query(EdgeCredentialInventory).filter(
-            EdgeCredentialInventory.legacy_path.is_(True),
-            EdgeCredentialInventory.status != "not_present",
-        ).count(),
     }
+    lifecycle_summary = key_management_lifecycle_summary(db)
+    counts.update(lifecycle_summary["counts"])
     trusted_release_signers = _trusted_release_signers(db)
     counts["trusted_release_signers"] = len(trusted_release_signers)
     cleanup_candidates = _credential_cleanup_candidates(db, older_than_days=14)
@@ -3571,33 +3444,8 @@ def list_key_management(
     return {
         "credentials": rows,
         "devices": device_rows,
-        "edge_lifecycle": [
-            {
-                "device_id": record.device_id,
-                "state": record.state,
-                "hardware_fingerprint": record.hardware_fingerprint,
-                "updated_at": record.updated_at.isoformat() if record.updated_at else None,
-                "transition_reason": record.transition_reason,
-            }
-            for record in db.query(EdgeLifecycleRecord).order_by(EdgeLifecycleRecord.device_id).all()
-        ],
-        "edge_credential_inventory": [
-            {
-                "device_id": row.device_id,
-                "trust_path": row.trust_path,
-                "credential_id": row.credential_id,
-                "key_type": row.key_type,
-                "status": row.status,
-                "legacy_path": bool(row.legacy_path),
-                "private_key_location": row.private_key_location,
-                "storage": row.storage,
-                "revocation": row.revocation,
-            }
-            for row in db.query(EdgeCredentialInventory).order_by(
-                EdgeCredentialInventory.device_id,
-                EdgeCredentialInventory.trust_path,
-            ).all()
-        ],
+        "edge_lifecycle": lifecycle_summary["edge_lifecycle"],
+        "edge_credential_inventory": lifecycle_summary["edge_credential_inventory"],
         "summary": counts,
         "controls": controls,
         "cleanup_candidates": cleanup_candidates,
@@ -3607,72 +3455,6 @@ def list_key_management(
             "trusted_release_signers": trusted_release_signers,
             "edge_acceptance_rule": "Edge must verify manifest signature, artifact sha256 and signer fingerprint before install.",
         },
-    }
-
-
-@app.post("/api/admin/edge-lifecycle/reconcile")
-def reconcile_edge_lifecycle_inventory(
-    current_user=require_role("super_admin", "admin"),
-    db: Session = Depends(get_db),
-):
-    """WP-1 compatibility migration: record lifecycle and credential inventory."""
-    from services.edge_lifecycle import reconcile_all_devices, legacy_credential_paths_remaining
-
-    summary = reconcile_all_devices(db, actor=current_user.username)
-    db.commit()
-    return {
-        "ok": True,
-        "summary": summary,
-        "legacy_credential_paths_remaining": legacy_credential_paths_remaining(db),
-    }
-
-
-@app.post("/api/admin/edge-lifecycle/{device_id}/transition")
-def transition_edge_lifecycle_state(
-    device_id: str,
-    payload: EdgeLifecycleTransitionPayload,
-    current_user=require_role("super_admin", "admin"),
-    db: Session = Depends(get_db),
-):
-    """Canonical WP-1 transition endpoint for revoke/recover/retire semantics."""
-    from services.edge_lifecycle import LifecycleTransitionError, get_or_create_lifecycle_record, transition_lifecycle
-
-    device_id = _sanitize_device_id(device_id)
-    device = db.query(Device).filter_by(device_id=device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Edge ikke fundet")
-    record = get_or_create_lifecycle_record(db, device, actor=current_user.username)
-    try:
-        transition = transition_lifecycle(
-            db,
-            record,
-            payload.state,
-            actor=current_user.username,
-            reason=payload.reason,
-        )
-    except LifecycleTransitionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    if payload.state in {"revoked", "retired"}:
-        for credential in db.query(KeyCredential).filter_by(entity_type="edge", entity_id=device_id, status="active").all():
-            credential.status = "revoked"
-            credential.revoked_at = now_utc()
-            credential.revoked_by = current_user.username
-            credential.revoke_reason = payload.reason
-            _audit_key_event(db, credential, "revoked_by_lifecycle", current_user.username, {
-                "device_id": device_id,
-                "lifecycle_state": payload.state,
-                "reason": payload.reason,
-            })
-        device.api_token = None
-        device.status = payload.state
-    _reconcile_edge_lifecycle(db, device, actor=current_user.username, reason=payload.reason)
-    db.commit()
-    return {
-        "ok": True,
-        "device_id": device_id,
-        "from_state": transition.from_state,
-        "to_state": transition.to_state,
     }
 
 
@@ -15144,13 +14926,7 @@ def prepare_edge_provisioning(
     device.site_name = payload.site_name or device.site_name
     device.camera_name = payload.camera_name or device.camera_name
     device.location_name = payload.location_name or location_name
-    lifecycle_summary = _reconcile_edge_lifecycle(
-        db,
-        device,
-        actor=current_user.username,
-        target_state="prepared",
-        reason="Edge provisioning prepared",
-    )
+    lifecycle_summary = _reconcile_edge_lifecycle(db, device, actor=current_user.username, target_state="prepared", reason="Edge provisioning prepared")
     try:
         cfg = json.loads(device.device_config or "{}")
     except Exception:
@@ -17345,10 +17121,12 @@ app.include_router(capture_access_router)
 from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
+from api.edge_lifecycle_api import create_edge_lifecycle_router
 app.include_router(customer_risk_api.router)
 app.include_router(grc_register_api.router)
 app.include_router(storage_api.router)
 app.include_router(headend_generator_api.router)
+app.include_router(create_edge_lifecycle_router(require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle))
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).

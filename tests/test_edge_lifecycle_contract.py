@@ -142,18 +142,19 @@ def test_device_auth_fails_closed_for_revoked_lifecycle_state():
     source = (ROOT / "headend" / "main.py").read_text(encoding="utf-8")
     verify_block = source.split("async def _verify_device_token(", 1)[1].split("async def _verify_payload_device_token(", 1)[0]
 
-    assert "EdgeLifecycleRecord" in verify_block
-    assert '{"quarantined", "revoked", "retired"}' in verify_block
-    assert "Edge lifecycle state afviser API-adgang" in verify_block
-    assert "find_active_api_credential" in verify_block
-    assert "migrate_legacy_api_token_to_inventory" in verify_block
+    assert "resolve_device_api_credential" in verify_block
+    service_source = (ROOT / "headend" / "services" / "edge_lifecycle.py").read_text(encoding="utf-8")
+    assert "Edge lifecycle state afviser API-adgang" in service_source
+    assert '{"quarantined", "revoked", "retired"}' in service_source
+    assert "migrate_legacy_api_token_to_inventory" in service_source
 
 
 def test_retired_lifecycle_state_rejects_device_api_auth():
     source = (ROOT / "headend" / "main.py").read_text(encoding="utf-8")
     verify_block = source.split("async def _verify_device_token(", 1)[1].split("async def _verify_payload_device_token(", 1)[0]
+    service_source = (ROOT / "headend" / "services" / "edge_lifecycle.py").read_text(encoding="utf-8")
 
-    assert '"retired"' in verify_block
+    assert '"retired"' in service_source
     assert "raise HTTPException(status_code=401" in verify_block
 
 
