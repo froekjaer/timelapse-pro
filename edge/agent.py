@@ -2116,10 +2116,15 @@ class EdgeAgent:
             # Include last camera diagnostics from capture cycle
             if hasattr(self, "_last_cam_diag") and self._last_cam_diag:
                 diag_data["camera"] = self._last_cam_diag
+            ssh_host_identity = self._collect_ssh_host_identity()
+            if ssh_host_identity:
+                diag_data["trust"] = {**diag_data.get("trust", {}), "ssh_host_identity": ssh_host_identity}
 
             ok, hb_resp = self._api.send_heartbeat(diag_data, capture_stats)
             if ok:
                 log.info("Heartbeat sent OK")
+                if ssh_host_identity:
+                    self._report_ssh_host_identity(ssh_host_identity)
                 self._connectivity.report_success()
                 # NTP: synkroniser systemtid fra headend
                 self._sync_time_from_headend(hb_resp)
@@ -2140,6 +2145,40 @@ class EdgeAgent:
             self._last_heartbeat = datetime.now(timezone.utc)
             if check_updates and self._running and not self._stop_event.is_set():
                 self._check_and_apply_updates()
+
+    def _collect_ssh_host_identity(self) -> dict | None:
+        """Collect read-only SSH server host public-key fingerprints."""
+        try:
+            import tempfile
+            import time as _time
+            from service_operations import create_service_platform
+            from service_platform import EdgeServiceGrantRef, Principal
+
+            with tempfile.TemporaryDirectory(prefix="tlp-ssh-host-id-") as state_dir:
+                platform = create_service_platform(base_dir=self._cfg_mgr.base_dir, state_dir=Path(state_dir))
+                session = platform.start_session(
+                    principal=Principal("edge-agent", "system", frozenset({"trust.read"})),
+                    grant=EdgeServiceGrantRef("edge-agent-ssh-host-identity", _time.time() + 60),
+                    idle_timeout_s=60,
+                    absolute_timeout_s=60,
+                )
+                return platform.call("trust.ssh_host_identity", session=session)
+        except Exception as exc:
+            log.warning("SSH host identity collection failed: %s", exc)
+            return None
+
+    def _report_ssh_host_identity(self, evidence: dict) -> None:
+        try:
+            ok, result = self._api.report_ssh_host_identity(evidence)
+            if ok:
+                log.info(
+                    "SSH host identity evidence reported: observed=%s",
+                    result.get("observed") if isinstance(result, dict) else "?",
+                )
+            else:
+                log.warning("SSH host identity evidence report failed")
+        except Exception as exc:
+            log.warning("SSH host identity evidence report error: %s", exc)
 
     def _sync_time_from_headend(self, hb_resp: dict | None) -> None:
         """Synkroniser systemtid fra headend server_time. Kræver root."""

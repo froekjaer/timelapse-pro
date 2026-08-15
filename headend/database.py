@@ -768,6 +768,27 @@ class EdgeCredentialInventory(Base):
     updated_at            = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
+class EdgeSshHostIdentityEvidence(Base):
+    """Read-only evidence from an authenticated Edge about its SSH server host public keys."""
+    __tablename__ = "edge_ssh_host_identity_evidence"
+
+    id                  = Column(Integer, primary_key=True)
+    device_id           = Column(String(50), nullable=False, index=True)
+    key_type            = Column(String(30), nullable=False, index=True)
+    fingerprint         = Column(String(128), nullable=False, index=True)
+    public_key_path     = Column(String(300), nullable=False)
+    hostname            = Column(String(120))
+    observed_at         = Column(DateTime(timezone=True), nullable=False, index=True)
+    reported_at         = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    evidence_source     = Column(String(80), nullable=False, default="authenticated_edge_report", index=True)
+    software_version    = Column(String(100))
+    source_commit       = Column(String(64))
+    release_artifact_id = Column(String(80))
+    status              = Column(String(30), nullable=False, default="observed", index=True)
+    trusted_state       = Column(String(30), nullable=False, default="untrusted_observed", index=True)
+    raw_evidence_json   = Column(Text)
+
+
 class CaptureAccessLog(Base):
     """GDPR-adgangslog pr. billede (GO_LIVE_CHECKLIST_v10.md §G-05).
 

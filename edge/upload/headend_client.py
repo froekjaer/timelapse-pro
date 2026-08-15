@@ -556,6 +556,15 @@ class HeadendClient:
             return True, {"inserted": 0, "duplicates": 0}
         return self._post(f"/siem/events/{self._device_id}", {"events": events})
 
+    def report_ssh_host_identity(self, evidence: dict) -> tuple[bool, Optional[dict]]:
+        """Report read-only SSH server host public-key fingerprints to Headend."""
+        payload = {
+            "device_id": self._device_id,
+            "evidence_source": "authenticated_edge_report",
+            "evidence": evidence,
+        }
+        return self._post(f"/trust/ssh-host-identity/{self._device_id}", payload)
+
     # ── HTTP helpers ──────────────────────────────────────────────────────────
 
     def _get(self, path: str) -> tuple[bool, Optional[dict]]:

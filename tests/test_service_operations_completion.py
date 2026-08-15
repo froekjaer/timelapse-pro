@@ -1,4 +1,6 @@
 import time
+import base64
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
@@ -40,6 +42,7 @@ EXPECTED_COMPLETION_OPERATIONS = {
     "timelapse.service.status",
     "timelapse.service.restart",
     "certificate.trust.status",
+    "trust.ssh_host_identity",
     "software.update.status",
     "diagnostic.bundle",
     "system.reboot",
@@ -271,6 +274,87 @@ def test_certificate_trust_status_fails_missing_certificate(tmp_path):
 
     assert status["ok"] is False
     assert status["error"] == "management certificate missing"
+
+
+def _openssh_ed25519_public_key(seed: bytes = b"a" * 32) -> tuple[str, str]:
+    blob = (
+        len(b"ssh-ed25519").to_bytes(4, "big")
+        + b"ssh-ed25519"
+        + len(seed).to_bytes(4, "big")
+        + seed
+    )
+    public_key = f"ssh-ed25519 {base64.b64encode(blob).decode('ascii')} test-host"
+    fingerprint = base64.b64encode(hashlib.sha256(blob).digest()).decode("ascii").rstrip("=")
+    return public_key, f"SHA256:{fingerprint}"
+
+
+def test_ssh_host_identity_reports_deterministic_public_fingerprint_only(tmp_path):
+    public_key, expected = _openssh_ed25519_public_key()
+    key_path = tmp_path / "ssh_host_ed25519_key.pub"
+    key_path.write_text(public_key, encoding="utf-8")
+    (tmp_path / "bootstrap.yaml").write_text("device_id: TL-TESTEDGE\n", encoding="utf-8")
+    (tmp_path / ".timelapse-release.json").write_text(
+        '{"artifact_id":"TL-ART-TEST","source_commit":"abc123","version":"v-test"}',
+        encoding="utf-8",
+    )
+    backend = ServiceOperations(base_dir=tmp_path)
+
+    result = backend.trust_ssh_host_identity(None, None, {"host_key_paths": [key_path]})
+
+    assert result["ok"] is True
+    assert result["device_id"] == "TL-TESTEDGE"
+    assert result["software"]["artifact_id"] == "TL-ART-TEST"
+    assert result["keys"] == [{
+        "path": str(key_path),
+        "status": "observed",
+        "key_type": "ED25519",
+        "fingerprint_sha256": expected,
+    }]
+    serialized = str(result)
+    assert public_key not in serialized
+    assert "PRIVATE" not in serialized
+
+
+def test_ssh_host_identity_never_reads_private_host_keys(tmp_path):
+    private_path = tmp_path / "ssh_host_ed25519_key"
+    private_path.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n", encoding="utf-8")
+    backend = ServiceOperations(base_dir=tmp_path)
+
+    result = backend.trust_ssh_host_identity(None, None, {"host_key_paths": [private_path]})
+
+    assert result["ok"] is False
+    assert result["keys"][0]["status"] == "invalid"
+    assert result["deviations"][0]["reason"] == "invalid_public_host_key"
+    assert "private SSH host key paths are not allowed" in result["deviations"][0]["error"]
+    assert "secret" not in str(result)
+
+
+def test_ssh_host_identity_handles_missing_host_key_explicitly(tmp_path):
+    missing = tmp_path / "ssh_host_ed25519_key.pub"
+    backend = ServiceOperations(base_dir=tmp_path)
+
+    result = backend.trust_ssh_host_identity(None, None, {"host_key_paths": [missing]})
+
+    assert result["ok"] is False
+    assert result["keys"] == [{"path": str(missing), "status": "missing"}]
+    assert result["deviations"] == [{
+        "path": str(missing),
+        "severity": "deviation",
+        "reason": "missing_public_host_key",
+    }]
+
+
+def test_ssh_host_identity_reports_malformed_public_key_as_failure(tmp_path):
+    malformed = tmp_path / "ssh_host_ed25519_key.pub"
+    malformed.write_text("ssh-ed25519 not-base64", encoding="utf-8")
+    backend = ServiceOperations(base_dir=tmp_path)
+
+    result = backend.trust_ssh_host_identity(None, None, {"host_key_paths": [malformed]})
+
+    assert result["ok"] is False
+    assert result["keys"][0]["status"] == "invalid"
+    assert result["deviations"][0]["severity"] == "fail"
+    assert result["deviations"][0]["reason"] == "invalid_public_host_key"
 
 
 def test_ui_and_cli_route_through_shared_service_operations_backend():

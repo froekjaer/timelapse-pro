@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import os
 import platform as platform_module
+import base64
+import hashlib
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -32,6 +35,11 @@ from service_platform import ServicePlatform
 EDGE_ROOT = Path(os.getenv("TIMELAPSE_EDGE_ROOT", Path(__file__).resolve().parent))
 EDGE_DIR = Path(os.getenv("TIMELAPSE_EDGE_DIR", "/opt/timelapse/edge"))
 SERVICE_NAME = os.getenv("TIMELAPSE_EDGE_SERVICE", "timelapse-edge")
+SSH_HOST_PUBLIC_KEY_PATHS = (
+    Path("/etc/ssh/ssh_host_ed25519_key.pub"),
+    Path("/etc/ssh/ssh_host_ecdsa_key.pub"),
+    Path("/etc/ssh/ssh_host_rsa_key.pub"),
+)
 
 CAMERA_CONFIG_PATHS = {
     "battery": "/main/status/batterylevel",
@@ -105,6 +113,7 @@ class ServiceOperations:
             "timelapse.service.status": self.timelapse_service_status,
             "timelapse.service.restart": self.timelapse_service_restart,
             "certificate.trust.status": self.certificate_trust_status,
+            "trust.ssh_host_identity": self.trust_ssh_host_identity,
             "software.update.status": self.software_update_status,
             "diagnostic.bundle": self.diagnostic_bundle,
             "system.reboot": self.system_reboot,
@@ -385,6 +394,54 @@ class ServiceOperations:
                 "known_hosts": {"path": str(known_hosts), "exists": known_hosts.exists()},
             }
 
+    def trust_ssh_host_identity(self, _platform, _session, kwargs: dict[str, Any]):
+        paths = kwargs.get("host_key_paths") or SSH_HOST_PUBLIC_KEY_PATHS
+        device_id = self._identity_section().get("device_id") or "TL-UNKNOWN"
+        observed_at = _now()
+        keys = []
+        deviations = []
+
+        for raw_path in paths:
+            path = Path(str(raw_path))
+            try:
+                self._assert_public_host_key_path(path)
+                if not path.exists():
+                    deviations.append({
+                        "path": str(path),
+                        "severity": "deviation",
+                        "reason": "missing_public_host_key",
+                    })
+                    keys.append({"path": str(path), "status": "missing"})
+                    continue
+                key_info = self._read_ssh_public_host_key(path)
+                keys.append({
+                    "path": str(path),
+                    "status": "observed",
+                    "key_type": key_info["key_type"],
+                    "fingerprint_sha256": key_info["fingerprint_sha256"],
+                })
+            except Exception as exc:
+                deviations.append({
+                    "path": str(path),
+                    "severity": "fail",
+                    "reason": "invalid_public_host_key",
+                    "error": str(exc),
+                })
+                keys.append({"path": str(path), "status": "invalid", "error": str(exc)})
+
+        observed = [item for item in keys if item.get("status") == "observed"]
+        return {
+            "ok": bool(observed) and not any(item.get("severity") == "fail" for item in deviations),
+            "operation": "trust.ssh_host_identity",
+            "schema": "timelapse.edge.ssh_host_identity.v1",
+            "device_id": device_id,
+            "hostname": socket.gethostname(),
+            "observed_at": observed_at,
+            "software": self.software_update_status(_platform, _session, kwargs).get("release", {}),
+            "keys": keys,
+            "deviations": deviations,
+        }
+
     def software_update_status(self, _platform, _session, _kwargs):
         receipt = self._read_json(self.base_dir / ".timelapse-release.json")
         return {"ok": True, "release": receipt, "git_commit": os.getenv("TIMELAPSE_GIT_COMMIT", "")}
@@ -637,6 +694,40 @@ class ServiceOperations:
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+
+    def _assert_public_host_key_path(self, path: Path) -> None:
+        name = path.name
+        if path.suffix != ".pub":
+            raise ValueError("private SSH host key paths are not allowed")
+        if not name.startswith("ssh_host_") or not name.endswith("_key.pub"):
+            raise ValueError("only SSH public host key paths are allowed")
+
+    def _read_ssh_public_host_key(self, path: Path) -> dict[str, str]:
+        text = path.read_text(encoding="utf-8").strip()
+        parts = text.split()
+        if len(parts) < 2:
+            raise ValueError("malformed OpenSSH public key")
+        key_type, key_blob_b64 = parts[0], parts[1]
+        if key_type not in {"ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-rsa"}:
+            raise ValueError(f"unsupported SSH host key type: {key_type}")
+        try:
+            key_blob = base64.b64decode(key_blob_b64.encode("ascii"), validate=True)
+        except Exception as exc:
+            raise ValueError("malformed OpenSSH public key blob") from exc
+        fingerprint = base64.b64encode(hashlib.sha256(key_blob).digest()).decode("ascii").rstrip("=")
+        return {
+            "key_type": self._ssh_key_type_label(key_type),
+            "fingerprint_sha256": f"SHA256:{fingerprint}",
+        }
+
+    def _ssh_key_type_label(self, key_type: str) -> str:
+        if key_type == "ssh-ed25519":
+            return "ED25519"
+        if key_type == "ssh-rsa":
+            return "RSA"
+        if key_type.startswith("ecdsa-"):
+            return "ECDSA"
+        return key_type
 
     def _identity_section(self) -> dict[str, Any]:
         bootstrap = self._read_yaml(self.base_dir / "bootstrap.yaml")

@@ -119,6 +119,7 @@ OPERATION_CAPABILITIES = {
     "timelapse.service.status": "system.read",
     "timelapse.service.restart": "system.service.restart",
     "certificate.trust.status": "trust.read",
+    "trust.ssh_host_identity": "trust.read",
     "software.update.status": "software.read",
     "diagnostic.bundle": "system.logs",
     "system.reboot": "system.reboot",
