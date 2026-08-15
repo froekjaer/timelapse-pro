@@ -1707,3 +1707,11 @@ person vide".
 - **Klienter:** `edge/tools/bootstrap_cli.py` routes maintenance camera work gennem `ServicePlatform.call(operation_name, ...)`; `/mgmt/technician` viser den samme shared Service Session status og bruger live-view operations; LAB Mode acquires camera power lease og invalidates session ved LAB disable.
 - **Status:** UI og CLI viser samme Service Session felter: login, camera relay, camera detected, PTP, Live View, config dirty, session/grant expiry og last activity.
 - **Tests:** WP-3 contract/routing/LAB/live-video/release regressions passerer lokalt. Dokumenteret i `Dokumentation/WP3_UNIFIED_TECHNICIAN_PLATFORM_2026-08.md`.
+
+### Handover 2026-08-15 — Codex: Technician Experience completion på WP-3 baseline
+- **Merge-sekvens:** PR #16 blev merged først som isoleret scheduler scheduled-slot fix. PR #17 blev derefter rebased på ny `main`, CI-kørt og merged som WP-3 Unified Technician Platform baseline.
+- **Backend completion:** `edge/service_operations.py` samler konkrete Service Operations handlers for camera, live view, test capture, config, focus/exposure, image quality, modem, network, storage, system health, TimeLapse service restart/status, certificate/trust, software/update, diagnostic bundle og CommissioningReport v1.
+- **UI/CLI parity:** `tlservice`/`bootstrap_cli.py` har generic `--service-operation` og `--commissioning-report`; `/mgmt/technician` bruger samme backend for live view og technician actions. Normal shell/browser terminal er ikke udvidet.
+- **CommissioningReport v1:** `commissioning.run` returnerer `PASS`, `PASS WITH DEVIATIONS` eller `FAIL` med sektioner for identity, hardware, camera, test capture, image quality, modem/network, GPS/time, storage, certificates, Headend connectivity, software, technician og deviations.
+- **Safety:** CameraPowerLease har acquire/cleanup hooks, så kamera-relæ aktiveres gennem lease-manageren og slukkes ved `release_after`/invalidation. Grant revoke/expiry cleanup-kontrakten er bevaret.
+- **Acceptance gate:** Se `Dokumentation/WP3_UNIFIED_TECHNICIAN_PLATFORM_2026-08.md` for dækkede/manglende operations, capability matrix, UI/CLI parity og safety cleanup status.

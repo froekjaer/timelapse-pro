@@ -98,6 +98,9 @@ CLI_ALLOWED_FLAGS = {
     "--qa-image",
     "--maintenance",
     "--service-status",
+    "--service-operation",
+    "--service-param",
+    "--commissioning-report",
 }
 PHOTO_VALUE_OPTIONS = {
     "exposure_comp": ["-2", "-1.7", "-1.3", "-1", "-0.7", "-0.3", "0", "+0.3", "+0.7", "+1", "+1.3", "+1.7", "+2"],
@@ -111,6 +114,15 @@ PHOTO_VALUE_OPTIONS = {
         "JPEG Basic", "JPEG Normal", "JPEG Fine", "NEF (Raw)",
         "NEF+Basic", "NEF+Normal", "NEF+Fine",
     ],
+}
+PHOTO_SETTING_PATHS = {
+    "exposure_comp": "/main/capturesettings/exposurecompensation",
+    "iso": "/main/imgsettings/iso",
+    "white_balance": "/main/imgsettings/whitebalance",
+    "shutter_speed": "/main/capturesettings/shutterspeed",
+    "aperture": "/main/capturesettings/f-number",
+    "focus_mode": "/main/capturesettings/focusmode",
+    "image_format": "/main/imgsettings/imageformat",
 }
 CAMERA_CONFIG_OPTIONS = [
     ("/main/capturesettings/exposurecompensation", "Eksponeringskompensation"),
@@ -183,35 +195,9 @@ def _service_session_snapshot() -> dict:
 
 
 def _service_platform_with_ui_handlers():
-    from service_platform import ServicePlatform
+    from service_operations import create_service_platform
 
-    platform = ServicePlatform()
-
-    def live_start(_platform, _session, kwargs):
-        status = VIDEO_MANAGER.start(
-            max_duration_s=int(kwargs.get("max_duration_s", 180)),
-            preview_interval_s=float(kwargs.get("preview_interval_s", 0.8)),
-        )
-        if status.get("status") == "error":
-            raise RuntimeError(status.get("error") or "Live View kunne ikke startes")
-        return {"ok": True, "status": status}
-
-    def live_stop(_platform, _session, kwargs):
-        status = VIDEO_MANAGER.stop(
-            join_timeout_s=float(kwargs.get("join_timeout_s", 45)),
-            reason=str(kwargs.get("reason", "manual")),
-        )
-        if status.get("status") == "error":
-            raise RuntimeError(status.get("error") or "Live View kunne ikke stoppes")
-        return {"ok": True, "status": status}
-
-    def cleanup_live(_platform, _session, reason):
-        VIDEO_MANAGER.stop(join_timeout_s=45, reason=reason)
-
-    platform.register_handler("camera.live.start", live_start)
-    platform.register_handler("camera.live.stop", live_stop)
-    platform.register_cleanup_handler("LiveViewLease", cleanup_live)
-    return platform
+    return create_service_platform(base_dir=EDGE_ROOT, live_manager=VIDEO_MANAGER)
 
 
 def _service_session_panel() -> str:
@@ -1276,13 +1262,13 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
     )
     buttons = [
         ("--status", "Overblik"),
-        ("--network-status", "Netværk"),
+        ("--service-operation network.diagnostics", "Netværk"),
         ("--test-headend", "Headend"),
-        ("--camera-summary --maintenance", "Kamera"),
-        ("--photo-status --maintenance", "Fotostatus"),
+        ("--service-operation camera.diagnostics", "Kamera"),
+        ("--service-operation camera.config.read", "Fotostatus"),
         ("--gps-status", "GPS"),
         ("--npu-status", "NPU"),
-        ("--doctor", "Doctor"),
+        ("--commissioning-report", "Commissioning"),
     ]
     quick = "".join(
         f'<button name="command" value="{html.escape(cmd)}">{html.escape(label)}</button>'
@@ -1982,25 +1968,15 @@ async def mgmt_technician_post_target_get_fallback(request: Request):
 @app.post("/mgmt/technician/action", response_class=HTMLResponse)
 async def mgmt_technician_action(request: Request, action: str = Form(...)):
     mapping = {
-        "doctor": ["--doctor"],
-        "camera-summary": ["--camera-summary", "--maintenance"],
+        "doctor": ["--commissioning-report"],
+        "camera-summary": ["--service-operation", "camera.diagnostics"],
         "gps": ["--gps-status"],
         "npu": ["--npu-status"],
-        "logs": [],
+        "logs": ["--service-operation", "system.logs"],
         "headend": ["--test-headend"],
-        "autofocus": ["--autofocus", "--maintenance"],
-        "photo-status": ["--photo-status", "--maintenance"],
+        "autofocus": ["--service-operation", "camera.focus.auto"],
+        "photo-status": ["--service-operation", "camera.config.read"],
     }
-    if action == "logs":
-        try:
-            result = subprocess.run(
-                ["journalctl", "--no-pager", "-u", "timelapse-edge", "-n", "160"],
-                capture_output=True, text=True, timeout=15,
-            )
-            output = (result.stdout or result.stderr or "").strip()
-            return HTMLResponse(_technician_page("Service logs hentet", output))
-        except Exception as exc:
-            return HTMLResponse(_technician_page("Service logs fejlede", str(exc)))
     args = mapping.get(action)
     if args is None:
         return HTMLResponse(_technician_page("Ukendt handling", action), status_code=400)
@@ -2013,7 +1989,7 @@ async def mgmt_technician_focus(request: Request, value: str = Form("")):
     value = (value or "").strip()
     if not value:
         return HTMLResponse(_technician_page("Focus drive mangler", "Skriv fx Near 1, Far 1 eller 500 i feltet."))
-    ok, output = _run_tech_cli("--focus-drive", value, "--maintenance", timeout=90)
+    ok, output = _run_tech_cli("--service-operation", "camera.focus.manual", "--service-param", f"value={value}", timeout=90)
     return HTMLResponse(_technician_page("Focus drive sendt" if ok else "Focus drive fejlede", output))
 
 
@@ -2023,19 +1999,20 @@ async def mgmt_technician_photo(request: Request, key: str = Form(...), value: s
     value = (value_manual or value or "").strip()
     if not key or not value:
         return HTMLResponse(_technician_page("Fotoparameter mangler", "Vælg parameter og skriv ny værdi."))
-    ok, output = _run_tech_cli("--photo-setting", key, value, "--maintenance", timeout=90)
+    path = PHOTO_SETTING_PATHS.get(key, key)
+    ok, output = _run_tech_cli("--service-operation", "camera.config.set_temporary", "--service-param", f"path={path}", "--service-param", f"value={value}", timeout=90)
     return HTMLResponse(_technician_page("Fotoparameter sat" if ok else "Fotoparameter fejlede", output))
 
 
 @app.post("/mgmt/technician/config", response_class=HTMLResponse)
 async def mgmt_technician_config(request: Request, path: str = Form(...), value: str = Form(...)):
-    ok, output = _run_tech_cli("--set-camera-config", path, value, "--maintenance", timeout=90)
+    ok, output = _run_tech_cli("--service-operation", "camera.config.set_temporary", "--service-param", f"path={path}", "--service-param", f"value={value}", timeout=90)
     return HTMLResponse(_technician_page("Kamera config sat" if ok else "Kamera config fejlede", output))
 
 
 @app.post("/mgmt/technician/capture", response_class=HTMLResponse)
 async def mgmt_technician_capture(request: Request, out_dir: str = Form("/tmp/timelapse-tech-captures")):
-    ok, output = _run_tech_cli("--capture-test", out_dir, "--maintenance", timeout=150)
+    ok, output = _run_tech_cli("--service-operation", "camera.capture.test", "--service-param", f"out_dir={out_dir}", timeout=150)
     return HTMLResponse(_technician_page("Testbillede taget" if ok else "Testbillede fejlede", output))
 
 
