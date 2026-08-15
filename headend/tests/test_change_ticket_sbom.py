@@ -18,13 +18,6 @@ brugt begge steder.
 Kører direkte mod den faktiske kode i `headend/main.py` med en frisk SQLite-
 database (samme mønster som `test_report_update_rollup.py`) — ingen live
 Postgres/headend rørt.
-
-Kør (fra headend/):
-    python3 -m venv /tmp/hvenv
-    /tmp/hvenv/bin/pip install fastapi==0.136.1 sqlalchemy==2.0.49 \
-        "python-jose[cryptography]==3.5.0" bcrypt==5.0.0 passlib==1.7.4 \
-        slowapi==0.1.9 python-multipart==0.0.27 python-dotenv pytest httpx
-    /tmp/hvenv/bin/python3 -m pytest tests/test_change_ticket_sbom.py -v
 """
 import json
 import os
@@ -34,7 +27,7 @@ import pathlib
 
 import pytest
 
-HERE = pathlib.Path(__file__).resolve().parent.parent  # headend/
+HERE = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
 _TMP_DB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -85,6 +78,10 @@ def _make_update(session, update_type="app_security", severity="high", status="p
 
 
 def _make_artifact(session, artifact_id="art-1", sbom_ref="sbom:dev-1:2026-07-05T00:00:00Z"):
+    # This suite tests SBOM/change-ticket document binding, not crypto itself.
+    # Use structurally PGP-signed test evidence so the fail-closed deployability
+    # gate does not accept an unsigned dummy. Real OpenPGP verification is
+    # covered separately by tests/test_artifact_openpgp_verification.py.
     artifact = database.UpdateArtifact(
         artifact_id=artifact_id,
         artifact_type="app",
@@ -93,7 +90,12 @@ def _make_artifact(session, artifact_id="art-1", sbom_ref="sbom:dev-1:2026-07-05
         source_ref="ci-run-1",
         sha256="a" * 64,
         sbom_ref=sbom_ref,
+        signature="-----BEGIN PGP SIGNATURE-----\nci-test-signature\n-----END PGP SIGNATURE-----",
         signed_by="ci-signer",
+        manifest_json=json.dumps({
+            "schema": "timelapse.update_artifact.v1",
+            "source": {"commit": "deadbeef", "dirty_worktree": False},
+        }),
     )
     session.add(artifact)
     session.commit()
@@ -130,14 +132,10 @@ def test_build_change_ticket_without_artifact_has_no_stale_sbom_claim(db_session
 
 def test_bind_artifact_to_existing_ticket_resigns_document_with_sbom(db_session):
     """Kernescenariet for buggen: en ticket oprettes FØR artifactet findes
-    (fx via /api/updates/{id}/create-change-ticket), og artifactet bindes
-    BAGEFTER via bind-artifact. Det signerede dokument skal opdateres til at
-    indeholde SBOM-referencen, og content_sha256/signature skal ændre sig
-    tilsvarende (ikke blive stående og pege på et forældet dokument)."""
+    og artifactet bindes BAGEFTER. Det signerede dokument skal opdateres."""
     user = _make_user(db_session)
     update = _make_update(db_session, update_type="app_updates")
 
-    # Ticket oprettes uden artifact (matcher create_change_ticket_for_update).
     ticket = main._build_change_ticket(update, main.ChangeTicketPayload(), user, None)
     db_session.add(ticket)
     db_session.commit()
@@ -160,16 +158,12 @@ def test_bind_artifact_to_existing_ticket_resigns_document_with_sbom(db_session)
     assert machine["artifact"]["sbom_ref"] == "sbom:late-bound"
     assert ticket.sbom_ref == "sbom:late-bound"
     assert "sbom:late-bound" in ticket.human_readable_md
-    # Dokumentet er reelt et andet nu (SBOM tilføjet) -> hash/signatur SKAL
-    # være genberegnet, ikke stå og pege på det gamle (artifact-løse) indhold.
     assert ticket.content_sha256 != original_sha
     assert ticket.signature != original_sig
 
 
 def test_bind_artifact_preserves_original_creator_and_ticket_id(db_session):
-    """Re-signering ved sen artifact-binding må ikke ændre hvem/hvornår
-    ticketen oprindeligt blev oprettet af, eller dens ticket_id — kun
-    dokumentets indhold og signaturen opdateres."""
+    """Re-signering ved sen artifact-binding må ikke ændre oprindelig creator/id."""
     user = _make_user(db_session, username="creator1")
     other_user = _make_user(db_session, username="binder1")
     update = _make_update(db_session, update_type="app_updates")
