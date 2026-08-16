@@ -11433,8 +11433,6 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
         raise HTTPException(status_code=400, detail="Ingen billeder valgt")
     if len(frame_ids) > 100_000 or any(not isinstance(frame_id, int) for frame_id in frame_ids):
         raise HTTPException(status_code=422, detail="Ugyldig eller for stor frame-liste")
-    if options.exposure_ramping and len(frame_ids) > 5000:
-        raise HTTPException(status_code=422, detail="exposure_ramping er i øjeblikket begrænset til 5000 billeder pr. render")
 
     # Hent billeder fra DB
     frames = db.query(Capture).filter(
