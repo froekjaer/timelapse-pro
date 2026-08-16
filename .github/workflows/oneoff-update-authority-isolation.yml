@@ -1,0 +1,400 @@
+name: One-off update authority isolation patch
+
+on:
+  push:
+    branches:
+      - fix/update-authority-isolation
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: fix/update-authority-isolation
+
+      - name: Apply scoped H-1/H-2/H-3 patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('headend/main.py')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''def _parse_target_device_ids(value: str | None) -> list[str]:
+              if not value:
+                  return []
+              try:
+                  parsed = json.loads(value)
+                  return [str(v) for v in parsed] if isinstance(parsed, list) else []
+              except Exception:
+                  return []
+
+
+          def _update_applies_to_device(update: PendingUpdate, device: Device | None, inv: DeviceInventory) -> bool:
+              target_ids = _parse_target_device_ids(update.target_device_ids)
+              if target_ids:
+                  return inv.device_id in target_ids
+              if update.scope == "global":
+                  return True
+              if update.scope == "device":
+                  return update.scope_id == inv.device_id
+              if update.scope == "customer" and device:
+                  return update.scope_id == device.customer_id
+              if update.scope == "site" and device:
+                  return update.scope_id == device.site_id
+              return False
+          '''
+          new = '''def _parse_target_device_ids(value: str | None) -> list[str]:
+              if not value:
+                  return []
+              try:
+                  parsed = json.loads(value)
+                  return [str(v) for v in parsed] if isinstance(parsed, list) else []
+              except Exception:
+                  return []
+
+
+          def _normalise_update_environment(value: str | None) -> str | None:
+              environment = str(value or "production").strip().lower()
+              environment = {
+                  "test": "lab",
+                  "rd": "lab",
+                  "dev": "lab",
+                  "prod": "production",
+              }.get(environment, environment)
+              return environment if environment in {"lab", "staging", "production"} else None
+
+
+          def _update_environment_applies_to_device(update: PendingUpdate, inv: DeviceInventory) -> bool:
+              update_environment = _normalise_update_environment(update.environment)
+              device_environment = _normalise_update_environment(inv.environment)
+              return bool(update_environment and device_environment and update_environment == device_environment)
+
+
+          def _update_applies_to_device(update: PendingUpdate, device: Device | None, inv: DeviceInventory) -> bool:
+              if not _update_environment_applies_to_device(update, inv):
+                  return False
+              target_ids = _parse_target_device_ids(update.target_device_ids)
+              if target_ids:
+                  return inv.device_id in target_ids
+              if update.scope == "global":
+                  return True
+              if update.scope == "device":
+                  return update.scope_id == inv.device_id
+              if update.scope == "customer" and device:
+                  return update.scope_id == device.customer_id
+              if update.scope == "site" and device:
+                  return update.scope_id == device.site_id
+              return False
+          '''
+          if old not in text:
+              raise SystemExit('target helper anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''def _resolve_update_targets(db: Session, update: PendingUpdate) -> list[Device]:
+              if update.target_device_ids:
+                  ids = json.loads(update.target_device_ids)
+                  return db.query(Device).filter(Device.device_id.in_(ids)).all()
+              if update.scope == "global":
+                  return db.query(Device).all()
+              if update.scope == "customer" and update.scope_id:
+                  return db.query(Device).filter(Device.customer_id == update.scope_id).all()
+              if update.scope == "site" and update.scope_id:
+                  return db.query(Device).filter(Device.site_id == update.scope_id).all()
+              if update.scope == "device" and update.scope_id:
+                  device = db.query(Device).filter_by(device_id=update.scope_id).first()
+                  return [device] if device else []
+              return []
+          '''
+          new = '''def _resolve_update_targets(db: Session, update: PendingUpdate) -> list[Device]:
+              if update.target_device_ids:
+                  ids = _parse_target_device_ids(update.target_device_ids)
+                  devices = db.query(Device).filter(Device.device_id.in_(ids)).all() if ids else []
+              elif update.scope == "global":
+                  devices = db.query(Device).all()
+              elif update.scope == "customer" and update.scope_id:
+                  devices = db.query(Device).filter(Device.customer_id == update.scope_id).all()
+              elif update.scope == "site" and update.scope_id:
+                  devices = db.query(Device).filter(Device.site_id == update.scope_id).all()
+              elif update.scope == "device" and update.scope_id:
+                  device = db.query(Device).filter_by(device_id=update.scope_id).first()
+                  devices = [device] if device else []
+              else:
+                  devices = []
+
+              if not devices:
+                  return []
+              device_ids = [device.device_id for device in devices]
+              inventory_by_device = {
+                  inventory.device_id: inventory
+                  for inventory in db.query(DeviceInventory).filter(DeviceInventory.device_id.in_(device_ids)).all()
+              }
+              resolved = []
+              for device in devices:
+                  inventory = inventory_by_device.get(device.device_id)
+                  if inventory is None:
+                      inventory = DeviceInventory(device_id=device.device_id, environment="production")
+                  if _update_applies_to_device(update, device, inventory):
+                      resolved.append(device)
+              return resolved
+          '''
+          if old not in text:
+              raise SystemExit('resolve target anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    pending_candidates = db.query(PendingUpdate).filter(PendingUpdate.status == "pending").all()
+              auto_changed = False
+              for candidate in pending_candidates:
+                  if _update_applies_to_device(candidate, device, db.query(DeviceInventory).filter_by(device_id=device_id).first() or DeviceInventory(device_id=device_id)):
+                      approved, _reason = _auto_approve_update_for_target(db, candidate, device)
+                      auto_changed = auto_changed or approved
+              if auto_changed:
+                  db.commit()
+
+              # Find godkendte opdateringer til denne enhed
+              from database import PendingUpdate as _PU
+              from sqlalchemy import or_
+              approved = db.query(_PU).filter(
+                  _PU.status.in_(["approved", "rollback_requested"]),
+                  or_(_PU.scope == "global", _PU.scope_id == device_id)
+              ).all()
+
+              filtered = []
+              for u in approved:
+                  if u.target_device_ids:
+                      targets = json.loads(u.target_device_ids)
+                      if device_id not in targets:
+                          continue
+          '''
+          new = '''    inventory = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+              inventory = inventory or DeviceInventory(device_id=device_id, environment="production")
+
+              pending_candidates = db.query(PendingUpdate).filter(PendingUpdate.status == "pending").all()
+              auto_changed = False
+              for candidate in pending_candidates:
+                  if _update_applies_to_device(candidate, device, inventory):
+                      approved, _reason = _auto_approve_update_for_target(db, candidate, device)
+                      auto_changed = auto_changed or approved
+              if auto_changed:
+                  db.commit()
+
+              # Find godkendte opdateringer til denne enhed through the same canonical
+              # scope + environment predicate used by approval and artifact authorization.
+              from database import PendingUpdate as _PU
+              approved = db.query(_PU).filter(
+                  _PU.status.in_(["approved", "rollback_requested"]),
+              ).all()
+
+              filtered = []
+              for u in approved:
+                  if not _update_applies_to_device(u, device, inventory):
+                      continue
+          '''
+          if old not in text:
+              raise SystemExit('policy delivery anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    u = db.query(PendingUpdate).filter_by(id=update_id).first()
+              if not u:
+                  raise HTTPException(status_code=404)
+              if reason and status in final_statuses:
+          '''
+          new = '''    u = db.query(PendingUpdate).filter_by(id=update_id).first()
+              if not u:
+                  raise HTTPException(status_code=404)
+              device = db.query(Device).filter_by(device_id=device_id).first()
+              if not device:
+                  raise HTTPException(status_code=403, detail="Edge er ikke et kendt target for denne update")
+              inventory = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+              inventory = inventory or DeviceInventory(device_id=device_id, environment="production")
+              if not _update_applies_to_device(u, device, inventory):
+                  raise HTTPException(status_code=403, detail="Edge er ikke target for denne update")
+              if reason and status in final_statuses:
+          '''
+          if old not in text:
+              raise SystemExit('report target-binding anchor not found')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+          test_path = Path('headend/tests/test_update_authority_isolation.py')
+          test_path.write_text(r'''"""Regression contracts for update authority target and environment isolation."""
+          import json
+          import os
+          import pathlib
+          import sys
+          import tempfile
+
+          import pytest
+          from fastapi import HTTPException
+
+          HERE = pathlib.Path(__file__).resolve().parent.parent
+          sys.path.insert(0, str(HERE))
+
+          _TMP_DB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+          os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMP_DB.name}")
+
+          import database  # noqa: E402
+          import main  # noqa: E402
+
+
+          @pytest.fixture()
+          def db_session():
+              database.create_tables()
+              session = database.SessionLocal()
+              try:
+                  yield session
+              finally:
+                  for table in reversed(database.Base.metadata.sorted_tables):
+                      session.execute(table.delete())
+                  session.commit()
+                  session.close()
+
+
+          def _device(session, device_id, *, customer_id="cust-a", site_id="site-a", environment="production"):
+              device = database.Device(
+                  device_id=device_id,
+                  customer_id=customer_id,
+                  site_id=site_id,
+                  app_version="1.0.0",
+              )
+              inventory = database.DeviceInventory(
+                  device_id=device_id,
+                  environment=environment,
+                  app_version="1.0.0",
+              )
+              session.add_all([device, inventory])
+              session.commit()
+              return device
+
+
+          def _update(session, **kwargs):
+              values = dict(
+                  update_type="config_metadata",
+                  version="v-next",
+                  scope="device",
+                  scope_id="dev-a",
+                  status="approved",
+                  environment="production",
+              )
+              values.update(kwargs)
+              update = database.PendingUpdate(**values)
+              session.add(update)
+              session.commit()
+              return update
+
+
+          def _policy(session, device_id):
+              return main.get_update_policy(device_id=device_id, _auth=None, db=session)
+
+
+          def test_customer_scoped_update_reaches_matching_device(db_session):
+              _device(db_session, "dev-a", customer_id="cust-a", site_id="site-a")
+              _device(db_session, "dev-b", customer_id="cust-b", site_id="site-b")
+              update = _update(db_session, scope="customer", scope_id="cust-a")
+
+              assert [item["id"] for item in _policy(db_session, "dev-a")["pending_updates"]] == [update.id]
+              assert _policy(db_session, "dev-b")["pending_updates"] == []
+
+
+          def test_site_scoped_update_reaches_matching_device(db_session):
+              _device(db_session, "dev-a", site_id="site-a")
+              _device(db_session, "dev-b", site_id="site-b")
+              update = _update(db_session, scope="site", scope_id="site-a")
+
+              assert [item["id"] for item in _policy(db_session, "dev-a")["pending_updates"]] == [update.id]
+              assert _policy(db_session, "dev-b")["pending_updates"] == []
+
+
+          def test_environment_is_fail_closed_and_test_alias_maps_to_lab(db_session):
+              _device(db_session, "dev-prod", environment="production")
+              _device(db_session, "dev-lab", environment="lab")
+              lab_update = _update(
+                  db_session,
+                  scope="global",
+                  scope_id=None,
+                  environment="test",
+              )
+
+              assert _policy(db_session, "dev-prod")["pending_updates"] == []
+              assert [item["id"] for item in _policy(db_session, "dev-lab")["pending_updates"]] == [lab_update.id]
+
+
+          def test_resolve_targets_excludes_wrong_environment(db_session):
+              _device(db_session, "dev-prod", environment="production")
+              _device(db_session, "dev-lab", environment="lab")
+              update = _update(db_session, scope="global", scope_id=None, environment="lab")
+
+              resolved = main._resolve_update_targets(db_session, update)
+              assert [device.device_id for device in resolved] == ["dev-lab"]
+
+
+          def test_non_target_authenticated_edge_cannot_report_status(db_session):
+              _device(db_session, "dev-a", site_id="site-a")
+              _device(db_session, "dev-b", site_id="site-b")
+              update = _update(db_session, scope="site", scope_id="site-a")
+
+              with pytest.raises(HTTPException) as excinfo:
+                  main.report_update(
+                      {"update_id": update.id, "status": "deployed", "device_id": "dev-b"},
+                      authenticated_device_id="dev-b",
+                      db=db_session,
+                  )
+              assert excinfo.value.status_code == 403
+              db_session.refresh(update)
+              assert update.status == "approved"
+              assert db_session.query(database.UpdateTarget).filter_by(
+                  pending_update_id=update.id,
+                  device_id="dev-b",
+              ).count() == 0
+
+
+          def test_wrong_environment_edge_cannot_report_status(db_session):
+              _device(db_session, "dev-a", environment="production")
+              update = _update(db_session, scope="device", scope_id="dev-a", environment="lab")
+
+              with pytest.raises(HTTPException) as excinfo:
+                  main.report_update(
+                      {"update_id": update.id, "status": "deployed", "device_id": "dev-a"},
+                      authenticated_device_id="dev-a",
+                      db=db_session,
+                  )
+              assert excinfo.value.status_code == 403
+              db_session.refresh(update)
+              assert update.status == "approved"
+
+
+          def test_explicit_target_list_remains_authoritative(db_session):
+              _device(db_session, "dev-a", site_id="site-a")
+              _device(db_session, "dev-b", site_id="site-a")
+              update = _update(
+                  db_session,
+                  scope="site",
+                  scope_id="site-a",
+                  target_device_ids=json.dumps(["dev-a"]),
+              )
+
+              assert [item["id"] for item in _policy(db_session, "dev-a")["pending_updates"]] == [update.id]
+              assert _policy(db_session, "dev-b")["pending_updates"] == []
+          ''').lstrip(), encoding='utf-8')
+          PY
+
+          python3 -m py_compile headend/main.py headend/tests/test_update_authority_isolation.py
+          rm -f .github/workflows/oneoff-update-authority-isolation.yml
+
+      - name: Commit scoped patch
+        shell: bash
+        run: |
+          git config user.name "TimeLapse Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add headend/main.py headend/tests/test_update_authority_isolation.py .github/workflows/oneoff-update-authority-isolation.yml
+          git diff --cached --check
+          git commit -m "Close update authority target and environment isolation gaps"
+          git push origin HEAD:fix/update-authority-isolation
