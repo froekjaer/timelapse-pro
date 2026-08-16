@@ -6229,7 +6229,26 @@ def _parse_target_device_ids(value: str | None) -> list[str]:
         return []
 
 
+def _normalise_update_environment(value: str | None) -> str | None:
+    environment = str(value or "production").strip().lower()
+    environment = {
+        "test": "lab",
+        "rd": "lab",
+        "dev": "lab",
+        "prod": "production",
+    }.get(environment, environment)
+    return environment if environment in {"lab", "staging", "production"} else None
+
+
+def _update_environment_applies_to_device(update: PendingUpdate, inv: DeviceInventory) -> bool:
+    update_environment = _normalise_update_environment(update.environment)
+    device_environment = _normalise_update_environment(inv.environment)
+    return bool(update_environment and device_environment and update_environment == device_environment)
+
+
 def _update_applies_to_device(update: PendingUpdate, device: Device | None, inv: DeviceInventory) -> bool:
+    if not _update_environment_applies_to_device(update, inv):
+        return False
     target_ids = _parse_target_device_ids(update.target_device_ids)
     if target_ids:
         return inv.device_id in target_ids
@@ -9496,18 +9515,35 @@ def _build_change_ticket(
 
 def _resolve_update_targets(db: Session, update: PendingUpdate) -> list[Device]:
     if update.target_device_ids:
-        ids = json.loads(update.target_device_ids)
-        return db.query(Device).filter(Device.device_id.in_(ids)).all()
-    if update.scope == "global":
-        return db.query(Device).all()
-    if update.scope == "customer" and update.scope_id:
-        return db.query(Device).filter(Device.customer_id == update.scope_id).all()
-    if update.scope == "site" and update.scope_id:
-        return db.query(Device).filter(Device.site_id == update.scope_id).all()
-    if update.scope == "device" and update.scope_id:
+        ids = _parse_target_device_ids(update.target_device_ids)
+        devices = db.query(Device).filter(Device.device_id.in_(ids)).all() if ids else []
+    elif update.scope == "global":
+        devices = db.query(Device).all()
+    elif update.scope == "customer" and update.scope_id:
+        devices = db.query(Device).filter(Device.customer_id == update.scope_id).all()
+    elif update.scope == "site" and update.scope_id:
+        devices = db.query(Device).filter(Device.site_id == update.scope_id).all()
+    elif update.scope == "device" and update.scope_id:
         device = db.query(Device).filter_by(device_id=update.scope_id).first()
-        return [device] if device else []
-    return []
+        devices = [device] if device else []
+    else:
+        devices = []
+
+    if not devices:
+        return []
+    device_ids = [device.device_id for device in devices]
+    inventory_by_device = {
+        inventory.device_id: inventory
+        for inventory in db.query(DeviceInventory).filter(DeviceInventory.device_id.in_(device_ids)).all()
+    }
+    resolved = []
+    for device in devices:
+        inventory = inventory_by_device.get(device.device_id)
+        if inventory is None:
+            inventory = DeviceInventory(device_id=device.device_id, environment="production")
+        if _update_applies_to_device(update, device, inventory):
+            resolved.append(device)
+    return resolved
 
 
 def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTicket | None = None) -> int:
@@ -10350,29 +10386,29 @@ def get_update_policy(
     policy["app_security"] = policy.get("timelapse_security", "auto")
     policy["app_updates"] = policy.get("timelapse_updates", "manual")
 
+    inventory = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    inventory = inventory or DeviceInventory(device_id=device_id, environment="production")
+
     pending_candidates = db.query(PendingUpdate).filter(PendingUpdate.status == "pending").all()
     auto_changed = False
     for candidate in pending_candidates:
-        if _update_applies_to_device(candidate, device, db.query(DeviceInventory).filter_by(device_id=device_id).first() or DeviceInventory(device_id=device_id)):
+        if _update_applies_to_device(candidate, device, inventory):
             approved, _reason = _auto_approve_update_for_target(db, candidate, device)
             auto_changed = auto_changed or approved
     if auto_changed:
         db.commit()
 
-    # Find godkendte opdateringer til denne enhed
+    # Approved delivery uses the same canonical scope + environment predicate
+    # as approval evaluation and artifact authorization.
     from database import PendingUpdate as _PU
-    from sqlalchemy import or_
     approved = db.query(_PU).filter(
         _PU.status.in_(["approved", "rollback_requested"]),
-        or_(_PU.scope == "global", _PU.scope_id == device_id)
     ).all()
 
     filtered = []
     for u in approved:
-        if u.target_device_ids:
-            targets = json.loads(u.target_device_ids)
-            if device_id not in targets:
-                continue
+        if not _update_applies_to_device(u, device, inventory):
+            continue
         artifact = _find_artifact_for_update(db, u)
         if _update_requires_headend_artifact(u.update_type) and not artifact:
             log.warning(
@@ -10419,6 +10455,13 @@ def report_update(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    if not device:
+        raise HTTPException(status_code=403, detail="Edge er ikke et kendt target for denne update")
+    inventory = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+    inventory = inventory or DeviceInventory(device_id=device_id, environment="production")
+    if not _update_applies_to_device(u, device, inventory):
+        raise HTTPException(status_code=403, detail="Edge er ikke target for denne update")
     if reason and status in final_statuses:
         u.description = ((u.description or "").rstrip() + f"\n\nEdge report {now_utc().isoformat()}: {status}; reason={reason[:700]}")[-6000:]
     # HLTH-008 / R06 / KRAVREGISTER UPD-012: for scope="device" (ét target) afspejler denne
