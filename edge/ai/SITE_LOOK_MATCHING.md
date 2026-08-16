@@ -158,6 +158,14 @@ Match quality score (0-1) indikerer hvor tæt kameraet er på reference:
 
 ## Video Rendering Pipeline
 
+> **Relateret, men separat system (2026-08-16):** `headend/services/exposure_ramping.py`
+> løser et beslægtet men andet problem — temporal eksponerings-/hvidbalance-udjævning
+> *inden for ét kameras egen sekvens over tid* (deflicker/ramping), som et opt-in
+> render-flag. Det bruger IKKE `CameraLUT`/`SiteReferenceFrame` herunder, og lukker
+> ikke TODO'en nedenfor — den handler stadig om at anvende den *rumlige* per-kamera-LUT
+> (kamera-til-kamera matching) under rendering. Se `Dokumentation/HANDOVER_LOG.md`,
+> entry 2026-08-16, for baggrund (evalueret som alternativ til LRTimelapse).
+
 TODO: Implementer rendering med LUT anvendt:
 
 ```python

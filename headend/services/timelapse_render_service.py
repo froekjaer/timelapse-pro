@@ -41,6 +41,11 @@ class RenderOptions:
     resolution: str
     codec: str
     deflicker: bool
+    # Temporal exposure/white-balance smoothing (headend/services/exposure_ramping.py).
+    # Independent of `deflicker` above (that's an ffmpeg pixel-domain filter on the
+    # rendered frames; this is a pre-render pass over the source images using measured
+    # brightness/color per frame). Default False — zero effect on existing renders.
+    exposure_ramping: bool
     fade_frames: int
     timestamp_overlay: bool
     timestamp_position: str
@@ -68,6 +73,7 @@ class RenderOptions:
             resolution=_choice(payload, "resolution", "1080p", ALLOWED_RESOLUTIONS),
             codec=_choice(payload, "codec", "h264", ALLOWED_CODECS),
             deflicker=bool(payload.get("deflicker", False)),
+            exposure_ramping=bool(payload.get("exposure_ramping", False)),
             fade_frames=fade_frames,
             timestamp_overlay=bool(payload.get("timestamp_overlay", False)),
             timestamp_position=_choice(payload, "timestamp_position", "br", ALLOWED_TIMESTAMP_POSITIONS),
