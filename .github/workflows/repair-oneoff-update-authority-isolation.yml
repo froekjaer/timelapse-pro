@@ -1,0 +1,39 @@
+name: Repair one-off update authority patch runner
+
+on:
+  push:
+    branches:
+      - fix/update-authority-isolation
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: fix/update-authority-isolation
+      - name: Repair runner syntax and self-remove
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          target = Path('.github/workflows/oneoff-update-authority-isolation.yml')
+          text = target.read_text(encoding='utf-8')
+          old = "''').lstrip(), encoding='utf-8')"
+          new = "'''.lstrip(), encoding='utf-8')"
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one syntax anchor, found {text.count(old)}')
+          target.write_text(text.replace(old, new, 1), encoding='utf-8')
+          Path('.github/workflows/repair-oneoff-update-authority-isolation.yml').unlink()
+          PY
+          git config user.name "TimeLapse Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add .github/workflows/oneoff-update-authority-isolation.yml .github/workflows/repair-oneoff-update-authority-isolation.yml
+          git diff --cached --check
+          git commit -m "Repair one-off update authority patch runner"
+          git push origin HEAD:fix/update-authority-isolation
