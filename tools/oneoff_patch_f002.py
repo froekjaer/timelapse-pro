@@ -53,7 +53,7 @@ bundle_replacement = '''    from headend.services.os_builder_security import (
     result = _subprocess.run(cmd, text=True, capture_output=True, timeout=3600)
 '''
 
-catalog_replacement = '''    from headend.services.os_builder_security import (
+catalog_replacement = r'''    from headend.services.os_builder_security import (
         catalog_container_command,
         secure_builder_dir,
         write_private_builder_file,
