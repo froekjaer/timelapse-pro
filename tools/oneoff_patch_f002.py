@@ -4,15 +4,23 @@ path = Path("headend/main.py")
 source = path.read_text(encoding="utf-8")
 
 
-def replace_segment(label: str, start_marker: str, end_marker: str, replacement: str, required: tuple[str, ...]) -> None:
+def replace_segment(
+    label: str,
+    scope_marker: str,
+    start_marker: str,
+    end_marker: str,
+    replacement: str,
+    required: tuple[str, ...],
+) -> None:
     global source
-    if source.count(start_marker) != 1:
-        raise SystemExit(f"{label}: start marker must occur exactly once")
-    start = source.index(start_marker)
+    if source.count(scope_marker) != 1:
+        raise SystemExit(f"{label}: scope marker must occur exactly once")
+    scope_start = source.index(scope_marker)
     try:
+        start = source.index(start_marker, scope_start)
         end = source.index(end_marker, start)
     except ValueError as exc:
-        raise SystemExit(f"{label}: end marker not found after start") from exc
+        raise SystemExit(f"{label}: scoped patch markers not found; refusing to patch") from exc
     segment = source[start:end]
     missing = [needle for needle in required if needle not in segment]
     if missing:
@@ -77,6 +85,7 @@ catalog_replacement = '''    from headend.services.os_builder_security import (
 
 replace_segment(
     "bundle",
+    "def _build_os_bundle_in_mac_container(\n",
     "    build_root = output_path.parent\n",
     "    if result.returncode != 0:\n",
     bundle_replacement,
@@ -89,6 +98,7 @@ replace_segment(
 )
 replace_segment(
     "catalog",
+    "def _generate_apt_list_from_mac_builder(\n",
     "    build_root = (_os_bundle_store_root().expanduser().resolve() / \"_catalog-builder\")\n",
     "    if result.returncode != 0:\n",
     catalog_replacement,
