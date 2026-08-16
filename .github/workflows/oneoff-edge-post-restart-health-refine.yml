@@ -1,0 +1,109 @@
+name: One-off Edge post-restart recovery refinement
+
+on:
+  push:
+    branches:
+      - fix/edge-post-restart-health-rollback
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/edge-post-restart-health-rollback
+          fetch-depth: 0
+
+      - name: Prepare focused tests
+        run: python3 -m pip install pytest pytest-asyncio
+
+      - name: Refine recovery ordering and guard activation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one anchor, found {count}")
+              return text.replace(old, new, 1)
+
+          agent_path = Path("edge/agent.py")
+          agent = agent_path.read_text(encoding="utf-8")
+          agent = replace_once(
+              agent,
+              '''        unit_backup = recovery_dir / "systemd-backup"\n        guard_started = False\n''',
+              '''        unit_backup = recovery_dir / "systemd-backup"\n        guard_started = False\n        rollback_ready = False\n''',
+              "rollback readiness flag",
+          )
+          agent = replace_once(
+              agent,
+              '''                    backup_dest.parent.mkdir(parents=True, exist_ok=True)\n                    _shutil.copy2(source, backup_dest)\n\n            self._report_update(update_id, "installing")\n''',
+              '''                    backup_dest.parent.mkdir(parents=True, exist_ok=True)\n                    _shutil.copy2(source, backup_dest)\n            rollback_ready = True\n\n            self._report_update(update_id, "installing")\n''',
+              "rollback readiness transition",
+          )
+          agent = replace_once(
+              agent,
+              '''                unit_backup.mkdir(parents=True, exist_ok=True)\n                for unit in managed_unit_files:\n                    target = Path("/etc/systemd/system") / unit\n                    if target.exists():\n                        _shutil.copy2(target, unit_backup / unit)\n                    source = repo / "edge" / "scripts" / unit\n                    if not source.is_file():\n                        raise RuntimeError(f"managed_systemd_unit_missing:{unit}")\n                    _shutil.copy2(source, target)\n''',
+              '''                unit_backup.mkdir(parents=True, exist_ok=True)\n                # Complete the recovery snapshot and validate every candidate\n                # unit before mutating the active systemd directory.\n                for unit in managed_unit_files:\n                    target = Path("/etc/systemd/system") / unit\n                    if target.exists():\n                        _shutil.copy2(target, unit_backup / unit)\n                    source = repo / "edge" / "scripts" / unit\n                    if not source.is_file():\n                        raise RuntimeError(f"managed_systemd_unit_missing:{unit}")\n                for unit in managed_unit_files:\n                    source = repo / "edge" / "scripts" / unit\n                    target = Path("/etc/systemd/system") / unit\n                    _shutil.copy2(source, target)\n''',
+              "systemd recovery snapshot ordering",
+          )
+          agent = replace_once(
+              agent,
+              '''            if guard_result.returncode != 0:\n                raise RuntimeError(\n                    f"post_restart_guard_start_failed:{guard_result.stderr[-400:]}"\n                )\n            guard_started = True\n''',
+              '''            if guard_result.returncode != 0:\n                raise RuntimeError(\n                    f"post_restart_guard_start_failed:{guard_result.stderr[-400:]}"\n                )\n            guard_active = False\n            for _ in range(10):\n                active = _sp.run(\n                    ["systemctl", "is-active", "--quiet", guard_unit],\n                    check=False,\n                    capture_output=True,\n                    text=True,\n                    timeout=5,\n                )\n                if active.returncode == 0:\n                    guard_active = True\n                    break\n                time.sleep(0.2)\n            if not guard_active:\n                raise RuntimeError("post_restart_guard_not_active")\n            guard_started = True\n''',
+              "guard active verification",
+          )
+          agent = replace_once(
+              agent,
+              '''                try:\n                    if backup.exists():\n                        restore_previous_app_release(repo, artifact)\n''',
+              '''                try:\n                    if rollback_ready and backup.exists():\n                        restore_previous_app_release(repo, artifact)\n''',
+              "current backup rollback guard",
+          )
+          agent_path.write_text(agent, encoding="utf-8")
+
+          lifecycle_path = Path("edge/update_lifecycle.py")
+          lifecycle = lifecycle_path.read_text(encoding="utf-8")
+          lifecycle = replace_once(
+              lifecycle,
+              '''    recovery = _validated_recovery_dir(payload)\n    path.unlink(missing_ok=True)\n    if recovery.is_dir():\n        shutil.rmtree(recovery)\n''',
+              '''    recovery = _validated_recovery_dir(payload)\n    # Remove recovery material first. If that fails, keep the marker so the\n    # update flow remains visibly blocked instead of silently orphaning state.\n    if recovery.is_dir():\n        shutil.rmtree(recovery)\n    path.unlink(missing_ok=True)\n''',
+              "fail-closed cleanup ordering",
+          )
+          lifecycle = replace_once(
+              lifecycle,
+              '''    repo = Path(str(payload.get("repo") or "/opt/timelapse")).resolve()\n    recovery = _validated_recovery_dir(payload)\n''',
+              '''    marker_repo = pending_path.parent.parent.resolve()\n    configured_repo = Path(str(payload.get("repo") or "")).resolve()\n    if configured_repo != marker_repo:\n        raise ValueError("pending_update_repo_binding_mismatch")\n    repo = marker_repo\n    recovery = _validated_recovery_dir(payload)\n''',
+              "pending marker repo binding",
+          )
+          lifecycle_path.write_text(lifecycle, encoding="utf-8")
+
+          test_path = Path("tests/test_edge_post_restart_update_health.py")
+          tests = test_path.read_text(encoding="utf-8")
+          tests = replace_once(
+              tests,
+              '''    assert "awaiting_post_restart_health" in installer\n''',
+              '''    assert "awaiting_post_restart_health" in installer\n    assert "rollback_ready = False" in installer\n    assert "if rollback_ready and backup.exists()" in installer\n    assert "post_restart_guard_not_active" in installer\n    first_unit_loop = installer.index("Complete the recovery snapshot")\n    active_unit_copy = installer.index("_shutil.copy2(source, target)", first_unit_loop)\n    missing_unit_gate = installer.index("managed_systemd_unit_missing", first_unit_loop)\n    assert missing_unit_gate < active_unit_copy\n''',
+              "recovery ordering contracts",
+          )
+          test_path.write_text(tests, encoding="utf-8")
+          PY
+
+          python3 -m py_compile edge/agent.py edge/update_lifecycle.py
+          python3 -m pytest tests/test_edge_update_lifecycle_closure.py tests/test_edge_post_restart_update_health.py -q
+          git diff --check
+
+      - name: Commit scoped recovery refinements
+        shell: bash
+        run: |
+          git config user.name "TimeLapse Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add edge/agent.py edge/update_lifecycle.py tests/test_edge_post_restart_update_health.py
+          git diff --cached --check
+          git commit -m "Harden Edge update recovery ordering"
+          git push origin HEAD:fix/edge-post-restart-health-rollback
