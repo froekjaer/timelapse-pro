@@ -21,10 +21,10 @@ jobs:
           python-version: '3.12'
       - name: Apply exact-match patch
         run: python tools/oneoff_patch_f002.py
-      - name: Verify focused closure
-        run: |
-          python -m py_compile headend/main.py headend/services/os_builder_security.py
-          pytest -q tests/test_os_builder_security.py
+      - name: Compile patched builder
+        run: python -m py_compile headend/main.py headend/services/os_builder_security.py
+      - name: Run focused F-002 contracts
+        run: pytest -q tests/test_os_builder_security.py
       - name: Remove one-off machinery and commit result
         run: |
           rm .github/workflows/oneoff-f002-os-builder.yml tools/oneoff_patch_f002.py
