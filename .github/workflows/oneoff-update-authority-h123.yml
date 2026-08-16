@@ -19,12 +19,14 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Install focused test dependency
+        run: python -m pip install pytest
       - name: Apply scoped authority patch
         run: python tools/oneoff_patch_update_authority.py
       - name: Compile and run focused contracts
         run: |
           python -m py_compile headend/main.py headend/services/update_authority.py
-          pytest tests/test_update_authority_scope_environment.py -q
+          python -m pytest tests/test_update_authority_scope_environment.py -q
       - name: Remove one-off machinery and commit result
         run: |
           rm .github/workflows/oneoff-update-authority-h123.yml tools/oneoff_patch_update_authority.py
