@@ -5468,6 +5468,9 @@ def assign_camera_to_device(
         device.camera_name   = camera.camera_name
         device.site_id       = camera.site_id
         device.customer_id   = camera.customer_id
+        # site_name/customer_name er separate fritekstfelter der ellers ville stå forældede (HANDOVER_LOG 2026-08-16)
+        site = db.query(Site).filter_by(id=camera.site_id).first() if camera.site_id else None; device.site_name = site.name if site else None
+        cust = db.query(Customer).filter_by(id=camera.customer_id).first() if camera.customer_id else None; device.customer_name = cust.name if cust else None
 
     db.commit()
     log.info("Kamera %s tildelt device %s", camera_id, device_id)
@@ -6793,14 +6796,12 @@ def _collect_release_outputs(root: Path) -> list[dict]:
     # Explicitly list all Edge runtime paths.  Artifacts are the only accepted
     # Edge update channel, so omitting a Python module or a systemd helper here
     # silently produces a partial release on the device.
-    candidates = [
+    # Top-level edge/*.py is globbed, not hand-listed: a hand-listed set went
+    # stale 2026-08-16 (update_lifecycle.py missing → crash loop on TL-043EB9E72EFD).
+    candidates: list[Path] = sorted((root / "edge").glob("*.py"))
+    candidates += [
         root / "headend" / "main.py",
         root / "headend" / "database.py",
-        root / "edge" / "agent.py",
-        root / "edge" / "frame_push.py",
-        root / "edge" / "security.py",
-        root / "edge" / "technician_auth.py",
-        root / "edge" / "technician_ui.py",
         root / "edge" / "requirements.txt",
         root / "edge" / "ai",
         root / "edge" / "camera",
