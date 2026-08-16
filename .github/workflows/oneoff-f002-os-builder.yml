@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply exact-match F-002 patch
-        shell: python
+        shell: python {0}
         run: |
           from pathlib import Path
 
@@ -97,25 +97,25 @@ jobs:
     for name, version in sorted(installed.items()):
         name_s = str(name).strip()
         version_s = str(version).strip()
-        if not name_s or not version_s or "\\t" in name_s or "\\n" in name_s or "\\n" in version_s:
+        if not name_s or not version_s or "\t" in name_s or "\n" in name_s or "\n" in version_s:
             continue
-        lines.append(f"{name_s}\\t{version_s}")
-    input_path.write_text("\\n".join(lines) + "\\n")
+        lines.append(f"{name_s}\t{version_s}")
+    input_path.write_text("\n".join(lines) + "\n")
     output_path.write_text("")
     os.chmod(input_path, 0o666)
     os.chmod(output_path, 0o666)
     shell = (
         "set -euo pipefail; "
         "apt-get update >/dev/null; "
-        "while IFS=$'\\\\t' read -r name installed; do "
-        "[ -n \\\"$name\\\" ] || continue; "
-        "candidate=$(apt-cache policy \\\"$name\\\" | awk '/Candidate:/ {print $2; exit}'); "
-        "[ -n \\\"$candidate\\\" ] && [ \\\"$candidate\\\" != '(none)' ] || continue; "
-        "if dpkg --compare-versions \\\"$candidate\\\" gt \\\"$installed\\\"; then "
-        "repos=$(apt-cache policy \\\"$name\\\" | awk -v cand=\\\"$candidate\\\" '$1 == cand {getline; print $3; exit}'); "
-        "[ -n \\\"$repos\\\" ] || repos=ubuntu-builder; "
-        "case \\\"$repos\\\" in *security*) repo_label=noble-security ;; *updates*) repo_label=noble-updates ;; *) repo_label=\\\"$repos\\\" ;; esac; "
-        f"printf '%s/%s %s {architecture} [upgradable from: %s]\\\\n' \\\"$name\\\" \\\"$repo_label\\\" \\\"$candidate\\\" \\\"$installed\\\"; "
+        "while IFS=$'\\t' read -r name installed; do "
+        "[ -n \"$name\" ] || continue; "
+        "candidate=$(apt-cache policy \"$name\" | awk '/Candidate:/ {print $2; exit}'); "
+        "[ -n \"$candidate\" ] && [ \"$candidate\" != '(none)' ] || continue; "
+        "if dpkg --compare-versions \"$candidate\" gt \"$installed\"; then "
+        "repos=$(apt-cache policy \"$name\" | awk -v cand=\"$candidate\" '$1 == cand {getline; print $3; exit}'); "
+        "[ -n \"$repos\" ] || repos=ubuntu-builder; "
+        "case \"$repos\" in *security*) repo_label=noble-security ;; *updates*) repo_label=noble-updates ;; *) repo_label=\"$repos\" ;; esac; "
+        f"printf '%s/%s %s {architecture} [upgradable from: %s]\\n' \"$name\" \"$repo_label\" \"$candidate\" \"$installed\"; "
         "fi; "
         "done < /out/" + input_path.name + " > /out/" + output_path.name
     )
@@ -154,10 +154,10 @@ jobs:
     for name, version in sorted(installed.items()):
         name_s = str(name).strip()
         version_s = str(version).strip()
-        if not name_s or not version_s or "\\t" in name_s or "\\n" in name_s or "\\n" in version_s:
+        if not name_s or not version_s or "\t" in name_s or "\n" in name_s or "\n" in version_s:
             continue
-        lines.append(f"{name_s}\\t{version_s}")
-    write_private_builder_file(input_path, "\\n".join(lines) + "\\n")
+        lines.append(f"{name_s}\t{version_s}")
+    write_private_builder_file(input_path, "\n".join(lines) + "\n")
     write_private_builder_file(output_path, "")
     cmd = catalog_container_command(
         docker=docker,
