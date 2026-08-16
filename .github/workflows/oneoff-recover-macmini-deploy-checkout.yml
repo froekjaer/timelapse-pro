@@ -1,0 +1,90 @@
+name: One-off recover Mac mini deploy checkout
+
+on:
+  push:
+    branches:
+      - ops/recover-macmini-deploy-checkout-2026-08-16
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    steps:
+      - name: Verify committed WIP and clean runtime checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPO="$HOME/projects/timelapse-pro"
+          EXPECTED_BASE="b96a4ac8ad0d78c58d5eebf4f8996490e56084e9"
+          WIP_COMMIT="a2ec9d691c2236456073e99e7d862163128d7f86"
+          WIP_BRANCH="feature/exposure-ramping-2026-08-16"
+          BACKUP_ROOT="$HOME/timelapse-deploy-wip-backups"
+          STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          BACKUP_DIR="$BACKUP_ROOT/$STAMP"
+
+          cd "$REPO"
+          git fetch --prune origin main "$WIP_BRANCH"
+
+          ACTUAL_HEAD="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_HEAD" != "$EXPECTED_BASE" ]; then
+            echo "❌ Refusing recovery: deploy checkout HEAD=$ACTUAL_HEAD, expected $EXPECTED_BASE"
+            exit 1
+          fi
+
+          if ! git cat-file -e "$WIP_COMMIT^{commit}"; then
+            echo "❌ WIP recovery commit missing locally after fetch"
+            exit 1
+          fi
+
+          if ! git diff --quiet; then
+            echo "❌ Refusing recovery: unstaged tracked changes exist in deploy checkout"
+            git status --short --untracked-files=no
+            exit 1
+          fi
+
+          if ! git diff --cached --quiet "$WIP_COMMIT" --; then
+            echo "❌ Refusing recovery: staged index is NOT byte-identical to committed WIP $WIP_COMMIT"
+            echo "Index vs committed WIP differences:"
+            git diff --cached --name-status "$WIP_COMMIT" --
+            exit 1
+          fi
+
+          EXPECTED_FILES=$(cat <<'EOF'
+          Dokumentation/HANDOVER_LOG.md
+          edge/ai/SITE_LOOK_MATCHING.md
+          headend/main.py
+          headend/services/exposure_ramping.py
+          headend/services/timelapse_render_service.py
+          headend/tests/test_exposure_ramping.py
+          EOF
+          )
+          ACTUAL_FILES="$(git diff --cached --name-only "$EXPECTED_BASE" | LC_ALL=C sort)"
+          if [ "$ACTUAL_FILES" != "$(printf '%s\n' "$EXPECTED_FILES" | LC_ALL=C sort)" ]; then
+            echo "❌ Refusing recovery: staged file set differs from PR #60 commit"
+            printf 'Actual staged files:\n%s\n' "$ACTUAL_FILES"
+            exit 1
+          fi
+
+          mkdir -p "$BACKUP_DIR"
+          git status --short --untracked-files=no > "$BACKUP_DIR/status.txt"
+          git diff --cached --binary "$EXPECTED_BASE" > "$BACKUP_DIR/exposure-ramping-wip.patch"
+          printf '%s\n' \
+            "deploy_head=$ACTUAL_HEAD" \
+            "verified_wip_commit=$WIP_COMMIT" \
+            "verified_wip_branch=$WIP_BRANCH" \
+            "created_utc=$STAMP" \
+            > "$BACKUP_DIR/metadata.txt"
+          chmod -R go-rwx "$BACKUP_DIR"
+
+          git reset --hard "$EXPECTED_BASE"
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "❌ Recovery reset did not produce a clean tracked checkout"
+            git status --short --untracked-files=no
+            exit 1
+          fi
+
+          echo "✅ Staged WIP was byte-identical to GitHub commit $WIP_COMMIT"
+          echo "✅ Recovery patch + metadata preserved at $BACKUP_DIR"
+          echo "✅ Runtime deploy checkout restored clean at $EXPECTED_BASE"
