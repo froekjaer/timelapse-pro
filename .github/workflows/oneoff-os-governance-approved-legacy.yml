@@ -27,7 +27,6 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           cmdb_path = Path('headend/cmdb.py')
           cmdb = cmdb_path.read_text(encoding='utf-8')
           old = 'PendingUpdate.status.in_(["blocked", "pending"]),'
@@ -35,25 +34,14 @@ jobs:
           if cmdb.count(old) != 1:
               raise SystemExit(f'expected exactly one CMDB status anchor, found {cmdb.count(old)}')
           cmdb_path.write_text(cmdb.replace(old, new, 1), encoding='utf-8')
-
           test_path = Path('tests/test_os_update_governance_closure.py')
           tests = test_path.read_text(encoding='utf-8')
-          old_test = '''    assert 'status="blocked"' in section
-    assert "CMDB observation" in section
-    assert 'status="pending"' not in section
-    assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
-'''
-          new_test = '''    assert 'status="blocked"' in section
-    assert "CMDB observation" in section
-    assert 'status="pending"' not in section
-    assert 'PendingUpdate.status.in_(["blocked", "pending", "approved"])' in section
-    assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
-'''
-          if tests.count(old_test) != 1:
-              raise SystemExit(f'expected exactly one test anchor, found {tests.count(old_test)}')
-          test_path.write_text(tests.replace(old_test, new_test, 1), encoding='utf-8')
+          anchor = "    assert 'PendingUpdate.status.in_([\"pending\", \"approved\"])' not in section\n"
+          inserted = "    assert 'PendingUpdate.status.in_([\"blocked\", \"pending\", \"approved\"])' in section\n" + anchor
+          if tests.count(anchor) != 1:
+              raise SystemExit(f'expected exactly one test anchor, found {tests.count(anchor)}')
+          test_path.write_text(tests.replace(anchor, inserted, 1), encoding='utf-8')
           PY
-
           python3 -m py_compile headend/cmdb.py
           python3 -m pytest tests/test_os_update_governance_closure.py -q
 
