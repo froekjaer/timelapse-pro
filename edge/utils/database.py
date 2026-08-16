@@ -320,6 +320,21 @@ class EdgeDatabase:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def increment_upload_attempts(self, capture_id: int) -> int:
+        """Atomically record one real SFTP retry attempt and return the new count."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE captures SET upload_attempts=upload_attempts+1 WHERE id=?",
+                (capture_id,),
+            )
+            row = conn.execute(
+                "SELECT upload_attempts FROM captures WHERE id=?",
+                (capture_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Capture {capture_id} not found")
+            return int(row["upload_attempts"] or 0)
+
     def get_capture(self, capture_id: int) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM captures WHERE id=?", (capture_id,)).fetchone()
