@@ -1615,14 +1615,41 @@ def first_line(text: str) -> str:
 def read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    with path.open("r") as fh:
-        text = fh.read()
+    try:
+        with path.open("r") as fh:
+            text = fh.read()
+    except PermissionError:
+        text = _read_root_only_file_via_sudo(path)
+        if text is None:
+            return {}
     if yaml is not None:
         return yaml.safe_load(text) or {}
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         return parse_simple_yaml(text)
+
+
+def _read_root_only_file_via_sudo(path: Path) -> str | None:
+    """Best-effort fallback when a config file is root-only (e.g. bootstrap.yaml).
+
+    Uses non-interactive sudo so a status check never blocks on a password
+    prompt mid-menu; falls back to a one-line hint instead of a stack trace.
+    """
+    if os.geteuid() == 0 or not command_exists("sudo"):
+        print(f"(kraever sudo for at laese {path} - koer vaerktoejet med sudo)")
+        return None
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "cat", str(path)],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        result = None
+    if result is None or result.returncode != 0:
+        print(f"(kraever sudo for at laese {path} - koer vaerktoejet med sudo)")
+        return None
+    return result.stdout
 
 
 def read_json_object(path: Path) -> dict[str, Any]:
