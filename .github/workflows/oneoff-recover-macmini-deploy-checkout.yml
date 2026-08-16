@@ -12,79 +12,66 @@ jobs:
   recover:
     runs-on: self-hosted
     steps:
-      - name: Verify committed WIP and clean runtime checkout
+      - name: Verify feature work is remote and restore deploy anchor
         shell: bash
         run: |
           set -euo pipefail
           REPO="$HOME/projects/timelapse-pro"
-          EXPECTED_BASE="b96a4ac8ad0d78c58d5eebf4f8996490e56084e9"
-          WIP_COMMIT="a2ec9d691c2236456073e99e7d862163128d7f86"
-          WIP_BRANCH="feature/exposure-ramping-2026-08-16"
+          LAST_DEPLOYED="b96a4ac8ad0d78c58d5eebf4f8996490e56084e9"
+          EXPECTED_FEATURE_HEAD="e08ab1d7d89a329bcd89dd414665e4c1a3197d0b"
+          FEATURE_BRANCH="feature/exposure-ramping-2026-08-16"
           BACKUP_ROOT="$HOME/timelapse-deploy-wip-backups"
           STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
           BACKUP_DIR="$BACKUP_ROOT/$STAMP"
 
           cd "$REPO"
-          git fetch --prune origin main "$WIP_BRANCH"
+          git fetch --prune origin main "$FEATURE_BRANCH"
 
           ACTUAL_HEAD="$(git rev-parse HEAD)"
-          if [ "$ACTUAL_HEAD" != "$EXPECTED_BASE" ]; then
-            echo "❌ Refusing recovery: deploy checkout HEAD=$ACTUAL_HEAD, expected $EXPECTED_BASE"
+          REMOTE_FEATURE_HEAD="$(git rev-parse "origin/$FEATURE_BRANCH")"
+          if [ "$ACTUAL_HEAD" != "$EXPECTED_FEATURE_HEAD" ]; then
+            echo "❌ Refusing recovery: local HEAD=$ACTUAL_HEAD, expected feature head $EXPECTED_FEATURE_HEAD"
             exit 1
           fi
-
-          if ! git cat-file -e "$WIP_COMMIT^{commit}"; then
-            echo "❌ WIP recovery commit missing locally after fetch"
+          if [ "$REMOTE_FEATURE_HEAD" != "$EXPECTED_FEATURE_HEAD" ]; then
+            echo "❌ Refusing recovery: remote feature head=$REMOTE_FEATURE_HEAD, expected $EXPECTED_FEATURE_HEAD"
             exit 1
           fi
-
-          if ! git diff --quiet; then
-            echo "❌ Refusing recovery: unstaged tracked changes exist in deploy checkout"
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "❌ Refusing recovery: tracked changes still exist after feature work was committed"
             git status --short --untracked-files=no
             exit 1
           fi
-
-          if ! git diff --cached --quiet "$WIP_COMMIT" --; then
-            echo "❌ Refusing recovery: staged index is NOT byte-identical to committed WIP $WIP_COMMIT"
-            echo "Index vs committed WIP differences:"
-            git diff --cached --name-status "$WIP_COMMIT" --
-            exit 1
-          fi
-
-          EXPECTED_FILES=$(cat <<'EOF'
-          Dokumentation/HANDOVER_LOG.md
-          edge/ai/SITE_LOOK_MATCHING.md
-          headend/main.py
-          headend/services/exposure_ramping.py
-          headend/services/timelapse_render_service.py
-          headend/tests/test_exposure_ramping.py
-          EOF
-          )
-          ACTUAL_FILES="$(git diff --cached --name-only "$EXPECTED_BASE" | LC_ALL=C sort)"
-          if [ "$ACTUAL_FILES" != "$(printf '%s\n' "$EXPECTED_FILES" | LC_ALL=C sort)" ]; then
-            echo "❌ Refusing recovery: staged file set differs from PR #60 commit"
-            printf 'Actual staged files:\n%s\n' "$ACTUAL_FILES"
+          if ! git merge-base --is-ancestor "$LAST_DEPLOYED" "$EXPECTED_FEATURE_HEAD"; then
+            echo "❌ Refusing recovery: last deployed revision is not an ancestor of the preserved feature history"
             exit 1
           fi
 
           mkdir -p "$BACKUP_DIR"
-          git status --short --untracked-files=no > "$BACKUP_DIR/status.txt"
-          git diff --cached --binary "$EXPECTED_BASE" > "$BACKUP_DIR/exposure-ramping-wip.patch"
           printf '%s\n' \
-            "deploy_head=$ACTUAL_HEAD" \
-            "verified_wip_commit=$WIP_COMMIT" \
-            "verified_wip_branch=$WIP_BRANCH" \
+            "local_head_before=$ACTUAL_HEAD" \
+            "verified_remote_feature_head=$REMOTE_FEATURE_HEAD" \
+            "feature_branch=$FEATURE_BRANCH" \
+            "last_verified_deployed_revision=$LAST_DEPLOYED" \
             "created_utc=$STAMP" \
             > "$BACKUP_DIR/metadata.txt"
+          git log -1 --format=fuller "$EXPECTED_FEATURE_HEAD" > "$BACKUP_DIR/feature-head.txt"
           chmod -R go-rwx "$BACKUP_DIR"
 
-          git reset --hard "$EXPECTED_BASE"
+          # Detach first so the local feature branch ref is never moved.
+          git checkout --detach "$LAST_DEPLOYED"
+          git reset --hard "$LAST_DEPLOYED"
+
+          if [ "$(git rev-parse HEAD)" != "$LAST_DEPLOYED" ]; then
+            echo "❌ Recovery checkout mismatch"
+            exit 1
+          fi
           if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-            echo "❌ Recovery reset did not produce a clean tracked checkout"
+            echo "❌ Recovery did not produce a clean tracked deploy checkout"
             git status --short --untracked-files=no
             exit 1
           fi
 
-          echo "✅ Staged WIP was byte-identical to GitHub commit $WIP_COMMIT"
-          echo "✅ Recovery patch + metadata preserved at $BACKUP_DIR"
-          echo "✅ Runtime deploy checkout restored clean at $EXPECTED_BASE"
+          echo "✅ Feature work preserved remotely at $FEATURE_BRANCH@$EXPECTED_FEATURE_HEAD"
+          echo "✅ Recovery metadata preserved at $BACKUP_DIR"
+          echo "✅ Runtime deploy checkout restored clean/detached at $LAST_DEPLOYED"
