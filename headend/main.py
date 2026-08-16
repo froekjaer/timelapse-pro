@@ -8718,6 +8718,14 @@ def _os_bundle_auto_build_pending() -> None:
                 log.debug("OS bundle auto-poller: update #%d har ingen scope_id — springer over", update.id)
                 continue
 
+            plan_path = _plan_path_for_update(update)
+            if not plan_path:
+                log.warning(
+                    "OS bundle auto-poller: update #%d mangler lab build-plan evidence — bygger ikke",
+                    update.id,
+                )
+                continue
+
             log.info(
                 "OS bundle auto-poller: bygger artifact for update #%d (%s, enhed %s)",
                 update.id, update.update_type, device_id,
