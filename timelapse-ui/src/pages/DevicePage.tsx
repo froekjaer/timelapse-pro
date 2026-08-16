@@ -16,7 +16,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, ReferenceLine } from 'recharts'
-import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, updateDeviceInfo, setParam, pathSegment, getApiUrl } from '../api/client'
+import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, setParam, pathSegment, getApiUrl } from '../api/client'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaptureThumbnailCard, parseCaptureQA, qaHardFailed, causeLabels } from '../components/CaptureThumbnailCard'
@@ -825,15 +825,48 @@ function CameraParamRow({ param, deviceId }: {
   )
 }
 
+interface IdentityCustomer { id: string; name: string }
+interface IdentitySite { id: string; name: string; customer_id: string }
+interface IdentityCamera { id: string; camera_name: string; site_id: string; customer_id: string; current_device_id: string | null }
+
+const NEW_OPTION = '__new__'
+
 function ConfigTab({ deviceId }: { deviceId: string }) {
   const [cfg, setCfg]       = useState<any>(null)
-  const [info, setInfo]     = useState<any>(null)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg]       = useState<string | null>(null)
 
+  // ── Enhedsidentitet: kunde/site/kamera som dropdowns med "ny…" ──────────
+  const [customers, setCustomers]     = useState<IdentityCustomer[]>([])
+  const [sites, setSites]             = useState<IdentitySite[]>([])
+  const [cameras, setCameras]         = useState<IdentityCamera[]>([])
+  const [identityCustomerId, setIdentityCustomerId] = useState('')
+  const [identitySiteId, setIdentitySiteId]         = useState('')
+  const [identityCameraId, setIdentityCameraId]     = useState('')
+  const [newCustomerName, setNewCustomerName] = useState('')
+  const [newSiteName, setNewSiteName]         = useState('')
+  const [newCameraName, setNewCameraName]     = useState('')
+
   useEffect(() => {
-    getConfig(deviceId).then(d => { setCfg(d); setInfo(d?.device ?? {}) })
+    getConfig(deviceId).then(d => { setCfg(d) })
   }, [deviceId])
+
+  const loadIdentityLists = useCallback(async () => {
+    const [cs, ss, cams] = await Promise.all([
+      authFetch(`${getApiUrl()}/api/admin/customers`).then(r => r.json()),
+      authFetch(`${getApiUrl()}/api/admin/sites`).then(r => r.json()),
+      authFetch(`${getApiUrl()}/api/admin/cameras`).then(r => r.json()),
+    ])
+    setCustomers(Array.isArray(cs) ? cs : [])
+    setSites(Array.isArray(ss) ? ss : [])
+    setCameras(Array.isArray(cams) ? cams : [])
+    const current = Array.isArray(cams) ? cams.find((c: IdentityCamera) => c.current_device_id === deviceId) : null
+    setIdentityCustomerId(current?.customer_id ?? '')
+    setIdentitySiteId(current?.site_id ?? '')
+    setIdentityCameraId(current?.id ?? '')
+  }, [deviceId])
+
+  useEffect(() => { loadIdentityLists() }, [loadIdentityLists])
 
   async function saveConfig() {
     setSaving(true); setMsg(null)
@@ -844,19 +877,65 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
     setSaving(false)
   }
 
-  async function saveInfo() {
+  async function saveIdentity() {
     setSaving(true); setMsg(null)
     try {
-      await updateDeviceInfo(deviceId, info)
-      setMsg('Enhedsinfo gemt ✓')
-    } catch { setMsg('Fejl ved gemning') }
-    setSaving(false)
+      let customerId = identityCustomerId
+      if (customerId === NEW_OPTION) {
+        if (!newCustomerName.trim()) throw new Error('Angiv navn på ny kunde')
+        const created = await authFetch(`${getApiUrl()}/api/admin/customers`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newCustomerName.trim() }),
+        }).then(r => r.json())
+        customerId = created.id
+      }
+      if (!customerId) throw new Error('Vælg en kunde')
+
+      let siteId = identitySiteId
+      if (siteId === NEW_OPTION) {
+        if (!newSiteName.trim()) throw new Error('Angiv navn på nyt site')
+        const created = await authFetch(`${getApiUrl()}/api/admin/sites`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customer_id: customerId, name: newSiteName.trim() }),
+        }).then(r => r.json())
+        siteId = created.id
+      }
+      if (!siteId) throw new Error('Vælg et site')
+
+      let cameraId = identityCameraId
+      if (cameraId === NEW_OPTION) {
+        if (!newCameraName.trim()) throw new Error('Angiv kameranavn')
+        const created = await authFetch(`${getApiUrl()}/api/admin/cameras`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ site_id: siteId, customer_id: customerId, camera_name: newCameraName.trim() }),
+        }).then(r => r.json())
+        cameraId = created.id
+      }
+      if (!cameraId) throw new Error('Vælg et kamera')
+
+      const assignRes = await authFetch(`${getApiUrl()}/api/admin/cameras/${pathSegment(cameraId)}/assign`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: deviceId, assigned_by: 'admin-ui' }),
+      })
+      if (!assignRes.ok) throw new Error('Kunne ikke binde enheden til kameraet')
+
+      setNewCustomerName(''); setNewSiteName(''); setNewCameraName('')
+      await loadIdentityLists()
+      setMsg('Enhedsidentitet gemt ✓')
+    } catch (e: any) {
+      setMsg(e?.message || 'Fejl ved gemning')
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (!cfg) return <div className="text-center py-12 text-gray-400">Indlæser konfiguration…</div>
 
   const schedule = cfg.schedule ?? {}
   const camera   = cfg.camera   ?? {}
+
+  const filteredSites = sites.filter(s => s.customer_id === identityCustomerId)
+  const filteredCameras = cameras.filter(c => c.site_id === identitySiteId)
 
   return (
     <div className="space-y-5 max-w-2xl">
@@ -870,23 +949,70 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">Enhedsidentitet</h3>
         <div className="space-y-3">
-          {[
-            { label: 'Kundenavn', key: 'customer_name', tooltip: 'Navnet på kunden der ejer enheden. Bruges til rapportering og fakturering.' },
-            { label: 'Sitenavn', key: 'site_name', tooltip: 'Navnet på site lokationen hvor enheden er placeret. Typisk adresse eller bygningsnavn.' },
-            { label: 'Kameranavn', key: 'camera_name', tooltip: 'Unikt navn til kameraet. Bruges til identificering i rapporter og CMDB.' },
-          ].map(({ label, key, tooltip }) => (
-            <div key={key}>
-              <div className="flex items-center gap-2 mb-1">
-                <label className="text-xs text-gray-400">{label}</label>
-                {tooltip && <span className="text-xs text-gray-300 cursor-help" title={tooltip}>ⓘ</span>}
-              </div>
-              <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                value={info?.[key] ?? ''} onChange={e => setInfo({ ...info, [key]: e.target.value })} />
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Kunde</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Kunden der ejer enheden. Bruges til rapportering, fakturering og adgangsstyring.">ⓘ</span>
             </div>
-          ))}
-          <button onClick={saveInfo} disabled={saving}
+            <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              value={identityCustomerId}
+              onChange={e => { setIdentityCustomerId(e.target.value); setIdentitySiteId(''); setIdentityCameraId('') }}>
+              <option value="">Vælg kunde…</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value={NEW_OPTION}>+ Ny kunde…</option>
+            </select>
+            {identityCustomerId === NEW_OPTION && (
+              <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-2"
+                placeholder="Navn på ny kunde" value={newCustomerName}
+                onChange={e => setNewCustomerName(e.target.value)} />
+            )}
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Site</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Site-lokationen hvor enheden er placeret. Typisk adresse eller bygningsnavn.">ⓘ</span>
+            </div>
+            <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              value={identitySiteId} disabled={!identityCustomerId}
+              onChange={e => { setIdentitySiteId(e.target.value); setIdentityCameraId('') }}>
+              <option value="">Vælg site…</option>
+              {filteredSites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              <option value={NEW_OPTION}>+ Nyt site…</option>
+            </select>
+            {identitySiteId === NEW_OPTION && (
+              <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-2"
+                placeholder="Navn på nyt site" value={newSiteName}
+                onChange={e => setNewSiteName(e.target.value)} />
+            )}
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <label className="text-xs text-gray-400">Kameranavn</label>
+              <span className="text-xs text-gray-300 cursor-help" title="Kamera-lokationen enheden er bundet til. Bruges til identificering i rapporter og CMDB.">ⓘ</span>
+            </div>
+            <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              value={identityCameraId} disabled={!identitySiteId}
+              onChange={e => setIdentityCameraId(e.target.value)}>
+              <option value="">Vælg kamera…</option>
+              {filteredCameras.map(c => (
+                <option key={c.id} value={c.id} disabled={!!c.current_device_id && c.current_device_id !== deviceId}>
+                  {c.camera_name}{c.current_device_id && c.current_device_id !== deviceId ? ' (optaget af anden enhed)' : ''}
+                </option>
+              ))}
+              <option value={NEW_OPTION}>+ Nyt kamera…</option>
+            </select>
+            {identityCameraId === NEW_OPTION && (
+              <input className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mt-2"
+                placeholder="Kameranavn" value={newCameraName}
+                onChange={e => setNewCameraName(e.target.value)} />
+            )}
+          </div>
+
+          <button onClick={saveIdentity} disabled={saving}
             className="mt-2 px-4 py-2 bg-sky-500 text-white text-sm rounded-lg hover:bg-sky-600 disabled:opacity-50">
-            Gem enhedsinfo
+            Gem enhedsidentitet
           </button>
         </div>
       </div>
