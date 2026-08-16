@@ -500,9 +500,7 @@ class HeadendClient:
                 path,
                 payload_hash=sha256,
             ))
-            session = requests.Session()
-            session.headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
-            session.headers["User-Agent"] = "TimeLapsePro-EdgeAgent/1.0"
+            session = _build_session(self._cfg_mgr.api_token)
             session.headers.pop("Content-Type", None)
             with open(path_obj, "rb") as fh:
                 resp = session.post(
@@ -579,7 +577,7 @@ class HeadendClient:
         """Returnerer True hvis headend API er tilgængeligt."""
         try:
             session = _build_session(self._cfg_mgr.api_token)
-            r = session.get(f"{self._base_url}/api/health", timeout=5)
+            r = session.get(f"{self._base_url}/health", timeout=5)
             return r.status_code == 200
         except Exception:
             return False
