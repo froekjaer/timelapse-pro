@@ -7386,41 +7386,28 @@ def _build_os_bundle_in_mac_container(
     docker = _shutil.which("docker") if "_shutil" in globals() else None
     if not docker:
         raise HTTPException(status_code=409, detail="Docker/Colima er ikke installeret på Headend")
-    build_root = output_path.parent
-    build_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(build_root, 0o777)
+    from headend.services.os_builder_security import (
+        bundle_container_command,
+        secure_builder_dir,
+        write_private_builder_file,
+    )
+
+    build_root = secure_builder_dir(output_path.parent)
     plan_copy = build_root / f"{output_path.name}.plan.json"
-    plan_copy.write_text(plan_path.read_text())
+    write_private_builder_file(plan_copy, plan_path.read_text())
     repo = _repo_root()
-    container_output = f"/out/{output_path.name}"
-    cmd = [
-        docker,
-        "run",
-        "--rm",
-        "--platform",
-        "linux/arm64",
-        "-e",
-        "DEBIAN_FRONTEND=noninteractive",
-        "-e",
-        "TZ=UTC",
-        "-v",
-        f"{repo}:/repo:ro",
-        "-v",
-        f"{build_root}:/out",
-        image,
-        "bash",
-        "-lc",
-        (
-            "set -euo pipefail; "
-            "apt-get update; "
-            "apt-get install -y --no-install-recommends python3 ca-certificates; "
-            f"python3 /repo/headend/tools/build_os_bundle.py --device-id {device_id!r} "
-            f"--catalog /out/{plan_copy.name!r} --output {container_output!r} "
-            f"--architecture {architecture!r} --source-ref {source_ref!r} "
-            f"{('--category ' + category) if category else ''} "
-            "--include-dependencies --force"
-        ),
-    ]
+    cmd = bundle_container_command(
+        docker=docker,
+        repo=repo,
+        build_root=build_root,
+        image=image,
+        output_name=output_path.name,
+        plan_name=plan_copy.name,
+        device_id=device_id,
+        architecture=architecture,
+        source_ref=source_ref,
+        category=category,
+    )
     result = _subprocess.run(cmd, text=True, capture_output=True, timeout=3600)
     if result.returncode != 0:
         raise HTTPException(
@@ -7778,9 +7765,13 @@ def _generate_apt_list_from_mac_builder(
                 "reason": docker_error,
             },
         )
-    build_root = (_os_bundle_store_root().expanduser().resolve() / "_catalog-builder")
-    build_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(build_root, 0o777)
+    from headend.services.os_builder_security import (
+        catalog_container_command,
+        secure_builder_dir,
+        write_private_builder_file,
+    )
+
+    build_root = secure_builder_dir(_os_bundle_store_root().expanduser().resolve() / "_catalog-builder")
     safe_device = _re.sub(r"[^A-Za-z0-9_.-]+", "-", device_id)
     input_path = build_root / f"{safe_device}.installed.tsv"
     output_path = build_root / f"{safe_device}.apt-list.txt"
@@ -7791,45 +7782,17 @@ def _generate_apt_list_from_mac_builder(
         if not name_s or not version_s or "\t" in name_s or "\n" in name_s or "\n" in version_s:
             continue
         lines.append(f"{name_s}\t{version_s}")
-    input_path.write_text("\n".join(lines) + "\n")
-    output_path.write_text("")
-    os.chmod(input_path, 0o666)
-    os.chmod(output_path, 0o666)
-    shell = (
-        "set -euo pipefail; "
-        "apt-get update >/dev/null; "
-        "while IFS=$'\\t' read -r name installed; do "
-        "[ -n \"$name\" ] || continue; "
-        "candidate=$(apt-cache policy \"$name\" | awk '/Candidate:/ {print $2; exit}'); "
-        "[ -n \"$candidate\" ] && [ \"$candidate\" != '(none)' ] || continue; "
-        "if dpkg --compare-versions \"$candidate\" gt \"$installed\"; then "
-        "repos=$(apt-cache policy \"$name\" | awk -v cand=\"$candidate\" '$1 == cand {getline; print $3; exit}'); "
-        "[ -n \"$repos\" ] || repos=ubuntu-builder; "
-        "case \"$repos\" in *security*) repo_label=noble-security ;; *updates*) repo_label=noble-updates ;; *) repo_label=\"$repos\" ;; esac; "
-        f"printf '%s/%s %s {architecture} [upgradable from: %s]\\n' \"$name\" \"$repo_label\" \"$candidate\" \"$installed\"; "
-        "fi; "
-        "done < /out/" + input_path.name + " > /out/" + output_path.name
+    write_private_builder_file(input_path, "\n".join(lines) + "\n")
+    write_private_builder_file(output_path, "")
+    cmd = catalog_container_command(
+        docker=docker,
+        build_root=build_root,
+        image=image,
+        input_name=input_path.name,
+        output_name=output_path.name,
+        architecture=architecture,
     )
-    result = _subprocess.run(
-        [
-            docker,
-            "run",
-            "--rm",
-            "--platform",
-            "linux/arm64",
-            "-e",
-            "DEBIAN_FRONTEND=noninteractive",
-            "-v",
-            f"{build_root}:/out",
-            image,
-            "bash",
-            "-lc",
-            shell,
-        ],
-        text=True,
-        capture_output=True,
-        timeout=3600,
-    )
+    result = _subprocess.run(cmd, text=True, capture_output=True, timeout=3600)
     if result.returncode != 0:
         raise HTTPException(
             status_code=409,
