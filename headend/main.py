@@ -11419,6 +11419,7 @@ def create_timelapse(payload: dict, _user=require_role("admin"), db: Session = D
         resolution: str,            # "1080p"|"4k"|"original"
         codec: str,                 # "h264"|"h265"
         deflicker: bool,
+        exposure_ramping: bool,     # temporal eksponerings-/hvidbalance-udjævning, default false
         fade_frames: int,           # 0 = ingen fade
         timestamp_overlay: bool,
         timestamp_position: str,    # "tl"|"tr"|"bl"|"br"
@@ -11502,8 +11503,20 @@ def _render_timelapse(job_id, image_paths, options):
 
     RENDER_JOBS[job_id]["status"] = "rendering"
     output_file = RENDER_OUTPUT_DIR / f"{job_id}_{title.replace(' ','_')}.mp4"
+    ramp_dir = RENDER_OUTPUT_DIR / f"{job_id}_ramped"
 
     try:
+        # Eksponerings-/hvidbalance-udjævning (opt-in, default fra). Erstatter kun de
+        # lokale kopier FFmpeg læser fra herunder — rører aldrig original-billederne.
+        # Enhver fejl her logges og falder tilbage til de originale billeder uændret,
+        # så et fejlslagent forsøg aldrig kan ødelægge en render.
+        if getattr(options, "exposure_ramping", False):
+            try:
+                from services.exposure_ramping import build_ramped_frame_sequence
+                image_paths = build_ramped_frame_sequence(image_paths, ramp_dir)
+            except Exception as exc:
+                log.warning("Timelapse %s: exposure_ramping fejlede, fortsætter med originale billeder: %s", job_id, exc)
+
         # Skriv billedliste til temp fil (FFmpeg concat demuxer)
         list_file = RENDER_OUTPUT_DIR / f"{job_id}_list.txt"
         with open(list_file, "w") as lf:
@@ -11618,6 +11631,10 @@ def _render_timelapse(job_id, image_paths, options):
     finally:
         # Ryd op
         try: list_file.unlink()
+        except Exception: pass
+        try:
+            if ramp_dir.exists():
+                _shutil.rmtree(ramp_dir)
         except Exception: pass
 
 

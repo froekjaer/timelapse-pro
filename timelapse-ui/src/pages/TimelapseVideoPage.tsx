@@ -69,6 +69,7 @@ interface Settings {
   resolution: '1080p' | '4k' | 'original'
   codec: 'h264' | 'h265'
   deflicker: boolean
+  exposure_ramping: boolean
   fade_frames: number
   timestamp_overlay: boolean
   timestamp_position: 'tl' | 'tr' | 'bl' | 'br'
@@ -91,6 +92,7 @@ const DEFAULT_SETTINGS: Settings = {
   resolution: '1080p',
   codec: 'h264',
   deflicker: false,
+  exposure_ramping: false,
   fade_frames: 0,
   timestamp_overlay: false,
   timestamp_position: 'br',
@@ -278,6 +280,7 @@ export default function TimelapseVideoPage() {
           resolution:         settings.resolution,
           codec:              settings.codec,
           deflicker:          settings.deflicker,
+          exposure_ramping:   settings.exposure_ramping,
           fade_frames:        settings.fade_frames,
           timestamp_overlay:  settings.timestamp_overlay,
           timestamp_position: settings.timestamp_position,
@@ -542,11 +545,19 @@ export default function TimelapseVideoPage() {
 
                 {/* Checkboxes */}
                 <div className="space-y-2 pt-1">
-                  <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+                  <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer"
+                    title="FFmpeg-filter der udjævner pixel-til-pixel flimmer mellem nabobilleder.">
                     <input type="checkbox" checked={settings.deflicker}
                       onChange={e => setSettings(s => ({...s, deflicker: e.target.checked}))}
                       className="w-3.5 h-3.5 rounded accent-purple-500" />
                     Deflicker (udjævn lys)
+                  </label>
+                  <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer"
+                    title="Udjævner eksponering og hvidbalance over tid ud fra faktisk målt lysstyrke pr. billede. Følger gradvise ændringer (fx dag-til-nat) uden at kæmpe imod dem — fjerner kun kortvarigt flimmer omkring den lokale trend. Rører aldrig original-billederne.">
+                    <input type="checkbox" checked={settings.exposure_ramping}
+                      onChange={e => setSettings(s => ({...s, exposure_ramping: e.target.checked}))}
+                      className="w-3.5 h-3.5 rounded accent-purple-500" />
+                    Eksponerings-/hvidbalance-udjævning (ramping)
                   </label>
                   <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
                     <input type="checkbox" checked={settings.timestamp_overlay}
