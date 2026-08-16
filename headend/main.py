@@ -696,6 +696,17 @@ def startup():
     except Exception as _thumb_loop_err:
         log.warning("Kunne ikke starte thumbnail auto loop: %s", _thumb_loop_err)
 
+    # ── Legacy/import backlog sweep (2026-08-16), inaktiv indtil sat til i settings ──
+    try:
+        from services.legacy_backlog_sweep import run_forever as _legacy_sweep_run_forever
+        _threading.Thread(target=_legacy_sweep_run_forever, kwargs=dict(
+            get_setting=_get_setting, thumbnail_lock=_thumbnail_generation_lock, find_image=_find_image,
+            thumbs_dir_for=_thumbs_dir_for, generate_thumbnail=_generate_edge_thumbnail,
+            is_valid_jpeg=_is_valid_jpeg, find_existing_thumbnail=_find_existing_thumbnail,
+        ), name="legacy-backlog-sweep", daemon=True).start()
+    except Exception as _legacy_sweep_err:
+        log.warning("Kunne ikke starte legacy backlog sweep: %s", _legacy_sweep_err)
+
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
@@ -2471,13 +2482,16 @@ def enroll_device(req: EnrollRequest, db: Session = Depends(get_db)):
 
 @app.get("/api/admin/devices/unassigned")
 def list_unassigned_devices(
-    current_user=Depends(get_current_user),
+    _user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
-    """Returnerer enheder der er enrollet men endnu ikke tildelt en site."""
-    devices = db.query(Device).filter(
-        Device.enrollment_state == "unassigned"
-    ).order_by(Device.created_at.desc()).all()
+    """Returner commissioning-kandidater inden for brugerens tenant."""
+    query = db.query(Device).filter(Device.enrollment_state == "unassigned")
+    if not _is_platform_admin(_user):
+        # Tenant-admins må ikke se eller claim'e globale/andre kunders
+        # unassigned devices. Platform admin beholder global commissioning.
+        query = query.filter(Device.customer_id == _user.customer_id)
+    devices = query.order_by(Device.created_at.desc()).all()
 
     return [
         {
@@ -2497,7 +2511,7 @@ def list_unassigned_devices(
 def assign_device_to_site(
     device_id: str,
     payload: dict,
-    current_user=Depends(get_current_user),
+    _user=require_role("admin"),
     db: Session = Depends(get_db),
 ):
     """
@@ -2508,16 +2522,19 @@ def assign_device_to_site(
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Enhed ikke fundet")
+    # Check current ownership before any re-assignment. A tenant admin cannot
+    # claim a global/unbound device or move another tenant's device.
+    _ensure_customer_access(_user, device.customer_id)
 
     site_id = payload.get("site_id")
     if not site_id:
         raise HTTPException(status_code=400, detail="site_id er påkrævet")
 
-    site = db.query(Site).filter_by(id=site_id).first()
-    if not site:
-        raise HTTPException(status_code=404, detail="Site ikke fundet")
+    # Resolve target through the same tenant boundary used by the rest of
+    # the admin/site API instead of an unscoped Site query.
+    site = _ensure_site_access(db, _user, site_id)
 
-    device.site_id          = site_id
+    device.site_id          = site.id
     device.site_name        = site.name
     device.customer_id      = site.customer_id or device.customer_id
     device.enrollment_state = "active"
@@ -2537,7 +2554,7 @@ def assign_device_to_site(
     prov["enrollment_state"] = "active"
     cfg["provisioning"] = prov
     device.device_config = json.dumps(cfg, ensure_ascii=False)
-    _reconcile_edge_lifecycle(db, device, actor=getattr(current_user, "username", "assign-site"), target_state="assigned", reason="Device assigned to site")
+    _reconcile_edge_lifecycle(db, device, actor=getattr(_user, "username", "assign-site"), target_state="assigned", reason="Device assigned to site")
 
     db.commit()
     log.info("Device %s tildelt site %s (%s)", device_id, site_id, site.name)
