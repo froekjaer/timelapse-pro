@@ -1,4 +1,5 @@
-"""Oldest-first backlog sweep for missing thumbnails and missing AI tags.
+"""Oldest-first backlog sweep for missing thumbnails, AI tags, and CV quality
+metrics (blur/brightness) for imported and pre-implementation captures.
 
 Complements two existing mechanisms that both structurally miss imported/
 legacy captures:
@@ -22,6 +23,24 @@ setting — disabled by default, since AI tagging can incur real cost
 (cloud Gemini) or load (local Ollama) depending on the configured
 strategy, and the size of a customer's historical backlog is unknown
 ahead of time. See Dokumentation/HANDOVER_LOG.md, 2026-08-16 entry.
+
+## What this does and does NOT backfill (2026-08-16 follow-up)
+
+- **CV quality metrics (blur_score/brightness_mean/quality_flag)**: backfilled.
+  Reuses `headend.importer._quality_check()` verbatim — the same
+  Laplacian-variance-blur + mean-brightness algorithm, downscaled to 800px,
+  that `edge/capture/quality.py` runs on Edge and that the importer already
+  runs at import time. Pure CPU/OpenCV, no cost, no hardware dependency.
+- **Edge NPU signals (`wb_cast_strength` and any other
+  `edge/ai/autonomous_optimizer.py` output)**: deliberately NOT backfilled,
+  and cannot be from the Headend. `edge/npu_viplite/` is a native C++
+  wrapper around a `.nb` model compiled for the Orange Pi's Allwinner/
+  VeriSilicon VIPLite NPU — it only runs on that specific board's NPU
+  silicon via its vendor SDK, not on the Mac mini Headend. Retroactively
+  computing it would require shipping the original image back out to an
+  online Edge device and is out of scope here. These fields stay NULL for
+  backfilled captures, exactly as already documented as "sparse by design"
+  in `headend/database.py`'s `wb_cast_strength` column comment.
 """
 from __future__ import annotations
 
@@ -34,6 +53,8 @@ DEFAULT_THUMBNAIL_SCAN_LIMIT = 500
 DEFAULT_THUMBNAIL_MAX_PER_RUN = 100
 DEFAULT_AI_SCAN_LIMIT = 500
 DEFAULT_AI_MAX_PER_RUN = 50
+DEFAULT_QUALITY_SCAN_LIMIT = 500
+DEFAULT_QUALITY_MAX_PER_RUN = 200
 
 
 def sweep_thumbnails(
@@ -76,6 +97,42 @@ def sweep_thumbnails(
     return generated, failed
 
 
+def sweep_quality_metrics(
+    candidates: list,
+    *,
+    find_image,
+    compute_quality,
+    apply_quality,
+    max_per_run: int = DEFAULT_QUALITY_MAX_PER_RUN,
+) -> tuple[int, int]:
+    """Backfill blur_score/brightness_mean/quality_flag for an oldest-first
+    candidate list missing them. `compute_quality(image_path) -> dict` is the
+    same algorithm already used at capture/import time (see module
+    docstring); `apply_quality(capture, quality_dict)` writes the result
+    onto the ORM object (commit is the caller's responsibility, matching how
+    sweep_thumbnails/sweep_ai_tags stay side-effect-injected). A quality
+    result with flag "error" (unreadable image) counts as failed, not
+    applied — never writes partial/garbage metrics."""
+    updated = failed = 0
+    for capture in candidates:
+        if updated >= max_per_run:
+            break
+        try:
+            image_path = find_image(capture.device_id, capture.filename)
+            if not image_path:
+                continue
+            quality = compute_quality(image_path)
+            if not quality or quality.get("flag") == "error":
+                failed += 1
+                continue
+            apply_quality(capture, quality)
+            updated += 1
+        except Exception as exc:  # noqa: BLE001 - one bad row must not stop the sweep
+            failed += 1
+            log.warning("legacy_backlog_sweep: uventet fejl ved kvalitetstjek for %s: %s", capture.filename, exc)
+    return updated, failed
+
+
 def run_once(
     db,
     Capture,
@@ -88,10 +145,14 @@ def run_once(
     is_valid_jpeg,
     find_existing_thumbnail,
     queue_capture_for_analysis,
+    compute_quality,
+    apply_quality,
     thumbnail_scan_limit: int = DEFAULT_THUMBNAIL_SCAN_LIMIT,
     thumbnail_max_per_run: int = DEFAULT_THUMBNAIL_MAX_PER_RUN,
     ai_scan_limit: int = DEFAULT_AI_SCAN_LIMIT,
     ai_max_per_run: int = DEFAULT_AI_MAX_PER_RUN,
+    quality_scan_limit: int = DEFAULT_QUALITY_SCAN_LIMIT,
+    quality_max_per_run: int = DEFAULT_QUALITY_MAX_PER_RUN,
 ) -> dict:
     """One full sweep pass: query oldest-first candidates and process them.
     Owns the SQLAlchemy querying so the caller (headend/main.py's loop) only
@@ -99,7 +160,11 @@ def run_once(
     existing thumbnail/AI machinery already uses. Returns all-zero
     immediately when `enabled` is False — the caller is expected to compute
     that from the `legacy_backlog_sweep_enabled` setting."""
-    result = {"thumbnails_generated": 0, "thumbnails_failed": 0, "ai_queued": 0, "ai_queue_full": 0}
+    result = {
+        "thumbnails_generated": 0, "thumbnails_failed": 0,
+        "ai_queued": 0, "ai_queue_full": 0,
+        "quality_updated": 0, "quality_failed": 0,
+    }
     if not enabled:
         return result
 
@@ -134,6 +199,21 @@ def run_once(
         queue_capture_for_analysis=queue_capture_for_analysis,
         max_per_run=ai_max_per_run,
     )
+
+    quality_candidates = (
+        db.query(Capture)
+        .filter(Capture.filename.isnot(None), (Capture.blur_score.is_(None)) | (Capture.brightness_mean.is_(None)))
+        .order_by(Capture.captured_at.asc())
+        .limit(quality_scan_limit)
+        .all()
+    )
+    result["quality_updated"], result["quality_failed"] = sweep_quality_metrics(
+        quality_candidates,
+        find_image=find_image,
+        compute_quality=compute_quality,
+        apply_quality=apply_quality,
+        max_per_run=quality_max_per_run,
+    )
     return result
 
 
@@ -146,6 +226,8 @@ SETTING_THUMBNAIL_SCAN_LIMIT = "legacy_backlog_sweep_thumbnail_scan_limit"
 SETTING_THUMBNAIL_MAX_PER_RUN = "legacy_backlog_sweep_thumbnail_max_per_run"
 SETTING_AI_SCAN_LIMIT = "legacy_backlog_sweep_ai_scan_limit"
 SETTING_AI_MAX_PER_RUN = "legacy_backlog_sweep_ai_max_per_run"
+SETTING_QUALITY_SCAN_LIMIT = "legacy_backlog_sweep_quality_scan_limit"
+SETTING_QUALITY_MAX_PER_RUN = "legacy_backlog_sweep_quality_max_per_run"
 
 
 def _read_number(get_setting, db, key: str, default, cast, floor):
@@ -179,6 +261,13 @@ def run_forever(
     import time as _t
     from database import SessionLocal, Capture
     from ai.integration import queue_capture_for_analysis
+    from importer import _quality_check
+
+    def _apply_quality(capture, quality: dict) -> None:
+        capture.blur_score = quality.get("blur_score")
+        capture.brightness_mean = quality.get("brightness_mean")
+        capture.quality_flag = quality.get("flag")
+        capture.quality_passed = quality.get("passed")
 
     _t.sleep(startup_delay_s)
     while True:
@@ -192,10 +281,15 @@ def run_forever(
                     find_image=find_image, thumbs_dir_for=thumbs_dir_for, generate_thumbnail=generate_thumbnail,
                     is_valid_jpeg=is_valid_jpeg, find_existing_thumbnail=find_existing_thumbnail,
                     queue_capture_for_analysis=queue_capture_for_analysis,
+                    compute_quality=lambda path: _quality_check(path), apply_quality=_apply_quality,
                     thumbnail_scan_limit=_read_number(get_setting, db, SETTING_THUMBNAIL_SCAN_LIMIT, DEFAULT_THUMBNAIL_SCAN_LIMIT, int, 1),
                     thumbnail_max_per_run=_read_number(get_setting, db, SETTING_THUMBNAIL_MAX_PER_RUN, DEFAULT_THUMBNAIL_MAX_PER_RUN, int, 1),
                     ai_scan_limit=_read_number(get_setting, db, SETTING_AI_SCAN_LIMIT, DEFAULT_AI_SCAN_LIMIT, int, 1),
-                    ai_max_per_run=_read_number(get_setting, db, SETTING_AI_MAX_PER_RUN, DEFAULT_AI_MAX_PER_RUN, int, 1))
+                    ai_max_per_run=_read_number(get_setting, db, SETTING_AI_MAX_PER_RUN, DEFAULT_AI_MAX_PER_RUN, int, 1),
+                    quality_scan_limit=_read_number(get_setting, db, SETTING_QUALITY_SCAN_LIMIT, DEFAULT_QUALITY_SCAN_LIMIT, int, 1),
+                    quality_max_per_run=_read_number(get_setting, db, SETTING_QUALITY_MAX_PER_RUN, DEFAULT_QUALITY_MAX_PER_RUN, int, 1))
+                if result["quality_updated"]:
+                    db.commit()
                 if any(result.values()):
                     log.info("Legacy backlog sweep: %s", result)
             finally:
