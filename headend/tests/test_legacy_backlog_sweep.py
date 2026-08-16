@@ -58,6 +58,8 @@ _NOOP_KWARGS = dict(
     is_valid_jpeg=lambda p: True,
     find_existing_thumbnail=lambda p: None,
     queue_capture_for_analysis=lambda cid: True,
+    compute_quality=lambda p: {"flag": "ok", "passed": True, "blur_score": 150.0, "brightness_mean": 120.0},
+    apply_quality=lambda capture, quality: None,
 )
 
 
@@ -237,23 +239,100 @@ def test_sweep_ai_tags_one_bad_candidate_does_not_abort_the_rest() -> None:
 def test_run_once_does_nothing_when_disabled() -> None:
     db = FakeDb(_captures(5))
     result = sweep.run_once(db, MagicMock(), enabled=False, thumbnail_lock_locked=False, **_NOOP_KWARGS)
-    assert result == {"thumbnails_generated": 0, "thumbnails_failed": 0, "ai_queued": 0, "ai_queue_full": 0}
+    assert result == {
+        "thumbnails_generated": 0, "thumbnails_failed": 0,
+        "ai_queued": 0, "ai_queue_full": 0,
+        "quality_updated": 0, "quality_failed": 0,
+    }
 
 
-def test_run_once_processes_both_thumbnails_and_ai_when_enabled() -> None:
+def test_run_once_processes_thumbnails_ai_and_quality_when_enabled() -> None:
     db = FakeDb(_captures(3))
     result = sweep.run_once(db, MagicMock(), enabled=True, thumbnail_lock_locked=False, **_NOOP_KWARGS)
     assert result["thumbnails_generated"] == 3
     assert result["ai_queued"] == 3
+    assert result["quality_updated"] == 3
     assert result["thumbnails_failed"] == 0
     assert result["ai_queue_full"] == 0
+    assert result["quality_failed"] == 0
 
 
-def test_run_once_skips_thumbnails_but_still_does_ai_when_lock_is_held() -> None:
+def test_run_once_skips_thumbnails_but_still_does_ai_and_quality_when_lock_is_held() -> None:
     db = FakeDb(_captures(3))
     result = sweep.run_once(db, MagicMock(), enabled=True, thumbnail_lock_locked=True, **_NOOP_KWARGS)
     assert result["thumbnails_generated"] == 0  # skipped — another generation was already in progress
     assert result["ai_queued"] == 3  # AI queueing is independent of the thumbnail lock
+    assert result["quality_updated"] == 3  # quality backfill is independent of the thumbnail lock too
+
+
+# ── sweep_quality_metrics ────────────────────────────────────────────────────
+
+def test_sweep_quality_metrics_applies_result_and_stops_at_cap() -> None:
+    candidates = _captures(10)
+    applied = []
+
+    def apply_quality(capture, quality):
+        applied.append((capture.id, quality))
+
+    updated, failed = sweep.sweep_quality_metrics(
+        candidates,
+        find_image=lambda d, f: Path(f"/fake/{f}"),
+        compute_quality=lambda p: {"flag": "ok", "passed": True, "blur_score": 200.0, "brightness_mean": 100.0},
+        apply_quality=apply_quality,
+        max_per_run=4,
+    )
+    assert updated == 4
+    assert failed == 0
+    assert len(applied) == 4
+    assert applied[0][1]["blur_score"] == 200.0
+
+
+def test_sweep_quality_metrics_counts_unreadable_images_as_failed_not_applied() -> None:
+    candidates = _captures(3)
+    applied = []
+
+    updated, failed = sweep.sweep_quality_metrics(
+        candidates,
+        find_image=lambda d, f: Path(f"/fake/{f}"),
+        compute_quality=lambda p: {"flag": "error", "passed": False, "blur_score": None, "brightness_mean": None},
+        apply_quality=lambda capture, quality: applied.append(capture.id),
+        max_per_run=100,
+    )
+    assert updated == 0
+    assert failed == 3
+    assert applied == []  # never applied a garbage/error result
+
+
+def test_sweep_quality_metrics_skips_captures_with_no_file_on_disk() -> None:
+    candidates = _captures(3)
+    updated, failed = sweep.sweep_quality_metrics(
+        candidates,
+        find_image=lambda d, f: None,
+        compute_quality=lambda p: {"flag": "ok", "passed": True, "blur_score": 200.0, "brightness_mean": 100.0},
+        apply_quality=lambda capture, quality: None,
+        max_per_run=100,
+    )
+    assert updated == 0
+    assert failed == 0
+
+
+def test_sweep_quality_metrics_one_bad_candidate_does_not_abort_the_rest() -> None:
+    candidates = _captures(3)
+
+    def find_image(device_id, filename):
+        if filename == "001.jpg":
+            raise RuntimeError("boom")
+        return Path(f"/fake/{filename}")
+
+    updated, failed = sweep.sweep_quality_metrics(
+        candidates,
+        find_image=find_image,
+        compute_quality=lambda p: {"flag": "ok", "passed": True, "blur_score": 200.0, "brightness_mean": 100.0},
+        apply_quality=lambda capture, quality: None,
+        max_per_run=100,
+    )
+    assert updated == 2
+    assert failed == 1
 
 
 # ── _read_number (tolerant settings parsing — all tunables live in the DB) ──

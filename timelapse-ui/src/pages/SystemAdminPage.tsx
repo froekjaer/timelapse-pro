@@ -862,8 +862,8 @@ export function SystemAdminPage() {
           tooltip="Upload slot styring: true begrænser uploads til tildelte tidsvinduer (upload slot policy), false uploader når som helst Edge er online. Slot enforcement bruges til at styre bandwidth usage og omkostninger.">
           <Txt value={settings.upload_slot_enforced ?? ''} onChange={v => setSettings(s => ({...s, upload_slot_enforced: v}))} mono />
         </Field>
-        <Field label="Ældste-først backlog-sweep (thumbnails + AI-tags)" description="Fanger importerede/gamle billeder der aldrig når det seneste-først-tjek"
-          tooltip="Genererer manglende thumbnails og sender manglende AI-tags til analyse, ældste billede først — modsat de eksisterende automatikker, der kun ser på de seneste captures. Fanger importerede historiske billeder og billeder taget før AI-tagging fandtes. OBS: AI-analyse kan koste penge (cloud Gemini) eller belaste server (lokal Ollama) afhængig af jeres AI-strategi — slå kun til når I har taget stilling til omfanget af jeres historiske backlog. Interval og loft pr. kørsel styres af felterne herunder. Default fra.">
+        <Field label="Ældste-først backlog-sweep (thumbnails + AI-tags + billedkvalitet)" description="Fanger importerede/gamle billeder der aldrig når det seneste-først-tjek"
+          tooltip="Genererer manglende thumbnails, sender manglende AI-tags til analyse, og genberegner manglende blur/lysstyrke-metrics — ældste billede først, modsat de eksisterende automatikker der kun ser på de seneste captures. Fanger importerede historiske billeder og billeder taget før AI-tagging fandtes. Billedkvalitet (blur/lysstyrke) beregnes lokalt med samme metode som ved import — gratis, ingen ekstern afhængighed. Hvidbalance-drift-signalet (wb_cast_strength) kan IKKE efterberegnes her — det kræver Edge-enhedens NPU-hardware (Orange Pi VIPLite) og forbliver tomt for backfillede billeder. OBS: AI-tag-analyse kan koste penge (cloud Gemini) eller belaste server (lokal Ollama) afhængig af jeres AI-strategi — slå kun til når I har taget stilling til omfanget af jeres historiske backlog. Interval og loft pr. kørsel styres af felterne herunder. Default fra.">
           <Toggle
             value={(settings.legacy_backlog_sweep_enabled ?? 'false').toLowerCase() === 'true'}
             onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_enabled: v ? 'true' : 'false'}))}
@@ -888,6 +888,14 @@ export function SystemAdminPage() {
         <Field label="Backlog-sweep: AI-billeder køet pr. kørsel (maks)" description="Loft for hvor mange billeder der sendes til AI-analyse pr. kørsel"
           tooltip="Maksimalt antal billeder der sendes til AI-analysekøen i én kørsel — styrer tempoet på cloud-omkostning/lokal belastning. Default 50.">
           <Txt value={settings.legacy_backlog_sweep_ai_max_per_run ?? ''} onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_ai_max_per_run: v}))} mono />
+        </Field>
+        <Field label="Backlog-sweep: billedkvalitet-scan pr. kørsel" description="Hvor mange ældste captures der tjekkes for manglende blur/lysstyrke pr. kørsel"
+          tooltip="Antal ældste captures uden blur_score/brightness_mean der undersøges pr. kørsel. Lokal OpenCV-beregning, ingen ekstern omkostning. Default 500.">
+          <Txt value={settings.legacy_backlog_sweep_quality_scan_limit ?? ''} onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_quality_scan_limit: v}))} mono />
+        </Field>
+        <Field label="Backlog-sweep: billedkvalitet opdateret pr. kørsel (maks)" description="Loft for hvor mange billeder der får genberegnet blur/lysstyrke pr. kørsel"
+          tooltip="Maksimalt antal billeder der får genberegnet blur_score/brightness_mean/quality_flag i én kørsel. Ren lokal CPU-beregning (samme metode som ved import), så loftet er primært for at sprede databaselast. Default 200.">
+          <Txt value={settings.legacy_backlog_sweep_quality_max_per_run ?? ''} onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_quality_max_per_run: v}))} mono />
         </Field>
         <Field label="WebAuthn RP ID" description="Domæne for passkeys/FIDO2, fx headendens hostname uden protokol"
           tooltip="Relying Party ID for WebAuthn/passkeys. Typisk headendens hostname uden protokol (fx timelapse.example.com). Skal matche browser origin for security. Forkert ID vil blokere passkey login.">
