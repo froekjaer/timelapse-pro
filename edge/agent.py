@@ -71,7 +71,16 @@ from diagnostics.collector  import DiagnosticsCollector
 from upload.sftp            import UploadManager
 from upload.headend_client import HeadendClient
 from security               import verify_update_artifact
-from update_lifecycle       import release_receipt_matches_artifact, restore_previous_app_release
+from update_lifecycle import (
+    cleanup_pending_app_update,
+    load_pending_app_update,
+    mark_pending_app_update_health_confirmed,
+    pending_app_update_path,
+    release_receipt_matches_artifact,
+    restore_previous_app_release,
+    write_pending_app_update,
+    write_post_restart_guard,
+)
 try:
     from tunnel.ssh_manager import SshTunnelManager
     _SSH_TUNNEL_AVAILABLE = True
@@ -347,6 +356,11 @@ class EdgeAgent:
 
         # 5. Sync unsynced capture records to headend
         self._sync_captures()
+
+        # 6. A candidate app release is not deployed until this complete
+        # startup sequence has succeeded.  The independent systemd guard keeps
+        # the previous release recoverable if the new agent never reaches here.
+        self._finalize_pending_app_update_health()
 
     def _auto_bootstrap_cameras(self) -> None:
         node_cameras = self._cfg.get('node_cameras', [])
@@ -1626,9 +1640,88 @@ class EdgeAgent:
 
 
 
+    @staticmethod
+    def _pending_app_update_artifact(pending: dict) -> dict:
+        return {
+            "artifact_id": str(pending.get("artifact_id") or ""),
+            "source_commit": str(pending.get("source_commit") or ""),
+            "version": str(pending.get("version") or ""),
+            "manifest": {"outputs": [{"path": raw} for raw in pending.get("outputs", [])]},
+        }
+
+    def _reconcile_pending_app_update(self) -> bool:
+        """Reconcile durable post-restart evidence before accepting new work.
+
+        Returns True whenever a pending lifecycle record exists, so update
+        policy processing stays fail-closed until that exact release has either
+        been confirmed healthy or rolled back.
+        """
+        repo = Path("/opt/timelapse")
+        pending_path = pending_app_update_path(repo)
+        try:
+            pending = load_pending_app_update(pending_path)
+        except Exception as exc:
+            log.error("Pending app-update evidence er ugyldig; update-flow blokeret: %s", exc)
+            return True
+        if not pending:
+            return False
+
+        state = str(pending.get("state") or "")
+        update_id = int(pending.get("update_id", -1))
+        if update_id < 0:
+            log.error("Pending app-update mangler update_id; update-flow blokeret")
+            return True
+        if state == "awaiting_restart_health":
+            log.info("App update %d afventer komplet post-restart health gate", update_id)
+            return True
+        if state == "health_confirmed":
+            if self._report_update(update_id, "deployed", "post_restart_health_confirmed"):
+                cleanup_pending_app_update(pending_path)
+                log.info("App update %d VERIFIED efter komplet startup; recovery evidence ryddet", update_id)
+            return True
+        if state == "rolled_back_by_guard":
+            reason = str(pending.get("rollback_reason") or "post_restart_health_rollback")
+            if self._report_update(update_id, "rolled_back", reason):
+                cleanup_pending_app_update(pending_path)
+                log.warning("App update %d rollback-evidence rapporteret og recovery ryddet", update_id)
+            return True
+
+        log.error("Ukendt pending app-update state=%s; update-flow blokeret", state)
+        return True
+
+    def _finalize_pending_app_update_health(self) -> None:
+        """Confirm a candidate release only after the full startup path succeeded."""
+        repo = Path("/opt/timelapse")
+        pending_path = pending_app_update_path(repo)
+        try:
+            pending = load_pending_app_update(pending_path)
+        except Exception as exc:
+            log.error("Post-restart health kan ikke verificeres: %s", exc)
+            return
+        if not pending:
+            return
+        state = str(pending.get("state") or "")
+        if state == "awaiting_restart_health":
+            artifact = self._pending_app_update_artifact(pending)
+            receipt = repo / "edge" / ".timelapse-release.json"
+            if not release_receipt_matches_artifact(receipt, artifact):
+                log.error(
+                    "Post-restart health afvist for update %s: release receipt matcher ikke candidate identity",
+                    pending.get("update_id"),
+                )
+                return
+            try:
+                mark_pending_app_update_health_confirmed(pending_path)
+            except Exception as exc:
+                log.error("Kunne ikke persistére post-restart health evidence: %s", exc)
+                return
+        self._reconcile_pending_app_update()
+
     def _check_and_apply_updates(self) -> None:
         """Tjek om der er godkendte opdateringer og eksekvér dem."""
         if not self._running or self._stop_event.is_set():
+            return
+        if self._reconcile_pending_app_update():
             return
         log.info("Update-check: starter...")
         self._last_update_check = datetime.now(timezone.utc)
@@ -1712,7 +1805,7 @@ class EdgeAgent:
             log.warning("Opdatering %d fejlede (rc=%d)\n%s", update_id, result.returncode, result.stderr[-300:])
             self._report_update(update_id, "rolled_back", f"legacy_update_failed_rc_{result.returncode}: {result.stderr[-500:]}")
 
-    def _report_update(self, update_id: int, status: str, reason: str | None = None) -> None:
+    def _report_update(self, update_id: int, status: str, reason: str | None = None) -> bool:
         payload = {
             "update_id": update_id,
             "status": status,
@@ -1720,7 +1813,12 @@ class EdgeAgent:
         }
         if reason:
             payload["reason"] = reason
-        self._api._post("/updates/report", payload)
+        try:
+            ok, _ = self._api._post("/updates/report", payload)
+            return bool(ok)
+        except Exception as exc:
+            log.warning("Update %d status=%s kunne ikke rapporteres: %s", update_id, status, exc)
+            return False
 
     def _run_artifact_app_update(self, update_id: int, artifact: dict) -> None:
         """Installér app-opdatering fra Headend-signeret artifact uden GitHub adgang."""
@@ -1745,7 +1843,13 @@ class EdgeAgent:
         staging = Path(_tempfile.mkdtemp(prefix="tlp-artifact-", dir="/tmp"))
         backup = repo / "prev"
         receipt_path = repo / "edge" / ".timelapse-release.json"
-        unit_backup = staging / "systemd-backup"
+        safe_artifact_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(artifact_id or "artifact"))[:80]
+        recovery_root = Path("/data/timelapse_update_recovery")
+        recovery_dir = recovery_root / f"app-{update_id}-{safe_artifact_id}"
+        pending_path = pending_app_update_path(repo)
+        unit_backup = recovery_dir / "systemd-backup"
+        guard_started = False
+        rollback_ready = False
         managed_units = (
             "timelapse-bt-pan.service",
             "timelapse-bt-agent.service",
@@ -1765,6 +1869,12 @@ class EdgeAgent:
             str(item.get("path")) in management_runtime_paths for item in outputs
         )
         try:
+            if pending_path.exists():
+                raise RuntimeError("pending_app_update_recovery_exists")
+            if recovery_dir.exists():
+                _shutil.rmtree(recovery_dir)
+            recovery_dir.mkdir(parents=True, mode=0o700)
+
             self._report_update(update_id, "backing_up")
             pre_archive, pre_sha, pre_size_kb = self._create_edge_backup_archive(f"pre-update-{update_id}")
             pre_ok, pre_result = self._api.upload_edge_backup(pre_archive, pre_sha)
@@ -1806,6 +1916,7 @@ class EdgeAgent:
                     backup_dest = backup / rel
                     backup_dest.parent.mkdir(parents=True, exist_ok=True)
                     _shutil.copy2(source, backup_dest)
+            rollback_ready = True
 
             self._report_update(update_id, "installing")
             for item in outputs:
@@ -1825,6 +1936,8 @@ class EdgeAgent:
                 # so the application rollback loop never copies them into the
                 # repository tree.
                 unit_backup.mkdir(parents=True, exist_ok=True)
+                # Complete the recovery snapshot and validate every candidate
+                # unit before mutating the active systemd directory.
                 for unit in managed_unit_files:
                     target = Path("/etc/systemd/system") / unit
                     if target.exists():
@@ -1832,6 +1945,9 @@ class EdgeAgent:
                     source = repo / "edge" / "scripts" / unit
                     if not source.is_file():
                         raise RuntimeError(f"managed_systemd_unit_missing:{unit}")
+                for unit in managed_unit_files:
+                    source = repo / "edge" / "scripts" / unit
+                    target = Path("/etc/systemd/system") / unit
                     _shutil.copy2(source, target)
                 _sp.run(["systemctl", "daemon-reload"], check=True, capture_output=True, text=True)
                 for service in managed_unit_files:
@@ -1915,38 +2031,106 @@ class EdgeAgent:
                 raise RuntimeError("release_receipt_readback_mismatch")
             log.info("App update %d release receipt persisted: %s", update_id, receipt_path)
 
-            self._report_update(update_id, "deployed")
-            log.info("App update %d installeret fra signeret artifact — genstarter agent", update_id)
+            guard_managed_units = managed_unit_files if management_changed else ()
+            write_pending_app_update(
+                pending_path,
+                update_id=update_id,
+                artifact=artifact,
+                recovery_dir=recovery_dir,
+                managed_unit_files=guard_managed_units,
+                health_timeout_s=int(
+                    self._cfg.get("updates", {}).get("post_restart_health_timeout_s", 180)
+                ),
+                repo=repo,
+            )
+            guard_runner = write_post_restart_guard(recovery_dir)
+            python_runtime = Path("/opt/timelapse/venv/bin/python")
+            if not python_runtime.is_file():
+                raise RuntimeError("edge_python_runtime_missing_for_post_restart_guard")
+            guard_unit = f"timelapse-app-update-guard-{update_id}"
+            guard_result = _sp.run(
+                [
+                    "/usr/bin/systemd-run",
+                    f"--unit={guard_unit}",
+                    "--collect",
+                    "--no-block",
+                    "-p", "NoNewPrivileges=yes",
+                    "-p", "PrivateTmp=yes",
+                    str(python_runtime),
+                    str(guard_runner),
+                    str(pending_path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            if guard_result.returncode != 0:
+                raise RuntimeError(
+                    f"post_restart_guard_start_failed:{guard_result.stderr[-400:]}"
+                )
+            guard_active = False
+            for _ in range(10):
+                active = _sp.run(
+                    ["systemctl", "is-active", "--quiet", guard_unit],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if active.returncode == 0:
+                    guard_active = True
+                    break
+                time.sleep(0.2)
+            if not guard_active:
+                raise RuntimeError("post_restart_guard_not_active")
+            guard_started = True
+            self._report_update(update_id, "installing", "awaiting_post_restart_health")
+            log.info(
+                "App update %d candidate installeret; separat guard aktiv — genstarter agent før deployed-status",
+                update_id,
+            )
             _sp.Popen(["systemctl", "restart", "timelapse-edge"])
         except Exception as exc:
             log.warning("App artifact update %d fejlede: %s", update_id, exc)
-            try:
-                if unit_backup.exists():
-                    for unit in managed_unit_files:
-                        previous = unit_backup / unit
-                        if previous.is_file():
-                            _shutil.copy2(previous, Path("/etc/systemd/system") / unit)
-                    _sp.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
-                    for service in managed_units:
-                        _sp.run(["systemctl", "try-restart", service], check=False, capture_output=True, text=True)
-            except Exception as service_rollback_exc:
-                log.warning("Rollback af lokale management-services fejlede: %s", service_rollback_exc)
-            try:
-                if backup.exists():
-                    for source in backup.rglob("*"):
-                        if source.is_file():
-                            rel = source.relative_to(backup)
-                            dest = repo / rel
-                            dest.parent.mkdir(parents=True, exist_ok=True)
-                            _shutil.copy2(source, dest)
-                previous_receipt = backup / "edge" / receipt_path.name
-                if previous_receipt.is_file():
-                    _shutil.copy2(previous_receipt, receipt_path)
-                elif receipt_path.exists():
-                    receipt_path.unlink()
-            except Exception as rollback_exc:
-                log.warning("Rollback efter app artifact update fejlede: %s", rollback_exc)
-            self._report_update(update_id, "rolled_back", str(exc)[:700])
+            if guard_started:
+                # The independent guard now owns candidate verification and
+                # rollback.  Do not race it with an in-process restore.
+                self._report_update(
+                    update_id,
+                    "installing",
+                    f"post_restart_guard_active_after_restart_error:{str(exc)[:500]}",
+                )
+            else:
+                try:
+                    if unit_backup.exists():
+                        for unit in managed_unit_files:
+                            previous = unit_backup / unit
+                            target = Path("/etc/systemd/system") / unit
+                            if previous.is_file():
+                                _shutil.copy2(previous, target)
+                            elif management_changed and target.exists():
+                                _sp.run(["systemctl", "stop", unit], check=False, capture_output=True, text=True)
+                                target.unlink()
+                        _sp.run(["systemctl", "daemon-reload"], check=False, capture_output=True, text=True)
+                        for service in managed_units:
+                            if (unit_backup / service).is_file():
+                                _sp.run(["systemctl", "try-restart", service], check=False, capture_output=True, text=True)
+                except Exception as service_rollback_exc:
+                    log.warning("Rollback af lokale management-services fejlede: %s", service_rollback_exc)
+                try:
+                    if rollback_ready and backup.exists():
+                        restore_previous_app_release(repo, artifact)
+                except Exception as rollback_exc:
+                    log.warning("Rollback efter app artifact update fejlede: %s", rollback_exc)
+                try:
+                    if pending_path.exists():
+                        cleanup_pending_app_update(pending_path)
+                    elif recovery_dir.exists():
+                        _shutil.rmtree(recovery_dir)
+                except Exception as cleanup_exc:
+                    log.warning("Cleanup af app-update recovery evidence fejlede: %s", cleanup_exc)
+                self._report_update(update_id, "rolled_back", str(exc)[:700])
         finally:
             try:
                 _shutil.rmtree(staging)
