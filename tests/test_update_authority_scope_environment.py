@@ -56,7 +56,7 @@ def test_explicit_target_list_never_bypasses_environment():
     assert update_applies_to_device(update, test, test)
 
 
-def test_main_policy_and_report_use_same_canonical_predicate():
+def test_main_policy_uses_canonical_scope_environment_and_report_uses_target_ledger():
     source = (ROOT / "headend" / "main.py").read_text(encoding="utf-8")
     assert "from services.update_authority import update_applies_to_device as _update_applies_to_device" in source
     policy_start = source.index('def get_update_policy(')
@@ -64,5 +64,6 @@ def test_main_policy_and_report_use_same_canonical_predicate():
     policy_block = source[policy_start:report_start]
     report_block = source[report_start:source.index('def report_available_updates(', report_start)]
     assert "if not _update_applies_to_device(u, device, inventory):" in policy_block
-    assert "if not _update_applies_to_device(u, report_device, report_inventory):" in report_block
+    assert "authorized_target = db.query(UpdateTarget).filter_by(" in report_block
+    assert "resolved_target_ids = {target.device_id for target in _resolve_update_targets(db, u)}" in report_block
     assert 'or_(_PU.scope == "global", _PU.scope_id == device_id)' not in policy_block
