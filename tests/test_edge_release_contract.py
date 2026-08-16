@@ -19,8 +19,8 @@ def test_edge_release_artifact_contains_all_active_runtime_paths():
     source = _source("headend/main.py")
     collector = source.split("def _collect_release_outputs", 1)[1].split("def _find_artifact_for_update", 1)[0]
 
+    assert '(root / "edge").glob("*.py")' in collector
     for runtime_path in (
-        'root / "edge" / "frame_push.py"',
         'root / "edge" / "ai"',
         'root / "edge" / "hal"',
         'root / "edge" / "scripts"',
@@ -28,6 +28,38 @@ def test_edge_release_artifact_contains_all_active_runtime_paths():
         'root / "edge" / "utils"',
     ):
         assert runtime_path in collector
+
+
+def test_edge_release_artifact_globs_top_level_edge_modules_not_a_hand_list():
+    """Regression: a hand-listed top-level module set went stale on 2026-08-16 —
+    edge/update_lifecycle.py shipped in agent.py's hard-required imports without
+    ever being added to the artifact manifest, crash-looping TL-043EB9E72EFD on
+    its first artifact-based update. Executes the real collector against the
+    real tree so any *future* top-level edge/*.py module is caught the same way.
+    """
+    import ast
+    import hashlib
+
+    source = _source("headend/main.py")
+    tree = ast.parse(source)
+    func = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "_collect_release_outputs"
+    )
+    code = compile(ast.Module(body=[func], type_ignores=[]), "<collector>", "exec")
+    ns = {
+        "Path": Path,
+        "list": list,
+        "_file_sha256": lambda p: hashlib.sha256(p.read_bytes()).hexdigest(),
+    }
+    exec(code, ns)
+    outputs = {o["path"] for o in ns["_collect_release_outputs"](ROOT)}
+
+    expected_top_level = {
+        f"edge/{p.name}" for p in (ROOT / "edge").glob("*.py")
+    }
+    missing = expected_top_level - outputs
+    assert not missing, f"top-level edge/*.py modules missing from release artifact: {missing}"
 
 
 def test_release_artifacts_use_immutable_artifact_scoped_storage():
