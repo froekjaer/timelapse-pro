@@ -696,6 +696,18 @@ def startup():
     except Exception as _thumb_loop_err:
         log.warning("Kunne ikke starte thumbnail auto loop: %s", _thumb_loop_err)
 
+    # ── Legacy/import backlog sweep (2026-08-16), inaktiv indtil sat til i settings ──
+    try:
+        from services.legacy_backlog_sweep import run_forever as _legacy_sweep_run_forever
+        _threading.Thread(target=_legacy_sweep_run_forever, kwargs=dict(
+            get_setting=_get_setting, thumbnail_lock=_thumbnail_generation_lock, find_image=_find_image,
+            thumbs_dir_for=_thumbs_dir_for, generate_thumbnail=_generate_edge_thumbnail,
+            is_valid_jpeg=_is_valid_jpeg, find_existing_thumbnail=_find_existing_thumbnail,
+            interval_minutes=float(os.getenv("TIMELAPSE_LEGACY_BACKLOG_SWEEP_MINUTES", "30")),
+        ), name="legacy-backlog-sweep", daemon=True).start()
+    except Exception as _legacy_sweep_err:
+        log.warning("Kunne ikke starte legacy backlog sweep: %s", _legacy_sweep_err)
+
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 

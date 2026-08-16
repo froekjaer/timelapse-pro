@@ -862,6 +862,13 @@ export function SystemAdminPage() {
           tooltip="Upload slot styring: true begrænser uploads til tildelte tidsvinduer (upload slot policy), false uploader når som helst Edge er online. Slot enforcement bruges til at styre bandwidth usage og omkostninger.">
           <Txt value={settings.upload_slot_enforced ?? ''} onChange={v => setSettings(s => ({...s, upload_slot_enforced: v}))} mono />
         </Field>
+        <Field label="Ældste-først backlog-sweep (thumbnails + AI-tags)" description="Fanger importerede/gamle billeder der aldrig når det seneste-først-tjek"
+          tooltip="Kører hvert 30. minut og genererer manglende thumbnails samt sender manglende AI-tags til analyse, ældste billede først — modsat de eksisterende automatikker, der kun ser på de seneste captures. Fanger importerede historiske billeder og billeder taget før AI-tagging fandtes. OBS: AI-analyse kan koste penge (cloud Gemini) eller belaste server (lokal Ollama) afhængig af jeres AI-strategi — slå kun til når I har taget stilling til omfanget af jeres historiske backlog. Default fra.">
+          <Toggle
+            value={(settings.legacy_backlog_sweep_enabled ?? 'false').toLowerCase() === 'true'}
+            onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_enabled: v ? 'true' : 'false'}))}
+          />
+        </Field>
         <Field label="WebAuthn RP ID" description="Domæne for passkeys/FIDO2, fx headendens hostname uden protokol"
           tooltip="Relying Party ID for WebAuthn/passkeys. Typisk headendens hostname uden protokol (fx timelapse.example.com). Skal matche browser origin for security. Forkert ID vil blokere passkey login.">
           <Txt value={settings.webauthn_rp_id ?? ''} onChange={v => setSettings(s => ({...s, webauthn_rp_id: v}))} mono />
