@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-16 (allersenest) — fra Claude til Peter/Claude/Codex: SEC-016 dokumenteret permanent + GRC-entries oprettet
+
+- Hvad er gjort: Den uddelegerede, men aldrig udførte "SEC-016-dokument + GRC-entry" (jf. forrige entry og den oprindelige uddelegering fra 2026-07-17) er nu lavet: `Dokumentation/SEC-016_Factory_BT_TOTP_Bootstrap_Gap.md` (fuld historik: hvad der var lukket, hvad Peter forklarede om det tiltænkte per-enhed-design, og hvad der konkret mangler i koden), plus 3 GRC-rækker — `SEC-016` (finding, closed — det oprindelige delte-secret-fund), `SEC-016-BOOTSTRAP-GAP` (finding, open — manglende sikker erstatning), `ACT-SEC-016-BOOTSTRAP-GAP` (action, open — 3-punkts anbefaling: gør per-enhed-secret obligatorisk ved image-build, byg den automatiske RBAC-tag→push→deaktivér-pipeline, dokumentér SSH/konsol som break-glass for allerede udrullede enheder uden secret).
+- Hvad mangler / næste skridt: `ACT-SEC-016-BOOTSTRAP-GAP` er ren dokumentation af anbefalinger — selve implementeringen (obligatorisk build-parameter, auto-provision-pipeline) er ikke startet og kræver et design-valg fra Peter om prioritet. PR #64 og #66 (Travbyen- og GPS-opfølgning) er merget/mergeklare i samme runde.
+- Kommandoer kørt: `psql` direkte INSERT i `grc_items` (3 rækker, én transaktion, verificeret med RETURNING).
+- Forventet/faktisk output: 3 nye GRC-rækker bekræftet (id 296, 297, 298). Ny dokumentationsfil, ingen kodeændringer.
+- Filer rørt: `Dokumentation/SEC-016_Factory_BT_TOTP_Bootstrap_Gap.md` (ny), `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Dette er tredje gang samme emne er fundet uden permanent dokumentation (2026-07-17 → uddelegeret og glemt, Kimi 2026-08-15, i dag) — hvis `ACT-SEC-016-BOOTSTRAP-GAP` ikke aktivt følges op, er risikoen at det sker en fjerde gang.
+
 ### Handover 2026-08-16 15:27 — fra Claude til Peter/Claude/Codex: opfølgning på GPS-fixet — det gik uden om vores eget update-system, og det er bekræftet skarpt
 
 - Hvad er gjort: Peter kørte gpsd-installationen live på `TL-043EB9E72EFD` (se forrige entry) og spurgte helt korrekt: "Burde meget af dette ikke være installeret via vores update sektion? Er du sikker på at den virker som vi forventer?" — og bad om at sammenligne med SBOM. Undersøgt grundigt mod produktions-DB og de faktiske update-plan-filer på headenden (`/data-fast/backup/timelapse-artifacts/update-store/update-plans/TL-043EB9E72EFD-*.json`). Konklusion: **ja, det burde det, og systemet vidste det faktisk allerede.**
