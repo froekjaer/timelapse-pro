@@ -3,43 +3,24 @@ from pathlib import Path
 path = Path("headend/main.py")
 source = path.read_text(encoding="utf-8")
 
-old1 = '''    build_root = output_path.parent
-    build_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(build_root, 0o777)
-    plan_copy = build_root / f"{output_path.name}.plan.json"
-    plan_copy.write_text(plan_path.read_text())
-    repo = _repo_root()
-    container_output = f"/out/{output_path.name}"
-    cmd = [
-        docker,
-        "run",
-        "--rm",
-        "--platform",
-        "linux/arm64",
-        "-e",
-        "DEBIAN_FRONTEND=noninteractive",
-        "-e",
-        "TZ=UTC",
-        "-v",
-        f"{repo}:/repo:ro",
-        "-v",
-        f"{build_root}:/out",
-        image,
-        "bash",
-        "-lc",
-        (
-            "set -euo pipefail; "
-            "apt-get update; "
-            "apt-get install -y --no-install-recommends python3 ca-certificates; "
-            f"python3 /repo/headend/tools/build_os_bundle.py --device-id {device_id!r} "
-            f"--catalog /out/{plan_copy.name!r} --output {container_output!r} "
-            f"--architecture {architecture!r} --source-ref {source_ref!r} "
-            f"{('--category ' + category) if category else ''} "
-            "--include-dependencies --force"
-        ),
-    ]
-'''
-new1 = '''    from headend.services.os_builder_security import (
+
+def replace_segment(label: str, start_marker: str, end_marker: str, replacement: str, required: tuple[str, ...]) -> None:
+    global source
+    if source.count(start_marker) != 1:
+        raise SystemExit(f"{label}: start marker must occur exactly once")
+    start = source.index(start_marker)
+    try:
+        end = source.index(end_marker, start)
+    except ValueError as exc:
+        raise SystemExit(f"{label}: end marker not found after start") from exc
+    segment = source[start:end]
+    missing = [needle for needle in required if needle not in segment]
+    if missing:
+        raise SystemExit(f"{label}: expected unsafe legacy markers missing: {missing}; refusing to patch")
+    source = source[:start] + replacement + source[end:]
+
+
+bundle_replacement = '''    from headend.services.os_builder_security import (
         bundle_container_command,
         secure_builder_dir,
         write_private_builder_file,
@@ -61,62 +42,10 @@ new1 = '''    from headend.services.os_builder_security import (
         source_ref=source_ref,
         category=category,
     )
+    result = _subprocess.run(cmd, text=True, capture_output=True, timeout=3600)
 '''
 
-old2 = '''    build_root = (_os_bundle_store_root().expanduser().resolve() / "_catalog-builder")
-    build_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(build_root, 0o777)
-    safe_device = _re.sub(r"[^A-Za-z0-9_.-]+", "-", device_id)
-    input_path = build_root / f"{safe_device}.installed.tsv"
-    output_path = build_root / f"{safe_device}.apt-list.txt"
-    lines = []
-    for name, version in sorted(installed.items()):
-        name_s = str(name).strip()
-        version_s = str(version).strip()
-        if not name_s or not version_s or "\t" in name_s or "\n" in name_s or "\n" in version_s:
-            continue
-        lines.append(f"{name_s}\t{version_s}")
-    input_path.write_text("\n".join(lines) + "\n")
-    output_path.write_text("")
-    os.chmod(input_path, 0o666)
-    os.chmod(output_path, 0o666)
-    shell = (
-        "set -euo pipefail; "
-        "apt-get update >/dev/null; "
-        "while IFS=$'\\t' read -r name installed; do "
-        "[ -n \"$name\" ] || continue; "
-        "candidate=$(apt-cache policy \"$name\" | awk '/Candidate:/ {print $2; exit}'); "
-        "[ -n \"$candidate\" ] && [ \"$candidate\" != '(none)' ] || continue; "
-        "if dpkg --compare-versions \"$candidate\" gt \"$installed\"; then "
-        "repos=$(apt-cache policy \"$name\" | awk -v cand=\"$candidate\" '$1 == cand {getline; print $3; exit}'); "
-        "[ -n \"$repos\" ] || repos=ubuntu-builder; "
-        "case \"$repos\" in *security*) repo_label=noble-security ;; *updates*) repo_label=noble-updates ;; *) repo_label=\"$repos\" ;; esac; "
-        f"printf '%s/%s %s {architecture} [upgradable from: %s]\\n' \"$name\" \"$repo_label\" \"$candidate\" \"$installed\"; "
-        "fi; "
-        "done < /out/" + input_path.name + " > /out/" + output_path.name
-    )
-    result = _subprocess.run(
-        [
-            docker,
-            "run",
-            "--rm",
-            "--platform",
-            "linux/arm64",
-            "-e",
-            "DEBIAN_FRONTEND=noninteractive",
-            "-v",
-            f"{build_root}:/out",
-            image,
-            "bash",
-            "-lc",
-            shell,
-        ],
-        text=True,
-        capture_output=True,
-        timeout=3600,
-    )
-'''
-new2 = '''    from headend.services.os_builder_security import (
+catalog_replacement = '''    from headend.services.os_builder_security import (
         catalog_container_command,
         secure_builder_dir,
         write_private_builder_file,
@@ -146,10 +75,30 @@ new2 = '''    from headend.services.os_builder_security import (
     result = _subprocess.run(cmd, text=True, capture_output=True, timeout=3600)
 '''
 
-for label, old, new in (("bundle", old1, new1), ("catalog", old2, new2)):
-    count = source.count(old)
-    if count != 1:
-        raise SystemExit(f"{label} exact-match count was {count}, expected 1; refusing to patch")
-    source = source.replace(old, new)
+replace_segment(
+    "bundle",
+    "    build_root = output_path.parent\n",
+    "    if result.returncode != 0:\n",
+    bundle_replacement,
+    (
+        "os.chmod(build_root, 0o777)",
+        "container_output =",
+        "build_os_bundle.py --device-id {device_id!r}",
+        "--source-ref {source_ref!r}",
+    ),
+)
+replace_segment(
+    "catalog",
+    "    build_root = (_os_bundle_store_root().expanduser().resolve() / \"_catalog-builder\")\n",
+    "    if result.returncode != 0:\n",
+    catalog_replacement,
+    (
+        "os.chmod(build_root, 0o777)",
+        "os.chmod(input_path, 0o666)",
+        "os.chmod(output_path, 0o666)",
+        "shell = (",
+        "{architecture}",
+    ),
+)
 
 path.write_text(source, encoding="utf-8")
