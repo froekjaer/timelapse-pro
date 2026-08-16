@@ -703,7 +703,6 @@ def startup():
             get_setting=_get_setting, thumbnail_lock=_thumbnail_generation_lock, find_image=_find_image,
             thumbs_dir_for=_thumbs_dir_for, generate_thumbnail=_generate_edge_thumbnail,
             is_valid_jpeg=_is_valid_jpeg, find_existing_thumbnail=_find_existing_thumbnail,
-            interval_minutes=float(os.getenv("TIMELAPSE_LEGACY_BACKLOG_SWEEP_MINUTES", "30")),
         ), name="legacy-backlog-sweep", daemon=True).start()
     except Exception as _legacy_sweep_err:
         log.warning("Kunne ikke starte legacy backlog sweep: %s", _legacy_sweep_err)

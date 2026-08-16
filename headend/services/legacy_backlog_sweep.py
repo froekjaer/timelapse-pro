@@ -137,6 +137,26 @@ def run_once(
     return result
 
 
+# Settings-nøgler — alle læses fra DB hver runde (ikke env vars, ikke faste
+# konstanter), så en admin kan ændre dem live fra Systemadministration uden
+# en Headend-genstart. Se SystemAdminPage.tsx for UI-felterne.
+SETTING_ENABLED = "legacy_backlog_sweep_enabled"
+SETTING_INTERVAL_MINUTES = "legacy_backlog_sweep_interval_minutes"
+SETTING_THUMBNAIL_SCAN_LIMIT = "legacy_backlog_sweep_thumbnail_scan_limit"
+SETTING_THUMBNAIL_MAX_PER_RUN = "legacy_backlog_sweep_thumbnail_max_per_run"
+SETTING_AI_SCAN_LIMIT = "legacy_backlog_sweep_ai_scan_limit"
+SETTING_AI_MAX_PER_RUN = "legacy_backlog_sweep_ai_max_per_run"
+
+
+def _read_number(get_setting, db, key: str, default, cast, floor):
+    """Tolerant settings-parser: forkert/tomt input falder tilbage til
+    default i stedet for at vælte baggrundstråden."""
+    try:
+        return max(floor, cast(get_setting(db, key, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
 def run_forever(
     *,
     get_setting,
@@ -146,7 +166,6 @@ def run_forever(
     generate_thumbnail,
     is_valid_jpeg,
     find_existing_thumbnail,
-    interval_minutes: float = DEFAULT_INTERVAL_MINUTES,
     startup_delay_s: float = 240,
 ) -> None:
     """Background-thread entry point. Owns the session lifecycle and the
@@ -154,21 +173,29 @@ def run_forever(
     main.py-local helpers (thumbnail generation, `_get_setting`) that can't
     be imported cleanly from here without a circular dependency. Everything
     importable on its own (SessionLocal, Capture, queue_capture_for_analysis)
-    is imported directly by this function instead of being injected."""
+    is imported directly by this function instead of being injected. All
+    tunables (interval, caps) are re-read from settings every iteration —
+    an admin change takes effect on the next cycle, no restart needed."""
     import time as _t
     from database import SessionLocal, Capture
     from ai.integration import queue_capture_for_analysis
 
     _t.sleep(startup_delay_s)
     while True:
+        interval_minutes = DEFAULT_INTERVAL_MINUTES
         try:
             db = SessionLocal()
             try:
-                enabled = get_setting(db, "legacy_backlog_sweep_enabled", "false").lower() == "true"
+                enabled = get_setting(db, SETTING_ENABLED, "false").lower() == "true"
+                interval_minutes = _read_number(get_setting, db, SETTING_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES, float, 0.5)
                 result = run_once(db, Capture, enabled=enabled, thumbnail_lock_locked=thumbnail_lock.locked(),
                     find_image=find_image, thumbs_dir_for=thumbs_dir_for, generate_thumbnail=generate_thumbnail,
                     is_valid_jpeg=is_valid_jpeg, find_existing_thumbnail=find_existing_thumbnail,
-                    queue_capture_for_analysis=queue_capture_for_analysis)
+                    queue_capture_for_analysis=queue_capture_for_analysis,
+                    thumbnail_scan_limit=_read_number(get_setting, db, SETTING_THUMBNAIL_SCAN_LIMIT, DEFAULT_THUMBNAIL_SCAN_LIMIT, int, 1),
+                    thumbnail_max_per_run=_read_number(get_setting, db, SETTING_THUMBNAIL_MAX_PER_RUN, DEFAULT_THUMBNAIL_MAX_PER_RUN, int, 1),
+                    ai_scan_limit=_read_number(get_setting, db, SETTING_AI_SCAN_LIMIT, DEFAULT_AI_SCAN_LIMIT, int, 1),
+                    ai_max_per_run=_read_number(get_setting, db, SETTING_AI_MAX_PER_RUN, DEFAULT_AI_MAX_PER_RUN, int, 1))
                 if any(result.values()):
                     log.info("Legacy backlog sweep: %s", result)
             finally:

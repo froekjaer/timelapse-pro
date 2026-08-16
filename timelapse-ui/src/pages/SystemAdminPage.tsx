@@ -863,11 +863,31 @@ export function SystemAdminPage() {
           <Txt value={settings.upload_slot_enforced ?? ''} onChange={v => setSettings(s => ({...s, upload_slot_enforced: v}))} mono />
         </Field>
         <Field label="Ældste-først backlog-sweep (thumbnails + AI-tags)" description="Fanger importerede/gamle billeder der aldrig når det seneste-først-tjek"
-          tooltip="Kører hvert 30. minut og genererer manglende thumbnails samt sender manglende AI-tags til analyse, ældste billede først — modsat de eksisterende automatikker, der kun ser på de seneste captures. Fanger importerede historiske billeder og billeder taget før AI-tagging fandtes. OBS: AI-analyse kan koste penge (cloud Gemini) eller belaste server (lokal Ollama) afhængig af jeres AI-strategi — slå kun til når I har taget stilling til omfanget af jeres historiske backlog. Default fra.">
+          tooltip="Genererer manglende thumbnails og sender manglende AI-tags til analyse, ældste billede først — modsat de eksisterende automatikker, der kun ser på de seneste captures. Fanger importerede historiske billeder og billeder taget før AI-tagging fandtes. OBS: AI-analyse kan koste penge (cloud Gemini) eller belaste server (lokal Ollama) afhængig af jeres AI-strategi — slå kun til når I har taget stilling til omfanget af jeres historiske backlog. Interval og loft pr. kørsel styres af felterne herunder. Default fra.">
           <Toggle
             value={(settings.legacy_backlog_sweep_enabled ?? 'false').toLowerCase() === 'true'}
             onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_enabled: v ? 'true' : 'false'}))}
           />
+        </Field>
+        <Field label="Backlog-sweep interval (minutter)" description="Hvor ofte sweepet kører når det er slået til"
+          tooltip="Antal minutter mellem hver kørsel af backlog-sweepet. Ændringer træder i kraft ved næste kørsel, ingen genstart nødvendig. Default 30 minutter.">
+          <Txt value={settings.legacy_backlog_sweep_interval_minutes ?? ''} onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_interval_minutes: v}))} mono />
+        </Field>
+        <Field label="Backlog-sweep: thumbnail-scan pr. kørsel" description="Hvor mange ældste captures der tjekkes for manglende thumbnail pr. kørsel"
+          tooltip="Antal ældste captures (sorteret efter optagelsestidspunkt) der undersøges for manglende thumbnail i hver kørsel. Default 500.">
+          <Txt value={settings.legacy_backlog_sweep_thumbnail_scan_limit ?? ''} onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_thumbnail_scan_limit: v}))} mono />
+        </Field>
+        <Field label="Backlog-sweep: thumbnails genereret pr. kørsel (maks)" description="Loft for hvor mange thumbnails der reelt genereres pr. kørsel"
+          tooltip="Maksimalt antal thumbnails der genereres i én kørsel, selv hvis flere mangler i scan-vinduet — resten tages i næste kørsel. Default 100.">
+          <Txt value={settings.legacy_backlog_sweep_thumbnail_max_per_run ?? ''} onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_thumbnail_max_per_run: v}))} mono />
+        </Field>
+        <Field label="Backlog-sweep: AI-scan pr. kørsel" description="Hvor mange ældste captures der tjekkes for manglende AI-tags pr. kørsel"
+          tooltip="Antal ældste captures uden AI-tags (sorteret efter optagelsestidspunkt) der undersøges pr. kørsel. Default 500.">
+          <Txt value={settings.legacy_backlog_sweep_ai_scan_limit ?? ''} onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_ai_scan_limit: v}))} mono />
+        </Field>
+        <Field label="Backlog-sweep: AI-billeder køet pr. kørsel (maks)" description="Loft for hvor mange billeder der sendes til AI-analyse pr. kørsel"
+          tooltip="Maksimalt antal billeder der sendes til AI-analysekøen i én kørsel — styrer tempoet på cloud-omkostning/lokal belastning. Default 50.">
+          <Txt value={settings.legacy_backlog_sweep_ai_max_per_run ?? ''} onChange={v => setSettings(s => ({...s, legacy_backlog_sweep_ai_max_per_run: v}))} mono />
         </Field>
         <Field label="WebAuthn RP ID" description="Domæne for passkeys/FIDO2, fx headendens hostname uden protokol"
           tooltip="Relying Party ID for WebAuthn/passkeys. Typisk headendens hostname uden protokol (fx timelapse.example.com). Skal matche browser origin for security. Forkert ID vil blokere passkey login.">

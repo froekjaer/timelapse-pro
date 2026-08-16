@@ -254,3 +254,29 @@ def test_run_once_skips_thumbnails_but_still_does_ai_when_lock_is_held() -> None
     result = sweep.run_once(db, MagicMock(), enabled=True, thumbnail_lock_locked=True, **_NOOP_KWARGS)
     assert result["thumbnails_generated"] == 0  # skipped — another generation was already in progress
     assert result["ai_queued"] == 3  # AI queueing is independent of the thumbnail lock
+
+
+# ── _read_number (tolerant settings parsing — all tunables live in the DB) ──
+
+def test_read_number_uses_stored_value_when_valid() -> None:
+    value = sweep._read_number(lambda db, k, d: "45", db=None, key=sweep.SETTING_INTERVAL_MINUTES, default=30.0, cast=float, floor=0.5)
+    assert value == 45.0
+
+
+def test_read_number_falls_back_to_default_on_garbage_input() -> None:
+    value = sweep._read_number(lambda db, k, d: "not-a-number", db=None, key=sweep.SETTING_AI_MAX_PER_RUN, default=50, cast=int, floor=1)
+    assert value == 50
+
+
+def test_read_number_falls_back_to_default_on_missing_setting() -> None:
+    # get_setting itself returns the caller-supplied default when the key is absent —
+    # exercised here by having the fake simply echo back whatever default was passed in.
+    value = sweep._read_number(lambda db, k, d: d, db=None, key=sweep.SETTING_THUMBNAIL_SCAN_LIMIT, default=500, cast=int, floor=1)
+    assert value == 500
+
+
+def test_read_number_enforces_the_floor_instead_of_a_zero_or_negative_value() -> None:
+    value = sweep._read_number(lambda db, k, d: "0", db=None, key=sweep.SETTING_THUMBNAIL_MAX_PER_RUN, default=100, cast=int, floor=1)
+    assert value == 1
+    value = sweep._read_number(lambda db, k, d: "-5", db=None, key=sweep.SETTING_AI_SCAN_LIMIT, default=500, cast=int, floor=1)
+    assert value == 1
