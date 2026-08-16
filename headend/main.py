@@ -11687,12 +11687,14 @@ def edge_report_inventory(
 ):
     return _cmdb_report_inventory(device_id=device_id, payload=payload, db=db)
 
+@app.post("/api/admin/devices/{device_id}/cmdb/reconcile-baseline")
+def reconcile_device_cmdb_baseline(device_id: str, current_user=require_role("admin", "super_admin"), db: Session = Depends(get_db)):
+    from services.cmdb_baseline_drift import reconcile_device_baseline; return reconcile_device_baseline(db, device_id, current_user.username)
 
 @app.get("/health")
 @app.get("/api/health")
 def health():
     return {"status": "ok", "time": now_utc().isoformat()}
-
 
 @app.post("/api/admin/restart-headend")
 def restart_headend(_auth=require_role("admin", "super_admin")):

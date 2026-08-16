@@ -517,6 +517,8 @@ def report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db
             software_inventory["_os_updates_available"] = payload["os_updates_available"]
         if "services" in payload:
             software_inventory["_services"] = payload["services"]
+        if "enabled_services" in payload:
+            software_inventory["_enabled_services"] = payload["enabled_services"]
         if "local_users" in payload:
             software_inventory["_local_users"] = payload["local_users"]
         if "sudo_users" in payload:
