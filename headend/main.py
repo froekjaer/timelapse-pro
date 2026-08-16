@@ -71,6 +71,7 @@ import functools as _functools
 import shutil as _shutil
 import edge_provisioning_security as _edge_provisioning
 from services.bootstrap_security import resolve_initial_admin_password
+from services.technician_auth_security import html_text, validate_technician_device_id
 # ── Auth imports (Sprint C) ───────────────────────────────────────────────
 from jose import JWTError, jwt as _jwt
 import bcrypt as _bcrypt_lib
@@ -1752,10 +1753,18 @@ def technician_auth_start(req: TechnicianAuthStartRequest, request: Request, db:
     import time
     from database import Device
 
+    # This endpoint is intentionally unauthenticated because an Edge starts the
+    # QR challenge. Treat device_id as protocol data, not free-form display
+    # text, before it reaches DB queries, logs or the pending-session store.
+    try:
+        device_id = validate_technician_device_id(req.device_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Ugyldigt device_id") from exc
+
     # Verify device exists
-    device = db.query(Device).filter_by(device_id=req.device_id).first()
+    device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
-        log.warning("Technician auth start for unknown device: %s", req.device_id)
+        log.warning("Technician auth start for unknown device: %s", device_id)
         # Still allow - device might not be provisioned yet
 
     # Generate session
@@ -1763,7 +1772,7 @@ def technician_auth_start(req: TechnicianAuthStartRequest, request: Request, db:
     now = time.time()
     session = {
         "session_id": session_id,
-        "device_id": req.device_id,
+        "device_id": device_id,
         "challenge": req.challenge,
         "created_at": now,
         "expires_at": now + 900,  # 15 minutes
@@ -1778,7 +1787,7 @@ def technician_auth_start(req: TechnicianAuthStartRequest, request: Request, db:
     if len(_pending_technician_sessions) > 100:
         _cleanup_pending_sessions()
 
-    log.info("Technician auth started: %s for device %s", session_id[:8], req.device_id)
+    log.info("Technician auth started: %s for device %s", session_id[:8], device_id)
     return {
         "session_id": session_id,
         "expires_at": session["expires_at"],
@@ -1919,6 +1928,10 @@ def technician_auth_page(session_id: str, db: Session = Depends(get_db)):
             status_code=404,
         )
 
+    # Defense in depth: sessions are ephemeral, but render all stored device
+    # identifiers as escaped text even though new sessions are allowlist-validated.
+    safe_device_id = html_text(session.get("device_id", "Ukendt"))
+
     return HTMLResponse(
         f"""
         <!DOCTYPE html>
@@ -1947,7 +1960,7 @@ def technician_auth_page(session_id: str, db: Session = Depends(get_db)):
                     <h1>🔧 TimeLapse Pro Tekniker Login</h1>
                     <p>Du er ved at logge ind på enhed:</p>
                     <div class="device">
-                        <strong>Enheds ID:</strong> {session.get('device_id', 'Ukendt')}<br>
+                        <strong>Enheds ID:</strong> {safe_device_id}<br>
                         <small>Session: {session_id[:8]}...</small>
                     </div>
                     <p>Log ind med din TimeLapse Pro konto for at fortsætte.</p>
