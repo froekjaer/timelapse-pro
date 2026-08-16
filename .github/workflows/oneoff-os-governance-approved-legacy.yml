@@ -20,7 +20,7 @@ jobs:
 
       - name: Prepare focused test environment
         shell: bash
-        run: python3 -m pip install pytest
+        run: python3 -m pip install pytest pytest-asyncio
 
       - name: Include approved legacy CMDB observations in fail-closed migration
         shell: bash
