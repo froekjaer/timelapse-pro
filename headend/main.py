@@ -110,6 +110,7 @@ from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
 from services.update_supersession import supersede_pending_app_updates
+from services.update_authority import update_applies_to_device as _update_applies_to_device
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
 from services.edge_lifecycle import LifecycleTransitionError as EdgeLifecycleError, key_management_lifecycle_summary, mark_bootstrap_consumed, reconcile_edge_lifecycle as _reconcile_edge_lifecycle, resolve_device_api_credential
@@ -6219,31 +6220,6 @@ def _update_is_matrix_candidate(update: PendingUpdate) -> bool:
     return update.status not in {"rejected", "cancelled"}
 
 
-def _parse_target_device_ids(value: str | None) -> list[str]:
-    if not value:
-        return []
-    try:
-        parsed = json.loads(value)
-        return [str(v) for v in parsed] if isinstance(parsed, list) else []
-    except Exception:
-        return []
-
-
-def _update_applies_to_device(update: PendingUpdate, device: Device | None, inv: DeviceInventory) -> bool:
-    target_ids = _parse_target_device_ids(update.target_device_ids)
-    if target_ids:
-        return inv.device_id in target_ids
-    if update.scope == "global":
-        return True
-    if update.scope == "device":
-        return update.scope_id == inv.device_id
-    if update.scope == "customer" and device:
-        return update.scope_id == device.customer_id
-    if update.scope == "site" and device:
-        return update.scope_id == device.site_id
-    return False
-
-
 def _installed_value(inv: DeviceInventory, category_key: str) -> str | None:
     if category_key.startswith("os_"):
         parts = [p for p in [inv.os_name, inv.kernel_version] if p]
@@ -10359,20 +10335,15 @@ def get_update_policy(
     if auto_changed:
         db.commit()
 
-    # Find godkendte opdateringer til denne enhed
+    # Find godkendte opdateringer til denne enhed via samme canonical authority predicate
     from database import PendingUpdate as _PU
-    from sqlalchemy import or_
-    approved = db.query(_PU).filter(
-        _PU.status.in_(["approved", "rollback_requested"]),
-        or_(_PU.scope == "global", _PU.scope_id == device_id)
-    ).all()
+    inventory = db.query(DeviceInventory).filter_by(device_id=device_id).first() or DeviceInventory(device_id=device_id)
+    approved = db.query(_PU).filter(_PU.status.in_(["approved", "rollback_requested"])).all()
 
     filtered = []
     for u in approved:
-        if u.target_device_ids:
-            targets = json.loads(u.target_device_ids)
-            if device_id not in targets:
-                continue
+        if not _update_applies_to_device(u, device, inventory):
+            continue
         artifact = _find_artifact_for_update(db, u)
         if _update_requires_headend_artifact(u.update_type) and not artifact:
             log.warning(
@@ -10419,6 +10390,10 @@ def report_update(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404)
+    report_device = db.query(Device).filter_by(device_id=device_id).first()
+    report_inventory = db.query(DeviceInventory).filter_by(device_id=device_id).first() or DeviceInventory(device_id=device_id)
+    if not _update_applies_to_device(u, report_device, report_inventory):
+        raise HTTPException(status_code=403, detail="Edge er ikke autoriseret target for denne update")
     if reason and status in final_statuses:
         u.description = ((u.description or "").rstrip() + f"\n\nEdge report {now_utc().isoformat()}: {status}; reason={reason[:700]}")[-6000:]
     # HLTH-008 / R06 / KRAVREGISTER UPD-012: for scope="device" (ét target) afspejler denne
