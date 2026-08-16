@@ -1,0 +1,33 @@
+name: One-off Headend client transport patch
+
+on:
+  push:
+    branches: [fix/headend-client-retry-health]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/headend-client-retry-health
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Apply scoped transport patch
+        run: python tools/oneoff_patch_headend_client_transport.py
+      - name: Compile patched client
+        run: python -m py_compile edge/upload/headend_client.py
+      - name: Remove one-off machinery and commit result
+        run: |
+          rm .github/workflows/oneoff-headend-client-transport.yml tools/oneoff_patch_headend_client_transport.py
+          git config user.name 'TimeLapse Closure Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'Use retry-aware backup transport and canonical health URL'
+          git push origin HEAD:fix/headend-client-retry-health
