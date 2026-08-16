@@ -5468,6 +5468,9 @@ def assign_camera_to_device(
         device.camera_name   = camera.camera_name
         device.site_id       = camera.site_id
         device.customer_id   = camera.customer_id
+        # site_name/customer_name er separate fritekstfelter der ellers ville stå forældede (HANDOVER_LOG 2026-08-16)
+        site = db.query(Site).filter_by(id=camera.site_id).first() if camera.site_id else None; device.site_name = site.name if site else None
+        cust = db.query(Customer).filter_by(id=camera.customer_id).first() if camera.customer_id else None; device.customer_name = cust.name if cust else None
 
     db.commit()
     log.info("Kamera %s tildelt device %s", camera_id, device_id)
