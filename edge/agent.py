@@ -48,6 +48,7 @@ import sys
 import threading
 import time
 import paramiko
+import yaml
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 
@@ -1392,6 +1393,12 @@ class EdgeAgent:
         except Exception as exc:
             log.warning("SSH tunnel live apply fejl: %s", exc)
 
+        # BT-TOTP secret (lokal Servicetekniker-adgang) — SEC-016-BOOTSTRAP-GAP
+        try:
+            self._sync_bt_totp_config(data.get("bt_totp", {}))
+        except Exception as exc:
+            log.warning("BT-TOTP auto-sync fejl: %s", exc)
+
         # Lab mode
         try:
             debug_cfg = data.get("debug_mode", {})
@@ -1410,6 +1417,49 @@ class EdgeAgent:
                 log.info("Capture interval opdateret til %s min", interval)
         except Exception:
             pass
+
+    BT_TOTP_CONFIG_PATH = Path("/etc/timelapse/bt-config.yaml")
+
+    def _sync_bt_totp_config(self, bt_totp: dict) -> None:
+        """Auto-synkronisér BT-TOTP secret fra headend til lokal totp-service.
+
+        Erstatter kravet om at en tekniker manuelt klikker "Synkroniser TOTP
+        fra CMDB" i /mgmt/*, hvilket kræver at allerede være logget ind lokalt
+        — en høne-og-æg-deadlock for en enhed uden fabrikssecret
+        (SEC-016-BOOTSTRAP-GAP). Enheden er allerede trust-forankret via
+        device_id + API-token for selve config-hentningen (_verify_device_token
+        på headend), så dette introducerer ingen ny tillidsgrænse — kun det
+        allerede-autoriserede config-svar bliver nu også anvendt lokalt uden
+        at kræve et separat manuelt klik.
+        """
+        new_secret = str(bt_totp.get("secret") or "")
+        new_sid = str(bt_totp.get("sid") or "")
+        if not new_secret or not new_sid or new_sid == "unprovisioned":
+            return  # intet reelt secret sat i hierarkiet endnu — rør ikke fabrikssecretet
+
+        path = self.BT_TOTP_CONFIG_PATH
+        try:
+            current = yaml.safe_load(path.read_text()) if path.exists() else {}
+        except Exception:
+            current = {}
+        current = current if isinstance(current, dict) else {}
+        current_totp = current.get("totp") or {}
+        if current_totp.get("sid") == new_sid and current_totp.get("secret") == new_secret:
+            return  # allerede synkroniseret
+
+        current["totp"] = {**current_totp, "secret": new_secret, "sid": new_sid}
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f".{path.name}.tmp")
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(current, fh, allow_unicode=True, default_flow_style=False)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o600)
+
+        log.info("BT-TOTP auto-synkroniseret fra headend (sid=%s) — genstarter timelapse-totp", new_sid)
+        subprocess.run(["systemctl", "restart", "timelapse-totp.service"], check=False)
 
     def _build_camera_commands(self) -> list[str]:
         """Byg kamera kommandoliste fra hierarkisk config.

@@ -1,10 +1,10 @@
-# SEC-016: Fabriks-BT-TOTP — delt secret lukket korrekt, men uden sikker erstatning
+# SEC-016: Fabriks-BT-TOTP — delt secret lukket korrekt, erstatning nu bygget
 
-**Dato:** 2026-08-16
-**Status:** ⚠️ DELVIST LØST — delt secret lukket (✅), sikker erstatning mangler (❌ åben som SEC-016-BOOTSTRAP-GAP)
+**Dato:** 2026-08-16 (opdateret samme dag efter Peters beslutning: byg trust-forankret auto-sync)
+**Status:** ✅ LØST — delt secret lukket, per-enhed mandatory secret bekræftet allerede håndhævet, automatisk trust-forankret sync bygget
 **Prioritet:** HIGH
 **Fundet via:** Claude_QA_Review_2026-07-17.md; gen-identificeret af Kimi 2026-08-15; gen-identificeret ved TL-043EB9E72EFD-incident 2026-08-16
-**GRC:** `SEC-016` (finding, closed), `SEC-016-BOOTSTRAP-GAP` (finding, open), `ACT-SEC-016-BOOTSTRAP-GAP` (action, open)
+**GRC:** `SEC-016` (finding, closed), `SEC-016-BOOTSTRAP-GAP` (finding, closed), `ACT-SEC-016-BOOTSTRAP-GAP` (action, implemented)
 
 ## Baggrund
 
@@ -33,22 +33,30 @@ Dvs.: et **per-enhed** (ikke delt) fabrikssecret til allerførste login, automat
 
 ### Hvad der faktisk findes i kodebasen
 
-- `headend/tools/inject_edge_image.py` har allerede parametre til at bage et **unikt per-enhed** secret ind ved image-build (`bt_totp_secret`/`bt_totp_sid`, linje ~890, ~1079) — det er den korrekte, sikre form af "fabriks-TOTP" (modsat det lukkede delte secret). Parameteren er dog **valgfri** (`if not bt_totp_secret or not bt_totp_sid:` — logger/springer over, fejler ikke buildet).
-- `users.on_site_service` (Boolean, `headend/database.py:288`) er den RBAC-tag Peter refererer til — men den styrer i dag kun hvem der har LOV til at se/oprette et BT-TOTP-secret i admin-UI'en (`CameraPage.tsx`), ikke en automatisk push-til-enhed.
-- `edge/scripts/totp-service.py::_sync_totp_from_headend()` er den ENESTE kode-vej der henter et secret fra CMDB ned til enheden — men den kaldes **udelukkende** fra en knap inde i den allerede-loggede-ind `/mgmt/*`-UI. Kildekodens egen kommentar bekræfter dette er bevidst: *"TOTP synces IKKE automatisk ved boot ... Rotation sker KUN ved eksplicit handling."*
-- Der findes ingen kode noget sted (headend eller edge) der automatisk pusher tekniker-credentials ved første headend-forbindelse, og ingen automatisk deaktivering af et fabrikssecret efter bekræftet teknikerlogin.
+- `headend/tools/inject_edge_image.py` har allerede parametre til at bage et **unikt per-enhed** secret ind ved image-build (`bt_totp_secret`/`bt_totp_sid`) — det er den korrekte, sikre form af "fabriks-TOTP" (modsat det lukkede delte secret). **Korrigeret fund:** ved nærmere kodegennemgang er dette allerede **obligatorisk**, ikke valgfrit — `inject_edge_image()` (linje ~1128) kaster `ValueError("Flashable image kræver en unik, provisioneret BT TOTP-secret og identifikator")` og producerer intet image, hvis parametrene mangler. Bekræftet til stede allerede i commit `dc69c6b2` (2026-08-06). TL-043EB9E72EFD's mangel var derfor historisk/uden-om-værktøjet-provisionering, ikke en kodefejl i den nuværende byggepipeline.
+- `users.on_site_service` (Boolean, `headend/database.py:288`) er den RBAC-tag Peter refererer til — den styrede indtil nu kun hvem der har LOV til at se/oprette et BT-TOTP-secret i admin-UI'en (`CameraPage.tsx`).
+- `edge/scripts/totp-service.py::_sync_totp_from_headend()` var indtil nu den ENESTE kode-vej der hentede et secret fra CMDB ned til enheden — men den blev **udelukkende** kaldt fra en knap inde i den allerede-loggede-ind `/mgmt/*`-UI, et høne-æg-problem for en fabrikssecret-løs enhed.
 
-**Konklusion:** det tiltænkte design er kun halvt bygget. Per-enhed-secret-baking ved image-build eksisterer men er valgfri. RBAC-tagget til "hvem må" eksisterer. Selve auto-push-og-auto-deaktivér-pipelinen mellem dem findes ikke.
+### Bygget fix (2026-08-16, samme dag): trust-forankret auto-sync
+
+Peter besluttede design **B**: brug den allerede-eksisterende enheds-identitet (`device_id` + API-token, MAC-bundet ved provisionering) som tillidsanker i stedet for at opfinde en ny tillidsmekanisme. Implementeret i `edge/agent.py`:
+
+- `EdgeAgent._sync_bt_totp_config()` kaldes fra `_apply_config_changes()`, som allerede kører hver gang enhedens `config_version` ændrer sig via den eksisterende, device-token-autentificerede `/config/{device_id}`-heartbeat (`_verify_device_token` på headend-siden — samme tillidsgrænse som alt andet config-flow, ingen ny attack surface).
+- Når headend's hierarki (global/kunde/site/kamera) har et reelt secret sat (`sid != "unprovisioned"`) OG det afviger fra enhedens lokale `/etc/timelapse/bt-config.yaml`, skrives det automatisk (atomisk, `0o600`, samme mønster som `totp-service.py::save_config`) og `timelapse-totp.service` genstartes — helt uden at en tekniker skal klikke noget lokalt først.
+- Er der **intet** reelt secret sat i hierarkiet endnu (`sid == "unprovisioned"`), rører funktionen IKKE den lokale fil — et eksisterende fabrikssecret overlever urørt, og enheden degraderer aldrig til "ikke provisioneret" bagefter.
+- Effekten er at fabrikssecretet reelt erstattes (og dermed de facto deaktiveres) i det øjeblik headend tildeler et rigtigt secret — ingen separat "deaktivér"-handling nødvendig, fordi kun ét secret kan være aktivt ad gangen i den nuværende `totp-service.py`-model.
+- **Bevidst forenklet i forhold til Peters fulde beskrivelse:** der er ingen eksplicit "teknikeren har testet login og bekræfter" mellemtrin — overgangen sker automatisk så snart headend har et rigtigt secret, ikke først når en tekniker har logget ind og bekræftet det virker. Praktisk effekt er næsten identisk (fabrikssecretet holder op med at virke), men uden det eksplicitte bekræftelses-gate. Hvis det bekræftelses-trin er vigtigt for jer, er det en opfølgende udvidelse (kræver at `totp-service.py` kan acceptere to secrets samtidig i en overgangsperiode).
+- Testdækning: `tests/test_bt_totp_auto_sync.py` (7 tests — skriver nyt secret, rører aldrig et fabrikssecret når headend ikke har noget endnu, idempotent når allerede synkroniseret, bevarer andre `management`-indstillinger i filen, atomisk skrivning med `0o600`, korrekt wiring ind i `_apply_config_changes`, og at en sync-fejl ikke vælter resten af config-apply'en).
 
 ### Konkret konsekvens: TL-043EB9E72EFD
 
-Reproduceret 2026-08-16 under en ikke-relateret incident (se `HANDOVER_LOG.md` samme dato): enhedens image blev tydeligvis bygget uden `bt_totp_secret`/`bt_totp_sid`. `/etc/timelapse/bt-config.yaml` har derfor aldrig haft et secret, og login-siden på port 8443 viser "Lokal adgang er ikke provisioneret" uden kodefelt overhovedet — der er intet at scanne, intet at logge ind med. Eneste virkende vej ind var direkte SSH (via headend-nøgle over reverse-tunnel, eller direkte LAN-adgang) til manuelt at skrive filen. En enhed uden LAN-nærhed eller fungerende SSH-tunnel ville have været permanent utilgængelig for lokal Servicetekniker-adgang.
+Reproduceret 2026-08-16 under en ikke-relateret incident (se `HANDOVER_LOG.md` samme dato): enhedens image blev tydeligvis bygget uden `bt_totp_secret`/`bt_totp_sid` (uden om den nuværende, håndhævede pipeline). `/etc/timelapse/bt-config.yaml` havde derfor aldrig et secret, og login-siden på port 8443 viste "Lokal adgang er ikke provisioneret" uden kodefelt overhovedet. Eneste virkende vej ind var direkte SSH til manuelt at skrive filen. Fra og med denne fix vil enheden nu automatisk hente et rigtigt secret, næste gang et bliver sat for kameraet i CameraPage — ingen manuel filskrivning nødvendig fremover.
 
-## Anbefalede næste skridt (jf. `ACT-SEC-016-BOOTSTRAP-GAP`)
+## Status
 
-1. **Gør `bt_totp_secret`/`bt_totp_sid` obligatorisk** i `inject_edge_image.py` — fejl image-build i stedet for at producere en enhed uden bootstrap-mulighed.
-2. **Design og byg** den automatiske "RBAC-tag → push tekniker-cert ved første headend-forbindelse → deaktivér fabrikssecret"-pipeline Peter beskrev, hvis det fortsat er den ønskede UX.
-3. **For allerede udrullede enheder uden secret** (som TL-043EB9E72EFD var indtil i dag): dokumentér SSH/fysisk-konsol-skrivning af `bt-config.yaml` som den sanktionerede break-glass-procedure, indtil (1)/(2) er på plads.
+1. ✅ **Obligatorisk per-enhed-secret ved image-build** — bekræftet allerede håndhævet, ingen kodeændring nødvendig.
+2. ✅ **Trust-forankret auto-sync-pipeline** — bygget, testet (7/7 grønne), se ovenfor.
+3. ⚠️ **Eksplicit teknikerbekræftelse før factory-secret retires** — bevidst udeladt i denne første version (se "bevidst forenklet" ovenfor); kan tilføjes senere hvis ønsket.
 
 ## Referencer
 
