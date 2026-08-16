@@ -71,6 +71,7 @@ from diagnostics.collector  import DiagnosticsCollector
 from upload.sftp            import UploadManager
 from upload.headend_client import HeadendClient
 from security               import verify_update_artifact
+from update_lifecycle       import release_receipt_matches_artifact, restore_previous_app_release
 try:
     from tunnel.ssh_manager import SshTunnelManager
     _SSH_TUNNEL_AVAILABLE = True
@@ -1646,7 +1647,7 @@ class EdgeAgent:
 
                 if status == "rollback_requested":
                     log.info("Rollback anmodet for opdatering %d (%s)", uid, utype)
-                    self._run_rollback(uid)
+                    self._run_rollback(uid, utype, update.get("artifact"))
                     return
 
                 if status == "approved":
@@ -1655,8 +1656,17 @@ class EdgeAgent:
                         log.error("Opdatering %d afvist af Edge trust policy: %s", uid, reason)
                         self._report_update(uid, "blocked", f"artifact_verification_failed: {reason}")
                         return
+                    artifact = update.get("artifact")
+                    receipt_path = Path("/opt/timelapse/edge/.timelapse-release.json")
+                    if artifact and release_receipt_matches_artifact(receipt_path, artifact):
+                        log.info(
+                            "Opdatering %d er allerede installeret ifølge durable release receipt; rapporterer deployed igen",
+                            uid,
+                        )
+                        self._report_update(uid, "deployed", "release_receipt_already_matches_artifact")
+                        return
                     log.info("Udfører opdatering %d: %s", uid, utype)
-                    self._run_update(uid, utype, update.get("artifact"))
+                    self._run_update(uid, utype, artifact)
                     return  # Ét ad gangen
 
         except Exception as e:
@@ -2090,21 +2100,33 @@ class EdgeAgent:
             except Exception:
                 pass
 
-    def _run_rollback(self, update_id: int) -> None:
-        """Tving rollback til forrige version."""
+    def _run_rollback(self, update_id: int, update_type: str, artifact: dict | None = None) -> None:
+        """Tving rollback af en app-release via den lokale, verificerbare prev-kopi."""
         import subprocess as _sp
-        prev = Path("/opt/timelapse/prev")
-        if not prev.exists():
-            log.warning("Ingen forrige version til rollback")
-            self._report_update(update_id, "rolled_back", "rollback_source_missing")
+
+        if update_type in ("os_security", "os_updates"):
+            log.warning("OS rollback %d afvist: offline OS-flowet lover ikke rollback", update_id)
+            self._report_update(update_id, "blocked", "os_forced_rollback_not_supported")
             return
-        _sp.run(["bash", "-c", f"cp -r {prev}/* /opt/timelapse/"], timeout=60)
-        previous_receipt = prev / "edge" / ".timelapse-release.json"
-        current_receipt = Path("/opt/timelapse/edge/.timelapse-release.json")
-        if not previous_receipt.exists():
-            current_receipt.unlink(missing_ok=True)
-        log.info("Rollback til forrige version gennemført")
+
+        try:
+            result = restore_previous_app_release(Path("/opt/timelapse"), artifact)
+        except FileNotFoundError:
+            log.warning("Ingen forrige app-version til rollback")
+            self._report_update(update_id, "blocked", "rollback_source_missing")
+            return
+        except Exception as exc:
+            log.warning("Tvungen rollback %d fejlede: %s", update_id, exc)
+            self._report_update(update_id, "blocked", f"forced_rollback_failed: {str(exc)[:500]}")
+            return
+
+        log.info(
+            "Rollback til forrige app-version gennemført: restored=%s removed_new=%s",
+            result.get("restored_files"),
+            result.get("removed_new_files"),
+        )
         self._report_update(update_id, "rolled_back")
+        _sp.Popen(["systemctl", "restart", "timelapse-edge"])
 
     def _send_heartbeat(self, *, check_updates: bool = True) -> None:
         """Collect diagnostics and send heartbeat to headend."""
