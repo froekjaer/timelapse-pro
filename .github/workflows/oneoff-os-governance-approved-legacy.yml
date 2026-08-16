@@ -18,6 +18,10 @@ jobs:
           ref: security/os-update-governance-closure
           fetch-depth: 0
 
+      - name: Prepare focused test environment
+        shell: bash
+        run: python3 -m pip install pytest
+
       - name: Include approved legacy CMDB observations in fail-closed migration
         shell: bash
         run: |
@@ -35,16 +39,16 @@ jobs:
           test_path = Path('tests/test_os_update_governance_closure.py')
           tests = test_path.read_text(encoding='utf-8')
           old_test = '''    assert 'status="blocked"' in section
-              assert "CMDB observation" in section
-              assert 'status="pending"' not in section
-              assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
-          '''
+    assert "CMDB observation" in section
+    assert 'status="pending"' not in section
+    assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
+'''
           new_test = '''    assert 'status="blocked"' in section
-              assert "CMDB observation" in section
-              assert 'status="pending"' not in section
-              assert 'PendingUpdate.status.in_(["blocked", "pending", "approved"])' in section
-              assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
-          '''
+    assert "CMDB observation" in section
+    assert 'status="pending"' not in section
+    assert 'PendingUpdate.status.in_(["blocked", "pending", "approved"])' in section
+    assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
+'''
           if tests.count(old_test) != 1:
               raise SystemExit(f'expected exactly one test anchor, found {tests.count(old_test)}')
           test_path.write_text(tests.replace(old_test, new_test, 1), encoding='utf-8')
