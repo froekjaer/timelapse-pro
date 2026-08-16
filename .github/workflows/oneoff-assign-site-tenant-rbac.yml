@@ -1,0 +1,85 @@
+name: One-off assign-site tenant RBAC closure
+
+on:
+  push:
+    branches:
+      - security/closure-assign-site-tenant-rbac
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: security/closure-assign-site-tenant-rbac
+          fetch-depth: 0
+
+      - name: Prepare focused tests
+        run: python3 -m pip install pytest pytest-asyncio
+
+      - name: Patch assign-site role and tenant boundaries
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('headend/main.py')
+          source = path.read_text(encoding='utf-8')
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global source
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one anchor, found {count}')
+              source = source.replace(old, new, 1)
+
+          replace_once(
+              '''def list_unassigned_devices(\n    current_user=Depends(get_current_user),\n    db: Session = Depends(get_db),\n):\n    \"\"\"Returnerer enheder der er enrollet men endnu ikke tildelt en site.\"\"\"\n    devices = db.query(Device).filter(\n        Device.enrollment_state == \"unassigned\"\n    ).order_by(Device.created_at.desc()).all()\n''',
+              '''def list_unassigned_devices(\n    _user=require_role(\"admin\"),\n    db: Session = Depends(get_db),\n):\n    \"\"\"Returner commissioning-kandidater inden for brugerens tenant.\"\"\"\n    query = db.query(Device).filter(Device.enrollment_state == \"unassigned\")\n    if not _is_platform_admin(_user):\n        # Tenant-admins må ikke se eller claim'e globale/andre kunders\n        # unassigned devices. Platform admin beholder global commissioning.\n        query = query.filter(Device.customer_id == _user.customer_id)\n    devices = query.order_by(Device.created_at.desc()).all()\n''',
+              'unassigned inventory RBAC and scope',
+          )
+
+          replace_once(
+              '''def assign_device_to_site(\n    device_id: str,\n    payload: dict,\n    current_user=Depends(get_current_user),\n    db: Session = Depends(get_db),\n):\n''',
+              '''def assign_device_to_site(\n    device_id: str,\n    payload: dict,\n    _user=require_role(\"admin\"),\n    db: Session = Depends(get_db),\n):\n''',
+              'assign-site admin dependency',
+          )
+
+          replace_once(
+              '''    device = db.query(Device).filter_by(device_id=device_id).first()\n    if not device:\n        raise HTTPException(status_code=404, detail=\"Enhed ikke fundet\")\n\n    site_id = payload.get(\"site_id\")\n''',
+              '''    device = db.query(Device).filter_by(device_id=device_id).first()\n    if not device:\n        raise HTTPException(status_code=404, detail=\"Enhed ikke fundet\")\n    # Check current ownership before any re-assignment. A tenant admin cannot\n    # claim a global/unbound device or move another tenant's device.\n    _ensure_customer_access(_user, device.customer_id)\n\n    site_id = payload.get(\"site_id\")\n''',
+              'current device tenant boundary',
+          )
+
+          replace_once(
+              '''    site = db.query(Site).filter_by(id=site_id).first()\n    if not site:\n        raise HTTPException(status_code=404, detail=\"Site ikke fundet\")\n\n    device.site_id          = site_id\n''',
+              '''    # Resolve target through the same tenant boundary used by the rest of\n    # the admin/site API instead of an unscoped Site query.\n    site = _ensure_site_access(db, _user, site_id)\n\n    device.site_id          = site.id\n''',
+              'target site tenant boundary',
+          )
+
+          replace_once(
+              '''    _reconcile_edge_lifecycle(db, device, actor=getattr(current_user, \"username\", \"assign-site\"), target_state=\"assigned\", reason=\"Device assigned to site\")\n''',
+              '''    _reconcile_edge_lifecycle(db, device, actor=getattr(_user, \"username\", \"assign-site\"), target_state=\"assigned\", reason=\"Device assigned to site\")\n''',
+              'validated actor reference',
+          )
+
+          path.write_text(source, encoding='utf-8')
+          PY
+
+          python3 -m py_compile headend/main.py
+          PYTHONPATH=headend:. python3 -m pytest tests/test_security_closure_zai_assign_site.py tests/test_operations_tenant_contract.py -q
+          git diff --check
+
+      - name: Commit focused closure
+        shell: bash
+        run: |
+          git config user.name "TimeLapse Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add headend/main.py
+          git diff --cached --check
+          git commit -m "Enforce tenant RBAC on device site assignment"
+          git push origin HEAD:security/closure-assign-site-tenant-rbac
