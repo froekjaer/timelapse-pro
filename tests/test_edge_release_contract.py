@@ -181,9 +181,10 @@ def test_artifact_receipt_is_cmdb_version_source_of_truth(tmp_path, monkeypatch)
     assert inventory._artifact_release_metadata()["source_commit"] == "deadbeef"
 
 
-def test_edge_installer_writes_a_verified_artifact_receipt():
+def test_edge_installer_writes_verified_receipt_before_post_restart_health_gate():
     source = _source("edge/agent.py")
     install_block = source.split("def _run_artifact_app_update", 1)[1].split("def _run_artifact_os_update", 1)[0]
+    reconcile_block = source.split("def _reconcile_pending_app_update", 1)[1].split("def _finalize_pending_app_update_health", 1)[0]
 
     assert '"schema": "timelapse.edge.release.v1"' in install_block
     assert 'receipt_path = repo / "edge" / ".timelapse-release.json"' in install_block
@@ -191,10 +192,18 @@ def test_edge_installer_writes_a_verified_artifact_receipt():
     assert '_os.replace(receipt_tmp, receipt_path)' in install_block
     assert 'persisted_receipt != release_receipt' in install_block
     assert 'release_receipt_readback_mismatch' in install_block
-    assert install_block.index('persisted_receipt =') < install_block.index('self._report_update(update_id, "deployed")')
     assert "backup_receipt = backup / \"edge\" / receipt_path.name" in install_block
-    assert 'elif receipt_path.exists()' in install_block
-    assert 'receipt_path.unlink()' in install_block
+    assert 'restore_previous_app_release(repo, artifact)' in install_block
+
+    receipt_i = install_block.index('persisted_receipt =')
+    pending_i = install_block.index('write_pending_app_update(')
+    guard_i = install_block.index('write_post_restart_guard(')
+    restart_i = install_block.index('_sp.Popen(["systemctl", "restart", "timelapse-edge"])')
+    assert receipt_i < pending_i < guard_i < restart_i
+    assert 'self._report_update(update_id, "deployed")' not in install_block
+    assert 'awaiting_post_restart_health' in install_block
+    assert 'self._report_update(update_id, "deployed", "post_restart_health_confirmed")' in reconcile_block
+    assert reconcile_block.index('post_restart_health_confirmed') < reconcile_block.index('cleanup_pending_app_update(pending_path)')
 
 
 def test_local_management_is_totp_https_only_and_has_no_interactive_shell_by_default():
