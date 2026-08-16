@@ -189,9 +189,11 @@ def cleanup_pending_app_update(path: Path) -> None:
     if not payload:
         return
     recovery = _validated_recovery_dir(payload)
-    path.unlink(missing_ok=True)
+    # Remove recovery material first. If that fails, keep the marker so the
+    # update flow remains visibly blocked instead of silently orphaning state.
     if recovery.is_dir():
         shutil.rmtree(recovery)
+    path.unlink(missing_ok=True)
 
 
 def write_post_restart_guard(recovery_dir: Path) -> Path:
@@ -311,7 +313,11 @@ def guard_pending_app_update(
     if payload.get("state") != "awaiting_restart_health":
         return {"ok": False, "state": "invalid_pending_state"}
 
-    repo = Path(str(payload.get("repo") or "/opt/timelapse")).resolve()
+    marker_repo = pending_path.parent.parent.resolve()
+    configured_repo = Path(str(payload.get("repo") or "")).resolve()
+    if configured_repo != marker_repo:
+        raise ValueError("pending_update_repo_binding_mismatch")
+    repo = marker_repo
     recovery = _validated_recovery_dir(payload)
     unit_backup = recovery / "systemd-backup"
     artifact = _artifact_from_pending(payload)

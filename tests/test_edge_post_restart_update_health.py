@@ -203,3 +203,10 @@ def test_agent_defers_deployed_until_complete_startup_health_gate():
     assert "write_post_restart_guard(" in installer
     assert 'self._report_update(update_id, "deployed")' not in installer
     assert "awaiting_post_restart_health" in installer
+    assert "rollback_ready = False" in installer
+    assert "if rollback_ready and backup.exists()" in installer
+    assert "post_restart_guard_not_active" in installer
+    first_unit_loop = installer.index("Complete the recovery snapshot")
+    active_unit_copy = installer.index("_shutil.copy2(source, target)", first_unit_loop)
+    missing_unit_gate = installer.index("managed_systemd_unit_missing", first_unit_loop)
+    assert missing_unit_gate < active_unit_copy

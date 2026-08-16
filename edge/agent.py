@@ -1849,6 +1849,7 @@ class EdgeAgent:
         pending_path = pending_app_update_path(repo)
         unit_backup = recovery_dir / "systemd-backup"
         guard_started = False
+        rollback_ready = False
         managed_units = (
             "timelapse-bt-pan.service",
             "timelapse-bt-agent.service",
@@ -1915,6 +1916,7 @@ class EdgeAgent:
                     backup_dest = backup / rel
                     backup_dest.parent.mkdir(parents=True, exist_ok=True)
                     _shutil.copy2(source, backup_dest)
+            rollback_ready = True
 
             self._report_update(update_id, "installing")
             for item in outputs:
@@ -1934,6 +1936,8 @@ class EdgeAgent:
                 # so the application rollback loop never copies them into the
                 # repository tree.
                 unit_backup.mkdir(parents=True, exist_ok=True)
+                # Complete the recovery snapshot and validate every candidate
+                # unit before mutating the active systemd directory.
                 for unit in managed_unit_files:
                     target = Path("/etc/systemd/system") / unit
                     if target.exists():
@@ -1941,6 +1945,9 @@ class EdgeAgent:
                     source = repo / "edge" / "scripts" / unit
                     if not source.is_file():
                         raise RuntimeError(f"managed_systemd_unit_missing:{unit}")
+                for unit in managed_unit_files:
+                    source = repo / "edge" / "scripts" / unit
+                    target = Path("/etc/systemd/system") / unit
                     _shutil.copy2(source, target)
                 _sp.run(["systemctl", "daemon-reload"], check=True, capture_output=True, text=True)
                 for service in managed_unit_files:
@@ -2062,6 +2069,21 @@ class EdgeAgent:
                 raise RuntimeError(
                     f"post_restart_guard_start_failed:{guard_result.stderr[-400:]}"
                 )
+            guard_active = False
+            for _ in range(10):
+                active = _sp.run(
+                    ["systemctl", "is-active", "--quiet", guard_unit],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if active.returncode == 0:
+                    guard_active = True
+                    break
+                time.sleep(0.2)
+            if not guard_active:
+                raise RuntimeError("post_restart_guard_not_active")
             guard_started = True
             self._report_update(update_id, "installing", "awaiting_post_restart_health")
             log.info(
@@ -2097,7 +2119,7 @@ class EdgeAgent:
                 except Exception as service_rollback_exc:
                     log.warning("Rollback af lokale management-services fejlede: %s", service_rollback_exc)
                 try:
-                    if backup.exists():
+                    if rollback_ready and backup.exists():
                         restore_previous_app_release(repo, artifact)
                 except Exception as rollback_exc:
                     log.warning("Rollback efter app artifact update fejlede: %s", rollback_exc)
