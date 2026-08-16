@@ -19,14 +19,31 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Install focused test dependency
-        run: python -m pip install pytest
       - name: Apply scoped authority patch
         run: python tools/oneoff_patch_update_authority.py
       - name: Compile and run focused contracts
         run: |
           python -m py_compile headend/main.py headend/services/update_authority.py
-          python -m pytest tests/test_update_authority_scope_environment.py -q
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          test_path = Path('tests/test_update_authority_scope_environment.py')
+          spec = importlib.util.spec_from_file_location('authority_contracts', test_path)
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          tests = [
+              mod.test_customer_and_site_scopes_reach_matching_device,
+              mod.test_scope_mismatch_fails_closed,
+              mod.test_environment_isolation_blocks_test_update_from_production,
+              mod.test_lab_rd_dev_aliases_are_test_environment,
+              mod.test_unknown_device_environment_fails_closed,
+              mod.test_explicit_target_list_never_bypasses_environment,
+              mod.test_main_policy_and_report_use_same_canonical_predicate,
+          ]
+          for test in tests:
+              test()
+          print(f'{len(tests)} focused authority contracts passed')
+          PY
       - name: Remove one-off machinery and commit result
         run: |
           rm .github/workflows/oneoff-update-authority-h123.yml tools/oneoff_patch_update_authority.py
