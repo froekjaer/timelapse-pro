@@ -1,0 +1,162 @@
+name: One-off SSH tunnel stderr drain
+
+on:
+  push:
+    branches:
+      - fix/ssh-tunnel-stderr-drain
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/ssh-tunnel-stderr-drain
+          fetch-depth: 0
+
+      - name: Prepare focused tests
+        run: python3 -m pip install pytest pytest-asyncio
+
+      - name: Add bounded SSH stderr drain
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('edge/tunnel/ssh_manager.py')
+          source = path.read_text(encoding='utf-8')
+
+          def replace_once(old: str, new: str, label: str) -> None:
+              global source
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly one anchor, found {count}')
+              source = source.replace(old, new, 1)
+
+          replace_once(
+              'import time\nfrom pathlib import Path\n',
+              'import time\nfrom collections import deque\nfrom pathlib import Path\n',
+              'deque import',
+          )
+
+          replace_once(
+              '''        self._connect_time: Optional[float] = None\n        self._lock       = threading.Lock()\n''',
+              '''        self._connect_time: Optional[float] = None\n        self._lock       = threading.Lock()\n        self._stderr_lock = threading.Lock()\n        self._stderr_tail = deque(maxlen=20)\n        self._stderr_thread: Optional[threading.Thread] = None\n''',
+              'stderr state',
+          )
+
+          methods_anchor = '''    def _try_connect(self, endpoint: str) -> bool:\n        \"\"\"Forsøg forbindelse til et enkelt endpoint.\"\"\"\n'''
+          methods = '''    def _start_stderr_drain(self, proc: subprocess.Popen) -> None:\n        \"\"\"Drain SSH stderr continuously while retaining only a bounded diagnostic tail.\"\"\"\n        with self._stderr_lock:\n            self._stderr_tail.clear()\n        thread = threading.Thread(\n            target=self._drain_stderr,\n            args=(proc,),\n            name=\"ssh-tunnel-stderr\",\n            daemon=True,\n        )\n        self._stderr_thread = thread\n        thread.start()\n\n    def _drain_stderr(self, proc: subprocess.Popen) -> None:\n        stream = proc.stderr\n        if stream is None:\n            return\n        try:\n            # Limit each read as well as the retained deque so a malformed or\n            # noisy SSH process cannot create unbounded memory pressure.\n            for raw in iter(lambda: stream.readline(2048), b\"\"):\n                line = raw.decode(errors=\"replace\").strip()\n                if not line:\n                    continue\n                with self._stderr_lock:\n                    self._stderr_tail.append(line[-1000:])\n        except Exception as exc:\n            log.debug(\"SSH tunnel: stderr drain sluttede med fejl: %s\", exc)\n        finally:\n            try:\n                stream.close()\n            except Exception:\n                pass\n\n    def _stderr_summary(self) -> str:\n        with self._stderr_lock:\n            return \"\\n\".join(self._stderr_tail)[-4000:]\n\n    def _join_stderr_drain(self, timeout: float = 1.0) -> None:\n        thread = self._stderr_thread\n        if thread and thread is not threading.current_thread():\n            thread.join(timeout=timeout)\n        if thread and not thread.is_alive() and self._stderr_thread is thread:\n            self._stderr_thread = None\n\n''' + methods_anchor
+          replace_once(methods_anchor, methods, 'stderr drain methods')
+
+          replace_once(
+              '''            with self._lock:\n                self._proc = subprocess.Popen(\n                    cmd,\n                    stdout=subprocess.DEVNULL,\n                    stderr=subprocess.PIPE,\n                )\n\n            # Vent kort og tjek at processen ikke straks fejlede\n            time.sleep(3)\n            if self._proc.poll() is not None:\n                stderr = self._proc.stderr.read().decode(errors=\"replace\")\n                log.error(\"SSH tunnel: connect fejlede: %s\", stderr[:200])\n                return False\n''',
+              '''            with self._lock:\n                self._proc = subprocess.Popen(\n                    cmd,\n                    stdout=subprocess.DEVNULL,\n                    stderr=subprocess.PIPE,\n                )\n                proc = self._proc\n            self._start_stderr_drain(proc)\n\n            # Vent kort og tjek at processen ikke straks fejlede.  stderr is\n            # drained concurrently, so a long-running tunnel cannot block on a\n            # full pipe while we still retain a bounded failure tail.\n            time.sleep(3)\n            if proc.poll() is not None:\n                self._join_stderr_drain(timeout=1.0)\n                stderr = self._stderr_summary()\n                log.error(\"SSH tunnel: connect fejlede: %s\", stderr[:200])\n                with self._lock:\n                    if self._proc is proc:\n                        self._proc = None\n                return False\n''',
+              'connect drain wiring',
+          )
+
+          replace_once(
+              '''    def _kill_tunnel(self):\n        \"\"\"Dræb SSH-processen.\"\"\"\n        with self._lock:\n            if self._proc:\n                try:\n                    self._proc.terminate()\n                    self._proc.wait(timeout=5)\n                except Exception:\n                    try:\n                        self._proc.kill()\n                    except Exception:\n                        pass\n                finally:\n                    self._proc = None\n''',
+              '''    def _kill_tunnel(self):\n        \"\"\"Dræb SSH-processen og luk stderr-drain deterministisk.\"\"\"\n        with self._lock:\n            proc = self._proc\n            self._proc = None\n        if proc:\n            try:\n                proc.terminate()\n                proc.wait(timeout=5)\n            except Exception:\n                try:\n                    proc.kill()\n                    proc.wait(timeout=2)\n                except Exception:\n                    pass\n        self._join_stderr_drain(timeout=1.0)\n''',
+              'shutdown drain join',
+          )
+
+          path.write_text(source, encoding='utf-8')
+          PY
+
+          cat > tests/test_ssh_tunnel_stderr_drain.py <<'PYTEST'
+          import io
+          from pathlib import Path
+
+          from edge.tunnel.ssh_manager import SshTunnelManager
+
+
+          class DummyApi:
+              _device_id = "TL-TEST"
+
+              def ping(self):
+                  return True
+
+              def _post(self, *_args, **_kwargs):
+                  return True, {}
+
+
+          class DummyProc:
+              def __init__(self, stderr=b""):
+                  self.stderr = io.BytesIO(stderr)
+                  self.terminated = False
+                  self.killed = False
+                  self.waited = []
+
+              def terminate(self):
+                  self.terminated = True
+
+              def kill(self):
+                  self.killed = True
+
+              def wait(self, timeout=None):
+                  self.waited.append(timeout)
+                  return 0
+
+              def poll(self):
+                  return None
+
+
+          def _manager():
+              return SshTunnelManager({"ssh_tunnel": {}}, DummyApi())
+
+
+          def test_stderr_drain_is_bounded_and_keeps_latest_diagnostics():
+              proc = DummyProc(b"".join(f"line-{i}\n".encode() for i in range(60)))
+              manager = _manager()
+              manager._start_stderr_drain(proc)
+              manager._join_stderr_drain(timeout=2.0)
+
+              summary = manager._stderr_summary()
+              assert "line-59" in summary
+              assert "line-0\n" not in summary
+              assert len(manager._stderr_tail) <= 20
+              assert manager._stderr_thread is None
+
+
+          def test_kill_tunnel_terminates_process_and_joins_reader():
+              proc = DummyProc(b"diagnostic\n")
+              manager = _manager()
+              manager._proc = proc
+              manager._start_stderr_drain(proc)
+
+              manager._kill_tunnel()
+
+              assert proc.terminated is True
+              assert manager._proc is None
+              assert manager._stderr_thread is None
+              assert "diagnostic" in manager._stderr_summary()
+
+
+          def test_source_has_no_undrained_direct_stderr_read_contract():
+              source = Path("edge/tunnel/ssh_manager.py").read_text(encoding="utf-8")
+              assert "stderr=subprocess.PIPE" in source
+              assert "self._start_stderr_drain(proc)" in source
+              assert "stream.readline(2048)" in source
+              assert "deque(maxlen=20)" in source
+              assert ".stderr.read()" not in source
+              assert "self._join_stderr_drain(timeout=1.0)" in source
+          PYTEST
+
+          python3 -m py_compile edge/tunnel/ssh_manager.py
+          python3 -m pytest tests/test_ssh_tunnel_stderr_drain.py tests/test_ssh_tunnel_ux_convergence.py -q
+          git diff --check
+
+      - name: Commit scoped P-03 fix
+        shell: bash
+        run: |
+          git config user.name "TimeLapse Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add edge/tunnel/ssh_manager.py tests/test_ssh_tunnel_stderr_drain.py
+          git diff --cached --check
+          git commit -m "Drain reverse SSH stderr without blocking"
+          git push origin HEAD:fix/ssh-tunnel-stderr-drain
