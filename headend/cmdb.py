@@ -389,19 +389,20 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
             f"Edge {device_id}: {count} {'sikkerhedsopdaterin' if 'security' in update_type else 'OS-opdaterin'}"
             f"g{'er' if count != 1 else ''} tilgænge{'lig' if count == 1 else 'lig'}e via apt. "
             f"Første pakker: {names}{'…' if len(pkg_list) > 10 else ''}. "
-            f"Installér via Headend-signeret offline OS bundle."
+            f"CMDB observation — ikke deployable. Opret/verificér lab-katalog og build-plan før Headend-signeret offline OS bundle."
         )
         existing = db.query(PendingUpdate).filter(
             PendingUpdate.update_type == update_type,
             PendingUpdate.scope == "device",
             PendingUpdate.scope_id == device_id,
-            PendingUpdate.status.in_(["pending", "approved"]),
+            PendingUpdate.status.in_(["blocked", "pending"]),
         ).first()
         if existing:
             existing.version = version
             existing.description = desc
             existing.severity = "high" if "security" in update_type else "medium"
             existing.environment = env
+            existing.status = "blocked"
         else:
             db.add(PendingUpdate(
                 update_type=update_type,
@@ -410,7 +411,7 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
                 severity="high" if "security" in update_type else "medium",
                 scope="device",
                 scope_id=device_id,
-                status="pending",
+                status="blocked",
                 environment=env,
                 target_device_ids=json.dumps([device_id]),
             ))
