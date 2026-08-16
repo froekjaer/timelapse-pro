@@ -1,3 +1,5 @@
+"""Kimi F-002 contracts for the two Headend OS-builder execution paths."""
+
 from pathlib import Path
 
 import pytest
