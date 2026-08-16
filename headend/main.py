@@ -6796,14 +6796,12 @@ def _collect_release_outputs(root: Path) -> list[dict]:
     # Explicitly list all Edge runtime paths.  Artifacts are the only accepted
     # Edge update channel, so omitting a Python module or a systemd helper here
     # silently produces a partial release on the device.
-    candidates = [
+    # Top-level edge/*.py is globbed, not hand-listed: a hand-listed set went
+    # stale 2026-08-16 (update_lifecycle.py missing → crash loop on TL-043EB9E72EFD).
+    candidates: list[Path] = sorted((root / "edge").glob("*.py"))
+    candidates += [
         root / "headend" / "main.py",
         root / "headend" / "database.py",
-        root / "edge" / "agent.py",
-        root / "edge" / "frame_push.py",
-        root / "edge" / "security.py",
-        root / "edge" / "technician_auth.py",
-        root / "edge" / "technician_ui.py",
         root / "edge" / "requirements.txt",
         root / "edge" / "ai",
         root / "edge" / "camera",
