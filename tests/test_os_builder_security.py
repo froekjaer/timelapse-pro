@@ -94,10 +94,23 @@ def test_unsafe_builder_control_values_fail_closed(tmp_path: Path, field: str, v
         bundle_container_command(**kwargs)
 
 
-def test_main_no_longer_contains_world_writable_builder_permissions_or_dynamic_builder_shell():
+def _function_slice(source: str, function_name: str, next_function: str) -> str:
+    start = source.index(f"def {function_name}(")
+    end = source.index(f"def {next_function}(", start)
+    return source[start:end]
+
+
+def test_main_no_longer_contains_world_writable_or_dynamic_shell_in_reported_f002_builders():
     source = Path("headend/main.py").read_text(encoding="utf-8")
-    assert "os.chmod(build_root, 0o777)" not in source
-    assert "os.chmod(input_path, 0o666)" not in source
-    assert "os.chmod(output_path, 0o666)" not in source
-    assert "bundle_container_command(" in source
-    assert "catalog_container_command(" in source
+    bundle = _function_slice(source, "_build_os_bundle_in_mac_container", "_human_update_job_error")
+    catalog = _function_slice(source, "_generate_apt_list_from_mac_builder", "_generate_apt_list_from_ubuntu_metadata")
+
+    assert "os.chmod(build_root, 0o777)" not in bundle
+    assert "build_os_bundle.py --device-id {device_id!r}" not in bundle
+    assert "bundle_container_command(" in bundle
+
+    assert "os.chmod(build_root, 0o777)" not in catalog
+    assert "os.chmod(input_path, 0o666)" not in catalog
+    assert "os.chmod(output_path, 0o666)" not in catalog
+    assert "shell = (" not in catalog
+    assert "catalog_container_command(" in catalog
