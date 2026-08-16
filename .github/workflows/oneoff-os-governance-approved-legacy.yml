@@ -1,0 +1,64 @@
+name: One-off legacy-approved OS governance closure
+
+on:
+  push:
+    branches:
+      - security/os-update-governance-closure
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: security/os-update-governance-closure
+          fetch-depth: 0
+
+      - name: Include approved legacy CMDB observations in fail-closed migration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cmdb_path = Path('headend/cmdb.py')
+          cmdb = cmdb_path.read_text(encoding='utf-8')
+          old = 'PendingUpdate.status.in_(["blocked", "pending"]),'
+          new = 'PendingUpdate.status.in_(["blocked", "pending", "approved"]),'
+          if cmdb.count(old) != 1:
+              raise SystemExit(f'expected exactly one CMDB status anchor, found {cmdb.count(old)}')
+          cmdb_path.write_text(cmdb.replace(old, new, 1), encoding='utf-8')
+
+          test_path = Path('tests/test_os_update_governance_closure.py')
+          tests = test_path.read_text(encoding='utf-8')
+          old_test = '''    assert 'status="blocked"' in section
+              assert "CMDB observation" in section
+              assert 'status="pending"' not in section
+              assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
+          '''
+          new_test = '''    assert 'status="blocked"' in section
+              assert "CMDB observation" in section
+              assert 'status="pending"' not in section
+              assert 'PendingUpdate.status.in_(["blocked", "pending", "approved"])' in section
+              assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
+          '''
+          if tests.count(old_test) != 1:
+              raise SystemExit(f'expected exactly one test anchor, found {tests.count(old_test)}')
+          test_path.write_text(tests.replace(old_test, new_test, 1), encoding='utf-8')
+          PY
+
+          python3 -m py_compile headend/cmdb.py
+          python3 -m pytest tests/test_os_update_governance_closure.py -q
+
+      - name: Commit scoped correction
+        shell: bash
+        run: |
+          git config user.name "TimeLapse Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add headend/cmdb.py tests/test_os_update_governance_closure.py
+          git diff --cached --check
+          git commit -m "Block legacy approved CMDB OS observations"
+          git push origin HEAD:security/os-update-governance-closure
