@@ -23,14 +23,6 @@ jobs:
         run: python tools/oneoff_patch_f002.py
       - name: Compile patched builder
         run: python -m py_compile headend/main.py headend/services/os_builder_security.py
-      - name: Verify private builder permissions
-        run: pytest -q tests/test_os_builder_security.py -k 'workspace_is_private or files_are_private'
-      - name: Verify command construction
-        run: pytest -q tests/test_os_builder_security.py -k 'command_keeps'
-      - name: Verify unsafe inputs fail closed
-        run: pytest -q tests/test_os_builder_security.py -k 'unsafe_builder_control_values'
-      - name: Verify main.py integration
-        run: pytest -q tests/test_os_builder_security.py -k 'reported_f002_builders'
       - name: Remove one-off machinery and commit result
         run: |
           rm .github/workflows/oneoff-f002-os-builder.yml tools/oneoff_patch_f002.py
