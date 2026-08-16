@@ -9,6 +9,7 @@ def test_cmdb_os_inventory_is_observation_only_not_deployable_pending_work():
     assert 'status="blocked"' in section
     assert "CMDB observation" in section
     assert 'status="pending"' not in section
+    assert 'PendingUpdate.status.in_(["blocked", "pending", "approved"])' in section
     assert 'PendingUpdate.status.in_(["pending", "approved"])' not in section
 
 

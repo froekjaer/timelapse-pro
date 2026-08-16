@@ -395,7 +395,7 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
             PendingUpdate.update_type == update_type,
             PendingUpdate.scope == "device",
             PendingUpdate.scope_id == device_id,
-            PendingUpdate.status.in_(["blocked", "pending"]),
+            PendingUpdate.status.in_(["blocked", "pending", "approved"]),
         ).first()
         if existing:
             existing.version = version
