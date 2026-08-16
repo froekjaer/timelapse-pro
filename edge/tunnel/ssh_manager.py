@@ -47,6 +47,7 @@ import os
 import subprocess
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -79,6 +80,9 @@ class SshTunnelManager:
         self._using_fallback = False
         self._connect_time: Optional[float] = None
         self._lock       = threading.Lock()
+        self._stderr_lock = threading.Lock()
+        self._stderr_tail = deque(maxlen=20)
+        self._stderr_thread: Optional[threading.Thread] = None
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -288,6 +292,51 @@ class SshTunnelManager:
             log.error("SSH tunnel: alle endpoints fejlede")
             self._notify_failed()
 
+    def _start_stderr_drain(self, proc: subprocess.Popen) -> None:
+        """Drain SSH stderr continuously while retaining only a bounded diagnostic tail."""
+        with self._stderr_lock:
+            self._stderr_tail.clear()
+        thread = threading.Thread(
+            target=self._drain_stderr,
+            args=(proc,),
+            name="ssh-tunnel-stderr",
+            daemon=True,
+        )
+        self._stderr_thread = thread
+        thread.start()
+
+    def _drain_stderr(self, proc: subprocess.Popen) -> None:
+        stream = proc.stderr
+        if stream is None:
+            return
+        try:
+            # Limit each read as well as the retained deque so a malformed or
+            # noisy SSH process cannot create unbounded memory pressure.
+            for raw in iter(lambda: stream.readline(2048), b""):
+                line = raw.decode(errors="replace").strip()
+                if not line:
+                    continue
+                with self._stderr_lock:
+                    self._stderr_tail.append(line[-1000:])
+        except Exception as exc:
+            log.debug("SSH tunnel: stderr drain sluttede med fejl: %s", exc)
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+    def _stderr_summary(self) -> str:
+        with self._stderr_lock:
+            return "\n".join(self._stderr_tail)[-4000:]
+
+    def _join_stderr_drain(self, timeout: float = 1.0) -> None:
+        thread = self._stderr_thread
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+        if thread and not thread.is_alive() and self._stderr_thread is thread:
+            self._stderr_thread = None
+
     def _try_connect(self, endpoint: str) -> bool:
         """Forsøg forbindelse til et enkelt endpoint."""
         try:
@@ -332,12 +381,20 @@ class SshTunnelManager:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
                 )
+                proc = self._proc
+            self._start_stderr_drain(proc)
 
-            # Vent kort og tjek at processen ikke straks fejlede
+            # Vent kort og tjek at processen ikke straks fejlede.  stderr is
+            # drained concurrently, so a long-running tunnel cannot block on a
+            # full pipe while we still retain a bounded failure tail.
             time.sleep(3)
-            if self._proc.poll() is not None:
-                stderr = self._proc.stderr.read().decode(errors="replace")
+            if proc.poll() is not None:
+                self._join_stderr_drain(timeout=1.0)
+                stderr = self._stderr_summary()
                 log.error("SSH tunnel: connect fejlede: %s", stderr[:200])
+                with self._lock:
+                    if self._proc is proc:
+                        self._proc = None
                 return False
 
             return True
@@ -358,19 +415,21 @@ class SshTunnelManager:
         log.info("SSH tunnel: afbrudt (varighed=%ss)", duration_s)
 
     def _kill_tunnel(self):
-        """Dræb SSH-processen."""
+        """Dræb SSH-processen og luk stderr-drain deterministisk."""
         with self._lock:
-            if self._proc:
+            proc = self._proc
+            self._proc = None
+        if proc:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
                 try:
-                    self._proc.terminate()
-                    self._proc.wait(timeout=5)
+                    proc.kill()
+                    proc.wait(timeout=2)
                 except Exception:
-                    try:
-                        self._proc.kill()
-                    except Exception:
-                        pass
-                finally:
-                    self._proc = None
+                    pass
+        self._join_stderr_drain(timeout=1.0)
 
     def _check_alive(self) -> bool:
         """Returnerer True hvis tunnel-processen stadig kører."""
