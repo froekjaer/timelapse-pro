@@ -1,0 +1,47 @@
+name: One-off handover PR73
+
+on:
+  push:
+    branches:
+      - security/closure-edge-ssh-private-key-ownership
+
+permissions:
+  contents: write
+
+jobs:
+  write-handover:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Insert handover entry
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('Dokumentation/HANDOVER_LOG.md')
+          text = p.read_text(encoding='utf-8')
+          anchor = '## Log\n\n'
+          if text.count(anchor) != 1:
+              raise SystemExit(f'handover log anchor count={text.count(anchor)}')
+          entry = '''### Handover 2026-08-17 12:32 — fra ChatGPT til Peter/Claude/Codex: SEC-ZAI-05/15 Edge SSH private-key ownership closure (#73)
+
+- Hvad er gjort: z.ai SEC-ZAI-05 og SEC-ZAI-15 blev genverificeret mod `main@812dd66eab4ba12babd1a5d3eb0a3ed27f6f8f1d` og var stadig reelle som ét sammenhængende Locked Decision #7/#12-brud. Headend kunne (a) downloade `Camera.ssh_private_key` som plaintext, (b) generere og gemme Camera-holdt Edge SSH keypair i `/api/admin/edge-provisioning/prepare`, (c) læse/injicere samme private key i begge image-builder paths, (d) generere tunnel/SFTP private keys i legacy `/api/admin/provision-package`, og (e) generere en Edge SSH private key via den generelle key-management route. PR #73 pensionerer alle aktive creation/read/export/inject paths: camera private-key download er tenant-scoped `410 Gone`; legacy provision-package er `410 Gone` og peger på signed one-time Edge provisioning; image-buildere sender aldrig Camera private-key material; provisioning prepare tildeler fortsat reverse-tunnel port men genererer ikke SSH keypair; generic key-management kræver Edge-leveret public key for `entity_type=edge,key_type=ssh` og afviser Headend key generation. Legacy DB-kolonnen/inventory evidence slettes ikke destruktivt i denne PR. BT-TOTP QR-ruten får samtidig den manglende tenant-boundary før secret-resolution (resten af SEC-016 auto-sync arbejdes separat i PR #71).
+- Hvad mangler / næste skridt: Kode-only PR CI #643 er PASS for Python syntax + hele unit/contract-suiten og Web UI. Efter denne handover-commit skal full PR CI køres igen på den endelige rene head. Merge kun hvis `main` stadig er samme base eller PR'en er konfliktfrit current, og alle checks er grønne. Brug squash merge, så de midlertidige exact-patch commits ikke kommer på main. Følg derefter main CI + Mac mini exact-SHA health deployment; først da markeres SEC-ZAI-05/15 VERIFIED/CLOSED. PR #71 (BT-TOTP auto-sync) og #72 (CMDB baseline drift) er parallelle Claude-spor og er bevidst urørte.
+- Kommandoer/evidens: exact-patch runners krævede unikke anchors, `python3 -m py_compile headend/main.py`, `pytest tests/test_security_closure_edge_ssh_private_key_ownership.py -q`, `git diff --check`; full repo PR CI #643 PASS. Manuel PR-diff review bekræftede kun `headend/main.py` + ownership regressionstest som produktændringer før denne handover-entry.
+- Forventet/faktisk output: Headend er ikke længere escrow/issuer for operationelle Edge SSH private keys i de aktive provisioning-, image- eller admin-paths; Edge SSH identity registreres public-key-only. Reverse-tunnel port og Headendens egen support-public-key er fortsat separate, legitime trust-objekter.
+- Filer rørt: `headend/main.py`, `tests/test_security_closure_edge_ssh_private_key_ownership.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Eksisterende `Camera.ssh_private_key` data kan stadig findes som legacy database/evidence og skal migreres/retireres kontrolleret senere; denne PR læser, eksporterer eller injicerer dem ikke. Første legacy Edge-konvergens skal sikre, at enheden faktisk har/genererer sin egen operationelle SSH identity før gamle escrow-data eventuelt destruktivt fjernes. Undgå at blande #71/#72 ind i #73; rebase/fresh-base hvis de merger først.
+
+'''
+          p.write_text(text.replace(anchor, anchor + entry, 1), encoding='utf-8')
+          PY
+          git diff --check
+      - name: Commit handover
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Dokumentation/HANDOVER_LOG.md
+          git commit -m "Document Edge SSH ownership closure handover"
+          git push origin HEAD:security/closure-edge-ssh-private-key-ownership
