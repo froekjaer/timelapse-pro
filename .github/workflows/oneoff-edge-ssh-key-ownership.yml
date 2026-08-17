@@ -1,0 +1,159 @@
+name: One-off Edge SSH ownership closure
+
+on:
+  push:
+    branches:
+      - security/closure-edge-ssh-private-key-ownership
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Apply exact security patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('headend/main.py')
+          source = path.read_text(encoding='utf-8')
+
+          def replace_between(text: str, start: str, end: str, replacement: str) -> str:
+              if text.count(start) != 1:
+                  raise SystemExit(f'expected exactly one start marker: {start!r}; got {text.count(start)}')
+              start_i = text.index(start)
+              end_i = text.index(end, start_i)
+              return text[:start_i] + replacement + text[end_i:]
+
+          # SEC-ZAI-05: legacy plaintext camera private-key export is retired.
+          source = replace_between(
+              source,
+              '@app.get("/api/admin/cameras/{camera_id}/ssh-key")',
+              '@app.get("/api/admin/headend/ssh-public-key")',
+              '''@app.get("/api/admin/cameras/{camera_id}/ssh-key")
+          def download_camera_ssh_key(
+              camera_id: str,
+              current_user=require_role("super_admin", "admin"),
+              db: Session = Depends(get_db),
+          ):
+              """Retired legacy escrow path: operational Edge private keys are Edge-owned."""
+              from database import Camera as _Camera
+              cam = db.query(_Camera).filter_by(id=camera_id).first()
+              if not cam:
+                  raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+              if cam.site_id:
+                  _ensure_site_access(db, current_user, cam.site_id)
+              elif cam.customer_id:
+                  _ensure_customer_access(current_user, cam.customer_id)
+              elif not _is_platform_admin(current_user):
+                  raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
+              raise HTTPException(
+                  status_code=410,
+                  detail="Legacy SSH private-key download er pensioneret. Edge ejer og genererer operationelle private nøgler lokalt.",
+              )
+
+
+          ''',
+          )
+
+          # SEC-ZAI-05: tenant boundary is enforced before BT-TOTP secret resolution.
+          old = '''    if current_user is None or not current_user.is_active:
+              raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
+              is_admin = current_user.role in {"super_admin", "admin"}
+          '''
+          new = '''    if current_user is None or not current_user.is_active:
+              raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
+              if cam.site_id:
+                  _ensure_site_access(db, current_user, cam.site_id)
+              elif cam.customer_id:
+                  _ensure_customer_access(current_user, cam.customer_id)
+              elif not _is_platform_admin(current_user):
+                  raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
+              is_admin = current_user.role in {"super_admin", "admin"}
+          '''
+          if source.count(old) != 1:
+              raise SystemExit(f'BT-TOTP anchor count={source.count(old)}')
+          source = source.replace(old, new, 1)
+
+          # SEC-ZAI-15: stop creating Camera-held Edge SSH keypairs in provisioning prepare.
+          gen_start = '        if cam_rec and not getattr(cam_rec, "ssh_private_key", None):\n'
+          gen_end = '        if cam_rec and not getattr(cam_rec, "reverse_tunnel_port", None):\n'
+          if source.count(gen_start) != 1 or source.count(gen_end) != 1:
+              raise SystemExit('legacy Camera SSH generation anchors changed')
+          a = source.index(gen_start)
+          b = source.index(gen_end, a)
+          source = source[:a] + '        # Edge generates operational SSH private keys locally; legacy DB material is evidence-only.\n' + source[b:]
+          source = source.replace(
+              '    # Generér SSH keypair + tildel reverse tunnel port (v8)\n',
+              '    # Tildel kun reverse-tunnel port; Edge ejer SSH private-key lifecycle.\n',
+              1,
+          )
+
+          # SEC-ZAI-15: image builders must not read or inject legacy Camera private keys.
+          replacements = {
+              '                    _device_ssh_privkey = getattr(_cam, "ssh_private_key", "") or ""\n':
+                  '                    _device_ssh_privkey = ""  # private key is generated on Edge, never read from Headend DB\n',
+              '                    ssh_private_key    = getattr(cam_ssh, "ssh_private_key", None)\n':
+                  '                    ssh_private_key    = None  # private key is generated on Edge\n',
+              '                device_ssh_privkey=_device_ssh_privkey,\n':
+                  '                device_ssh_privkey="",\n',
+              '            ssh_private_key=ssh_private_key,\n':
+                  '            ssh_private_key=None,\n',
+          }
+          for old_text, new_text in replacements.items():
+              if source.count(old_text) != 1:
+                  raise SystemExit(f'expected one legacy injection anchor, got {source.count(old_text)}: {old_text!r}')
+              source = source.replace(old_text, new_text, 1)
+
+          # SEC-ZAI-15: retire the old ZIP provisioner that exported tunnel/SFTP private keys.
+          source = replace_between(
+              source,
+              '@app.post("/api/admin/provision-package")',
+              '# ── Reverse SSH',
+              '''@app.post("/api/admin/provision-package")
+          def create_provision_package(
+              payload: dict,
+              current_user=require_role("super_admin", "admin"),
+              db: Session = Depends(get_db),
+          ):
+              """Retired legacy package: Headend must never manufacture/export Edge private keys."""
+              raise HTTPException(
+                  status_code=410,
+                  detail=(
+                      "Legacy provision-package er pensioneret. Brug /api/admin/edge-provisioning/prepare "
+                      "og den signerede one-time provisioning-envelope; Edge genererer private SSH/TLS-nøgler lokalt."
+                  ),
+              )
+
+
+          ''',
+          )
+
+          path.write_text(source, encoding='utf-8')
+          PY
+      - name: Verify focused contracts
+        shell: bash
+        run: |
+          python3 -m py_compile headend/main.py
+          python3 -m pip install -q pytest pytest-asyncio
+          python3 -m pytest tests/test_security_closure_edge_ssh_private_key_ownership.py -q
+          git diff --check
+      - name: Commit product patch
+        shell: bash
+        run: |
+          if git diff --quiet -- headend/main.py; then
+            echo "No product changes produced" >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add headend/main.py
+          git commit -m "Retire Headend escrow of Edge SSH private keys"
+          git push origin HEAD:security/closure-edge-ssh-private-key-ownership
