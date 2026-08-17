@@ -3567,6 +3567,15 @@ def create_key_credential(
         expires_at = now + timedelta(days=int(payload.expires_days))
     credential_id = f"TL-KEY-{now:%Y%m%d}-{_secrets.token_hex(6)}"
     secret_once = None
+    if entity_type == "edge" and key_type == "ssh":
+        if payload.generate_keypair:
+            raise HTTPException(
+                status_code=409,
+                detail="Edge SSH private keys skal genereres lokalt på Edge; registrér en Edge-leveret public key.",
+            )
+        if not (payload.public_key or "").strip():
+            raise HTTPException(status_code=400, detail="Edge-leveret public key er påkrævet for Edge SSH identity")
+
     private_key_once = None
     public_key = payload.public_key.strip() if payload.public_key else None
     secret_hash = None
@@ -5170,23 +5179,23 @@ def list_cameras(
 @app.get("/api/admin/cameras/{camera_id}/ssh-key")
 def download_camera_ssh_key(
     camera_id: str,
-    _user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db),
 ):
-    """Hent SSH private key til direkte SSH-adgang til edge-enhed (via reverse tunnel).
-    Returnerer PEM-formateret Ed25519 private key som plaintext fil."""
+    """Retired legacy escrow path: operational Edge private keys are Edge-owned."""
     from database import Camera as _Camera
-    from fastapi.responses import PlainTextResponse
     cam = db.query(_Camera).filter_by(id=camera_id).first()
     if not cam:
         raise HTTPException(status_code=404, detail="Kamera ikke fundet")
-    pk = getattr(cam, "ssh_private_key", None)
-    if not pk:
-        raise HTTPException(status_code=404, detail="Ingen SSH-nøgle genereret for dette kamera endnu")
-    safe_name = (cam.camera_name or camera_id).replace(" ", "_").replace("/", "-")
-    return PlainTextResponse(
-        content=pk,
-        headers={"Content-Disposition": f'attachment; filename="timelapse_{safe_name}.pem"'},
+    if cam.site_id:
+        _ensure_site_access(db, current_user, cam.site_id)
+    elif cam.customer_id:
+        _ensure_customer_access(current_user, cam.customer_id)
+    elif not _is_platform_admin(current_user):
+        raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy SSH private-key download er pensioneret. Edge ejer og genererer operationelle private nøgler lokalt.",
     )
 
 
@@ -5316,6 +5325,12 @@ def get_camera_bt_totp_qr(
         raise HTTPException(status_code=404, detail="Kamera ikke fundet")
     if current_user is None or not current_user.is_active:
         raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
+    if cam.site_id:
+        _ensure_site_access(db, current_user, cam.site_id)
+    elif cam.customer_id:
+        _ensure_customer_access(current_user, cam.customer_id)
+    elif not _is_platform_admin(current_user):
+        raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
     is_admin = current_user.role in {"super_admin", "admin"}
     if not is_admin:
         if not bool(getattr(current_user, "on_site_service", False)):
@@ -10952,126 +10967,16 @@ def revoke_bootstrap_token(
 def create_provision_package(
     payload: dict,
     current_user=require_role("super_admin", "admin"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Generer komplet provisionerings-ZIP til ny Orange Pi edge-enhed.
-
-    ZIP indeholder:
-      bootstrap.yaml       — device_id (foreløbig), headend_url, bootstrap_token
-      tunnel_key           — Ed25519 privat nøgle til reverse SSH tunnel
-      tunnel_key.pub       — Tilhørende public key (kopiér til headend authorized_keys)
-      sftp_key             — Ed25519 privat nøgle til SFTP upload
-      sftp_key.pub         — Tilhørende public key
-      INSTALL.md           — Trin-for-trin installationsguide
-    """
-    site_id     = payload.get("site_id")
-    camera_name = payload.get("camera_name", "Kamera 1")
-    device_id   = payload.get("device_id")  # valgfrit — hvis None genereres foreløbig ID
-
-    if not site_id:
-        raise HTTPException(status_code=400, detail="site_id er påkrævet")
-
-    # Hent site og kunde-info
-    site     = db.query(Site).filter_by(id=site_id).first()
-    if not site:
-        raise HTTPException(status_code=404, detail="Site ikke fundet")
-    customer = db.query(Customer).filter_by(id=site.customer_id).first()
-
-    site_name     = site.name
-    customer_name = customer.name if customer else "Ukendt kunde"
-    location_name = f"{customer_name} — {site_name} — {camera_name}"
-
-    # Generer foreløbigt device_id hvis ikke angivet
-    device_id_hint = device_id or f"TL-PROV-{_uuid.uuid4().hex[:8].upper()}"
-
-    # Headend URL fra settings
-    headend_url = _get_setting(db, "base_url", os.getenv("BASE_URL", "http://127.0.0.1:8000"))
-
-    # Generer bootstrap token
-    import secrets
-    from datetime import timedelta
-    token_str = f"test-{secrets.token_hex(24)}"
-    token_rec = BootstrapToken(
-        token        = token_str,
-        device_label = location_name,
-        site_id      = site_id,
-        customer_id  = site.customer_id,
-        camera_name  = camera_name,
-        created_by   = current_user.username,
-        expires_at   = now_utc() + timedelta(hours=48),
+    """Retired legacy package: Headend must never manufacture/export Edge private keys."""
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Legacy provision-package er pensioneret. Brug /api/admin/edge-provisioning/prepare "
+            "og den signerede one-time provisioning-envelope; Edge genererer private SSH/TLS-nøgler lokalt."
+        ),
     )
-    db.add(token_rec)
-    db.commit()
-
-    # Generer SSH-nøglepar
-    tunnel_priv, tunnel_pub = _generate_ed25519_keypair()
-    sftp_priv,   sftp_pub   = _generate_ed25519_keypair()
-
-    # Tilføj kommentar til public keys
-    tunnel_pub = f"{tunnel_pub.strip()} {device_id_hint}"
-    sftp_pub   = f"{sftp_pub.strip()} sftp@{site_name.replace(' ', '_')}"
-
-    # Byg filindhold
-    bootstrap_yaml = _build_bootstrap_yaml(device_id_hint, headend_url, token_str, location_name)
-    install_md     = _build_install_md(site_name, camera_name, headend_url, tunnel_pub, sftp_pub, device_id_hint)
-
-    # Generer known_hosts med headendens SSH fingerprint
-    known_hosts_content = ""
-    try:
-        import subprocess as _sp
-        headend_host = headend_url.replace("https://", "").replace("http://", "").split(":")[0]
-        result = _sp.run(
-            ["ssh-keyscan", "-H", headend_host],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            known_hosts_content = result.stdout
-            log.info("known_hosts genereret for %s (%d linjer)",
-                     headend_host, len(result.stdout.splitlines()))
-        else:
-            log.warning("ssh-keyscan fejlede for %s — known_hosts udelades", headend_host)
-    except Exception as exc:
-        log.warning("known_hosts generering fejlede: %s", exc)
-
-    # Byg ZIP i hukommelsen
-    zip_buffer = _io.BytesIO()
-    safe_site  = site_name.replace(" ", "_").replace("/", "-")[:20]
-
-    with _zipfile.ZipFile(zip_buffer, "w", _zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("bootstrap.yaml",   bootstrap_yaml)
-        zf.writestr("tunnel_key",       tunnel_priv)
-        zf.writestr("tunnel_key.pub",   tunnel_pub + "\n")
-        zf.writestr("sftp_key",         sftp_priv)
-        zf.writestr("sftp_key.pub",     sftp_pub + "\n")
-        if known_hosts_content:
-            zf.writestr("known_hosts", known_hosts_content)
-        zf.writestr("INSTALL.md",       install_md)
-
-    zip_buffer.seek(0)
-
-    # Log audit-event
-    db.add(Event(
-        device_id = device_id_hint,
-        level     = "INFO",
-        category  = "provision",
-        message   = f"Provisionerings-pakke genereret til {location_name}",
-        extra     = _json.dumps({
-            "site_id":    site_id,
-            "created_by": current_user.username,
-            "token":      token_str[:16] + "…",
-        }),
-    ))
-    db.commit()
-    log.info("Provisionerings-pakke genereret: %s af %s", location_name, current_user.username)
-
-    filename = f"timelapse_provision_{safe_site}_{now_utc().strftime('%Y%m%d')}.zip"
-    return StreamingResponse(
-        _io.BytesIO(zip_buffer.read()),
-        media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
-
 
 
 # ── Reverse SSH ───────────────────────────────────────────────────────────────
@@ -14878,23 +14783,11 @@ def prepare_edge_provisioning(
                 cam_rec.wifi_country = payload.wifi_country or "DK"
             log.info("Netværksconfig opdateret for kamera %s: %s", camera_id, payload.network_type)
 
-    # Generér SSH keypair + tildel reverse tunnel port (v8)
+    # Tildel kun reverse-tunnel port; Edge ejer SSH private-key lifecycle.
     if camera_id:
         from database import Camera as _Camera
         cam_rec = db.query(_Camera).filter_by(id=camera_id).first()
-        if cam_rec and not getattr(cam_rec, "ssh_private_key", None):
-            # Generer unik Ed25519 nøgle til denne enhed
-            import tempfile, subprocess as _sp, os as _os
-            with tempfile.TemporaryDirectory() as _td:
-                _kpath = _os.path.join(_td, "id_ed25519")
-                _sp.run(
-                    ["ssh-keygen", "-t", "ed25519", "-f", _kpath, "-N", "",
-                     "-C", f"timelapse-{camera_id[:8]}"],
-                    check=True, capture_output=True,
-                )
-                cam_rec.ssh_private_key = open(_kpath).read()
-                cam_rec.ssh_public_key  = open(_kpath + ".pub").read().strip()
-            log.info("SSH keypair genereret for kamera %s", camera_id)
+        # Edge generates operational SSH private keys locally; legacy DB material is evidence-only.
         if cam_rec and not getattr(cam_rec, "reverse_tunnel_port", None):
             # Tildel næste ledige port fra 2201
             from database import Camera as _Camera2
@@ -15169,9 +15062,8 @@ def _run_edge_disk_image_build(
 
             progress(f"\n💉 Mode=flashable — starter image injection...")
 
-            # ── Hent SSH-nøgler fra kamera-DB ────────────────────────────────
+            # ── Hent ikke-private service metadata; Edge private keys forbliver lokale. ──
             _headend_ssh_pubkey = ""
-            _device_ssh_privkey = ""
             _ssh_tunnel_port    = 0
             _bt_totp_secret = ""
             _bt_totp_sid = ""
@@ -15186,7 +15078,6 @@ def _run_edge_disk_image_build(
                     _cam = _db_ssh.query(_Camera).filter_by(id=camera_id).first()
                     if not _cam:
                         raise RuntimeError(f"Kameralokation findes ikke: {camera_id}")
-                    _device_ssh_privkey = getattr(_cam, "ssh_private_key", "") or ""
                     _ssh_tunnel_port = int(getattr(_cam, "reverse_tunnel_port", 0) or 0)
                     _cam_name = getattr(_cam, "camera_name", camera_id)
                     if not getattr(_cam, "bt_totp_secret", None):
@@ -15209,10 +15100,7 @@ def _run_edge_disk_image_build(
                         from services.edge_local_pki import issue_local_edge_server_certificate
                     _local_tls = issue_local_edge_server_certificate(_resolved_device_id)
                     progress(f"   🔐 Lokal TLS udstedt: {_local_tls['hostname']} (Edge-ID {_resolved_device_id})")
-                    if _device_ssh_privkey:
-                        progress(f"   📷 Kamera '{_cam_name}': SSH privkey hentet, tunnel port {_ssh_tunnel_port}")
-                    else:
-                        progress(f"   ⚠️  Kamera '{_cam_name}' har ingen SSH privkey — kald /prepare først")
+                    progress(f"   🔑 Kamera '{_cam_name}': Edge-ejet SSH identity; Headend injicerer ingen privat nøgle")
                 finally:
                     _db_ssh.close()
             except Exception as _e:
@@ -15260,7 +15148,7 @@ def _run_edge_disk_image_build(
                 wifi_password=wifi_password,
                 wifi_country=wifi_country,
                 headend_ssh_pubkey=_headend_ssh_pubkey,
-                device_ssh_privkey=_device_ssh_privkey,
+                device_ssh_privkey="",
                 ssh_tunnel_port=_ssh_tunnel_port,
                 tunnel_headend_host=_tunnel_host,
                 tunnel_headend_port=_tunnel_port,
@@ -15582,8 +15470,7 @@ def _run_wifi_inject(
                 target_id = known
                 break
 
-        # Hent SSH-parametre fra Camera hvis camera_id er angivet
-        ssh_private_key: str | None = None
+        # Hent kun ikke-private SSH metadata fra Camera hvis camera_id er angivet.
         headend_ssh_public_key: str | None = None
         reverse_tunnel_port: int | None = None
         if camera_id:
@@ -15592,7 +15479,6 @@ def _run_wifi_inject(
                 from database import Camera as _Camera
                 cam_ssh = db_ssh.query(_Camera).filter_by(id=camera_id).first()
                 if cam_ssh:
-                    ssh_private_key    = getattr(cam_ssh, "ssh_private_key", None)
                     reverse_tunnel_port = getattr(cam_ssh, "reverse_tunnel_port", None)
             finally:
                 db_ssh.close()
@@ -15605,8 +15491,6 @@ def _run_wifi_inject(
             except Exception:
                 pass
 
-        if ssh_private_key:
-            progress(f"   🔑 SSH inject aktiveret (tunnel port {reverse_tunnel_port})")
         db_url = db_factory()
         try:
             edge_url = _headend_api_url(db_url, os.getenv("TIMELAPSE_HEADEND_URL"))
@@ -15625,7 +15509,7 @@ def _run_wifi_inject(
             output_dir=output_dir,
             progress_cb=progress,
             repo_root=str(_repo_root()),
-            ssh_private_key=ssh_private_key,
+            ssh_private_key=None,
             headend_ssh_public_key=headend_ssh_public_key,
             reverse_tunnel_port=reverse_tunnel_port,
             headend_host=tunnel_host,
@@ -15640,7 +15524,7 @@ def _run_wifi_inject(
             result=result,
             output_dir=output_dir,
             wifi_country=wifi_country,
-            ssh_configured=bool(ssh_private_key),
+            ssh_configured=False,
             progress=progress,
         )
         new_artifact_id = signed_manifest["artifact_id"]
