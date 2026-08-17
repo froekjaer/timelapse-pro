@@ -41,6 +41,25 @@ def test_headend_no_longer_creates_or_reads_edge_ssh_private_keys_for_provisioni
         assert needle not in source, needle
 
 
+def test_legacy_provision_package_is_retired_instead_of_exporting_private_keys():
+    source = _source()
+    block = _function_block(
+        source,
+        '@app.post("/api/admin/provision-package")',
+        '# ── Reverse SSH',
+    )
+    assert "status_code=410" in block
+    assert "/api/admin/edge-provisioning/prepare" in block
+    for needle in (
+        "_generate_ed25519_keypair()",
+        "tunnel_priv",
+        "sftp_priv",
+        'writestr("tunnel_key"',
+        'writestr("sftp_key"',
+    ):
+        assert needle not in block, needle
+
+
 def test_bt_totp_qr_enforces_tenant_boundary_before_secret_resolution():
     source = _source()
     block = _function_block(
