@@ -414,6 +414,31 @@ def _systemd_services() -> list[dict]:
     return services
 
 
+def _enabled_service_names() -> list[str]:
+    """Returnerer navne på ALLE enabled systemd service-units, ikke kun den
+    trackede/tidligere filtrerede delmængde i _systemd_services(). Bruges til
+    baseline-drift-sammenligning (FIND-CMDB-MISSING-PACKAGE-DETECTION og
+    -UNTRACKED-DOCKER-CE-CHANNEL, udvidet til services+accounts jf. Peter
+    2026-08-16) — skal kunne opdage services der ER enabled men IKKE burde
+    være det, hvilket den gamle allowlist-filtrerede liste ikke kunne.
+    """
+    names: list[str] = []
+    try:
+        result = subprocess.run(
+            ["systemctl", "list-unit-files", "--type=service", "--state=enabled",
+             "--no-pager", "--no-legend"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if parts:
+                    names.append(parts[0])
+    except Exception as exc:
+        log.debug("enabled_service_names fejl: %s", exc)
+    return sorted(set(names))
+
+
 # ── Tilgængelige OS-opdateringer ──────────────────────────────────────────────
 
 def _apt_updates_available() -> dict:
@@ -569,6 +594,7 @@ def collect_inventory(config: dict) -> dict:
     local_users: list[dict] = []
     sudo_users:  list[str]  = []
     services:    list[dict] = []
+    enabled_services: list[str] = []
     apt_updates: dict       = {}
     try:
         local_users = _local_users()
@@ -582,6 +608,10 @@ def collect_inventory(config: dict) -> dict:
         services = _systemd_services()
     except Exception as exc:
         log.debug("_systemd_services fejl: %s", exc)
+    try:
+        enabled_services = _enabled_service_names()
+    except Exception as exc:
+        log.debug("_enabled_service_names fejl: %s", exc)
     try:
         apt_updates = _apt_updates_available()
     except Exception as exc:
@@ -630,6 +660,7 @@ def collect_inventory(config: dict) -> dict:
 
         # Systemd services
         "services":                 services,
+        "enabled_services":         enabled_services,
 
         # Storage (boot)
         "boot_storage_type":        boot_type,

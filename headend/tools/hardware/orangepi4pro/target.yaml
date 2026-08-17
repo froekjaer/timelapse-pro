@@ -60,6 +60,24 @@ extra_packages:
   - bluez-tools
   - python3-dbus
 
+# CMDB baseline-drift (jf. FIND-CMDB-MISSING-PACKAGE-DETECTION og
+# FIND-CMDB-UNTRACKED-DOCKER-CE-CHANNEL, udvidet 2026-08-16 til også services
+# og lokale konti): forventet enabled-service- og konto-tilstand for denne
+# hardware-target. Bruges af headend/services/cmdb_baseline_drift.py til at
+# opdage BÅDE hvad der mangler OG hvad der ikke burde være der.
+expected_enabled_services:
+  - timelapse-edge.service
+  - timelapse-totp.service
+  - timelapse-bt-pan.service
+  - timelapse-bt-agent.service
+  - timelapse-captive.service
+  - ssh.service
+
+expected_local_users:
+  - orangepi
+  - timelapse
+  - emergency
+
 device_tree_model_patterns:
   - "orangepi 4 pro"
   - "orange pi 4 pro"
