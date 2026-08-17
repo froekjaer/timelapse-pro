@@ -36,9 +36,23 @@ def test_headend_no_longer_creates_or_reads_edge_ssh_private_keys_for_provisioni
         'getattr(cam_ssh, "ssh_private_key"',
         'device_ssh_privkey=_device_ssh_privkey',
         'ssh_private_key=ssh_private_key',
+        "SSH privkey hentet",
+        "har ingen SSH privkey — kald /prepare",
     )
     for needle in forbidden:
         assert needle not in source, needle
+
+
+def test_generic_key_management_cannot_generate_edge_ssh_private_keys():
+    source = _source()
+    block = _function_block(
+        source,
+        '@app.post("/api/admin/key-management/credentials")',
+        '@app.',
+    )
+    assert 'entity_type == "edge" and key_type == "ssh"' in block
+    assert "payload.generate_keypair" in block
+    assert "Edge-leveret public key" in block
 
 
 def test_legacy_provision_package_is_retired_instead_of_exporting_private_keys():
