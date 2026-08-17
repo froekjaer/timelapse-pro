@@ -63,24 +63,27 @@ jobs:
           ''',
           )
 
-          # SEC-ZAI-05: tenant boundary is enforced before BT-TOTP secret resolution.
-          old = '''    if current_user is None or not current_user.is_active:
-              raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
-              is_admin = current_user.role in {"super_admin", "admin"}
-          '''
-          new = '''    if current_user is None or not current_user.is_active:
-              raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
-              if cam.site_id:
-                  _ensure_site_access(db, current_user, cam.site_id)
-              elif cam.customer_id:
-                  _ensure_customer_access(current_user, cam.customer_id)
-              elif not _is_platform_admin(current_user):
-                  raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
-              is_admin = current_user.role in {"super_admin", "admin"}
-          '''
-          if source.count(old) != 1:
-              raise SystemExit(f'BT-TOTP anchor count={source.count(old)}')
-          source = source.replace(old, new, 1)
+          # SEC-ZAI-05: tenant boundary before BT-TOTP secret resolution.
+          route_start = '@app.get("/api/admin/cameras/{camera_id}/bt-totp-qr")'
+          route_end = '    secret = ""\n'
+          if source.count(route_start) != 1:
+              raise SystemExit('BT-TOTP route marker changed')
+          a = source.index(route_start)
+          b = source.index(route_end, a)
+          block = source[a:b]
+          admin_anchor = '    is_admin = current_user.role in {"super_admin", "admin"}\n'
+          if block.count(admin_anchor) != 1:
+              raise SystemExit(f'BT-TOTP admin anchor count={block.count(admin_anchor)}')
+          tenant_guard = (
+              '    if cam.site_id:\n'
+              '        _ensure_site_access(db, current_user, cam.site_id)\n'
+              '    elif cam.customer_id:\n'
+              '        _ensure_customer_access(current_user, cam.customer_id)\n'
+              '    elif not _is_platform_admin(current_user):\n'
+              '        raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")\n'
+          )
+          block = block.replace(admin_anchor, tenant_guard + admin_anchor, 1)
+          source = source[:a] + block + source[b:]
 
           # SEC-ZAI-15: stop creating Camera-held Edge SSH keypairs in provisioning prepare.
           gen_start = '        if cam_rec and not getattr(cam_rec, "ssh_private_key", None):\n'
@@ -90,8 +93,11 @@ jobs:
           a = source.index(gen_start)
           b = source.index(gen_end, a)
           source = source[:a] + '        # Edge generates operational SSH private keys locally; legacy DB material is evidence-only.\n' + source[b:]
+          old_comment = '    # Generér SSH keypair + tildel reverse tunnel port (v8)\n'
+          if source.count(old_comment) != 1:
+              raise SystemExit(f'legacy provisioning comment count={source.count(old_comment)}')
           source = source.replace(
-              '    # Generér SSH keypair + tildel reverse tunnel port (v8)\n',
+              old_comment,
               '    # Tildel kun reverse-tunnel port; Edge ejer SSH private-key lifecycle.\n',
               1,
           )
@@ -112,7 +118,7 @@ jobs:
                   raise SystemExit(f'expected one legacy injection anchor, got {source.count(old_text)}: {old_text!r}')
               source = source.replace(old_text, new_text, 1)
 
-          # SEC-ZAI-15: retire the old ZIP provisioner that exported tunnel/SFTP private keys.
+          # SEC-ZAI-15: retire old ZIP provisioner that exported tunnel/SFTP private keys.
           source = replace_between(
               source,
               '@app.post("/api/admin/provision-package")',
