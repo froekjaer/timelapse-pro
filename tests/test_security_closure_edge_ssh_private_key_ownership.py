@@ -48,7 +48,7 @@ def test_generic_key_management_cannot_generate_edge_ssh_private_keys():
     block = _function_block(
         source,
         '@app.post("/api/admin/key-management/credentials")',
-        '@app.',
+        '@app.post("/api/admin/key-management/credentials/{credential_id}/revoke")',
     )
     assert 'entity_type == "edge" and key_type == "ssh"' in block
     assert "payload.generate_keypair" in block
