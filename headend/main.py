@@ -3567,6 +3567,15 @@ def create_key_credential(
         expires_at = now + timedelta(days=int(payload.expires_days))
     credential_id = f"TL-KEY-{now:%Y%m%d}-{_secrets.token_hex(6)}"
     secret_once = None
+    if entity_type == "edge" and key_type == "ssh":
+        if payload.generate_keypair:
+            raise HTTPException(
+                status_code=409,
+                detail="Edge SSH private keys skal genereres lokalt på Edge; registrér en Edge-leveret public key.",
+            )
+        if not (payload.public_key or "").strip():
+            raise HTTPException(status_code=400, detail="Edge-leveret public key er påkrævet for Edge SSH identity")
+
     private_key_once = None
     public_key = payload.public_key.strip() if payload.public_key else None
     secret_hash = None
@@ -15051,9 +15060,8 @@ def _run_edge_disk_image_build(
 
             progress(f"\n💉 Mode=flashable — starter image injection...")
 
-            # ── Hent SSH-nøgler fra kamera-DB ────────────────────────────────
+            # ── Hent ikke-private service metadata; Edge private keys forbliver lokale. ──
             _headend_ssh_pubkey = ""
-            _device_ssh_privkey = ""
             _ssh_tunnel_port    = 0
             _bt_totp_secret = ""
             _bt_totp_sid = ""
@@ -15068,7 +15076,6 @@ def _run_edge_disk_image_build(
                     _cam = _db_ssh.query(_Camera).filter_by(id=camera_id).first()
                     if not _cam:
                         raise RuntimeError(f"Kameralokation findes ikke: {camera_id}")
-                    _device_ssh_privkey = ""  # private key is generated on Edge, never read from Headend DB
                     _ssh_tunnel_port = int(getattr(_cam, "reverse_tunnel_port", 0) or 0)
                     _cam_name = getattr(_cam, "camera_name", camera_id)
                     if not getattr(_cam, "bt_totp_secret", None):
@@ -15091,10 +15098,7 @@ def _run_edge_disk_image_build(
                         from services.edge_local_pki import issue_local_edge_server_certificate
                     _local_tls = issue_local_edge_server_certificate(_resolved_device_id)
                     progress(f"   🔐 Lokal TLS udstedt: {_local_tls['hostname']} (Edge-ID {_resolved_device_id})")
-                    if _device_ssh_privkey:
-                        progress(f"   📷 Kamera '{_cam_name}': SSH privkey hentet, tunnel port {_ssh_tunnel_port}")
-                    else:
-                        progress(f"   ⚠️  Kamera '{_cam_name}' har ingen SSH privkey — kald /prepare først")
+                    progress(f"   🔑 Kamera '{_cam_name}': Edge-ejet SSH identity; Headend injicerer ingen privat nøgle")
                 finally:
                     _db_ssh.close()
             except Exception as _e:
@@ -15464,8 +15468,7 @@ def _run_wifi_inject(
                 target_id = known
                 break
 
-        # Hent SSH-parametre fra Camera hvis camera_id er angivet
-        ssh_private_key: str | None = None
+        # Hent kun ikke-private SSH metadata fra Camera hvis camera_id er angivet.
         headend_ssh_public_key: str | None = None
         reverse_tunnel_port: int | None = None
         if camera_id:
@@ -15474,7 +15477,6 @@ def _run_wifi_inject(
                 from database import Camera as _Camera
                 cam_ssh = db_ssh.query(_Camera).filter_by(id=camera_id).first()
                 if cam_ssh:
-                    ssh_private_key    = None  # private key is generated on Edge
                     reverse_tunnel_port = getattr(cam_ssh, "reverse_tunnel_port", None)
             finally:
                 db_ssh.close()
@@ -15487,8 +15489,6 @@ def _run_wifi_inject(
             except Exception:
                 pass
 
-        if ssh_private_key:
-            progress(f"   🔑 SSH inject aktiveret (tunnel port {reverse_tunnel_port})")
         db_url = db_factory()
         try:
             edge_url = _headend_api_url(db_url, os.getenv("TIMELAPSE_HEADEND_URL"))
@@ -15522,7 +15522,7 @@ def _run_wifi_inject(
             result=result,
             output_dir=output_dir,
             wifi_country=wifi_country,
-            ssh_configured=bool(ssh_private_key),
+            ssh_configured=False,
             progress=progress,
         )
         new_artifact_id = signed_manifest["artifact_id"]
