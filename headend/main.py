@@ -6813,6 +6813,9 @@ def _collect_release_outputs(root: Path) -> list[dict]:
     # silently produces a partial release on the device.
     # Top-level edge/*.py is globbed, not hand-listed: a hand-listed set went
     # stale 2026-08-16 (update_lifecycle.py missing → crash loop on TL-043EB9E72EFD).
+    # edge/tools is a full directory candidate for the same reason, not a
+    # hand-listed file: a hand-listed set went stale again 2026-08-19
+    # (edge_qa_npu_runner.py missing → NPU QA never ran on TL-043EB9E72EFD).
     candidates: list[Path] = sorted((root / "edge").glob("*.py"))
     candidates += [
         root / "headend" / "main.py",
@@ -6827,7 +6830,7 @@ def _collect_release_outputs(root: Path) -> list[dict]:
         root / "edge" / "npu_viplite",
         root / "edge" / "scripts",
         root / "edge" / "tunnel",
-        root / "edge" / "tools" / "bootstrap_cli.py",
+        root / "edge" / "tools",
         root / "edge" / "upload",
         root / "edge" / "update",
         root / "edge" / "utils",
