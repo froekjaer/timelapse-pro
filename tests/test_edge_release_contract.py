@@ -24,7 +24,7 @@ def test_edge_release_artifact_contains_all_active_runtime_paths():
         'root / "edge" / "ai"',
         'root / "edge" / "hal"',
         'root / "edge" / "scripts"',
-        'root / "edge" / "tools" / "bootstrap_cli.py"',
+        'root / "edge" / "tools"',
         'root / "edge" / "utils"',
     ):
         assert runtime_path in collector
@@ -60,6 +60,40 @@ def test_edge_release_artifact_globs_top_level_edge_modules_not_a_hand_list():
     }
     missing = expected_top_level - outputs
     assert not missing, f"top-level edge/*.py modules missing from release artifact: {missing}"
+
+
+def test_edge_release_artifact_includes_all_of_edge_tools_not_a_hand_list():
+    """Regression: edge/tools was hand-listed down to a single file
+    (bootstrap_cli.py) while every sibling runtime directory (edge/ai,
+    edge/scripts, ...) was a full directory candidate. edge_qa_npu_runner.py
+    lived in edge/tools/ but was never in that hand-list, so it never shipped
+    in a release artifact — NPU QA silently never ran on TL-043EB9E72EFD,
+    found 2026-08-19. Executes the real collector against the real tree so
+    any *future* edge/tools/*.py script is caught the same way.
+    """
+    import ast
+    import hashlib
+
+    source = _source("headend/main.py")
+    tree = ast.parse(source)
+    func = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "_collect_release_outputs"
+    )
+    code = compile(ast.Module(body=[func], type_ignores=[]), "<collector>", "exec")
+    ns = {
+        "Path": Path,
+        "list": list,
+        "_file_sha256": lambda p: hashlib.sha256(p.read_bytes()).hexdigest(),
+    }
+    exec(code, ns)
+    outputs = {o["path"] for o in ns["_collect_release_outputs"](ROOT)}
+
+    expected_tools = {
+        f"edge/tools/{p.name}" for p in (ROOT / "edge" / "tools").glob("*.py")
+    }
+    missing = expected_tools - outputs
+    assert not missing, f"edge/tools/*.py scripts missing from release artifact: {missing}"
 
 
 def test_release_artifacts_use_immutable_artifact_scoped_storage():
