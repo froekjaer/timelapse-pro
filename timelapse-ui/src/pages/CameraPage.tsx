@@ -730,7 +730,7 @@ export function CameraPage() {
           </p>
           <div className="space-y-3">
             {(['focus', 'exposure', 'white_balance'] as const).map(dim => {
-              const d = driftData.dimensions[dim]
+              const d = driftData.dimensions?.[dim]
               if (!d?.enabled) return null
               const icon = d.drift_suspected ? '⚠️' : d.sufficient_data ? '✓' : '○'
               const color = d.drift_suspected ? 'text-red-600' : d.sufficient_data ? 'text-green-600' : 'text-gray-400'
@@ -757,7 +757,7 @@ export function CameraPage() {
                 </div>
               )
             })}
-            {!driftData.dimensions.focus.enabled && !driftData.dimensions.exposure.enabled && !driftData.dimensions.white_balance.enabled && (
+            {!driftData.dimensions?.focus?.enabled && !driftData.dimensions?.exposure?.enabled && !driftData.dimensions?.white_balance?.enabled && (
               <p className="text-xs text-gray-400 italic">
                 Drift-analyse er slået fra i konfigurationen. Slå til under "Kvalitet" ovenfor.
               </p>
