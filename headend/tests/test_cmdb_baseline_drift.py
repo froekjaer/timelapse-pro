@@ -5,6 +5,7 @@ widened per Peter (2026-08-16) to packages+services+accounts, both directions.
 """
 from services.cmdb_baseline_drift import (
     compute_account_drift,
+    compute_apt_source_drift,
     compute_baseline_drift,
     compute_package_drift,
     compute_service_drift,
@@ -57,17 +58,37 @@ def test_account_drift_ignores_entries_without_a_username():
     assert result.unexpected == []
 
 
+def test_apt_source_drift_detects_both_directions():
+    result = compute_apt_source_drift(
+        expected_sources=["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"],
+        configured_sources=["https://repo.huaweicloud.com/docker-ce/linux/ubuntu", "http://repo.huaweicloud.com/ubuntu-ports"],
+    )
+    assert result.missing == []
+    assert result.unexpected == ["http://repo.huaweicloud.com/ubuntu-ports"]
+
+
+def test_apt_source_drift_flags_a_missing_expected_channel():
+    result = compute_apt_source_drift(
+        expected_sources=["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"],
+        configured_sources=[],
+    )
+    assert result.missing == ["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"]
+    assert result.unexpected == []
+
+
 def test_compute_baseline_drift_reads_the_real_target_and_inventory_shapes():
     target = {
         "extra_packages": ["gpsd", "gpsd-clients"],
         "expected_enabled_services": ["timelapse-edge.service", "timelapse-totp.service"],
         "expected_local_users": ["orangepi"],
+        "expected_apt_sources": ["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"],
     }
     inventory = {
         "os_packages": {"gpsd-clients": "3.22-1"},
         "software_inventory": {
             "_enabled_services": ["timelapse-edge.service", "dnsmasq.service"],
             "_local_users": [{"username": "orangepi"}, {"username": "backdoor"}],
+            "_apt_sources": ["http://repo.huaweicloud.com/ubuntu-ports"],
         },
     }
 
@@ -77,6 +98,8 @@ def test_compute_baseline_drift_reads_the_real_target_and_inventory_shapes():
     assert drift["services"].missing == ["timelapse-totp.service"]
     assert drift["services"].unexpected == ["dnsmasq.service"]
     assert drift["accounts"].unexpected == ["backdoor"]
+    assert drift["apt_sources"].missing == ["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"]
+    assert drift["apt_sources"].unexpected == ["http://repo.huaweicloud.com/ubuntu-ports"]
 
 
 def test_compute_baseline_drift_is_clean_when_nothing_reported_yet():

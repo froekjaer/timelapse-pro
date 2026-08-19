@@ -8,11 +8,15 @@ direction the same day, this is widened beyond packages to cover services and
 local accounts, and to detect BOTH directions: things that should exist but
 don't, and things that exist but shouldn't.
 
-Package "unexpected" detection (an installed package not traceable to a known
-apt source/repo — the general form of the docker-ce finding) is intentionally
-NOT built here: the collector only reports name+version, not apt origin, so
-that check would either need new edge-side collection or would false-positive
-on the entire base OS image. Left as a documented follow-up.
+Per-package apt origin (which repo a given installed package came from) is
+still not collected — that would need per-package `apt-cache policy` lookups
+and would false-positive on the entire base OS image. What IS built
+(2026-08-19, ACT-CMDB-APT-SOURCE-TRACKING): the general form of the
+docker-ce finding, which was really "an apt CHANNEL isn't in CMDB's
+baseline" — compute_apt_source_drift() compares the device's configured apt
+repo URIs (edge/utils/inventory.py::_apt_sources()) against a hardware
+target's expected_apt_sources, both directions, the same shape as
+services/accounts below.
 """
 from __future__ import annotations
 
@@ -72,13 +76,27 @@ def compute_account_drift(expected_users: list[str], local_users: list[dict]) ->
     return DriftResult(missing=missing, unexpected=unexpected)
 
 
+def compute_apt_source_drift(expected_sources: list[str], configured_sources: list[str]) -> DriftResult:
+    """Apt repo URIs the hardware target expects that aren't configured, and
+    repos that are configured but aren't part of the expected baseline —
+    the general form of FIND-CMDB-UNTRACKED-DOCKER-CE-CHANNEL. `configured_sources`
+    is the list edge/utils/inventory.py::_apt_sources() reports.
+    """
+    expected = set(expected_sources or [])
+    configured = set(configured_sources or [])
+    missing = sorted(expected - configured)
+    unexpected = sorted(configured - expected)
+    return DriftResult(missing=missing, unexpected=unexpected)
+
+
 def compute_baseline_drift(target: dict, inventory: dict) -> dict[str, DriftResult]:
-    """Full three-category comparison for one device against its hardware target.
+    """Full four-category comparison for one device against its hardware target.
 
     `target` is a parsed target.yaml (must have extra_packages,
-    expected_enabled_services, expected_local_users). `inventory` is a
-    device_inventory-shaped dict (os_packages, software_inventory with
-    _enabled_services / _local_users keys, as persisted by headend/cmdb.py).
+    expected_enabled_services, expected_local_users, expected_apt_sources).
+    `inventory` is a device_inventory-shaped dict (os_packages,
+    software_inventory with _enabled_services / _local_users / _apt_sources
+    keys, as persisted by headend/cmdb.py).
     """
     software = inventory.get("software_inventory") or {}
     return {
@@ -94,11 +112,16 @@ def compute_baseline_drift(target: dict, inventory: dict) -> dict[str, DriftResu
             target.get("expected_local_users") or [],
             software.get("_local_users") or [],
         ),
+        "apt_sources": compute_apt_source_drift(
+            target.get("expected_apt_sources") or [],
+            software.get("_apt_sources") or [],
+        ),
     }
 
 
 _CATEGORY_LABELS = {
     "packages": "pakke(r)",
+    "apt_sources": "apt-kilde(r)",
     "services": "service(s)",
     "accounts": "lokal(e) konto/konti",
 }

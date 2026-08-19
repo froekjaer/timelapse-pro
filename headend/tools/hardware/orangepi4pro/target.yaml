@@ -78,6 +78,17 @@ expected_local_users:
   - timelapse
   - emergency
 
+# 3.-parts apt-kanaler (i /etc/apt/sources.list.d/ — se _apt_sources() i
+# edge/utils/inventory.py for hvorfor selve sources.list ikke er med).
+# docker-ce er den ENESTE kendte, godkendte 3.-parts-kanal på dette hardware-
+# target pr. 2026-08-19 (FIND-CMDB-UNTRACKED-DOCKER-CE-CHANNEL) — bevidst
+# gjort synlig/sporet her i stedet for fortsat usporet, siden Docker-servicen
+# allerede er verificeret sund i produktion. Skal matche jammy — se
+# FIND-TL-C87FF9587CA0-UBUNTU-NOBLE-UNDOCUMENTED-OS-UPGRADE (2026-08-19) for
+# hvorfor TL-C87FF9587CA0 forventes at afvige her indtil den er afklaret.
+expected_apt_sources:
+  - https://repo.huaweicloud.com/docker-ce/linux/ubuntu
+
 device_tree_model_patterns:
   - "orangepi 4 pro"
   - "orange pi 4 pro"
