@@ -15,6 +15,7 @@ import { CameraPage } from './pages/CameraPage'
 import { GlobalConfigPage } from './pages/GlobalConfigPage'
 import LabPage from './pages/LabPage'
 import { SystemAdminPage } from './pages/SystemAdminPage'
+import { LocalAccessOverviewPage } from './pages/LocalAccessOverviewPage'
 import { TagSearchPage } from './pages/TagSearchPage'
 import { NotificationsPage } from './pages/NotificationsPage'
 import TimelapseVideoPage from './pages/TimelapseVideoPage'
@@ -102,6 +103,7 @@ function AppRoutes() {
                 <Route path="/lab/:deviceId" element={<RequireRole minimum="admin"><LabPage /></RequireRole>} />
                 <Route path="/devices/:deviceId/lab" element={<RequireRole minimum="admin"><LabPage /></RequireRole>} />
                 <Route path="/system-admin" element={<RequireRole minimum="admin"><SystemAdminPage /></RequireRole>} />
+                <Route path="/local-access" element={<RequireRole minimum="admin"><LocalAccessOverviewPage /></RequireRole>} />
             <Route path="/tags" element={<TagSearchPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/devices/:id/timelapse" element={<RequireRole minimum="admin"><TimelapseVideoPage /></RequireRole>} />

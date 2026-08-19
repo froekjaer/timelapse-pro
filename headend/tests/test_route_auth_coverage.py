@@ -20,6 +20,11 @@ AUTH_DEPENDENCIES = {
     # other edge-vendte endpoint, not a separate trust model. See
     # headend/edge_sync.py.
     "_require_edge_sync_auth",
+    # local_access._require_local_access_admin (2026-08-19): reviewed
+    # wrapper that replicates main.require_role("super_admin", "admin")'s
+    # exact role + MFA check via get_current_user() — same trust model, not
+    # a separate one. See headend/local_access.py.
+    "_require_local_access_admin",
 }
 
 # Routes here are intentionally pre-auth or use an explicit in-body token/loopback

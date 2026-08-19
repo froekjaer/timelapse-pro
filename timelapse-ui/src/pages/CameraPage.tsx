@@ -206,11 +206,12 @@ export function CameraPage() {
   const [locationExpanded, setLocationExpanded] = useState(false)
 
   // ── BT TOTP QR ───────────────────────────────────────────────────────────
-  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,source:string,uri:string,qr_code:string,account_name:string,device_id:string|null,is_factory_default:boolean}|null>(null)
+  const [btTotp, setBtTotp]               = useState<{secret:string,sid:string,source:string,uri:string,qr_code:string,account_name:string,device_id:string|null,is_factory_default:boolean,current_code:string,seconds_remaining:number}|null>(null)
   const [btTotpLoading, setBtTotpLoading] = useState(false)
   const [btTotpRegen, setBtTotpRegen]     = useState(false)
   const [btTotpError, setBtTotpError]     = useState<string | null>(null)
   const [btTotpCopied, setBtTotpCopied]   = useState(false)
+  const [btTotpCountdown, setBtTotpCountdown] = useState(0)
 
   // ── Drift-analyse (fase 1, 2026-07-07) ─────────────────────────────────────
   const [driftData, setDriftData]         = useState<DriftAnalysis | null>(null)
@@ -278,6 +279,25 @@ export function CameraPage() {
       setDriftLoading(false)
     }
   }
+
+  // Live-koden roterer hvert 30. sekund — tæl ned lokalt, og hent den næste
+  // kode fra headend når den nuværende udløber. Kun aktiv mens panelet
+  // faktisk er åbent for dette kamera. Placeret før komponentens early
+  // returns (loading/!device nedenfor) — Hooks skal kaldes ubetinget.
+  useEffect(() => {
+    if (!btTotp) return
+    let refreshing = false
+    const id = window.setInterval(() => {
+      setBtTotpCountdown(prev => {
+        if (prev <= 1) {
+          if (!refreshing) { refreshing = true; loadBtTotp() }
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [btTotp?.current_code])
 
   useEffect(() => {
     if (!deviceId) return
@@ -392,7 +412,9 @@ export function CameraPage() {
         headers: { 'Content-Type': 'application/json' },
       })
       if (r.ok) {
-        setBtTotp(await r.json())
+        const data = await r.json()
+        setBtTotp(data)
+        setBtTotpCountdown(data.seconds_remaining ?? 0)
       } else {
         const body = await r.json().catch(() => ({}))
         setBtTotpError(body.detail ?? 'Kunne ikke hente lokal adgang')
@@ -848,6 +870,16 @@ export function CameraPage() {
                   {btTotp!.source === 'kamera' && ' Specifik for dette kamera.'}
                 </p>
                 <p className="text-gray-400 font-mono">SID: {btTotp.sid}</p>
+                {btTotp.current_code && (
+                  <div className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                    <span className="font-mono text-2xl tracking-[0.2em] text-gray-800">
+                      {btTotp.current_code}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      Ny kode om {btTotpCountdown}s — til direkte indtastning uden authenticator-app
+                    </span>
+                  </div>
+                )}
                 <p className="text-gray-500 font-medium">Authenticator-navn: {btTotp.account_name}</p>
                 <button onClick={addBtTotpToAuthenticator}
                   className="inline-flex items-center px-3 py-1.5 text-xs font-medium text-white bg-sky-600 rounded-lg hover:bg-sky-700">
