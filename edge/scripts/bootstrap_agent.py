@@ -244,8 +244,7 @@ def _write_node_agent_conf(
             "buffer_max_mb":    4096,
         },
         "diagnostics": {
-            "heartbeat_interval_minutes":    60,
-            "config_poll_interval_minutes":   5,
+            "sync_poll_interval_minutes":       5,
             "inventory_report_interval_hours": 24,
         },
     }

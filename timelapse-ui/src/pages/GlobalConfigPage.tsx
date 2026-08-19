@@ -196,12 +196,10 @@ const SECTIONS: { key: keyof ConfigDefaults; label: string; description: string;
   {
     key: 'diagnostics',
     label: 'Diagnostik',
-    description: 'Heartbeat, config-poll og rapportering.',
+    description: 'Sync-poll (heartbeat + config + SIEM samlet) og rapportering.',
     fields: [
-      { key: 'heartbeat_interval_minutes', label: 'Heartbeat', type: 'number', unit: 'min', placeholder: '60', default: 60,
-        tooltip: 'Minutter mellem heartbeat signals til headend. Heartbeat indeholder device status, capture statistik, og sundhedsmetrics. For lang interval = for sent til at opdage problemer. Typisk 5-60 minutter.' },
-      { key: 'config_poll_interval_minutes', label: 'Config poll', type: 'number', unit: 'min', placeholder: '5', default: 5,
-        tooltip: 'Minutter mellem tjek for konfigurationsændringer fra headend. Ændringer pushes herefter til edge. Lavere = hurtigere response men mere network trafik. Typisk 5-10 minutter. Øges ved network problemer.' },
+      { key: 'sync_poll_interval_minutes', label: 'Sync-poll', type: 'number', unit: 'min', placeholder: '5', default: 5,
+        tooltip: 'Minutter mellem den konsoliderede sync-poll til headend (POST /api/edge/sync). Ét kald dækker heartbeat/diagnostik, config-ændringer og SIEM-log-forward — erstatter de tidligere separate Heartbeat- (60 min) og Config poll- (5 min) indstillinger siden 2026-08-19. Lavere = hurtigere response men mere network trafik. Typisk 5-10 minutter.' },
       { key: 'update_poll_interval_minutes', label: 'Update poll', type: 'number', unit: 'min', placeholder: '5',
         tooltip: 'Minutter mellem tjek for systemopdateringer fra headend. Opdateringer downloades og installeres automatisk. Typisk 5-15 minutter sammen med config poll. Kan øges for at spare batteri.' },
       { key: 'inventory_report_interval_hours', label: 'Inventory', type: 'number', unit: 'timer', placeholder: '24', default: 24,
@@ -430,7 +428,7 @@ export function GlobalConfigPage() {
         },
       },
       storage: { local_path: '/data/captures', circular_buffer_gb: 50, db_path: '/data/timelapse_edge.db' },
-      diagnostics: { heartbeat_interval_minutes: 60, config_poll_interval_minutes: 5, update_poll_interval_minutes: 5, inventory_report_interval_hours: 24 },
+      diagnostics: { sync_poll_interval_minutes: 5, update_poll_interval_minutes: 5, inventory_report_interval_hours: 24 },
       system: {
         error_recovery_sleep_s: 30,
         min_sleep_s: 60,

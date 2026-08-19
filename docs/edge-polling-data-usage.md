@@ -51,7 +51,7 @@ poll_s = int(debug_cfg.get("config_poll_s", 1))
 
 ---
 
-### 2. Normal Mode Config Poll
+### 2. Normal Mode Config Poll (⚠️ konsolideret 2026-08-19 — se pkt. 5 nedenfor)
 
 **Fil:** `edge/agent.py:687`
 **Interval:** **5 minutter** (default `config_poll_interval_minutes = 5`)
@@ -78,7 +78,7 @@ config_interval = timedelta(minutes=int(
 
 ---
 
-### 3. SIEM Event Forward
+### 3. SIEM Event Forward (⚠️ konsolideret 2026-08-19 — se pkt. 5 nedenfor)
 
 **Fil:** `edge/agent.py` (SIEM module)
 **Interval:** **5 minutter** (default `forward_interval_s = 300`)
@@ -282,6 +282,17 @@ def unified_config_poll():
 - Mindst modem wake-ups
 - Data besparelse: ~20-30%
 
+> ✅ **Implementeret 2026-08-19**, langt foran den oprindelige "Fase 3:
+> Architectural (Måneder)"-tidsplan nedenfor. `POST /api/edge/sync/{device_id}`
+> ([headend/edge_sync.py](../headend/edge_sync.py)) kombinerer config-pull,
+> heartbeat/diagnostik, SIEM-forward og updates-policy-check i ét
+> request/response, gated af ét interval (`diagnostics.sync_poll_interval_minutes`,
+> default 5 min) i stedet for tre uafhængige timere. Fundet og bygget som del
+> af opfølgning på en produktionshændelse (heartbeat bar aldrig `app_version`,
+> så Headends app-update-auto-detektion aldrig kunne udløses) — se
+> `Dokumentation/HANDOVER_LOG.md` 2026-08-19. Gamle enkelt-endpoints er bevaret
+> uændrede som rollback-vej.
+
 ---
 
 ## Implementerings Plan
@@ -319,12 +330,12 @@ def unified_config_poll():
 ### Normal Mode (Produktion)
 
 ```yaml
-# edge config
+# edge config — opdateret 2026-08-19: config_poll_interval_minutes og
+# siem.forward_interval_s er erstattet af ét samlet sync-interval (se pkt. 5
+# ovenfor). Stadig konfigurerbare (fx per-device override), men styrer nu
+# den samme konsoliderede /api/edge/sync-poll, ikke separate requests.
 diagnostics:
-  config_poll_interval_minutes: 5  # 5 minutter
-
-siem:
-  forward_interval_s: 300  # 5 minutter
+  sync_poll_interval_minutes: 5  # 5 minutter — config+heartbeat+SIEM+updates i ét kald
 
 ssh:
   tunnel_check_interval_s: 60  # 1 minut

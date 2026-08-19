@@ -15,6 +15,11 @@ AUTH_DEPENDENCIES = {
     "_current_viewer",
     "_require_platform_admin",
     "_require_risk_admin",
+    # edge_sync._require_edge_sync_auth (2026-08-19): reviewed wrapper that
+    # calls _verify_device_token() — same HMAC/attestation chain as every
+    # other edge-vendte endpoint, not a separate trust model. See
+    # headend/edge_sync.py.
+    "_require_edge_sync_auth",
 }
 
 # Routes here are intentionally pre-auth or use an explicit in-body token/loopback

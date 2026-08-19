@@ -31,10 +31,13 @@ def test_sync_captures_called_at_startup():
     assert count >= 3, \
         f"FEJL: _sync_captures skal kaldes minimum 3 steder, fundet {count}!"
 
-def test_config_interval_not_zero():
+def test_sync_poll_interval_not_zero():
+    # 2026-08-19: config-pull, heartbeat and SIEM-forward were consolidated
+    # into one sync_interval-gated poll — see edge_agent._run_sync() and
+    # Dokumentation/HANDOVER_LOG.md 2026-08-19.
     content = read_agent()
-    assert "config_interval = timedelta(minutes=" in content, \
-        "FEJL: config_interval mangler i agent.py!"
+    assert "sync_interval = timedelta(minutes=" in content, \
+        "FEJL: sync_interval mangler i agent.py!"
 
 def test_check_update_exists():
     content = read_agent()

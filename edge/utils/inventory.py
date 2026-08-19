@@ -566,6 +566,24 @@ def _artifact_release_metadata() -> dict[str, str]:
     }
 
 
+def current_app_version() -> str:
+    """Best-known identity of the code actually running on this device.
+
+    Shared by collect_inventory() (daily /api/inventory report) and the
+    agent's own consolidated sync poll (POST /api/edge/sync, every
+    sync_poll_interval_minutes — see edge/agent.py::_run_sync()) so Headend's
+    app-update auto-detection (_process_update_report) has a real app_version
+    to compare against on every poll, not just once a day. See
+    Dokumentation/HANDOVER_LOG.md 2026-08-19 for the incident this closes:
+    heartbeat never carried an "updates" block at all, so a newer Headend
+    release was never auto-detected outside of a manual DB insert.
+    """
+    release = _artifact_release_metadata()
+    git_commit = _git_app_version()
+    git_tag    = _git_app_tag()
+    return release.get("source_commit") or release.get("version") or git_tag or git_commit or APP_VERSION
+
+
 # ── Samlet inventar ───────────────────────────────────────────────────────────
 
 def collect_inventory(config: dict) -> dict:
@@ -584,11 +602,13 @@ def collect_inventory(config: dict) -> dict:
     package_manager, os_packages = _os_packages()
 
     # A verified artifact receipt takes precedence over Git. Artifact installs
-    # intentionally do not mutate the Edge checkout's Git HEAD.
+    # intentionally do not mutate the Edge checkout's Git HEAD. The raw pieces
+    # are also reported individually below (software["git_commit"], etc.), so
+    # they're kept alongside current_app_version()'s precedence result.
     release = _artifact_release_metadata()
     git_commit = _git_app_version()
     git_tag    = _git_app_tag()
-    app_ver    = release.get("source_commit") or release.get("version") or git_tag or git_commit or APP_VERSION
+    app_ver    = current_app_version()
 
     # Bruger + services (ikke-blokerende)
     local_users: list[dict] = []

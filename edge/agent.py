@@ -203,7 +203,7 @@ class EdgeAgent:
         self._last_inventory:    datetime = datetime.min.replace(tzinfo=timezone.utc)
         self._stop_event = threading.Event()
         self._last_siem_emit: dict[str, datetime] = {}
-        self._last_siem_forward: datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._pending_siem_cursor: str | None = None
         self._siem_cursor_path = self._cfg_mgr.base_dir / "siem_journal.cursor"
         self._adaptive_exposure_ev = 0.0
         self._last_capture_skip_until: datetime | None = None
@@ -582,16 +582,23 @@ class EdgeAgent:
             return None, message
         return match.group(2), match.group(3)
 
-    def _forward_siem_logs(self, force: bool = False) -> None:
-        """Forward selected systemd journal lines to Headend SIEM according to policy."""
+    def _collect_siem_events_for_sync(self) -> list[dict]:
+        """Collect pending SIEM journal events for the consolidated sync poll.
+
+        Split out of the old, independently-timed _forward_siem_logs() so SIEM
+        forwarding rides on the same single request as config/heartbeat/updates
+        instead of its own separate 5-minute POST. See _run_sync() and
+        Dokumentation/HANDOVER_LOG.md 2026-08-19.
+
+        The journal cursor advances immediately when there's nothing to send
+        (avoids re-reading the same empty window every cycle). When there IS
+        something to send, the cursor only advances once the sync poll actually
+        succeeds — _run_sync() calls _persist_siem_cursor_after_sync() for that,
+        matching the original per-call "only advance on confirmed send" semantics.
+        """
         cfg = self._siem_cfg()
         if not cfg.get("enabled", True):
-            return
-        now = datetime.now(timezone.utc)
-        interval_s = int(cfg.get("forward_interval_s", 300))
-        if not force and (now - self._last_siem_forward).total_seconds() < interval_s:
-            return
-        self._last_siem_forward = now
+            return []
 
         min_sev = str(cfg.get("min_severity", "warning")).lower()
         max_events = max(1, int(cfg.get("max_events_per_batch", 100)))
@@ -617,11 +624,12 @@ class EdgeAgent:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         except Exception as exc:
             log.debug("SIEM journal read failed: %s", exc)
-            return
+            return []
         if result.returncode != 0:
             log.debug("SIEM journal read rc=%s stderr=%s", result.returncode, result.stderr[:200])
-            return
+            return []
 
+        now = datetime.now(timezone.utc)
         events: list[dict] = []
         latest_cursor = cursor
         for line in result.stdout.splitlines():
@@ -663,28 +671,32 @@ class EdgeAgent:
                 "occurred_at": occurred.isoformat(),
             })
 
+        self._pending_siem_cursor = None
         if not events:
+            # Nothing to send — advance the cursor now, no network call needed.
             if latest_cursor and latest_cursor != cursor:
                 try:
                     self._siem_cursor_path.write_text(latest_cursor)
                 except Exception:
                     pass
+            return []
+        # Cursor only advances once the sync poll that carries these events
+        # actually succeeds — see _persist_siem_cursor_after_sync().
+        self._pending_siem_cursor = latest_cursor
+        return events
+
+    def _persist_siem_cursor_after_sync(self) -> None:
+        """Advance the SIEM journal cursor once a sync poll carrying pending
+        events has actually been confirmed delivered. No-op when the last
+        collected batch was empty (cursor was already advanced inline)."""
+        cursor = self._pending_siem_cursor
+        self._pending_siem_cursor = None
+        if not cursor:
             return
-        ok, data = self._api.send_siem_events(events)
-        if ok:
-            try:
-                if latest_cursor:
-                    self._siem_cursor_path.write_text(latest_cursor)
-            except Exception:
-                pass
-            log.info(
-                "SIEM journal forward complete: events=%d inserted=%s duplicates=%s min_severity=%s mode=%s",
-                len(events),
-                (data or {}).get("inserted"),
-                (data or {}).get("duplicates"),
-                min_sev,
-                cfg.get("mode"),
-            )
+        try:
+            self._siem_cursor_path.write_text(cursor)
+        except Exception:
+            pass
 
     def _check_camera_profile_known(self, context: str) -> None:
         if not hasattr(self._driver, "get_profile_summary"):
@@ -804,16 +816,22 @@ class EdgeAgent:
         """
         now = datetime.now(timezone.utc)
 
-        # Periodic config re-pull (every 6 hours)
-        config_interval = timedelta(minutes=int(
-            self._cfg.get("diagnostics", {}).get("config_poll_interval_minutes", 5)
+        # Consolidated sync poll: one request carries diagnostics/app_version/
+        # SIEM events out and config/pending-updates back, replacing what used
+        # to be three independently-timed loops (config-pull, heartbeat,
+        # SIEM-forward) plus a redundant nested update-check timer. Interval is
+        # configurable (diagnostics.sync_poll_interval_minutes) so operators can
+        # tune responsiveness vs. communication overhead per device. See
+        # Dokumentation/HANDOVER_LOG.md 2026-08-19.
+        sync_interval = timedelta(minutes=int(
+            self._cfg.get("diagnostics", {}).get("sync_poll_interval_minutes", 5)
         ))
-        if now - self._last_config_pull > config_interval:
-            self._pull_config()
+        if now - self._last_heartbeat > sync_interval:
+            self._run_sync()
+            self._sync_captures()
             self._check_backup_request()
-            # Tjek om headend har bedt om en opdatering
+            # Tjek om headend har bedt om en opdatering (legacy LAB-path)
             self._check_update()
-            self._check_and_apply_updates_if_due()
 
         # Check capture schedule by scheduled slot, not by current wall-clock cycle.
         capture_slot = self._scheduled_capture_slot(now, mode)
@@ -832,19 +850,6 @@ class EdgeAgent:
         # Upload pending large files only inside the Headend-assigned slot.
         # This runs after capture checks so upload backlog cannot delay capture.
         self._retry_pending_uploads_if_slot()
-
-        # Heartbeat (every 60 minutes)
-        heartbeat_interval = timedelta(minutes=int(
-            self._cfg.get("diagnostics", {}).get("heartbeat_interval_minutes", 60)
-        ))
-        if now - self._last_heartbeat > heartbeat_interval:
-            self._send_heartbeat()
-            self._sync_captures()
-
-        # SIEM forward - kun hvis due for at minimere overhead
-        siem_interval = timedelta(seconds=int(self._siem_cfg().get("forward_interval_s", 300)))
-        if now - self._last_siem_forward >= siem_interval:
-            self._forward_siem_logs()
 
         # Calculate sleep until next event
         sleep_s = self._seconds_until_next_event(now, mode)
@@ -1206,7 +1211,7 @@ class EdgeAgent:
         schedule      = self._cfg.get("schedule", {})
         warmup_s      = self._camera_warmup_seconds()
         lead_s        = warmup_s + 3
-        heartbeat_min = int(self._cfg.get("diagnostics", {}).get("heartbeat_interval_minutes", 60))
+        heartbeat_min = int(self._cfg.get("diagnostics", {}).get("sync_poll_interval_minutes", 5))
         if mode == "interval":
             interval_s   = int(schedule.get("interval_minutes", 60)) * 60
             epoch_s      = int(now.timestamp())
@@ -1250,26 +1255,33 @@ class EdgeAgent:
 
     def _pull_config(self) -> None:
         """Fetch and apply updated config from headend."""
-        old_version = self._cfg.get("config_version", "")
         ok, data = self._api.fetch_config()
         if ok and data:
-            try:
-                self._api.ensure_signing_enrolled(data.get("security", {}))
-                new_version = data.get("config_version", "")
-                self._cfg_mgr.save_config(data)
-                self._cfg = self._cfg_mgr.load()
-                self._uploader.update_config(data)
-
-                if new_version != old_version:
-                    log.info("Config version ændret %s→%s — anvender live", old_version[:8], new_version[:8])
-                    self._apply_config_changes(data)
-                else:
-                    log.debug("Config uændret — ingen live apply nødvendig")
-            except Exception as exc:
-                log.warning("Could not apply headend config: %s", exc)
+            self._apply_fetched_config(data)
         else:
             log.info("Config pull failed — using cached config")
         self._last_config_pull = datetime.now(timezone.utc)
+
+    def _apply_fetched_config(self, data: dict) -> None:
+        """Apply an already-fetched config response. Split out of
+        _pull_config() so the consolidated sync poll (_run_sync) can apply a
+        config it received inline, without a second /config round-trip.
+        """
+        old_version = self._cfg.get("config_version", "")
+        try:
+            self._api.ensure_signing_enrolled(data.get("security", {}))
+            new_version = data.get("config_version", "")
+            self._cfg_mgr.save_config(data)
+            self._cfg = self._cfg_mgr.load()
+            self._uploader.update_config(data)
+
+            if new_version != old_version:
+                log.info("Config version ændret %s→%s — anvender live", old_version[:8], new_version[:8])
+                self._apply_config_changes(data)
+            else:
+                log.debug("Config uændret — ingen live apply nødvendig")
+        except Exception as exc:
+            log.warning("Could not apply headend config: %s", exc)
 
     def _check_backup_request(self) -> None:
         """Run a Headend-requested Edge backup once."""
@@ -1779,41 +1791,48 @@ class EdgeAgent:
             ok, policy = self._api._get(f"/updates/policy/{self._device_id}")
             if not ok or not policy:
                 return
-            pending = policy.get("pending_updates", [])
-            if not pending:
-                return
-
-            for update in pending:
-                uid    = update["id"]
-                utype  = update["update_type"]
-                status = update["status"]
-
-                if status == "rollback_requested":
-                    log.info("Rollback anmodet for opdatering %d (%s)", uid, utype)
-                    self._run_rollback(uid, utype, update.get("artifact"))
-                    return
-
-                if status == "approved":
-                    ok, reason = verify_update_artifact(update, self._cfg.get("security", {}))
-                    if not ok:
-                        log.error("Opdatering %d afvist af Edge trust policy: %s", uid, reason)
-                        self._report_update(uid, "blocked", f"artifact_verification_failed: {reason}")
-                        return
-                    artifact = update.get("artifact")
-                    receipt_path = Path("/opt/timelapse/edge/.timelapse-release.json")
-                    if artifact and release_receipt_matches_artifact(receipt_path, artifact):
-                        log.info(
-                            "Opdatering %d er allerede installeret ifølge durable release receipt; rapporterer deployed igen",
-                            uid,
-                        )
-                        self._report_update(uid, "deployed", "release_receipt_already_matches_artifact")
-                        return
-                    log.info("Udfører opdatering %d: %s", uid, utype)
-                    self._run_update(uid, utype, artifact)
-                    return  # Ét ad gangen
-
+            self._apply_update_policy(policy)
         except Exception as e:
             log.warning("Update-check fejl: %s", e, exc_info=True)
+
+    def _apply_update_policy(self, policy: dict) -> None:
+        """Execute the first actionable item in an already-fetched update
+        policy response. Split out of _check_and_apply_updates() so the
+        consolidated sync poll (_run_sync) can apply a policy it received
+        inline, without a second /updates/policy round-trip.
+        """
+        pending = policy.get("pending_updates", [])
+        if not pending:
+            return
+
+        for update in pending:
+            uid    = update["id"]
+            utype  = update["update_type"]
+            status = update["status"]
+
+            if status == "rollback_requested":
+                log.info("Rollback anmodet for opdatering %d (%s)", uid, utype)
+                self._run_rollback(uid, utype, update.get("artifact"))
+                return
+
+            if status == "approved":
+                ok, reason = verify_update_artifact(update, self._cfg.get("security", {}))
+                if not ok:
+                    log.error("Opdatering %d afvist af Edge trust policy: %s", uid, reason)
+                    self._report_update(uid, "blocked", f"artifact_verification_failed: {reason}")
+                    return
+                artifact = update.get("artifact")
+                receipt_path = Path("/opt/timelapse/edge/.timelapse-release.json")
+                if artifact and release_receipt_matches_artifact(receipt_path, artifact):
+                    log.info(
+                        "Opdatering %d er allerede installeret ifølge durable release receipt; rapporterer deployed igen",
+                        uid,
+                    )
+                    self._report_update(uid, "deployed", "release_receipt_already_matches_artifact")
+                    return
+                log.info("Udfører opdatering %d: %s", uid, utype)
+                self._run_update(uid, utype, artifact)
+                return  # Ét ad gangen
 
     def _run_update(self, update_id: int, update_type: str, artifact: dict | None = None) -> None:
         """Kør opdatering baseret på type og rapportér resultat."""
@@ -2367,6 +2386,13 @@ class EdgeAgent:
         try:
             diag_data     = self._diag.collect()
             capture_stats = self._db.capture_stats(self._device_id)
+            # Headend's app-update auto-detection (_process_update_report) reads
+            # diag["updates"]["app_version"] on every heartbeat — without this the
+            # collector never carried it, so a newer Headend release was never
+            # auto-detected outside of a manual DB insert. See
+            # Dokumentation/HANDOVER_LOG.md 2026-08-19.
+            from utils.inventory import current_app_version
+            diag_data["updates"] = {"app_version": current_app_version()}
             self._db.insert_diagnostics(self._device_id, diag_data)
 
             # Include last camera diagnostics from capture cycle
@@ -2443,6 +2469,75 @@ class EdgeAgent:
                      hal_caps.get("hal_id", "unknown"))
         except Exception as exc:
             log.warning("Inventar-rapportering fejlede: %s", exc)
+
+    def _collect_inventory_if_due(self, *, force: bool = False) -> dict | None:
+        """Build the CMDB inventory payload when due, for inclusion in the
+        consolidated sync poll instead of _report_inventory()'s own separate
+        POST. Same interval/force semantics and shared _last_inventory gate —
+        whichever path fires first (this or an ad-hoc _report_inventory() call
+        from _send_heartbeat) consumes the due window, so inventory is never
+        reported twice.
+        """
+        now = datetime.now(timezone.utc)
+        interval_h = float(self._cfg.get("diagnostics", {}).get("inventory_report_interval_hours", 24))
+        if not force and (now - self._last_inventory).total_seconds() < interval_h * 3600:
+            return None
+        try:
+            from utils.inventory import collect_inventory
+            hal_caps = _HAL_ADAPTER.capabilities() if _HAL_ADAPTER else {}
+            payload = collect_inventory(self._cfg)
+            payload["hal"] = hal_caps
+            if not payload.get("hardware_model"):
+                payload["hardware_model"] = hal_caps.get("hal_id")
+            return payload
+        except Exception as exc:
+            log.warning("Inventar-indsamling fejlede: %s", exc)
+            return None
+
+    def _run_sync(self) -> None:
+        """Single consolidated poll: diagnostics/app_version/SIEM events
+        (and, when due, CMDB inventory) go out; config/pending-updates come
+        back. One HTTP request instead of what used to be three
+        independently-timed loops (config-pull, heartbeat, SIEM-forward)
+        plus a redundant nested update-check timer. Composes the same apply
+        logic _pull_config()/_check_and_apply_updates() already used, just
+        fed from an already-fetched response instead of a fresh round-trip.
+        See headend/edge_sync.py and Dokumentation/HANDOVER_LOG.md 2026-08-19.
+        """
+        try:
+            diag_data = self._diag.collect()
+            from utils.inventory import current_app_version
+            diag_data["updates"] = {"app_version": current_app_version()}
+            capture_stats = self._db.capture_stats(self._device_id)
+            self._db.insert_diagnostics(self._device_id, diag_data)
+            if hasattr(self, "_last_cam_diag") and self._last_cam_diag:
+                diag_data["camera"] = self._last_cam_diag
+
+            siem_events = self._collect_siem_events_for_sync()
+            inventory_payload = self._collect_inventory_if_due()
+
+            ok, resp = self._api.sync(diag_data, capture_stats, siem_events, inventory_payload)
+            if ok and resp:
+                log.info("Sync poll sent OK")
+                self._connectivity.report_success()
+                self._sync_time_from_headend(resp)
+                if inventory_payload is not None:
+                    self._last_inventory = datetime.now(timezone.utc)
+                    log.info("Inventory rapporteret til headend CMDB (via sync poll)")
+                if siem_events:
+                    self._persist_siem_cursor_after_sync()
+                config = resp.get("config")
+                if config:
+                    self._apply_fetched_config(config)
+                self._apply_update_policy(resp)
+            else:
+                log.warning("Sync poll failed — headend unreachable")
+                self._connectivity.report_failure()
+        except Exception as exc:
+            log.warning("Sync poll error: %s", exc)
+            self._connectivity.report_failure()
+        finally:
+            self._last_heartbeat = datetime.now(timezone.utc)
 
     def _sync_captures(self) -> None:
         """Sync unsynced capture metadata to headend API."""

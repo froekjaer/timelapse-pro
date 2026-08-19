@@ -107,6 +107,7 @@ from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
 from ai.settings_api import settings_router
 from siem import router as siem_router, start_headend_log_collector, record_events as _siem_record_events
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
+from edge_sync import router as edge_sync_router
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
@@ -4082,9 +4083,9 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
             },
         },
         "diagnostics": {
-            "heartbeat_interval_minutes":        60,
-            "update_poll_interval_minutes":       5,
-            "inventory_report_interval_hours":   24,
+            "sync_poll_interval_minutes":          5,
+            "update_poll_interval_minutes":        5,
+            "inventory_report_interval_hours":    24,
             "collect": [
                 "cpu_temperature", "cpu_load",
                 "memory_usage", "disk_usage", "connectivity_type"
@@ -11581,6 +11582,7 @@ def list_timelapse_jobs(_user=require_role("admin")):
 app.include_router(import_router, prefix="/api/import", dependencies=[require_role("admin")])
 app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
+app.include_router(edge_sync_router, prefix="/api/edge")
 app.include_router(itim_router, prefix="/api/itim")
 app.include_router(settings_router, dependencies=[require_role("admin")])
 app.include_router(redaction_router)
@@ -13878,7 +13880,7 @@ _FACTORY_CONFIG_DEFAULTS = {
         },
     },
     "storage": {"local_path": "/data/captures", "circular_buffer_gb": 50, "db_path": "/data/timelapse_edge.db"},
-    "diagnostics": {"heartbeat_interval_minutes": 60, "config_poll_interval_minutes": 5, "update_poll_interval_minutes": 5, "inventory_report_interval_hours": 24},
+    "diagnostics": {"sync_poll_interval_minutes": 5, "update_poll_interval_minutes": 5, "inventory_report_interval_hours": 24},
     "system": {
         "error_recovery_sleep_s": 30,
         "min_sleep_s": 60,

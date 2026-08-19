@@ -132,8 +132,7 @@ System overvågning og rapportering.
 
 | Parameter | Type | Default | Beskrivelse |
 |-----------|------|---------|-------------|
-| `heartbeat_interval_minutes` | number | 60 | Minutter mellem heartbeat signals til headend. Heartbeat indeholder device status, capture statistik, og sundhedsmetrics. For lang interval = for sent til at opdage problemer. |
-| `config_poll_interval_minutes` | number | 5 | Minutter mellem tjek for konfigurationsændringer fra headend. Lavere = hurtigere response men mere network trafik. Typisk 5-10 minutter. |
+| `sync_poll_interval_minutes` | number | 5 | Minutter mellem den konsoliderede sync-poll til headend (`POST /api/edge/sync/{device_id}`). Ét request/response dækker heartbeat/diagnostik, konfigurationsændringer og SIEM-log-forward — erstatter de tidligere separate `heartbeat_interval_minutes` (60 min) og `config_poll_interval_minutes` (5 min) siden 2026-08-19. Lavere = hurtigere response men mere network trafik. Typisk 5-10 minutter. |
 | `update_poll_interval_minutes` | number | 5 | Minutter mellem tjek for systemopdateringer fra headend. Opdateringer downloades og installeres automatisk. Typisk 5-15 minutter. |
 | `inventory_report_interval_hours` | number | 24 | Timer mellem inventory rapporter til headend. Inventory indeholder hardware info, versions, og kapacitet. Typisk 24 timer (daglig). |
 

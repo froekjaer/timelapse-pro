@@ -146,7 +146,7 @@ const CAMERA_PARAMS: ParamRow[] = [
   { key: 'quality.drift_detection.white_balance.enabled', label: 'Hvidbalance-drift-alarm', section: 'Kvalitet', type: 'boolean', description: 'Kræver at edge-optimizeren rapporterer hvidbalance-data — slået fra som default', tooltip: 'Aktiver drift-detektion for hvidbalance. Kræver at edge-optimizeren rapporterer wb_cast_strength. Default OFF da data ofte mangler.' },
   { key: 'quality.drift_detection.white_balance.z_threshold', label: 'Hvidbalance-følsomhed', section: 'Kvalitet', type: 'number', placeholder: '2.0', tooltip: 'Z-score tærskel for hvidbalance-drift. 2.0 = typisk. Kun relevant hvis enabled og wb data rapporteres.' },
   // Diagnostik
-  { key: 'diagnostics.heartbeat_interval_minutes', label: 'Heartbeat interval', section: 'Diagnostik', type: 'number', unit: 'min', placeholder: '60', description: 'Minutter mellem diagnostik uploads', tooltip: 'Minutter mellem hver heartbeat diagnostik upload. 60 = hver time. Kortere = mere detaljeret men mere data. Typisk 30-120 minutter.' },
+  { key: 'diagnostics.sync_poll_interval_minutes', label: 'Sync-poll interval', section: 'Diagnostik', type: 'number', unit: 'min', placeholder: '5', description: 'Minutter mellem konsolideret sync (config + diagnostik + SIEM + opdateringer)', tooltip: 'Minutter mellem hver samlet sync-poll til headend. Ét kald dækker config-hentning, diagnostik-upload, SIEM-log-forward og tjek for opdateringer. 5 = hvert 5. minut. Kortere = hurtigere respons men mere trafik.' },
 ]
 
 function getNestedValue(obj: Record<string, unknown>, path: string): string {
