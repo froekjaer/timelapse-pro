@@ -283,8 +283,7 @@ export function SystemAdminPage() {
   const [modemOffSeconds, setModemOffSeconds]       = useState('5')
   const [modemRecoverSeconds, setModemRecoverSeconds] = useState('15')
   const [uploadAttempts, setUploadAttempts]   = useState('5')
-  const [configPollS, setConfigPollS]         = useState('300')
-  const [heartbeatMin, setHeartbeatMin]       = useState('60')
+  const [syncPollMin, setSyncPollMin]         = useState('5')
   const [errorSleepS, setErrorSleepS]         = useState('30')
   const [minSleepS, setMinSleepS]             = useState('60')
   const [apiTimeoutS, setApiTimeoutS]         = useState('15')
@@ -377,8 +376,7 @@ export function SystemAdminPage() {
       setModemOffSeconds(String(mod.modem_power_cycle_off_s ?? 5))
       setModemRecoverSeconds(String(mod.modem_power_cycle_recover_s ?? 15))
       setUploadAttempts(String(sftp.upload_attempts ?? 5))
-      setConfigPollS(String(diag.config_poll_interval_minutes ? diag.config_poll_interval_minutes * 60 : 300))
-      setHeartbeatMin(String(diag.heartbeat_interval_minutes ?? 60))
+      setSyncPollMin(String(diag.sync_poll_interval_minutes ?? 5))
       setErrorSleepS(String(sys.error_recovery_sleep_s ?? 30))
       setMinSleepS(String(sys.min_sleep_s ?? 60))
       setApiTimeoutS(String(sys.api_timeout_s ?? 15))
@@ -514,8 +512,7 @@ export function SystemAdminPage() {
             },
             sftp: { upload_attempts: parseInt(uploadAttempts) },
             diagnostics: {
-              heartbeat_interval_minutes:   parseInt(heartbeatMin),
-              config_poll_interval_minutes: Math.round(parseInt(configPollS) / 60),
+              sync_poll_interval_minutes: parseInt(syncPollMin),
             },
             system: {
               error_recovery_sleep_s: parseInt(errorSleepS),
@@ -702,16 +699,11 @@ export function SystemAdminPage() {
 
       {/* Polling & heartbeat */}
       <Section title="Polling & heartbeat" icon={<Activity className="w-4 h-4" />}
-        description="Kommunikationsintervaller med headend">
-        <Field label="Config poll interval" unit="sekunder"
-          description="Sekunder mellem hentning af ny config fra headend"
-          tooltip="Sekunder mellem config pull fra headend for at opdatere parametre. Lav værdi = hurtigere config udrulning men mere netværk traffic. Høj værdi = langsommere udrulning men mindre load. Typisk 180-600 sekunder (3-10 min). Ændringer træder ikke i kraft før næste poll.">
-          <Num value={configPollS} onChange={setConfigPollS} placeholder="300" />
-        </Field>
-        <Field label="Heartbeat interval" unit="minutter"
-          description="Minutter mellem diagnostik-uploads til headend"
-          tooltip="Minutter mellem diagnostik heartbeat uploads til headend. Indeholder device health, storage status, og fejl logs. Lav værdi = bedre overvågning men mere bandwidth. Høj værdi = mindre bandwidth men langsommere alarm detection. Typisk 30-120 minutter.">
-          <Num value={heartbeatMin} onChange={setHeartbeatMin} placeholder="60" />
+        description="Kommunikationsinterval med headend">
+        <Field label="Sync-poll interval" unit="minutter"
+          description="Minutter mellem konsolideret sync (config + diagnostik + SIEM + opdateringer)"
+          tooltip="Minutter mellem hver samlet sync-poll til headend (POST /api/edge/sync). Ét kald dækker config-hentning, diagnostik-upload, SIEM-log-forward og tjek for opdateringer — erstatter de tidligere separate Config poll- og Heartbeat-indstillinger siden 2026-08-19. Lav værdi = hurtigere respons men mere netværkstrafik. Typisk 5-10 minutter.">
+          <Num value={syncPollMin} onChange={setSyncPollMin} placeholder="5" />
         </Field>
       </Section>
 

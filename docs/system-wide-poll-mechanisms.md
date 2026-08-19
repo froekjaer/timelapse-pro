@@ -206,31 +206,34 @@ Kort opsummering:
 
 ## Del 2: Backend Polling (Edge/Headend)
 
-### 11. Edge Agent — Config Poll
+### 11-12-15. Edge Agent — Consolidated Sync Poll (2026-08-19)
 
-**Fil:** `edge/agent.py:687`
-**Interval:** **5 minutter** (300 sekunder, konfigurerbar)
-**Formål:** Agent henter config fra headend
+> **Opdateret 2026-08-19:** De separate "Config Poll" (#11) og "Heartbeat Poll"
+> (#12) beskrevet nedenfor er erstattet af ÉN konsolideret poll. En tredje,
+> separat SIEM-forward-loop (5 min, ikke oprindeligt talt med i denne survey)
+> var siden kommet til og blev fanget i samme oprydning. Se
+> `Dokumentation/HANDOVER_LOG.md` 2026-08-19 for den fulde historik: den
+> manglende konsolidering betød bl.a. at heartbeat aldrig bar `app_version`,
+> så Headends egen app-update-auto-detektion reelt aldrig kunne udløses af
+> rigtig enhedstrafik. Implementerer "Batch API kald"-anbefalingen fra Del 4
+> nedenfor (skrevet 13. juli 2026, ~5 uger før det blev bygget).
 
-```python
-config_interval = timedelta(minutes=int(
-    self._cfg.get("diagnostics", {}).get("config_poll_interval_minutes", 5)
-))
-```
-
-**Kører når:** Edge agent kører
-**Konfigurerbar:** `config_poll_interval_minutes`
-
----
-
-### 12. Edge Agent — Heartbeat Poll
-
-**Fil:** `edge/agent.py:737`
-**Interval:** **60 minutter**
-**Formål:** Rapporter status til headend
-
-**Kører når:** Edge agent kører
-**Problemer:** Meget lang interval - kunne være hyppigere
+**Fil:** `edge/agent.py` — `_tick()` (gate) + `_run_sync()` (implementation)
+**Interval:** **5 minutter** (konfigurerbar, `sync_poll_interval_minutes`) —
+samme cadence som de tidligere mest ansvarlige loops (config/updates/SIEM),
+så responsivitet ikke regredierer 12x ved at arve heartbeatets gamle 60 min.
+**Formål:** Ét request/response pr. cyklus: diagnostik + `app_version` +
+SIEM-log-events (+ CMDB-inventar, når det er 24 timer siden sidst) ud;
+config + ventende opdateringer tilbage.
+**Server-side:** `headend/edge_sync.py` — `POST /api/edge/sync/{device_id}`,
+komponerer (kalder direkte, ingen ny forretningslogik) de allerede
+eksisterende `heartbeat()`, `get_config()`, `get_update_policy()`,
+`siem.ingest_events()` og `cmdb.report_inventory()`.
+**Rollback:** De gamle enkelt-endpoints (`/api/heartbeat`, `/api/config`,
+`/api/updates/policy`, `/api/siem/events`, `/api/inventory`) er UÆNDREDE og
+stadig aktive — nødvendigt hvis en enhed må rulles tilbage til et
+pre-2026-08-19-artifact.
+**Konfigurerbar:** `sync_poll_interval_minutes` (default 5)
 
 ---
 
@@ -412,6 +415,9 @@ function createBackoffPoll(initialMs: number, maxMs: number) {
 Kombiner flere requests i ét kald:
 - `/api/lab/{id}/status` returnerer alt LAB state
 - `/api/admin/devices/status` returnerer alle device states
+- ✅ **Implementeret 2026-08-19** for Edge Agent-siden: `POST /api/edge/sync/{device_id}`
+  erstatter config-poll + heartbeat + SIEM-forward + updates-policy-check med ét
+  request/response. Se punkt 11-12-15 ovenfor.
 
 ---
 
@@ -485,6 +491,6 @@ Kombiner flere requests i ét kald:
 
 ---
 
-**Dokument version:** 2.1
-**Sidst opdateret:** 13. juli 2026
+**Dokument version:** 2.2
+**Sidst opdateret:** 19. august 2026 (punkt 11-12-15 opdateret — se ændringen; resten af dokumentet er fra 13. juli 2026 og ikke genverificeret)
 **Relateret:** `lab-poll-mechanisms.md`

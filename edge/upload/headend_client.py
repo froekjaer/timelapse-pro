@@ -191,6 +191,28 @@ class HeadendClient:
         log.debug("Sending heartbeat for %s", self._device_id)
         return self._post(f"/heartbeat/{self._device_id}", payload)
 
+    def sync(
+        self,
+        diagnostics: dict,
+        capture_stats: dict,
+        siem_events: list[dict] | None = None,
+        inventory: dict | None = None,
+    ) -> tuple[bool, Optional[dict]]:
+        """Single consolidated poll: replaces separate calls to /heartbeat,
+        /config, /updates/policy and /siem/events with one request/response.
+        See headend/edge_sync.py for the composed server-side handler.
+        """
+        payload = {
+            "timestamp":     _now(),
+            "diagnostics":   diagnostics,
+            "capture_stats": capture_stats,
+            "ip_address":    self._get_ip(),
+            "siem_events":   siem_events or [],
+            "inventory":     inventory,
+        }
+        log.debug("Sending sync poll for %s", self._device_id)
+        return self._post(f"/edge/sync/{self._device_id}", payload)
+
     # ── Capture metadata sync ───────────────────────────────────────────────
 
     def sync_capture(self, capture_row: dict) -> tuple[bool, Optional[dict]]:
