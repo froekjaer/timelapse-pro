@@ -4,7 +4,7 @@ import {
   Brain, Camera, Settings, Database, Globe, LogOut,
   Shield, Users, Key, Terminal, Package, Server,
   ChevronDown, ClipboardCheck, Upload, Bot, Tag,
-  Wrench, Activity, EyeOff, Clock, Menu, X,
+  Wrench, Activity, EyeOff, Clock, Menu, X, QrCode,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -39,6 +39,7 @@ export function Navbar() {
 
   const adminLinks = [
     { to: '/system-admin',  label: 'System Admin',  icon: Shield, tooltip: 'Systemniveau administration. Service status, konfiguration, og avancerede systemindstillinger.' },
+    { to: '/local-access',  label: 'Lokal adgang',  icon: QrCode, tooltip: 'Oversigt over BT PAN TOTP-status for alle kameraer du har adgang til. QR-kode og live kode åbnes fra det enkelte kamera.' },
     { to: '/users',         label: 'Brugere',       icon: Users, tooltip: 'Bruger- og rollestyring. Opret, rediger og deaktiver brugere. Konfigurer rettigheder og MFA.' },
     { to: '/key-management',label: 'Nøgler',        icon: Key, tooltip: 'API nøgle administration. Generer, roter og tilbagekald API tokens. Se nøgle forbrug og aktivitet.' },
     { to: '/ssh-tunnel',    label: 'SSH Tunnels',   icon: Terminal, tooltip: 'SSH tunnel management til edge-enheder. Opret sikre forbindelser til onsite udstyr.' },

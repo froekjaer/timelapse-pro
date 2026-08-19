@@ -364,6 +364,42 @@ def test_local_totp_qr_never_returns_a_shared_factory_secret() -> None:
     assert "window.location.assign(btTotp.uri)" in camera_ui
 
 
+def test_bt_totp_qr_response_includes_a_live_rotating_code() -> None:
+    """Regression: a live, computed 6-digit code (not the raw secret text)
+    used to sit next to the QR code and was lost in an undocumented refactor
+    (a51ee8b4, 2026-08-03). Rebuilt 2026-08-19 per Peter. Must be a *computed*
+    code (pyotp.TOTP(secret).now()), never the raw secret itself.
+    """
+    headend = _source("headend/main.py")
+    endpoint = headend.split("def get_camera_bt_totp_qr", 1)[1].split("def regenerate_camera_bt_totp", 1)[0]
+    camera_ui = _source("timelapse-ui/src/pages/CameraPage.tsx")
+
+    assert '"current_code": totp.now()' in endpoint
+    assert '"seconds_remaining"' in endpoint
+    assert "btTotp.current_code" in camera_ui
+    assert "btTotpCountdown" in camera_ui
+
+
+def test_local_access_overview_lists_all_visible_cameras_with_rbac() -> None:
+    """The admin submenu Peter asked for: all cameras a user can see, with
+    their resolved BT-TOTP source layer — never the secret/QR/code itself
+    (those stay behind the per-camera endpoint, fetched on demand)."""
+    local_access = _source("headend/local_access.py")
+    nav = _source("timelapse-ui/src/components/Navbar.tsx")
+    app_routes = _source("timelapse-ui/src/App.tsx")
+
+    assert '@router.get("/local-access")' in local_access
+    assert "_visible_camera_query" in local_access
+    assert '"secret"' not in local_access
+    assert '"qr_code"' not in local_access
+    assert "/local-access" in nav
+    assert "/local-access" in app_routes
+    # Ratchet guard: this must live on its own APIRouter, not @app. directly —
+    # see tests/test_architecture_ratchet.py.
+    assert "@router.get" in local_access
+    assert "@app.get" not in local_access
+
+
 def test_legacy_local_http_technician_surfaces_cannot_be_started():
     cli = _source("edge/tools/bootstrap_cli.py")
     legacy_ui = _source("edge/technician_ui.py")

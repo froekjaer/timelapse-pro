@@ -108,6 +108,7 @@ from ai.settings_api import settings_router
 from siem import router as siem_router, start_headend_log_collector, record_events as _siem_record_events
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from edge_sync import router as edge_sync_router
+from local_access import router as local_access_router
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
@@ -5307,37 +5308,15 @@ def update_camera(
     return {"status": "ok", "id": cam.id}
 
 
-@app.get("/api/admin/cameras/{camera_id}/bt-totp-qr")
-def get_camera_bt_totp_qr(
-    camera_id: str,
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Returner QR-kode (data-URI) til BT PAN TOTP for dette kamera.
-    Beregner det gældende secret ved at gå op i hierarkiet:
-      global (Settings) → kunde.config_overrides.bt_totp
-      → site.config_overrides.bt_totp → kamera.bt_totp_secret (højeste prioritet)
+def _resolve_camera_bt_totp(db: Session, cam) -> tuple[str, str, str]:
+    """Beregn det gældende BT-TOTP secret/sid/source for et kamera ved at gå
+    op i hierarkiet: global (Settings) → kunde.config_overrides.bt_totp →
+    site.config_overrides.bt_totp → kamera.bt_totp_secret (højeste prioritet).
+    Returnerer ("", "", "") hvis intet lag har et secret. Delt mellem
+    get_camera_bt_totp_qr() og list_local_access() (admin-oversigten,
+    2026-08-19) så resolutionslogikken kun findes ét sted.
     """
-    import pyotp as _pyotp, qrcode as _qrcode, io as _io, base64 as _b64
-    from database import Camera, Site, Customer, Device, DeviceAssignment
-
-    cam = db.query(Camera).filter_by(id=camera_id).first()
-    if not cam:
-        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
-    if current_user is None or not current_user.is_active:
-        raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
-    if cam.site_id:
-        _ensure_site_access(db, current_user, cam.site_id)
-    elif cam.customer_id:
-        _ensure_customer_access(current_user, cam.customer_id)
-    elif not _is_platform_admin(current_user):
-        raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
-    is_admin = current_user.role in {"super_admin", "admin"}
-    if not is_admin:
-        if not bool(getattr(current_user, "on_site_service", False)):
-            raise HTTPException(status_code=403, detail="On-site idriftsættelse og service kræves")
-        if current_user.customer_id and str(cam.customer_id) != str(current_user.customer_id):
-            raise HTTPException(status_code=403, detail="Kameraet ligger uden for din kundeafgrænsning")
+    from database import Site, Customer
 
     secret = ""
     sid = ""
@@ -5367,6 +5346,53 @@ def get_camera_bt_totp_qr(
     if cam.bt_totp_secret:
         secret, sid, source = cam.bt_totp_secret, cam.bt_totp_sid or "kamera", "kamera"
 
+    return secret, sid, source
+
+
+def _visible_camera_query(db: Session, user: "User | None"):
+    """Samme tenant-afgrænsning som _visible_device_query, for Camera."""
+    from database import Camera
+    q = db.query(Camera).filter(Camera.retired_at.is_(None))
+    if _is_platform_admin(user):
+        return q
+    if not user or not user.customer_id:
+        return q.filter(Camera.id == "__none__")
+    site_ids = db.query(Site.id).filter(Site.customer_id == user.customer_id)
+    return q.filter(or_(Camera.customer_id == user.customer_id, Camera.site_id.in_(site_ids)))
+
+
+@app.get("/api/admin/cameras/{camera_id}/bt-totp-qr")
+def get_camera_bt_totp_qr(
+    camera_id: str,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returner QR-kode (data-URI) til BT PAN TOTP for dette kamera.
+    Beregner det gældende secret via _resolve_camera_bt_totp() (hierarkiet:
+    global → kunde → site → kamera, se den funktion for detaljer).
+    """
+    import pyotp as _pyotp, qrcode as _qrcode, io as _io, base64 as _b64
+    from database import Camera, Site, Customer, Device, DeviceAssignment
+
+    cam = db.query(Camera).filter_by(id=camera_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Kamera ikke fundet")
+    if current_user is None or not current_user.is_active:
+        raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
+    if cam.site_id:
+        _ensure_site_access(db, current_user, cam.site_id)
+    elif cam.customer_id:
+        _ensure_customer_access(current_user, cam.customer_id)
+    elif not _is_platform_admin(current_user):
+        raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
+    is_admin = current_user.role in {"super_admin", "admin"}
+    if not is_admin:
+        if not bool(getattr(current_user, "on_site_service", False)):
+            raise HTTPException(status_code=403, detail="On-site idriftsættelse og service kræves")
+        if current_user.customer_id and str(cam.customer_id) != str(current_user.customer_id):
+            raise HTTPException(status_code=403, detail="Kameraet ligger uden for din kundeafgrænsning")
+
+    secret, sid, source = _resolve_camera_bt_totp(db, cam)
     if not secret:
         raise HTTPException(
             status_code=409,
@@ -5386,11 +5412,17 @@ def get_camera_bt_totp_qr(
     # generic product name.
     issuer = "TimeLapse Pro Local Edge"
     account_name = f"{device_label} - {camera_label}"
-    uri = _pyotp.TOTP(secret).provisioning_uri(name=account_name, issuer_name=issuer)
+    totp = _pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=account_name, issuer_name=issuer)
 
     buf = _io.BytesIO()
     _qrcode.make(uri).save(buf, format="PNG")
     qr_b64 = _b64.b64encode(buf.getvalue()).decode()
+    # Live code alongside the QR — a technician standing at the device can
+    # type it in directly without an authenticator app. Removed at some point
+    # during a large refactor without a documented rationale; rebuilt as a
+    # computed rotating code (not the old raw-secret text) per Peter,
+    # 2026-08-19. Same pyotp already used for user MFA elsewhere in this file.
     return {
         "secret":   secret,
         "sid":      sid,
@@ -5400,6 +5432,8 @@ def get_camera_bt_totp_qr(
         "uri":      uri,
         "qr_code":  f"data:image/png;base64,{qr_b64}",
         "is_factory_default": False,
+        "current_code": totp.now(),
+        "seconds_remaining": totp.interval - (int(time.time()) % totp.interval),
     }
 
 
@@ -11583,6 +11617,7 @@ app.include_router(import_router, prefix="/api/import", dependencies=[require_ro
 app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(edge_sync_router, prefix="/api/edge")
+app.include_router(local_access_router, prefix="/api/admin")
 app.include_router(itim_router, prefix="/api/itim")
 app.include_router(settings_router, dependencies=[require_role("admin")])
 app.include_router(redaction_router)

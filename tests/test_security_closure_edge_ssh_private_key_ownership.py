@@ -75,11 +75,14 @@ def test_legacy_provision_package_is_retired_instead_of_exporting_private_keys()
 
 
 def test_bt_totp_qr_enforces_tenant_boundary_before_secret_resolution():
+    # 2026-08-19: secret resolution moved into _resolve_camera_bt_totp()
+    # (shared with the new local-access overview endpoint), so the end
+    # marker changed from the old inline "secret = ''" to the call site.
     source = _source()
     block = _function_block(
         source,
         '@app.get("/api/admin/cameras/{camera_id}/bt-totp-qr")',
-        '    secret = ""',
+        'secret, sid, source = _resolve_camera_bt_totp(db, cam)',
     )
     assert "_ensure_site_access(db, current_user, cam.site_id)" in block
     assert "_ensure_customer_access(current_user, cam.customer_id)" in block
