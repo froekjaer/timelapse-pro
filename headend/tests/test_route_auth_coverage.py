@@ -25,6 +25,11 @@ AUTH_DEPENDENCIES = {
     # exact role + MFA check via get_current_user() — same trust model, not
     # a separate one. See headend/local_access.py.
     "_require_local_access_admin",
+    # technician_keys._require_self_or_admin (2026-08-19): reviewed wrapper —
+    # calls get_current_user() and allows either the resource owner (their
+    # own SSH keys) or super_admin/admin. Public-key management only, never
+    # anything secret. See headend/technician_keys.py.
+    "_require_self_or_admin",
 }
 
 # Routes here are intentionally pre-auth or use an explicit in-body token/loopback

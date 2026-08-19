@@ -37,7 +37,8 @@ async def test_edge_sync_composes_heartbeat_config_and_update_policy():
 
     with patch.object(main, "heartbeat", fake_heartbeat), \
          patch.object(main, "get_config", fake_get_config), \
-         patch.object(main, "get_update_policy", fake_get_update_policy):
+         patch.object(main, "get_update_policy", fake_get_update_policy), \
+         patch.object(edge_sync, "resolve_authorized_technician_keys", MagicMock(return_value=[])):
         result = await edge_sync_endpoint("TL-TESTDEVICE0001", req, _auth=None, db=db)
 
     fake_heartbeat.assert_called_once()
@@ -49,6 +50,24 @@ async def test_edge_sync_composes_heartbeat_config_and_update_policy():
     assert result["server_time"] == "2026-08-19T12:00:01Z"
     assert result["app_security"] == "auto"
     assert result["app_updates"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_edge_sync_includes_authorized_technician_keys_for_the_device():
+    req = EdgeSyncRequest(timestamp="t", diagnostics={}, capture_stats={}, siem_events=[], inventory=None)
+    db = MagicMock()
+    fake_device = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = fake_device
+    fake_keys = [{"public_key": "ssh-ed25519 AAAA", "identity": "tekniker1:laptop", "field_role": "technician"}]
+
+    with patch.object(main, "heartbeat", MagicMock(return_value={"server_time": "t", "config_version": "v"})), \
+         patch.object(main, "get_config", MagicMock(return_value={})), \
+         patch.object(main, "get_update_policy", MagicMock(return_value={"pending_updates": []})), \
+         patch.object(edge_sync, "resolve_authorized_technician_keys", MagicMock(return_value=fake_keys)) as fake_resolve:
+        result = await edge_sync_endpoint("TL-TESTDEVICE0001", req, _auth=None, db=db)
+
+    fake_resolve.assert_called_once_with(db, fake_device)
+    assert result["technician_keys"] == fake_keys
 
 
 @pytest.mark.asyncio
@@ -66,7 +85,8 @@ async def test_edge_sync_forwards_siem_events_and_inventory_when_present():
          patch.object(main, "get_config", MagicMock(return_value={})), \
          patch.object(main, "get_update_policy", MagicMock(return_value={"pending_updates": []})), \
          patch.object(edge_sync, "_siem_ingest_events", new=AsyncMock()) as fake_ingest, \
-         patch.object(edge_sync, "_cmdb_report_inventory", MagicMock()) as fake_inventory:
+         patch.object(edge_sync, "_cmdb_report_inventory", MagicMock()) as fake_inventory, \
+         patch.object(edge_sync, "resolve_authorized_technician_keys", MagicMock(return_value=[])):
         await edge_sync_endpoint("TL-TESTDEVICE0001", req, _auth=None, db=db)
 
     fake_ingest.assert_called_once_with(
@@ -87,7 +107,8 @@ async def test_edge_sync_skips_siem_and_inventory_when_absent():
          patch.object(main, "get_config", MagicMock(return_value={})), \
          patch.object(main, "get_update_policy", MagicMock(return_value={"pending_updates": []})), \
          patch.object(edge_sync, "_siem_ingest_events", new=AsyncMock()) as fake_ingest, \
-         patch.object(edge_sync, "_cmdb_report_inventory", MagicMock()) as fake_inventory:
+         patch.object(edge_sync, "_cmdb_report_inventory", MagicMock()) as fake_inventory, \
+         patch.object(edge_sync, "resolve_authorized_technician_keys", MagicMock(return_value=[])):
         await edge_sync_endpoint("TL-TESTDEVICE0001", req, _auth=None, db=db)
 
     fake_ingest.assert_not_called()
