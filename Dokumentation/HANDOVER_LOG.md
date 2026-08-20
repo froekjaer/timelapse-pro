@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-08-20 (4) — fra Claude til Peter/Claude: C-09 (Edge private key-lækage via legacy key-management) og C-07 (path traversal i edge-backup-complete) lukket
+
+- Hvad er gjort: Fortsatte spot-check-runden (samme 5 Explore-agenter som forrige entries).
+  - **C-09 (OPEN → CLOSED):** `POST /api/admin/key-management/credentials` havde en guard der forhindrede Headend i at generere Edge SSH-private-keys (`entity_type=="edge" and key_type=="ssh"`) — men IKKE for `key_type=="signing"`. En request med `{"entity_type":"edge","key_type":"signing","generate_keypair":true}` faldt igennem til `_generate_ed25519_keypair()` og Headend genererede + returnerede en Edge private key, i direkte modstrid med WP-4-princippet (Edge ejer sine egne private nøgler, Headend signerer kun CSR'er). Udvidede guarden til `key_type in {"ssh", "signing"}`. Opdaterede en eksisterende kildetekst-baseret regressionstest (`test_generic_key_management_cannot_generate_edge_ssh_private_keys`) der ellers ville være blevet stående som falsk grøn efter min ændring, og tilføjede en RIGTIG adfærdstest der rent faktisk kalder endpointet og bekræfter 409.
+  - **C-07 (OPEN → CLOSED):** `POST /api/admin/backup/edge-complete/{device_id}` tog `filename` direkte fra request-body og brugte det usaniteret i `os.path.join()` til BÅDE kilde- og destinationssti — samme sårbarhedsklasse som C-01. Genbrugte den allerede etablerede `_sanitize_filename()`-hjælper (samme som søskende-endpointet `upload_edge_backup` allerede brugte). Explore-agenten bemærkede at endpointet muligvis er forældreløst (ingen kald fra edge/ eller UI fundet) — men det er stadig reachable af enhver `operator`-rolle, så rettet alligevel frem for at lade en kendt sårbarhed stå ubrugt-men-eksponeret.
+  - Bekræftede desuden C-08 (BT-pairing/TOTP-firewall lifecycle) og C-10 (ingen session-revocation/absolut levetid) som reelle men IKKE rettet her — begge rører enten fysisk hardware-adfærd (BlueZ-agent, iptables-regler på levende edge-enheder) eller hele auth-sessionsmodellen på tværs af samtlige endpoints. Samme forsigtighedsprincip som break-glass-arkitekturbeslutningen: for stort blast radius til at ændre uden Peters eksplicitte retning.
+- Hvad mangler / næste skridt: C-08 og C-10 kræver Peters beslutning før jeg går videre (se opsamlende status til Peter). På update-flow-siden er U-01, U-03 (delvist), U-04, U-12, U-14 bekræftet OPEN — U-12 er særligt interessant, samme fejlklasse som C-06 (auto OS-bundle-builder tilskriver artifact-signering til "første super_admin" i stedet for et system-principal, selvom mønsteret for korrekt system-principal allerede findes andetsteds i koden: `system:auto-policy`).
+- Kommandoer kørt: `git worktree add /tmp/timelapse-c09-c07`; `.venv/bin/pytest` (4 nye/opdaterede tests + fuld CI-ækvivalent kørsel, 1030 passed).
+- Forventet/faktisk output: Fuld CI-ækvivalent kørsel grøn (1030 passed). Ratchet uændret.
+- Filer rørt: `headend/main.py`, `headend/tests/test_c07_edge_backup_complete_path_traversal.py` (ny), `tests/test_security_closure_edge_ssh_private_key_ownership.py`.
+- Risici / pas på: Ingen funktionel adfærdsændring for legitime kald — begge rettelser strammer kun adgang der allerede burde have været blokeret.
+
 ### Handover 2026-08-20 (3) — fra Claude til Peter/Claude: C-04 (tenant-isolation) og C-05 (settings secret-lækage) lukket
 
 - Hvad er gjort: Fortsatte den systematiske spot-check af `MASTER_REVIEW_CLOSURE_2026-08-15.md`s resterende C-/U-punkter (5 parallelle Explore-agenter mod nuværende main — dokumentet selv er fra før mange senere PR'er). To bekræftet reelle og lukket i denne omgang:
