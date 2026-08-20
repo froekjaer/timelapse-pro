@@ -583,10 +583,9 @@ export default function TimelapseVideoPage() {
                           className={`flex-1 py-1 rounded-lg text-xs cursor-pointer ${settings.timestamp_format === 'pts' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-white/50'}`}>
                           Sekunder
                         </button>
-                        <button disabled
-                          title="Ikke tilgængelig endnu — kræver en libass-baseret renderer på Headend"
-                          className="flex-1 py-1 rounded-lg text-xs bg-gray-800 text-white/25 cursor-not-allowed">
-                          Dato/tid (kommer snart)
+                        <button onClick={() => setSettings(s => ({...s, timestamp_format: 'datetime'}))}
+                          className={`flex-1 py-1 rounded-lg text-xs cursor-pointer ${settings.timestamp_format === 'datetime' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-white/50'}`}>
+                          Dato/tid
                         </button>
                       </div>
                     </div>
