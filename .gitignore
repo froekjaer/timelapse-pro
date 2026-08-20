@@ -6,6 +6,11 @@ edge/sftp_cache.yaml
 edge/ssh/
 edge/bootstrap.yaml
 
+# Genereret hjælpe-indhold til /help-siden (synces fra Dokumentation/ via
+# timelapse-ui/scripts/sync-help-docs.mjs — npm predev/prebuild)
+timelapse-ui/src/help/content/*.md
+!timelapse-ui/src/help/content/README.md
+
 # Python
 __pycache__/
 *.pyc

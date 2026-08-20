@@ -5,6 +5,7 @@ import {
   Shield, Users, Key, Terminal, Package, Server,
   ChevronDown, ClipboardCheck, Upload, Bot, Tag,
   Wrench, Activity, EyeOff, Clock, Menu, X, QrCode,
+  LifeBuoy,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -35,6 +36,7 @@ export function Navbar() {
     { to: '/ai',           label: 'AI Styring',    icon: Brain, tooltip: 'AI-drevet billedanalyse og kvalitetskontrol. Konfigurer NPU, adaptive exposure, og drift detection.', adminOnly: true },
     { to: '/openwebui',    label: 'Open WebUI',    icon: Bot, tooltip: 'AI assistent interface til natural language queries. Få svar om captures, kvalitet, og system status.', adminOnly: true },
     { to: '/compliance',   label: 'Compliance',    icon: ClipboardCheck, tooltip: 'SABSA compliance cockpit. Audit logs, sikkerhedsrapporter, og compliance status for hele systemet.', adminOnly: false },
+    { to: '/help',         label: 'Hjælp',         icon: LifeBuoy, tooltip: 'Hjælp og dokumentation. Menuguides, FAQ og manualer — indbygget i UI\'en og virker uden internet.', adminOnly: false },
   ].filter(link => !link.adminOnly || hasRole('super_admin', 'admin'))
 
   const adminLinks = [
