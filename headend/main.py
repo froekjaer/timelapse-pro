@@ -11448,7 +11448,7 @@ def _render_timelapse(job_id, image_paths, options):
 
     fps, resolution, codec = options.fps, options.resolution, options.codec
     fade_frames = options.fade_frames
-    ts_overlay, ts_pos = options.timestamp_overlay, options.timestamp_position
+    ts_overlay, ts_pos, ts_format = options.timestamp_overlay, options.timestamp_position, options.timestamp_format
     ken_burns, crop_ratio, title = options.ken_burns, options.crop_ratio, options.title
 
     RENDER_JOBS[job_id]["status"] = "rendering"
@@ -11508,7 +11508,28 @@ def _render_timelapse(job_id, image_paths, options):
             vf_parts.append(f"fade=t=out:st={(n-fade_frames)/fps:.2f}:d={fade_frames/fps:.2f}")
 
         # Tidsstempel overlay
-        if ts_overlay:
+        if ts_overlay and ts_format == "datetime":
+            from services.timelapse_render_service import build_datetime_subtitle_file, ffmpeg_filter_path_escape
+
+            if resolution == "1080p":
+                play_res = (1920, 1080)
+            elif resolution == "4k":
+                play_res = (3840, 2160)
+            else:
+                from PIL import Image as _PILImage
+                with _PILImage.open(image_paths[0][0]) as _im:
+                    play_res = _im.size
+
+            ass_path = RENDER_OUTPUT_DIR / f"{job_id}_timestamps.ass"
+            build_datetime_subtitle_file(
+                frame_timestamps=[captured_at for _, captured_at in image_paths],
+                fps=fps,
+                position=ts_pos,
+                play_res=play_res,
+                output_path=ass_path,
+            )
+            vf_parts.append(f"subtitles={ffmpeg_filter_path_escape(str(ass_path))}")
+        elif ts_overlay:
             positions = {
                 "tl": "x=20:y=20",
                 "tr": "x=w-tw-20:y=20",
