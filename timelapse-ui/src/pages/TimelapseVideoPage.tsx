@@ -32,7 +32,10 @@ const apiCall = async (path: string, options?: RequestInit) => {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail || `HTTP ${res.status}`)
+  }
   return res.json()
 }
 
@@ -580,9 +583,10 @@ export default function TimelapseVideoPage() {
                           className={`flex-1 py-1 rounded-lg text-xs cursor-pointer ${settings.timestamp_format === 'pts' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-white/50'}`}>
                           Sekunder
                         </button>
-                        <button onClick={() => setSettings(s => ({...s, timestamp_format: 'datetime'}))}
-                          className={`flex-1 py-1 rounded-lg text-xs cursor-pointer ${settings.timestamp_format === 'datetime' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-white/50'}`}>
-                          Dato/tid
+                        <button disabled
+                          title="Ikke tilgængelig endnu — kræver en libass-baseret renderer på Headend"
+                          className="flex-1 py-1 rounded-lg text-xs bg-gray-800 text-white/25 cursor-not-allowed">
+                          Dato/tid (kommer snart)
                         </button>
                       </div>
                     </div>
