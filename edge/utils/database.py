@@ -310,6 +310,41 @@ class EdgeDatabase:
             ).fetchone()
             return bool(row and row["uploaded_primary"])
 
+    def get_deletion_candidates(self, min_hours_since_upload: float, limit: int = 500) -> list[dict]:
+        """Return local files eligible for circular-buffer pruning, oldest capture first.
+
+        Eligibility (both required):
+          - uploaded_primary=1 — Headend independently recomputed and matched the
+            file's SHA-256 before returning success (headend/main.py::receive_capture_files);
+            this is not just "we sent an HTTP request", it's a cryptographically
+            verified round-trip.
+          - uploaded_at is at least `min_hours_since_upload` old — an extra grace
+            margin beyond the upload confirmation itself, in case a problem with
+            the Headend copy surfaces shortly after.
+
+        Callers must treat "no rows" and "query raised" identically: never delete.
+        Returns [] on any error rather than raising, so a transient DB issue can
+        never be mistaken for "nothing uploaded yet" and fall through to deleting
+        something else — there is no "something else" to fall through to.
+        """
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT filepath, filesize, uploaded_at FROM captures
+                    WHERE uploaded_primary = 1
+                      AND uploaded_at IS NOT NULL
+                      AND datetime(uploaded_at) <= datetime('now', ? || ' hours')
+                    ORDER BY captured_at ASC
+                    LIMIT ?
+                    """,
+                    (f"-{min_hours_since_upload}", limit),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except Exception as exc:
+            log.warning("get_deletion_candidates query failed — treating as no candidates: %s", exc)
+            return []
+
     def get_pending_uploads(self, target: str = "primary", limit: int = 50) -> list[dict]:
         """Return captures not yet uploaded to the given target."""
         col = _upload_column(target)
