@@ -16,6 +16,7 @@ import {
   Brain, Loader2, Shield, Activity
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
+import { useAuth } from '../context/AuthContext'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -587,6 +588,7 @@ export function CMDBPage() {
 
 export function CMDBDetailPage() {
   const { deviceId } = useParams<{ deviceId: string }>()
+  const { user } = useAuth()
   const [detail, setDetail] = useState<CMDBDetail | null>(null)
   const [accounts, setAccounts] = useState<BreakGlassAccount[]>([])
   const [loading, setLoading] = useState(true)
@@ -599,7 +601,6 @@ export function CMDBDetailPage() {
 
   // Break-glass state
   const [bgModal, setBgModal] = useState(false)
-  const [bgAdminUser, setBgAdminUser] = useState('')
   const [bgExpiresDays, setBgExpiresDays] = useState(0)
   const [bgCreating, setBgCreating] = useState(false)
   const [bgError, setBgError] = useState('')
@@ -639,12 +640,11 @@ export function CMDBDetailPage() {
   }
 
   async function createBreakGlass() {
-    if (!deviceId || !bgAdminUser) return
+    if (!deviceId) return
     setBgCreating(true)
     setBgError('')
     try {
       const r = await apiPost(`/api/cmdb/${pathSegment(deviceId)}/break-glass`, {
-        admin_username: bgAdminUser,
         expires_days: bgExpiresDays,
       })
       if (!r.ok) {
@@ -660,16 +660,14 @@ export function CMDBDetailPage() {
     }
     setBgCreating(false)
     setBgModal(false)
-    setBgAdminUser('')
     setBgError('')
     load()
   }
 
-  async function doCheckout(accountId: number) {
+  async function doCheckout() {
     if (!deviceId) return
     setCheckingOut(true)
     const r = await apiPost(`/api/cmdb/${pathSegment(deviceId)}/break-glass/checkout`, {
-      admin_username: accounts.find(a => a.id === accountId)?.admin_username,
       reason: checkoutReason || 'Ikke angivet',
     })
     const data = await r.json()
@@ -1310,13 +1308,19 @@ export function CMDBDetailPage() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => { setCheckoutModal(acc.id); setCheckoutReason(''); setCheckoutResult(null) }}
-                    className="flex items-center gap-1 text-xs bg-orange-100 text-orange-700 px-2.5 py-1 rounded hover:bg-orange-200 transition-colors"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    Checkout
-                  </button>
+                  {acc.admin_username === user?.username ? (
+                    <button
+                      onClick={() => { setCheckoutModal(acc.id); setCheckoutReason(''); setCheckoutResult(null) }}
+                      className="flex items-center gap-1 text-xs bg-orange-100 text-orange-700 px-2.5 py-1 rounded hover:bg-orange-200 transition-colors"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      Checkout
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-300" title="Kun ejeren af kontoen kan checke den ud">
+                      Ejes af anden admin
+                    </span>
+                  )}
                   <button
                     onClick={() => deleteAccount(acc.id)}
                     className="text-gray-300 hover:text-red-500 transition-colors"
@@ -1336,18 +1340,8 @@ export function CMDBDetailPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-6 w-96 shadow-xl">
             <h3 className="font-semibold text-gray-900 mb-4">Opret break-glass konto</h3>
             <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">Admin-brugernavn</label>
-                <input
-                  className="w-full border border-gray-200 rounded px-3 py-2 text-sm outline-none focus:border-sky-400"
-                  value={bgAdminUser}
-                  onChange={e => setBgAdminUser(e.target.value)}
-                  placeholder="peter"
-                  autoFocus
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  spellCheck={false}
-                />
+              <div className="bg-sky-50 border border-sky-200 rounded p-3 text-xs text-sky-700">
+                Kontoen oprettes til dig ({user?.username}) — én konto pr. device pr. admin.
               </div>
               <div>
                 <label className="text-xs text-gray-500 block mb-1">Udlø (dage, 0 = ingen)</label>
@@ -1357,6 +1351,7 @@ export function CMDBDetailPage() {
                   value={bgExpiresDays}
                   onChange={e => setBgExpiresDays(Number(e.target.value))}
                   min={0}
+                  autoFocus
                 />
               </div>
               <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-700">
@@ -1371,7 +1366,7 @@ export function CMDBDetailPage() {
             <div className="flex gap-3 mt-5">
               <button
                 onClick={createBreakGlass}
-                disabled={!bgAdminUser || bgCreating}
+                disabled={bgCreating}
                 className="flex-1 bg-orange-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50 transition-colors"
               >
                 {bgCreating ? 'Opretter…' : 'Opret'}
@@ -1412,7 +1407,7 @@ export function CMDBDetailPage() {
                 </div>
                 <div className="flex gap-3">
                   <button
-                    onClick={() => doCheckout(checkoutModal)}
+                    onClick={() => doCheckout()}
                     disabled={checkingOut}
                     className="flex-1 bg-orange-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50 transition-colors"
                   >
