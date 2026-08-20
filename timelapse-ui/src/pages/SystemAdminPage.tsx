@@ -814,7 +814,7 @@ export function SystemAdminPage() {
           <Txt value={settings.sftp_user ?? ''} onChange={v => setSettings(s => ({...s, sftp_user: v}))} mono />
         </Field>
         <Field label="SFTP password"
-          tooltip="SFTP password til authentication. Gemmes krypteret i databasen. Brug key-based auth for bedre sikkerhed hvis muligt. Forkert password kan låse konto ved for mange login forsøg.">
+          tooltip="SFTP password til authentication. OBS: gemmes i klartekst i databasen (ikke krypteret) — brug key-based auth for bedre sikkerhed hvis muligt. Forkert password kan låse konto ved for mange login forsøg.">
           <input type="password" className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-mono"
             value={settings.sftp_password ?? ''} onChange={e => setSettings(s => ({...s, sftp_password: e.target.value}))} />
         </Field>
