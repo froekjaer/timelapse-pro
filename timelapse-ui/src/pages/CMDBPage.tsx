@@ -106,6 +106,16 @@ interface BreakGlassAccount {
   created_at: string | null
 }
 
+interface BreakGlassCheckoutHistoryEntry {
+  id: number
+  account_id: number
+  checked_out_by: string
+  on_behalf_of: string | null
+  reason: string | null
+  client_ip: string | null
+  checked_out_at: string | null
+}
+
 interface SbomDocument {
   bomFormat?: string
   specVersion?: string
@@ -606,8 +616,12 @@ export function CMDBDetailPage() {
   const [bgError, setBgError] = useState('')
   const [checkoutModal, setCheckoutModal] = useState<number | null>(null)
   const [checkoutReason, setCheckoutReason] = useState('')
+  const [checkoutOnBehalfOf, setCheckoutOnBehalfOf] = useState('')
   const [checkoutResult, setCheckoutResult] = useState<null | { password: string; ssh_username: string }>(null)
   const [checkingOut, setCheckingOut] = useState(false)
+  const [bgHistoryOpen, setBgHistoryOpen] = useState(false)
+  const [bgHistory, setBgHistory] = useState<BreakGlassCheckoutHistoryEntry[]>([])
+  const [bgHistoryLoading, setBgHistoryLoading] = useState(false)
 
   async function load() {
     if (!deviceId) return
@@ -669,11 +683,25 @@ export function CMDBDetailPage() {
     setCheckingOut(true)
     const r = await apiPost(`/api/cmdb/${pathSegment(deviceId)}/break-glass/checkout`, {
       reason: checkoutReason || 'Ikke angivet',
+      on_behalf_of: checkoutOnBehalfOf || undefined,
     })
     const data = await r.json()
     setCheckoutResult({ password: data.password, ssh_username: data.ssh_username })
     setCheckingOut(false)
+    setCheckoutOnBehalfOf('')
     load()
+  }
+
+  async function loadBgHistory() {
+    if (!deviceId) return
+    setBgHistoryLoading(true)
+    try {
+      const r = await api(`/api/cmdb/${pathSegment(deviceId)}/break-glass/checkout-history`)
+      setBgHistory(r.ok ? await r.json() : [])
+    } catch {
+      setBgHistory([])
+    }
+    setBgHistoryLoading(false)
   }
 
   async function deleteAccount(accountId: number) {
@@ -1272,14 +1300,57 @@ export function CMDBDetailPage() {
               Passwords krypteres med Fernet AES-128 og roteres automatisk ved checkout.
             </p>
           </div>
-          <button
-            onClick={() => { setBgModal(true); setBgError('') }}
-            className="flex items-center gap-1.5 text-xs bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700 transition-colors"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Opret konto
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const next = !bgHistoryOpen
+                setBgHistoryOpen(next)
+                if (next) loadBgHistory()
+              }}
+              className="flex items-center gap-1.5 text-xs bg-white text-orange-700 border border-orange-200 px-3 py-1.5 rounded-lg hover:bg-orange-100 transition-colors"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              {bgHistoryOpen ? 'Skjul historik' : 'Vis historik'}
+            </button>
+            <button
+              onClick={() => { setBgModal(true); setBgError('') }}
+              className="flex items-center gap-1.5 text-xs bg-orange-600 text-white px-3 py-1.5 rounded-lg hover:bg-orange-700 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Opret konto
+            </button>
+          </div>
         </div>
+
+        {bgHistoryOpen && (
+          <div className="px-5 py-4 bg-gray-50 border-b border-orange-100">
+            <p className="text-xs text-gray-500 mb-2">
+              Fuld checkout-historik (alle checkouts, ikke kun seneste pr. konto). "På vegne af" er en
+              dokumentations-markør fra "hjælp en kollega uden central-adgang"-proceduren — ikke en
+              autentificeringspåstand.
+            </p>
+            {bgHistoryLoading ? (
+              <div className="text-xs text-gray-400">Henter…</div>
+            ) : bgHistory.length === 0 ? (
+              <div className="text-xs text-gray-400">Ingen checkouts registreret endnu.</div>
+            ) : (
+              <div className="space-y-1.5">
+                {bgHistory.map(h => (
+                  <div key={h.id} className="text-xs bg-white border border-gray-100 rounded px-3 py-2 flex items-center justify-between gap-3">
+                    <div>
+                      <span className="font-medium text-gray-900">{h.checked_out_by}</span>
+                      {h.on_behalf_of && (
+                        <span className="text-orange-600"> — på vegne af {h.on_behalf_of}</span>
+                      )}
+                      {h.reason && <span className="text-gray-400"> · {h.reason}</span>}
+                    </div>
+                    <div className="text-gray-400 shrink-0">{h.checked_out_at ? fmtDate(h.checked_out_at) : ''}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {accounts.length === 0 ? (
           <div className="px-5 py-8 text-center text-gray-400 text-sm">
@@ -1404,6 +1475,20 @@ export function CMDBDetailPage() {
                     placeholder="f.eks. 'SSH forbindelse mistet, enhed hænger'"
                     autoFocus
                   />
+                </div>
+                <div className="mb-3">
+                  <label className="text-xs text-gray-500 block mb-1">
+                    Hjælper du en kollega uden central-adgang? (valgfrit)
+                  </label>
+                  <input
+                    className="w-full border border-gray-200 rounded px-3 py-2 text-sm outline-none focus:border-sky-400"
+                    value={checkoutOnBehalfOf}
+                    onChange={e => setCheckoutOnBehalfOf(e.target.value)}
+                    placeholder="f.eks. 'Peter, on-site, ingen VPN-forbindelse'"
+                  />
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    Registreres i historikken til senere gennemgang — checker altid din EGEN konto ud.
+                  </p>
                 </div>
                 <div className="flex gap-3">
                   <button

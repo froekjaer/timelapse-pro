@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-08-20 (2) — fra Claude til Peter/Claude: Formel "hjælp en kollega uden central-adgang"-procedure for break-glass, med permanent audit-historik
+
+- Hvad er gjort: Opfølgning på C-06-lukningen (se forrige entry) — Peter bekræftede at den fjernede "kollega checker min konto ud"-adfærd FAKTISK dækkede et reelt behov: en tekniker på en site der ikke kan nå det centrale system skal kunne få hjælp af en kollega, med et audit-spor. Byggede dette som en EKSPLICIT, dokumenteret procedure i stedet for den tidligere implicitte identitets-spoofing:
+  - Ny tabel `BreakGlassCheckoutAudit` (`headend/database.py`) — permanent historik over ALLE checkouts (i modsætning til `BreakGlassAccount.last_used_by`/`rotation_reason`, som kun holder det SENESTE checkout og overskrives ved næste rotation — et reelt hul, nu lukket som sidegevinst).
+  - `checkout_break_glass()` tager nu et valgfrit `on_behalf_of`-felt — en admin checker STADIG kun sin EGEN konto ud (C-06-garantien er uændret, ingen impersonation), men kan nu formelt notere hvilken kollega de hjælper og hvorfor. Feltet er eksplicit dokumenteret som IKKE-autoritativt (ændrer intet ved hvem den autentificerede aktør er eller hvilken konto der slås op) — kun en markør til senere gennemgang.
+  - Ny endpoint `GET /{device_id}/break-glass/checkout-history` — fuld, læsbar historik (admin-only, device-access-scoped, aldrig passwords).
+  - UI (`CMDBPage.tsx`): checkout-modal har nu et "Hjælper du en kollega uden central-adgang?"-felt, og break-glass-panelet har en "Vis historik"-knap der viser alle tidligere checkouts inkl. "på vegne af"-markering.
+- Hvad mangler / næste skridt: Fortsætter nu til den resterende C-01..C-10/U-01..U-15 spot-check-gennemgang fra `MASTER_REVIEW_CLOSURE_2026-08-15.md` (7 af C-punkterne + hele U-listen ikke tjekket endnu) — Peter gav eksplicit grønt lys til at fikse hvad der findes ("alle fejl er vores fejl").
+- Kommandoer kørt: `git worktree add /tmp/timelapse-breakglass-delegation`; `.venv/bin/pytest` (nye tests + fuld CI-ækvivalent kørsel, 1026 passed); `npx tsc -b`; `npx eslint`; `npx vite build`.
+- Forventet/faktisk output: Fuld CI-ækvivalent kørsel grøn (1026 passed, op fra 1022 — 4 nye tests). Frontend build/typecheck rene, samme 3 pre-eksisterende ESLint-fejl uden for rørte hunks.
+- Filer rørt: `headend/database.py`, `headend/cmdb.py`, `headend/tests/test_break_glass_checkout_delegation_audit.py` (ny), `timelapse-ui/src/pages/CMDBPage.tsx`.
+- Risici / pas på: `on_behalf_of` er bevidst fri tekst, ikke valideret mod `users`-tabellen — det er en dokumentations-markør, ikke en autentificeringspåstand, og skal ALDRIG bruges som grundlag for adgangsbeslutninger. Nævnt eksplicit i både kode-docstring og UI-hjælpetekst for at undgå fremtidig misforståelse af feltets autoritet.
+
 ### Handover 2026-08-20 — fra Claude til Peter/Claude: C-06 lukket — break-glass audit-actor bundet til autentificeret session, ikke client-payload
 
 - Hvad er gjort: Efter Peters gennemgang af Kimi/ChatGPT-fundene og eksplicit grønt lys ("Hvis der er noget der skal rettes, så - ja tak") lukkede jeg C-06 fra `MASTER_REVIEW_CLOSURE_2026-08-15.md` (dokumentet selv nåede aldrig main — PR #30 er CLOSED, ikke MERGED — men fundet er reelt og blev verificeret direkte i koden).
