@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { BookOpen, LifeBuoy, Search, ShieldCheck, UserRound, Wrench } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { Markdown } from '../help/markdown'
@@ -109,24 +110,30 @@ export function HelpPage() {
   const isAdmin = hasRole('super_admin', 'admin')
   const visibleDocs = useMemo(() => DOCS.filter((d) => !d.adminOnly || isAdmin), [isAdmin])
 
-  const [selectedSlug, setSelectedSlug] = useState('faq')
+  // URL'en er sandheden: /help?d=<doc>&h=<overskrift> — så hjælpelinks kan deles
+  // og den flydende hjælpeknap på hver side kan linke direkte til sit kapitel.
+  const [searchParams, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState('')
 
-  const selected = visibleDocs.find((d) => d.slug === selectedSlug) ?? visibleDocs[0]
+  const selected = visibleDocs.find((d) => d.slug === searchParams.get('d')) ?? visibleDocs[0]
   const headings = useMemo(() => extractHeadings(selected.source), [selected])
   const hits = useMemo(() => searchDocs(visibleDocs, query), [visibleDocs, query])
 
-  function goto(docSlug: string, headingId?: string) {
-    setSelectedSlug(docSlug)
-    setQuery('')
-    if (headingId) {
-      // Vent til React har renderet det nye dokument, scroll derefter til overskriften
-      setTimeout(() => {
-        document.getElementById(headingId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // Scroll til ankeret når URL'en ændres (efter React har renderet dokumentet)
+  useEffect(() => {
+    const h = searchParams.get('h')
+    if (h) {
+      const timer = setTimeout(() => {
+        document.getElementById(h)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }, 50)
-    } else {
-      setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 0)
+      return () => clearTimeout(timer)
     }
+    window.scrollTo({ top: 0 })
+  }, [searchParams])
+
+  function goto(docSlug: string, headingId?: string) {
+    setQuery('')
+    setSearchParams(headingId ? { d: docSlug, h: headingId } : { d: docSlug })
   }
 
   return (
