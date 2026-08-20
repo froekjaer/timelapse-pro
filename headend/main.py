@@ -8769,7 +8769,13 @@ def _os_bundle_auto_build_pending() -> None:
     Finder alle pending OS-updates uden artifact og bygger et offline .deb bundle
     via fetch_os_bundle.py (Python-mode, kræver ikke Docker).
 
-    Bruger første super_admin som systembruger til artifact-signering.
+    Bruger et system-principal til artifact-signering — IKKE en rigtig
+    super_admin-konto (U-12: dette tilskrev tidligere artifact-oprettelse til den
+    første super_admin i databasen, hvilket falsk lod det se ud som om et
+    menneske havde godkendt/signeret en automatisk bygget artifact. Samme mønster
+    som _auto_approve_update_for_target() allerede bruger korrekt for
+    policy-godkendelser: en transient, ikke-persisteret User med et
+    "system:"-præfikset brugernavn og role="system").
     """
     import sys as _sys
 
@@ -8788,16 +8794,8 @@ def _os_bundle_auto_build_pending() -> None:
         if not pending:
             return
 
-        # System-bruger til auto-signering
-        system_user = (
-            db.query(User)
-            .filter(User.role == "super_admin")
-            .order_by(User.id)
-            .first()
-        )
-        if not system_user:
-            log.warning("OS bundle auto-poller: ingen super_admin fundet — springer over")
-            return
+        # System-principal til auto-signering — se docstring ovenfor (U-12).
+        system_user = User(username="system:auto-os-bundle-builder", role="system", password_hash="")
 
         for update in pending:
             # Tjek om artifact allerede er bundet

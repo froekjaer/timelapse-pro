@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-20 (5) — fra Claude til Peter/Claude: U-12 lukket — auto OS-bundle-builder tilskriver ikke længere signering til en tilfældig super_admin
+
+- Hvad er gjort: `_os_bundle_auto_build_pending()` (den ubetjente baggrundsjob der bygger offline OS-update-bundles) hentede tidligere "den første super_admin" fra databasen og brugte den kontos brugernavn som `manifest["created"]["by"]` i den signerede artifact — dvs. hvis den konto senere kiggede i audit-loggen, ville det se ud som om DE havde bygget/godkendt et bundle de aldrig havde set. Samme fejlklasse som C-06 (falsk tilskrivning af en automatiseret handling til en rigtig, navngiven konto). Rettet ved at genbruge det mønster `_auto_approve_update_for_target()` allerede bruger korrekt for policy-auto-godkendelser: en transient, IKKE-persisteret `User(username="system:auto-os-bundle-builder", role="system", password_hash="")` i stedet for et DB-opslag efter en rigtig super_admin-konto. Bekræftede at `catalog_os_update_artifact()` kun læser `current_user.username` til manifestet (ingen `.id`/FK-afhængighed), så den transiente bruger er sikker at bruge.
+- Hvad mangler / næste skridt: Resterende bekræftet OPEN fra samme runde: U-01 (interrupted app-install kan ødelægge `prev`-rollback-kilden ved retry — `edge/agent.py`), U-03 (delvist — file-copy er ikke atomisk/transaction-like), U-04 (ingen disk-space preflight før update-staging), U-14 (ingen blast-radius-preview og INGEN bekræftelsesdialog overhovedet ved "reject" af en opdatering, uanset omfang). C-08 og C-10 afventer stadig Peters retning (fysisk hardware-adfærd hhv. hele sessionsmodellen).
+- Kommandoer kørt: `git worktree add /tmp/timelapse-u12`; `.venv/bin/pytest` (1 ny test + fuld CI-ækvivalent kørsel, 1037 passed).
+- Forventet/faktisk output: Fuld CI-ækvivalent kørsel grøn (1037 passed). Ratchet uændret.
+- Filer rørt: `headend/main.py`, `headend/tests/test_u12_os_bundle_builder_system_principal.py` (ny).
+- Risici / pas på: Ingen funktionel adfærdsændring for legitime OS-bundle-builds — kun hvem artifact-manifestet tilskrives. Bemærk at funktionen tidligere sprang bygningen helt over hvis INGEN super_admin fandtes i databasen (`log.warning("...ingen super_admin fundet...")`) — den guard er væk nu, da den ikke længere er nødvendig (systemprincipalen kræver ikke en eksisterende DB-konto), så auto-builderen kører nu uafhængigt af om der findes en super_admin-konto overhovedet.
+
 ### Handover 2026-08-20 (4) — fra Claude til Peter/Claude: C-09 (Edge private key-lækage via legacy key-management) og C-07 (path traversal i edge-backup-complete) lukket
 
 - Hvad er gjort: Fortsatte spot-check-runden (samme 5 Explore-agenter som forrige entries).
