@@ -67,3 +67,5 @@ curl -s http://<headend>:8000/api/config/TL-XXX | python3 -m json.tool | head -1
 ## 6. Reverse SSH-provisioning
 
 Reverse SSH (ED25519, autossh -R) med customer approval — teknikerens flow beskrevet i `ADMINISTRATORMANUAL_v10.md` (Edge-management) og `RISK_ASSESSMENT_v10.md` (R10/§14 Key Management).
+
+**Opdatering 2026-08-20 (PR #73, SEC-ZAI-05/15):** Edge-enheden ejer selv sin operationelle SSH-identitet. Headend genererer, gemmer eller injicerer **ikke** længere Edge private keys — key-management er public-key-only for `entity_type=edge`, og legacy `Camera.ssh_private_key`-data er pensioneret fra alle aktive flows (410 Gone). Første legacy-konvergens skal sikre at enheden har/genererer sin egen nøgle **før** gamle escrow-data fjernes destruktivt. Browserterminal i UI'en (`/ssh-tunnel`) kræver at enhedens host identity er trusted/verified — ellers er den deaktiveret med begrundelse.

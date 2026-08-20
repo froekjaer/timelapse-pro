@@ -16,7 +16,9 @@
 | `GO_LIVE_CHECKLIST_v10.md` | Konkrete krav før Headend sættes på Internet og domænet skifter |
 | `PORT_AUDIT_og_WEBSITE_v10.md` | Portkrav, aktuelle afvigelser og plan for `www.timelapse-pro.dk` / `backend.timelapse-pro.dk` |
 | `BRUGERMANUAL_v10.md` | Brugermanual for kunde/site manager/almindelig bruger |
+| `MENUGUIDE_BRUGER_v1.md` | Menu-for-menu beskrivelse af alle bruger-sider (felt-for-felt, rollekrav, fejlfinding) |
 | `ADMINISTRATORMANUAL_v10.md` | Administratormanual for drift, sikkerhed, update, backup, CMDB og go-live |
+| `MENUGUIDE_ADMIN_v1.md` | Menu-for-menu beskrivelse af alle admin-sider og Admin-dropdownens undermenuer |
 | `Timelapse_pro_full_documentation_v10.md` | Samlet systemdokumentation (arkitektur, komponenter, flows) |
 | `SABSA_Architecture_v10.md` | SABSA-arkitektur (konsolideret fra .docx v3–v9) |
 | `REGULATORISK_OG_STANDARD_REFERENCE_v1.md` | Living EU/Danmark regulatory horizon og standardreference for AI, cyber, privacy, produkt og OT |
@@ -48,7 +50,8 @@ De nyeste/gældende dokumenter er vægtet højest.
 | Kamera | Ældre docs er Canon EOS-orienterede; aktivt kamera er Nikon Z30 | Nikon Z30 profil er gældende; færdiggøres i LAB/fokus/video |
 | Backup | Docs omtaler backup, men restore-test mangler | Ikke production-godkendt før restore-test foreligger |
 | Node-agent | CMDB/GRC kræver frisk inventory; reassessment viser node-agent stoppet | Genetabler node-agent før go-live |
-| Open WebUI | UI/link findes, men service/rolle uklar | Beslut lab-only eller prod-komponent med launchd, health, RBAC, non-standard loopback port |
+| Open WebUI | UI/link findes, men service/rolle uklar | **Løst (2026-08-20-markeret):** Open WebUI-runtime er committet (`headend/openwebui_runtime.py`, R27 lukket), siden `/openwebui` er admin-gated, og Ollama-runtime-styring (Normal/Pause/Lav-memory) er bygget 2026-07-20. Status: lab-komponent med launchd + RBAC. Sektionen "Peter vil gerne lege med Ollama" er eksplicit eksperimentel |
+| Edge polling | Ældre design-docs beskriver separate heartbeat/config/SIEM-loops | **Løst (2026-08-19, PR #76):** konsolideret til én sync-poll (`sync_poll_interval_minutes`, default 5 min, `POST /api/edge/sync/{device_id}`). `docs/admin-guide.md` er opdateret; `docs/system-wide-poll-mechanisms.md` og `docs/drift-mode-optimering.md` er markeret som historiske |
 | Storage | Ældre paths peger på `/Volumes/data`; aktiv storage er `/Volumes/data-fast` | `/Volumes/data-fast` er canonical; startup-preflight og single source of truth mangler |
 
 ## Samlet status

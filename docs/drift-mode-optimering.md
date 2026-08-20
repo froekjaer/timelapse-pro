@@ -1,5 +1,7 @@
 # Drift Mode Optimering — Data og Strøm
 
+> ⚠️ **Historisk design-dokument (2026-08-20):** Poll-arkitekturen beskrevet her (separate `heartbeat_interval_minutes` / `config_poll_interval_minutes`-loops) er erstattet af én konsolideret sync-poll (`sync_poll_interval_minutes`, `POST /api/edge/sync/{device_id}`) pr. PR #76, 2026-08-19. For aktuel adfærd se `docs/admin-guide.md`. Dokumentet beholdes som designhistorik.
+
 **Version:** 1.0
 **Dato:** 13. juli 2026
 **Fokus:** Normal drift mode (ikke LAB mode)
