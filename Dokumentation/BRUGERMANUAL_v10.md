@@ -4,6 +4,7 @@
 **Dato:** 2026-07-02 (opdateret 2026-07-12 med F-012 Site-Wide Look Matching)
 **Målgruppe:** Kunde, site manager, projektleder og almindelig bruger
 **Status:** Pre-production manual. Skærmnavne kan ændre sig lidt, men arbejdsgangen er gældende.
+**Se også:** `MENUGUIDE_BRUGER_v1.md` — menu-for-menu beskrivelse af hver side i UI'en (felt-for-felt). `FAQ_og_fejlsøgning.md` — spørgsmål/svar til de hyppigste problemer.
 **Konsoliderer:** `BRUGERMANUAL_2026-06-23.md`, `Claude_BRUGERMANUAL_2026-06-23.md`, `Codex_BRUGERMANUAL_2026-06-23.md` (tidligere versioner arkiveret i `Gamle versioner/`).
 
 ## 1. Login
