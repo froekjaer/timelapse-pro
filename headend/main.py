@@ -3569,14 +3569,19 @@ def create_key_credential(
         expires_at = now + timedelta(days=int(payload.expires_days))
     credential_id = f"TL-KEY-{now:%Y%m%d}-{_secrets.token_hex(6)}"
     secret_once = None
-    if entity_type == "edge" and key_type == "ssh":
+    # WP-4 (C-09): Edge-ejede private nøgler må ALDRIG genereres på Headend — hverken
+    # SSH- eller signing-nøgler. Denne guard dækkede tidligere kun key_type=="ssh";
+    # "signing" faldt igennem til _generate_ed25519_keypair() nedenfor og lækkede en
+    # Edge private key via Headend-API'et. Se WP-4 provisioning (headend/trust/provisioning.py)
+    # for den korrekte CSR-baserede vej.
+    if entity_type == "edge" and key_type in {"ssh", "signing"}:
         if payload.generate_keypair:
             raise HTTPException(
                 status_code=409,
-                detail="Edge SSH private keys skal genereres lokalt på Edge; registrér en Edge-leveret public key.",
+                detail="Edge private keys skal genereres lokalt på Edge; registrér en Edge-leveret public key.",
             )
         if not (payload.public_key or "").strip():
-            raise HTTPException(status_code=400, detail="Edge-leveret public key er påkrævet for Edge SSH identity")
+            raise HTTPException(status_code=400, detail="Edge-leveret public key er påkrævet for Edge SSH/signing identity")
 
     private_key_once = None
     public_key = payload.public_key.strip() if payload.public_key else None
@@ -15799,7 +15804,12 @@ def edge_backup_complete(device_id: str, payload: dict, _user=require_role("oper
     if not device:
         raise HTTPException(status_code=404)
 
-    filename = payload.get("filename", "")
+    # C-07: filnavnet kommer fra request-body (Edge-rapporteret) og blev tidligere brugt
+    # direkte i os.path.join() til BÅDE kilde- og destinationssti uden sanitering — en
+    # "../../../etc/passwd"-agtig værdi kunne flytte en vilkårlig fil ind i/ud af
+    # backup-mappen (samme sårbarhedsklasse som C-01, path_security.py). Genbruger den
+    # allerede etablerede _sanitize_filename() (basename-only, afviser "..", allowlist-tegn).
+    filename = _sanitize_filename(payload.get("filename", ""))
 
     # Filen er landet i SFTP incoming — flyt den lokalt til backup mappe
     SFTP_INCOMING = "/data/sftp/incoming"
