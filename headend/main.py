@@ -4334,6 +4334,7 @@ def get_device_config_admin(
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device ikke fundet")
+    _ensure_capture_device_access(db, _user, device_id)
 
     # Brug samme merge-logik som get_config
     from sqlalchemy.orm import Session as _S
@@ -4353,6 +4354,7 @@ def update_device_config(
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    _ensure_capture_device_access(db, _user, device_id)
 
     existing = {}
     if device.device_config:
@@ -5562,6 +5564,7 @@ def get_device_camera_location(
 ):
     """Returnerer den aktive kamera-lokation (Camera) som en device er tildelt."""
     from database import Camera, DeviceAssignment, Customer, Site
+    _ensure_capture_device_access(db, _user, device_id)
     assignment = (
         db.query(DeviceAssignment)
         .filter_by(device_id=device_id)
@@ -11634,6 +11637,7 @@ def edge_report_inventory(
 
 @app.post("/api/admin/devices/{device_id}/cmdb/reconcile-baseline")
 def reconcile_device_cmdb_baseline(device_id: str, current_user=require_role("admin", "super_admin"), db: Session = Depends(get_db)):
+    _ensure_capture_device_access(db, current_user, device_id)
     from services.cmdb_baseline_drift import reconcile_device_baseline; return reconcile_device_baseline(db, device_id, current_user.username)
 
 @app.get("/health")
@@ -16805,16 +16809,38 @@ def test_notification(payload: dict, _user=require_role("admin"), db: Session = 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+_SETTINGS_SECRET_MASK = "••••••••"
+_SETTINGS_SECRET_KEY_MARKERS = ("password", "secret", "token", "api_key", "apikey", "private_key")
+
+
+def _is_secret_setting_key(key: str) -> bool:
+    """C-05: hvilke nøgler i den flade `settings`-tabel skal maskeres ved readback.
+    Substring-baseret (ikke en fast liste) så nye password/secret/token/api_key-agtige
+    nøgler også dækkes automatisk fremover, uden at kræve en kode-ændring hver gang."""
+    lowered = key.lower()
+    return any(marker in lowered for marker in _SETTINGS_SECRET_KEY_MARKERS)
+
+
 @app.get("/api/admin/settings")
 def get_settings(_user=require_role("admin"), db: Session = Depends(get_db)):
-    """Returner alle system settings."""
+    """Returner alle system settings. Secret-agtige nøgler (password/secret/token/api_key)
+    maskeres til '••••••••' — enhver admin kunne før dette hente fx sftp_password og
+    bt_totp_secret i klartekst (C-05). PUT nedenfor ignorerer masken hvis den sendes
+    uændret tilbage, så UI'en kan redigere andre felter uden at nulstille secrets."""
     rows = db.execute(text("SELECT key, value FROM settings")).fetchall()
-    return {row[0]: row[1] for row in rows}
+    return {
+        row[0]: (_SETTINGS_SECRET_MASK if _is_secret_setting_key(row[0]) and row[1] else row[1])
+        for row in rows
+    }
 
 @app.put("/api/admin/settings")
 def update_settings(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
-    """Opdater system settings."""
+    """Opdater system settings. Secret-agtige nøgler springes over hvis værdien er den
+    maskerede placeholder ('••••••••') — dvs. uændret siden GET — så et gemt formular-felt
+    aldrig ved et uheld overskriver en eksisterende secret med selve masken."""
     for key, value in payload.items():
+        if _is_secret_setting_key(key) and str(value) == _SETTINGS_SECRET_MASK:
+            continue
         existing = db.execute(text("SELECT id FROM settings WHERE key = :k"), {"k": key}).fetchone()
         if existing:
             db.execute(text("UPDATE settings SET value = :v WHERE key = :k"), {"v": str(value), "k": key})
