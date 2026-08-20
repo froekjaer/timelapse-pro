@@ -892,10 +892,13 @@ def update_cmdb(device_id: str, payload: dict, _user=Depends(_require_cmdb_role(
 @router.post("/{device_id}/break-glass")
 def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """
-    Admin opretter en break-glass konto for en enhed.
+    Admin opretter sin egen break-glass konto for en enhed.
+
+    Ejerskab (admin_username) bindes til den autentificerede sessions brugernavn,
+    ikke til request-body — en admin kan ikke oprette eller overtage en konto i en
+    anden admins navn (C-06: audit-actor skal være den autentificerede principal).
 
     Body:
-        admin_username  (str)  Hvilken admin-konto der ejer denne adgang
         ssh_username    (str, optional) Standard: "emergency"
         public_key      (str, optional) SSH public key til authorized_keys
         expires_days    (int, optional) Antal dage til udløb (0 = udløber ikke)
@@ -904,9 +907,7 @@ def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmd
     — brug /checkout for at hente det.
     """
     _ensure_device_access(db, _user, device_id)
-    admin_username = payload.get("admin_username")
-    if not admin_username:
-        raise HTTPException(status_code=400, detail="admin_username påkrævet")
+    admin_username = _user.username
 
     # Tjek om der allerede eksisterer en aktiv konto
     existing = db.query(BreakGlassAccount).filter_by(
@@ -979,15 +980,18 @@ def list_break_glass(device_id: str, _user=Depends(_require_cmdb_role("admin")),
 @router.post("/{device_id}/break-glass/checkout")
 def checkout_break_glass(device_id: str, payload: dict, request: Request = None, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """
-    Checkout break-glass password.
+    Checkout break-glass password for den autentificerede admins egen konto.
 
     - Dekrypterer og returnerer det aktuelle password
     - Genererer straks et NYT password og krypterer det (rotation)
     - Logger tidspunkt og bruger
     - TODO Sprint CMDB-2: push nyt password til edge via SSH
 
+    admin_username bindes til den autentificerede sessions brugernavn, ikke til
+    request-body (C-06: audit-actor skal være den autentificerede principal — en
+    admin kan ellers checke ud og lade audit-loggen pege på en anden admin).
+
     Body:
-        admin_username  (str)  Hvilken admin der checker ud
         reason          (str)  Årsag til adgang (til audit log)
 
     SIKKERHED: Denne endpoint skal i produktion kræve:
@@ -996,11 +1000,8 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
         3. Rate limiting (maks 3 checkouts pr. time)
     """
     _ensure_device_access(db, _user, device_id)
-    admin_username = payload.get("admin_username")
+    admin_username = _user.username
     reason = payload.get("reason", "Ikke angivet")
-
-    if not admin_username:
-        raise HTTPException(status_code=400, detail="admin_username påkrævet")
 
     # Opt-in hærdning (rate-limit + IP-allowlist); no-op når env ikke er sat.
     _enforce_break_glass_policy(request, device_id, admin_username)
