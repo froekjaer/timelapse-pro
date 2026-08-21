@@ -101,6 +101,35 @@ def migrate_user_ssh_keys_table(engine) -> None:
     except Exception as exc:
         log.warning("DB migration user_ssh_keys fejl: %s", exc)
 
+
+def drop_orphaned_device_credential_columns(engine) -> None:
+    """Remove devices.{ssh_private_key,bt_totp_secret,factory_totp_disabled,
+    shared_ssh_key_disabled} — FIND-DEVICES-PLAINTEXT-SSH-KEY-COLUMN (2026-08-19):
+    devices.ssh_private_key held real, unencrypted OpenSSH private keys for
+    2 production devices; none of these 4 columns were ever read or written
+    by any code. Leftovers from a third, abandoned "give the device its own
+    credentials" design — never the same as the merged BreakGlassAccount or
+    the closed/unmerged PR #9. Peter decided 2026-08-21: consolidate on
+    BreakGlassAccount (password) + RBAC technician keys (#79/#95); this third
+    variant is retired, not developed further. Confirmed the same night that
+    the exposed keys don't match anything actually trusted on either device
+    today (direct SSH attempts refused) — this is cleanup of exposed-but-
+    inert secret material, not revocation of live access."""
+    try:
+        with engine.connect() as conn:
+            for column in (
+                "ssh_private_key", "bt_totp_secret",
+                "factory_totp_disabled", "shared_ssh_key_disabled",
+            ):
+                try:
+                    conn.execute(text(f"ALTER TABLE devices DROP COLUMN IF EXISTS {column}"))
+                    conn.commit()
+                except Exception:
+                    pass
+        log.info("DB migration: orphaned devices credential columns fjernet")
+    except Exception as exc:
+        log.warning("DB migration orphaned devices-kolonner fejl: %s", exc)
+
 _ALLOWED_KEY_PREFIXES = ("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")
 
 
