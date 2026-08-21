@@ -7,6 +7,11 @@ Before=timelapse-totp.service
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=-/etc/timelapse/time-sync.env
+# Logmappen oprettes normalt som sideeffekt af timelapse-bt-pan.service, men
+# denne service har ingen ordering-afhængighed af den overhovedet (kun
+# network.target) — opret den selv i stedet for at gætte på boot-rækkefølge.
+# Se HANDOVER_LOG 2026-08-21.
+ExecStartPre=/bin/mkdir -p /var/log.hdd/timelapse
 ExecStart=/bin/bash /opt/timelapse/edge/scripts/sync-time.sh
 StandardOutput=append:/var/log.hdd/timelapse/time-sync.log
 StandardError=append:/var/log.hdd/timelapse/time-sync.log
