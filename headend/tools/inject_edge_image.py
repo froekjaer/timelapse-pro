@@ -549,12 +549,21 @@ fi
 # (edge/scripts/technician_authorized_keys.py), der dynamisk resolver hvilke
 # personlige nøgler der er gyldige for denne enhed lige nu. Se
 # Dokumentation/HANDOVER_LOG.md 2026-08-19/21. IKKE break-glass — det er en
-# separat konto (emergency), med sit eget password-baserede flow.
+# separat konto (emergency), med sit eget password-baserede flow. UID 1002 er
+# allerede i brug af "emergency" på begge live-enheder i dag (manuelt
+# provisioneret, ingen kode gør det endnu — se BreakGlassAccount's TODO) —
+# find derfor et reelt ledigt UID fremfor at antage 1002 er frit.
 if ! grep -q "^servicetekniker:" /mnt/root/etc/passwd 2>/dev/null; then
     echo "[inject] Opretter servicetekniker bruger..."
-    echo "servicetekniker:x:1002:1002:TimeLapse Pro Servicetekniker,,,:/home/servicetekniker:/bin/bash" \
+    SVCTECH_UID=1003
+    while grep -q ":${SVCTECH_UID}:${SVCTECH_UID}:" /mnt/root/etc/passwd 2>/dev/null \
+       || grep -q "^[^:]*:[^:]*:${SVCTECH_UID}:" /mnt/root/etc/passwd 2>/dev/null; do
+        SVCTECH_UID=$((SVCTECH_UID + 1))
+    done
+    echo "[inject]   Bruger UID/GID ${SVCTECH_UID}"
+    echo "servicetekniker:x:${SVCTECH_UID}:${SVCTECH_UID}:TimeLapse Pro Servicetekniker,,,:/home/servicetekniker:/bin/bash" \
         >> /mnt/root/etc/passwd
-    echo "servicetekniker:!:1002:" >> /mnt/root/etc/group
+    echo "servicetekniker:!:${SVCTECH_UID}:" >> /mnt/root/etc/group
     mkdir -p /mnt/root/home/servicetekniker
     # Låst password — pubkey-only, udelukkende via AuthorizedKeysCommand.
     if [ -f /mnt/root/etc/shadow ]; then
@@ -833,7 +842,10 @@ chown -R 1001:1001 \
     /mnt/root/run/timelapse \
     /mnt/root/home/timelapse \
     2>/dev/null || true
-chown -R 1002:1002 /mnt/root/home/servicetekniker 2>/dev/null || true
+SVCTECH_ACTUAL_UID=$(grep "^servicetekniker:" /mnt/root/etc/passwd 2>/dev/null | cut -d: -f3)
+if [ -n "$SVCTECH_ACTUAL_UID" ]; then
+    chown -R "${SVCTECH_ACTUAL_UID}:${SVCTECH_ACTUAL_UID}" /mnt/root/home/servicetekniker 2>/dev/null || true
+fi
 chmod 700 /mnt/root/etc/timelapse/device_keys
 
 # ── Unmount ───────────────────────────────────────────────────────────────────
