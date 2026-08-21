@@ -2092,6 +2092,14 @@ def _sync_totp_from_headend() -> str:
     """Hent TOTP secret fra headend (via config-hierarki) og opdater bt-config.yaml.
     Kaldes KUN ved eksplicit brugerhandling — aldrig automatisk ved boot.
     Returnerer statusbesked til management-UI.
+
+    Delegates the actual file-write to utils.bt_totp_sync.sync_bt_totp_config(),
+    the same function edge/agent.py's automatic sync and
+    bootstrap_cli.py --totp-sync use — one implementation instead of three
+    independently-maintained copies of the same fetch/compare/write/restart
+    logic (see Dokumentation/HANDOVER_LOG.md 2026-08-21: the automatic path
+    silently diverging from what this button did was invisible for hours
+    specifically because there was nothing forcing the two to agree).
     """
     try:
         edge_cfg = _fetch_headend_config(load_config())
@@ -2099,23 +2107,16 @@ def _sync_totp_from_headend() -> str:
             msg = "Ingen forbindelse til CMDB — device_id eller headend_url mangler"
             log.warning("TOTP sync: %s", msg)
             return msg
-        bt_totp    = edge_cfg.get("bt_totp", {})
-        new_secret = bt_totp.get("secret", "")
-        new_sid    = bt_totp.get("sid", "")
-        if not new_secret:
+        bt_totp = edge_cfg.get("bt_totp", {})
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from utils.bt_totp_sync import sync_bt_totp_config
+        result = sync_bt_totp_config(bt_totp, Path(CONFIG_FILE))
+        new_sid = bt_totp.get("sid", "")
+        if result == "no-secret":
             return "CMDB returnerede intet TOTP-secret — ingen ændring"
-        cfg = load_config()
-        if cfg["totp"].get("secret") == new_secret and cfg["totp"].get("sid") == new_sid:
+        if result == "unchanged":
             return f"Allerede opdateret (sid={new_sid}) — ingen ændring nødvendig"
-        cfg["totp"]["secret"] = new_secret
-        cfg["totp"]["sid"] = new_sid
-        save_config(cfg)
         log.info("TOTP sync: opdateret → sid=%s", new_sid)
-        # Genstart totp-service så nyt secret træder i kraft (non-blocking)
-        subprocess.Popen(
-            ["sudo", "systemctl", "restart", "timelapse-totp.service"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
         return f"✓ TOTP opdateret til sid={new_sid} — service genstarter"
     except Exception as e:
         msg = f"Sync fejlede: {e}"

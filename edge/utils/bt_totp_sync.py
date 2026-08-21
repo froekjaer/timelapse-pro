@@ -83,5 +83,13 @@ def sync_bt_totp_config(
     log.info("BT-TOTP synkroniseret fra headend (sid=%s)", new_sid)
     if restart_service:
         log.info("Genstarter timelapse-totp efter BT-TOTP sync")
-        subprocess.run(["systemctl", "restart", "timelapse-totp.service"], check=False)
+        # Popen, not run(): totp-service.py itself is one of this function's
+        # callers, restarting its own systemd unit from inside a request
+        # handler. A blocking call here would wait on a process (itself)
+        # that can't finish responding until this call returns — fire and
+        # forget, same as the original totp-service.py implementation did.
+        subprocess.Popen(
+            ["systemctl", "restart", "timelapse-totp.service"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
     return "synced"

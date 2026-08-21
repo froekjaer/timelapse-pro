@@ -22,13 +22,14 @@ def test_sync_writes_new_secret_and_restarts_totp_service(tmp_path, monkeypatch)
     monkeypatch.setattr(edge_agent.EdgeAgent, "BT_TOTP_CONFIG_PATH", config_path)
     agent = _make_agent()
 
-    with patch.object(edge_agent.subprocess, "run") as run_mock:
+    with patch.object(edge_agent.subprocess, "Popen") as popen_mock:
         agent._sync_bt_totp_config({"secret": "REALSECRET123", "sid": "camera-abc"})
 
     written = edge_agent.yaml.safe_load(config_path.read_text())
     assert written["totp"] == {"secret": "REALSECRET123", "sid": "camera-abc"}
-    run_mock.assert_called_once_with(
-        ["systemctl", "restart", "timelapse-totp.service"], check=False
+    popen_mock.assert_called_once_with(
+        ["systemctl", "restart", "timelapse-totp.service"],
+        stdout=edge_agent.subprocess.DEVNULL, stderr=edge_agent.subprocess.DEVNULL,
     )
 
 
@@ -38,13 +39,13 @@ def test_sync_is_a_noop_when_headend_has_no_secret_yet(tmp_path, monkeypatch):
     monkeypatch.setattr(edge_agent.EdgeAgent, "BT_TOTP_CONFIG_PATH", config_path)
     agent = _make_agent()
 
-    with patch.object(edge_agent.subprocess, "run") as run_mock:
+    with patch.object(edge_agent.subprocess, "Popen") as popen_mock:
         agent._sync_bt_totp_config({"secret": "", "sid": "unprovisioned"})
 
     # Factory secret must survive untouched — never overwritten with nothing.
     written = edge_agent.yaml.safe_load(config_path.read_text())
     assert written["totp"]["secret"] == "FACTORYSECRET"
-    run_mock.assert_not_called()
+    popen_mock.assert_not_called()
 
 
 def test_sync_is_idempotent_when_already_up_to_date(tmp_path, monkeypatch):
@@ -53,10 +54,10 @@ def test_sync_is_idempotent_when_already_up_to_date(tmp_path, monkeypatch):
     monkeypatch.setattr(edge_agent.EdgeAgent, "BT_TOTP_CONFIG_PATH", config_path)
     agent = _make_agent()
 
-    with patch.object(edge_agent.subprocess, "run") as run_mock:
+    with patch.object(edge_agent.subprocess, "Popen") as popen_mock:
         agent._sync_bt_totp_config({"secret": "REALSECRET123", "sid": "camera-abc"})
 
-    run_mock.assert_not_called()
+    popen_mock.assert_not_called()
 
 
 def test_sync_preserves_other_management_settings_in_the_file(tmp_path, monkeypatch):
@@ -68,7 +69,7 @@ def test_sync_preserves_other_management_settings_in_the_file(tmp_path, monkeypa
     monkeypatch.setattr(edge_agent.EdgeAgent, "BT_TOTP_CONFIG_PATH", config_path)
     agent = _make_agent()
 
-    with patch.object(edge_agent.subprocess, "run"):
+    with patch.object(edge_agent.subprocess, "Popen"):
         agent._sync_bt_totp_config({"secret": "REALSECRET123", "sid": "camera-abc"})
 
     written = edge_agent.yaml.safe_load(config_path.read_text())
@@ -81,7 +82,7 @@ def test_sync_creates_file_atomically_with_root_only_permissions(tmp_path, monke
     monkeypatch.setattr(edge_agent.EdgeAgent, "BT_TOTP_CONFIG_PATH", config_path)
     agent = _make_agent()
 
-    with patch.object(edge_agent.subprocess, "run"):
+    with patch.object(edge_agent.subprocess, "Popen"):
         agent._sync_bt_totp_config({"secret": "REALSECRET123", "sid": "camera-abc"})
 
     assert config_path.exists()
