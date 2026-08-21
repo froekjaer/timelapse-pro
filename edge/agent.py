@@ -1283,6 +1283,20 @@ class EdgeAgent:
         except Exception as exc:
             log.warning("Could not apply headend config: %s", exc)
 
+        # BT-TOTP secret (lokal Servicetekniker-adgang) — SEC-016-BOOTSTRAP-GAP.
+        # Deliberately OUTSIDE the config_version gate above: that gate is a
+        # legitimate optimization for expensive/disruptive changes, but wrong
+        # here. sync_bt_totp_config() is cheap and idempotent — a file read
+        # plus string compare when nothing changed — so it runs on every poll.
+        # A device whose cached config_version already equals Headend's current
+        # hash (e.g. because a prior poll's version write succeeded while this
+        # write didn't) would otherwise never get another chance to converge;
+        # the version compare keeps matching forever while the file stays wrong.
+        try:
+            self._sync_bt_totp_config(data.get("bt_totp", {}))
+        except Exception as exc:
+            log.warning("BT-TOTP auto-sync fejl: %s", exc)
+
     def _check_backup_request(self) -> None:
         """Run a Headend-requested Edge backup once."""
         backup_requested = self._cfg.get("backup_requested") is True
@@ -1405,12 +1419,6 @@ class EdgeAgent:
         except Exception as exc:
             log.warning("SSH tunnel live apply fejl: %s", exc)
 
-        # BT-TOTP secret (lokal Servicetekniker-adgang) — SEC-016-BOOTSTRAP-GAP
-        try:
-            self._sync_bt_totp_config(data.get("bt_totp", {}))
-        except Exception as exc:
-            log.warning("BT-TOTP auto-sync fejl: %s", exc)
-
         # Lab mode
         try:
             debug_cfg = data.get("debug_mode", {})
@@ -1443,35 +1451,13 @@ class EdgeAgent:
         på headend), så dette introducerer ingen ny tillidsgrænse — kun det
         allerede-autoriserede config-svar bliver nu også anvendt lokalt uden
         at kræve et separat manuelt klik.
+
+        Delegates to utils.bt_totp_sync.sync_bt_totp_config(), which
+        bootstrap_cli.py --totp-sync also calls, so there is one
+        implementation of the actual file-write logic.
         """
-        new_secret = str(bt_totp.get("secret") or "")
-        new_sid = str(bt_totp.get("sid") or "")
-        if not new_secret or not new_sid or new_sid == "unprovisioned":
-            return  # intet reelt secret sat i hierarkiet endnu — rør ikke fabrikssecretet
-
-        path = self.BT_TOTP_CONFIG_PATH
-        try:
-            current = yaml.safe_load(path.read_text()) if path.exists() else {}
-        except Exception:
-            current = {}
-        current = current if isinstance(current, dict) else {}
-        current_totp = current.get("totp") or {}
-        if current_totp.get("sid") == new_sid and current_totp.get("secret") == new_secret:
-            return  # allerede synkroniseret
-
-        current["totp"] = {**current_totp, "secret": new_secret, "sid": new_sid}
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_name(f".{path.name}.tmp")
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(current, fh, allow_unicode=True, default_flow_style=False)
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, path)
-        os.chmod(path, 0o600)
-
-        log.info("BT-TOTP auto-synkroniseret fra headend (sid=%s) — genstarter timelapse-totp", new_sid)
-        subprocess.run(["systemctl", "restart", "timelapse-totp.service"], check=False)
+        from utils.bt_totp_sync import sync_bt_totp_config
+        sync_bt_totp_config(bt_totp, self.BT_TOTP_CONFIG_PATH)
 
     def _build_camera_commands(self) -> list[str]:
         """Byg kamera kommandoliste fra hierarkisk config.
