@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react'
 import {
   Users, Plus, Trash2, Key, Shield, Check, AlertTriangle,
-  Eye, EyeOff, Settings, ChevronDown, ChevronRight, X, Pencil, Fingerprint, Trash
+  Eye, EyeOff, Settings, ChevronDown, ChevronRight, X, Pencil, Fingerprint, Trash, Terminal
 } from 'lucide-react'
 import { startRegistration } from '@simplewebauthn/browser'
 import { getApiUrl } from '../api/client'
@@ -54,6 +54,15 @@ interface UserRec {
   created_at: string
   last_login?: string
   field_role?: 'none' | 'installer' | 'technician'
+}
+
+interface SSHKeyRec {
+  id: number
+  label: string | null
+  public_key: string
+  created_at: string | null
+  created_by: string | null
+  revoked_at: string | null
 }
 
 interface Customer { id: string; name: string }
@@ -212,6 +221,14 @@ export default function UsersPage() {
   const [mfaCode,       setMfaCode]       = useState('')
   const [mfaErr,        setMfaErr]        = useState<string | null>(null)
   const [mfaSaving,     setMfaSaving]     = useState(false)
+
+  // SSH-nøgler (field-role/RBAC teknikeradgang, PR #79)
+  const [sshKeysId,      setSshKeysId]      = useState<number | null>(null)
+  const [sshKeys,        setSshKeys]        = useState<SSHKeyRec[]>([])
+  const [sshKeysErr,     setSshKeysErr]     = useState<string | null>(null)
+  const [sshKeysLoading, setSshKeysLoading] = useState(false)
+  const [newSshKey,      setNewSshKey]      = useState('')
+  const [newSshKeyLabel, setNewSshKeyLabel] = useState('')
   const [mfaDisableOpen, setMfaDisableOpen] = useState(false)
   const [mfaDisablePassword, setMfaDisablePassword] = useState('')
   const [mfaDisableCode, setMfaDisableCode] = useState('')
@@ -292,6 +309,39 @@ export default function UsersPage() {
       load()
     } catch (e: any) { setEditErr(e.message) }
     finally { setEditSaving(false) }
+  }
+
+  async function openSshKeys(id: number) {
+    setSshKeysId(sshKeysId === id ? null : id)
+    if (sshKeysId === id) return
+    setSshKeysErr(null); setNewSshKey(''); setNewSshKeyLabel('')
+    try {
+      const keys = await api(`/api/admin/users/${id}/ssh-keys`)
+      setSshKeys(keys)
+    } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
+  }
+
+  async function addSshKey(id: number) {
+    setSshKeysLoading(true); setSshKeysErr(null)
+    try {
+      await api(`/api/admin/users/${id}/ssh-keys`, {
+        method: 'POST',
+        body: JSON.stringify({ public_key: newSshKey, label: newSshKeyLabel || null })
+      })
+      setNewSshKey(''); setNewSshKeyLabel('')
+      const keys = await api(`/api/admin/users/${id}/ssh-keys`)
+      setSshKeys(keys)
+    } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
+    finally { setSshKeysLoading(false) }
+  }
+
+  async function revokeSshKey(userId: number, keyId: number) {
+    setSshKeysErr(null)
+    try {
+      await api(`/api/admin/users/${userId}/ssh-keys/${keyId}`, { method: 'DELETE' })
+      const keys = await api(`/api/admin/users/${userId}/ssh-keys`)
+      setSshKeys(keys)
+    } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
   }
 
   async function startMfaSetup(id: number) {
@@ -728,6 +778,56 @@ export default function UsersPage() {
                   </div>
                 )}
 
+                {sshKeysId === u.id && (
+                  <div className="mt-3 space-y-2 border-t border-gray-50 pt-3">
+                    <p className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5 text-sky-500" />
+                      SSH-nøgler til lokal Edge-adgang
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      Erstatter den delte, fælles nøgle — hver registreret nøgle logger ind som "servicetekniker" på enheder, men er sporbar til denne bruger. Replikeres til enheder ved næste sync-poll.
+                    </p>
+                    {sshKeysErr && <p className="text-xs text-red-600">{sshKeysErr}</p>}
+                    {sshKeys.length > 0 ? (
+                      <div className="space-y-1">
+                        {sshKeys.map(k => (
+                          <div key={k.id} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${k.revoked_at ? 'border-gray-100 bg-gray-50' : 'border-sky-100 bg-sky-50'}`}>
+                            <Terminal className={`w-3.5 h-3.5 flex-shrink-0 ${k.revoked_at ? 'text-gray-300' : 'text-sky-500'}`} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-gray-700 truncate">{k.label || 'Uden navn'}</p>
+                              <p className="text-[10px] text-gray-400 font-mono truncate">{k.public_key}</p>
+                            </div>
+                            {k.revoked_at ? (
+                              <span className="text-[10px] text-gray-400 flex-shrink-0">Tilbagekaldt</span>
+                            ) : (
+                              <button onClick={() => revokeSshKey(u.id, k.id)}
+                                title="Tilbagekald nøgle"
+                                className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 flex-shrink-0">
+                                <Trash className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">Ingen SSH-nøgler registreret endnu.</p>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <input value={newSshKeyLabel} onChange={e => setNewSshKeyLabel(e.target.value)}
+                        placeholder="Navn, fx Peters laptop"
+                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-40 focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                      <input value={newSshKey} onChange={e => setNewSshKey(e.target.value)}
+                        placeholder="ssh-ed25519 AAAA... eller ssh-rsa AAAA..."
+                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs flex-1 font-mono focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                      <button onClick={() => addSshKey(u.id)} disabled={sshKeysLoading || !newSshKey.trim()}
+                        className="px-3 py-1.5 bg-sky-500 text-white text-xs rounded-lg disabled:opacity-50 flex-shrink-0">
+                        {sshKeysLoading ? 'Tilføjer…' : 'Tilføj'}
+                      </button>
+                      <button onClick={() => setSshKeysId(null)} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg flex-shrink-0">Luk</button>
+                    </div>
+                  </div>
+                )}
+
                 {waId === u.id && (
                   <div className="mt-3 space-y-2 border-t border-gray-50 pt-3">
                     <p className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
@@ -806,6 +906,13 @@ export default function UsersPage() {
                   className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
                   <Key className="w-3.5 h-3.5" />
                 </button>
+                {(u.field_role === 'installer' || u.field_role === 'technician') && (
+                  <button onClick={() => openSshKeys(u.id)}
+                    title="SSH-nøgler til lokal Edge-adgang"
+                    className={`p-1.5 rounded-lg transition-colors ${sshKeysId === u.id ? 'text-sky-600 bg-sky-50' : 'text-gray-400 hover:text-sky-600 hover:bg-sky-50'}`}>
+                    <Terminal className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 {u.username !== me?.username && (
                   <button onClick={() => deleteUser(u.id)}
                     title="Slet bruger"

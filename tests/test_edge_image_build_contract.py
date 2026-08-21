@@ -180,3 +180,30 @@ def test_supported_base_images_are_checksum_pinned(target: str) -> None:
     checksum = config["base_image"]["sha256"]
     assert isinstance(checksum, str)
     assert len(checksum) == 64
+
+
+def test_flashable_injection_provisions_servicetekniker_account() -> None:
+    """RBAC technician SSH access (PR #79) needs a real, scoped account on
+    the device for sshd's AuthorizedKeysCommand to serve keys for — this is
+    the device-side half. Must be pubkey-only (locked shadow entry) and
+    scoped sudo (never the blanket sudo group orangepi has)."""
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    assert 'echo "servicetekniker:x:1002:1002' in source
+    assert "servicetekniker:!:1002:" in source
+    assert 'servicetekniker:!:19000' in source  # locked shadow entry
+    assert "/etc/sudoers.d/servicetekniker" in source
+    assert "chmod 440 /mnt/root/etc/sudoers.d/servicetekniker" in source
+    # Scoped to bootstrap_cli.py only — never blanket sudo like orangepi.
+    assert "servicetekniker ALL=(root) NOPASSWD: /opt/timelapse/venv/bin/python3 /opt/timelapse/edge/tools/bootstrap_cli.py*" in source
+
+
+def test_flashable_injection_wires_sshd_match_block_for_servicetekniker() -> None:
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    assert "Match User servicetekniker" in source
+    assert "AuthorizedKeysCommand /usr/bin/python3 /opt/timelapse/edge/scripts/technician_authorized_keys.py" in source
+    assert "AuthorizedKeysCommandUser nobody" in source
+    # The Match block is appended via >>, after global PasswordAuthentication
+    # no is already set — must never appear before the global hardening sed.
+    match_idx = source.index("Match User servicetekniker")
+    global_hardening_idx = source.index("PasswordAuthentication.*/PasswordAuthentication no/")
+    assert global_hardening_idx < match_idx

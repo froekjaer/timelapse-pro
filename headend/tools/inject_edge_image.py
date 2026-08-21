@@ -544,6 +544,33 @@ if ! grep -q "^timelapse:" /mnt/root/etc/passwd 2>/dev/null; then
     mkdir -p /mnt/root/home/timelapse
 fi
 
+# ── Servicetekniker-bruger (RBAC-scopede tekniker-nøgler, 2026-08-19/21) ───────
+# Ingen lokal password — al adgang sker via sshd's AuthorizedKeysCommand
+# (edge/scripts/technician_authorized_keys.py), der dynamisk resolver hvilke
+# personlige nøgler der er gyldige for denne enhed lige nu. Se
+# Dokumentation/HANDOVER_LOG.md 2026-08-19/21. IKKE break-glass — det er en
+# separat konto (emergency), med sit eget password-baserede flow.
+if ! grep -q "^servicetekniker:" /mnt/root/etc/passwd 2>/dev/null; then
+    echo "[inject] Opretter servicetekniker bruger..."
+    echo "servicetekniker:x:1002:1002:TimeLapse Pro Servicetekniker,,,:/home/servicetekniker:/bin/bash" \
+        >> /mnt/root/etc/passwd
+    echo "servicetekniker:!:1002:" >> /mnt/root/etc/group
+    mkdir -p /mnt/root/home/servicetekniker
+    # Låst password — pubkey-only, udelukkende via AuthorizedKeysCommand.
+    if [ -f /mnt/root/etc/shadow ]; then
+        sed -i '/^servicetekniker:/d' /mnt/root/etc/shadow
+        echo "servicetekniker:!:19000:0:99999:7:::" >> /mnt/root/etc/shadow
+    fi
+    # Snævert scoped NOPASSWD sudo — kun bootstrap_cli.py, aldrig blanket sudo
+    # (i modsætning til den nuværende orangepi-konto). bootstrap_cli.py gater
+    # selv farlige operationer bag Service Sessions/EdgeServiceGrant.
+    mkdir -p /mnt/root/etc/sudoers.d
+    cat > /mnt/root/etc/sudoers.d/servicetekniker << 'SUDOERS_EOF'
+servicetekniker ALL=(root) NOPASSWD: /opt/timelapse/venv/bin/python3 /opt/timelapse/edge/tools/bootstrap_cli.py*
+SUDOERS_EOF
+    chmod 440 /mnt/root/etc/sudoers.d/servicetekniker
+fi
+
 # ── Aktiver timelapse-bootstrap.service ──────────────────────────────────────
 echo "[inject] Aktiverer timelapse-bootstrap.service..."
 WANTS_DIR=/mnt/root/etc/systemd/system/multi-user.target.wants
@@ -779,6 +806,22 @@ if [ -f "$SSHD_CONFIG" ]; then
         [ -f "$f" ] || continue
         sed -i 's/^PasswordAuthentication.*/# &/' "$f" 2>/dev/null || true
     done
+
+    # Servicetekniker: pubkey-only via AuthorizedKeysCommand, resolved
+    # dynamically per-device from RBAC-replicated technician keys (never a
+    # static file). Must stay a Match block appended at file end — anything
+    # after a Match applies only within it, so this can never accidentally
+    # widen global sshd policy. See edge/scripts/technician_authorized_keys.py.
+    if ! grep -q "^Match User servicetekniker$" "$SSHD_CONFIG" 2>/dev/null; then
+        cat >> "$SSHD_CONFIG" << 'SSHD_MATCH_EOF'
+
+Match User servicetekniker
+    AuthorizedKeysCommand /usr/bin/python3 /opt/timelapse/edge/scripts/technician_authorized_keys.py
+    AuthorizedKeysCommandUser nobody
+    PasswordAuthentication no
+SSHD_MATCH_EOF
+        echo "[inject]   sshd Match-blok for servicetekniker tilføjet"
+    fi
 fi
 
 # ── Rettigheder ───────────────────────────────────────────────────────────────
@@ -790,6 +833,7 @@ chown -R 1001:1001 \
     /mnt/root/run/timelapse \
     /mnt/root/home/timelapse \
     2>/dev/null || true
+chown -R 1002:1002 /mnt/root/home/servicetekniker 2>/dev/null || true
 chmod 700 /mnt/root/etc/timelapse/device_keys
 
 # ── Unmount ───────────────────────────────────────────────────────────────────
