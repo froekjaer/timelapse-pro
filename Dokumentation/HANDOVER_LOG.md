@@ -153,6 +153,15 @@
 - Filer rørt: Kun `Dokumentation/HANDOVER_LOG.md` (denne entry).
 - Risici / pas på: (1) "Up-to-date"-reglen + den meget hotte HANDOVER_LOG.md betyder at docs-PR'er på denne fil næsten altid skal have et frisk main-merge lige før merge — regn med det. (2) Den delte OneDrive-klon bruges af flere AI-sessioner samtidig — brug `git worktree add /tmp/<navn>` til alt reelt arbejde, og lad klone-rodens egen HEAD stå neutral (detached). (3) Deploy-job'et bygger UI'en på Mac mini'en — ved hjælpe-relaterede fejl dér, se `timelapse-ui/scripts/sync-help-docs.mjs` og `src/help/content/README.md`.
 
+### Handover 2026-08-21 14:34 — fra Codex til Peter/Codex: manuel Codex-Audit oprettet under Dokumentation/Codex-Audit
+
+- Hvad er gjort: Oprettede en manuel auditpakke i `Dokumentation/Codex-Audit/` på branch `codex/codex-audit-2026-08-21`, baseret på `main@aafe7d9f8b60bb1102a2cbf1d6c981ebe10886fa` og Mission Framework review-clone `6e4c6fa3ad59a37542c5b0a8ebe816a053856d60`. Pakken dækker executive readiness, Mission Framework alignment, arkitektur/dataflows, kodefund, cybersecurity/SABSA/virtuel pentest, compliance-readiness og roadmap/acceptance gates. Den vigtigste konkrete kodeobservation er en sandsynlig P1 runtime-regression i `edge/technician_auth.py::confirm_session()` hvor SQL'en har dobbelt `WHERE session_id = ?`. Der er ikke lavet kodefix i denne audit.
+- Hvad mangler / næste skridt: Review og merge auditpakken til `main`; derefter bør P1/P2-fund oprettes/afstemmes i GRC, især technician-auth SQL-fundet, security closure gaps, artifact signing/attestation og dokumenteret pilot acceptance gate.
+- Kommandoer kørt eller skal køres: Se `Dokumentation/Codex-Audit/08_EVIDENCE_LOG.md` for fuld evidenslog; dokumentpakken er manuel og docs-only.
+- Forventet/faktisk output: 8 nye auditfiler plus index i `Dokumentation/Codex-Audit/`; auditten konkluderer at TimeLapse Pro er tæt på kontrolleret pilot-readiness, men ikke bred production/scale release uden P1-closure og explicit risk acceptance.
+- Filer rørt: `Dokumentation/Codex-Audit/00_INDEX.md`, `01_EXECUTIVE_READINESS.md`, `02_MISSION_FRAMEWORK_ALIGNMENT.md`, `03_ARCHITECTURE_DATAFLOWS.md`, `04_CODE_REVIEW_FINDINGS.md`, `05_SECURITY_RISK_SABSA_PENTEST.md`, `06_COMPLIANCE_ASSESSMENTS.md`, `07_ACCEPTANCE_GATE_AND_ROADMAP.md`, `08_EVIDENCE_LOG.md`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Dette er ikke juridisk rådgivning og ikke en certificeringsaudit; de licenserede ISO/IEC-kataloger er ikke clause-complete importeret. `IEC 63442-2-4` kunne ikke verificeres som standardnummer og er behandlet som sandsynlig reference til `IEC 62443-2-4`.
+
 ### Handover 2026-08-21 (15) — fra Claude til Peter: browser-side SSH-nøgle-generering — ingen CLI nødvendig, forenklet panel
 
 - Baggrund: Peter, efter entry 14's fix: "Jeg tænker ikke vi skal bede om at operatøren skal ud i CLI for at generere nøgler mv." + "husk at brugervenlighed er vigtig, det er ved at være temmelig kompleks at betjene". Fuldt berettiget kritik — entry 14 fjernede overlap-buggen, men efterlod stadig en vægger af `ssh-keygen`/`cat`-terminal-instruktioner som PRIMÆR vej ind.
