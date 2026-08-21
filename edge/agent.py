@@ -1439,6 +1439,36 @@ class EdgeAgent:
             pass
 
     BT_TOTP_CONFIG_PATH = Path("/etc/timelapse/bt-config.yaml")
+    AUTHORIZED_TECHNICIANS_PATH = Path("/etc/timelapse/authorized_technicians.json")
+
+    def _apply_technician_keys(self, keys: list[dict]) -> None:
+        """Write the RBAC-replicated technician SSH public keys to a local
+        cache, atomically. Read by edge/scripts/technician_authorized_keys.py
+        via sshd's AuthorizedKeysCommand — no live headend round-trip needed
+        at login time, so this keeps working while the device is offline,
+        using whatever was last synced. First slice of the break-glass/RBAC
+        redesign (2026-08-19, per Peter) — see Dokumentation/HANDOVER_LOG.md.
+        Only public keys are handled here; nothing secret ever passes through
+        this path.
+        """
+        path = self.AUTHORIZED_TECHNICIANS_PATH
+        try:
+            current_raw = path.read_text() if path.exists() else "[]"
+            current = json.loads(current_raw)
+        except Exception:
+            current = None
+        if current == keys:
+            return  # allerede synkroniseret
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f".{path.name}.tmp")
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(keys, fh)
+        os.chmod(tmp_path, 0o644)
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o644)
+        log.info("Technician SSH-nøgler synkroniseret fra headend (%d aktive)", len(keys))
 
     def _sync_bt_totp_config(self, bt_totp: dict) -> None:
         """Auto-synkronisér BT-TOTP secret fra headend til lokal totp-service.
@@ -2515,6 +2545,7 @@ class EdgeAgent:
                 config = resp.get("config")
                 if config:
                     self._apply_fetched_config(config)
+                self._apply_technician_keys(resp.get("technician_keys", []))
                 self._apply_update_policy(resp)
             else:
                 log.warning("Sync poll failed — headend unreachable")

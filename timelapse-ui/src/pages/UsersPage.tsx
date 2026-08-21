@@ -53,7 +53,7 @@ interface UserRec {
   is_active: boolean
   created_at: string
   last_login?: string
-  on_site_service?: boolean
+  field_role?: 'none' | 'installer' | 'technician'
 }
 
 interface Customer { id: string; name: string }
@@ -190,7 +190,7 @@ export default function UsersPage() {
   const [showPw,    setShowPw]    = useState(false)
   const [newRole,   setNewRole]   = useState<Role>('viewer')
   const [newCust,   setNewCust]   = useState('')
-  const [newOnSiteService, setNewOnSiteService] = useState(false)
+  const [newFieldRole, setNewFieldRole] = useState<'none' | 'installer' | 'technician'>('none')
   const [creating,  setCreating]  = useState(false)
   const [createErr, setCreateErr] = useState<string | null>(null)
 
@@ -203,7 +203,7 @@ export default function UsersPage() {
   const [editEmail,  setEditEmail]  = useState('')
   const [editCust,   setEditCust]   = useState('')
   const [editActive, setEditActive] = useState(true)
-  const [editOnSiteService, setEditOnSiteService] = useState(false)
+  const [editFieldRole, setEditFieldRole] = useState<'none' | 'installer' | 'technician'>('none')
   const [editErr,    setEditErr]    = useState<string | null>(null)
   const [editSaving,    setEditSaving]    = useState(false)
   const [mfaId,         setMfaId]         = useState<number | null>(null)
@@ -255,11 +255,11 @@ export default function UsersPage() {
           role:        newRole,
           email:       newEmail || `${newUser}@timelapse.local`,
           customer_id: newCust || null,
-          on_site_service: newOnSiteService,
+          field_role: newFieldRole,
         }),
       })
       setShowNew(false)
-      setNewUser(''); setNewPw(''); setNewEmail(''); setNewRole('viewer'); setNewCust(''); setNewOnSiteService(false)
+      setNewUser(''); setNewPw(''); setNewEmail(''); setNewRole('viewer'); setNewCust(''); setNewFieldRole('none')
       load()
     } catch (e: any) { setCreateErr(e.message) }
     finally { setCreating(false) }
@@ -277,7 +277,7 @@ export default function UsersPage() {
     setEditEmail(u.email ?? '')
     setEditCust(u.customer_id ?? '')
     setEditActive(u.is_active)
-    setEditOnSiteService(!!u.on_site_service)
+    setEditFieldRole(u.field_role ?? 'none')
     setEditErr(null)
   }
 
@@ -286,7 +286,7 @@ export default function UsersPage() {
     try {
       await api(`/api/admin/users/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ role: editRole, email: editEmail || null, customer_id: editCust || null, is_active: editActive, on_site_service: editOnSiteService })
+        body: JSON.stringify({ role: editRole, email: editEmail || null, customer_id: editCust || null, is_active: editActive, field_role: editFieldRole })
       })
       setEditId(null)
       load()
@@ -484,10 +484,16 @@ export default function UsersPage() {
                 Begrænser brugeren til kun at se og administrere den valgte kundes data.
               </p>
             </div>
-            <label className="col-span-2 flex items-start gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 cursor-pointer">
-              <input type="checkbox" checked={newOnSiteService} onChange={e => setNewOnSiteService(e.target.checked)} className="mt-0.5 rounded" />
-              <span className="text-xs text-sky-900"><strong>On-site idriftsættelse og service</strong><br /><span className="text-sky-700">Tillader tekniker-login til lokal Edge-service efter normal TimeLapse Pro-autentificering. Primær rolle og kundeafgrænsning bevares.</span></span>
-            </label>
+            <div className="col-span-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2">
+              <label className="text-xs text-sky-900 font-medium block mb-1">Felt-rolle (on-site adgang)</label>
+              <select value={newFieldRole} onChange={e => setNewFieldRole(e.target.value as 'none' | 'installer' | 'technician')}
+                className="w-full border border-sky-200 rounded-lg px-2 py-1.5 text-sm bg-white">
+                <option value="none">Ingen</option>
+                <option value="installer">Idriftsætter</option>
+                <option value="technician">Servicetekniker</option>
+              </select>
+              <p className="text-xs text-sky-700 mt-1">Tillader tekniker-login til lokal Edge-service efter normal TimeLapse Pro-autentificering. Primær rolle og kundeafgrænsning bevares.</p>
+            </div>
           </div>
           <div className="flex items-center justify-end gap-2 mt-4">
             <button onClick={() => { setShowNew(false); setCreateErr(null) }}
@@ -552,8 +558,11 @@ export default function UsersPage() {
                   {u.mfa_partial && (
                     <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">MFA halv state</span>
                   )}
-                  {u.on_site_service && (
-                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full">On-site service</span>
+                  {u.field_role === 'installer' && (
+                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full">Idriftsætter</span>
+                  )}
+                  {u.field_role === 'technician' && (
+                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full">Servicetekniker</span>
                   )}
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -620,11 +629,15 @@ export default function UsersPage() {
                           Aktiv konto
                         </label>
                       </div>
-                      <div className="col-span-2">
-                        <label className="flex items-start gap-2 cursor-pointer text-xs text-sky-800 rounded-lg border border-sky-100 bg-sky-50 px-2 py-2">
-                          <input type="checkbox" checked={editOnSiteService} onChange={e => setEditOnSiteService(e.target.checked)} className="mt-0.5 rounded border-gray-300" />
-                          <span><strong>On-site idriftsættelse og service</strong><br /><span className="text-sky-700">Kan gennemføre lokal Edge-service med sin normale konto og gældende rolle.</span></span>
-                        </label>
+                      <div className="col-span-2 rounded-lg border border-sky-100 bg-sky-50 px-2 py-2">
+                        <label className="text-xs text-sky-900 font-medium block mb-1">Felt-rolle (on-site adgang)</label>
+                        <select value={editFieldRole} onChange={e => setEditFieldRole(e.target.value as 'none' | 'installer' | 'technician')}
+                          className="w-full border border-sky-200 rounded-lg px-2 py-1.5 text-xs bg-white">
+                          <option value="none">Ingen</option>
+                          <option value="installer">Idriftsætter</option>
+                          <option value="technician">Servicetekniker</option>
+                        </select>
+                        <p className="text-xs text-sky-700 mt-1">Kan gennemføre lokal Edge-service med sin normale konto og gældende rolle.</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 pt-1">

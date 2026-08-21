@@ -340,13 +340,17 @@ def test_local_management_portal_serves_bluetooth_wifi_and_ethernet_interfaces()
 
 
 def test_on_site_service_is_a_capability_not_a_new_role() -> None:
+    # 2026-08-19: on_site_service (boolean) replaced by field_role (tag:
+    # none|installer|technician) — same orthogonal-capability intent, more
+    # granular. See headend.database.User.field_role and main._has_field_access.
     database = _source("headend/database.py")
     headend = _source("headend/main.py")
     users_ui = _source("timelapse-ui/src/pages/UsersPage.tsx")
 
-    assert "on_site_service = Column(Boolean" in database
-    assert "on_site_service: Optional[bool]" in headend
-    assert "On-site idriftsættelse og service" in users_ui
+    assert "field_role = Column(String(20)" in database
+    assert "field_role:  Optional[str]" in headend
+    assert 'FIELD_ROLES = ("none", "installer", "technician")' in headend
+    assert "Felt-rolle (on-site adgang)" in users_ui
     assert "Brugeren mangler capability: On-site idriftsættelse og service" in headend
 
 
@@ -357,7 +361,7 @@ def test_local_totp_qr_never_returns_a_shared_factory_secret() -> None:
 
     assert 'secret = "JBSWY3DPEHPK3PXP"' not in endpoint
     assert "Lokal adgang er ikke provisioneret" in endpoint
-    assert "on_site_service" in endpoint
+    assert "_has_field_access(current_user)" in endpoint  # 2026-08-19: replaces the old on_site_service check
     assert "account_name = f\"{device_label} - {camera_label}\"" in endpoint
     assert "Åbn i Apple Adgangskoder" in camera_ui
     assert "Kopiér opsætningsnøgle" in camera_ui
