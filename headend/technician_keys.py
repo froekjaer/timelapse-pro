@@ -27,13 +27,79 @@ against what was actually authorized at any point in time.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database import get_db, User, UserSSHKey
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(tags=["Technician Keys"])
+
+
+def migrate_field_role_column(engine) -> None:
+    """Replace users.on_site_service (boolean) with users.field_role (tag).
+    Additive migration for existing PostgreSQL data, called once from
+    main.py::startup(). Backfills existing TRUE values to 'technician', then
+    drops the old column in the same pass — deliberately not left as an
+    orphaned column once superseded (see FIND-DEVICES-PLAINTEXT-SSH-KEY-COLUMN
+    for why that's a hard rule now, not just a preference)."""
+    try:
+        with engine.connect() as conn:
+            try:
+                conn.execute(text(
+                    "ALTER TABLE users ADD COLUMN field_role VARCHAR(20) NOT NULL DEFAULT 'none'"
+                ))
+                conn.commit()
+                log.info("DB migration: users.field_role tilføjet")
+            except Exception:
+                pass
+            try:
+                conn.execute(text(
+                    "UPDATE users SET field_role = 'technician' WHERE on_site_service = TRUE AND field_role = 'none'"
+                ))
+                conn.commit()
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE users DROP COLUMN on_site_service"))
+                conn.commit()
+                log.info("DB migration: users.on_site_service fjernet (erstattet af field_role)")
+            except Exception:
+                pass
+    except Exception as exc:
+        log.warning("DB migration users.field_role fejl: %s", exc)
+
+
+def migrate_user_ssh_keys_table(engine) -> None:
+    """Create the user_ssh_keys table if missing. Called once from
+    main.py::startup(), alongside its other additive DB migrations."""
+    try:
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS user_ssh_keys (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        public_key TEXT NOT NULL,
+                        label VARCHAR(200),
+                        created_at TIMESTAMP,
+                        created_by VARCHAR(100),
+                        revoked_at TIMESTAMP
+                    )
+                """))
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_user_ssh_keys_user_id ON user_ssh_keys (user_id)"
+                ))
+                conn.commit()
+            except Exception:
+                pass
+    except Exception as exc:
+        log.warning("DB migration user_ssh_keys fejl: %s", exc)
 
 _ALLOWED_KEY_PREFIXES = ("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")
 

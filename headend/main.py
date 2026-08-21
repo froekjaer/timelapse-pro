@@ -435,64 +435,12 @@ def startup():
     except Exception as _exc_auth:
         log.warning("DB migration auth fejl: %s", _exc_auth)
 
-    # Field-role (installer/technician) er en capability og ikke en særskilt
-    # privilegeret RBAC-rolle. Additiv migration for eksisterende PostgreSQL-data.
-    # 2026-08-19: erstatter on_site_service (boolean) med field_role (tag) —
-    # backfilder eksisterende TRUE-værdier til 'technician' og dropper derefter
-    # den gamle kolonne, så vi ikke efterlader endnu en orphaned kolonne (se
-    # FIND-DEVICES-PLAINTEXT-SSH-KEY-COLUMN for hvorfor det er en bevidst regel nu).
-    try:
-        _eng_user_cap = __import__('database').engine
-        with _eng_user_cap.connect() as _conn_user_cap:
-            try:
-                _conn_user_cap.execute(text(
-                    "ALTER TABLE users ADD COLUMN field_role VARCHAR(20) NOT NULL DEFAULT 'none'"
-                ))
-                _conn_user_cap.commit()
-                log.info("DB migration: users.field_role tilføjet")
-            except Exception:
-                pass
-            try:
-                _conn_user_cap.execute(text(
-                    "UPDATE users SET field_role = 'technician' WHERE on_site_service = TRUE AND field_role = 'none'"
-                ))
-                _conn_user_cap.commit()
-            except Exception:
-                pass
-            try:
-                _conn_user_cap.execute(text("ALTER TABLE users DROP COLUMN on_site_service"))
-                _conn_user_cap.commit()
-                log.info("DB migration: users.on_site_service fjernet (erstattet af field_role)")
-            except Exception:
-                pass
-    except Exception as _exc_user_cap:
-        log.warning("DB migration users.field_role fejl: %s", _exc_user_cap)
-
-    # user_ssh_keys — en field-role-brugers personlige SSH public keys,
-    # replikeret til edge via den konsoliderede sync-poll (2026-08-19).
-    try:
-        _eng_ssh_keys = __import__('database').engine
-        with _eng_ssh_keys.connect() as _conn_ssh_keys:
-            try:
-                _conn_ssh_keys.execute(text("""
-                    CREATE TABLE IF NOT EXISTS user_ssh_keys (
-                        id SERIAL PRIMARY KEY,
-                        user_id INTEGER NOT NULL,
-                        public_key TEXT NOT NULL,
-                        label VARCHAR(200),
-                        created_at TIMESTAMP,
-                        created_by VARCHAR(100),
-                        revoked_at TIMESTAMP
-                    )
-                """))
-                _conn_ssh_keys.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_user_ssh_keys_user_id ON user_ssh_keys (user_id)"
-                ))
-                _conn_ssh_keys.commit()
-            except Exception:
-                pass
-    except Exception as _exc_ssh_keys:
-        log.warning("DB migration user_ssh_keys fejl: %s", _exc_ssh_keys)
+    # Field-role (installer/technician) + user_ssh_keys — se
+    # technician_keys.py for detaljer og begrundelse (2026-08-19).
+    from technician_keys import migrate_field_role_column, migrate_user_ssh_keys_table
+    _db_engine_field_role = __import__('database').engine
+    migrate_field_role_column(_db_engine_field_role)
+    migrate_user_ssh_keys_table(_db_engine_field_role)
 
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:
