@@ -109,6 +109,7 @@ from siem import router as siem_router, start_headend_log_collector, record_even
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from edge_sync import router as edge_sync_router
 from local_access import router as local_access_router
+from technician_keys import router as technician_keys_router
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
@@ -434,21 +435,12 @@ def startup():
     except Exception as _exc_auth:
         log.warning("DB migration auth fejl: %s", _exc_auth)
 
-    # On-site idriftsættelse/service er en capability og ikke en særskilt
-    # privilegeret rolle. Additiv migration for eksisterende PostgreSQL-data.
-    try:
-        _eng_user_cap = __import__('database').engine
-        with _eng_user_cap.connect() as _conn_user_cap:
-            try:
-                _conn_user_cap.execute(text(
-                    "ALTER TABLE users ADD COLUMN on_site_service BOOLEAN NOT NULL DEFAULT FALSE"
-                ))
-                _conn_user_cap.commit()
-                log.info("DB migration: users.on_site_service tilføjet")
-            except Exception:
-                pass
-    except Exception as _exc_user_cap:
-        log.warning("DB migration users.on_site_service fejl: %s", _exc_user_cap)
+    # Field-role (installer/technician) + user_ssh_keys — se
+    # technician_keys.py for detaljer og begrundelse (2026-08-19).
+    from technician_keys import migrate_field_role_column, migrate_user_ssh_keys_table
+    _db_engine_field_role = __import__('database').engine
+    migrate_field_role_column(_db_engine_field_role)
+    migrate_user_ssh_keys_table(_db_engine_field_role)
 
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:
@@ -1145,6 +1137,18 @@ def _is_platform_admin(user: User | None) -> bool:
     return user.role == "super_admin" or (user.role == "admin" and not user.customer_id)
 
 
+FIELD_ROLES = ("none", "installer", "technician")
+
+
+def _has_field_access(user: "User | None") -> bool:
+    """True for users with an on-site field capability (installer or
+    technician) — orthogonal to the UI RBAC role. Replaces the old
+    on_site_service boolean (2026-08-19)."""
+    if user is None:
+        return False
+    return getattr(user, "field_role", "none") in ("installer", "technician")
+
+
 def _ensure_customer_access(user: User | None, customer_id: str | None) -> None:
     """Enforce tenant boundary for customer scoped records."""
     if _is_platform_admin(user):
@@ -1583,14 +1587,14 @@ class UserCreateRequest(BaseModel):
     password:    str
     role:        str = "viewer"
     customer_id: Optional[str] = None
-    on_site_service: bool = False
+    field_role:  str = "none"
 
 class UserUpdateRequest(BaseModel):
     email:       Optional[str] = None
     role:        Optional[str] = None
     customer_id: Optional[str] = None
     is_active:   Optional[bool] = None
-    on_site_service: Optional[bool] = None
+    field_role:  Optional[str] = None
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────
@@ -1826,7 +1830,7 @@ def technician_auth_confirm(
 
     if current_user is None or not current_user.is_active:
         raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
-    if not bool(getattr(current_user, "on_site_service", False)):
+    if not _has_field_access(current_user):
         raise HTTPException(
             status_code=403,
             detail="Brugeren mangler capability: On-site idriftsættelse og service",
@@ -2062,7 +2066,7 @@ def list_users(
             "mfa_partial": _user_has_partial_mfa(u),
             "mfa_required": _mfa_required_for_user(db, u),
             "webauthn_count": int(cred_counts.get(u.id, 0)),
-            "on_site_service": bool(getattr(u, "on_site_service", False)),
+            "field_role": getattr(u, "field_role", "none"),
         }
         for u in users
     ]
@@ -2128,6 +2132,8 @@ def create_user(
         raise HTTPException(status_code=400, detail="Brugernavn findes allerede")
     if req.role not in ("super_admin", "admin", "operator", "viewer"):
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
+    if req.field_role not in FIELD_ROLES:
+        raise HTTPException(status_code=400, detail="Ugyldig field_role")
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Adgangskode skal være mindst 8 tegn")
     u = User(
@@ -2136,7 +2142,7 @@ def create_user(
         password_hash = _hash_password(req.password),
         role          = req.role,
         customer_id   = req.customer_id,
-        on_site_service = req.on_site_service,
+        field_role    = req.field_role,
     )
     db.add(u); db.commit(); db.refresh(u)
     log.info("Bruger oprettet: %s (%s)", u.username, u.role)
@@ -2155,7 +2161,9 @@ def update_user(
         raise HTTPException(status_code=404)
     if req.role and req.role not in ("super_admin", "admin", "operator", "viewer"):
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
-    for field in ["email", "role", "customer_id", "is_active", "on_site_service"]:
+    if req.field_role and req.field_role not in FIELD_ROLES:
+        raise HTTPException(status_code=400, detail="Ugyldig field_role")
+    for field in ["email", "role", "customer_id", "is_active", "field_role"]:
         val = getattr(req, field)
         if val is not None:
             setattr(u, field, val)
@@ -5394,7 +5402,7 @@ def get_camera_bt_totp_qr(
         raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
     is_admin = current_user.role in {"super_admin", "admin"}
     if not is_admin:
-        if not bool(getattr(current_user, "on_site_service", False)):
+        if not _has_field_access(current_user):
             raise HTTPException(status_code=403, detail="On-site idriftsættelse og service kræves")
         if current_user.customer_id and str(cam.customer_id) != str(current_user.customer_id):
             raise HTTPException(status_code=403, detail="Kameraet ligger uden for din kundeafgrænsning")
@@ -11448,7 +11456,7 @@ def _render_timelapse(job_id, image_paths, options):
 
     fps, resolution, codec = options.fps, options.resolution, options.codec
     fade_frames = options.fade_frames
-    ts_overlay, ts_pos = options.timestamp_overlay, options.timestamp_position
+    ts_overlay, ts_pos, ts_format = options.timestamp_overlay, options.timestamp_position, options.timestamp_format
     ken_burns, crop_ratio, title = options.ken_burns, options.crop_ratio, options.title
 
     RENDER_JOBS[job_id]["status"] = "rendering"
@@ -11508,7 +11516,28 @@ def _render_timelapse(job_id, image_paths, options):
             vf_parts.append(f"fade=t=out:st={(n-fade_frames)/fps:.2f}:d={fade_frames/fps:.2f}")
 
         # Tidsstempel overlay
-        if ts_overlay:
+        if ts_overlay and ts_format == "datetime":
+            from services.timelapse_render_service import build_datetime_subtitle_file, ffmpeg_filter_path_escape
+
+            if resolution == "1080p":
+                play_res = (1920, 1080)
+            elif resolution == "4k":
+                play_res = (3840, 2160)
+            else:
+                from PIL import Image as _PILImage
+                with _PILImage.open(image_paths[0][0]) as _im:
+                    play_res = _im.size
+
+            ass_path = RENDER_OUTPUT_DIR / f"{job_id}_timestamps.ass"
+            build_datetime_subtitle_file(
+                frame_timestamps=[captured_at for _, captured_at in image_paths],
+                fps=fps,
+                position=ts_pos,
+                play_res=play_res,
+                output_path=ass_path,
+            )
+            vf_parts.append(f"subtitles={ffmpeg_filter_path_escape(str(ass_path))}")
+        elif ts_overlay:
             positions = {
                 "tl": "x=20:y=20",
                 "tr": "x=w-tw-20:y=20",
@@ -11624,6 +11653,7 @@ app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(edge_sync_router, prefix="/api/edge")
 app.include_router(local_access_router, prefix="/api/admin")
+app.include_router(technician_keys_router, prefix="/api/admin")
 app.include_router(itim_router, prefix="/api/itim")
 app.include_router(settings_router, dependencies=[require_role("admin")])
 app.include_router(redaction_router)

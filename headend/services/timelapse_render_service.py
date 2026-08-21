@@ -6,6 +6,9 @@ import re
 import subprocess
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 
@@ -119,7 +122,15 @@ def required_filters(options: RenderOptions) -> set[str]:
     if options.sharpen != "none":
         required.add("unsharp")
     if options.timestamp_overlay:
-        required.add("drawtext")
+        # "pts" is drawn via ffmpeg's built-in %{pts} expression (drawtext).
+        # "datetime" needs each frame's REAL, possibly-irregularly-spaced
+        # capture time, which drawtext has no concept of — that's rendered as
+        # a generated per-frame subtitle track burned in via the libass-based
+        # `subtitles` filter instead (see build_datetime_subtitle_file below).
+        if options.timestamp_format == "datetime":
+            required.add("subtitles")
+        else:
+            required.add("drawtext")
     return required
 
 
@@ -129,11 +140,6 @@ def validate_filter_capabilities(options: RenderOptions, available: set[str]) ->
         raise HTTPException(
             status_code=422,
             detail="FFmpeg-installationen mangler valgte filtre: " + ", ".join(missing),
-        )
-    if options.timestamp_overlay and options.timestamp_format == "datetime":
-        raise HTTPException(
-            status_code=422,
-            detail="Dato/tid-overlay kræver en libass-baseret renderer og er endnu ikke tilgængelig.",
         )
 
 
@@ -155,3 +161,89 @@ def enhancement_filters(options: RenderOptions) -> list[str]:
     elif options.sharpen == "strong":
         filters.append("unsharp=5:5:0.65:5:5:0")
     return filters
+
+
+# ── Real-datetime timestamp overlay (subtitle-based) ─────────────────────────
+#
+# ffmpeg's drawtext has a built-in %{pts} expression for elapsed PLAYBACK time,
+# but no concept of a frame's real, independently-varying capture time — a
+# timelapse's source photos are rarely evenly spaced (the camera can go
+# offline, skip intervals, etc.), so there's no formula that turns "frame
+# index" into "correct real date". Instead we generate an ASS subtitle file
+# with one cue per rendered frame, each showing that frame's actual
+# `captured_at`, and burn it in via ffmpeg's libass-based `subtitles` filter.
+
+_ASS_ALIGNMENT = {"tl": 7, "tr": 9, "bl": 1, "br": 3}  # numpad-style layout
+
+
+def _ass_timecode(seconds: float) -> str:
+    """Format seconds as ASS H:MM:SS.CS (centiseconds)."""
+    centis_total = max(0, round(seconds * 100))
+    hours, rem = divmod(centis_total, 360000)
+    minutes, rem = divmod(rem, 6000)
+    secs, centis = divmod(rem, 100)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{centis:02d}"
+
+
+def _ass_escape_text(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}").replace("\n", "\\N")
+
+
+def _ass_frame_text(captured_at: datetime | None, zone: ZoneInfo) -> str:
+    if captured_at is None:
+        return "?"
+    aware = captured_at if captured_at.tzinfo else captured_at.replace(tzinfo=timezone.utc)
+    return aware.astimezone(zone).strftime("%Y-%m-%d %H:%M")
+
+
+def build_datetime_subtitle_file(
+    frame_timestamps: list[datetime | None],
+    fps: int,
+    position: str,
+    play_res: tuple[int, int],
+    output_path: Path,
+    tz_name: str = "Europe/Copenhagen",
+) -> None:
+    """Write an .ass subtitle file with one cue per rendered frame, timed to
+    match the render's fixed per-frame duration (1/fps each, same as the
+    FFmpeg concat demuxer's `duration` directive) and showing that frame's
+    real capture timestamp converted to `tz_name`.
+    """
+    zone = ZoneInfo(tz_name)
+    align = _ASS_ALIGNMENT.get(position, 3)
+    width, height = play_res
+    fontsize = max(18, round(height / 30))
+    frame_duration = 1.0 / fps
+
+    lines = [
+        "[Script Info]",
+        "ScriptType: v4.00+",
+        f"PlayResX: {width}",
+        f"PlayResY: {height}",
+        "",
+        "[V4+ Styles]",
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding",
+        # White text, opaque-ish black box background (BorderStyle=3), matching the
+        # look of the pts drawtext overlay (fontcolor=white:box=1:boxcolor=black@0.4).
+        f"Style: Default,Arial,{fontsize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H99000000,"
+        f"0,0,0,0,100,100,0,0,3,2,0,{align},20,20,20,1",
+        "",
+        "[Events]",
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+    ]
+    for index, captured_at in enumerate(frame_timestamps):
+        start = _ass_timecode(index * frame_duration)
+        end = _ass_timecode((index + 1) * frame_duration)
+        text = _ass_escape_text(_ass_frame_text(captured_at, zone))
+        lines.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}")
+
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def ffmpeg_filter_path_escape(path: str) -> str:
+    """Escape a filesystem path for use as an ffmpeg filter argument value
+    (e.g. subtitles=<path>). ffmpeg filter syntax treats ':' as the option
+    separator and needs '\\' and undecorated ':' escaped."""
+    return path.replace("\\", "\\\\").replace(":", "\\:")

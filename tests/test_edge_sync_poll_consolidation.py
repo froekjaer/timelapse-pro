@@ -34,6 +34,7 @@ def _make_agent():
     agent._last_inventory = None
     agent._cfg = {}
     agent._pending_siem_cursor = None
+    agent._apply_technician_keys = MagicMock()
     return agent
 
 
@@ -86,6 +87,22 @@ def test_run_sync_sends_one_request_with_app_version_siem_and_inventory(monkeypa
     )
     agent._persist_siem_cursor_after_sync.assert_called_once()
     agent._connectivity.report_success.assert_called_once()
+
+
+def test_run_sync_applies_technician_keys_from_response(monkeypatch):
+    agent = _make_agent()
+    monkeypatch.setattr(inventory, "current_app_version", lambda: "x")
+    agent._collect_siem_events_for_sync = MagicMock(return_value=[])
+    agent._collect_inventory_if_due = MagicMock(return_value=None)
+    agent._apply_fetched_config = MagicMock()
+    agent._apply_update_policy = MagicMock()
+    agent._sync_time_from_headend = MagicMock()
+    fake_keys = [{"public_key": "ssh-ed25519 AAAA", "identity": "tekniker1:laptop"}]
+    agent._api = MagicMock(sync=MagicMock(return_value=(True, {"pending_updates": [], "technician_keys": fake_keys})))
+
+    agent._run_sync()
+
+    agent._apply_technician_keys.assert_called_once_with(fake_keys)
 
 
 def test_run_sync_skips_config_apply_when_response_has_no_config_change(monkeypatch):

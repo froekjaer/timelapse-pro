@@ -285,10 +285,32 @@ class User(Base):
     customer_id   = Column(String(36))
     totp_secret   = Column(String(64))
     mfa_enabled   = Column(Boolean, default=False)                     # null = adgang til alle kunder
-    on_site_service = Column(Boolean, default=False, nullable=False)  # explicit capability, independent of RBAC role
+    # Field-role capability, independent of the UI RBAC role (super_admin/admin/
+    # operator/viewer) above — orthogonal axis: who's allowed physical/SSH access
+    # to edge devices in the field, not who can see which admin pages. Replaces
+    # the old on_site_service boolean (2026-08-19, per Peter — needed distinct
+    # installer vs. technician tags for edge break-glass/RBAC SSH replication).
+    field_role = Column(String(20), default="none", nullable=False)  # none|installer|technician
     is_active     = Column(Boolean, default=True)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login    = Column(DateTime)
+
+
+class UserSSHKey(Base):
+    """A field-role user's personal SSH public key, replicated to edge devices
+    they have access to (via headend/edge_sync.py + edge/agent.py's local
+    AuthorizedKeysCommand cache) instead of a single shared operational key.
+    Built 2026-08-19 as the first slice of the break-glass/RBAC redesign —
+    see Dokumentation/HANDOVER_LOG.md 2026-08-19."""
+    __tablename__ = "user_ssh_keys"
+
+    id           = Column(Integer, primary_key=True)
+    user_id      = Column(Integer, nullable=False, index=True)
+    public_key   = Column(Text, nullable=False)     # "ssh-ed25519 AAAA... label"
+    label        = Column(String(200))
+    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by   = Column(String(100))
+    revoked_at   = Column(DateTime)                 # null = active
 
 
 class Camera(Base):
