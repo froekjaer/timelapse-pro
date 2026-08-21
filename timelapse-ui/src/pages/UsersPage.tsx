@@ -238,6 +238,17 @@ export default function UsersPage() {
   const [waLoading,     setWaLoading]     = useState(false)
   const [waErr,         setWaErr]         = useState<string | null>(null)
 
+  // Kun ét ekspanderet panel ad gangen pr. bruger — de var uafhængige før,
+  // så fx "Rediger" + "SSH-nøgler" åbne samtidig gav et rodet, stablet
+  // layout i stedet for den fokuserede visning brugeren forventede.
+  function closeExpandedPanels() {
+    setChangePwId(null)
+    setEditId(null)
+    setMfaId(null)
+    setSshKeysId(null)
+    setWaId(null)
+  }
+
   const load = () => {
     setLoading(true)
     api('/api/admin/users')
@@ -289,6 +300,7 @@ export default function UsersPage() {
   }
 
   function startEdit(u: UserRec) {
+    closeExpandedPanels()
     setEditId(u.id)
     setEditRole(u.role)
     setEditEmail(u.email ?? '')
@@ -312,8 +324,10 @@ export default function UsersPage() {
   }
 
   async function openSshKeys(id: number) {
-    setSshKeysId(sshKeysId === id ? null : id)
-    if (sshKeysId === id) return
+    const opening = sshKeysId !== id
+    closeExpandedPanels()
+    if (!opening) return
+    setSshKeysId(id)
     setSshKeysErr(null); setNewSshKey(''); setNewSshKeyLabel('')
     try {
       const keys = await api(`/api/admin/users/${id}/ssh-keys`)
@@ -587,32 +601,32 @@ export default function UsersPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium text-gray-900">{u.username}</span>
+                  <span className="text-sm font-medium text-gray-900 flex-shrink-0">{u.username}</span>
                   {u.username === me?.username && (
-                    <span className="text-xs bg-sky-100 text-sky-600 px-2 py-0.5 rounded-full">dig</span>
+                    <span className="text-xs bg-sky-100 text-sky-600 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">dig</span>
                   )}
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[u.role]}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 whitespace-nowrap ${ROLE_COLORS[u.role]}`}>
                     {ROLE_LABELS[u.role]}
                   </span>
                   {u.customer_id && (
-                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">
                       {customers.find(c => c.id === u.customer_id)?.name ?? 'Kunde'}
                     </span>
                   )}
                   {!u.is_active && (
-                    <span className="text-xs bg-red-100 text-red-500 px-2 py-0.5 rounded-full">Deaktiveret</span>
+                    <span className="text-xs bg-red-100 text-red-500 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">Deaktiveret</span>
                   )}
                   {u.mfa_required && (
-                    <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">MFA kræves</span>
+                    <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">MFA kræves</span>
                   )}
                   {u.mfa_partial && (
-                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">MFA halv state</span>
+                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">MFA halv state</span>
                   )}
                   {u.field_role === 'installer' && (
-                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full">Idriftsætter</span>
+                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">Idriftsætter</span>
                   )}
                   {u.field_role === 'technician' && (
-                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full">Servicetekniker</span>
+                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">Servicetekniker</span>
                   )}
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -787,6 +801,23 @@ export default function UsersPage() {
                     <p className="text-xs text-gray-400">
                       Erstatter den delte, fælles nøgle — hver registreret nøgle logger ind som "servicetekniker" på enheder, men er sporbar til denne bruger. Replikeres til enheder ved næste sync-poll.
                     </p>
+                    <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+                      <p className="text-xs text-gray-500">
+                        <strong>Har du ikke en SSH-nøgle endnu?</strong> Åbn Terminal på din Mac og kør:
+                      </p>
+                      <p className="text-xs font-mono bg-white border border-gray-200 rounded px-2 py-1 mt-1 text-gray-700 select-all">
+                        ssh-keygen -t ed25519 -C "din@email.dk"
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1.5">
+                        Har du allerede en nøgle? Hent den offentlige del (aldrig den private!) med:
+                      </p>
+                      <p className="text-xs font-mono bg-white border border-gray-200 rounded px-2 py-1 mt-1 text-gray-700 select-all">
+                        cat ~/.ssh/id_ed25519.pub
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1.5">
+                        Kopiér hele linjen (starter med "ssh-ed25519") ind i feltet nedenfor — eller vælg filen direkte med knappen.
+                      </p>
+                    </div>
                     {sshKeysErr && <p className="text-xs text-red-600">{sshKeysErr}</p>}
                     {sshKeys.length > 0 ? (
                       <div className="space-y-1">
@@ -812,13 +843,26 @@ export default function UsersPage() {
                     ) : (
                       <p className="text-xs text-gray-400">Ingen SSH-nøgler registreret endnu.</p>
                     )}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <input value={newSshKeyLabel} onChange={e => setNewSshKeyLabel(e.target.value)}
                         placeholder="Navn, fx Peters laptop"
-                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-40 focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-full sm:w-40 flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-sky-300" />
                       <input value={newSshKey} onChange={e => setNewSshKey(e.target.value)}
                         placeholder="ssh-ed25519 AAAA... eller ssh-rsa AAAA..."
-                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs flex-1 font-mono focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs flex-1 min-w-[12rem] font-mono focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                      <label className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg flex-shrink-0 cursor-pointer hover:bg-gray-200 transition-colors">
+                        Vælg fil…
+                        <input type="file" accept=".pub,text/plain" className="hidden"
+                          onChange={e => {
+                            const file = e.target.files?.[0]
+                            if (!file) return
+                            const reader = new FileReader()
+                            reader.onload = () => setNewSshKey(String(reader.result ?? '').trim())
+                            reader.readAsText(file)
+                            if (!newSshKeyLabel) setNewSshKeyLabel(file.name.replace(/\.pub$/, ''))
+                            e.target.value = ''
+                          }} />
+                      </label>
                       <button onClick={() => addSshKey(u.id)} disabled={sshKeysLoading || !newSshKey.trim()}
                         className="px-3 py-1.5 bg-sky-500 text-white text-xs rounded-lg disabled:opacity-50 flex-shrink-0">
                         {sshKeysLoading ? 'Tilføjer…' : 'Tilføj'}
@@ -878,14 +922,21 @@ export default function UsersPage() {
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                <button onClick={() => { setWaId(waId === u.id ? null : u.id); if (waId !== u.id) openWebAuthn(u) }}
+                <button onClick={() => {
+                    const opening = waId !== u.id
+                    closeExpandedPanels()
+                    if (opening) { setWaId(u.id); openWebAuthn(u) }
+                  }}
                   title={(u.webauthn_count ?? 0) > 0 ? `${u.webauthn_count} passkey-enhed(er)` : 'Windows Hello / Touch ID'}
                   className={`p-1.5 rounded-lg transition-colors ${(u.webauthn_count ?? 0) > 0 ? 'text-sky-600 hover:bg-sky-50' : 'text-gray-400 hover:text-sky-600 hover:bg-sky-50'}`}>
                   <Fingerprint className="w-3.5 h-3.5" />
                 </button>
                 <button onClick={() => {
-                    setMfaId(mfaId === u.id ? null : u.id)
-                    if (mfaId !== u.id && !u.mfa_enabled && u.username === me?.username) startMfaSetup(u.id)
+                    const opening = mfaId !== u.id
+                    closeExpandedPanels()
+                    if (!opening) return
+                    setMfaId(u.id)
+                    if (!u.mfa_enabled && u.username === me?.username) startMfaSetup(u.id)
                   }}
                   title={u.mfa_enabled ? 'Administrer MFA' : u.mfa_required ? 'MFA kræves' : 'MFA'}
                   className={`p-1.5 rounded-lg transition-colors ${
@@ -901,7 +952,11 @@ export default function UsersPage() {
                   className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors">
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={() => { setChangePwId(changePwId === u.id ? null : u.id); setNewPwFor(''); setChangePwErr(null) }}
+                <button onClick={() => {
+                    const opening = changePwId !== u.id
+                    closeExpandedPanels()
+                    if (opening) { setChangePwId(u.id); setNewPwFor(''); setChangePwErr(null) }
+                  }}
                   title="Skift adgangskode"
                   className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
                   <Key className="w-3.5 h-3.5" />
