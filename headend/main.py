@@ -441,6 +441,8 @@ def startup():
     _db_engine_field_role = __import__('database').engine
     migrate_field_role_column(_db_engine_field_role)
     migrate_user_ssh_keys_table(_db_engine_field_role)
+    from technician_keys import drop_orphaned_device_credential_columns
+    drop_orphaned_device_credential_columns(_db_engine_field_role)
 
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:
