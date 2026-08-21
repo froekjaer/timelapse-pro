@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-21 13:30 — fra Kimi til Peter/Claude/Codex/ChatGPT/z.ai: PR #90-konflikt løst + PR #89 mergeklar med main indarbejdet
+
+- Hvad er gjort: To opfølgningspunkter fra natten: (1) PR #90 (denne handover-branch) var gået i merge-konflikt med main (Claudes entry (7) og min 22:45-entry havde begge lagt sig øverst i denne fil). Konflikten løst lokalt — begge entries bevaret, nyeste øverst. **Vigtig læring:** GitHub kører slet ikke CI på PR'er med merge-konflikter — mine pushes i nat (API-commit `6350d7c` og git-push `fe6df485`) startede ingen checks, hvilket så ud som "CI i stykker", men reelt betød "PR kan ikke merges". Efter konfliktløsning (merge-commit `6be737ce`) kørte CI med det samme: fuld grøn, PR #90 MERGEABLE. (2) Efter Peters godkendelse er `origin/main` merget ind i PR #89 (hjælpemenu) — ingen konflikter (hjælpe-filerne overlapper ikke med Claudes merges fra i aftes). Signeret merge-commit `95b2e12d`, CI fuld grøn, PR #89 MERGEABLE. Begge PR'er er nu klar til merge.
+- Hvad mangler / næste skridt: Peter merger #81, #83, #89, #90 når han vil. Efter merge af #89: sædvanlig governed udrulning (signeret tag → katalogisér → godkend).
+- Kommandoer kørt: `git fetch/checkout/merge origin/main` på begge brancher, konfliktløsning i denne fil, GPG-signerede commits via loopback-pinentry, `git push`, `gh pr view --json statusCheckRollup`.
+- Forventet/faktisk output: Begge PR'er MERGEABLE med grøn CI. Lokal klon efterladt i oprindelig detached-HEAD-tilstand på seneste main (`55c150a6`) — `main`-branchen er bevidst checket ud i worktree'en `timelapse-pro-wp1`.
+- Filer rørt: Kun `Dokumentation/HANDOVER_LOG.md` (denne entry + gårsdagens konfliktløsning).
+- Risici / pas på: OneDrive-hydrering af `.git` var langsom i nat (flere 180-300s timeouts — kommandoer skulle gentages, men intet gik tabt). Efter Peters diskoprydning fungerer klonen igen, dog stadig med lejlighedsvis lang responstid.
+
 ### Handover 2026-08-20 (7) — fra Claude til Peter/Claude: "Dato/tid" timestamp-overlay implementeret (rigtig optagelsestid, ikke video-relativ tid)
 
 - Hvad er gjort: Peter installerede `ffmpeg-full` (forrige entry) og bad om at få "Dato/tid"-valget bygget færdigt. Roden af hvorfor det aldrig virkede: ffmpegs indbyggede `%{pts}`-udtryk (brugt af "Sekunder"-formatet) kender kun VIDEOENS egen afspilningstid — det har intet begreb om et billedes RIGTIGE, potentielt uregelmæssigt fordelte optagelsestidspunkt (kameraet kan gå offline, springe intervaller over osv.), så der findes ingen formel der oversætter "frame-nummer" til "korrekt rigtig dato".
