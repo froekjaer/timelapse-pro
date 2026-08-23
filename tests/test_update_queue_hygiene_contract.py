@@ -21,6 +21,16 @@ def test_heartbeat_app_update_requires_signed_artifact():
     assert "intet signeret Edge app-artifact" in block
 
 
+def test_edge_available_update_hints_do_not_create_app_candidates():
+    source = _source("headend/main.py")
+    block = source[source.index("def report_available_updates("):source.index("# ── PROVISION PACKAGE")]
+
+    assert "app_security_ignored_signed_artifact_required" in block
+    assert "app_updates_ignored_signed_artifact_required" in block
+    assert 'update_type = "app_security"' not in block
+    assert 'update_type = "app_updates"' not in block
+
+
 def test_homebrew_inventory_candidates_are_blocked_until_signed_artifact_flow_exists():
     source = _source("headend/cmdb.py")
     block = source[

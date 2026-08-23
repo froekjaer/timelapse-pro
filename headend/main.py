@@ -10678,29 +10678,11 @@ def report_available_updates(
     if os_updates_count > 0:
         created.append("os_updates_ignored_cmdb_catalog_required")
 
-    if app_security and not _active_update("app_security"):
-        db.add(PendingUpdate(
-            update_type = "app_security",
-            version     = app_version or "ukendt",
-            description = "TimeLapse Pro sikkerhedsopdatering tilgængelig",
-            severity    = "critical",
-            scope       = "device",
-            scope_id    = device_id,
-            status      = "pending",
-        ))
-        created.append("app_security")
+    if app_security:
+        created.append("app_security_ignored_signed_artifact_required")
 
-    if app_behind_commits > 0 and not _active_update("app_updates"):
-        db.add(PendingUpdate(
-            update_type = "app_updates",
-            version     = app_version or "ukendt",
-            description = f"TimeLapse Pro er {app_behind_commits} commit(s) bagud",
-            severity    = "medium",
-            scope       = "device",
-            scope_id    = device_id,
-            status      = "pending",
-        ))
-        created.append("app_updates")
+    if app_behind_commits > 0:
+        created.append("app_updates_ignored_signed_artifact_required")
 
     db.commit()
     log.info("Update rapport fra %s: %s", device_id, created or "ingen nye")
