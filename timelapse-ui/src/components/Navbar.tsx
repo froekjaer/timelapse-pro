@@ -5,8 +5,10 @@ import {
   Shield, Users, Key, Terminal, Package, Server,
   ChevronDown, ClipboardCheck, Upload, Bot, Tag,
   Wrench, Activity, EyeOff, Clock, Menu, X, QrCode,
+  LifeBuoy,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { resolveHelpTarget, helpUrl } from '../help/routeMap'
 
 export function Navbar() {
   const { pathname } = useLocation()
@@ -15,6 +17,9 @@ export function Navbar() {
   const [adminOpen, setAdminOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Kontekstuel hjælp: hvilket kapitel dokumenterer den aktuelle side?
+  const helpTarget = resolveHelpTarget(pathname)
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -35,6 +40,7 @@ export function Navbar() {
     { to: '/ai',           label: 'AI Styring',    icon: Brain, tooltip: 'AI-drevet billedanalyse og kvalitetskontrol. Konfigurer NPU, adaptive exposure, og drift detection.', adminOnly: true },
     { to: '/openwebui',    label: 'Open WebUI',    icon: Bot, tooltip: 'AI assistent interface til natural language queries. Få svar om captures, kvalitet, og system status.', adminOnly: true },
     { to: '/compliance',   label: 'Compliance',    icon: ClipboardCheck, tooltip: 'SABSA compliance cockpit. Audit logs, sikkerhedsrapporter, og compliance status for hele systemet.', adminOnly: false },
+    { to: '/help',         label: 'Hjælp',         icon: LifeBuoy, tooltip: 'Hjælp og dokumentation. Menuguides, FAQ og manualer — indbygget i UI\'en og virker uden internet.', adminOnly: false },
   ].filter(link => !link.adminOnly || hasRole('super_admin', 'admin'))
 
   const adminLinks = [
@@ -128,6 +134,16 @@ export function Navbar() {
         )}
 
         <div className="ml-auto hidden items-center gap-3 xl:flex">
+          {helpTarget && (
+            <Link
+              to={helpUrl(helpTarget)}
+              title="Åbn hjælp for denne side"
+              aria-label="Åbn hjælp for denne side"
+              className="flex h-9 w-9 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+            >
+              <LifeBuoy className="h-4 w-4" />
+            </Link>
+          )}
           {user && (
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-full bg-sky-500 flex items-center justify-center flex-shrink-0">
@@ -149,15 +165,27 @@ export function Navbar() {
           </button>
         </div>
 
-        <button
-          type="button"
-          aria-label={mobileOpen ? 'Luk navigation' : 'Åbn navigation'}
-          aria-expanded={mobileOpen}
-          onClick={() => setMobileOpen(open => !open)}
-          className="ml-auto flex h-11 w-11 items-center justify-center rounded-md text-slate-200 hover:bg-slate-800 xl:hidden"
-        >
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+        <div className="ml-auto flex items-center gap-1 xl:hidden">
+          {helpTarget && (
+            <Link
+              to={helpUrl(helpTarget)}
+              title="Åbn hjælp for denne side"
+              aria-label="Åbn hjælp for denne side"
+              className="flex h-11 w-11 items-center justify-center rounded-md text-slate-200 hover:bg-slate-800"
+            >
+              <LifeBuoy className="h-5 w-5" />
+            </Link>
+          )}
+          <button
+            type="button"
+            aria-label={mobileOpen ? 'Luk navigation' : 'Åbn navigation'}
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen(open => !open)}
+            className="flex h-11 w-11 items-center justify-center rounded-md text-slate-200 hover:bg-slate-800"
+          >
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
 
       </div>
 
