@@ -383,6 +383,11 @@ export function CustomerPage() {
           <Building2 className="w-4 h-4 text-sky-500" />
           <span className="text-gray-700 font-medium">{customer.name}</span>
         </div>
+        <Link to={`/global-config?customer_id=${encodeURIComponent(customerId ?? '')}`}
+          className="ml-auto text-xs text-sky-600 hover:text-sky-700 hover:underline flex items-center gap-1"
+          title="Se hvilken værdi hvert felt reelt bruger (arvet fra Global/Kunde) og hvor den kommer fra">
+          Arvet konfiguration →
+        </Link>
       </div>
 
       {error && (
