@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-23 04:35 — fra Kimi til Peter/Claude/Codex/ChatGPT/z.ai: PR #89 (hjælpemenu) og PR #90 (handover) MERGET — hjælpemenuen er live
+
+- Hvad er gjort: Peter godkendte mergene ("ja tak"). **PR #90** krævede endnu en konfliktløsning (Claudes entries (13)+(14) var landet på main i samme område) + en ekstra main-merge, fordi repoets regelsæt kræver at PR-head indeholder seneste main FØR merge ("head branch is not up to date with the base branch") — MCP-merge fejlede med 405 ruleset-violation, `gh pr merge` gav den klare besked. PR #90 squasht og merget. **PR #89**: main (inkl. #90) merget ind i `docs-help-menu` — ren auto-merge, ingen konflikter — squasht og merget som `ad0db99f`. **Deploy verificeret:** main-workflowen på den self-hosted Mac mini runner kørte alle 4 jobs SUCCESS, inkl. "Deploy to Mac mini Headend" (checkout af præcis SHA, `npm ci`+`npm run build` — hvor `prebuild` automatisk synkede hjælpeindholdet fra `Dokumentation/*.md` — headend-genstart og health-check). Hjælpemenuen er dermed live på headenden: "Hjælp" i hovedmenuen + kontekstuel hjælpeknap øverst til højre i navbaren.
+- Hvad mangler / næste skridt: Peter: genindlæs UI'en i browseren (evt. hård reload for at få den nye bundle) og verificér visuelt at Hjælp-menuen og det kontekstuelle ikon ser rigtigt ud. PR #81 og #83 (ren dokumentation: GRC-beslutningsliste, gap-analyse, menuguides) er stadig åbne og kan merges når det passer — de påvirker ikke UI'en og rører ikke denne fil, så de konflikter ikke.
+- Kommandoer kørt: `git worktree add /tmp/kimi-pr90-merge` og `/tmp/kimi-pr89-merge` (ISOLEREDE worktrees — opdagede undervejs at den delte OneDrive-klon skiftede HEAD under mig, formentlig fordi en anden AI-session brugte den samtidig; worktrees eliminerer den race), `git merge origin/main`, `gh pr merge --squash`, `gh api actions/runs` til deploy-verifikation. Worktrees fjernet efter brug; delt klon efterladt detached på `ad0db99f`.
+- Forventet/faktisk output: Begge PR'er merget, deploy grøn, UI live.
+- Filer rørt: Kun `Dokumentation/HANDOVER_LOG.md` (denne entry).
+- Risici / pas på: (1) "Up-to-date"-reglen + den meget hotte HANDOVER_LOG.md betyder at docs-PR'er på denne fil næsten altid skal have et frisk main-merge lige før merge — regn med det. (2) Den delte OneDrive-klon bruges af flere AI-sessioner samtidig — brug `git worktree add /tmp/<navn>` til alt reelt arbejde, og lad klone-rodens egen HEAD stå neutral (detached). (3) Deploy-job'et bygger UI'en på Mac mini'en — ved hjælpe-relaterede fejl dér, se `timelapse-ui/scripts/sync-help-docs.mjs` og `src/help/content/README.md`.
+
 ### Handover 2026-08-21 (15) — fra Claude til Peter: browser-side SSH-nøgle-generering — ingen CLI nødvendig, forenklet panel
 
 - Baggrund: Peter, efter entry 14's fix: "Jeg tænker ikke vi skal bede om at operatøren skal ud i CLI for at generere nøgler mv." + "husk at brugervenlighed er vigtig, det er ved at være temmelig kompleks at betjene". Fuldt berettiget kritik — entry 14 fjernede overlap-buggen, men efterlod stadig en vægger af `ssh-keygen`/`cat`-terminal-instruktioner som PRIMÆR vej ind.
