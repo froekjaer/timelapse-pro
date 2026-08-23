@@ -88,6 +88,97 @@ function isMfaRequiredError(message: string | null) {
   return (message ?? '').toLowerCase().includes('mfa kræves')
 }
 
+// ── Browser-side SSH-nøgle-generering ─────────────────────────────────────
+// Genererer et Ed25519-nøglepar direkte i browseren via Web Crypto API, så
+// en operatør aldrig behøver en terminal. Den private nøgle forlader ALDRIG
+// browseren undtagen som en lokal fil-download — kun den offentlige nøgle
+// sendes til serveren. Output-formatet er ægte OpenSSH-format (samme som
+// `ssh-keygen` selv producerer), verificeret byte-for-byte mod `ssh-keygen -y`
+// før dette blev bygget ind i UI'en — kan bruges direkte med `ssh -i fil`,
+// ingen konvertering nødvendig.
+function u32Bytes(n: number): Uint8Array {
+  return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff])
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.length, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) { out.set(c, offset); offset += c.length }
+  return out
+}
+
+function sshString(data: Uint8Array | string): Uint8Array {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+  return concatBytes([u32Bytes(bytes.length), bytes])
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const b of bytes) binary += String.fromCharCode(b)
+  return btoa(binary)
+}
+
+function base64urlToBytes(s: string): Uint8Array {
+  let padded = s.replace(/-/g, '+').replace(/_/g, '/')
+  while (padded.length % 4) padded += '='
+  const binary = atob(padded)
+  const out = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i)
+  return out
+}
+
+function wrapPem(header: string, base64: string): string {
+  const lines = base64.match(/.{1,70}/g) ?? []
+  return `-----BEGIN ${header}-----\n${lines.join('\n')}\n-----END ${header}-----\n`
+}
+
+async function generateEd25519KeyPair(): Promise<{ publicKeyOpenSSH: string; privateKeyOpenSSH: string }> {
+  const keyPair = await crypto.subtle.generateKey({ name: 'Ed25519' } as EcKeyGenParams, true, ['sign', 'verify']) as CryptoKeyPair
+  const jwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey)
+  const seed = base64urlToBytes(jwk.d as string)   // 32-byte private seed
+  const pub  = base64urlToBytes(jwk.x as string)   // 32-byte public key
+
+  const pubBlob = concatBytes([sshString('ssh-ed25519'), sshString(pub)])
+  const publicKeyOpenSSH = `ssh-ed25519 ${bytesToBase64(pubBlob)}`
+
+  const checkint = crypto.getRandomValues(new Uint8Array(4))
+  let privSection = concatBytes([
+    checkint, checkint,
+    sshString('ssh-ed25519'),
+    sshString(pub),
+    sshString(concatBytes([seed, pub])), // OpenSSH's "expanded" private key: seed + pubkey
+    sshString(''), // comment
+  ])
+  const padLen = (8 - (privSection.length % 8)) % 8
+  const padding = new Uint8Array(padLen)
+  for (let i = 0; i < padLen; i++) padding[i] = i + 1
+  privSection = concatBytes([privSection, padding])
+
+  const full = concatBytes([
+    new TextEncoder().encode('openssh-key-v1\0'),
+    sshString('none'), sshString('none'), sshString(''), // cipher, kdf, kdfoptions
+    u32Bytes(1),
+    sshString(pubBlob),
+    sshString(privSection),
+  ])
+  const privateKeyOpenSSH = wrapPem('OPENSSH PRIVATE KEY', bytesToBase64(full))
+
+  return { publicKeyOpenSSH, privateKeyOpenSSH }
+}
+
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 // ── Password styrke ────────────────────────────────────────────────────────
 function PwStrength({ pw, policy }: { pw: string; policy: Policy | null }) {
   if (!policy || !pw) return null
@@ -229,6 +320,8 @@ export default function UsersPage() {
   const [sshKeysLoading, setSshKeysLoading] = useState(false)
   const [newSshKey,      setNewSshKey]      = useState('')
   const [newSshKeyLabel, setNewSshKeyLabel] = useState('')
+  const [sshKeyGeneratedInfo, setSshKeyGeneratedInfo] = useState<string | null>(null)
+  const [showManualKeyEntry,  setShowManualKeyEntry]  = useState(false)
   const [mfaDisableOpen, setMfaDisableOpen] = useState(false)
   const [mfaDisablePassword, setMfaDisablePassword] = useState('')
   const [mfaDisableCode, setMfaDisableCode] = useState('')
@@ -329,22 +422,41 @@ export default function UsersPage() {
     if (!opening) return
     setSshKeysId(id)
     setSshKeysErr(null); setNewSshKey(''); setNewSshKeyLabel('')
+    setSshKeyGeneratedInfo(null); setShowManualKeyEntry(false)
     try {
       const keys = await api(`/api/admin/users/${id}/ssh-keys`)
       setSshKeys(keys)
     } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
   }
 
+  async function registerSshKey(id: number, publicKey: string, label: string) {
+    await api(`/api/admin/users/${id}/ssh-keys`, {
+      method: 'POST',
+      body: JSON.stringify({ public_key: publicKey, label: label || null })
+    })
+    const keys = await api(`/api/admin/users/${id}/ssh-keys`)
+    setSshKeys(keys)
+  }
+
   async function addSshKey(id: number) {
     setSshKeysLoading(true); setSshKeysErr(null)
     try {
-      await api(`/api/admin/users/${id}/ssh-keys`, {
-        method: 'POST',
-        body: JSON.stringify({ public_key: newSshKey, label: newSshKeyLabel || null })
-      })
+      await registerSshKey(id, newSshKey, newSshKeyLabel)
       setNewSshKey(''); setNewSshKeyLabel('')
-      const keys = await api(`/api/admin/users/${id}/ssh-keys`)
-      setSshKeys(keys)
+    } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
+    finally { setSshKeysLoading(false) }
+  }
+
+  async function generateAndRegisterSshKey(id: number) {
+    setSshKeysLoading(true); setSshKeysErr(null); setSshKeyGeneratedInfo(null)
+    try {
+      const { publicKeyOpenSSH, privateKeyOpenSSH } = await generateEd25519KeyPair()
+      const label = newSshKeyLabel.trim() || `Nøgle oprettet ${new Date().toLocaleDateString('da-DK')}`
+      const filename = `${label.replace(/[^a-zA-Z0-9._-]+/g, '-')}.key`
+      await registerSshKey(id, publicKeyOpenSSH, label)
+      downloadTextFile(filename, privateKeyOpenSSH)
+      setNewSshKey(''); setNewSshKeyLabel('')
+      setSshKeyGeneratedInfo(filename)
     } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
     finally { setSshKeysLoading(false) }
   }
@@ -799,26 +911,14 @@ export default function UsersPage() {
                       SSH-nøgler til lokal Edge-adgang
                     </p>
                     <p className="text-xs text-gray-400">
-                      Erstatter den delte, fælles nøgle — hver registreret nøgle logger ind som "servicetekniker" på enheder, men er sporbar til denne bruger. Replikeres til enheder ved næste sync-poll.
+                      Erstatter den delte, fælles nøgle — hver nøgle logger ind som "servicetekniker" på enheder, men er sporbar til denne bruger.
                     </p>
-                    <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
-                      <p className="text-xs text-gray-500">
-                        <strong>Har du ikke en SSH-nøgle endnu?</strong> Åbn Terminal på din Mac og kør:
-                      </p>
-                      <p className="text-xs font-mono bg-white border border-gray-200 rounded px-2 py-1 mt-1 text-gray-700 select-all">
-                        ssh-keygen -t ed25519 -C "din@email.dk"
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1.5">
-                        Har du allerede en nøgle? Hent den offentlige del (aldrig den private!) med:
-                      </p>
-                      <p className="text-xs font-mono bg-white border border-gray-200 rounded px-2 py-1 mt-1 text-gray-700 select-all">
-                        cat ~/.ssh/id_ed25519.pub
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1.5">
-                        Kopiér hele linjen (starter med "ssh-ed25519") ind i feltet nedenfor — eller vælg filen direkte med knappen.
-                      </p>
-                    </div>
                     {sshKeysErr && <p className="text-xs text-red-600">{sshKeysErr}</p>}
+                    {sshKeyGeneratedInfo && (
+                      <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">
+                        ✓ Nøgle oprettet og registreret. Filen <strong>{sshKeyGeneratedInfo}</strong> er hentet til din computer (typisk i "Filer hentet") — gem den et sikkert sted, den bruges til at logge ind.
+                      </p>
+                    )}
                     {sshKeys.length > 0 ? (
                       <div className="space-y-1">
                         {sshKeys.map(k => (
@@ -845,30 +945,42 @@ export default function UsersPage() {
                     )}
                     <div className="flex items-center gap-2 flex-wrap">
                       <input value={newSshKeyLabel} onChange={e => setNewSshKeyLabel(e.target.value)}
-                        placeholder="Navn, fx Peters laptop"
-                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-full sm:w-40 flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-sky-300" />
-                      <input value={newSshKey} onChange={e => setNewSshKey(e.target.value)}
-                        placeholder="ssh-ed25519 AAAA... eller ssh-rsa AAAA..."
-                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs flex-1 min-w-[12rem] font-mono focus:outline-none focus:ring-2 focus:ring-sky-300" />
-                      <label className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg flex-shrink-0 cursor-pointer hover:bg-gray-200 transition-colors">
-                        Vælg fil…
-                        <input type="file" accept=".pub,text/plain" className="hidden"
-                          onChange={e => {
-                            const file = e.target.files?.[0]
-                            if (!file) return
-                            const reader = new FileReader()
-                            reader.onload = () => setNewSshKey(String(reader.result ?? '').trim())
-                            reader.readAsText(file)
-                            if (!newSshKeyLabel) setNewSshKeyLabel(file.name.replace(/\.pub$/, ''))
-                            e.target.value = ''
-                          }} />
-                      </label>
-                      <button onClick={() => addSshKey(u.id)} disabled={sshKeysLoading || !newSshKey.trim()}
+                        placeholder="Navn, fx Peters MacBook Pro"
+                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-full sm:w-48 flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                      <button onClick={() => generateAndRegisterSshKey(u.id)} disabled={sshKeysLoading}
                         className="px-3 py-1.5 bg-sky-500 text-white text-xs rounded-lg disabled:opacity-50 flex-shrink-0">
-                        {sshKeysLoading ? 'Tilføjer…' : 'Tilføj'}
+                        {sshKeysLoading ? 'Genererer…' : 'Generér ny nøgle'}
                       </button>
                       <button onClick={() => setSshKeysId(null)} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg flex-shrink-0">Luk</button>
                     </div>
+                    <button onClick={() => setShowManualKeyEntry(v => !v)}
+                      className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2">
+                      {showManualKeyEntry ? 'Skjul' : 'Har du allerede en nøgle, du vil bruge i stedet?'}
+                    </button>
+                    {showManualKeyEntry && (
+                      <div className="flex items-center gap-2 flex-wrap rounded-lg bg-gray-50 border border-gray-100 p-2">
+                        <input value={newSshKey} onChange={e => setNewSshKey(e.target.value)}
+                          placeholder="ssh-ed25519 AAAA... eller ssh-rsa AAAA..."
+                          className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs flex-1 min-w-[12rem] font-mono focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                        <label className="px-3 py-1.5 bg-white border border-gray-200 text-gray-600 text-xs rounded-lg flex-shrink-0 cursor-pointer hover:bg-gray-100 transition-colors">
+                          Vælg fil…
+                          <input type="file" accept=".pub,text/plain" className="hidden"
+                            onChange={e => {
+                              const file = e.target.files?.[0]
+                              if (!file) return
+                              const reader = new FileReader()
+                              reader.onload = () => setNewSshKey(String(reader.result ?? '').trim())
+                              reader.readAsText(file)
+                              if (!newSshKeyLabel) setNewSshKeyLabel(file.name.replace(/\.pub$/, ''))
+                              e.target.value = ''
+                            }} />
+                        </label>
+                        <button onClick={() => addSshKey(u.id)} disabled={sshKeysLoading || !newSshKey.trim()}
+                          className="px-3 py-1.5 bg-sky-500 text-white text-xs rounded-lg disabled:opacity-50 flex-shrink-0">
+                          {sshKeysLoading ? 'Tilføjer…' : 'Tilføj'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
