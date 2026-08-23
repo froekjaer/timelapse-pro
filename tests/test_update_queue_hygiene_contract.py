@@ -31,3 +31,17 @@ def test_homebrew_inventory_candidates_are_blocked_until_signed_artifact_flow_ex
     assert '"\\n\\nBlocked: kræver signeret dependency-artifact og rollback-plan før godkendelse."' in block
     assert 'exists.status = "blocked"' in block
     assert 'status="blocked"' in block
+
+
+def test_deployed_history_requires_explicit_promotion_eligibility():
+    backend = _source("headend/main.py")
+    pending_block = backend[backend.index("def list_pending_updates("):backend.index("UPDATE_CATEGORIES = [")]
+    ui = _source("timelapse-ui/src/pages/UpdatesPage.tsx")
+
+    assert '"promotion_eligible": _promotion_status(u)[0]' in pending_block
+    assert '"promotion_blocked_reason": _promotion_status(u)[1]' in pending_block
+    assert 'update.environment not in {"test", "staging"}' in pending_block
+    assert "Mangler deploybart signeret artifact." in pending_block
+    assert "Target-enhed rapporterer ikke længere denne app-version." in pending_block
+    assert "u.promotion_eligible ? (" in ui
+    assert "Historisk deploy" in ui

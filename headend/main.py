@@ -5657,6 +5657,13 @@ def list_pending_updates(
     production_matches = {}
     for prod in db.query(PendingUpdate).filter(PendingUpdate.environment == "production").all():
         production_matches[(prod.update_type, prod.version, prod.scope, prod.scope_id)] = prod
+    latest_deployed_nonprod: dict[tuple[str, str, str | None], PendingUpdate] = {}
+    for deployed in db.query(PendingUpdate).filter(
+        PendingUpdate.status == "deployed",
+        PendingUpdate.environment.in_(["lab", "test", "staging"]),
+    ).order_by(PendingUpdate.deployed_at.desc().nullslast(), PendingUpdate.created_at.desc(), PendingUpdate.id.desc()).all():
+        key = (deployed.update_type, deployed.scope, deployed.scope_id)
+        latest_deployed_nonprod.setdefault(key, deployed)
 
     def _promotion_source(update: PendingUpdate) -> str | None:
         description = update.description or ""
@@ -5664,6 +5671,38 @@ def list_pending_updates(
         if not match:
             return None
         return match.group(1)
+
+    def _app_candidate_still_installed(update: PendingUpdate) -> bool:
+        if update.update_type not in {"app_updates", "app_security", "timelapse_update", "timelapse_updates", "timelapse_security"}:
+            return True
+        targets = _resolve_update_targets(db, update)
+        if not targets:
+            return False
+        for device in targets:
+            installed = str(device.app_version or "").strip()
+            version = str(update.version or "").strip()
+            if not installed or not version:
+                return False
+            if installed != version and not version.startswith(installed):
+                return False
+        return True
+
+    def _promotion_status(update: PendingUpdate) -> tuple[bool, str | None]:
+        if update.status != "deployed":
+            return False, None
+        if update.environment not in {"test", "staging"}:
+            return False, "Kun deployed test/staging-kandidater kan promoveres direkte."
+        if production_matches.get((update.update_type, update.version, update.scope, update.scope_id)):
+            return False, "Allerede promoveret til production."
+        latest = latest_deployed_nonprod.get((update.update_type, update.scope, update.scope_id))
+        if not latest or latest.id != update.id:
+            return False, "Historisk deployment erstattet af en nyere non-prod deployment."
+        artifact = _find_artifact_for_update(db, update)
+        if not is_deployable_artifact(artifact):
+            return False, "Mangler deploybart signeret artifact."
+        if not _app_candidate_still_installed(update):
+            return False, "Target-enhed rapporterer ikke længere denne app-version."
+        return True, None
 
     return [
         {
@@ -5686,15 +5725,17 @@ def list_pending_updates(
             "rollback_at": u.rollback_at.isoformat() if u.rollback_at else None,
             "production_promotion_id": (
                 production_matches.get((u.update_type, u.version, u.scope, u.scope_id)).id
-                if u.environment == "test" and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
+                if u.environment in {"lab", "test", "staging"} and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
                 else None
             ),
             "production_promotion_status": (
                 production_matches.get((u.update_type, u.version, u.scope, u.scope_id)).status
-                if u.environment == "test" and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
+                if u.environment in {"lab", "test", "staging"} and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
                 else None
             ),
             "promotion_source_environment": _promotion_source(u),
+            "promotion_eligible": _promotion_status(u)[0],
+            "promotion_blocked_reason": _promotion_status(u)[1],
             "prod_ready": (
                 u.environment == "production"
                 and u.status == "pending"
