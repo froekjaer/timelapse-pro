@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react'
 import {
   Users, Plus, Trash2, Key, Shield, Check, AlertTriangle,
-  Eye, EyeOff, Settings, ChevronDown, ChevronRight, X, Pencil, Fingerprint, Trash
+  Eye, EyeOff, Settings, ChevronDown, ChevronRight, X, Pencil, Fingerprint, Trash, Terminal
 } from 'lucide-react'
 import { startRegistration } from '@simplewebauthn/browser'
 import { getApiUrl } from '../api/client'
@@ -53,7 +53,16 @@ interface UserRec {
   is_active: boolean
   created_at: string
   last_login?: string
-  on_site_service?: boolean
+  field_role?: 'none' | 'installer' | 'technician'
+}
+
+interface SSHKeyRec {
+  id: number
+  label: string | null
+  public_key: string
+  created_at: string | null
+  created_by: string | null
+  revoked_at: string | null
 }
 
 interface Customer { id: string; name: string }
@@ -77,6 +86,97 @@ function api(path: string, opts?: RequestInit) {
 
 function isMfaRequiredError(message: string | null) {
   return (message ?? '').toLowerCase().includes('mfa kræves')
+}
+
+// ── Browser-side SSH-nøgle-generering ─────────────────────────────────────
+// Genererer et Ed25519-nøglepar direkte i browseren via Web Crypto API, så
+// en operatør aldrig behøver en terminal. Den private nøgle forlader ALDRIG
+// browseren undtagen som en lokal fil-download — kun den offentlige nøgle
+// sendes til serveren. Output-formatet er ægte OpenSSH-format (samme som
+// `ssh-keygen` selv producerer), verificeret byte-for-byte mod `ssh-keygen -y`
+// før dette blev bygget ind i UI'en — kan bruges direkte med `ssh -i fil`,
+// ingen konvertering nødvendig.
+function u32Bytes(n: number): Uint8Array {
+  return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff])
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.length, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) { out.set(c, offset); offset += c.length }
+  return out
+}
+
+function sshString(data: Uint8Array | string): Uint8Array {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
+  return concatBytes([u32Bytes(bytes.length), bytes])
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const b of bytes) binary += String.fromCharCode(b)
+  return btoa(binary)
+}
+
+function base64urlToBytes(s: string): Uint8Array {
+  let padded = s.replace(/-/g, '+').replace(/_/g, '/')
+  while (padded.length % 4) padded += '='
+  const binary = atob(padded)
+  const out = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i)
+  return out
+}
+
+function wrapPem(header: string, base64: string): string {
+  const lines = base64.match(/.{1,70}/g) ?? []
+  return `-----BEGIN ${header}-----\n${lines.join('\n')}\n-----END ${header}-----\n`
+}
+
+async function generateEd25519KeyPair(): Promise<{ publicKeyOpenSSH: string; privateKeyOpenSSH: string }> {
+  const keyPair = await crypto.subtle.generateKey({ name: 'Ed25519' } as EcKeyGenParams, true, ['sign', 'verify']) as CryptoKeyPair
+  const jwk = await crypto.subtle.exportKey('jwk', keyPair.privateKey)
+  const seed = base64urlToBytes(jwk.d as string)   // 32-byte private seed
+  const pub  = base64urlToBytes(jwk.x as string)   // 32-byte public key
+
+  const pubBlob = concatBytes([sshString('ssh-ed25519'), sshString(pub)])
+  const publicKeyOpenSSH = `ssh-ed25519 ${bytesToBase64(pubBlob)}`
+
+  const checkint = crypto.getRandomValues(new Uint8Array(4))
+  let privSection = concatBytes([
+    checkint, checkint,
+    sshString('ssh-ed25519'),
+    sshString(pub),
+    sshString(concatBytes([seed, pub])), // OpenSSH's "expanded" private key: seed + pubkey
+    sshString(''), // comment
+  ])
+  const padLen = (8 - (privSection.length % 8)) % 8
+  const padding = new Uint8Array(padLen)
+  for (let i = 0; i < padLen; i++) padding[i] = i + 1
+  privSection = concatBytes([privSection, padding])
+
+  const full = concatBytes([
+    new TextEncoder().encode('openssh-key-v1\0'),
+    sshString('none'), sshString('none'), sshString(''), // cipher, kdf, kdfoptions
+    u32Bytes(1),
+    sshString(pubBlob),
+    sshString(privSection),
+  ])
+  const privateKeyOpenSSH = wrapPem('OPENSSH PRIVATE KEY', bytesToBase64(full))
+
+  return { publicKeyOpenSSH, privateKeyOpenSSH }
+}
+
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 // ── Password styrke ────────────────────────────────────────────────────────
@@ -190,7 +290,7 @@ export default function UsersPage() {
   const [showPw,    setShowPw]    = useState(false)
   const [newRole,   setNewRole]   = useState<Role>('viewer')
   const [newCust,   setNewCust]   = useState('')
-  const [newOnSiteService, setNewOnSiteService] = useState(false)
+  const [newFieldRole, setNewFieldRole] = useState<'none' | 'installer' | 'technician'>('none')
   const [creating,  setCreating]  = useState(false)
   const [createErr, setCreateErr] = useState<string | null>(null)
 
@@ -203,7 +303,7 @@ export default function UsersPage() {
   const [editEmail,  setEditEmail]  = useState('')
   const [editCust,   setEditCust]   = useState('')
   const [editActive, setEditActive] = useState(true)
-  const [editOnSiteService, setEditOnSiteService] = useState(false)
+  const [editFieldRole, setEditFieldRole] = useState<'none' | 'installer' | 'technician'>('none')
   const [editErr,    setEditErr]    = useState<string | null>(null)
   const [editSaving,    setEditSaving]    = useState(false)
   const [mfaId,         setMfaId]         = useState<number | null>(null)
@@ -212,6 +312,16 @@ export default function UsersPage() {
   const [mfaCode,       setMfaCode]       = useState('')
   const [mfaErr,        setMfaErr]        = useState<string | null>(null)
   const [mfaSaving,     setMfaSaving]     = useState(false)
+
+  // SSH-nøgler (field-role/RBAC teknikeradgang, PR #79)
+  const [sshKeysId,      setSshKeysId]      = useState<number | null>(null)
+  const [sshKeys,        setSshKeys]        = useState<SSHKeyRec[]>([])
+  const [sshKeysErr,     setSshKeysErr]     = useState<string | null>(null)
+  const [sshKeysLoading, setSshKeysLoading] = useState(false)
+  const [newSshKey,      setNewSshKey]      = useState('')
+  const [newSshKeyLabel, setNewSshKeyLabel] = useState('')
+  const [sshKeyGeneratedInfo, setSshKeyGeneratedInfo] = useState<string | null>(null)
+  const [showManualKeyEntry,  setShowManualKeyEntry]  = useState(false)
   const [mfaDisableOpen, setMfaDisableOpen] = useState(false)
   const [mfaDisablePassword, setMfaDisablePassword] = useState('')
   const [mfaDisableCode, setMfaDisableCode] = useState('')
@@ -220,6 +330,17 @@ export default function UsersPage() {
   const [waCredentials, setWaCredentials] = useState<any[]>([])
   const [waLoading,     setWaLoading]     = useState(false)
   const [waErr,         setWaErr]         = useState<string | null>(null)
+
+  // Kun ét ekspanderet panel ad gangen pr. bruger — de var uafhængige før,
+  // så fx "Rediger" + "SSH-nøgler" åbne samtidig gav et rodet, stablet
+  // layout i stedet for den fokuserede visning brugeren forventede.
+  function closeExpandedPanels() {
+    setChangePwId(null)
+    setEditId(null)
+    setMfaId(null)
+    setSshKeysId(null)
+    setWaId(null)
+  }
 
   const load = () => {
     setLoading(true)
@@ -255,11 +376,11 @@ export default function UsersPage() {
           role:        newRole,
           email:       newEmail || `${newUser}@timelapse.local`,
           customer_id: newCust || null,
-          on_site_service: newOnSiteService,
+          field_role: newFieldRole,
         }),
       })
       setShowNew(false)
-      setNewUser(''); setNewPw(''); setNewEmail(''); setNewRole('viewer'); setNewCust(''); setNewOnSiteService(false)
+      setNewUser(''); setNewPw(''); setNewEmail(''); setNewRole('viewer'); setNewCust(''); setNewFieldRole('none')
       load()
     } catch (e: any) { setCreateErr(e.message) }
     finally { setCreating(false) }
@@ -272,12 +393,13 @@ export default function UsersPage() {
   }
 
   function startEdit(u: UserRec) {
+    closeExpandedPanels()
     setEditId(u.id)
     setEditRole(u.role)
     setEditEmail(u.email ?? '')
     setEditCust(u.customer_id ?? '')
     setEditActive(u.is_active)
-    setEditOnSiteService(!!u.on_site_service)
+    setEditFieldRole(u.field_role ?? 'none')
     setEditErr(null)
   }
 
@@ -286,12 +408,66 @@ export default function UsersPage() {
     try {
       await api(`/api/admin/users/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ role: editRole, email: editEmail || null, customer_id: editCust || null, is_active: editActive, on_site_service: editOnSiteService })
+        body: JSON.stringify({ role: editRole, email: editEmail || null, customer_id: editCust || null, is_active: editActive, field_role: editFieldRole })
       })
       setEditId(null)
       load()
     } catch (e: any) { setEditErr(e.message) }
     finally { setEditSaving(false) }
+  }
+
+  async function openSshKeys(id: number) {
+    const opening = sshKeysId !== id
+    closeExpandedPanels()
+    if (!opening) return
+    setSshKeysId(id)
+    setSshKeysErr(null); setNewSshKey(''); setNewSshKeyLabel('')
+    setSshKeyGeneratedInfo(null); setShowManualKeyEntry(false)
+    try {
+      const keys = await api(`/api/admin/users/${id}/ssh-keys`)
+      setSshKeys(keys)
+    } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
+  }
+
+  async function registerSshKey(id: number, publicKey: string, label: string) {
+    await api(`/api/admin/users/${id}/ssh-keys`, {
+      method: 'POST',
+      body: JSON.stringify({ public_key: publicKey, label: label || null })
+    })
+    const keys = await api(`/api/admin/users/${id}/ssh-keys`)
+    setSshKeys(keys)
+  }
+
+  async function addSshKey(id: number) {
+    setSshKeysLoading(true); setSshKeysErr(null)
+    try {
+      await registerSshKey(id, newSshKey, newSshKeyLabel)
+      setNewSshKey(''); setNewSshKeyLabel('')
+    } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
+    finally { setSshKeysLoading(false) }
+  }
+
+  async function generateAndRegisterSshKey(id: number) {
+    setSshKeysLoading(true); setSshKeysErr(null); setSshKeyGeneratedInfo(null)
+    try {
+      const { publicKeyOpenSSH, privateKeyOpenSSH } = await generateEd25519KeyPair()
+      const label = newSshKeyLabel.trim() || `Nøgle oprettet ${new Date().toLocaleDateString('da-DK')}`
+      const filename = `${label.replace(/[^a-zA-Z0-9._-]+/g, '-')}.key`
+      await registerSshKey(id, publicKeyOpenSSH, label)
+      downloadTextFile(filename, privateKeyOpenSSH)
+      setNewSshKey(''); setNewSshKeyLabel('')
+      setSshKeyGeneratedInfo(filename)
+    } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
+    finally { setSshKeysLoading(false) }
+  }
+
+  async function revokeSshKey(userId: number, keyId: number) {
+    setSshKeysErr(null)
+    try {
+      await api(`/api/admin/users/${userId}/ssh-keys/${keyId}`, { method: 'DELETE' })
+      const keys = await api(`/api/admin/users/${userId}/ssh-keys`)
+      setSshKeys(keys)
+    } catch (e: unknown) { setSshKeysErr(e instanceof Error ? e.message : String(e)) }
   }
 
   async function startMfaSetup(id: number) {
@@ -484,10 +660,16 @@ export default function UsersPage() {
                 Begrænser brugeren til kun at se og administrere den valgte kundes data.
               </p>
             </div>
-            <label className="col-span-2 flex items-start gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 cursor-pointer">
-              <input type="checkbox" checked={newOnSiteService} onChange={e => setNewOnSiteService(e.target.checked)} className="mt-0.5 rounded" />
-              <span className="text-xs text-sky-900"><strong>On-site idriftsættelse og service</strong><br /><span className="text-sky-700">Tillader tekniker-login til lokal Edge-service efter normal TimeLapse Pro-autentificering. Primær rolle og kundeafgrænsning bevares.</span></span>
-            </label>
+            <div className="col-span-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2">
+              <label className="text-xs text-sky-900 font-medium block mb-1">Felt-rolle (on-site adgang)</label>
+              <select value={newFieldRole} onChange={e => setNewFieldRole(e.target.value as 'none' | 'installer' | 'technician')}
+                className="w-full border border-sky-200 rounded-lg px-2 py-1.5 text-sm bg-white">
+                <option value="none">Ingen</option>
+                <option value="installer">Idriftsætter</option>
+                <option value="technician">Servicetekniker</option>
+              </select>
+              <p className="text-xs text-sky-700 mt-1">Tillader tekniker-login til lokal Edge-service efter normal TimeLapse Pro-autentificering. Primær rolle og kundeafgrænsning bevares.</p>
+            </div>
           </div>
           <div className="flex items-center justify-end gap-2 mt-4">
             <button onClick={() => { setShowNew(false); setCreateErr(null) }}
@@ -531,29 +713,32 @@ export default function UsersPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium text-gray-900">{u.username}</span>
+                  <span className="text-sm font-medium text-gray-900 flex-shrink-0">{u.username}</span>
                   {u.username === me?.username && (
-                    <span className="text-xs bg-sky-100 text-sky-600 px-2 py-0.5 rounded-full">dig</span>
+                    <span className="text-xs bg-sky-100 text-sky-600 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">dig</span>
                   )}
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ROLE_COLORS[u.role]}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 whitespace-nowrap ${ROLE_COLORS[u.role]}`}>
                     {ROLE_LABELS[u.role]}
                   </span>
                   {u.customer_id && (
-                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">
+                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">
                       {customers.find(c => c.id === u.customer_id)?.name ?? 'Kunde'}
                     </span>
                   )}
                   {!u.is_active && (
-                    <span className="text-xs bg-red-100 text-red-500 px-2 py-0.5 rounded-full">Deaktiveret</span>
+                    <span className="text-xs bg-red-100 text-red-500 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">Deaktiveret</span>
                   )}
                   {u.mfa_required && (
-                    <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">MFA kræves</span>
+                    <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">MFA kræves</span>
                   )}
                   {u.mfa_partial && (
-                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">MFA halv state</span>
+                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">MFA halv state</span>
                   )}
-                  {u.on_site_service && (
-                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full">On-site service</span>
+                  {u.field_role === 'installer' && (
+                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">Idriftsætter</span>
+                  )}
+                  {u.field_role === 'technician' && (
+                    <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">Servicetekniker</span>
                   )}
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -620,11 +805,15 @@ export default function UsersPage() {
                           Aktiv konto
                         </label>
                       </div>
-                      <div className="col-span-2">
-                        <label className="flex items-start gap-2 cursor-pointer text-xs text-sky-800 rounded-lg border border-sky-100 bg-sky-50 px-2 py-2">
-                          <input type="checkbox" checked={editOnSiteService} onChange={e => setEditOnSiteService(e.target.checked)} className="mt-0.5 rounded border-gray-300" />
-                          <span><strong>On-site idriftsættelse og service</strong><br /><span className="text-sky-700">Kan gennemføre lokal Edge-service med sin normale konto og gældende rolle.</span></span>
-                        </label>
+                      <div className="col-span-2 rounded-lg border border-sky-100 bg-sky-50 px-2 py-2">
+                        <label className="text-xs text-sky-900 font-medium block mb-1">Felt-rolle (on-site adgang)</label>
+                        <select value={editFieldRole} onChange={e => setEditFieldRole(e.target.value as 'none' | 'installer' | 'technician')}
+                          className="w-full border border-sky-200 rounded-lg px-2 py-1.5 text-xs bg-white">
+                          <option value="none">Ingen</option>
+                          <option value="installer">Idriftsætter</option>
+                          <option value="technician">Servicetekniker</option>
+                        </select>
+                        <p className="text-xs text-sky-700 mt-1">Kan gennemføre lokal Edge-service med sin normale konto og gældende rolle.</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 pt-1">
@@ -715,6 +904,86 @@ export default function UsersPage() {
                   </div>
                 )}
 
+                {sshKeysId === u.id && (
+                  <div className="mt-3 space-y-2 border-t border-gray-50 pt-3">
+                    <p className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
+                      <Terminal className="w-3.5 h-3.5 text-sky-500" />
+                      SSH-nøgler til lokal Edge-adgang
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      Erstatter den delte, fælles nøgle — hver nøgle logger ind som "servicetekniker" på enheder, men er sporbar til denne bruger.
+                    </p>
+                    {sshKeysErr && <p className="text-xs text-red-600">{sshKeysErr}</p>}
+                    {sshKeyGeneratedInfo && (
+                      <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">
+                        ✓ Nøgle oprettet og registreret. Filen <strong>{sshKeyGeneratedInfo}</strong> er hentet til din computer (typisk i "Filer hentet") — gem den et sikkert sted, den bruges til at logge ind.
+                      </p>
+                    )}
+                    {sshKeys.length > 0 ? (
+                      <div className="space-y-1">
+                        {sshKeys.map(k => (
+                          <div key={k.id} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 ${k.revoked_at ? 'border-gray-100 bg-gray-50' : 'border-sky-100 bg-sky-50'}`}>
+                            <Terminal className={`w-3.5 h-3.5 flex-shrink-0 ${k.revoked_at ? 'text-gray-300' : 'text-sky-500'}`} />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-gray-700 truncate">{k.label || 'Uden navn'}</p>
+                              <p className="text-[10px] text-gray-400 font-mono truncate">{k.public_key}</p>
+                            </div>
+                            {k.revoked_at ? (
+                              <span className="text-[10px] text-gray-400 flex-shrink-0">Tilbagekaldt</span>
+                            ) : (
+                              <button onClick={() => revokeSshKey(u.id, k.id)}
+                                title="Tilbagekald nøgle"
+                                className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 flex-shrink-0">
+                                <Trash className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">Ingen SSH-nøgler registreret endnu.</p>
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input value={newSshKeyLabel} onChange={e => setNewSshKeyLabel(e.target.value)}
+                        placeholder="Navn, fx Peters MacBook Pro"
+                        className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-full sm:w-48 flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                      <button onClick={() => generateAndRegisterSshKey(u.id)} disabled={sshKeysLoading}
+                        className="px-3 py-1.5 bg-sky-500 text-white text-xs rounded-lg disabled:opacity-50 flex-shrink-0">
+                        {sshKeysLoading ? 'Genererer…' : 'Generér ny nøgle'}
+                      </button>
+                      <button onClick={() => setSshKeysId(null)} className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg flex-shrink-0">Luk</button>
+                    </div>
+                    <button onClick={() => setShowManualKeyEntry(v => !v)}
+                      className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2">
+                      {showManualKeyEntry ? 'Skjul' : 'Har du allerede en nøgle, du vil bruge i stedet?'}
+                    </button>
+                    {showManualKeyEntry && (
+                      <div className="flex items-center gap-2 flex-wrap rounded-lg bg-gray-50 border border-gray-100 p-2">
+                        <input value={newSshKey} onChange={e => setNewSshKey(e.target.value)}
+                          placeholder="ssh-ed25519 AAAA... eller ssh-rsa AAAA..."
+                          className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs flex-1 min-w-[12rem] font-mono focus:outline-none focus:ring-2 focus:ring-sky-300" />
+                        <label className="px-3 py-1.5 bg-white border border-gray-200 text-gray-600 text-xs rounded-lg flex-shrink-0 cursor-pointer hover:bg-gray-100 transition-colors">
+                          Vælg fil…
+                          <input type="file" accept=".pub,text/plain" className="hidden"
+                            onChange={e => {
+                              const file = e.target.files?.[0]
+                              if (!file) return
+                              const reader = new FileReader()
+                              reader.onload = () => setNewSshKey(String(reader.result ?? '').trim())
+                              reader.readAsText(file)
+                              if (!newSshKeyLabel) setNewSshKeyLabel(file.name.replace(/\.pub$/, ''))
+                              e.target.value = ''
+                            }} />
+                        </label>
+                        <button onClick={() => addSshKey(u.id)} disabled={sshKeysLoading || !newSshKey.trim()}
+                          className="px-3 py-1.5 bg-sky-500 text-white text-xs rounded-lg disabled:opacity-50 flex-shrink-0">
+                          {sshKeysLoading ? 'Tilføjer…' : 'Tilføj'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {waId === u.id && (
                   <div className="mt-3 space-y-2 border-t border-gray-50 pt-3">
                     <p className="text-xs font-medium text-gray-600 flex items-center gap-1.5">
@@ -765,14 +1034,21 @@ export default function UsersPage() {
 
               {/* Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
-                <button onClick={() => { setWaId(waId === u.id ? null : u.id); if (waId !== u.id) openWebAuthn(u) }}
+                <button onClick={() => {
+                    const opening = waId !== u.id
+                    closeExpandedPanels()
+                    if (opening) { setWaId(u.id); openWebAuthn(u) }
+                  }}
                   title={(u.webauthn_count ?? 0) > 0 ? `${u.webauthn_count} passkey-enhed(er)` : 'Windows Hello / Touch ID'}
                   className={`p-1.5 rounded-lg transition-colors ${(u.webauthn_count ?? 0) > 0 ? 'text-sky-600 hover:bg-sky-50' : 'text-gray-400 hover:text-sky-600 hover:bg-sky-50'}`}>
                   <Fingerprint className="w-3.5 h-3.5" />
                 </button>
                 <button onClick={() => {
-                    setMfaId(mfaId === u.id ? null : u.id)
-                    if (mfaId !== u.id && !u.mfa_enabled && u.username === me?.username) startMfaSetup(u.id)
+                    const opening = mfaId !== u.id
+                    closeExpandedPanels()
+                    if (!opening) return
+                    setMfaId(u.id)
+                    if (!u.mfa_enabled && u.username === me?.username) startMfaSetup(u.id)
                   }}
                   title={u.mfa_enabled ? 'Administrer MFA' : u.mfa_required ? 'MFA kræves' : 'MFA'}
                   className={`p-1.5 rounded-lg transition-colors ${
@@ -788,11 +1064,22 @@ export default function UsersPage() {
                   className="p-1.5 rounded-lg text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition-colors">
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={() => { setChangePwId(changePwId === u.id ? null : u.id); setNewPwFor(''); setChangePwErr(null) }}
+                <button onClick={() => {
+                    const opening = changePwId !== u.id
+                    closeExpandedPanels()
+                    if (opening) { setChangePwId(u.id); setNewPwFor(''); setChangePwErr(null) }
+                  }}
                   title="Skift adgangskode"
                   className="p-1.5 rounded-lg text-gray-400 hover:text-sky-600 hover:bg-sky-50 transition-colors">
                   <Key className="w-3.5 h-3.5" />
                 </button>
+                {(u.field_role === 'installer' || u.field_role === 'technician') && (
+                  <button onClick={() => openSshKeys(u.id)}
+                    title="SSH-nøgler til lokal Edge-adgang"
+                    className={`p-1.5 rounded-lg transition-colors ${sshKeysId === u.id ? 'text-sky-600 bg-sky-50' : 'text-gray-400 hover:text-sky-600 hover:bg-sky-50'}`}>
+                    <Terminal className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 {u.username !== me?.username && (
                   <button onClick={() => deleteUser(u.id)}
                     title="Slet bruger"

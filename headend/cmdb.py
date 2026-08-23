@@ -23,6 +23,7 @@ Endpoints:
     POST /api/cmdb/{device_id}/break-glass  → admin opretter break-glass konto
     GET  /api/cmdb/{device_id}/break-glass  → list break-glass konti (ingen passwords)
     POST /api/cmdb/{device_id}/break-glass/checkout → checkout: vis password + roter
+    GET  /api/cmdb/{device_id}/break-glass/checkout-history → fuld checkout-historik (audit)
     DELETE /api/cmdb/{device_id}/break-glass/{account_id} → slet konto
 """
 
@@ -41,7 +42,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from database import CustomerRiskInput, CustomerRiskProfile, Device, DeviceInventory, BreakGlassAccount, PendingUpdate, get_db, now_utc
+from database import CustomerRiskInput, CustomerRiskProfile, Device, DeviceInventory, BreakGlassAccount, BreakGlassCheckoutAudit, PendingUpdate, get_db, now_utc
 from services.fair_risk import estimate_annual_loss
 
 log = logging.getLogger(__name__)
@@ -519,6 +520,8 @@ def report_inventory(device_id: str, payload: dict, db: Session = Depends(get_db
             software_inventory["_services"] = payload["services"]
         if "enabled_services" in payload:
             software_inventory["_enabled_services"] = payload["enabled_services"]
+        if "apt_sources" in payload:
+            software_inventory["_apt_sources"] = payload["apt_sources"]
         if "local_users" in payload:
             software_inventory["_local_users"] = payload["local_users"]
         if "sudo_users" in payload:
@@ -890,10 +893,13 @@ def update_cmdb(device_id: str, payload: dict, _user=Depends(_require_cmdb_role(
 @router.post("/{device_id}/break-glass")
 def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """
-    Admin opretter en break-glass konto for en enhed.
+    Admin opretter sin egen break-glass konto for en enhed.
+
+    Ejerskab (admin_username) bindes til den autentificerede sessions brugernavn,
+    ikke til request-body — en admin kan ikke oprette eller overtage en konto i en
+    anden admins navn (C-06: audit-actor skal være den autentificerede principal).
 
     Body:
-        admin_username  (str)  Hvilken admin-konto der ejer denne adgang
         ssh_username    (str, optional) Standard: "emergency"
         public_key      (str, optional) SSH public key til authorized_keys
         expires_days    (int, optional) Antal dage til udløb (0 = udløber ikke)
@@ -902,9 +908,7 @@ def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmd
     — brug /checkout for at hente det.
     """
     _ensure_device_access(db, _user, device_id)
-    admin_username = payload.get("admin_username")
-    if not admin_username:
-        raise HTTPException(status_code=400, detail="admin_username påkrævet")
+    admin_username = _user.username
 
     # Tjek om der allerede eksisterer en aktiv konto
     existing = db.query(BreakGlassAccount).filter_by(
@@ -977,16 +981,31 @@ def list_break_glass(device_id: str, _user=Depends(_require_cmdb_role("admin")),
 @router.post("/{device_id}/break-glass/checkout")
 def checkout_break_glass(device_id: str, payload: dict, request: Request = None, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
     """
-    Checkout break-glass password.
+    Checkout break-glass password for den autentificerede admins egen konto.
 
     - Dekrypterer og returnerer det aktuelle password
     - Genererer straks et NYT password og krypterer det (rotation)
     - Logger tidspunkt og bruger
     - TODO Sprint CMDB-2: push nyt password til edge via SSH
 
+    admin_username bindes til den autentificerede sessions brugernavn, ikke til
+    request-body (C-06: audit-actor skal være den autentificerede principal — en
+    admin kan ellers checke ud og lade audit-loggen pege på en anden admin). Det
+    betyder en admin kun kan checke sin EGEN konto ud.
+
+    Nødhjælp til kollega uden central-adgang: hvis en kollega står på en site og
+    ikke selv kan nå det centrale system, ringer/kontakter de en admin der KAN
+    — den admin checker sin EGEN konto ud som normalt og udfylder on_behalf_of
+    med hvem de hjælper. Det er en dokumentations-markør til audit-historikken
+    (se GET .../checkout-history), IKKE en autentificerings-mekanisme — den
+    ændrer intet ved hvilken konto der slås op eller hvem den autentificerede
+    aktør er.
+
     Body:
-        admin_username  (str)  Hvilken admin der checker ud
-        reason          (str)  Årsag til adgang (til audit log)
+        reason        (str)  Årsag til adgang (til audit log)
+        on_behalf_of  (str, optional)  Navn/brugernavn på kollega der hjælpes,
+                      hvis checkout sker fordi kollegaen ikke selv kan nå det
+                      centrale system
 
     SIKKERHED: Denne endpoint skal i produktion kræve:
         1. Stærk MFA (ikke bare session-cookie)
@@ -994,11 +1013,9 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
         3. Rate limiting (maks 3 checkouts pr. time)
     """
     _ensure_device_access(db, _user, device_id)
-    admin_username = payload.get("admin_username")
+    admin_username = _user.username
     reason = payload.get("reason", "Ikke angivet")
-
-    if not admin_username:
-        raise HTTPException(status_code=400, detail="admin_username påkrævet")
+    on_behalf_of = (payload.get("on_behalf_of") or "").strip()[:200] or None
 
     # Opt-in hærdning (rate-limit + IP-allowlist); no-op når env ikke er sat.
     _enforce_break_glass_policy(request, device_id, admin_username)
@@ -1025,11 +1042,21 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
     account.last_used_by    = admin_username
     account.checkout_count  = (account.checkout_count or 0) + 1
 
+    client_ip = getattr(getattr(request, "client", None), "host", None)
+    db.add(BreakGlassCheckoutAudit(
+        account_id=account.id,
+        device_id=device_id,
+        checked_out_by=admin_username,
+        on_behalf_of=on_behalf_of,
+        reason=reason,
+        client_ip=client_ip,
+    ))
+
     db.commit()
 
     log.warning(
-        "BREAK-GLASS CHECKOUT: device=%s admin=%s reason='%s' checkout_count=%d",
-        device_id, admin_username, reason, account.checkout_count
+        "BREAK-GLASS CHECKOUT: device=%s admin=%s on_behalf_of=%s reason='%s' checkout_count=%d",
+        device_id, admin_username, on_behalf_of, reason, account.checkout_count
     )
 
     # TODO Sprint CMDB-2: push nyt password til edge
@@ -1048,6 +1075,37 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
         "checkout_count":   account.checkout_count,
         "warning":          "Password vises kun denne ene gang. Gem det nu. Rotation er sket.",
     }
+
+
+@router.get("/{device_id}/break-glass/checkout-history")
+def list_break_glass_checkout_history(device_id: str, limit: int = 50, _user=Depends(_require_cmdb_role("admin")), db: Session = Depends(get_db)):
+    """
+    Fuld checkout-historik for en enheds break-glass konti — i modsætning til
+    GET .../break-glass (som kun viser SENESTE checkout pr. konto), viser dette
+    ALLE historiske checkouts, inkl. eventuel on_behalf_of-markering fra
+    "hjælp en kollega uden central-adgang"-proceduren. Aldrig passwords.
+    """
+    _ensure_device_access(db, _user, device_id)
+    limit = max(1, min(limit, 500))
+    entries = (
+        db.query(BreakGlassCheckoutAudit)
+        .filter_by(device_id=device_id)
+        .order_by(BreakGlassCheckoutAudit.checked_out_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id":              e.id,
+            "account_id":      e.account_id,
+            "checked_out_by":  e.checked_out_by,
+            "on_behalf_of":    e.on_behalf_of,
+            "reason":          e.reason,
+            "client_ip":       e.client_ip,
+            "checked_out_at":  e.checked_out_at.isoformat() if e.checked_out_at else None,
+        }
+        for e in entries
+    ]
 
 
 @router.delete("/{device_id}/break-glass/{account_id}")

@@ -33,9 +33,10 @@ from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from database import get_db
+from database import get_db, Device
 from cmdb import report_inventory as _cmdb_report_inventory
 from siem import ingest_events as _siem_ingest_events
+from technician_keys import resolve_authorized_technician_keys
 
 router = APIRouter(tags=["Edge Sync"])
 
@@ -98,6 +99,8 @@ async def edge_sync(
 
     cfg = get_config(device_id, _auth=None, db=db)
     policy = get_update_policy(device_id, _auth=None, db=db)
+    device = db.query(Device).filter_by(device_id=device_id).first()
+    technician_keys = resolve_authorized_technician_keys(db, device) if device else []
 
     return {
         "server_time": hb_result["server_time"],
@@ -106,4 +109,5 @@ async def edge_sync(
         "pending_updates": policy.get("pending_updates", []),
         "app_security": policy.get("app_security"),
         "app_updates": policy.get("app_updates"),
+        "technician_keys": technician_keys,
     }

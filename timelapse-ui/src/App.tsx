@@ -37,6 +37,7 @@ import AIPage from './pages/AIPage'
 import OpenWebUIPage from './pages/OpenWebUIPage'
 import PostProcessingPage from './pages/PostProcessingPage'
 import DriftPage from './pages/DriftPage'
+import { HelpPage } from './pages/HelpPage'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 
@@ -119,11 +120,12 @@ function AppRoutes() {
         <Route path="/siem" element={<SIEMPage />} />
         <Route path="/import" element={<RequireRole minimum="admin"><ImportPage /></RequireRole>} />
         <Route path="/cmdb/:deviceId" element={<CMDBDetailPage />} />
-	        <Route path="/ai" element={<RequireRole minimum="admin"><AIPage /></RequireRole>} />
-	        <Route path="/openwebui" element={<RequireRole minimum="admin"><OpenWebUIPage /></RequireRole>} />
-	        <Route path="/post-processing" element={<RequireRole minimum="admin"><PostProcessingPage /></RequireRole>} />
-	        <Route path="/observability" element={<DriftPage />} />
-	              </Routes>
+        <Route path="/ai" element={<RequireRole minimum="admin"><AIPage /></RequireRole>} />
+        <Route path="/openwebui" element={<RequireRole minimum="admin"><OpenWebUIPage /></RequireRole>} />
+        <Route path="/post-processing" element={<RequireRole minimum="admin"><PostProcessingPage /></RequireRole>} />
+        <Route path="/observability" element={<DriftPage />} />
+        <Route path="/help" element={<HelpPage />} />
+              </Routes>
             </main>
           </div>
         </RequireAuth>

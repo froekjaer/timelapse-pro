@@ -50,9 +50,37 @@ def test_generic_key_management_cannot_generate_edge_ssh_private_keys():
         '@app.post("/api/admin/key-management/credentials")',
         '@app.post("/api/admin/key-management/credentials/{credential_id}/revoke")',
     )
-    assert 'entity_type == "edge" and key_type == "ssh"' in block
+    assert 'entity_type == "edge" and key_type in {"ssh", "signing"}' in block
     assert "payload.generate_keypair" in block
     assert "Edge-leveret public key" in block
+
+
+def test_key_management_rejects_edge_signing_keypair_generation():
+    """C-09 regression: this guard used to only cover key_type=="ssh" — a
+    request with key_type=="signing" fell through to _generate_ed25519_keypair()
+    and Headend generated + returned an Edge private key, violating the WP-4
+    Edge-owns-its-private-keys principle. Behavioral test, not just a source
+    string check, so a future refactor that keeps the SAME bug under different
+    wording still gets caught."""
+    import sys
+    from pathlib import Path
+    from unittest.mock import MagicMock
+
+    import pytest
+    from fastapi import HTTPException
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "headend"))
+    import main
+
+    payload = main.KeyCredentialPayload(
+        entity_type="edge",
+        entity_id="TL-TESTDEVICE-C09",
+        key_type="signing",
+        generate_keypair=True,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        main.create_key_credential(payload, current_user=MagicMock(username="admin"), db=MagicMock())
+    assert exc_info.value.status_code == 409
 
 
 def test_legacy_provision_package_is_retired_instead_of_exporting_private_keys():

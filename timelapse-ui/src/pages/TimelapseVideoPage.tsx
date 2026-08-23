@@ -32,7 +32,10 @@ const apiCall = async (path: string, options?: RequestInit) => {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail || `HTTP ${res.status}`)
+  }
   return res.json()
 }
 

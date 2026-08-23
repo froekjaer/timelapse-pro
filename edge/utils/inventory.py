@@ -270,6 +270,58 @@ def _os_packages() -> tuple[str, dict[str, str]]:
         return "apt/dpkg", {}
 
 
+def _apt_sources(base_dir: Path = Path("/etc/apt/sources.list.d")) -> list[str]:
+    """Every 3rd-party apt repo URI configured in /etc/apt/sources.list.d/
+    (classic one-line .list files and deb822 .sources files), deduplicated.
+    Generalizes the docker-ce finding (FIND-CMDB-UNTRACKED-DOCKER-CE-CHANNEL,
+    2026-08-16): that finding was really "an apt channel isn't in CMDB's
+    baseline", not specific to docker-ce — comparing this list against a
+    hardware target's expected_apt_sources catches any untracked 3rd-party
+    repo the same way.
+
+    Deliberately excludes /etc/apt/sources.list itself: that's where the
+    base distro's own default archive/security mirrors live, which vary
+    legitimately by image/region/geoip and would swamp this in noise. Third-
+    party additions (docker's official install instructions are a typical
+    example) go in sources.list.d/ by Debian/Ubuntu packaging convention —
+    that's the actual signal this exists to catch.
+
+    Package-level origin (which repo a given installed package came from)
+    is deliberately NOT collected — see
+    headend/services/cmdb_baseline_drift.py's module docstring for why.
+    """
+    sources: set[str] = set()
+    search_paths: list[Path] = []
+    for pattern in ("*.list", "*.sources"):
+        search_paths.extend(sorted(base_dir.glob(pattern)))
+
+    for path in search_paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if path.suffix == ".sources":
+                # deb822: "URIs: https://example.com/repo ..." (possibly multiple)
+                if line.startswith(("URIs:", "URI:")):
+                    for uri in line.split(":", 1)[1].split():
+                        sources.add(uri.rstrip("/"))
+            elif line.startswith(("deb ", "deb-src ")):
+                # "deb [arch=arm64] https://host/repo jammy stable" — an
+                # optional bracketed options token (e.g. [arch=arm64]) can
+                # sit between "deb" and the URI; skip it if present.
+                parts = line.split()
+                fields = parts[1:]
+                if fields and fields[0].startswith("["):
+                    fields = fields[1:]
+                if fields:
+                    sources.add(fields[0].rstrip("/"))
+    return sorted(sources)
+
+
 def _software_inventory() -> dict[str, str]:
     inventory = {
         "timelapse_pro": APP_VERSION,
@@ -615,6 +667,7 @@ def collect_inventory(config: dict) -> dict:
     sudo_users:  list[str]  = []
     services:    list[dict] = []
     enabled_services: list[str] = []
+    apt_sources: list[str]  = []
     apt_updates: dict       = {}
     try:
         local_users = _local_users()
@@ -632,6 +685,10 @@ def collect_inventory(config: dict) -> dict:
         enabled_services = _enabled_service_names()
     except Exception as exc:
         log.debug("_enabled_service_names fejl: %s", exc)
+    try:
+        apt_sources = _apt_sources()
+    except Exception as exc:
+        log.debug("_apt_sources fejl: %s", exc)
     try:
         apt_updates = _apt_updates_available()
     except Exception as exc:
@@ -681,6 +738,7 @@ def collect_inventory(config: dict) -> dict:
         # Systemd services
         "services":                 services,
         "enabled_services":         enabled_services,
+        "apt_sources":              apt_sources,
 
         # Storage (boot)
         "boot_storage_type":        boot_type,

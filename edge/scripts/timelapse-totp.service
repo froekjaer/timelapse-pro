@@ -8,6 +8,12 @@ Type=simple
 User=root
 WorkingDirectory=/opt/timelapse/edge/scripts
 
+# Logmappen oprettes normalt som sideeffekt af timelapse-bt-pan.service, men
+# den service kan fejle før den når dertil (fx hci0 ikke klar), og denne
+# service venter ikke blokerende på den (Wants, ikke Requires) — så vent
+# ikke på en andens sideeffekt, opret den selv. Se HANDOVER_LOG 2026-08-21.
+ExecStartPre=/bin/mkdir -p /var/log.hdd/timelapse
+
 # Generer cert hvis det ikke findes
 ExecStartPre=/bin/bash /opt/timelapse/edge/scripts/gen-bt-cert.sh
 

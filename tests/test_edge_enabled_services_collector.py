@@ -9,6 +9,52 @@ from unittest.mock import MagicMock, patch
 from utils import inventory
 
 
+def test_apt_sources_parses_classic_one_line_list_files(tmp_path):
+    (tmp_path / "docker.list").write_text(
+        "# comment, should be skipped\n"
+        "deb https://repo.huaweicloud.com/docker-ce/linux/ubuntu jammy stable\n"
+    )
+    assert inventory._apt_sources(tmp_path) == ["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"]
+
+
+def test_apt_sources_skips_bracketed_options_before_the_uri(tmp_path):
+    # Real production format (TL-043EB9E72EFD, verified 2026-08-19): the
+    # [arch=arm64] options token sits between "deb" and the URI and must not
+    # be mistaken for the URI itself.
+    (tmp_path / "docker.list").write_text(
+        "deb [arch=arm64] https://repo.huaweicloud.com/docker-ce/linux/ubuntu jammy stable\n"
+    )
+    assert inventory._apt_sources(tmp_path) == ["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"]
+
+
+def test_apt_sources_parses_deb822_sources_files(tmp_path):
+    (tmp_path / "docker.sources").write_text(
+        "Types: deb\n"
+        "URIs: https://repo.huaweicloud.com/docker-ce/linux/ubuntu\n"
+        "Suites: noble\n"
+        "Components: stable\n"
+    )
+    assert inventory._apt_sources(tmp_path) == ["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"]
+
+
+def test_apt_sources_deduplicates_and_sorts_across_files(tmp_path):
+    (tmp_path / "a.list").write_text("deb https://b.example.com/repo jammy main\n")
+    (tmp_path / "b.list").write_text("deb https://a.example.com/repo jammy main\n")
+    (tmp_path / "c.sources").write_text("URIs: https://b.example.com/repo\n")
+    assert inventory._apt_sources(tmp_path) == ["https://a.example.com/repo", "https://b.example.com/repo"]
+
+
+def test_apt_sources_ignores_dist_upgrade_backup_files(tmp_path):
+    # apt-get's do-release-upgrade leaves *.list.distUpgrade backups behind —
+    # not an active source, must not be picked up by the *.list glob.
+    (tmp_path / "docker.list.distUpgrade").write_text("deb https://old.example.com/repo focal main\n")
+    assert inventory._apt_sources(tmp_path) == []
+
+
+def test_apt_sources_returns_empty_list_when_directory_missing(tmp_path):
+    assert inventory._apt_sources(tmp_path / "does-not-exist") == []
+
+
 def test_enabled_service_names_parses_list_unit_files_output():
     fake = MagicMock(returncode=0, stdout=(
         "timelapse-edge.service         enabled\n"
@@ -47,6 +93,7 @@ def test_enabled_service_names_deduplicates_and_sorts():
 
 def test_collect_inventory_includes_enabled_services_key(monkeypatch):
     monkeypatch.setattr(inventory, "_enabled_service_names", lambda: ["timelapse-edge.service"])
+    monkeypatch.setattr(inventory, "_apt_sources", lambda: ["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"])
     monkeypatch.setattr(inventory, "_local_users", lambda: [])
     monkeypatch.setattr(inventory, "_sudo_users", lambda: [])
     monkeypatch.setattr(inventory, "_systemd_services", lambda: [])
@@ -73,3 +120,4 @@ def test_collect_inventory_includes_enabled_services_key(monkeypatch):
     result = inventory.collect_inventory({})
 
     assert result["enabled_services"] == ["timelapse-edge.service"]
+    assert result["apt_sources"] == ["https://repo.huaweicloud.com/docker-ce/linux/ubuntu"]
