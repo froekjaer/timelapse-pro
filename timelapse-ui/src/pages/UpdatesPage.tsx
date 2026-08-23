@@ -63,6 +63,8 @@ interface Update {
   production_promotion_id?: number | null
   production_promotion_status?: string | null
   promotion_source_environment?: string | null
+  promotion_eligible?: boolean
+  promotion_blocked_reason?: string | null
   prod_ready?: boolean
 }
 
@@ -755,13 +757,13 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
             </button>
           </div>
         )}
-        {u.status === 'deployed' && u.environment === 'test' && (
+        {u.status === 'deployed' && (u.environment === 'test' || u.environment === 'staging') && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             {u.production_promotion_id ? (
               <span className="px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs">
                 Prod #{u.production_promotion_id} · {u.production_promotion_status === 'pending' ? 'Prod-klar' : (STATUS_LABELS[u.production_promotion_status || ''] ?? u.production_promotion_status)}
               </span>
-            ) : (
+            ) : u.promotion_eligible ? (
               <>
                 <button onClick={() => onPromote(u.id, 'staging')} disabled={isBusy}
                   title="Opret en staging-promotion. Installeres først efter staging-godkendelse."
@@ -774,6 +776,12 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
                   Markér prod-klar
                 </button>
               </>
+            ) : (
+              <span
+                title={u.promotion_blocked_reason || 'Historisk deployment kan ikke promoveres direkte.'}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs">
+                Historisk deploy
+              </span>
             )}
           </div>
         )}

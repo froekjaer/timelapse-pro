@@ -331,11 +331,16 @@ def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceIn
         installed = str(item.get("installed_version") or "ukendt")
         available = str(item.get("available_version") or "ukendt")
         version = f"{name} {installed} -> {available}"
+        description = (
+            f"{name} kan opdateres via Headend-kontrolleret Homebrew-artifact/lab-flow "
+            f"({installed} -> {available}). {HEADEND_MANAGED_HOMEBREW_FORMULAE[name]}."
+            "\n\nBlocked: kræver signeret dependency-artifact og rollback-plan før godkendelse."
+        )
         exists = db.query(PendingUpdate).filter(
             PendingUpdate.update_type == "application_updates",
             PendingUpdate.scope == "device",
             PendingUpdate.scope_id == device_id,
-            PendingUpdate.status.in_(["pending", "approved"]),
+            PendingUpdate.status.in_(["pending", "approved", "blocked"]),
             or_(
                 PendingUpdate.version == version,
                 PendingUpdate.description.ilike(f"%{name}%"),
@@ -343,25 +348,21 @@ def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceIn
         ).first()
         if exists:
             exists.version = version
-            exists.description = (
-                f"{name} kan opdateres via Headend-kontrolleret Homebrew-artifact/lab-flow "
-                f"({installed} -> {available}). {HEADEND_MANAGED_HOMEBREW_FORMULAE[name]}."
-            )
+            exists.description = description
             exists.severity = _managed_update_severity(name)
             exists.environment = _pending_environment(inv)
+            if exists.status in {"pending", "approved"}:
+                exists.status = "blocked"
             continue
 
         db.add(PendingUpdate(
             update_type="application_updates",
             version=version,
-            description=(
-                f"{name} kan opdateres via Headend-kontrolleret Homebrew-artifact/lab-flow "
-                f"({installed} -> {available}). {HEADEND_MANAGED_HOMEBREW_FORMULAE[name]}."
-            ),
+            description=description,
             severity=_managed_update_severity(name),
             scope="device",
             scope_id=device_id,
-            status="pending",
+            status="blocked",
             environment=_pending_environment(inv),
             target_device_ids=json.dumps([device_id]),
         ))

@@ -218,6 +218,20 @@ def test_rolled_back_update_can_be_explicitly_reapproved():
     assert "existing.completed_at = None" in target_block
 
 
+def test_already_current_update_target_cannot_remain_queued():
+    source = _source("headend/main.py")
+    supersession_source = _source("headend/services/update_supersession.py")
+    target_block = source[source.index("def _ensure_update_targets("):source.index("def _update_flow_stage(")]
+
+    assert "from services.update_supersession import device_already_at_update_version" in source
+    assert "def device_already_at_update_version" in supersession_source
+    assert "already_current = device_already_at_update_version(device, update)" in target_block
+    assert 'existing.status in {"pending", "queued", "approved", "authorized"}' in target_block
+    assert 'existing.status = "deployed"' in target_block
+    assert 'status="deployed" if already_current else' in target_block
+    assert 'update.status = "deployed"' in target_block
+
+
 def test_legacy_edge_update_and_time_scripts_cannot_use_direct_internet_channels():
     legacy_executor = _source("edge/cmdb/executor.py")
     direct_deploy = _source("edge/scripts/deploy-totp.sh")
