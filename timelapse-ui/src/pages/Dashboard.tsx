@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, Camera, Building2, MapPin, ChevronRight, Plus, CheckCircle, AlertCircle, Clock, Settings, ShieldAlert, Package } from 'lucide-react'
 import { getStats, getDevices, getApiUrl, pathSegment } from '../api/client'
@@ -272,7 +272,7 @@ export function Dashboard() {
   const [loading, setLoading]     = useState(true)
   const [lastRefresh, setLastRefresh] = useState(new Date())
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const updateRequests = canConfigure
@@ -299,13 +299,13 @@ export function Dashboard() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [canConfigure])
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [load])
   useEffect(() => {
     const id = setInterval(load, 60_000)
     return () => clearInterval(id)
-  }, [])
+  }, [load])
 
   const online = devices.filter(d => d.status === 'online').length
 

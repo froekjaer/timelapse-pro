@@ -113,6 +113,7 @@ from technician_keys import router as technician_keys_router
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
+from services.update_promotion import build_update_promotion_context, serialize_pending_update
 from services.update_supersession import supersede_pending_app_updates
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from redaction_api import router as redaction_router
@@ -128,9 +129,6 @@ from database import (
     SessionLocal, create_tables, get_db, now_utc
 )
 import uuid as _uuid
-
-
-
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 import os as _os
@@ -5654,96 +5652,12 @@ def list_pending_updates(
     else:
         q = q.filter(PendingUpdate.status.in_(["pending", "approved"]))
     updates = q.order_by(PendingUpdate.created_at.desc()).all()
-    production_matches = {}
-    for prod in db.query(PendingUpdate).filter(PendingUpdate.environment == "production").all():
-        production_matches[(prod.update_type, prod.version, prod.scope, prod.scope_id)] = prod
-    latest_deployed_nonprod: dict[tuple[str, str, str | None], PendingUpdate] = {}
-    for deployed in db.query(PendingUpdate).filter(
-        PendingUpdate.status == "deployed",
-        PendingUpdate.environment.in_(["lab", "test", "staging"]),
-    ).order_by(PendingUpdate.deployed_at.desc().nullslast(), PendingUpdate.created_at.desc(), PendingUpdate.id.desc()).all():
-        key = (deployed.update_type, deployed.scope, deployed.scope_id)
-        latest_deployed_nonprod.setdefault(key, deployed)
-
-    def _promotion_source(update: PendingUpdate) -> str | None:
-        description = update.description or ""
-        match = _re.match(r"^\[Promoveret fra ([^\]]+) til ([^\]]+)\]", description)
-        if not match:
-            return None
-        return match.group(1)
-
-    def _app_candidate_still_installed(update: PendingUpdate) -> bool:
-        if update.update_type not in {"app_updates", "app_security", "timelapse_update", "timelapse_updates", "timelapse_security"}:
-            return True
-        targets = _resolve_update_targets(db, update)
-        if not targets:
-            return False
-        for device in targets:
-            installed = str(device.app_version or "").strip()
-            version = str(update.version or "").strip()
-            if not installed or not version:
-                return False
-            if installed != version and not version.startswith(installed):
-                return False
-        return True
-
-    def _promotion_status(update: PendingUpdate) -> tuple[bool, str | None]:
-        if update.status != "deployed":
-            return False, None
-        if update.environment not in {"test", "staging"}:
-            return False, "Kun deployed test/staging-kandidater kan promoveres direkte."
-        if production_matches.get((update.update_type, update.version, update.scope, update.scope_id)):
-            return False, "Allerede promoveret til production."
-        latest = latest_deployed_nonprod.get((update.update_type, update.scope, update.scope_id))
-        if not latest or latest.id != update.id:
-            return False, "Historisk deployment erstattet af en nyere non-prod deployment."
-        artifact = _find_artifact_for_update(db, update)
-        if not is_deployable_artifact(artifact):
-            return False, "Mangler deploybart signeret artifact."
-        if not _app_candidate_still_installed(update):
-            return False, "Target-enhed rapporterer ikke længere denne app-version."
-        return True, None
-
-    return [
-        {
-            "id":          u.id,
-            "update_type": u.update_type,
-            "version":     u.version,
-            "description": u.description,
-            "severity":    u.severity,
-            "scope":       u.scope,
-            "scope_id":    u.scope_id,
-            "status":      u.status,
-            "environment": u.environment,
-            "target_device_ids": json.loads(u.target_device_ids) if u.target_device_ids else None,
-            "deployed_count": u.deployed_count or 0,
-            "failed_count":   u.failed_count or 0,
-            "created_at":  u.created_at.isoformat() if u.created_at else None,
-            "approved_at": u.approved_at.isoformat() if u.approved_at else None,
-            "approved_by": u.approved_by,
-            "deployed_at": u.deployed_at.isoformat() if u.deployed_at else None,
-            "rollback_at": u.rollback_at.isoformat() if u.rollback_at else None,
-            "production_promotion_id": (
-                production_matches.get((u.update_type, u.version, u.scope, u.scope_id)).id
-                if u.environment in {"lab", "test", "staging"} and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
-                else None
-            ),
-            "production_promotion_status": (
-                production_matches.get((u.update_type, u.version, u.scope, u.scope_id)).status
-                if u.environment in {"lab", "test", "staging"} and production_matches.get((u.update_type, u.version, u.scope, u.scope_id))
-                else None
-            ),
-            "promotion_source_environment": _promotion_source(u),
-            "promotion_eligible": _promotion_status(u)[0],
-            "promotion_blocked_reason": _promotion_status(u)[1],
-            "prod_ready": (
-                u.environment == "production"
-                and u.status == "pending"
-                and _promotion_source(u) in {"lab", "test", "staging"}
-            ),
-        }
-        for u in updates
-    ]
+    promotion_context = build_update_promotion_context(db, PendingUpdate,
+        resolve_update_targets=lambda u: _resolve_update_targets(db, u),
+        find_artifact_for_update=lambda u: _find_artifact_for_update(db, u),
+        is_deployable_artifact=is_deployable_artifact,
+    )
+    return [serialize_pending_update(update, promotion_context) for update in updates]
 
 UPDATE_CATEGORIES = [
     {

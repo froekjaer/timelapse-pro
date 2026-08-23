@@ -34,14 +34,13 @@ def test_homebrew_inventory_candidates_are_blocked_until_signed_artifact_flow_ex
 
 
 def test_deployed_history_requires_explicit_promotion_eligibility():
-    backend = _source("headend/main.py")
-    pending_block = backend[backend.index("def list_pending_updates("):backend.index("UPDATE_CATEGORIES = [")]
+    backend = _source("headend/services/update_promotion.py")
     ui = _source("timelapse-ui/src/pages/UpdatesPage.tsx")
 
-    assert '"promotion_eligible": _promotion_status(u)[0]' in pending_block
-    assert '"promotion_blocked_reason": _promotion_status(u)[1]' in pending_block
-    assert 'update.environment not in {"test", "staging"}' in pending_block
-    assert "Mangler deploybart signeret artifact." in pending_block
-    assert "Target-enhed rapporterer ikke længere denne app-version." in pending_block
+    assert '"promotion_eligible": promotion.eligible' in backend
+    assert '"promotion_blocked_reason": promotion.blocked_reason' in backend
+    assert 'getattr(update, "environment", None) not in {"test", "staging"}' in backend
+    assert "Mangler deploybart signeret artifact." in backend
+    assert "Target-enhed rapporterer ikke længere denne app-version." in backend
     assert "u.promotion_eligible ? (" in ui
     assert "Historisk deploy" in ui
