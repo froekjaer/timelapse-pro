@@ -7,6 +7,8 @@
 
 **Seneste ændringer (2026-07-06):** Tilføjet §1.5 med nye sikkerheds- og compliance-opdateringer: M-05 agent-lockdown, R17 debug/lab mode forbedringer, G-05 download-/adgangslog, R09 backup forbedringer.
 
+**Se også:** `MENUGUIDE_ADMIN_v1.md` — menu-for-menu beskrivelse af alle admin-sider og undermenuer (felt-for-felt, inkl. Lokal adgang, Import, SIEM, GDPR Sløring og Drift). `FAQ_og_fejlsøgning.md` — selvbetjenings-fejlfinding.
+
 ---
 
 ## 1. Systemarkitektur

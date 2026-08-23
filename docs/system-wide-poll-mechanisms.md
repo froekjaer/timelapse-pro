@@ -1,5 +1,7 @@
 # System-Wide Polling Mekanismer
 
+> ⚠️ **Delvist historisk (2026-08-20):** Beskrivelsen af edge-agentens separate polling-loops er forældet efter PR #76 (2026-08-19), der konsoliderede config/heartbeat/SIEM til én sync-poll (`sync_poll_interval_minutes`, standard 5 min). UI- og backend-sektionerne er stadig gyldige. For aktuel edge-adfærd se `docs/admin-guide.md`.
+
 **Version:** 2.1
 **Dato:** 13. juli 2026
 **Omfang:** Hele TimeLapse Pro systemet (Frontend + Backend)
