@@ -73,3 +73,46 @@ def test_resolve_authorized_technician_keys_includes_global_and_matching_custome
     assert "cust-a-tech:laptop" in identities
     assert not any("cust-b-tech" in i for i in identities)
     assert len(entries) == 2
+
+
+def test_drop_orphaned_device_credential_columns_drops_all_four():
+    """FIND-DEVICES-PLAINTEXT-SSH-KEY-COLUMN cleanup: must attempt to drop
+    every one of the four orphaned columns, independently — one already
+    being gone (or the ALTER failing for any reason) must not block the
+    others."""
+    executed = []
+    conn = MagicMock()
+    conn.execute.side_effect = lambda stmt: executed.append(str(stmt))
+    conn.__enter__ = MagicMock(return_value=conn)
+    conn.__exit__ = MagicMock(return_value=False)
+    engine = MagicMock()
+    engine.connect.return_value = conn
+
+    technician_keys.drop_orphaned_device_credential_columns(engine)
+
+    assert any("ssh_private_key" in s for s in executed)
+    assert any("bt_totp_secret" in s for s in executed)
+    assert any("factory_totp_disabled" in s for s in executed)
+    assert any("shared_ssh_key_disabled" in s for s in executed)
+    assert all("DROP COLUMN IF EXISTS" in s for s in executed)
+
+
+def test_drop_orphaned_device_credential_columns_one_failure_does_not_block_others():
+    conn = MagicMock()
+    calls = {"n": 0}
+
+    def flaky_execute(stmt):
+        calls["n"] += 1
+        if "ssh_private_key" in str(stmt):
+            raise RuntimeError("simulated failure")
+        return MagicMock()
+
+    conn.execute.side_effect = flaky_execute
+    conn.__enter__ = MagicMock(return_value=conn)
+    conn.__exit__ = MagicMock(return_value=False)
+    engine = MagicMock()
+    engine.connect.return_value = conn
+
+    # Must not raise even though one column's DROP fails.
+    technician_keys.drop_orphaned_device_credential_columns(engine)
+    assert calls["n"] == 4
