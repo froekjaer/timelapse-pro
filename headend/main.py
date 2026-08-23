@@ -4401,7 +4401,7 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
     candidates, fordi Headend skal reconciliere CMDB installed-state mod et
     Headend-ejet lab/mirror-katalog.
     """
-    from database import PendingUpdate
+    from database import PendingUpdate, UpdateArtifact
     updates = diag.get("updates", {})
     if not updates:
         return
@@ -4421,10 +4421,19 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
     except Exception:
         headend_version = ""
 
-    def _has_pending(update_type: str) -> bool:
+    def _has_active(update_type: str) -> bool:
         return db.query(PendingUpdate).filter_by(
             update_type=update_type, scope="device",
-            scope_id=device_id, status="pending"
+            scope_id=device_id,
+        ).filter(
+            PendingUpdate.status.in_(["pending", "approved", "blocked"])
+        ).first() is not None
+
+    def _has_signed_app_artifact(version: str) -> bool:
+        return db.query(UpdateArtifact).filter(
+            UpdateArtifact.artifact_type == "app",
+            UpdateArtifact.source_commit == version,
+            UpdateArtifact.signature.isnot(None),
         ).first() is not None
 
     if os_security > 0 or os_total > 0:
@@ -4436,7 +4445,14 @@ def _process_update_report(device_id: str, diag: dict, db) -> None:
 
     edge_is_current = bool(edge_version and headend_version.startswith(edge_version))
     if edge_version and headend_version and not edge_is_current:
-        if not _has_pending("app_updates"):
+        if not _has_signed_app_artifact(headend_version):
+            log.info(
+                "Ignorerer app update hint for %s: headend commit %s har intet signeret Edge app-artifact",
+                device_id,
+                headend_version[:12],
+            )
+            return
+        if not _has_active("app_updates"):
             db.add(PendingUpdate(
                 update_type = "app_updates",
                 version     = headend_version,
@@ -8531,7 +8547,13 @@ def _create_lab_update_candidates_for_artifact(db: Session, artifact: UpdateArti
         installed = str(inv.app_version or device.app_version or "").strip()
         if installed and artifact.source_commit.startswith(installed):
             continue
-        supersede_pending_app_updates(db, PendingUpdate, device.device_id, artifact.source_commit)
+        supersede_pending_app_updates(
+            db,
+            PendingUpdate,
+            device.device_id,
+            artifact.source_commit,
+            target_model=UpdateTarget,
+        )
         existing = db.query(PendingUpdate).filter(
             PendingUpdate.update_type == "app_updates",
             PendingUpdate.version == artifact.source_commit,
@@ -9594,9 +9616,18 @@ def _resolve_update_targets(db: Session, update: PendingUpdate) -> list[Device]:
     return []
 
 
+def _device_already_at_update_version(device: Device, update: PendingUpdate) -> bool:
+    installed = str(device.app_version or "").strip()
+    target = str(update.version or "").strip()
+    if not installed or not target:
+        return False
+    return installed == target or (len(installed) >= 12 and target.startswith(installed))
+
+
 def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTicket | None = None) -> int:
     created = 0
     for device in _resolve_update_targets(db, update):
+        already_current = _device_already_at_update_version(device, update)
         existing = db.query(UpdateTarget).filter_by(
             pending_update_id=update.id,
             device_id=device.device_id,
@@ -9613,6 +9644,12 @@ def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTic
             existing.customer_id = existing.customer_id or device.customer_id
             existing.site_id = existing.site_id or device.site_id
             existing.target_version = existing.target_version or update.version
+            existing.current_version = existing.current_version or device.app_version
+            if already_current and existing.status in {"pending", "queued", "approved", "authorized"}:
+                existing.status = "deployed"
+                existing.completed_at = existing.completed_at or now_utc()
+                existing.last_report_at = now_utc()
+                existing.last_error = None
             continue
         db.add(UpdateTarget(
             pending_update_id=update.id,
@@ -9622,11 +9659,28 @@ def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTic
             camera_id=None,
             customer_id=device.customer_id,
             site_id=device.site_id,
-            status="queued" if update.status == "approved" else "pending",
+            status="deployed" if already_current else ("queued" if update.status == "approved" else "pending"),
             current_version=device.app_version,
             target_version=update.version,
+            completed_at=now_utc() if already_current else None,
+            last_report_at=now_utc() if already_current else None,
         ))
         created += 1
+    if update.status == "approved":
+        resolved_devices = _resolve_update_targets(db, update)
+        if resolved_devices:
+            target_rows = db.query(UpdateTarget).filter_by(pending_update_id=update.id).all()
+            latest_by_device: dict[str, UpdateTarget] = {}
+            for row in target_rows:
+                latest_by_device.setdefault(row.device_id, row)
+            if all(
+                latest_by_device.get(device.device_id)
+                and latest_by_device[device.device_id].status == "deployed"
+                for device in resolved_devices
+            ):
+                update.status = "deployed"
+                update.deployed_at = update.deployed_at or now_utc()
+                update.deployed_count = len(resolved_devices)
     return created
 
 
