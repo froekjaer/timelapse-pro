@@ -292,6 +292,11 @@ export function SitePage() {
           <MapPin className="w-4 h-4" />
           <span className="text-gray-700 font-medium">{site.name}</span>
         </div>
+        <Link to={`/global-config?site_id=${encodeURIComponent(siteId ?? '')}`}
+          className="ml-auto text-xs text-sky-600 hover:text-sky-700 hover:underline flex items-center gap-1"
+          title="Se hvilken værdi hvert felt reelt bruger (arvet fra Global/Kunde/Site) og hvor den kommer fra">
+          Arvet konfiguration →
+        </Link>
       </div>
 
       {error && (
