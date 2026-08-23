@@ -188,13 +188,23 @@ def test_flashable_injection_provisions_servicetekniker_account() -> None:
     the device-side half. Must be pubkey-only (locked shadow entry) and
     scoped sudo (never the blanket sudo group orangepi has)."""
     source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
-    assert 'echo "servicetekniker:x:1002:1002' in source
-    assert "servicetekniker:!:1002:" in source
+    assert 'echo "servicetekniker:x:${SVCTECH_UID}:${SVCTECH_UID}' in source
+    assert "servicetekniker:!:${SVCTECH_UID}:" in source
     assert 'servicetekniker:!:19000' in source  # locked shadow entry
     assert "/etc/sudoers.d/servicetekniker" in source
     assert "chmod 440 /mnt/root/etc/sudoers.d/servicetekniker" in source
     # Scoped to bootstrap_cli.py only — never blanket sudo like orangepi.
     assert "servicetekniker ALL=(root) NOPASSWD: /opt/timelapse/venv/bin/python3 /opt/timelapse/edge/tools/bootstrap_cli.py*" in source
+
+
+def test_flashable_injection_does_not_hardcode_servicetekniker_uid() -> None:
+    """Regression: UID 1002 collided with the pre-existing "emergency"
+    break-glass account on a live device (manually provisioned, no code
+    creates it yet — see BreakGlassAccount's own TODO), so useradd/the
+    raw passwd append must never assume a fixed UID is free."""
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    assert "SVCTECH_UID=1003" in source
+    assert '"servicetekniker:x:1002:1002' not in source
 
 
 def test_flashable_injection_wires_sshd_match_block_for_servicetekniker() -> None:
