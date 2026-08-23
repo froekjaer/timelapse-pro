@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-23 17:35 — fra Kimi til Peter/Claude/Codex/ChatGPT/z.ai: PR #81 og #83 MERGET — hele dokumentationspakken nu på main
+
+- Hvad er gjort: Efter Peters godkendelse ("ja tak - hvis det ikke ødelægger noget for andre") er de to resterende docs-PR'er merget. Begge er 100% dokumentation — ingen kodefiler rørt, så ingen funktionel risiko for andres arbejde. Begge brancher var 3 dage gamle og skulle have frisk main merget ind pga. regelsættets up-to-date-krav (samme mønster som i nat): begge merges var rene auto-merges uden konflikter (#81: kun 2 nye filer; #83: menuguides-filerne delt med allerede-merget PR #89 var indholdsmæssigt identiske og mergede rent). CI grøn på begge, begge squash-merget. Deploy-workflowen på Mac mini kørte SUCCESS for begge main-merges. **Status: alle fire Kimi-PR'er (#81, #83, #89, #90) er nu merget** — GRC-beslutningslisten, dokumentations-gap-analysen, menuguiderne (bruger+admin), opdaterede hovedmanualer/runbook/DOKUMENTPAKKE og den in-app hjælpemenu er alle på main og deployet.
+- Hvad mangler / næste skridt: Indholdsmæssige opfølgninger fra dokumenterne står stadig åbne for Peter: GRC-beslutningslisten i `Dokumentation/kimi-grc-afventer-2026-08-19.md` (punkt 1-2 er kritiske — bemærk at punkt 1, plaintext SSH-key-kolonnen, ifølge Claudes entry (12) allerede har fået kodefixet merget, så listen bør genlæses mod den nye virkelighed). Menuguiderne er levende dokumenter: ændres menuerne, skal guiderne og `src/help/routeMap.ts` opdateres i samme PR.
+- Kommandoer kørt: `git worktree add /tmp/kimi-pr81` og `/tmp/kimi-pr83` (isoleret arbejde, jf. gårsdagens læring om den delte klon), `git merge origin/main`, `gh pr merge --squash`, `gh api actions/runs` til deploy-verifikation. Worktrees fjernet efter brug.
+- Forventet/faktisk output: 2 PR'er merget, 2 main-deploys grønne.
+- Filer rørt: Kun `Dokumentation/HANDOVER_LOG.md` (denne entry).
+- Risici / pas på: Ingen kendte — rent dokumentations-arbejde i denne omgang.
+
 ### Handover 2026-08-23 04:35 — fra Kimi til Peter/Claude/Codex/ChatGPT/z.ai: PR #89 (hjælpemenu) og PR #90 (handover) MERGET — hjælpemenuen er live
 
 - Hvad er gjort: Peter godkendte mergene ("ja tak"). **PR #90** krævede endnu en konfliktløsning (Claudes entries (13)+(14) var landet på main i samme område) + en ekstra main-merge, fordi repoets regelsæt kræver at PR-head indeholder seneste main FØR merge ("head branch is not up to date with the base branch") — MCP-merge fejlede med 405 ruleset-violation, `gh pr merge` gav den klare besked. PR #90 squasht og merget. **PR #89**: main (inkl. #90) merget ind i `docs-help-menu` — ren auto-merge, ingen konflikter — squasht og merget som `ad0db99f`. **Deploy verificeret:** main-workflowen på den self-hosted Mac mini runner kørte alle 4 jobs SUCCESS, inkl. "Deploy to Mac mini Headend" (checkout af præcis SHA, `npm ci`+`npm run build` — hvor `prebuild` automatisk synkede hjælpeindholdet fra `Dokumentation/*.md` — headend-genstart og health-check). Hjælpemenuen er dermed live på headenden: "Hjælp" i hovedmenuen + kontekstuel hjælpeknap øverst til højre i navbaren.
