@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { RefreshCw, Camera, Building2, MapPin, ChevronRight, Plus, CheckCircle, AlertCircle, Clock, Settings } from 'lucide-react'
+import { RefreshCw, Camera, Building2, MapPin, ChevronRight, Plus, CheckCircle, AlertCircle, Clock, Settings, ShieldAlert, Package } from 'lucide-react'
 import { getStats, getDevices, getApiUrl, pathSegment } from '../api/client'
 import { StatCard } from '../components/StatCard'
 import { StatusBadge } from '../components/StatusBadge'
@@ -28,6 +28,14 @@ interface Site {
   devices_count: number
 }
 
+interface PendingUpdate {
+  id: number
+  update_type: string
+  severity: string
+  status: string
+  environment: string | null
+}
+
 function api(path: string) {
   return fetch(`${getApiUrl()}${path}`, {
     credentials: 'include',
@@ -39,6 +47,49 @@ function api(path: string) {
 }
 
 const TZ = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
+
+function updateCategory(type: string) {
+  if (type.includes('security')) return 'security'
+  if (type.startsWith('os_')) return 'os'
+  if (type.includes('app') || type.includes('timelapse')) return 'app'
+  return 'other'
+}
+
+function UpdateIndicator({ updates, canConfigure }: { updates: PendingUpdate[]; canConfigure: boolean }) {
+  if (!canConfigure) return null
+  const security = updates.filter(u => updateCategory(u.update_type) === 'security').length
+  const os = updates.filter(u => updateCategory(u.update_type) === 'os').length
+  const app = updates.filter(u => updateCategory(u.update_type) === 'app').length
+  const blocked = updates.filter(u => u.status === 'blocked').length
+  const high = updates.filter(u => ['critical', 'high'].includes(String(u.severity || '').toLowerCase())).length
+  const hasUpdates = updates.length > 0
+  const tone = high > 0 || security > 0 ? 'red' : hasUpdates ? 'amber' : 'emerald'
+  const classes = tone === 'red'
+    ? 'border-red-200 bg-red-50 text-red-900'
+    : tone === 'amber'
+      ? 'border-amber-200 bg-amber-50 text-amber-900'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+  const iconClasses = tone === 'red' ? 'text-red-500' : tone === 'amber' ? 'text-amber-500' : 'text-emerald-500'
+
+  return (
+    <Link to="/updates" className={`mb-6 flex items-center gap-4 rounded-xl border px-4 py-3 shadow-sm transition hover:shadow-md ${classes}`}>
+      <div className="w-10 h-10 rounded-lg bg-white/80 flex items-center justify-center flex-shrink-0">
+        {security > 0 ? <ShieldAlert className={`w-5 h-5 ${iconClasses}`} /> : <Package className={`w-5 h-5 ${iconClasses}`} />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold">
+          {hasUpdates ? `${updates.length} ventende opdatering${updates.length !== 1 ? 'er' : ''}` : 'Ingen ventende opdateringer'}
+        </p>
+        <p className="text-xs opacity-80 mt-0.5">
+          {hasUpdates
+            ? `${security} security · ${os} OS · ${app} app · ${blocked} blokeret`
+            : 'OS/App security og funktionelle opdateringer er ajour'}
+        </p>
+      </div>
+      <ChevronRight className="w-4 h-4 opacity-60 flex-shrink-0" />
+    </Link>
+  )
+}
 
 function formatLastSeen(value?: string | null) {
   if (!value) return null
@@ -217,22 +268,31 @@ export function Dashboard() {
   const [devices, setDevices]     = useState<Device[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [sites, setSites]         = useState<Site[]>([])
+  const [pendingUpdates, setPendingUpdates] = useState<PendingUpdate[]>([])
   const [loading, setLoading]     = useState(true)
   const [lastRefresh, setLastRefresh] = useState(new Date())
 
   const load = async () => {
     setLoading(true)
     try {
-      const [s, d, c, si] = await Promise.all([
+      const updateRequests = canConfigure
+        ? [
+            api('/api/updates/pending'),
+            api('/api/updates/pending?status=blocked'),
+          ]
+        : []
+      const [s, d, c, si, ...updateResults] = await Promise.all([
         getStats(),
         getDevices(),
         api('/api/admin/customers'),
         api('/api/admin/sites'),
+        ...updateRequests,
       ])
       setStats(s)
       setDevices(d)
       setCustomers(c)
       setSites(si)
+      setPendingUpdates(updateResults.flat() as PendingUpdate[])
       setLastRefresh(new Date())
     } catch (e) {
       console.error(e)
@@ -277,6 +337,8 @@ export function Dashboard() {
           <StatCard label="Upload OK" value={`${stats.upload_pct}%`} sub="success rate" color={stats.upload_pct >= 95 ? 'green' : 'amber'} />
         </div>
       )}
+
+      <UpdateIndicator updates={pendingUpdates} canConfigure={canConfigure} />
 
       {/* Kunder → Sites → Kameraer */}
       <div className="flex items-center justify-between mb-4">
