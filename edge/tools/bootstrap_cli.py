@@ -112,6 +112,7 @@ def main() -> int:
     parser.add_argument("--service-operation", help="Run a canonical Service Operation through the shared backend")
     parser.add_argument("--service-param", action="append", default=[], metavar="KEY=VALUE", help="Parameter for --service-operation")
     parser.add_argument("--commissioning-report", action="store_true", help="Run CommissioningReport v1 through Service Operations")
+    parser.add_argument("--totp-sync", action="store_true", help="Fetch current BT-TOTP secret from Headend and write it to the local management portal config (requires root)")
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir)
@@ -183,6 +184,8 @@ def main() -> int:
         return 0
     if args.commissioning_report:
         return 0 if print_service_operation("commissioning.run", base_dir, {"capture": False}) else 1
+    if args.totp_sync:
+        return 0 if run_totp_sync(base_dir) else 1
     if args.service_operation:
         return 0 if print_service_operation(args.service_operation, base_dir, parse_service_params(args.service_param)) else 1
     return menu(base_dir)
@@ -376,16 +379,64 @@ def ui_menu(base_dir: Path) -> None:
         print("-----------------")
         print("1. Generer HTML statusrapport")
         print("2. Vis lokal TOTP-adresse")
-        print("3. Tilbage")
+        print("3. Synkroniser TOTP fra Headend (kræver root)")
+        print("4. Tilbage")
         choice = input("Valg: ").strip()
         if choice == "1":
             print(f"Rapport: {write_technician_report(base_dir)}")
         elif choice == "2":
             print("Brug den beskyttede lokale management-portal: https://192.168.42.1:8443")
         elif choice == "3":
+            run_totp_sync(base_dir)
+        elif choice == "4":
             return
         else:
             print("Ugyldigt valg")
+
+
+def run_totp_sync(base_dir: Path) -> bool:
+    """Fetch the current BT-TOTP secret from Headend and apply it locally.
+
+    Normally this happens automatically on every agent poll
+    (edge/agent.py::_apply_fetched_config -> utils.bt_totp_sync). This is the
+    manual escape hatch for a device that's stuck on a stale local secret —
+    e.g. it was applied once when the agent's cached config_version already
+    matched Headend's hash for an unrelated reason, so the automatic path
+    never got a chance to write it (see Dokumentation/HANDOVER_LOG.md
+    2026-08-21). Requires root: the target file is root-only, and a
+    successful sync restarts timelapse-totp.service.
+    """
+    if os.geteuid() != 0:
+        print("Kræver root — kør: sudo python3 bootstrap_cli.py --totp-sync")
+        return False
+
+    sys.path.insert(0, str(EDGE_ROOT))
+    from config.manager import ConfigManager
+    from upload.headend_client import HeadendClient
+    from utils.bt_totp_sync import sync_bt_totp_config
+
+    cfg_mgr = ConfigManager(base_dir)
+    try:
+        cfg = cfg_mgr.load()
+    except Exception as exc:
+        print(f"Kunne ikke læse lokal config: {exc}")
+        return False
+
+    client = HeadendClient(cfg, cfg_mgr)
+    ok, data = client.fetch_config()
+    if not ok or not data:
+        print("Kunne ikke hente config fra Headend — tjek forbindelse/token")
+        return False
+
+    bt_totp = data.get("bt_totp", {})
+    result = sync_bt_totp_config(bt_totp)
+    messages = {
+        "no-secret": "Headend har intet BT-TOTP secret for denne enhed endnu (uprovisioneret).",
+        "unchanged": f"Allerede synkroniseret (sid={bt_totp.get('sid', '?')}) — ingen ændring nødvendig.",
+        "synced": f"BT-TOTP synkroniseret (sid={bt_totp.get('sid', '?')}) — timelapse-totp genstartet.",
+    }
+    print(messages.get(result, f"Ukendt resultat: {result}"))
+    return result in {"unchanged", "synced"}
 
 
 def configure_bootstrap(base_dir: Path) -> None:

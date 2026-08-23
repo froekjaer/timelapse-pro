@@ -109,6 +109,7 @@ from siem import router as siem_router, start_headend_log_collector, record_even
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from edge_sync import router as edge_sync_router
 from local_access import router as local_access_router
+from technician_keys import router as technician_keys_router
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
@@ -434,21 +435,14 @@ def startup():
     except Exception as _exc_auth:
         log.warning("DB migration auth fejl: %s", _exc_auth)
 
-    # On-site idriftsættelse/service er en capability og ikke en særskilt
-    # privilegeret rolle. Additiv migration for eksisterende PostgreSQL-data.
-    try:
-        _eng_user_cap = __import__('database').engine
-        with _eng_user_cap.connect() as _conn_user_cap:
-            try:
-                _conn_user_cap.execute(text(
-                    "ALTER TABLE users ADD COLUMN on_site_service BOOLEAN NOT NULL DEFAULT FALSE"
-                ))
-                _conn_user_cap.commit()
-                log.info("DB migration: users.on_site_service tilføjet")
-            except Exception:
-                pass
-    except Exception as _exc_user_cap:
-        log.warning("DB migration users.on_site_service fejl: %s", _exc_user_cap)
+    # Field-role (installer/technician) + user_ssh_keys — se
+    # technician_keys.py for detaljer og begrundelse (2026-08-19).
+    from technician_keys import migrate_field_role_column, migrate_user_ssh_keys_table
+    _db_engine_field_role = __import__('database').engine
+    migrate_field_role_column(_db_engine_field_role)
+    migrate_user_ssh_keys_table(_db_engine_field_role)
+    from technician_keys import drop_orphaned_device_credential_columns
+    drop_orphaned_device_credential_columns(_db_engine_field_role)
 
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:
@@ -1145,6 +1139,18 @@ def _is_platform_admin(user: User | None) -> bool:
     return user.role == "super_admin" or (user.role == "admin" and not user.customer_id)
 
 
+FIELD_ROLES = ("none", "installer", "technician")
+
+
+def _has_field_access(user: "User | None") -> bool:
+    """True for users with an on-site field capability (installer or
+    technician) — orthogonal to the UI RBAC role. Replaces the old
+    on_site_service boolean (2026-08-19)."""
+    if user is None:
+        return False
+    return getattr(user, "field_role", "none") in ("installer", "technician")
+
+
 def _ensure_customer_access(user: User | None, customer_id: str | None) -> None:
     """Enforce tenant boundary for customer scoped records."""
     if _is_platform_admin(user):
@@ -1583,14 +1589,14 @@ class UserCreateRequest(BaseModel):
     password:    str
     role:        str = "viewer"
     customer_id: Optional[str] = None
-    on_site_service: bool = False
+    field_role:  str = "none"
 
 class UserUpdateRequest(BaseModel):
     email:       Optional[str] = None
     role:        Optional[str] = None
     customer_id: Optional[str] = None
     is_active:   Optional[bool] = None
-    on_site_service: Optional[bool] = None
+    field_role:  Optional[str] = None
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────
@@ -1826,7 +1832,7 @@ def technician_auth_confirm(
 
     if current_user is None or not current_user.is_active:
         raise HTTPException(status_code=401, detail="Aktiv TimeLapse Pro-konto kræves")
-    if not bool(getattr(current_user, "on_site_service", False)):
+    if not _has_field_access(current_user):
         raise HTTPException(
             status_code=403,
             detail="Brugeren mangler capability: On-site idriftsættelse og service",
@@ -2062,7 +2068,7 @@ def list_users(
             "mfa_partial": _user_has_partial_mfa(u),
             "mfa_required": _mfa_required_for_user(db, u),
             "webauthn_count": int(cred_counts.get(u.id, 0)),
-            "on_site_service": bool(getattr(u, "on_site_service", False)),
+            "field_role": getattr(u, "field_role", "none"),
         }
         for u in users
     ]
@@ -2128,6 +2134,8 @@ def create_user(
         raise HTTPException(status_code=400, detail="Brugernavn findes allerede")
     if req.role not in ("super_admin", "admin", "operator", "viewer"):
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
+    if req.field_role not in FIELD_ROLES:
+        raise HTTPException(status_code=400, detail="Ugyldig field_role")
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Adgangskode skal være mindst 8 tegn")
     u = User(
@@ -2136,7 +2144,7 @@ def create_user(
         password_hash = _hash_password(req.password),
         role          = req.role,
         customer_id   = req.customer_id,
-        on_site_service = req.on_site_service,
+        field_role    = req.field_role,
     )
     db.add(u); db.commit(); db.refresh(u)
     log.info("Bruger oprettet: %s (%s)", u.username, u.role)
@@ -2155,7 +2163,9 @@ def update_user(
         raise HTTPException(status_code=404)
     if req.role and req.role not in ("super_admin", "admin", "operator", "viewer"):
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
-    for field in ["email", "role", "customer_id", "is_active", "on_site_service"]:
+    if req.field_role and req.field_role not in FIELD_ROLES:
+        raise HTTPException(status_code=400, detail="Ugyldig field_role")
+    for field in ["email", "role", "customer_id", "is_active", "field_role"]:
         val = getattr(req, field)
         if val is not None:
             setattr(u, field, val)
@@ -3569,14 +3579,19 @@ def create_key_credential(
         expires_at = now + timedelta(days=int(payload.expires_days))
     credential_id = f"TL-KEY-{now:%Y%m%d}-{_secrets.token_hex(6)}"
     secret_once = None
-    if entity_type == "edge" and key_type == "ssh":
+    # WP-4 (C-09): Edge-ejede private nøgler må ALDRIG genereres på Headend — hverken
+    # SSH- eller signing-nøgler. Denne guard dækkede tidligere kun key_type=="ssh";
+    # "signing" faldt igennem til _generate_ed25519_keypair() nedenfor og lækkede en
+    # Edge private key via Headend-API'et. Se WP-4 provisioning (headend/trust/provisioning.py)
+    # for den korrekte CSR-baserede vej.
+    if entity_type == "edge" and key_type in {"ssh", "signing"}:
         if payload.generate_keypair:
             raise HTTPException(
                 status_code=409,
-                detail="Edge SSH private keys skal genereres lokalt på Edge; registrér en Edge-leveret public key.",
+                detail="Edge private keys skal genereres lokalt på Edge; registrér en Edge-leveret public key.",
             )
         if not (payload.public_key or "").strip():
-            raise HTTPException(status_code=400, detail="Edge-leveret public key er påkrævet for Edge SSH identity")
+            raise HTTPException(status_code=400, detail="Edge-leveret public key er påkrævet for Edge SSH/signing identity")
 
     private_key_once = None
     public_key = payload.public_key.strip() if payload.public_key else None
@@ -4334,6 +4349,7 @@ def get_device_config_admin(
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device ikke fundet")
+    _ensure_capture_device_access(db, _user, device_id)
 
     # Brug samme merge-logik som get_config
     from sqlalchemy.orm import Session as _S
@@ -4353,6 +4369,7 @@ def update_device_config(
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    _ensure_capture_device_access(db, _user, device_id)
 
     existing = {}
     if device.device_config:
@@ -5387,7 +5404,7 @@ def get_camera_bt_totp_qr(
         raise HTTPException(status_code=403, detail="Ingen adgang til dette kamera")
     is_admin = current_user.role in {"super_admin", "admin"}
     if not is_admin:
-        if not bool(getattr(current_user, "on_site_service", False)):
+        if not _has_field_access(current_user):
             raise HTTPException(status_code=403, detail="On-site idriftsættelse og service kræves")
         if current_user.customer_id and str(cam.customer_id) != str(current_user.customer_id):
             raise HTTPException(status_code=403, detail="Kameraet ligger uden for din kundeafgrænsning")
@@ -5562,6 +5579,7 @@ def get_device_camera_location(
 ):
     """Returnerer den aktive kamera-lokation (Camera) som en device er tildelt."""
     from database import Camera, DeviceAssignment, Customer, Site
+    _ensure_capture_device_access(db, _user, device_id)
     assignment = (
         db.query(DeviceAssignment)
         .filter_by(device_id=device_id)
@@ -8761,7 +8779,13 @@ def _os_bundle_auto_build_pending() -> None:
     Finder alle pending OS-updates uden artifact og bygger et offline .deb bundle
     via fetch_os_bundle.py (Python-mode, kræver ikke Docker).
 
-    Bruger første super_admin som systembruger til artifact-signering.
+    Bruger et system-principal til artifact-signering — IKKE en rigtig
+    super_admin-konto (U-12: dette tilskrev tidligere artifact-oprettelse til den
+    første super_admin i databasen, hvilket falsk lod det se ud som om et
+    menneske havde godkendt/signeret en automatisk bygget artifact. Samme mønster
+    som _auto_approve_update_for_target() allerede bruger korrekt for
+    policy-godkendelser: en transient, ikke-persisteret User med et
+    "system:"-præfikset brugernavn og role="system").
     """
     import sys as _sys
 
@@ -8780,16 +8804,8 @@ def _os_bundle_auto_build_pending() -> None:
         if not pending:
             return
 
-        # System-bruger til auto-signering
-        system_user = (
-            db.query(User)
-            .filter(User.role == "super_admin")
-            .order_by(User.id)
-            .first()
-        )
-        if not system_user:
-            log.warning("OS bundle auto-poller: ingen super_admin fundet — springer over")
-            return
+        # System-principal til auto-signering — se docstring ovenfor (U-12).
+        system_user = User(username="system:auto-os-bundle-builder", role="system", password_hash="")
 
         for update in pending:
             # Tjek om artifact allerede er bundet
@@ -11442,7 +11458,7 @@ def _render_timelapse(job_id, image_paths, options):
 
     fps, resolution, codec = options.fps, options.resolution, options.codec
     fade_frames = options.fade_frames
-    ts_overlay, ts_pos = options.timestamp_overlay, options.timestamp_position
+    ts_overlay, ts_pos, ts_format = options.timestamp_overlay, options.timestamp_position, options.timestamp_format
     ken_burns, crop_ratio, title = options.ken_burns, options.crop_ratio, options.title
 
     RENDER_JOBS[job_id]["status"] = "rendering"
@@ -11502,7 +11518,28 @@ def _render_timelapse(job_id, image_paths, options):
             vf_parts.append(f"fade=t=out:st={(n-fade_frames)/fps:.2f}:d={fade_frames/fps:.2f}")
 
         # Tidsstempel overlay
-        if ts_overlay:
+        if ts_overlay and ts_format == "datetime":
+            from services.timelapse_render_service import build_datetime_subtitle_file, ffmpeg_filter_path_escape
+
+            if resolution == "1080p":
+                play_res = (1920, 1080)
+            elif resolution == "4k":
+                play_res = (3840, 2160)
+            else:
+                from PIL import Image as _PILImage
+                with _PILImage.open(image_paths[0][0]) as _im:
+                    play_res = _im.size
+
+            ass_path = RENDER_OUTPUT_DIR / f"{job_id}_timestamps.ass"
+            build_datetime_subtitle_file(
+                frame_timestamps=[captured_at for _, captured_at in image_paths],
+                fps=fps,
+                position=ts_pos,
+                play_res=play_res,
+                output_path=ass_path,
+            )
+            vf_parts.append(f"subtitles={ffmpeg_filter_path_escape(str(ass_path))}")
+        elif ts_overlay:
             positions = {
                 "tl": "x=20:y=20",
                 "tr": "x=w-tw-20:y=20",
@@ -11618,6 +11655,7 @@ app.include_router(siem_router, prefix="/api/siem")
 app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(edge_sync_router, prefix="/api/edge")
 app.include_router(local_access_router, prefix="/api/admin")
+app.include_router(technician_keys_router, prefix="/api/admin")
 app.include_router(itim_router, prefix="/api/itim")
 app.include_router(settings_router, dependencies=[require_role("admin")])
 app.include_router(redaction_router)
@@ -11634,6 +11672,7 @@ def edge_report_inventory(
 
 @app.post("/api/admin/devices/{device_id}/cmdb/reconcile-baseline")
 def reconcile_device_cmdb_baseline(device_id: str, current_user=require_role("admin", "super_admin"), db: Session = Depends(get_db)):
+    _ensure_capture_device_access(db, current_user, device_id)
     from services.cmdb_baseline_drift import reconcile_device_baseline; return reconcile_device_baseline(db, device_id, current_user.username)
 
 @app.get("/health")
@@ -15795,7 +15834,12 @@ def edge_backup_complete(device_id: str, payload: dict, _user=require_role("oper
     if not device:
         raise HTTPException(status_code=404)
 
-    filename = payload.get("filename", "")
+    # C-07: filnavnet kommer fra request-body (Edge-rapporteret) og blev tidligere brugt
+    # direkte i os.path.join() til BÅDE kilde- og destinationssti uden sanitering — en
+    # "../../../etc/passwd"-agtig værdi kunne flytte en vilkårlig fil ind i/ud af
+    # backup-mappen (samme sårbarhedsklasse som C-01, path_security.py). Genbruger den
+    # allerede etablerede _sanitize_filename() (basename-only, afviser "..", allowlist-tegn).
+    filename = _sanitize_filename(payload.get("filename", ""))
 
     # Filen er landet i SFTP incoming — flyt den lokalt til backup mappe
     SFTP_INCOMING = "/data/sftp/incoming"
@@ -16805,16 +16849,38 @@ def test_notification(payload: dict, _user=require_role("admin"), db: Session = 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+_SETTINGS_SECRET_MASK = "••••••••"
+_SETTINGS_SECRET_KEY_MARKERS = ("password", "secret", "token", "api_key", "apikey", "private_key")
+
+
+def _is_secret_setting_key(key: str) -> bool:
+    """C-05: hvilke nøgler i den flade `settings`-tabel skal maskeres ved readback.
+    Substring-baseret (ikke en fast liste) så nye password/secret/token/api_key-agtige
+    nøgler også dækkes automatisk fremover, uden at kræve en kode-ændring hver gang."""
+    lowered = key.lower()
+    return any(marker in lowered for marker in _SETTINGS_SECRET_KEY_MARKERS)
+
+
 @app.get("/api/admin/settings")
 def get_settings(_user=require_role("admin"), db: Session = Depends(get_db)):
-    """Returner alle system settings."""
+    """Returner alle system settings. Secret-agtige nøgler (password/secret/token/api_key)
+    maskeres til '••••••••' — enhver admin kunne før dette hente fx sftp_password og
+    bt_totp_secret i klartekst (C-05). PUT nedenfor ignorerer masken hvis den sendes
+    uændret tilbage, så UI'en kan redigere andre felter uden at nulstille secrets."""
     rows = db.execute(text("SELECT key, value FROM settings")).fetchall()
-    return {row[0]: row[1] for row in rows}
+    return {
+        row[0]: (_SETTINGS_SECRET_MASK if _is_secret_setting_key(row[0]) and row[1] else row[1])
+        for row in rows
+    }
 
 @app.put("/api/admin/settings")
 def update_settings(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
-    """Opdater system settings."""
+    """Opdater system settings. Secret-agtige nøgler springes over hvis værdien er den
+    maskerede placeholder ('••••••••') — dvs. uændret siden GET — så et gemt formular-felt
+    aldrig ved et uheld overskriver en eksisterende secret med selve masken."""
     for key, value in payload.items():
+        if _is_secret_setting_key(key) and str(value) == _SETTINGS_SECRET_MASK:
+            continue
         existing = db.execute(text("SELECT id FROM settings WHERE key = :k"), {"k": key}).fetchone()
         if existing:
             db.execute(text("UPDATE settings SET value = :v WHERE key = :k"), {"v": str(value), "k": key})

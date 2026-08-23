@@ -285,10 +285,32 @@ class User(Base):
     customer_id   = Column(String(36))
     totp_secret   = Column(String(64))
     mfa_enabled   = Column(Boolean, default=False)                     # null = adgang til alle kunder
-    on_site_service = Column(Boolean, default=False, nullable=False)  # explicit capability, independent of RBAC role
+    # Field-role capability, independent of the UI RBAC role (super_admin/admin/
+    # operator/viewer) above — orthogonal axis: who's allowed physical/SSH access
+    # to edge devices in the field, not who can see which admin pages. Replaces
+    # the old on_site_service boolean (2026-08-19, per Peter — needed distinct
+    # installer vs. technician tags for edge break-glass/RBAC SSH replication).
+    field_role = Column(String(20), default="none", nullable=False)  # none|installer|technician
     is_active     = Column(Boolean, default=True)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login    = Column(DateTime)
+
+
+class UserSSHKey(Base):
+    """A field-role user's personal SSH public key, replicated to edge devices
+    they have access to (via headend/edge_sync.py + edge/agent.py's local
+    AuthorizedKeysCommand cache) instead of a single shared operational key.
+    Built 2026-08-19 as the first slice of the break-glass/RBAC redesign —
+    see Dokumentation/HANDOVER_LOG.md 2026-08-19."""
+    __tablename__ = "user_ssh_keys"
+
+    id           = Column(Integer, primary_key=True)
+    user_id      = Column(Integer, nullable=False, index=True)
+    public_key   = Column(Text, nullable=False)     # "ssh-ed25519 AAAA... label"
+    label        = Column(String(200))
+    created_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_by   = Column(String(100))
+    revoked_at   = Column(DateTime)                 # null = active
 
 
 class Camera(Base):
@@ -1166,6 +1188,35 @@ class BreakGlassAccount(Base):
     checkout_count  = Column(Integer, default=0)
     rotation_reason = Column(Text)
     # Årsag til seneste rotation (manuel, checkout, scheduled)
+
+
+class BreakGlassCheckoutAudit(Base):
+    """
+    Permanent historik over ALLE break-glass checkouts — i modsætning til
+    BreakGlassAccount.last_used_by/last_used_at/rotation_reason, som kun
+    holder det SENESTE checkout (overskrives ved næste rotation).
+
+    checked_out_by er altid den autentificerede sessions brugernavn (bundet
+    server-side, aldrig fra request-body — jf. C-06,
+    MASTER_REVIEW_CLOSURE_2026-08-15.md). on_behalf_of er en VALGFRI,
+    IKKE-AUTORITATIV tekstmarkør til den formelle "hjælp en kollega på site
+    uden central-adgang"-procedure (Peter, 2026-08-20): en kollega med egen
+    break-glass-konto kan checke sin EGEN konto ud og notere hvem de hjælper
+    og hvorfor — men on_behalf_of ændrer ALDRIG hvilken konto der slås op
+    eller hvem der er den autentificerede aktør, kun hvad der vises i audit-
+    historikken til senere gennemgang.
+    """
+    __tablename__ = "break_glass_checkout_audit"
+
+    id              = Column(Integer, primary_key=True)
+    account_id      = Column(Integer, nullable=False, index=True)
+    device_id       = Column(String(50), nullable=False, index=True)
+    checked_out_by  = Column(String(100), nullable=False, index=True)
+    on_behalf_of    = Column(String(200))
+    reason          = Column(Text)
+    client_ip       = Column(String(64))
+    checked_out_at  = Column(DateTime(timezone=True),
+                        default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class AiBatchJob(Base):
