@@ -8,6 +8,14 @@ _SUPERSEDED_UPDATE_STATUSES = {"pending", "approved"}
 _SUPERSEDED_TARGET_STATUSES = {"pending", "queued", "approved", "authorized"}
 
 
+def device_already_at_update_version(device: Any, update: Any) -> bool:
+    installed = str(getattr(device, "app_version", None) or "").strip()
+    target = str(getattr(update, "version", None) or "").strip()
+    if not installed or not target:
+        return False
+    return installed == target or (len(installed) >= 12 and target.startswith(installed))
+
+
 def _append_note(value: str | None, note: str) -> str:
     return f"{value or ''}\n{note}".strip()
 

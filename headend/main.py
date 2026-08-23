@@ -114,7 +114,7 @@ from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
 from services.update_promotion import build_update_promotion_context, serialize_pending_update
-from services.update_supersession import supersede_pending_app_updates
+from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
@@ -928,7 +928,7 @@ def _resolve_session_policy(
 ) -> dict:
     policy = _normalise_session_policy({})
     try:
-        defaults = db.query(ConfigDefaults).first()
+        defaults = db.query(ConfigDefaults).order_by(ConfigDefaults.id.asc()).first()
         if defaults and getattr(defaults, "session_policy", None):
             policy = _normalise_session_policy(_deep_merge(policy, _policy_from_json(defaults.session_policy)))
     except Exception as exc:
@@ -4146,27 +4146,21 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         "service_access": {"enabled": True, "live_view_enabled": True, "live_view_max_duration_s": 180, "allow_continuous_live_view": False},
     }
 
-    # Apply per-device overrides from database
-    if device.device_config:
-        try:
-            overrides = json.loads(device.device_config or "{}")
-            for section, values in overrides.items():
-                if section == "device":
-                    continue  # device-sektion styres af DB-kolonner, ikke device_config
-                if section in cfg and isinstance(cfg[section], dict):
-                    cfg[section].update(values)
-                else:
-                    cfg[section] = values
-        except Exception as exc:
-            log.warning("Invalid device_config for %s: %s", device_id, exc)
-
-    # Apply hierarchical config overrides (Sprint A)
+    # Apply hierarchical config overrides (Sprint A). Priority, lowest to
+    # highest: hardcoded factory literal (cfg above) < Lag 1 config_defaults
+    # ("Global Config" page) < device_config < Lag 2 customer < Lag 3 site <
+    # Lag 4/5 camera. Bug fixed 2026-08-23: Lag 1 ran as _deep_merge(d,
+    # cfg[section]) — override wins in _deep_merge(base, override), so the
+    # factory literal (plus device_config, applied before this at the time)
+    # always outranked the admin's Global Config edit. Reordered so
+    # device_config applies after config_defaults, with config_defaults now
+    # correctly passed as the override.
     try:
         from database import Customer, Site
         site    = db.query(Site).filter_by(id=device.site_id).first() if hasattr(device, "site_id") and device.site_id else None
         customer = db.query(Customer).filter_by(id=site.customer_id).first() if site else None
-        defaults = db.query(ConfigDefaults).first()
-        # Lag 1: config_defaults
+        defaults = db.query(ConfigDefaults).order_by(ConfigDefaults.id.asc()).first()
+        # Lag 1: config_defaults — overrides the hardcoded factory literal.
         if defaults:
             for section in ["schedule", "camera", "quality", "storage", "diagnostics", "system", "session_policy"]:
                 if hasattr(defaults, section):
@@ -4174,9 +4168,22 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
                     if val:
                         d = json.loads(val)
                         if section in cfg and isinstance(cfg[section], dict):
-                            cfg[section] = _deep_merge(d, cfg[section])
+                            cfg[section] = _deep_merge(cfg[section], d)
                         else:
                             cfg[section] = d
+        # Lag 1.5: per-device overrides — overrides config_defaults.
+        if device.device_config:
+            try:
+                overrides = json.loads(device.device_config or "{}")
+                for section, values in overrides.items():
+                    if section == "device":
+                        continue  # device-sektion styres af DB-kolonner, ikke device_config
+                    if section in cfg and isinstance(cfg[section], dict):
+                        cfg[section].update(values)
+                    else:
+                        cfg[section] = values
+            except Exception as exc:
+                log.warning("Invalid device_config for %s: %s", device_id, exc)
         # Lag 2: customer overrides
         if customer and customer.config_overrides:
             for section, values in json.loads(customer.config_overrides).items():
@@ -7045,7 +7052,7 @@ def _resolved_update_policy(db: Session, device: Device | None) -> dict:
     if not device:
         return policy
     try:
-        defaults = db.query(ConfigDefaults).first()
+        defaults = db.query(ConfigDefaults).order_by(ConfigDefaults.id.asc()).first()
         if defaults and getattr(defaults, "system", None):
             sys_cfg = _json.loads(defaults.system)
             policy = _merge_update_policy(policy, sys_cfg.get("update_policy"))
@@ -9571,18 +9578,10 @@ def _resolve_update_targets(db: Session, update: PendingUpdate) -> list[Device]:
     return []
 
 
-def _device_already_at_update_version(device: Device, update: PendingUpdate) -> bool:
-    installed = str(device.app_version or "").strip()
-    target = str(update.version or "").strip()
-    if not installed or not target:
-        return False
-    return installed == target or (len(installed) >= 12 and target.startswith(installed))
-
-
 def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTicket | None = None) -> int:
     created = 0
     for device in _resolve_update_targets(db, update):
-        already_current = _device_already_at_update_version(device, update)
+        already_current = device_already_at_update_version(device, update)
         existing = db.query(UpdateTarget).filter_by(
             pending_update_id=update.id,
             device_id=device.device_id,
@@ -14031,7 +14030,7 @@ def _validate_device_pki_config(config: dict) -> None:
             raise HTTPException(status_code=400, detail=f"system.device_pki.{key} skal være {minimum}-{maximum}")
 
 def _get_or_create_defaults(db: Session) -> ConfigDefaults:
-    d = db.query(ConfigDefaults).first()
+    d = db.query(ConfigDefaults).order_by(ConfigDefaults.id.asc()).first()
     if not d:
         d = ConfigDefaults(
             schedule    = json.dumps(_FACTORY_CONFIG_DEFAULTS["schedule"]),

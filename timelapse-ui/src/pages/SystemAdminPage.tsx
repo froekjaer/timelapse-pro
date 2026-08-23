@@ -554,6 +554,13 @@ export function SystemAdminPage() {
             </option>
           ))}
         </select>
+        {selectedDevice && (
+          <Link to={`/global-config?device_id=${encodeURIComponent(selectedDevice)}`}
+            className="inline-flex items-center gap-1 text-xs text-sky-600 hover:text-sky-700 hover:underline mt-2"
+            title="Se hvilken værdi hvert felt reelt bruger (arvet fra Global/Kunde/Site/Kamera) og hvor den kommer fra, i stedet for kun den effektive værdi her">
+            Se arvet konfiguration for denne enhed →
+          </Link>
+        )}
         {devices.some(d => d.debug_mode_enabled) && (
           <p className="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mt-2">
             {'⚠️'} {devices.filter(d => d.debug_mode_enabled).length} enhed(er) har LAB mode aktiv lige nu

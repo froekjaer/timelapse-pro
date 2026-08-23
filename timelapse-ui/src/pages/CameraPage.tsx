@@ -529,6 +529,11 @@ export function CameraPage() {
         )}
         <Camera className="w-3.5 h-3.5 text-sky-500" />
         <span className="text-gray-700 font-medium">{device.camera_name || device.device_id}</span>
+        <Link to={`/global-config?device_id=${encodeURIComponent(device.device_id)}`}
+          className="ml-auto text-xs text-sky-600 hover:text-sky-700 hover:underline flex items-center gap-1"
+          title="Se hvilken værdi hvert felt reelt bruger (arvet fra Global/Kunde/Site/Kamera) og hvor den kommer fra">
+          Arvet konfiguration →
+        </Link>
       </div>
 
       {/* ── Kamera lokation ─────────────────────────────────────────────── */}

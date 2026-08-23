@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, CheckCircle, Globe, Layers, RotateCcw, Save } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -294,15 +294,19 @@ function sourceClass(source: string, layer: LayerKey, changedFromGlobal: boolean
 }
 
 export function GlobalConfigPage() {
+  const [searchParams] = useSearchParams()
+  const initialDeviceId = searchParams.get('device_id') ?? ''
   const [defaults, setDefaults] = useState<ConfigDefaults | null>(null)
   const [customers, setCustomers] = useState<EntityOption[]>([])
   const [sites, setSites] = useState<EntityOption[]>([])
   const [cameras, setCameras] = useState<EntityOption[]>([])
   const [adminUsers, setAdminUsers] = useState<Array<{ username: string; role: string }>>([])
-  const [selectedCustomer, setSelectedCustomer] = useState('')
-  const [selectedSite, setSelectedSite] = useState('')
-  const [selectedCamera, setSelectedCamera] = useState('')
-  const [editLayer, setEditLayer] = useState<LayerKey>('global')
+  const [selectedCustomer, setSelectedCustomer] = useState(searchParams.get('customer_id') ?? '')
+  const [selectedSite, setSelectedSite] = useState(searchParams.get('site_id') ?? '')
+  const [selectedCamera, setSelectedCamera] = useState(searchParams.get('camera_id') ?? '')
+  const [editLayer, setEditLayer] = useState<LayerKey>(
+    searchParams.get('camera_id') ? 'camera' : searchParams.get('site_id') ? 'site' : searchParams.get('customer_id') ? 'customer' : 'global'
+  )
   const [resolution, setResolution] = useState<Resolution | null>(null)
   const [draft, setDraft] = useState<ConfigObject>({})
   const [loading, setLoading] = useState(true)
@@ -351,11 +355,20 @@ export function GlobalConfigPage() {
     if (selectedCamera) params.set('camera_id', selectedCamera)
     else if (selectedSite) params.set('site_id', selectedSite)
     else if (selectedCustomer) params.set('customer_id', selectedCustomer)
+    else if (initialDeviceId) params.set('device_id', initialDeviceId)
     try {
       const data = await api(`/api/admin/config-resolution${params.toString() ? `?${params}` : ''}`)
       setResolution(data)
       const layer = data.layers?.find((l: any) => l.key === editLayer)
       setDraft(layer?.config ?? {})
+      // Linket ind fra en enhedsside (?device_id=X) — synkroniser dropdowns
+      // med det kunde/site/kamera enheden reelt hører under, så filtrene
+      // matcher konteksten i stedet for at stå tomme.
+      if (initialDeviceId && data.context) {
+        if (data.context.customer_id) setSelectedCustomer((prev: string) => prev || data.context.customer_id)
+        if (data.context.site_id) setSelectedSite((prev: string) => prev || data.context.site_id)
+        if (data.context.camera_id) setSelectedCamera((prev: string) => prev || data.context.camera_id)
+      }
     } catch (e: any) {
       setError(`Kunne ikke resolver konfiguration (${e.message})`)
     }
