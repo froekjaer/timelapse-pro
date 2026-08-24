@@ -2545,7 +2545,16 @@ class EdgeAgent:
                 config = resp.get("config")
                 if config:
                     self._apply_fetched_config(config)
-                self._apply_technician_keys(resp.get("technician_keys", []))
+                try:
+                    self._apply_technician_keys(resp.get("technician_keys", []))
+                except Exception as tech_exc:
+                    # Must not block update-policy processing below — an update
+                    # is often exactly what fixes a broken technician-key write
+                    # (e.g. a stale sandbox ReadWritePaths). Found 2026-08-24:
+                    # a device stuck on the pre-fix agent could never receive
+                    # the fixing update, because this exception used to abort
+                    # the rest of _run_sync() before reaching _apply_update_policy.
+                    log.warning("Technician-nøgle synkronisering fejlede: %s", tech_exc)
                 if not self._reconcile_pending_app_update():
                     self._apply_update_policy(resp)
             else:
