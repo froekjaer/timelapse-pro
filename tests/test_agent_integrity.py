@@ -13,12 +13,16 @@ def test_sync_captures_limit_100():
         "FEJL: _sync_captures limit skal være 100!"
 
 def test_sync_captures_in_capture_cycle():
+    # 2026-08-24: the per-capture self._send_heartbeat() call was removed —
+    # it duplicated the consolidated sync poll and bypassed both poll-interval
+    # settings (see test_edge_sync_poll_consolidation.py). _sync_captures()
+    # must still run in the capture cycle, just no longer anchored to it.
     content = read_agent()
-    idx_heartbeat = content.find("self._send_heartbeat()")
-    idx_sync = content.find("self._sync_captures()", idx_heartbeat)
-    idx_success = content.find("success = True", idx_heartbeat)
+    cycle_body = content.split("def _do_capture_cycle(", 1)[1].split("\n    def ", 1)[0]
+    idx_sync = cycle_body.find("self._sync_captures()")
+    idx_success = cycle_body.find("success = True")
     assert idx_sync > 0 and idx_sync < idx_success, \
-        "FEJL: _sync_captures mangler i capture cycle efter heartbeat!"
+        "FEJL: _sync_captures mangler i capture cycle før success = True!"
 
 def test_sync_captures_info_logging():
     content = read_agent()

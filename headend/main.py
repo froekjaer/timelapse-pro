@@ -10384,7 +10384,8 @@ def promote_update(
         approved_at       = now_utc() if target_environment == "staging" else None,
         approved_by       = current_user.username if target_environment == "staging" else None,
         environment       = target_environment,
-        target_device_ids = u.target_device_ids,
+        # Production must re-resolve against its full scope, not the test canary subset.
+        target_device_ids = u.target_device_ids if target_environment == "staging" else None,
     )
     db.add(prod_update)
     db.flush()
