@@ -20,7 +20,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-DB_VERSION = 3
+DB_VERSION = 4
 SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS captures (
     -- Sync to headend API
     synced_to_headend  INTEGER DEFAULT 0,
     synced_at          TEXT,
+
+    -- Edge-local retention. Headend/project data is authoritative; these
+    -- fields only record that the local buffer copy was pruned after delivery.
+    local_files_deleted_at TEXT,
+    local_retention_reason TEXT,
 
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
@@ -171,6 +176,13 @@ class EdgeDatabase:
         }
         if "uploaded_tertiary" not in columns:
             conn.execute("ALTER TABLE captures ADD COLUMN uploaded_tertiary INTEGER DEFAULT 0")
+            columns.add("uploaded_tertiary")
+        if "local_files_deleted_at" not in columns:
+            conn.execute("ALTER TABLE captures ADD COLUMN local_files_deleted_at TEXT")
+            columns.add("local_files_deleted_at")
+        if "local_retention_reason" not in columns:
+            conn.execute("ALTER TABLE captures ADD COLUMN local_retention_reason TEXT")
+            columns.add("local_retention_reason")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS capture_slots (
                 slot_id       TEXT PRIMARY KEY,
@@ -319,6 +331,42 @@ class EdgeDatabase:
                 (limit,)
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def local_retention_candidates(
+        self,
+        required_targets: list[str],
+        limit: int = 200,
+    ) -> list[dict]:
+        """Return oldest captures whose local files may be pruned safely."""
+        columns = [_upload_column(target) for target in required_targets]
+        # Keep the SQL identifiers on the fixed upload-column allowlist.
+        predicates = " AND ".join(f"{col}=1" for col in sorted(set(columns)))
+        if predicates:
+            predicates = f" AND {predicates}"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM captures
+                WHERE local_files_deleted_at IS NULL
+                {predicates}
+                ORDER BY captured_at ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_local_files_deleted(self, capture_id: int, reason: str) -> None:
+        """Record that Edge-local buffer files were removed after delivery."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE captures
+                SET local_files_deleted_at=?, local_retention_reason=?
+                WHERE id=?
+                """,
+                (_now(), reason, capture_id),
+            )
 
     def increment_upload_attempts(self, capture_id: int) -> int:
         """Atomically record one real SFTP retry attempt and return the new count."""
