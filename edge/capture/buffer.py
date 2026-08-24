@@ -168,13 +168,22 @@ class CircularBuffer:
     def _required_upload_targets(config: dict) -> list[str]:
         targets = ["primary"]
         sftp = config.get("sftp", {}) if isinstance(config.get("sftp", {}), dict) else {}
-        if sftp.get("enabled", False):
+        if CircularBuffer._sftp_target_complete(sftp):
             targets.append(sftp.get("role") or "customer_sftp")
         for key, default_role in (
             ("secondary_sftp", "backup_sftp"),
             ("backup_sftp", "backup_sftp"),
         ):
             nested = sftp.get(key, {}) if isinstance(sftp.get(key, {}), dict) else {}
-            if nested.get("enabled", False):
+            if CircularBuffer._sftp_target_complete(nested):
                 targets.append(nested.get("role") or default_role)
         return list(dict.fromkeys(targets))
+
+    @staticmethod
+    def _sftp_target_complete(target: dict) -> bool:
+        if not target.get("enabled", False):
+            return False
+        required = ("host", "username", "remote_base")
+        if any(not str(target.get(key) or "").strip() for key in required):
+            return False
+        return bool(str(target.get("password") or "").strip() or str(target.get("key_file") or "").strip())

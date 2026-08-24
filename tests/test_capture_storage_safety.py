@@ -124,7 +124,14 @@ def test_edge_local_retention_requires_customer_sftp_when_enabled(tmp_path: Path
     }])
     guard = CircularBuffer({
         "storage": {"local_path": str(capture_dir), "circular_buffer_bytes": 10},
-        "sftp": {"enabled": True, "role": "customer_sftp"},
+        "sftp": {
+            "enabled": True,
+            "role": "customer_sftp",
+            "host": "sftp.example.test",
+            "username": "site-user",
+            "remote_base": "/incoming",
+            "key_file": "/opt/timelapse/edge/ssh/site_sftp_ed25519",
+        },
     })
 
     assert guard.enforce(db) == 0
@@ -151,7 +158,18 @@ def test_edge_local_retention_requires_backup_sftp_when_enabled(tmp_path: Path) 
         "sftp": {
             "enabled": True,
             "role": "customer_sftp",
-            "backup_sftp": {"enabled": True, "role": "backup_sftp"},
+            "host": "sftp.example.test",
+            "username": "site-user",
+            "remote_base": "/incoming",
+            "key_file": "/opt/timelapse/edge/ssh/site_sftp_ed25519",
+            "backup_sftp": {
+                "enabled": True,
+                "role": "backup_sftp",
+                "host": "backup.example.test",
+                "username": "backup-user",
+                "remote_base": "/backup",
+                "key_file": "/opt/timelapse/edge/ssh/backup_sftp_ed25519",
+            },
         },
     })
 
@@ -159,6 +177,30 @@ def test_edge_local_retention_requires_backup_sftp_when_enabled(tmp_path: Path) 
     assert image.exists()
     assert db.marked == []
     assert db.requested_targets == [["primary", "customer_sftp", "backup_sftp"]]
+
+
+def test_edge_local_retention_ignores_incomplete_customer_sftp_target(tmp_path: Path) -> None:
+    capture_dir = tmp_path / "captures"
+    capture_dir.mkdir()
+    image = capture_dir / "api-delivered.jpg"
+    image.write_bytes(b"x" * 50)
+    db = _RetentionDb([{
+        "id": 1,
+        "filepath": str(image),
+        "captured_at": "2026-08-01T00:00:00Z",
+        "uploaded_primary": 1,
+        "uploaded_secondary": 0,
+        "uploaded_tertiary": 0,
+    }])
+    guard = CircularBuffer({
+        "storage": {"local_path": str(capture_dir), "circular_buffer_bytes": 10},
+        "sftp": {"enabled": True, "role": "customer_sftp", "host": "sftp.example.test"},
+    })
+
+    assert guard.enforce(db) == 1
+    assert not image.exists()
+    assert db.marked == [(1, "edge_local_fifo_after_required_uploads")]
+    assert db.requested_targets == [["primary"]]
 
 
 def test_edge_local_retention_uses_fifo_order(tmp_path: Path) -> None:
