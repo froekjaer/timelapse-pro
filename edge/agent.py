@@ -305,6 +305,7 @@ class EdgeAgent:
         # 1. Pull fresh config from headend
         self._pull_config()
         self._check_backup_request()
+        self._repair_sshd_authorized_keys_command_missing_u_token()
 
         # 2. Send startup heartbeat
         self._send_heartbeat(check_updates=False)
@@ -352,6 +353,8 @@ class EdgeAgent:
             retry_results = self._uploader.retry_pending(camera_id)
             if any(v > 0 for v in retry_results.values()):
                 log.info("Startup SFTP upload retry: %s", retry_results)
+            if api_retried or any(v > 0 for v in retry_results.values()):
+                self._enforce_local_retention()
         else:
             log.info("Startup upload retry deferred by Headend slot: next_slot_in_s=%s", wait_s)
 
@@ -1028,14 +1031,15 @@ class EdgeAgent:
                 brightness   = quality_report.get("brightness_mean"),
             )
 
-            # 7. Enforce circular buffer BEFORE upload (free space first)
-            self._buffer.enforce(self._db)
+            # 7. Free space before upload using only older delivered captures.
+            self._enforce_local_retention()
 
             # 8. Upload — report connectivity result. Capture timing is not
             # delayed by upload slots; files are queued locally if outside slot.
             camera_id      = self._cfg.get("device", {}).get("device_id", "unknown")
             upload_results = self._upload_capture_transports(capture_id, result.filepath, camera_id)
             log.info("Upload results: %s", upload_results)
+            self._enforce_local_retention()
             self._last_capture_result = {
                 "capture_id": capture_id,
                 "filename": result.filepath.name,
@@ -1440,6 +1444,73 @@ class EdgeAgent:
 
     BT_TOTP_CONFIG_PATH = Path("/etc/timelapse/bt-config.yaml")
     AUTHORIZED_TECHNICIANS_PATH = Path("/etc/timelapse/authorized_technicians.json")
+    SSHD_CONFIG_PATH = Path("/etc/ssh/sshd_config")
+
+    def _repair_sshd_authorized_keys_command_missing_u_token(self) -> None:
+        """One-time self-heal for devices provisioned before 2026-08-24.
+
+        inject_edge_image.py wrote the servicetekniker Match block's
+        AuthorizedKeysCommand without the %u token, so sshd never passed the
+        requested username to technician_authorized_keys.py — argv[1] was
+        always empty, so the script's own guard (only serve requests for
+        "servicetekniker") never matched anything and it printed no keys for
+        ANY login, ever. Confirmed live 2026-08-24 via a debug trace: every
+        registered technician key was correctly synced and readable, but
+        sshd itself never asked the right question. This has nothing to do
+        with the ReadWritePaths/ownership/permission fixes shipped earlier
+        the same day — it predates all of them. inject_edge_image.py is
+        provisioning-only and never re-applied to already-provisioned
+        devices, so this repairs the deployed sshd_config directly. Runs at
+        every startup; a no-op once the line is already correct.
+        """
+        try:
+            if not self.SSHD_CONFIG_PATH.exists():
+                return
+            original = self.SSHD_CONFIG_PATH.read_text(encoding="utf-8")
+            broken = (
+                "    AuthorizedKeysCommand /usr/bin/python3 "
+                "/opt/timelapse/edge/scripts/technician_authorized_keys.py\n"
+            )
+            fixed = (
+                "    AuthorizedKeysCommand /usr/bin/python3 "
+                "/opt/timelapse/edge/scripts/technician_authorized_keys.py %u\n"
+            )
+            if broken not in original:
+                return
+            patched = original.replace(broken, fixed)
+
+            tmp_path = self.SSHD_CONFIG_PATH.with_name(".sshd_config.tmp")
+            tmp_path.write_text(patched, encoding="utf-8")
+            os.chmod(tmp_path, 0o644)
+
+            check = subprocess.run(
+                ["/usr/sbin/sshd", "-t", "-f", str(tmp_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if check.returncode != 0:
+                log.error(
+                    "sshd_config selv-reparation afvist af sshd -t, dropper: %s",
+                    check.stderr.strip(),
+                )
+                tmp_path.unlink(missing_ok=True)
+                return
+
+            os.replace(tmp_path, self.SSHD_CONFIG_PATH)
+            reload_result = subprocess.run(
+                ["systemctl", "reload", "ssh"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if reload_result.returncode != 0:
+                subprocess.run(
+                    ["systemctl", "reload", "sshd"],
+                    capture_output=True, text=True, timeout=15,
+                )
+            log.info(
+                "sshd_config selv-repareret: AuthorizedKeysCommand manglede %%u-token "
+                "(2026-08-24 provisioning-fejl) — teknikernøgler kan nu autentificere"
+            )
+        except Exception as exc:
+            log.warning("sshd_config selv-reparation fejlede: %s", exc)
 
     def _apply_technician_keys(self, keys: list[dict]) -> None:
         """Write the RBAC-replicated technician SSH public keys to a local
@@ -2616,6 +2687,13 @@ class EdgeAgent:
         retried = self._retry_pending_api_uploads()
         if retried:
             log.info("API upload slot processed pending files: count=%d remaining_s=%s", retried, remaining_s)
+            self._enforce_local_retention()
+
+    def _enforce_local_retention(self) -> None:
+        try:
+            self._buffer.enforce(self._db)
+        except Exception as exc:
+            log.warning("Edge local retention failed: %s", exc)
 
     def _retry_pending_api_uploads(self) -> int:
         """Retry primary API uploads from the local store-and-forward queue."""

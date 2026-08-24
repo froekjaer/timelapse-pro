@@ -825,7 +825,7 @@ if [ -f "$SSHD_CONFIG" ]; then
         cat >> "$SSHD_CONFIG" << 'SSHD_MATCH_EOF'
 
 Match User servicetekniker
-    AuthorizedKeysCommand /usr/bin/python3 /opt/timelapse/edge/scripts/technician_authorized_keys.py
+    AuthorizedKeysCommand /usr/bin/python3 /opt/timelapse/edge/scripts/technician_authorized_keys.py %u
     AuthorizedKeysCommandUser nobody
     PasswordAuthentication no
 SSHD_MATCH_EOF
