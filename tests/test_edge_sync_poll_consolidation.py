@@ -38,6 +38,46 @@ def _make_agent():
     return agent
 
 
+def test_capture_cycle_methods_do_not_call_the_legacy_heartbeat():
+    """2026-08-24 gap: the consolidation above only checked _tick()'s own
+    body text. _do_capture_cycle() and _do_multi_capture_cycle() still called
+    self._send_heartbeat() directly after every single/burst capture — a
+    second, independent HTTP round-trip to the old /heartbeat endpoint that
+    also unconditionally re-ran the update-check, completely ignoring
+    update_poll_interval_minutes and resetting the same _last_heartbeat
+    clock _run_sync()'s own interval gate reads. Since captures commonly
+    happen more often than the configured sync interval, this could starve
+    _run_sync() from ever firing on schedule. Found while explaining to
+    Peter why "Sync-poll" and "Update poll" behaved like two different
+    mechanisms when only one was meant to exist.
+    """
+    source = AGENT_PATH.read_text(encoding="utf-8")
+    single = source.split("def _do_capture_cycle(", 1)[1].split("\n    def ", 1)[0]
+    multi = source.split("def _do_multi_capture_cycle(", 1)[1].split("\n    def ", 1)[0]
+
+    assert "self._send_heartbeat()" not in single
+    assert "self._send_heartbeat()" not in multi
+
+
+def test_run_sync_defers_to_pending_app_update_reconciliation():
+    """_check_and_apply_updates() always checked _reconcile_pending_app_update()
+    first, so update policy stays fail-closed while a prior release awaits
+    post-restart health confirmation or rollback. _run_sync() must apply the
+    same guard before _apply_update_policy() now that it's the only path."""
+    agent = _make_agent()
+    agent._collect_siem_events_for_sync = MagicMock(return_value=[])
+    agent._collect_inventory_if_due = MagicMock(return_value=None)
+    agent._apply_fetched_config = MagicMock()
+    agent._apply_update_policy = MagicMock()
+    agent._sync_time_from_headend = MagicMock()
+    agent._reconcile_pending_app_update = MagicMock(return_value=True)
+    agent._api = MagicMock(sync=MagicMock(return_value=(True, {"pending_updates": []})))
+
+    agent._run_sync()
+
+    agent._apply_update_policy.assert_not_called()
+
+
 def test_tick_gates_on_a_single_sync_interval_not_three_separate_timers():
     """Lock in the consolidation: _tick()'s own body must use one
     sync_interval-gated call to _run_sync(), and must not still carry the

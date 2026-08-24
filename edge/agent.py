@@ -775,7 +775,6 @@ class EdgeAgent:
         ok  = sum(1 for r in results if r and r.get('success'))
         err = sum(1 for r in results if r and not r.get('success'))
         log.info("Burst: %d OK, %d fejl", ok, err)
-        self._send_heartbeat()
         self._sync_captures()
         return ok > 0
 
@@ -1100,8 +1099,9 @@ class EdgeAgent:
             except Exception as cam_exc:
                 log.warning("Camera diagnostics failed: %s", cam_exc)
 
-            # Send heartbeat immediately after capture with fresh camera diagnostics
-            self._send_heartbeat()
+            # Fresh camera diagnostics ride along on the next consolidated
+            # sync poll (_run_sync picks up self._last_cam_diag) instead of
+            # triggering their own separate heartbeat round-trip here.
             self._sync_captures()
             success = True
 
@@ -2546,7 +2546,8 @@ class EdgeAgent:
                 if config:
                     self._apply_fetched_config(config)
                 self._apply_technician_keys(resp.get("technician_keys", []))
-                self._apply_update_policy(resp)
+                if not self._reconcile_pending_app_update():
+                    self._apply_update_policy(resp)
             else:
                 log.warning("Sync poll failed — headend unreachable")
                 self._connectivity.report_failure()
