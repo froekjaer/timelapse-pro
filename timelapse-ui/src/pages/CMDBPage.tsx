@@ -13,7 +13,7 @@ import {
   Server, ChevronRight, RefreshCw, AlertTriangle,
   HardDrive, Cpu, Wifi, Package, Key, Eye, Trash2,
   Plus, ArrowLeft, Edit2, Check, X,
-  Brain, Loader2, Shield, Activity
+  Brain, Loader2, Shield, Activity, Search
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -222,7 +222,7 @@ function compactValue(value: unknown) {
   return String(value)
 }
 
-type VersionRisk = 'security' | 'feature' | 'current'
+type VersionRisk = 'security' | 'feature' | 'current' | 'unknown'
 
 interface VersionRow {
   key: string
@@ -230,6 +230,7 @@ interface VersionRow {
   installed: string
   available: string
   source: string
+  category: string
   risk: VersionRisk
 }
 
@@ -237,18 +238,25 @@ function normalizedPackageName(value: unknown): string {
   return String(value ?? '').trim().toLowerCase().replace(/:(arm64|amd64|all)$/, '')
 }
 
+function versionText(value: unknown) {
+  const text = String(value ?? '').trim()
+  return text || '—'
+}
+
 function versionRows(detail: CMDBDetail, sbom: SbomDocument | null): VersionRow[] {
   const rows = new Map<string, VersionRow>()
-  const addInstalled = (name: string, version: unknown, source: string) => {
+  const addInstalled = (name: string, version: unknown, source: string, category = source) => {
     const key = normalizedPackageName(name)
     if (!key || key.startsWith('_')) return
     const current = rows.get(key)
+    const installed = versionText(version ?? current?.installed)
     rows.set(key, {
       key,
       name: current?.name || name,
-      installed: String(version ?? current?.installed ?? '—'),
-      available: current?.available || String(version ?? '—'),
+      installed,
+      available: current?.available && current.available !== '—' ? current.available : installed,
       source: current?.source || source,
+      category: current?.category || category,
       risk: current?.risk || 'current',
     })
   }
@@ -275,9 +283,28 @@ function versionRows(detail: CMDBDetail, sbom: SbomDocument | null): VersionRow[
     rows.set(key, {
       key,
       name: current?.name || name,
-      installed: String(update.installed_version ?? current?.installed ?? '—'),
-      available: String(update.available_version ?? current?.available ?? '—'),
+      installed: versionText(update.installed_version ?? current?.installed),
+      available: versionText(update.available_version ?? current?.available),
       source: String(update.manager ?? current?.source ?? 'Update'),
+      category: String(update.manager ?? current?.category ?? 'Update'),
+      risk,
+    })
+  })
+
+  const osUpdateState = detail.software_inventory?._os_updates_available as Record<string, unknown> | undefined
+  const osUpdatePackages = Array.isArray(osUpdateState?.packages) ? osUpdateState.packages as Array<Record<string, unknown>> : []
+  osUpdatePackages.forEach(pkg => {
+    const name = String(pkg.name ?? pkg.package ?? 'ukendt')
+    const key = normalizedPackageName(name)
+    const current = rows.get(key)
+    const risk: VersionRisk = pkg.security ? 'security' : 'feature'
+    rows.set(key, {
+      key,
+      name: current?.name || name,
+      installed: versionText(pkg.installed_version ?? pkg.installed ?? current?.installed),
+      available: versionText(pkg.available_version ?? pkg.candidate ?? pkg.version ?? current?.available),
+      source: 'apt',
+      category: 'OS',
       risk,
     })
   })
@@ -294,61 +321,88 @@ function versionRows(detail: CMDBDetail, sbom: SbomDocument | null): VersionRow[
       installed: update.current_version || current?.installed || '—',
       available: update.latest_available_version || current?.available || '—',
       source: update.update_type,
+      category: update.update_type.includes('os_') ? 'OS' : update.update_type.includes('app') ? 'App' : 'Update',
       risk,
     })
   })
 
-  const priority: Record<VersionRisk, number> = { security: 0, feature: 1, current: 2 }
+  const priority: Record<VersionRisk, number> = { security: 0, feature: 1, unknown: 2, current: 3 }
   return [...rows.values()].sort((a, b) => priority[a.risk] - priority[b.risk] || a.name.localeCompare(b.name))
 }
 
 function VersionInventory({ detail, sbom }: { detail: CMDBDetail; sbom: SbomDocument | null }) {
+  const [query, setQuery] = useState('')
   const rows = versionRows(detail, sbom)
+  const visibleRows = rows.filter(row => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return true
+    return [row.name, row.installed, row.available, row.source, row.category].some(value => value.toLowerCase().includes(needle))
+  })
   const security = rows.filter(row => row.risk === 'security').length
   const feature = rows.filter(row => row.risk === 'feature').length
+  const current = rows.filter(row => row.risk === 'current').length
   return (
-    <div className="mt-4 rounded-lg border border-gray-200 overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
-        <span className="text-xs font-semibold text-gray-700">Komponentversioner</span>
-        {security > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-semibold">{security} sikkerhed</span>}
-        {feature > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 font-semibold">{feature} feature</span>}
-        {security === 0 && feature === 0 && <span className="text-[10px] text-emerald-700">Ingen kendte versionsgab</span>}
-        <span className="ml-auto text-[10px] text-gray-400">{rows.length} komponenter</span>
+    <div className="mt-4 rounded-xl border border-gray-200 overflow-hidden bg-white">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 bg-slate-50 border-b border-gray-200">
+        <span className="text-sm font-semibold text-gray-800">Software, services og pakker</span>
+        {security > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">{security} sikkerhed</span>}
+        {feature > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">{feature} funktionelle</span>}
+        {security === 0 && feature === 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">Ingen kendte versionsgab</span>}
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{current} aktuelle</span>
+        <div className="ml-auto flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 min-w-56">
+          <Search className="w-3.5 h-3.5 text-gray-400" />
+          <input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="Søg komponent eller version"
+            className="w-full bg-transparent text-xs outline-none text-gray-700 placeholder:text-gray-400"
+          />
+        </div>
       </div>
-      <div className="max-h-80 overflow-auto">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-white text-[10px] uppercase text-gray-400 border-b border-gray-100">
+      <div className="max-h-[65vh] overflow-y-auto">
+        <table className="w-full table-fixed text-xs">
+          <thead className="sticky top-0 bg-white text-[10px] uppercase text-gray-400 border-b border-gray-100 shadow-sm">
             <tr>
-              <th className="text-left px-3 py-1.5">Komponent</th>
-              <th className="text-left px-3 py-1.5">Installeret</th>
-              <th className="text-left px-3 py-1.5">Tilgængelig</th>
-              <th className="text-right px-3 py-1.5">Status</th>
+              <th className="text-left px-4 py-2 w-[30%]">App / service / pakke</th>
+              <th className="text-left px-4 py-2 w-[23%]">Installeret version</th>
+              <th className="text-left px-4 py-2 w-[23%]">Aktuel / tilgængelig version</th>
+              <th className="text-left px-4 py-2 w-[12%]">Kilde</th>
+              <th className="text-right px-4 py-2 w-[12%]">Status</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(row => {
-              const rowClass = row.risk === 'security' ? 'bg-red-50' : row.risk === 'feature' ? 'bg-orange-50' : ''
+            {visibleRows.map(row => {
+              const rowClass = row.risk === 'security' ? 'bg-red-50/70' : row.risk === 'feature' ? 'bg-amber-50/70' : 'bg-white'
               const badgeClass = row.risk === 'security'
                 ? 'bg-red-100 text-red-700'
-                : row.risk === 'feature' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-50 text-emerald-700'
+                : row.risk === 'feature' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-50 text-emerald-700'
               return (
-                <tr key={row.key} className={`border-b border-gray-100 last:border-0 ${rowClass}`}>
-                  <td className="px-3 py-1.5 min-w-40">
-                    <div className="font-medium text-gray-800">{row.name}</div>
-                    <div className="text-[10px] text-gray-400">{row.source}</div>
+                <tr key={row.key} className={`border-b border-gray-100 last:border-0 hover:bg-sky-50/60 ${rowClass}`}>
+                  <td className="px-4 py-2 align-top">
+                    <div className="font-medium text-gray-900 break-words">{row.name}</div>
+                    <div className="text-[10px] text-gray-400">{row.category}</div>
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-gray-600 break-all">{row.installed}</td>
-                  <td className={`px-3 py-1.5 font-mono font-medium break-all ${row.risk === 'security' ? 'text-red-700' : row.risk === 'feature' ? 'text-orange-700' : 'text-gray-500'}`}>{row.available}</td>
-                  <td className="px-3 py-1.5 text-right">
-                    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${badgeClass}`}>
-                      {row.risk === 'security' ? 'Sikkerhed' : row.risk === 'feature' ? 'Feature' : 'Aktuel'}
+                  <td className="px-4 py-2 align-top font-mono text-gray-600 break-words">{row.installed}</td>
+                  <td className={`px-4 py-2 align-top font-mono font-medium break-words ${row.risk === 'security' ? 'text-red-700' : row.risk === 'feature' ? 'text-amber-700' : 'text-gray-600'}`}>{row.available}</td>
+                  <td className="px-4 py-2 align-top text-gray-500 break-words">{row.source}</td>
+                  <td className="px-4 py-2 align-top text-right">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeClass}`}>
+                      {row.risk === 'security' ? 'Sikkerhed' : row.risk === 'feature' ? 'Opdatering' : 'Aktuel'}
                     </span>
                   </td>
                 </tr>
               )
             })}
+            {visibleRows.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-400">Ingen komponenter matcher søgningen.</td>
+              </tr>
+            )}
           </tbody>
         </table>
+      </div>
+      <div className="px-4 py-2 border-t border-gray-100 bg-gray-50 text-[11px] text-gray-500">
+        Viser {visibleRows.length} af {rows.length} CMDB/SBOM-komponenter. Grøn er aktuel, gul er funktionel update, rød er security.
       </div>
     </div>
   )
@@ -783,7 +837,7 @@ export function CMDBDetailPage() {
   const envOptions: Array<'lab' | 'staging' | 'production'> = ['lab', 'staging', 'production']
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <Link to="/cmdb" className="text-gray-400 hover:text-gray-600">
@@ -858,7 +912,7 @@ export function CMDBDetailPage() {
         </section>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
         {/* Hardware */}
         <div className="bg-white rounded-xl border border-gray-200 p-5">
@@ -878,7 +932,7 @@ export function CMDBDetailPage() {
         </div>
 
         {/* OS / Software */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <div className="bg-white rounded-xl border border-gray-200 p-5 lg:col-span-2">
           <div className="flex items-center justify-between gap-3 mb-3">
             <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
               <Package className="w-4 h-4 text-sky-500" /> OS / Software
@@ -929,7 +983,7 @@ export function CMDBDetailPage() {
             const securityUpdates = updates.filter(u => String(u.kind ?? '') === 'security')
             const otherUpdates = updates.filter(u => String(u.kind ?? '') !== 'security')
             return (
-              <details className="mt-3" open>
+              <details className="mt-3">
                 <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
                   {securityUpdates.length > 0 && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-semibold">
@@ -979,7 +1033,7 @@ export function CMDBDetailPage() {
             )
           })()}
           {(detail.update_summary?.latest?.length ?? 0) > 0 && (
-            <details className="mt-3" open>
+            <details className="mt-3">
               <summary className="text-xs text-amber-600 cursor-pointer hover:text-amber-700">
                 Installeret vs. senest tilgængelig
               </summary>
@@ -1015,7 +1069,7 @@ export function CMDBDetailPage() {
             const components = sbom.components || []
             const updatableInSbom = components.filter(c => allUpdateMap[(c.name ?? '').toLowerCase()]).length
             return (
-              <details className="mt-3" open>
+              <details className="mt-3">
                 <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
                   <span className="text-sky-600">SBOM · {components.length} komponenter</span>
                   {updatableInSbom > 0 && (

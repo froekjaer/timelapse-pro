@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-23 20:18 — fra Codex til Peter/Claude/Codex/ChatGPT/z.ai: CMDB version inventory gjort samlet og læsbar
+
+- Hvad er gjort: CMDB detailvisningen har nu en samlet, bredere og søgbar versionstabel for app/service/package-status. Tabellen normaliserer data fra `os_packages`, `venv_packages`, `software_inventory`, `_os_updates_available`, update summary og indlæst SBOM, så hver linje viser komponentnavn, installeret version, aktuel/tilgængelig version, kilde og status. Farver: grøn = aktuel, gul = funktionel opdatering, rød = sikkerhedsopdatering. Detail-layoutet er udvidet til `max-w-7xl`, og OS/software-panelet spænder over to kolonner på desktop, så der er mindre behov for vandret scroll. De gamle detaljerede update/SBOM/venv/OS-tabeller ligger fortsat som teknisk evidence, men er lukkede som standard.
+- Hvad mangler / næste skridt: Visuel live-verifikation efter deploy anbefales, især på enheder med mange Homebrew-/OS-pakker og på smal skærm. Hvis tabellen stadig føles for tæt, er næste lille UX-step sticky filterchips for kategori/status.
+- Kommandoer kørt eller skal køres: `npm --prefix timelapse-ui ci`; `npm --prefix timelapse-ui run lint:gate`; `npm --prefix timelapse-ui run build`.
+- Forventet/faktisk output: UI lint gate grøn uden nye ESLint-problemer; build grøn.
+- Filer rørt: `timelapse-ui/src/pages/CMDBPage.tsx`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Ren UI/data-normalisering; ingen Headend API-, DB-, Edge-, GPIO-, credential- eller deploymentændringer.
+
 ### Handover 2026-08-23 19:55 — fra Codex til Peter/Claude/Codex/ChatGPT/z.ai: #103 ekstra update-generator lukket og aktiv kø ryddet igen
 
 - Hvad er gjort: Efter Peters spørgsmål om hvorvidt alle OS/App-opdateringer reelt var væk, blev produktionsdatabasen læst igen. Aktiv godkendelseskø havde 8 nye rækker: to Edge `app_updates` mod commit `030dd633...` uden signeret deploybart app-artifact, samt seks Headend/Homebrew-testkandidater som igen stod `pending`. Rækkerne blev ryddet uden deployment: Edge app-rækkerne blev `superseded`, og Homebrew-rækkerne blev `blocked` med krav om signeret dependency-artifact og rollback-plan. Aktiv `pending`/`approved` kø var derefter 0 rækker. Under efterfølgende evidence-check kl. 19:54 oprettede den stadig kørende gamle Headend-proces samme klasse støj igen: to Edge app-rækker mod usignerede lokale commits (`6ac4...`/`d17c...`) og seks Homebrew-testkandidater. Den nye batch blev også ryddet, så aktiv `pending`/`approved` kø igen er 0. Edge inventory viste samtidig 0 OS-opdateringer og 0 security-opdateringer på begge eksisterende Edges ved seneste rapport.
