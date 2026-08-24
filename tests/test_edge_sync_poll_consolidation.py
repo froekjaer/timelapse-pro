@@ -78,6 +78,31 @@ def test_run_sync_defers_to_pending_app_update_reconciliation():
     agent._apply_update_policy.assert_not_called()
 
 
+def test_run_sync_applies_update_policy_even_when_technician_key_write_fails():
+    """2026-08-24 chicken-and-egg: a device still on the pre-fix agent has a
+    broken _apply_technician_keys() (stale sandbox ReadWritePaths). That raised
+    uncaught inside _run_sync()'s single try block, aborting the rest of the
+    cycle — including _apply_update_policy(), which is exactly what would have
+    delivered the fix. Confirmed live against TL-C87FF9587CA0: approved update
+    with valid signed artifact never installed because every sync poll died
+    on the technician-key write first. _apply_technician_keys() must not be
+    able to block update-policy processing."""
+    agent = _make_agent()
+    agent._collect_siem_events_for_sync = MagicMock(return_value=[])
+    agent._collect_inventory_if_due = MagicMock(return_value=None)
+    agent._apply_fetched_config = MagicMock()
+    agent._apply_update_policy = MagicMock()
+    agent._sync_time_from_headend = MagicMock()
+    agent._reconcile_pending_app_update = MagicMock(return_value=False)
+    agent._apply_technician_keys = MagicMock(side_effect=OSError(30, "Read-only file system"))
+    agent._api = MagicMock(sync=MagicMock(return_value=(True, {"pending_updates": []})))
+
+    agent._run_sync()
+
+    agent._apply_update_policy.assert_called_once()
+    agent._connectivity.report_success.assert_called_once()
+
+
 def test_tick_gates_on_a_single_sync_interval_not_three_separate_timers():
     """Lock in the consolidation: _tick()'s own body must use one
     sync_interval-gated call to _run_sync(), and must not still carry the
