@@ -1479,23 +1479,29 @@ class EdgeAgent:
                 return
             patched = original.replace(broken, fixed)
 
-            tmp_path = self.SSHD_CONFIG_PATH.with_name(".sshd_config.tmp")
-            tmp_path.write_text(patched, encoding="utf-8")
-            os.chmod(tmp_path, 0o644)
-
-            check = subprocess.run(
-                ["/usr/sbin/sshd", "-t", "-f", str(tmp_path)],
-                capture_output=True, text=True, timeout=10,
-            )
+            # Validate via a temp file in an already-writable directory, not
+            # /etc/ssh itself — the sandbox (ProtectSystem=strict) only grants
+            # write access to the exact sshd_config file, not the directory,
+            # so a create-temp-then-rename-within-/etc/ssh pattern would fail
+            # the same way the missing-%u bug's own fix once did. Write the
+            # real file in place only after validation passes.
+            check_path = self.AUTHORIZED_TECHNICIANS_PATH.with_name(".sshd_config_check.tmp")
+            check_path.write_text(patched, encoding="utf-8")
+            try:
+                check = subprocess.run(
+                    ["/usr/sbin/sshd", "-t", "-f", str(check_path)],
+                    capture_output=True, text=True, timeout=10,
+                )
+            finally:
+                check_path.unlink(missing_ok=True)
             if check.returncode != 0:
                 log.error(
                     "sshd_config selv-reparation afvist af sshd -t, dropper: %s",
                     check.stderr.strip(),
                 )
-                tmp_path.unlink(missing_ok=True)
                 return
 
-            os.replace(tmp_path, self.SSHD_CONFIG_PATH)
+            self.SSHD_CONFIG_PATH.write_text(patched, encoding="utf-8")
             reload_result = subprocess.run(
                 ["systemctl", "reload", "ssh"],
                 capture_output=True, text=True, timeout=15,
