@@ -290,7 +290,9 @@ export function SystemAdminPage() {
 
   useEffect(() => {
     api('/api/admin/settings').then((s: any) => setSettings(s)).catch(() => {})
-    api('/api/ai/settings').then((s: any) => setInstalledModels(s.installed_models || [])).catch(() => {})
+    api('/api/settings/ollama-runtime-control')
+      .then((s: any) => setInstalledModels(s.installed_models || []))
+      .catch(() => {})
     loadStorage()
   }, [])
 
@@ -355,7 +357,7 @@ export function SystemAdminPage() {
       setTunnelDeny(!!tun.deny)
       setNodeCameras(dc.node_cameras ?? [])
     }).catch(() => {})
-    api(`/api/config/${pathSegment(selectedDevice)}`).then((c: any) => {
+    api(`/api/admin/devices/${pathSegment(selectedDevice)}/config`).then((c: any) => {
       setCfg(c)
       const cam  = c.camera  ?? {}
       const mod  = c.modem   ?? {}
