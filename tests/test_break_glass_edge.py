@@ -91,6 +91,50 @@ def test_repair_emergency_account_creates_user_and_sshd_block(tmp_path, monkeypa
     assert agent.BREAKGLASS_EVENTS_PATH.exists()
 
 
+def test_repair_emergency_account_chowns_log_tree_to_emergency_user(tmp_path, monkeypatch):
+    """2026-08-25 (Peter's live login): the agent runs as root, which bypasses
+    DAC permission checks, so root-owned 0700 log dirs looked fine from here
+    but were unwritable by breakglass_shell_wrapper.sh, which runs AS
+    "emergency" — an unprivileged login shell. `script` and the event-append
+    both hit Permission denied before a shell was ever handed back, closing
+    the SSH connection right after a successful password auth. The fix
+    chowns the log tree to "emergency" so its own login shell can write to
+    it; root keeps full access regardless of ownership."""
+    agent = _make_agent()
+    agent.SSHD_CONFIG_PATH = tmp_path / "sshd_config"
+    original = "PasswordAuthentication no\n\nMatch User emergency\n    PasswordAuthentication yes\n"
+    agent.SSHD_CONFIG_PATH.write_text(original)
+    agent.AUTHORIZED_TECHNICIANS_PATH = tmp_path / "authorized_technicians.json"
+    agent.BREAKGLASS_LOG_DIR = tmp_path / "breakglass"
+    agent.BREAKGLASS_LOG_DIR.mkdir()
+    (agent.BREAKGLASS_LOG_DIR / "sessions").mkdir()
+    agent.BREAKGLASS_EVENTS_PATH = agent.BREAKGLASS_LOG_DIR / "pending_events.jsonl"
+    agent.BREAKGLASS_EVENTS_PATH.write_text("")
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "getent":
+            return MagicMock(returncode=0, stdout="emergency:x:1002:1002::/home/emergency:/bin/bash", stderr="")
+        raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+    monkeypatch.setattr(edge_agent, "subprocess", MagicMock(run=fake_run))
+    monkeypatch.setattr(
+        "pwd.getpwnam",
+        lambda name: MagicMock(pw_uid=1002, pw_gid=1002) if name == "emergency" else (_ for _ in ()).throw(KeyError(name)),
+    )
+    chown_calls = []
+    monkeypatch.setattr(edge_agent.os, "chown", lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)))
+
+    agent._repair_emergency_breakglass_account()
+
+    chowned_paths = {c[0] for c in chown_calls}
+    assert chowned_paths == {
+        agent.BREAKGLASS_LOG_DIR,
+        agent.BREAKGLASS_LOG_DIR / "sessions",
+        agent.BREAKGLASS_EVENTS_PATH,
+    }
+    assert all(c[1:] == (1002, 1002) for c in chown_calls)
+
+
 def test_repair_emergency_account_is_noop_when_already_configured(tmp_path, monkeypatch):
     agent = _make_agent()
     agent.SSHD_CONFIG_PATH = tmp_path / "sshd_config"
