@@ -33,7 +33,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from database import get_db, Device
+from database import get_db, Device, now_utc
 from cmdb import report_inventory as _cmdb_report_inventory
 from siem import ingest_events as _siem_ingest_events
 from technician_keys import resolve_authorized_technician_keys
@@ -102,6 +102,18 @@ async def edge_sync(
     device = db.query(Device).filter_by(device_id=device_id).first()
     technician_keys = resolve_authorized_technician_keys(db, device) if device else []
 
+    # Commissioning-key disable lifecycle (2026-08-24): the edge reports
+    # whether it just saw a successful servicetekniker publickey login in
+    # its own sshd journal — that's the verify-before-disable evidence the
+    # admin UI's "disable commissioning key" action gates on. See
+    # Dokumentation/HANDOVER_LOG.md and headend/main.py's
+    # /api/admin/devices/{device_id}/commissioning-key endpoints.
+    if device:
+        security = req.diagnostics.get("security") if isinstance(req.diagnostics, dict) else None
+        if isinstance(security, dict) and security.get("servicetekniker_login_seen"):
+            device.servicetekniker_verified_at = now_utc()
+            db.commit()
+
     return {
         "server_time": hb_result["server_time"],
         "config_version": hb_result["config_version"],
@@ -110,4 +122,5 @@ async def edge_sync(
         "app_security": policy.get("app_security"),
         "app_updates": policy.get("app_updates"),
         "technician_keys": technician_keys,
+        "commissioning_key_disabled": bool(device.commissioning_key_disabled) if device else False,
     }
