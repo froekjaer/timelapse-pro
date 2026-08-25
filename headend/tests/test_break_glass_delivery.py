@@ -184,6 +184,33 @@ async def test_edge_sync_does_not_mark_applied_when_hash_is_wrong(db_session):
 
 
 @pytest.mark.asyncio
+async def test_edge_sync_survives_an_undecryptable_break_glass_row(db_session):
+    """2026-08-25 incident: a pre-existing account.password_enc that can't
+    be decrypted with the currently-configured BREAK_GLASS_ENC_KEY (e.g.
+    from before a key rotation) took down sync for EVERY device for ~10
+    minutes — one bad row, no error handling, crashed the whole endpoint.
+    Must never happen again: a broken row is skipped, sync still succeeds
+    with whatever remains."""
+    _make_device(db_session, "TL-BG0007")
+    user = _admin_user()
+    with patch.object(cmdb, "_enforce_break_glass_policy", MagicMock()):
+        cmdb.create_break_glass("TL-BG0007", {}, _user=user, db=db_session)
+    account = db_session.query(database.BreakGlassAccount).filter_by(device_id="TL-BG0007").first()
+    account.password_enc = "not-a-valid-fernet-token"
+    db_session.commit()
+
+    req = EdgeSyncRequest(timestamp="t", diagnostics={}, capture_stats={}, siem_events=[], inventory=None)
+    with patch.object(main, "heartbeat", MagicMock(return_value={"server_time": "t", "config_version": "v"})), \
+         patch.object(main, "get_config", MagicMock(return_value={})), \
+         patch.object(main, "get_update_policy", MagicMock(return_value={"pending_updates": []})), \
+         patch.object(edge_sync, "resolve_authorized_technician_keys", MagicMock(return_value=[])):
+        result = await edge_sync_endpoint("TL-BG0007", req, _auth=None, db=db_session)
+
+    assert result["server_time"] == "t"
+    assert result["break_glass"] == []
+
+
+@pytest.mark.asyncio
 async def test_edge_sync_omits_break_glass_once_applied(db_session):
     _make_device(db_session, "TL-BG0006")
     user = _admin_user()
