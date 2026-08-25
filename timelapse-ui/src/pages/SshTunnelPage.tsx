@@ -28,6 +28,8 @@ interface ActiveTunnel {
   ssh_user?: string
   ssh_identity_path?: string
   ssh_command?: string
+  device_ip?: string | null
+  servicetekniker_command?: string | null
   terminal?: {
     allowed: boolean
     reason?: string
@@ -342,6 +344,20 @@ export function SshTunnelPage() {
                 <p className="mt-2 text-xs text-amber-600">
                   Browserterminal er deaktiveret: {t.terminal?.reason ?? 'SSH host identity er ikke trusted/verified'}
                 </p>
+              )}
+              {t.servicetekniker_command && (
+                <div className="mt-3">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">
+                    Login som servicetekniker (direkte, egen nøgle — kræver samme netværk som enheden)
+                  </p>
+                  <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between gap-3">
+                    <code className="text-xs text-sky-300 font-mono break-all">{t.servicetekniker_command}</code>
+                    <CopyBtn text={t.servicetekniker_command} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    Erstat <code className="font-mono">&lt;din-private-nøgle&gt;</code> med stien til din egen nøglefil — den kan headend ikke kende, da din private nøgle aldrig sendes til serveren.
+                  </p>
+                </div>
               )}
               <CommissioningKeyStatus deviceId={t.device_id} />
               <TunnelLog deviceId={t.device_id} />

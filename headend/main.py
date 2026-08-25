@@ -5121,6 +5121,11 @@ def ssh_tunnel_active(
         ORDER BY s.event_at DESC
     """)).fetchall()
 
+    device_ips = {
+        d.device_id: d.ip_address
+        for d in db.query(Device).filter(Device.device_id.in_([r[0] for r in rows])).all()
+    }
+
     return [
         {
             "device_id":   r[0],
@@ -5131,6 +5136,14 @@ def ssh_tunnel_active(
             "ssh_identity_path": os.getenv("TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY", "~/.ssh/timelapse_headend_ed25519"),
             "ssh_command": f"ssh -p {r[1]} -i {os.getenv('TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY', '~/.ssh/timelapse_headend_ed25519')} orangepi@localhost",
             "terminal": terminal_trust_status(db, r[0]),
+            # Direct LAN servicetekniker login template — separate from the
+            # orangepi/tunnel path above; the operator's private key never
+            # touches headend, so this is a command to run themselves.
+            "device_ip": device_ips.get(r[0]),
+            "servicetekniker_command": (
+                f"ssh -i <din-private-nøgle> servicetekniker@{device_ips[r[0]]}"
+                if device_ips.get(r[0]) else None
+            ),
         }
         for r in rows
     ]
