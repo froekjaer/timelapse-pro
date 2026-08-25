@@ -180,6 +180,31 @@ def test_collect_breakglass_events_parses_and_renames_queue(tmp_path):
     assert sending.exists()
 
 
+def test_collect_breakglass_events_rechowns_recreated_queue_file_to_emergency(tmp_path, monkeypatch):
+    """2026-08-25 (Peter's second live login attempt): the previous fix
+    chowned the log tree once, but this method — which runs every sync
+    cycle, as root — recreates pending_events.jsonl from scratch via
+    path.write_text() whenever it drains events, silently resetting
+    ownership back to root before breakglass_shell_wrapper.sh's next append.
+    Peter kept hitting Permission denied on this exact file because his
+    retries landed inside that window."""
+    agent = _make_agent()
+    agent.BREAKGLASS_EVENTS_PATH = tmp_path / "pending_events.jsonl"
+    agent.BREAKGLASS_EVENTS_PATH.write_text(
+        json.dumps({"event_type": "breakglass_session_start", "occurred_at": "t1"}) + "\n"
+    )
+    monkeypatch.setattr(
+        "pwd.getpwnam",
+        lambda name: MagicMock(pw_uid=1002, pw_gid=1002) if name == "emergency" else (_ for _ in ()).throw(KeyError(name)),
+    )
+    chown_calls = []
+    monkeypatch.setattr(edge_agent.os, "chown", lambda path, uid, gid: chown_calls.append((Path(path), uid, gid)))
+
+    agent._collect_breakglass_events_for_sync()
+
+    assert (agent.BREAKGLASS_EVENTS_PATH, 1002, 1002) in chown_calls
+
+
 def test_collect_breakglass_events_returns_empty_when_no_queue(tmp_path):
     agent = _make_agent()
     agent.BREAKGLASS_EVENTS_PATH = tmp_path / "pending_events.jsonl"
