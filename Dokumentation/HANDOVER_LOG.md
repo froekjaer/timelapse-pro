@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-08-25 (nat, fortsat) — fra Claude til Peter/Codex: break-glass ramte STADIG Permission denied efter #130 — event-drain nulstillede ejerskabet igen (PR #132, v2.8.1-lab.47)
+
+- Baggrund: Peter prøvede login igen efter v2.8.1-lab.46 (forrige entry) og ramte STADIG `pending_events.jsonl: Permission denied` — gentaget 15 gange i træk, ingen "Connection closed"-linje denne gang (shellen selv virkede altså nu, kun event-loggen fejlede fortsat).
+- Rodårsag (nummer to i samme feature): `_repair_emergency_breakglass_account()`'s chown (forrige entry) kører kun i selv-reparationscyklussen. Men `_collect_breakglass_events_for_sync()` — som kører HVER sync-cyklus, som root, og drænet event-køen hver gang der var noget i den — genskaber `pending_events.jsonl` fra bunden via `path.write_text("")` (i BEGGE dens grene: både "forrige cyklus' send fejlede"-grenen og normal-grenen). En nyoprettet fil ejes af den proces der opretter den, altså root — hvilket ubemærket nulstillede chown'en fra forrige cyklus, indtil næste selv-reparation (~1 sync-interval senere) rettede det igen. Peters gentagne login-forsøg ramte konsekvent dette vindue.
+- Hvad er gjort: Udtrukket en delt `_chown_to_emergency(*paths)`-hjælpefunktion (bruges nu af både selv-reparationen OG event-dræningen). Kaldes nu UMIDDELBART efter hver af de to steder i `_collect_breakglass_events_for_sync()` der genskaber filen — ikke kun én gang i minuttet fra selv-reparationen.
+- **Verificeret:** Signeret tag `v2.8.1-lab.47` cuttet fra commit `790b3e9f`, katalogiseret og godkendt for begge devices (kandidat #263 test/`.134`, #264 production/`.117`). Begge bekræftet installeret (`app_version=790b3e9f...`) ved 21:34. **Ikke afprøvet interaktivt af Claude** — Peter bør forsøge login igen for endelig bekræftelse; denne gang bør ALLE break-glass-relaterede filskrivninger holde korrekt ejerskab, uanset timing.
+- Lære til fremtidige lignende fixes: en chown/permission-fix på ÉT sted i en selv-reparationsfunktion er ikke nok, hvis en ANDEN, hyppigere kørende funktion genskaber den samme fil fra bunden — skal spores til ALLE steder der skriver/genskaber filer under samme sti, ikke kun det oplagte selv-reparations-kald.
+- Kommandoer kørt: Fuldt CI-batteri — 1136 passed (ny regressionstest `test_collect_breakglass_events_rechowns_recreated_queue_file_to_emergency`), 4 skipped, 4 pre-eksisterende openpgp-fejl (urelateret). `gh pr create/checks/merge` (#132, squash). Samme direkte Python-katalogiserings/godkendelses-mønster som forrige entries.
+- Filer rørt: `edge/agent.py`, `tests/test_break_glass_edge.py`.
+
 ### Handover 2026-08-25 (nat) — fra Claude til Peter/Codex: break-glass login lukkede forbindelsen straks efter password — log-mappe ejerskab (PR #130, v2.8.1-lab.46)
 
 - Baggrund: Peter prøvede selv `ssh emergency@192.168.86.117` med et rigtigt checked-out password (efter forrige entry's sandbox-fix). Password blev accepteret (banner vist), men forbindelsen lukkede med det samme: `breakglass_shell_wrapper.sh: line 35: /var/log.hdd/timelapse/breakglass/pending_events.jsonl: Permission denied` og `script: cannot open .../sessions/session-....log: Permission denied`.
