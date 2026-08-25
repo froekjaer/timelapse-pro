@@ -51,19 +51,35 @@ router = APIRouter(tags=["CMDB"])
 
 
 def migrate_break_glass_applied_at_column(engine) -> None:
-    """Additive migration, called once from main.py::startup(). Same
-    try/except idiom as technician_keys.py/commissioning_key.py — Postgres
-    has no ADD COLUMN IF NOT EXISTS."""
+    """Additive migration, called once from main.py::startup().
+
+    2026-08-25 incident: the naive try/except-pass idiom used elsewhere in
+    this codebase for "column already exists" silently swallowed a
+    DIFFERENT failure here (InsufficientPrivilege — break_glass_accounts
+    turned out to be owned by a non-application DB role) and the migration
+    never actually ran. edge_sync.py then unconditionally queried the
+    missing column on every poll, 500ing every device's sync for ~10
+    minutes before this was caught. Only swallow the specific
+    "already exists" case now; anything else surfaces as a real error so
+    it can never again fail this quietly.
+    """
     try:
         with engine.connect() as conn:
             try:
                 conn.execute(text("ALTER TABLE break_glass_accounts ADD COLUMN applied_at TIMESTAMP"))
                 conn.commit()
                 log.info("DB migration break-glass: break_glass_accounts.applied_at tilføjet")
-            except Exception:
-                pass
+            except Exception as exc:
+                if "already exists" in str(exc).lower() or "duplicate column" in str(exc).lower():
+                    pass
+                else:
+                    log.error(
+                        "DB migration break-glass: ALTER TABLE fejlede af en IKKE-forventet "
+                        "årsag (ikke 'already exists') — applied_at findes muligvis IKKE i DB "
+                        "endnu, hvilket vil crashe edge_sync for alle devices: %s", exc,
+                    )
     except Exception as exc:
-        log.warning("DB migration break-glass fejl: %s", exc)
+        log.error("DB migration break-glass fejl: %s", exc)
 
 # ── Break-glass checkout-hærdning (opt-in, default slået FRA) ─────────────────
 # Lukker en del af det dokumenterede SABSA-/compliance-hul i checkout_break_glass.
