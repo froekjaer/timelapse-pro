@@ -28,6 +28,18 @@ def test_private_key_material_is_never_returned_to_ssh_tunnel_ui() -> None:
     assert "private_key" not in UI_PAGE
 
 
+def test_servicetekniker_command_template_is_a_placeholder_not_a_real_key():
+    """2026-08-25: the "login as servicetekniker" convenience command is a
+    template the operator fills in themselves — headend never has their
+    personal private key, so it must never emit anything but the literal
+    placeholder token here."""
+    active_block = MAIN.split("@app.get(\"/api/ssh-tunnel/active\")", 1)[1].split("@app.get(\"/api/ssh-tunnel/log", 1)[0]
+    assert "servicetekniker_command" in active_block
+    assert "device_ip" in active_block
+    assert "<din-private-nøgle>" in active_block
+    assert "servicetekniker_command" in UI_PAGE
+
+
 def test_terminal_uses_new_trust_and_service_model_not_auto_add_policy() -> None:
     assert "evaluate_legacy_role_capability_check" in API
     assert "issue_edge_service_grant" in API
