@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-25 16:35 — fra Codex til Peter/Codex/Claude/Kimi: historisk 3P-assessment reconcilet mod current main
+
+- Hvad er gjort: Peter valgte option 2 for den gamle 3.-parts assessment fra 2026-07-31: ikke merge råt, men reconcile mod current main. Den originale pakke fra `origin/assessment/2026-07-3p-review` er bevaret som historisk audit-evidens under `Dokumentation/Gamle versioner/Assessment_2026-07_3P/` og markeret tydeligt som ikke-aktuel status. Der er oprettet en ny autoritativ læsevej: `Dokumentation/Assessment_2026-07_3P_RECONCILIATION_2026-08-25.md`, som klassificerer gamle fund som lukket, erstattet, stadig relevant eller forældet mod `main@9925021dc3b19634be55248788d23140d6d6dbd9`.
+- Hvad mangler / næste skridt: Brug kun reconciliation-filens `STADIG RELEVANT` punkter til nye GRC-items. De vigtigste tilbageværende work items fra 3P-pakken er P2 config-fingerprint/MD5-konsolidering, P2 dynamic SQL identifier allowlists, restore rehearsal evidence og compliance readiness pack. Factory shared TOTP, gammel Edge-generator model og gammel retention no-op skal ikke genåbnes fra arkivpakken.
+- Kommandoer kørt eller skal køres: `git show origin/assessment/2026-07-3p-review:...` for alle 3P-dokumenter; `rg` mod current main for `JBSWY3DPEHPK3PXP`, MD5 config fingerprints, dynamic SQL patterns, EdgeServiceGrant/WP-4/provisioning/retention evidence; `git diff --check` skal køres før PR.
+- Forventet/faktisk output: Historisk pakke arkiveret; ny reconciliation-fil oprettet; ingen kode-, DB-, Edge-, credential-, GPIO- eller deploymentændringer.
+- Filer rørt: `Dokumentation/Assessment_2026-07_3P_RECONCILIATION_2026-08-25.md`, `Dokumentation/Gamle versioner/Assessment_2026-07_3P/*`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Reconciliation er dokumentations- og vurderingsarbejde, ikke en ny sikkerhedsscanning. Den skal ikke overstyre den nyere `Dokumentation/Codex-Audit/`-pakke; den forklarer kun hvordan 31. juli-assessmenten skal læses i dag.
+
 ### Handover 2026-08-24 20:04 — fra Codex til Peter/Codex/Claude/Kimi: retention follow-up for ufuldstændig SFTP-konfiguration
 
 - Hvad er gjort: Efter deployment af Edge-lokal uploaded FIFO-retention blev begge Edges observeret på nyeste main (`v2.8.1-lab.38`, commit `3ba224a775fe`) med tom upload-kø og præcis ét captureforsøg pr. 10-minutters slot. Under live-logverifikation blev der fundet en smal follow-up-fejl: `edge/upload/sftp.py` ignorerer korrekt en ufuldstændig `customer_sftp`-profil, men `edge/capture/buffer.py` talte samme ufuldstændige profil som et påkrævet retention-transportspor. Det kan forhindre Edge-lokal retention i at frigive plads på devices hvor SFTP er delvist slået til uden brugbare credentials/path.
