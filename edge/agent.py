@@ -1523,6 +1523,30 @@ class EdgeAgent:
     BREAKGLASS_EVENTS_PATH = BREAKGLASS_LOG_DIR / "pending_events.jsonl"
     BREAKGLASS_SUDOERS_PATH = Path("/etc/sudoers.d/timelapse-breakglass")
 
+    def _chown_to_emergency(self, *paths: Path) -> None:
+        """Best-effort chown of the given paths to the "emergency" user.
+        This agent runs as root, which bypasses DAC permission checks, so
+        anything this process creates or rewrites under the break-glass log
+        tree defaults to root ownership — invisible from here, but fatal to
+        breakglass_shell_wrapper.sh, which runs AS "emergency" (an
+        unprivileged login shell) and genuinely cannot write to a path it
+        doesn't own. Every writer under BREAKGLASS_LOG_DIR must call this
+        after it creates or replaces a file there — see
+        _collect_breakglass_events_for_sync(), which rewrites
+        pending_events.jsonl from scratch every cycle it drains events.
+        """
+        try:
+            import pwd as _pwd
+            emergency_pw = _pwd.getpwnam("emergency")
+        except KeyError:
+            return
+        for target in paths:
+            try:
+                if target.exists():
+                    os.chown(target, emergency_pw.pw_uid, emergency_pw.pw_gid)
+            except Exception:
+                pass
+
     def _repair_emergency_breakglass_account(self) -> None:
         """One-time self-heal: ensure the "emergency" break-glass account
         exists, is password-login-capable, and sshd actually offers password
@@ -1602,18 +1626,11 @@ class EdgeAgent:
             # "emergency" fixes this while keeping mode 0700 — root still has
             # full access regardless of ownership, so confidentiality from
             # every other account on the box is unchanged.
-            try:
-                import pwd as _pwd
-                emergency_pw = _pwd.getpwnam(username)
-                for target in (
-                    self.BREAKGLASS_LOG_DIR,
-                    self.BREAKGLASS_LOG_DIR / "sessions",
-                    self.BREAKGLASS_EVENTS_PATH,
-                ):
-                    if target.exists():
-                        os.chown(target, emergency_pw.pw_uid, emergency_pw.pw_gid)
-            except KeyError:
-                pass
+            self._chown_to_emergency(
+                self.BREAKGLASS_LOG_DIR,
+                self.BREAKGLASS_LOG_DIR / "sessions",
+                self.BREAKGLASS_EVENTS_PATH,
+            )
 
             if not self.SSHD_CONFIG_PATH.exists():
                 return
@@ -1696,6 +1713,15 @@ class EdgeAgent:
                     os.rename(path, sending_path)
                     path.write_text("", encoding="utf-8")
                     os.chmod(path, 0o600)
+                # 2026-08-25: both branches above recreate pending_events.jsonl
+                # as a brand-new, root-owned file (this process runs as root)
+                # every cycle that drains events — silently undoing
+                # _repair_emergency_breakglass_account()'s chown to
+                # "emergency" until the next repair cycle, ~1 sync interval
+                # later. Live-caught: Peter's break-glass login kept hitting
+                # Permission denied on this exact file because he was
+                # retrying inside that window.
+                self._chown_to_emergency(path)
             if not sending_path.exists():
                 return []
             raw = sending_path.read_text(encoding="utf-8")
