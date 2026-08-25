@@ -30,6 +30,11 @@ AUTH_DEPENDENCIES = {
     # own SSH keys) or super_admin/admin. Public-key management only, never
     # anything secret. See headend/technician_keys.py.
     "_require_self_or_admin",
+    # commissioning_key._require_admin (2026-08-24): reviewed wrapper — calls
+    # get_current_user() and requires super_admin/admin role. Governs the
+    # verify-before-disable commissioning-key lifecycle only; never handles
+    # or stores anything secret. See headend/commissioning_key.py.
+    "_require_admin",
 }
 
 # Routes here are intentionally pre-auth or use an explicit in-body token/loopback

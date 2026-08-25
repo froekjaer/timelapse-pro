@@ -1547,6 +1547,61 @@ class EdgeAgent:
         os.chmod(path, 0o644)
         log.info("Technician SSH-nøgler synkroniseret fra headend (%d aktive)", len(keys))
 
+    COMMISSIONING_KEY_COMMENT = " timelapse-headend"
+    COMMISSIONING_KEY_HOMES = ("orangepi", "pi", "ubuntu", "timelapse")
+
+    def _check_servicetekniker_login_evidence(self) -> bool:
+        """Did a servicetekniker publickey login succeed recently?
+
+        Feeds the headend-side verify-before-disable gate for the
+        commissioning key (2026-08-24, per Peter: same safety pattern as
+        MFA enrollment — prove the new access path works before the old one
+        can be turned off). A 10-minute window comfortably covers the
+        default 5-minute sync_poll_interval_minutes with margin; cheap to
+        run every cycle since it's a small bounded journal query, not a
+        full scan.
+        """
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", "ssh", "--no-pager", "--since", "10 minutes ago"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            return False
+        if result.returncode != 0:
+            return False
+        return "Accepted publickey for servicetekniker" in result.stdout
+
+    def _apply_commissioning_key_disabled(self, disabled: bool) -> None:
+        """Remove the shared headend commissioning key from every candidate
+        account's authorized_keys once an admin has disabled it (only
+        offered in the UI after _check_servicetekniker_login_evidence()
+        proved personal RBAC access works — see headend/main.py). One-way:
+        does not re-inject the key, since re-enabling isn't part of the
+        2026-08-24 design and would need the raw public key value again.
+        Matches by the fixed ' timelapse-headend' comment ssh-keygen wrote
+        the key with at provisioning time — see headend/main.py's
+        _headend_key_path keygen call (-C timelapse-headend).
+        """
+        if not disabled:
+            return
+        for username in self.COMMISSIONING_KEY_HOMES:
+            path = Path(f"/home/{username}/.ssh/authorized_keys")
+            try:
+                if not path.exists():
+                    continue
+                lines = path.read_text(encoding="utf-8").splitlines()
+                kept = [ln for ln in lines if not ln.rstrip().endswith(self.COMMISSIONING_KEY_COMMENT)]
+                if len(kept) == len(lines):
+                    continue
+                tmp_path = path.with_name(f".{path.name}.tmp")
+                tmp_path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+                os.chmod(tmp_path, 0o600)
+                os.replace(tmp_path, path)
+                log.info("Commissioning-nøgle fjernet fra %s", path)
+            except Exception as exc:
+                log.warning("Kunne ikke fjerne commissioning-nøgle fra %s: %s", path, exc)
+
     def _sync_bt_totp_config(self, bt_totp: dict) -> None:
         """Auto-synkronisér BT-TOTP secret fra headend til lokal totp-service.
 
@@ -2601,6 +2656,7 @@ class EdgeAgent:
             diag_data = self._diag.collect()
             from utils.inventory import current_app_version
             diag_data["updates"] = {"app_version": current_app_version()}
+            diag_data["security"] = {"servicetekniker_login_seen": self._check_servicetekniker_login_evidence()}
             capture_stats = self._db.capture_stats(self._device_id)
             self._db.insert_diagnostics(self._device_id, diag_data)
             if hasattr(self, "_last_cam_diag") and self._last_cam_diag:
@@ -2632,6 +2688,10 @@ class EdgeAgent:
                     # the fixing update, because this exception used to abort
                     # the rest of _run_sync() before reaching _apply_update_policy.
                     log.warning("Technician-nøgle synkronisering fejlede: %s", tech_exc)
+                try:
+                    self._apply_commissioning_key_disabled(bool(resp.get("commissioning_key_disabled")))
+                except Exception as ckey_exc:
+                    log.warning("Commissioning-nøgle deaktivering fejlede: %s", ckey_exc)
                 if not self._reconcile_pending_app_update():
                     self._apply_update_policy(resp)
             else:
