@@ -42,6 +42,14 @@ ProtectSystem=strict
 ReadWritePaths=/data /opt/timelapse /opt/timelapse/edge /run/timelapse /etc/timelapse /etc/ssh/sshd_config
 ReadWritePaths=-/home/orangepi/.ssh -/home/pi/.ssh -/home/ubuntu/.ssh -/home/timelapse/.ssh
 ReadWritePaths=-/var/log.hdd/timelapse
+# useradd (emergency/servicetekniker self-heal) and chpasswd (break-glass
+# password delivery) both need to write the user/group database and its
+# lock file — confirmed live 2026-08-25 as the actual cause of a
+# persistent (not transient) "useradd: cannot lock /etc/passwd" failure on
+# TL-C87FF9587CA0: none of these were ever granted, so every write was
+# EROFS, which shadow-utils reports as a lock failure rather than a
+# permissions error.
+ReadWritePaths=-/etc/passwd -/etc/passwd- -/etc/shadow -/etc/shadow- -/etc/group -/etc/group- -/etc/gshadow -/etc/gshadow- -/etc/subuid -/etc/subuid- -/etc/subgid -/etc/subgid- -/etc/.pwd.lock
 ReadWritePaths=/etc/systemd/system/timelapse-edge.service /etc/systemd/system/timelapse-bt-pan.service /etc/systemd/system/timelapse-bt-agent.service /etc/systemd/system/timelapse-captive.service /etc/systemd/system/timelapse-totp.service
 ProtectHome=yes
 
