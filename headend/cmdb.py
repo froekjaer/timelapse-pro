@@ -39,7 +39,7 @@ from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from database import CustomerRiskInput, CustomerRiskProfile, Device, DeviceInventory, BreakGlassAccount, BreakGlassCheckoutAudit, PendingUpdate, get_db, now_utc
@@ -48,6 +48,22 @@ from services.fair_risk import estimate_annual_loss
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["CMDB"])
+
+
+def migrate_break_glass_applied_at_column(engine) -> None:
+    """Additive migration, called once from main.py::startup(). Same
+    try/except idiom as technician_keys.py/commissioning_key.py — Postgres
+    has no ADD COLUMN IF NOT EXISTS."""
+    try:
+        with engine.connect() as conn:
+            try:
+                conn.execute(text("ALTER TABLE break_glass_accounts ADD COLUMN applied_at TIMESTAMP"))
+                conn.commit()
+                log.info("DB migration break-glass: break_glass_accounts.applied_at tilføjet")
+            except Exception:
+                pass
+    except Exception as exc:
+        log.warning("DB migration break-glass fejl: %s", exc)
 
 # ── Break-glass checkout-hærdning (opt-in, default slået FRA) ─────────────────
 # Lukker en del af det dokumenterede SABSA-/compliance-hul i checkout_break_glass.
@@ -974,6 +990,8 @@ def list_break_glass(device_id: str, _user=Depends(_require_cmdb_role("admin")),
             "rotated_at":       a.rotated_at.isoformat() if a.rotated_at else None,
             "expires_at":       a.expires_at.isoformat() if a.expires_at else None,
             "created_at":       a.created_at.isoformat() if a.created_at else None,
+            "applied":          a.applied_at is not None,
+            "applied_at":       a.applied_at.isoformat() if a.applied_at else None,
         }
         for a in accounts
     ]
@@ -984,10 +1002,22 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
     """
     Checkout break-glass password for den autentificerede admins egen konto.
 
-    - Dekrypterer og returnerer det aktuelle password
-    - Genererer straks et NYT password og krypterer det (rotation)
+    - Dekrypterer og returnerer det AKTUELLE password_enc (det der enten
+      allerede er anvendt på enheden, eller vil blive det ved dens næste
+      sync — se edge_sync.py/edge/agent.py::_apply_break_glass_password)
+    - Genererer derefter et NYT password til NÆSTE checkout og markerer det
+      som ubekræftet (applied_at=None), så det leveres ved enhedens næste sync
     - Logger tidspunkt og bruger
-    - TODO Sprint CMDB-2: push nyt password til edge via SSH
+
+    2026-08-25 (rettet rækkefølge-fejl): tidligere roterede denne endpoint
+    password_enc FØR det var bekræftet leveret, hvilket betød det viste
+    password aldrig kunne garanteres at matche det der reelt stod på
+    enheden. Nu returneres altid den værdi der ER (eller er ved at blive)
+    den aktive — rotation sker BAGEFTER og gælder først næste checkout.
+    Leverings-cirkularitet (password kan ikke pushes til en enhed der er
+    utilgængelig via normal kanal) er accepteret bevidst, jf. Peters valg
+    2026-08-25: leveres ved enhedens næste succesfulde sync, ikke et
+    øjeblikkeligt SSH-push.
 
     admin_username bindes til den autentificerede sessions brugernavn, ikke til
     request-body (C-06: audit-actor skal være den autentificerede principal — en
@@ -1031,12 +1061,19 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
     if account.expires_at and account.expires_at < now_utc():
         raise HTTPException(status_code=403, detail="Break-glass konto er udløbet")
 
-    # Dekryptér det aktuelle password (til returnering)
+    # Dekryptér det AKTUELLE password FØR rotation — dette er det der enten
+    # allerede er bekræftet anvendt (account.applied_at sat), eller stadig
+    # afventer enhedens næste sync (applied_at=None fra en tidligere
+    # oprettelse/rotation).
     current_password = _decrypt(account.password_enc)
+    was_already_applied = account.applied_at is not None
 
-    # Generer og kryptér nyt password (rotation)
+    # Generér og kryptér NÆSTE password — gælder først efter enhedens næste
+    # sync har anvendt det og bekræftet det (se edge_sync.py). applied_at
+    # nulstilles, så det IKKE forveksles med det password der lige er vist.
     new_password = _generate_password()
     account.password_enc    = _encrypt(new_password)
+    account.applied_at      = None
     account.rotated_at      = now_utc()
     account.rotation_reason = f"checkout af {admin_username}: {reason}"
     account.last_used_at    = now_utc()
@@ -1056,25 +1093,28 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
     db.commit()
 
     log.warning(
-        "BREAK-GLASS CHECKOUT: device=%s admin=%s on_behalf_of=%s reason='%s' checkout_count=%d",
-        device_id, admin_username, on_behalf_of, reason, account.checkout_count
+        "BREAK-GLASS CHECKOUT: device=%s admin=%s on_behalf_of=%s reason='%s' checkout_count=%d applied=%s",
+        device_id, admin_username, on_behalf_of, reason, account.checkout_count, was_already_applied
     )
 
-    # TODO Sprint CMDB-2: push nyt password til edge
-    # Dette kræver SSH-forbindelse til edge (break-glass giver jo netop adgang
-    # til enheder der måske ikke er tilgængelige via normal kanal — så det er
-    # komplekst. For nu: admin er ansvarlig for at rotere manuelt efter brug.)
+    warning = "Password vises kun denne ene gang. Gem det nu. Et nyt password er klargjort til næste checkout."
+    if not was_already_applied:
+        warning = (
+            "ADVARSEL: dette password er IKKE bekræftet anvendt på enheden endnu "
+            "(ingen sync-bekræftelse modtaget siden det blev sat). Det virker først "
+            "når enheden har synkroniseret med Headend — hvis enheden er offline, "
+            "virker det ikke."
+        )
 
     return {
         "device_id":        device_id,
         "ssh_username":     account.ssh_username,
         "password":         current_password,
-        # ⚠️ Dette er det AKTUELLE password (inden rotation).
-        # Det nye password er allerede gemt i DB.
-        # Gem dette password sikkert — det vises kun denne ene gang.
+        # ⚠️ Gem dette password sikkert — det vises kun denne ene gang.
+        "applied":          was_already_applied,
         "rotated":          True,
         "checkout_count":   account.checkout_count,
-        "warning":          "Password vises kun denne ene gang. Gem det nu. Rotation er sket.",
+        "warning":          warning,
     }
 
 

@@ -33,8 +33,8 @@ from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from database import get_db, Device, now_utc
-from cmdb import report_inventory as _cmdb_report_inventory
+from database import get_db, Device, BreakGlassAccount, now_utc
+from cmdb import report_inventory as _cmdb_report_inventory, _decrypt as _bg_decrypt
 from siem import ingest_events as _siem_ingest_events
 from technician_keys import resolve_authorized_technician_keys
 
@@ -108,11 +108,40 @@ async def edge_sync(
     # admin UI's "disable commissioning key" action gates on. See
     # Dokumentation/HANDOVER_LOG.md and headend/main.py's
     # /api/admin/devices/{device_id}/commissioning-key endpoints.
+    break_glass_payload = []
     if device:
         security = req.diagnostics.get("security") if isinstance(req.diagnostics, dict) else None
         if isinstance(security, dict) and security.get("servicetekniker_login_seen"):
             device.servicetekniker_verified_at = now_utc()
-            db.commit()
+
+        # Break-glass password delivery (2026-08-25): the circularity Peter
+        # accepted — a password can't be pushed to an unreachable device, so
+        # it's delivered on the device's own next successful sync instead of
+        # an out-of-band push. See headend/cmdb.py::checkout_break_glass()
+        # and edge/agent.py::_apply_break_glass_password().
+        pending_accounts = db.query(BreakGlassAccount).filter_by(
+            device_id=device_id, is_active=True, applied_at=None,
+        ).all()
+        break_glass_payload = [
+            {"username": a.ssh_username or "emergency", "password": _bg_decrypt(a.password_enc)}
+            for a in pending_accounts
+        ]
+
+        applied_reports = (
+            security.get("break_glass_applied") if isinstance(security, dict) else None
+        ) or []
+        if applied_reports and pending_accounts:
+            import hashlib
+            reported = {
+                (str(r.get("username") or ""), str(r.get("password_sha256") or ""))
+                for r in applied_reports if isinstance(r, dict)
+            }
+            for account in pending_accounts:
+                digest = hashlib.sha256(_bg_decrypt(account.password_enc).encode("utf-8")).hexdigest()
+                if (account.ssh_username or "emergency", digest) in reported:
+                    account.applied_at = now_utc()
+
+        db.commit()
 
     return {
         "server_time": hb_result["server_time"],
@@ -123,4 +152,5 @@ async def edge_sync(
         "app_updates": policy.get("app_updates"),
         "technician_keys": technician_keys,
         "commissioning_key_disabled": bool(device.commissioning_key_disabled) if device else False,
+        "break_glass": break_glass_payload,
     }
