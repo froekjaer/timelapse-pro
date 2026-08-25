@@ -1590,6 +1590,31 @@ class EdgeAgent:
                     log.error("emergency sudoers-fil ugyldig, fjerner: %s", visudo_check.stderr.strip())
                     sudoers_path.unlink(missing_ok=True)
 
+            # 2026-08-25 (live, Peter's own login attempt): the log dir tree
+            # above is created by this agent, which runs as root — root
+            # bypasses DAC permission checks, so the 0700-root-owned
+            # directories looked fine from here but were completely
+            # unwritable by breakglass_shell_wrapper.sh, which runs AS
+            # "emergency" (an unprivileged login shell), not as root. `script`
+            # and the event-append both hit Permission denied before a shell
+            # was ever handed back, closing the SSH connection immediately
+            # after a successful password auth. Chowning the tree to
+            # "emergency" fixes this while keeping mode 0700 — root still has
+            # full access regardless of ownership, so confidentiality from
+            # every other account on the box is unchanged.
+            try:
+                import pwd as _pwd
+                emergency_pw = _pwd.getpwnam(username)
+                for target in (
+                    self.BREAKGLASS_LOG_DIR,
+                    self.BREAKGLASS_LOG_DIR / "sessions",
+                    self.BREAKGLASS_EVENTS_PATH,
+                ):
+                    if target.exists():
+                        os.chown(target, emergency_pw.pw_uid, emergency_pw.pw_gid)
+            except KeyError:
+                pass
+
             if not self.SSHD_CONFIG_PATH.exists():
                 return
             original = self.SSHD_CONFIG_PATH.read_text(encoding="utf-8")
