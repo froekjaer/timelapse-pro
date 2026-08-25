@@ -58,9 +58,14 @@ def test_checkout_break_glass_records_authenticated_caller_not_payload_claim():
     db.query.return_value.filter_by.return_value.first.return_value = account
     caller = _platform_admin("real-admin")
 
+    # 2026-08-25: plain checkout no longer rotates by default (a second
+    # live incident the same night — see headend/tests/test_break_glass_
+    # delivery.py), so rotation_reason is only touched when rotate=True is
+    # explicitly requested. last_used_by is the field that's always bound
+    # to the authenticated caller regardless of rotate.
     checkout_break_glass(
         "TL-TESTDEVICE0001",
-        {"admin_username": "impostor-admin", "reason": "incident-123"},
+        {"admin_username": "impostor-admin", "reason": "incident-123", "rotate": True},
         request=None,
         _user=caller,
         db=db,
