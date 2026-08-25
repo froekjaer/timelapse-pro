@@ -76,8 +76,63 @@ def test_checkout_returns_current_password_and_flags_unapplied_on_first_checkout
     assert result["password"]
 
     account = db_session.query(database.BreakGlassAccount).filter_by(id=created["id"]).first()
-    # Rotated to a NEW pending password after returning the shown one.
-    assert cmdb._decrypt(account.password_enc) != result["password"]
+    # 2026-08-25 (second live incident, same night): a plain checkout must
+    # NOT rotate — it did originally, which silently invalidated the shown
+    # password within one sync interval (Peter hit this exact race live).
+    # The returned password must be exactly what's stored, unchanged.
+    assert cmdb._decrypt(account.password_enc) == result["password"]
+    assert account.applied_at is None
+
+
+def test_checkout_without_rotate_is_idempotent_across_repeated_calls(db_session):
+    """The core regression this fixes: checkout must be safe to call
+    repeatedly (e.g. an admin re-opening the page) without ever changing
+    the password that's actually live on the device."""
+    _make_device(db_session, "TL-BG0001b")
+    user = _admin_user()
+
+    with patch.object(cmdb, "_enforce_break_glass_policy", MagicMock()):
+        created = cmdb.create_break_glass("TL-BG0001b", {}, _user=user, db=db_session)
+        account = db_session.query(database.BreakGlassAccount).filter_by(id=created["id"]).first()
+        account.applied_at = datetime.now(timezone.utc)
+        db_session.commit()
+
+        first = cmdb.checkout_break_glass(
+            "TL-BG0001b", {"reason": "test"}, request=None, _user=user, db=db_session,
+        )
+        second = cmdb.checkout_break_glass(
+            "TL-BG0001b", {"reason": "test again"}, request=None, _user=user, db=db_session,
+        )
+
+    assert first["password"] == second["password"]
+    assert first["rotated"] is False
+    assert second["rotated"] is False
+
+
+def test_checkout_with_rotate_generates_a_fresh_password_and_flags_unapplied(db_session):
+    _make_device(db_session, "TL-BG0001c")
+    user = _admin_user()
+
+    with patch.object(cmdb, "_enforce_break_glass_policy", MagicMock()):
+        created = cmdb.create_break_glass("TL-BG0001c", {}, _user=user, db=db_session)
+        account = db_session.query(database.BreakGlassAccount).filter_by(id=created["id"]).first()
+        account.applied_at = datetime.now(timezone.utc)
+        db_session.commit()
+        previous_password = cmdb._decrypt(account.password_enc)
+
+        result = cmdb.checkout_break_glass(
+            "TL-BG0001c", {"reason": "test", "rotate": True}, request=None, _user=user, db=db_session,
+        )
+
+    assert result["rotated"] is True
+    assert result["applied"] is False
+    assert result["password"] != previous_password
+
+    db_session.expire_all()
+    account = db_session.query(database.BreakGlassAccount).filter_by(id=created["id"]).first()
+    # The returned password must always be exactly what got persisted —
+    # never a stale value from before the rotation.
+    assert cmdb._decrypt(account.password_enc) == result["password"]
     assert account.applied_at is None
 
 
@@ -101,14 +156,32 @@ def test_checkout_does_not_warn_once_previous_password_was_confirmed_applied(db_
     assert "ADVARSEL" not in result["warning"]
 
 
-def test_checkout_never_returns_a_password_that_was_never_shown():
-    """Regression guard for the original bug: the endpoint must always
-    decrypt password_enc BEFORE mutating it, never after."""
-    source = (HERE / "cmdb.py").read_text(encoding="utf-8")
-    block = source[source.index("def checkout_break_glass("):source.index("@router.get(\"/{device_id}/break-glass/checkout-history\")")]
-    decrypt_idx = block.index("current_password = _decrypt(account.password_enc)")
-    rotate_idx = block.index("account.password_enc    = _encrypt(new_password)")
-    assert decrypt_idx < rotate_idx
+def test_checkout_never_returns_a_password_that_was_never_shown(db_session):
+    """Regression guard, rewritten 2026-08-25 (second incident): the
+    original bug was rotating password_enc BEFORE the previous value was
+    confirmed applied. The second bug was rotating password_enc on EVERY
+    checkout regardless of request, which — because edge_sync delivers any
+    unapplied row on the device's very next sync — silently invalidated the
+    password an admin was just shown within about a minute. Both bugs share
+    one invariant this test checks directly rather than via source-text
+    matching: whatever password_enc holds right after checkout returns is
+    always exactly what was returned, never a value the caller never saw."""
+    _make_device(db_session, "TL-BG0001d")
+    user = _admin_user()
+
+    with patch.object(cmdb, "_enforce_break_glass_policy", MagicMock()):
+        created = cmdb.create_break_glass("TL-BG0001d", {}, _user=user, db=db_session)
+        account = db_session.query(database.BreakGlassAccount).filter_by(id=created["id"]).first()
+        account.applied_at = datetime.now(timezone.utc)
+        db_session.commit()
+
+        for payload in ({"reason": "plain"}, {"reason": "rotate", "rotate": True}):
+            result = cmdb.checkout_break_glass(
+                "TL-BG0001d", payload, request=None, _user=user, db=db_session,
+            )
+            db_session.expire_all()
+            account = db_session.query(database.BreakGlassAccount).filter_by(id=created["id"]).first()
+            assert cmdb._decrypt(account.password_enc) == result["password"]
 
 
 @pytest.mark.asyncio

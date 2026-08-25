@@ -1021,19 +1021,28 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
     - Dekrypterer og returnerer det AKTUELLE password_enc (det der enten
       allerede er anvendt på enheden, eller vil blive det ved dens næste
       sync — se edge_sync.py/edge/agent.py::_apply_break_glass_password)
-    - Genererer derefter et NYT password til NÆSTE checkout og markerer det
-      som ubekræftet (applied_at=None), så det leveres ved enhedens næste sync
+    - Roterer KUN til et nyt password hvis `payload.rotate` er sat
+      eksplicit (se nedenfor) — IKKE ved hver almindelig checkout
     - Logger tidspunkt og bruger
 
-    2026-08-25 (rettet rækkefølge-fejl): tidligere roterede denne endpoint
-    password_enc FØR det var bekræftet leveret, hvilket betød det viste
-    password aldrig kunne garanteres at matche det der reelt stod på
-    enheden. Nu returneres altid den værdi der ER (eller er ved at blive)
-    den aktive — rotation sker BAGEFTER og gælder først næste checkout.
+    2026-08-25 (rettet endnu en rækkefølge-fejl, samme aften, live fanget af
+    Peters eget login-forsøg): denne endpoint roterede TIDLIGERE automatisk
+    til et nyt password ved HVER checkout — "klargjort til næste checkout".
+    Men edge_sync.py/agent.py's leveringsmekanisme skelner ikke mellem "et
+    password der lige er vist til en admin og skal være det aktive" og "et
+    password der blot er forudgenereret til en fremtidig checkout" — ALT med
+    applied_at=None bliver pushet og anvendt ved enhedens NÆSTE sync,
+    typisk under et minut senere. Resultatet: det password checkout lige
+    havde vist blev rutinemæssigt ugyldigt inden admin nåede at bruge det —
+    Peter ramte "Permission denied" gentagne gange fordi hans faktisk
+    viste password blev overskrevet på enheden, mens han stadig var ved at
+    skrive det ind. Nu er checkout idempotent som standard: samme password
+    vises igen og igen, indtil det EKSPLICIT roteres (payload.rotate=true).
     Leverings-cirkularitet (password kan ikke pushes til en enhed der er
-    utilgængelig via normal kanal) er accepteret bevidst, jf. Peters valg
-    2026-08-25: leveres ved enhedens næste succesfulde sync, ikke et
-    øjeblikkeligt SSH-push.
+    utilgængelig via normal kanal) er stadig accepteret bevidst, jf. Peters
+    valg 2026-08-25: leveres ved enhedens næste succesfulde sync, ikke et
+    øjeblikkeligt SSH-push — men nu uden at det checkede-ud password
+    invaliderer sig selv i baggrunden.
 
     admin_username bindes til den autentificerede sessions brugernavn, ikke til
     request-body (C-06: audit-actor skal være den autentificerede principal — en
@@ -1053,6 +1062,13 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
         on_behalf_of  (str, optional)  Navn/brugernavn på kollega der hjælpes,
                       hvis checkout sker fordi kollegaen ikke selv kan nå det
                       centrale system
+        rotate        (bool, optional, default False)  Generér eksplicit et
+                      NYT password i stedet for at vise det nuværende. Brug
+                      kun hvis det aktuelle password skal invalideres (f.eks.
+                      mistanke om kompromittering) — almindelig checkout skal
+                      IKKE rotere, da det ville gøre det viste password
+                      forældet igen inden for et sync-interval (se historik
+                      2026-08-25 ovenfor).
 
     SIKKERHED: Denne endpoint skal i produktion kræve:
         1. Stærk MFA (ikke bare session-cookie)
@@ -1063,6 +1079,7 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
     admin_username = _user.username
     reason = payload.get("reason", "Ikke angivet")
     on_behalf_of = (payload.get("on_behalf_of") or "").strip()[:200] or None
+    rotate = bool(payload.get("rotate", False))
 
     # Opt-in hærdning (rate-limit + IP-allowlist); no-op når env ikke er sat.
     _enforce_break_glass_policy(request, device_id, admin_username)
@@ -1077,21 +1094,28 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
     if account.expires_at and account.expires_at < now_utc():
         raise HTTPException(status_code=403, detail="Break-glass konto er udløbet")
 
-    # Dekryptér det AKTUELLE password FØR rotation — dette er det der enten
-    # allerede er bekræftet anvendt (account.applied_at sat), eller stadig
-    # afventer enhedens næste sync (applied_at=None fra en tidligere
-    # oprettelse/rotation).
-    current_password = _decrypt(account.password_enc)
     was_already_applied = account.applied_at is not None
 
-    # Generér og kryptér NÆSTE password — gælder først efter enhedens næste
-    # sync har anvendt det og bekræftet det (se edge_sync.py). applied_at
-    # nulstilles, så det IKKE forveksles med det password der lige er vist.
-    new_password = _generate_password()
-    account.password_enc    = _encrypt(new_password)
-    account.applied_at      = None
-    account.rotated_at      = now_utc()
-    account.rotation_reason = f"checkout af {admin_username}: {reason}"
+    if rotate:
+        # Eksplicit ønsket rotation — generér og gem et NYT password, som
+        # leveres ved enhedens næste sync (samme leverings-cirkularitet som
+        # altid). Dette password bliver til gengæld det STABILE svar på
+        # alle fremtidige checkouts, indtil nogen roterer eksplicit igen.
+        new_password = _generate_password()
+        account.password_enc    = _encrypt(new_password)
+        account.applied_at      = None
+        account.rotated_at      = now_utc()
+        account.rotation_reason = f"checkout af {admin_username}: {reason}"
+        current_password = new_password
+        was_already_applied = False
+    else:
+        # Almindelig checkout: dekryptér og returnér det AKTUELLE password
+        # uændret — det der enten allerede er anvendt på enheden, eller
+        # stadig afventer enhedens næste sync. INGEN rotation her; det er
+        # netop det der tidligere gjorde det viste password forældet igen
+        # inden for et sync-interval.
+        current_password = _decrypt(account.password_enc)
+
     account.last_used_at    = now_utc()
     account.last_used_by    = admin_username
     account.checkout_count  = (account.checkout_count or 0) + 1
@@ -1109,26 +1133,32 @@ def checkout_break_glass(device_id: str, payload: dict, request: Request = None,
     db.commit()
 
     log.warning(
-        "BREAK-GLASS CHECKOUT: device=%s admin=%s on_behalf_of=%s reason='%s' checkout_count=%d applied=%s",
-        device_id, admin_username, on_behalf_of, reason, account.checkout_count, was_already_applied
+        "BREAK-GLASS CHECKOUT: device=%s admin=%s on_behalf_of=%s reason='%s' checkout_count=%d applied=%s rotated=%s",
+        device_id, admin_username, on_behalf_of, reason, account.checkout_count, was_already_applied, rotate
     )
 
-    warning = "Password vises kun denne ene gang. Gem det nu. Et nyt password er klargjort til næste checkout."
-    if not was_already_applied:
+    if rotate:
+        warning = (
+            "Nyt password genereret og gemt. Det virker først når enheden har "
+            "synkroniseret med Headend (typisk under et minut) — hvis enheden er "
+            "offline, virker det ikke før den er tilbage online."
+        )
+    elif not was_already_applied:
         warning = (
             "ADVARSEL: dette password er IKKE bekræftet anvendt på enheden endnu "
             "(ingen sync-bekræftelse modtaget siden det blev sat). Det virker først "
             "når enheden har synkroniseret med Headend — hvis enheden er offline, "
             "virker det ikke."
         )
+    else:
+        warning = "Dette password er aktivt på enheden og forbliver det, indtil det roteres eksplicit."
 
     return {
         "device_id":        device_id,
         "ssh_username":     account.ssh_username,
         "password":         current_password,
-        # ⚠️ Gem dette password sikkert — det vises kun denne ene gang.
         "applied":          was_already_applied,
-        "rotated":          True,
+        "rotated":          rotate,
         "checkout_count":   account.checkout_count,
         "warning":          warning,
     }
