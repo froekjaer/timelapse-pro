@@ -39,18 +39,24 @@ PrivateTmp=yes
 RuntimeDirectory=timelapse
 RuntimeDirectoryMode=0755
 ProtectSystem=strict
-ReadWritePaths=/data /opt/timelapse /opt/timelapse/edge /run/timelapse /etc/timelapse /etc/ssh/sshd_config
-ReadWritePaths=-/home/orangepi/.ssh -/home/pi/.ssh -/home/ubuntu/.ssh -/home/timelapse/.ssh
+# 2026-08-25: four separate incidents in one night (sshd_config, .ssh
+# authorized_keys dirs, /var/log.hdd/timelapse, and finally /etc/passwd's
+# own atomic-rename temp file) all traced back to the same root cause —
+# tools that do create-temp-then-rename (sshd itself, useradd, chpasswd)
+# need write access to the CONTAINING DIRECTORY, not just the specific
+# filename, because they create a NEW file first and only a directory
+# grant covers that. Piecemeal single-file grants under ProtectSystem=strict
+# kept missing this (note: ProtectSystem=full does NOT help here — it
+# makes /etc read-only too, same as strict, it just doesn't ALSO cover
+# every other path strict does). Granting /etc itself as ReadWritePaths is
+# the actual fix. This agent's job is genuinely system provisioning
+# (creates Linux accounts, manages sudoers and sshd config, manages its
+# own and sibling systemd units) — /etc write access doesn't meaningfully
+# over-privilege it beyond what running as root with unrestricted sudo
+# grants (which it writes for itself) already does.
+ReadWritePaths=/data /opt/timelapse /opt/timelapse/edge /run/timelapse /etc
 ReadWritePaths=-/var/log.hdd/timelapse
-# useradd (emergency/servicetekniker self-heal) and chpasswd (break-glass
-# password delivery) both need to write the user/group database and its
-# lock file — confirmed live 2026-08-25 as the actual cause of a
-# persistent (not transient) "useradd: cannot lock /etc/passwd" failure on
-# TL-C87FF9587CA0: none of these were ever granted, so every write was
-# EROFS, which shadow-utils reports as a lock failure rather than a
-# permissions error.
-ReadWritePaths=-/etc/passwd -/etc/passwd- -/etc/shadow -/etc/shadow- -/etc/group -/etc/group- -/etc/gshadow -/etc/gshadow- -/etc/subuid -/etc/subuid- -/etc/subgid -/etc/subgid- -/etc/.pwd.lock
-ReadWritePaths=/etc/systemd/system/timelapse-edge.service /etc/systemd/system/timelapse-bt-pan.service /etc/systemd/system/timelapse-bt-agent.service /etc/systemd/system/timelapse-captive.service /etc/systemd/system/timelapse-totp.service
+ReadWritePaths=-/home/orangepi/.ssh -/home/pi/.ssh -/home/ubuntu/.ssh -/home/timelapse/.ssh -/home/emergency/.ssh -/home/servicetekniker/.ssh
 ProtectHome=yes
 
 [Install]
