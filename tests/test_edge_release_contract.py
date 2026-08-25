@@ -205,7 +205,14 @@ def test_artifact_install_activates_and_verifies_local_management_services():
     assert "User=root" in unit
     assert "Type=simple" in unit
     assert "WatchdogSec=" not in unit
-    assert "ReadWritePaths=/etc/systemd/system/timelapse-edge.service" in unit
+    # 2026-08-25: the narrow per-unit-file grant was folded into a broader
+    # /etc ReadWritePaths grant (useradd/chpasswd need write access to the
+    # containing directory for their atomic-rename temp files, not just
+    # specific filenames — see edge/scripts/timelapse-edge.service's own
+    # comment). The self-update capability this line originally guarded is
+    # still covered: /etc/systemd/system/timelapse-edge.service is a
+    # subpath of /etc.
+    assert "ReadWritePaths=/data /opt/timelapse /opt/timelapse/edge /run/timelapse /etc" in unit
 
 
 def test_rolled_back_update_can_be_explicitly_reapproved():
