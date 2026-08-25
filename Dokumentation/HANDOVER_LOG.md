@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-25 16:55 — fra Codex til Peter/Codex/Claude/Kimi: Compliance Readiness Pack oprettet
+
+- Hvad er gjort: Oprettet `Dokumentation/Compliance-Readiness-Pack/` som praktisk arbejdspakke oven på den allerede merged `Dokumentation/Codex-Audit/`-audit. Pakken indeholder index, site-DPIA/checkliste, rolle-/DPA-matrix, vulnerability/update-SLA, SBOM/release-evidence checkliste, ISO/NIS2/CER supplier assurance, AI system inventory og compliance acceptance gate. Formålet er ikke ny juridisk analyse, men et kunde-/audit-brugbart readiness-lag med tydelige no-claim grænser.
+- Hvad mangler / næste skridt: Review/merge docs-PR. Derefter bør de to konkrete tekniske audit-fund lukkes separat: config fingerprint MD5->SHA-256 og dynamic SQL identifier allowlists. Peter ønsker bagefter en guidet browsergennemgang af alle menuer/submenuer.
+- Kommandoer kørt eller skal køres: Docs-only; kør `git diff --check` før PR.
+- Forventet/faktisk output: Ny compliance pack under `Dokumentation/Compliance-Readiness-Pack/`; ingen kode-, DB-, Edge-, credential-, GPIO- eller deploymentændringer.
+- Filer rørt: `Dokumentation/Compliance-Readiness-Pack/*`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Pakken må ikke bruges som certificerings- eller juridisk compliance-erklæring. Eksterne claims skal stadig godkendes juridisk og/eller via relevant audit.
+
 ### Handover 2026-08-25 16:35 — fra Codex til Peter/Codex/Claude/Kimi: historisk 3P-assessment reconcilet mod current main
 
 - Hvad er gjort: Peter valgte option 2 for den gamle 3.-parts assessment fra 2026-07-31: ikke merge råt, men reconcile mod current main. Den originale pakke fra `origin/assessment/2026-07-3p-review` er bevaret som historisk audit-evidens under `Dokumentation/Gamle versioner/Assessment_2026-07_3P/` og markeret tydeligt som ikke-aktuel status. Der er oprettet en ny autoritativ læsevej: `Dokumentation/Assessment_2026-07_3P_RECONCILIATION_2026-08-25.md`, som klassificerer gamle fund som lukket, erstattet, stadig relevant eller forældet mod `main@9925021dc3b19634be55248788d23140d6d6dbd9`.
