@@ -2848,6 +2848,20 @@ class EdgeAgent:
         See headend/edge_sync.py and Dokumentation/HANDOVER_LOG.md 2026-08-19.
         """
         try:
+            # Self-heals used to only run once at _startup() — a transient
+            # failure (e.g. useradd hitting a locked /etc/passwd right after
+            # an update install, confirmed live 2026-08-25 on TL-C87FF9587CA0)
+            # then stuck until the NEXT full service restart, which could be
+            # days away. Both are cheap once-already-correct no-ops, so
+            # retrying every sync cycle costs nothing in the common case and
+            # actually self-heals from a one-off failure instead of needing
+            # another deploy.
+            try:
+                self._repair_sshd_authorized_keys_command_missing_u_token()
+                self._repair_emergency_breakglass_account()
+            except Exception as repair_exc:
+                log.warning("Selv-reparation (retry) fejlede: %s", repair_exc)
+
             diag_data = self._diag.collect()
             from utils.inventory import current_app_version
             diag_data["updates"] = {"app_version": current_app_version()}
