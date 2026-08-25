@@ -445,6 +445,8 @@ def startup():
 
     from commissioning_key import migrate_commissioning_key_columns
     migrate_commissioning_key_columns(_db_engine_field_role)
+    from cmdb import migrate_break_glass_applied_at_column as _mbgc
+    _mbgc(_db_engine_field_role)
 
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:
@@ -5121,10 +5123,7 @@ def ssh_tunnel_active(
         ORDER BY s.event_at DESC
     """)).fetchall()
 
-    device_ips = {
-        d.device_id: d.ip_address
-        for d in db.query(Device).filter(Device.device_id.in_([r[0] for r in rows])).all()
-    }
+    device_ips = {d.device_id: d.ip_address for d in db.query(Device).filter(Device.device_id.in_([r[0] for r in rows])).all()}
 
     return [
         {

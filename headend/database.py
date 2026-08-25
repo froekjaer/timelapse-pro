@@ -1189,6 +1189,15 @@ class BreakGlassAccount(Base):
     expires_at      = Column(DateTime)
     # Udløb — headend advarer 7 dage før. None = udløber ikke.
 
+    # 2026-08-25: leverings-bekræftelse for password_enc's AKTUELLE værdi.
+    # None = enheden har endnu ikke bekræftet at have anvendt det via
+    # chpasswd (enten helt nyt password, eller en rotation der endnu ikke
+    # er nået enheden på næste sync). Sat af edge_sync.py når Edge
+    # rapporterer et password_sha256-match. checkout_break_glass() må
+    # ALDRIG rotere password_enc uden at have vist den AKTUELLE (evt.
+    # stadig ubekræftede) værdi først — se cmdb.py.
+    applied_at      = Column(DateTime)
+
     # ── Audit ────────────────────────────────────────────────────────────
     checkout_count  = Column(Integer, default=0)
     rotation_reason = Column(Text)
