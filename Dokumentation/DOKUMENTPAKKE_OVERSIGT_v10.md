@@ -22,6 +22,7 @@
 | `Timelapse_pro_full_documentation_v10.md` | Samlet systemdokumentation (arkitektur, komponenter, flows) |
 | `SABSA_Architecture_v10.md` | SABSA-arkitektur (konsolideret fra .docx v3–v9) |
 | `REGULATORISK_OG_STANDARD_REFERENCE_v1.md` | Living EU/Danmark regulatory horizon og standardreference for AI, cyber, privacy, produkt og OT |
+| `Compliance-Readiness-Pack/00_INDEX.md` | Praktisk compliance readiness-pakke til site-DPIA, DPA/roller, vulnerability/update-SLA, SBOM/release evidence, AI inventory og supplier assurance |
 | `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` | Fælles arbejds-, review- og handovermodel for Peter, Claude og Codex |
 
 ## Kildegrundlag
