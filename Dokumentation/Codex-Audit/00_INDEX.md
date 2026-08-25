@@ -25,6 +25,13 @@ Denne mappe indeholder en manuel Codex-gennemgang af `froekjaer/mission-framewor
 7. `07_ACCEPTANCE_GATE_AND_ROADMAP.md` — stop/merge/deploy gates og næste rækkefølge.
 8. `08_EVIDENCE_LOG.md` — evidens, commands, kilder og begrænsninger.
 
+## Praktisk compliance-pakke
+
+Auditten er omsat til en praktisk readiness-pakke i `Dokumentation/Compliance-Readiness-Pack/`.
+Den pakke er den anbefalede indgang, når auditten skal bruges til kundeonboarding,
+site-DPIA, SBOM/release evidence, vulnerability/update-SLA, AI inventory eller
+ISO/NIS2/CER supplier assurance.
+
 ## Metode
 
 Reviewet følger `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md`: facts before assumptions, search before create, evidens før konklusion og eksplicit begrænsning når en kilde ikke kunne verificeres.
