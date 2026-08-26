@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-08-26 15:13 — fra Codex til Peter/Claude/Codex: TLS-certifikat serveres igen og renewal hook installeret
+
+- Hvad er gjort: Fejlen i browseren blev bekræftet som udløbet TLS-certifikat serveret fra nginx. Certbot havde allerede fornyet certifikatet korrekt, men nginx brugte en stale kopi under `/opt/homebrew/etc/nginx/ssl/`. Den gamle `fullchain.pem`/`privkey.pem` blev backuppet under `/opt/homebrew/etc/nginx/ssl/backup/`, ny kopi blev lagt ind fra `/etc/letsencrypt/live/timelapse.froekjaer.dk/`, rettigheder sat til `0644` for fullchain og `0600` for private key, og nginx blev genindlæst efter `nginx -t`.
+- Verificeret: `timelapse.froekjaer.dk` server nu certifikat udstedt af Let's Encrypt `YE2`, gyldigt `2026-08-03 00:41:11Z` til `2026-11-01 00:41:10Z`, SHA-256 fingerprint `9E:99:F1:7F:D4:14:1D:69:69:B7:07:45:BA:E2:D9:7A:29:9D:C3:AC:12:70:65:4D:8F:A1:0A:E7:CC:5F:C1:36`. `curl https://timelapse.froekjaer.dk/api/health` virker uden `-k`.
+- Varig sikring: Installeret `/etc/letsencrypt/renewal-hooks/deploy/timelapse-nginx-cert-copy.sh`. Hooken reagerer kun på `timelapse.froekjaer.dk`, tager backup af nginx certkopier, kopierer nyt cert/key fra certbot-lineage, sætter rettigheder og reloader nginx efter config-test. Hooken er testkørt manuelt med `RENEWED_LINEAGE=/etc/letsencrypt/live/timelapse.froekjaer.dk`.
+- Filer/systemstate rørt: `/opt/homebrew/etc/nginx/ssl/fullchain.pem`, `/opt/homebrew/etc/nginx/ssl/privkey.pem`, `/opt/homebrew/etc/nginx/ssl/backup/`, `/etc/letsencrypt/renewal-hooks/deploy/timelapse-nginx-cert-copy.sh`. Ingen app-code, credentials, Edge-state eller known_hosts ændret.
+- Risici / pas på: Hooken kopierer private key til den eksisterende nginx-sti, fordi nginx-config allerede bruger den sti. På længere sigt er symlink direkte til certbot-lineage eller en dokumenteret cert-deploy service renere, men dagens løsning lukker den konkrete renewal driftfejl uden nginx-config redesign.
+
 ### Handover 2026-08-26 15:05 — fra Codex til Peter/Claude/Codex: Headend update-flow failure state og udløbet TLS-certifikat
 
 - Hvad er gjort: Undersøgt fejl på `/updates` efter at `#229 ffmpeg` blev installeret OK og `#232 ollama` blev forsøgt bagefter. Rodårsagen i update-UI var, at fejlet Headend-installation kun blev gemt som evidence/`failed_count`, men lod `pending_updates.status` blive `approved` og `update_targets.status` blive `queued`. Live DB er ryddet non-destruktivt: `#229` står `deployed`, target `deployed`, ticket `deployed`; `#232` står `blocked`, target `failed`, ticket `cancelled`; `#233` havde stale `queued` target trods `blocked`, target er sat `failed` og ticket `cancelled`.
