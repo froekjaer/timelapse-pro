@@ -135,8 +135,11 @@ def test_wifi_reconfiguration_requires_signed_artifact() -> None:
 def test_edge_target_catalog_uses_the_module_imported_by_main() -> None:
     source = (ROOT / "headend" / "edge_provisioning_security.py").read_text()
     assert "base_pinned = bool(re.fullmatch" in source
+    # Moved to api/edge_disk_image_api.py (2026-08-26, Phase 1 of the main.py
+    # modularization plan) along with the rest of the disk-image/wifi-inject
+    # domain — no longer inline in main.py.
     assert "_edge_provisioning.load_hardware_targets(hw_dir, log)" in (
-        ROOT / "headend" / "main.py"
+        ROOT / "headend" / "api" / "edge_disk_image_api.py"
     ).read_text()
 
 

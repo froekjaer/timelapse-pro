@@ -83,7 +83,7 @@ def _bundle_storage_dir(*, create: bool = True) -> Path:
     if configured:
         candidate = Path(configured).expanduser()
     else:
-        from main import _edge_image_storage_dir
+        from api.edge_disk_image_api import _edge_image_storage_dir
         candidate = _edge_image_storage_dir(create=create).parent / "headend-images"
     if create:
         candidate.mkdir(parents=True, exist_ok=True)

@@ -2,7 +2,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
-MAIN = (ROOT / "headend" / "main.py").read_text()
+# delete_edge_disk_image moved to api/edge_disk_image_api.py (2026-08-26,
+# Phase 1 of the main.py modularization plan) along with the rest of the
+# disk-image/wifi-inject domain.
+MAIN = (ROOT / "headend" / "api" / "edge_disk_image_api.py").read_text()
 
 
 def test_edge_image_delete_preserves_manifest_and_requires_super_admin() -> None:
