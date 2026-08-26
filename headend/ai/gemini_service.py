@@ -651,7 +651,7 @@ class GeminiVisionService:
         Files API til batch). JSONL-linjer er BARE request-objekter uden
         "key"-felt (Vertex-konventionen er anderledes end AI Studio) — derfor
         matches resultater POSITIONELT (samme rækkefølge ind som ud) i stedet
-        for via key. Se _finalize_ai_batch_job i main.py.
+        for via key. Se _finalize_ai_batch_job i api/ai_batch_api.py.
         """
         try:
             from google.cloud import storage as _gcs
