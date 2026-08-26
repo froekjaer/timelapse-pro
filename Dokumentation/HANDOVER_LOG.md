@@ -29,6 +29,20 @@
 
 ## Log
 
+### Handover 2026-08-26 03:30 — fra Kimi til alle: ensartet hover-hjælp (ⓘ InfoTooltip) på alle UI-felter (PR #139)
+
+- Baggrund: Peter bad 2026-08-24 om at ALLE UI-sider/menuer/undermenuer gennemgås, så alle ikke-selvforklarende parametre har en relevant kort hover-hjælpetekst (mouse-over), i sammenhæng med hjælpemenuen og menuguiderne fra 2026-08-20.
+- Hvad er gjort:
+  - Ny komponent `timelapse-ui/src/components/InfoTooltip.tsx` — ren CSS hover/focus-within (ingen JS-state), `role="tooltip"`, tastaturtilgængelig, mørk popup med maks. 4-linjers dansk tekst.
+  - 20 sider dækket: GlobalConfig, Camera, Device, Backup, SystemAdmin, Drift, CMDB (break-glass), Users (roller), KeyManagement, Redaction, SIEM, Lab, Import, TimelapseVideo (Min blur, lysstyrke, dag/nat, fade, Ken Burns), Compliance (GRC-register), TagSearch (QA årsag, min. konfidence), TagCleanup, ChangeTickets (PendingUpdate ID), SshTunnel (remote port), LocalAccessOverview (SID/Kilde).
+  - Spredte rå `title=`-attributter og håndskrevne `cursor-help`-spans erstattet af InfoTooltip der hvor de sad på labels — ensartet udseende og opførsel overalt.
+  - `MENUGUIDE_BRUGER_v1.md` og `MENUGUIDE_ADMIN_v1.md` har fået en note øverst om hover-hjælpen; tooltip-teksterne genbruger guidernes terminologi.
+  - Sider der allerede havde tilstrækkelig inline-hjælp (Updates, AI, Customer, Site, Retention, PostProcessing, Notifications, Dashboard, Login, NewCustomer) er bevidst ikke ændret.
+- Verificeret: `npx tsc -b` rent, `eslint-gate.mjs` uændret baseline (186, ingen nye), `npm run build` OK. CI på PR #139: Python Syntax Check ✅, Web UI Build Check ✅ (deploy-checks springes over på PR'er som sædvanlig). Squash-merget til main som `e46dde9f`; deploy til Mac mini headend kører automatisk fra main-push.
+- Hvad mangler / næste skridt: Peter bør hård-reloade UI'en (Cmd+Shift+R) når deploy er færdig og spot-checke et par felter (fx Global Config og Timelapse-video). Nye felter i fremtidige features bør få InfoTooltip fra start — komponenten er dokumenteret med doc-kommentar i filen.
+- Filer rørt: `timelapse-ui/src/components/InfoTooltip.tsx` (ny), 20 side-filer under `timelapse-ui/src/pages/`, `Dokumentation/MENUGUIDE_BRUGER_v1.md`, `Dokumentation/MENUGUIDE_ADMIN_v1.md`.
+- Risici / pas på: Ingen funktionsændringer — kun præsentation. Komponenten er CSS-only, så der er ingen ny JS-fejlflade.
+
 ### Handover 2026-08-26 (nat, fortsat) — fra Claude til Peter/Codex: break-glass login virkede endelig, men terminalen var ubrugelig — fjernet script(1)-pty-relæet (PR #137, v2.8.1-lab.48)
 
 - Baggrund: Efter #134 (checkout roterer ikke automatisk mere) fik Peter ENDELIG en rigtig shell — password blev accepteret, OrangePi-velkomstbilledet blev vist. Men terminalen var ubrugelig: "der vises et bogstav ad gangen og så scroller skærmen mange linjer" ved hvert tastetryk.
