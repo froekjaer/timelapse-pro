@@ -29,15 +29,18 @@ back to a pre-2026-08-19 artifact must keep working against them.
 """
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from database import get_db, Device
-from cmdb import report_inventory as _cmdb_report_inventory
+from database import get_db, Device, BreakGlassAccount, now_utc
+from cmdb import report_inventory as _cmdb_report_inventory, _decrypt as _bg_decrypt
 from siem import ingest_events as _siem_ingest_events
 from technician_keys import resolve_authorized_technician_keys
 
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["Edge Sync"])
 
 
@@ -102,6 +105,71 @@ async def edge_sync(
     device = db.query(Device).filter_by(device_id=device_id).first()
     technician_keys = resolve_authorized_technician_keys(db, device) if device else []
 
+    # Commissioning-key disable lifecycle (2026-08-24): the edge reports
+    # whether it just saw a successful servicetekniker publickey login in
+    # its own sshd journal — that's the verify-before-disable evidence the
+    # admin UI's "disable commissioning key" action gates on. See
+    # Dokumentation/HANDOVER_LOG.md and headend/main.py's
+    # /api/admin/devices/{device_id}/commissioning-key endpoints.
+    break_glass_payload = []
+    if device:
+        security = req.diagnostics.get("security") if isinstance(req.diagnostics, dict) else None
+        if isinstance(security, dict) and security.get("servicetekniker_login_seen"):
+            device.servicetekniker_verified_at = now_utc()
+
+        # Break-glass password delivery (2026-08-25): the circularity Peter
+        # accepted — a password can't be pushed to an unreachable device, so
+        # it's delivered on the device's own next successful sync instead of
+        # an out-of-band push. See headend/cmdb.py::checkout_break_glass()
+        # and edge/agent.py::_apply_break_glass_password().
+        #
+        # 2026-08-25 incident: an undecryptable account.password_enc (pre-
+        # dating the currently-configured BREAK_GLASS_ENC_KEY, likely from a
+        # long-ago key rotation) took down sync for every device for ~10
+        # minutes — one bad row, no try/except, crashed the whole endpoint.
+        # Never again: every account is handled independently; one failure
+        # is logged and skipped, not fatal to this device's sync or anyone
+        # else's.
+        try:
+            pending_accounts = db.query(BreakGlassAccount).filter_by(
+                device_id=device_id, is_active=True, applied_at=None,
+            ).all()
+        except Exception as exc:
+            log.error("Break-glass konto-opslag fejlede for %s: %s", device_id, exc)
+            pending_accounts = []
+
+        decrypted = {}
+        for account in pending_accounts:
+            try:
+                decrypted[account.id] = _bg_decrypt(account.password_enc)
+            except Exception as exc:
+                log.error(
+                    "Break-glass password kunne ikke dekrypteres (id=%s device=%s) — "
+                    "springer over, sync fortsætter: %s", account.id, device_id, exc,
+                )
+        break_glass_payload = [
+            {"username": a.ssh_username or "emergency", "password": decrypted[a.id]}
+            for a in pending_accounts if a.id in decrypted
+        ]
+
+        applied_reports = (
+            security.get("break_glass_applied") if isinstance(security, dict) else None
+        ) or []
+        if applied_reports and decrypted:
+            import hashlib
+            reported = {
+                (str(r.get("username") or ""), str(r.get("password_sha256") or ""))
+                for r in applied_reports if isinstance(r, dict)
+            }
+            for account in pending_accounts:
+                if account.id not in decrypted:
+                    continue
+                digest = hashlib.sha256(decrypted[account.id].encode("utf-8")).hexdigest()
+                if (account.ssh_username or "emergency", digest) in reported:
+                    account.applied_at = now_utc()
+
+        db.commit()
+
     return {
         "server_time": hb_result["server_time"],
         "config_version": hb_result["config_version"],
@@ -110,4 +178,6 @@ async def edge_sync(
         "app_security": policy.get("app_security"),
         "app_updates": policy.get("app_updates"),
         "technician_keys": technician_keys,
+        "commissioning_key_disabled": bool(device.commissioning_key_disabled) if device else False,
+        "break_glass": break_glass_payload,
     }

@@ -99,6 +99,65 @@ async def test_edge_sync_forwards_siem_events_and_inventory_when_present():
 
 
 @pytest.mark.asyncio
+async def test_edge_sync_records_servicetekniker_login_evidence():
+    """2026-08-24 commissioning-key disable lifecycle: when the edge reports
+    a successful servicetekniker publickey login in its diagnostics, that's
+    the verify-before-disable evidence headend/commissioning_key.py's
+    disable action gates on — must land on Device.servicetekniker_verified_at."""
+    req = EdgeSyncRequest(
+        timestamp="t",
+        diagnostics={"security": {"servicetekniker_login_seen": True}},
+        capture_stats={},
+        siem_events=[],
+        inventory=None,
+    )
+    db = MagicMock()
+    fake_device = MagicMock(commissioning_key_disabled=False)
+    db.query.return_value.filter_by.return_value.first.return_value = fake_device
+
+    with patch.object(main, "heartbeat", MagicMock(return_value={"server_time": "t", "config_version": "v"})), \
+         patch.object(main, "get_config", MagicMock(return_value={})), \
+         patch.object(main, "get_update_policy", MagicMock(return_value={"pending_updates": []})), \
+         patch.object(edge_sync, "resolve_authorized_technician_keys", MagicMock(return_value=[])):
+        await edge_sync_endpoint("TL-TESTDEVICE0001", req, _auth=None, db=db)
+
+    assert fake_device.servicetekniker_verified_at is not None
+    db.commit.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_edge_sync_does_not_touch_verified_at_when_no_evidence():
+    req = EdgeSyncRequest(timestamp="t", diagnostics={}, capture_stats={}, siem_events=[], inventory=None)
+    db = MagicMock()
+    fake_device = MagicMock(commissioning_key_disabled=False, servicetekniker_verified_at=None)
+    db.query.return_value.filter_by.return_value.first.return_value = fake_device
+
+    with patch.object(main, "heartbeat", MagicMock(return_value={"server_time": "t", "config_version": "v"})), \
+         patch.object(main, "get_config", MagicMock(return_value={})), \
+         patch.object(main, "get_update_policy", MagicMock(return_value={"pending_updates": []})), \
+         patch.object(edge_sync, "resolve_authorized_technician_keys", MagicMock(return_value=[])):
+        await edge_sync_endpoint("TL-TESTDEVICE0001", req, _auth=None, db=db)
+
+    assert fake_device.servicetekniker_verified_at is None
+
+
+@pytest.mark.asyncio
+async def test_edge_sync_reports_commissioning_key_disabled_state():
+    req = EdgeSyncRequest(timestamp="t", diagnostics={}, capture_stats={}, siem_events=[], inventory=None)
+    db = MagicMock()
+    fake_device = MagicMock(commissioning_key_disabled=True)
+    db.query.return_value.filter_by.return_value.first.return_value = fake_device
+
+    with patch.object(main, "heartbeat", MagicMock(return_value={"server_time": "t", "config_version": "v"})), \
+         patch.object(main, "get_config", MagicMock(return_value={})), \
+         patch.object(main, "get_update_policy", MagicMock(return_value={"pending_updates": []})), \
+         patch.object(edge_sync, "resolve_authorized_technician_keys", MagicMock(return_value=[])):
+        result = await edge_sync_endpoint("TL-TESTDEVICE0001", req, _auth=None, db=db)
+
+    assert result["commissioning_key_disabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_edge_sync_skips_siem_and_inventory_when_absent():
     req = EdgeSyncRequest(timestamp="t", diagnostics={}, capture_stats={}, siem_events=[], inventory=None)
     db = MagicMock()

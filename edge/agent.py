@@ -306,6 +306,7 @@ class EdgeAgent:
         self._pull_config()
         self._check_backup_request()
         self._repair_sshd_authorized_keys_command_missing_u_token()
+        self._repair_emergency_breakglass_account()
 
         # 2. Send startup heartbeat
         self._send_heartbeat(check_updates=False)
@@ -1478,39 +1479,290 @@ class EdgeAgent:
             if broken not in original:
                 return
             patched = original.replace(broken, fixed)
-
-            tmp_path = self.SSHD_CONFIG_PATH.with_name(".sshd_config.tmp")
-            tmp_path.write_text(patched, encoding="utf-8")
-            os.chmod(tmp_path, 0o644)
-
-            check = subprocess.run(
-                ["/usr/sbin/sshd", "-t", "-f", str(tmp_path)],
-                capture_output=True, text=True, timeout=10,
-            )
-            if check.returncode != 0:
-                log.error(
-                    "sshd_config selv-reparation afvist af sshd -t, dropper: %s",
-                    check.stderr.strip(),
-                )
-                tmp_path.unlink(missing_ok=True)
-                return
-
-            os.replace(tmp_path, self.SSHD_CONFIG_PATH)
-            reload_result = subprocess.run(
-                ["systemctl", "reload", "ssh"],
-                capture_output=True, text=True, timeout=15,
-            )
-            if reload_result.returncode != 0:
-                subprocess.run(
-                    ["systemctl", "reload", "sshd"],
-                    capture_output=True, text=True, timeout=15,
-                )
-            log.info(
+            self._validate_and_apply_sshd_config(
+                patched,
                 "sshd_config selv-repareret: AuthorizedKeysCommand manglede %%u-token "
-                "(2026-08-24 provisioning-fejl) — teknikernøgler kan nu autentificere"
+                "(2026-08-24 provisioning-fejl) — teknikernøgler kan nu autentificere",
             )
         except Exception as exc:
             log.warning("sshd_config selv-reparation fejlede: %s", exc)
+
+    def _validate_and_apply_sshd_config(self, patched: str, success_log_msg: str) -> bool:
+        """Shared write path for every sshd_config self-heal: validate via a
+        temp file in the already-writable /etc/timelapse (never /etc/ssh
+        itself — the sandbox only grants the exact sshd_config file, not the
+        directory, so create-then-rename inside /etc/ssh would fail), then
+        only touch the real file once `sshd -t` accepts it, then reload
+        (never restart, so active sessions aren't dropped). Returns whether
+        it was applied."""
+        check_path = self.AUTHORIZED_TECHNICIANS_PATH.with_name(".sshd_config_check.tmp")
+        check_path.write_text(patched, encoding="utf-8")
+        try:
+            check = subprocess.run(
+                ["/usr/sbin/sshd", "-t", "-f", str(check_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+        finally:
+            check_path.unlink(missing_ok=True)
+        if check.returncode != 0:
+            log.error("sshd_config selv-reparation afvist af sshd -t, dropper: %s", check.stderr.strip())
+            return False
+
+        self.SSHD_CONFIG_PATH.write_text(patched, encoding="utf-8")
+        reload_result = subprocess.run(
+            ["systemctl", "reload", "ssh"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if reload_result.returncode != 0:
+            subprocess.run(["systemctl", "reload", "sshd"], capture_output=True, text=True, timeout=15)
+        log.info(success_log_msg)
+        return True
+
+    BREAKGLASS_WRAPPER_PATH = Path("/opt/timelapse/edge/scripts/breakglass_shell_wrapper.sh")
+    BREAKGLASS_LOG_DIR = Path("/var/log.hdd/timelapse/breakglass")
+    BREAKGLASS_EVENTS_PATH = BREAKGLASS_LOG_DIR / "pending_events.jsonl"
+    BREAKGLASS_SUDOERS_PATH = Path("/etc/sudoers.d/timelapse-breakglass")
+
+    def _chown_to_emergency(self, *paths: Path) -> None:
+        """Best-effort chown of the given paths to the "emergency" user.
+        This agent runs as root, which bypasses DAC permission checks, so
+        anything this process creates or rewrites under the break-glass log
+        tree defaults to root ownership — invisible from here, but fatal to
+        breakglass_shell_wrapper.sh, which runs AS "emergency" (an
+        unprivileged login shell) and genuinely cannot write to a path it
+        doesn't own. Every writer under BREAKGLASS_LOG_DIR must call this
+        after it creates or replaces a file there — see
+        _collect_breakglass_events_for_sync(), which rewrites
+        pending_events.jsonl from scratch every cycle it drains events.
+        """
+        try:
+            import pwd as _pwd
+            emergency_pw = _pwd.getpwnam("emergency")
+        except KeyError:
+            return
+        for target in paths:
+            try:
+                if target.exists():
+                    os.chown(target, emergency_pw.pw_uid, emergency_pw.pw_gid)
+            except Exception:
+                pass
+
+    def _repair_emergency_breakglass_account(self) -> None:
+        """One-time self-heal: ensure the "emergency" break-glass account
+        exists, is password-login-capable, and sshd actually offers password
+        auth for it. 2026-08-25 (Peter's design decision): password-based
+        delivery, not the pubkey-only design an abandoned, never-merged PR
+        (#9, branch codex/edge-terminal-renderer) built — that branch's
+        breakglass_shell_wrapper.sh (full session recording, forwarded to
+        SIEM) is still genuinely good and is reused here unchanged, since
+        session auditing is orthogonal to how the account authenticates.
+
+        Global sshd_config sets PasswordAuthentication no with no Match
+        block for "emergency" — confirmed live 2026-08-25 as the reason
+        `ssh emergency@<device>` always failed with "Permission denied
+        (publickey)": no password prompt was ever offered, because the
+        protocol-level auth method wasn't even on the table. Also confirmed
+        the emergency Linux account doesn't exist at all on every device
+        (present only on TL-043EB9E72EFD, from ad-hoc manual setup;
+        completely absent on TL-C87FF9587CA0) — inject_edge_image.py never
+        created it, only avoided colliding with its UID.
+        """
+        try:
+            username = "emergency"
+            self.BREAKGLASS_LOG_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+            (self.BREAKGLASS_LOG_DIR / "sessions").mkdir(mode=0o700, exist_ok=True)
+            if not self.BREAKGLASS_EVENTS_PATH.exists():
+                self.BREAKGLASS_EVENTS_PATH.write_text("", encoding="utf-8")
+                os.chmod(self.BREAKGLASS_EVENTS_PATH, 0o600)
+
+            passwd_line = subprocess.run(
+                ["getent", "passwd", username], capture_output=True, text=True, timeout=5,
+            )
+            if passwd_line.returncode != 0:
+                shell = (
+                    str(self.BREAKGLASS_WRAPPER_PATH)
+                    if self.BREAKGLASS_WRAPPER_PATH.exists()
+                    else "/bin/bash"
+                )
+                create = subprocess.run(
+                    [
+                        "useradd", "--create-home", "--shell", shell,
+                        "--comment", "TimeLapse Pro break-glass emergency access", username,
+                    ],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if create.returncode != 0:
+                    log.error("Kunne ikke oprette emergency-konto: %s", create.stderr.strip())
+                    return
+                log.info("emergency break-glass konto oprettet (shell=%s)", shell)
+                # Full, unrestricted sudo by design (Peter, 2026-08-05: "Break-
+                # The-Glass virkelig er hvad ordet siger. Ingen begrænsninger").
+                # Compensating control is full session recording, not access
+                # limits.
+                sudoers_path = self.BREAKGLASS_SUDOERS_PATH
+                sudoers_path.write_text(
+                    "# TimeLapse Pro break-glass account — full, unrestricted sudo by design.\n"
+                    "# Compensating control is full session recording, not access restriction.\n"
+                    "emergency ALL=(ALL) NOPASSWD:ALL\n",
+                    encoding="utf-8",
+                )
+                os.chmod(sudoers_path, 0o440)
+                visudo_check = subprocess.run(
+                    ["visudo", "-cf", str(sudoers_path)], capture_output=True, text=True, timeout=10,
+                )
+                if visudo_check.returncode != 0:
+                    log.error("emergency sudoers-fil ugyldig, fjerner: %s", visudo_check.stderr.strip())
+                    sudoers_path.unlink(missing_ok=True)
+
+            # 2026-08-25 (live, Peter's own login attempt): the log dir tree
+            # above is created by this agent, which runs as root — root
+            # bypasses DAC permission checks, so the 0700-root-owned
+            # directories looked fine from here but were completely
+            # unwritable by breakglass_shell_wrapper.sh, which runs AS
+            # "emergency" (an unprivileged login shell), not as root. `script`
+            # and the event-append both hit Permission denied before a shell
+            # was ever handed back, closing the SSH connection immediately
+            # after a successful password auth. Chowning the tree to
+            # "emergency" fixes this while keeping mode 0700 — root still has
+            # full access regardless of ownership, so confidentiality from
+            # every other account on the box is unchanged.
+            self._chown_to_emergency(
+                self.BREAKGLASS_LOG_DIR,
+                self.BREAKGLASS_LOG_DIR / "sessions",
+                self.BREAKGLASS_EVENTS_PATH,
+            )
+
+            if not self.SSHD_CONFIG_PATH.exists():
+                return
+            original = self.SSHD_CONFIG_PATH.read_text(encoding="utf-8")
+            match_block = "\nMatch User emergency\n    PasswordAuthentication yes\n"
+            if "Match User emergency" in original:
+                return
+            self._validate_and_apply_sshd_config(
+                original.rstrip("\n") + "\n" + match_block,
+                "sshd_config selv-repareret: Match-blok for emergency tilføjet — "
+                "break-glass password-login er nu muligt",
+            )
+        except Exception as exc:
+            log.warning("emergency break-glass selv-reparation fejlede: %s", exc)
+
+    def _apply_break_glass_password(self, entries: list[dict]) -> list[dict]:
+        """Apply headend-declared break-glass password(s) via chpasswd, and
+        return confirmation entries (username + sha256 of the password that
+        was actually applied) for the next sync's diagnostics report —
+        that's what flips BreakGlassAccount.applied_at server-side, so a
+        checkout never shows a password that isn't confirmed to be the one
+        actually on the device. See headend/edge_sync.py and
+        headend/cmdb.py::checkout_break_glass().
+        """
+        import hashlib
+
+        applied = []
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            username = str(entry.get("username") or "").strip()
+            password = entry.get("password")
+            if not username or not password:
+                continue
+            try:
+                result = subprocess.run(
+                    ["chpasswd"],
+                    input=f"{username}:{password}\n",
+                    capture_output=True, text=True, timeout=10,
+                )
+                if result.returncode != 0:
+                    log.warning("chpasswd fejlede for %s: %s", username, result.stderr.strip())
+                    continue
+                applied.append({
+                    "username": username,
+                    "password_sha256": hashlib.sha256(password.encode("utf-8")).hexdigest(),
+                })
+                log.warning("BREAK-GLASS: nyt password anvendt for %s", username)
+            except Exception as exc:
+                log.warning("Kunne ikke anvende break-glass password for %s: %s", username, exc)
+        return applied
+
+    def _collect_breakglass_events_for_sync(self) -> list[dict]:
+        """Pick up break-glass session events queued by
+        breakglass_shell_wrapper.sh (emergency's login shell) and fold them
+        into the same consolidated sync poll's siem_events — no separate
+        round-trip, matching _collect_siem_events_for_sync()'s shape.
+
+        These are a security audit trail, not routine diagnostics — unlike
+        that method's journal cursor (byte-precise, never loses a line),
+        a flat file needs care to avoid losing events. So: atomically rename
+        the queue to a .sending side file BEFORE reading (the wrapper script
+        always appends to the live path, so anything it writes afterwards
+        starts a fresh file rather than racing this read). Only deleted by
+        _persist_breakglass_cursor_after_sync() once the sync poll actually
+        succeeds; if it fails, the .sending file survives and gets picked
+        back up (merged with anything new) next cycle.
+        """
+        path = self.BREAKGLASS_EVENTS_PATH
+        sending_path = path.with_suffix(path.suffix + ".sending")
+        try:
+            if path.exists() and path.stat().st_size > 0:
+                if sending_path.exists():
+                    # Previous cycle's send failed — append rather than clobber.
+                    with path.open("r", encoding="utf-8") as src, \
+                         sending_path.open("a", encoding="utf-8") as dst:
+                        dst.write(src.read())
+                    path.write_text("", encoding="utf-8")
+                else:
+                    os.rename(path, sending_path)
+                    path.write_text("", encoding="utf-8")
+                    os.chmod(path, 0o600)
+                # 2026-08-25: both branches above recreate pending_events.jsonl
+                # as a brand-new, root-owned file (this process runs as root)
+                # every cycle that drains events — silently undoing
+                # _repair_emergency_breakglass_account()'s chown to
+                # "emergency" until the next repair cycle, ~1 sync interval
+                # later. Live-caught: Peter's break-glass login kept hitting
+                # Permission denied on this exact file because he was
+                # retrying inside that window.
+                self._chown_to_emergency(path)
+            if not sending_path.exists():
+                return []
+            raw = sending_path.read_text(encoding="utf-8")
+            if not raw.strip():
+                return []
+        except Exception as exc:
+            log.debug("Break-glass event-kø kunne ikke læses: %s", exc)
+            return []
+
+        events = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+            ssh_client = str(entry.get("ssh_client") or "").strip()
+            source_ip = ssh_client.split(" ")[0] if ssh_client else None
+            events.append({
+                "event_type": entry.get("event_type", "breakglass_event"),
+                "severity": entry.get("severity", "critical"),
+                "username": "emergency",
+                "source_ip": source_ip,
+                "raw_message": json.dumps(entry),
+                "occurred_at": entry.get("occurred_at"),
+            })
+        return events
+
+    def _persist_breakglass_cursor_after_sync(self) -> None:
+        """Delete the .sending side file once the sync poll that carried its
+        events actually succeeded — mirrors
+        _persist_siem_cursor_after_sync()'s "only advance on confirmed
+        send" semantics for the journal cursor."""
+        path = self.BREAKGLASS_EVENTS_PATH
+        sending_path = path.with_suffix(path.suffix + ".sending")
+        try:
+            sending_path.unlink(missing_ok=True)
+        except Exception as exc:
+            log.debug("Kunne ikke rydde break-glass .sending-fil: %s", exc)
 
     def _apply_technician_keys(self, keys: list[dict]) -> None:
         """Write the RBAC-replicated technician SSH public keys to a local
@@ -1540,6 +1792,61 @@ class EdgeAgent:
         os.replace(tmp_path, path)
         os.chmod(path, 0o644)
         log.info("Technician SSH-nøgler synkroniseret fra headend (%d aktive)", len(keys))
+
+    COMMISSIONING_KEY_COMMENT = " timelapse-headend"
+    COMMISSIONING_KEY_HOMES = ("orangepi", "pi", "ubuntu", "timelapse")
+
+    def _check_servicetekniker_login_evidence(self) -> bool:
+        """Did a servicetekniker publickey login succeed recently?
+
+        Feeds the headend-side verify-before-disable gate for the
+        commissioning key (2026-08-24, per Peter: same safety pattern as
+        MFA enrollment — prove the new access path works before the old one
+        can be turned off). A 10-minute window comfortably covers the
+        default 5-minute sync_poll_interval_minutes with margin; cheap to
+        run every cycle since it's a small bounded journal query, not a
+        full scan.
+        """
+        try:
+            result = subprocess.run(
+                ["journalctl", "-u", "ssh", "--no-pager", "--since", "10 minutes ago"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except Exception:
+            return False
+        if result.returncode != 0:
+            return False
+        return "Accepted publickey for servicetekniker" in result.stdout
+
+    def _apply_commissioning_key_disabled(self, disabled: bool) -> None:
+        """Remove the shared headend commissioning key from every candidate
+        account's authorized_keys once an admin has disabled it (only
+        offered in the UI after _check_servicetekniker_login_evidence()
+        proved personal RBAC access works — see headend/main.py). One-way:
+        does not re-inject the key, since re-enabling isn't part of the
+        2026-08-24 design and would need the raw public key value again.
+        Matches by the fixed ' timelapse-headend' comment ssh-keygen wrote
+        the key with at provisioning time — see headend/main.py's
+        _headend_key_path keygen call (-C timelapse-headend).
+        """
+        if not disabled:
+            return
+        for username in self.COMMISSIONING_KEY_HOMES:
+            path = Path(f"/home/{username}/.ssh/authorized_keys")
+            try:
+                if not path.exists():
+                    continue
+                lines = path.read_text(encoding="utf-8").splitlines()
+                kept = [ln for ln in lines if not ln.rstrip().endswith(self.COMMISSIONING_KEY_COMMENT)]
+                if len(kept) == len(lines):
+                    continue
+                tmp_path = path.with_name(f".{path.name}.tmp")
+                tmp_path.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+                os.chmod(tmp_path, 0o600)
+                os.replace(tmp_path, path)
+                log.info("Commissioning-nøgle fjernet fra %s", path)
+            except Exception as exc:
+                log.warning("Kunne ikke fjerne commissioning-nøgle fra %s: %s", path, exc)
 
     def _sync_bt_totp_config(self, bt_totp: dict) -> None:
         """Auto-synkronisér BT-TOTP secret fra headend til lokal totp-service.
@@ -2592,15 +2899,41 @@ class EdgeAgent:
         See headend/edge_sync.py and Dokumentation/HANDOVER_LOG.md 2026-08-19.
         """
         try:
+            # Self-heals used to only run once at _startup() — a transient
+            # failure (e.g. useradd hitting a locked /etc/passwd right after
+            # an update install, confirmed live 2026-08-25 on TL-C87FF9587CA0)
+            # then stuck until the NEXT full service restart, which could be
+            # days away. Both are cheap once-already-correct no-ops, so
+            # retrying every sync cycle costs nothing in the common case and
+            # actually self-heals from a one-off failure instead of needing
+            # another deploy.
+            try:
+                self._repair_sshd_authorized_keys_command_missing_u_token()
+                self._repair_emergency_breakglass_account()
+            except Exception as repair_exc:
+                log.warning("Selv-reparation (retry) fejlede: %s", repair_exc)
+
             diag_data = self._diag.collect()
             from utils.inventory import current_app_version
             diag_data["updates"] = {"app_version": current_app_version()}
+            diag_data["security"] = {
+                "servicetekniker_login_seen": self._check_servicetekniker_login_evidence(),
+                # Confirms to headend which break-glass password(s) actually
+                # got applied last cycle — that's what flips
+                # BreakGlassAccount.applied_at. Sent once, then cleared; if
+                # this specific sync fails to reach headend the account
+                # stays "pending" server-side and resends the same password
+                # next cycle, which chpasswd applies idempotently, so the
+                # confirmation naturally retries too. See _apply_break_glass_password().
+                "break_glass_applied": getattr(self, "_pending_break_glass_confirmations", []),
+            }
+            self._pending_break_glass_confirmations = []
             capture_stats = self._db.capture_stats(self._device_id)
             self._db.insert_diagnostics(self._device_id, diag_data)
             if hasattr(self, "_last_cam_diag") and self._last_cam_diag:
                 diag_data["camera"] = self._last_cam_diag
 
-            siem_events = self._collect_siem_events_for_sync()
+            siem_events = self._collect_siem_events_for_sync() + self._collect_breakglass_events_for_sync()
             inventory_payload = self._collect_inventory_if_due()
 
             ok, resp = self._api.sync(diag_data, capture_stats, siem_events, inventory_payload)
@@ -2613,6 +2946,7 @@ class EdgeAgent:
                     log.info("Inventory rapporteret til headend CMDB (via sync poll)")
                 if siem_events:
                     self._persist_siem_cursor_after_sync()
+                    self._persist_breakglass_cursor_after_sync()
                 config = resp.get("config")
                 if config:
                     self._apply_fetched_config(config)
@@ -2626,6 +2960,16 @@ class EdgeAgent:
                     # the fixing update, because this exception used to abort
                     # the rest of _run_sync() before reaching _apply_update_policy.
                     log.warning("Technician-nøgle synkronisering fejlede: %s", tech_exc)
+                try:
+                    self._apply_commissioning_key_disabled(bool(resp.get("commissioning_key_disabled")))
+                except Exception as ckey_exc:
+                    log.warning("Commissioning-nøgle deaktivering fejlede: %s", ckey_exc)
+                try:
+                    self._pending_break_glass_confirmations = self._apply_break_glass_password(
+                        resp.get("break_glass", [])
+                    )
+                except Exception as bg_exc:
+                    log.warning("Break-glass password-anvendelse fejlede: %s", bg_exc)
                 if not self._reconcile_pending_app_update():
                     self._apply_update_policy(resp)
             else:

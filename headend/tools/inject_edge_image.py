@@ -544,15 +544,45 @@ if ! grep -q "^timelapse:" /mnt/root/etc/passwd 2>/dev/null; then
     mkdir -p /mnt/root/home/timelapse
 fi
 
+# ── Emergency-bruger (break-glass, password-baseret, 2026-08-25) ──────────────
+# Password leveres af Headend via BreakGlassAccount-checkout + den konsoliderede
+# sync poll (headend/edge_sync.py "break_glass" felt, edge/agent.py::
+# _apply_break_glass_password) — samme selvhelbredende mønster som denne fil
+# ikke selv genkører for allerede-provisionerede enheder, se
+# edge/agent.py::_repair_emergency_breakglass_account() for den vej. UID 1002
+# reserveres her for konsistens med de to eksisterende live-enheder.
+if ! grep -q "^emergency:" /mnt/root/etc/passwd 2>/dev/null; then
+    echo "[inject] Opretter emergency (break-glass) bruger..."
+    echo "emergency:x:1002:1002:TimeLapse Pro break-glass emergency access:/home/emergency:/opt/timelapse/edge/scripts/breakglass_shell_wrapper.sh" \
+        >> /mnt/root/etc/passwd
+    echo "emergency:!:1002:" >> /mnt/root/etc/group
+    mkdir -p /mnt/root/home/emergency
+    # Password sættes IKKE her — leveres af Headend ved første checkout via
+    # den normale sync-kanal. Kontoen findes, men er login-uduelig indtil da.
+    if [ -f /mnt/root/etc/shadow ]; then
+        sed -i '/^emergency:/d' /mnt/root/etc/shadow
+        echo "emergency:!:19000:0:99999:7:::" >> /mnt/root/etc/shadow
+    fi
+    # Fuld, ubegrænset sudo med vilje (Peter, 2026-08-05: "Break-The-Glass
+    # virkelig er hvad ordet siger. Ingen begrænsninger"). Kompenserende
+    # kontrol er fuld session-optagelse (breakglass_shell_wrapper.sh), ikke
+    # adgangsbegrænsning.
+    mkdir -p /mnt/root/etc/sudoers.d
+    cat > /mnt/root/etc/sudoers.d/timelapse-breakglass << 'SUDOERS_EOF'
+emergency ALL=(ALL) NOPASSWD:ALL
+SUDOERS_EOF
+    chmod 440 /mnt/root/etc/sudoers.d/timelapse-breakglass
+    mkdir -p /mnt/root/var/log.hdd/timelapse/breakglass/sessions
+    : > /mnt/root/var/log.hdd/timelapse/breakglass/pending_events.jsonl
+fi
+
 # ── Servicetekniker-bruger (RBAC-scopede tekniker-nøgler, 2026-08-19/21) ───────
 # Ingen lokal password — al adgang sker via sshd's AuthorizedKeysCommand
 # (edge/scripts/technician_authorized_keys.py), der dynamisk resolver hvilke
 # personlige nøgler der er gyldige for denne enhed lige nu. Se
-# Dokumentation/HANDOVER_LOG.md 2026-08-19/21. IKKE break-glass — det er en
-# separat konto (emergency), med sit eget password-baserede flow. UID 1002 er
-# allerede i brug af "emergency" på begge live-enheder i dag (manuelt
-# provisioneret, ingen kode gør det endnu — se BreakGlassAccount's TODO) —
-# find derfor et reelt ledigt UID fremfor at antage 1002 er frit.
+# Dokumentation/HANDOVER_LOG.md 2026-08-19/21. IKKE break-glass — det er den
+# separate emergency-konto ovenfor. UID 1002 er brugt af emergency; find et
+# reelt ledigt UID for servicetekniker fremfor at antage 1003 er frit.
 if ! grep -q "^servicetekniker:" /mnt/root/etc/passwd 2>/dev/null; then
     echo "[inject] Opretter servicetekniker bruger..."
     SVCTECH_UID=1003
@@ -830,6 +860,17 @@ Match User servicetekniker
     PasswordAuthentication no
 SSHD_MATCH_EOF
         echo "[inject]   sshd Match-blok for servicetekniker tilføjet"
+    fi
+
+    # Emergency: password-baseret break-glass — global PasswordAuthentication
+    # no ovenfor gælder ikke her, kun for denne ene konto.
+    if ! grep -q "^Match User emergency$" "$SSHD_CONFIG" 2>/dev/null; then
+        cat >> "$SSHD_CONFIG" << 'SSHD_MATCH_EOF'
+
+Match User emergency
+    PasswordAuthentication yes
+SSHD_MATCH_EOF
+        echo "[inject]   sshd Match-blok for emergency tilføjet"
     fi
 fi
 

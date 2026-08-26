@@ -6,7 +6,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, Terminal, RefreshCw, ChevronDown, ChevronRight,
-  Wifi, WifiOff, Clock, Activity, Copy, CheckCircle, KeyRound
+  Wifi, WifiOff, Clock, Activity, Copy, CheckCircle, KeyRound, ShieldAlert, ShieldCheck
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { SshTerminalModal } from '../components/SshTerminalModal'
@@ -29,6 +29,8 @@ interface ActiveTunnel {
   ssh_user?: string
   ssh_identity_path?: string
   ssh_command?: string
+  device_ip?: string | null
+  servicetekniker_command?: string | null
   terminal?: {
     allowed: boolean
     reason?: string
@@ -146,6 +148,81 @@ function TunnelLog({ deviceId }: { deviceId: string }) {
               </tbody>
             </table>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface CommissioningKeyStatus {
+  disabled: boolean
+  disabled_at: string | null
+  disabled_by: string | null
+  servicetekniker_verified_at: string | null
+  can_disable: boolean
+}
+
+function CommissioningKeyStatus({ deviceId }: { deviceId: string }) {
+  const [status, setStatus]     = useState<CommissioningKeyStatus | null>(null)
+  const [busy, setBusy]         = useState(false)
+  const [confirming, setConfirming] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await api(`/api/admin/devices/${deviceId}/commissioning-key`))
+    } catch { /* ignorér */ }
+  }, [deviceId])
+
+  useEffect(() => { load() }, [load])
+
+  async function disable() {
+    setBusy(true)
+    try {
+      setStatus(await api(`/api/admin/devices/${deviceId}/commissioning-key/disable`, { method: 'POST' }))
+      setConfirming(false)
+    } catch { /* fejl vises via can_disable/disabled forbliver uændret */ }
+    finally { setBusy(false) }
+  }
+
+  if (!status || status.disabled) {
+    return status?.disabled ? (
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-green-600">
+        <ShieldCheck className="w-3.5 h-3.5" />
+        Commissioning-nøgle deaktiveret{status.disabled_by ? ` af ${status.disabled_by}` : ''}{status.disabled_at ? ` · ${fmt(status.disabled_at)}` : ''}
+      </p>
+    ) : null
+  }
+
+  return (
+    <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700">
+        <ShieldAlert className="w-3.5 h-3.5" />
+        Commissioning-nøgle er stadig aktiveret på denne enhed
+      </p>
+      <p className="mt-1 text-xs text-amber-600">
+        {status.servicetekniker_verified_at
+          ? `Personlig servicetekniker-adgang bekræftet ${fmt(status.servicetekniker_verified_at)} — kan nu deaktiveres.`
+          : 'Log ind som servicetekniker med din egen nøgle mindst én gang, før commissioning-nøglen kan deaktiveres.'}
+      </p>
+      {!confirming ? (
+        <button
+          onClick={() => setConfirming(true)}
+          disabled={!status.can_disable}
+          className="mt-2 px-3 py-1.5 rounded-md text-xs font-medium border border-amber-300 text-amber-700 hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          Deaktivér commissioning-nøgle
+        </button>
+      ) : (
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-xs text-amber-700">Sikker? Dette fjerner den delte nøgle fra enheden permanent.</span>
+          <button onClick={disable} disabled={busy}
+            className="px-2.5 py-1 rounded-md text-xs font-medium bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50">
+            {busy ? 'Deaktiverer…' : 'Ja, deaktivér'}
+          </button>
+          <button onClick={() => setConfirming(false)} disabled={busy}
+            className="px-2.5 py-1 rounded-md text-xs font-medium border border-gray-200 text-gray-500 hover:bg-gray-50">
+            Annullér
+          </button>
         </div>
       )}
     </div>
@@ -271,6 +348,21 @@ export function SshTunnelPage() {
                   Browserterminal er deaktiveret: {t.terminal?.reason ?? 'SSH host identity er ikke trusted/verified'}
                 </p>
               )}
+              {t.servicetekniker_command && (
+                <div className="mt-3">
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">
+                    Login som servicetekniker (direkte, egen nøgle — kræver samme netværk som enheden)
+                  </p>
+                  <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between gap-3">
+                    <code className="text-xs text-sky-300 font-mono break-all">{t.servicetekniker_command}</code>
+                    <CopyBtn text={t.servicetekniker_command} />
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    Erstat <code className="font-mono">&lt;din-private-nøgle&gt;</code> med stien til din egen nøglefil — den kan headend ikke kende, da din private nøgle aldrig sendes til serveren.
+                  </p>
+                </div>
+              )}
+              <CommissioningKeyStatus deviceId={t.device_id} />
               <TunnelLog deviceId={t.device_id} />
             </div>
           ))}

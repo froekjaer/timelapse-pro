@@ -129,6 +129,7 @@ def test_provisioning_sshd_match_block_passes_username_token():
 def _make_agent_with_sshd_path(tmp_path):
     agent = _make_agent()
     agent.SSHD_CONFIG_PATH = tmp_path / "sshd_config"
+    agent.AUTHORIZED_TECHNICIANS_PATH = tmp_path / "authorized_technicians.json"
     return agent
 
 

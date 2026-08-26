@@ -121,6 +121,11 @@ class Device(Base):
     hardware_model    = Column(String(50))    # "rpi4", "orangepi4pro", "rpi5", "jetson-orin-nano", …
     enrollment_state  = Column(String(20), default="active")  # "unassigned" | "active"
     ssh_pubkey        = Column(Text)          # ed25519 public key genereret ved first-boot
+    # ── Commissioning-key disable lifecycle (2026-08-24) ─────────────────
+    commissioning_key_disabled    = Column(Boolean, default=False)
+    commissioning_key_disabled_at = Column(DateTime)
+    commissioning_key_disabled_by = Column(String(100))
+    servicetekniker_verified_at   = Column(DateTime)
 
 
 class Capture(Base):
@@ -1183,6 +1188,15 @@ class BreakGlassAccount(Base):
     rotated_at      = Column(DateTime)      # tidspunkt for seneste rotation
     expires_at      = Column(DateTime)
     # Udløb — headend advarer 7 dage før. None = udløber ikke.
+
+    # 2026-08-25: leverings-bekræftelse for password_enc's AKTUELLE værdi.
+    # None = enheden har endnu ikke bekræftet at have anvendt det via
+    # chpasswd (enten helt nyt password, eller en rotation der endnu ikke
+    # er nået enheden på næste sync). Sat af edge_sync.py når Edge
+    # rapporterer et password_sha256-match. checkout_break_glass() må
+    # ALDRIG rotere password_enc uden at have vist den AKTUELLE (evt.
+    # stadig ubekræftede) værdi først — se cmdb.py.
+    applied_at      = Column(DateTime)
 
     # ── Audit ────────────────────────────────────────────────────────────
     checkout_count  = Column(Integer, default=0)

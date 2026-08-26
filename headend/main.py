@@ -110,6 +110,7 @@ from cmdb import router as cmdb_router, report_inventory as _cmdb_report_invento
 from edge_sync import router as edge_sync_router
 from local_access import router as local_access_router
 from technician_keys import router as technician_keys_router
+from commissioning_key import router as commissioning_key_router
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
@@ -441,6 +442,11 @@ def startup():
     migrate_user_ssh_keys_table(_db_engine_field_role)
     from technician_keys import drop_orphaned_device_credential_columns
     drop_orphaned_device_credential_columns(_db_engine_field_role)
+
+    from commissioning_key import migrate_commissioning_key_columns
+    migrate_commissioning_key_columns(_db_engine_field_role)
+    from cmdb import migrate_break_glass_applied_at_column as _mbgc
+    _mbgc(_db_engine_field_role)
 
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:
@@ -5117,6 +5123,8 @@ def ssh_tunnel_active(
         ORDER BY s.event_at DESC
     """)).fetchall()
 
+    device_ips = {d.device_id: d.ip_address for d in db.query(Device).filter(Device.device_id.in_([r[0] for r in rows])).all()}
+
     return [
         {
             "device_id":   r[0],
@@ -5127,6 +5135,14 @@ def ssh_tunnel_active(
             "ssh_identity_path": os.getenv("TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY", "~/.ssh/timelapse_headend_ed25519"),
             "ssh_command": f"ssh -p {r[1]} -i {os.getenv('TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY', '~/.ssh/timelapse_headend_ed25519')} orangepi@localhost",
             "terminal": terminal_trust_status(db, r[0]),
+            # Direct LAN servicetekniker login template — separate from the
+            # orangepi/tunnel path above; the operator's private key never
+            # touches headend, so this is a command to run themselves.
+            "device_ip": device_ips.get(r[0]),
+            "servicetekniker_command": (
+                f"ssh -i <din-private-nøgle> servicetekniker@{device_ips[r[0]]}"
+                if device_ips.get(r[0]) else None
+            ),
         }
         for r in rows
     ]
@@ -11647,6 +11663,7 @@ app.include_router(cmdb_router, prefix="/api/cmdb")
 app.include_router(edge_sync_router, prefix="/api/edge")
 app.include_router(local_access_router, prefix="/api/admin")
 app.include_router(technician_keys_router, prefix="/api/admin")
+app.include_router(commissioning_key_router, prefix="/api/admin")
 app.include_router(itim_router, prefix="/api/itim")
 app.include_router(settings_router, dependencies=[require_role("admin")])
 app.include_router(redaction_router)
