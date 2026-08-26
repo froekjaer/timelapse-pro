@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Building2, MapPin, Camera, Save, Trash2, ChevronRight,
          CheckCircle, Beaker, Image, PlusCircle } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -662,14 +663,18 @@ export function CameraPage() {
               value={cameraName} onChange={e => setCameraName(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Kamera index</label>
+            <label className="text-xs text-gray-400 flex items-center gap-1 mb-1">Kamera index
+              <InfoTooltip label="Kamera index" text={'Fysisk node-index på Edge-enheden (0–7).\nBruges til at koble denne lokation til den rigtige fysiske kameraport.\nKamera-konfigurationen gemmes på lokationen, ikke på indexet.'} />
+            </label>
             <input type="number" min={0} max={7} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={cameraIndex} onChange={e => setCameraIndex(parseInt(e.target.value) || 0)} />
             <p className="text-xs text-gray-300 mt-1">Fysisk node-index. Kamera-config gemmes på lokationen.</p>
           </div>
           {cameraLocation?.id ? (
             <div>
-              <label className="text-xs text-gray-400 block mb-1">Retention (dage)</label>
+              <label className="text-xs text-gray-400 flex items-center gap-1 mb-1">Retention (dage)
+                <InfoTooltip label="Retention" text={'Antal dage billeder opbevares før automatisk sletning (GDPR).\nStandard er 365 dage.\nSæt til 99999 for at beholde billederne for altid.'} />
+              </label>
               <input type="number" min={1} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                 value={retentionDays} onChange={e => setRetentionDays(parseInt(e.target.value) || 99999)} />
               <p className="text-xs text-gray-300 mt-1">Antal dage billeder opbevares før automatisk sletning (GDPR)</p>
@@ -681,12 +686,16 @@ export function CameraPage() {
             </div>
           )}
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Relay GPIO (kamera)</label>
+            <label className="text-xs text-gray-400 flex items-center gap-1 mb-1">Relay GPIO (kamera)
+              <InfoTooltip label="Relay GPIO (kamera)" text={'GPIO-pin på Edge-enheden der styrer kameraets strømrelæ.\nBruges til at genstarte et hængt kamera automatisk.\nStandard er 356 — ændr kun hvis hardwaren er kablet anderledes.'} />
+            </label>
             <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               value={relayCamera} onChange={e => setRelayCamera(parseInt(e.target.value) || 356)} />
           </div>
           <div>
-            <label className="text-xs text-gray-400 block mb-1">Relay GPIO (modem)</label>
+            <label className="text-xs text-gray-400 flex items-center gap-1 mb-1">Relay GPIO (modem)
+              <InfoTooltip label="Relay GPIO (modem)" text={'GPIO-pin der styrer 4G-modemmets strømrelæ.\nBruges til at genstarte modemet hvis forbindelsen falder.\nStandard er 361 — ændr kun hvis hardwaren er kablet anderledes.'} />
+            </label>
             <input type="number" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
               value={relayModem} onChange={e => setRelayModem(parseInt(e.target.value) || 361)} />
           </div>
@@ -728,7 +737,9 @@ export function CameraPage() {
       )}
       {driftData && !driftLoading && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 mb-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-1">Drift-analyse</h2>
+          <h2 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-1">Drift-analyse
+            <InfoTooltip label="Drift-analyse" text={'Overvåger om kameraet langsomt mister kalibrering.\nZ-score viser hvor langt nyeste billeder ligger fra baseline — over tærsklen (fx 2.0) markeres drift.\n✓ = ok, ⚠️ = mistænkt drift, ○ = ikke nok data endnu.'} />
+          </h2>
           <p className="text-xs text-gray-400 mb-4">
             Opdager om kameraet glider ud af kalibrering over tid (fokus, eksponering, hvidbalance).
             Sammenligner nyeste billeder med ældre baseline — kun hvis nok data er tilgængeligt.
@@ -784,9 +795,9 @@ export function CameraPage() {
               return (
                 <div key={param.key}>
                   <div className="flex items-center gap-2 mb-1">
-                    <label className="text-xs text-gray-500 font-medium" title={param.tooltip}>{param.label}</label>
+                    <label className="text-xs text-gray-500 font-medium">{param.label}</label>
                     {param.tooltip && (
-                      <span className="text-xs text-gray-400 cursor-help" title={param.tooltip}>ⓘ</span>
+                      <InfoTooltip text={param.tooltip} label={param.label} />
                     )}
                     {param.unit && <span className="text-xs text-gray-300">{param.unit}</span>}
                     {val && <span className="text-xs text-sky-500 font-medium">● Override aktiv</span>}
@@ -817,7 +828,9 @@ export function CameraPage() {
         <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h3 className="text-sm font-semibold text-gray-700">BT PAN TOTP</h3>
+              <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1">BT PAN TOTP
+                <InfoTooltip label="BT PAN TOTP" text={'Engangskode (TOTP) til lokal adgang via Bluetooth når kameraet er offline.\nScan QR-koden i en authenticator-app for at få login-koder.\nNøglen arves fra Global → Kunde → Site → Kamera — farven viser hvilket lag den kommer fra.'} />
+              </h3>
               <p className="text-xs text-gray-400">QR-kode til lokal management adgang via Bluetooth</p>
             </div>
             <div className="flex gap-2">

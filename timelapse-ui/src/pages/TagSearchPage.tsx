@@ -12,6 +12,7 @@ import { getApiUrl } from '../api/client'
 import { Lightbox } from './DevicePage'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
+import { InfoTooltip } from '../components/InfoTooltip'
 import type { Capture } from '../types'
 
 function api(path: string, opts?: RequestInit) {
@@ -440,13 +441,17 @@ export function TagSearchPage() {
         {/* QA MODE */}
         {mode === 'qa' && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div><label className="text-xs font-medium text-gray-600 block mb-1.5">QA årsag</label>
+            <div><label className="text-xs font-medium text-gray-600 flex items-center gap-1 mb-1.5">QA årsag
+              <InfoTooltip label="QA årsag" text={'Hvorfor billedet fejlede kvalitetskontrollen — fx sløring, mørke eller kamerafejl.\nVælg en eller flere årsager for at finde billeder med netop de problemer.'} />
+            </label>
               <MultiSelect label="årsager" options={QA_CAUSES} selected={qaCauses} onChange={setQaCauses}/></div>
             <div><label className="text-xs font-medium text-gray-600 block mb-1.5">Anomali</label>
               <MultiSelect label="status" options={[{value:'true',label:'⚠️ Er anomali'},{value:'false',label:'✓ Normal'}]} selected={qaAnomaly} onChange={setQaAnomaly}/></div>
             <div><label className="text-xs font-medium text-gray-600 block mb-1.5">Alarm</label>
               <MultiSelect label="alarm" options={[{value:'true',label:'🚨 Alarm udløst'},{value:'false',label:'Ingen alarm'}]} selected={qaAlarm} onChange={setQaAlarm}/></div>
-            <div><label className="text-xs font-medium text-gray-600 block mb-1.5">Min. konfidence</label>
+            <div><label className="text-xs font-medium text-gray-600 flex items-center gap-1 mb-1.5">Min. konfidence
+              <InfoTooltip label="Min. konfidence" text={'Filtrer AI-resultater efter sikkerhedsscore (0–1).\nFx 0.7 viser kun analyser hvor AI\'en er mindst 70% sikker.\nTomt felt = alle resultater medtages.'} />
+            </label>
               <input type="number" min="0" max="1" step="0.05" className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm" placeholder="f.eks. 0.7" value={qaMinConf} onChange={e=>setQaMinConf(e.target.value)}/></div>
           </div>
         )}

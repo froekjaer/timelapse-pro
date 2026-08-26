@@ -14,6 +14,7 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 interface HealthTile {
@@ -263,7 +264,9 @@ export default function DriftPage() {
       </section>
 
       <details className="border border-slate-200 bg-white rounded-lg p-4">
-        <summary className="cursor-pointer text-sm font-semibold text-slate-800">Billedadgang (GDPR)</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-slate-800"><span className="inline-flex items-center gap-1">Billedadgang (GDPR)
+          <InfoTooltip label="Billedadgang (GDPR)" text={'Søg i hvem der har set eller hentet et bestemt billede.\nBruges til GDPR-dokumentation og intern kontrol.\nThumbnailvisninger deduplikeres i ti minutter, så loggen ikke fyldes af gentagne visninger.'} />
+        </span></summary>
         <p className="text-xs text-slate-500 mt-1">Søg i hvem der har set eller hentet et bestemt billede. Thumbnailvisninger deduplikeres i ti minutter.</p>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mt-3">
           <input aria-label="Bruger" placeholder="Bruger" value={accessFilters.username} onChange={e => setAccessFilters(v => ({...v, username: e.target.value}))} className="text-xs border border-slate-200 rounded px-2 py-1.5" />
@@ -293,7 +296,9 @@ export default function DriftPage() {
       </details>
 
       <details className="border border-slate-200 bg-white rounded-lg p-4">
-        <summary className="cursor-pointer text-sm font-semibold text-slate-800">Alarmregler &amp; notifikationer</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-slate-800"><span className="inline-flex items-center gap-1">Alarmregler &amp; notifikationer
+          <InfoTooltip label="Alarmregler" text={'Regler der udløser alarm når en metrik passerer en tærskel, fx diskforbrug eller offline-tid.\nAktiv = reglen overvåges. Send = der sendes mail/SMS/Teams ved alarm og recovery.\nKanalerne opsættes under Notifikationsopsætning.'} />
+        </span></summary>
         <div className="flex items-center justify-between gap-3 mt-2">
           <p className="text-xs text-slate-500">Driftsalarmer bruger samme mail/SMS/Teams-kanaler som SIEM og sender både alarm og recovery.</p>
           <button onClick={() => navigate('/notifications')} className="text-xs text-sky-700 hover:text-sky-900 whitespace-nowrap">Notifikationsopsætning</button>

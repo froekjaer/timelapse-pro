@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect } from "react";
+import { InfoTooltip } from "../components/InfoTooltip";
 
 interface BoundingBox {
   x: number;
@@ -316,7 +317,9 @@ export default function RedactionPage() {
                     </div>
 
                     <div>
-                      <h3 className="font-medium mb-2">Fundet GDPR data</h3>
+                      <h3 className="font-medium mb-2 flex items-center gap-1">Fundet GDPR data
+                        <InfoTooltip label="Fundet GDPR data" text={'Antal ansigter og nummerplader AI-analysen har fundet i billedet.\nBounding boxes viser præcis hvor de ligger (x, y, bredde, højde).\nConf er AI\'ens sikkerhed (0–1) — lav sikkerhed bør kontrolleres manuelt før godkendelse.'} />
+                      </h3>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="bg-gray-50 p-3 rounded">
                           <div className="text-sm text-gray-500">Ansiger</div>

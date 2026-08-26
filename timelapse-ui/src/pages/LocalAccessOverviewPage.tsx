@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertTriangle, QrCode, RefreshCw } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 interface LocalAccessRow {
   camera_id: string
@@ -94,8 +95,12 @@ export function LocalAccessOverviewPage() {
               <th className="text-left px-4 py-2.5">Site</th>
               <th className="text-left px-4 py-2.5">Kamera</th>
               <th className="text-left px-4 py-2.5">Enhed</th>
-              <th className="text-left px-4 py-2.5">SID</th>
-              <th className="text-left px-4 py-2.5">Kilde</th>
+              <th className="text-left px-4 py-2.5"><span className="inline-flex items-center gap-1">SID
+                <InfoTooltip label="SID" text={'Session-ID for den lokale adgangs-binding.\nIdentificerer hvilken TOTP-nøgle kameraet bruger til Bluetooth-adgang.'} />
+              </span></th>
+              <th className="text-left px-4 py-2.5"><span className="inline-flex items-center gap-1">Kilde
+                <InfoTooltip label="Kilde" text={'Hvilket konfigurationslag nøglen kommer fra.\nGlobal → Kunde → Site → Kamera: mest specifikke lag vinder.\nKamera-niveau giver unik adgang pr. kamera.'} />
+              </span></th>
               <th className="text-right px-4 py-2.5"></th>
             </tr>
           </thead>

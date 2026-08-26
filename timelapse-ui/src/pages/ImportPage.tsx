@@ -4,6 +4,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { Upload, FolderOpen, Package, CheckCircle, AlertTriangle, Clock, ChevronRight, RefreshCw, Server } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 interface Customer { id: number; name: string }
 interface Site { id: string; name: string; customer_id: string }
@@ -193,7 +194,9 @@ export function ImportPage() {
               </div>
 
               <div>
-                <label className="text-xs text-gray-500 block mb-1">Kameranavn (nyt virtuelt kamera)</label>
+                <label className="text-xs text-gray-500 flex items-center gap-1 mb-1">Kameranavn (nyt virtuelt kamera)
+                  <InfoTooltip label="Virtuelt kamera" text={'Importerede billeder knyttes til et virtuelt kamera, ikke en fysisk Edge-enhed.\nDet får et genereret Device ID (TL-IMPORT-…).\nBruges fx til historiske billeder fra et kamera der ikke længere er i drift.'} />
+                </label>
                 <input
                   type="text"
                   value={cameraName}
@@ -209,7 +212,9 @@ export function ImportPage() {
               </div>
 
               <div>
-                <label className="text-xs text-gray-500 block mb-1">SFTP-bruger (destination)</label>
+                <label className="text-xs text-gray-500 flex items-center gap-1 mb-1">SFTP-bruger (destination)
+                  <InfoTooltip label="SFTP-bruger" text={'Brugeren billederne uploades som på headend via SFTP.\nSkal have skriveadgang til import-biblioteket.\nTypisk en dedikeret import-bruger — ikke en personlig konto.'} />
+                </label>
                 <input
                   type="text"
                   value={sftpUser}

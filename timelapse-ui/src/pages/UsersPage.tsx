@@ -9,6 +9,7 @@ import {
 import { startRegistration } from '@simplewebauthn/browser'
 import { getApiUrl } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 const ROLES = ['super_admin', 'admin', 'operator', 'viewer'] as const
 type Role = typeof ROLES[number]
@@ -640,7 +641,9 @@ export default function UsersPage() {
               {policy && <PwStrength pw={newPw} policy={policy} />}
             </div>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Rolle *</label>
+              <label className="text-xs text-gray-500 mb-1 flex items-center gap-1">Rolle *
+                <InfoTooltip label="Rolle" text={'Super Admin: fuld adgang inkl. brugerstyring og nøgler.\nAdmin: alle sites og konfiguration.\nOperatør: drift — ingen sletning.\nSeer: kun visning. Se også rolle-oversigten nederst på siden.'} />
+              </label>
               <select value={newRole} onChange={e => setNewRole(e.target.value as Role)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300">
                 {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}

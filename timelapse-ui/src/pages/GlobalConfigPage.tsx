@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, CheckCircle, Globe, Layers, RotateCcw, Save } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -502,7 +503,10 @@ export function GlobalConfigPage() {
       <div className="bg-white border border-gray-200 rounded-xl p-4 mb-5">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
-            <label className="text-xs text-gray-500 block mb-1">Kunde</label>
+            <label className="text-xs text-gray-500 block mb-1">
+              Kunde
+              <InfoTooltip text={'Filtrer konteksten til én kunde.\nVælges ingen, arbejder du i global kontekst der gælder for alle.\nKunde-laget kan overstyre de globale defaults.'} />
+            </label>
             <select value={selectedCustomer} onChange={e => { setSelectedCustomer(e.target.value); setSelectedSite(''); setSelectedCamera('') }}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
               <option value="">Global kontekst</option>
@@ -510,7 +514,10 @@ export function GlobalConfigPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-500 block mb-1">Site</label>
+            <label className="text-xs text-gray-500 block mb-1">
+              Site
+              <InfoTooltip text={'Filtrer yderligere til én site under den valgte kunde.\nSite-laget arver fra kunde/global og kan selv overstyre.\nTomt felt = arv fra kunde/global.'} />
+            </label>
             <select value={selectedSite} onChange={e => { setSelectedSite(e.target.value); setSelectedCamera('') }}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" disabled={!selectedCustomer && filteredSites.length === 0}>
               <option value="">Arv fra kunde/global</option>
@@ -518,7 +525,10 @@ export function GlobalConfigPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-500 block mb-1">Kamera-lokation</label>
+            <label className="text-xs text-gray-500 block mb-1">
+              Kamera-lokation
+              <InfoTooltip text={'Filtrer helt ned til ét kamera.\nKamera-laget er det mest specifikke og vinder altid ved konflikt.\nTomt felt = arv fra site/kunde/global.'} />
+            </label>
             <select value={selectedCamera} onChange={e => setSelectedCamera(e.target.value)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" disabled={!selectedSite && filteredCameras.length === 0}>
               <option value="">Arv fra site/kunde/global</option>
@@ -530,7 +540,10 @@ export function GlobalConfigPage() {
             </select>
           </div>
           <div>
-            <label className="text-xs text-gray-500 block mb-1">Rediger lag</label>
+            <label className="text-xs text-gray-500 block mb-1">
+              Rediger lag
+              <InfoTooltip text={'Hvilket lag dine ændringer gemmes på.\nHierarkiet er Global → Kunde → Site → Kamera, og det mest specifikke lag vinder.\nEn værdi sat på kamera påvirker kun det kamera — sat på global påvirker den alt, der ikke selv har en overstyring.'} />
+            </label>
             <select value={editLayer} onChange={e => setEditLayer(e.target.value as LayerKey)}
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
               <option value="global">Global</option>
@@ -598,8 +611,13 @@ export function GlobalConfigPage() {
                 const draftValue = getNested(draft, field.path)
                 return (
                   <tr key={field.path} className={field.changed_from_global ? 'bg-amber-50/30' : ''}>
-                    <td className="px-4 py-3 align-top min-w-[200px] max-w-[240px]" title={def?.tooltip ?? 'Dynamisk parameter uden beskrivelse'}>
-                      <div className="font-medium text-gray-800 break-words">{def?.label ?? field.key}</div>
+                    <td className="px-4 py-3 align-top min-w-[200px] max-w-[240px]">
+                      <div className="font-medium text-gray-800 break-words">
+                        {def?.label ?? field.key}
+                        {def?.tooltip
+                          ? <InfoTooltip text={def.tooltip} label={`Forklaring af ${def.label}`} />
+                          : <InfoTooltip text={'Dynamisk parameter uden foruddefineret beskrivelse.\nDen er oprettet direkte i konfigurationen og arver/sættes som de øvrige parametre.'} label={`Forklaring af ${field.key}`} />}
+                      </div>
                       <div className="text-[11px] text-gray-400 font-mono break-all">{field.path}</div>
                       {!def && <div className="text-[11px] text-amber-600 mt-1">Dynamisk parameter</div>}
                     </td>

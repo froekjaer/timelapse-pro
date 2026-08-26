@@ -23,6 +23,7 @@ import { getApiUrl, pathSegment } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
 import { VirtualImageGrid } from '../components/VirtualImageGrid'
 import { Lightbox } from './DevicePage'
+import { InfoTooltip } from '../components/InfoTooltip'
 import type { Capture } from '../types'
 
 const apiCall = async (path: string, options?: RequestInit) => {
@@ -376,7 +377,9 @@ export default function TimelapseVideoPage() {
                 Kun godkendte
               </label>
               <div className="flex-1" />
-              <label className="text-xs text-white/40">Min blur</label>
+              <label className="text-xs text-white/40 flex items-center gap-1">Min blur
+                <InfoTooltip label="Min blur" text={'Minimum skarphedsscore for at et billede medtages i videoen.\nHøjere værdi = flere slørede billeder sorteres fra.\n0 = alle billeder medtages uanset skarphed.'} />
+              </label>
               <input type="number" value={settings.min_blur} min={0} max={1000}
                 onChange={e => setSettings(s => ({...s, min_blur: Number(e.target.value)}))}
                 className="w-20 bg-gray-800 border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-right" />
@@ -465,7 +468,9 @@ export default function TimelapseVideoPage() {
 
                 {/* Lysstyrke filter */}
                 <div>
-                  <label className="text-xs text-white/40 block mb-1.5">Lysstyrke filter</label>
+                  <label className="text-xs text-white/40 flex items-center gap-1 mb-1.5">Lysstyrke filter
+                    <InfoTooltip label="Lysstyrke filter" text={'Medtag kun billeder hvis gennemsnitlige lysstyrke ligger mellem Min og Max (0–255).\nBruges til at fjerne fx mørke natbilleder eller overeksponerede billeder fra videoen.'} />
+                  </label>
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-white/30 w-6">Min</span>
@@ -486,7 +491,9 @@ export default function TimelapseVideoPage() {
 
                 {/* Dag/nat filter */}
                 <div>
-                  <label className="text-xs text-white/40 block mb-1.5">Dag / nat filter</label>
+                  <label className="text-xs text-white/40 flex items-center gap-1 mb-1.5">Dag / nat filter
+                    <InfoTooltip label="Dag / nat filter" text={'Begræns videoen til billeder taget i dagslys eller om natten.\nBaseret på solopgang/solnedgang beregnet fra kameraets GPS-position.'} />
+                  </label>
                   <div className="flex gap-1.5">
                     {([['all','Alle'],['day','☀️ Kun dag'],['night','🌙 Kun nat']] as const).map(([v,l]) => (
                       <button key={v} onClick={() => setSettings(s => ({...s, day_night: v}))}
@@ -499,7 +506,9 @@ export default function TimelapseVideoPage() {
 
                 {/* Fade */}
                 <div>
-                  <label className="text-xs text-white/40 block mb-1">Fade in/ud (frames)</label>
+                  <label className="text-xs text-white/40 flex items-center gap-1 mb-1">Fade in/ud (frames)
+                    <InfoTooltip label="Fade in/ud" text={'Antal frames videoen toner ind fra sort i starten og ud til sort i slutningen.\nVed 25 FPS giver 25 frames et fade på 1 sekund.\n0 = ingen fade.'} />
+                  </label>
                   <div className="flex gap-2 items-center">
                     <input type="range" min={0} max={60} step={5} value={settings.fade_frames}
                       onChange={e => setSettings(s => ({...s, fade_frames: Number(e.target.value)}))}
@@ -510,7 +519,9 @@ export default function TimelapseVideoPage() {
 
                 {/* Ken Burns */}
                 <div>
-                  <label className="text-xs text-white/40 block mb-1.5">Ken Burns effekt</label>
+                  <label className="text-xs text-white/40 flex items-center gap-1 mb-1.5">Ken Burns effekt
+                    <InfoTooltip label="Ken Burns effekt" text={'Langsom zoom-bevægelse hen over videoen der giver liv i stillbillederne.\nZoom ind: starter bredt og zoomer mod centrum.\nZoom ud: starter tæt og zoomer ud.'} />
+                  </label>
                   <div className="flex gap-1.5">
                     {([['none','Ingen'],['zoom_in','Zoom ind'],['zoom_out','Zoom ud']] as const).map(([v,l]) => (
                       <button key={v} onClick={() => setSettings(s => ({...s, ken_burns: v}))}

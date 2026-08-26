@@ -5,6 +5,8 @@
 **Kilde:** Udledt direkte af koden (`timelapse-ui/src/pages/`, `Navbar.tsx`) på `main @ c130fc9` — beskrivelserne matcher den faktiske UI.
 **Roller:** Alle sider i denne guide kræver `admin` eller `super_admin` (Brugere kræver `super_admin`).
 
+> **Hover-hjælp i UI'en:** Alle ikke-selvforklarende felter har et ⓘ-ikon ved siden af feltnavnet. Hold musen over (eller fokusér med tastaturet) for at få en kort forklaring. Tooltip-teksterne bruger samme terminologi som denne guide.
+
 ---
 
 ## Topmenu (admin-delen)

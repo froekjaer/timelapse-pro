@@ -4,6 +4,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Brain, RefreshCw, Plus, Trash2, Check, Archive, Square, CheckSquare } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -153,6 +154,7 @@ export default function TagCleanupTab() {
           <h2 className="font-semibold text-white flex items-center gap-2">
             <Brain className="w-4 h-4 text-violet-400" />
             Tag oprydning
+            <InfoTooltip label="Tag oprydning" text={'AI grupperer tags der betyder det samme (fx "kran" og "krane").\nTræk og slip tags mellem grupper for at omgruppere.\nOpløs en gruppe for at lade tags stå hver for sig.'} />
           </h2>
           <p className="text-sm text-slate-400 mt-0.5">
             Gemini AI finder lignende tags — træk og slip for at omgruppere

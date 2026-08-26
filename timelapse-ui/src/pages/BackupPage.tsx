@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { HeadendGeneratorTab } from '../components/HeadendGeneratorTab'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}/api${path}`, {
@@ -317,7 +318,9 @@ function LocationPicker({
             </div>
           </div>
           <div className="w-20">
-            <label className="block text-xs text-sky-700 mb-1">Landekode</label>
+            <label className="flex items-center gap-1 text-xs text-sky-700 mb-1">Landekode
+              <InfoTooltip label="Landekode" text={'WiFi-landekode (ISO 2-bogstaver, fx DK).\nBestemmer hvilke kanaler og sendestyrke kameraet må bruge.\nSkal matche det land enheden står i — ellers kan WiFi være ulovligt eller ustabilt.'} />
+            </label>
             <input
               value={form.wifi_country}
               onChange={e => setForm(f => ({ ...f, wifi_country: e.target.value.toUpperCase().slice(0, 2) }))}
@@ -817,8 +820,12 @@ function HeadendDrTab(props: {
       </section>
 
       <section className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="text-sm font-semibold text-gray-800 mb-4">Off-host target</h2>
-        <label className="text-xs text-gray-400 block mb-1">NAS / backup path</label>
+        <h2 className="text-sm font-semibold text-gray-800 mb-4 flex items-center gap-1">Off-host target
+          <InfoTooltip label="Off-host target" text={'Ekstern backup-destination uden for selve headend-maskinen.\nBeskytter mod at både data OG backup går tabt ved hardwarefejl eller tyveri.'} />
+        </h2>
+        <label className="text-xs text-gray-400 flex items-center gap-1 mb-1">NAS / backup path
+          <InfoTooltip label="NAS / backup path" text={'Sti til netværksdrev (NAS) hvor backup-arkiver kopieres hen.\nFx /Volumes/backup/timelapse.\nDrevet skal være mountet på headend før backup køres.'} />
+        </label>
         <input value={props.nasPath} onChange={e => props.setNasPath(e.target.value)}
           placeholder="/Volumes/backup/timelapse"
           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" />
@@ -1067,7 +1074,9 @@ function HeadendUrlPicker({
 
   return (
     <div>
-      <label className="block text-xs text-gray-500 mb-1">Headend API URL</label>
+      <label className="flex items-center gap-1 text-xs text-gray-500 mb-1">Headend API URL
+        <InfoTooltip label="Headend API URL" text={'Adressen på headend-serverens API som den nye Edge skal kontakte.\nVælg den kendte URL eller indtast en tilpasset.\nSkal kunne nås fra enhedens netværk — ellers kan den ikke parres.'} />
+      </label>
       <select className={selCls} value={custom ? '__custom__' : (value || knownUrl || '')}
         onChange={e => {
           if (e.target.value === '__custom__') {
@@ -1441,8 +1450,9 @@ function IsoTab({
             {/* Target + mode selectors */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
               <div>
-                <label htmlFor="edge-build-target" className="text-xs text-gray-500 block mb-1">
+                <label htmlFor="edge-build-target" className="text-xs text-gray-500 flex items-center gap-1 mb-1">
                   Hardware target
+                  <InfoTooltip label="Hardware target" text={'Hvilken Edge-hardware imaget bygges til.\nFx Raspberry Pi eller Orange Pi — vælg den model enheden reelt bruger.\nForkert target giver et image der ikke kan boote.'} />
                 </label>
                 <select
                   id="edge-build-target"
@@ -1466,8 +1476,9 @@ function IsoTab({
                 </select>
               </div>
               <div>
-                <label htmlFor="edge-build-mode" className="text-xs text-gray-500 block mb-1">
+                <label htmlFor="edge-build-mode" className="text-xs text-gray-500 flex items-center gap-1 mb-1">
                   Output type
+                  <InfoTooltip label="Output type" text={'rootfs.tar.gz: hurtig bygning (~5 min), men skal flashe manuelt.\nFlashbart .img.gz: færdigt image (~20 min), skrives direkte til SD-kort med fx balenaEtcher.\nVælg flashbar hvis du vil hurtigt i gang uden tekniske trin.'} />
                 </label>
                 <select
                   id="edge-build-mode"

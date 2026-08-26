@@ -6,6 +6,8 @@
 
 > **Roller i korthed:** `viewer` kan se captures og status. `operator` kan desuden trigge handlinger på enheder. `admin`/`super_admin` har adgang til alle sider (se `MENUGUIDE_ADMIN_v1.md`). Sider markeret 🔒 kræver admin eller højere.
 
+> **Hover-hjælp i UI'en:** Alle ikke-selvforklarende felter har et ⓘ-ikon ved siden af feltnavnet. Hold musen over (eller fokusér med tastaturet) for at få en kort forklaring. Tooltip-teksterne bruger samme terminologi som denne guide.
+
 ---
 
 ## Topmenuen
