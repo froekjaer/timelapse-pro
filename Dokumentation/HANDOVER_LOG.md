@@ -29,6 +29,20 @@
 
 ## Log
 
+### Handover 2026-08-26 (nat) — fra Claude til Peter/Codex: main.py-modularisering, Fase 1.3 — password-policy + notifications + settings CRUD udtrukket (PR #151)
+
+- Baggrund: Fortsætter Fase 1 (edge disk-image #147, ai-batch #149). Denne udtrækning var planens "fold de små admin-settings-domæner sammen i én fil"-punkt.
+- Hvad er gjort: Tre spredte, ikke-sammenhængende route-klynger (password-politik, notifikations-config, generisk settings CRUD) samlet i ét nyt `headend/api/admin_settings_api.py` i stedet for tre næsten-tomme filer. Navngivet `admin_settings_api.py` (ikke `settings_api.py`) for at undgå forveksling med det allerede-udtrukne `ai/settings_api.py` (monterer på `/api/settings`, AI/Ollama-runtime-config — en helt anden sti og et andet anliggende).
+- **Bevidst IKKE lagt ind her**, selvom de oprindeligt lå i planens "små admin-settings"-mentale-bucket: `/api/admin/config-defaults` og `/api/admin/config-resolution`. Læsning af den faktiske kode afslørede dyb kobling til `_resolve_config_hierarchy`, `_merge_missing_defaults`, `_FACTORY_CONFIG_DEFAULTS` — den bredere enheds-/kunde-/site-config-resolution-maskine denne kodebase allerede har som sin egen, meget større klynge (delt med backup/retention). At flytte dem her ville have krævet enten at duplikere det maskineri eller række tilbage ind i main.py for det. De hører til den større udtrækning i stedet.
+- `require_role` fra `auth.py` på modul-scope. Den ene main.py-brede hjælpefunktion domænet stadig har brug for (`_get_setting`) er lazy-importeret ved dens ene brugssted. `main.py`'s egen `change_user_password()`-route (bliver, det er en brugeradministrations-handling, ikke en settings-side) lazy-importerer nu `_get_password_policy`/`_validate_password` fra det nye modul.
+- `headend/tests/test_c05_settings_secret_redaction.py` kaldte `main.get_settings()`/`main.update_settings()` direkte som almindelige funktioner — opdateret til at importere dem fra `api.admin_settings_api`.
+- `main.py`: 17.197 → 17.049 linjer, 226 → 219 direkte routes. Baseline sænket i samme commit.
+- **Git-mekanik-lære fra forrige entry anvendt korrekt denne gang:** HEAD blev detached IGEN (samme self-hosted-runner-problem) lige før commit — men denne gang blev det opdaget FØR push (via `git status`), rettet med `git checkout <branchnavn>` (arbejdstræet bevares på tværs af checkout), OG den pushede SHA blev eksplicit bekræftet mod den lokale commit før PR blev oprettet. Ingen fejl denne gang.
+- **Verificeret live efter deploy:** ny proces bekræftet kørende (PID 50955, startet 20:13), `/api/health` OK, alle tre flyttede route-klynger (`/api/admin/settings`, `/api/admin/password-policy`, `/api/admin/notifications`) returnerer korrekt 401 uden session.
+- Kommandoer kørt: Fuldt CI-batteri — 1144 passed, 4 skipped, 4 pre-eksisterende openpgp-fejl (urelateret). `test_route_auth_coverage.py` + `test_architecture_ratchet.py` kørt eksplicit. `gh pr create/checks/merge` (#151, squash). Live `curl` mod health + tre flyttede endpoints efter deploy.
+- Hvad mangler / næste skridt: Fase 1's sidste punkt (tjek om de inline SSH-tunnel routes er dødt kode, evt. slet dem) er ikke gjort endnu. Herefter Fase 2 (Cameras, Customers/sites/devices CRUD → cmdb.py, Compliance/GRC, Device enrollment/bootstrap, Capture/storage/thumbnails, OpenWebUI). Se plandokumentet (`/Users/peter/.claude/plans/twinkling-toasting-treehouse.md`).
+- Filer rørt: `headend/api/admin_settings_api.py` (ny), `headend/main.py`, `headend/tests/test_c05_settings_secret_redaction.py`, `tests/architecture_baseline.json`.
+
 ### Handover 2026-08-26 (nat) — fra Claude til Peter/Codex: main.py-modularisering, Fase 1.2 — Gemini Batch API udtrukket (PR #149)
 
 - Baggrund: Fortsætter Fase 1 fra samme nat (edge disk-image, PR #147). Peter var ude, bad om at fortsætte autonomt med testning undervejs.
