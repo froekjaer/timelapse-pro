@@ -1236,7 +1236,8 @@ class BreakGlassCheckoutAudit(Base):
 class AiBatchJob(Base):
     """Gemini Batch API job — bulk AI-genanalyse til ~50% af normal pris.
     Asynkront: submitted → running → succeeded|failed|cancelled|expired.
-    Polles periodisk af baggrundstråd i main.py (se _ai_batch_poller_loop).
+    Polles periodisk af baggrundstråd i api/ai_batch_api.py (se
+    _ai_batch_poller_loop).
     """
     __tablename__ = "ai_batch_jobs"
 
