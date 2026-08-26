@@ -13,6 +13,7 @@
 //   5.0.0  12-apr-2026  Sprint A, LAB route fix /lab/:deviceId
 // ═══════════════════════════════════════════════════════════════════════════
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { InfoTooltip } from '../components/InfoTooltip'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, ReferenceLine } from 'recharts'
@@ -952,7 +953,7 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <label className="text-xs text-gray-400">Kunde</label>
-              <span className="text-xs text-gray-300 cursor-help" title="Kunden der ejer enheden. Bruges til rapportering, fakturering og adgangsstyring.">ⓘ</span>
+              <InfoTooltip label="Kunde" text={'Kunden der ejer enheden.\nBruges til rapportering, fakturering og adgangsstyring.'} />
             </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
               value={identityCustomerId}
@@ -971,7 +972,7 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <label className="text-xs text-gray-400">Site</label>
-              <span className="text-xs text-gray-300 cursor-help" title="Site-lokationen hvor enheden er placeret. Typisk adresse eller bygningsnavn.">ⓘ</span>
+              <InfoTooltip label="Site" text={'Site-lokationen hvor enheden er placeret.\nTypisk en adresse eller et bygningsnavn.\nKnytter enheden til kundens hierarki.'} />
             </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
               value={identitySiteId} disabled={!identityCustomerId}
@@ -990,7 +991,7 @@ function ConfigTab({ deviceId }: { deviceId: string }) {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <label className="text-xs text-gray-400">Kameranavn</label>
-              <span className="text-xs text-gray-300 cursor-help" title="Kamera-lokationen enheden er bundet til. Bruges til identificering i rapporter og CMDB.">ⓘ</span>
+              <InfoTooltip label="Kameranavn" text={'Kamera-lokationen enheden er bundet til.\nBilleder følger lokationen — ikke den fysiske enhed.\nBruges til identificering i rapporter og CMDB.'} />
             </div>
             <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
               value={identityCameraId} disabled={!identitySiteId}

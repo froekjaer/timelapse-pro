@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -546,7 +547,9 @@ export function CMDBPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">OS / App</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Opdateringer</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Sidst set</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Break-glass</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600"><span className="inline-flex items-center gap-1">Break-glass
+                  <InfoTooltip label="Break-glass" text={'Nødadgangskonto til enheden hvis normal adgang fejler.\nKontoen er låst og skal aktivt checkes ud med dokumenteret årsag.\nAl brug logges til audit-sporet.'} />
+                </span></th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>

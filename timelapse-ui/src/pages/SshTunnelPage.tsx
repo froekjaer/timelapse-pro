@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { SshTerminalModal } from '../components/SshTerminalModal'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -238,7 +239,9 @@ export function SshTunnelPage() {
               </div>
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="bg-gray-50 rounded-lg px-3 py-2.5">
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">Remote port</p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5 flex items-center gap-1">Remote port
+                    <InfoTooltip label="Remote port" text={'Porten på headend-serveren som Edge-enhedens reverse tunnel lytter på.\nSSH til enheden sker via denne port: ssh -p <port> …\nHver enhed har sin egen unikke port.'} />
+                  </p>
                   <p className="text-sm font-mono font-semibold text-gray-800">{t.remote_port}</p>
                 </div>
                 <div className="bg-gray-50 rounded-lg px-3 py-2.5">

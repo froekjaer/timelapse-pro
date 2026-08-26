@@ -10,6 +10,7 @@ import {
   Bug, Timer
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -304,6 +305,7 @@ export function SIEMPage() {
         <div className="flex items-center gap-2 mb-3">
           <Brain className="w-4 h-4 text-sky-600" />
           <h2 className="text-sm font-semibold text-gray-800">AI SIEM-analyse</h2>
+          <InfoTooltip label="AI SIEM-analyse" text={'Stil spørgsmål til sikkerhedsloggene på almindeligt dansk.\nAI\'en søger i hændelserne og vurderer risikoniveauet.\nSvaret er en analysehjælp — verificér altid kritiske fund i rå-loggen.'} />
           {aiAnswer?.risk_level && (
             <span className="ml-auto text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">
               Risk: {aiAnswer.risk_level}
@@ -397,7 +399,9 @@ export function SIEMPage() {
             </div>
           </div>
           <div className="bg-white rounded-xl border border-gray-200 p-4">
-            <h2 className="text-sm font-semibold text-gray-800 mb-3">Aktiv risiko</h2>
+            <h2 className="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-1">Aktiv risiko
+              <InfoTooltip label="Aktiv risiko" text={'Øjeblikkelig risiko-score ud fra loghændelserne.\nBrute-force IPs er adresser med gentagne fejlede loginforsøg.\nKritiske events bør håndteres med det samme.'} />
+            </h2>
             <div className="space-y-3 text-sm">
               <RiskLine label="Kritiske events" value={critCount} tone="red" />
               <RiskLine label="Fejl" value={errorCount} tone="rose" />

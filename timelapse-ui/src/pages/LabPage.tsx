@@ -23,6 +23,7 @@ import {
   requestCameraParams, setLiveStream
 } from '../api/client'
 import type { LabPreview, CameraParam, DebugMode, CameraProfile } from '../types'
+import { InfoTooltip } from '../components/InfoTooltip'
 // // import { useWebRTC } from '../hooks/useWebRTC' // F-013B/C: Replaced with Frame Push
 
 function authFetch(url: string, opts?: RequestInit) {
@@ -226,9 +227,7 @@ function ParamRow({
           <div className="flex items-center gap-1">
             <span className="text-sm font-medium text-gray-700 truncate">{param.label}</span>
             {paramDesc && (
-              <span className="text-gray-400 hover:text-sky-600 cursor-help" title={paramDesc}>
-                <HelpCircle className="w-3.5 h-3.5" />
-              </span>
+              <InfoTooltip text={paramDesc} label={param.label} />
             )}
             {isReadonly && readonlyHint && (
               <span className="text-amber-600 hover:text-amber-700 cursor-help" title={readonlyHint}>
@@ -1158,6 +1157,7 @@ export default function LabPage() {
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
               <h2 className="font-semibold text-gray-800 flex items-center gap-2">
                 <Camera className="w-4 h-4 text-purple-500" /> Live Preview
+                <InfoTooltip label="Live Preview" text={'LAB mode giver direkte adgang til kameraets indstillinger mens du ser live billedet.\nAlle parametre til højre kan ændres og testes med det samme.\nHusk at stoppe LAB mode bagefter — den slukker automatisk efter timeout.'} />
               </h2>
               <div className="flex items-center gap-2">
                 <button onClick={() => setShowHistogram(h => !h)}

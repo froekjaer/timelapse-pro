@@ -5,6 +5,7 @@ import {
   RefreshCw, RotateCw, Server, ShieldCheck, Trash2, XCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -374,6 +375,7 @@ export default function KeyManagementPage() {
           <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-4">
             <Plus className="w-4 h-4 text-gray-500" />
             Udsted credential
+            <InfoTooltip label="Udsted credential" text={'Udsteder en ny nøgle eller et certifikat til en enhed, service eller bruger.\nScopes styrer hvad credential må bruges til (kommasepareret).\nUdløb i dage: 0 = udløber aldrig. Rotation og revocation sker fra listen til højre.'} />
           </h2>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">

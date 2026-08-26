@@ -5,6 +5,7 @@ import {
   ShieldCheck, XCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -176,7 +177,9 @@ export function ChangeTicketsPage() {
       <div className="grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
         <div className="space-y-4">
           <div className="bg-white border border-gray-200 rounded-xl p-4">
-            <label className="block text-xs font-medium text-gray-500 mb-1">PendingUpdate ID</label>
+            <label className="flex items-center gap-1 text-xs font-medium text-gray-500 mb-1">PendingUpdate ID
+              <InfoTooltip label="PendingUpdate ID" text={'ID på en ventende opdatering fra Opdateringer-siden.\nÆndringsticketen dokumenterer hvem der godkender, tester og ruller opdateringen ud.\nFind ID\'et under Opdateringer → ventende opdateringer.'} />
+            </label>
             <div className="flex gap-2">
               <input value={updateId} onChange={e => setUpdateId(e.target.value)}
                 className="min-w-0 flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm"

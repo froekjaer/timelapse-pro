@@ -12,6 +12,7 @@ import { ArrowLeft, Terminal, Radio, Wifi, Camera, Save, CheckCircle,
          Power, PowerOff, RefreshCw, ChevronDown, ChevronRight, Database,
          Zap, Shield, HardDrive, Activity } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -74,7 +75,8 @@ function Field({ label, description, unit, tooltip, children }: { label: string;
   return (
     <div className="py-3 border-b border-gray-50 last:border-0">
       <div className="flex items-center gap-2 mb-1">
-        <label className="text-xs font-medium text-gray-600" title={tooltip}>{label}</label>
+        <label className="text-xs font-medium text-gray-600">{label}</label>
+        {tooltip && <InfoTooltip text={tooltip} label={label} />}
         {unit && <span className="text-xs text-gray-300">{unit}</span>}
       </div>
       {children}
@@ -750,7 +752,9 @@ export function SystemAdminPage() {
           {multiCameraMode !== 'single' && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-medium text-gray-600">Ekstra kameraer på denne node</label>
+                <label className="text-xs font-medium text-gray-600 flex items-center gap-1">Ekstra kameraer på denne node
+                  <InfoTooltip label="Ekstra kameraer" text={'En Edge-enhed kan styre flere fysiske kameraer (multi-kamera).\nHvert kamera får sit eget index, GPIO-relæ og serienummer.\nSerienummeret findes med kommandoen gphoto2 --auto-detect på enheden.'} />
+                </label>
                 <button onClick={addNodeCamera}
                   className="text-xs text-sky-500 hover:text-sky-700 flex items-center gap-1 cursor-pointer">
                   + Tilføj kamera

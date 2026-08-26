@@ -5,6 +5,7 @@ import {
   Download, ExternalLink, Globe2, MessageSquare, RefreshCw, Search, ShieldCheck, XCircle
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
+import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -688,7 +689,9 @@ export function CompliancePage() {
           <div className="bg-white border border-gray-200 rounded-lg p-4">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
               <div>
-                <h2 className="text-sm font-semibold text-gray-900">Autoritativt GRC-register</h2>
+                <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-1">Autoritativt GRC-register
+                  <InfoTooltip label="GRC-register" text={'GRC = Governance, Risk & Compliance.\nDatabasen er den eneste sandhedskilde — rapporter og dokumenter er kontrollerede eksporter.\nFiltrer på krav, kontroller, risici, tests, fund og handlinger.'} />
+                </h2>
                 <p className="text-xs text-gray-500 mt-1">PostgreSQL er single source of truth. Dokumenter og rapporter er kontrollerede eksporter.</p>
               </div>
               <div className="flex gap-1 overflow-x-auto">
