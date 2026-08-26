@@ -35,6 +35,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database import get_db, User, UserSSHKey
+from auth import get_current_user
 
 log = logging.getLogger(__name__)
 
@@ -135,12 +136,9 @@ _ALLOWED_KEY_PREFIXES = ("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")
 
 async def _require_self_or_admin(user_id: int, request: Request, db: Session = Depends(get_db)):
     """A user may manage their own keys; admin/super_admin may manage anyone's.
-    Lazy import: main.py imports this module at load time, so a module-scope
-    import of main here would be circular. Same idiom as edge_sync.py /
-    local_access.py.
+    get_current_user comes from auth.py at module scope (2026-08-26) — auth.py
+    doesn't depend on main.py, so this is no longer a circular-import concern.
     """
-    from main import get_current_user
-
     current_user = get_current_user(request, db)
     if current_user is None:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")

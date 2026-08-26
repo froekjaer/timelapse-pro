@@ -34,6 +34,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from database import BootstrapToken, get_db
+from auth import get_current_user
 
 router = APIRouter(prefix="/api/headend/generator", tags=["Headend Generator"])
 
@@ -93,7 +94,6 @@ def _bundle_storage_dir(*, create: bool = True) -> Path:
 
 
 def _current_viewer(request: Request, db: Session = Depends(get_db)):
-    from main import get_current_user
     user = get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")

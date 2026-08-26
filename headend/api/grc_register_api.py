@@ -18,6 +18,7 @@ from database import (
     GrcComment, GrcDocument, GrcDocumentItemLink, GrcDocumentRevision, GrcEvidence,
     GrcItem, GrcLink, GrcTestRun, get_db,
 )
+from auth import get_current_user
 
 
 router = APIRouter(prefix="/api/grc/register", tags=["GRC Register"])
@@ -26,7 +27,6 @@ WRITE_ROLES = {"admin", "super_admin"}
 
 
 def _current_viewer(request: Request, db: Session = Depends(get_db)):
-    from main import get_current_user
     user = get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")

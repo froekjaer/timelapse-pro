@@ -44,6 +44,7 @@ from sqlalchemy.orm import Session
 
 from database import CustomerRiskInput, CustomerRiskProfile, Device, DeviceInventory, BreakGlassAccount, BreakGlassCheckoutAudit, PendingUpdate, get_db, now_utc
 from services.fair_risk import estimate_annual_loss
+from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
 
 log = logging.getLogger(__name__)
 
@@ -136,24 +137,19 @@ def _enforce_break_glass_policy(request: "Request | None", device_id: str, admin
 
 
 def _require_cmdb_role(*roles: str):
-    """Local RBAC bridge for this router without making cmdb.py import main.py at module load.
+    """Local RBAC bridge — keeps cmdb.py's existing `Depends(_require_cmdb_role(...))`
+    call sites unchanged (a bare callable, not a pre-wrapped Depends object like
+    auth.require_role returns) while sourcing its auth primitives from auth.py
+    at module scope (2026-08-26) instead of a lazy `from main import ...`.
 
     2026-07-03: tilføjet MFA-håndhævelse. Denne bro tjekkede tidligere KUN rolle —
-    den kaldte aldrig main._mfa_required_for_user()/_session_is_mfa_verified(), så
+    den kaldte aldrig _mfa_required_for_user()/_session_is_mfa_verified(), så
     hele CMDB-routeren (inkl. break-glass password-checkout) reelt omgik MFA-
     politikken, selvom RISK_ASSESSMENT_v10.md/GO_LIVE_CHECKLIST_v10.md markerer
     MFA som "løst" for admin/super_admin. Se
     Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.2/§2.3.
     """
     def _check(request: Request, db: Session = Depends(get_db)):
-        from main import (
-            _ROLE_HIERARCHY,
-            _mfa_required_for_user,
-            _session_is_mfa_verified,
-            _session_payload,
-            get_current_user,
-        )
-
         user = get_current_user(request, db)
         if user is None:
             raise HTTPException(status_code=401, detail="Ikke autentificeret")

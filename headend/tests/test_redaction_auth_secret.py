@@ -2,12 +2,14 @@ import redaction_api
 import inspect
 from types import SimpleNamespace
 
-import main
-
 
 def test_redaction_router_delegates_to_central_headend_auth(monkeypatch):
+    """redaction_api imports get_current_user from auth.py at module scope
+    (2026-08-26) — patch the name where redaction_api actually looks it up,
+    not main's (which is a separate binding of the same original function,
+    unaffected by patching main's copy)."""
     expected = SimpleNamespace(username="viewer")
-    monkeypatch.setattr(main, "get_current_user", lambda request, db: expected)
+    monkeypatch.setattr(redaction_api, "get_current_user", lambda request, db: expected)
 
     assert redaction_api.get_required_user(SimpleNamespace(), db=object()) is expected
 

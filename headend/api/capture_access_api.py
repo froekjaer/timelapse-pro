@@ -6,16 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from database import CaptureAccessLog, get_db
+from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
 
 
 router = APIRouter(prefix="/api/audit/capture-access", tags=["Audit"])
 
 
 def _current_viewer(request: Request, db: Session = Depends(get_db)):
-    from main import (
-        _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified,
-        _session_payload, get_current_user,
-    )
     user = get_current_user(request, db)
     if user is None:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")
