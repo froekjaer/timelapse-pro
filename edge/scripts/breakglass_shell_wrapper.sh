@@ -1,8 +1,6 @@
 #!/bin/bash
 # breakglass_shell_wrapper.sh — login shell for the "emergency" break-glass
-# account. Records the FULL session (commands AND their output, not just
-# keystrokes — output matters for judging whether an attempted action
-# actually succeeded) and announces start/end to Headend SIEM via the
+# account. Announces start/end of every session to Headend SIEM via the
 # agent's existing authenticated event-forward cycle.
 #
 # Recovered 2026-08-25 from an abandoned, never-merged branch
@@ -17,6 +15,25 @@
 # edge/agent.py::_collect_breakglass_events_for_sync(), folded into the same
 # consolidated sync poll as every other SIEM event — not a separate
 # round-trip.
+#
+# 2026-08-25 (live, Peter's real login, same night as the two log-dir
+# ownership fixes above): interactive sessions used to be wrapped in
+# `script -f -q -c "$REAL_SHELL -l" "$SESSION_LOG"` to capture a full
+# keystroke+output transcript — a second pty relayed between sshd's pty and
+# a plain login shell. That double-pty relay is what broke: the terminal
+# came up (banner visible, password auth fine), but every keystroke echoed
+# one character then scrolled many lines — classic symptom of the inner
+# pty starting with the wrong window size / echo mode, something util-linux
+# `script` doesn't reliably get right for every terminal/client combination.
+# servicetekniker's login shell is plain /bin/bash with no such relay and
+# has been confirmed working end-to-end all night. Rather than keep
+# debugging a pty relay neither of us can iterate on quickly (every attempt
+# needs a live SSH round-trip from Peter), the interactive path now runs
+# the real shell directly, with no relay — full transcript recording is
+# dropped for now in exchange for a terminal that actually works.
+# Start/end events (who, when, exit code) still go to SIEM either way, and
+# non-interactive commands (scp, `ssh emergency@host cmd`) still get their
+# command + output logged below, since that path never touched `script`.
 set -u
 
 LOG_DIR=/var/log.hdd/timelapse/breakglass
@@ -43,14 +60,13 @@ _emit_event() {
 }
 
 if [ -t 0 ]; then
-  # Interactive login — record the full session transcript.
-  _emit_event "breakglass_session_start" ",\"log_file\":\"$(basename "$SESSION_LOG")\""
-  # -f: flush output as it's written, so a crashed/killed session still
-  #     leaves a usable partial transcript for later review.
-  # -q: quiet, no "Script started/done" chatter mixed into the transcript.
-  script -f -q -c "$REAL_SHELL -l" "$SESSION_LOG"
+  # Interactive login — no pty relay (see 2026-08-25 note above), so the
+  # real shell talks directly to sshd's own pty, exactly like
+  # servicetekniker's already-working login. Start/end still logged.
+  _emit_event "breakglass_session_start" ",\"transcript\":\"disabled\""
+  "$REAL_SHELL" -l
   RC=$?
-  _emit_event "breakglass_session_end" ",\"log_file\":\"$(basename "$SESSION_LOG")\",\"exit_code\":$RC"
+  _emit_event "breakglass_session_end" ",\"exit_code\":$RC"
   exit $RC
 else
   # Non-interactive invocation (e.g. `ssh emergency@host 'command'`, legacy
