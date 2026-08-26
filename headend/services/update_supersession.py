@@ -4,7 +4,7 @@ from typing import Any
 from datetime import datetime, timezone
 
 
-_SUPERSEDED_UPDATE_STATUSES = {"pending", "approved"}
+_SUPERSEDED_UPDATE_STATUSES = {"pending", "approved", "blocked"}
 _SUPERSEDED_TARGET_STATUSES = {"pending", "queued", "approved", "authorized"}
 
 

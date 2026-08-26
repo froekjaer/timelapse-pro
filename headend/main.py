@@ -6312,7 +6312,7 @@ def _status_rank(status: str | None) -> int:
 
 
 def _update_is_matrix_candidate(update: PendingUpdate) -> bool:
-    return update.status not in {"rejected", "cancelled"}
+    return update.status not in {"rejected", "superseded", "rolled_back", "cancelled"}
 
 
 def _installed_value(inv: DeviceInventory, category_key: str) -> str | None:

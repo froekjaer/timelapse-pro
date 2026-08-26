@@ -79,6 +79,14 @@ def test_approved_candidate_target_is_superseded_with_evidence_note():
     assert target.last_report_at is not None
 
 
+def test_blocked_candidate_is_superseded_with_evidence_note():
+    blocked = SimpleNamespace(id=4, status="blocked", version="old-commit", description="Blocked older release")
+    count = supersede_pending_app_updates(Db([blocked]), Model, "TL-1", "new-commit")
+    assert count == 1
+    assert blocked.status == "superseded"
+    assert blocked.description.endswith("Superseded by signed release new-commit.")
+
+
 def test_deployed_candidate_is_preserved():
     deployed = SimpleNamespace(id=3, status="deployed", version="old-commit", description="Already deployed")
     count = supersede_pending_app_updates(Db([deployed]), Model, "TL-1", "new-commit")

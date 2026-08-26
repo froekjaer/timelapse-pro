@@ -29,6 +29,26 @@
 
 ## Log
 
+### Handover 2026-08-26 13:55 — fra Codex til Peter/Claude/Codex: update-kø hygiene og UX-afklaring
+
+- Hvad er gjort: Gennemgået update-flowet fra Dashboard (`10 ventende opdateringer`) til `/updates` før godkendelse. Verificeret mod PostgreSQL/CMDB at fire aktive blocker-kort var stale: `#150`, `#151`, `#170`, `#234`. De blev markeret `superseded` i `pending_updates`; `#234` target blev markeret `superseded`; change tickets `TL-CHG-20260824-00234` og `TL-CHG-20260807-00170` blev sat `cancelled` med hygiene-note. Ingen deployment eller device-ændring.
+- Hvad blev tilbage: Seks blokerede `application_updates` er stadig valide mod aktuel CMDB for `TL-MACMINI-HEADEND-TEST-1`: `certbot 5.6.0_1 -> 5.7.0`, `ffmpeg 8.1.1 -> 9.0.1`, `nginx 1.31.1 -> 1.31.4`, `node 26.0.0 -> 26.7.0`, `ollama 0.30.6 -> 0.32.14`, `postgresql@17 17.10 -> 17.11`. Dashboard viser nu `6 ventende opdateringer · 0 security · 0 OS · 6 app · 6 blokeret`.
+- Kodeændring: Tilføjet backend-hygiejne i `headend/cmdb.py`, så aktiv OS-observation lukkes når Edge rapporterer `0` OS updates, og stale Homebrew-komponentupdates kan lukkes når de ikke længere rapporteres. `headend/services/update_supersession.py` supersederer nu også `blocked` app-release-kandidater, ikke kun `pending`/`approved`. `headend/main.py` filtrerer nu historiske statuses (`superseded`, `rolled_back`, `rejected`, `cancelled`) ud af CMDB-matrixens aktuelle statusvalg.
+- UX-ændring: `timelapse-ui/src/pages/UpdatesPage.tsx` bruger nu `Revurder` i stedet for `Genprøv` for blokerede/rollback updates, modalens overskrift siger `Revurder opdatering`, dependency-versioner vises som versionsgap i stedet for fejlagtigt `commit ffmpeg...`, og tom `Afventer`-fane forklarer at brugeren skal tjekke `Blokeret` for sager der kræver forarbejde.
+- Verificeret: `pytest -q tests/test_os_update_governance_closure.py tests/test_update_supersession.py tests/test_update_queue_hygiene_contract.py` = 14 passed. `npm run build` = OK; kun kendte Vite/advarsler om stor bundle/dynamisk import.
+- Hvad mangler / næste skridt: De seks tilbageværende Headend-test dependency-updates skal ikke godkendes/installere før der findes signeret dependency artifact, rollback og postflight-flow. Senere UX-forbedring kan stadig tilføje en egentlig “Historik”-foldout i CMDB-matrixen, men historiske statuses bør ikke længere ligne aktuelle mangler efter deploy af denne kode.
+- Risici / pas på: Database-oprydningen ændrede kun governance-statusser, ikke software, credentials eller device state. Næste klik på en blokeret sag åbner stadig en godkendelsesdialog; brugeren skal forstå at approval kan flytte sagen videre til installer-flow når gates er opfyldt.
+
+### Handover 2026-08-26 13:32 — fra Codex til Peter/Claude/Codex: UI usecase-katalog til "tryk på alt"-acceptance
+
+- Hvad er gjort: Oprettet `Dokumentation/UI_USECASE_CATALOG_2026-08-26.md` som samlet, praktisk usecase-katalog for alle UI-funktionaliteter. Dokumentet dækker navigation, read-only visninger, CRUD, updates/change tickets, backup/restore/provisioning, retention/GDPR, CMDB/SBOM, SIEM/Drift, credentials/SSH/local access, Open WebUI/AI Ops og Edge Technician/ServiceSession flows. Hver usecase angiver forventet resultat, vigtig top-information, sikkerhed/audit og statusklasse (`READY`, `NEEDS TESTDATA`, `CONTROLLED UAT`, `BLOCKED`/`NEEDS EDGE`, `READ-ONLY PASS`).
+- Opdatering efter Peters afklaring: Kontrolleret destruktiv UAT er accepteret i testfasen, inkl. sletning af et/nogle få gamle/ældre billeder, fordi målet er at prøve hele lifecycle-flowet. Dokumentet bruger nu `CONTROLLED UAT` for flows der skal prøves med 1-3 udvalgte billeder, før/efter-state og auditkontrol.
+- Hvad mangler / næste skridt: Brug dokumentet som checklisten til fælles manuel UAT. De første oplagte produktrettelser fra gennemgangen er status-konsistens mellem Dashboard og Drift (`online`/`stale`/`offline`) samt beslutning om `/mgmt/technician` på Headend skal skjules, redirecte eller forklare Edge-lokal teknikerflade.
+- Kommandoer kørt eller skal køres: Read-only `rg`/`sed` mod eksisterende menuguider, UI-testjournal, `App.tsx` og `Navbar.tsx`; ingen tests kørt, da ændringen kun er dokumentation.
+- Forventet/faktisk output: Nyt dokument kan bruges direkte til "klik på alt"-gennemgang og senere Playwright/API-contract automation.
+- Filer rørt: `Dokumentation/UI_USECASE_CATALOG_2026-08-26.md`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Dokumentet beskriver farlige flows, men udfører ingen. Sletning, retention, credential-rotation, browserterminal, break-glass og Edge hardwarehandlinger skal fortsat testes separat med testdata, audit og rollback.
+
 ### Handover 2026-08-26 03:30 — fra Kimi til alle: ensartet hover-hjælp (ⓘ InfoTooltip) på alle UI-felter (PR #139)
 
 - Baggrund: Peter bad 2026-08-24 om at ALLE UI-sider/menuer/undermenuer gennemgås, så alle ikke-selvforklarende parametre har en relevant kort hover-hjælpetekst (mouse-over), i sammenhæng med hjælpemenuen og menuguiderne fra 2026-08-20.
