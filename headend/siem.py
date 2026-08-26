@@ -38,6 +38,7 @@ from sqlalchemy import Column, DateTime, Integer, String, Text, func, text
 from sqlalchemy.orm import Session
 
 from database import Base, Device, get_db
+from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["SIEM"])
@@ -52,21 +53,14 @@ _API_RATE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 # POST-ingest-endpoint (som accepterede events for et vilkårligt device_id uden
 # nogen form for token-tjek). Se Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.1.
 #
-# Lazy import af main (samme mønster som cmdb.py::_require_cmdb_role) for at
-# undgå cirkulær import ved modul-indlæsning.
+# Auth-primitiver hentes fra auth.py på modul-scope (2026-08-26) — ikke længere
+# en lazy import af main, siden auth.py ikke afhænger af main.py og derfor ikke
+# giver en cirkulær import ved modul-indlæsning.
 
 def _require_siem_role(*roles: str):
     """RBAC-bro til denne router — inkl. MFA-håndhævelse (modsat cmdb.py/itim.py's
     bro, som IKKE tjekker MFA, jf. §2.2 i statusgennemgangen)."""
     def _check(request: Request, db: Session = Depends(get_db)):
-        from main import (
-            _ROLE_HIERARCHY,
-            _mfa_required_for_user,
-            _session_is_mfa_verified,
-            _session_payload,
-            get_current_user,
-        )
-
         user = get_current_user(request, db)
         if user is None:
             raise HTTPException(status_code=401, detail="Ikke autentificeret")

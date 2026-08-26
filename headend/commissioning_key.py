@@ -44,6 +44,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database import Device, get_db, now_utc
+from auth import get_current_user
 
 log = logging.getLogger(__name__)
 
@@ -75,11 +76,9 @@ def migrate_commissioning_key_columns(engine) -> None:
 
 
 async def _require_admin(request: Request, db: Session = Depends(get_db)):
-    """Lazy import: main.py imports this module at load time, so a
-    module-scope import of main here would be circular. Same idiom as
-    technician_keys.py / edge_sync.py / local_access.py."""
-    from main import get_current_user
-
+    """get_current_user comes from auth.py at module scope (2026-08-26) —
+    auth.py doesn't depend on main.py, so this is no longer a circular-import
+    concern."""
     user = get_current_user(request, db)
     if user is None:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")

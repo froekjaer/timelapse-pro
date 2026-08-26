@@ -28,24 +28,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from database import get_db, Camera, Site, Customer, Device, DeviceAssignment
+from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
 
 router = APIRouter(tags=["Local Access"])
 
 
 async def _require_local_access_admin(request: Request, db: Session = Depends(get_db)):
-    """Samme rolle- og MFA-håndhævelse som main.require_role("super_admin",
-    "admin") — reviewed wrapper, ikke en separat tillidsmodel. Lazy import:
-    main.py importerer dette modul ved load, så et modul-scope-import af main
-    her ville være cirkulært. Samme idiom som edge_sync._require_edge_sync_auth.
+    """Samme rolle- og MFA-håndhævelse som auth.require_role("super_admin",
+    "admin") — reviewed wrapper, ikke en separat tillidsmodel. Auth-primitiver
+    hentes fra auth.py på modul-scope (2026-08-26) — ikke længere en lazy
+    import af main, siden auth.py ikke afhænger af main.py.
     """
-    from main import (
-        _ROLE_HIERARCHY,
-        _mfa_required_for_user,
-        _session_is_mfa_verified,
-        _session_payload,
-        get_current_user,
-    )
-
     user = get_current_user(request, db)
     if user is None:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")

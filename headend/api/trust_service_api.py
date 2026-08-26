@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import Device, get_db
+from auth import _session_is_mfa_verified, _session_payload
 from trust.dmz import SECURE_SERVICE_DMZ_SPEC
 from trust.grants import (
     GrantDenied,
@@ -75,8 +76,6 @@ def create_trust_service_router(require_role: Callable) -> APIRouter:
     ):
         # Use the actual authenticated session's AMR/MFA evidence. Never claim
         # MFA merely because the endpoint requires an admin role.
-        from main import _session_is_mfa_verified, _session_payload
-
         mfa_verified = _session_is_mfa_verified(_session_payload(request))
         tenant_id = _resolve_edge_tenant(
             db,

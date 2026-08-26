@@ -69,6 +69,7 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{_TMP_DB.name}")
 
 import database  # noqa: E402
 import main  # noqa: E402
+import auth  # noqa: E402
 
 
 @pytest.fixture()
@@ -108,26 +109,26 @@ def _make_user(session, username, role, *, is_active=True):
 
 @pytest.mark.parametrize("env", ["prod", "production", "staging"])
 def test_agent_role_blocked_in_locked_environments(monkeypatch, env):
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", env)
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", env)
     assert main._agent_role_blocked_in_this_environment("agent") is True
 
 
 @pytest.mark.parametrize("env", ["rd", "lab", "dev", "development", ""])
 def test_agent_role_not_blocked_outside_locked_environments(monkeypatch, env):
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", env)
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", env)
     assert main._agent_role_blocked_in_this_environment("agent") is False
 
 
 @pytest.mark.parametrize("role", ["viewer", "operator", "admin", "super_admin", None, ""])
 def test_non_agent_roles_never_blocked_regardless_of_environment(monkeypatch, role):
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", "prod")
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", "prod")
     assert main._agent_role_blocked_in_this_environment(role) is False
 
 
 def test_agent_role_check_is_case_and_whitespace_insensitive(monkeypatch):
     """En rolle-streng med afvigende case/whitespace (fx fra en manuel DB-rettelse
     eller en fremtidig UI-formularfejl) må ikke ved en fejl omgå spærren."""
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", "prod")
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", "prod")
     assert main._agent_role_blocked_in_this_environment(" Agent ") is True
     assert main._agent_role_blocked_in_this_environment("AGENT") is True
 
@@ -142,7 +143,7 @@ def test_get_current_user_rejects_agent_session_in_prod(monkeypatch, db_session)
     token = main._create_token({"sub": "svc-claude"})
     fake_request = _FakeRequest(cookies={main.COOKIE_NAME: token})
 
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", "prod")
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", "prod")
     result = main.get_current_user(fake_request, db_session)
 
     assert result is None
@@ -156,7 +157,7 @@ def test_get_current_user_allows_agent_session_in_rd(monkeypatch, db_session):
     token = main._create_token({"sub": "svc-claude"})
     fake_request = _FakeRequest(cookies={main.COOKIE_NAME: token})
 
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", "rd")
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", "rd")
     result = main.get_current_user(fake_request, db_session)
 
     assert result is not None
@@ -170,7 +171,7 @@ def test_get_current_user_unaffected_for_human_roles_in_prod(monkeypatch, db_ses
     token = main._create_token({"sub": "peter"})
     fake_request = _FakeRequest(cookies={main.COOKIE_NAME: token})
 
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", "prod")
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", "prod")
     result = main.get_current_user(fake_request, db_session)
 
     assert result is not None
@@ -184,7 +185,7 @@ def test_get_current_user_rejection_is_logged_critical(monkeypatch, db_session, 
     token = main._create_token({"sub": "svc-codex"})
     fake_request = _FakeRequest(cookies={main.COOKIE_NAME: token})
 
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", "staging")
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", "staging")
     with caplog.at_level(logging.CRITICAL, logger="headend"):
         main.get_current_user(fake_request, db_session)
 
@@ -203,7 +204,7 @@ def test_get_current_user_inactive_agent_still_returns_none_as_before(monkeypatc
     token = main._create_token({"sub": "old-agent"})
     fake_request = _FakeRequest(cookies={main.COOKIE_NAME: token})
 
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", "rd")
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", "rd")
     result = main.get_current_user(fake_request, db_session)
 
     assert result is None
@@ -213,7 +214,7 @@ def test_get_current_user_inactive_agent_still_returns_none_as_before(monkeypatc
 
 @pytest.mark.parametrize("env", ["prod", "production", "staging"])
 def test_startup_logs_critical_when_lockdown_active(monkeypatch, caplog, env):
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", env)
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", env)
     with caplog.at_level(logging.CRITICAL, logger="headend"):
         main._log_agent_lockdown_status()
 
@@ -225,7 +226,7 @@ def test_startup_logs_critical_when_lockdown_active(monkeypatch, caplog, env):
 
 
 def test_startup_logs_info_only_when_not_locked(monkeypatch, caplog):
-    monkeypatch.setattr(main, "TIMELAPSE_ENV", "rd")
+    monkeypatch.setattr(auth, "TIMELAPSE_ENV", "rd")
     with caplog.at_level(logging.DEBUG, logger="headend"):
         main._log_agent_lockdown_status()
 

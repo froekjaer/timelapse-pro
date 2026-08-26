@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import Capture, User, get_db
+from auth import get_current_user
 
 router = APIRouter(prefix="/api/redaction", tags=["redaction"])
 log = logging.getLogger(__name__)
@@ -45,9 +46,8 @@ _ROLE_LEVEL = {
 
 
 def get_required_user(request: Request, db: Session = Depends(get_db)) -> User:
-    """Delegate session validation to Headend's central auth implementation."""
-    from main import get_current_user
-
+    """Delegate session validation to Headend's central auth implementation
+    (auth.py, module-scope import — 2026-08-26)."""
     user = get_current_user(request, db)
     if not user:
         raise HTTPException(

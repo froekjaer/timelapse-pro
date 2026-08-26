@@ -39,6 +39,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Session
 
 from database import Base, Device, get_db
+from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["ITIM"])
@@ -792,19 +793,12 @@ def start_itim_collector() -> None:
     threading.Thread(target=loop, name="itim-collector", daemon=True).start()
 
 
-# ── RBAC-bro (uden at importere main ved modulindlæsning) ────────────────────
+# ── RBAC-bro (auth-primitiver fra auth.py på modul-scope) ────────────────────
 # 2026-07-03: tilføjet MFA-håndhævelse — se samme note i cmdb.py::_require_cmdb_role
 # og Claude_Kritisk_Statusgennemgang_2026-07-03.md §2.2.
 
 def _require_role(*roles: str):
     def _check(request: Request, db: Session = Depends(get_db)):
-        from main import (
-            _ROLE_HIERARCHY,
-            _mfa_required_for_user,
-            _session_is_mfa_verified,
-            _session_payload,
-            get_current_user,
-        )
         user = get_current_user(request, db)
         if user is None:
             raise HTTPException(status_code=401, detail="Ikke autentificeret")
