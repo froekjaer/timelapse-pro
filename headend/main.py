@@ -10554,64 +10554,9 @@ ssh -T -i /opt/timelapse/edge/ssh/tunnel_key tunnel@<headend-host>
 
 
 
-# ── Password politik ──────────────────────────────────────────────────────────
-
-def _get_password_policy(db: Session) -> dict:
-    """Hent password-politik fra settings."""
-    return {
-        "min_length":        int(_get_setting(db, "pw_min_length",        "8")),
-        "require_uppercase": _get_setting(db, "pw_require_uppercase", "false").lower() == "true",
-        "require_number":    _get_setting(db, "pw_require_number",    "false").lower() == "true",
-        "require_special":   _get_setting(db, "pw_require_special",   "false").lower() == "true",
-    }
-
-
-def _validate_password(pw: str, policy: dict) -> list[str]:
-    """Returnerer liste af fejl — tom liste = OK."""
-    errors = []
-    if len(pw) < policy["min_length"]:
-        errors.append(f"Mindst {policy['min_length']} tegn")
-    if policy["require_uppercase"] and not any(c.isupper() for c in pw):
-        errors.append("Mindst ét stort bogstav")
-    if policy["require_number"] and not any(c.isdigit() for c in pw):
-        errors.append("Mindst ét tal")
-    if policy["require_special"] and not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in pw):
-        errors.append("Mindst ét specialtegn")
-    return errors
-
-
-@app.get("/api/admin/password-policy")
-def get_password_policy(
-    _user=require_role("super_admin", "admin", "operator", "viewer"),
-    db: Session = Depends(get_db)
-):
-    """Returner gældende password-politik."""
-    return _get_password_policy(db)
-
-
-@app.put("/api/admin/password-policy")
-def update_password_policy(
-    payload: dict,
-    _user=require_role("super_admin"),
-    db: Session = Depends(get_db)
-):
-    """Opdater password-politik i settings."""
-    mapping = {
-        "min_length":        ("pw_min_length",        str),
-        "require_uppercase": ("pw_require_uppercase", lambda v: "true" if v else "false"),
-        "require_number":    ("pw_require_number",    lambda v: "true" if v else "false"),
-        "require_special":   ("pw_require_special",   lambda v: "true" if v else "false"),
-    }
-    for key, (setting_key, converter) in mapping.items():
-        if key in payload:
-            val = converter(payload[key])
-            existing = db.query(Settings).filter_by(key=setting_key).first()
-            if existing:
-                existing.value = val
-            else:
-                db.add(Settings(key=setting_key, value=val))
-    db.commit()
-    return _get_password_policy(db)
+# Password policy moved to headend/api/admin_settings_api.py (2026-08-26,
+# Phase 1 of the main.py modularization plan) — imported near the top of
+# this file, mounted below.
 
 
 
@@ -15328,106 +15273,9 @@ def qa_search(
 
     return {"total": len(results), "results": results}
 
-@app.get("/api/admin/notifications")
-def get_notifications(_user=require_role("admin"), db: Session = Depends(get_db)):
-    try:
-        from sqlalchemy import text as _t
-        row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
-        if not row:
-            return {}
-        cfg = json.loads(row[0])
-        if "email" in cfg and cfg["email"].get("password"):
-            cfg["email"]["password"] = "••••••••••••••••"
-        if "sms" in cfg and cfg["sms"].get("api_token"):
-            cfg["sms"]["api_token"] = "••••••••"
-        return cfg
-    except Exception as e:
-        return {}
-
-@app.put("/api/admin/notifications")
-def update_notifications(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
-    try:
-        from sqlalchemy import text as _t
-        row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
-        existing = json.loads(row[0]) if row else {}
-        if "email" in payload and "•" in payload["email"].get("password",""):
-            payload["email"]["password"] = existing.get("email",{}).get("password","")
-        if "sms" in payload and "•" in payload["sms"].get("api_token",""):
-            payload["sms"]["api_token"] = existing.get("sms",{}).get("api_token","")
-        value = json.dumps(payload, ensure_ascii=False, indent=2)
-        if row:
-            db.execute(_t("UPDATE settings SET value=:v WHERE key='notifications'"), {"v": value})
-        else:
-            db.execute(_t("INSERT INTO settings (key, value) VALUES ('notifications', :v)"), {"v": value})
-        db.commit()
-        return {"status": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/admin/notifications/test")
-def test_notification(payload: dict, _user=require_role("admin"), db: Session = Depends(get_db)):
-    channel = payload.get("channel", "email")
-    from sqlalchemy import text as _t
-    row = db.execute(_t("SELECT value FROM settings WHERE key='notifications'")).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Ingen notifikations-konfiguration")
-    config = json.loads(row[0])
-    config["min_severity"] = "info"
-    test_alarm = {
-        "rule_name": "Test notifikation", "rule_id": "test", "severity": "info",
-        "device_id": "TL-TEST", "description": "Test fra TimeLapse Pro — systemet virker.",
-        "matched_on": ["test:manual"], "confidence": 1.0,
-        "triggered_at": datetime.now(timezone.utc).isoformat(), "capture_id": None,
-    }
-    try:
-        from ai.notify import send_email, send_sms, send_teams
-        result = False
-        if channel == "email":   result = send_email(test_alarm, config)
-        elif channel == "sms":   result = send_sms(test_alarm, config)
-        elif channel == "teams": result = send_teams(test_alarm, config)
-        return {"status": "ok" if result else "failed", "channel": channel}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-_SETTINGS_SECRET_MASK = "••••••••"
-_SETTINGS_SECRET_KEY_MARKERS = ("password", "secret", "token", "api_key", "apikey", "private_key")
-
-
-def _is_secret_setting_key(key: str) -> bool:
-    """C-05: hvilke nøgler i den flade `settings`-tabel skal maskeres ved readback.
-    Substring-baseret (ikke en fast liste) så nye password/secret/token/api_key-agtige
-    nøgler også dækkes automatisk fremover, uden at kræve en kode-ændring hver gang."""
-    lowered = key.lower()
-    return any(marker in lowered for marker in _SETTINGS_SECRET_KEY_MARKERS)
-
-
-@app.get("/api/admin/settings")
-def get_settings(_user=require_role("admin"), db: Session = Depends(get_db)):
-    """Returner alle system settings. Secret-agtige nøgler (password/secret/token/api_key)
-    maskeres til '••••••••' — enhver admin kunne før dette hente fx sftp_password og
-    bt_totp_secret i klartekst (C-05). PUT nedenfor ignorerer masken hvis den sendes
-    uændret tilbage, så UI'en kan redigere andre felter uden at nulstille secrets."""
-    rows = db.execute(text("SELECT key, value FROM settings")).fetchall()
-    return {
-        row[0]: (_SETTINGS_SECRET_MASK if _is_secret_setting_key(row[0]) and row[1] else row[1])
-        for row in rows
-    }
-
-@app.put("/api/admin/settings")
-def update_settings(payload: dict, _user=require_role("super_admin"), db: Session = Depends(get_db)):
-    """Opdater system settings. Secret-agtige nøgler springes over hvis værdien er den
-    maskerede placeholder ('••••••••') — dvs. uændret siden GET — så et gemt formular-felt
-    aldrig ved et uheld overskriver en eksisterende secret med selve masken."""
-    for key, value in payload.items():
-        if _is_secret_setting_key(key) and str(value) == _SETTINGS_SECRET_MASK:
-            continue
-        existing = db.execute(text("SELECT id FROM settings WHERE key = :k"), {"k": key}).fetchone()
-        if existing:
-            db.execute(text("UPDATE settings SET value = :v WHERE key = :k"), {"v": str(value), "k": key})
-        else:
-            db.execute(text("INSERT INTO settings (key, value) VALUES (:k, :v)"), {"k": key, "v": str(value)})
-    db.commit()
-    return {"ok": True}
+# Notifications config + generic settings CRUD moved to
+# headend/api/admin_settings_api.py (2026-08-26, Phase 1 of the main.py
+# modularization plan) — imported near the top of this file, mounted below.
 
 
 @app.put("/api/admin/devices/{device_id}/assign")
@@ -15631,6 +15479,7 @@ def change_user_password(
     current_user=require_role("super_admin", "admin"),
     db: Session = Depends(get_db)
 ):
+    from api.admin_settings_api import _get_password_policy, _validate_password
     u = db.query(User).filter_by(id=user_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Bruger ikke fundet")
@@ -15666,6 +15515,9 @@ app.include_router(edge_disk_image_router)
 
 from api.ai_batch_api import router as ai_batch_router, start_ai_batch_background_loop
 app.include_router(ai_batch_router)
+
+from api.admin_settings_api import router as admin_settings_router
+app.include_router(admin_settings_router)
 
 from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
 from api.service_access_api import create_service_access_router
