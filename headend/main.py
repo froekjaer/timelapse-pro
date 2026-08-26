@@ -101,7 +101,6 @@ COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").lower() == "true"
 def ensure_utc(dt):
     if dt is None: return None
     return dt if dt.tzinfo else dt.replace(tzinfo=_tz.utc)
-
 from importer import router as import_router
 from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
 from ai.settings_api import settings_router
@@ -116,6 +115,7 @@ from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
 from services.update_promotion import build_update_promotion_context, serialize_pending_update
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates
+from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
@@ -6212,6 +6212,7 @@ def _run_headend_platform_update(update_id: int, requested_by: str) -> None:
                 f"profile validation OK; install_mode={'validation_only_after_deployed_test' if production_validation_only else 'brew_upgrade'}."
             )
             update.description = ((update.description or "").rstrip() + evidence)[-6000:]
+            mark_headend_update_deployed(db, update)
             db.commit()
             _headend_update_status[update_id] = {
                 "update_id": update_id,
@@ -6250,6 +6251,7 @@ def _run_headend_platform_update(update_id: int, requested_by: str) -> None:
                     f"error={str(exc)[:700]}"
                 )
                 update.description = ((update.description or "").rstrip() + failure_evidence)[-6000:]
+                mark_headend_update_failed(db, update, exc, failure_evidence)
                 db.commit()
             _headend_update_status[update_id] = {
                 **_headend_update_status_for(update_id),

@@ -66,3 +66,17 @@ def test_device_matrix_excludes_historical_update_statuses_from_current_state():
     assert '"rolled_back"' in block
     assert '"rejected"' in block
     assert '"cancelled"' in block
+
+
+def test_headend_installer_persists_terminal_target_and_ticket_state():
+    main_source = _source("headend/main.py")
+    main_block = main_source[main_source.index("def _run_headend_platform_update("):main_source.index("\n\n@app.get(\"/api/updates/{update_id}/headend-deploy/status\")")]
+    helper = _source("headend/services/headend_update_state.py")
+
+    assert "mark_headend_update_deployed(db, update)" in main_block
+    assert "mark_headend_update_failed(db, update, exc, failure_evidence)" in main_block
+    assert 'ticket.status = "deployed"' in helper
+    assert '"status": "deployed"' in helper
+    assert 'update.status = "blocked"' in helper
+    assert 'ticket.status = "cancelled"' in helper
+    assert '"status": "failed"' in helper
