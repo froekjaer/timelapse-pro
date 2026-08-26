@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-26 15:05 — fra Codex til Peter/Claude/Codex: Headend update-flow failure state og udløbet TLS-certifikat
+
+- Hvad er gjort: Undersøgt fejl på `/updates` efter at `#229 ffmpeg` blev installeret OK og `#232 ollama` blev forsøgt bagefter. Rodårsagen i update-UI var, at fejlet Headend-installation kun blev gemt som evidence/`failed_count`, men lod `pending_updates.status` blive `approved` og `update_targets.status` blive `queued`. Live DB er ryddet non-destruktivt: `#229` står `deployed`, target `deployed`, ticket `deployed`; `#232` står `blocked`, target `failed`, ticket `cancelled`; `#233` havde stale `queued` target trods `blocked`, target er sat `failed` og ticket `cancelled`.
+- Kodeændring i gang: `headend/main.py::_run_headend_platform_update()` persisterer nu terminal target/ticket-state på både succes og fejl. Ved fejl sættes update til `blocked`, target til `failed`, og approved ticket til `cancelled`, så UI ikke længere viser “Installer på Headend” efter fejlet restart/postflight. Ny kontrakttest i `tests/test_update_queue_hygiene_contract.py`.
+- Verificeret: Targeted tests `pytest -q tests/test_update_queue_hygiene_contract.py tests/test_os_update_governance_closure.py tests/test_update_supersession.py` = 15 passed. Browser DOM på `/updates` efter DB-oprydning: ingen `Aktivt opdateringsflow`, ingen `Installer på Headend`, ingen synlig `#232` i aktivt flow.
+- Separat driftsfund: `timelapse.froekjaer.dk` server stadig et Let's Encrypt certifikat der udløb `2026-08-26 12:45:56Z`, fingerprint `55:82:FF:C1:CA:FD:C8:79:FB:CE:50:98:3E:ED:21:32:13:FB:A0:D0:2F:78:22:B8:1F:D2:69:0B:13:B3:AF:79`. Certbot har et nyere certifikat på disk, gyldigt til `2026-11-01 00:41:10Z`, men nginx reload uden root fejlede med `Operation not permitted` mod master PID 641. Der er ikke lavet cert/known_hosts/trust-bypass.
+- Hvad mangler / næste skridt: Deploy den smalle kodefix-PR til Headend, og genindlæs/restart den rigtige root-ejede nginx-instans, så det fornyede certifikat tages i brug. Derefter bør certbot renewal hook/reload automatiseres/valideres, så “fornyet men ikke serveret” ikke gentager sig.
+- Risici / pas på: `ollama` er på pakkelaget opgraderet til `0.32.14`, men servicevalideringen fejlede i restartfasen. Det må ikke promoveres eller genforsøges blindt; revurder #232 efter nginx/cert og launchctl/service-state er stabiliseret.
+
 ### Handover 2026-08-26 13:55 — fra Codex til Peter/Claude/Codex: update-kø hygiene og UX-afklaring
 
 - Hvad er gjort: Gennemgået update-flowet fra Dashboard (`10 ventende opdateringer`) til `/updates` før godkendelse. Verificeret mod PostgreSQL/CMDB at fire aktive blocker-kort var stale: `#150`, `#151`, `#170`, `#234`. De blev markeret `superseded` i `pending_updates`; `#234` target blev markeret `superseded`; change tickets `TL-CHG-20260824-00234` og `TL-CHG-20260807-00170` blev sat `cancelled` med hygiene-note. Ingen deployment eller device-ændring.
