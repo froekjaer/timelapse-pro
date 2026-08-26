@@ -5869,7 +5869,7 @@ HEADEND_PLATFORM_BREW_ALLOWLIST = {
         "service": "ollama",
         "service_label": "homebrew.mxcl.ollama",
         "launch_agent": str(Path(HEADEND_LAUNCH_AGENTS) / "homebrew.mxcl.ollama.plist"),
-        "runtime_bin": "/Applications/Ollama.app/Contents/Resources/ollama",
+        "runtime_bin": "/opt/homebrew/opt/ollama/libexec/ollama",
         "owner": HEADEND_LOCAL_OWNER,
         "home": HEADEND_LOCAL_HOME,
         "description": "Ollama AI runtime",
@@ -6069,8 +6069,7 @@ def _headend_profile_snapshot(formula: str, meta: dict, label: str, log_offset: 
     commands = meta.get(label, [])
     return _run_profile_commands(meta, commands, label) if commands else {}
 
-
-def _validate_ollama_runtime(meta: dict) -> str:
+def _validate_ollama_runtime(meta: dict, expected_version: str | None = None) -> str:
     runtime_bin = meta.get("runtime_bin") or "/opt/homebrew/bin/ollama"
     version = _subprocess.run(
         [runtime_bin, "--version"],
@@ -6099,15 +6098,16 @@ def _validate_ollama_runtime(meta: dict) -> str:
     )
     if api_version.returncode != 0:
         raise RuntimeError(f"Ollama API validering fejlede: {api_version.stderr[-1000:] or api_version.stdout[-1000:]}")
+    if expected_version and (observed := (_json.loads(api_version.stdout or "{}").get("version") or "").strip()) != expected_version:
+        raise RuntimeError(f"Ollama API version mismatch: expected {expected_version}, observed {observed or 'ukendt'}")
     return f"{version.stdout}{version.stderr}\nAPI OK:\n{api_version.stdout}\nInference OK:\n{generate.stdout[-1000:]}"
 
-
-def _validate_headend_profile(formula: str, meta: dict) -> str:
+def _validate_headend_profile(formula: str, meta: dict, update: PendingUpdate | None = None) -> str:
     if formula == "ollama":
-        return _validate_ollama_runtime(meta)
+        expected = (update.version.rsplit("->", 1)[1].strip() if update and "->" in (update.version or "") else None)
+        return _validate_ollama_runtime(meta, expected)
     results = _run_profile_commands(meta, meta.get("postflight", []), "postflight")
     return _json.dumps(results, indent=2, ensure_ascii=False)[-3000:]
-
 
 def _run_headend_platform_update(update_id: int, requested_by: str) -> None:
     started = now_utc()
@@ -6195,7 +6195,7 @@ def _run_headend_platform_update(update_id: int, requested_by: str) -> None:
                     _headend_status_update(update_id, phase="restart", message=f"{formula} har ingen service der skal genstartes")
 
             _headend_status_update(update_id, phase="postflight", message="Validerer service, API og inference")
-            validation_output = _validate_headend_profile(formula, meta)
+            validation_output = _validate_headend_profile(formula, meta, update)
             postflight = _headend_profile_snapshot(formula, meta, "postflight", log_offset)
             new_log = str(postflight.get("new_log_tail") or "")
             if formula == "ollama" and "llama-server binary not found" in new_log:

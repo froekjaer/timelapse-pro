@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-08-26 15:30 — fra Codex til Peter/Claude/Codex: Ollama runtime recovery og postflight-kontrakt
+
+- Hvad er gjort: Afklaret at `#232 ollama 0.30.6 -> 0.32.14` havde opdateret Homebrew-pakken, men den kørende API svarede stadig `0.30.6`, fordi processen var `/Applications/Ollama.app/Contents/Resources/ollama serve`. Den gamle proces blev stoppet, LaunchAgent blev ændret til `/opt/homebrew/opt/ollama/libexec/ollama serve`, og launchd startede Ollama igen som PID 17958.
+- Verificeret: `/opt/homebrew/bin/brew list --versions ollama` = `ollama 0.32.14`; `curl http://127.0.0.1:11434/api/version` = `{"version":"0.32.14"}`; proceslisten viser `/opt/homebrew/opt/ollama/libexec/ollama serve`; inference-postflight med `llama3.2:latest` gennemførte. Live DB er opdateret med recovery-evidence: pending update `#232`, update target og change ticket står `deployed`.
+- Kodeændring i gang: Headend allowlist for Ollama runtime peger nu på Homebrew libexec i stedet for App-binary, og Ollama-postflight kræver at API-versionen matcher target-versionen fra update-kandidaten. Det lukker hullet hvor “pakke installeret” kunne se færdigt ud selvom runtime stadig var gammel.
+- Filer/systemstate rørt: `~/Library/LaunchAgents/homebrew.mxcl.ollama.plist` med backup `~/Library/LaunchAgents/homebrew.mxcl.ollama.plist.backup-20260826_152552`; repoændring i `headend/main.py` og `tests/test_update_queue_hygiene_contract.py`.
+- Risici / pas på: Dette er en service-runtime recovery, ikke en ny package install. Hvis Ollama senere styres via `.app` igen, kan API-versionen regressere; postflight-kontrakten skal derfor merges/deployes, før næste Ollama-lignende dependency-flow betragtes som robust.
+
 ### Handover 2026-08-26 15:13 — fra Codex til Peter/Claude/Codex: TLS-certifikat serveres igen og renewal hook installeret
 
 - Hvad er gjort: Fejlen i browseren blev bekræftet som udløbet TLS-certifikat serveret fra nginx. Certbot havde allerede fornyet certifikatet korrekt, men nginx brugte en stale kopi under `/opt/homebrew/etc/nginx/ssl/`. Den gamle `fullchain.pem`/`privkey.pem` blev backuppet under `/opt/homebrew/etc/nginx/ssl/backup/`, ny kopi blev lagt ind fra `/etc/letsencrypt/live/timelapse.froekjaer.dk/`, rettigheder sat til `0644` for fullchain og `0600` for private key, og nginx blev genindlæst efter `nginx -t`.

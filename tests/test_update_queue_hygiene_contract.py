@@ -80,3 +80,15 @@ def test_headend_installer_persists_terminal_target_and_ticket_state():
     assert 'update.status = "blocked"' in helper
     assert 'ticket.status = "cancelled"' in helper
     assert '"status": "failed"' in helper
+
+
+def test_ollama_headend_postflight_uses_homebrew_runtime_and_api_version_match():
+    source = _source("headend/main.py")
+    allowlist = source[source.index("HEADEND_PLATFORM_BREW_ALLOWLIST = {"):source.index("\nHEADEND_PLATFORM_MANUAL_PROFILES")]
+    runtime_block = source[source.index("def _validate_ollama_runtime("):source.index("\ndef _validate_headend_profile(", source.index("def _validate_ollama_runtime("))]
+    profile_block = source[source.index("def _validate_headend_profile("):source.index("\ndef _run_headend_platform_update(")]
+
+    assert '"/opt/homebrew/opt/ollama/libexec/ollama"' in allowlist
+    assert "/Applications/Ollama.app/Contents/Resources/ollama" not in allowlist
+    assert "Ollama API version mismatch" in runtime_block
+    assert "update.version.rsplit(\"->\", 1)[1].strip()" in profile_block
