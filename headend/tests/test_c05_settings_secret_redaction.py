@@ -12,7 +12,9 @@ existing secret with the placeholder.
 """
 import pytest
 
-import main
+# get_settings/update_settings moved to api/admin_settings_api.py (2026-08-26,
+# Phase 1 of the main.py modularization plan).
+from api.admin_settings_api import get_settings, update_settings
 from database import Base, Settings, SessionLocal, engine
 
 _KEYS = ["sftp_password", "bt_totp_secret", "sftp_host", "bt_totp_sid"]
@@ -40,19 +42,19 @@ def db_session():
 
 
 def test_get_settings_masks_secret_shaped_keys(db_session):
-    result = main.get_settings(_user=None, db=db_session)
+    result = get_settings(_user=None, db=db_session)
     assert result["sftp_password"] == "••••••••"
     assert result["bt_totp_secret"] == "••••••••"
 
 
 def test_get_settings_leaves_non_secret_keys_untouched(db_session):
-    result = main.get_settings(_user=None, db=db_session)
+    result = get_settings(_user=None, db=db_session)
     assert result["sftp_host"] == "sftp.example.com"
     assert result["bt_totp_sid"] == "cam-abcd1234"
 
 
 def test_put_settings_skips_masked_placeholder_for_secret_key(db_session):
-    main.update_settings({"sftp_password": "••••••••", "sftp_host": "new.example.com"}, _user=None, db=db_session)
+    update_settings({"sftp_password": "••••••••", "sftp_host": "new.example.com"}, _user=None, db=db_session)
     row = db_session.query(Settings).filter_by(key="sftp_password").first()
     assert row.value == "hunter2-real-password"
     row2 = db_session.query(Settings).filter_by(key="sftp_host").first()
@@ -60,6 +62,6 @@ def test_put_settings_skips_masked_placeholder_for_secret_key(db_session):
 
 
 def test_put_settings_still_allows_a_real_new_secret_value(db_session):
-    main.update_settings({"sftp_password": "a-genuinely-new-password"}, _user=None, db=db_session)
+    update_settings({"sftp_password": "a-genuinely-new-password"}, _user=None, db=db_session)
     row = db_session.query(Settings).filter_by(key="sftp_password").first()
     assert row.value == "a-genuinely-new-password"
