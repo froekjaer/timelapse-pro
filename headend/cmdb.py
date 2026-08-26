@@ -196,6 +196,44 @@ HEADEND_MANAGED_HOMEBREW_FORMULAE = {
 }
 
 
+_ACTIVE_UPDATE_STATUSES = {"pending", "approved", "blocked", "rollback_requested"}
+
+
+def _append_update_hygiene_note(value: str | None, note: str) -> str:
+    text = (value or "").rstrip()
+    if note in text:
+        return text
+    return f"{text}\n\n{note}".strip()
+
+
+def _supersede_active_device_updates(
+    db: Session,
+    device_id: str,
+    update_types: set[str],
+    note: str,
+    *,
+    component_names: set[str] | None = None,
+) -> int:
+    query = db.query(PendingUpdate).filter(
+        PendingUpdate.scope == "device",
+        PendingUpdate.scope_id == device_id,
+        PendingUpdate.update_type.in_(sorted(update_types)),
+        PendingUpdate.status.in_(sorted(_ACTIVE_UPDATE_STATUSES)),
+    )
+    updates = query.all()
+    closed = 0
+    for update in updates:
+        if component_names:
+            version = str(update.version or "")
+            description = str(update.description or "")
+            if not any(name in version or name in description for name in component_names):
+                continue
+        update.status = "superseded"
+        update.description = _append_update_hygiene_note(update.description, note)
+        closed += 1
+    return closed
+
+
 def _parse_version_gap(version: str | None) -> dict:
     text = (version or "").strip()
     import re
@@ -354,12 +392,14 @@ def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceIn
     if not isinstance(updates, list):
         return
 
+    observed_names: set[str] = set()
     for item in updates:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
         if name not in HEADEND_MANAGED_HOMEBREW_FORMULAE:
             continue
+        observed_names.add(name)
         installed = str(item.get("installed_version") or "ukendt")
         available = str(item.get("available_version") or "ukendt")
         version = f"{name} {installed} -> {available}"
@@ -399,6 +439,18 @@ def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceIn
             target_device_ids=json.dumps([device_id]),
         ))
 
+    stale_names = set(HEADEND_MANAGED_HOMEBREW_FORMULAE) - observed_names
+    if stale_names:
+        closed = _supersede_active_device_updates(
+            db,
+            device_id,
+            {"application_updates", "dependency_updates", "third_party_updates"},
+            f"Superseded by CMDB inventory {now_utc().isoformat()}: component no longer reported as available update.",
+            component_names=stale_names,
+        )
+        if closed:
+            log.info("CMDB: lukkede %d stale application update-kandidat(er) for %s", closed, device_id)
+
 
 def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, payload: dict) -> None:
     """
@@ -412,6 +464,14 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
     security = int(apt.get("security", 0))
     packages = apt.get("packages", [])
     if total == 0:
+        closed = _supersede_active_device_updates(
+            db,
+            device_id,
+            {"os_security", "os_updates"},
+            f"Superseded by CMDB inventory {now_utc().isoformat()}: device reports 0 OS updates available.",
+        )
+        if closed:
+            log.info("CMDB: lukkede %d stale OS update-kandidat(er) for %s", closed, device_id)
         return
 
     env = _pending_environment(inv)

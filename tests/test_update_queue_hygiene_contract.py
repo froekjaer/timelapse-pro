@@ -54,3 +54,15 @@ def test_deployed_history_requires_explicit_promotion_eligibility():
     assert "Target-enhed rapporterer ikke længere denne app-version." in backend
     assert "u.promotion_eligible ? (" in ui
     assert "Historisk deploy" in ui
+
+
+def test_device_matrix_excludes_historical_update_statuses_from_current_state():
+    source = _source("headend/main.py")
+    start = source.index("def _update_is_matrix_candidate(")
+    end = source.index("\ndef _installed_value(", start)
+    block = source[start:end]
+
+    assert '"superseded"' in block
+    assert '"rolled_back"' in block
+    assert '"rejected"' in block
+    assert '"cancelled"' in block

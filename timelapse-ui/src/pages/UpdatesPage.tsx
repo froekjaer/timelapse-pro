@@ -294,6 +294,12 @@ function shortHash(value: string | null | undefined) {
   return value.length > 18 ? `${value.slice(0, 12)}...${value.slice(-6)}` : value
 }
 
+function displayUpdateVersion(u: Pick<Update, 'update_type' | 'version'> | null | undefined) {
+  if (!u?.version) return '-'
+  if (u.update_type === 'app_updates' && /^[0-9a-f]{40}$/i.test(u.version)) return `commit ${shortHash(u.version)}`
+  return u.version
+}
+
 function isProdReadyUpdate(u: Update) {
   return Boolean(u.prod_ready) || (
     u.environment === 'production' &&
@@ -704,7 +710,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
             <span className="text-sm font-medium text-gray-800">
               {TYPE_LABELS[u.update_type] ?? u.update_type}
             </span>
-            <span className="text-xs font-mono text-gray-500">{u.version.startsWith('v') ? u.version : `commit ${shortHash(u.version)}`}</span>
+            <span className="text-xs font-mono text-gray-500">{displayUpdateVersion(u)}</span>
             <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${severityBadge(u.severity)}`}>
               {u.severity}
             </span>
@@ -750,10 +756,10 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
         {(u.status === 'blocked' || u.status === 'rolled_back') && (
           <div className="flex items-center gap-1.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
             <button onClick={() => onApprove(u.id)} disabled={isBusy}
-              title="Genåbn den blokerede eller tilbagekaldte opdatering til fornyet godkendelse."
+              title="Revurder den blokerede eller tilbagekaldte opdatering og åbn godkendelsesdialogen."
               className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs rounded-lg disabled:opacity-50">
               <RefreshCw className="w-3.5 h-3.5" />
-              Genprøv
+              Revurder
             </button>
           </div>
         )}
@@ -1754,10 +1760,12 @@ export function UpdatesPage() {
       {approveId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="approve-update-title">
         <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto bg-white rounded-lg border border-gray-200 p-5 shadow-2xl">
-          <h3 id="approve-update-title" className="text-base font-semibold text-gray-900">Godkend opdatering #{approveId}</h3>
+          <h3 id="approve-update-title" className="text-base font-semibold text-gray-900">
+            {approveUpdate?.status === 'blocked' || approveUpdate?.status === 'rolled_back' ? 'Revurder opdatering' : 'Godkend opdatering'} #{approveId}
+          </h3>
           {approveUpdate && (
             <div className="mt-1 mb-3 text-xs text-gray-600">
-              <div>{TYPE_LABELS[approveUpdate.update_type] ?? approveUpdate.update_type} · {approveUpdate.version.startsWith('v') ? approveUpdate.version : `commit ${shortHash(approveUpdate.version)}`}</div>
+              <div>{TYPE_LABELS[approveUpdate.update_type] ?? approveUpdate.update_type} · {displayUpdateVersion(approveUpdate)}</div>
               <div className="font-mono mt-0.5">Mål: {approveUpdate.scope}{approveUpdate.scope_id ? ` / ${approveUpdate.scope_id}` : ''} · Miljø: {approveUpdate.environment || 'ikke angivet'}</div>
             </div>
           )}
@@ -1842,7 +1850,9 @@ export function UpdatesPage() {
             <Shield className="w-8 h-8 text-gray-200 mx-auto mb-3" />
             <p className="text-sm font-medium text-gray-500">Ingen opdateringer</p>
             <p className="text-xs text-gray-300 mt-1">
-              {filter === 'pending' ? 'Alle opdateringer er behandlet' : `Ingen opdateringer med status "${filter}"`}
+              {filter === 'pending'
+                ? 'Der er ingen opdateringer, som afventer godkendelse. Tjek fanen Blokeret for sager der kræver forarbejde.'
+                : `Ingen opdateringer med status "${FILTERS.find(f => f.key === filter)?.label ?? filter}"`}
             </p>
           </div>
         ) : (

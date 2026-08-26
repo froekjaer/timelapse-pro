@@ -21,6 +21,17 @@ def test_existing_cmdb_observation_is_forced_back_to_blocked():
     assert 'existing.status = "blocked"' in section
 
 
+def test_zero_os_inventory_supersedes_stale_active_os_observations():
+    source = Path("headend/cmdb.py").read_text(encoding="utf-8")
+    start = source.index("def _sync_edge_os_updates(")
+    end = source.index("\n\n# ── Kryptering", start)
+    section = source[start:end]
+    assert "if total == 0:" in section
+    assert '"os_security", "os_updates"' in section
+    assert "device reports 0 OS updates available" in section
+    assert 'update.status = "superseded"' in source
+
+
 def test_auto_os_bundle_builder_requires_explicit_lab_plan_evidence():
     source = Path("headend/main.py").read_text(encoding="utf-8")
     start = source.index("def _os_bundle_auto_build_pending()")
