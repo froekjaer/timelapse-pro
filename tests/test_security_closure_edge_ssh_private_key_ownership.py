@@ -1,11 +1,19 @@
 from pathlib import Path
 
 
-MAIN = Path(__file__).resolve().parents[1] / "headend" / "main.py"
+ROOT = Path(__file__).resolve().parents[1]
+MAIN = ROOT / "headend" / "main.py"
+# download_camera_ssh_key/get_camera_bt_totp_qr moved to
+# api/cameras_api.py (2026-08-27, Phase 2 of the main.py modularization plan).
+CAMERAS_API = ROOT / "headend" / "api" / "cameras_api.py"
 
 
 def _source() -> str:
     return MAIN.read_text(encoding="utf-8")
+
+
+def _cameras_api_source() -> str:
+    return CAMERAS_API.read_text(encoding="utf-8")
 
 
 def _function_block(source: str, marker: str, next_marker: str) -> str:
@@ -15,11 +23,11 @@ def _function_block(source: str, marker: str, next_marker: str) -> str:
 
 
 def test_legacy_camera_private_key_download_is_retired_fail_closed():
-    source = _source()
+    source = _cameras_api_source()
     block = _function_block(
         source,
-        '@app.get("/api/admin/cameras/{camera_id}/ssh-key")',
-        '@app.get("/api/admin/headend/ssh-public-key")',
+        '@router.get("/api/admin/cameras/{camera_id}/ssh-key")',
+        '@router.post("/api/admin/cameras")',
     )
     assert "status_code=410" in block
     assert "_ensure_site_access" in block
@@ -106,10 +114,10 @@ def test_bt_totp_qr_enforces_tenant_boundary_before_secret_resolution():
     # 2026-08-19: secret resolution moved into _resolve_camera_bt_totp()
     # (shared with the new local-access overview endpoint), so the end
     # marker changed from the old inline "secret = ''" to the call site.
-    source = _source()
+    source = _cameras_api_source()
     block = _function_block(
         source,
-        '@app.get("/api/admin/cameras/{camera_id}/bt-totp-qr")',
+        '@router.get("/api/admin/cameras/{camera_id}/bt-totp-qr")',
         'secret, sid, source = _resolve_camera_bt_totp(db, cam)',
     )
     assert "_ensure_site_access(db, current_user, cam.site_id)" in block

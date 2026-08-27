@@ -6,12 +6,21 @@ tilgængelige, og kan ses (jfr. RBAC)."
 _resolve_camera_bt_totp() was extracted from get_camera_bt_totp_qr() so both
 the single-camera QR endpoint and this list endpoint share one resolution
 implementation — these tests exercise the extracted function directly.
+
+2026-08-27: _resolve_camera_bt_totp moved from main.py to
+api/cameras_api.py, and local_access.py now imports it (and
+_visible_camera_query, from tenant_scope.py) at module scope rather than
+lazily from main — so patches must target local_access's own bindings of
+those names, not main's, which are separate objects after import time
+(main.py doesn't even hold a reference to _resolve_camera_bt_totp anymore,
+only local_access.py and cameras_api.py itself do).
 """
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import main
 import local_access
+from api import cameras_api
 
 
 def _fake_camera(**overrides):
@@ -42,7 +51,7 @@ def test_resolve_camera_bt_totp_prefers_camera_over_all_other_layers():
     cam = _fake_camera(bt_totp_secret="CAMSECRET", bt_totp_sid="cam-sid")
     db = _db_with()
     with patch.object(main, "_get_setting", return_value="GLOBALSECRET"):
-        secret, sid, source = main._resolve_camera_bt_totp(db, cam)
+        secret, sid, source = cameras_api._resolve_camera_bt_totp(db, cam)
     assert (secret, sid, source) == ("CAMSECRET", "cam-sid", "kamera")
 
 
@@ -51,7 +60,7 @@ def test_resolve_camera_bt_totp_falls_back_to_site_then_global():
     site = SimpleNamespace(id="site-1", customer_id="cust-1", config_overrides='{"bt_totp": {"secret": "SITESECRET", "sid": "site-sid"}}')
     db = _db_with(site=site)
     with patch.object(main, "_get_setting", side_effect=lambda db, key, default: {"bt_totp_secret": "GLOBALSECRET", "bt_totp_sid": "global-sid"}.get(key, default)):
-        secret, sid, source = main._resolve_camera_bt_totp(db, cam)
+        secret, sid, source = cameras_api._resolve_camera_bt_totp(db, cam)
     assert (secret, sid, source) == ("SITESECRET", "site-sid", "site")
 
 
@@ -59,15 +68,15 @@ def test_resolve_camera_bt_totp_returns_empty_when_no_layer_configured():
     cam = _fake_camera()
     db = _db_with()
     with patch.object(main, "_get_setting", return_value=""):
-        secret, sid, source = main._resolve_camera_bt_totp(db, cam)
+        secret, sid, source = cameras_api._resolve_camera_bt_totp(db, cam)
     assert (secret, sid, source) == ("", "", "")
 
 
 def test_list_local_access_never_returns_secret_or_qr_fields():
     cam = _fake_camera(camera_name="Mod baggård")
     db = MagicMock()
-    with patch.object(main, "_visible_camera_query") as fake_query, \
-         patch.object(main, "_resolve_camera_bt_totp", return_value=("s3cr3t", "sid-1", "kamera")):
+    with patch.object(local_access, "_visible_camera_query") as fake_query, \
+         patch.object(local_access, "_resolve_camera_bt_totp", return_value=("s3cr3t", "sid-1", "kamera")):
         fake_query.return_value.order_by.return_value.all.return_value = [cam]
         db.query.return_value.filter_by.return_value.first.return_value = None
         rows = local_access.list_local_access(current_user=MagicMock(), db=db)
@@ -85,8 +94,8 @@ def test_list_local_access_never_returns_secret_or_qr_fields():
 def test_list_local_access_marks_unprovisioned_cameras():
     cam = _fake_camera(camera_name="Ny kamera uden adgang")
     db = MagicMock()
-    with patch.object(main, "_visible_camera_query") as fake_query, \
-         patch.object(main, "_resolve_camera_bt_totp", return_value=("", "", "")):
+    with patch.object(local_access, "_visible_camera_query") as fake_query, \
+         patch.object(local_access, "_resolve_camera_bt_totp", return_value=("", "", "")):
         fake_query.return_value.order_by.return_value.all.return_value = [cam]
         db.query.return_value.filter_by.return_value.first.return_value = None
         rows = local_access.list_local_access(current_user=MagicMock(), db=db)

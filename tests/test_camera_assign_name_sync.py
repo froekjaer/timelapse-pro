@@ -5,7 +5,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _main() -> str:
-    return (ROOT / "headend" / "main.py").read_text(encoding="utf-8")
+    # assign_camera_to_device moved to headend/api/cameras_api.py (2026-08-27,
+    # Phase 2 of the main.py modularization plan).
+    return (ROOT / "headend" / "api" / "cameras_api.py").read_text(encoding="utf-8")
 
 
 def _route_block(source: str, start: str, end: str) -> str:
@@ -24,7 +26,7 @@ def test_camera_assign_syncs_site_and_customer_name_not_just_ids():
     block = _route_block(
         source,
         'def assign_camera_to_device(',
-        '@app.get("/api/admin/cameras/{camera_id}/history")',
+        '@router.get("/api/admin/cameras/{camera_id}/history")',
     )
     assert 'device.site_id       = camera.site_id' in block
     assert 'device.customer_id   = camera.customer_id' in block
