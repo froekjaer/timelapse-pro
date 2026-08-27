@@ -9,7 +9,7 @@ import { startAuthentication } from '@simplewebauthn/browser'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
-  const { login, verifyMfa, confirmMfaSetup } = useAuth()
+  const { login, verifyMfa, confirmMfaSetup, acceptSessionUser } = useAuth()
   const navigate  = useNavigate()
   const location  = useLocation()
   const from = (location.state as any)?.from?.pathname ?? '/'
@@ -117,9 +117,8 @@ export default function LoginPage() {
       }).then(r => { if (!r.ok) throw new Error('Autentificering fejlede'); return r.json() })
 
       const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
-      localStorage.setItem('tl_user', JSON.stringify(u))
+      acceptSessionUser(u)
       navigate(from, { replace: true })
-      window.location.href = from
     } catch (e: any) {
       setError(e.message ?? 'WebAuthn fejlede')
     } finally { setLoading(false) }
