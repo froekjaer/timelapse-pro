@@ -97,6 +97,7 @@ from auth import (
     _hash_password, _verify_password, _create_token, _decode_token,
     _cookie_header, _delete_cookie_header,
     _session_payload, _session_is_mfa_verified, _mfa_required_for_user,
+    _resolve_session_policy,
     _user_has_totp, _user_has_partial_mfa,
     _AGENT_LOCKED_ENVIRONMENTS, _agent_role_blocked_in_this_environment,
     _log_agent_lockdown_status,
