@@ -27,6 +27,7 @@ interface AuthCtx {
   logout:    () => void
   verifyMfa: (mfa_token: string, code: string) => Promise<void>
   confirmMfaSetup: (code: string) => Promise<void>
+  acceptSessionUser: (user: User) => void
   isAuthenticated: boolean
   loading: boolean
   hasRole: (...roles: User['role'][]) => boolean
@@ -145,6 +146,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u)
   }
 
+  function acceptSessionUser(user: User) {
+    localStorage.setItem('tl_user', JSON.stringify(user))
+    setUser(user)
+  }
+
   function logout() {
     fetch(`${getApiUrl()}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
     localStorage.removeItem('tl_user')
@@ -155,7 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const hasRole = (...roles: User['role'][]) => !!user && roles.includes(user.role)
 
   return (
-    <Ctx.Provider value={{ user, token, login, logout, verifyMfa, confirmMfaSetup, isAuthenticated: !!user, hasRole, loading }}>
+    <Ctx.Provider value={{ user, token, login, logout, verifyMfa, confirmMfaSetup, acceptSessionUser, isAuthenticated: !!user, hasRole, loading }}>
       {children}
     </Ctx.Provider>
   )

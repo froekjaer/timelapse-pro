@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-08-27 15:45 — fra Codex til Peter/Codex: WebAuthn-login fastholder UI-session
+
+- Hvad er gjort: Fejlsøgt login hvor WebAuthn/passkey returnerede `WebAuthn login OK: peter` i Headend-loggen, men UI gik direkte tilbage til login. Password/MFA-flowet satte React auth-state korrekt, mens WebAuthn-flowet kun skrev `tl_user` i localStorage og tvang en fuld browser-reload.
+- Løsning: `AuthContext` har nu en eksplicit `acceptSessionUser()` helper, og `LoginPage` bruger den efter successful WebAuthn login i stedet for at kalde `window.location.href`.
+- Verificeret: `PYTHONPATH=headend:. pytest tests/test_webauthn_login_ui_contract.py -q` grønt; `npm run build` grønt.
+- Filer rørt: `timelapse-ui/src/context/AuthContext.tsx`, `timelapse-ui/src/pages/LoginPage.tsx`, `tests/test_webauthn_login_ui_contract.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Den normale Headend-proces på port 8000 har `JWT_SECRET` sat; en separat testproces på port 8001 kører med `TIMELAPSE_ENV=test` og uden fast sessionnøgle, men Nginx bør ikke sende produktionstrafik dertil.
+
 ### Handover 2026-08-26 (nat) — fra Claude til Peter/Codex: main.py-modularisering, Fase 1.3 — password-policy + notifications + settings CRUD udtrukket (PR #151)
 
 - Baggrund: Fortsætter Fase 1 (edge disk-image #147, ai-batch #149). Denne udtrækning var planens "fold de små admin-settings-domæner sammen i én fil"-punkt.
