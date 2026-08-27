@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session
 from database import CustomerRiskInput, CustomerRiskProfile, Device, DeviceInventory, BreakGlassAccount, BreakGlassCheckoutAudit, PendingUpdate, get_db, now_utc
 from services.fair_risk import estimate_annual_loss
 from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
+from tenant_scope import _is_platform_admin, _visible_device_query
 
 log = logging.getLogger(__name__)
 
@@ -165,8 +166,6 @@ def _require_cmdb_role(*roles: str):
 
 def _visible_device_ids(db: Session, user) -> set[str] | None:
     """Return None for platform scope, otherwise the tenant's explicit device set."""
-    from main import _is_platform_admin, _visible_device_query
-
     if _is_platform_admin(user):
         return None
     return {row[0] for row in _visible_device_query(db, user).with_entities(Device.device_id).all()}
@@ -826,7 +825,6 @@ def get_operational_context(
             "confidentiality": business_profile.confidentiality_impact,
             "personal_data_level": business_profile.personal_data_level,
         }
-    from main import _is_platform_admin
     if commercial_input and _is_platform_admin(_user):
         fair["monthly_service_price"] = float(commercial_input.monthly_service_price)
         fair["monthly_service_price_currency"] = commercial_input.currency

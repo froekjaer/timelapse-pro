@@ -14,13 +14,13 @@ from ai.ai_strategy import AIConfigManager
 from ai.settings_helper import get_all_settings, get_setting, set_setting
 from database import get_db
 from auth import _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
+from tenant_scope import _is_platform_admin
 
 settings_router = APIRouter(prefix="/api/settings", tags=["settings"])
 log = logging.getLogger(__name__)
 
 
 def _require_platform_admin(request: Request, db: Session = Depends(get_db)):
-    from main import _is_platform_admin
     user = get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")

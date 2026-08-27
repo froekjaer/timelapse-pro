@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from database import Customer, CustomerRiskInput, CustomerRiskProfile, get_db
 from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
+from tenant_scope import _is_platform_admin
 
 
 router = APIRouter(prefix="/api/customer-risk", tags=["GRC"])
@@ -19,8 +20,6 @@ log = logging.getLogger(__name__)
 
 
 def _require_platform_admin(request: Request, db: Session = Depends(get_db)):
-    from main import _is_platform_admin
-
     user = get_current_user(request, db)
     if not user:
         raise HTTPException(status_code=401, detail="Ikke autentificeret")
@@ -43,8 +42,6 @@ def _require_risk_admin(request: Request, db: Session = Depends(get_db)):
 
 
 def _ensure_customer_scope(user, customer_id: str) -> None:
-    from main import _is_platform_admin
-
     if _is_platform_admin(user):
         return
     if not user.customer_id or str(user.customer_id) != customer_id:

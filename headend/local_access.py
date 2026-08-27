@@ -29,6 +29,8 @@ from sqlalchemy.orm import Session
 
 from database import get_db, Camera, Site, Customer, Device, DeviceAssignment
 from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
+from tenant_scope import _visible_camera_query
+from api.cameras_api import _resolve_camera_bt_totp
 
 router = APIRouter(tags=["Local Access"])
 
@@ -55,8 +57,6 @@ def list_local_access(
     current_user=Depends(_require_local_access_admin),
     db: Session = Depends(get_db),
 ):
-    from main import _resolve_camera_bt_totp, _visible_camera_query
-
     rows = []
     for cam in _visible_camera_query(db, current_user).order_by(Camera.camera_name).all():
         secret, sid, source = _resolve_camera_bt_totp(db, cam)

@@ -363,20 +363,29 @@ def test_local_management_portal_serves_bluetooth_wifi_and_ethernet_interfaces()
 def test_on_site_service_is_a_capability_not_a_new_role() -> None:
     # 2026-08-19: on_site_service (boolean) replaced by field_role (tag:
     # none|installer|technician) — same orthogonal-capability intent, more
-    # granular. See headend.database.User.field_role and main._has_field_access.
+    # granular. See headend.database.User.field_role and
+    # tenant_scope._has_field_access.
+    # 2026-08-27: FIELD_ROLES moved from main.py to tenant_scope.py (Phase 2
+    # of the main.py modularization plan).
     database = _source("headend/database.py")
     headend = _source("headend/main.py")
+    tenant_scope = _source("headend/tenant_scope.py")
     users_ui = _source("timelapse-ui/src/pages/UsersPage.tsx")
 
     assert "field_role = Column(String(20)" in database
     assert "field_role:  Optional[str]" in headend
-    assert 'FIELD_ROLES = ("none", "installer", "technician")' in headend
+    assert 'FIELD_ROLES = ("none", "installer", "technician")' in tenant_scope
     assert "Felt-rolle (on-site adgang)" in users_ui
+    # This exact message lives at an unrelated call site in main.py, not in
+    # cameras_api.py's own "On-site idriftsættelse og service kræves" string.
     assert "Brugeren mangler capability: On-site idriftsættelse og service" in headend
 
 
 def test_local_totp_qr_never_returns_a_shared_factory_secret() -> None:
-    headend = _source("headend/main.py")
+    # get_camera_bt_totp_qr/regenerate_camera_bt_totp moved to
+    # headend/api/cameras_api.py (2026-08-27, Phase 2 of the main.py
+    # modularization plan).
+    headend = _source("headend/api/cameras_api.py")
     camera_ui = _source("timelapse-ui/src/pages/CameraPage.tsx")
     endpoint = headend.split("def get_camera_bt_totp_qr", 1)[1].split("def regenerate_camera_bt_totp", 1)[0]
 
@@ -395,7 +404,7 @@ def test_bt_totp_qr_response_includes_a_live_rotating_code() -> None:
     (a51ee8b4, 2026-08-03). Rebuilt 2026-08-19 per Peter. Must be a *computed*
     code (pyotp.TOTP(secret).now()), never the raw secret itself.
     """
-    headend = _source("headend/main.py")
+    headend = _source("headend/api/cameras_api.py")
     endpoint = headend.split("def get_camera_bt_totp_qr", 1)[1].split("def regenerate_camera_bt_totp", 1)[0]
     camera_ui = _source("timelapse-ui/src/pages/CameraPage.tsx")
 

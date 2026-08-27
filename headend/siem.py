@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 
 from database import Base, Device, get_db
 from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
+from tenant_scope import _is_platform_admin, _visible_device_query
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["SIEM"])
@@ -76,8 +77,6 @@ def _require_siem_role(*roles: str):
 
 def _visible_event_query(db: Session, user):
     """Apply the same device/tenant boundary used by CMDB."""
-    from main import _is_platform_admin, _visible_device_query
-
     q = db.query(SecurityEvent)
     if _is_platform_admin(user):
         return q
