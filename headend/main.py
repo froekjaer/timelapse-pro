@@ -10295,6 +10295,37 @@ def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
 
 
 
+_AI_RESULT_LIST_STRIP_TOP_KEYS = ("raw_response", "prompt")
+_AI_RESULT_LIST_STRIP_EDGE_KEYS = ("npu", "autonomous_optimizer", "cv_features")
+
+
+def _trim_ai_result_for_list(raw: str | None) -> str | None:
+    """Strip de store diagnostik-blobs fra ai_result før den indgår i LISTE-
+    svaret /api/admin/captures (2026-08-27, Peter: begrænset dataplan over VPN,
+    spar datatransport). raw_response/prompt/edge_ai.npu/edge_ai.autonomous_
+    optimizer/edge_ai.cv_features udgør typisk ~90% af et ai_result og bruges
+    ikke af thumbnail-grid'ets QA-badges — Lightbox'ens Metadata-panel henter
+    allerede en fuld, utrimmet kopi via /api/sidecar/... og
+    /api/captures/{id}/model-results når panelet rent faktisk åbnes. Fejler
+    åbent (returnerer raw uændret) ved enhver parse-fejl.
+    """
+    if not raw:
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return raw
+    if not isinstance(parsed, dict):
+        return raw
+    for key in _AI_RESULT_LIST_STRIP_TOP_KEYS:
+        parsed.pop(key, None)
+    edge_ai = parsed.get("edge_ai")
+    if isinstance(edge_ai, dict):
+        for key in _AI_RESULT_LIST_STRIP_EDGE_KEYS:
+            edge_ai.pop(key, None)
+    return json.dumps(parsed)
+
+
 @app.get("/api/admin/captures")
 def list_captures(
     device_id: Optional[str] = None,
@@ -10365,7 +10396,7 @@ def list_captures(
             "fov_vertical_deg": c.fov_vertical_deg if hasattr(c, 'fov_vertical_deg') else None,
             "perspective":   c.perspective if hasattr(c, 'perspective') else None,
             "xmp_written":   c.xmp_written if hasattr(c, 'xmp_written') else None,
-            "ai_result":      c.ai_result if hasattr(c, 'ai_result') else None,
+            "ai_result":      _trim_ai_result_for_list(c.ai_result) if hasattr(c, 'ai_result') else None,
             "ai_analyzed_at": c.ai_analyzed_at.isoformat() if hasattr(c, 'ai_analyzed_at') and c.ai_analyzed_at else None,
             "ai_tags":        json.loads(c.ai_tags) if hasattr(c, 'ai_tags') and c.ai_tags else None,
         }
@@ -14631,7 +14662,7 @@ def captures_timeline(
                 "brightness":   round(c.brightness_mean, 1) if c.brightness_mean else None,
                 "filesize_mb":  round(c.filesize / 1e6, 1) if c.filesize else None,
                 "uploaded":     c.uploaded,
-                "ai_result":      c.ai_result if hasattr(c, 'ai_result') else None,
+                "ai_result":      _trim_ai_result_for_list(c.ai_result) if hasattr(c, 'ai_result') else None,
                 "ai_analyzed_at": c.ai_analyzed_at.isoformat() if hasattr(c, 'ai_analyzed_at') and c.ai_analyzed_at else None,
                 "ai_tags":        json.loads(c.ai_tags) if hasattr(c, 'ai_tags') and c.ai_tags else None,
             }

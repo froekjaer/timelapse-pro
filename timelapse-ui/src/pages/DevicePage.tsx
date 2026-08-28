@@ -221,8 +221,11 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
         ? (gpsHasFix ? '✍️ Manuelt indtastet' : 'Ingen GPS data')
         : '—'
 
-  // Hent sidecar JSON når billede skifter
+  // Hent sidecar JSON + EXIF — kun når Metadata-panelet rent faktisk er åbent
+  // (2026-08-27, Peter: begrænset dataplan over VPN, spar datatransport). Før
+  // fyrede dette på hvert billedskift uanset om panelet var åbent.
   useEffect(() => {
+    if (!showMetadata) return
     let cancelled = false
     setSidecar(null)
     const sidecarName = c.filename.replace(/\.[^.]+$/, '.json')
@@ -246,12 +249,14 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
       .then(d => { if (!cancelled) setExif(d?.exif ?? null) })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [cur, c.device_id, c.filename])
+  }, [cur, c.device_id, c.filename, showMetadata])
 
   // Hent model-separerede AI/QA-resultater (edge_cv_v1/edge_npu/headend_ollama/
-  // gemini_cloud) når billede skifter. Separat fetch fra sidecar, da denne kilde
-  // kommer fra headend-DB'en (capture_model_results), ikke sidecar-JSON'en.
+  // gemini_cloud) — samme Metadata-gating som sidecar/exif ovenfor. Separat
+  // fetch fra sidecar, da denne kilde kommer fra headend-DB'en
+  // (capture_model_results), ikke sidecar-JSON'en.
   useEffect(() => {
+    if (!showMetadata) return
     let cancelled = false
     setModelResults(null)
     const apiUrl = getApiUrl()
@@ -260,7 +265,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
       .then(d => { if (!cancelled) setModelResults(d?.results ?? []) })
       .catch(() => { if (!cancelled) setModelResults([]) })
     return () => { cancelled = true }
-  }, [cur, c.id])
+  }, [cur, c.id, showMetadata])
 
   // Compute histogram from image pixels via canvas
   function computeHistogram() {
