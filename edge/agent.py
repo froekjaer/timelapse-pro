@@ -784,14 +784,15 @@ class EdgeAgent:
 
     def _load_camera_features(self) -> None:
         """Detect camera capabilities for this session."""
+        powered = False
         try:
             self._camera_power_on("feature detection")
+            powered = True
             self._driver.connect()
             self._check_camera_profile_known("feature_detection")
             self._has_autofocus = self._driver.supports_autofocus()
             self._has_refocus   = self._driver.supports_remote_focus()
             self._driver.disconnect()
-            self._camera_power_off("feature detection")
             log.info(
                 "Camera features: autofocus=%s remote_focus=%s",
                 self._has_autofocus, self._has_refocus
@@ -806,6 +807,12 @@ class EdgeAgent:
             )
             self._has_autofocus = False
             self._has_refocus   = False
+        finally:
+            if powered:
+                try:
+                    self._camera_power_off("feature detection", force=True)
+                except Exception as exc:
+                    log.warning("Could not power off camera after feature detection: %s", exc)
 
     # ── Main tick ──────────────────────────────────────────────────────────
 
