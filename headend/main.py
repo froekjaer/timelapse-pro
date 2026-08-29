@@ -122,6 +122,7 @@ from commissioning_key import router as commissioning_key_router
 from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
+from capture_api_helpers import capture_timestamp_fields, capture_timezone_from_config, trim_ai_result_for_list
 from services.update_promotion import build_update_promotion_context, serialize_pending_update
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
@@ -10295,37 +10296,6 @@ def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
 
 
 
-_AI_RESULT_LIST_STRIP_TOP_KEYS = ("raw_response", "prompt")
-_AI_RESULT_LIST_STRIP_EDGE_KEYS = ("npu", "autonomous_optimizer", "cv_features")
-
-
-def _trim_ai_result_for_list(raw: str | None) -> str | None:
-    """Strip de store diagnostik-blobs fra ai_result før den indgår i LISTE-
-    svaret /api/admin/captures (2026-08-27, Peter: begrænset dataplan over VPN,
-    spar datatransport). raw_response/prompt/edge_ai.npu/edge_ai.autonomous_
-    optimizer/edge_ai.cv_features udgør typisk ~90% af et ai_result og bruges
-    ikke af thumbnail-grid'ets QA-badges — Lightbox'ens Metadata-panel henter
-    allerede en fuld, utrimmet kopi via /api/sidecar/... og
-    /api/captures/{id}/model-results når panelet rent faktisk åbnes. Fejler
-    åbent (returnerer raw uændret) ved enhver parse-fejl.
-    """
-    if not raw:
-        return raw
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return raw
-    if not isinstance(parsed, dict):
-        return raw
-    for key in _AI_RESULT_LIST_STRIP_TOP_KEYS:
-        parsed.pop(key, None)
-    edge_ai = parsed.get("edge_ai")
-    if isinstance(edge_ai, dict):
-        for key in _AI_RESULT_LIST_STRIP_EDGE_KEYS:
-            edge_ai.pop(key, None)
-    return json.dumps(parsed)
-
-
 @app.get("/api/admin/captures")
 def list_captures(
     device_id: Optional[str] = None,
@@ -10365,6 +10335,11 @@ def list_captures(
             _ensure_customer_access(_user, cam.customer_id)
         q = q.filter(Capture.camera_id == camera_id)
     captures = q.limit(limit).all()
+    device_timezones = {
+        d.device_id: capture_timezone_from_config(d.device_config)
+        for d in db.query(Device).filter(Device.device_id.in_({c.device_id for c in captures})).all()
+    }
+
     return [
         {
             "id":            c.id,
@@ -10373,7 +10348,7 @@ def list_captures(
             "customer_id":   c.customer_id if hasattr(c, 'customer_id') else None,
             "site_id":       c.site_id if hasattr(c, 'site_id') else None,
             "filename":      c.filename,
-            "captured_at":   c.captured_at.isoformat() if c.captured_at else None,
+            **capture_timestamp_fields(c.captured_at, device_timezones.get(c.device_id, "Europe/Copenhagen")),
             "quality_flag":  c.quality_flag,
             "quality_passed":c.quality_passed,
             "blur_score":    round(c.blur_score, 1) if c.blur_score else None,
@@ -10396,7 +10371,7 @@ def list_captures(
             "fov_vertical_deg": c.fov_vertical_deg if hasattr(c, 'fov_vertical_deg') else None,
             "perspective":   c.perspective if hasattr(c, 'perspective') else None,
             "xmp_written":   c.xmp_written if hasattr(c, 'xmp_written') else None,
-            "ai_result":      _trim_ai_result_for_list(c.ai_result) if hasattr(c, 'ai_result') else None,
+            "ai_result":      trim_ai_result_for_list(c.ai_result) if hasattr(c, 'ai_result') else None,
             "ai_analyzed_at": c.ai_analyzed_at.isoformat() if hasattr(c, 'ai_analyzed_at') and c.ai_analyzed_at else None,
             "ai_tags":        json.loads(c.ai_tags) if hasattr(c, 'ai_tags') and c.ai_tags else None,
         }
@@ -14638,6 +14613,8 @@ def captures_timeline(
         Capture.device_id == device_id,
         Capture.captured_at.isnot(None)
     )
+    _device_for_time = db.query(Device).filter_by(device_id=device_id).first()
+    timezone_name = capture_timezone_from_config(_device_for_time.device_config if _device_for_time else None)
 
     if year and month and day:
         # Hent alle captures på en specifik dag
@@ -14655,14 +14632,14 @@ def captures_timeline(
                 "id":           c.id,
                 "device_id":    c.device_id,
                 "filename":     c.filename,
-                "captured_at":  c.captured_at.isoformat() if c.captured_at else None,
+                **capture_timestamp_fields(c.captured_at, timezone_name),
                 "quality_flag": c.quality_flag,
                 "quality_passed": c.quality_passed,
                 "blur_score":   round(c.blur_score, 1) if c.blur_score else None,
                 "brightness":   round(c.brightness_mean, 1) if c.brightness_mean else None,
                 "filesize_mb":  round(c.filesize / 1e6, 1) if c.filesize else None,
                 "uploaded":     c.uploaded,
-                "ai_result":      _trim_ai_result_for_list(c.ai_result) if hasattr(c, 'ai_result') else None,
+                "ai_result":      trim_ai_result_for_list(c.ai_result) if hasattr(c, 'ai_result') else None,
                 "ai_analyzed_at": c.ai_analyzed_at.isoformat() if hasattr(c, 'ai_analyzed_at') and c.ai_analyzed_at else None,
                 "ai_tags":        json.loads(c.ai_tags) if hasattr(c, 'ai_tags') and c.ai_tags else None,
             }
