@@ -2,10 +2,9 @@ import { useEffect, useState, useRef } from 'react'
 import { Image } from 'lucide-react'
 import { getThumbnailUrl, requestThumbnailGeneration } from '../api/client'
 import { acquireImageSlot, observeInView } from '../lib/imageLoadGate'
+import { captureTimestampParts } from '../lib/captureTime'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
 import type { Capture } from '../types'
-
-const getTz = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhagen'
 
 export function parseCaptureAI(capture: any, sidecar?: any): Record<string, any> | null {
   if (sidecar?.ai_analysis) return sidecar.ai_analysis
@@ -154,13 +153,7 @@ export function CaptureThumbnailCard({
   showFileSize?: boolean
   compact?: boolean
 }) {
-  const time = capture.captured_at
-    ? new Date(capture.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-    : '-'
-  const [datePart, timePart] = time.split(', ')
-  const yearPart = capture.captured_at
-    ? new Date(capture.captured_at).toLocaleString('da-DK', { timeZone: getTz(), year: 'numeric' })
-    : ''
+  const { datePart, timePart, yearPart, time } = captureTimestampParts(capture)
   const passed = capture.quality_passed !== false
   const thumbUrl = getThumbnailUrl(capture.device_id, capture.filename)
   const [imgOk, setImgOk] = useState(true)

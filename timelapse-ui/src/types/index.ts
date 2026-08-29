@@ -29,6 +29,9 @@ export interface Capture {
   device_id: string
   filename: string
   captured_at: string | null
+  captured_at_local?: string | null
+  captured_at_utc?: string | null
+  captured_timezone?: string | null
   quality_flag: string | null
   quality_passed: boolean | null
   blur_score: number | null

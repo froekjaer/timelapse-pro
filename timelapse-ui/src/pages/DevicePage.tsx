@@ -21,6 +21,7 @@ import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, setParam,
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaptureThumbnailCard, parseCaptureQA, qaHardFailed, causeLabels } from '../components/CaptureThumbnailCard'
+import { formatCaptureTimestamp } from '../lib/captureTime'
 import { FotoTechnicalCard } from '../components/FotoTechnicalCard'
 import { SiteLookCard } from '../components/SiteLookCard'
 import { useTagLabels, tagLabel } from '../hooks/useTagLabels'
@@ -342,9 +343,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
   }
   function onMouseUp() { setDragging(false) }
 
-  const time = c.captured_at
-    ? new Date(c.captured_at).toLocaleString('da-DK', { timeZone: getTz(), day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : '–'
+  const time = formatCaptureTimestamp(c, { includeYear: true })
 
   return (
     <div className="fixed inset-0 z-50 bg-black/95 flex flex-col" onClick={zoom === 1 ? onClose : undefined}>
@@ -1251,7 +1250,7 @@ function StatsTab({ captures, diagnostics, deviceId }: { captures: Capture[]; di
   const qualityData = sorted
     .filter(c => c.captured_at)
     .map(c => ({
-      time: new Date(c.captured_at!).toLocaleTimeString('da-DK', { timeZone: getTz(), hour: '2-digit', minute: '2-digit' }),
+      time: formatCaptureTimestamp(c, { timeOnly: true }),
       blur:       c.blur_score != null ? Math.round(c.blur_score) : null,
       brightness: c.brightness != null ? Math.round(c.brightness) : null,
       size:       c.filesize_mb ?? null,

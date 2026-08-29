@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-08-29 20:30 — fra Codex til Peter/Codex: capture-tid/thumbnail-kontrakt og Edge 2 read-only evidens
+
+- Hvad er gjort: Efter Claudes main.py-modularisering blev current `origin/main` (`6d558afd`) brugt som ren base for en fokuseret branch `codex/fix-capture-time-and-edge2-evidence`. Thumbnail/listetid er rettet ved at Headend nu returnerer eksplicitte `captured_at_local`, `captured_at_utc` og `captured_timezone` felter for capture-lister/timeline, og UI formatter lokale capture-tider uden at lade browseren gætte tidszone for naive ISO-strenge. `exifread==3.5.1` er tilføjet til Headend requirements, fordi live Headend allerede forsøger EXIF-berigelse men mangler dependency.
+- Read-only Edge 2 evidens: `TL-043EB9E72EFD` har stadig frisk `devices.last_seen`/heartbeat, men seneste capture er `2026-08-26 03:40:04` og seneste diagnostics er `2026-08-26 03:39:22`. De sidste captures er alle `underexposed` og uploadet; diagnostics viser disk/SSD ikke fuld (`ssd_used_pct=24.9`, `ssd_free_gb=94.14`, `upload_queue=0`). Seneste security_events stopper med config/sync/sleep omkring `2026-08-26 03:39`; der ses ingen nyere capture-/diagnostics-log fra Edge-kanalen i Headend.
+- Hvad mangler / næste skridt: Selve Edge 2 capture-stop kræver fortsat sikker Edge-side diagnose via trusted kanal/Service Operations eller verificeret SSH host identity; ingen SSH trust-bypass og ingen relay/power handling er udført. Separat bør healthcheck-reglen skærpes, så “heartbeat frisk men diagnostics/capture-loop stale” vises som en klar driftsalarm.
+- Kommandoer kørt eller skal køres: `PYTHONPATH=headend:. pytest tests/test_capture_time_metadata_contract.py -q`; `npm run build`; `python3 -m py_compile headend/main.py`; read-only Postgres queries mod devices/captures/diagnostics/security_events/GRC.
+- Forventet/faktisk output: 4/4 kontrakttests grønne; UI build grøn med eksisterende chunk/dynamic-import warnings; Python compile grøn. Edge 2: 0 captures seneste 24 timer; Edge 1 fortsætter normalt.
+- Filer rørt: `headend/capture_api_helpers.py`, `headend/main.py`, `headend/requirements.txt`, `timelapse-ui/src/lib/captureTime.ts`, `timelapse-ui/src/components/CaptureThumbnailCard.tsx`, `timelapse-ui/src/pages/DevicePage.tsx`, `timelapse-ui/src/types/index.ts`, `tests/test_capture_time_metadata_contract.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Denne PR ændrer ikke DB-kolonnen `captures.captured_at` og flytter ikke historiske timestamps. Det er bevidst for at undgå utilsigtet historik-migration. Edge 2 root cause er endnu ikke bevist, kun afgrænset til Edge-side capture/diagnostics/log-forwarding efter `2026-08-26 03:39`.
+
 ### Handover 2026-08-27 (eftermiddag) — fra Claude til Peter/Codex: main.py-modularisering, Fase 2.1 — tenant_scope.py + Cameras-domænet udtrukket (PR #155)
 
 - Baggrund: Peter bad om at fortsætte moduliseringen ("er der mulighed for at få mere ud i moduler? der er stadig meget kode i main"). Første Fase 2-domæne: Cameras (logisk kamera-CRUD, BT-PAN TOTP lokal-adgang, device-assignment).
