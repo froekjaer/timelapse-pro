@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-29 22:45 — fra Codex til Peter/Codex: Edge 2 read-only diagnose og smal tunnel/relay safety-fix
+
+- Hvad er gjort: Edge 2 (`TL-043EB9E72EFD`) blev undersøgt read-only efter rapport om konstant kamera-relæ ON og manglende browserterminal fra SSH-menuen. Headend-konfiguration viser `debug_mode.enabled=false`, men har en gammel/inaktiv `relay_always_on=true` rest i debug-blokken fra tidligere LAB/debug-forløb. Der er ikke ændret known_hosts, credentials, GPIO mapping eller live Edge-state.
+- Fund: `devices.last_seen` er frisk, fordi Edge stadig henter config, men seneste capture er `2026-08-26 03:40:04`, seneste diagnostics er `2026-08-26 03:39:22`, og seneste security_events stopper omkring `2026-08-26 03:39`. Disk/upload er ikke årsagen (`ssd_free_gb=94.14`, `upload_queue=0`). Seneste reverse-tunnel-log for Edge 2 er `connected` på port `2204` fra `2026-08-26 03:40:18`, men Headend-porten lytter ikke længere (`connection refused`). Browserterminal-audit viser gentagne `SSH host-key verified connection failed: Unable to connect to port 2204`.
+- Kodefix: `headend/api/ssh_tunnel_terminal_api.py` kræver nu både frisk reverse-tunnel-event og faktisk lokal TCP-liveness på Headend, før browserterminal tillades. Det forhindrer, at UI viser en tilsyneladende brugbar terminalknap baseret på stale tunnel-log. Fejlede terminalforsøg lukker nu også deres kortlivede `EdgeServiceGrant`, så de ikke bliver liggende som `active` efter connection failure. `edge/agent.py` slukker nu kamera-relæet i `finally` efter startup feature-detection, også hvis gphoto/PTP fejler midt i detektionen.
+- Verificeret: `PYTHONPATH=headend:edge:. pytest tests/test_edge2_safety_regressions.py tests/test_ssh_tunnel_ux_convergence.py tests/test_lab_tick_state_machine.py -q` = 20 passed. `python3 -m py_compile headend/api/ssh_tunnel_terminal_api.py edge/agent.py` = OK.
+- Filer rørt: `headend/api/ssh_tunnel_terminal_api.py`, `edge/agent.py`, `tests/test_edge2_safety_regressions.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Dette er ikke en live-recovery af Edge 2. Hvis relæet allerede står fysisk ON på den kørende Edge, kræver det stadig en sikker kanal eller fysisk/operatør-bekræftet handling at få den ud af tilstanden. Næste sikre driftsskridt er at genetablere/verificere Edge 2-kanal uden SSH trust-bypass og derefter bruge Service Operations/diagnostics til kamerafejlsøgning.
+
 ### Handover 2026-08-27 (eftermiddag) — fra Claude til Peter/Codex: main.py-modularisering, Fase 2.1 — tenant_scope.py + Cameras-domænet udtrukket (PR #155)
 
 - Baggrund: Peter bad om at fortsætte moduliseringen ("er der mulighed for at få mere ud i moduler? der er stadig meget kode i main"). Første Fase 2-domæne: Cameras (logisk kamera-CRUD, BT-PAN TOTP lokal-adgang, device-assignment).

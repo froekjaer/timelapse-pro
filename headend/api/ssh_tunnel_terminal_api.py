@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import secrets
+import socket
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from database import (
     Event,
     SshHostKeyTrust,
     SshTerminalSessionAudit,
+    ensure_utc,
     get_db,
     now_utc,
 )
@@ -31,6 +33,8 @@ log = logging.getLogger("headend")
 
 CAPABILITY = "edge.shell.remote"
 TERMINAL_TTL_SECONDS = int(os.getenv("TIMELAPSE_SSH_TERMINAL_TTL_SECONDS", "900"))
+TUNNEL_STALE_SECONDS = int(os.getenv("TIMELAPSE_SSH_TUNNEL_STALE_SECONDS", "300"))
+TUNNEL_TCP_TIMEOUT_SECONDS = float(os.getenv("TIMELAPSE_SSH_TUNNEL_TCP_TIMEOUT_SECONDS", "0.5"))
 RESIZE_PREFIX = "\x01RESIZE:"
 TRUSTED_HOST_STATES = {"trusted", "verified"}
 
@@ -72,13 +76,30 @@ def terminal_trust_status(db: Session, device_id: str) -> dict:
             "reason": "SSH server host identity is not trusted/verified",
             "required_state": sorted(TRUSTED_HOST_STATES),
         }
+    tunnel = _active_reverse_tunnel(db, device_id)
+    if not tunnel:
+        return {
+            "allowed": False,
+            "reason": "No active reverse SSH tunnel",
+            "key_type": trusted.key_type,
+            "fingerprint": trusted.fingerprint_sha256,
+            "trusted_state": trusted.trusted_state,
+        }
     return {
         "allowed": True,
-        "reason": "SSH server host identity trusted",
+        "reason": "SSH server host identity trusted and reverse tunnel reachable",
         "key_type": trusted.key_type,
         "fingerprint": trusted.fingerprint_sha256,
         "trusted_state": trusted.trusted_state,
     }
+
+
+def _localhost_tcp_reachable(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=TUNNEL_TCP_TIMEOUT_SECONDS):
+            return True
+    except OSError:
+        return False
 
 
 def _active_reverse_tunnel(db: Session, device_id: str):
@@ -92,11 +113,25 @@ def _active_reverse_tunnel(db: Session, device_id: str):
     )
     if not latest or latest.event != "connected" or not latest.remote_port:
         return None
+    event_at = ensure_utc(latest.event_at)
+    if not event_at or (now_utc() - event_at).total_seconds() > TUNNEL_STALE_SECONDS:
+        return None
+    if not _localhost_tcp_reachable(int(latest.remote_port)):
+        return None
     return latest
 
 
 def _deny_terminal(db: Session, session: SshTerminalSessionAudit | None, reason: str, status: str = "denied") -> None:
     if session:
+        grant = db.query(EdgeServiceGrant).filter_by(grant_id=session.grant_id).first()
+        if grant and grant.status == "active":
+            if status == "expired" or (grant.expires_at and ensure_utc(grant.expires_at) <= now_utc()):
+                grant.status = "expired"
+            else:
+                grant.status = "revoked"
+                grant.revoked_at = now_utc()
+                grant.revoked_by = "ssh_terminal"
+                grant.revoke_reason = reason
         session.status = status
         session.reason = reason
         session.ended_at = now_utc()
