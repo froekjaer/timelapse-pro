@@ -1,4 +1,5 @@
 # Secrets og lokale overrides
+.claude/settings.local.json
 secrets/
 edge/config.yaml
 edge/local_network.yaml
