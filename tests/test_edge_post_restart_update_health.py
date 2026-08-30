@@ -9,6 +9,7 @@ from edge.update_lifecycle import (
     mark_pending_app_update_health_confirmed,
     pending_app_update_matches,
     pending_app_update_path,
+    record_pending_app_update_health_probe,
     write_pending_app_update,
     write_post_restart_guard,
 )
@@ -173,6 +174,41 @@ def test_health_confirmation_prevents_guard_rollback(tmp_path: Path):
     assert (repo / "edge" / "agent.py").read_text() == "candidate"
 
 
+def test_health_probe_requires_stability_window_before_confirmation(tmp_path: Path):
+    from datetime import datetime, timedelta, timezone
+
+    repo = tmp_path / "timelapse"
+    (repo / "edge").mkdir(parents=True)
+    recovery = _make_recovery_root(tmp_path)
+    pending = pending_app_update_path(repo)
+    write_pending_app_update(
+        pending,
+        update_id=7,
+        artifact=_artifact(),
+        recovery_dir=recovery,
+        repo=repo,
+    )
+
+    first = datetime(2026, 8, 30, 10, 0, tzinfo=timezone.utc)
+    probe = record_pending_app_update_health_probe(
+        pending,
+        stability_s=600,
+        checks={"release_receipt_matches_artifact": True},
+        now=first,
+    )
+    assert probe["state"] == "awaiting_restart_health"
+    assert probe["health_elapsed_s"] == 0
+
+    confirmed = record_pending_app_update_health_probe(
+        pending,
+        stability_s=600,
+        checks={"release_receipt_matches_artifact": True},
+        now=first + timedelta(seconds=600),
+    )
+    assert confirmed["state"] == "health_confirmed"
+    assert confirmed["health_confirmed_at"]
+
+
 def test_guard_runner_is_persisted_from_trusted_lifecycle_source(tmp_path: Path):
     recovery = _make_recovery_root(tmp_path)
     runner = write_post_restart_guard(recovery)
@@ -210,3 +246,16 @@ def test_agent_defers_deployed_until_complete_startup_health_gate():
     active_unit_copy = installer.index("_shutil.copy2(source, target)", first_unit_loop)
     missing_unit_gate = installer.index("managed_systemd_unit_missing", first_unit_loop)
     assert missing_unit_gate < active_unit_copy
+
+
+def test_watchdog_applies_device_relay_safety_state_from_edge_config():
+    source = Path("edge/scripts/watchdog.sh").read_text(encoding="utf-8")
+    assert 'RELAY_GPIO_PIN="${TIMELAPSE_RELAY_PIN:-18}"' not in source
+    assert "resolve_camera_relay_gpio_pin()" in source
+    assert "resolve_modem_relay_gpio_pin()" in source
+    assert 'read_config_value "camera" "relay_gpio_pin"' in source
+    assert 'read_config_value "modem" "modem_relay_gpio_pin"' in source
+    assert "camera relay (camera off)" in source
+    assert "modem relay (modem on)" in source
+    assert "camera.relay_gpio_pin missing or invalid" in source
+    assert "refusing relay safety action" in source

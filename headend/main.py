@@ -126,6 +126,7 @@ from services.update_promotion import build_update_promotion_context, serialize_
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
+from services.post_restart_health import sweep_stale_post_restart_update_handshakes as _sweep_stale_post_restart_update_handshakes
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
 from services.edge_lifecycle import LifecycleTransitionError as EdgeLifecycleError, key_management_lifecycle_summary, mark_bootstrap_consumed, reconcile_edge_lifecycle as _reconcile_edge_lifecycle, resolve_device_api_credential
@@ -4872,10 +4873,6 @@ def get_device_camera_location(
     }
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# ── OPDATERINGSSTYRING (Sprint C) ─────────────────────────────────────────
-# ═══════════════════════════════════════════════════════════════════════════
-
 @app.get("/api/updates/pending")
 def list_pending_updates(
     status: Optional[str] = None,
@@ -4884,6 +4881,7 @@ def list_pending_updates(
 ):
     """List opdateringer der afventer godkendelse eller deployment."""
     from database import PendingUpdate
+    _sweep_stale_post_restart_update_handshakes(db)
     q = db.query(PendingUpdate)
     if status:
         q = q.filter_by(status=status)
@@ -8905,6 +8903,7 @@ def get_update_flow_status(
     db: Session = Depends(get_db),
 ):
     """Detaljeret update-flow pr. target, inkl. hvad Edge/Headend venter på."""
+    _sweep_stale_post_restart_update_handshakes(db)
     update = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not update:
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
@@ -9668,6 +9667,7 @@ def get_update_policy(
     db: Session = Depends(get_db)
 ):
     """Returnerer resolved update_policy for et device (bruges af edge)."""
+    _sweep_stale_post_restart_update_handshakes(db)
     device = db.query(Device).filter_by(device_id=device_id).first()
     if not device:
         raise HTTPException(status_code=404)

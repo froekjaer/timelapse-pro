@@ -75,8 +75,8 @@ from security               import verify_update_artifact
 from update_lifecycle import (
     cleanup_pending_app_update,
     load_pending_app_update,
-    mark_pending_app_update_health_confirmed,
     pending_app_update_path,
+    record_pending_app_update_health_probe,
     release_receipt_matches_artifact,
     restore_previous_app_release,
     write_pending_app_update,
@@ -2135,7 +2135,7 @@ class EdgeAgent:
             log.error("Pending app-update mangler update_id; update-flow blokeret")
             return True
         if state == "awaiting_restart_health":
-            log.info("App update %d afventer komplet post-restart health gate", update_id)
+            self._probe_pending_app_update_health(pending_path, pending)
             return True
         if state == "health_confirmed":
             if self._report_update(update_id, "deployed", "post_restart_health_confirmed"):
@@ -2152,6 +2152,80 @@ class EdgeAgent:
         log.error("Ukendt pending app-update state=%s; update-flow blokeret", state)
         return True
 
+    def _post_restart_health_stability_s(self) -> int:
+        updates_cfg = self._cfg.get("updates", {}) if isinstance(self._cfg, dict) else {}
+        return max(0, int(updates_cfg.get("post_restart_health_stability_s", 600)))
+
+    def _post_restart_health_checks(self, pending: dict) -> tuple[bool, dict, str | None]:
+        repo = Path("/opt/timelapse")
+        artifact = self._pending_app_update_artifact(pending)
+        receipt = repo / "edge" / ".timelapse-release.json"
+        checks = {
+            "release_receipt_matches_artifact": release_receipt_matches_artifact(receipt, artifact),
+            "agent_running": bool(self._running and not self._stop_event.is_set()),
+        }
+        if bool(self._cfg.get("ssh_tunnel", {}).get("enabled", True)):
+            tunnel = getattr(self, "_tunnel", None)
+            checks["ssh_tunnel_connected"] = bool(
+                tunnel and getattr(tunnel, "is_connected", lambda: False)()
+            )
+        failed = [name for name, ok in checks.items() if not ok]
+        if failed:
+            return False, checks, ",".join(failed)
+        return True, checks, None
+
+    def _probe_pending_app_update_health(self, pending_path: Path, pending: dict) -> bool:
+        update_id = int(pending.get("update_id", -1))
+        ok, checks, reason = self._post_restart_health_checks(pending)
+        if not ok:
+            if update_id >= 0:
+                self._report_update(
+                    update_id,
+                    "installing",
+                    f"post_restart_health_failed:{reason}",
+                    extra={"post_restart_health": {"checks": checks, "state": "failed"}},
+                )
+            log.error("App update %s post-restart health probe fejlede: %s", pending.get("update_id"), reason)
+            return False
+
+        stability_s = self._post_restart_health_stability_s()
+        try:
+            updated = record_pending_app_update_health_probe(
+                pending_path,
+                stability_s=stability_s,
+                checks=checks,
+            )
+        except Exception as exc:
+            log.error("Kunne ikke persistére post-restart health probe: %s", exc)
+            return False
+
+        state = str(updated.get("state") or "")
+        elapsed_s = int(updated.get("health_elapsed_s") or 0)
+        if state == "health_confirmed":
+            log.info("App update %d post-restart health stability gate er grøn", update_id)
+            return True
+        if update_id >= 0:
+            self._report_update(
+                update_id,
+                "installing",
+                "awaiting_post_restart_health",
+                extra={
+                    "post_restart_health": {
+                        "state": "stable_pending",
+                        "elapsed_s": elapsed_s,
+                        "required_stability_s": stability_s,
+                        "checks": checks,
+                    }
+                },
+            )
+        log.info(
+            "App update %d afventer post-restart stabilitet (%ss/%ss)",
+            update_id,
+            elapsed_s,
+            stability_s,
+        )
+        return False
+
     def _finalize_pending_app_update_health(self) -> None:
         """Confirm a candidate release only after the full startup path succeeded."""
         repo = Path("/opt/timelapse")
@@ -2165,18 +2239,9 @@ class EdgeAgent:
             return
         state = str(pending.get("state") or "")
         if state == "awaiting_restart_health":
-            artifact = self._pending_app_update_artifact(pending)
-            receipt = repo / "edge" / ".timelapse-release.json"
-            if not release_receipt_matches_artifact(receipt, artifact):
-                log.error(
-                    "Post-restart health afvist for update %s: release receipt matcher ikke candidate identity",
-                    pending.get("update_id"),
-                )
-                return
-            try:
-                mark_pending_app_update_health_confirmed(pending_path)
-            except Exception as exc:
-                log.error("Kunne ikke persistére post-restart health evidence: %s", exc)
+            self._probe_pending_app_update_health(pending_path, pending)
+            pending = load_pending_app_update(pending_path) or pending
+            if str(pending.get("state") or "") == "awaiting_restart_health":
                 return
         self._reconcile_pending_app_update()
 
@@ -2275,7 +2340,7 @@ class EdgeAgent:
             log.warning("Opdatering %d fejlede (rc=%d)\n%s", update_id, result.returncode, result.stderr[-300:])
             self._report_update(update_id, "rolled_back", f"legacy_update_failed_rc_{result.returncode}: {result.stderr[-500:]}")
 
-    def _report_update(self, update_id: int, status: str, reason: str | None = None) -> bool:
+    def _report_update(self, update_id: int, status: str, reason: str | None = None, *, extra: dict | None = None) -> bool:
         payload = {
             "update_id": update_id,
             "status": status,
@@ -2283,6 +2348,8 @@ class EdgeAgent:
         }
         if reason:
             payload["reason"] = reason
+        if isinstance(extra, dict):
+            payload.update(extra)
         try:
             ok, _ = self._api._post("/updates/report", payload)
             return bool(ok)
@@ -2502,15 +2569,18 @@ class EdgeAgent:
             log.info("App update %d release receipt persisted: %s", update_id, receipt_path)
 
             guard_managed_units = managed_unit_files if management_changed else ()
+            post_restart_health_stability_s = self._post_restart_health_stability_s()
+            post_restart_health_timeout_s = max(
+                int(self._cfg.get("updates", {}).get("post_restart_health_timeout_s", 180)),
+                post_restart_health_stability_s + 120,
+            )
             write_pending_app_update(
                 pending_path,
                 update_id=update_id,
                 artifact=artifact,
                 recovery_dir=recovery_dir,
                 managed_unit_files=guard_managed_units,
-                health_timeout_s=int(
-                    self._cfg.get("updates", {}).get("post_restart_health_timeout_s", 180)
-                ),
+                health_timeout_s=post_restart_health_timeout_s,
                 repo=repo,
             )
             guard_runner = write_post_restart_guard(recovery_dir)
@@ -2555,7 +2625,18 @@ class EdgeAgent:
             if not guard_active:
                 raise RuntimeError("post_restart_guard_not_active")
             guard_started = True
-            self._report_update(update_id, "installing", "awaiting_post_restart_health")
+            self._report_update(
+                update_id,
+                "installing",
+                "awaiting_post_restart_health",
+                extra={
+                    "post_restart_health": {
+                        "state": "restart_requested",
+                        "timeout_s": post_restart_health_timeout_s,
+                        "required_stability_s": post_restart_health_stability_s,
+                    }
+                },
+            )
             log.info(
                 "App update %d candidate installeret; separat guard aktiv — genstarter agent før deployed-status",
                 update_id,

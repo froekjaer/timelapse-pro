@@ -22,6 +22,8 @@ import os
 import sys
 import tempfile
 import pathlib
+import json
+from datetime import timedelta
 
 import pytest
 
@@ -153,6 +155,63 @@ def test_force_rollback_unknown_update_raises_404(db_session):
     with pytest.raises(HTTPException) as excinfo:
         main.force_rollback(999999, current_user=_FakeUser(), db=db_session)
     assert excinfo.value.status_code == 404
+
+
+def test_stale_post_restart_health_handshake_marks_device_update_blocked(db_session):
+    _make_device(db_session, "dev-1")
+    update = _make_update(db_session, scope="device", scope_id="dev-1", status="approved")
+    target = database.UpdateTarget(
+        pending_update_id=update.id,
+        device_id="dev-1",
+        status="installing",
+        last_report_at=database.now_utc() - timedelta(seconds=1900),
+        report_json=json.dumps({
+            "update_id": update.id,
+            "device_id": "dev-1",
+            "status": "installing",
+            "reason": "awaiting_post_restart_health",
+            "post_restart_health": {"state": "restart_requested", "timeout_s": 720},
+        }),
+    )
+    db_session.add(target)
+    db_session.commit()
+
+    changed = main._sweep_stale_post_restart_update_handshakes(db_session, timeout_s=1800)
+
+    assert changed == 1
+    db_session.refresh(update)
+    db_session.refresh(target)
+    assert update.status == "blocked"
+    assert target.status == "failed"
+    assert target.last_error == "post_restart_health_handshake_missing"
+
+
+def test_active_post_restart_health_handshake_is_not_marked_failed(db_session):
+    _make_device(db_session, "dev-1")
+    update = _make_update(db_session, scope="device", scope_id="dev-1", status="approved")
+    target = database.UpdateTarget(
+        pending_update_id=update.id,
+        device_id="dev-1",
+        status="installing",
+        last_report_at=database.now_utc() - timedelta(seconds=30),
+        report_json=json.dumps({
+            "update_id": update.id,
+            "device_id": "dev-1",
+            "status": "installing",
+            "reason": "awaiting_post_restart_health",
+            "post_restart_health": {"state": "restart_requested", "timeout_s": 720},
+        }),
+    )
+    db_session.add(target)
+    db_session.commit()
+
+    changed = main._sweep_stale_post_restart_update_handshakes(db_session, timeout_s=1800)
+
+    assert changed == 0
+    db_session.refresh(update)
+    db_session.refresh(target)
+    assert update.status == "approved"
+    assert target.status == "installing"
 
 
 # ── Edge case: device forsvinder fra CMDB midt i en igangværende rollout ────

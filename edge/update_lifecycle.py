@@ -166,6 +166,43 @@ def mark_pending_app_update_health_confirmed(path: Path) -> dict:
     return payload
 
 
+def record_pending_app_update_health_probe(
+    path: Path,
+    *,
+    stability_s: int,
+    checks: dict | None = None,
+    now: datetime | None = None,
+) -> dict:
+    payload = load_pending_app_update(path)
+    if not payload:
+        raise FileNotFoundError("pending_update_marker_missing")
+    if payload.get("state") != "awaiting_restart_health":
+        return payload
+
+    now = now or datetime.now(timezone.utc)
+    first_raw = payload.get("health_first_ok_at")
+    if first_raw:
+        try:
+            first_ok = datetime.fromisoformat(str(first_raw))
+        except ValueError:
+            first_ok = now
+            payload["health_first_ok_at"] = first_ok.isoformat()
+    else:
+        first_ok = now
+        payload["health_first_ok_at"] = first_ok.isoformat()
+
+    payload["health_last_ok_at"] = now.isoformat()
+    payload["health_stability_s"] = max(0, int(stability_s))
+    payload["health_checks"] = checks if isinstance(checks, dict) else {}
+    elapsed_s = max(0, int((now - first_ok).total_seconds()))
+    payload["health_elapsed_s"] = elapsed_s
+    if elapsed_s >= max(0, int(stability_s)):
+        payload["state"] = "health_confirmed"
+        payload["health_confirmed_at"] = now.isoformat()
+    _atomic_write_json(path, payload)
+    return payload
+
+
 def mark_pending_app_update_rolled_back(path: Path, reason: str) -> dict:
     payload = load_pending_app_update(path)
     if not payload:
