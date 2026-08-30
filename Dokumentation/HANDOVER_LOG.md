@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-08-30 17:24 — fra Codex til Peter/Codex: SSH tunnel UI gate rettet efter single-poll regression
+
+- Hvad er gjort: Browserterminal-gaten blev korrigeret efter PR #160, fordi Edge 1 (`TL-C87FF9587CA0`) blev gråmarkeret selvom reverse SSH-port `2201` faktisk lyttede på Headend. Efter Claudes single-poll konsolidering er et gammelt `connected`-event ikke i sig selv nok til at afvise en tunnel, hvis den lokale reverse-port stadig er reachable og host-key trust er verified.
+- Fix: `headend/api/ssh_tunnel_terminal_api.py` kræver fortsat `connected` som seneste tunnel-event og lokal TCP-liveness, men afviser ikke længere en ellers reachable tunnel kun fordi `connected`-eventet er ældre end 300 sekunder. Edge 2 (`TL-043EB9E72EFD`) forbliver korrekt blokeret, fordi port `2204` ikke lytter.
+- Verificeret: `PYTHONPATH=headend:edge:. headend/venv/bin/python -m pytest tests/test_edge2_safety_regressions.py tests/test_ssh_tunnel_ux_convergence.py tests/test_edge_sync_poll_consolidation.py -q` = 25 passed. `python3 -m py_compile headend/api/ssh_tunnel_terminal_api.py` = OK. Live check efter Headend restart: Edge 1 terminal allowed, Edge 2 denied med `No active reverse SSH tunnel`.
+- Filer rørt: `headend/api/ssh_tunnel_terminal_api.py`, `tests/test_edge2_safety_regressions.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: `/api/ssh-tunnel/active` viser stadig devices hvor seneste tunnel-event er `connected`; selve browserterminal-adgangen afgøres nu af host-key trust plus faktisk reachable reverse-port. En senere UX-forbedring kan gøre listen tydeligere ved at vise “tunnel stale/ikke reachable” direkte i kortet.
+
 ### Handover 2026-08-29 22:45 — fra Codex til Peter/Codex: Edge 2 read-only diagnose og smal tunnel/relay safety-fix
 
 - Hvad er gjort: Edge 2 (`TL-043EB9E72EFD`) blev undersøgt read-only efter rapport om konstant kamera-relæ ON og manglende browserterminal fra SSH-menuen. Headend-konfiguration viser `debug_mode.enabled=false`, men har en gammel/inaktiv `relay_always_on=true` rest i debug-blokken fra tidligere LAB/debug-forløb. Der er ikke ændret known_hosts, credentials, GPIO mapping eller live Edge-state.

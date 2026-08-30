@@ -47,11 +47,11 @@ def test_active_reverse_tunnel_requires_reachable_local_tcp_port(monkeypatch) ->
     assert terminal_api._active_reverse_tunnel(_FakeDb(latest), "TL-043EB9E72EFD") is None
 
 
-def test_active_reverse_tunnel_rejects_stale_connected_log(monkeypatch) -> None:
+def test_active_reverse_tunnel_allows_old_connected_log_when_port_is_reachable(monkeypatch) -> None:
     latest = SimpleNamespace(event="connected", remote_port=2204, event_at=now_utc() - timedelta(hours=1))
     monkeypatch.setattr(terminal_api, "_localhost_tcp_reachable", lambda _port: True)
 
-    assert terminal_api._active_reverse_tunnel(_FakeDb(latest), "TL-043EB9E72EFD") is None
+    assert terminal_api._active_reverse_tunnel(_FakeDb(latest), "TL-C87FF9587CA0") is latest
 
 
 def test_denied_terminal_closes_short_lived_grant() -> None:
