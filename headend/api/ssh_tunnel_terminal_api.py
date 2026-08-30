@@ -113,10 +113,10 @@ def _active_reverse_tunnel(db: Session, device_id: str):
     )
     if not latest or latest.event != "connected" or not latest.remote_port:
         return None
-    event_at = ensure_utc(latest.event_at)
-    if not event_at or (now_utc() - event_at).total_seconds() > TUNNEL_STALE_SECONDS:
-        return None
     if not _localhost_tcp_reachable(int(latest.remote_port)):
+        return None
+    event_at = ensure_utc(latest.event_at)
+    if not event_at:
         return None
     return latest
 
