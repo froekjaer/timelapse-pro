@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-08-30 17:33 — fra Codex til Peter/Codex: Edge 2 tunnel/capture recovery efter failed agent
+
+- Hvad er gjort: Edge 2 (`TL-043EB9E72EFD`) blev undersøgt efter forventning om automatisk reverse tunnel. Headend-konfigurationen var korrekt (`ssh_tunnel.enabled=true`, port `2204`), men `timelapse-edge.service` på Edge 2 stod `failed (Result: timeout)` siden `2026-08-26 01:41 UTC`. Direkte LAN SSH blev kun brugt efter host-key pinning mod den allerede trusted Edge 2 fingerprint `SHA256:cEHcetG6VrsTKZklL5H2u0TPqKl03RuJIAhJWfu0sZ0`; ingen known_hosts-bypass eller ny nøgleaccept.
+- Recovery: Kamera-relæ pin `356` blev sat OFF (`gpio356=1`), `timelapse-edge.service` blev `reset-failed` og startet igen. Service blev aktiv, reverse tunnel `2204` kom tilbage med ny `connected` event `2026-08-30 17:30:46`, og browserterminal-gaten returnerer nu allowed for Edge 2.
+- Verificeret: Edge 2 tog og uploadede nyt billede `TL-043EB9E72EFD_20260830_153121.jpg`; capture modtaget `2026-08-30 17:32:04`, `uploaded=true`, `quality_flag=ok`, brightness ca. `101.1`, blur ca. `2085.4`. `timelapse-edge.service` og `timelapse-totp.service` er aktive. `gpio356=1` (kamera-relæ OFF), `gpio361=0` (modem-relæ ON).
+- Fund: DB `devices.ip_address` viste `192.168.86.117`, men aktuel Edge 2 config-poll kom fra `192.168.86.144`. `192.168.86.144` havde SSH og TOTP-port `8443` åben; `192.168.86.117` var ikke den sunde Edge-agentvej. Watchdog-scriptet bruger default `TIMELAPSE_RELAY_PIN=18`, mens Edge 2’s kamera-relæ er pin `356`, så watchdog’en kunne ikke pålideligt slukke kamera-relæet efter agent-crash uden korrekt environment.
+- Risici / pas på: Seneste app update #266 blev markeret `deployed` den `2026-08-26 03:27`, men agenten endte senere i `failed/timeout`; post-deploy health bør udvides med vedvarende service/tunnel/capture-liveness. Watchdog bør bruge canonical relay config eller device-specific environment, ikke default pin 18.
+
 ### Handover 2026-08-30 17:24 — fra Codex til Peter/Codex: SSH tunnel UI gate rettet efter single-poll regression
 
 - Hvad er gjort: Browserterminal-gaten blev korrigeret efter PR #160, fordi Edge 1 (`TL-C87FF9587CA0`) blev gråmarkeret selvom reverse SSH-port `2201` faktisk lyttede på Headend. Efter Claudes single-poll konsolidering er et gammelt `connected`-event ikke i sig selv nok til at afvise en tunnel, hvis den lokale reverse-port stadig er reachable og host-key trust er verified.
