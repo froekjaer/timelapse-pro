@@ -266,6 +266,28 @@ class Event(Base):
     extra       = Column(Text)  # JSON
 
 
+class EdgeApiCommunicationLog(Base):
+    """Sanitized Edge-to-Headend API communication observations."""
+    __tablename__ = "edge_api_communication_logs"
+
+    id                  = Column(Integer, primary_key=True)
+    device_id           = Column(String(50), index=True)
+    direction           = Column(String(20), default="edge_to_headend", index=True)
+    method              = Column(String(12), nullable=False)
+    path                = Column(String(500), nullable=False, index=True)
+    query_string        = Column(Text)
+    status_code         = Column(Integer, index=True)
+    transport_scheme    = Column(String(20), index=True)
+    transport_security  = Column(String(30), index=True)
+    client_host         = Column(String(100))
+    user_agent          = Column(String(300))
+    request_content_type= Column(String(120))
+    request_bytes       = Column(Integer)
+    request_body_json   = Column(Text)
+    request_body_truncated = Column(Boolean, default=False)
+    interpretation      = Column(Text)
+    created_at          = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
 
 
 
