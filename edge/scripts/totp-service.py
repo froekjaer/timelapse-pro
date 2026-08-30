@@ -242,14 +242,24 @@ def _refresh_service_policy() -> dict:
 
 
 def _service_policy_watch_loop() -> None:
+    """Håndhæv central Headend-policy mens Live View eller en tekniker-session
+    rent faktisk er aktiv. Poller kun Headend (GET /api/config/{device_id})
+    når der er noget at håndhæve — VIDEO_MANAGER.status() og
+    _service_session_snapshot() er begge rent lokale, uden netværkskald, så
+    idle-tilfældet koster intet (2026-08-31, Peter: undgå konstant polling
+    når feltet er i drift — spar strøm/data).
+    """
     while not SERVICE_POLICY_STOP.is_set():
         try:
-            policy = _refresh_service_policy()
-            if VIDEO_MANAGER.status().get("running") and (
-                not policy["enabled"] or not policy["live_view_enabled"]
-            ):
-                log.warning("Live View stoppes af central Headend-policy")
-                VIDEO_MANAGER.stop(reason="central_policy")
+            live_running = bool(VIDEO_MANAGER.status().get("running"))
+            session_active = bool(_service_session_snapshot().get("logged_in"))
+            if live_running or session_active:
+                policy = _refresh_service_policy()
+                if live_running and (
+                    not policy["enabled"] or not policy["live_view_enabled"]
+                ):
+                    log.warning("Live View stoppes af central Headend-policy")
+                    VIDEO_MANAGER.stop(reason="central_policy")
         except Exception as exc:
             log.warning("Central service-policy kunne ikke opdateres: %s", exc)
         SERVICE_POLICY_STOP.wait(10)
