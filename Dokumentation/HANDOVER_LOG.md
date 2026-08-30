@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-08-30 20:55 — fra Codex til Peter/Codex: Edge watchdog relay-pin og post-restart update handshake
+
+- Hvad er gjort: Smal convergence-fix på branch `codex/edge-post-restart-health-handshake`. Edge watchdog anvender nu device-konfigurationens relay mapping: kamera-relæet slukkes via `camera.relay_gpio_pin`, og modem-relæet holdes tændt via `modem.modem_relay_gpio_pin`, så enheden fortsat kan kontaktes og fejlsøges efter agent-nedbrud. Hvis kamera-pin mangler/er ugyldig, udføres relæ-safety ikke blindt; det logges som fejl.
+- Update-flow: App artifact deployment rapporterer nu post-restart health-probes via den eksisterende authenticated Edge→Headend `/updates/report` kanal. Edge markerer først update `deployed`, når release receipt matcher, agenten kører, reverse tunnel er connected når tunnel er aktiveret, og stabilitetsvinduet er opfyldt. Default stabilitetsvindue er 600 sekunder; guard-timeout hæves automatisk til mindst stabilitetsvindue + 120 sekunder.
+- Headend safety: Headend sweeper stale `installing` targets med `post_restart_health` evidence. Hvis Edge forsvinder efter restart-request og ikke sender ny health-probe/deployed/rollback inden timeout, markeres target som `failed` med `post_restart_health_handshake_missing`; single-device updates markeres `blocked`.
+- Verificeret: `env -u DATABASE_URL /tmp/tlp-health-handshake-venv/bin/python -m pytest tests/test_edge_post_restart_update_health.py tests/test_edge_release_contract.py tests/test_architecture_ratchet.py -q` = 41 passed. `TIMELAPSE_TEST_DATABASE_URL=sqlite:////tmp/tlp-headend-update-lifecycle-test-$$.db /tmp/tlp-health-handshake-venv/bin/python -m pytest headend/tests/test_update_lifecycle.py headend/tests/test_report_update_rollup.py -q` = 15 passed. `python -m py_compile edge/agent.py edge/update_lifecycle.py headend/main.py headend/services/post_restart_health.py ...` og `bash -n edge/scripts/watchdog.sh` = OK.
+- Filer rørt: `edge/scripts/watchdog.sh`, `edge/update_lifecycle.py`, `edge/agent.py`, `headend/services/post_restart_health.py`, `headend/main.py`, `tests/test_edge_post_restart_update_health.py`, `headend/tests/test_update_lifecycle.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Dette er kodefix/PR-forberedelse, ikke live Edge deployment. Eksisterende Edges bør opdateres kontrolleret én ad gangen via signeret artifact efter CI/PR merge; ingen GPIO mapping eller credentials ændres af denne patch.
+
 ### Handover 2026-08-30 17:33 — fra Codex til Peter/Codex: Edge 2 tunnel/capture recovery efter failed agent
 
 - Hvad er gjort: Edge 2 (`TL-043EB9E72EFD`) blev undersøgt efter forventning om automatisk reverse tunnel. Headend-konfigurationen var korrekt (`ssh_tunnel.enabled=true`, port `2204`), men `timelapse-edge.service` på Edge 2 stod `failed (Result: timeout)` siden `2026-08-26 01:41 UTC`. Direkte LAN SSH blev kun brugt efter host-key pinning mod den allerede trusted Edge 2 fingerprint `SHA256:cEHcetG6VrsTKZklL5H2u0TPqKl03RuJIAhJWfu0sZ0`; ingen known_hosts-bypass eller ny nøgleaccept.
