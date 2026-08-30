@@ -5,7 +5,7 @@ import {
   Shield, Users, Key, Terminal, Package, Server,
   ChevronDown, ClipboardCheck, Upload, Bot, Tag,
   Wrench, Activity, EyeOff, Clock, Menu, X, QrCode,
-  LifeBuoy,
+  LifeBuoy, Router,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import { resolveHelpTarget, helpUrl } from '../help/routeMap'
@@ -55,6 +55,7 @@ export function Navbar() {
     { to: '/cmdb',          label: 'CMDB',          icon: Server, tooltip: 'Configuration Management Database. Asset tracking, relationer, og konfigurationshistorik.' },
     { to: '/import',        label: 'Import',        icon: Upload, tooltip: 'Import af data fra eksterne kilder. Bulk upload, migrering, og data integration.' },
     { to: '/siem',          label: 'SIEM',          icon: Shield, tooltip: 'SIEM integration og sikkerhedshændelser. Audit logs, alerts, og sikkerhedsmetrics.' },
+    { to: '/edge-communications', label: 'Edge API', icon: Router, tooltip: 'Debug og fortolkning af Edge til Headend API-kald, inkl. transportstatus og Excel-export.' },
     { to: '/retention',     label: 'Retention',     icon: Clock, tooltip: 'Data retention politikker. Konfigurer hvor længe captures og logs gemmes automatisk.' },
     { to: '/redaction',     label: 'GDPR Sløring',icon: EyeOff, tooltip: 'GDPR compliance med automatisk sløring. Detekter og slør personsensitive data i billeder.' },
     { to: '/observability', label: 'Drift',         icon: Activity, tooltip: 'Driftsovervågning og diagnostik. System health, performance metrics, og alerts.' },

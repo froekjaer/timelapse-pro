@@ -37,6 +37,7 @@ import AIPage from './pages/AIPage'
 import OpenWebUIPage from './pages/OpenWebUIPage'
 import PostProcessingPage from './pages/PostProcessingPage'
 import DriftPage from './pages/DriftPage'
+import { EdgeCommunicationsPage } from './pages/EdgeCommunicationsPage'
 import { HelpPage } from './pages/HelpPage'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
@@ -124,6 +125,7 @@ function AppRoutes() {
         <Route path="/openwebui" element={<RequireRole minimum="admin"><OpenWebUIPage /></RequireRole>} />
         <Route path="/post-processing" element={<RequireRole minimum="admin"><PostProcessingPage /></RequireRole>} />
         <Route path="/observability" element={<DriftPage />} />
+        <Route path="/edge-communications" element={<RequireRole minimum="admin"><EdgeCommunicationsPage /></RequireRole>} />
         <Route path="/help" element={<HelpPage />} />
               </Routes>
             </main>

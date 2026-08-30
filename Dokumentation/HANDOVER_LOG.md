@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-08-30 18:05 — fra Codex til Peter/Codex: Edge/Headend kommunikations-debug menu
+
+- Hvad er gjort: Tilføjet fokuseret admin-debugspor til Edge/Headend-kommunikation. Headend logger fremadrettet sanitiserede observationer for Edge-vendte API-kald (`/api/edge/*`, `/api/config/*`, `/api/heartbeat/*`, `/api/captures/*`, `/api/updates/report`, `/api/siem/events/*`) med device, metode, sti, status, transportkryptering, klientmetadata, begrænset JSON-request-payload og kort fortolkning. Tokens, secrets, passwords, credentials og private keys redigeres væk før persistens. Multipart/billed-upload får kun metadata, ikke billeddata.
+- UI: Ny admin-menu `Edge API` (`/edge-communications`) med Edge-filter, transportfilter (`krypteret`/`ukrypteret`/`ukendt`), fritekstsøgning, KPI'er, rå/sanitiseret detailvisning og Excel-export.
+- Arkitektur: Route-registrering for admin/trust-bundtet er flyttet til `headend/api/admin_route_bundle.py`, så `headend/main.py` ikke vokser; ratchet er fortsat grøn.
+- Hvad mangler / næste skridt: Efter deploy får tabellen kun nye observationer fremadrettet. Kør `headend/migrations/v33_edge_communication_debug.sql` som del af deploy/migrationsflow, og brug menuen til at verificere om eventuelle `unencrypted` observationer kun er intern proxy/loopback-trafik.
+- Kommandoer kørt eller skal køres: `pytest tests/test_edge_communication_debug_contract.py tests/test_architecture_ratchet.py -q` = 6 passed. `py_compile` på nye/berørte Python-filer = OK. `npm --prefix timelapse-ui run build` = OK med kendte Vite chunk/import-advarsler. `git diff --check` = OK.
+- Filer rørt: `headend/api/edge_communication_debug_api.py`, `headend/api/admin_route_bundle.py`, `headend/database.py`, `headend/migrations/v33_edge_communication_debug.sql`, `timelapse-ui/src/pages/EdgeCommunicationsPage.tsx`, `timelapse-ui/src/App.tsx`, `timelapse-ui/src/components/Navbar.tsx`, `tests/test_edge_communication_debug_contract.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: “Rå data” betyder sanitiserede API-observationer, ikke fuld hemmelig request/response-dump. Response bodies logges ikke, da config-responser kan indeholde følsomt materiale.
+
 ### Handover 2026-08-30 17:33 — fra Codex til Peter/Codex: Edge 2 tunnel/capture recovery efter failed agent
 
 - Hvad er gjort: Edge 2 (`TL-043EB9E72EFD`) blev undersøgt efter forventning om automatisk reverse tunnel. Headend-konfigurationen var korrekt (`ssh_tunnel.enabled=true`, port `2204`), men `timelapse-edge.service` på Edge 2 stod `failed (Result: timeout)` siden `2026-08-26 01:41 UTC`. Direkte LAN SSH blev kun brugt efter host-key pinning mod den allerede trusted Edge 2 fingerprint `SHA256:cEHcetG6VrsTKZklL5H2u0TPqKl03RuJIAhJWfu0sZ0`; ingen known_hosts-bypass eller ny nøgleaccept.

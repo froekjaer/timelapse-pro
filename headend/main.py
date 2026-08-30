@@ -15101,18 +15101,11 @@ app.include_router(admin_settings_router)
 from api.cameras_api import router as cameras_router
 app.include_router(cameras_router)
 
-from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
+from api.admin_route_bundle import register_admin_route_bundle
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
 from api.ssh_tunnel_terminal_api import create_ssh_tunnel_terminal_router, terminal_trust_status
-from api.edge_lifecycle_api import create_edge_lifecycle_router
-from api.trust_service_api import create_trust_service_router
-app.include_router(customer_risk_api.router)
-app.include_router(grc_register_api.router)
-app.include_router(storage_api.router)
-app.include_router(headend_generator_api.router)
-app.include_router(create_edge_lifecycle_router(require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle))
-app.include_router(create_trust_service_router(require_role))
+register_admin_route_bundle(app, require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle)
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).
