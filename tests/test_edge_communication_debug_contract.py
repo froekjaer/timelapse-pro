@@ -50,3 +50,38 @@ def test_edge_communication_debug_ui_is_reachable_from_admin_menu():
     assert "/api/admin/edge-communications/export.xlsx" in page_source
     assert "Ukrypteret" in page_source
     assert "Rå kommunikationsdata" in page_source
+
+
+def test_edge_communication_logging_is_gated_behind_a_bounded_capture_session():
+    """2026-08-31 (Peter): the always-on logger wrote a DB row for every
+    single Edge API call, for every device, forever. Now it must only log
+    while an explicit, time- and/or count-bounded capture session is
+    active — and an idle Headend must skip body-parsing entirely, not just
+    the DB write."""
+    source = Path("headend/api/edge_communication_debug_api.py").read_text(encoding="utf-8")
+    database_source = Path("headend/database.py").read_text(encoding="utf-8")
+    migration = Path("headend/migrations/v34_edge_communication_capture_sessions.sql").read_text(encoding="utf-8")
+    page_source = Path("timelapse-ui/src/pages/EdgeCommunicationsPage.tsx").read_text(encoding="utf-8")
+
+    assert "class EdgeCommunicationCaptureSession" in database_source
+    assert "duration_minutes" in database_source and "max_packets" in database_source
+
+    assert "_any_capture_session_might_be_active" in source
+    assert "_match_active_capture_session" in source
+    # The idle-skip must happen BEFORE the request body is read/parsed.
+    idle_skip_pos = source.index("_any_capture_session_might_be_active(db)")
+    body_read_pos = source.index("await request.body()")
+    assert idle_skip_pos < body_read_pos
+
+    assert '@router.post("/capture/start")' in source
+    assert '@router.post("/capture/{session_id}/stop")' in source
+    assert '@router.get("/capture/status")' in source
+    # An unbounded (no duration, no packet limit) session must be rejected.
+    assert "duration_minutes is None and max_packets is None" in source
+
+    assert "CREATE TABLE IF NOT EXISTS edge_communication_capture_sessions" in migration
+
+    assert "capture/start" in page_source
+    assert "capture/status" in page_source
+    assert "Start capture" in page_source
+    assert "Stop capture" in page_source

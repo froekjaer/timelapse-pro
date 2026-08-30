@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Filter, RefreshCw,
-  Router, Search, Shield, XCircle,
+  AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Filter, Play, RefreshCw,
+  Router, Search, Shield, Square, XCircle,
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -11,6 +11,19 @@ interface DeviceOption {
   customer_name: string | null
   site_name: string | null
   last_seen: string | null
+}
+
+interface CaptureSession {
+  id: number
+  device_id: string | null
+  started_at: string | null
+  started_by: string
+  duration_minutes: number | null
+  max_packets: number | null
+  packet_count: number
+  stopped_at: string | null
+  stop_reason: string | null
+  active: boolean
 }
 
 interface CommunicationRow {
@@ -33,8 +46,8 @@ interface CommunicationRow {
   interpretation: string | null
 }
 
-function api(path: string) {
-  return fetch(`${getApiUrl()}${path}`, { credentials: 'include' }).then(async response => {
+function api(path: string, init?: RequestInit) {
+  return fetch(`${getApiUrl()}${path}`, { credentials: 'include', ...init }).then(async response => {
     if (!response.ok) {
       let detail = `${response.status}`
       try {
@@ -93,6 +106,21 @@ export function EdgeCommunicationsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [captureSessions, setCaptureSessions] = useState<CaptureSession[]>([])
+  const [captureDeviceId, setCaptureDeviceId] = useState('')
+  const [captureMinutes, setCaptureMinutes] = useState<string>('5')
+  const [capturePackets, setCapturePackets] = useState<string>('')
+  const [captureBusy, setCaptureBusy] = useState(false)
+  const [captureError, setCaptureError] = useState<string | null>(null)
+
+  const activeCapture = captureSessions.find(s => s.active) ?? null
+
+  const loadCaptureStatus = useCallback(async () => {
+    try {
+      setCaptureSessions(await api('/api/admin/edge-communications/capture/status'))
+    } catch { /* status polling failure is non-critical */ }
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -102,6 +130,7 @@ export function EdgeCommunicationsPage() {
       const [deviceData, rowData] = await Promise.all([
         api('/api/admin/edge-communications/devices'),
         api(`/api/admin/edge-communications?${params}`),
+        loadCaptureStatus(),
       ])
       setDevices(deviceData)
       setRows(rowData)
@@ -111,9 +140,49 @@ export function EdgeCommunicationsPage() {
     } finally {
       setLoading(false)
     }
-  }, [deviceId, transport, limit])
+  }, [deviceId, transport, limit, loadCaptureStatus])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    if (!activeCapture) return
+    const id = window.setInterval(loadCaptureStatus, 3000)
+    return () => window.clearInterval(id)
+  }, [activeCapture, loadCaptureStatus])
+
+  async function startCapture() {
+    setCaptureError(null)
+    if (!captureMinutes && !capturePackets) {
+      setCaptureError('Angiv varighed (minutter) og/eller maks. antal pakker')
+      return
+    }
+    setCaptureBusy(true)
+    try {
+      const params = new URLSearchParams()
+      if (captureDeviceId) params.set('device_id', captureDeviceId)
+      if (captureMinutes) params.set('duration_minutes', captureMinutes)
+      if (capturePackets) params.set('max_packets', capturePackets)
+      await api(`/api/admin/edge-communications/capture/start?${params}`, { method: 'POST' })
+      await loadCaptureStatus()
+      await load()
+    } catch (err) {
+      setCaptureError(err instanceof Error ? err.message : 'Kunne ikke starte capture')
+    } finally {
+      setCaptureBusy(false)
+    }
+  }
+
+  async function stopCapture(id: number) {
+    setCaptureBusy(true)
+    try {
+      await api(`/api/admin/edge-communications/capture/${id}/stop`, { method: 'POST' })
+      await loadCaptureStatus()
+    } catch (err) {
+      setCaptureError(err instanceof Error ? err.message : 'Kunne ikke stoppe capture')
+    } finally {
+      setCaptureBusy(false)
+    }
+  }
 
   const filteredRows = useMemo(() => {
     const needle = search.trim().toLowerCase()
@@ -145,7 +214,8 @@ export function EdgeCommunicationsPage() {
           </div>
           <h1 className="text-2xl font-semibold text-slate-900">Kommunikations-debug</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Sanitiserede API-observationer fra Edge-kald. Secrets og private nøgler vises ikke.
+            Sanitiserede API-observationer fra Edge-kald — kun logget mens en tidsbegrænset og/eller
+            antalsbegrænset capture-session er aktiv. Secrets og private nøgler vises som "[redacted]".
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -158,6 +228,64 @@ export function EdgeCommunicationsPage() {
             Excel
           </button>
         </div>
+      </div>
+
+      <div className="mb-4 rounded-lg border border-slate-200 bg-white p-3">
+        {activeCapture ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-slate-700">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+              </span>
+              <span className="font-medium">Capture aktiv</span>
+              <span className="text-slate-500">
+                {activeCapture.device_id ? activeCapture.device_id : 'alle enheder'} · {activeCapture.packet_count}
+                {activeCapture.max_packets ? ` / ${activeCapture.max_packets}` : ''} pakker
+                {activeCapture.duration_minutes ? ` · maks ${activeCapture.duration_minutes} min` : ''} · startet af {activeCapture.started_by}
+              </span>
+            </div>
+            <button
+              onClick={() => stopCapture(activeCapture.id)}
+              disabled={captureBusy}
+              className="inline-flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50"
+            >
+              <Square className="h-3.5 w-3.5" />
+              Stop capture
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Enhed</span>
+              <select value={captureDeviceId} onChange={event => setCaptureDeviceId(event.target.value)} className="w-48 rounded-md border border-slate-300 px-3 py-2 text-sm">
+                <option value="">Alle enheder</option>
+                {devices.map(device => (
+                  <option key={device.device_id} value={device.device_id}>{device.device_id}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Varighed (min)</span>
+              <input type="number" min={1} value={captureMinutes} onChange={event => setCaptureMinutes(event.target.value)}
+                placeholder="fx 5" className="w-28 rounded-md border border-slate-300 px-3 py-2 text-sm" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Maks. antal pakker</span>
+              <input type="number" min={1} value={capturePackets} onChange={event => setCapturePackets(event.target.value)}
+                placeholder="fx 200" className="w-28 rounded-md border border-slate-300 px-3 py-2 text-sm" />
+            </label>
+            <button
+              onClick={startCapture}
+              disabled={captureBusy}
+              className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              <Play className="h-4 w-4" />
+              Start capture
+            </button>
+            {captureError && <span className="text-sm text-rose-600">{captureError}</span>}
+          </div>
+        )}
       </div>
 
       <div className="mb-4 grid gap-3 md:grid-cols-3">
