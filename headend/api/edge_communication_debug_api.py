@@ -5,16 +5,16 @@ import io
 import json
 import re
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qsl, urlencode
 from xml.sax.saxutils import escape
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from auth import require_role
-from database import Device, EdgeApiCommunicationLog, SessionLocal, get_db
+from database import Device, EdgeApiCommunicationLog, EdgeCommunicationCaptureSession, SessionLocal, get_db
 
 router = APIRouter(prefix="/api/admin/edge-communications", tags=["Edge Communications"])
 
@@ -127,11 +127,92 @@ def _interpret(path: str, status_code: int | None, transport_security: str, body
     return " ".join(parts)
 
 
+def _expire_if_due(session: EdgeCommunicationCaptureSession, now: datetime) -> bool:
+    """Mark a session stopped if its bound was reached. Returns True if it
+    is (now) inactive."""
+    if session.stopped_at is not None:
+        return True
+    started_at = session.started_at
+    # SQLite (tests) round-trips DateTime(timezone=True) as naive UTC — Postgres
+    # (production) preserves tz-awareness. Normalise so this comparison never
+    # raises regardless of backend.
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    if session.duration_minutes and now >= started_at + timedelta(minutes=session.duration_minutes):
+        session.stopped_at = now
+        session.stop_reason = "duration_expired"
+        return True
+    if session.max_packets and session.packet_count >= session.max_packets:
+        session.stopped_at = now
+        session.stop_reason = "packet_limit_reached"
+        return True
+    return False
+
+
+def _any_capture_session_might_be_active(db: Session) -> bool:
+    """Cheap existence check — lets an idle Headend skip body-parsing/redaction
+    entirely for every Edge request when no one asked for a capture."""
+    return db.query(
+        db.query(EdgeCommunicationCaptureSession)
+        .filter(EdgeCommunicationCaptureSession.stopped_at.is_(None))
+        .exists()
+    ).scalar()
+
+
+def _match_active_capture_session(db: Session, device_id: str | None) -> EdgeCommunicationCaptureSession | None:
+    """Return the capture session (device-specific or all-devices) that
+    covers this request, expiring any session whose time/count bound was
+    reached along the way."""
+    now = datetime.now(timezone.utc)
+    candidates = (
+        db.query(EdgeCommunicationCaptureSession)
+        .filter(EdgeCommunicationCaptureSession.stopped_at.is_(None))
+        .all()
+    )
+    matched = None
+    for session in candidates:
+        if _expire_if_due(session, now):
+            continue
+        if session.device_id and session.device_id != device_id:
+            continue
+        if matched is None:
+            matched = session
+    if candidates:
+        db.commit()
+    return matched
+
+
+def _capture_session_dict(session: EdgeCommunicationCaptureSession) -> dict[str, Any]:
+    return {
+        "id": session.id,
+        "device_id": session.device_id,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "started_by": session.started_by,
+        "duration_minutes": session.duration_minutes,
+        "max_packets": session.max_packets,
+        "packet_count": session.packet_count,
+        "stopped_at": session.stopped_at.isoformat() if session.stopped_at else None,
+        "stop_reason": session.stop_reason,
+        "active": session.stopped_at is None,
+    }
+
+
 def install_edge_communication_logger(app) -> None:
     @app.middleware("http")
     async def _edge_communication_logger(request: Request, call_next):
         path = request.url.path
         if not _path_is_edge_api(path):
+            return await call_next(request)
+
+        # No active capture session anywhere → skip body-parsing/redaction
+        # entirely and just pass the request through. This is the common
+        # case (2026-08-31, Peter: the always-on logger wrote a DB row for
+        # every single Edge call, forever — real cost with no bound as the
+        # fleet grows). Only a deliberately started, time- and/or
+        # count-bounded session causes any logging or extra work here.
+        with SessionLocal() as db:
+            any_session = _any_capture_session_might_be_active(db)
+        if not any_session:
             return await call_next(request)
 
         content_type = request.headers.get("content-type", "")
@@ -160,6 +241,11 @@ def install_edge_communication_logger(app) -> None:
                 device_id = str(body_device) if body_device else None
             scheme, security = _transport_security(request)
             with SessionLocal() as db:
+                session = _match_active_capture_session(db, device_id)
+                if session is None:
+                    return response
+                session.packet_count += 1
+                _expire_if_due(session, datetime.now(timezone.utc))
                 db.add(EdgeApiCommunicationLog(
                     device_id=device_id,
                     method=request.method,
@@ -223,6 +309,84 @@ def list_devices(_user=require_role("admin"), db: Session = Depends(get_db)):
         }
         for row in rows
     ]
+
+
+@router.get("/capture/status")
+def capture_status(_user=require_role("admin"), db: Session = Depends(get_db)):
+    """Alle capture-sessioner der stadig er aktive lige nu (typisk 0 eller 1)."""
+    now = datetime.now(timezone.utc)
+    sessions = (
+        db.query(EdgeCommunicationCaptureSession)
+        .order_by(EdgeCommunicationCaptureSession.started_at.desc())
+        .limit(20)
+        .all()
+    )
+    changed = False
+    for session in sessions:
+        if _expire_if_due(session, now):
+            changed = True
+    if changed:
+        db.commit()
+    return [_capture_session_dict(s) for s in sessions]
+
+
+@router.post("/capture/start")
+def start_capture(
+    device_id: str | None = None,
+    duration_minutes: int | None = None,
+    max_packets: int | None = None,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    if duration_minutes is None and max_packets is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Angiv varighed (minutter) og/eller maks. antal pakker — en ubegrænset capture-session er ikke tilladt",
+        )
+    if duration_minutes is not None and duration_minutes <= 0:
+        raise HTTPException(status_code=400, detail="Varighed skal være positiv")
+    if max_packets is not None and max_packets <= 0:
+        raise HTTPException(status_code=400, detail="Maks. antal pakker skal være positivt")
+
+    now = datetime.now(timezone.utc)
+    existing = (
+        db.query(EdgeCommunicationCaptureSession)
+        .filter(EdgeCommunicationCaptureSession.stopped_at.is_(None))
+        .all()
+    )
+    for session in existing:
+        if _expire_if_due(session, now):
+            continue
+        if not session.device_id or not device_id or session.device_id == device_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"En capture-session kører allerede (id={session.id}) — stop den først",
+            )
+    db.commit()
+
+    session = EdgeCommunicationCaptureSession(
+        device_id=device_id or None,
+        started_by=_user.username,
+        duration_minutes=duration_minutes,
+        max_packets=max_packets,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return _capture_session_dict(session)
+
+
+@router.post("/capture/{session_id}/stop")
+def stop_capture(session_id: int, _user=require_role("admin"), db: Session = Depends(get_db)):
+    session = db.query(EdgeCommunicationCaptureSession).filter_by(id=session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Capture-session ikke fundet")
+    if session.stopped_at is None:
+        session.stopped_at = datetime.now(timezone.utc)
+        session.stop_reason = "manual"
+        db.commit()
+        db.refresh(session)
+    return _capture_session_dict(session)
 
 
 @router.get("")

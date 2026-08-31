@@ -289,6 +289,24 @@ class EdgeApiCommunicationLog(Base):
     created_at          = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class EdgeCommunicationCaptureSession(Base):
+    """Bounded capture window for the edge communication debug logger
+    (2026-08-31, Peter: den forrige altid-til logger skrev til DB'en for
+    HVER eneste Edge-kald, for alle enheder, for evigt — reelt data/CPU-
+    belastning uden bund, hvis flåden vokser. Nu logges der kun mens en
+    eksplicit, tidsbegrænset og/eller antalsbegrænset capture-session er
+    aktiv; observationer uden for en session skrives slet ikke)."""
+    __tablename__ = "edge_communication_capture_sessions"
+
+    id               = Column(Integer, primary_key=True)
+    device_id        = Column(String(50), index=True)  # NULL = alle enheder
+    started_at       = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    started_by       = Column(String(100), nullable=False)
+    duration_minutes = Column(Integer)
+    max_packets      = Column(Integer)
+    packet_count     = Column(Integer, default=0, nullable=False)
+    stopped_at       = Column(DateTime(timezone=True), index=True)
+    stop_reason      = Column(String(30))  # manual | duration_expired | packet_limit_reached
 
 
 
