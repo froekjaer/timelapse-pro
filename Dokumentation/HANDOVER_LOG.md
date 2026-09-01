@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-01 22:05 — fra Codex til Peter/Codex: GDPR redaction workflow-knapper korrigeret
+
+- Hvad er gjort: Efter Peters test virkede `Analyser`, men `Godkend` gav korrekt backend-fejl: `Capture skal have status 'redacted'. Nu: detected`. Rodårsagen var UI-flowet, ikke backend-reglen: knappen `Godkend` blev vist allerede på status `detected`, selv om næste trin skal være `Slør`.
+- Fix: `GDPR Sløring` viser nu kun `Slør` når et billede har status `detected`. Når status er `redacted`, viser UI’en “Billedet er sløret og afventer endelig godkendelse” og en deaktiveret `Godkend`-knap med forklaring om at durable approval-auditfelter endnu ikke er aktiveret. Den tidligere tekst “sløret og godkendt” er fjernet, fordi den skabte falsk compliance-evidence.
+- Verificeret: `pytest tests/test_redaction_page_image_preview.py tests/test_security_closure_zai_redaction.py -q` = 11 passed. `npm --prefix timelapse-ui run build` = OK med kendte Vite chunk/import-advarsler. `git diff --check` = OK.
+- Hvad mangler / næste skridt: Den endelige godkendelsesfunktion bør bygges som separat lille PR med durable `approved_at`/`approved_by`/approval audit, før UI’en må aktivere `Godkend`.
+- Filer rørt: `timelapse-ui/src/pages/RedactionPage.tsx`, `tests/test_redaction_page_image_preview.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Dette ændrer ikke backend-statusmodellen. Det forhindrer bare at UI’en tilbyder et trin, som backend med rette afviser.
+
 ### Handover 2026-09-01 21:55 — fra Codex til Peter/Codex: GDPR redaction-analyse billedsti fix
 
 - Hvad er gjort: Undersøgt hvorfor GDPR Sløring viser ca. 41k `pending` captures og manuel `Analyser` fejler. Count i live DB viste `pending=41127`, `detected=1`, `skipped=4`; det skyldes historiske/nyere billeder der aldrig er GDPR-analyseret automatisk. Den konkrete analysefejl skyldtes at `headend/redaction_api.py` kun ledte efter billeder i gammel `/mnt/SFTP_DATA`/`device_id`-struktur, mens live billeder ligger under canonical `sftp_base` (`/Volumes/data-fast/timelapse-incoming/canonical-images/{kunde}/{site}/{kamera}/YYYY/MM/DD/...`).
