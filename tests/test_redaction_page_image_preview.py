@@ -35,3 +35,14 @@ def test_redaction_page_still_has_the_analyze_redact_approve_workflow():
     assert "/api/redaction/analyze/" in source
     assert "/api/redaction/redact/" in source
     assert "/api/redaction/approve/" in source
+
+
+def test_redaction_page_does_not_offer_approve_before_redaction():
+    source = Path("timelapse-ui/src/pages/RedactionPage.tsx").read_text(encoding="utf-8")
+    detected_block = source.split('selectedCapture.redaction_status === "detected"', 1)[1]
+    detected_block = detected_block.split('selectedCapture.redaction_status === "redacted"', 1)[0]
+
+    assert "redactCapture" in detected_block
+    assert "approveCapture" not in detected_block
+    assert "afventer endelig godkendelse" in source
+    assert "sløret og godkendt" not in source

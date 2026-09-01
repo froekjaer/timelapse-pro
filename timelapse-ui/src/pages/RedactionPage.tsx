@@ -358,27 +358,28 @@ export default function RedactionPage() {
                     </button>
                   )}
                   {selectedCapture.redaction_status === "detected" && (
+                    <button
+                      onClick={() => redactCapture(selectedCapture.capture_id)}
+                      disabled={loading}
+                      className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                    >
+                      Slør
+                    </button>
+                  )}
+                  {selectedCapture.redaction_status === "redacted" && (
                     <>
-                      <button
-                        onClick={() => redactCapture(selectedCapture.capture_id)}
-                        disabled={loading}
-                        className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                      >
-                        Slør
-                      </button>
+                      <div className="text-blue-700 font-medium">
+                        Billedet er sløret og afventer endelig godkendelse
+                      </div>
                       <button
                         onClick={() => approveCapture(selectedCapture.capture_id)}
-                        disabled={loading}
-                        className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                        disabled
+                        title="Endelig godkendelse kræver durable auditfelter i databasen og er ikke aktiveret endnu."
+                        className="px-4 py-2 bg-gray-200 text-gray-500 rounded cursor-not-allowed"
                       >
                         Godkend
                       </button>
                     </>
-                  )}
-                  {selectedCapture.redaction_status === "redacted" && (
-                    <div className="text-green-600 font-medium">
-                      ✓ Billedet er sløret og godkendt
-                    </div>
                   )}
                 </div>
 
