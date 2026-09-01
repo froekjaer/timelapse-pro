@@ -17,6 +17,7 @@
 
 import { useState, useEffect } from "react";
 import { InfoTooltip } from "../components/InfoTooltip";
+import { getImageUrl } from "../api/client";
 
 interface BoundingBox {
   x: number;
@@ -57,10 +58,20 @@ export default function RedactionPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("detected");
+  const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
+  const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
     loadPending();
   }, [statusFilter]);
+
+  useEffect(() => {
+    // Nyt billede valgt — nulstil overlay-tilstand, ellers vises forrige
+    // billedes bounding boxes kortvarigt oven på det nye, før onLoad når at
+    // opdatere dimensionerne.
+    setImgDims(null);
+    setImgError(false);
+  }, [selectedCapture?.capture_id]);
 
   const loadPending = async () => {
     try {
@@ -270,6 +281,61 @@ export default function RedactionPage() {
                 <div className="text-sm text-gray-500">Billede ID: {selectedCapture.capture_id}</div>
               </div>
               <div className="p-4">
+                {/* Billede med overlay af hvor sløringen rammer */}
+                <div className="relative mx-auto mb-4 max-w-xl overflow-hidden rounded border border-gray-200 bg-gray-100">
+                  {!imgError ? (
+                    <img
+                      src={getImageUrl(selectedCapture.device_id, selectedCapture.filename)}
+                      alt={selectedCapture.filename}
+                      className="block h-auto w-full"
+                      onLoad={(e) =>
+                        setImgDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
+                      }
+                      onError={() => setImgError(true)}
+                    />
+                  ) : (
+                    <div className="p-8 text-center text-sm text-gray-400">Billedet kunne ikke indlæses</div>
+                  )}
+                  {imgDims && analysisResult && (analysisResult.faces.length > 0 || analysisResult.license_plates.length > 0) && (
+                    <svg
+                      viewBox={`0 0 ${imgDims.w} ${imgDims.h}`}
+                      className="pointer-events-none absolute inset-0 h-full w-full"
+                    >
+                      {analysisResult.faces.map((f, i) => (
+                        <rect
+                          key={`face-${i}`}
+                          x={f.x} y={f.y} width={f.w} height={f.h}
+                          fill="rgba(245,158,11,0.15)" stroke="#f59e0b" strokeWidth={Math.max(2, imgDims.w / 250)}
+                        />
+                      ))}
+                      {analysisResult.license_plates.map((p, i) => (
+                        <rect
+                          key={`plate-${i}`}
+                          x={p.x} y={p.y} width={p.w} height={p.h}
+                          fill="rgba(14,165,233,0.15)" stroke="#0ea5e9" strokeWidth={Math.max(2, imgDims.w / 250)}
+                        />
+                      ))}
+                    </svg>
+                  )}
+                  {selectedCapture.redaction_status === "redacted" && (
+                    <span className="absolute left-2 top-2 rounded bg-blue-600/90 px-2 py-0.5 text-xs font-medium text-white">
+                      Allerede sløret på billedet
+                    </span>
+                  )}
+                </div>
+                {analysisResult && (analysisResult.faces.length > 0 || analysisResult.license_plates.length > 0) && (
+                  <div className="mb-4 flex items-center gap-4 text-xs text-gray-600">
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-2.5 w-2.5 rounded-sm border-2" style={{ borderColor: "#f59e0b" }} />
+                      Ansigt {selectedCapture.redaction_status === "detected" ? "(vil blive sløret her)" : ""}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="inline-block h-2.5 w-2.5 rounded-sm border-2" style={{ borderColor: "#0ea5e9" }} />
+                      Nummerplade {selectedCapture.redaction_status === "detected" ? "(vil blive sløret her)" : ""}
+                    </span>
+                  </div>
+                )}
+
                 {/* Actions */}
                 <div className="flex gap-2 mb-4">
                   {selectedCapture.redaction_status === "pending" && (
