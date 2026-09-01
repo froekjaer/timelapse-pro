@@ -61,6 +61,16 @@ export default function RedactionPage() {
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
   const [imgError, setImgError] = useState(false);
 
+  const readError = async (res: Response, fallback: string) => {
+    try {
+      const data = await res.json();
+      if (data?.detail) return String(data.detail);
+    } catch {
+      // ignore
+    }
+    return fallback;
+  };
+
   useEffect(() => {
     loadPending();
   }, [statusFilter]);
@@ -80,7 +90,7 @@ export default function RedactionPage() {
         ? `/api/redaction/pending?status_filter=${statusFilter}`
         : "/api/redaction/pending";
       const res = await fetch(url);
-      if (!res.ok) throw new Error("Kunne ikke indlæse afventende billeder");
+      if (!res.ok) throw new Error(await readError(res, "Kunne ikke indlæse afventende billeder"));
       const data = await res.json();
       setPendingData(data);
     } catch (e) {
@@ -96,7 +106,7 @@ export default function RedactionPage() {
       const res = await fetch(`/api/redaction/analyze/${captureId}`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error("Analyse fejlede");
+      if (!res.ok) throw new Error(await readError(res, "Analyse fejlede"));
       const data = await res.json();
       setAnalysisResult(data.detections);
       setSelectedCapture((prev) => (prev ? { ...prev, redaction_status: data.redaction_status } : null));
@@ -119,7 +129,7 @@ export default function RedactionPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ blur_kernel: 51, blur_sigma: 30, auto_approve: false }),
       });
-      if (!res.ok) throw new Error("Sløring fejlede");
+      if (!res.ok) throw new Error(await readError(res, "Sløring fejlede"));
       await loadPending();
       await loadCaptureStatus(captureId); // Refresh selected
     } catch (e) {
@@ -135,7 +145,7 @@ export default function RedactionPage() {
       const res = await fetch(`/api/redaction/approve/${captureId}`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error("Godkendelse fejlede");
+      if (!res.ok) throw new Error(await readError(res, "Godkendelse fejlede"));
       await loadPending();
       await loadCaptureStatus(captureId);
     } catch (e) {

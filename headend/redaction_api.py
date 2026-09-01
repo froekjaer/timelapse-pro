@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,7 +32,7 @@ from sqlalchemy.orm import Session
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database import Capture, User, get_db
+from database import Capture, Settings, User, get_db
 from auth import get_current_user
 
 router = APIRouter(prefix="/api/redaction", tags=["redaction"])
@@ -155,26 +156,64 @@ class PendingListResponse(BaseModel):
     items: list[RedactionStatusResponse]
 
 
-def _find_image_path(capture: Capture, base_path: str = "/mnt/SFTP_DATA") -> Path:
-    """Find a capture image within configured storage roots."""
-    import re
+def _setting(db: Session | None, key: str, default: str = "") -> str:
+    if db is None:
+        return default
+    try:
+        row = db.query(Settings).filter(Settings.key == key).first()
+        return str(row.value) if row and row.value is not None else default
+    except Exception:
+        return default
 
+
+def _configured_storage_roots(db: Session | None, base_path: str) -> list[Path]:
+    primary = _setting(
+        db,
+        "sftp_base",
+        os.getenv("SFTP_DATA_ROOT") or os.getenv("SFTP_BASE") or base_path,
+    )
+    raw_legacy = _setting(db, "sftp_legacy_roots", os.getenv("SFTP_LEGACY_ROOTS", ""))
+    roots: list[Path] = []
+    for item in [primary, *re.split(r"[\n,]+", raw_legacy or "")]:
+        item = str(item or "").strip()
+        if not item:
+            continue
+        path = Path(item).expanduser()
+        if path not in roots:
+            roots.append(path)
+    return roots
+
+
+def _find_image_path(capture: Capture, db: Session | None = None, base_path: str = "/mnt/SFTP_DATA") -> Path:
+    """Find a capture image within configured canonical and legacy storage roots."""
     filename = capture.filename or ""
     device_id = capture.device_id
-    storage_roots = os.getenv("SFTP_DATA_ROOT", base_path).split(":")
+    storage_roots = _configured_storage_roots(db, base_path)
+    match = re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
 
     for root in storage_roots:
         base = Path(root)
-        path_simple = base / device_id / filename
-        if path_simple.exists():
-            return path_simple
 
-        match = re.search(r"_(\d{4})(\d{2})(\d{2})_\d{6}\.\w+$", filename)
         if match:
             yyyy, mm, dd = match.group(1), match.group(2), match.group(3)
+            patterns = [
+                f"*/*/*/{yyyy}/{mm}/{dd}/{filename}",
+                f"timelapse-incoming/*/data/*/*/*/{yyyy}/{mm}/{dd}/{filename}",
+                f"timelapse-incoming/*/data/*/*/{yyyy}/{mm}/{dd}/{filename}",
+                f"*/*/{yyyy}/{mm}/{dd}/{filename}",
+            ]
+            for pattern in patterns:
+                found = [path for path in base.glob(pattern) if ".thumbs" not in path.parts]
+                if found:
+                    return found[0]
+
             path_date = base / device_id / yyyy / mm / dd / filename
             if path_date.exists():
                 return path_date
+
+        path_simple = base / device_id / filename
+        if path_simple.exists():
+            return path_simple
 
     raise HTTPException(
         status_code=404,
@@ -219,7 +258,7 @@ def analyze_capture(
     try:
         import cv2
 
-        image_path = _find_image_path(capture)
+        image_path = _find_image_path(capture, db)
         img = cv2.imread(str(image_path))
         if img is None:
             raise HTTPException(status_code=500, detail=f"Failed to load image: {image_path}")
@@ -306,7 +345,7 @@ def redact_capture(
         import cv2
         import shutil
 
-        image_path = _find_image_path(capture)
+        image_path = _find_image_path(capture, db)
         img = cv2.imread(str(image_path))
         if img is None:
             raise HTTPException(status_code=500, detail="Failed to load image")
