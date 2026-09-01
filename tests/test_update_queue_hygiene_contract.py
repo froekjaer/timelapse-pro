@@ -43,6 +43,28 @@ def test_homebrew_inventory_candidates_are_blocked_until_signed_artifact_flow_ex
     assert 'status="blocked"' in block
 
 
+def test_updates_endpoint_has_actionable_filter_and_action_first_ordering():
+    source = _source("headend/main.py")
+    block = source[source.index("def list_pending_updates("):source.index("UPDATE_CATEGORIES = [")]
+
+    assert 'status == "actionable"' in block
+    assert '"pending", "approved", "blocked", "rollback_requested"' in block
+    assert 'status == "all"' in block
+    assert "PendingUpdate.created_at.desc()" in block
+    assert "PendingUpdate.id.desc()" in block
+
+
+def test_updates_page_defaults_to_actionable_cards_before_reference_panels():
+    source = _source("timelapse-ui/src/pages/UpdatesPage.tsx")
+
+    assert "type Filter = 'actionable'" in source
+    assert "{ key: 'actionable', label: 'Kræver handling' }" in source
+    assert "useState<Filter>('actionable')" in source
+    assert 'const params = `?status=${activeFilter}`' in source
+    assert "sortUpdatesForDisplay(data as Update[])" in source
+    assert source.index('<div className="bg-white rounded-xl border border-gray-200 overflow-hidden">') < source.index("<DeviceUpdateMatrix matrix={matrix} />")
+
+
 def test_deployed_history_requires_explicit_promotion_eligibility():
     backend = _source("headend/services/update_promotion.py")
     ui = _source("timelapse-ui/src/pages/UpdatesPage.tsx")

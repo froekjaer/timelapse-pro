@@ -222,7 +222,7 @@ interface ApproveOptions {
   scope_id:         string
 }
 
-type Filter = 'pending' | 'approved' | 'blocked' | 'deployed' | 'rejected' | 'superseded' | 'rolled_back' | 'all'
+type Filter = 'actionable' | 'pending' | 'approved' | 'blocked' | 'deployed' | 'rejected' | 'superseded' | 'rolled_back' | 'all'
 
 const ACTIVE_FLOW_KEYS = new Set([
   'waiting_for_edge_poll',
@@ -1254,6 +1254,7 @@ function UpdateJobsPanel({ jobs }: { jobs: Record<string, UpdateJobStatus> }) {
 }
 
 const FILTERS: { key: Filter; label: string }[] = [
+  { key: 'actionable', label: 'Kræver handling' },
   { key: 'pending',  label: 'Afventer' },
   { key: 'approved', label: 'Godkendt' },
   { key: 'blocked', label: 'Blokeret' },
@@ -1264,12 +1265,49 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'all',      label: 'Alle' },
 ]
 
+function updateSortRank(u: Update) {
+  const statusRank: Record<string, number> = {
+    pending: 0,
+    approved: 1,
+    rollback_requested: 2,
+    blocked: 3,
+    failed: 4,
+    rolled_back: 5,
+    deployed: 6,
+    rejected: 7,
+    superseded: 8,
+  }
+  const severityRank: Record<string, number> = {
+    critical: 0,
+    high: 1,
+    medium: 2,
+    low: 3,
+  }
+  return [
+    statusRank[u.status] ?? 9,
+    severityRank[String(u.severity || '').toLowerCase()] ?? 4,
+    -(u.created_at ? new Date(u.created_at).getTime() : 0),
+    -u.id,
+  ] as const
+}
+
+function sortUpdatesForDisplay(rows: Update[]) {
+  return [...rows].sort((a, b) => {
+    const ar = updateSortRank(a)
+    const br = updateSortRank(b)
+    for (let i = 0; i < ar.length; i += 1) {
+      if (ar[i] !== br[i]) return ar[i] - br[i]
+    }
+    return 0
+  })
+}
+
 export function UpdatesPage() {
   const [updates, setUpdates]       = useState<Update[]>([])
   const [matrix, setMatrix]         = useState<UpdateMatrix | null>(null)
   const [artifacts, setArtifacts]   = useState<UpdateArtifact[]>([])
   const [loading, setLoading]       = useState(true)
-  const [filter, setFilter]         = useState<Filter>('pending')
+  const [filter, setFilter]         = useState<Filter>('actionable')
   const [busy, setBusy]             = useState<number | null>(null)
   const [lastRefresh, setLast]      = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -1292,13 +1330,13 @@ export function UpdatesPage() {
     setError(null)
     try {
       const activeFilter = filterOverride ?? filter
-      const params = activeFilter === 'all' ? '' : `?status=${activeFilter}`
+      const params = `?status=${activeFilter}`
       const [data, matrixData, artifactData] = await Promise.all([
         api(`/api/updates/pending${params}`),
         api('/api/updates/device-matrix'),
         api('/api/updates/artifacts'),
       ])
-      const updateList = Array.isArray(data) ? data as Update[] : []
+      const updateList = Array.isArray(data) ? sortUpdatesForDisplay(data as Update[]) : []
       setUpdates(updateList)
       setMatrix(matrixData && Array.isArray(matrixData.devices) ? matrixData : null)
       setArtifacts(Array.isArray(artifactData) ? artifactData : [])
@@ -1412,8 +1450,8 @@ export function UpdatesPage() {
       await api(`/api/updates/${id}/approve`, { method: 'POST', body: JSON.stringify(payload) })
       setApproveId(null)
       setWatchedUpdateIds(ids => ids.includes(id) ? ids : [...ids, id])
-      setFilter('all')
-      await load(false, 'all')
+      setFilter('actionable')
+      await load(false, 'actionable')
     }
     catch (error: unknown) { setError(getErrorMessage(error)) }
     finally { setBusy(null) }
@@ -1462,9 +1500,9 @@ export function UpdatesPage() {
         method: 'POST',
         body: JSON.stringify({ artifact_id: artifactId }),
       })
-      setFilter('pending')
-      setNotice(`Artifact ${artifactId} er bundet til update #${id}. Den ligger nu i Afventer til godkendelse.`)
-      await load(false, 'pending')
+      setFilter('actionable')
+      setNotice(`Artifact ${artifactId} er bundet til update #${id}. Den ligger nu øverst under Kræver handling.`)
+      await load(false, 'actionable')
     } catch (e: unknown) {
       setError(`Kunne ikke binde artifact (${getErrorMessage(e)})`)
     } finally {
@@ -1625,7 +1663,7 @@ export function UpdatesPage() {
     }
   }
 
-  const pending = updates.filter(u => u.status === 'pending').length
+  const actionable = updates.filter(u => ['pending', 'approved', 'blocked', 'rollback_requested'].includes(u.status)).length
   const autoPolling =
     watchedUpdateIds.length > 0 ||
     updates.some(u => u.status === 'approved') ||
@@ -1647,9 +1685,9 @@ export function UpdatesPage() {
           <h1 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
             <Package className="w-5 h-5 text-gray-400" />
             Opdateringer
-            {pending > 0 && (
+            {actionable > 0 && (
               <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
-                {pending} afventer
+                {actionable} kræver handling
               </span>
             )}
           </h1>
@@ -1741,21 +1779,6 @@ export function UpdatesPage() {
       </div>
 
       <UpdateJobsPanel jobs={updateJobs} />
-
-      <DeviceUpdateMatrix matrix={matrix} />
-
-      <LabCatalogImport
-        onImport={importLabCatalog}
-        onRefreshBuilder={refreshCatalogFromBuilder}
-        busy={refreshing}
-      />
-
-      <ArtifactCatalog
-        artifacts={artifacts}
-        onCatalogCurrent={catalogCurrentRelease}
-        onCatalogOsBundle={catalogOsBundle}
-        busy={refreshing}
-      />
 
       {approveId !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="approve-update-title">
@@ -1852,6 +1875,8 @@ export function UpdatesPage() {
             <p className="text-xs text-gray-300 mt-1">
               {filter === 'pending'
                 ? 'Der er ingen opdateringer, som afventer godkendelse. Tjek fanen Blokeret for sager der kræver forarbejde.'
+                : filter === 'actionable'
+                  ? 'Der er ingen opdateringer, der kræver handling lige nu.'
                 : `Ingen opdateringer med status "${FILTERS.find(f => f.key === filter)?.label ?? filter}"`}
             </p>
           </div>
@@ -1880,6 +1905,21 @@ export function UpdatesPage() {
           ))
         )}
       </div>
+
+      <DeviceUpdateMatrix matrix={matrix} />
+
+      <LabCatalogImport
+        onImport={importLabCatalog}
+        onRefreshBuilder={refreshCatalogFromBuilder}
+        busy={refreshing}
+      />
+
+      <ArtifactCatalog
+        artifacts={artifacts}
+        onCatalogCurrent={catalogCurrentRelease}
+        onCatalogOsBundle={catalogOsBundle}
+        busy={refreshing}
+      />
     </div>
   )
 }

@@ -58,7 +58,7 @@ from sqlalchemy.orm import Session
 from datetime import timezone as _tz
 
 import re as _re
-from sqlalchemy import and_, false as _sql_false, func, or_, text
+from sqlalchemy import and_, case, false as _sql_false, func, or_, text
 import subprocess as _subprocess
 import threading as _threading
 import json as _json
@@ -4885,11 +4885,27 @@ def list_pending_updates(
     """List opdateringer der afventer godkendelse eller deployment."""
     from database import PendingUpdate
     q = db.query(PendingUpdate)
-    if status:
+    if status == "all":
+        pass
+    elif status == "actionable":
+        q = q.filter(PendingUpdate.status.in_(["pending", "approved", "blocked", "rollback_requested"]))
+    elif status:
         q = q.filter_by(status=status)
     else:
         q = q.filter(PendingUpdate.status.in_(["pending", "approved"]))
-    updates = q.order_by(PendingUpdate.created_at.desc()).all()
+    status_order = case(
+        (PendingUpdate.status == "pending", 0),
+        (PendingUpdate.status == "approved", 1),
+        (PendingUpdate.status == "rollback_requested", 2),
+        (PendingUpdate.status == "blocked", 3),
+        (PendingUpdate.status == "failed", 4),
+        (PendingUpdate.status == "rolled_back", 5),
+        (PendingUpdate.status == "deployed", 6),
+        (PendingUpdate.status == "rejected", 7),
+        (PendingUpdate.status == "superseded", 8),
+        else_=9,
+    )
+    updates = q.order_by(status_order, PendingUpdate.created_at.desc(), PendingUpdate.id.desc()).all()
     promotion_context = build_update_promotion_context(db, PendingUpdate,
         resolve_update_targets=lambda u: _resolve_update_targets(db, u),
         find_artifact_for_update=lambda u: _find_artifact_for_update(db, u),
