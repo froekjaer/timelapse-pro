@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-01 21:55 — fra Codex til Peter/Codex: GDPR redaction-analyse billedsti fix
+
+- Hvad er gjort: Undersøgt hvorfor GDPR Sløring viser ca. 41k `pending` captures og manuel `Analyser` fejler. Count i live DB viste `pending=41127`, `detected=1`, `skipped=4`; det skyldes historiske/nyere billeder der aldrig er GDPR-analyseret automatisk. Den konkrete analysefejl skyldtes at `headend/redaction_api.py` kun ledte efter billeder i gammel `/mnt/SFTP_DATA`/`device_id`-struktur, mens live billeder ligger under canonical `sftp_base` (`/Volumes/data-fast/timelapse-incoming/canonical-images/{kunde}/{site}/{kamera}/YYYY/MM/DD/...`).
+- Fix: Redaction image lookup læser nu `settings.sftp_base`/legacy roots og understøtter canonical kunde/site/kamera-struktur, legacy chroot/site-strukturer og device-strukturer. `.thumbs`-kopier bruges ikke som redaction-kilde. UI viser nu backendens faktiske fejltekst i stedet for kun generisk `Analyse fejlede`.
+- Verificeret: Fokuserede tests `headend/tests/test_redaction_auth_secret.py`, `tests/test_redaction_page_image_preview.py`, `tests/test_security_closure_zai_redaction.py` = 15 passed. `py_compile headend/redaction_api.py` OK. `npm --prefix timelapse-ui run build` OK med kendte Vite chunk/import-advarsler. Live read-only prøve mod capture `41842` fandt canonical filsti og `cv2.imread()` kunne åbne billedet (`3712x5568`).
+- Hvad mangler / næste skridt: Efter deploy bør Peter prøve `GDPR Sløring -> Afventer analyse -> Analyser` igen på et enkelt billede. Det løser manuel analysefejl, men ikke bulk/backlog-problemet: de 41k pending kræver et separat kontrolleret backlog/batch-flow med hastighedsbegrænsning, pause/stop og tydelig driftspåvirkning.
+- Filer rørt: `headend/redaction_api.py`, `headend/tests/test_redaction_auth_secret.py`, `timelapse-ui/src/pages/RedactionPage.tsx`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Manuel analyse ændrer capture-status fra `pending` til `analyzed`/`detected`. Kør ikke ukontrolleret bulk-analyse af hele historikken før der er aftalt kapacitet, prioritering og auditflow.
+
 ### Handover 2026-08-31 00:15 — fra Claude til Peter: kilde til uventet Edge-polling fundet + rettet, capture-sessions, KRITISK: lækket GitHub-token på TL-C87FF9587CA0
 
 - **KRITISK, læs dette først:** `/opt/timelapse/edge/.git/config` på TL-C87FF9587CA0 (edge2/port 2201-tunnel) indeholder en levende GitHub Personal Access Token i klartekst i remote-URL'en (`origin` peger på `https://github%40froekjaer.dk:ghp_...@github.com/froekjaer/timelapse-pro.git`). Enhver med adgang til den fil (eller til selve enheden) har reelt push-adgang til hele repoet. **Roter/tilbagekald denne token på GitHub (Settings → Developer settings → Personal access tokens) snarest.** Jeg har bevidst ikke brugt tokenen yderligere eller rørt `.git/config` — det er din beslutning om enheden skal beholde et dev-checkout dernede (med en ny, rigtigt scoped token) eller om `.git`-mappen bare skal slettes. Selve `.git`-checkoutet er IKKE den reelle deploy-mekanisme (se næste punkt), så det kan trygt fjernes uden at det driftende device påvirkes.
