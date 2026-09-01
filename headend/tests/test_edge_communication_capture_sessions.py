@@ -17,6 +17,7 @@ from api.edge_communication_debug_api import (
     _any_capture_session_might_be_active,
     _match_active_capture_session,
     capture_status,
+    clear_communications,
     install_edge_communication_logger,
     start_capture,
     stop_capture,
@@ -93,6 +94,53 @@ def test_capture_status_lists_recent_sessions(db_session):
     assert len(rows) == 1
     assert rows[0]["device_id"] == "TL-X"
     assert rows[0]["active"] is True
+
+
+def _make_log_row(db, device_id="TL-X", transport_security="encrypted"):
+    row = database.EdgeApiCommunicationLog(
+        device_id=device_id,
+        method="GET",
+        path="/api/config/" + device_id,
+        transport_security=transport_security,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_clear_with_no_filter_removes_everything(db_session):
+    _make_log_row(db_session, device_id="TL-X")
+    _make_log_row(db_session, device_id="TL-Y")
+    result = clear_communications(device_id=None, transport_security=None, _user=_admin(), db=db_session)
+    assert result["deleted"] == 2
+    assert db_session.query(database.EdgeApiCommunicationLog).count() == 0
+
+
+def test_clear_respects_device_filter(db_session):
+    _make_log_row(db_session, device_id="TL-X")
+    _make_log_row(db_session, device_id="TL-Y")
+    result = clear_communications(device_id="TL-X", transport_security=None, _user=_admin(), db=db_session)
+    assert result["deleted"] == 1
+    remaining = db_session.query(database.EdgeApiCommunicationLog).all()
+    assert len(remaining) == 1
+    assert remaining[0].device_id == "TL-Y"
+
+
+def test_clear_respects_transport_filter(db_session):
+    _make_log_row(db_session, device_id="TL-X", transport_security="encrypted")
+    _make_log_row(db_session, device_id="TL-X", transport_security="unencrypted")
+    result = clear_communications(device_id=None, transport_security="unencrypted", _user=_admin(), db=db_session)
+    assert result["deleted"] == 1
+    remaining = db_session.query(database.EdgeApiCommunicationLog).all()
+    assert len(remaining) == 1
+    assert remaining[0].transport_security == "encrypted"
+
+
+def test_clear_does_not_touch_capture_sessions(db_session):
+    _make_log_row(db_session, device_id="TL-X")
+    start_capture(device_id="TL-X", duration_minutes=5, max_packets=None, _user=_admin(), db=db_session)
+    clear_communications(device_id=None, transport_security=None, _user=_admin(), db=db_session)
+    assert _any_capture_session_might_be_active(db_session) is True
 
 
 def _fake_request(path: str, method: str = "GET") -> Request:

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Filter, Play, RefreshCw,
-  Router, Search, Shield, Square, XCircle,
+  Router, Search, Shield, Square, Trash2, XCircle,
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 
@@ -105,6 +105,7 @@ export function EdgeCommunicationsPage() {
   const [selected, setSelected] = useState<CommunicationRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [clearing, setClearing] = useState(false)
 
   const [captureSessions, setCaptureSessions] = useState<CaptureSession[]>([])
   const [captureDeviceId, setCaptureDeviceId] = useState('')
@@ -204,6 +205,26 @@ export function EdgeCommunicationsPage() {
     window.location.href = `${getApiUrl()}/api/admin/edge-communications/export.xlsx?${params}`
   }
 
+  async function clearList() {
+    const scope = deviceId || transport
+      ? `de observationer der matcher det aktuelle filter (${[deviceId, transport].filter(Boolean).join(', ')})`
+      : 'ALLE observationer'
+    if (!window.confirm(`Ryd ${scope}? Dette kan ikke fortrydes.`)) return
+    setClearing(true)
+    try {
+      const params = new URLSearchParams()
+      if (deviceId) params.set('device_id', deviceId)
+      if (transport) params.set('transport_security', transport)
+      await api(`/api/admin/edge-communications?${params}`, { method: 'DELETE' })
+      setSelected(null)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke rydde listen')
+    } finally {
+      setClearing(false)
+    }
+  }
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
       <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -226,6 +247,15 @@ export function EdgeCommunicationsPage() {
           <button onClick={exportExcel} className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">
             <FileSpreadsheet className="h-4 w-4" />
             Excel
+          </button>
+          <button
+            onClick={clearList}
+            disabled={clearing || !rows.length}
+            title="Ryd den loggede pakkeliste, så man kan starte forfra"
+            className="inline-flex items-center gap-2 rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+          >
+            <Trash2 className="h-4 w-4" />
+            Ryd liste
           </button>
         </div>
       </div>

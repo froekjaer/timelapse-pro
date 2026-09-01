@@ -85,3 +85,20 @@ def test_edge_communication_logging_is_gated_behind_a_bounded_capture_session():
     assert "capture/status" in page_source
     assert "Start capture" in page_source
     assert "Stop capture" in page_source
+
+
+def test_edge_communication_list_can_be_cleared():
+    """Peter (2026-08-31): "kan du lave så man kan lave en clear listen med
+    datapakker, så man kan starte forfra" — a destructive action, so the UI
+    must confirm before calling it."""
+    source = Path("headend/api/edge_communication_debug_api.py").read_text(encoding="utf-8")
+    page_source = Path("timelapse-ui/src/pages/EdgeCommunicationsPage.tsx").read_text(encoding="utf-8")
+
+    assert '@router.delete("")' in source
+    assert "def clear_communications" in source
+    assert "q.delete(synchronize_session=False)" in source
+
+    assert "clearList" in page_source
+    assert "window.confirm" in page_source
+    assert "method: 'DELETE'" in page_source
+    assert "Ryd liste" in page_source

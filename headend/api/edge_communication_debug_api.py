@@ -406,6 +406,27 @@ def list_communications(
     return [_row_dict(row) for row in rows]
 
 
+@router.delete("")
+def clear_communications(
+    device_id: str | None = None,
+    transport_security: str | None = None,
+    _user=require_role("admin"),
+    db: Session = Depends(get_db),
+):
+    """Ryd den loggede pakkeliste, så man kan starte forfra. Respekterer
+    samme filtre som listevisningen — uden filtre ryddes alt. Rydder ikke
+    capture-sessioner (de styrer om der logges noget nyt, ikke hvad der
+    allerede er logget)."""
+    q = db.query(EdgeApiCommunicationLog)
+    if device_id:
+        q = q.filter(EdgeApiCommunicationLog.device_id == device_id)
+    if transport_security:
+        q = q.filter(EdgeApiCommunicationLog.transport_security == transport_security)
+    deleted = q.delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": deleted}
+
+
 def _xlsx_cell(value: Any) -> str:
     if value is None:
         value = ""
