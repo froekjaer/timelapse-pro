@@ -156,6 +156,13 @@ class PendingListResponse(BaseModel):
     items: list[RedactionStatusResponse]
 
 
+class FalsePositiveResponse(BaseModel):
+    capture_id: int
+    redaction_status: str
+    has_gdpr_data: bool
+    message: str
+
+
 def _setting(db: Session | None, key: str, default: str = "") -> str:
     if db is None:
         return default
@@ -240,6 +247,19 @@ def _update_redaction_status(
         capture.redacted_at = now_utc()
         capture.redacted_by = redacted_by
     db.commit()
+
+
+def _false_positive_review_payload(capture: Capture, current_user: User) -> dict:
+    existing = capture.gdpr_detections if isinstance(capture.gdpr_detections, dict) else {}
+    payload = dict(existing)
+    payload["review"] = {
+        "decision": "false_positive",
+        "previous_status": capture.redaction_status,
+        "reviewed_by": current_user.username,
+        "reviewed_at": now_utc().isoformat(),
+        "source": "manual_gdpr_redaction_review",
+    }
+    return payload
 
 
 @router.post("/analyze/{capture_id}", response_model=AnalyzeResponse)
@@ -390,6 +410,39 @@ def redact_capture(
     except Exception as exc:
         log.exception("Redaction fejlede for capture %s", capture_id)
         raise HTTPException(status_code=500, detail=f"Redaction fejlede: {exc}")
+
+
+@router.post("/false-positive/{capture_id}", response_model=FalsePositiveResponse)
+def mark_false_positive(
+    capture_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Mark an analyzed GDPR detection as reviewed false positive."""
+    _require_role(current_user, "operator")
+    capture = db.query(Capture).filter(Capture.id == capture_id).first()
+    if not capture:
+        raise HTTPException(status_code=404, detail="Capture not found")
+    _ensure_capture_access(db, current_user, capture)
+
+    if capture.redaction_status != "detected":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Kun GDPR-fund kan markeres som falsk positiv. Nu: {capture.redaction_status}",
+        )
+
+    capture.gdpr_detections = _false_positive_review_payload(capture, current_user)
+    capture.has_gdpr_data = False
+    capture.redaction_status = "skipped"
+    capture.redaction_method = "false_positive_review"
+    capture.redacted_by = current_user.username
+    db.commit()
+    return FalsePositiveResponse(
+        capture_id=capture.id,
+        redaction_status=capture.redaction_status,
+        has_gdpr_data=False,
+        message="Markeret som falsk positiv og fjernet fra GDPR-fund-listen",
+    )
 
 
 @router.post("/approve/{capture_id}")

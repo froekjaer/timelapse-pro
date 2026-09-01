@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-01 22:25 — fra Codex til Peter/Codex: GDPR falsk-positiv review-flow
+
+- Hvad er gjort: Peter observerede at de hidtidige GDPR-fund ser ud til at være falske positive. Tilføjet et eksplicit `Falsk positiv` review-flow for status `detected`, så et billede kan lukkes uden sløring og uden at blive ved med at stå som GDPR-fund.
+- Fix: Ny backend-endpoint `POST /api/redaction/false-positive/{capture_id}` kræver operator+ og tenant-adgang, accepterer kun captures med status `detected`, sætter `redaction_status='skipped'`, `has_gdpr_data=false`, `redaction_method='false_positive_review'` og gemmer en `gdpr_detections.review`-blok med beslutning, tidligere status, reviewer og timestamp. UI viser `Slør` og `Falsk positiv` som to adskilte valg efter detection; `skipped` vises som `Falsk positiv`.
+- Verificeret: `pytest tests/test_redaction_page_image_preview.py tests/test_security_closure_zai_redaction.py headend/tests/test_redaction_auth_secret.py -q` = 18 passed. `py_compile headend/redaction_api.py` OK. `npm --prefix timelapse-ui run build` OK med kendte Vite chunk/import-advarsler. `git diff --check` OK.
+- Hvad mangler / næste skridt: Dette er manuel review-læring/evidence. Næste større trin bør være en kontrolleret batch/backlog-side med sampling, false-positive-rate, tærskeljustering og evt. eksport af reviewed detections til trænings-/kalibreringsdatasæt.
+- Filer rørt: `headend/redaction_api.py`, `timelapse-ui/src/pages/RedactionPage.tsx`, `tests/test_security_closure_zai_redaction.py`, `tests/test_redaction_page_image_preview.py`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: `skipped` er valgt som eksisterende status for “reviewed false positive”, så ingen DB-migration er nødvendig. Det er ikke en juridisk endelig godkendelse og ændrer ikke billedfilen.
+
 ### Handover 2026-09-01 22:05 — fra Codex til Peter/Codex: GDPR redaction workflow-knapper korrigeret
 
 - Hvad er gjort: Efter Peters test virkede `Analyser`, men `Godkend` gav korrekt backend-fejl: `Capture skal have status 'redacted'. Nu: detected`. Rodårsagen var UI-flowet, ikke backend-reglen: knappen `Godkend` blev vist allerede på status `detected`, selv om næste trin skal være `Slør`.

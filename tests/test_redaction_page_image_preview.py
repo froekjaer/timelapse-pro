@@ -35,6 +35,7 @@ def test_redaction_page_still_has_the_analyze_redact_approve_workflow():
     assert "/api/redaction/analyze/" in source
     assert "/api/redaction/redact/" in source
     assert "/api/redaction/approve/" in source
+    assert "/api/redaction/false-positive/" in source
 
 
 def test_redaction_page_does_not_offer_approve_before_redaction():
@@ -44,5 +45,6 @@ def test_redaction_page_does_not_offer_approve_before_redaction():
 
     assert "redactCapture" in detected_block
     assert "approveCapture" not in detected_block
+    assert "markFalsePositive" in detected_block
     assert "afventer endelig godkendelse" in source
     assert "sløret og godkendt" not in source

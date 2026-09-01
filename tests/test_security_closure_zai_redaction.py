@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from headend.redaction_api import _ensure_capture_access, _require_role
+from headend.redaction_api import _ensure_capture_access, _false_positive_review_payload, _require_role
 
 
 class _NoFallbackDb:
@@ -66,3 +66,28 @@ def test_auto_approve_does_not_change_redaction_state_to_approved():
     source = inspect.getsource(module.redact_capture)
     assert '"redacted"' in source
     assert '"approved"' not in source
+
+
+def test_false_positive_review_payload_is_explicit_training_evidence():
+    capture = SimpleNamespace(
+        gdpr_detections={"faces": [{"x": 1, "y": 2, "w": 3, "h": 4}], "has_pii": True},
+        redaction_status="detected",
+    )
+
+    payload = _false_positive_review_payload(capture, _user(role="operator"))
+
+    assert payload["faces"][0]["x"] == 1
+    assert payload["review"]["decision"] == "false_positive"
+    assert payload["review"]["previous_status"] == "detected"
+    assert payload["review"]["reviewed_by"] == "tester"
+
+
+def test_false_positive_endpoint_requires_detected_status():
+    import inspect
+    import headend.redaction_api as module
+
+    source = inspect.getsource(module.mark_false_positive)
+    assert 'capture.redaction_status != "detected"' in source
+    assert 'capture.redaction_status = "skipped"' in source
+    assert 'capture.has_gdpr_data = False' in source
+    assert 'capture.redaction_method = "false_positive_review"' in source

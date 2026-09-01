@@ -155,6 +155,26 @@ export default function RedactionPage() {
     }
   };
 
+  const markFalsePositive = async (captureId: number) => {
+    if (!confirm("Markér fundet som falsk positiv? Billedet bliver ikke sløret og fjernes fra GDPR-fund-listen.")) {
+      return;
+    }
+    try {
+      setLoading(true);
+      const res = await fetch(`/api/redaction/false-positive/${captureId}`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(await readError(res, "Kunne ikke markere falsk positiv"));
+      setAnalysisResult(null);
+      await loadPending();
+      setSelectedCapture(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadCaptureStatus = async (captureId: number) => {
     try {
       const res = await fetch(`/api/redaction/status/${captureId}`);
@@ -188,7 +208,7 @@ export default function RedactionPage() {
       case "analyzed": return "Analyseret (OK)";
       case "detected": return "GDPR fundet";
       case "redacted": return "Sløret";
-      case "skipped": return "Sprunget over";
+      case "skipped": return "Falsk positiv";
       default: return status;
     }
   };
@@ -358,13 +378,22 @@ export default function RedactionPage() {
                     </button>
                   )}
                   {selectedCapture.redaction_status === "detected" && (
-                    <button
-                      onClick={() => redactCapture(selectedCapture.capture_id)}
-                      disabled={loading}
-                      className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
-                    >
-                      Slør
-                    </button>
+                    <>
+                      <button
+                        onClick={() => redactCapture(selectedCapture.capture_id)}
+                        disabled={loading}
+                        className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                      >
+                        Slør
+                      </button>
+                      <button
+                        onClick={() => markFalsePositive(selectedCapture.capture_id)}
+                        disabled={loading}
+                        className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-800 disabled:opacity-50"
+                      >
+                        Falsk positiv
+                      </button>
+                    </>
                   )}
                   {selectedCapture.redaction_status === "redacted" && (
                     <>
