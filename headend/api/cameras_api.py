@@ -109,6 +109,16 @@ def list_cameras(
             # SSH / reverse tunnel (v8)
             "ssh_public_key":      getattr(cam, "ssh_public_key", None),
             "reverse_tunnel_port": getattr(cam, "reverse_tunnel_port", None),
+            # Live-rapporteret hardware/firmware fra kameraet selv (v35) — se
+            # edge/diagnostics/camera_diagnostics.py. Adskilt fra model/
+            # serial_number ovenfor, som er admin-indtastet fritekst.
+            "reported_model":                getattr(cam, "reported_model", None),
+            "reported_manufacturer":         getattr(cam, "reported_manufacturer", None),
+            "reported_serial_number":        getattr(cam, "reported_serial_number", None),
+            "reported_firmware_version":     getattr(cam, "reported_firmware_version", None),
+            "reported_at":                   cam.reported_at.isoformat() if getattr(cam, "reported_at", None) else None,
+            "latest_known_firmware_version": getattr(cam, "latest_known_firmware_version", None),
+            "latest_firmware_checked_at":    cam.latest_firmware_checked_at.isoformat() if getattr(cam, "latest_firmware_checked_at", None) else None,
         })
     return result
 

@@ -4155,6 +4155,32 @@ def heartbeat(
     ))
     db.commit()
 
+    # Camera hardware/firmware, into CMDB (v35, Peter 2026-09-01) — separate
+    # from the admin-entered Camera.model/serial_number fields, which are
+    # free text and often left blank. Only overwrites fields the edge
+    # actually managed to read this cycle (a failed gphoto2 read must not
+    # blank out a previously-known value).
+    cam_hardware = cam.get("camera_hardware") or {}
+    if cam_hardware:
+        assignment = (
+            db.query(DeviceAssignment)
+            .filter_by(device_id=device_id, unassigned_at=None)
+            .first()
+        )
+        if assignment:
+            camera = db.query(Camera).filter_by(id=assignment.camera_id).first()
+            if camera:
+                if cam_hardware.get("model"):
+                    camera.reported_model = cam_hardware["model"]
+                if cam_hardware.get("manufacturer"):
+                    camera.reported_manufacturer = cam_hardware["manufacturer"]
+                if cam_hardware.get("serial_number"):
+                    camera.reported_serial_number = cam_hardware["serial_number"]
+                if cam_hardware.get("firmware_version"):
+                    camera.reported_firmware_version = cam_hardware["firmware_version"]
+                camera.reported_at = now_utc()
+                db.commit()
+
     log.info("UPDATE DEBUG: updates felt=%s", diag.get('updates'))
     _process_update_report(device_id, diag, db)
     db.commit()
@@ -4868,6 +4894,13 @@ def get_device_camera_location(
             "baseline_description": getattr(cam, "baseline_description", None),
             "context_notes":        getattr(cam, "context_notes", None),
             "retention_days":       getattr(cam, "retention_days", 99999),
+            "reported_model":                getattr(cam, "reported_model", None),
+            "reported_manufacturer":         getattr(cam, "reported_manufacturer", None),
+            "reported_serial_number":        getattr(cam, "reported_serial_number", None),
+            "reported_firmware_version":     getattr(cam, "reported_firmware_version", None),
+            "reported_at":                   cam.reported_at.isoformat() if getattr(cam, "reported_at", None) else None,
+            "latest_known_firmware_version": getattr(cam, "latest_known_firmware_version", None),
+            "latest_firmware_checked_at":    cam.latest_firmware_checked_at.isoformat() if getattr(cam, "latest_firmware_checked_at", None) else None,
         },
     }
 

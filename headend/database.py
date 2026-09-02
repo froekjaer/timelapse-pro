@@ -407,6 +407,25 @@ class Camera(Base):
     #   config-hierarkiet (retention.days i camera config). Default 365 dage.
     #   Hvis 0 eller NULL, ingen automatisk sletning (manuel styring).
     retention_days      = Column(Integer, default=365)
+    # ── Live-rapporteret hardware (v35 migration, 2026-09-01) ──────────────
+    # Adskilt fra model/serial_number ovenfor, som er admin-indtastet fritekst
+    # og ofte tom i praksis (aldrig håndhævet). Disse felter udfyldes af Edge
+    # selv via gphoto2 (edge/diagnostics/camera_diagnostics.py) hver
+    # sync-cyklus — reported_model/serial_number/manufacturer er i praksis
+    # statiske pr. fysisk kamera, reported_firmware_version ændrer sig kun
+    # efter en manuel firmware-opdatering (se HANDOVER_LOG 2026-09-01: fjern-
+    # push af kamera-firmware er IKKE muligt via gphoto2/PTP — kun SD-kort +
+    # kameraets egen menu, både for Nikon og Canon).
+    reported_model            = Column(String(100))
+    reported_manufacturer     = Column(String(100))
+    reported_serial_number    = Column(String(100))
+    reported_firmware_version = Column(String(50))
+    reported_at               = Column(DateTime)
+    # Bedste kendte tilgængelige firmware pr. model, hentet ved periodisk
+    # scraping af producentens hjemmeside (der findes ingen API) — se
+    # headend/camera_firmware_catalog.py. "Bedste indsats", ikke autoritativ.
+    latest_known_firmware_version = Column(String(50))
+    latest_firmware_checked_at    = Column(DateTime)
 
 
 class DeviceAssignment(Base):

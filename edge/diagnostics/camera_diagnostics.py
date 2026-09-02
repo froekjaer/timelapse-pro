@@ -25,6 +25,22 @@ CAMERA_STATUS_PARAMS = {
     "serial_number":    "/main/status/eosserialnumber",
 }
 
+# Hardware identity/firmware — essentially static per physical camera (serial,
+# manufacturer, model never change; firmware only after a manual update), so
+# these are kept separate from CAMERA_STATUS_PARAMS above rather than growing
+# it, even though they're read on the same cadence for simplicity. Each key
+# lists candidate gphoto2 config paths tried in order — vendor PTP extensions
+# differ: eosserialnumber/firmwareversion are Canon EOS-specific, while
+# serialnumber/deviceversion are the generic PTP DeviceInfo fields Nikon (and
+# most non-EOS PTP cameras) expose instead. Unverified against real Nikon Z30
+# hardware in CI (needs an attached camera); see HANDOVER_LOG 2026-09-01.
+CAMERA_HARDWARE_PARAMS = {
+    "manufacturer":     ["/main/status/manufacturer"],
+    "model":            ["/main/status/cameramodel"],
+    "serial_number":    ["/main/status/eosserialnumber", "/main/status/serialnumber"],
+    "firmware_version": ["/main/status/firmwareversion", "/main/status/deviceversion"],
+}
+
 CAMERA_CONFIG_PARAMS = {
     "focus_mode":        "/main/capturesettings/focusmode",
     "image_format":      "/main/imgsettings/imageformat",
@@ -155,6 +171,32 @@ def _read_gphoto2_param(param_path: str, timeout: int = 5) -> Optional[str]:
     return None
 
 
+def _read_first_available(paths: list[str]) -> Optional[str]:
+    """Try each gphoto2 config path in order, return the first non-empty
+    value. Different camera vendors expose the same logical field (serial
+    number, firmware version) under different PTP config paths — see
+    CAMERA_HARDWARE_PARAMS."""
+    for path in paths:
+        val = _read_gphoto2_param(path)
+        if val:
+            return val
+    return None
+
+
+def read_camera_hardware() -> dict:
+    """Read hardware identity (manufacturer/model/serial) and firmware
+    version straight from the attached camera via gphoto2. Returns only the
+    keys that were actually readable — a field missing here (rather than
+    present-but-empty) means every candidate path failed on this body/
+    firmware, not that the camera lacks the property."""
+    hardware: dict[str, str] = {}
+    for key, paths in CAMERA_HARDWARE_PARAMS.items():
+        val = _read_first_available(paths)
+        if val:
+            hardware[key] = val
+    return hardware
+
+
 def _normalise_config_value(key: str, value: object) -> str:
     text = str(value).strip().lower()
     return VALUE_ALIASES.get(key, {}).get(text, text)
@@ -193,6 +235,8 @@ def collect_camera_diagnostics(
       - camera_config_non_enforceable: params intentionally excluded above
       - shutter_pct: percentage of rated shutter life used
       - shutter_alarm: True if > 80% of rated life used
+      - camera_hardware: manufacturer/model/serial_number/firmware_version,
+        for CMDB — see CAMERA_HARDWARE_PARAMS
     """
     result = {
         "camera_status": {},
@@ -201,6 +245,7 @@ def collect_camera_diagnostics(
         "camera_config_non_enforceable": [],
         "shutter_pct": None,
         "shutter_alarm": False,
+        "camera_hardware": read_camera_hardware(),
     }
 
     # Read status parameters

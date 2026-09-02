@@ -48,6 +48,15 @@ interface CameraLocation {
   baseline_description: string | null
   context_notes: string | null
   retention_days?: number | null  // P0-05: Antal dage billeder skal opbevares (default 365)
+  // Live-rapporteret hardware/firmware fra kameraet selv (v35) — adskilt fra
+  // `model` ovenfor, som er admin-indtastet fritekst.
+  reported_model?: string | null
+  reported_manufacturer?: string | null
+  reported_serial_number?: string | null
+  reported_firmware_version?: string | null
+  reported_at?: string | null
+  latest_known_firmware_version?: string | null
+  latest_firmware_checked_at?: string | null
 }
 
 interface CameraOption { id: string; camera_name: string; site_name?: string; customer_name?: string; customer_id?: string; site_id?: string }
@@ -701,6 +710,55 @@ export function CameraPage() {
           </div>
         </div>
       </div>
+
+      {/* Live-rapporteret hardware/firmware — fra selve kameraet via gphoto2, ikke admin-indtastet */}
+      {cameraLocation?.id && (
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-1">Live hardware
+            <InfoTooltip label="Live hardware" text={'Udlæst direkte fra kameraet via gphoto2, ikke admin-indtastet.\nOpdateres hver gang Edge-enheden synkroniserer med Headend.\nHvis kameraet er slukket eller uden USB-forbindelse, forbliver de sidst kendte værdier stående.'} />
+          </h2>
+          {cameraLocation.reported_at ? (
+            <>
+              <p className="text-xs text-gray-400 mb-4">
+                Sidst rapporteret {new Date(cameraLocation.reported_at).toLocaleString('da-DK')}
+              </p>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Producent</p>
+                  <p className="text-sm text-gray-700">{cameraLocation.reported_manufacturer || '–'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Model</p>
+                  <p className="text-sm text-gray-700">{cameraLocation.reported_model || '–'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Serienummer</p>
+                  <p className="text-sm font-mono text-gray-700">{cameraLocation.reported_serial_number || '–'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Firmware</p>
+                  <p className="text-sm text-gray-700">
+                    {cameraLocation.reported_firmware_version || '–'}
+                    {cameraLocation.latest_known_firmware_version && cameraLocation.reported_firmware_version &&
+                      cameraLocation.latest_known_firmware_version !== cameraLocation.reported_firmware_version && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                        Opdatering tilgængelig ({cameraLocation.latest_known_firmware_version})
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <p className="mt-4 text-xs text-gray-300">
+                Firmware kan ikke opdateres fjernt — kameraets producent kræver opdatering via SD-kort og kameraets egen menu.
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-gray-400 italic">
+              Endnu ikke rapporteret — vises efter Edge-enhedens næste synkronisering.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* AI-kontekst / baseline — fodres til vision-prompten pr. billede */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-5">
