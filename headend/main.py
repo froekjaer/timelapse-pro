@@ -4894,17 +4894,8 @@ def list_pending_updates(
     else:
         q = q.filter(PendingUpdate.status.in_(["pending", "approved"]))
     status_order = case(
-        (PendingUpdate.status == "pending", 0),
-        (PendingUpdate.status == "approved", 1),
-        (PendingUpdate.status == "rollback_requested", 2),
-        (PendingUpdate.status == "blocked", 3),
-        (PendingUpdate.status == "failed", 4),
-        (PendingUpdate.status == "rolled_back", 5),
-        (PendingUpdate.status == "deployed", 6),
-        (PendingUpdate.status == "rejected", 7),
-        (PendingUpdate.status == "superseded", 8),
-        else_=9,
-    )
+        {"pending": 0, "approved": 1, "rollback_requested": 2, "blocked": 3, "failed": 4, "rolled_back": 5, "deployed": 6, "rejected": 7, "superseded": 8},
+        value=PendingUpdate.status, else_=9)
     updates = q.order_by(status_order, PendingUpdate.created_at.desc(), PendingUpdate.id.desc()).all()
     promotion_context = build_update_promotion_context(db, PendingUpdate,
         resolve_update_targets=lambda u: _resolve_update_targets(db, u),
