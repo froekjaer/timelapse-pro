@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-01 23:10 — fra Codex til Peter/Codex: update-flow diagnose og handling-first UX
+
+- Hvad er gjort: Undersøgt hvorfor update-siden fortsat indeholder mange `rejected`, `blocked` og `rolled_back` rækker. Databasen viser primært seks aktuelle blokerede Headend platform-app-kandidater (`#228`, `#230`, `#231`, `#233`, `#267`, `#268`) og historiske afviste/rollback/superseded rækker fra tidligere test-, OS- og artifact-forløb. Årsagerne er dokumenteret i `Dokumentation/UPDATE_GOVERNANCE_DIAGNOSIS_2026-09-01.md`.
+- Fix: `/api/updates/pending?status=actionable` returnerer nu kun sager der kræver handling (`pending`, `approved`, `blocked`, `rollback_requested`), og `?status=all` returnerer faktisk alle rækker. Backend og UI sorterer action-first. `/updates` starter nu på `Kræver handling`, og update-kortlisten ligger før CMDB-matrix, lab-import og artifact-katalog, så reelle `#xxx` ikke gemmer sig nederst.
+- Hvad mangler / næste skridt: Næste tekniske lukning bør være en rigtig statusmodel for `blocked_reason`/`resolution_reason`, daglig hygiene-job og harmonisering af `pending_updates.status` med `update_targets.status`, så blokerede updates ikke kan have target `queued`.
+- Kommandoer kørt eller skal køres: Kør `pytest tests/test_update_queue_hygiene_contract.py tests/test_dashboard_update_indicator_contract.py -q` og `npm --prefix timelapse-ui run build`.
+- Forventet/faktisk output: Ikke deployet endnu i denne entry; PR/merge/deploy bør følge normal Headend-flow efter grønne checks.
+- Filer rørt: `headend/main.py`, `timelapse-ui/src/pages/UpdatesPage.tsx`, `tests/test_update_queue_hygiene_contract.py`, `Dokumentation/UPDATE_GOVERNANCE_DIAGNOSIS_2026-09-01.md`, `Dokumentation/HANDOVER_LOG.md`.
+- Risici / pas på: Historiske rækker slettes ikke. De flyttes kun ud af default handling-visning. Det bevarer audit-evidence, men gør driftsbeslutninger mere overskuelige.
+
 ### Handover 2026-09-01 22:25 — fra Codex til Peter/Codex: GDPR falsk-positiv review-flow
 
 - Hvad er gjort: Peter observerede at de hidtidige GDPR-fund ser ud til at være falske positive. Tilføjet et eksplicit `Falsk positiv` review-flow for status `detected`, så et billede kan lukkes uden sløring og uden at blive ved med at stå som GDPR-fund.
