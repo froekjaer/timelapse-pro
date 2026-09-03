@@ -9614,6 +9614,7 @@ def reject_update(
     u.status      = "rejected"
     u.approved_by = current_user.username
     u.approved_at = now_utc()
+    u.resolution_reason = f"Rejected by {current_user.username}."
     db.commit()
     return {"ok": True}
 

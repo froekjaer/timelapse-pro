@@ -152,3 +152,17 @@ def test_missing_artifact_withheld_update_resets_stale_target():
         line for line in source.splitlines() if line.startswith("from services.update_supersession import")
     )
     assert "reset_stale_targets_on_block" in import_line
+
+
+def test_direct_reject_endpoint_sets_resolution_reason():
+    """The UI's 'Afvis' button calls POST /api/updates/{id}/reject directly (reject_update),
+    a separate, simpler code path from the change-ticket decision flow — easy to miss when
+    grepping for '.status = "rejected"' since this one is column-aligned with extra spaces.
+    Confirmed missing live (2026-09-03): rejecting via this button left resolution_reason NULL.
+    """
+    source = _source("headend/main.py")
+    start = source.index('@app.post("/api/updates/{update_id}/reject")')
+    end = source.index('@app.post("/api/updates/{update_id}/promote")')
+    block = source[start:end]
+    assert 'u.status      = "rejected"' in block
+    assert "u.resolution_reason = " in block
