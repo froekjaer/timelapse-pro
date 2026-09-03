@@ -427,14 +427,15 @@ def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceIn
             exists.environment = _pending_environment(inv)
             if exists.status in {"pending", "approved"}:
                 exists.status = "blocked"
+            if exists.status == "blocked":
                 exists.resolution_reason = "CMDB re-observed package as still outdated; requires signed dependency artifact."
-            if exists.status == "blocked" and exists.id is not None:
-                # Self-heal: a target may already sit at queued/approved (set while this
-                # PendingUpdate was briefly approved) — it can't progress while blocked.
-                reset_stale_targets_on_block(
-                    db, UpdateTarget, exists.id,
-                    f"Parent update blocked by CMDB inventory {now_utc().isoformat()}: requires signed dependency artifact.",
-                )
+                if exists.id is not None:
+                    # Self-heal: a target may already sit at queued/approved (set while this
+                    # PendingUpdate was briefly approved) — it can't progress while blocked.
+                    reset_stale_targets_on_block(
+                        db, UpdateTarget, exists.id,
+                        f"Parent update blocked by CMDB inventory {now_utc().isoformat()}: requires signed dependency artifact.",
+                    )
             continue
 
         db.add(PendingUpdate(
