@@ -109,6 +109,27 @@ def test_cmdb_reblock_sites_reset_stale_targets():
     assert 'existing.status = "blocked"' in os_block
 
 
+def test_app_update_reblock_sets_resolution_reason_even_when_already_blocked():
+    """Regression: an already-blocked row (not just the pending/approved -> blocked
+    transition) must also get resolution_reason set on every re-sync — otherwise a row
+    blocked before this field existed stays NULL forever, since CMDB re-observes the
+    same outdated package as still-blocked, not as a fresh transition. Shipped once
+    without this (2026-09-03): #228/#230/#231 self-healed their targets on the next
+    sync but resolution_reason stayed NULL.
+    """
+    source = _source("headend/cmdb.py")
+    app_block = source[
+        source.index("def _sync_managed_application_updates("):source.index("def _sync_edge_os_updates(")
+    ]
+    reblock = app_block[app_block.index("if exists.status in"):]
+    assert 'if exists.status == "blocked":' in reblock
+    assert "exists.resolution_reason = " in reblock
+    # resolution_reason assignment must be reachable outside the pending/approved-only
+    # transition branch, not nested inside it.
+    transition_branch = reblock[reblock.index('if exists.status in'):reblock.index('if exists.status == "blocked":')]
+    assert "exists.resolution_reason" not in transition_branch
+
+
 def test_cmdb_supersession_cascades_to_targets():
     source = _source("headend/cmdb.py")
     block = source[
