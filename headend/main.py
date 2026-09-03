@@ -644,6 +644,29 @@ def startup():
     except Exception as _obp_err:
         log.warning("Kunne ikke starte OS bundle auto-poller: %s", _obp_err)
 
+    # ── OS-katalogopdagelse fra CMDB ─────────────────────────────────────────
+    # Edge har ikke direkte internetadgang. Headend reconciler derfor periodisk
+    # det senest rapporterede package inventory (CMDB) mod et katalog genereret
+    # via Headends egen internetadgang, og opretter/opdaterer kun BLOKEREDE
+    # OS-update-kandidater med en Plan-reference — selve artifact-bygningen sker
+    # separat i OS bundle-pollerens næste kørsel (kræver eksplicit plan-evidens,
+    # jf. OS_UPDATE_GOVERNANCE_CLOSURE_2026-08.md). 2026-09-03: dette skridt fandtes
+    # kun på en aldrig-merged branch (codex/os-catalog-refresh) — har derfor aldrig
+    # kørt automatisk i produktion, kun manuelt via UI'ets "Refresh fra
+    # CMDB/Mac-builder"-knap. Se HANDOVER_LOG.
+    try:
+        interval_h = float(os.getenv("TIMELAPSE_OS_CATALOG_REFRESH_INTERVAL_HOURS", "24"))
+        t_catalog = _threading.Thread(
+            target=_os_catalog_refresh_loop,
+            args=(interval_h,),
+            name="os-catalog-refresh",
+            daemon=True,
+        )
+        t_catalog.start()
+        log.info("OS-katalogopdagelse fra CMDB startet (interval=%.1fh)", interval_h)
+    except Exception as _ocr_err:
+        log.warning("Kunne ikke starte OS-katalogopdagelse: %s", _ocr_err)
+
     # ── AI batch-job poller (Gemini Batch API) ───────────────────────────────
     try:
         interval_m = float(os.getenv("TIMELAPSE_AI_BATCH_POLL_MINUTES", "5"))
@@ -8013,6 +8036,94 @@ def _git_tag_poller_loop(interval_hours: float = 1.0) -> None:
         _time.sleep(interval_s)
 
 
+# ── OS-katalogopdagelse fra CMDB ──────────────────────────────────────────────
+
+def _os_catalog_refresh_loop(interval_hours: float = 24.0) -> None:
+    """
+    Baggrunds-tråd: reconciler periodisk CMDB package-inventory mod et
+    OS-opdateringskatalog genereret via Headends egen internetadgang, og
+    opretter/opdaterer blokerede OS update-kandidater med Plan-evidens, klar
+    til at OS bundle-pollerens næste kørsel bygger og binder et signeret
+    artifact. Se _os_catalog_refresh_pending_devices() for selve arbejdet.
+    """
+    import time as _time
+
+    interval_s = max(3600, interval_hours * 3600)
+
+    # Giv serveren tid til at starte fuldt op
+    _time.sleep(45)
+
+    while True:
+        try:
+            _os_catalog_refresh_pending_devices()
+        except Exception as _poll_err:
+            log.warning("OS-katalogopdagelse fejl: %s", _poll_err)
+        _time.sleep(interval_s)
+
+
+def _os_catalog_refresh_pending_devices() -> None:
+    """
+    Finder alle enheder med apt-baseret CMDB-inventory og reconciler deres
+    seneste package-inventory mod et katalog genereret via
+    _generate_os_update_catalog_candidates() (Headend Docker/arm64-builder,
+    falder tilbage til Ubuntu-metadata uden Docker). Opretter/opdaterer
+    blokerede os_security/os_updates PendingUpdate-rækker med Plan-reference
+    via import_os_catalog_from_lab_apt_list().
+
+    Bruger et system-principal, samme mønster som _os_bundle_auto_build_pending()
+    (U-12: ingen automatisk build/katalog-refresh må tilskrives en rigtig
+    admin-konto der aldrig så eller godkendte det).
+    """
+    db = SessionLocal()
+    try:
+        devices = (
+            db.query(DeviceInventory)
+            .filter(DeviceInventory.package_manager.ilike("%apt%"))
+            .order_by(DeviceInventory.device_id)
+            .all()
+        )
+        if not devices:
+            return
+
+        system_user = User(username="system:os-catalog-refresh", role="system", password_hash="")
+
+        for inv in devices:
+            device_id = (inv.device_id or "").strip()
+            if not device_id or not inv.os_packages:
+                continue
+            try:
+                installed = json.loads(inv.os_packages or "{}")
+            except Exception:
+                installed = {}
+            if not isinstance(installed, dict) or not installed:
+                continue
+            try:
+                generated = _generate_os_update_catalog_candidates(
+                    installed=installed,
+                    device_id=device_id,
+                    architecture="arm64",
+                    image="ubuntu:24.04",
+                )
+                import_os_catalog_from_lab_apt_list(
+                    OsCatalogImportPayload(
+                        device_id=device_id,
+                        apt_list_text=generated["apt_list_text"],
+                        source=f"headend-scheduled-cmdb-refresh:{now_utc():%Y-%m-%d}",
+                        environment=inv.environment or "lab",
+                        create_updates=True,
+                    ),
+                    system_user,
+                    db,
+                )
+                db.commit()
+                log.info("OS-katalogopdagelse: opdateret for %s", device_id)
+            except Exception as exc:
+                db.rollback()
+                log.warning("OS-katalogopdagelse: fejl for %s: %s", device_id, exc)
+    finally:
+        db.close()
+
+
 # ── Automatisk OS bundle builder ──────────────────────────────────────────────
 
 def _os_bundle_auto_poller_loop(interval_minutes: float = 10.0) -> None:
@@ -8055,12 +8166,17 @@ def _os_bundle_auto_build_pending() -> None:
 
     db = SessionLocal()
     try:
-        # Find pending OS-updates uden artifact
+        # Find OS-updates uden artifact. cmdb.py's inventory-sync opretter disse
+        # direkte som "blocked" (ren observation, ikke deployable endnu) — kun
+        # "pending" her betød denne poller reelt aldrig fandt noget, siden intet
+        # kodested nogensinde sætter os_security/os_updates til "pending" (fundet
+        # 2026-09-03, jf. HANDOVER_LOG). plan_path-kravet nedenfor er den
+        # tilsigtede gate (OS_UPDATE_GOVERNANCE_CLOSURE_2026-08.md) og er urørt.
         pending = (
             db.query(PendingUpdate)
             .filter(
                 PendingUpdate.update_type.in_(["os_security", "os_updates"]),
-                PendingUpdate.status.in_(["pending"]),
+                PendingUpdate.status.in_(["pending", "blocked"]),
             )
             .order_by(PendingUpdate.created_at)
             .all()
