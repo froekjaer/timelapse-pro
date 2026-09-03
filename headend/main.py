@@ -8221,6 +8221,33 @@ def _os_bundle_auto_build_pending() -> None:
         db.close()
 
 
+def _packages_from_os_plan(plan_path_str: str, update_type: str) -> list[dict]:
+    """
+    Udtrækker den kategori-rene pakkeliste for update_type ("os_security"/
+    "os_updates") fra en OS-plan-JSON-fil skrevet af
+    import_os_catalog_from_lab_apt_list()/_os_catalog_refresh_pending_devices().
+    Returnerer [] hvis planen mangler, ikke kan læses, eller ikke har
+    pakker for denne kategori — kaldere falder da tilbage til anden kilde.
+    """
+    try:
+        plan_data = json.loads(Path(plan_path_str).expanduser().read_text())
+    except Exception as exc:
+        log.warning("Kunne ikke læse OS-plan %s: %s", plan_path_str, exc)
+        return []
+    decision = (plan_data.get("decisions") or {}).get(update_type) or {}
+    return [
+        {
+            "name":               p["name"],
+            "available_version":  p.get("available_version") or "",
+            "installed_version":  p.get("installed_version") or "",
+            "source_repo":        p.get("source_repo") or "",
+            "category":           update_type,
+        }
+        for p in (decision.get("packages") or [])
+        if p.get("name") and p.get("available_version")
+    ]
+
+
 def _auto_build_and_bind_os_bundle(
     db: Session,
     update: PendingUpdate,
@@ -8242,43 +8269,41 @@ def _auto_build_and_bind_os_bundle(
     _fb_mod = _importlib_util.module_from_spec(_spec)
     _spec.loader.exec_module(_fb_mod)  # type: ignore[union-attr]
 
-    # Hent pakkeliste fra inventory (soft_inventory JSON i DB)
     inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
-    packages_raw: list[dict] = []
-    if inv and inv.software_inventory:
-        try:
-            sw = json.loads(inv.software_inventory) if isinstance(inv.software_inventory, str) else inv.software_inventory
-            apt_data = sw.get("_os_updates_available") or {}
-            packages_raw = apt_data.get("packages") or []
-        except Exception:
-            pass
 
-    if not packages_raw:
-        raise RuntimeError(
-            f"Ingen pakker i inventory for {device_id} — "
-            "kan ikke bygge OS bundle uden pakkeliste"
-        )
+    # Foretrukken kilde: den godkendte, kategori-rene pakkeliste fra Plan-filen.
+    # Edge's egen _os_updates_available er strukturelt upålidelig som eneste kilde:
+    # Edge har intet internet og kan derfor aldrig køre "apt update" mod rigtige
+    # mirrors, så dens lokale apt-cache — og dermed dens rapporterede "upgradable"-
+    # liste — forbliver reelt altid 0, uanset hvor forældet systemet faktisk er
+    # (fundet 2026-09-03: en frisk, netop reconcileret plan viste 215+535 reelt
+    # udestående pakker for en enhed hvis _os_updates_available samtidig sagde 0).
+    plan_path_str = _plan_path_for_update(update)
+    packages: list[dict] = (
+        _packages_from_os_plan(plan_path_str, update.update_type) if plan_path_str else []
+    )
 
-    # Konverter inventory-format (name + new_ver) til fetch_os_bundle-format (name + available_version)
-    # Filtrer til den relevante update_type (security vs. non-security)
-    want_security = (update.update_type == "os_security")
-    packages = [
-        {
-            "name":               p["name"],
-            "available_version":  p.get("new_ver") or p.get("available_version") or "",
-            "installed_version":  p.get("old_ver") or p.get("installed_version") or "",
-            "source_repo":        p.get("source_repo") or "",
-            "category":           update.update_type,
-        }
-        for p in packages_raw
-        if bool(p.get("security")) == want_security
-        and (p.get("new_ver") or p.get("available_version"))
-    ]
+    if not packages:
+        # Fallback: Edge's egen apt-inventory (kun pålidelig hvis Edge for en gangs
+        # skyld selv har en frisk apt-cache — se advarsel ovenfor).
+        packages_raw: list[dict] = []
+        if inv and inv.software_inventory:
+            try:
+                sw = json.loads(inv.software_inventory) if isinstance(inv.software_inventory, str) else inv.software_inventory
+                apt_data = sw.get("_os_updates_available") or {}
+                packages_raw = apt_data.get("packages") or []
+            except Exception:
+                pass
 
-    if not packages and not any("security" in p for p in packages_raw):
-        # Legacy inventory uden security-flag: brug hele listen som fallback.
-        # Hvis security-flag findes og ingen pakker matcher, må vi ikke bygge et
-        # funktionelt OS-bundle som om det var en security-update.
+        if not packages_raw:
+            raise RuntimeError(
+                f"Ingen pakker i plan eller inventory for {device_id} — "
+                "kan ikke bygge OS bundle uden pakkeliste"
+            )
+
+        # Konverter inventory-format (name + new_ver) til fetch_os_bundle-format (name + available_version)
+        # Filtrer til den relevante update_type (security vs. non-security)
+        want_security = (update.update_type == "os_security")
         packages = [
             {
                 "name":               p["name"],
@@ -8288,8 +8313,25 @@ def _auto_build_and_bind_os_bundle(
                 "category":           update.update_type,
             }
             for p in packages_raw
-            if p.get("new_ver") or p.get("available_version")
+            if bool(p.get("security")) == want_security
+            and (p.get("new_ver") or p.get("available_version"))
         ]
+
+        if not packages and not any("security" in p for p in packages_raw):
+            # Legacy inventory uden security-flag: brug hele listen som fallback.
+            # Hvis security-flag findes og ingen pakker matcher, må vi ikke bygge et
+            # funktionelt OS-bundle som om det var en security-update.
+            packages = [
+                {
+                    "name":               p["name"],
+                    "available_version":  p.get("new_ver") or p.get("available_version") or "",
+                    "installed_version":  p.get("old_ver") or p.get("installed_version") or "",
+                    "source_repo":        p.get("source_repo") or "",
+                    "category":           update.update_type,
+                }
+                for p in packages_raw
+                if p.get("new_ver") or p.get("available_version")
+            ]
 
     if not packages:
         raise RuntimeError(f"Ingen gyldige pakker at downloade for update #{update.id}")

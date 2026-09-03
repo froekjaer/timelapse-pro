@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-03 (endnu en gang) — fra Claude til Peter: fjerde bug i samme kæde, fundet ved live-test af #178
+
+- Hvad skete: Efter #178 (genoprettet katalog-refresh + rettet statusfilter) blev deployet, fulgte jeg kæden live i produktion i stedet for at antage den virkede. Den nye katalog-refresh-tråd fandt korrekt 215+535 udestående OS-pakker for `TL-043EB9E72EFD` (#269/#270). 10-min-artifact-pollingtråden (nu rettet til at se "blocked") fandt dem korrekt og FORSØGTE at bygge — men fejlede: `"Ingen pakker i inventory for TL-043EB9E72EFD"`.
+- **Root cause**: `_auto_build_and_bind_os_bundle()` hentede UDELUKKENDE pakkelisten fra `DeviceInventory.software_inventory`s `_os_updates_available`-felt — dvs. Edge's egen, lokale `apt list --upgradable`-rapportering. Det felt er strukturelt ubrugeligt i denne arkitektur: Edge har intet internet og kan derfor ALDRIG køre `apt update` mod rigtige mirrors, så dens lokale apt-cache — og dermed alt den rapporterer som "upgradable" — forbliver reelt permanent 0, uanset hvor forældet systemet faktisk er. Bekræftet direkte: enhedens `_os_updates_available` sagde `{"total": 0}` i SAMME øjeblik den friskt reconcilerede plan (bygget af Headend mod Ubuntu 24.04-metadata via egen internetadgang) viste 750 reelt udestående pakker.
+- Rettet: ny hjælpefunktion `_packages_from_os_plan(plan_path, update_type)` udtrækker den allerede-reconcilerede, kategori-rene pakkeliste direkte fra Plan-JSON-filen (samme fil `_plan_path_for_update()` allerede peger på). `_auto_build_and_bind_os_bundle()` bruger nu DENNE som primær kilde, og falder kun tilbage til den (upålidelige) Edge-inventory-kilde hvis planen mangler eller er tom — bevarer bagudkompatibilitet uden at ændre adfærd for evt. ældre, plan-løse opkald.
+- Dette er PRÆCIS den slags fejl Peter bad mig lede efter i den kommende brede gennemgang — fundet ved at faktisk FØLGE kæden live i stedet for at stoppe ved "testene er grønne". Den brede gennemgang (Peters eksplicitte "please-please"-ønske) er stadig ikke lavet endnu, kommer i næste handover.
+- Kommandoer kørt: fuldt testbatteri = 1211 passed (4 nye tests for `_packages_from_os_plan`: kategori-filtrering, manglende fil, tom kategori, det konkrete scenario). Ratchet-baseline opdateret (16798 → 16840 linjer).
+- Filer rørt: `headend/main.py` (`_packages_from_os_plan` ny, `_auto_build_and_bind_os_bundle` ændret til at bruge den), `headend/tests/test_os_bundle_uses_plan_packages.py` (ny), `tests/architecture_baseline.json`, denne log.
+- Risici / pas på: Denne rettelse er endnu ikke live-verificeret i produktion (kræver enten en frisk katalog-refresh-cyklus (~24t) eller manuel trigger + at vente på næste 10-min artifact-poll for at se #269/#270 rent faktisk få et bundet artifact denne gang). Bør tjekkes efter deploy.
+
 ### Handover 2026-09-03 (fortsat igen) — fra Claude til Peter: fundet og rettet hvorfor OS-katalog-refresh gik i stå
 
 - Hvad skete: Peter afviste (med rette) min "håndholdte proces"-guides forslag om at SSH ind på Edge og køre `apt upgrade` selv — Edge har ingen internetadgang, og det havde jeg overset. Peters pointe: "Vi skal kunne deploye via den mekanisme vi allerede har bygget."
