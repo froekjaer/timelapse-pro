@@ -123,7 +123,7 @@ from itim import router as itim_router, start_itim_collector
 from runtime_environment import background_jobs_enabled, rate_limits_enabled
 from services.artifact_trust import is_deployable_artifact
 from services.update_promotion import build_update_promotion_context, serialize_pending_update
-from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates
+from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
 from redaction_api import router as redaction_router
@@ -7412,6 +7412,12 @@ def _upsert_blocked_os_updates_from_plan(
             existing.environment = environment
             if existing.status != "approved":
                 existing.status = "blocked"
+                existing.resolution_reason = "Awaiting lab-built, tested, Headend-signed offline OS artifact."
+                if existing.id is not None:
+                    reset_stale_targets_on_block(
+                        db, UpdateTarget, existing.id,
+                        f"Parent update blocked {now_utc().isoformat()}: awaiting lab-signed offline OS artifact.",
+                    )
             changes.append({"update_type": update_type, "status": "updated", "id": existing.id})
             continue
         update = PendingUpdate(
@@ -7422,6 +7428,7 @@ def _upsert_blocked_os_updates_from_plan(
             scope="device",
             scope_id=device_id,
             status="blocked",
+            resolution_reason="Awaiting lab-built, tested, Headend-signed offline OS artifact.",
             environment=environment,
         )
         db.add(update)
@@ -9195,6 +9202,7 @@ def reject_change_ticket(
             update.status = "rejected"
             update.approved_at = decided_at
             update.approved_by = current_user.username
+            update.resolution_reason = (payload.notes or "Rejected by admin.")[:500]
     db.commit()
     return {"ok": True, "ticket_id": ticket.ticket_id, "signed_payload_sha256": signed_hash}
 
@@ -9745,6 +9753,12 @@ def get_update_policy(
                 f"\n\nBlocked {now_utc().isoformat()}: approved update withheld from Edge policy "
                 "because it lacks required Headend-signed artifact."
             ))[-6000:]
+            u.resolution_reason = "Approved update withheld from Edge policy: missing required Headend-signed artifact."
+            if u.id is not None:
+                reset_stale_targets_on_block(
+                    db, UpdateTarget, u.id,
+                    f"Parent update blocked {now_utc().isoformat()}: missing required Headend-signed artifact.",
+                )
             db.commit()
             continue
         filtered.append({
@@ -9790,6 +9804,8 @@ def report_update(
             raise HTTPException(status_code=403, detail="Edge er ikke autoriseret target for denne update")
     if reason and status in final_statuses:
         u.description = ((u.description or "").rstrip() + f"\n\nEdge report {now_utc().isoformat()}: {status}; reason={reason[:700]}")[-6000:]
+        if status in {"rolled_back", "blocked"}:
+            u.resolution_reason = reason[:500]
     # HLTH-008 / R06 / KRAVREGISTER UPD-012: for scope="device" (ét target) afspejler denne
     # ene rapport hele update'ens skæbne, som hidtil. For multi-target scopes
     # (global/customer/site) må ét device IKKE alene kunne sætte hele update'ens globale
@@ -9881,6 +9897,7 @@ def report_update(
                     else:
                         u.status = "rolled_back"
                         u.rollback_at = u.rollback_at or now_utc()
+                        u.resolution_reason = f"{deployed_n}/{total} targets deployed; {total - deployed_n} rolled back or failed."
     db.commit()
     log.info("Update %d rapporteret som %s fra device", update_id, status)
     return {"ok": True}

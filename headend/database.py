@@ -531,6 +531,10 @@ class PendingUpdate(Base):
     target_device_ids = Column(Text)          # JSON liste af specifikke device_ids
     deployed_count    = Column(Integer, default=0)
     failed_count      = Column(Integer, default=0)
+    resolution_reason = Column(Text)
+    # Short "why" for the current status (blocked/rejected/rolled_back/superseded/
+    # deployed) — distinct from the longer free-text description. Set at the write
+    # site that changed the status; NULL for rows predating this field.
 
 
 class ChangeTicket(Base):
