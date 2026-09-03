@@ -13,6 +13,7 @@
 3. [Systemadministration](#systemadministration)
 4. [Overvågning og Diagnostik](#overvågning-og-diagnostik)
 5. [Sikkerhed](#sikkerhed)
+6. [Update-kø (håndholdt proces)](../Dokumentation/GUIDE_HAANDHOLDT_UPDATE_PROCES.md)
 
 ---
 
@@ -307,6 +308,13 @@ journalctl -u timelapse-headend --since "1 hour ago"
 # Filtrer på specifik komponent
 journalctl -u timelapse-edge | grep -i "camera"
 ```
+
+### Update-kø (håndholdt proces)
+
+Se den dedikerede guide: [`Dokumentation/GUIDE_HAANDHOLDT_UPDATE_PROCES.md`](../Dokumentation/GUIDE_HAANDHOLDT_UPDATE_PROCES.md)
+— hvordan `/updates`-siden læses, hvilke af de tre update-spor der reelt er
+selvbetjente i dag, og den håndholdte proces for OS/Homebrew-drift-opdateringer
+uden AI til stede.
 
 ### Backup
 
