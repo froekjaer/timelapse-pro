@@ -169,3 +169,40 @@ Denne PR retter kun synlighed og sortering:
    - TimeLapse release.
    - Historik/evidence.
 5. Gør Headend platform-app updates til et egentligt "preflight -> artifact -> install -> postflight" flow for hver understøttet komponent.
+
+## Opfølgning 2026-09-03 — punkt 1, 2 og 3 lukket
+
+Peter: "grave godt og grundigt i det, måske noget skal gentænkes" + eksplicit "ja tak"
+til at gå videre med den dybere rettelse. Denne opfølgning lukker punkt 1, 2 og
+(reaktivt, uden ny scheduler) punkt 3 fra listen ovenfor:
+
+- **`resolution_reason`** (v36-migration, `headend/migrations/v36_pending_update_resolution_reason.sql`)
+  tilføjet på `pending_updates`, sat ved ~10 write-sites der blokerer/afviser/ruller
+  tilbage/superseder (`cmdb.py`, `main.py`, `update_supersession.py`,
+  `headend_update_state.py`), eksponeret i `/api/updates/pending`-svar og vist i UI'et
+  under "Årsag:" i det udfoldede kort.
+- **Target/parent harmonisering**: root cause var at `_ensure_update_targets()` kun
+  sætter en `UpdateTarget` til `queued` når parent er `approved` i det øjeblik — intet
+  nulstillede en allerede-`queued` target når CMDB-syncen senere flippede parent
+  tilbage til `blocked`. Ny delt helper `reset_stale_targets_on_block()`
+  (`headend/services/update_supersession.py`) kaldes nu fra alle steder der (gen)sætter
+  en update til `blocked` (begge Homebrew/OS-synk-stier i `cmdb.py`, lab-katalog OS-stien
+  og "mangler signeret artifact"-stien i `main.py`) og flytter enhver stale
+  `pending/queued/approved/authorized` target til `failed` — samme mapping
+  `report_update()`/`mark_headend_update_failed()` allerede brugte for en blokeret
+  parent, nu konsistent alle steder.
+- **Punkt 3 (daglig hygiene) løst reaktivt, ikke som ny scheduler**: `cmdb.py`s
+  `_supersede_active_device_updates()` (kaldes fra hver CMDB inventory-sync, reelt
+  ~dagligt pr. device) cascadede tidligere ikke til `UpdateTarget` overhovedet — det
+  gjorde kun app_updates-stien i `update_supersession.py`. Ny delt
+  `close_targets_for_superseded_updates()` lukker nu samme asymmetri, så CMDB-drevne
+  OS/platform-app-kandidater også lukker deres targets korrekt. Da self-heal-kaldet
+  til `reset_stale_targets_on_block()` kører hver gang en update *er* `blocked` (ikke
+  kun på selve overgangen), retter det også allerede-forkerte rækker automatisk ved
+  næste sync — de tre konkret bekræftede tilfælde (#228/#230/#231) retter sig selv
+  uden manuelt indgreb, næste gang deres device synkroniserer.
+
+**Stadig åbent, bevidst ikke forsøgt i denne omgang**: punkt 4 (3-vejs UI-opdeling
+drift/release/historik) og punkt 5 (reelt preflight→artifact→install→postflight-flow
+for Headend platform-apps) — sidstnævnte kræver signeret artifact-infrastruktur for
+3.-parts-pakker der endnu ikke findes, og er en væsentligt større, separat indsats.

@@ -42,8 +42,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
-from database import CustomerRiskInput, CustomerRiskProfile, Device, DeviceInventory, BreakGlassAccount, BreakGlassCheckoutAudit, PendingUpdate, get_db, now_utc
+from database import CustomerRiskInput, CustomerRiskProfile, Device, DeviceInventory, BreakGlassAccount, BreakGlassCheckoutAudit, PendingUpdate, UpdateTarget, get_db, now_utc
 from services.fair_risk import estimate_annual_loss
+from services.update_supersession import close_targets_for_superseded_updates, reset_stale_targets_on_block
 from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
 from tenant_scope import _is_platform_admin, _visible_device_query
 
@@ -217,6 +218,7 @@ def _supersede_active_device_updates(
     )
     updates = query.all()
     closed = 0
+    closed_ids: list[int] = []
     for update in updates:
         if component_names:
             version = str(update.version or "")
@@ -225,7 +227,12 @@ def _supersede_active_device_updates(
                 continue
         update.status = "superseded"
         update.description = _append_update_hygiene_note(update.description, note)
+        update.resolution_reason = note
         closed += 1
+        if update.id is not None:
+            closed_ids.append(update.id)
+    if closed_ids:
+        close_targets_for_superseded_updates(db, UpdateTarget, closed_ids, note, device_id=device_id)
     return closed
 
 
@@ -420,6 +427,14 @@ def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceIn
             exists.environment = _pending_environment(inv)
             if exists.status in {"pending", "approved"}:
                 exists.status = "blocked"
+                exists.resolution_reason = "CMDB re-observed package as still outdated; requires signed dependency artifact."
+            if exists.status == "blocked" and exists.id is not None:
+                # Self-heal: a target may already sit at queued/approved (set while this
+                # PendingUpdate was briefly approved) — it can't progress while blocked.
+                reset_stale_targets_on_block(
+                    db, UpdateTarget, exists.id,
+                    f"Parent update blocked by CMDB inventory {now_utc().isoformat()}: requires signed dependency artifact.",
+                )
             continue
 
         db.add(PendingUpdate(
@@ -430,6 +445,7 @@ def _sync_managed_application_updates(db: Session, device_id: str, inv: DeviceIn
             scope="device",
             scope_id=device_id,
             status="blocked",
+            resolution_reason="Requires signed dependency artifact and rollback plan before approval.",
             environment=_pending_environment(inv),
             target_device_ids=json.dumps([device_id]),
         ))
@@ -492,6 +508,14 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
             existing.severity = "high" if "security" in update_type else "medium"
             existing.environment = env
             existing.status = "blocked"
+            existing.resolution_reason = "CMDB observation only; requires lab-built, Headend-signed offline OS bundle before approval."
+            if existing.id is not None:
+                # Self-heal: an already-queued/approved target from an earlier approval
+                # can't progress while the parent is (still) blocked.
+                reset_stale_targets_on_block(
+                    db, UpdateTarget, existing.id,
+                    f"Parent update blocked by CMDB inventory {now_utc().isoformat()}: requires lab-signed offline OS bundle.",
+                )
         else:
             db.add(PendingUpdate(
                 update_type=update_type,
@@ -501,6 +525,7 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
                 scope="device",
                 scope_id=device_id,
                 status="blocked",
+                resolution_reason="CMDB observation only; requires lab-built, Headend-signed offline OS bundle before approval.",
                 environment=env,
                 target_device_ids=json.dumps([device_id]),
             ))

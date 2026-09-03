@@ -126,6 +126,7 @@ def serialize_pending_update(update: Any, promotion_context: PromotionContext) -
         "scope": update.scope,
         "scope_id": update.scope_id,
         "status": update.status,
+        "resolution_reason": getattr(update, "resolution_reason", None),
         "environment": update.environment,
         "target_device_ids": json.loads(update.target_device_ids) if update.target_device_ids else None,
         "deployed_count": update.deployed_count or 0,

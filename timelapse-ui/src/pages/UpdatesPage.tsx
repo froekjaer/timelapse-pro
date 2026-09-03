@@ -53,6 +53,7 @@ interface Update {
   scope:             string
   scope_id:          string | null
   status:            string
+  resolution_reason: string | null
   environment:       string | null
   deployed_count:    number
   failed_count:      number
@@ -823,6 +824,12 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
       {open && (
         <div className="px-5 pb-4 pt-1 bg-gray-50 border-t border-gray-100">
           <div className="grid grid-cols-2 gap-x-8 gap-y-1.5 text-xs">
+            {u.resolution_reason && (
+              <div className="col-span-2 mb-1">
+                <span className="text-gray-400">Årsag: </span>
+                <span className="text-gray-800 font-medium">{u.resolution_reason}</span>
+              </div>
+            )}
             {u.description && (
               <div className="col-span-2 mb-1">
                 <span className="text-gray-400">Beskrivelse: </span>
