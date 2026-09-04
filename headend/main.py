@@ -6404,18 +6404,12 @@ def _update_requires_headend_artifact(update_type: str | None) -> bool:
 def _default_os_bundle_commands() -> list[dict]:
     return [
         {
-            "name": "offline dpkg install",
+            "name": "offline APT install from signed bundle",
             "argv": [
                 "/bin/bash",
-                "-lc",
-                "dpkg -i {bundle}/packages/*.deb || apt-get --no-download -f install -y",
+                "{bundle}/install-offline.sh",
             ],
             "timeout_s": 1800,
-        },
-        {
-            "name": "post install package audit",
-            "argv": ["/bin/bash", "{bundle}/verify-installed.sh"],
-            "timeout_s": 300,
         },
     ]
 
@@ -9001,19 +8995,45 @@ def _build_change_ticket(
 
 
 def _resolve_update_targets(db: Session, update: PendingUpdate) -> list[Device]:
+    """
+    Candidates are resolved by scope first, then narrowed to the same
+    canonical scope+environment authority predicate used by get_update_policy()
+    (services.update_authority.update_applies_to_device / _update_applies_to_device
+    alias). Found missing 2026-09-04: this was the one caller of the
+    device/site/customer/global scope resolution that never applied the
+    environment boundary, so a lab-tagged device sharing a site/customer with
+    a production target could still be handed an UpdateTarget row by
+    _ensure_update_targets() and, from there, report_update()'s fallback
+    authorization (`resolved_target_ids = {... for target in
+    _resolve_update_targets(...)}`) would accept its status report for an
+    update it was never scoped to receive.
+    """
     if update.target_device_ids:
         ids = json.loads(update.target_device_ids)
-        return db.query(Device).filter(Device.device_id.in_(ids)).all()
-    if update.scope == "global":
-        return db.query(Device).all()
-    if update.scope == "customer" and update.scope_id:
-        return db.query(Device).filter(Device.customer_id == update.scope_id).all()
-    if update.scope == "site" and update.scope_id:
-        return db.query(Device).filter(Device.site_id == update.scope_id).all()
-    if update.scope == "device" and update.scope_id:
+        candidates = db.query(Device).filter(Device.device_id.in_(ids)).all()
+    elif update.scope == "global":
+        candidates = db.query(Device).all()
+    elif update.scope == "customer" and update.scope_id:
+        candidates = db.query(Device).filter(Device.customer_id == update.scope_id).all()
+    elif update.scope == "site" and update.scope_id:
+        candidates = db.query(Device).filter(Device.site_id == update.scope_id).all()
+    elif update.scope == "device" and update.scope_id:
         device = db.query(Device).filter_by(device_id=update.scope_id).first()
-        return [device] if device else []
-    return []
+        candidates = [device] if device else []
+    else:
+        candidates = []
+
+    if not candidates:
+        return []
+    device_ids = [device.device_id for device in candidates]
+    inventory_by_device = {
+        inventory.device_id: inventory
+        for inventory in db.query(DeviceInventory).filter(DeviceInventory.device_id.in_(device_ids)).all()
+    }
+    return [
+        device for device in candidates
+        if _update_applies_to_device(update, device, inventory_by_device.get(device.device_id) or DeviceInventory(device_id=device.device_id))
+    ]
 
 
 def _ensure_update_targets(db: Session, update: PendingUpdate, ticket: ChangeTicket | None = None) -> int:

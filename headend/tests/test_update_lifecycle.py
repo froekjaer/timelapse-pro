@@ -56,7 +56,7 @@ def db_session():
         session.close()
 
 
-def _make_device(session, device_id, customer_id="cust-1", site_id="site-1"):
+def _make_device(session, device_id, customer_id="cust-1", site_id="site-1", environment="production"):
     device = database.Device(
         device_id=device_id,
         customer_id=customer_id,
@@ -64,6 +64,13 @@ def _make_device(session, device_id, customer_id="cust-1", site_id="site-1"):
         app_version="1.0.0",
     )
     session.add(device)
+    # _resolve_update_targets() now enforces the same scope+environment authority
+    # predicate as get_update_policy() (2026-09-04) — every test device here needs
+    # a DeviceInventory row so scope-only tests keep testing scope, not tripping the
+    # (correct, fail-closed) environment gate. All updates in this file default to
+    # "production" (PendingUpdate.environment's column default), so devices default
+    # to it too.
+    session.add(database.DeviceInventory(device_id=device_id, environment=environment))
     session.commit()
     return device
 
@@ -124,6 +131,20 @@ def test_resolve_targets_global_scope_matches_all_devices(db_session):
     assert {d.device_id for d in resolved} == {"dev-1", "dev-2"}
 
 
+def test_resolve_targets_excludes_device_in_wrong_environment(db_session):
+    """Regression 2026-09-04: found live that a lab-tagged device sharing a site
+    with a production device was still handed an UpdateTarget row (and could
+    therefore report status) for a production-scoped update, because
+    _resolve_update_targets() only matched scope, never environment — the one
+    caller of the scope-resolution that get_update_policy()'s environment fix
+    never reached. See services.update_authority.update_applies_to_device."""
+    _make_device(db_session, "dev-prod", site_id="site-1", environment="production")
+    _make_device(db_session, "dev-lab", site_id="site-1", environment="lab")
+    update = _make_update(db_session, scope="site", scope_id="site-1")  # environment defaults to production
+    resolved = main._resolve_update_targets(db_session, update)
+    assert [d.device_id for d in resolved] == ["dev-prod"]
+
+
 def test_resolve_targets_explicit_target_device_ids_overrides_scope(db_session):
     """target_device_ids (JSON-liste) har forrang over scope/scope_id, jf. koden."""
     import json
@@ -136,6 +157,43 @@ def test_resolve_targets_explicit_target_device_ids_overrides_scope(db_session):
     )
     resolved = main._resolve_update_targets(db_session, update)
     assert {d.device_id for d in resolved} == {"dev-1", "dev-3"}
+
+
+# ── report_update() authorization uses the same target ledger ──────────────
+
+def test_report_update_rejects_device_outside_scope(db_session):
+    from fastapi import HTTPException
+    _make_device(db_session, "dev-a", site_id="site-a")
+    _make_device(db_session, "dev-b", site_id="site-b")
+    update = _make_update(db_session, scope="site", scope_id="site-a")
+    with pytest.raises(HTTPException) as excinfo:
+        main.report_update(
+            {"update_id": update.id, "status": "deployed", "device_id": "dev-b"},
+            authenticated_device_id="dev-b",
+            db=db_session,
+        )
+    assert excinfo.value.status_code == 403
+    db_session.refresh(update)
+    assert update.status == "approved"
+
+
+def test_report_update_rejects_device_in_wrong_environment(db_session):
+    """The concrete scenario found live 2026-09-04: dev-lab shares site-1 with
+    dev-prod, so scope alone would have authorized it. report_update() falls
+    back to _resolve_update_targets(), which now also enforces environment."""
+    from fastapi import HTTPException
+    _make_device(db_session, "dev-prod", site_id="site-1", environment="production")
+    _make_device(db_session, "dev-lab", site_id="site-1", environment="lab")
+    update = _make_update(db_session, scope="site", scope_id="site-1")
+    with pytest.raises(HTTPException) as excinfo:
+        main.report_update(
+            {"update_id": update.id, "status": "deployed", "device_id": "dev-lab"},
+            authenticated_device_id="dev-lab",
+            db=db_session,
+        )
+    assert excinfo.value.status_code == 403
+    db_session.refresh(update)
+    assert update.status == "approved"
 
 
 # ── force_rollback() ─────────────────────────────────────────────────────────

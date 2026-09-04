@@ -52,7 +52,7 @@ def db_session():
         session.close()
 
 
-def _make_device(session, device_id, customer_id="cust-1", site_id="site-1"):
+def _make_device(session, device_id, customer_id="cust-1", site_id="site-1", environment="production"):
     device = database.Device(
         device_id=device_id,
         customer_id=customer_id,
@@ -60,6 +60,10 @@ def _make_device(session, device_id, customer_id="cust-1", site_id="site-1"):
         app_version="1.0.0",
     )
     session.add(device)
+    # _resolve_update_targets() now enforces the same scope+environment authority
+    # predicate as get_update_policy() (2026-09-04) — needs a DeviceInventory row
+    # or it fails closed. All updates here default to "production", so devices do too.
+    session.add(database.DeviceInventory(device_id=device_id, environment=environment))
     session.commit()
     return device
 
