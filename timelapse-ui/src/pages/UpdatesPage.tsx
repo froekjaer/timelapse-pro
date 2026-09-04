@@ -364,6 +364,8 @@ const TYPE_LABELS: Record<string, string> = {
   application_updates: 'Platform/app opdatering',
   application_update:  'Platform/app opdatering',
   third_party_updates: 'Platform/app opdatering',
+  dependency_updates:  'Python-afhængighed',
+  dependency_security: 'Python-afhængighed (sikkerhed)',
 }
 
 function canDeployOnHeadend(u: Update) {
