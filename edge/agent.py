@@ -2246,6 +2246,13 @@ class EdgeAgent:
             log.warning("OS update %d blokeret: mangler Headend-signeret offline artifact", update_id)
             self._report_update(update_id, "blocked", "os_update_requires_headend_signed_offline_artifact")
             return
+        elif update_type in ("dependency_security", "dependency_updates"):
+            if artifact:
+                self._run_artifact_python_update(update_id, artifact)
+                return
+            log.warning("Python dependency update %d blokeret: mangler Headend-signeret offline artifact", update_id)
+            self._report_update(update_id, "blocked", "python_update_requires_headend_signed_offline_artifact")
+            return
         else:
             if artifact:
                 self._run_artifact_app_update(update_id, artifact)
@@ -2754,6 +2761,156 @@ class EdgeAgent:
             except Exception:
                 pass
 
+    def _run_artifact_python_update(self, update_id: int, artifact: dict) -> None:
+        """Installér Python-afhængighedsopdatering fra Headend-signeret offline wheel-bundle.
+
+        Samme model som _run_artifact_os_update(): staging, pre-update backup,
+        sha256-verificeret download pr. fil, script-scan for forbudte online-
+        kommandoer, installation via systemd-run, verificering, rapportering.
+        pip-installet skal ramme Edges EGEN venv eksplicit (/opt/timelapse/venv/bin/
+        python3) — aldrig bart "python3"/"pip3" opløst via PATH, som ville installere
+        i den forkerte, systembredte Python (samme fejlklasse som blev rettet
+        2026-09-04 i edge/utils/inventory.py's _venv_packages()).
+        """
+        import hashlib as _hashlib
+        import os as _os
+        import shlex as _shlex
+        import shutil as _shutil
+        import subprocess as _sp
+
+        EDGE_VENV_PYTHON = "/opt/timelapse/venv/bin/python3"
+
+        artifact_id = artifact.get("artifact_id")
+        manifest = artifact.get("manifest") if isinstance(artifact.get("manifest"), dict) else {}
+        outputs = [item for item in manifest.get("outputs", []) if isinstance(item, dict)]
+        commands = [cmd for cmd in manifest.get("commands", []) if isinstance(cmd, dict)]
+        safe_artifact_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(artifact_id or "artifact"))[:80]
+        staging_root = Path("/data/timelapse_update_staging")
+        staging = staging_root / f"update-{update_id}-{safe_artifact_id}"
+        try:
+            if staging.exists():
+                _shutil.rmtree(staging)
+            staging.mkdir(parents=True, mode=0o700)
+            if manifest.get("schema") != "timelapse.python_update_artifact.v1":
+                raise RuntimeError("invalid_python_artifact_schema")
+            if manifest.get("distribution_model") != "headend_signed_offline_python_bundle_edge_pull":
+                raise RuntimeError("invalid_python_distribution_model")
+            if not artifact_id or not outputs:
+                raise RuntimeError("python_artifact_missing_outputs")
+
+            self._report_update(update_id, "backing_up")
+            pre_archive, pre_sha, pre_size_kb = self._create_edge_backup_archive(f"pre-python-update-{update_id}")
+            pre_ok, _pre_result = self._api.upload_edge_backup(pre_archive, pre_sha)
+            if not pre_ok:
+                raise RuntimeError("pre_update_backup_upload_failed")
+            log.info("Python update %d pre-update backup OK: %s (%d KB)", update_id, pre_archive.name, pre_size_kb)
+
+            self._report_update(update_id, "downloading")
+            for item in outputs:
+                rel = str(item.get("path") or "")
+                if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+                    raise RuntimeError(f"unsafe artifact path: {rel}")
+                ok, content = self._api.download_artifact_file(artifact_id, rel)
+                if not ok or content is None:
+                    raise RuntimeError(f"download failed: {rel}")
+                actual = _hashlib.sha256(content).hexdigest()
+                if actual != item.get("sha256"):
+                    raise RuntimeError(f"sha256 mismatch: {rel}")
+                dest = staging / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(content)
+
+            self._report_update(update_id, "verifying")
+            forbidden_script_patterns = [
+                r"^\s*(curl|wget|scp|rsync)\b",
+                r"^\s*git\s+(clone|pull|fetch)\b",
+                r"--index-url\b",
+                r"^\s*pip3?\s+download\b",
+            ]
+            for script_path in staging.rglob("*"):
+                if not script_path.is_file() or script_path.suffix not in {".sh", ".bash", ".conf", ".txt", ".json"}:
+                    continue
+                content = script_path.read_text(errors="ignore")
+                rel_script = str(script_path.relative_to(staging))
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#"):
+                        continue
+                    for pattern in forbidden_script_patterns:
+                        if re.search(pattern, stripped):
+                            raise RuntimeError(f"python bundle contains forbidden online command: {rel_script}")
+                    if "pip" in stripped and "install" in stripped:
+                        if "--no-index" not in stripped:
+                            raise RuntimeError(f"python bundle pip install without --no-index: {rel_script}")
+                        if EDGE_VENV_PYTHON not in stripped and stripped.split()[0] != EDGE_VENV_PYTHON:
+                            raise RuntimeError(f"python bundle pip install must target edge venv explicitly: {rel_script}")
+
+            if not commands:
+                raise RuntimeError("python_artifact_missing_install_commands")
+
+            self._report_update(update_id, "installing")
+            allowed_roots = {str(staging), "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/opt/timelapse/venv/bin"}
+            runner_lines = [
+                "#!/bin/bash",
+                "set -euo pipefail",
+                f"cd {_shlex.quote(str(staging))}",
+            ]
+            for command in commands:
+                argv = command.get("argv")
+                if not isinstance(argv, list) or not argv:
+                    raise RuntimeError("invalid_python_command")
+                argv = [str(a).replace("{bundle}", str(staging)) for a in argv]
+                executable = str(argv[0])
+                if "/" in executable and not any(executable.startswith(root) for root in allowed_roots):
+                    raise RuntimeError(f"python command outside allowed roots: {executable}")
+                joined = " ".join(argv)
+                if "--index-url" in joined:
+                    raise RuntimeError("python artifact command may not reference a pip index-url")
+                runner_lines.append(" ".join(_shlex.quote(str(a)) for a in argv))
+
+            runner = staging / "run-python-update.sh"
+            runner.write_text("\n".join(runner_lines) + "\n")
+            runner.chmod(0o700)
+            systemd_run = [
+                "/usr/bin/systemd-run",
+                "--wait",
+                "--pipe",
+                "--collect",
+                f"--unit=timelapse-python-update-{update_id}",
+                "-p",
+                "ProtectSystem=false",
+                "-p",
+                "NoNewPrivileges=false",
+                "-p",
+                "PrivateTmp=false",
+                "-p",
+                "ReadWritePaths=/opt/timelapse/venv /data",
+                "/bin/bash",
+                str(runner),
+            ]
+            result = _sp.run(
+                    systemd_run,
+                    capture_output=True,
+                    text=True,
+                    timeout=max(900, sum(int(command.get("timeout_s") or 900) for command in commands)),
+                    env=dict(_os.environ),
+                )
+            combined_output = (result.stdout or "") + (result.stderr or "")
+            log.info("Python update %d systemd-run rc=%d\n%s", update_id, result.returncode, combined_output[-2000:])
+            if result.returncode != 0:
+                raise RuntimeError(f"python artifact install failed rc={result.returncode}\n{combined_output[-1600:]}")
+
+            self._report_update(update_id, "deployed")
+            log.info("Python update %d installeret fra offline artifact", update_id)
+        except Exception as exc:
+            log.warning("Python artifact update %d fejlede: %s", update_id, exc)
+            self._report_update(update_id, "blocked", str(exc)[:700])
+        finally:
+            try:
+                _shutil.rmtree(staging)
+            except Exception:
+                pass
+
     def _run_rollback(self, update_id: int, update_type: str, artifact: dict | None = None) -> None:
         """Tving rollback af en app-release via den lokale, verificerbare prev-kopi."""
         import subprocess as _sp
@@ -2761,6 +2918,11 @@ class EdgeAgent:
         if update_type in ("os_security", "os_updates"):
             log.warning("OS rollback %d afvist: offline OS-flowet lover ikke rollback", update_id)
             self._report_update(update_id, "blocked", "os_forced_rollback_not_supported")
+            return
+
+        if update_type in ("dependency_security", "dependency_updates"):
+            log.warning("Python dependency rollback %d afvist: offline wheel-flowet lover ikke rollback", update_id)
+            self._report_update(update_id, "blocked", "python_forced_rollback_not_supported")
             return
 
         try:

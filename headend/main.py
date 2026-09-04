@@ -6479,6 +6479,83 @@ def _validate_os_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> 
                     )
 
 
+def _default_python_bundle_commands() -> list[dict]:
+    return [
+        {
+            "name": "offline pip install from signed wheel bundle",
+            "argv": [
+                "/bin/bash",
+                "{bundle}/install-offline.sh",
+            ],
+            "timeout_s": 900,
+        },
+    ]
+
+
+def _validate_python_bundle_commands(commands: list[dict]) -> None:
+    allowed_commands = {
+        "/bin/bash",
+        "/usr/bin/bash",
+        "/usr/bin/python3",
+        "/usr/bin/pip3",
+    }
+    for command in commands:
+        if not isinstance(command, dict) or not isinstance(command.get("argv"), list) or not command.get("argv"):
+            raise HTTPException(status_code=400, detail="commands skal indeholde argv-lister")
+        argv = [str(arg) for arg in command["argv"]]
+        executable = argv[0]
+        if executable not in allowed_commands:
+            raise HTTPException(status_code=400, detail=f"Python bundle command er ikke allowlisted: {executable}")
+        joined = " ".join(argv)
+        if "pip" in joined:
+            if "--index-url" in joined or "--no-index" not in joined:
+                raise HTTPException(
+                    status_code=400,
+                    detail="pip i Python bundle må kun bruges offline med --no-index, aldrig et index-url",
+                )
+        if "{bundle}" not in joined:
+            raise HTTPException(status_code=400, detail="Python bundle commands skal bruge {bundle} placeholder")
+
+
+def _validate_python_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> None:
+    # Checked per-line (not via _re.search over the whole file) so a forbidden
+    # command on any line is caught — a single search with a "^"-anchored
+    # pattern only matches the very first line of the file without re.MULTILINE.
+    forbidden_line_patterns = [
+        r"\b(curl|wget)\b",
+        r"\bgit\s+(clone|pull|fetch)\b",
+        r"\bscp\b",
+        r"\brsync\b",
+        r"--index-url\b",
+        r"\bpip3?\s+download\b",
+    ]
+    for item in outputs:
+        rel = str(item.get("path") or "")
+        if not rel.endswith((".sh", ".bash", ".conf", ".txt")):
+            continue
+        path = (storage_path / rel).resolve()
+        try:
+            text_content = path.read_text(errors="ignore")
+        except Exception:
+            continue
+        for line in text_content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            for pattern in forbidden_line_patterns:
+                if _re.search(pattern, stripped):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Python bundle script/config indeholder forbudt online kommando: {rel}",
+                    )
+            if "pip" in stripped and "install" in stripped:
+                if "--no-index" not in stripped:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Python bundle pip-brug mangler --no-index: {rel}",
+                    )
+
+
 def _assert_update_has_required_artifact(db: Session, update: PendingUpdate) -> UpdateArtifact:
     artifact = _find_artifact_for_update(db, update)
     if (
@@ -8039,6 +8116,9 @@ def _os_catalog_refresh_loop(interval_hours: float = 24.0) -> None:
     opretter/opdaterer blokerede OS update-kandidater med Plan-evidens, klar
     til at OS bundle-pollerens næste kørsel bygger og binder et signeret
     artifact. Se _os_catalog_refresh_pending_devices() for selve arbejdet.
+    Kører også _python_catalog_refresh_pending_devices() på samme cadence —
+    samme idé, men reconciler Edge's venv_packages mod PyPI i stedet for
+    os_packages mod Ubuntus arkiv.
     """
     import time as _time
 
@@ -8052,6 +8132,10 @@ def _os_catalog_refresh_loop(interval_hours: float = 24.0) -> None:
             _os_catalog_refresh_pending_devices()
         except Exception as _poll_err:
             log.warning("OS-katalogopdagelse fejl: %s", _poll_err)
+        try:
+            _python_catalog_refresh_pending_devices()
+        except Exception as _poll_err:
+            log.warning("Python-katalogopdagelse fejl: %s", _poll_err)
         _time.sleep(interval_s)
 
 
@@ -8118,6 +8202,179 @@ def _os_catalog_refresh_pending_devices() -> None:
         db.close()
 
 
+def _reconcile_python_packages_from_pypi(installed: dict) -> dict:
+    """
+    Sammenligner installerede venv-pakker (edge's pip list --format=json) mod
+    PyPI's seneste udgivne version pr. pakke, via Headends egen internetadgang.
+
+    I modsætning til Ubuntu/apt har PyPI ingen indbygget "security"-markering
+    på en release — der findes derfor kun én kategori ("dependency_updates"),
+    ikke den samme security/non-security-opdeling som OS-sporet.
+
+    Returnerer {} hvis intet er forældet, ellers
+    {"dependency_updates": {"package_count", "severity", "packages": [...]}}
+    matchende formen _reconcile_os_catalog() bruger, så samme
+    _write_update_json()/plan-mønster og _plan_path_for_update()-opslag virker.
+    """
+    import urllib.error
+    import urllib.request
+
+    outdated = []
+    for name, installed_version in sorted(installed.items()):
+        installed_version = str(installed_version or "").strip()
+        if not name or not installed_version:
+            continue
+        try:
+            req = urllib.request.Request(
+                f"https://pypi.org/pypi/{name}/json",
+                headers={"User-Agent": "TimeLapsePro-Headend-PyPIReconcile/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read())
+            latest = str((data.get("info") or {}).get("version") or "").strip()
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                log.debug("PyPI-opslag fejlede for %s: %s", name, exc)
+            continue
+        except Exception as exc:
+            log.debug("PyPI-opslag fejlede for %s: %s", name, exc)
+            continue
+        if not latest or latest == installed_version:
+            continue
+        outdated.append({
+            "name": name,
+            "installed_version": installed_version,
+            "available_version": latest,
+            "source_repo": "pypi",
+        })
+
+    if not outdated:
+        return {}
+    return {
+        "dependency_updates": {
+            "package_count": len(outdated),
+            "severity": "medium",
+            "packages": outdated,
+        }
+    }
+
+
+def _upsert_blocked_python_updates_from_plan(
+    db: Session,
+    device_id: str,
+    environment: str,
+    decisions: dict,
+    catalog_source: str,
+    plan_path: str,
+) -> list[dict]:
+    """Python-modstykke til _upsert_blocked_os_updates_from_plan()."""
+    changes = []
+    decision = decisions.get("dependency_updates")
+    if not decision or not decision.get("package_count"):
+        return changes
+    count = decision["package_count"]
+    names = ", ".join(p["name"] for p in decision["packages"][:10])
+    description = (
+        f"{count} Python-afhængighed(er) klar via Headend PyPI-reconciliation ({catalog_source}).\n"
+        f"Plan: {plan_path}\n"
+        f"Første pakker: {names}{'…' if count > 10 else ''}. "
+        "Blocked: afventer Headend-signeret offline wheel-bundle før godkendelse."
+    )
+    version = f"{count} pakker"
+    existing = db.query(PendingUpdate).filter(
+        PendingUpdate.update_type == "dependency_updates",
+        PendingUpdate.scope == "device",
+        PendingUpdate.scope_id == device_id,
+        PendingUpdate.status.in_(["pending", "approved", "blocked"]),
+    ).first()
+    if existing:
+        existing.version = version
+        existing.description = description
+        existing.severity = "medium"
+        existing.environment = environment
+        existing.status = "blocked"
+        existing.resolution_reason = "Awaiting Headend-signed offline Python wheel bundle."
+        if existing.id is not None:
+            reset_stale_targets_on_block(
+                db, UpdateTarget, existing.id,
+                f"Parent update blocked {now_utc().isoformat()}: awaiting signed Python wheel bundle.",
+            )
+        changes.append({"update_type": "dependency_updates", "status": "updated", "id": existing.id})
+        return changes
+
+    update = PendingUpdate(
+        update_type="dependency_updates",
+        version=version,
+        description=description,
+        severity="medium",
+        scope="device",
+        scope_id=device_id,
+        status="blocked",
+        resolution_reason="Awaiting Headend-signed offline Python wheel bundle.",
+        environment=environment,
+    )
+    db.add(update)
+    db.flush()
+    changes.append({"update_type": "dependency_updates", "status": "created", "id": update.id})
+    return changes
+
+
+def _python_catalog_refresh_pending_devices() -> None:
+    """
+    Finder alle enheder med rapporterede venv_packages og reconciler dem mod
+    PyPI (se _reconcile_python_packages_from_pypi()). Opretter/opdaterer
+    blokerede dependency_updates PendingUpdate-rækker med Plan-reference,
+    samme mønster som _os_catalog_refresh_pending_devices() men for Python.
+    """
+    db = SessionLocal()
+    try:
+        devices = (
+            db.query(DeviceInventory)
+            .filter(DeviceInventory.venv_packages.isnot(None))
+            .order_by(DeviceInventory.device_id)
+            .all()
+        )
+        system_user = User(username="system:python-catalog-refresh", role="system", password_hash="")
+
+        for inv in devices:
+            device_id = (inv.device_id or "").strip()
+            if not device_id:
+                continue
+            try:
+                installed = json.loads(inv.venv_packages or "{}")
+            except Exception:
+                installed = {}
+            if not isinstance(installed, dict) or not installed:
+                continue
+            try:
+                decisions = _reconcile_python_packages_from_pypi(installed)
+                if not decisions:
+                    continue
+                created_at = now_utc()
+                environment = inv.environment or "lab"
+                plan = {
+                    "schema": "dk.froekjaer.timelapse.python_update_plan.v1",
+                    "source": "headend-cmdb-pypi-reconcile",
+                    "generated_at": created_at.isoformat(),
+                    "device_id": device_id,
+                    "environment": environment,
+                    "decisions": decisions,
+                }
+                stamp = f"{device_id}-{created_at:%Y%m%d-%H%M%S}"
+                plan_path = _write_update_json("python-update-plans", f"{stamp}.json", plan)
+                _upsert_blocked_python_updates_from_plan(
+                    db, device_id, environment, decisions,
+                    f"headend-scheduled-pypi-refresh:{created_at:%Y-%m-%d}", plan_path,
+                )
+                db.commit()
+                log.info("Python-katalogopdagelse: opdateret for %s", device_id)
+            except Exception as exc:
+                db.rollback()
+                log.warning("Python-katalogopdagelse: fejl for %s: %s", device_id, exc)
+    finally:
+        db.close()
+
+
 # ── Automatisk OS bundle builder ──────────────────────────────────────────────
 
 def _os_bundle_auto_poller_loop(interval_minutes: float = 10.0) -> None:
@@ -8145,8 +8402,9 @@ def _os_bundle_auto_poller_loop(interval_minutes: float = 10.0) -> None:
 
 def _os_bundle_auto_build_pending() -> None:
     """
-    Finder alle pending OS-updates uden artifact og bygger et offline .deb bundle
-    via fetch_os_bundle.py (Python-mode, kræver ikke Docker).
+    Finder alle pending OS- og Python-dependency-updates uden artifact og
+    bygger et offline bundle — .deb via fetch_os_bundle.py, .whl via
+    fetch_python_bundle.py (begge Python-mode, kræver ikke Docker).
 
     Bruger et system-principal til artifact-signering — IKKE en rigtig
     super_admin-konto (U-12: dette tilskrev tidligere artifact-oprettelse til den
@@ -8160,16 +8418,17 @@ def _os_bundle_auto_build_pending() -> None:
 
     db = SessionLocal()
     try:
-        # Find OS-updates uden artifact. cmdb.py's inventory-sync opretter disse
-        # direkte som "blocked" (ren observation, ikke deployable endnu) — kun
-        # "pending" her betød denne poller reelt aldrig fandt noget, siden intet
+        # Find OS/Python-updates uden artifact. cmdb.py's inventory-sync og
+        # _upsert_blocked_python_updates_from_plan() opretter disse direkte som
+        # "blocked" (ren observation, ikke deployable endnu) — kun "pending" her
+        # betød denne poller reelt aldrig fandt noget for OS, siden intet
         # kodested nogensinde sætter os_security/os_updates til "pending" (fundet
         # 2026-09-03, jf. HANDOVER_LOG). plan_path-kravet nedenfor er den
         # tilsigtede gate (OS_UPDATE_GOVERNANCE_CLOSURE_2026-08.md) og er urørt.
         pending = (
             db.query(PendingUpdate)
             .filter(
-                PendingUpdate.update_type.in_(["os_security", "os_updates"]),
+                PendingUpdate.update_type.in_(["os_security", "os_updates", "dependency_updates", "dependency_security"]),
                 PendingUpdate.status.in_(["pending", "blocked"]),
             )
             .order_by(PendingUpdate.created_at)
@@ -8205,7 +8464,10 @@ def _os_bundle_auto_build_pending() -> None:
                 update.id, update.update_type, device_id,
             )
             try:
-                _auto_build_and_bind_os_bundle(db, update, device_id, system_user)
+                if update.update_type in ("os_security", "os_updates"):
+                    _auto_build_and_bind_os_bundle(db, update, device_id, system_user)
+                else:
+                    _auto_build_and_bind_python_bundle(db, update, device_id, system_user)
             except Exception as exc:
                 log.warning(
                     "OS bundle auto-poller: fejl ved build af update #%d: %s",
@@ -8236,6 +8498,28 @@ def _packages_from_os_plan(plan_path_str: str, update_type: str) -> list[dict]:
             "installed_version":  p.get("installed_version") or "",
             "source_repo":        p.get("source_repo") or "",
             "category":           update_type,
+        }
+        for p in (decision.get("packages") or [])
+        if p.get("name") and p.get("available_version")
+    ]
+
+
+def _packages_from_python_plan(plan_path_str: str) -> list[dict]:
+    """
+    Python-modstykke til _packages_from_os_plan(). PyPI har ingen
+    security/non-security-signal, så planens decisions har kun én nøgle
+    ("dependency_updates") uanset hvilken PendingUpdate der peger på den.
+    """
+    try:
+        plan_data = json.loads(Path(plan_path_str).expanduser().read_text())
+    except Exception as exc:
+        log.warning("Kunne ikke læse Python-plan %s: %s", plan_path_str, exc)
+        return []
+    decision = (plan_data.get("decisions") or {}).get("dependency_updates") or {}
+    return [
+        {
+            "name":              p["name"],
+            "available_version": p.get("available_version") or "",
         }
         for p in (decision.get("packages") or [])
         if p.get("name") and p.get("available_version")
@@ -8412,6 +8696,107 @@ def _auto_build_and_bind_os_bundle(
     return {"update_id": update.id, "bundle_path": str(output_path), "artifact_id": artifact_dict["artifact_id"],
             "packages_requested": result["packages_requested"], "deb_files": result["deb_files"],
             "version_drifts": result["version_drifts"]}
+
+
+def _auto_build_and_bind_python_bundle(
+    db: Session,
+    update: PendingUpdate,
+    device_id: str,
+    system_user: User,
+) -> dict:
+    """
+    Bygger offline Python wheel-bundle for én PendingUpdate via
+    fetch_python_bundle.build_bundle(). Registrerer og binder artifactet.
+    Henter .whl-filer direkte fra PyPI via Headends egen internetadgang —
+    Edge downloader intet selv, kun det signerede, allerede-hentede bundle.
+    """
+    import importlib.util as _importlib_util
+
+    _fb_path = _Path(__file__).parent / "tools" / "fetch_python_bundle.py"
+    _spec = _importlib_util.spec_from_file_location("fetch_python_bundle", str(_fb_path))
+    if not _spec or not _spec.loader:
+        raise RuntimeError(f"Kan ikke importere fetch_python_bundle fra {_fb_path}")
+    _fb_mod = _importlib_util.module_from_spec(_spec)
+    _spec.loader.exec_module(_fb_mod)  # type: ignore[union-attr]
+
+    inv = db.query(DeviceInventory).filter_by(device_id=device_id).first()
+
+    plan_path = _plan_path_for_update(update)
+    packages = _packages_from_python_plan(plan_path) if plan_path else []
+    if not packages:
+        raise RuntimeError(f"Ingen pakker i plan for {device_id} — kan ikke bygge Python bundle")
+
+    python_version = str(getattr(inv, "python_version", None) or "3.10.12").strip()
+    architecture = "arm64"
+
+    created_at = now_utc()
+    safe_type = _re.sub(r"[^a-zA-Z0-9_.-]+", "-", update.update_type)
+    output_root = _os_bundle_store_root().expanduser().resolve()
+    output_root.mkdir(parents=True, exist_ok=True)
+    output_path = output_root / f"auto-{update.id}-{safe_type}-{created_at:%Y%m%d-%H%M%S}"
+
+    result = _fb_mod.build_bundle(
+        packages=packages,
+        output=output_path,
+        device_id=device_id,
+        python_version=python_version,
+        arch=architecture,
+        source_ref=f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
+        verbose=True,
+    )
+
+    log.info(
+        "Python bundle auto-poller: bundle bygget — %d wheels, %d ikke fundet, sti: %s",
+        result["wheel_files"], len(result["not_found"]), output_path,
+    )
+
+    if not result.get("ok") or result["wheel_files"] == 0:
+        raise RuntimeError(
+            f"Python bundle build fejlede: ingen .whl filer downloadet (not_found={result['not_found']})"
+        )
+
+    artifact_dict = catalog_python_update_artifact(
+        {
+            "storage_path": str(output_path),
+            "version": f"{device_id}-{update.update_type}-{created_at:%Y%m%d-%H%M%S}",
+            "architecture": architecture,
+            "python_version": python_version,
+            "source_ref": f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
+            "lab_evidence": {
+                "builder": "fetch_python_bundle.py (headend-auto)",
+                "packages_requested": result["packages_requested"],
+                "wheel_files": result["wheel_files"],
+                "not_found": result["not_found"],
+                "architecture": architecture,
+                "triggered_from": "python_bundle_auto_poller",
+            },
+        },
+        system_user,
+        db,
+    )
+    log.info("Python bundle auto-poller: artifact registreret: %s", artifact_dict.get("artifact_id"))
+
+    bind_artifact_to_update(
+        update.id,
+        {
+            "artifact_id": artifact_dict["artifact_id"],
+            "summary": (
+                f"Python wheel-bundle automatisk bygget af Headend auto-poller "
+                f"({result['wheel_files']} pakker downloadet fra PyPI; python={python_version}, "
+                f"arch={architecture}). Intet internet på edge krævet."
+            ),
+            "test_evidence_ref": f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
+        },
+        system_user,
+        db,
+    )
+    log.info(
+        "Python bundle auto-poller: artifact %s bundet til update #%d ✓",
+        artifact_dict["artifact_id"], update.id,
+    )
+    return {"update_id": update.id, "bundle_path": str(output_path), "artifact_id": artifact_dict["artifact_id"],
+            "packages_requested": result["packages_requested"], "wheel_files": result["wheel_files"],
+            "not_found": result["not_found"]}
 
 
 def _infer_ubuntu_suite_for_os_bundle(inv: DeviceInventory | None, packages: list[dict]) -> str:
@@ -8607,6 +8992,113 @@ def catalog_os_update_artifact(
     return _artifact_to_dict(artifact)
 
 
+@app.post("/api/updates/artifacts/catalog-python-bundle")
+def catalog_python_update_artifact(
+    payload: dict,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Registrer et Headend-bygget offline Python wheel-bundle som signeret artifact."""
+    storage_path = Path(str(payload.get("storage_path") or "")).expanduser().resolve()
+    if not storage_path.is_dir():
+        raise HTTPException(status_code=400, detail="storage_path skal være en eksisterende mappe")
+    version = str(payload.get("version") or storage_path.name).strip()
+    if not version:
+        raise HTTPException(status_code=400, detail="version er påkrævet")
+    commands = payload.get("commands")
+    if commands is None:
+        commands = _default_python_bundle_commands()
+    if not isinstance(commands, list) or not commands:
+        raise HTTPException(status_code=400, detail="commands skal være en ikke-tom liste")
+    _validate_python_bundle_commands(commands)
+
+    outputs = []
+    for file_path in sorted(p for p in storage_path.rglob("*") if p.is_file()):
+        rel = str(file_path.relative_to(storage_path))
+        if rel.startswith("../") or "/../" in rel or file_path.name in {".DS_Store", "Icon\r"}:
+            continue
+        outputs.append({
+            "path": rel,
+            "size_bytes": file_path.stat().st_size,
+            "sha256": _file_sha256(file_path),
+        })
+    if not outputs:
+        raise HTTPException(status_code=400, detail="Python bundle indeholder ingen filer")
+    output_paths = {item["path"] for item in outputs}
+    whl_outputs = [p for p in output_paths if p.startswith("packages/") and p.endswith(".whl")]
+    if not whl_outputs:
+        raise HTTPException(status_code=400, detail="Python bundle skal indeholde packages/*.whl")
+    if "package-manifest.json" not in output_paths:
+        raise HTTPException(status_code=400, detail="Python bundle mangler package-manifest.json fra builder")
+    if "verify-installed.sh" not in output_paths:
+        raise HTTPException(status_code=400, detail="Python bundle mangler verify-installed.sh fra builder")
+    _validate_python_bundle_file_policy(storage_path, outputs)
+
+    created_at = now_utc()
+    bundle_hash = _sha256_text(_canonical_json({
+        "version": version,
+        "outputs": outputs,
+        "commands": commands,
+    }))[:12]
+    artifact_id = f"TL-PY-{created_at:%Y%m%d}-{bundle_hash}"
+    existing = db.query(UpdateArtifact).filter_by(artifact_id=artifact_id).first()
+    if existing:
+        return _artifact_to_dict(existing)
+
+    manifest = {
+        "schema": "timelapse.python_update_artifact.v1",
+        "artifact_id": artifact_id,
+        "artifact_type": "dependency",
+        "version": version,
+        "target": {
+            "python_version": payload.get("python_version") or "3.10.12",
+            "architecture": payload.get("architecture") or "arm64",
+            "device_scope": payload.get("device_scope") or "edge",
+        },
+        "distribution_model": "headend_signed_offline_python_bundle_edge_pull",
+        "edge_constraints": {
+            "edge_requires_direct_internet": False,
+            "edge_may_run_pip_install_from_index": False,
+            "install_commands_must_use_offline_bundle": True,
+        },
+        "commands": commands,
+        "rollback": {
+            "required": True,
+            "strategy": payload.get("rollback_strategy") or "pre-update Edge backup; pip rollback requires re-running install-offline.sh from a prior bundle if needed",
+        },
+        "controls": ["SABSA", "IEC62443", "ISO27000", "NIS2", "CRA"],
+        "outputs": outputs,
+        "created": {
+            "by": current_user.username,
+            "at": created_at.isoformat(),
+            "lab_evidence": payload.get("lab_evidence"),
+        },
+    }
+    manifest_json = _canonical_json(manifest)
+    manifest_sha = _sha256_text(manifest_json)
+    signature, signed_by = _sign_payload(manifest_json)
+    artifact = UpdateArtifact(
+        artifact_id=artifact_id,
+        artifact_type="dependency",
+        version=version,
+        source_commit=None,
+        source_ref=str(payload.get("source_ref") or "headend-python-bundle"),
+        filename=f"{artifact_id}.manifest.json",
+        storage_path=str(storage_path),
+        size_bytes=sum(int(o.get("size_bytes") or 0) for o in outputs),
+        sha256=manifest_sha,
+        manifest_json=manifest_json,
+        sbom_ref=payload.get("sbom_ref"),
+        signature=signature,
+        signed_by=signed_by,
+        signed_at=created_at,
+        created_at=created_at,
+    )
+    db.add(artifact)
+    db.commit()
+    return _artifact_to_dict(artifact)
+
+
 @app.post("/api/updates/{update_id}/os-bundle/build-bind")
 def build_catalog_and_bind_os_bundle(
     update_id: int,
@@ -8754,6 +9246,10 @@ def bind_artifact_to_update(
         raise HTTPException(status_code=400, detail="OS updates kræver OS artifact")
     if update.update_type not in {"os_security", "os_updates"} and artifact.artifact_type == "os":
         raise HTTPException(status_code=400, detail="OS artifact kan kun bindes til OS updates")
+    if update.update_type in {"dependency_security", "dependency_updates"} and artifact.artifact_type != "dependency":
+        raise HTTPException(status_code=400, detail="Python dependency updates kræver dependency artifact")
+    if update.update_type not in {"dependency_security", "dependency_updates"} and artifact.artifact_type == "dependency":
+        raise HTTPException(status_code=400, detail="Dependency artifact kan kun bindes til dependency updates")
 
     ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).order_by(ChangeTicket.created_at.desc()).first()
     if not ticket:
