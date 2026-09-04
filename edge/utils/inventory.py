@@ -28,6 +28,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -225,11 +226,17 @@ def _storage_info(path: str = "/") -> tuple[Optional[str], Optional[float], Opti
 def _venv_packages() -> dict[str, str]:
     """
     Returnerer dict af installerede venv-pakker: {navn: version}.
-    Kører `pip list --format=json` i aktive venv.
+    Kører `pip list --format=json` via sys.executable — IKKE bare "pip" på PATH.
+    Fundet 2026-09-04: agenten kører under systemd (ExecStart=/opt/timelapse/venv/bin/python)
+    med systemds DEFAULT PATH, som ikke indeholder /opt/timelapse/venv/bin. "pip" fandtes
+    derfor aldrig, subprocess kastede FileNotFoundError, og det brede except herunder
+    fangede det stille — venv_packages var permanent tomt i produktion, uden fejl nogen
+    steder. sys.executable er altid den venv-python der faktisk kører denne proces,
+    uafhængigt af PATH.
     """
     try:
         result = subprocess.run(
-            ["pip", "list", "--format=json"],
+            [sys.executable, "-m", "pip", "list", "--format=json"],
             capture_output=True, text=True, timeout=10
         )
         pkgs = json.loads(result.stdout)
