@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-09-06 23:59 — fra Codex til Peter: canonical public domain, backend cert og WebAuthn RP-valg
+
+- Hvad er gjort: `backend.timelapse-pro.dk:8443` fik separat Let's Encrypt-certifikat via Simply DNS-01, fordi port 80 ikke er åben fra internettet. Certbot `dns-simply` er installeret, `/etc/letsencrypt/secrets/simply.ini` ligger root-only, renewal dry-run er grøn med 300 sekunders DNS-propagation. Headend nginx 8443 bruger nu `/etc/letsencrypt/live/backend.timelapse-pro.dk/`. Oracle frontend nginx redirecter `timelapsepro.dk`, `www.timelapsepro.dk` og `www.timelapse-pro.dk` til canonical `https://timelapse-pro.dk/`; `timelapse-pro.dk` server siden direkte.
+- WebAuthn: Tilføjet request-baseret allowlistet RP-valg. `https://backend.timelapse-pro.dk:8443` bruger RP ID `timelapse-pro.dk`, mens `https://timelapse.froekjaer.dk` fortsat bruger RP ID `timelapse.froekjaer.dk`. Ikke-allowlistede origins fejler lukket. Samtidig rettet WebAuthn challenge-opdatering fra delete+insert til update-or-create, så parallelle/sekventielle login-begin kald ikke rammer duplicate `settings.key`.
+- Live setting: `webauthn_allowed_origins=https://backend.timelapse-pro.dk:8443,https://timelapse.froekjaer.dk`.
+- Verificeret: `pytest tests/test_webauthn_origin_rp_contract.py tests/test_webauthn_login_ui_contract.py -q` = 5 passed. `pytest tests/test_architecture_ratchet.py -q` = 2 passed. `python3 -m py_compile headend/main.py headend/services/webauthn_origin.py` OK. Live `/api/health` OK. WebAuthn begin returnerer `rpId=timelapse-pro.dk` på backend og `rpId=timelapse.froekjaer.dk` på legacy. Frontend redirects testet 200/301 som forventet.
+- Risici / pas på: Passkeys kan ikke deles mellem `froekjaer.dk` og `timelapse-pro.dk`; brugeren skal oprette en separat passkey pr. registrerbar domænefamilie. Existing froekjaer-passkeys bevares for legacy-adressen.
+
 ### Handover 2026-09-04 — fra Claude til Peter: nyt update-governance-spor for Python-afhængigheder (venv_packages)
 
 - Hvad skete: Under den fælles end-to-end-gennemgang af update-flowet spurgte Peter om SBOM/CMDB dækker mere end Ubuntu-pakker — jo, `venv_packages` (pip-installerede biblioteker) er en del af den, men var permanent tomt (rettet i går, `df07a41b`). Peter bad om at det fulde reconciliation-flow blev bygget nu, "så vi tager det hele undervejs" — dvs. samme kæde som OS-sporet (#178/#179/#180), bare for Python-pakker mod PyPI i stedet for apt mod Ubuntu.

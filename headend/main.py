@@ -126,6 +126,7 @@ from services.update_promotion import build_update_promotion_context, serialize_
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
+from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
 from services.edge_lifecycle import LifecycleTransitionError as EdgeLifecycleError, key_management_lifecycle_summary, mark_bootstrap_consumed, reconcile_edge_lifecycle as _reconcile_edge_lifecycle, resolve_device_api_credential
@@ -854,19 +855,15 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
 
 # ── WebAuthn / FIDO2 ───────────────────────────────────────────────────────
 
-def _webauthn_settings(db: Session) -> tuple[str, str, str]:
-    """Return WebAuthn RP settings from DB, then env, then local bootstrap defaults."""
-    from urllib.parse import urlparse
-
-    base_url = _get_setting(db, "base_url", os.getenv("BASE_URL", "http://127.0.0.1:8000")).strip().rstrip("/")
-    origin = _get_setting(db, "webauthn_origin", os.getenv("WEBAUTHN_ORIGIN", base_url)).strip().rstrip("/")
-    host = urlparse(origin).hostname or "localhost"
-    rp_id = _get_setting(db, "webauthn_rp_id", os.getenv("WEBAUTHN_RP_ID", host)).strip() or host
-    rp_name = _get_setting(db, "webauthn_rp_name", os.getenv("WEBAUTHN_RP_NAME", "TimeLapse Pro")).strip() or "TimeLapse Pro"
-    return rp_id, rp_name, origin
+def _webauthn_settings(db: Session, request: Request | None = None) -> tuple[str, str, str]:
+    """Return WebAuthn RP settings from request allowlist, DB, env, then defaults."""
+    try:
+        return _resolve_webauthn_settings(db, request, _get_setting)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 @app.post("/api/auth/webauthn/register-begin")
-def webauthn_register_begin(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+def webauthn_register_begin(payload: dict, request: Request, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     """Trin 1: Generer WebAuthn registreringsudfordring."""
     import webauthn
     from webauthn.helpers.structs import (
@@ -883,7 +880,7 @@ def webauthn_register_begin(payload: dict, current_user=Depends(get_current_user
         for c in existing
     ]
 
-    rp_id, rp_name, _origin = _webauthn_settings(db)
+    rp_id, rp_name, _origin = _webauthn_settings(db, request)
     options = webauthn.generate_registration_options(
         rp_id                    = rp_id,
         rp_name                  = rp_name,
@@ -900,13 +897,12 @@ def webauthn_register_begin(payload: dict, current_user=Depends(get_current_user
     import json as _json
     opts_json = webauthn.options_to_json(options)
     # Gem challenge i session (midlertidigt i DB via settings)
-    db.query(Settings).filter_by(key=f"wabauthn_challenge_{current_user.id}").delete()
-    db.add(Settings(key=f"wabauthn_challenge_{current_user.id}", value=opts_json))
+    _replace_setting_value(db, Settings, f"wabauthn_challenge_{current_user.id}", opts_json)
     db.commit()
     return _json.loads(opts_json)
 
 @app.post("/api/auth/webauthn/register-complete")
-def webauthn_register_complete(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+def webauthn_register_complete(payload: dict, request: Request, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     """Trin 2: Valider og gem WebAuthn credential."""
     import webauthn, json as _json
     from database import WebAuthnCredential
@@ -921,7 +917,7 @@ def webauthn_register_complete(payload: dict, current_user=Depends(get_current_u
     challenge = webauthn.base64url_to_bytes(opts["challenge"])
 
     try:
-        rp_id, _rp_name, origin = _webauthn_settings(db)
+        rp_id, _rp_name, origin = _webauthn_settings(db, request)
         verification = webauthn.verify_registration_response(
             credential          = payload,
             expected_challenge  = challenge,
@@ -945,7 +941,7 @@ def webauthn_register_complete(payload: dict, current_user=Depends(get_current_u
     return {"ok": True}
 
 @app.post("/api/auth/webauthn/login-begin")
-def webauthn_login_begin(payload: dict, db: Session = Depends(get_db)):
+def webauthn_login_begin(payload: dict, request: Request, db: Session = Depends(get_db)):
     """Trin 1 login: Generer WebAuthn autentificeringsudfordring."""
     import webauthn, json as _json
     from database import WebAuthnCredential
@@ -962,19 +958,18 @@ def webauthn_login_begin(payload: dict, db: Session = Depends(get_db)):
         webauthn.helpers.structs.PublicKeyCredentialDescriptor(id=c.credential_id)
         for c in creds
     ]
-    rp_id, _rp_name, _origin = _webauthn_settings(db)
+    rp_id, _rp_name, _origin = _webauthn_settings(db, request)
     options = webauthn.generate_authentication_options(
         rp_id             = rp_id,
         allow_credentials = allow_creds,
     )
     opts_json = webauthn.options_to_json(options)
-    db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").delete()
-    db.add(Settings(key=f"wabauthn_auth_challenge_{user.id}", value=opts_json))
+    _replace_setting_value(db, Settings, f"wabauthn_auth_challenge_{user.id}", opts_json)
     db.commit()
     return _json.loads(opts_json)
 
 @app.post("/api/auth/webauthn/login-complete")
-def webauthn_login_complete(payload: dict, db: Session = Depends(get_db)):
+def webauthn_login_complete(payload: dict, request: Request, db: Session = Depends(get_db)):
     """Trin 2 login: Valider WebAuthn og udsted session cookie."""
     import webauthn, json as _json
     from database import WebAuthnCredential
@@ -998,7 +993,7 @@ def webauthn_login_complete(payload: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Credential ikke fundet")
 
     try:
-        rp_id, _rp_name, origin = _webauthn_settings(db)
+        rp_id, _rp_name, origin = _webauthn_settings(db, request)
         verification = webauthn.verify_authentication_response(
             credential          = payload,
             expected_challenge  = challenge,
