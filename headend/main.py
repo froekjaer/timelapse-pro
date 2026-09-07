@@ -9937,7 +9937,26 @@ def approve_update(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
-    if u.status not in ("pending", "rejected", "blocked", "rolled_back"):
+    if u.status == "approved":
+        # Re-approving an already-approved update is how an admin corrects a
+        # mistaken approval (wrong scope/environment) before anything has
+        # actually started moving — approve_update() already fully
+        # re-derives environment, scope, and targets each time it runs, so
+        # this is safe as long as nothing is actively mid-flight. Found
+        # 2026-09-08: Edge 2's #273 was approved to the wrong environment,
+        # producing zero authorized targets, and there was previously no way
+        # to correct that short of a fresh update row — reject_update() only
+        # accepts status="pending", not "approved".
+        in_flight = db.query(UpdateTarget).filter(
+            UpdateTarget.pending_update_id == u.id,
+            UpdateTarget.status.in_(["downloading", "verifying", "installing"]),
+        ).first()
+        if in_flight:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Kan ikke godkende igen: enhed {in_flight.device_id} er midt i en igangværende installation.",
+            )
+    elif u.status not in ("pending", "rejected", "blocked", "rolled_back"):
         raise HTTPException(status_code=400, detail=f"Kan ikke godkende opdatering med status '{u.status}'")
     if payload.scope == "device" and not payload.scope_id and not payload.target_device_ids:
         raise HTTPException(status_code=400, detail="Device scope kræver scope_id eller target_device_ids")
