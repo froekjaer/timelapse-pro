@@ -27,10 +27,9 @@
   <string>/Users/peter/Library/Logs/timelapse-mount.log</string>
   <key>RunAtLoad</key>
   <true/>
-  <!-- Retry after late external-volume visibility without console login. -->
-  <key>KeepAlive</key>
-  <true/>
-  <key>ThrottleInterval</key>
+  <!-- Retry after late external-volume visibility without keeping a
+       successfully completed one-shot mount process alive. -->
+  <key>StartInterval</key>
   <integer>30</integer>
 </dict>
 </plist>

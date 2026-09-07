@@ -32,5 +32,5 @@ def test_headend_retries_after_transient_boot_dependency_failure():
 def test_external_volume_mount_retries_after_late_boot_visibility():
     plist = plistlib.loads(MOUNT_PLIST.read_bytes())
     assert plist["RunAtLoad"] is True
-    assert plist["KeepAlive"] is True
-    assert plist["ThrottleInterval"] >= 10
+    assert "KeepAlive" not in plist
+    assert plist["StartInterval"] <= 60
