@@ -117,10 +117,11 @@ def _active_reverse_tunnel(db: Session, device_id: str):
     latest = (
         db.query(SshTunnelLog)
         .filter(SshTunnelLog.device_id == device_id)
+        .filter(SshTunnelLog.event == "connected")
         .order_by(SshTunnelLog.event_at.desc())
         .first()
     )
-    if not latest or latest.event != "connected" or not latest.remote_port:
+    if not latest or not latest.remote_port:
         return None
     if not _localhost_tcp_reachable(int(latest.remote_port)):
         return None

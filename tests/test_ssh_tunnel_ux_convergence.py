@@ -35,6 +35,12 @@ def test_tunnel_liveness_probes_localhost_ipv4_and_ipv6():
     assert '"127.0.0.1"' not in helper
 
 
+def test_terminal_status_ignores_failed_retry_when_connected_event_is_reachable():
+    helper = API.split("def _active_reverse_tunnel", 1)[1].split("def _deny_terminal", 1)[0]
+    assert '.filter(SshTunnelLog.event == "connected")' in helper
+    assert "latest.event != \"connected\"" not in helper
+
+
 def test_private_key_material_is_never_returned_to_ssh_tunnel_ui() -> None:
     active_block = MAIN.split("@app.get(\"/api/ssh-tunnel/active\")", 1)[1].split("@app.get(\"/api/ssh-tunnel/log", 1)[0]
     assert "ssh_identity_path" in active_block
