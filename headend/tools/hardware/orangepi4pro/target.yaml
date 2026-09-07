@@ -1,12 +1,12 @@
 # TimeLapse Pro — Hardware target: OrangePi 4 Pro
-# SoC: Rockchip RK3399 (2x Cortex-A72 + 4x Cortex-A53 @ 2.0GHz / 1.5GHz)
-# GPU: Mali-T860MP4
-# NPU: ingen
+# SoC: Allwinner A733 (2x Cortex-A76 + 6x Cortex-A55 @ 2.0GHz)
+# GPU: Imagination BXM-4-64
+# NPU: 3 TOPS (VIPLite — kræver vendor BSP-kernel linux5.15-sun60iw2)
 # Arch: arm64 (aarch64)
 # Boot: SPI Flash (U-Boot) → NVMe SSD (via nand-sata-install)
 # Base OS: OrangePi official Ubuntu Jammy Server
 #
-# VIGTIGT: Brug officielt OrangePi-image — Armbian mangler RK3399-NPU-support.
+# VIGTIGT: Brug officielt OrangePi-image — vendor-BSP'en er nødvendig for A733.
 
 id: orangepi4pro
 display_name: "OrangePi 4 Pro"
@@ -14,7 +14,7 @@ arch: arm64
 docker_platform: linux/arm64
 docker_base: arm64v8/ubuntu:22.04
 hal_class: orangepi
-soc: RK3399
+soc: Allwinner_A733
 
 base_image:
   # Officielt OrangePi Ubuntu Server image — kun tilgængeligt via Google Drive.
@@ -92,7 +92,9 @@ expected_apt_sources:
 device_tree_model_patterns:
   - "orangepi 4 pro"
   - "orange pi 4 pro"
-  - "rk3399"
+  - "sun6iw2"
+  - "sun6niw2"
+  - "sun60iw2"
 
 agent_install:
   agent_dir: /opt/timelapse/edge
@@ -102,8 +104,8 @@ agent_install:
   service_name: timelapse-edge
 
 notes: |
-  OrangePi 4 Pro (RK3399) — officielt OrangePi Ubuntu Jammy Server image.
-  Kernel: linux5.15.x (RK3399 BSP — vendor-specifik fra OrangePi).
+  OrangePi 4 Pro (Allwinner A733) — officielt OrangePi Ubuntu Jammy Server image.
+  Kernel: linux5.15.147-sun60iw2 (A733 BSP — vendor-specifik fra OrangePi).
   GPIO relay pins: sysfs 356 (Kamera), 361 (Modem). Pin 2=VCC, Pin 6=GND.
   NVMe flash-workflow: flash til SD → boot → sudo nand-sata-install → boot fra NVMe.
   Image: https://drive.google.com/drive/folders/1TcFAGTblG_gbDhwFotEWS0y78LwHA-VG

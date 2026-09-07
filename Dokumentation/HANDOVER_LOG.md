@@ -29,6 +29,31 @@
 
 ## Log
 
+### Handover 2026-09-07 — fra Codex: Orange Pi 4 Pro-identitet korrigeret til A733
+
+- Hvad er gjort: Verificeret mod producentens Orange Pi 4 Pro/A733-materiale og live device-tree på begge Edges. Begge rapporterer `xunlong,orangepi-4-pro` sammen med `sun6niw2p1`/`sun6iw2`, kernel `5.15.147-sun60iw2` og Ubuntu Jammy på Edge 2.
+- Fund: `edge/utils/inventory.py` klassificerede tidligere boardet som RK3588S, og `edge/hal/orangepi.py` kunne klassificere samme vendor-identitet som RK3399. Det forurenede den agentleverede CMDB-identitet.
+- Rettelse: A733/vendor-kernel-signatur prioriteres i inventory og HAL. `headend/tools/hardware/orangepi4pro/target.yaml` bruger nu `Allwinner_A733`, A733-device-tree patterns og den officielle Jammy/BSP-baseline. Target bruges fortsat kun som generator-/drift-baseline; CMDB’s faktiske værdier kommer fra agentens rapport.
+- Test: 4 nye identitets-/prioriteringskontrakter PASS; Python compile og `git diff --check` PASS. Ingen Edge-deployment eller live systemændring udført.
+- Hvad mangler: Commit/deploy skal ske via normal CI og signeret artifact-flow. Efter deployment skal begge Edges rapportere `soc_model=Allwinner A733`, og CMDB skal derefter genindlæse inventory. Der bør senere tilføjes en eksplicit rå device-tree evidence-kolonne, hvis auditspor ønskes endnu stærkere.
+
+### Handover 2026-09-07 — fra Codex: Edge 2 driftsafhjælpning og capture-baseline
+
+- Hvad er gjort: Edge 2 (`TL-043EB9E72EFD`) er read-only sammenlignet med Edge 1 (`TL-C87FF9587CA0`). Begge kører app-commit `92309993a5c84b8a691ed9a7e72a2808723d4205` / `v2.8.1-lab.48` og 10-minutters UTC-baseret intervalplan. Edge 1 kører Ubuntu 24.04/Noble; Edge 2 kører Ubuntu 22.04/Jammy, som fortsat er den dokumenterede `orangepi4pro` target-baseline. Edge 1's Noble-status er derfor registreret som miljødrift, ikke automatisk ophøjet til ny image-authority.
+- Live Edge 2 containment: `/var/log.hdd/timelapse/breakglass` blev oprettet med ejer `emergency` og mode 0700; den konkurrerende legacy `timelapse-ssh-tunnel.service` blev deaktiveret; den generiske `dnsmasq.service` blev deaktiveret, fordi den kolliderede med systemd-resolved på port 53, mens den relevante Bluetooth-dnsmasq med `port=0` fortsat kører; `nfs-common.service` blev maskeret, fordi den genererede `rpc_pipefs`-mount ikke understøttes af kernel-baselinen. Kamera, API credential, device identity, GPIO mapping og capture-data blev ikke ændret.
+- Sandsynlig historisk fejl: Edge 2 stoppede med lokale captures efter 2026-09-04 13:22, mens Headend-heartbeats også udeblev; lokal capture/upload kom tilbage efter reboot. Tilgængelig evidence beviser ikke en enkelt kernel-/hardwareårsag, men viser kommunikations-/tids-/runtime-fejl under boot og manglende logsti. Der var ingen tegn på debug-mode; kamera-relæet er OFF mellem captures og capture/upload fungerer efter reboot.
+- Permanent kodeændring: `edge/agent.py::_tick()` vurderer og claimer nu scheduled capture-slot før al Headend-kommunikation. `edge/scripts/timelapse-edge.service` opretter audit-logroden før agenten starter. Edge Dockerfiles opretter samme logstruktur og fjerner den konkurrerende legacy tunnel-unit; `inject_edge_image.py` installerer ikke længere den gamle autossh-unit i nye injected images.
+- Verifikation: `pytest -q tests/test_edge_capture_runtime_safety.py tests/test_edge_image_build_contract.py tests/test_edge_release_contract.py tests/test_capture_scheduled_slot.py` = 64 passed; `PYTHONPATH=edge pytest -q tests/test_edge_sync_poll_consolidation.py tests/test_lab_tick_state_machine.py tests/test_edge_live_video.py` = 21 passed; Python compile og `git diff --check` PASS.
+- Hvad mangler: Permanent kodefix skal leveres gennem den signerede Edge app-artifact/update-kanal efter commit/CI. Ingen reprovisioning eller key rotation er udført. Generatoren må ikke skifte til Noble alene ud fra én Edge; den officielle, checksum-pinnede Jammy-baseline skal først ændres med separat leverandør-/reproducerbar image-evidence.
+
+### Handover 2026-09-06 23:59 — fra Codex til Peter: canonical public domain, backend cert og WebAuthn RP-valg
+
+- Hvad er gjort: `backend.timelapse-pro.dk:8443` fik separat Let's Encrypt-certifikat via Simply DNS-01, fordi port 80 ikke er åben fra internettet. Certbot `dns-simply` er installeret, `/etc/letsencrypt/secrets/simply.ini` ligger root-only, renewal dry-run er grøn med 300 sekunders DNS-propagation. Headend nginx 8443 bruger nu `/etc/letsencrypt/live/backend.timelapse-pro.dk/`. Oracle frontend nginx redirecter `timelapsepro.dk`, `www.timelapsepro.dk` og `www.timelapse-pro.dk` til canonical `https://timelapse-pro.dk/`; `timelapse-pro.dk` server siden direkte.
+- WebAuthn: Tilføjet request-baseret allowlistet RP-valg. `https://backend.timelapse-pro.dk:8443` bruger RP ID `timelapse-pro.dk`, mens `https://timelapse.froekjaer.dk` fortsat bruger RP ID `timelapse.froekjaer.dk`. Ikke-allowlistede origins fejler lukket. Samtidig rettet WebAuthn challenge-opdatering fra delete+insert til update-or-create, så parallelle/sekventielle login-begin kald ikke rammer duplicate `settings.key`.
+- Live setting: `webauthn_allowed_origins=https://backend.timelapse-pro.dk:8443,https://timelapse.froekjaer.dk`.
+- Verificeret: `pytest tests/test_webauthn_origin_rp_contract.py tests/test_webauthn_login_ui_contract.py -q` = 5 passed. `pytest tests/test_architecture_ratchet.py -q` = 2 passed. `python3 -m py_compile headend/main.py headend/services/webauthn_origin.py` OK. Live `/api/health` OK. WebAuthn begin returnerer `rpId=timelapse-pro.dk` på backend og `rpId=timelapse.froekjaer.dk` på legacy. Frontend redirects testet 200/301 som forventet.
+- Risici / pas på: Passkeys kan ikke deles mellem `froekjaer.dk` og `timelapse-pro.dk`; brugeren skal oprette en separat passkey pr. registrerbar domænefamilie. Existing froekjaer-passkeys bevares for legacy-adressen.
+
 ### Handover 2026-09-07 — fra Claude til Peter: CMDB viste "alt er aktuelt" — fundet, rettet, og siden gjort mere læsbar
 
 - Hvad skete: Peter gik ind i CMDB selv og så at ALT stod til "aktuel version" — hvilket han med rette ikke troede på, givet vi lige har bevist (live, i produktion) at der er hundredvis af reelt forældede OS- og Python-pakker. Han spurgte om selve check-mekanismen overhovedet virker.

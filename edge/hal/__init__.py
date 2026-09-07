@@ -75,7 +75,7 @@ def get_adapter() -> HardwareAdapter:
 
     if any(kw in hw_str for kw in ("orangepi", "orange pi", "rk3399",
                                     "allwinner", "sun8i", "h3", "h5", "h6",
-                                    "rockchip")):
+                                    "sun6iw2", "sun6niw2", "sun60iw2", "rockchip")):
         log.info("HAL: OrangePi detekteret — model=%r", hw_str)
         return OrangePiAdapter(model_string=hw_str)
 
@@ -96,7 +96,9 @@ def hal_model_id(hw_str: str | None = None) -> str:
         return "rpi4"
     if "nvidia" in hw_str or "jetson" in hw_str or "tegra" in hw_str:
         return "jetson-orin-nano"
-    if "rk3399" in hw_str or "orangepi 4" in hw_str or "orange pi 4" in hw_str:
+    if ("a733" in hw_str or "sun6iw2" in hw_str or "sun6niw2" in hw_str
+            or "sun60iw2" in hw_str or "rk3399" in hw_str
+            or "orangepi 4" in hw_str or "orange pi 4" in hw_str):
         return "orangepi4pro"
     if "allwinner" in hw_str or "sun8i" in hw_str or "h3" in hw_str or "orangepi pc" in hw_str:
         return "orangepi-pc-plus"
