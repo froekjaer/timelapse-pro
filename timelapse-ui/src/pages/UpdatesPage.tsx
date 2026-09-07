@@ -1894,9 +1894,25 @@ export function UpdatesPage() {
             <UpdateRow key={u.id} u={u}
               onApprove={id => {
                 setApproveId(id)
+                const scope = (['global', 'device', 'customer', 'site'].includes(u.scope) ? u.scope : 'device') as ApproveOptions['scope']
+                // For a device-scoped approval, the Headend backend always
+                // overrides whatever's picked here with that one device's
+                // own reported environment (see approve_update() ->
+                // _resolve_approval_environment() — a single named device
+                // can't ambiguously be both "test" and "production", and
+                // picking the wrong one here used to silently approve an
+                // update no device would ever be authorized to poll for,
+                // see Dokumentation/HANDOVER_LOG.md 2026-09-08). Default the
+                // dropdown to match so it isn't showing a choice that won't
+                // actually take effect.
+                const deviceEnv = scope === 'device'
+                  ? matrix?.devices.find(d => d.device_id === (u.scope_id || ''))?.environment
+                  : null
                 setApproveOpts({
-                  environment: (u.environment === 'test' || u.environment === 'production') ? u.environment : 'production',
-                  scope: (['global', 'device', 'customer', 'site'].includes(u.scope) ? u.scope : 'device') as ApproveOptions['scope'],
+                  environment: (deviceEnv === 'test' || deviceEnv === 'production')
+                    ? deviceEnv
+                    : (u.environment === 'test' || u.environment === 'production') ? u.environment : 'production',
+                  scope,
                   scope_id: u.scope_id || ''
                 })
               }}

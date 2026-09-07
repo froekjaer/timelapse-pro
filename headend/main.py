@@ -9905,6 +9905,26 @@ def reject_change_ticket(
     return {"ok": True, "ticket_id": ticket.ticket_id, "signed_payload_sha256": signed_hash}
 
 
+def _resolve_approval_environment(
+    db: Session, requested_environment: str, scope: str | None, scope_id: str | None,
+) -> str:
+    """A device-scoped approval already names one specific, unambiguous
+    device — the environment dropdown is then just a second, disconnected
+    way to say the same thing, and picking the wrong one silently produces
+    zero authorized targets (update_applies_to_device() correctly refuses a
+    device whose own environment doesn't match). Found 2026-09-08: Edge 2
+    (env=production) got approved to "test", so it sat forever at "Afventer
+    Edge poll" with no error anywhere. The device's own reported environment
+    is the one source of truth here for a single-device approval — always
+    defer to it over whatever the approver happened to have selected.
+    """
+    if scope == "device" and scope_id:
+        device_inventory = db.query(DeviceInventory).filter_by(device_id=scope_id).first()
+        if device_inventory and device_inventory.environment:
+            return device_inventory.environment
+    return requested_environment
+
+
 @app.post("/api/updates/{update_id}/approve")
 def approve_update(
     update_id: int,
@@ -9976,6 +9996,7 @@ def approve_update(
         u.scope_id = None if payload.scope == "global" else payload.scope_id
     else:
         u.scope    = u.scope or "device"
+    u.environment = _resolve_approval_environment(db, u.environment, u.scope, u.scope_id)
     target_ids = payload.target_device_ids
     if target_ids is not None:
         u.target_device_ids = json.dumps(target_ids) if target_ids else None
