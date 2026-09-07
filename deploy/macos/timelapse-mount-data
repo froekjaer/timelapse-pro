@@ -1,0 +1,75 @@
+#!/bin/zsh
+set -euo pipefail
+
+ENV_FILE="${TIMELAPSE_HEADEND_ENV_FILE:-/etc/timelapse/headend.env}"
+LOG_PREFIX="[timelapse-mount]"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
+if [[ -r "$ENV_FILE" ]]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
+DATA_VOLUME="${TIMELAPSE_DATA_VOLUME:-data-fast}"
+LOGICAL_DATA_ROOT="${TIMELAPSE_DATA_ROOT:-/data-fast}"
+
+mounted_target() {
+  /sbin/mount | /usr/bin/awk -v target="/Volumes/${DATA_VOLUME}" '$3 == target { found=1 } END { exit(found ? 0 : 1) }'
+}
+
+publish_logical_data_root() {
+  [[ "$LOGICAL_DATA_ROOT" == "/data-fast" ]] || return 1
+  [[ -L "$LOGICAL_DATA_ROOT" ]] || return 0
+  [[ "$(/usr/bin/readlink "$LOGICAL_DATA_ROOT")" == "/Volumes/${DATA_VOLUME}" ]]
+}
+
+expected_volume_device() {
+  local device="$1"
+  /usr/sbin/diskutil info "/dev/${device}" 2>/dev/null | \
+    /usr/bin/awk -F: -v expected="$DATA_VOLUME" '
+      $1 ~ /^[[:space:]]*Volume Name[[:space:]]*$/ {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+        found = ($2 == expected)
+      }
+      END { exit(found ? 0 : 1) }
+    '
+}
+
+find_volume_device() {
+  /usr/sbin/diskutil apfs list 2>/dev/null | /usr/bin/awk -v vol="$DATA_VOLUME" '
+    /Volume disk[0-9]+s[0-9]+/ { dev=$0 }
+    /Name:/ && index($0, vol) {
+      match(dev, /disk[0-9]+s[0-9]+/)
+      if (RSTART > 0) print substr(dev, RSTART, RLENGTH)
+      exit
+    }
+  '
+}
+
+echo "$LOG_PREFIX starter — volume=$DATA_VOLUME"
+if mounted_target; then
+  publish_logical_data_root
+  exit 0
+fi
+
+DEVICE="$(find_volume_device)"
+if [[ -z "$DEVICE" ]] || ! expected_volume_device "$DEVICE"; then
+  echo "$LOG_PREFIX volume '$DATA_VOLUME' er ikke klar som en rigtig APFS-volume"
+  exit 1
+fi
+
+if [[ ! -d "/Volumes/${DATA_VOLUME}" ]]; then
+  /bin/mkdir -p "/Volumes/${DATA_VOLUME}"
+fi
+
+echo "$LOG_PREFIX mounter /dev/$DEVICE → /Volumes/$DATA_VOLUME"
+/usr/sbin/diskutil mount "/dev/${DEVICE}" 2>&1 | sed "s/^/$LOG_PREFIX /"
+
+if ! mounted_target; then
+  echo "$LOG_PREFIX volume '$DATA_VOLUME' blev ikke mounted"
+  exit 1
+fi
+
+publish_logical_data_root
+echo "$LOG_PREFIX mounted succesfuldt"

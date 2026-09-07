@@ -6,6 +6,7 @@ import plistlib
 
 ROOT = Path(__file__).resolve().parents[1]
 START_SCRIPT = ROOT / "deploy/macos/timelapse-headend-start.sh"
+MOUNT_SCRIPT = ROOT / "deploy/macos/timelapse-mount-data"
 PLISTS = (
     ROOT / "deploy/launchd/macos/dk.froekjaer.timelapse-headend.plist",
     ROOT / "deploy/launchd/dk.froekjaer.timelapse-headend.plist",
@@ -34,3 +35,10 @@ def test_external_volume_mount_retries_after_late_boot_visibility():
     assert plist["RunAtLoad"] is True
     assert "KeepAlive" not in plist
     assert plist["StartInterval"] <= 60
+
+
+def test_mount_script_rejects_apfs_physical_store_as_volume():
+    source = MOUNT_SCRIPT.read_text()
+    assert "diskutil info" in source
+    assert "Volume Name" in source
+    assert "expected_volume_device" in source
