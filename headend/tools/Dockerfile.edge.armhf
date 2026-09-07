@@ -56,6 +56,7 @@ RUN mkdir -p \
         /etc/timelapse \
         /data \
         /run/timelapse \
+        /var/log.hdd/timelapse/breakglass/sessions \
     && chown -R timelapse:timelapse \
         /opt/timelapse \
         /etc/timelapse \
@@ -101,6 +102,8 @@ RUN echo "${TIMELAPSE_VERSION}" > /opt/timelapse/edge/VERSION \
 COPY edge/scripts/timelapse-edge.service /etc/systemd/system/timelapse-edge.service
 COPY edge/scripts/timelapse-bootstrap.service /etc/systemd/system/timelapse-bootstrap.service
 COPY edge/scripts/bootstrap_agent.py /opt/timelapse/edge/scripts/bootstrap_agent.py
+RUN rm -f /etc/systemd/system/timelapse-ssh-tunnel.service \
+          /etc/systemd/system/multi-user.target.wants/timelapse-ssh-tunnel.service
 
 EXPOSE 22
 
