@@ -265,6 +265,16 @@ def test_time_sync_prioritizes_validated_gps_and_rejects_large_chrony_offset():
     assert 'chronyc offline' in time_sync
 
 
+def test_gps_image_setup_uses_actual_usb_receiver_as_authoritative_clock():
+    setup = _source("edge/scripts/setup-gps-time.sh")
+    injector = _source("headend/tools/inject_edge_image.py")
+    assert 'GPS_DEVICE="${GPS_DEVICE:-/dev/ttyACM0}"' in setup
+    assert 'refclock SHM 0 offset 0.0 delay 0.2 refid GPS prefer trust' in setup
+    assert 'local stratum 10' not in setup
+    assert 'DEVICES="/dev/ttyACM0"' in injector
+    assert 'DEVICES="/dev/ttyUSB0"' not in injector
+
+
 def test_artifact_receipt_is_cmdb_version_source_of_truth(tmp_path, monkeypatch):
     receipt = tmp_path / ".timelapse-release.json"
     receipt.write_text(
