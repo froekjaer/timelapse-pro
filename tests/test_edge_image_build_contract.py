@@ -121,7 +121,8 @@ def test_edge_injection_has_no_default_debug_credential_or_online_install() -> N
     ):
         assert forbidden not in source
     assert "PermitRootLogin no" in source
-    assert "ExecStartPre=/usr/bin/test -x /usr/bin/autossh" in source
+    assert "Agent-owned SSH tunnel retained; legacy unit removed" in source
+    assert "ExecStartPre=/usr/bin/test -x /usr/bin/autossh" not in source
 
 
 def test_wifi_reconfiguration_requires_signed_artifact() -> None:

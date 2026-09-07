@@ -826,6 +826,22 @@ class EdgeAgent:
         """
         now = datetime.now(timezone.utc)
 
+        # Capture scheduling is evaluated before any Headend communication.
+        # A slow or unreachable Headend must never prevent a local scheduled
+        # slot from being claimed and attempted.
+        capture_slot = self._scheduled_capture_slot(now, mode)
+        if capture_slot:
+            slot_id = capture_slot["slot_id"]
+            if not self._db.claim_capture_slot(
+                slot_id=slot_id,
+                device_id=self._device_id,
+                mode=mode,
+                scheduled_at=capture_slot["scheduled_at"],
+            ):
+                log.debug("Capture slot already attempted: %s", slot_id)
+            else:
+                self._run_capture_slot(datetime.now(timezone.utc), mode, capture_slot)
+
         # Consolidated sync poll: one request carries diagnostics/app_version/
         # SIEM events out and config/pending-updates back, replacing what used
         # to be three independently-timed loops (config-pull, heartbeat,
@@ -842,20 +858,6 @@ class EdgeAgent:
             self._check_backup_request()
             # Tjek om headend har bedt om en opdatering (legacy LAB-path)
             self._check_update()
-
-        # Check capture schedule by scheduled slot, not by current wall-clock cycle.
-        capture_slot = self._scheduled_capture_slot(now, mode)
-        if capture_slot:
-            slot_id = capture_slot["slot_id"]
-            if not self._db.claim_capture_slot(
-                slot_id=slot_id,
-                device_id=self._device_id,
-                mode=mode,
-                scheduled_at=capture_slot["scheduled_at"],
-            ):
-                log.debug("Capture slot already attempted: %s", slot_id)
-            else:
-                self._run_capture_slot(now, mode, capture_slot)
 
         # Upload pending large files only inside the Headend-assigned slot.
         # This runs after capture checks so upload backlog cannot delay capture.
@@ -3161,6 +3163,12 @@ class EdgeAgent:
                 ok, _ = self._api.sync_capture(row)
                 if ok:
                     self._db.mark_synced(row["id"])
+                else:
+                    # Do not walk a large backlog while the Headend is down.
+                    # One bounded failed request is enough evidence; retrying
+                    # every row here can occupy the capture loop for hours.
+                    log.warning("Capture sync stopped after first failed request")
+                    break
         except Exception as exc:
             log.warning("Capture sync error: %s", exc)
 
@@ -3226,6 +3234,12 @@ class EdgeAgent:
                 if ok:
                     self._db.mark_uploaded(row["id"], "primary")
                     count += 1
+                else:
+                    # Preserve the local store-and-forward queue, but avoid
+                    # serialising several timeout/retry windows in the main
+                    # agent loop when communication is unavailable.
+                    log.warning("API upload retry stopped after first failed request")
+                    break
         except Exception as exc:
             log.warning("API upload retry error: %s", exc)
         return count

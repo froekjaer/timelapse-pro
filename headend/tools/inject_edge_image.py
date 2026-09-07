@@ -785,43 +785,12 @@ if [ -n "${DEVICE_SSH_PRIVATE_KEY:-}" ] && [ -n "${SSH_TUNNEL_PORT:-}" ]; then
     printf '%s\n' "${DEVICE_SSH_PRIVATE_KEY}" > /mnt/root/etc/timelapse/device_keys/id_ed25519
     chmod 600 /mnt/root/etc/timelapse/device_keys/id_ed25519
 
-    HEADEND_HOST="${TUNNEL_HEADEND_HOST}"
-    HEADEND_PORT="${TUNNEL_HEADEND_PORT}"
-    HEADEND_USER="${TUNNEL_HEADEND_USER}"
-
-    echo "[inject] Skriver timelapse-ssh-tunnel.service (port ${SSH_TUNNEL_PORT} → ${HEADEND_HOST})..."
-    cat > /mnt/root/etc/systemd/system/timelapse-ssh-tunnel.service << SSHSVC_EOF
-[Unit]
-Description=TimeLapse Pro — Reverse SSH Tunnel til Headend
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-Environment="AUTOSSH_GATETIME=0"
-ExecStartPre=/usr/bin/test -x /usr/bin/autossh
-ExecStart=/usr/bin/autossh -M 0 -N \
-  -o ServerAliveInterval=30 \
-  -o ServerAliveCountMax=3 \
-  -o StrictHostKeyChecking=accept-new \
-  -o ExitOnForwardFailure=yes \
-  -o BatchMode=yes \
-  -i /etc/timelapse/device_keys/id_ed25519 \
-  -R ${SSH_TUNNEL_PORT}:localhost:22 \
-  ${HEADEND_USER}@${HEADEND_HOST} -p ${HEADEND_PORT}
-Restart=always
-RestartSec=30
-
-[Install]
-WantedBy=multi-user.target
-SSHSVC_EOF
-
-    WANTS_DIR3=/mnt/root/etc/systemd/system/multi-user.target.wants
-    mkdir -p "$WANTS_DIR3"
-    ln -sf /etc/systemd/system/timelapse-ssh-tunnel.service \
-        "$WANTS_DIR3/timelapse-ssh-tunnel.service"
-    echo "[inject]   timelapse-ssh-tunnel.service aktiveret (port ${SSH_TUNNEL_PORT})"
+    # Tunnel ownership belongs to edge/agent.py.  The historical standalone
+    # autossh unit was a competing authority and could fail independently
+    # (or reintroduce StrictHostKeyChecking=accept-new) on a fresh image.
+    rm -f /mnt/root/etc/systemd/system/timelapse-ssh-tunnel.service \
+          /mnt/root/etc/systemd/system/multi-user.target.wants/timelapse-ssh-tunnel.service
+    echo "[inject]   Agent-owned SSH tunnel retained; legacy unit removed"
 fi
 
 # ── SSH hardening ─────────────────────────────────────────────────────────────

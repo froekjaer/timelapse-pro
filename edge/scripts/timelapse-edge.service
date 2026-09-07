@@ -33,6 +33,11 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=timelapse-edge
 
+# The edge agent may start before timelapse-totp.service.  Create the
+# persistent audit root here so boot ordering cannot cause repeated
+# break-glass read-only failures.
+ExecStartPre=/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions
+
 # Security hardening
 NoNewPrivileges=yes
 PrivateTmp=yes
