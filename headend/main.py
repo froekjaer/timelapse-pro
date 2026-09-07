@@ -7499,11 +7499,13 @@ def _upsert_blocked_os_updates_from_plan(
             "Blocked: afventer lab-bygget, testet og Headend-signeret offline OS artifact. "
             "Edge må ikke bruge direkte apt/internet."
         )
+        package_details = json.dumps(decision.get("packages") or [])
         if existing:
             existing.version = version
             existing.description = description
             existing.severity = severity
             existing.environment = environment
+            existing.package_details = package_details
             if existing.status != "approved":
                 existing.status = "blocked"
                 existing.resolution_reason = "Awaiting lab-built, tested, Headend-signed offline OS artifact."
@@ -7523,6 +7525,7 @@ def _upsert_blocked_os_updates_from_plan(
             scope_id=device_id,
             status="blocked",
             resolution_reason="Awaiting lab-built, tested, Headend-signed offline OS artifact.",
+            package_details=package_details,
             environment=environment,
         )
         db.add(update)
@@ -8281,6 +8284,7 @@ def _upsert_blocked_python_updates_from_plan(
         "Blocked: afventer Headend-signeret offline wheel-bundle før godkendelse."
     )
     version = f"{count} pakker"
+    package_details = json.dumps(decision["packages"])
     existing = db.query(PendingUpdate).filter(
         PendingUpdate.update_type == "dependency_updates",
         PendingUpdate.scope == "device",
@@ -8294,6 +8298,7 @@ def _upsert_blocked_python_updates_from_plan(
         existing.environment = environment
         existing.status = "blocked"
         existing.resolution_reason = "Awaiting Headend-signed offline Python wheel bundle."
+        existing.package_details = package_details
         if existing.id is not None:
             reset_stale_targets_on_block(
                 db, UpdateTarget, existing.id,
@@ -8311,6 +8316,7 @@ def _upsert_blocked_python_updates_from_plan(
         scope_id=device_id,
         status="blocked",
         resolution_reason="Awaiting Headend-signed offline Python wheel bundle.",
+        package_details=package_details,
         environment=environment,
     )
     db.add(update)
