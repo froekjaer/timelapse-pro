@@ -28,6 +28,13 @@ def test_failed_reconnect_must_not_hide_a_live_tunnel() -> None:
     assert "failed retry hide the tunnel" in active_block
 
 
+def test_tunnel_liveness_probes_localhost_ipv4_and_ipv6():
+    helper = API.split("def _localhost_tcp_reachable", 1)[1].split("def _active_reverse_tunnel", 1)[0]
+    assert 'socket.getaddrinfo(\n        "localhost"' in helper
+    assert "socket.socket(family, socktype, proto)" in helper
+    assert '"127.0.0.1"' not in helper
+
+
 def test_private_key_material_is_never_returned_to_ssh_tunnel_ui() -> None:
     active_block = MAIN.split("@app.get(\"/api/ssh-tunnel/active\")", 1)[1].split("@app.get(\"/api/ssh-tunnel/log", 1)[0]
     assert "ssh_identity_path" in active_block
