@@ -255,6 +255,16 @@ def test_legacy_edge_update_and_time_scripts_cannot_use_direct_internet_channels
     assert '[[ ! "$HEADEND_URL" =~ ^https:// ]]' in time_sync
 
 
+def test_time_sync_prioritizes_validated_gps_and_rejects_large_chrony_offset():
+    time_sync = _source("edge/scripts/sync-time.sh")
+    assert 'gpspipe -w -n 20' in time_sync
+    assert 'message.get("class") != "TPV"' in time_sync
+    assert 'int(message.get("mode", 0)) < 2' in time_sync
+    assert 'date -u -s "@$GPS_UNIX"' in time_sync
+    assert 'SYSTEM_OFFSET <= 5' in time_sync
+    assert 'chronyc offline' in time_sync
+
+
 def test_artifact_receipt_is_cmdb_version_source_of_truth(tmp_path, monkeypatch):
     receipt = tmp_path / ".timelapse-release.json"
     receipt.write_text(

@@ -21,6 +21,13 @@ def test_external_ssh_command_includes_identity_key_path() -> None:
     assert "~/.ssh/timelapse_headend_ed25519" in UI_PAGE
 
 
+def test_failed_reconnect_must_not_hide_a_live_tunnel() -> None:
+    active_block = MAIN.split('@app.get("/api/ssh-tunnel/active")', 1)[1].split('@app.get("/api/ssh-tunnel/log', 1)[0]
+    assert 'WHERE event = \'connected\'' in active_block
+    assert "_localhost_tcp_reachable(int(r[1]))" in active_block
+    assert "failed retry hide the tunnel" in active_block
+
+
 def test_private_key_material_is_never_returned_to_ssh_tunnel_ui() -> None:
     active_block = MAIN.split("@app.get(\"/api/ssh-tunnel/active\")", 1)[1].split("@app.get(\"/api/ssh-tunnel/log", 1)[0]
     assert "ssh_identity_path" in active_block

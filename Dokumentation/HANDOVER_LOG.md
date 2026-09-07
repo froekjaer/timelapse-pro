@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-09-07 — fra Codex: Edge 1 clock skew og trusted kommunikationsgendannelse
+
+- Fund: Edge 1 (`TL-C87FF9587CA0`) tog fortsat billeder, men systemuret var ca. 7.208 sekunder bag Headenden. `chrony` viste ingen brugbar NTP-kilde (`?` på alle kilder), men et misvisende gammelt synkroniseringsresultat.
+- Konsekvens: Headenden afviste signerede Edge 1-heartbeats og uploads med `401` / `Edge signatur er udenfor tidsvindue`. Det gjorde Edge 1 offline i UI'et og blokerede også tidsafhængig servicetekniker-auth.
+- Afhjælpning: Uret blev korrigeret til Headendens aktuelle UTC-tid via den allerede trusted reverse SSH-tunnel. Efter korrektionen accepteres uploads igen med `200 OK` (capture IDs `42749` og `42750`). Ingen camera, relay, credentials, device identity, GPIO mapping eller capture-data blev ændret.
+- Bluetooth: `bluetooth.service`, `timelapse-bt-agent.service` og TOTP-tjenesten er aktive på begge Edges, men `br-bt` har `NO-CARRIER`. Edge 1 har ingen parret Bluetooth-enhed; Edge 2 har en parret iPhone, men ingen aktiv PAN-forbindelse. Ingen Bluetooth- eller netværksændring blev udført.
+- Hvad mangler: NTP-kilden på Edge 1 skal gøres pålideligt anvendelig og overvåges, så stor clock drift ikke igen skjult markerer Edge som healthy. Bluetooth skal fejlsøges separat via en faktisk parret/forbundet enhed.
+
 ### Handover 2026-09-07 — fra Codex: Orange Pi 4 Pro-identitet korrigeret til A733
 
 - Hvad er gjort: Verificeret mod producentens Orange Pi 4 Pro/A733-materiale og live device-tree på begge Edges. Begge rapporterer `xunlong,orangepi-4-pro` sammen med `sun6niw2p1`/`sun6iw2`, kernel `5.15.147-sun60iw2` og Ubuntu Jammy på Edge 2.
