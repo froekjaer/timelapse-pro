@@ -44,13 +44,17 @@ GPG_KEY_UID = "timelapse@froekjaer.dk"  # Til fingerprint-opslag
 def _detect_hardware_model() -> tuple[str, str]:
     """
     Returnerer (hardware_model, soc_model).
-    Eksempel: ("Orange Pi 4 Pro", "RK3588S")
+    Orange Pi 4 Pro-identiteten skal udledes af vendor device-tree-data.
+    `orangepi-4-pro` alene er ikke nok til at bestemme SoC'en: den samme
+    board-identifikator bruges i vendor-BSP'en sammen med A733-kompatibiliteten.
     """
     try:
         dt = Path("/proc/device-tree/compatible").read_bytes() \
                .replace(b"\x00", b"\n").decode(errors="ignore")
         if "orangepi-4-pro" in dt:
-            return "Orange Pi 4 Pro", "RK3588S"
+            if any(token in dt.lower() for token in ("sun6iw2", "sun6niw2", "sun60iw2")):
+                return "Orange Pi 4 Pro", "Allwinner A733"
+            return "Orange Pi 4 Pro", "Ukendt"
         if "orangepi-pc-plus" in dt:
             return "Orange Pi PC Plus", "Allwinner H3"
         if "orangepi-zero" in dt:
