@@ -27,6 +27,9 @@ export interface DeviceInfo {
 export interface Capture {
   id: number
   device_id: string
+  customer_name?: string | null
+  site_name?: string | null
+  camera_name?: string | null
   filename: string
   captured_at: string | null
   quality_flag: string | null
