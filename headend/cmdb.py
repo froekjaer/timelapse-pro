@@ -268,6 +268,73 @@ def _parse_version_gap(version: str | None) -> dict:
     }
 
 
+def _package_level_updates_for_device(db: Session, device_id: str, software_inventory: dict) -> list[dict]:
+    """
+    One canonical, per-package "what's outdated" list for a device, combining:
+      - Homebrew/platform-app updates (already per-package in software_inventory's
+        available_software_updates — Headend's own formulas).
+      - Batch-style updates (os_security/os_updates/dependency_updates/
+        dependency_security) via PendingUpdate.package_details, added 2026-09-07
+        after Peter found the CMDB page showed everything as "current" — those
+        rows bundle many packages into one row with an aggregate "N pakker"
+        version string, which the old per-component table couldn't parse at all.
+
+    Frontend should use THIS as the single source of truth for "is X outdated",
+    not build its own ad-hoc lookup from software_inventory sub-fields.
+    """
+    items: list[dict] = []
+
+    brew_updates = software_inventory.get("available_software_updates")
+    if isinstance(brew_updates, list):
+        for u in brew_updates:
+            if not isinstance(u, dict) or not u.get("name"):
+                continue
+            items.append({
+                "name": str(u.get("name")),
+                "installed_version": str(u.get("installed_version") or ""),
+                "available_version": str(u.get("available_version") or ""),
+                "source": str(u.get("manager") or "brew"),
+                "severity": "security" if str(u.get("kind") or "") == "security" else "feature",
+                "update_id": None,
+                "update_type": "application_updates",
+                "status": None,
+            })
+
+    active = (
+        db.query(PendingUpdate)
+        .filter(
+            PendingUpdate.scope == "device",
+            PendingUpdate.scope_id == device_id,
+            PendingUpdate.status.in_(["pending", "approved", "blocked", "rollback_requested"]),
+        )
+        .all()
+    )
+    for update in active:
+        if not update.package_details:
+            continue
+        try:
+            packages = json.loads(update.package_details)
+        except Exception:
+            continue
+        if not isinstance(packages, list):
+            continue
+        is_security = "security" in (update.update_type or "")
+        for p in packages:
+            if not isinstance(p, dict) or not p.get("name"):
+                continue
+            items.append({
+                "name": str(p.get("name")),
+                "installed_version": str(p.get("installed_version") or ""),
+                "available_version": str(p.get("available_version") or ""),
+                "source": str(p.get("source_repo") or ""),
+                "severity": "security" if is_security else "feature",
+                "update_id": update.id,
+                "update_type": update.update_type,
+                "status": update.status,
+            })
+    return items
+
+
 def _update_summary_for_device(db: Session, device_id: str) -> dict:
     updates = (
         db.query(PendingUpdate)
@@ -491,6 +558,15 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
     def _upsert_os_update(update_type: str, count: int, pkg_list: list) -> None:
         version = f"{count} pakker"
         names = ", ".join(p["name"] for p in pkg_list[:10])
+        package_details = json.dumps([
+            {
+                "name": p.get("name"),
+                "installed_version": p.get("old_ver") or p.get("installed_version") or "",
+                "available_version": p.get("new_ver") or p.get("available_version") or "",
+                "source_repo": p.get("source_repo") or "apt",
+            }
+            for p in pkg_list if p.get("name")
+        ])
         desc  = (
             f"Edge {device_id}: {count} {'sikkerhedsopdaterin' if 'security' in update_type else 'OS-opdaterin'}"
             f"g{'er' if count != 1 else ''} tilgænge{'lig' if count == 1 else 'lig'}e via apt. "
@@ -510,6 +586,7 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
             existing.environment = env
             existing.status = "blocked"
             existing.resolution_reason = "CMDB observation only; requires lab-built, Headend-signed offline OS bundle before approval."
+            existing.package_details = package_details
             if existing.id is not None:
                 # Self-heal: an already-queued/approved target from an earlier approval
                 # can't progress while the parent is (still) blocked.
@@ -527,6 +604,7 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
                 scope_id=device_id,
                 status="blocked",
                 resolution_reason="CMDB observation only; requires lab-built, Headend-signed offline OS bundle before approval.",
+                package_details=package_details,
                 environment=env,
                 target_device_ids=json.dumps([device_id]),
             ))
@@ -966,6 +1044,7 @@ def get_cmdb(device_id: str, _user=Depends(_require_cmdb_role("viewer")), db: Se
         "last_seen":                device.last_seen.isoformat() if device and device.last_seen else None,
     }
     result["update_summary"] = _update_summary_for_device(db, device_id)
+    result["package_updates"] = _package_level_updates_for_device(db, device_id, software_inventory)
     return result
 
 

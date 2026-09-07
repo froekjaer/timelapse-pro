@@ -535,6 +535,15 @@ class PendingUpdate(Base):
     # Short "why" for the current status (blocked/rejected/rolled_back/superseded/
     # deployed) — distinct from the longer free-text description. Set at the write
     # site that changed the status; NULL for rows predating this field.
+    package_details = Column(Text)
+    # JSON list of [{"name","installed_version","available_version","source_repo"}]
+    # for batch-style updates (os_security/os_updates/dependency_updates/
+    # dependency_security) that bundle many packages into one row with an aggregate
+    # "N pakker" version string. Found 2026-09-07: the CMDB page's per-component
+    # version table could only parse a "name version -> version" style version
+    # string (Homebrew's format), so every batch-style update was silently invisible
+    # there and every package showed as falsely "current". NULL for rows predating
+    # this field, and for the per-package Homebrew track which doesn't need it.
 
 
 class ChangeTicket(Base):
