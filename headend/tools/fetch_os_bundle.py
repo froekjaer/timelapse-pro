@@ -357,6 +357,29 @@ def install_script(package_file_entries: list[dict[str, Any]]) -> str:
     chance.  That can unpack a coherent bundle but leave it half configured.
     Put the signed files in APT's local cache and let APT resolve the order,
     while ``--no-download`` makes an attempted network fetch fail closed.
+
+    ``apt-get install name=version`` only works for names/versions APT
+    already knows about from its *own* (device-local) ``/var/lib/apt/lists``
+    cache — copying the .debs into ``/var/cache/apt/archives`` does not make
+    them known candidates by itself. On a device that never runs a real
+    ``apt-get update`` (no internet), that local cache is a snapshot from
+    whenever it was last refreshed (e.g. image build time) and will
+    eventually miss newer patch versions Headend just fetched fresh from the
+    real Ubuntu mirror. Found 2026-09-07: an Edge 2 os_security bundle with
+    216 packages failed outright (apt-get install is one atomic transaction)
+    because 2 of them — libpam-modules, linux-libc-dev — weren't resolvable
+    at their target version in Edge 2's local index, even though the correct
+    .deb files were sitting right there in the bundle.
+
+    Fix: build a throwaway, file://-only local APT repository from the
+    bundle's own .debs (flat repository format: a Packages(.gz) index next
+    to the .debs, referenced via ``deb [trusted=yes] file://... ./``) and
+    refresh *only* that source's index with a sourcelist-scoped
+    ``apt-get update`` (``-o Dir::Etc::sourcelist=...``). That never touches
+    the device's real sources.list or its cached lists for those sources —
+    it only adds fresh candidate entries for exactly what's in this bundle —
+    and never performs any network I/O, since the scoped sourcelist contains
+    nothing but a local file:// path.
     """
     requested = " ".join(
         _shell_quote(f"{entry['name']}={entry['version']}")
@@ -366,9 +389,22 @@ def install_script(package_file_entries: list[dict[str, Any]]) -> str:
 set -euo pipefail
 cd "$(dirname "$0")"
 # Kun pakker i dette signerede bundle gøres tilgængelige for APT. Der foretages
-# ingen ``apt update`` eller netværksdownload på Edgen.
+# ingen apt update mod internettet eller netværksdownload på Edgen — kun en
+# lokal, fil-baseret APT-kilde genopbygges fra bundlets egne .deb-filer, så
+# APT kan finde kandidat-versioner uafhængigt af hvor frisk enhedens egne
+# apt-lister er.
 install -d -m 0755 /var/cache/apt/archives
 cp -f packages/*.deb /var/cache/apt/archives/
+
+local_repo="$(mktemp -d)"
+local_sourcelist="$(mktemp)"
+trap 'rm -rf "$local_repo" "$local_sourcelist"' EXIT
+cp -f packages/*.deb "$local_repo/"
+( cd "$local_repo" && dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz )
+printf 'deb [trusted=yes] file://%s ./\\n' "$local_repo" > "$local_sourcelist"
+
+apt-get -o Dir::Etc::sourcelist="$local_sourcelist" -o Dir::Etc::sourceparts="-" \\
+  -o APT::Get::List-Cleanup="0" update
 apt-get --no-download --no-install-recommends --allow-downgrades \\
   --allow-change-held-packages -y install {requested}
 # Verificer de faktiske versioner efter APT har afsluttet transaktionen.

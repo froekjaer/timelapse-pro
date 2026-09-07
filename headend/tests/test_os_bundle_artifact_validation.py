@@ -96,3 +96,72 @@ def test_file_policy_ignores_non_script_files(tmp_path):
     (tmp_path / "packages" ).mkdir()
     (tmp_path / "packages" / "curl_7.81.0.deb").write_bytes(b"fake deb bytes with curl in the filename")
     main._validate_os_bundle_file_policy(tmp_path, [{"path": "packages/curl_7.81.0.deb"}])
+
+
+# ── scoped local-repo "apt-get update" (2026-09-07: libpam-modules/         ──
+# ── linux-libc-dev regression — see fetch_os_bundle.py's install_script()) ──
+
+def test_file_policy_accepts_real_fetch_os_bundle_install_script(tmp_path):
+    # The actual generator output, not a hand-typed approximation — proves
+    # the validator accepts what install_script() really produces, including
+    # its backslash line-continuations and a package literally named 'curl'.
+    import importlib.util
+    from pathlib import Path as _Path
+
+    module_path = _Path(__file__).parents[2] / "headend" / "tools" / "fetch_os_bundle.py"
+    spec = importlib.util.spec_from_file_location("fetch_os_bundle_for_test", module_path)
+    fetch = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetch)
+    script = fetch.install_script([
+        {"name": "libpam-modules", "version": "1.4.0-11ubuntu2.8"},
+        {"name": "curl", "version": "7.81.0-1ubuntu1.27"},
+        {"name": "wget", "version": "1.21.2-2ubuntu1.5"},
+    ])
+    (tmp_path / "install-offline.sh").write_text(script)
+    main._validate_os_bundle_file_policy(tmp_path, [{"path": "install-offline.sh"}])
+
+
+def test_file_policy_accepts_apt_update_scoped_to_local_tmp_sourcelist(tmp_path):
+    (tmp_path / "install-offline.sh").write_text(
+        "#!/bin/bash\n"
+        'local_sourcelist="$(mktemp)"\n'
+        'apt-get -o Dir::Etc::sourcelist="$local_sourcelist" -o Dir::Etc::sourceparts="-" update\n'
+    )
+    main._validate_os_bundle_file_policy(tmp_path, [{"path": "install-offline.sh"}])
+
+
+def test_file_policy_rejects_apt_update_scoped_to_real_sources_list(tmp_path):
+    # A scoped-looking update that actually points at the device's real
+    # sources.list must still be rejected — the scoping flag alone isn't
+    # proof of safety, the target must also not be /etc/apt.
+    (tmp_path / "install-offline.sh").write_text(
+        '#!/bin/bash\napt-get -o Dir::Etc::sourcelist="/etc/apt/sources.list" update\n'
+    )
+    with pytest.raises(HTTPException):
+        main._validate_os_bundle_file_policy(tmp_path, [{"path": "install-offline.sh"}])
+
+
+def test_file_policy_rejects_literal_http_url_anywhere(tmp_path):
+    (tmp_path / "install-offline.sh").write_text(
+        "#!/bin/bash\necho 'see http://example.com for details'\n"
+    )
+    with pytest.raises(HTTPException):
+        main._validate_os_bundle_file_policy(tmp_path, [{"path": "install-offline.sh"}])
+
+
+def test_file_policy_rejects_literal_ftp_url_anywhere(tmp_path):
+    (tmp_path / "install-offline.sh").write_text(
+        "#!/bin/bash\necho 'see ftp://example.com for details'\n"
+    )
+    with pytest.raises(HTTPException):
+        main._validate_os_bundle_file_policy(tmp_path, [{"path": "install-offline.sh"}])
+
+
+def test_file_policy_collapses_backslash_continuations_before_scanning(tmp_path):
+    # A forbidden command split across a backslash line-continuation must
+    # still be caught — a naive per-physical-line scan would miss it.
+    (tmp_path / "install-offline.sh").write_text(
+        "#!/bin/bash\napt-get \\\n  update\n"
+    )
+    with pytest.raises(HTTPException):
+        main._validate_os_bundle_file_policy(tmp_path, [{"path": "install-offline.sh"}])

@@ -6438,8 +6438,12 @@ def _validate_os_bundle_commands(commands: list[dict]) -> None:
 
 
 def _validate_os_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> None:
+    # apt(-get) update isn't blanket-forbidden: install_script() legitimately
+    # runs one, scoped via -o Dir::Etc::sourcelist=... to a throwaway local
+    # file://-only repo built from the bundle's own .debs (APT's own local
+    # index can go stale on a no-internet device — 2026-09-07 incident).
+    # Handled explicitly below; must never fall through to the real sources.list.
     forbidden_patterns = [
-        r"\bapt(-get)?\s+update\b",
         r"\bapt(-get)?\s+(dist-upgrade|full-upgrade|upgrade)\b",
         r"(^|[;&|]\s*)(curl|wget)\b",
         r"(^|[;&|]\s*)git\s+(clone|pull|fetch)\b",
@@ -6447,6 +6451,8 @@ def _validate_os_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> 
         r"(^|[;&|]\s*)rsync\b",
         r"(^|[;&|]\s*)python3?\s+-m\s+pip\b",
         r"(^|[;&|]\s*)pip3?\s+install\b",
+        r"https?://",  # a legit offline bundle never needs a literal network URL
+        r"\bftp://",
     ]
     for item in outputs:
         rel = str(item.get("path") or "")
@@ -6457,7 +6463,15 @@ def _validate_os_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> 
             text_content = path.read_text(errors="ignore")
         except Exception:
             continue
-        for line in text_content.splitlines():
+        # Collapse \-continued lines first so a per-line scan sees whole commands.
+        logical_lines: list[str] = []
+        buffer = ""
+        for raw in text_content.splitlines():
+            buffer += (raw[:-1] + " ") if raw.endswith("\\") else raw
+            if not raw.endswith("\\"):
+                logical_lines.append(buffer)
+                buffer = ""
+        for line in logical_lines:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
@@ -6467,12 +6481,20 @@ def _validate_os_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> 
                         status_code=400,
                         detail=f"OS bundle script/config indeholder forbudt online update-kommando: {rel}",
                     )
-            if "apt-get" in stripped or " apt " in stripped:
-                if "--no-download" not in stripped:
+            if not ("apt-get" in stripped or _re.search(r"(^|[;&|]\s*)apt\s", stripped)):
+                continue
+            if _re.search(r"\bupdate\b", stripped):
+                lowered = stripped.lower()
+                if "dir::etc::sourcelist" not in lowered or "/etc/apt" in lowered:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"OS bundle apt-brug mangler --no-download: {rel}",
+                        detail=f"OS bundle apt update skal være scoped til en lokal fil-kilde, aldrig enhedens rigtige /etc/apt: {rel}",
                     )
+            elif "--no-download" not in stripped:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"OS bundle apt-brug mangler --no-download: {rel}",
+                )
 
 
 def _default_python_bundle_commands() -> list[dict]:
