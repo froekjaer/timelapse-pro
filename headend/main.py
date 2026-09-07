@@ -6456,16 +6456,16 @@ def _validate_os_bundle_file_policy(storage_path: Path, outputs: list[dict]) -> 
             text_content = path.read_text(errors="ignore")
         except Exception:
             continue
-        for pattern in forbidden_patterns:
-            if _re.search(pattern, text_content):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"OS bundle script/config indeholder forbudt online update-kommando: {rel}",
-                )
         for line in text_content.splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
+            for pattern in forbidden_patterns:
+                if _re.search(pattern, stripped):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"OS bundle script/config indeholder forbudt online update-kommando: {rel}",
+                    )
             if "apt-get" in stripped or " apt " in stripped:
                 if "--no-download" not in stripped:
                     raise HTTPException(
