@@ -64,6 +64,18 @@ interface CMDBDetail extends CMDBEntry {
   os_packages: Record<string, string>
   venv_packages: Record<string, string>
   software_inventory: Record<string, unknown>
+  package_updates: PackageUpdateItem[]
+}
+
+interface PackageUpdateItem {
+  name: string
+  installed_version: string
+  available_version: string
+  source: string
+  severity: 'security' | 'feature'
+  update_id: number | null
+  update_type: string
+  status: string | null
 }
 
 interface UpdateSummaryItem {
@@ -239,6 +251,23 @@ function normalizedPackageName(value: unknown): string {
   return String(value ?? '').trim().toLowerCase().replace(/:(arm64|amd64|all)$/, '')
 }
 
+/**
+ * Single canonical "is this package outdated" lookup, keyed by normalized name.
+ * detail.package_updates already combines Homebrew's per-package data and the
+ * batch OS/Python tracks' package_details (added 2026-09-07 — previously each
+ * table on this page built its own, incomplete lookup from
+ * software_inventory.available_software_updates alone, which only ever
+ * covered Headend's own Homebrew formulas. Every OS/Python package showed as
+ * falsely "current" as a result).
+ */
+function packageUpdateLookup(detail: CMDBDetail): Record<string, PackageUpdateItem> {
+  const map: Record<string, PackageUpdateItem> = {}
+  ;(detail.package_updates ?? []).forEach(update => {
+    map[normalizedPackageName(update.name)] = update
+  })
+  return map
+}
+
 function versionText(value: unknown) {
   const text = String(value ?? '').trim()
   return text || '—'
@@ -272,58 +301,25 @@ function versionRows(detail: CMDBDetail, sbom: SbomDocument | null): VersionRow[
     if (component.name) addInstalled(component.name, component.version, component.type || 'SBOM')
   })
 
-  const updates = Array.isArray(detail.software_inventory?.available_software_updates)
-    ? detail.software_inventory.available_software_updates as Array<Record<string, unknown>>
-    : []
-  updates.forEach(update => {
-    const name = String(update.name ?? 'ukendt')
-    const key = normalizedPackageName(name)
-    const current = rows.get(key)
-    const kind = String(update.kind ?? update.update_type ?? '').toLowerCase()
-    const risk: VersionRisk = kind.includes('security') ? 'security' : 'feature'
-    rows.set(key, {
-      key,
-      name: current?.name || name,
-      installed: versionText(update.installed_version ?? current?.installed),
-      available: versionText(update.available_version ?? current?.available),
-      source: String(update.manager ?? current?.source ?? 'Update'),
-      category: String(update.manager ?? current?.category ?? 'Update'),
-      risk,
-    })
-  })
-
-  const osUpdateState = detail.software_inventory?._os_updates_available as Record<string, unknown> | undefined
-  const osUpdatePackages = Array.isArray(osUpdateState?.packages) ? osUpdateState.packages as Array<Record<string, unknown>> : []
-  osUpdatePackages.forEach(pkg => {
-    const name = String(pkg.name ?? pkg.package ?? 'ukendt')
-    const key = normalizedPackageName(name)
-    const current = rows.get(key)
-    const risk: VersionRisk = pkg.security ? 'security' : 'feature'
-    rows.set(key, {
-      key,
-      name: current?.name || name,
-      installed: versionText(pkg.installed_version ?? pkg.installed ?? current?.installed),
-      available: versionText(pkg.available_version ?? pkg.candidate ?? pkg.version ?? current?.available),
-      source: 'apt',
-      category: 'OS',
-      risk,
-    })
-  })
-
-  ;(detail.update_summary?.latest ?? []).forEach(update => {
-    if (!update.component) return
-    const key = normalizedPackageName(update.component)
-    if (rows.has(key) && rows.get(key)?.risk !== 'current') return
-    const risk: VersionRisk = update.update_type.includes('security') ? 'security' : 'feature'
+  // Single canonical "what's outdated" source — see packageUpdateLookup(). Replaces
+  // three separate, partially-broken lookups this table used to build itself
+  // (available_software_updates alone, which is Homebrew-only; _os_updates_available,
+  // which is permanently empty on real Edge devices; and update_summary.latest,
+  // which skips every batch-style row since it has no single "component" name).
+  ;(detail.package_updates ?? []).forEach(update => {
+    const key = normalizedPackageName(update.name)
     const current = rows.get(key)
     rows.set(key, {
       key,
-      name: current?.name || update.component,
-      installed: update.current_version || current?.installed || '—',
-      available: update.latest_available_version || current?.available || '—',
-      source: update.update_type,
-      category: update.update_type.includes('os_') ? 'OS' : update.update_type.includes('app') ? 'App' : 'Update',
-      risk,
+      name: current?.name || update.name,
+      installed: versionText(update.installed_version || current?.installed),
+      available: versionText(update.available_version || current?.available),
+      source: update.source || current?.source || 'Update',
+      category: current?.category
+        || (update.update_type.startsWith('os_') ? 'OS'
+          : update.update_type.startsWith('dependency') ? 'Python'
+          : 'Applikation'),
+      risk: update.severity,
     })
   })
 
@@ -362,7 +358,7 @@ function VersionInventory({ detail, sbom }: { detail: CMDBDetail; sbom: SbomDocu
       </div>
       <div className="max-h-[65vh] overflow-y-auto">
         <table className="w-full table-fixed text-xs">
-          <thead className="sticky top-0 bg-white text-[10px] uppercase text-gray-400 border-b border-gray-100 shadow-sm">
+          <thead className="sticky top-0 bg-white text-[10px] uppercase text-gray-600 border-b border-gray-200 shadow-sm">
             <tr>
               <th className="text-left px-4 py-2 w-[30%]">App / service / pakke</th>
               <th className="text-left px-4 py-2 w-[23%]">Installeret version</th>
@@ -381,11 +377,11 @@ function VersionInventory({ detail, sbom }: { detail: CMDBDetail; sbom: SbomDocu
                 <tr key={row.key} className={`border-b border-gray-100 last:border-0 hover:bg-sky-50/60 ${rowClass}`}>
                   <td className="px-4 py-2 align-top">
                     <div className="font-medium text-gray-900 break-words">{row.name}</div>
-                    <div className="text-[10px] text-gray-400">{row.category}</div>
+                    <div className="text-[10px] text-gray-500">{row.category}</div>
                   </td>
-                  <td className="px-4 py-2 align-top font-mono text-gray-600 break-words">{row.installed}</td>
-                  <td className={`px-4 py-2 align-top font-mono font-medium break-words ${row.risk === 'security' ? 'text-red-700' : row.risk === 'feature' ? 'text-amber-700' : 'text-gray-600'}`}>{row.available}</td>
-                  <td className="px-4 py-2 align-top text-gray-500 break-words">{row.source}</td>
+                  <td className="px-4 py-2 align-top font-mono text-gray-800 break-words">{row.installed}</td>
+                  <td className={`px-4 py-2 align-top font-mono font-semibold break-words ${row.risk === 'security' ? 'text-red-700' : row.risk === 'feature' ? 'text-amber-700' : 'text-gray-800'}`}>{row.available}</td>
+                  <td className="px-4 py-2 align-top text-gray-700 break-words">{row.source}</td>
                   <td className="px-4 py-2 align-top text-right">
                     <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeClass}`}>
                       {row.risk === 'security' ? 'Sikkerhed' : row.risk === 'feature' ? 'Opdatering' : 'Aktuel'}
@@ -396,13 +392,13 @@ function VersionInventory({ detail, sbom }: { detail: CMDBDetail; sbom: SbomDocu
             })}
             {visibleRows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-400">Ingen komponenter matcher søgningen.</td>
+                <td colSpan={5} className="px-4 py-8 text-center text-sm text-gray-500">Ingen komponenter matcher søgningen.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      <div className="px-4 py-2 border-t border-gray-100 bg-gray-50 text-[11px] text-gray-500">
+      <div className="px-4 py-2 border-t border-gray-100 bg-gray-50 text-[11px] text-gray-600">
         Viser {visibleRows.length} af {rows.length} CMDB/SBOM-komponenter. Grøn er aktuel, gul er funktionel update, rød er security.
       </div>
     </div>
@@ -803,7 +799,7 @@ export function CMDBDetailPage() {
     const isEditing = editField === field
     return (
       <div className="flex items-start gap-2 py-1.5">
-        <span className="text-xs text-gray-400 w-36 flex-shrink-0 mt-0.5">{label}</span>
+        <span className="text-xs text-gray-600 w-36 flex-shrink-0 mt-0.5">{label}</span>
         {isEditing ? (
           <div className="flex items-center gap-1 flex-1">
             <input
@@ -917,25 +913,13 @@ export function CMDBDetailPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-        {/* Hardware */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-sky-500" /> Hardware
-          </h2>
-          <div className="space-y-0.5">
-            <Row label="Model" value={detail.hardware_model} />
-            <Row label="SoC" value={detail.soc_model} />
-            <Row label="CPU-kerner" value={detail.cpu_cores?.toString()} />
-            <Row label="RAM" value={detail.ram_mb ? `${detail.ram_mb} MB` : null} />
-            <Row label="MAC-adresse" value={detail.mac_address} mono />
-            <Row label="Serienummer" value={detail.serial_number} mono />
-            <Row label="Hostname" value={detail.hostname} />
-            <Row label="IP-adresse" value={detail.ip_address} mono />
-          </div>
-        </div>
-
-        {/* OS / Software */}
-        <div className="bg-white rounded-xl border border-gray-200 p-5 lg:col-span-2">
+        {/* OS / Software — full width: this is the primary reason an admin opens
+            a device's CMDB page, so it gets the most room. Hardware/Storage/
+            CMDB-admin move below as an even three-column row (2026-09-07,
+            per Peter: previously Hardware sat here at 1/3 width while OS/Software
+            was squeezed into the remaining 2/3, and the row below had an empty,
+            wasted third column next to Storage/CMDB-admin). */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5 lg:col-span-3">
           <div className="flex items-center justify-between gap-3 mb-3">
             <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
               <Package className="w-4 h-4 text-sky-500" /> OS / Software
@@ -956,7 +940,7 @@ export function CMDBDetailPage() {
           </div>
           <VersionInventory detail={detail} sbom={sbom} />
           <details className="mt-3">
-            <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">Teknisk rådata og SBOM-evidens</summary>
+            <summary className="text-xs font-medium text-gray-700 cursor-pointer hover:text-gray-900">Teknisk rådata og SBOM-evidens</summary>
             <div className="mt-2 border-l-2 border-gray-100 pl-3">
           {Object.keys(detail.software_inventory ?? {}).length > 0 && (() => {
             // Skjul nøgler der allerede vises i dedikerede sektioner
@@ -973,20 +957,20 @@ export function CMDBDetailPage() {
                 <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-100">
                   {invEntries.map(([name, value]) => (
                     <div key={name} className="flex min-w-0 justify-between gap-3 text-xs py-1 px-2 border-b border-gray-50 last:border-0">
-                      <span className="text-gray-600 font-medium shrink-0">{name}</span>
-                      <span className="min-w-0 break-all text-right font-mono text-gray-400">{compactValue(value)}</span>
+                      <span className="text-gray-700 font-medium shrink-0">{name}</span>
+                      <span className="min-w-0 break-all text-right font-mono text-gray-600">{compactValue(value)}</span>
                     </div>
                   ))}
                 </div>
               </details>
             )
           })()}
-          {Array.isArray(detail.software_inventory?.available_software_updates) && (() => {
-            const updates = detail.software_inventory.available_software_updates as Array<Record<string, unknown>>
-            const securityUpdates = updates.filter(u => String(u.kind ?? '') === 'security')
-            const otherUpdates = updates.filter(u => String(u.kind ?? '') !== 'security')
+          {(detail.package_updates?.length ?? 0) > 0 && (() => {
+            const updates = detail.package_updates
+            const securityUpdates = updates.filter(u => u.severity === 'security')
+            const otherUpdates = updates.filter(u => u.severity !== 'security')
             return (
-              <details className="mt-3">
+              <details className="mt-3" open>
                 <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
                   {securityUpdates.length > 0 && (
                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-semibold">
@@ -998,12 +982,12 @@ export function CMDBDetailPage() {
                       ↑ {otherUpdates.length} øvrige
                     </span>
                   )}
-                  <span className="text-gray-400">tilgængelige opdateringer</span>
+                  <span className="text-gray-600">tilgængelige opdateringer (OS, Python og platform-apps)</span>
                 </summary>
                 <div className="mt-2 max-h-56 overflow-auto rounded border border-gray-100">
                   <table className="min-w-[36rem] w-full text-xs">
                     <thead>
-                      <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+                      <tr className="bg-gray-50 text-gray-600 uppercase tracking-wide text-[10px]">
                         <th className="text-left px-2 py-1">Pakke</th>
                         <th className="text-right px-2 py-1">Installeret</th>
                         <th className="text-center px-1 py-1"></th>
@@ -1013,17 +997,17 @@ export function CMDBDetailPage() {
                     </thead>
                     <tbody>
                       {updates.map((item, idx) => {
-                        const isSecurity = String(item.kind ?? '') === 'security'
+                        const isSecurity = item.severity === 'security'
                         return (
-                          <tr key={`${String(item.name)}-${idx}`} className={`border-t border-gray-50 ${isSecurity ? 'bg-red-50/40' : ''}`}>
-                            <td className="px-2 py-1 font-medium text-gray-700">{String(item.name ?? 'ukendt')}</td>
-                            <td className="px-2 py-1 font-mono text-gray-400 text-right">{String(item.installed_version ?? '?')}</td>
-                            <td className="px-1 py-1 text-gray-300 text-center">→</td>
-                            <td className="px-2 py-1 font-mono font-semibold text-green-700">{String(item.available_version ?? '?')}</td>
+                          <tr key={`${item.name}-${idx}`} className={`border-t border-gray-50 ${isSecurity ? 'bg-red-50/40' : ''}`}>
+                            <td className="px-2 py-1 font-medium text-gray-800">{item.name || 'ukendt'}</td>
+                            <td className="px-2 py-1 font-mono text-gray-700 text-right">{item.installed_version || '?'}</td>
+                            <td className="px-1 py-1 text-gray-400 text-center">→</td>
+                            <td className="px-2 py-1 font-mono font-semibold text-green-700">{item.available_version || '?'}</td>
                             <td className="px-2 py-1 text-right">
                               {isSecurity
                                 ? <span className="px-1 py-0.5 rounded bg-red-100 text-red-600 text-[10px]">security</span>
-                                : <span className="px-1 py-0.5 rounded bg-gray-100 text-gray-400 text-[10px]">{String(item.kind ?? item.manager ?? '')}</span>
+                                : <span className="px-1 py-0.5 rounded bg-gray-100 text-gray-600 text-[10px]">{item.source || item.update_type}</span>
                               }
                             </td>
                           </tr>
@@ -1045,9 +1029,9 @@ export function CMDBDetailPage() {
                   <div key={item.id} className="grid grid-cols-12 gap-2 text-xs px-3 py-2 border-b border-gray-50 last:border-0">
                     <div className="col-span-3 min-w-0">
                       <div className="font-medium text-gray-800 truncate">{item.component || item.update_type}</div>
-                      <div className="text-[11px] text-gray-400">#{item.id} · {item.environment || '-'}</div>
+                      <div className="text-[11px] text-gray-500">#{item.id} · {item.environment || '-'}</div>
                     </div>
-                    <div className="col-span-3 font-mono text-gray-500 truncate">{item.current_version || '—'}</div>
+                    <div className="col-span-3 font-mono text-gray-700 truncate">{item.current_version || '—'}</div>
                     <div className="col-span-4 font-mono text-gray-800 truncate">{item.latest_available_version || '—'}</div>
                     <div className="col-span-2 text-right">
                       <span className={`px-1.5 py-0.5 rounded border text-[11px] ${statusBadgeClass(item.status)}`}>{item.status}</span>
@@ -1058,19 +1042,11 @@ export function CMDBDetailPage() {
             </details>
           )}
           {sbom && (() => {
-            // Byg opslag: pakkenavn → tilgængelig version (alle managere)
-            const availUpdates = Array.isArray(detail.software_inventory?.available_software_updates)
-              ? (detail.software_inventory.available_software_updates as Array<Record<string, unknown>>)
-              : []
-            const allUpdateMap: Record<string, { avail: string; kind: string }> = {}
-            availUpdates.forEach(u => {
-              allUpdateMap[String(u.name ?? '').toLowerCase()] = {
-                avail: String(u.available_version ?? ''),
-                kind: String(u.kind ?? ''),
-              }
-            })
+            // Kanonisk opslag: pakkenavn → outdated-info, samme kilde som resten
+            // af siden (dækker OS/Python/platform-apps, ikke kun Homebrew).
+            const updateMap = packageUpdateLookup(detail)
             const components = sbom.components || []
-            const updatableInSbom = components.filter(c => allUpdateMap[(c.name ?? '').toLowerCase()]).length
+            const updatableInSbom = components.filter(c => updateMap[normalizedPackageName(c.name)]).length
             return (
               <details className="mt-3">
                 <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
@@ -1080,16 +1056,16 @@ export function CMDBDetailPage() {
                       {updatableInSbom} har nyere version
                     </span>
                   )}
-                  <span className="ml-auto text-gray-400 text-[10px]">{sbom.serialNumber?.slice(0, 20) || `${sbom.bomFormat || 'SBOM'} ${sbom.specVersion || ''}`}</span>
+                  <span className="ml-auto text-gray-500 text-[10px]">{sbom.serialNumber?.slice(0, 20) || `${sbom.bomFormat || 'SBOM'} ${sbom.specVersion || ''}`}</span>
                 </summary>
                 <div className="mt-2 rounded-lg border border-gray-100 overflow-hidden">
-                  <div className="flex items-center justify-end gap-3 px-3 py-1.5 bg-gray-50 text-[10px] text-gray-400 border-b border-gray-100">
+                  <div className="flex items-center justify-end gap-3 px-3 py-1.5 bg-gray-50 text-[10px] text-gray-600 border-b border-gray-100">
                     <button onClick={downloadSbom} className="text-sky-600 hover:text-sky-700">Download JSON</button>
                   </div>
                   <div className="max-h-64 overflow-auto">
                     <table className="min-w-[34rem] w-full text-xs">
                       <thead>
-                        <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+                        <tr className="bg-gray-50 text-gray-600 uppercase tracking-wide text-[10px]">
                           <th className="text-left px-2 py-1">Komponent</th>
                           <th className="text-right px-2 py-1">Version</th>
                           <th className="text-left px-2 py-1">Tilgængelig</th>
@@ -1098,22 +1074,22 @@ export function CMDBDetailPage() {
                       </thead>
                       <tbody>
                         {components.slice(0, 200).map((component, idx) => {
-                          const upd = allUpdateMap[(component.name ?? '').toLowerCase()]
-                          const isSecurity = upd?.kind === 'security'
+                          const upd = updateMap[normalizedPackageName(component.name)]
+                          const isSecurity = upd?.severity === 'security'
                           return (
                             <tr key={`${component.name}-${idx}`} className={`border-t border-gray-50 ${isSecurity ? 'bg-red-50/30' : upd ? 'bg-amber-50/30' : ''}`}>
-                              <td className={`px-2 py-0.5 truncate max-w-[120px] ${upd ? 'font-medium text-gray-800' : 'text-gray-600'}`}>{component.name || 'ukendt'}</td>
-                              <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-400'}`}>{component.version || '—'}</td>
+                              <td className={`px-2 py-0.5 truncate max-w-[120px] ${upd ? 'font-medium text-gray-800' : 'text-gray-700'}`}>{component.name || 'ukendt'}</td>
+                              <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-600'}`}>{component.version || '—'}</td>
                               <td className="px-2 py-0.5 font-mono">
                                 {upd
                                   ? <span className={`font-semibold ${isSecurity ? 'text-red-600' : 'text-green-600'}`}>
-                                      {upd.avail}
+                                      {upd.available_version}
                                       {isSecurity && <span className="ml-1 text-[10px] bg-red-100 text-red-600 px-1 rounded">sec</span>}
                                     </span>
-                                  : <span className="text-gray-300 text-[10px]">✓</span>
+                                  : <span className="text-gray-400 text-[10px]">✓</span>
                                 }
                               </td>
-                              <td className="px-2 py-0.5 text-right text-gray-400 text-[10px]">{component.type || 'lib'}</td>
+                              <td className="px-2 py-0.5 text-right text-gray-500 text-[10px]">{component.type || 'lib'}</td>
                             </tr>
                           )
                         })}
@@ -1121,7 +1097,7 @@ export function CMDBDetailPage() {
                     </table>
                   </div>
                   {components.length > 200 && (
-                    <div className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-50">
+                    <div className="px-3 py-2 text-[11px] text-gray-600 border-t border-gray-50">
                       Viser de første 200 komponenter. Download JSON for fuld SBOM.
                     </div>
                   )}
@@ -1130,21 +1106,9 @@ export function CMDBDetailPage() {
             )
           })()}
           {Object.keys(detail.venv_packages ?? {}).length > 0 && (() => {
-            // Pip-opdateringer fra inventory
-            const availUpdates = Array.isArray(detail.software_inventory?.available_software_updates)
-              ? (detail.software_inventory.available_software_updates as Array<Record<string, unknown>>)
-              : []
-            const pipUpdateMap: Record<string, { avail: string; kind: string }> = {}
-            availUpdates
-              .filter(u => String(u.manager ?? '').toLowerCase() === 'pip' || String(u.manager ?? '').toLowerCase() === 'python')
-              .forEach(u => {
-                pipUpdateMap[String(u.name ?? '').toLowerCase()] = {
-                  avail: String(u.available_version ?? ''),
-                  kind: String(u.kind ?? ''),
-                }
-              })
+            const updateMap = packageUpdateLookup(detail)
             const venvEntries = Object.entries(detail.venv_packages).sort()
-            const updatableCount = venvEntries.filter(([name]) => pipUpdateMap[name.toLowerCase()]).length
+            const updatableCount = venvEntries.filter(([name]) => updateMap[normalizedPackageName(name)]).length
             return (
               <details className="mt-3">
                 <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
@@ -1158,7 +1122,7 @@ export function CMDBDetailPage() {
                 <div className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-100">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+                      <tr className="bg-gray-50 text-gray-600 uppercase tracking-wide text-[10px]">
                         <th className="text-left px-2 py-1">Pakke</th>
                         <th className="text-right px-2 py-1">Installeret</th>
                         <th className="text-left px-2 py-1">Tilgængelig</th>
@@ -1166,15 +1130,15 @@ export function CMDBDetailPage() {
                     </thead>
                     <tbody>
                       {venvEntries.map(([name, ver]) => {
-                        const upd = pipUpdateMap[name.toLowerCase()]
+                        const upd = updateMap[normalizedPackageName(name)]
                         return (
                           <tr key={name} className={`border-t border-gray-50 ${upd ? 'bg-amber-50/30' : ''}`}>
-                            <td className={`px-2 py-0.5 ${upd ? 'font-medium text-gray-800' : 'text-gray-600'}`}>{name}</td>
-                            <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-400'}`}>{ver}</td>
+                            <td className={`px-2 py-0.5 ${upd ? 'font-medium text-gray-800' : 'text-gray-700'}`}>{name}</td>
+                            <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-600'}`}>{ver}</td>
                             <td className="px-2 py-0.5 font-mono">
                               {upd
-                                ? <span className="font-semibold text-green-600">{upd.avail}</span>
-                                : <span className="text-gray-300 text-[10px]">✓</span>
+                                ? <span className="font-semibold text-green-600">{upd.available_version}</span>
+                                : <span className="text-gray-400 text-[10px]">✓</span>
                               }
                             </td>
                           </tr>
@@ -1187,19 +1151,9 @@ export function CMDBDetailPage() {
             )
           })()}
           {Object.keys(detail.os_packages ?? {}).length > 0 && (() => {
-            // Byg opslag: pakkenavn → tilgængelig version (fra apt-inventory)
-            const availUpdates = Array.isArray(detail.software_inventory?.available_software_updates)
-              ? (detail.software_inventory.available_software_updates as Array<Record<string, unknown>>)
-              : []
-            const updateMap: Record<string, { avail: string; kind: string }> = {}
-            availUpdates.forEach(u => {
-              updateMap[String(u.name ?? '')] = {
-                avail: String(u.available_version ?? ''),
-                kind: String(u.kind ?? ''),
-              }
-            })
+            const updateMap = packageUpdateLookup(detail)
             const pkgEntries = Object.entries(detail.os_packages).sort()
-            const updatableCount = pkgEntries.filter(([name]) => updateMap[name]).length
+            const updatableCount = pkgEntries.filter(([name]) => updateMap[normalizedPackageName(name)]).length
             return (
               <details className="mt-3">
                 <summary className="text-xs cursor-pointer hover:opacity-80 flex items-center gap-2">
@@ -1213,7 +1167,7 @@ export function CMDBDetailPage() {
                 <div className="mt-2 max-h-64 overflow-y-auto rounded border border-gray-100">
                   <table className="w-full text-xs">
                     <thead>
-                      <tr className="bg-gray-50 text-gray-400 uppercase tracking-wide text-[10px]">
+                      <tr className="bg-gray-50 text-gray-600 uppercase tracking-wide text-[10px]">
                         <th className="text-left px-2 py-1">Pakke</th>
                         <th className="text-right px-2 py-1">Installeret</th>
                         <th className="text-left px-2 py-1">Tilgængelig</th>
@@ -1221,19 +1175,19 @@ export function CMDBDetailPage() {
                     </thead>
                     <tbody>
                       {pkgEntries.map(([name, ver]) => {
-                        const upd = updateMap[name]
-                        const isSecurity = upd?.kind === 'security'
+                        const upd = updateMap[normalizedPackageName(name)]
+                        const isSecurity = upd?.severity === 'security'
                         return (
                           <tr key={name} className={`border-t border-gray-50 ${isSecurity ? 'bg-red-50/30' : upd ? 'bg-amber-50/30' : ''}`}>
-                            <td className={`px-2 py-0.5 ${upd ? 'font-medium text-gray-800' : 'text-gray-600'}`}>{name}</td>
-                            <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-400'}`}>{ver}</td>
+                            <td className={`px-2 py-0.5 ${upd ? 'font-medium text-gray-800' : 'text-gray-700'}`}>{name}</td>
+                            <td className={`px-2 py-0.5 font-mono text-right ${upd ? 'text-amber-700' : 'text-gray-600'}`}>{ver}</td>
                             <td className="px-2 py-0.5 font-mono">
                               {upd
                                 ? <span className={`font-semibold ${isSecurity ? 'text-red-600' : 'text-green-600'}`}>
-                                    {upd.avail}
+                                    {upd.available_version}
                                     {isSecurity && <span className="ml-1 text-[10px] bg-red-100 text-red-600 px-1 rounded">security</span>}
                                   </span>
-                                : <span className="text-gray-300">✓ up to date</span>
+                                : <span className="text-gray-400">✓ up to date</span>
                               }
                             </td>
                           </tr>
@@ -1247,6 +1201,23 @@ export function CMDBDetailPage() {
           })()}
             </div>
           </details>
+        </div>
+
+        {/* Hardware */}
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <Cpu className="w-4 h-4 text-sky-500" /> Hardware
+          </h2>
+          <div className="space-y-0.5">
+            <Row label="Model" value={detail.hardware_model} />
+            <Row label="SoC" value={detail.soc_model} />
+            <Row label="CPU-kerner" value={detail.cpu_cores?.toString()} />
+            <Row label="RAM" value={detail.ram_mb ? `${detail.ram_mb} MB` : null} />
+            <Row label="MAC-adresse" value={detail.mac_address} mono />
+            <Row label="Serienummer" value={detail.serial_number} mono />
+            <Row label="Hostname" value={detail.hostname} />
+            <Row label="IP-adresse" value={detail.ip_address} mono />
+          </div>
         </div>
 
         {/* Storage */}
@@ -1291,7 +1262,7 @@ export function CMDBDetailPage() {
 
           {/* Environment picker */}
           <div className="flex items-start gap-2 py-1.5">
-            <span className="text-xs text-gray-400 w-36 flex-shrink-0 mt-0.5">Miljø</span>
+            <span className="text-xs text-gray-600 w-36 flex-shrink-0 mt-0.5">Miljø</span>
             <div className="flex gap-1.5">
               {envOptions.map(env => (
                 <button
@@ -1316,7 +1287,7 @@ export function CMDBDetailPage() {
 
           {/* Notes */}
           <div className="mt-3">
-            <span className="text-xs text-gray-400 block mb-1">Noter</span>
+            <span className="text-xs text-gray-600 block mb-1">Noter</span>
             {editField === 'notes' ? (
               <div>
                 <textarea
@@ -1598,8 +1569,8 @@ export function CMDBDetailPage() {
 function Row({ label, value, mono = false }: { label: string; value: string | null | undefined; mono?: boolean }) {
   return (
     <div className="grid min-w-0 grid-cols-[minmax(6rem,0.8fr)_minmax(0,1.2fr)] items-start gap-2 py-1">
-      <span className="text-xs text-gray-400">{label}</span>
-      <span className={`min-w-0 break-all text-sm ${value ? 'text-gray-900' : 'text-gray-400'} ${mono ? 'font-mono' : ''}`}>
+      <span className="text-xs text-gray-600">{label}</span>
+      <span className={`min-w-0 break-all text-sm ${value ? 'text-gray-900' : 'text-gray-500'} ${mono ? 'font-mono' : ''}`}>
         {value ?? '—'}
       </span>
     </div>
