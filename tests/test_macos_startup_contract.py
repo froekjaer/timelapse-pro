@@ -10,6 +10,7 @@ PLISTS = (
     ROOT / "deploy/launchd/macos/dk.froekjaer.timelapse-headend.plist",
     ROOT / "deploy/launchd/dk.froekjaer.timelapse-headend.plist",
 )
+MOUNT_PLIST = ROOT / "deploy/launchd/macos/dk.froekjaer.timelapse-mount.plist"
 
 
 def test_headend_waits_for_real_writable_volume():
@@ -26,3 +27,10 @@ def test_headend_retries_after_transient_boot_dependency_failure():
         assert plist["RunAtLoad"] is True
         assert plist["KeepAlive"] is True
         assert plist["ThrottleInterval"] >= 10
+
+
+def test_external_volume_mount_retries_after_late_boot_visibility():
+    plist = plistlib.loads(MOUNT_PLIST.read_bytes())
+    assert plist["RunAtLoad"] is True
+    assert plist["KeepAlive"] is True
+    assert plist["ThrottleInterval"] >= 10
