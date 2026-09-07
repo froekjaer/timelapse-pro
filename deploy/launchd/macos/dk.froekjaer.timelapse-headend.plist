@@ -26,17 +26,10 @@
   <string>/Users/peter/Library/Logs/timelapse-headend.log</string>
   <key>RunAtLoad</key>
   <true/>
-  <!-- KeepAlive with SuccessfulExit=false means only restart on unexpected crash -->
-  <!-- Clean exit (exit code 0) will NOT restart - prevents restart loops on startup errors -->
+  <!-- The launcher performs bounded dependency waits; keep retrying after a
+       late volume/database start so a console login is never required. -->
   <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-    <!-- Maximum 5 rapid failures in 60 seconds before giving up -->
-    <key>CrashCount</key>
-    <integer>5</integer>
-  </dict>
-  <!-- ThrottleInterval increased to 30s to prevent aggressive restart loops -->
+  <true/>
   <key>ThrottleInterval</key>
   <integer>30</integer>
 </dict>

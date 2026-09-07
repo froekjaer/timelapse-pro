@@ -15,16 +15,26 @@ if [[ -r "$ENV_FILE" ]]; then
   set +a
 fi
 
-wait_for_path() {
-  local path="$1"
-  local timeout="${2:-180}"
+wait_for_data_volume() {
+  local timeout="${1:-180}"
   local waited=0
-  while [[ ! -e "$path" && "$waited" -lt "$timeout" ]]; do
-    echo "$LOG_PREFIX waiting for $path ($waited/$timeout)"
+
+  # /Volumes/data-fast can exist as an empty mount point before APFS has
+  # mounted the actual volume.  Check the mount table and the real workload
+  # directory instead of trusting the directory entry alone.
+  while [[ "$waited" -lt "$timeout" ]]; do
+    if /sbin/mount | /usr/bin/awk -v target="/Volumes/${TIMELAPSE_DATA_VOLUME:-data-fast}" '$3 == target { found=1 } END { exit(found ? 0 : 1) }' \
+      && [[ -d "$WORKDIR" && -w "$WORKDIR" ]]; then
+      echo "$LOG_PREFIX data volume mounted and writable: /Volumes/${TIMELAPSE_DATA_VOLUME:-data-fast}"
+      return 0
+    fi
+    echo "$LOG_PREFIX waiting for mounted writable data volume ($waited/$timeout)"
     sleep 5
     waited=$((waited + 5))
   done
-  [[ -e "$path" ]]
+
+  echo "$LOG_PREFIX ERROR: data volume was not mounted and writable after ${timeout}s"
+  return 1
 }
 
 wait_for_tcp() {
@@ -170,8 +180,7 @@ ensure_port_available() {
   return 1
 }
 
-wait_for_path "/Volumes/data-fast" 240
-wait_for_path "$WORKDIR" 240
+wait_for_data_volume 240
 wait_for_tcp "127.0.0.1" "5432" 240
 
 # Ensure port 8000 is available before starting headend
