@@ -469,6 +469,13 @@ if _cert_exists "$TL_DOMAIN_BACKEND"; then
         ssl_ciphers HIGH:!aNULL:!MD5;
         add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;
 
+        gzip              on;
+        gzip_comp_level   5;
+        gzip_min_length   1024;
+        gzip_vary         on;
+        gzip_types        application/javascript application/json application/wasm
+                          image/svg+xml text/css text/plain text/xml;
+
         root ${TL_REPO_DIR}/timelapse-ui/dist;
         index index.html;
 
@@ -477,7 +484,8 @@ if _cert_exists "$TL_DOMAIN_BACKEND"; then
             try_files \$uri \$uri/ /index.html;
         }
         location ^~ /assets/ {
-            add_header Cache-Control "no-cache, must-revalidate" always;
+            expires 1y;
+            add_header Cache-Control "public, max-age=31536000, immutable" always;
             try_files \$uri =404;
         }
 

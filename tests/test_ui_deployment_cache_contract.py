@@ -19,6 +19,15 @@ def test_nginx_templates_revalidate_ui_documents_and_assets():
         assert "location ^~ /assets/" in source
 
 
+def test_nginx_compresses_and_long_caches_content_addressed_assets():
+    for relative in ("deploy/nginx/timelapse.froekjaer.dk.conf", "deploy/install/install_headend.sh"):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        assert "gzip              on;" in source
+        assert "gzip_types" in source
+        assert 'Cache-Control "public, max-age=31536000, immutable"' in source
+        assert "expires 1y;" in source
+
+
 def test_update_approval_is_visible_and_flow_status_stays_at_the_top():
     source = (ROOT / "timelapse-ui/src/pages/UpdatesPage.tsx").read_text(encoding="utf-8")
     assert 'role="dialog" aria-modal="true"' in source
