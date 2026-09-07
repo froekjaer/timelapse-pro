@@ -172,7 +172,12 @@ export function CaptureThumbnailCard({
   const [inView, setInView] = useState(false)
   const [loadSrc, setLoadSrc] = useState<string | null>(null)
   const ai = parseCaptureQA(capture)
-  const parts = filenameParts(capture.filename)
+  const filenameFallback = filenameParts(capture.filename)
+  const parts = {
+    customer: capture.customer_name || filenameFallback.customer,
+    site: capture.site_name || filenameFallback.site,
+    camera: capture.camera_name || filenameFallback.camera,
+  }
   const imgSrc = refresh > 0 ? `${thumbUrl}?repair=${refresh}` : thumbUrl
   const tagLabels = useTagLabels()
 

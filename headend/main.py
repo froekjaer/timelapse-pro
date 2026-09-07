@@ -70,6 +70,7 @@ import urllib.request as _urlrequest
 import functools as _functools
 import shutil as _shutil
 import edge_provisioning_security as _edge_provisioning
+import services.capture_display as _capture_display
 from services.bootstrap_security import resolve_initial_admin_password
 from services.technician_auth_security import html_text, validate_technician_device_id
 # ── Auth imports (Sprint C) ───────────────────────────────────────────────
@@ -11097,7 +11098,7 @@ def list_captures(
         elif cam.customer_id:
             _ensure_customer_access(_user, cam.customer_id)
         q = q.filter(Capture.camera_id == camera_id)
-    captures = q.limit(limit).all()
+    captures = q.limit(limit).all(); display_names = _capture_display.names(db, captures)
     return [
         {
             "id":            c.id,
@@ -11105,6 +11106,9 @@ def list_captures(
             "camera_id":     c.camera_id if hasattr(c, 'camera_id') else None,
             "customer_id":   c.customer_id if hasattr(c, 'customer_id') else None,
             "site_id":       c.site_id if hasattr(c, 'site_id') else None,
+            "customer_name": display_names.get(c.id, {}).get("customer_name"),
+            "site_name":     display_names.get(c.id, {}).get("site_name"),
+            "camera_name":   display_names.get(c.id, {}).get("camera_name"),
             "filename":      c.filename,
             "captured_at":   c.captured_at.isoformat() if c.captured_at else None,
             "quality_flag":  c.quality_flag,
