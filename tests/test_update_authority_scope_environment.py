@@ -48,6 +48,26 @@ def test_unknown_device_environment_fails_closed():
     assert not update_applies_to_device(update, obj(device_id="TL-1"), obj(device_id="TL-1", environment=None))
 
 
+def test_all_environments_marker_matches_any_known_device_environment():
+    # Peter, 2026-09-08: multi-device rollouts (customer/site/global) had no
+    # way to intentionally target every environment in one approval — you
+    # had to guess "test" or "production" and risk silently authorizing zero
+    # devices, same class of trap as the one that caused #273 to get stuck.
+    update = obj(scope="global", scope_id=None, environment="all", target_device_ids=None)
+    for env in ("test", "production", "staging", "lab"):
+        device = obj(device_id="TL-1", environment=env)
+        assert update_applies_to_device(update, device, device)
+    for alias in ("all", "alle", "any", "ALL", " All "):
+        aliased = obj(scope="global", scope_id=None, environment=alias, target_device_ids=None)
+        prod = obj(device_id="TL-1", environment="production")
+        assert update_applies_to_device(aliased, prod, prod)
+
+
+def test_all_environments_marker_still_fails_closed_for_unknown_device_environment():
+    update = obj(scope="global", scope_id=None, environment="all", target_device_ids=None)
+    assert not update_applies_to_device(update, obj(device_id="TL-1"), obj(device_id="TL-1", environment=None))
+
+
 def test_explicit_target_list_never_bypasses_environment():
     update = obj(scope="global", scope_id=None, environment="test", target_device_ids='["TL-1"]')
     prod = obj(device_id="TL-1", environment="production")

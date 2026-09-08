@@ -218,7 +218,7 @@ interface UpdateArtifact {
 }
 
 interface ApproveOptions {
-  environment:      'test' | 'production'
+  environment:      'test' | 'production' | 'all'
   scope:            'global' | 'device' | 'customer' | 'site'
   scope_id:         string
 }
@@ -674,12 +674,13 @@ function FlowTargetsPanel({ flowStatus }: { flowStatus?: UpdateFlowStatus }) {
   )
 }
 
-function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDeploy, onBindArtifact, onBuildOsBundle, onRequestFlow, busy, deployStatus, flowStatus }: {
+function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onStopApproval, onHeadendDeploy, onBindArtifact, onBuildOsBundle, onRequestFlow, busy, deployStatus, flowStatus }: {
   u: Update
   onApprove:  (id: number) => void
   onReject:   (id: number) => void
   onPromote:  (id: number, target: 'staging' | 'production') => void
   onRollback: (id: number) => void
+  onStopApproval: (id: number) => void
   onHeadendDeploy: (id: number) => void
   onBindArtifact: (id: number, artifactId: string) => void
   onBuildOsBundle: (id: number) => void
@@ -721,8 +722,8 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
               {prodReady ? 'Prod-klar' : (STATUS_LABELS[u.status] ?? u.status)}
             </span>
             {u.environment && (
-              <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${u.environment === 'test' ? 'bg-purple-50 text-purple-700 border-purple-200' : prodReady ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                {u.environment === 'test' ? 'test' : prodReady ? 'prod-klar' : 'prod'}
+              <span className={`text-[11px] px-1.5 py-0.5 rounded border font-medium ${u.environment === 'all' ? 'bg-sky-50 text-sky-700 border-sky-200' : u.environment === 'test' ? 'bg-purple-50 text-purple-700 border-purple-200' : prodReady ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
+                {u.environment === 'all' ? 'alle miljøer' : u.environment === 'test' ? 'test' : prodReady ? 'prod-klar' : 'prod'}
               </span>
             )}
             {u.scope !== 'global' && (
@@ -804,21 +805,27 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onHeadendDep
           </div>
         )}
         {u.status === 'approved' && (
-          headendDeployable ? (
-            <div className="flex items-center gap-1.5 mr-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-1.5 mr-3 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            {headendDeployable ? (
               <button onClick={() => onHeadendDeploy(u.id)} disabled={isBusy || deployRunning}
                 title={u.environment === 'production' ? 'Aktivér den allerede godkendte release på Headend.' : 'Installer den godkendte release på test-Headend.'}
                 className="flex items-center gap-1 px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-white text-xs rounded-lg disabled:opacity-50">
                 <Package className="w-3.5 h-3.5" />
                 {deployRunning ? 'Kører...' : u.environment === 'production' ? 'Aktivér prod' : 'Installer på Headend'}
               </button>
-            </div>
-          ) : (
-            <div className={`flex items-center gap-1.5 mr-3 text-xs flex-shrink-0 ${headendScoped ? 'text-amber-600' : 'text-sky-500'}`}>
-              <Clock className="w-3.5 h-3.5 animate-pulse" />
-              {headendScoped ? 'Afventer Headend-flow' : 'Afventer edge'}
-            </div>
-          )
+            ) : (
+              <div className={`flex items-center gap-1.5 text-xs ${headendScoped ? 'text-amber-600' : 'text-sky-500'}`}>
+                <Clock className="w-3.5 h-3.5 animate-pulse" />
+                {headendScoped ? 'Afventer Headend-flow' : 'Afventer edge'}
+              </div>
+            )}
+            <button onClick={() => onStopApproval(u.id)} disabled={isBusy || deployRunning}
+              title="Stop godkendelsen. Sender opdateringen tilbage til 'Blokeret' — ingen enhed forsøger at installere den, indtil den godkendes igen."
+              className="flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 text-xs rounded-lg border border-red-200 disabled:opacity-50">
+              <XCircle className="w-3.5 h-3.5" />
+              Stop
+            </button>
+          </div>
         )}
         {open ? <ChevronDown className="w-4 h-4 text-gray-300 flex-shrink-0" />
                : <ChevronRight className="w-4 h-4 text-gray-300 flex-shrink-0" />}
@@ -1501,6 +1508,14 @@ export function UpdatesPage() {
     finally { setBusy(null) }
   }
 
+  async function stopApproval(id: number) {
+    if (!confirm('Stop godkendelsen? Opdateringen går tilbage til "Blokeret" — ingen enhed forsøger at installere den, før den godkendes igen.')) return
+    setBusy(id)
+    try { await api(`/api/updates/${id}/stop-approval`, { method: 'POST' }); load() }
+    catch (error: unknown) { setError(getErrorMessage(error)) }
+    finally { setBusy(null) }
+  }
+
   async function bindArtifact(id: number, artifactId: string) {
     setBusy(id)
     setError(null)
@@ -1803,13 +1818,22 @@ export function UpdatesPage() {
           )}
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
-              <label className="text-xs text-gray-500 block mb-1" title="Vælg test før produktion, medmindre en dokumenteret undtagelse er godkendt.">Miljø</label>
+              <label className="text-xs text-gray-500 block mb-1" title={approveOpts.scope === 'device'
+                ? 'Enheden selv afgør miljøet her — Headend håndhæver altid den valgte enheds eget rapporterede miljø, uanset hvad der vælges.'
+                : 'Vælg test før produktion, medmindre en dokumenteret undtagelse er godkendt.'}>Miljø</label>
               <select value={approveOpts.environment}
+                disabled={approveOpts.scope === 'device'}
                 onChange={(e: ChangeEvent<HTMLSelectElement>) => setApproveOpts(o => ({...o, environment: e.target.value as ApproveOptions['environment']}))}
-                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs">
+                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs disabled:bg-gray-50 disabled:text-gray-400">
                 <option value="test">Test (deploy til testmiljø først)</option>
                 <option value="production">Produktion</option>
+                {approveOpts.scope !== 'device' && (
+                  <option value="all">Alle miljøer (test og produktion)</option>
+                )}
               </select>
+              {approveOpts.scope === 'device' && (
+                <p className="text-[11px] text-gray-400 mt-1">Låst til den valgte enheds eget miljø.</p>
+              )}
             </div>
             <div>
               <label className="text-xs text-gray-500 block mb-1" title="Afgræns hvilke enheder den godkendte opdatering må gælde for.">Scope</label>
@@ -1919,6 +1943,7 @@ export function UpdatesPage() {
               onReject={reject}
               onPromote={(id, target) => promote(id, target)}
               onRollback={id => forceRollback(id)}
+              onStopApproval={stopApproval}
               onHeadendDeploy={headendDeploy}
               onBindArtifact={bindArtifact}
               onBuildOsBundle={buildOsBundle}
