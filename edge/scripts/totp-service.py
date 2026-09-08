@@ -13,6 +13,7 @@ Flow:
 """
 
 import os
+import re
 import ssl
 import time
 import hmac
@@ -324,6 +325,7 @@ def _valid_token(token: str, ip: str) -> bool:
     if timeout > 0 and time.time() > sess["expires"]:
         _sessions.pop(token, None)
         _iptables_remove(ip)
+        _forget_bluetooth_peer_for_ip(ip)
         return False
     return True
 
@@ -351,6 +353,29 @@ def _iptables_remove(ip: str) -> None:
         log.info(f"iptables: fjernede {ip}")
     except subprocess.CalledProcessError:
         pass
+
+
+def _forget_bluetooth_peer_for_ip(client_ip: str) -> None:
+    """Remove only the paired Bluetooth peer that owns this PAN lease."""
+    for lease_path in ("/var/lib/misc/dnsmasq.leases", "/var/lib/dnsmasq/dnsmasq.leases"):
+        try:
+            lines = Path(lease_path).read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            fields = line.split()
+            if len(fields) < 3 or fields[2] != client_ip:
+                continue
+            mac = fields[1].upper()
+            if not re.fullmatch(r"[0-9A-F]{2}(?::[0-9A-F]{2}){5}", mac):
+                return
+            try:
+                subprocess.run(["bluetoothctl", "remove", mac], check=True, capture_output=True)
+                log.info("Bluetooth-peer %s fjernet ved logout for %s", mac, client_ip)
+            except subprocess.CalledProcessError as exc:
+                log.warning("Kunne ikke fjerne Bluetooth-peer %s: %s", mac, exc.stderr.decode(errors="replace"))
+            return
+    log.info("Ingen Bluetooth-peer kunne knyttes til PAN-klient %s", client_ip)
 
 
 def _totp_login_allowed(client_ip: str) -> tuple[bool, int]:
@@ -585,6 +610,20 @@ async def verify(request: Request, code: str = Form(...)):
 @app.get("/health")
 async def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    """End the local session and forget only its Bluetooth PAN peer."""
+    client_ip = request.client.host
+    token = request.cookies.get(SESSION_COOKIE)
+    if token:
+        _sessions.pop(token, None)
+    _iptables_remove(client_ip)
+    _forget_bluetooth_peer_for_ip(client_ip)
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 
 # ── Management UI ─────────────────────────────────────────────────────────────

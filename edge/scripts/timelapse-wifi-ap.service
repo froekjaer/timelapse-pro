@@ -1,0 +1,18 @@
+[Unit]
+Description=TimeLapse Pro - isolated local WiFi AP fallback
+After=network-online.target timelapse-bt-pan.service
+Wants=network-online.target
+Before=timelapse-totp.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/opt/timelapse/edge/scripts/timelapse-wifi-ap.sh start
+ExecStop=/opt/timelapse/edge/scripts/timelapse-wifi-ap.sh stop
+TimeoutStartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
