@@ -5,6 +5,12 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  # Lets deploy-macmini be triggered by hand (Actions tab -> Run workflow, or
+  # `gh workflow run ci.yml --ref main`) while that job is gated to
+  # manual-only below. This trigger becomes unnecessary once the gate is
+  # lifted back to automatic in a follow-up PR — see deploy-macmini's own
+  # comment for why the gate exists.
+  workflow_dispatch: {}
 
 jobs:
 
@@ -88,11 +94,33 @@ jobs:
     name: Deploy to Mac mini Headend
     runs-on: self-hosted
     needs: [ python-check, ui-check ]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Manual-only (workflow_dispatch), NOT automatic on push, until the live
+    # cutover below is done. Uses ~/projects/timelapse-pro-deploy, a checkout
+    # dedicated to this job — never the interactive ~/projects/timelapse-pro
+    # working copy. That copy is also where interactive sessions (Claude,
+    # Codex, ...) actively edit, and this job's own tracked-changes guard
+    # correctly refuses to discard someone else's in-progress work, which
+    # used to mean any dirty working copy blocked every deploy until someone
+    # noticed and cleaned it up by hand (2026-09-08).
+    #
+    # The running Headend process itself still resolves its code from
+    # TIMELAPSE_HEADEND_WORKDIR in /etc/timelapse/headend.env, which as of
+    # this change still points at the OLD ~/projects/timelapse-pro (or falls
+    # back to it — see /usr/local/sbin/timelapse-headend-start's own
+    # default). If this job ran automatically on push right now, a merge
+    # could deploy code into the new checkout while the live process keeps
+    # serving old code from the other one — a worse, more hidden version
+    # mismatch than the dirty-checkout problem this PR fixes. Once the
+    # controlled headend.env cutover has happened (restart, verify health +
+    # actual worktree/path + DB connectivity), flip this back to
+    # `github.ref == 'refs/heads/main' && github.event_name == 'push'` in
+    # its own small follow-up PR — do not silently combine that revert with
+    # unrelated changes.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     steps:
       - name: Ryd macOS Icon metadata fra lokal repo
         run: |
-          cd ~/projects/timelapse-pro
+          cd ~/projects/timelapse-pro-deploy
           if [ -x tools/cleanup_macos_icon_files.sh ]; then
             tools/cleanup_macos_icon_files.sh .
           else
@@ -113,7 +141,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd ~/projects/timelapse-pro
+          cd ~/projects/timelapse-pro-deploy
           git fetch --prune origin main
           if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
             echo "❌ Lokal deploy-repo har tracked ændringer. Stopper før checkout."
@@ -135,7 +163,7 @@ jobs:
 
       - name: Build UI for target revision before backend restart
         run: |
-          cd ~/projects/timelapse-pro/timelapse-ui
+          cd ~/projects/timelapse-pro-deploy/timelapse-ui
           npm ci --silent
           npm run build
           echo "✅ UI built for exact target revision"
@@ -144,7 +172,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          REPO="$HOME/projects/timelapse-pro"
+          REPO="$HOME/projects/timelapse-pro-deploy"
           PREVIOUS_SHA="$(cat "$RUNNER_TEMP/timelapse-previous-sha")"
           TARGET_SHA="${{ github.sha }}"
 
