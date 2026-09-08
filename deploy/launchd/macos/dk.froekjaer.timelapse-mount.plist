@@ -4,12 +4,13 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>dk.froekjaer.timelapse-headend</string>
+  <string>dk.froekjaer.timelapse-mount</string>
   <key>UserName</key>
-  <string>peter</string>
+  <string>root</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/local/sbin/timelapse-headend-start</string>
+    <string>/bin/zsh</string>
+    <string>/usr/local/sbin/timelapse-mount-data</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -21,16 +22,14 @@
     <string>/etc/timelapse/headend.env</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>/Users/peter/Library/Logs/timelapse-headend.log</string>
+  <string>/Users/peter/Library/Logs/timelapse-mount.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/peter/Library/Logs/timelapse-headend.log</string>
+  <string>/Users/peter/Library/Logs/timelapse-mount.log</string>
   <key>RunAtLoad</key>
   <true/>
-  <!-- The launcher performs bounded dependency waits; keep retrying after a
-       late volume/database start so a console login is never required. -->
-  <key>KeepAlive</key>
-  <true/>
-  <key>ThrottleInterval</key>
+  <!-- Retry after late external-volume visibility without keeping a
+       successfully completed one-shot mount process alive. -->
+  <key>StartInterval</key>
   <integer>30</integer>
 </dict>
 </plist>
