@@ -2332,15 +2332,19 @@ class EdgeAgent:
         managed_units = (
             "timelapse-bt-pan.service",
             "timelapse-bt-agent.service",
+            "timelapse-ble-technician.service",
             "timelapse-captive.service",
+            "timelapse-wifi-ap.service",
             "timelapse-totp.service",
         )
         managed_unit_files = (*managed_units, "timelapse-edge.service")
         management_runtime_paths = {
             "edge/scripts/timelapse-bt-pan.sh",
             "edge/scripts/bt-autoagent.py",
+            "edge/scripts/ble-technician-gatt.py",
             "edge/scripts/totp-service.py",
             "edge/scripts/timelapse-captive.sh",
+            "edge/scripts/timelapse-wifi-ap.sh",
             "edge/scripts/gen-bt-cert.sh",
             *(f"edge/scripts/{unit}" for unit in managed_unit_files),
         }

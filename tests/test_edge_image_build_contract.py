@@ -52,8 +52,10 @@ def test_dockerfile_contains_edge_qa_and_management_runtime() -> None:
     source = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
     assert "edge/requirements.txt" in source
     assert "gphoto2" in source
-    for unit in ("timelapse-edge", "timelapse-bt-pan", "timelapse-bt-agent", "timelapse-captive", "timelapse-totp"):
+    for unit in ("timelapse-edge", "timelapse-bt-pan", "timelapse-bt-agent", "timelapse-captive", "timelapse-wifi-ap", "timelapse-totp"):
         assert f"{unit}.service" in source
+    assert "hostapd" in source
+    assert "dnsmasq" in source
     assert "avahi-daemon" in source
     assert "libnss-mdns" in source
 
@@ -63,7 +65,9 @@ def test_flashable_injection_copies_and_enables_all_local_management_units() -> 
     for unit in (
         "timelapse-bt-pan.service",
         "timelapse-bt-agent.service",
+        "timelapse-ble-technician.service",
         "timelapse-captive.service",
+        "timelapse-wifi-ap.service",
         "timelapse-totp.service",
     ):
         assert f'"etc/systemd/system/{unit}"' in source
@@ -77,6 +81,21 @@ def test_flashable_injection_copies_and_enables_all_local_management_units() -> 
     assert "centralt CA-udstedt lokalt TLS-certifikat" in source
     assert "forventet fysisk Edge-ID til MAC-binding" in source
     assert "expected_device_id" in source
+
+
+def test_wifi_ap_is_isolated_and_client_profile_wins() -> None:
+    script = (ROOT / "edge" / "scripts" / "timelapse-wifi-ap.sh").read_text()
+    assert "configured_client_profile" in script
+    assert "client_wifi_active" in script
+    assert "Router-WiFi er offline" in script
+    assert "/etc/netplan/60-wifi.yaml" in script
+    assert "/etc/wpa_supplicant/wpa_supplicant.conf" in script
+    assert "ssid=%s" in script
+    assert "wpa=0" in script
+    assert "sysctl -w net.ipv4.ip_forward=0" in script
+    assert 'iptables -A "$CHAIN" -i "$AP_IF" -j DROP' in script
+    assert 'dport 8443' in script
+    assert '[[ -f "$AP_ACTIVE" ]] || exit 0' in script
 
 
 def test_flashable_image_refuses_shared_or_unprovisioned_local_access() -> None:

@@ -1,0 +1,28 @@
+name: TimeLapseTechnician
+options:
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: dk.froekjaer.timelapse.technician
+    SWIFT_VERSION: 5.9
+targets:
+  TimeLapseTechnician:
+    type: application
+    platform: iOS
+    sources:
+      - path: TimeLapseTechnician
+        excludes:
+          - README.md
+          - Info.plist
+    info:
+      path: TimeLapseTechnician/Info.plist
+    settings:
+      base:
+        PRODUCT_NAME: TimeLapse Technician
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+    scheme:
+      gatherCoverageData: false
+      testTargets: []

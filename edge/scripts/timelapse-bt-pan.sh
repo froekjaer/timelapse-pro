@@ -64,7 +64,7 @@ fi
 timeout 5 bluetoothctl power on >/dev/null 2>&1 || true
 
 # --- 4. IO capability + discoverable ---
-timeout 5 btmgmt io-cap 4 >/dev/null 2>&1 || true   # KeyboardDisplay: agent håndterer confirmation
+timeout 5 btmgmt io-cap 3 >/dev/null 2>&1 || true   # NoInputNoOutput: TOTP er den lokale adgangskontrol
 timeout 5 bluetoothctl discoverable-timeout 0 >/dev/null 2>&1 || true
 timeout 5 bluetoothctl discoverable on >/dev/null 2>&1 || true
 timeout 5 bluetoothctl pairable on >/dev/null 2>&1 || true

@@ -4770,18 +4770,22 @@ def ssh_tunnel_active(
     from database import SshTunnelLog
     from sqlalchemy import text as _t
 
-    # Find seneste event pr. device — aktiv = seneste event er "connected"
+    # A reconnect can fail with EADDRINUSE while the previous reverse tunnel is
+    # still serving traffic. Select the latest connected event and verify the
+    # actual listener instead of letting that failed retry hide the tunnel.
     rows = db.execute(_t("""
         SELECT s.device_id, s.remote_port, s.local_port, s.event_at, s.extra
         FROM ssh_tunnel_log s
         INNER JOIN (
             SELECT device_id, MAX(event_at) as max_at
             FROM ssh_tunnel_log
+            WHERE event = 'connected'
             GROUP BY device_id
         ) latest ON s.device_id = latest.device_id AND s.event_at = latest.max_at
         WHERE s.event = 'connected'
         ORDER BY s.event_at DESC
     """)).fetchall()
+    rows = [r for r in rows if r[1] and _localhost_tcp_reachable(int(r[1]))]
 
     device_ips = {d.device_id: d.ip_address for d in db.query(Device).filter(Device.device_id.in_([r[0] for r in rows])).all()}
 
@@ -15950,7 +15954,11 @@ app.include_router(cameras_router)
 from api.admin_route_bundle import register_admin_route_bundle
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
-from api.ssh_tunnel_terminal_api import create_ssh_tunnel_terminal_router, terminal_trust_status
+from api.ssh_tunnel_terminal_api import (
+    _localhost_tcp_reachable,
+    create_ssh_tunnel_terminal_router,
+    terminal_trust_status,
+)
 register_admin_route_bundle(app, require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle)
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
