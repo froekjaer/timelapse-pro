@@ -83,6 +83,7 @@ CLI_ALLOWED_FLAGS = {
     "--status",
     "--test-headend",
     "--doctor",
+    "--doctor-json",
     "--network-status",
     "--network-preference",
     "--static-routes",
