@@ -3,7 +3,7 @@
 # Package installation is deliberately not performed here.
 set -euo pipefail
 
-GPS_DEVICE="${GPS_DEVICE:-/dev/ttyS3}"
+GPS_DEVICE="${GPS_DEVICE:-/dev/ttyACM0}"
 GPS_BAUD="${GPS_BAUD:-9600}"
 HEADEND_NTP_HOST="${HEADEND_NTP_HOST:-}"
 CHRONY_CONF="/etc/chrony/chrony.conf"
@@ -39,16 +39,16 @@ if [[ -n "$HEADEND_NTP_HOST" ]]; then
     HEADEND_NTP_LINE="server $HEADEND_NTP_HOST iburst minpoll 4 maxpoll 6"
 fi
 cat > "$CHRONY_CONF" <<EOF
-# TimeLapse Pro: GPS is primary; optional Headend NTP is offline-site fallback.
-refclock SHM 0 offset 0.5 delay 0.2 refid GPS noselect
-refclock SHM 1 offset 0.0 delay 0.005 refid PPS prefer
+# TimeLapse Pro: GPS is the primary local clock source. An optional Headend
+# source is only a fallback when GPS has no valid fix; there is no fake local
+# clock source, so a stale clock cannot be reported as synchronized.
+refclock SHM 0 offset 0.0 delay 0.2 refid GPS prefer trust
 $HEADEND_NTP_LINE
 makestep 1.0 3
 driftfile /var/lib/chrony/chrony.drift
 logdir /var/log.hdd/timelapse
 log tracking measurements statistics
 allow 192.168.42.0/24
-local stratum 10
 EOF
 
 systemctl enable gpsd chrony
