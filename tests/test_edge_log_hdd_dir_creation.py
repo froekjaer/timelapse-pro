@@ -44,3 +44,9 @@ def test_totp_and_timesync_no_longer_rely_solely_on_bt_pan_for_log_dir():
         assert "mkdir -p /var/log.hdd/timelapse" in text, (
             f"{name} logs to /var/log.hdd/timelapse but doesn't create it itself"
         )
+
+
+def test_timesync_waits_for_gpsd_and_chrony_before_running():
+    text = _service_text("timelapse-timesync.service")
+    assert "gpsd.service" in text
+    assert "chrony.service" in text

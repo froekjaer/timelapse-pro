@@ -74,6 +74,7 @@ expected_enabled_services:
   - timelapse-totp.service
   - timelapse-bt-pan.service
   - timelapse-bt-agent.service
+  - timelapse-ble-technician.service
   - timelapse-captive.service
   - timelapse-wifi-ap.service
   - ssh.service

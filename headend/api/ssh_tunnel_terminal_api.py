@@ -95,11 +95,20 @@ def terminal_trust_status(db: Session, device_id: str) -> dict:
 
 
 def _localhost_tcp_reachable(port: int) -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", int(port)), timeout=TUNNEL_TCP_TIMEOUT_SECONDS):
-            return True
-    except OSError:
-        return False
+    # Reverse-forward listeners can be exposed on IPv6 localhost only (or on
+    # IPv4 depending on sshd). Probe the same localhost name SSH uses rather
+    # than assuming 127.0.0.1, while keeping the check local and bounded.
+    for family, socktype, proto, _, sockaddr in socket.getaddrinfo(
+        "localhost", int(port), type=socket.SOCK_STREAM
+    ):
+        try:
+            with socket.socket(family, socktype, proto) as sock:
+                sock.settimeout(TUNNEL_TCP_TIMEOUT_SECONDS)
+                sock.connect(sockaddr)
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _active_reverse_tunnel(db: Session, device_id: str):
@@ -108,10 +117,11 @@ def _active_reverse_tunnel(db: Session, device_id: str):
     latest = (
         db.query(SshTunnelLog)
         .filter(SshTunnelLog.device_id == device_id)
+        .filter(SshTunnelLog.event == "connected")
         .order_by(SshTunnelLog.event_at.desc())
         .first()
     )
-    if not latest or latest.event != "connected" or not latest.remote_port:
+    if not latest or not latest.remote_port:
         return None
     if not _localhost_tcp_reachable(int(latest.remote_port)):
         return None

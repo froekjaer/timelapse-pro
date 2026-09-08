@@ -193,6 +193,7 @@ def test_artifact_install_activates_and_verifies_local_management_services():
 
     assert '"timelapse-bt-pan.service"' in install_block
     assert '"timelapse-bt-agent.service"' in install_block
+    assert '"timelapse-ble-technician.service"' in install_block
     assert '"timelapse-captive.service"' in install_block
     assert '"timelapse-totp.service"' in install_block
     assert 'managed_unit_files = (*managed_units, "timelapse-edge.service")' in install_block
@@ -253,6 +254,26 @@ def test_legacy_edge_update_and_time_scripts_cannot_use_direct_internet_channels
     assert "pool pool.ntp.org" not in gps_setup
     assert "http://192.168.86.125" not in time_sync
     assert '[[ ! "$HEADEND_URL" =~ ^https:// ]]' in time_sync
+
+
+def test_time_sync_prioritizes_validated_gps_and_rejects_large_chrony_offset():
+    time_sync = _source("edge/scripts/sync-time.sh")
+    assert 'gpspipe -w -n 20' in time_sync
+    assert 'message.get("class") != "TPV"' in time_sync
+    assert 'int(message.get("mode", 0)) < 2' in time_sync
+    assert 'date -u -s "@$GPS_UNIX"' in time_sync
+    assert 'SYSTEM_OFFSET <= 5' in time_sync
+    assert 'chronyc offline' in time_sync
+
+
+def test_gps_image_setup_uses_actual_usb_receiver_as_authoritative_clock():
+    setup = _source("edge/scripts/setup-gps-time.sh")
+    injector = _source("headend/tools/inject_edge_image.py")
+    assert 'GPS_DEVICE="${GPS_DEVICE:-/dev/ttyACM0}"' in setup
+    assert 'refclock SHM 0 offset 0.0 delay 0.2 refid GPS prefer trust' in setup
+    assert 'local stratum 10' not in setup
+    assert 'DEVICES="/dev/ttyACM0"' in injector
+    assert 'DEVICES="/dev/ttyUSB0"' not in injector
 
 
 def test_artifact_receipt_is_cmdb_version_source_of_truth(tmp_path, monkeypatch):
