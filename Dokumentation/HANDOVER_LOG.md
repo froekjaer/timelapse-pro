@@ -29,6 +29,51 @@
 
 ## Log
 
+### Handover 2026-09-08 — fra Codex: BLE-GATT runtime aktiveret på Edge 1
+
+- Hvad er gjort: BLE technician GATT-adapteren blev installeret direkte på udviklings-Edge `TL-C87FF9587CA0` via den eksisterende verificerede reverse SSH-tunnel. Kun `ble_technician_protocol.py`, `ble_technician_service.py`, `totp_verifier.py`, `ble-technician-gatt.py` og systemd-unit'en blev ændret; capture-agent, capture-database, credentials, device identity og GPIO blev ikke rørt.
+- Verifikation: `timelapse-edge.service=active`, `timelapse-ble-technician.service=active/enabled`, `bluetooth.service=active`; BlueZ er powered/discoverable og viser service UUID `6f2b0001-2f4e-4a8c-9b6e-74696d656c70`. GATT-loggen rapporterer korrekt registration.
+- Rollback: Backup ligger på Edge 1 under `/var/backups/timelapse-ble-edge1-20260908T184311Z`.
+- Artifact: Signeret Orange Pi 4 Pro build `TL-EDGE-IMG-ORANGEPI4PRO-20260907224940` blev bygget og verificeret, SHA-256 `a4e9726d5b55bb393fc90468c06d3d9a439d10d81ae1597377cc6b8c105cab96`; 72 relevante tests bestod. Rootfs-artifactet blev ikke lagt oven på Edge; runtime-filerne blev installeret selektivt.
+- Hvad mangler: Fysisk iPhone-CoreBluetooth scan, TOTP-login og første Service Operation-kald. Edge 2 er ikke ændret.
+
+### Handover 2026-09-07 — fra Codex: BLE GATT transport og iOS client-baseline bygget
+
+- Hvad er gjort: Tilføjet `edge/scripts/ble-technician-gatt.py` som BlueZ GATT-peripheral med custom service, auth/request/response/status characteristics og separat `timelapse-ble-technician.service`. GATT-laget har ingen shell-, GPIO-, gphoto- eller systemctl-logik og delegerer til den eksisterende `BleTechnicianSession`/`ServicePlatform`.
+- Auth/session: `ble_technician_service.py` opretter kun en eksplicit offline-recovery `ServiceSession` efter gyldig provisioneret TOTP, håndhæver idle timeout og invaliderer den normale lease-/cleanup-kæde. Ingen pairing/trust-state bruges som autorisation.
+- iPhone: Tilføjet `ios/TimeLapseTechnician/BleTechnicianClient.swift` som CoreBluetooth transportlag til samme GATT-kontrakt. Native iOS UI skal kalde denne klient og må ikke indeholde hardwarelogik. Xcode/iOS SDK findes ikke på denne Mac, så klienten er ikke signeret eller bygget her.
+- Image-flow: GATT-script/unit er tilføjet til Docker edge image, flashable injector, Orange Pi target og Edge app-managed runtime paths. WiFi/PAN/capture-services er ikke ændret af GATT-servicen.
+- Test: `PYTHONPATH=edge pytest -q tests/test_ble_technician_protocol.py tests/test_ble_technician_service.py tests/test_ble_gatt_contract.py tests/test_edge_image_build_contract.py` = 36 passed; Python compile og `git diff --check` PASS.
+- Hvad mangler: Xcode-projekt/TestFlight-wrapper, GATT runtime-test på en Edge med BlueZ D-Bus registration og fysisk iPhone-test. Før dette er verificeret, må servicen ikke deployes til produktions-Edges.
+- Risici / pas på: Den eksisterende iPhone Classic Bluetooth ACL/PAN-test er ikke erstattet; den fejler fortsat ved manglende PAN-request. Den midlertidige `bluetoothctl trust`-test er rullet tilbage.
+
+### Handover 2026-09-07 — fra Codex: BLE runtime-afhængigheder og TOTP verifier lukket
+
+- Hvad er gjort: GATT-servicen bruger system-Python til BlueZ D-Bus (`python3-dbus`, `python3-gi`) og indsætter eksplicit Edge-venv'ens site-packages til `ServiceOperations`/cryptography. Image-baselinen installerer de systempakker, der kræves ved første boot.
+- Auth: Tilføjet `edge/totp_verifier.py`, en dependency-free RFC6238-kompatibel HMAC-SHA1 verifier med bounded six-digit input og fail-closed invalid-secret handling. GATT-processen afhænger derfor ikke af, at `pyotp` findes i system-Python.
+- Test: `PYTHONPATH=edge pytest -q tests/test_ble_technician_protocol.py tests/test_ble_technician_service.py tests/test_ble_gatt_contract.py tests/test_totp_verifier.py tests/test_edge_image_build_contract.py` = 39 passed; Python compile og `git diff --check` PASS.
+- Hvad mangler: BlueZ GATT registration og iPhone CoreBluetooth fysisk test skal køres på Edge 1 efter signed artifact/image gate. Native iOS-klienten er kildekode, men ikke Xcode-bygget eller signeret på denne Mac.
+
+### Handover 2026-09-07 — fra Codex: native iPhone-teknikerskærm tilføjet
+
+- Hvad er gjort: Tilføjet `ios/TimeLapseTechnician/TimeLapseTechnicianApp.swift`, `ContentView.swift` og `Info.plist`. Skærmen understøtter Edge-scan, TOTP-login, statusvisning og read-only/diagnostiske Service Operations via `BleTechnicianClient`; den indeholder ingen hardwarelogik.
+- Verifikation: Swift frontend parse PASS; Edge/GATT/image/release-testbatteri = 73 passed; Python compile og `git diff --check` PASS.
+- Hvad mangler: Xcode-projekt, signing team/provisioning profile og fysisk iPhone-build/TestFlight. Denne Mac har kun Command Line Tools (`xcode-select` peger på `/Library/Developer/CommandLineTools`), så ingen installérbar IPA kan produceres endnu.
+
+### Handover 2026-09-07 — fra Codex: iOS-projekt genereret og build-gate afklaret
+
+- Hvad er gjort: Installeret Homebrew-værktøjerne `xcodes` og `xcodegen` på Mac Mini'en. Genereret `ios/TimeLapseTechnician.xcodeproj` fra `ios/project.yml` med iOS 16-target, automatisk signing, bundle-id og Bluetooth usage description.
+- Verifikation: Swift parse PASS; Edge/GATT/image/release-testbatteri = 73 passed. `xcodebuild -list` er blokeret af, at aktiv developer directory kun er Command Line Tools (`/Library/Developer/CommandLineTools`), ikke fuld Xcode.
+- Hvad mangler før iPhone-installation: Fuldt Xcode skal installeres på Mac Mini'en, og et Apple development team/provisioning profile skal vælges i projektet. Først derefter kan target bygges til en tilsluttet iPhone eller arkiveres til TestFlight.
+
+### Handover 2026-09-07 — fra Codex: BLE/GATT-teknikeradgang som supplement til WiFi
+
+- Hvad er gjort: Verificeret live, at iPhone kan etablere Classic Bluetooth ACL-forbindelse til Edge 1, men ikke starter en NAP/PAN-session (`bnep`/DHCP mangler). Cross-check mod Apple/BlueZ dokumentation viser, at iPhone-IoT-konfiguration normalt bruger BLE/GATT fra en native iOS-app, mens nuværende Edge kun udstiller Classic NAP/PAN.
+- Ny baseline: `edge/ble_technician_protocol.py` definerer en bounded JSON-protokol med custom service/auth/request/response/status UUID'er, TOTP-only authentication, request-id, operation/parameter-validering og 8 KiB message-limit. Protokollen er transport-only og skal dispatches via eksisterende `ServicePlatform`/capabilities/audit.
+- Dokumentation: `Dokumentation/BLE_TECHNICIAN_ACCESS_2026-09.md` beskriver target, sikkerhedsgrænser og client-boundary. Repository'et har ingen eksisterende GATT-service eller iOS-klient. Den nuværende Mac har Swift, men ikke Xcode/iOS SDK, så native-klienten kan ikke bygges eller signeres herfra endnu.
+- Test: `pytest -q tests/test_ble_technician_protocol.py` = 5 passed; `PYTHONPATH=edge pytest -q tests/test_service_operations_completion.py` = 12 passed; Python compile og `git diff --check` PASS.
+- Risici / pas på: Dette er kun protokol-baseline; ingen GATT-D-Bus adapter, iOS-app, image-installation eller live Edge-deployment er udført. Den midlertidige BlueZ `Trusted`-test for iPhone blev fjernet igen.
+
 ### Handover 2026-09-07 — fra Codex: Edge 1 clock skew og trusted kommunikationsgendannelse
 
 - Fund: Edge 1 (`TL-C87FF9587CA0`) tog fortsat billeder, men systemuret var ca. 7.208 sekunder bag Headenden. `chrony` viste ingen brugbar NTP-kilde (`?` på alle kilder), men et misvisende gammelt synkroniseringsresultat.

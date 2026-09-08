@@ -1,0 +1,19 @@
+[Unit]
+Description=TimeLapse Pro — BLE/GATT technician transport
+After=bluetooth.service timelapse-bt-pan.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/timelapse/edge/scripts/ble-technician-gatt.py
+Restart=on-failure
+RestartSec=5
+ReadWritePaths=/run/timelapse
+ProtectHome=true
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
