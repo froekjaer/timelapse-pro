@@ -59,6 +59,10 @@ extra_packages:
   - bluez
   - bluez-tools
   - python3-dbus
+  # Local WiFi AP fallback; disabled whenever router WiFi is configured.
+  - hostapd
+  - dnsmasq
+  - iw
 
 # CMDB baseline-drift (jf. FIND-CMDB-MISSING-PACKAGE-DETECTION og
 # FIND-CMDB-UNTRACKED-DOCKER-CE-CHANNEL, udvidet 2026-08-16 til også services
@@ -72,6 +76,7 @@ expected_enabled_services:
   - timelapse-bt-agent.service
   - timelapse-ble-technician.service
   - timelapse-captive.service
+  - timelapse-wifi-ap.service
   - ssh.service
 
 expected_local_users:

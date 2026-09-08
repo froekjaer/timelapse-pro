@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-07 — fra Codex: isoleret WiFi-AP fallback for lokal teknikeradgang
+
+- Hvad er gjort: Tilføjet `timelapse-wifi-ap.service` og `timelapse-wifi-ap.sh` til Edge image-/app-flowet. AP'et bruger SSID lig med den provisionerede `device_id`, er åbent på radio-laget, og begrænser IP-trafik til DHCP og lokal HTTPS/TOTP på port 8443. Forwarding er eksplicit slået fra; der er ingen NAT eller adgang til LAN/Internet.
+- Vigtig regel: AP'et er slukket, mens `wlan0` faktisk er forbundet til routeren. Hvis routerforbindelsen falder, starter AP'et automatisk til fejlsøgning med samme device-ID som SSID. En konfigureret profil bruges som fallback-signal; hvis linkstatus ikke kan aflæses sikkert, starter AP'et ikke. AP-servicens stop-rutine rører ikke `wlan0`, hvis AP'et ikke faktisk blev startet.
+- Image-flow: `hostapd` og `dnsmasq` er tilføjet til Orange Pi 4 Pro-baseline/Docker-image; generatoren kopierer og aktiverer den nye unit, og eksisterende signerede app-artifacts kan installere unit/script sammen med de øvrige lokale management-services.
+- TOTP-portal: session-udløb og ny `/logout`-endpoint fjerner nu kun den Bluetooth-peer der ejer den afsluttede PAN-lease, så en teknikers session ikke efterlader en parret enhed.
+- Afgrænsning: Ingen live Edge er ændret eller deployet. WiFi-AP'et skal testes på en ikke-produktionsenhed eller efter særskilt deployment-gate.
+- Verifikation: `bash -n` og Python compile PASS; `pytest -q tests/test_edge_image_build_contract.py tests/test_edge_release_contract.py` = 57 passed; `git diff --check` PASS.
+- Risici / pas på: Åbent SSID er kun acceptabelt sammen med den eksisterende TOTP-portal og isolerede firewall-regler. AP'et må ikke aktiveres på en Edge med konfigureret router-WiFi, da en enkelt radio ellers kan miste den stabile klientforbindelse.
+
 ### Handover 2026-09-08 — fra Codex: BLE-GATT runtime aktiveret på Edge 1
 
 - Hvad er gjort: BLE technician GATT-adapteren blev installeret direkte på udviklings-Edge `TL-C87FF9587CA0` via den eksisterende verificerede reverse SSH-tunnel. Kun `ble_technician_protocol.py`, `ble_technician_service.py`, `totp_verifier.py`, `ble-technician-gatt.py` og systemd-unit'en blev ændret; capture-agent, capture-database, credentials, device identity og GPIO blev ikke rørt.

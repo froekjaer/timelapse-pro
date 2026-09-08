@@ -2334,6 +2334,7 @@ class EdgeAgent:
             "timelapse-bt-agent.service",
             "timelapse-ble-technician.service",
             "timelapse-captive.service",
+            "timelapse-wifi-ap.service",
             "timelapse-totp.service",
         )
         managed_unit_files = (*managed_units, "timelapse-edge.service")
@@ -2343,6 +2344,7 @@ class EdgeAgent:
             "edge/scripts/ble-technician-gatt.py",
             "edge/scripts/totp-service.py",
             "edge/scripts/timelapse-captive.sh",
+            "edge/scripts/timelapse-wifi-ap.sh",
             "edge/scripts/gen-bt-cert.sh",
             *(f"edge/scripts/{unit}" for unit in managed_unit_files),
         }

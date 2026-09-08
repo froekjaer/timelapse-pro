@@ -495,6 +495,7 @@ for TAR_PATH in \
     "etc/systemd/system/timelapse-bt-agent.service" \
     "etc/systemd/system/timelapse-ble-technician.service" \
     "etc/systemd/system/timelapse-captive.service" \
+    "etc/systemd/system/timelapse-wifi-ap.service" \
     "etc/systemd/system/timelapse-totp.service"
 do
     echo "[inject] Udpakker: $TAR_PATH"
@@ -654,7 +655,7 @@ fi
 
 # First boot must include the complete local technician surface. Previously
 # these signed unit files were built but not copied into flashable images.
-for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-ble-technician.service timelapse-captive.service timelapse-totp.service; do
+for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-ble-technician.service timelapse-captive.service timelapse-wifi-ap.service timelapse-totp.service; do
     if [ -f "/mnt/root/etc/systemd/system/$UNIT" ]; then
         ln -sf "/etc/systemd/system/$UNIT" "$WANTS_DIR/$UNIT"
         echo "[inject]   $UNIT aktiveret"
