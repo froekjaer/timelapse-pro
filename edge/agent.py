@@ -146,6 +146,62 @@ def setup_logging(debug: bool) -> None:
 log = logging.getLogger("agent")
 
 
+def _validate_os_bundle_staged_scripts(staging) -> None:
+    """Fail closed on any staged OS-bundle script that isn't a strictly
+    offline, --no-download install (or a locally-scoped index refresh).
+
+    "apt(-get)? update" is not blanket-forbidden below: install_script()
+    (headend/tools/fetch_os_bundle.py) legitimately runs one, scoped via
+    -o Dir::Etc::sourcelist=... to a throwaway local file://-only repo built
+    from the bundle's own .debs, so APT can resolve package versions its own
+    (possibly stale) local index doesn't know about yet. This is the
+    edge-side mirror of headend/main.py's _validate_os_bundle_file_policy()
+    — found 2026-09-09 out of sync with it (still blanket-forbidding "apt
+    update" and not collapsing \\-continued lines), which rejected every
+    real bundle's own legitimate update line and failed every OS update on
+    Edge 2.
+    """
+    forbidden_script_patterns = [
+        r"\bapt(-get)?\s+(dist-upgrade|full-upgrade|upgrade)\b",
+        r"^\s*(curl|wget|scp|rsync)\b",
+        r"^\s*git\s+(clone|pull|fetch)\b",
+        r"^\s*python3?\s+-m\s+pip\b",
+        r"^\s*pip3?\s+install\b",
+        r"https?://",
+        r"\bftp://",
+    ]
+    for script_path in staging.rglob("*"):
+        if not script_path.is_file() or script_path.suffix not in {".sh", ".bash", ".conf", ".txt", ".json"}:
+            continue
+        content = script_path.read_text(errors="ignore")
+        rel_script = str(script_path.relative_to(staging))
+        # Collapse \-continued lines first so a per-line scan sees whole commands.
+        logical_lines: list = []
+        buffer = ""
+        for raw in content.splitlines():
+            buffer += (raw[:-1] + " ") if raw.endswith("\\") else raw
+            if not raw.endswith("\\"):
+                logical_lines.append(buffer)
+                buffer = ""
+        for line in logical_lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            for pattern in forbidden_script_patterns:
+                if re.search(pattern, stripped):
+                    raise RuntimeError(f"os bundle contains forbidden online command: {rel_script}")
+            if not ("apt-get" in stripped or " apt " in stripped):
+                continue
+            if re.search(r"\bupdate\b", stripped):
+                lowered = stripped.lower()
+                if "dir::etc::sourcelist" not in lowered or "/etc/apt" in lowered:
+                    raise RuntimeError(
+                        f"os bundle apt update must be scoped to a local file source: {rel_script}"
+                    )
+            elif "--no-download" not in stripped:
+                raise RuntimeError(f"os bundle apt command without --no-download: {rel_script}")
+
+
 # ── Agent ──────────────────────────────────────────────────────────────────────
 
 class EdgeAgent:
@@ -2669,29 +2725,7 @@ class EdgeAgent:
                 dest.write_bytes(content)
 
             self._report_update(update_id, "verifying")
-            forbidden_script_patterns = [
-                r"\bapt(-get)?\s+update\b",
-                r"\bapt(-get)?\s+(dist-upgrade|full-upgrade|upgrade)\b",
-                r"^\s*(curl|wget|scp|rsync)\b",
-                r"^\s*git\s+(clone|pull|fetch)\b",
-                r"^\s*python3?\s+-m\s+pip\b",
-                r"^\s*pip3?\s+install\b",
-            ]
-            for script_path in staging.rglob("*"):
-                if not script_path.is_file() or script_path.suffix not in {".sh", ".bash", ".conf", ".txt", ".json"}:
-                    continue
-                content = script_path.read_text(errors="ignore")
-                rel_script = str(script_path.relative_to(staging))
-                for line in content.splitlines():
-                    stripped = line.strip()
-                    if not stripped or stripped.startswith("#"):
-                        continue
-                    for pattern in forbidden_script_patterns:
-                        if re.search(pattern, stripped):
-                            raise RuntimeError(f"os bundle contains forbidden online command: {rel_script}")
-                    if "apt-get" in line or " apt " in line:
-                        if "--no-download" not in line:
-                            raise RuntimeError(f"os bundle apt command without --no-download: {rel_script}")
+            _validate_os_bundle_staged_scripts(staging)
 
             if not commands:
                 raise RuntimeError("os_artifact_missing_install_commands")
