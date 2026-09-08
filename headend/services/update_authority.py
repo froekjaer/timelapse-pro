@@ -12,6 +12,7 @@ from typing import Any
 
 _TEST_ENVIRONMENTS = {"lab", "test", "rd", "dev", "development"}
 _PRODUCTION_ENVIRONMENTS = {"prod", "production"}
+_ALL_ENVIRONMENTS_MARKER = {"all", "alle", "any"}
 
 
 def _normalize_environment(value: Any) -> str | None:
@@ -24,6 +25,8 @@ def _normalize_environment(value: Any) -> str | None:
         return "production"
     if raw == "staging":
         return "staging"
+    if raw in _ALL_ENVIRONMENTS_MARKER:
+        return "all"
     return raw
 
 
@@ -42,8 +45,11 @@ def _parse_target_device_ids(value: Any) -> list[str]:
 def update_applies_to_device(update: Any, device: Any, inventory: Any) -> bool:
     """Return True only when both scope and environment authorize this Edge.
 
-    Unknown device environment fails closed. Explicit ``target_device_ids`` narrows
-    scope but never bypasses the environment boundary.
+    Unknown device environment fails closed, even for an "all environments"
+    update — that marker means "don't discriminate between known
+    environments", not "skip the check entirely". Explicit
+    ``target_device_ids`` narrows scope but never bypasses the environment
+    boundary.
     """
     device_id = str(getattr(inventory, "device_id", None) or getattr(device, "device_id", None) or "").strip()
     if not device_id:
@@ -53,7 +59,9 @@ def update_applies_to_device(update: Any, device: Any, inventory: Any) -> bool:
     device_environment = _normalize_environment(
         getattr(inventory, "environment", None) or getattr(device, "environment", None)
     )
-    if not device_environment or update_environment != device_environment:
+    if not device_environment:
+        return False
+    if update_environment != "all" and update_environment != device_environment:
         return False
 
     target_ids = _parse_target_device_ids(getattr(update, "target_device_ids", None))

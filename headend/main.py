@@ -9925,6 +9925,19 @@ def _resolve_approval_environment(
     return requested_environment
 
 
+# Matches _update_flow_stage()'s "Edge arbejder" set — a target actively
+# mid-flight can't safely have its parent update re-approved or stopped out
+# from under it without racing Edge's own in-progress report.
+_IN_FLIGHT_TARGET_STATUSES = {"downloading", "verifying", "backing_up", "installing"}
+
+
+def _find_in_flight_target(db: Session, update_id: int) -> UpdateTarget | None:
+    return db.query(UpdateTarget).filter(
+        UpdateTarget.pending_update_id == update_id,
+        UpdateTarget.status.in_(_IN_FLIGHT_TARGET_STATUSES),
+    ).first()
+
+
 @app.post("/api/updates/{update_id}/approve")
 def approve_update(
     update_id: int,
@@ -9947,10 +9960,7 @@ def approve_update(
         # producing zero authorized targets, and there was previously no way
         # to correct that short of a fresh update row — reject_update() only
         # accepts status="pending", not "approved".
-        in_flight = db.query(UpdateTarget).filter(
-            UpdateTarget.pending_update_id == u.id,
-            UpdateTarget.status.in_(["downloading", "verifying", "installing"]),
-        ).first()
+        in_flight = _find_in_flight_target(db, u.id)
         if in_flight:
             raise HTTPException(
                 status_code=409,
@@ -10024,6 +10034,43 @@ def approve_update(
     log.info("Opdatering godkendt: %s v%s → %s/%s af %s",
              u.update_type, u.version, u.environment, u.scope, current_user.username)
     return {"ok": True, "ticket_id": ticket.ticket_id, "signed_payload_sha256": signed_hash}
+
+
+@app.post("/api/updates/{update_id}/stop-approval")
+def stop_update_approval(
+    update_id: int,
+    current_user=require_role("super_admin", "admin"),
+    db: Session = Depends(get_db),
+):
+    """Stop en godkendt opdatering uden at skulle udfylde godkend-dialogen igen.
+
+    For at rette en fejlagtig godkendelse (forkert scope/miljø/enhed) kan man
+    i stedet bare godkende igen med de rigtige valg (approve_update() håndterer
+    det direkte) — men admin skal også kunne stoppe uden straks at beslutte
+    nye valg, fx for at undersøge sagen først. Ét skridt tilbage til "blocked",
+    samme tilstand som en frisk, endnu ikke godkendt kandidat.
+    """
+    u = db.query(PendingUpdate).filter_by(id=update_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    if u.status != "approved":
+        raise HTTPException(status_code=400, detail=f"Kan kun stoppe en godkendt opdatering, ikke status '{u.status}'")
+    in_flight = _find_in_flight_target(db, u.id)
+    if in_flight:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Kan ikke stoppe: enhed {in_flight.device_id} er midt i en igangværende installation.",
+        )
+    u.status = "blocked"
+    u.resolution_reason = f"Godkendelse stoppet af {current_user.username}."[:500]
+    if u.id is not None:
+        reset_stale_targets_on_block(
+            db, UpdateTarget, u.id,
+            f"Godkendelse stoppet {now_utc().isoformat()} af {current_user.username}.",
+        )
+    db.commit()
+    log.info("Godkendelse stoppet for opdatering %d af %s", update_id, current_user.username)
+    return {"ok": True}
 
 
 def _control_summary_state(controls: list[dict]) -> dict:
