@@ -63,6 +63,7 @@ def test_flashable_injection_copies_and_enables_all_local_management_units() -> 
     for unit in (
         "timelapse-bt-pan.service",
         "timelapse-bt-agent.service",
+        "timelapse-ble-technician.service",
         "timelapse-captive.service",
         "timelapse-totp.service",
     ):

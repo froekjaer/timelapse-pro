@@ -193,6 +193,7 @@ def test_artifact_install_activates_and_verifies_local_management_services():
 
     assert '"timelapse-bt-pan.service"' in install_block
     assert '"timelapse-bt-agent.service"' in install_block
+    assert '"timelapse-ble-technician.service"' in install_block
     assert '"timelapse-captive.service"' in install_block
     assert '"timelapse-totp.service"' in install_block
     assert 'managed_unit_files = (*managed_units, "timelapse-edge.service")' in install_block
