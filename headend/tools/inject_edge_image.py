@@ -772,11 +772,11 @@ if echo "${EXTRA_PACKAGES:-}" | grep -q gpsd; then
 # TimeLapse Pro — gpsd konfiguration
 START_DAEMON="true"
 GPSD_OPTIONS="-n"
-DEVICES="/dev/ttyUSB0"
+DEVICES="/dev/ttyACM0"
 USBAUTO="true"
 GPSD_SOCKET="/var/run/gpsd.sock"
 GPSD_EOF
-    echo "[inject]   gpsd konfigureret (/dev/ttyUSB0), hvis pakken findes i base eller offline bundle"
+    echo "[inject]   gpsd konfigureret (/dev/ttyACM0), hvis pakken findes i base eller offline bundle"
 fi
 
 # ── Device SSH private key (edge → headend reverse tunnel) ───────────────────
