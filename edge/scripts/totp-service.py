@@ -27,6 +27,7 @@ import asyncio
 import json
 import pty
 import select
+import signal
 import sys
 import threading
 import yaml
@@ -1342,12 +1343,20 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
         shell_script = """
 let shellWs = null;
 const term = document.getElementById('term');
+function renderShellOutput(data) {
+  // The Edge fallback UI is intentionally dependency-free. Remove terminal
+  // control sequences instead of exposing them as literal text in the textarea.
+  return data
+    .replace(/\\x1b\\][^\\x07]*(?:\\x07|\\x1b\\\\)/g, '')
+    .replace(/\\x1b\\[[0-?]*[ -\\/]*[@-~]/g, '')
+    .replace(/[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]/g, '');
+}
 function openShell() {
   if (shellWs && shellWs.readyState === WebSocket.OPEN) return;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   shellWs = new WebSocket(proto + '//' + location.host + '/mgmt/cli/bash/ws');
   shellWs.onopen = () => { term.value += '\\n[connected]\\n'; term.focus(); };
-  shellWs.onmessage = (event) => { term.value += event.data; term.scrollTop = term.scrollHeight; };
+  shellWs.onmessage = (event) => { term.value += renderShellOutput(event.data); term.scrollTop = term.scrollHeight; };
   shellWs.onclose = () => { term.value += '\\n[closed]\\n'; };
 }
 function closeShell() { if (shellWs) shellWs.close(); }
@@ -1793,26 +1802,31 @@ async def mgmt_cli_bash_ws(websocket: WebSocket):
         await websocket.close(code=1008)
         return
     await websocket.accept()
-    master_fd, slave_fd = pty.openpty()
     env = os.environ.copy()
     env.update({"TERM": "xterm-256color", "TIMELAPSE_EDGE_ROOT": str(EDGE_ROOT)})
-    proc = subprocess.Popen(
-        [BASH_PATH, "-l"],
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        cwd=str(EDGE_ROOT),
-        env=env,
-        close_fds=True,
-    )
-    os.close(slave_fd)
+    # pty.fork() establishes a session and controlling terminal for bash.
+    # Passing an openpty() slave to Popen leaves bash without job control.
+    child_pid, master_fd = pty.fork()
+    if child_pid == 0:
+        os.chdir(str(EDGE_ROOT))
+        os.execvpe(BASH_PATH, [BASH_PATH, "-l"], env)
+
+    def child_alive() -> bool:
+        try:
+            waited_pid, _ = os.waitpid(child_pid, os.WNOHANG)
+        except ChildProcessError:
+            return False
+        return waited_pid == 0
 
     async def pump_shell() -> None:
         try:
-            while proc.poll() is None:
+            while child_alive():
                 readable, _, _ = select.select([master_fd], [], [], 0.05)
                 if readable:
-                    data = os.read(master_fd, 4096)
+                    try:
+                        data = os.read(master_fd, 4096)
+                    except OSError:
+                        break
                     if not data:
                         break
                     await websocket.send_text(data.decode(errors="replace"))
@@ -1822,7 +1836,7 @@ async def mgmt_cli_bash_ws(websocket: WebSocket):
 
     pump_task = asyncio.create_task(pump_shell())
     try:
-        while proc.poll() is None:
+        while child_alive():
             msg = await websocket.receive_text()
             os.write(master_fd, msg.encode())
     except WebSocketDisconnect:
@@ -1832,10 +1846,14 @@ async def mgmt_cli_bash_ws(websocket: WebSocket):
     finally:
         pump_task.cancel()
         try:
-            proc.terminate()
+            os.kill(child_pid, signal.SIGTERM)
             await asyncio.sleep(0.2)
-            if proc.poll() is None:
-                proc.kill()
+            if child_alive():
+                os.kill(child_pid, signal.SIGKILL)
+            try:
+                os.waitpid(child_pid, 0)
+            except ChildProcessError:
+                pass
         except Exception:
             pass
         try:
