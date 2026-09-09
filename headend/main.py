@@ -8726,6 +8726,22 @@ def _auto_build_and_bind_os_bundle(
             "version_drifts": result["version_drifts"]}
 
 
+def _infer_os_family_for_python_bundle(inv: DeviceInventory | None) -> str:
+    """Which wheel platform family to fetch for this device.
+
+    Every real Edge device runs Linux; only the Headend's own macOS
+    pseudo-device (TL-MACMINI-HEADEND-TEST-1) needs macOS wheels. Found
+    2026-09-09: fetch_python_bundle.py's wheel selector didn't check OS at
+    all, only CPU architecture — a platform tag like "macosx_12_0_arm64"
+    matched the arm64 check and got selected for a Linux Edge device,
+    producing a bundle pip refused to install (update #271).
+    """
+    os_name = str(getattr(inv, "os_name", "") or "").lower()
+    if "darwin" in os_name or "macos" in os_name or "mac os" in os_name:
+        return "macos"
+    return "linux"
+
+
 def _auto_build_and_bind_python_bundle(
     db: Session,
     update: PendingUpdate,
@@ -8756,6 +8772,7 @@ def _auto_build_and_bind_python_bundle(
 
     python_version = str(getattr(inv, "python_version", None) or "3.10.12").strip()
     architecture = "arm64"
+    os_family = _infer_os_family_for_python_bundle(inv)
 
     created_at = now_utc()
     safe_type = _re.sub(r"[^a-zA-Z0-9_.-]+", "-", update.update_type)
@@ -8769,6 +8786,7 @@ def _auto_build_and_bind_python_bundle(
         device_id=device_id,
         python_version=python_version,
         arch=architecture,
+        os_family=os_family,
         source_ref=f"headend-auto-fetch:{created_at:%Y%m%dT%H%M%SZ}",
         verbose=True,
     )

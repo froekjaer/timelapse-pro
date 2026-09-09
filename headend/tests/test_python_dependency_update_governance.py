@@ -36,6 +36,26 @@ def _clean(session):
     session.commit()
 
 
+# ── _infer_os_family_for_python_bundle() ────────────────────────────────────
+# Regression coverage for update #271 (2026-09-09): the wheel selector had no
+# OS-family check at all, only architecture, so a macOS-tagged wheel (which
+# also matches the arm64 architecture check) got selected for a Linux Edge
+# device and pip refused to install it.
+
+def test_infers_linux_for_ubuntu_edge_device():
+    inv = DeviceInventory(device_id=DEVICE_ID, os_name="Ubuntu 24.04.4 LTS")
+    assert main._infer_os_family_for_python_bundle(inv) == "linux"
+
+
+def test_infers_macos_for_darwin_headend_pseudo_device():
+    inv = DeviceInventory(device_id=DEVICE_ID, os_name="Darwin 25.6.0")
+    assert main._infer_os_family_for_python_bundle(inv) == "macos"
+
+
+def test_infers_linux_when_inventory_missing():
+    assert main._infer_os_family_for_python_bundle(None) == "linux"
+
+
 # ── _reconcile_python_packages_from_pypi() ──────────────────────────────────
 
 def test_reconcile_finds_outdated_package(monkeypatch):

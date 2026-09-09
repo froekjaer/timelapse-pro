@@ -45,6 +45,40 @@ def test_wrong_cpython_tag_without_abi3_is_incompatible():
     )
 
 
+def test_macos_wheel_is_not_compatible_with_linux_default():
+    # Regression for update #271 (2026-09-09): "macosx_12_0_arm64" contains
+    # "arm64" and used to pass the (OS-blind) arch check, so pip on a real
+    # Linux Edge device got handed a macOS-only scipy wheel and refused it.
+    assert not fetch.wheel_is_compatible(
+        "scipy-1.18.1-cp312-cp312-macosx_12_0_arm64.whl", "cp312", "arm64", "linux"
+    )
+    assert fetch.wheel_is_compatible(
+        "scipy-1.18.1-cp312-cp312-macosx_12_0_arm64.whl", "cp312", "arm64", "macos"
+    )
+
+
+def test_linux_wheel_is_not_compatible_with_macos():
+    assert not fetch.wheel_is_compatible(
+        "cryptography-42.0.5-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", "cp310", "arm64", "macos"
+    )
+    assert fetch.wheel_is_compatible(
+        "cryptography-42.0.5-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", "cp310", "arm64", "linux"
+    )
+
+
+def test_universal_wheel_matches_regardless_of_os_family():
+    assert fetch.wheel_is_compatible("pyyaml-6.0.1-py3-none-any.whl", "cp310", "arm64", "macos")
+    assert fetch.wheel_is_compatible("pyyaml-6.0.1-py3-none-any.whl", "cp310", "arm64", "linux")
+
+
+def test_select_wheel_skips_macos_wheel_for_linux_device():
+    urls = [
+        {"packagetype": "bdist_wheel", "filename": "pkg-1.0-cp310-cp310-macosx_12_0_arm64.whl"},
+        {"packagetype": "sdist", "filename": "pkg-1.0.tar.gz"},
+    ]
+    assert fetch.select_wheel(urls, "cp310", "arm64", "linux") is None
+
+
 def test_select_wheel_prefers_universal_over_platform_specific():
     urls = [
         {"packagetype": "bdist_wheel", "filename": "pkg-1.0-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl"},

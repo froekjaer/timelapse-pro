@@ -45,6 +45,17 @@ _ARCH_PLATFORM_MARKERS = {
     "x86_64": ("x86_64",),
 }
 
+# OS-family platform-tag substrings. A platform tag like "macosx_12_0_arm64"
+# contains "arm64" and would otherwise pass the arch check above even though
+# it is a macOS-only wheel — found 2026-09-09 breaking Linux Edge device
+# update #271, which installed a macOS scipy wheel pip then refused to use.
+# Every real Edge device is Linux; only the Headend's own macOS pseudo-device
+# (TL-MACMINI-HEADEND-TEST-1) needs "macos".
+_OS_FAMILY_PLATFORM_MARKERS = {
+    "linux": ("linux",),
+    "macos": ("macosx",),
+}
+
 
 def _cpython_tag(python_version: str) -> str:
     """'3.10.12' -> 'cp310'."""
@@ -65,13 +76,16 @@ def _parse_wheel_tags(filename: str) -> tuple[str, str, str] | None:
     return parts[-3], parts[-2], parts[-1]
 
 
-def wheel_is_compatible(filename: str, cpython_tag: str, arch: str) -> bool:
+def wheel_is_compatible(filename: str, cpython_tag: str, arch: str, os_family: str = "linux") -> bool:
     """True if the wheel's tags are usable on this device.
 
-    Pure-Python universal wheels (py3-none-any / cp3x-none-any) match anything.
-    Otherwise the platform tag must reference the device's architecture, and the
-    python/abi tag must match exactly or be the stable ABI (abi3, forward-compatible
-    across CPython 3.x minor versions from the wheel's own floor).
+    Pure-Python universal wheels (py3-none-any / cp3x-none-any) match anything —
+    the platform tag is "any", so there's nothing OS-specific to check. Otherwise
+    the platform tag must reference both the device's OS family and its
+    architecture (checked separately: a tag like "macosx_12_0_arm64" contains
+    "arm64" but is not Linux-compatible), and the python/abi tag must match
+    exactly or be the stable ABI (abi3, forward-compatible across CPython 3.x
+    minor versions from the wheel's own floor).
     """
     tags = _parse_wheel_tags(filename)
     if not tags:
@@ -79,25 +93,28 @@ def wheel_is_compatible(filename: str, cpython_tag: str, arch: str) -> bool:
     python_tag, abi_tag, platform_tag = tags
     if platform_tag == "any":
         return python_tag in ("py3", cpython_tag) or python_tag.startswith("py3")
-    markers = _ARCH_PLATFORM_MARKERS.get(arch, (arch,))
-    if not any(marker in platform_tag for marker in markers):
+    os_markers = _OS_FAMILY_PLATFORM_MARKERS.get(os_family, ("linux",))
+    if not any(marker in platform_tag for marker in os_markers):
+        return False
+    arch_markers = _ARCH_PLATFORM_MARKERS.get(arch, (arch,))
+    if not any(marker in platform_tag for marker in arch_markers):
         return False
     if python_tag == cpython_tag or abi_tag == "abi3":
         return True
     return False
 
 
-def select_wheel(urls: list[dict[str, Any]], cpython_tag: str, arch: str) -> dict[str, Any] | None:
+def select_wheel(urls: list[dict[str, Any]], cpython_tag: str, arch: str, os_family: str = "linux") -> dict[str, Any] | None:
     """Pick the best compatible wheel from a PyPI release's `urls` list.
 
     Prefers a pure-Python universal wheel over an architecture-specific one
     (smaller, simpler, works regardless of any future device architecture change).
     """
     wheels = [u for u in urls if u.get("packagetype") == "bdist_wheel"]
-    universal = [u for u in wheels if wheel_is_compatible(u.get("filename", ""), cpython_tag, arch) and "-none-any" in u.get("filename", "")]
+    universal = [u for u in wheels if wheel_is_compatible(u.get("filename", ""), cpython_tag, arch, os_family) and "-none-any" in u.get("filename", "")]
     if universal:
         return universal[0]
-    specific = [u for u in wheels if wheel_is_compatible(u.get("filename", ""), cpython_tag, arch)]
+    specific = [u for u in wheels if wheel_is_compatible(u.get("filename", ""), cpython_tag, arch, os_family)]
     return specific[0] if specific else None
 
 
@@ -207,6 +224,7 @@ def build_bundle(
     device_id: str,
     python_version: str = "3.10.12",
     arch: str = "arm64",
+    os_family: str = "linux",
     source_ref: str = "pypi-http",
     verbose: bool = False,
 ) -> dict[str, Any]:
@@ -241,9 +259,9 @@ def build_bundle(
                 print(f"  WARNING: {name}=={wanted_version} not found on PyPI", file=sys.stderr)
                 not_found.append(f"{name}=={wanted_version}")
                 continue
-            entry = select_wheel(metadata.get("urls") or [], cpython_tag, arch)
+            entry = select_wheel(metadata.get("urls") or [], cpython_tag, arch, os_family)
             if not entry:
-                print(f"  WARNING: no compatible wheel for {name}=={wanted_version} ({cpython_tag}/{arch})", file=sys.stderr)
+                print(f"  WARNING: no compatible wheel for {name}=={wanted_version} ({cpython_tag}/{arch}/{os_family})", file=sys.stderr)
                 not_found.append(f"{name}=={wanted_version}")
                 continue
             wheel_path = download_wheel(entry, packages_dir, verbose=verbose)
@@ -267,6 +285,7 @@ def build_bundle(
         "device_id": device_id,
         "python_version": python_version,
         "architecture": arch,
+        "os_family": os_family,
         "source_ref": source_ref,
         "packages_requested": packages,
         "package_files": package_file_entries,
