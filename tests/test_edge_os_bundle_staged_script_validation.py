@@ -111,3 +111,16 @@ def test_ignores_non_script_files(tmp_path):
     (tmp_path / "packages").mkdir()
     (tmp_path / "packages" / "curl_7.81.0.deb").write_bytes(b"fake deb bytes mentioning curl")
     AGENT._validate_os_bundle_staged_scripts(tmp_path)  # must not raise
+
+
+def test_ignores_package_manifest_json_mirror_url(tmp_path):
+    # Regression for update #290 (2026-09-09): package-manifest.json's
+    # "mirror" field is a plain https:// URL string describing where
+    # packages were fetched from, not a command — but the unanchored
+    # https?:// pattern matched it anywhere in the file, failing every real
+    # OS-security bundle before it ever reached the actual apt install step.
+    (tmp_path / "install-offline.sh").write_text("#!/bin/bash\napt-get --no-download install 'curl=7.81.0-1ubuntu1.27'\n")
+    (tmp_path / "package-manifest.json").write_text(
+        '{\n  "mirror": "https://ports.ubuntu.com/ubuntu-ports",\n  "suite": "jammy"\n}\n'
+    )
+    AGENT._validate_os_bundle_staged_scripts(tmp_path)  # must not raise
