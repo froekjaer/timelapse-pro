@@ -543,14 +543,19 @@ def _sync_edge_os_updates(db: Session, device_id: str, inv: DeviceInventory, pay
     security = int(apt.get("security", 0))
     packages = apt.get("packages", [])
     if total == 0:
-        closed = _supersede_active_device_updates(
-            db,
-            device_id,
-            {"os_security", "os_updates"},
-            f"Superseded by CMDB inventory {now_utc().isoformat()}: device reports 0 OS updates available.",
-        )
-        if closed:
-            log.info("CMDB: lukkede %d stale OS update-kandidat(er) for %s", closed, device_id)
+        # Do NOT supersede active os_security/os_updates tickets on this signal.
+        # Edge is offline by design (only talks to Headend + SFTP) — its own
+        # "apt-get -s --just-print upgrade" (edge/utils/inventory.py
+        # _apt_updates_available()) can only ever reflect its own local, frozen
+        # apt index, never real upstream Ubuntu security advisories. Trusting
+        # "0 upgradable" here to cancel tickets meant every real ticket Headend's
+        # own scheduled catalog scan found (the side with actual internet access,
+        # comparing against the correct Ubuntu suite — see the ubuntu:24.04
+        # hardcode fix, 2026-09-09) got killed by Edge's next routine CMDB sync
+        # before it could ever be approved — found 2026-09-09 chasing why update
+        # #290 (Edge 2, 24 real jammy security packages) kept evaporating.
+        # Headend's own catalog reconciliation remains the sole authority for
+        # closing these two update types.
         return
 
     env = _pending_environment(inv)
