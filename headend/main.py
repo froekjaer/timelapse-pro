@@ -67,7 +67,6 @@ from collections import defaultdict as _defaultdict
 import gzip as _gzip
 import lzma as _lzma
 import urllib.request as _urlrequest
-import functools as _functools
 import shutil as _shutil
 import edge_provisioning_security as _edge_provisioning
 import services.capture_display as _capture_display
@@ -11846,8 +11845,34 @@ def _configured_storage_roots(db: Session | None = None) -> list[_Path]:
 
 #Peter import re as _re
 
-@_functools.lru_cache(maxsize=100_000)
+_find_image_cache: dict[tuple[str, str, tuple[str, ...]], str] = {}
+_find_image_cache_lock = _threading.Lock()
+
+
 def _find_image_cached(device_id: str, filename: str, roots_key: tuple[str, ...]) -> str:
+    """Cache wrapper around _find_image_uncached().
+
+    Only caches HITS, never misses: a capture whose upload lags behind a
+    display request (e.g. an Edge offline outage) must be found on the very
+    next lookup once the file lands, not stay 404 forever. A plain
+    functools.lru_cache here previously memoized the empty-string "not
+    found" result permanently (no TTL, no invalidation), which meant
+    captures backlogged during an outage stayed unviewable in the gallery
+    until the headend process restarted, even though the files were on
+    disk (see 2026-09-09 Edge 1 clock-drift backlog).
+    """
+    key = (device_id, filename, roots_key)
+    cached = _find_image_cache.get(key)
+    if cached:
+        return cached
+    found = _find_image_uncached(device_id, filename, roots_key)
+    if found:
+        with _find_image_cache_lock:
+            _find_image_cache[key] = found
+    return found
+
+
+def _find_image_uncached(device_id: str, filename: str, roots_key: tuple[str, ...]) -> str:
     """
     Find image — håndterer flere strukturer:
       1. Canonical data root: SFTP_BASE/{customer}/{site}/{camera}/YYYY/MM/DD/filename
