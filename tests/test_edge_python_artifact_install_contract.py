@@ -23,6 +23,16 @@ def _python_install_block() -> str:
     return source[start:end]
 
 
+def _python_bundle_validator_source() -> str:
+    # Script-scan logic lives in the module-level _validate_python_bundle_staged_scripts()
+    # (extracted 2026-09-09, same pattern as _validate_os_bundle_staged_scripts()),
+    # not inlined in _run_artifact_python_update() anymore — see PR fixing update #271.
+    source = _source("edge/agent.py")
+    start = source.index("def _validate_python_bundle_staged_scripts(")
+    end = source.index("\n\n\n", start)
+    return source[start:end]
+
+
 def test_python_install_validates_artifact_schema_and_distribution_model():
     block = _python_install_block()
     assert '"timelapse.python_update_artifact.v1"' in block
@@ -42,17 +52,19 @@ def test_python_install_rejects_unsafe_artifact_paths():
 
 
 def test_python_install_forbids_network_commands_in_bundle_scripts():
-    block = _python_install_block()
+    block = _python_bundle_validator_source()
     assert r"curl|wget|scp|rsync" in block
     assert r"git\s+(clone|pull|fetch)" in block
     assert "--index-url" in block
 
 
 def test_python_install_requires_no_index_and_venv_python_for_pip_install_lines():
-    block = _python_install_block()
+    block = _python_bundle_validator_source()
     assert '"--no-index" not in stripped' in block
-    assert "EDGE_VENV_PYTHON = \"/opt/timelapse/venv/bin/python3\"" in block
-    assert "EDGE_VENV_PYTHON not in stripped" in block
+    assert "edge_venv_python not in stripped" in block
+    install_block = _python_install_block()
+    assert "EDGE_VENV_PYTHON = \"/opt/timelapse/venv/bin/python3\"" in install_block
+    assert "_validate_python_bundle_staged_scripts(staging, EDGE_VENV_PYTHON)" in install_block
 
 
 def test_python_install_takes_a_pre_update_backup_before_installing():
