@@ -399,8 +399,18 @@ cp -f packages/*.deb /var/cache/apt/archives/
 local_repo="$(mktemp -d)"
 local_sourcelist="$(mktemp)"
 trap 'rm -rf "$local_repo" "$local_sourcelist"' EXIT
+# apt-get update's actual file-fetch step runs sandboxed as the unprivileged
+# "_apt" user (APT::Sandbox::User, standard on Debian/Ubuntu since the
+# CVE-2016-1252 hardening) — not as whatever user invoked apt-get. mktemp -d
+# defaults to 0700 owned by the invoking (root) user, which _apt cannot even
+# traverse into, so it fails reading the local file:// source with
+# "Permission denied" despite the whole install running as root. Found
+# 2026-09-09 breaking update #297 (Edge 2, os_security, 24 packages): the
+# local repo dir must be world-readable/traversable for _apt to reach it.
+chmod 0755 "$local_repo"
 cp -f packages/*.deb "$local_repo/"
 ( cd "$local_repo" && dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz )
+chmod -R a+rX "$local_repo"
 printf 'deb [trusted=yes] file://%s ./\\n' "$local_repo" > "$local_sourcelist"
 
 apt-get -o Dir::Etc::sourcelist="$local_sourcelist" -o Dir::Etc::sourceparts="-" \\

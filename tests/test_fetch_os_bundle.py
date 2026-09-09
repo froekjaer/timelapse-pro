@@ -90,6 +90,29 @@ def test_install_script_seeds_a_local_apt_index_before_installing():
     assert "/etc/apt" not in script
 
 
+def test_install_script_makes_the_local_repo_readable_by_the_apt_sandbox_user():
+    # Regression for update #297 (2026-09-09): apt-get update's actual
+    # file-fetch step runs sandboxed as the unprivileged "_apt" user
+    # (standard on Debian/Ubuntu since the CVE-2016-1252 hardening), not as
+    # whatever user invoked apt-get. mktemp -d defaults to 0700 owned by the
+    # invoking (root) user, which _apt cannot even traverse into — so it
+    # failed reading the local file:// source with "Permission denied"
+    # despite the whole install running as root. Confirmed live via SSH:
+    # /var/lib/apt/lists/partial is 0700, owned by _apt (uid 104).
+    script = fetch.install_script([
+        {"name": "libpam-modules", "version": "1.4.0-11ubuntu2.8"},
+    ])
+    chmod_dir_pos = script.index('chmod 0755 "$local_repo"')
+    mktemp_pos = script.index('local_repo="$(mktemp -d)"')
+    scanpackages_pos = script.index("dpkg-scanpackages")
+    assert mktemp_pos < chmod_dir_pos < scanpackages_pos
+    assert 'chmod -R a+rX "$local_repo"' in script
+    # Must be readable before apt-get update ever runs.
+    chmod_recursive_pos = script.index('chmod -R a+rX "$local_repo"')
+    update_pos = script.index("Dir::Etc::sourcelist=")
+    assert chmod_recursive_pos < update_pos
+
+
 def test_install_script_never_contains_a_literal_network_url():
     script = fetch.install_script([{"name": "demo", "version": "1.0"}])
     assert "http://" not in script
