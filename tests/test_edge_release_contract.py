@@ -193,6 +193,24 @@ def test_edge_agent_starts_and_stops_the_site_look_policy_client():
     assert 'self._site_look_config_client.stop_polling()' in shutdown
 
 
+def test_timesync_timer_is_installed_and_re_armed_by_app_updates():
+    # Regression for 2026-09-09: timelapse-timesync.service/.timer weren't in
+    # managed_units at all, so a fix to the unit file (e.g. removing a stale
+    # RemainAfterExit=yes that stopped the timer from ever repeating) would
+    # only land in the repo checkout, never get installed to
+    # /etc/systemd/system, and never get the timer restarted to pick it up —
+    # leaving a live device silently broken until its next reboot.
+    source = _source("edge/agent.py")
+    install_block = source.split("def _run_artifact_app_update", 1)[1].split("def _run_artifact_os_update", 1)[0]
+
+    assert '"timelapse-timesync.service"' in install_block
+    assert '"timelapse-timesync.timer"' in install_block
+    assert '"edge/scripts/sync-time.sh"' in install_block
+    # Restarting the *timer* (not just the oneshot service) is required for
+    # a unit-file fix to actually re-arm the schedule.
+    assert '"timelapse-timesync.timer"' in install_block.split('for service in ("timelapse-totp.service",):', 1)[1]
+
+
 def test_lab_mode_keeps_signed_update_poll_active():
     source = _source("edge/agent.py")
     lab_tick = source.split("def _lab_tick", 1)[1].split("\n    def ", 1)[0]
