@@ -121,6 +121,20 @@ def test_dirty_worktree_artifacts_are_fail_closed_everywhere():
     assert 'if not is_deployable_artifact(artifact):' in binder
 
 
+def test_os_bundle_install_preserves_execute_bit_on_staged_shell_scripts():
+    # Regression for the same class of bug that broke update #271's Python
+    # bundle (2026-09-09): dest.write_bytes() doesn't preserve the 0o755 the
+    # Headend set when building a bundle's install-offline.sh/verify-installed.sh
+    # — without re-applying it after download, install-offline.sh's own
+    # "./verify-installed.sh" call fails with "Permission denied". Fixed for
+    # both the OS and Python bundle download loops in the same PR.
+    source = _source("edge/agent.py")
+    block = source.split("def _run_artifact_os_update(", 1)[1].split("\n    def _run_artifact_python_update(", 1)[0]
+    assert "dest.write_bytes(content)" in block
+    assert 'if dest.suffix == ".sh":' in block
+    assert "dest.chmod(dest.stat().st_mode | 0o111)" in block
+
+
 def test_updates_ui_catalogs_only_from_signed_git_tags():
     source = _source("timelapse-ui/src/pages/UpdatesPage.tsx")
 

@@ -67,6 +67,18 @@ def test_python_install_requires_no_index_and_venv_python_for_pip_install_lines(
     assert "_validate_python_bundle_staged_scripts(staging, EDGE_VENV_PYTHON)" in install_block
 
 
+def test_python_install_preserves_execute_bit_on_staged_shell_scripts():
+    # Regression for update #271 (2026-09-09): pip install succeeded fully
+    # (all 26 packages, including the pinned pydantic_core), but the bundle's
+    # own install-offline.sh then failed on "./verify-installed.sh: Permission
+    # denied" — dest.write_bytes() doesn't preserve the 0o755 the Headend set
+    # when building the bundle, and nothing re-applied it after download.
+    block = _python_install_block()
+    assert "dest.write_bytes(content)" in block
+    assert 'if dest.suffix == ".sh":' in block
+    assert "dest.chmod(dest.stat().st_mode | 0o111)" in block
+
+
 def test_python_install_takes_a_pre_update_backup_before_installing():
     block = _python_install_block()
     assert '_create_edge_backup_archive(f"pre-python-update-{update_id}")' in block

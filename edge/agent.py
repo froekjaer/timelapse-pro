@@ -2761,6 +2761,8 @@ class EdgeAgent:
                 dest = staging / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(content)
+                if dest.suffix == ".sh":
+                    dest.chmod(dest.stat().st_mode | 0o111)
 
             self._report_update(update_id, "verifying")
             _validate_os_bundle_staged_scripts(staging)
@@ -2897,6 +2899,8 @@ class EdgeAgent:
                 dest = staging / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(content)
+                if dest.suffix == ".sh":
+                    dest.chmod(dest.stat().st_mode | 0o111)
 
             self._report_update(update_id, "verifying")
             _validate_python_bundle_staged_scripts(staging, EDGE_VENV_PYTHON)
