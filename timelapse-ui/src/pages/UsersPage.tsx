@@ -345,15 +345,18 @@ export default function UsersPage() {
 
   const load = () => {
     setLoading(true)
-    api('/api/admin/users')
-      .then(async u => {
-        const [c, p] = await Promise.all([
-          api('/api/admin/customers').catch(() => []),
-          api('/api/admin/password-policy').catch(() => ({ min_length: 8, require_uppercase: false, require_number: false, require_special: false })),
-        ])
-      setUsers(Array.isArray(u) ? u : (u.users ?? []))
-      setCustomers(Array.isArray(c) ? c : (c.customers ?? []))
-      setPolicy(p)
+    // Ingen af de tre kald afhænger af hinandens data — kør parallelt i
+    // stedet for at vente på /users før /customers + /password-policy
+    // starter. Sparer en hel netværkstur, mærkbart på en langsom forbindelse.
+    Promise.all([
+      api('/api/admin/users'),
+      api('/api/admin/customers').catch(() => []),
+      api('/api/admin/password-policy').catch(() => ({ min_length: 8, require_uppercase: false, require_number: false, require_special: false })),
+    ])
+      .then(([u, c, p]) => {
+        setUsers(Array.isArray(u) ? u : (u.users ?? []))
+        setCustomers(Array.isArray(c) ? c : (c.customers ?? []))
+        setPolicy(p)
       })
       .catch(e => {
         setError(e.message)
