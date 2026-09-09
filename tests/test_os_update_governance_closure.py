@@ -21,15 +21,23 @@ def test_existing_cmdb_observation_is_forced_back_to_blocked():
     assert 'existing.status = "blocked"' in section
 
 
-def test_zero_os_inventory_supersedes_stale_active_os_observations():
+def test_zero_edge_reported_os_updates_does_not_supersede_active_os_tickets():
+    # Edge is offline by design (only talks to Headend + SFTP) — its own
+    # "apt-get -s --just-print upgrade" can only ever reflect its own local,
+    # frozen apt index, never real upstream Ubuntu security advisories.
+    # Trusting Edge's self-reported "0 upgradable" to cancel active
+    # os_security/os_updates tickets meant every real ticket Headend's own
+    # scheduled catalog scan found got killed by Edge's next routine CMDB
+    # sync before it could ever be approved (found 2026-09-09, update #290).
+    # Headend's own catalog reconciliation is the sole authority for closing
+    # these two update types now — see test_zero_edge_reported_os_updates_returns_without_touching_pending_updates
+    # for the behavioral proof.
     source = Path("headend/cmdb.py").read_text(encoding="utf-8")
     start = source.index("def _sync_edge_os_updates(")
     end = source.index("\n\n# ── Kryptering", start)
     section = source[start:end]
     assert "if total == 0:" in section
-    assert '"os_security", "os_updates"' in section
-    assert "device reports 0 OS updates available" in section
-    assert 'update.status = "superseded"' in source
+    assert "_supersede_active_device_updates" not in section
 
 
 def test_auto_os_bundle_builder_requires_explicit_lab_plan_evidence():
