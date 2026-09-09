@@ -6,7 +6,21 @@ Before=timelapse-totp.service
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
+# RemainAfterExit=yes must NOT be set here: this service is meant to run
+# repeatedly via timelapse-timesync.timer's OnUnitActiveSec=6min. With
+# RemainAfterExit=yes, systemd considers the service permanently "active"
+# after its first successful run, so the timer's relative re-arm timer never
+# gets a fresh "became active" transition to count 6 minutes from — the
+# well-documented oneshot+RemainAfterExit+OnUnitActiveSec systemd anti-
+# pattern. Found 2026-09-09 live on Edge 1 (and matching symptoms on Edge 2):
+# `systemctl status timelapse-timesync.timer` showed "Trigger: n/a" and
+# `list-timers` showed "NEXT: -" with the timer never firing again after its
+# first post-boot run, so a broken RTC's clock drift (confirmed via
+# `chronyc tracking`: GPS reference correct, system clock 90min-2h behind)
+# was never auto-corrected, silently breaking all signed Edge<->Headend
+# communication ("Edge signatur er udenfor tidsvindue") until manually
+# force-corrected via `chronyc makestep`. This exact class of drift was
+# already flagged unresolved by Codex on 2026-09-07 (HANDOVER_LOG).
 EnvironmentFile=-/etc/timelapse/time-sync.env
 # Logmappen oprettes normalt som sideeffekt af timelapse-bt-pan.service, men
 # denne service har ingen ordering-afhængighed af den overhovedet (kun
