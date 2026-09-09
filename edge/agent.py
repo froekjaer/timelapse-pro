@@ -160,6 +160,15 @@ def _validate_os_bundle_staged_scripts(staging) -> None:
     update" and not collapsing \\-continued lines), which rejected every
     real bundle's own legitimate update line and failed every OS update on
     Edge 2.
+
+    Only scans .sh/.bash/.conf/.txt — the same scope as headend's
+    _validate_os_bundle_file_policy(). package-manifest.json is data, not a
+    script: its "mirror" field is a plain https:// URL string describing
+    where packages were fetched from, not a command — but the (unanchored)
+    https?://+ftp:// patterns below match that substring anywhere in a line,
+    so scanning .json here (found 2026-09-09, same class of bug already
+    fixed for the Python bundle's package-manifest.json) failed every real
+    OS-security bundle before it ever reached the actual apt install step.
     """
     forbidden_script_patterns = [
         r"\bapt(-get)?\s+(dist-upgrade|full-upgrade|upgrade)\b",
@@ -171,7 +180,7 @@ def _validate_os_bundle_staged_scripts(staging) -> None:
         r"\bftp://",
     ]
     for script_path in staging.rglob("*"):
-        if not script_path.is_file() or script_path.suffix not in {".sh", ".bash", ".conf", ".txt", ".json"}:
+        if not script_path.is_file() or script_path.suffix not in {".sh", ".bash", ".conf", ".txt"}:
             continue
         content = script_path.read_text(errors="ignore")
         rel_script = str(script_path.relative_to(staging))
