@@ -137,6 +137,124 @@ def test_bundle_installer_uses_offline_pip_with_exact_versions(tmp_path, monkeyp
     assert fetch.EDGE_VENV_PYTHON in verify
 
 
+def test_exact_pins_from_requires_dist_extracts_unconditional_pins():
+    pins = fetch.exact_pins_from_requires_dist([
+        "annotated-types>=0.6.0",
+        "pydantic-core==2.46.5",
+        "typing-extensions>=4.14.1",
+        'email-validator>=2.0.0; extra == "email"',
+    ])
+    assert pins == {"pydantic-core": "2.46.5"}
+
+
+def test_exact_pins_from_requires_dist_normalizes_names():
+    pins = fetch.exact_pins_from_requires_dist(["Pydantic_Core==2.46.5"])
+    assert pins == {"pydantic-core": "2.46.5"}
+
+
+def test_exact_pins_from_requires_dist_ignores_missing_or_range_specifiers():
+    assert fetch.exact_pins_from_requires_dist(None) == {}
+    assert fetch.exact_pins_from_requires_dist(["foo>=1.0,<2.0"]) == {}
+
+
+def test_build_bundle_repins_transitive_dependency_to_the_version_its_own_dependent_requires(tmp_path, monkeypatch):
+    # Regression for update #271 (2026-09-09): pydantic and pydantic_core were
+    # each independently flagged outdated and fetched at their own "latest on
+    # PyPI" version, but pydantic 2.13.5 requires pydantic-core==2.46.5
+    # exactly — not the independently-latest 2.48.0 — so pip's resolver
+    # refused to install the pair as originally requested.
+    releases = {
+        ("pydantic", "2.13.5"): {
+            "info": {"requires_dist": ["pydantic-core==2.46.5", "annotated-types>=0.6.0"]},
+            "urls": [{"packagetype": "bdist_wheel", "filename": "pydantic-2.13.5-py3-none-any.whl",
+                       "url": "https://files.pythonhosted.org/pydantic-2.13.5-py3-none-any.whl",
+                       "digests": {"sha256": ""}, "size": 10}],
+        },
+        ("pydantic_core", "2.48.0"): {
+            "info": {"requires_dist": []},
+            "urls": [{"packagetype": "bdist_wheel", "filename": "pydantic_core-2.48.0-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+                       "url": "https://files.pythonhosted.org/pydantic_core-2.48.0.whl",
+                       "digests": {"sha256": ""}, "size": 10}],
+        },
+        ("pydantic_core", "2.46.5"): {
+            "info": {"requires_dist": []},
+            "urls": [{"packagetype": "bdist_wheel", "filename": "pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+                       "url": "https://files.pythonhosted.org/pydantic_core-2.46.5.whl",
+                       "digests": {"sha256": ""}, "size": 10}],
+        },
+    }
+    monkeypatch.setattr(fetch, "fetch_release_metadata", lambda name, version, verbose=False: releases.get((name, version)))
+
+    def fake_download(entry, dest_dir, verbose=False):
+        path = dest_dir / entry["filename"]
+        path.write_bytes(b"whl")
+        return path
+
+    monkeypatch.setattr(fetch, "download_wheel", fake_download)
+    result = fetch.build_bundle(
+        [
+            {"name": "pydantic", "available_version": "2.13.5"},
+            {"name": "pydantic_core", "available_version": "2.48.0"},
+        ],
+        tmp_path / "bundle",
+        "TL-TEST",
+        python_version="3.12.3",
+        arch="arm64",
+        os_family="linux",
+    )
+    assert result["wheel_files"] == 2
+    assert result["not_found"] == []
+    installer = (tmp_path / "bundle" / "install-offline.sh").read_text()
+    assert "'pydantic==2.13.5'" in installer
+    assert "'pydantic_core==2.46.5'" in installer
+    assert "2.48.0" not in installer
+
+
+def test_build_bundle_leaves_version_alone_when_pins_conflict(tmp_path, monkeypatch):
+    # Two dependents pin the same transitive package to different exact
+    # versions — auto-resolving would be a guess, so leave the originally
+    # requested version untouched rather than silently picking one.
+    releases = {
+        ("a", "1.0"): {
+            "info": {"requires_dist": ["shared==1.0"]},
+            "urls": [{"packagetype": "bdist_wheel", "filename": "a-1.0-py3-none-any.whl",
+                       "url": "https://files.pythonhosted.org/a-1.0-py3-none-any.whl",
+                       "digests": {"sha256": ""}, "size": 10}],
+        },
+        ("b", "1.0"): {
+            "info": {"requires_dist": ["shared==2.0"]},
+            "urls": [{"packagetype": "bdist_wheel", "filename": "b-1.0-py3-none-any.whl",
+                       "url": "https://files.pythonhosted.org/b-1.0-py3-none-any.whl",
+                       "digests": {"sha256": ""}, "size": 10}],
+        },
+        ("shared", "3.0"): {
+            "info": {"requires_dist": []},
+            "urls": [{"packagetype": "bdist_wheel", "filename": "shared-3.0-py3-none-any.whl",
+                       "url": "https://files.pythonhosted.org/shared-3.0-py3-none-any.whl",
+                       "digests": {"sha256": ""}, "size": 10}],
+        },
+    }
+    monkeypatch.setattr(fetch, "fetch_release_metadata", lambda name, version, verbose=False: releases.get((name, version)))
+
+    def fake_download(entry, dest_dir, verbose=False):
+        path = dest_dir / entry["filename"]
+        path.write_bytes(b"whl")
+        return path
+
+    monkeypatch.setattr(fetch, "download_wheel", fake_download)
+    result = fetch.build_bundle(
+        [
+            {"name": "a", "available_version": "1.0"},
+            {"name": "b", "available_version": "1.0"},
+            {"name": "shared", "available_version": "3.0"},
+        ],
+        tmp_path / "bundle",
+        "TL-TEST",
+    )
+    installer = (tmp_path / "bundle" / "install-offline.sh").read_text()
+    assert "'shared==3.0'" in installer
+
+
 def test_unresolvable_package_is_reported_not_found(tmp_path, monkeypatch):
     monkeypatch.setattr(fetch, "fetch_release_metadata", lambda name, version, verbose=False: None)
     monkeypatch.setattr(fetch, "fetch_release_metadata", lambda name, version, verbose=False: {

@@ -118,6 +118,34 @@ def select_wheel(urls: list[dict[str, Any]], cpython_tag: str, arch: str, os_fam
     return specific[0] if specific else None
 
 
+def _normalize_pypi_name(name: str) -> str:
+    """PEP 503 normalization — PyPI treats "pydantic-core", "pydantic_core"
+    and "Pydantic.Core" as the same distribution name."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def exact_pins_from_requires_dist(requires_dist: list[str] | None) -> dict[str, str]:
+    """Extract unconditional exact-version pins ("pkg==1.2.3") from a
+    release's requires_dist metadata.
+
+    Skips anything with an environment marker (extras, platform/python
+    conditionals — a ";" in the requirement) since those aren't
+    unconditionally required, and anything that isn't a single bare "=="
+    specifier (ranges, multiple specifiers) since those don't force one
+    exact version.
+    """
+    pins: dict[str, str] = {}
+    for raw in requires_dist or []:
+        req = str(raw or "").strip()
+        if ";" in req:
+            continue
+        match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*\(?==\s*([A-Za-z0-9][A-Za-z0-9._-]*)\)?$", req)
+        if not match:
+            continue
+        pins[_normalize_pypi_name(match.group(1))] = match.group(2)
+    return pins
+
+
 def fetch_release_metadata(name: str, version: str, verbose: bool = False) -> dict[str, Any] | None:
     url = PYPI_JSON_URL.format(name=name, version=version)
     if verbose:
@@ -248,6 +276,23 @@ def build_bundle(
     package_file_entries: list[dict[str, Any]] = []
     not_found: list[str] = []
 
+    # Pass 1: fetch each candidate's own PyPI metadata at its independently
+    # "latest" version, without downloading yet. Each package in `packages`
+    # was flagged outdated purely by comparing its own installed vs. latest
+    # PyPI version — with no awareness of any other package in this same
+    # batch, so two packages that must be version-locked together (e.g. a
+    # compiled-extension pair like pydantic/pydantic-core, which pydantic
+    # pins to an exact version) can each get bumped to their own latest,
+    # producing a pair pip's resolver correctly refuses to install together.
+    # Found 2026-09-09 breaking update #271 (Edge 1): pydantic==2.13.5 was
+    # requested alongside pydantic_core==2.48.0, but pydantic 2.13.5 itself
+    # requires pydantic-core==2.46.5 exactly.
+    candidate_names = {_normalize_pypi_name(str(p.get("name") or "")) for p in packages}
+    requested: dict[str, tuple[str, str]] = {}  # normalized name -> (original name, version)
+    metadata_by_name: dict[str, dict[str, Any]] = {}
+    pins: dict[str, str] = {}
+    pin_conflicts: set[str] = set()
+
     for pkg in packages:
         name = str(pkg.get("name") or "").strip()
         wanted_version = str(pkg.get("available_version") or "").strip()
@@ -255,11 +300,50 @@ def build_bundle(
             continue
         try:
             metadata = fetch_release_metadata(name, wanted_version, verbose=verbose)
-            if not metadata:
-                print(f"  WARNING: {name}=={wanted_version} not found on PyPI", file=sys.stderr)
-                not_found.append(f"{name}=={wanted_version}")
+        except Exception as exc:
+            print(f"  ERROR fetching metadata for {name}=={wanted_version}: {exc}", file=sys.stderr)
+            not_found.append(f"{name}=={wanted_version}")
+            continue
+        if not metadata:
+            print(f"  WARNING: {name}=={wanted_version} not found on PyPI", file=sys.stderr)
+            not_found.append(f"{name}=={wanted_version}")
+            continue
+        normalized = _normalize_pypi_name(name)
+        requested[normalized] = (name, wanted_version)
+        metadata_by_name[normalized] = metadata
+        for pinned_name, pinned_version in exact_pins_from_requires_dist(
+            (metadata.get("info") or {}).get("requires_dist")
+        ).items():
+            if pinned_name not in candidate_names:
+                continue  # not something we're independently bumping — irrelevant
+            if pinned_name in pins and pins[pinned_name] != pinned_version:
+                pin_conflicts.add(pinned_name)  # two packages disagree — don't guess
                 continue
-            entry = select_wheel(metadata.get("urls") or [], cpython_tag, arch, os_family)
+            pins[pinned_name] = pinned_version
+
+    # Pass 2: apply pins onto any of our own candidates whose independently-
+    # fetched "latest" version doesn't match what another candidate in this
+    # same batch actually requires, then re-fetch metadata for the corrected
+    # version before downloading.
+    for normalized, (name, wanted_version) in list(requested.items()):
+        pinned_version = pins.get(normalized)
+        if not pinned_version or normalized in pin_conflicts or pinned_version == wanted_version:
+            continue
+        print(f"  pinning {name}=={pinned_version} (was {wanted_version}, required by another package in this bundle)", file=sys.stderr)
+        try:
+            corrected = fetch_release_metadata(name, pinned_version, verbose=verbose)
+        except Exception as exc:
+            print(f"  ERROR fetching pinned metadata for {name}=={pinned_version}: {exc}", file=sys.stderr)
+            corrected = None
+        if not corrected:
+            print(f"  WARNING: pinned version {name}=={pinned_version} not found on PyPI — leaving at {wanted_version}", file=sys.stderr)
+            continue
+        requested[normalized] = (name, pinned_version)
+        metadata_by_name[normalized] = corrected
+
+    for normalized, (name, wanted_version) in requested.items():
+        try:
+            entry = select_wheel(metadata_by_name[normalized].get("urls") or [], cpython_tag, arch, os_family)
             if not entry:
                 print(f"  WARNING: no compatible wheel for {name}=={wanted_version} ({cpython_tag}/{arch}/{os_family})", file=sys.stderr)
                 not_found.append(f"{name}=={wanted_version}")
