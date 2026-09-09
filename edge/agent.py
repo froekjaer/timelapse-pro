@@ -2439,6 +2439,8 @@ class EdgeAgent:
             "timelapse-captive.service",
             "timelapse-wifi-ap.service",
             "timelapse-totp.service",
+            "timelapse-timesync.service",
+            "timelapse-timesync.timer",
         )
         managed_unit_files = (*managed_units, "timelapse-edge.service")
         management_runtime_paths = {
@@ -2449,6 +2451,7 @@ class EdgeAgent:
             "edge/scripts/timelapse-captive.sh",
             "edge/scripts/timelapse-wifi-ap.sh",
             "edge/scripts/gen-bt-cert.sh",
+            "edge/scripts/sync-time.sh",
             *(f"edge/scripts/{unit}" for unit in managed_unit_files),
         }
         management_changed = any(
@@ -2579,6 +2582,22 @@ class EdgeAgent:
                     )
 
                 for service in ("timelapse-totp.service",):
+                    _sp.run(["systemctl", "restart", service], check=True, capture_output=True, text=True)
+                    active = _sp.run(
+                        ["systemctl", "is-active", "--quiet", service],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if active.returncode != 0:
+                        raise RuntimeError(f"managed_service_not_active:{service}")
+
+                # Restart the *timer*, not the oneshot service: a timer only
+                # recomputes its next-elapse schedule on its own start/restart,
+                # so an in-place unit-file fix (e.g. removing a stale
+                # RemainAfterExit=yes that stopped it from ever re-arming)
+                # would otherwise sit inert until the next reboot.
+                for service in ("timelapse-timesync.timer",):
                     _sp.run(["systemctl", "restart", service], check=True, capture_output=True, text=True)
                     active = _sp.run(
                         ["systemctl", "is-active", "--quiet", service],
