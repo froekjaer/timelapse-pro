@@ -1026,6 +1026,128 @@ class EdgeAgent:
 
     # ── Capture cycle ───────────────────────────────────────────────────────
 
+    _TIME_SYNC_LOG = Path("/var/log.hdd/timelapse/time-sync.log")
+    _TIME_SYNC_STEP_THRESHOLD_S = 5
+
+    def _log_time_sync(self, message: str) -> None:
+        try:
+            self._TIME_SYNC_LOG.parent.mkdir(parents=True, exist_ok=True)
+            with self._TIME_SYNC_LOG.open("a", encoding="utf-8") as handle:
+                handle.write(f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} [capture-time-sync] {message}\n")
+        except Exception:
+            pass
+
+    def _sync_time_from_gps_before_capture(self) -> None:
+        """Best-effort: step the system clock from a live GPS fix right
+        before camera power-on. Never raises and never blocks the capture
+        on a GPS problem — a missed sync here just leaves the periodic
+        timelapse-timesync.timer and heartbeat-triggered
+        _sync_time_from_headend() as fallbacks, same as before this existed.
+        """
+        try:
+            gps_unix = self._read_gps_time(timeout_s=6)
+        except Exception as exc:
+            log.debug("Pre-capture GPS time sync: read failed (%s)", exc)
+            return
+        if gps_unix is None:
+            return
+        diff = gps_unix - int(time.time())
+        if abs(diff) <= self._TIME_SYNC_STEP_THRESHOLD_S:
+            return
+        try:
+            result = subprocess.run(
+                ["date", "-u", "-s", f"@{gps_unix}"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception as exc:
+            log.warning("Pre-capture GPS time sync: date -s failed (%s)", exc)
+            return
+        if result.returncode != 0:
+            log.warning("Pre-capture GPS time sync: date -s exited %d: %s", result.returncode, result.stderr.strip())
+            return
+        log.info("Pre-capture GPS time sync: stepped clock by %+ds", diff)
+        self._log_time_sync(f"Sat ur fra GPS-fix før capture (forskel: {diff}s)")
+
+    _GPS_STABILITY_TOLERANCE_S = 2
+
+    @classmethod
+    def _read_gps_time(cls, timeout_s: int = 6) -> int | None:
+        """Read TPV fixes from gpsd via gpspipe and only return a time once
+        two consecutive readings are mutually consistent — i.e. GPS-reported
+        time advances in lockstep with real (monotonic) elapsed time between
+        the two reads.
+
+        Peter, 2026-09-09: the camera and GPS module share a power rail, so
+        GPS loses power (and needs to reacquire) on every capture. Right
+        after power returns, gpsd's very first reading(s) before the fix has
+        genuinely settled can be a transient bad value — reading a couple of
+        times and comparing filters that out. Deliberately does NOT rely on
+        disabling chrony's SHM refclock "trust" flag: these devices have no
+        RTC, so GPS is the only time source to fall back on, and "trust" is
+        what lets chrony keep using it as sole source at all.
+
+        Uses the same line-by-line, wall-clock-deadline reading pattern as
+        camera/drivers/gphoto2_driver.py's _read_gpsd_fix() (fixed
+        2026-07-03 there after a fixed-line-count `gpspipe -n N` approach
+        proved unreliable) rather than sync-time.sh's `gpspipe -w -n 20`,
+        for the same reason.
+        """
+        import select as _select
+
+        try:
+            proc = subprocess.Popen(["gpspipe", "-w"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
+
+        deadline = time.monotonic() + timeout_s
+        readings: list[tuple[float, int]] = []  # (monotonic read time, gps epoch)
+        gps_unix: int | None = None
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                ready, _, _ = _select.select([proc.stdout], [], [], remaining)
+                if not ready:
+                    break
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                try:
+                    message = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if message.get("class") != "TPV" or int(message.get("mode") or 0) < 2:
+                    continue
+                stamp = message.get("time")
+                if not stamp:
+                    continue
+                try:
+                    value = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    continue
+                candidate = int(value.timestamp())
+                if candidate <= 1_000_000_000:
+                    continue
+                readings.append((time.monotonic(), candidate))
+                if len(readings) >= 2:
+                    (t_prev, g_prev), (t_now, g_now) = readings[-2], readings[-1]
+                    if abs((g_now - g_prev) - (t_now - t_prev)) <= cls._GPS_STABILITY_TOLERANCE_S:
+                        gps_unix = g_now
+                        break
+        finally:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        return gps_unix
+
     def _do_capture_cycle(self) -> bool:
         """
         Full capture cycle:
@@ -1039,6 +1161,18 @@ class EdgeAgent:
         self._last_capture_result = None
 
         try:
+            # 0. Sync system clock from GPS while it still has a fix from
+            #    before this cycle's own power draw. The camera and GPS
+            #    module share a power rail, so GPS loses its fix (and needs
+            #    to reacquire) every time the camera powers on/captures —
+            #    an independent periodic timer can easily land its own
+            #    correction attempt right after a capture, exactly when GPS
+            #    has just dropped out. Syncing here, immediately before
+            #    camera power-on, is the only reliable way to catch GPS
+            #    time before THIS cycle's dip, keeping EXIF timestamps as
+            #    accurate as possible.
+            self._sync_time_from_gps_before_capture()
+
             # 1. Power camera on and connect
             self._camera_power_on("capture cycle")
             try:

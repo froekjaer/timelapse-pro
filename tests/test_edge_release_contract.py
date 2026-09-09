@@ -298,6 +298,37 @@ def test_time_sync_prioritizes_validated_gps_and_rejects_large_chrony_offset():
     assert 'chronyc offline' in time_sync
 
 
+def test_time_sync_requires_two_consistent_gps_readings_before_stepping_clock():
+    # Peter, 2026-09-09: the camera and GPS module share a power rail, so
+    # GPS loses power (and needs to reacquire) on every capture. gpsd's
+    # first reading right after power returns, before the fix has settled,
+    # can be a transient bad value — a single TPV read isn't enough to
+    # trust. Deliberately does not remove chrony's SHM refclock "trust"
+    # flag (setup-gps-time.sh): these devices have no RTC, so GPS is the
+    # only time source to fall back on.
+    time_sync = _source("edge/scripts/sync-time.sh")
+    assert "STABILITY_TOLERANCE_S = 2" in time_sync
+    assert "readings.append((time.monotonic(), candidate))" in time_sync
+    assert "len(readings) >= 2" in time_sync
+    assert "(t_prev, g_prev), (t_now, g_now) = readings[-2], readings[-1]" in time_sync
+
+
+def test_time_sync_falls_back_to_configured_ntp_server_before_headend():
+    # Peter, 2026-09-09: add an NTP fallback, but only if an operator
+    # explicitly configures one (e.g. a reachable LAN server) — off by
+    # default, never a hardcoded public pool, preserving "no direct
+    # Internet unless explicitly configured" for these devices.
+    time_sync = _source("edge/scripts/sync-time.sh")
+    assert 'NTP_SERVER="${TIMELAPSE_NTP_SERVER:-${NTP_SERVER:-}}"' in time_sync
+    assert '[[ -n "$NTP_SERVER" ]]' in time_sync
+    assert 'chronyd -q "server ${NTP_SERVER} iburst"' in time_sync
+    assert "pool.ntp.org" not in time_sync
+    # Must be tried before the Headend HTTPS fallback, not after.
+    ntp_pos = time_sync.index('chronyd -q "server ${NTP_SERVER} iburst"')
+    headend_pos = time_sync.index('TIME_URL="${HEADEND_URL}/api/time"')
+    assert ntp_pos < headend_pos
+
+
 def test_gps_image_setup_uses_actual_usb_receiver_as_authoritative_clock():
     setup = _source("edge/scripts/setup-gps-time.sh")
     injector = _source("headend/tools/inject_edge_image.py")
