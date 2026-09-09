@@ -202,6 +202,44 @@ def _validate_os_bundle_staged_scripts(staging) -> None:
                 raise RuntimeError(f"os bundle apt command without --no-download: {rel_script}")
 
 
+def _validate_python_bundle_staged_scripts(staging, edge_venv_python: str) -> None:
+    """Fail closed on any staged Python-bundle script/config that isn't a
+    strictly offline pip install targeting Edge's own venv.
+
+    Only scans .sh/.bash/.conf/.txt — the same scope as headend/main.py's
+    _validate_python_bundle_file_policy(). package-manifest.json is data,
+    not a script: its "install_model" field is a human-readable description
+    string that legitimately contains the words "pip install" and
+    "--no-index" without being a command. Scanning .json here (found
+    2026-09-09, out of sync with the headend-side validator) made every
+    Python dependency update fail on that description line before ever
+    reaching the real install-offline.sh.
+    """
+    forbidden_script_patterns = [
+        r"^\s*(curl|wget|scp|rsync)\b",
+        r"^\s*git\s+(clone|pull|fetch)\b",
+        r"--index-url\b",
+        r"^\s*pip3?\s+download\b",
+    ]
+    for script_path in staging.rglob("*"):
+        if not script_path.is_file() or script_path.suffix not in {".sh", ".bash", ".conf", ".txt"}:
+            continue
+        content = script_path.read_text(errors="ignore")
+        rel_script = str(script_path.relative_to(staging))
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            for pattern in forbidden_script_patterns:
+                if re.search(pattern, stripped):
+                    raise RuntimeError(f"python bundle contains forbidden online command: {rel_script}")
+            if "pip" in stripped and "install" in stripped:
+                if "--no-index" not in stripped:
+                    raise RuntimeError(f"python bundle pip install without --no-index: {rel_script}")
+                if edge_venv_python not in stripped and stripped.split()[0] != edge_venv_python:
+                    raise RuntimeError(f"python bundle pip install must target edge venv explicitly: {rel_script}")
+
+
 # ── Agent ──────────────────────────────────────────────────────────────────────
 
 class EdgeAgent:
@@ -2861,29 +2899,7 @@ class EdgeAgent:
                 dest.write_bytes(content)
 
             self._report_update(update_id, "verifying")
-            forbidden_script_patterns = [
-                r"^\s*(curl|wget|scp|rsync)\b",
-                r"^\s*git\s+(clone|pull|fetch)\b",
-                r"--index-url\b",
-                r"^\s*pip3?\s+download\b",
-            ]
-            for script_path in staging.rglob("*"):
-                if not script_path.is_file() or script_path.suffix not in {".sh", ".bash", ".conf", ".txt", ".json"}:
-                    continue
-                content = script_path.read_text(errors="ignore")
-                rel_script = str(script_path.relative_to(staging))
-                for line in content.splitlines():
-                    stripped = line.strip()
-                    if not stripped or stripped.startswith("#"):
-                        continue
-                    for pattern in forbidden_script_patterns:
-                        if re.search(pattern, stripped):
-                            raise RuntimeError(f"python bundle contains forbidden online command: {rel_script}")
-                    if "pip" in stripped and "install" in stripped:
-                        if "--no-index" not in stripped:
-                            raise RuntimeError(f"python bundle pip install without --no-index: {rel_script}")
-                        if EDGE_VENV_PYTHON not in stripped and stripped.split()[0] != EDGE_VENV_PYTHON:
-                            raise RuntimeError(f"python bundle pip install must target edge venv explicitly: {rel_script}")
+            _validate_python_bundle_staged_scripts(staging, EDGE_VENV_PYTHON)
 
             if not commands:
                 raise RuntimeError("python_artifact_missing_install_commands")
