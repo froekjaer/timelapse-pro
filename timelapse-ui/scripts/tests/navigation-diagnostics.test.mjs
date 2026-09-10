@@ -47,3 +47,32 @@ test('retains a slow navigation separately, excludes stale and hidden frames',()
  api.frameReady('tags');clock.now=9010;sandbox.document.hidden=true;frames.shift()();frames.shift()()
  assert.equal(JSON.parse(api.report()).slowNavigations.length,1);api.stopDiagnostics()
 })
+
+test('first load is measured from document navigation start',()=>{
+ const {api,frames,clock}=setup();api.startDiagnostics();api.frameReady('dashboard')
+ clock.now=2500;frames.shift()();frames.shift()()
+ const fr=JSON.parse(api.report()).events.find(e=>e.kind==='frame-ready')
+ assert.equal(fr.values.elapsed,2500);assert.equal(fr.values.refresh,0)
+})
+
+test('automatic refresh starts its own clock and is never a slow navigation',()=>{
+ const {api,frames,clock}=setup();api.startDiagnostics()
+ api.frameReady('dashboard');clock.now=20;frames.shift()();frames.shift()()
+ clock.now=60010;api.phase('dashboard-data-wait')
+ api.frameReady('dashboard');clock.now=60510;frames.shift()();frames.shift()()
+ const r=JSON.parse(api.report());const frs=r.events.filter(e=>e.kind==='frame-ready')
+ assert.equal(frs.length,2);assert.equal(frs[1].values.elapsed,500);assert.equal(frs[1].values.refresh,1)
+ assert.equal(r.slowNavigations.length,0)
+})
+
+test('a loading state ended by error is not a successful page load',()=>{
+ const {api,frames,clock}=setup();api.startDiagnostics()
+ clock.now=9000;api.loadFailed('dashboard')
+ let r=JSON.parse(api.report())
+ assert.equal(r.events.filter(e=>e.kind==='frame-ready').length,0)
+ assert.equal(r.events.filter(e=>e.kind==='load-failed').length,1)
+ assert.equal(r.slowNavigations.length,0)
+ api.phase('dashboard-data-wait');api.frameReady('dashboard');clock.now=9400;frames.shift()();frames.shift()()
+ const fr=JSON.parse(api.report()).events.find(e=>e.kind==='frame-ready')
+ assert.equal(fr.values.elapsed,400)
+})

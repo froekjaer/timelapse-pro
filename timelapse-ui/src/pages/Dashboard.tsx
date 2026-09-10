@@ -1,8 +1,9 @@
 import { useDiagnosticReady } from '../diagnostics/useDiagnosticReady'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, Camera, Building2, MapPin, ChevronRight, Plus, CheckCircle, AlertCircle, Clock, Settings, ShieldAlert, Package } from 'lucide-react'
 import { getStats, getDevices, getApiUrl, pathSegment } from '../api/client'
+import { withRetry } from '../api/retry'
 import { StatCard } from '../components/StatCard'
 import { StatusBadge } from '../components/StatusBadge'
 import { useAuth } from '../context/AuthContext'
@@ -37,12 +38,20 @@ interface PendingUpdate {
   environment: string | null
 }
 
+class ApiError extends Error {
+  status: number
+  constructor(status: number) {
+    super(`HTTP ${status}`)
+    this.status = status
+  }
+}
+
 function api(path: string) {
   return fetch(`${getApiUrl()}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' }
   }).then(r => {
-    if (!r.ok) throw new Error(`${r.status}`)
+    if (!r.ok) throw new ApiError(r.status)
     return r.json()
   })
 }
@@ -271,36 +280,51 @@ export function Dashboard() {
   const [sites, setSites]         = useState<Site[]>([])
   const [pendingUpdates, setPendingUpdates] = useState<PendingUpdate[]>([])
   const [loading, setLoading]     = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [lastRefresh, setLastRefresh] = useState(new Date())
+  const inFlight = useRef(false)
 
-  useDiagnosticReady(loading, 'dashboard')
+  useDiagnosticReady(loading, 'dashboard', loadError)
 
   const load = useCallback(async () => {
+    if (inFlight.current) return          // no overlapping loads / retry storms
+    inFlight.current = true
     setLoading(true)
     try {
-      const updateRequests = canConfigure
-        ? [
-            api('/api/updates/pending'),
-            api('/api/updates/pending?status=blocked'),
-          ]
-        : []
-      const [s, d, c, si, ...updateResults] = await Promise.all([
-        getStats(),
-        getDevices(),
-        api('/api/admin/customers'),
-        api('/api/admin/sites'),
-        ...updateRequests,
-      ])
-      setStats(s)
-      setDevices(d)
-      setCustomers(c)
-      setSites(si)
-      setPendingUpdates(updateResults.flat() as PendingUpdate[])
-      setLastRefresh(new Date())
-    } catch (e) {
-      console.error(e)
+      const sections: [string, () => Promise<unknown>][] = [
+        ['statistik', () => getStats()],
+        ['enheder', () => getDevices()],
+        ['kunder', () => api('/api/admin/customers')],
+        ['sites', () => api('/api/admin/sites')],
+      ]
+      if (canConfigure) {
+        sections.push(['opdateringer', () => api('/api/updates/pending')])
+        sections.push(['blokerede opdateringer', () => api('/api/updates/pending?status=blocked')])
+      }
+      // allSettled: one failed call must not block the whole dashboard.
+      // withRetry: transient failures (429/502/503/504/network) get a few
+      // bounded backoff retries; access rejections are never retried.
+      const results = await Promise.allSettled(
+        sections.map(([, fn]) => withRetry(fn))
+      )
+      const failed: string[] = []
+      const settled = results.map((r, i) => {
+        if (r.status === 'fulfilled') return r.value
+        console.error(`Dashboard: could not load ${sections[i][0]}`, r.reason)
+        failed.push(sections[i][0])
+        return null
+      })
+      const [s, d, c, si, ...updateResults] = settled
+      if (s) setStats(s as Stats)
+      if (d) setDevices(d as Device[])
+      if (c) setCustomers(c as Customer[])
+      if (si) setSites(si as Site[])
+      setPendingUpdates(updateResults.filter(Boolean).flat() as PendingUpdate[])
+      setLoadError(failed.length ? `Kunne ikke hente: ${failed.join(', ')}` : null)
+      if (!failed.length) setLastRefresh(new Date())
     } finally {
       setLoading(false)
+      inFlight.current = false
     }
   }, [canConfigure])
 
@@ -330,6 +354,18 @@ export function Dashboard() {
           </button>
         </div>
       </div>
+
+      {/* Load error: visible, with manual retry (automatic backoff retries
+          for transient errors already happened inside load()) */}
+      {loadError && (
+        <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span>{loadError}. Serveren kan være midlertidigt overbelastet — viste data kan være ufuldstændige.</span>
+          <button onClick={load} disabled={loading}
+            className="shrink-0 px-3 py-1.5 rounded-lg border border-amber-300 bg-white hover:bg-amber-100 disabled:opacity-50">
+            Prøv igen
+          </button>
+        </div>
+      )}
 
       {/* Stats */}
       {stats && (
