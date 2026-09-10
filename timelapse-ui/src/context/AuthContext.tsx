@@ -1,3 +1,4 @@
+import { stopDiagnostics } from '../diagnostics/timingRecorder'
 // ───────────────────────────────────────────────────────────────────
 // AuthContext.tsx — JWT auth state for TimeLapse Pro
 // ───────────────────────────────────────────────────────────────────
@@ -152,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    stopDiagnostics()
     fetch(`${getApiUrl()}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
     localStorage.removeItem('tl_user')
     setToken(null)

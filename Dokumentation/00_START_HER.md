@@ -1,5 +1,7 @@
 # 00 — START HER (master-indeks & onboarding)
 
+> **Navigationsdiagnostik 2026-09-10:** [aktivering, installation, test og målegrænser](NAVIGATION_DIAGNOSTICS_2026-09.md). Opt-in diagnostik for sporadiske menupauser; se handover for faktisk rollout-status.
+
 > **GRC single source of truth:** Testcases, testkørsler, risici, fund,
 > afhjælpninger og evidens vedligeholdes i PostgreSQL og vises under
 > `Compliance -> GRC register`. Markdown-test- og riskdokumenter er

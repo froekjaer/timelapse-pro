@@ -1,3 +1,4 @@
+import { diagnosticsEnabled, record, safeName } from '../diagnostics/timingRecorder'
 import axios from 'axios'
 import type { Device, DeviceDetail, Stats, Capture, DeviceConfig } from '../types'
 
@@ -38,10 +39,16 @@ export const bootstrapToken = async () => {
 }
 
 const getClient = () => {
-  return axios.create({
+  const client = axios.create({
     baseURL:         getApiUrl(),
     withCredentials: true,
+    headers: diagnosticsEnabled() && getApiUrl() === window.location.origin ? { 'X-TLP-Diagnostics': '1' } : {},
   })
+  if (diagnosticsEnabled()) {
+    client.interceptors.request.use(config => { record('request-dispatch', safeName(config.url ?? '')); return config })
+    client.interceptors.response.use(response => { record('response-decoded', safeName(response.config.url ?? ''), { status: response.status }); return response }, error => { record('request-error', 'axios'); return Promise.reject(error) })
+  }
+  return client
 }
 
 export const pathSegment = (value: string) => encodeURIComponent(value)

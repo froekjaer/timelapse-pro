@@ -137,7 +137,7 @@ from database import (
     DeviceInventory, Diagnostic, Event, KeyAuditEvent, KeyCredential,
     PendingUpdate, Settings, Site, SshTunnelLog, UpdateJobRecord, User,
     AiBatchJob,
-    SessionLocal, create_tables, get_db, now_utc
+    SessionLocal, create_tables, get_db, now_utc, engine
 )
 import uuid as _uuid
 
@@ -193,12 +193,13 @@ def _sanitize_filename(filename: str) -> str:
         raise HTTPException(status_code=400, detail="Ugyldigt filnavn")
     return name[:180]
 
-
 app = FastAPI(
     title       = "TimeLapse Pro Headend",
     description = "Central control API for TimeLapse Pro edge nodes",
     version     = "1.0.0",
 )
+from services.navigation_timing import NavigationTimingMiddleware
+app.add_middleware(NavigationTimingMiddleware, engine=engine)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -206,7 +207,6 @@ def _resolve_allowed_origin(environment: str, explicit_origin: str | None, base_
     if environment in {"prod", "production", "staging"} and not explicit_origin:
         raise RuntimeError("ALLOWED_ORIGIN must be explicitly configured in staging/production")
     return explicit_origin or base_url or "http://127.0.0.1:5173"
-
 
 ALLOWED_ORIGIN = _resolve_allowed_origin(
     TIMELAPSE_ENV,
