@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-10 23:50 — fra Kimi: navigationsdiagnostik reviewet, merget og LIVE på Headend
+
+- Hvad er gjort: PR #216 (`codex/navigation-diagnostics-20260910`) reviewet (anonymisering, gating, overhead, merge — alle fire kontrolpunkter verificeret i kode), squashet til main som `eafda213` og deployet til live: live-klonen `~/projects/timelapse-pro` er fastgjort (detached HEAD) på `eafda213`, fordi `main` er optaget af worktree `timelapse-pro-wp1`. UI bygget med `npm run build`; de 92 gamle hash-assets er bevaret (186 i alt), så åbne faner ikke mister lazy chunks. Peter tilføjede `TIMELAPSE_NAV_DIAGNOSTICS=1` til `/etc/timelapse/headend.env` og genstartede servicen (ny pid 21565).
+- Verifikation: `node --test` 4/4, `pytest test_navigation_timing + test_architecture_ratchet` 7/7, `tsc --noEmit` rent, ingen nye ESLint-fejl (DevicePage/AuthContext-fejl er præ-eksisterende på main). Live: `/api/health` = 200; `Server-Timing: app/sql/sql_count/loop_lag/trace` returneres KUN når `X-TLP-Diagnostics: 1` sendes — uden header ingen Server-Timing (gating verificeret begge veje).
+- Brug: admin → "Fejlsøg ventetid" under navigationen → "Start måling og genindlæs" → brug systemet normalt → "Vis/Hent tidsrapport" FØR næste genindlæsning. Se `Dokumentation/NAVIGATION_DIAGNOSTICS_2026-09.md`.
+- Hvad mangler / næste skridt: Peter indsamler en rapport fra en reelt langsom hændelse (4–15 s pauser); derefter fortolkning og først DÉRÉFTER evt. fix. Lav-severity observation fra review: serveren rolle-gater ikke diagnoseheaderen (data er kun om kalderens egen request; rate limiter gælder) — kan strammes senere.
+- Kommandoer kørt: `gh pr create/merge 216 --squash`; `git checkout --detach eafda213` (live-klon); `npm run build` (timelapse-ui); `cp -an` gamle assets tilbage; Peter: `echo 'TIMELAPSE_NAV_DIAGNOSTICS=1' | sudo tee -a /etc/timelapse/headend.env` + `sudo launchctl kickstart -k system/dk.froekjaer.timelapse-headend`.
+- Filer rørt: live-klon checkout + `timelapse-ui/dist` (ikke i git); denne log-entry.
+- Risici / pas på: live-klonen står i detached HEAD — commit ikke direkte der; næste deploy bør fastgøre på ny revision igen. Rollback: fjern env-flaget + kickstart (serverdel), og/eller checkout forrige revision + rebuild (UI). Målingen beviser intet i sig selv — diagnose først, fix bagefter.
+
 ### Handover 2026-09-10 — fra Codex: opt-in navigationsdiagnostik, implementering
 
 - Plan: efter Peters accept implementeres begrænset lokal browserdiagnostik for opstart, navigation, resource timing, sideklar-markører og lange main-thread-opgaver; valgfri servermåling korreleres med genererede request-ID'er. Ingen billeder, URL-parametre, identiteter, tokens eller SQL-tekst gemmes i diagnostikrapporten.
