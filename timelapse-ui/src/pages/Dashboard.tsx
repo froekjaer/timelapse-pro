@@ -1,3 +1,4 @@
+import { useDiagnosticReady } from '../diagnostics/useDiagnosticReady'
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, Camera, Building2, MapPin, ChevronRight, Plus, CheckCircle, AlertCircle, Clock, Settings, ShieldAlert, Package } from 'lucide-react'
@@ -271,6 +272,8 @@ export function Dashboard() {
   const [pendingUpdates, setPendingUpdates] = useState<PendingUpdate[]>([])
   const [loading, setLoading]     = useState(true)
   const [lastRefresh, setLastRefresh] = useState(new Date())
+
+  useDiagnosticReady(loading, 'dashboard')
 
   const load = useCallback(async () => {
     setLoading(true)

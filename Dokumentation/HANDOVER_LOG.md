@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-10 — fra Codex: opt-in navigationsdiagnostik, implementering
+
+- Plan: efter Peters accept implementeres begrænset lokal browserdiagnostik for opstart, navigation, resource timing, sideklar-markører og lange main-thread-opgaver; valgfri servermåling korreleres med genererede request-ID'er. Ingen billeder, URL-parametre, identiteter, tokens eller SQL-tekst gemmes i diagnostikrapporten.
+- Baseline: separat worktree `timelapse-pro-navigation-diagnostics`, branch `codex/navigation-diagnostics-20260910`, `e7ec9fb3`. OP-001, AGENTS, startindeks, GRC-emnesøgning, Git/PR-status og eksisterende målinger kontrolleret. PR #214 er Claudes global-config-spor og ændres ikke. Hovedfilens ratchet hæves ikke.
+- Scope: klargøring og isoleret test; live deployment ikke udført. Dokumentation og slutresultat tilføjes efter tests.
+- Udført: opt-in målepanel, anonymiserede og begrænsede Resource Timing-/navigationsevents, opstarts- og sideklar-markører, snapshots af langsom dashboard/kameranavigation samt valgfri ASGI-/SQL-/loopmåling med servergenereret trace-ID. Ingen nye endpoints, DB-migrationer eller forhøjet ratchet.
+- Verificeret: fire Node-adfærdstests og syv Python-/ratchet-tests PASS; TypeScript, fokuseret ESLint, Python-syntaks og UI-build PASS. Isoleret browserfixture med 1,2 s serverforsinkelse gav app=1201,04 ms, resource=1204,5 ms og loop_lag=1,37 ms; rapportpanelet virkede uden udviklerværktøjer. Første direkte Vite-build manglede genererede help-filer; normal `npm run build` kørte prebuild og bestod. Testmiljø bruger lokal Python 3.14.7; produktionsfuld integration og CI 3.12 er ikke kørt.
+- Vejledning: `NAVIGATION_DIAGNOSTICS_2026-09.md` beskriver installation, aktivering, grænser, måletolkning og rollback. Næste skridt er review og normal release af denne branch; serverdelen kræver `TIMELAPSE_NAV_DIAGNOSTICS=1`. Peters aktuelle live-browser indeholder endnu ikke funktionen. Ingen produktionsservice, credentials eller kundedata ændret.
+
 ### Handover 2026-09-07 — fra Codex: isoleret WiFi-AP fallback for lokal teknikeradgang
 
 - Hvad er gjort: Tilføjet `timelapse-wifi-ap.service` og `timelapse-wifi-ap.sh` til Edge image-/app-flowet. AP'et bruger SSID lig med den provisionerede `device_id`, er åbent på radio-laget, og begrænser IP-trafik til DHCP og lokal HTTPS/TOTP på port 8443. Forwarding er eksplicit slået fra; der er ingen NAT eller adgang til LAN/Internet.

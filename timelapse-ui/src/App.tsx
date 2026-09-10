@@ -1,6 +1,7 @@
 // ───────────────────────────────────────────────────────────────────
 // App.tsx — TimeLapse Pro med RBAC auth guard
 // ───────────────────────────────────────────────────────────────────
+import { NavigationDiagnostics, DiagnosticFallback } from './diagnostics/NavigationDiagnostics'
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import type { ReactElement, ReactNode } from 'react'
@@ -58,6 +59,7 @@ const HelpPage                  = lazy(() => import('./pages/HelpPage').then(m =
 function PageLoading() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center text-sm text-gray-500">
+      <DiagnosticFallback />
       Indlæser side...
     </div>
   )
@@ -113,6 +115,7 @@ function AppRoutes() {
           <RequireAuth>
             <div className="min-h-screen bg-gray-50">
               <Navbar />
+              <NavigationDiagnostics />
               <main>
                 <Suspense fallback={<PageLoading />}>
                   <Routes>

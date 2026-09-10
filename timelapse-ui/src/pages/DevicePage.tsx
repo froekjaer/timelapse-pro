@@ -1,3 +1,4 @@
+import { useDiagnosticReady } from '../diagnostics/useDiagnosticReady'
 // ═══════════════════════════════════════════════════════════════════════════
 // TimeLapse Pro — DevicePage.tsx
 // ───────────────────────────────────────────────────────────────────────────
@@ -1699,6 +1700,8 @@ export function DevicePage() {
   const [loading, setLoading]   = useState(true)
   const [tab, setTab]           = useState<Tab>('captures')
   const [lightbox, setLightbox] = useState<number | null>(null)
+
+  useDiagnosticReady(loading, 'device')
 
   const load = async () => {
     if (!id) return
