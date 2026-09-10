@@ -1698,10 +1698,11 @@ export function DevicePage() {
   const [detail, setDetail]   = useState<DeviceDetail | null>(null)
   const [captures, setCaptures] = useState<Capture[]>([])
   const [loading, setLoading]   = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [tab, setTab]           = useState<Tab>('captures')
   const [lightbox, setLightbox] = useState<number | null>(null)
 
-  useDiagnosticReady(loading, 'device')
+  useDiagnosticReady(loading, 'device', loadError)
 
   const load = async () => {
     if (!id) return
@@ -1710,6 +1711,10 @@ export function DevicePage() {
       const [d, c] = await Promise.all([getDevice(id), getCaptures(id, 200)])
       setDetail(d)
       setCaptures(c)
+      setLoadError(false)
+    } catch (e) {
+      console.error(e)
+      setLoadError(true)
     } finally {
       setLoading(false)
     }
