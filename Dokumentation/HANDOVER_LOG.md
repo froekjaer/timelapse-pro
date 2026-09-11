@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-09-11 20:40 — fra Kimi: GRC-registrering af 2026-09-11 performance-hændelser (lukket/implementeret)
+
+- Baggrund: Peter bad om at få lukket "resterende GRC-punkter om performance" efter PR #218/#220. Verificeret mod GRC-registeret (live-DB): der fandtes INGEN åbne performance-punkter (rate-limit/503/dashboard/latens) — hændelserne var slet ikke registreret. MASTER_REVIEW_CLOSURE_2026-08-15.md indeholder heller ingen performance-punkter (C-serien er sikkerhed, U-serien er update-flow) — og dokumentet nåede aldrig main (PR #30 er CLOSED, ikke MERGED), selvom `kimi-grc-afventer-*.md` refererer det.
+- Hvad er gjort: Ny idempotent import `headend/tools/import_grc_20260911_performance.py` (samme kontrakt som import_grc_risks_decisions.py), kørt mod live-DB. Registreret og verificeret:
+  - `FIND-API-RATELIMIT-503-LEGIT-UI-20260911` (finding, **closed**) — 503-hændelsen 00:04, rodårsag pr.-IP-bucket, fix PR #218.
+  - `ACT-API-RATELIMIT-DASHBOARD-RESILIENCE-20260911` (action, **implemented**) — rate-limit 600 r/m/burst 100 + Promise.allSettled + withRetry + diagnostik-præcision, PR #218/#219.
+  - `FIND-LIGHTBOX-FULLRES-BANDWIDTH-20260911` (finding, **closed**) — 3,7 s API-forsinkelse dokumenteret som netværksmætning (browser 3665 ms vs nginx 17–27 ms vs app 12 ms), fix PR #220.
+  - `ACT-LIGHTBOX-PROGRESSIVE-PREFETCH-20260911` (action, **implemented**) — progressiv Lightbox + idle-prefetch, PR #220.
+  - 7 evidens-links (PR'er + HANDOVER_LOG-ankre) vedhæftet.
+- Hvad mangler / åbent spørgsmål til Peter: Skal `MASTER_REVIEW_CLOSURE_2026-08-15.md` hentes ind på main (docs-only, fra den lukkede PR #30-branch) for at reparere de døde referencer? Indholdet er et historisk closure-ledger pr. 2026-08-16-baseline.
+- Filer rørt: `headend/tools/import_grc_20260911_performance.py` (ny), denne log. Live-DB: 4 nye grc_items + 7 grc_evidence.
+- Risici / pas på: importen er idempotent (upsert på item_type+external_id) — kan genkøres uden dubletter. Ingen kode-/driftsændring.
+
 ### Handover 2026-09-11 19:20 — fra Kimi: SLUT — progressiv Lightbox + baggrundsprefetch implementeret og testet
 
 - Hvad er gjort (branch `kimi/lightbox-progressive-prefetch-20260911`, PR følger):
