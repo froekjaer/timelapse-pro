@@ -39,6 +39,24 @@ def test_abi3_wheel_matches_forward_compatible_cpython():
     )
 
 
+def test_abi3_wheel_below_its_own_floor_version_is_incompatible():
+    # Regression for update #292 (2026-09-11): abi3 is forward-compatible
+    # from the wheel's OWN minimum Python version upward, not universally
+    # compatible with any interpreter. A cp311-abi3 wheel requires Python
+    # >= 3.11 and was wrongly accepted for a cp310 (3.10.12) Edge device —
+    # it downloaded fine, then pip on-device correctly refused to install
+    # it ("Could not find a version that satisfies the requirement").
+    assert not fetch.wheel_is_compatible(
+        "cryptography-50.0.1-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", "cp310", "arm64"
+    )
+    assert fetch.wheel_is_compatible(
+        "cryptography-50.0.1-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", "cp311", "arm64"
+    )
+    assert fetch.wheel_is_compatible(
+        "cryptography-50.0.1-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", "cp312", "arm64"
+    )
+
+
 def test_wrong_cpython_tag_without_abi3_is_incompatible():
     assert not fetch.wheel_is_compatible(
         "somepkg-1.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", "cp310", "arm64"
