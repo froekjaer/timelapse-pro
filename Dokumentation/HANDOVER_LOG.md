@@ -29,6 +29,21 @@
 
 ## Log
 
+### Handover 2026-09-11 19:20 — fra Kimi: SLUT — progressiv Lightbox + baggrundsprefetch implementeret og testet
+
+- Hvad er gjort (branch `kimi/lightbox-progressive-prefetch-20260911`, PR følger):
+  1. **Ny `timelapse-ui/src/lib/prefetchQueue.ts`:** ren, testbar `createPrefetchQueue(load, schedule)`-fabrik + browser-singleton. Sekventiel (én ad gangen), dedupe, husker hentede URL'er, nearest-first via `setTargets`, `cancel()` ved Lightbox-luk. Browser-scheduler: `requestIdleCallback` (fallback `setTimeout` 250 ms), udskyder 5 s ad gangen mens fanen er skjult. Fundet + rettet race: cancel mens et load var i gang kunne standse køen permanent — in-flight completion pumper nu altid den aktuelle generation videre.
+  2. **`DevicePage.tsx` Lightbox:** viser thumbnail øjeblikkeligt (`getThumbnailUrl`, næsten altid cachet fra galleriet), henter fuld opløsning i baggrunden og swapper ind når klar; badge "Henter fuld opløsning…" mens der hentes; thumbnail-404 → direkte fallback til fuld URL; `key={c.filename}` sikrer korrekt remount ved skift; histogram genberegnes på fuld opløsning. Ved hvert skift: prefetch-køen fyldes nærmest-først (naboer ±1, ±2, … derefter hele galleriet) — piletast-browsing bliver øjeblikkelig efter få sekunder, og resten hentes stille i baggrunden uden at mætte linket.
+- Verifikation: `node --test` **15/15** (7 diagnostik + 4 retry + 4 nye prefetch-queue inkl. cancel-race); `tsc --noEmit` rent; ESLint: 0 problemer i `prefetchQueue.ts`, DevicePage 31 mod 34 på baseline (ingen nye); `npm run build` OK. Ingen backend-ændring (pytest ikke berørt).
+- Deploy efter merge: kun UI — live-klon på ny main-SHA + `npm run build` med hash-asset-bevarelse. Ingen nginx/headend-genstart.
+- Risici / pas på: baggrundsprefetch henter i princippet hele det indlæste galleri over tid — med vilje sekventielt + idle-gated, så det ikke mætter linket. Download-knap og eksport bruger stadig fuld opløsning direkte (uændret).
+
+### Handover 2026-09-11 19:05 — fra Kimi: START på progressiv Lightbox + baggrundsprefetch (opgave fra Peter)
+
+- Opgave: UI'et føles langsomt ved billedgennemgang. Diagnostik fra Peters browser (16:47 UTC) viste at /users-kaldene var serveret af nginx på 17–27 ms, men først modtaget af browseren 3,7 s senere — forsinkelsen sidder i netværksvejen (hairpin via offentlig IP + båndbredde mættet af 5–6 MB fuldbilleder), IKKE i serveren. nginx-loggen viser at index.html altid serveres på <1 ms, så også "4–5 s til første byte" peger på netværksvejen.
+- Plan (godkendt af Peter): Lightbox viser thumbnail med det samme og opgraderer til fuld opløsning når den er hentet; nabo-billeder (±) prefetches først; derefter prefetches resten af galleriet sekventielt (én ad gangen, kun når browseren er idle og fanen synlig) nærmest-først — så "alt går hurtigt bagefter" uden at genere API-kald.
+- Branch `kimi/lightbox-progressive-prefetch-20260911` fra main `edf464dc`. Berører KUN `timelapse-ui/src/pages/DevicePage.tsx`, ny `timelapse-ui/src/lib/prefetchQueue.ts` + test. Ingen backend- eller nginx-ændring.
+
 ### Handover 2026-09-11 17:55 — fra Kimi: PR #218 merget, deployet og live-verificeret; KORREKTION af nginx-servicenavn
 
 - Hvad er gjort:

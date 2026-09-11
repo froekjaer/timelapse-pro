@@ -18,7 +18,8 @@ import { InfoTooltip } from '../components/InfoTooltip'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, ReferenceLine } from 'recharts'
-import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, setParam, pathSegment, getApiUrl } from '../api/client'
+import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getThumbnailUrl, setParam, pathSegment, getApiUrl } from '../api/client'
+import { setPrefetchTargets, cancelPrefetch } from '../lib/prefetchQueue'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
 import { CaptureThumbnailCard, parseCaptureQA, qaHardFailed, causeLabels } from '../components/CaptureThumbnailCard'
@@ -200,6 +201,12 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
   const [modelResults, setModelResults] = useState<any[] | null>(null)
   const [overexposed, setOverexposed]     = useState(0)
   const [underexposed, setUnderexposed]   = useState(0)
+  // Progressiv billedvisning (2026-09-11, Kimi): thumbnail vises øjeblikkeligt,
+  // fuld opløsning hentes i baggrunden og swappes ind når den er klar. På trænge
+  // netværksveje (hairpin/begrænset upload) gør det browsing flydende, fordi
+  // piletast-skift ikke længere venter på 5–6 MB pr. billede.
+  const [fullReady, setFullReady]         = useState(false)
+  const [thumbFailed, setThumbFailed]     = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
   const metaRef = useRef<HTMLDivElement>(null)
 
@@ -309,6 +316,37 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
     setExif(null)
   }, [cur])
 
+  // Progressiv indlæsning + baggrundsprefetch ved billedskift (2026-09-11, Kimi):
+  // 1) Nulstil → thumbnail vises med det samme (den er som regel allerede i
+  //    browser-cachen fra galleriet, så skiftet er øjeblikkeligt).
+  // 2) Fuld opløsning hentes i baggrunden og swappes ind når klar.
+  // 3) Køen fyldes nærmest-først (naboer øverst, derefter resten af galleriet),
+  //    så piletast-browsing bliver øjeblikkelig efter få sekunder, og "alt er
+  //    hurtigt bagefter" uden at prefetchen mætter linket (én ad gangen, idle).
+  useEffect(() => {
+    let cancelled = false
+    setFullReady(false)
+    setThumbFailed(false)
+    const fullUrl = getImageUrl(c.device_id, c.filename)
+    const img = new Image()
+    img.onload = () => { if (!cancelled) setFullReady(true) }
+    img.src = fullUrl
+
+    const ordered: string[] = []
+    for (let d = 1; d < captures.length; d++) {
+      const fwd = captures[cur + d]
+      const back = captures[cur - d]
+      if (fwd) ordered.push(getImageUrl(fwd.device_id, fwd.filename))
+      if (back) ordered.push(getImageUrl(back.device_id, back.filename))
+    }
+    setPrefetchTargets(ordered)
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cur, captures])
+
+  // Stop baggrundsprefetch når Lightbox lukkes.
+  useEffect(() => () => cancelPrefetch(), [])
+
   const prev = useCallback(() => { setCur(i => Math.max(0, i - 1)); setZoom(1); setPan({ x: 0, y: 0 }) }, [])
   const next = useCallback(() => { setCur(i => Math.min(captures.length - 1, i + 1)); setZoom(1); setPan({ x: 0, y: 0 }) }, [captures.length])
 
@@ -414,11 +452,18 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
         style={{ cursor: zoom > 1 ? (dragging ? 'grabbing' : 'grab') : 'default' }}
         onClick={e => e.stopPropagation()}
       >
+        {!fullReady && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 text-xs px-2 py-1 rounded-lg bg-black/60 text-white/70 pointer-events-none">
+            Henter fuld opløsning…
+          </div>
+        )}
         <img
           ref={imgRef}
-          src={getImageUrl(c.device_id, c.filename)}
+          key={c.filename}
+          src={fullReady || thumbFailed ? getImageUrl(c.device_id, c.filename) : getThumbnailUrl(c.device_id, c.filename)}
           alt={c.filename}
           draggable={false}
+          onError={() => { if (!fullReady && !thumbFailed) setThumbFailed(true) }}
           onLoad={() => { if (showHistogram) computeHistogram() }}
           style={{
             transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
