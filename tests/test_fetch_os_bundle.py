@@ -124,3 +124,22 @@ def test_install_script_cleans_up_its_temporary_local_repo():
     script = fetch.install_script([{"name": "demo", "version": "1.0"}])
     assert "trap 'rm -rf" in script
     assert "EXIT" in script
+
+
+def test_install_resolves_from_the_same_offline_source_as_index_refresh():
+    # APT only considers lists associated with its configured sources. A
+    # local index refreshed with -o sourcelist disappears from the candidate
+    # set when install falls back to the device's normal sources.
+    import shlex
+
+    script = fetch.install_script([{"name": "demo", "version": "2.0"}])
+    commands = [shlex.split(line) for line in script.replace("\\\n", " ").splitlines()
+                if line.startswith("apt-get ")]
+    assert len(commands) == 2
+    for command in commands:
+        options = [command[i + 1] for i, arg in enumerate(command) if arg == "-o"]
+        assert "Dir::Etc::sourcelist=$local_sourcelist" in options
+        assert "Dir::Etc::sourceparts=-" in options
+    assert "update" in commands[0]
+    assert "--no-download" in commands[1]
+    assert commands[1][-2:] == ["install", "demo=2.0"]
