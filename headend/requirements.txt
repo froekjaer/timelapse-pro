@@ -23,3 +23,7 @@ slowapi==0.1.9
 # Kontrolleret Headend-side download/udpakning af versionspinnede Edge-base-images.
 gdown==6.1.0
 py7zr==1.1.0
+# Requires-Python constraint parsing for headend/tools/fetch_python_bundle.py
+# (2026-09-11) — was already present transitively via pip/setuptools, now an
+# explicit pin so it isn't lost in a future clean-environment restore.
+packaging==26.2
