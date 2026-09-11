@@ -28,6 +28,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
+
 PYPI_JSON_URL = "https://pypi.org/pypi/{name}/{version}/json"
 HTTP_USER_AGENT = "TimeLapsePro-Headend-PythonBundle/1.0"
 
@@ -126,6 +129,28 @@ def wheel_is_compatible(filename: str, cpython_tag: str, arch: str, os_family: s
         if wheel_version and device_version and device_version >= wheel_version:
             return True
     return False
+
+
+def python_version_satisfies_requires_python(python_version: str, requires_python: str | None) -> bool:
+    """True if `requires_python` (PyPI's release-level constraint, e.g.
+    ">=3.11") allows the device's actual interpreter.
+
+    This is a SEPARATE check from wheel_is_compatible(): a release can ship
+    a wheel whose filename tags look universally compatible (py3-none-any)
+    while its PyPI metadata still declares a Requires-Python floor the
+    wheel filename doesn't encode at all — pip enforces this metadata
+    regardless of how permissive the filename tag looks. Found 2026-09-11
+    (update #292): websockets==17.1 ships a py3-none-any wheel (passes
+    every filename-tag check) but declares Requires-Python >=3.11; it
+    downloaded fine and then pip on Edge's 3.10.12 device correctly
+    refused it ("Package 'websockets' requires a different Python").
+    """
+    if not requires_python:
+        return True
+    try:
+        return Version(python_version) in SpecifierSet(requires_python)
+    except (InvalidVersion, InvalidSpecifier):
+        return True
 
 
 def select_wheel(urls: list[dict[str, Any]], cpython_tag: str, arch: str, os_family: str = "linux") -> dict[str, Any] | None:
@@ -367,6 +392,15 @@ def build_bundle(
 
     for normalized, (name, wanted_version) in requested.items():
         try:
+            requires_python = (metadata_by_name[normalized].get("info") or {}).get("requires_python")
+            if not python_version_satisfies_requires_python(python_version, requires_python):
+                print(
+                    f"  WARNING: {name}=={wanted_version} requires Python {requires_python}, "
+                    f"device runs {python_version}",
+                    file=sys.stderr,
+                )
+                not_found.append(f"{name}=={wanted_version}")
+                continue
             entry = select_wheel(metadata_by_name[normalized].get("urls") or [], cpython_tag, arch, os_family)
             if not entry:
                 print(f"  WARNING: no compatible wheel for {name}=={wanted_version} ({cpython_tag}/{arch}/{os_family})", file=sys.stderr)

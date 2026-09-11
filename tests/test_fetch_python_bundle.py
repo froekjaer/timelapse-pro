@@ -57,6 +57,27 @@ def test_abi3_wheel_below_its_own_floor_version_is_incompatible():
     )
 
 
+def test_requires_python_metadata_rejected_even_for_universal_looking_wheel():
+    # Regression for update #292 (2026-09-11): websockets==17.1 ships a
+    # py3-none-any wheel (passes every filename-tag check in
+    # wheel_is_compatible) but PyPI metadata declares Requires-Python
+    # >=3.11 — a constraint the wheel filename doesn't encode at all. It
+    # downloaded fine and pip on-device correctly refused it ("Package
+    # 'websockets' requires a different Python: 3.10.12 not in '>=3.11'").
+    assert not fetch.python_version_satisfies_requires_python("3.10.12", ">=3.11")
+    assert fetch.python_version_satisfies_requires_python("3.11.4", ">=3.11")
+    assert fetch.python_version_satisfies_requires_python("3.10.12", ">=3.8,<4")
+    assert not fetch.python_version_satisfies_requires_python("3.10.12", "<3.10")
+
+
+def test_requires_python_missing_or_unparseable_defaults_to_allowed():
+    # No metadata / a garbled specifier must never silently drop a package —
+    # fail open here since wheel_is_compatible() is still the real gate.
+    assert fetch.python_version_satisfies_requires_python("3.10.12", None)
+    assert fetch.python_version_satisfies_requires_python("3.10.12", "")
+    assert fetch.python_version_satisfies_requires_python("3.10.12", "not a specifier")
+
+
 def test_wrong_cpython_tag_without_abi3_is_incompatible():
     assert not fetch.wheel_is_compatible(
         "somepkg-1.0-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", "cp310", "arm64"
@@ -297,3 +318,44 @@ def test_unresolvable_package_is_reported_not_found(tmp_path, monkeypatch):
     )
     assert result["wheel_files"] == 1
     assert result["not_found"] == ["ghost==9.9"]
+
+
+def test_build_bundle_skips_package_whose_requires_python_excludes_the_device(tmp_path, monkeypatch):
+    # End-to-end regression for update #292 (2026-09-11): a py3-none-any
+    # wheel passes every filename-tag check, but the release's own
+    # Requires-Python metadata excludes the device's actual interpreter.
+    # build_bundle() must skip it (not_found), not hand pip a wheel it will
+    # refuse to install on-device.
+    releases = {
+        ("websockets", "17.1"): {
+            "info": {"requires_dist": [], "requires_python": ">=3.11"},
+            "urls": [{"packagetype": "bdist_wheel", "filename": "websockets-17.1-py3-none-any.whl",
+                       "url": "https://files.pythonhosted.org/websockets-17.1-py3-none-any.whl",
+                       "digests": {"sha256": ""}, "size": 10}],
+        },
+        ("click", "8.5.0"): {
+            "info": {"requires_dist": [], "requires_python": ">=3.8"},
+            "urls": [{"packagetype": "bdist_wheel", "filename": "click-8.5.0-py3-none-any.whl",
+                       "url": "https://files.pythonhosted.org/click-8.5.0-py3-none-any.whl",
+                       "digests": {"sha256": ""}, "size": 10}],
+        },
+    }
+    monkeypatch.setattr(fetch, "fetch_release_metadata", lambda name, version, verbose=False: releases.get((name, version)))
+
+    def fake_download(entry, dest_dir, verbose=False):
+        path = dest_dir / entry["filename"]
+        path.write_bytes(b"whl")
+        return path
+
+    monkeypatch.setattr(fetch, "download_wheel", fake_download)
+    result = fetch.build_bundle(
+        [
+            {"name": "websockets", "available_version": "17.1"},
+            {"name": "click", "available_version": "8.5.0"},
+        ],
+        tmp_path / "bundle",
+        "TL-043EB9E72EFD",
+        python_version="3.10.12",
+    )
+    assert result["wheel_files"] == 1
+    assert result["not_found"] == ["websockets==17.1"]
