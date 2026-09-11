@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-11 21:15 — fra Kimi: MASTER_REVIEW_CLOSURE genindlagt + afstemning af kimi-2026-08-15-reviewet
+
+- Hvad er gjort (docs-only):
+  1. `Dokumentation/MASTER_REVIEW_CLOSURE_2026-08-15.md` genindlagt uændret fra den lukkede PR #30-branch (`docs/master-review-closure-2026-08-15`) — reparerer de døde referencer i `kimi-grc-afventer-*.md`. Indholdet er et historisk closure-ledger pr. baseline `9b174c0b`.
+  2. Ny `Dokumentation/kimi-2026-08-15-AFSTEMNING-2026-09-11.md`: alle 12 fund (F-001..F-012) fra Kimis store review genverificeret mod `main @ ac95103e`. Resultat: **7 lukket, 1 forældet, 3 delvist (F-005, F-009, F-011), 1 bedret (F-008), 0 uberørte.**
+- Væsentlige verifikationer: F-001 lukket af `ec277259` (PR #25 lukket uden merge, men indhold reappliceret + kontrakttest); F-002: builder bruger nu argv-liste + 0o755; F-005: edge-side lukket (PR #41), men headend `system-hash`-fallback STADIG aktiv (`main.py:5997, 6019, 6283-6288`) → afventer Peters beslutning (jf. afventer-liste pkt 3); F-008: main.py 18.653 → 17.550 linjer; F-009: 1.799 tests samles, 4 collection-fejl (BLE/break-glass/BT-TOTP/drift), IT-MATRIX-544 fail + IT-G2 blocked i GRC; F-011: edge/requirements.txt stadig upinnede.
+- Resterende handling (prioriteret i afstemningen): F-005-beslutning (🔴 Peter), F-009-rester (🟠), F-011 edge-pinning (🟡), U-01/U-03/U-04/U-14 (🟠, på AI-teamets liste).
+- Filer rørt: de to nye dokumenter + denne log. Ingen kode-/driftsændring.
+
 ### Handover 2026-09-11 20:40 — fra Kimi: GRC-registrering af 2026-09-11 performance-hændelser (lukket/implementeret)
 
 - Baggrund: Peter bad om at få lukket "resterende GRC-punkter om performance" efter PR #218/#220. Verificeret mod GRC-registeret (live-DB): der fandtes INGEN åbne performance-punkter (rate-limit/503/dashboard/latens) — hændelserne var slet ikke registreret. MASTER_REVIEW_CLOSURE_2026-08-15.md indeholder heller ingen performance-punkter (C-serien er sikkerhed, U-serien er update-flow) — og dokumentet nåede aldrig main (PR #30 er CLOSED, ikke MERGED), selvom `kimi-grc-afventer-*.md` refererer det.
