@@ -416,6 +416,7 @@ printf 'deb [trusted=yes] file://%s ./\\n' "$local_repo" > "$local_sourcelist"
 apt-get -o Dir::Etc::sourcelist="$local_sourcelist" -o Dir::Etc::sourceparts="-" \\
   -o APT::Get::List-Cleanup="0" update
 apt-get --no-download --no-install-recommends --allow-downgrades \\
+  -o Dir::Etc::sourcelist="$local_sourcelist" -o Dir::Etc::sourceparts="-" \\
   --allow-change-held-packages -y install {requested}
 # Verificer de faktiske versioner efter APT har afsluttet transaktionen.
 ./verify-installed.sh

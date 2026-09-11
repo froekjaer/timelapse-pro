@@ -29,6 +29,24 @@
 
 ## Log
 
+### Handover 2026-09-11 — fra Codex: START — update-flow end-to-end
+
+- Peter har bedt om installation af ventende opdateringer gennem browserflowet og rettelse af fejl undervejs. OP-001, live UI, GRC, handover, Git/PR og update-kontrakt gennemgået. Isoleret branch `codex/update-flow-e2e-20260911` fra `e028f789`; live checkout er `a210d9b9` og ændres ikke under udvikling.
+- Første reproduktion: #297 har signeret artifact `TL-OS-20260909-c1d59ae9e851`, fire fejlede forsøg; sidste rapport 2026-09-09 10:56 UTC viser rc=100 / versioner ikke fundet. Artifactets script opdaterer en midlertidig lokal APT-kilde, men install-kaldet bruger ikke samme sourcelist. UI skjuler rebuild når et artifact findes; lab vises fejlagtigt som Produktion i revurderingsdialog.
+- Plan: reproducer og ret installerens kildevalg samt browserens retry-/miljøvisning, test isoleret, byg nyt signeret artifact gennem normal pipeline, verificér installation og frisk inventory. Eksisterende signerede artifacts ændres aldrig. Ingen direkte Edge Internet-installation eller omgåelse af signatur-/miljøkontrol.
+- Dokumentationskonflikt: GUIDE_HAANDHOLDT_UPDATE_PROCES.md siger OS-pipeline mangler og anbefaler direkte apt; det modsiges af aktuel kode, signeret artifact og sikkerhedskontrakt. Guiden skal rettes efter faktisk gennemløb. Mac-platform og Python følger separat efter OS-sporet. Ingen updates endnu godkendt/installeret af denne session.
+
+### Handover 2026-09-11 — fra Claude: FORTSAT — begge rettelser verificeret og sendt til PR
+
+- Denne session (Codex' oprindelige, `codex/update-flow-e2e-20260911`) løb tør for kreditter midt i fejlrettelsen; Peter bad en anden Claude-session fortsætte. Fandt de ufærdige, ukommittede ændringer direkte i worktree'et `timelapse-pro-update-flow-e2e` (ikke gættet/genopbygget fra hukommelse, jf. OP-001) og verificerede dem, frem for at starte forfra.
+- Begge diagnoser fra START-entryen er korrekte og allerede rettet i arbejdstræet:
+  1. `headend/tools/fetch_os_bundle.py`: install-kaldet manglede `-o Dir::Etc::sourcelist=$local_sourcelist -o Dir::Etc::sourceparts=-`, som index-refresh-kaldet allerede brugte — APT så derfor aldrig den lokale offline-pakkekilde under selve installationen, kun under indekseringen. Præcis det der matcher de gentagne "version ikke fundet"-fejl på #297.
+  2. `timelapse-ui/src/pages/UpdatesPage.tsx`: "Byg artifact"-panelet var skjult så snart ETHVERT artifact var bundet, også et fejlet ét — betingelsen er nu `flowStatus && !flowStatus.error` i stedet for kun `osArtifactMissing`, med tekst der skelner "Byg" vs "Genbyg". Miljø-gætningen i godkendelsesdialogen genkendte kun bogstavelig `'test'`/`'production'` — `'lab'` (som begge rigtige Edge-enheder faktisk står i, se `project_edge_devices_lab_environment`-hukommelsen) faldt fejlagtigt igennem til "Produktion". Udvidet til at behandle `lab`/`rd`/`dev`/`development` som ikke-produktion.
+- Verifikation: `pytest tests/test_fetch_os_bundle.py` 8/8 (inkl. ny `test_install_resolves_from_the_same_offline_source_as_index_refresh`, som eksplicit tjekker at BEGGE apt-get-kald i det genererede script bruger samme sourcelist-flag); fuldt CI-batteri (`pytest tests headend/tests edge/ai/tests`) 1408 passed (4 pre-eksisterende gpg-agent-miljøfejl i `test_artifact_openpgp_verification.py`, urelateret); `tsc --noEmit` rent; `npm run lint:gate` — 183 vs. baseline 186 (forbedring, ingen nye); `npm run build` OK, kæde-splitting bevaret.
+- Hvad mangler / næste skridt: åbne PR fra dette branch, vente på grøn CI, merge, deploye (headend-genstart for Python-siden + UI-rebuild for TSX-siden). DEREFTER selve opgaven Peter oprindeligt bad om: gennemgå og godkende de 12 ventende opdateringer (2 security, 1 OS, 6 app) gennem det nu-rettede browserflow, med fejlundersøgelse hvis noget stadig går galt undervejs. Intet er endnu godkendt eller installeret.
+- Filer rørt (denne entry): kun denne log. Selve rettelserne er allerede i arbejdstræets ukommitterede diff, committes sammen med denne entry.
+- Risici / pas på: live checkout (`a210d9b9`, detached HEAD) er IKKE ændret af denne verifikation — kun læst. Deployment af begge dele (Python + UI) kræver headend-genstart, som afbryder aktive kald kortvarigt; gør det bevidst, ikke midt i en igangværende installation.
+
 ### Handover 2026-09-11 22:00 — fra Kimi: OS-baseline-anbefaling (Noble) + builder-gennemgang — AFVENTER Peters beslutning
 
 - Anledning: Peter vil have samme pakkeversioner + samme OS på alle enheder, det sikreste OS-valg, og en ISO-builder der sikrer "alt er med, alt er opdateret".

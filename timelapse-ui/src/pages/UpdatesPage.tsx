@@ -854,9 +854,9 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onStopApprov
           </div>
           <WorkflowStatusPanel update={u} deployStatus={deployStatus} flowStatus={flowStatus} />
           {!headendScoped && <FlowTargetsPanel flowStatus={flowStatus} />}
-          {(u.status === 'pending' || u.status === 'blocked') && isOsUpdate && osArtifactMissing && (
+          {(u.status === 'pending' || u.status === 'blocked') && isOsUpdate && flowStatus && !flowStatus.error && (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
-              <div className="font-medium text-amber-800">Byg og bind signeret OS artifact før godkendelse</div>
+              <div className="font-medium text-amber-800">{osArtifactMissing ? 'Byg og bind signeret OS artifact før godkendelse' : 'Byg et nyt signeret OS artifact til genforsøg'}</div>
               <div className="mt-1 text-amber-700">
                 Headend bygger via Mac-container/lab-builder, registrerer artifactet og binder det til denne update. Manuel artifact-binding er kun til fejlsøgning.
               </div>
@@ -864,7 +864,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onStopApprov
                 <button onClick={() => onBuildOsBundle(u.id)} disabled={isBusy}
                   title="Byg, signér, registrér og bind et offline OS-artifact fra Headend. Edge henter det ved næste poll."
                   className="px-3 py-2 rounded-lg bg-gray-900 text-white text-xs disabled:opacity-50">
-                  Byg artifact og bind
+                  {osArtifactMissing ? 'Byg artifact og bind' : 'Genbyg artifact og bind'}
                 </button>
                 <input value={artifactId} onChange={e => setArtifactId(e.target.value)}
                   placeholder="TL-OS-YYYYMMDD-..."
@@ -1933,7 +1933,7 @@ export function UpdatesPage() {
                   ? matrix?.devices.find(d => d.device_id === (u.scope_id || ''))?.environment
                   : null
                 setApproveOpts({
-                  environment: (deviceEnv === 'test' || deviceEnv === 'production')
+                  environment: ['lab', 'rd', 'dev', 'development'].includes(deviceEnv || '') ? 'test' : (deviceEnv === 'test' || deviceEnv === 'production')
                     ? deviceEnv
                     : (u.environment === 'test' || u.environment === 'production') ? u.environment : 'production',
                   scope,
