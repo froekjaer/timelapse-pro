@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-11 22:00 — fra Kimi: OS-baseline-anbefaling (Noble) + builder-gennemgang — AFVENTER Peters beslutning
+
+- Anledning: Peter vil have samme pakkeversioner + samme OS på alle enheder, det sikreste OS-valg, og en ISO-builder der sikrer "alt er med, alt er opdateret".
+- Målt virkelighed (SSH-verificeret begge enheder): .144 = Jammy/Python 3.10, .134 = Noble/Python 3.12, SAMME BSP-kernel 5.15.147-sun60iw2 på begge. Pakkedivergens er reel: numpy 2.2.6 vs 2.5.3, uvicorn 0.46 vs 0.52, **qrcode + python-dotenv MANGLER på .134** (tekniker-QR-login reelt i stykker — verificeret `ModuleNotFoundError`), onnxruntime/OPi.GPIO kun på .134 (NPU-spor udenfor git).
+- Anbefaling i `Dokumentation/OS_BASELINE_ANBEFALING_2026-09-11.md`: **Noble som fælles baseline** (support til 2029 vs 2027, nyere krypto/Python 3.12, allerede bevist i prod på .134, gør F-011-pinning med ét fælles versionssæt mulig). BSP-kernel er bundmandat (NPU/kamera) og uændret af valget — noteret som svageste led.
+- Builder-gennemgang (krav vs. status): OS-laget apt-opdateres ALDRIG under image-build (kendte CVE'er shippes); opencv + NPU-pakker installeres post-flash manuelt (divergenskilden); requirements upinnede; base-Docker-tag ikke digest-pinnet. SBOM + git-provenance er gode fundamentale byggesten. Forbedringsplan pkt 4 i dokumentet.
+- Eksekveringsrækkefølge foreslået: 1) Peters Noble-beslutning → 2) akut qrcode/python-dotenv-fix på .134 → 3) F-011 pinning → 4) builder-PR'er → 5) .144-konvergens (backup først!) → 6) GRC-lukning af Noble-finding som "bevidst baseline".
+- Filer rørt: OS_BASELINE_ANBEFALING_2026-09-11.md (ny), denne log. Ingen kode-/driftsændring endnu.
+
 ### Handover 2026-09-11 21:30 — fra Kimi: F-005 formel risikoaccept registreret (besluttet af Peter)
 
 - Beslutning: Peter valgte 2026-09-11 "Accepter formel risikoaccept" for F-005 (headend `system-hash` fallback for artifact-signatur).
