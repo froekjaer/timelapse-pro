@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-11 21:30 — fra Kimi: F-005 formel risikoaccept registreret (besluttet af Peter)
+
+- Beslutning: Peter valgte 2026-09-11 "Accepter formel risikoaccept" for F-005 (headend `system-hash` fallback for artifact-signatur).
+- Hvad er gjort:
+  1. `Dokumentation/RISIKOACCEPT_F-005_SYSTEM_HASH_2026-09-11.md` — formel accept med omfang (kun pre-produktion, kun drift uden GPG-nøgle), begrundelse, kompenserende kontroller (Edge fail-closed OpenPGP pr. PR #41, ingen ubegrænset release, UI-UPD-06 som RC1-gate) og genbesøgskriterier (RC1 / GPG-ibrugtagning / ændret trusselsbillede / senest 2027-03-11).
+  2. GRC live-DB (idempotent import `headend/tools/import_grc_f005_risk_acceptance.py`, kørt og verificeret): `RISK-ARTIFACT-SYSTEM-HASH-FALLBACK` (risk, **accepted**, P1) + `FIND-ARTIFACT-SYSTEM-HASH-FALLBACK-F005` (finding, **closed** — dispositioneret via accepten) + 4 evidens-links.
+  3. `kimi-grc-afventer-2026-08-23.md` pkt 3 markeret BESLUTTET.
+- Konsekvens for afstemningen (PR #222): F-005 går fra "delvist — afventer beslutning" til "dispositioneret via risikoaccept". Resterende åbne fra reviewet: F-009-rester (🟠), F-011 edge-pinning (🟡), U-01/U-03/U-04/U-14 (🟠).
+- Filer rørt: risikoaccept-dokument, import-script, afventer-liste, denne log. Ingen kode-/driftsændring — fallback'en er bevidst UÆNDRET i koden (det er jo netop det der accepteres).
+
 ### Handover 2026-09-11 21:15 — fra Kimi: MASTER_REVIEW_CLOSURE genindlagt + afstemning af kimi-2026-08-15-reviewet
 
 - Hvad er gjort (docs-only):
