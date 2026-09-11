@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-09-11 17:55 — fra Kimi: PR #218 merget, deployet og live-verificeret; KORREKTION af nginx-servicenavn
+
+- Hvad er gjort:
+  - PR #218 (`kimi/ratelimit-dashboard-20260911`) squash-merget til main (`0a7278f3`) efter grøn CI (Python Syntax Check + Web UI Build Check).
+  - Live-klonen `~/projects/timelapse-pro` sat på `0a7278f3` (detached), UI bygget med hash-asset-bevarelse. Verificeret at aktiv bundle (`index-CscrmX_K-local.js`) indeholder den nye Dashboard-fejlhåndtering/retry-kode, og at forsiden serverer den (HTTP 200 efter login-redirect).
+  - Live nginx-konfig opdateret af Peter (sudo): `api_general` nu 600 r/m + burst 100 begge `location /api/`-steder; `nginx -t` OK; genindlæst med `sudo nginx -s reload`.
+  - Live-verificering: 40 hurtige API-kald gennem nginx → 0 × 503, 0 nye "limiting requests" i nginx error-log. Headend-health 200.
+- KORREKTION af kommandoen i 00:45-entryen: nginx kører IKKE længere som `dk.froekjaer.timelapse-nginx` (plist arkiveret til `.bak` 2026-07-28). Den kører som Homebrew-servicen **`homebrew.mxcl.nginx`** (root, system-domænet). Genstart: `sudo nginx -s reload` (blid, anbefalet) eller `sudo launchctl kickstart -k system/homebrew.mxcl.nginx`. Konfigfilen er fortsat `/opt/homebrew/etc/nginx/nginx.conf`.
+- Hvad mangler: intet for denne opgave. Det SÆRSKILTE uafklarede problem med 4–5 s til første HTML-byte står stadig åbent (se 00:45-entry).
+- Filer rørt: kun denne log (selve rettelserne ligger i PR #218).
+- Risici / pas på: ingen nye. Bemærk at curl-tests uden session-cookie giver 302-redirect til login — det er forventet adgangskontrol, ikke en fejl.
+
 ### Handover 2026-09-11 00:45 — fra Kimi: SLUT — rate-limit/Dashboard/diagnostik rettet, testet, klar til merge
 
 - Hvad er gjort (branch `kimi/ratelimit-dashboard-20260911`, PR følger):
