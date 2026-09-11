@@ -33,8 +33,8 @@
 
 ### 3. 🟠 `system-hash` fallback for artifact-signatur (F-005)
 
+- ✅ **BESLUTTET af Peter 2026-09-11: formel risikoaccept.** Registreret i GRC som `RISK-ARTIFACT-SYSTEM-HASH-FALLBACK` (accepted, P1) + `FIND-ARTIFACT-SYSTEM-HASH-FALLBACK-F005` (closed). Se `Dokumentation/RISIKOACCEPT_F-005_SYSTEM_HASH_2026-09-11.md` — genbesøges ved RC1, ved GPG-nøgle-ibrugtagning, og senest 2027-03-11.
 - **Genverificeret 23/8: stadig aktiv i koden** (`headend/main.py:6740, 6762, 7026-7031`). Headend accepterer hash-binding uden GPG-nøgle som signaturgrundlag.
-- **Valg:** Formaliser en PO-risikoaccept, eller fjern fallback'en og kræv GPG-signering overalt.
 - **Kilde:** kimi-2026-08-15.md (F-005); kode verificeret på `main` 23/8.
 
 ### 4. 🟠 C-08 og C-10 (fra MASTER_REVIEW_CLOSURE-spotcheck)
