@@ -76,6 +76,18 @@ def _parse_wheel_tags(filename: str) -> tuple[str, str, str] | None:
     return parts[-3], parts[-2], parts[-1]
 
 
+def _cpython_tag_version(tag: str) -> tuple[int, int] | None:
+    """'cp310' -> (3, 10), 'cp39' -> (3, 9). None if not a cpNNN tag.
+
+    Assumes a single-digit major version, true for every CPython 3.x
+    release to date (and 2.x is irrelevant here).
+    """
+    m = re.match(r"^cp(\d)(\d+)$", tag)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
 def wheel_is_compatible(filename: str, cpython_tag: str, arch: str, os_family: str = "linux") -> bool:
     """True if the wheel's tags are usable on this device.
 
@@ -99,8 +111,20 @@ def wheel_is_compatible(filename: str, cpython_tag: str, arch: str, os_family: s
     arch_markers = _ARCH_PLATFORM_MARKERS.get(arch, (arch,))
     if not any(marker in platform_tag for marker in arch_markers):
         return False
-    if python_tag == cpython_tag or abi_tag == "abi3":
+    if python_tag == cpython_tag:
         return True
+    if abi_tag == "abi3":
+        # abi3 is forward-compatible from the wheel's OWN minimum Python
+        # version upward, not universally compatible with any version — a
+        # cp311-abi3 wheel requires Python >= 3.11 and fails to install on
+        # an older interpreter. Found 2026-09-11 (update #292): a
+        # cryptography cp311-abi3 wheel was accepted for Edge's cp310
+        # device, downloaded fine, then pip on-device correctly refused it
+        # ("Could not find a version that satisfies the requirement").
+        wheel_version = _cpython_tag_version(python_tag)
+        device_version = _cpython_tag_version(cpython_tag)
+        if wheel_version and device_version and device_version >= wheel_version:
+            return True
     return False
 
 
