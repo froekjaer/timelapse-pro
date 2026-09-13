@@ -608,7 +608,16 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 # See Dokumentation/ for provenance: this replaces a hand-rolled ANSI-stripping
 # textarea renderer that could not support Ctrl-C/job control, Tab completion,
 # history or resize.
-app.mount("/mgmt/static", StaticFiles(directory=str(EDGE_ROOT / "scripts" / "static")), name="mgmt-static")
+app.mount(
+    "/mgmt/static",
+    # check_dir=False: some test modules import this file with
+    # TIMELAPSE_EDGE_ROOT unset/pointing at a non-existent path (they
+    # only need unrelated functions, not the shell/static assets) - the
+    # eager directory-exists check would otherwise raise at import time
+    # and break test collection for code that never touches this route.
+    StaticFiles(directory=str(EDGE_ROOT / "scripts" / "static"), check_dir=False),
+    name="mgmt-static",
+)
 
 
 @app.on_event("shutdown")
