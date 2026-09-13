@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Claude: PR #232 konsistensrettelser (reviewpakke-lukning, ADR-003-tal, recovery-pilot, fulde spor)
+
+- Hvad er gjort: Peter gav mandat (via Codex/ChatGPT, mens Codex' egen session sov) til at rette de resterende governance-konsistenspunkter direkte på `codex/package-governance-review-pack`, ved at hente aktuel head og de tre åbne P2-reviewtråde fra ChatGPT/Codex-connector. Fire punkter rettet:
+  1. `PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md`: status/opfølgning/§9-tabel/afslutningsafsnit rettet fra "afventer accept" til "historisk, ADR-003+§14 accepteret 2026-09-13" — reviewinstruktionerne (§1-8) er urørt og bevaret som historisk skabelon.
+  2. ADR-003: Kontekst- og Konsekvens-afsnittets ukvalificerede "127"/"124 branches" erstattet med eksplicit "ubekræftet historisk estimat" + henvisning til de to bevarede, reproducerbare populationer (122/123 ekskl. main).
+  3. `RECOVERY_PILOT.json`: PASS nedgraderet til `SELF_REPORTED_HISTORICAL_PASS_NOT_INDEPENDENTLY_REPRODUCIBLE` — fixture-commit/tree/tag er ikke bevaret nogetsteds holdbart, intet script/transskript er committet, så resultatet kan ikke genskabes fra repoet alene. Ingen ny evidens opfundet. `DISPOSITION.md`s to referencer til denne pilot er opdateret til samme nedgradering, så de ikke modsiger den rettede JSON.
+  4. `PAKKE_SPOR_REGISTER.md`: #159/#163/#214/#229 migreret fra det lette seks-kolonne-skema til §14.6's fulde feltsæt (mandat, formål/scope, berørte domæner, base/head-SHA med hentningstidspunkt, overlap/restdisposition, seneste verificerede aktivitet, næste handling, blokeringsansvarlig, opfølgning). Kimis rapporterede 3 delte stashes og de øvrige lokalt rapporterede worktrees er tilføjet som `reported / local verification pending` — hverken inspiceret eller ændret, kun registreret som reconciliation-input. En stående intern modsigelse i registrets "Ejerskab og aktivitet"-afsnit ("før endelig ADR-accept") er rettet til at matche den nu accepterede status.
+- Hvad mangler / næste skridt: Kimi skal genreviewe denne nye head uafhængigt, før #232 merges. Ingen merge udført af mig. Selve branchtriage (#R04), #163/#159-rebase (#R03) og scheduler/CI-håndhævelse (#R01/#R02) er fortsat åbne, ikke rørt i denne leverance.
+- Kommandoer kørt: `gh pr view 232/163/159/214/229 --json ...` (frisk head-SHA + mergeable-status), `git ls-remote origin refs/heads/main`, `gh api repos/froekjaer/timelapse-pro/pulls/232/comments` (reviewtråde). Ingen kodetests relevante — rent dokumentationsarbejde.
+- Filer rørt: `Dokumentation/PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md`, `Dokumentation/ADR/ADR-003-pakke-hygiejne-mod-legacy-branches.md`, `Dokumentation/Pakke_Governance_Review_2026-09/RECOVERY_PILOT.json`, `Dokumentation/Pakke_Governance_Review_2026-09/DISPOSITION.md`, `Dokumentation/PAKKE_SPOR_REGISTER.md`, denne log.
+- Risici / pas på: Ingen branch/worktree/stash slettet eller undersøgt destruktivt. Ingen merge af #159/#163/#214/#229. `AI_KOMPETENCER_OG_OPGAVEROUTING.md`/§15 er ikke rørt og forbliver Proposed. Kimis og Codex' originale reviewtekster (`*_ORIGINAL.txt/.md`) er ikke redigeret — kun den levende `DISPOSITION.md`-syntese er opdateret, i tråd med princippet om at bevare originaler uændret.
+
 ### Handover 2026-09-13 — Codex: formel afslutning autoriseret
 
 - Peter bad om at lukke det tidligere reviewede arbejde og sætte Solar Eclipse på sidelinjen. Registrerer accept af ADR-003/§14 og afslutter PR #232; nye routing-/upstream-forslag forbliver Proposed. Ingen runtimeændring eller branchsletning.

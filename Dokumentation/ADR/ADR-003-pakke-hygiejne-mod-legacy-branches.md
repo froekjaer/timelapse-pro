@@ -11,7 +11,7 @@
 
 Peter rejste en konkret bekymring 2026-09-13: da PR #214 viste sig at være `BEHIND` main, opstod spørgsmålet om hvorvidt en opdatering til branchen risikerer at overskrive eller kritikløst "overhale" arbejde, der reelt stadig mangler at blive integreret. En efterfølgende gennemgang bekræftede at bekymringen er velbegrundet i praksis, ikke kun i teori:
 
-- Repoet har **127 remote branches**, hvoraf kun en håndfuld har en åben PR.
+- Ved den oprindelige forespørgsel blev der uformelt talt **ca. 127 remote branches** (`git branch -r`, ikke frosset/verificeret) — historisk kontekst-estimat, ikke et verificeret grundlag. Kun en håndfuld havde en åben PR. Det senere bevarede, reproducerbare grundlag er **122–123 branches** ekskl. main (to uafhængigt frosne populationer, forskel forklaret); se `PAKKE_SPOR_REGISTER.md` §Backlog for metode og data.
 - To Codex-PR'er (**#163** og **#159**) har ligget åbne i 2+ uger uden opfølgning og er nu i reel Git-konflikt med main, fordi main er ændret uafhængigt i de samme filer (bl.a. `edge/agent.py`-refaktorering og `headend/main.py`-modularisering).
 - Claudes foreløbige strengsøgning gav indikation af, at de to PR'er ikke var fuldt overhalet — den funktionalitet de tilføjer (post-restart health-stabilitetsvindue + Headend-sweeper i #163; eksplicitte lokal/UTC-tidsfelter fra capture-API'et i #159) blev ikke fundet ved den beskrevne søgning. Det er screening fra samme forfatter, ikke en fuld uafhængig semantisk gennemgang; genverifikation udestår før integration.
 - Årsagen er strukturel, ikke en enkelt fejl: **flere AI-sessioner (Claude-instanser, Codex, evt. Kimi) arbejder asynkront og taler ikke direkte sammen** (jf. `HANDOVER_Claude_Codex_arbejdsdeling.md` §0: "Vi to assistenter taler ikke direkte sammen"). Uden et fælles, levende overblik over *alle* åbne spor — ikke kun det spor man selv sidder i — er der intet der fanger et glemt branch, før det enten rådner eller (værre) bliver overskrevet af en anden sessions uafhængige, parallelle løsning på samme problem.
@@ -42,7 +42,7 @@ Den eneste operative procedurespecifikation er [samarbejdsmodellen §14](../SAMA
 - Kræver at hver session bruger et par minutter på opslag før merge — en lille, men reel friktion.
 
 **Neutrale:**
-- Løser ikke i sig selv de 124 branches der endnu ikke er trieret (se `PAKKE_SPOR_REGISTER.md` §Backlog). Denne ADR fastlægger *processen fremadrettet*; den fulde historiske oprydning er et separat, afgrænset arbejde.
+- Løser ikke i sig selv de branches der endnu ikke er trieret (127/124 var ubekræftede tidlige estimater, ikke et verificeret tal; det bevarede, reproducerbare grundlag er 122–123 branches ekskl. main — se `PAKKE_SPOR_REGISTER.md` §Backlog). Denne ADR fastlægger *processen fremadrettet*; den fulde historiske oprydning er et separat, afgrænset arbejde.
 
 ## Standardmapping
 

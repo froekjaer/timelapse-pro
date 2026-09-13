@@ -1,11 +1,11 @@
 # Fælles reviewpakke — pakker, parallelle AI-spor og kontinuitet
 
 **Version:** 1.0 · 2026-09-13  
-**Status:** Klar til uafhængige reviews; ikke endeligt accepteret.  
-**Reviewbase:** `13a0d3b3af67a36adf9115d0911aaf2a687bca15` (PR #231). Reviewpakken tilføjer reviewinstruktioner; den ændrer ikke denne baseline.  
-**Bestiller/beslutningsejer:** Peter. **Redaktør/integrator:** Codex. **Inviterede reviewere:** Claude, Kimi og Codex; Peter kan invitere andre. Ingen reviews er indhentet automatisk.
+**Status:** **HISTORISK — reviewrunde v1 afsluttet.** ADR-003 og §14 er accepteret af Peter (2026-09-13, efter Claude- og Kimi-genreviews af kandidat `8cb96638`; se ADR-003's Accept-linje og `PAKKE_SPOR_REGISTER.md` §Governance-afslutning for den aktuelt bindende tilstand). Indholdet i dette dokument — opgavebeskrivelse, spændinger, beslutningspunkter, scenarier og svarskabelon — bevares uændret som reviewinstruktioner for runde v1, ikke som en løbende opgave eller en påstand om at accept fortsat afventer.  
+**Reviewbase:** `13a0d3b3af67a36adf9115d0911aaf2a687bca15` (PR #231). Reviewpakken tilføjede reviewinstruktioner; den ændrede ikke denne baseline.  
+**Bestiller/beslutningsejer:** Peter. **Redaktør/integrator:** Codex (denne runde). **Inviterede reviewere:** Claude, Kimi og Codex; Peter kan invitere andre. Ingen reviews er indhentet automatisk.
 
-> **Opfølgning:** Claude og Kimi har nu afleveret reviews; se [originaler, Codex-selvreview og samlet disposition](Pakke_Governance_Review_2026-09/DISPOSITION.md). Instruktionerne nedenfor bevares som reviewrunde v1. Slutkandidaten på PR #232 skal genreviewes ved sin nye commit, ikke ved den gamle baseline. Ingen endelig accept er registreret.
+> **Opfølgning (historisk):** Claude og Kimi afleverede reviews af baseline `13a0d3b3`, og efterfølgende genreviews af kandidat `8cb96638`; se [originaler, Codex-selvreview og samlet disposition](Pakke_Governance_Review_2026-09/DISPOSITION.md). Begge genreviews lukkede deres fund. Peter registrerede derefter formel accept af ADR-003 + §14. Instruktionerne nedenfor forbliver gyldige som skabelon for en fremtidig, ny reviewrunde, men beskriver ikke længere ADR-003's aktuelle status.
 
 ## 1. Opgaven til hver reviewer
 
@@ -137,16 +137,16 @@ Framework-feedback og Platform-arbejde: anbefaling / afgrænsning
 
 ## 9. Modtagelses- og beslutningslog
 
-| Reviewer | Status ved pakkens oprettelse | Baseline / svarreference |
+| Reviewer | Status (historisk, ved pakkens oprettelse) | Baseline / svarreference |
 |---|---|---|
-| Claude | Modtaget via Peter; tiltræder efter rettelser | Original bevaret i dispositionspakken; nyt kandidat-review udestår |
-| Kimi | Modtaget fra commit 0c2e2c78; tiltræder efter rettelser | Original bevaret; råbilag modtaget og konsistenskontrolleret; kandidat-review udestår |
+| Claude | Afleverede review, derefter genreview af kandidat `8cb96638` — accepterede dispositionerne med én redaktionel tællepræcisering (indarbejdet) | Originaler bevaret i dispositionspakken |
+| Kimi | Afleverede review fra commit 0c2e2c78, derefter genreview af kandidat `8cb96638` — lukkede alle ti fund | Originaler + råbilag bevaret og konsistenskontrolleret |
 | Codex | Informeret selvreview afleveret | Ikke blind/uafhængig tredje stemme; se dispositionspakken |
-| Peter | Endelig beslutning udestår | ADR fortsat Proposed |
+| Peter | **Accepteret 2026-09-13.** Registrerede formel accept af ADR-003 + §14 efter begge genreviews | Se ADR-003 Accept-linje |
 
-Ingen timer, baggrundsmonitor eller automatisk besked er oprettet. Næste konkrete handling: Peter deler slutkandidatens nye revision til målrettet genreview; dispositionen foreligger.
+Denne tabel er et historisk øjebliksbillede af reviewrundens forløb, ikke en løbende statusvisning. Ingen timer, baggrundsmonitor eller automatisk besked blev oprettet under selve runden.
 
 
-## Reviewrunden afsluttet — beslutning udestår
+## Reviewrunden afsluttet — beslutning registreret
 
-Begge genreviews af 8cb96638 er modtaget og bevaret i dispositionspakken. Kimi lukker alle ti fund; Claude accepterer dispositionerne med én redaktionel tællepræcisering, som er indarbejdet. Tidligere ventestatus ovenfor er historisk. Ingen materiel ændring efter genreview; ingen formel accept registreret endnu. Næste handling: Peter tager stilling til beslutningen nederst i DISPOSITION.md.
+Begge genreviews af `8cb96638` blev modtaget og er bevaret i dispositionspakken. Kimi lukkede alle ti fund; Claude accepterede dispositionerne med én redaktionel tællepræcisering, som blev indarbejdet. Peter har derefter registreret formel accept af ADR-003 og §14 (2026-09-13). §15 og AI-kompetence-/routingforslag forbliver Proposed og er ikke omfattet af denne accept. Resterende implementeringsspor (branchtriage, #159/#163/#214/#229-disposition, teknisk håndhævelse) er ikke afsluttet ved denne accept — se `PAKKE_SPOR_REGISTER.md` for deres aktuelle, uafhængigt sporede status.

@@ -1,6 +1,6 @@
 # Reviewdisposition og slutkandidat
 
-Status: **rettelser indarbejdet, afventer målrettet genreview og Peters endelige beslutning**. Dette skema er Codex' disposition, ikke de øvrige revieweres accept af slutteksten. Baseline for originalreviews: `13a0d3b3`; kandidat: ny commit på PR #232 (angives i overdragelsen, ikke reviewpakkens gamle base).
+Status: **HISTORISK — rettelser indarbejdet, begge genreviews modtaget og lukket, Peter har registreret formel accept af ADR-003 + §14 (2026-09-13).** Dette skema forbliver Codex' disposition af de originale fund, ikke en løbende beslutningsstatus. Baseline for originalreviews: `13a0d3b3`; kandidat der blev genreviewet og accepteret: `8cb96638`. Denne fils indhold nedenfor beskriver forløbet frem til accept og er ikke opdateret til at fjerne hvert enkelt "udestår"/"Proposed"-udsagn fra selve forløbet — se `PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md` og ADR-003's Accept-linje for den aktuelt gældende status.
 
 ## Originaler og proveniens
 
@@ -15,8 +15,8 @@ Begge eksterne reviews tiltræder efter konkrete rettelser. Alle 20 fund bevares
 
 | ID | Disposition | Rettelse, evidens eller åben handling |
 |---|---|---|
-| CLAUDE-01 | Accepteret tekst; beslutning åben | Header/agentloadere skelner operationel §14, Proposed ADR og uvedtaget §15. Peter skal beslutte accept eller revurderingsdato. |
-| CLAUDE-02 | Accepteret med sikring | §14.4: annoteret remote-arkivtag eller verificeret backup/bundle; kollision/retention/readback. Isoleret restore-pilot PASS, ingen rigtig branch slettet. |
+| CLAUDE-01 | Accepteret tekst; beslutning registreret | Header/agentloadere skelner operationel §14, Proposed ADR og uvedtaget §15. Peter har siden besluttet: ADR-003 + §14 Accepted 2026-09-13. |
+| CLAUDE-02 | Accepteret med sikring | §14.4: annoteret remote-arkivtag eller verificeret backup/bundle; kollision/retention/readback. Isoleret restore-pilot rapporteret; nedgraderet 2026-09-13 til selvrapporteret historisk resultat efter #232-review — se RECOVERY_PILOT.json. Ingen rigtig branch slettet. |
 | CLAUDE-03 | Accepteret | Frosset Codex-population og per-SHA råoutput vedlagt; ingen sletteautorisation. Kimis historiske råliste afventes særskilt. |
 | CLAUDE-04 | Accepteret | ADR/register nedtoner #159/#163 til Claudes ikke-uafhængige strengscreening; semantisk genverifikation udestår. |
 | CLAUDE-05 | Accepteret | §14.5: selvrapporteret identitet ≠ attestering; originaler/checksums og begrænsninger ved reviews bevaret. |
@@ -47,7 +47,7 @@ Reproduktion: hent nødvendige commit-objekter uden at flytte arbejdsbranches; f
 
 Codex-datasæt: 123 = 13 + 110; 110 = 51 + 59. Kimis oplyste tidligere observation: 123 = 14 + 109; 109 = 51 + 58. Hans oprindelige råliste er endnu ikke vedlagt; Peter har fået en præcis anmodning til Kimi. Ingen af de to målinger beviser sikker sletning eller manglende funktionalitet.
 
-[RECOVERY_PILOT.json](RECOVERY_PILOT.json): isolerede midlertidige repositories, annoteret tag til separat lokal bare remote, hentning i tomt repository, commit/tree og filindhold sammenlignet: PASS. Ingen produktionsbranch slettet. Pilot beviser ikke GitHub-retention, adgangsbeskyttelse eller backup af uncommitted materiale.
+[RECOVERY_PILOT.json](RECOVERY_PILOT.json): isolerede midlertidige repositories, annoteret tag til separat lokal bare remote, hentning i tomt repository, commit/tree og filindhold sammenlignet — rapporteret som PASS ved selve pilotkørslen. **Nedgraderet 2026-09-13:** ingen af fixture-materialerne (commit, tree, tag, bare remote) er bevaret i dette repository eller andetsteds holdbart, og der er intet committet script eller kommandotransskript. Resultatet er derfor omklassificeret til selvrapporteret/historisk og kan ikke uafhængigt genskabes fra det aktuelle repo alene. Ingen produktionsbranch slettet. Pilot beviste (dengang den kørte) ikke GitHub-retention, adgangsbeskyttelse eller backup af uncommitted materiale, og beviser det fortsat ikke.
 
 Dokumentkontroller: statusheader, enkelt procedurespecifikation, relative links, diff-whitespace, komplette fund-ID'er og review-checksums. Runtime-tests og fuld branchtriage er ikke udført. Ingen installations-/sletnings-/schedulerhandlinger.
 
@@ -61,14 +61,14 @@ Peter er beslutningsejer; Codex er udpeget til **denne** sammenlægning, ikke st
 | R02 Teknisk generations-/mandatkontrol | Afgræns Platform-kontrakt og testcase S01/S02/S06 | Codex som foreslået forfatter; mandat/implementering skal bekræftes | Efter governance-accept |
 | R03 PR #159/#163 | Frisk semantisk restanalyse, konfliktgenforening og relevante tests | Udfører skal overtages eksplicit; Codex registrerer afklaringsbehov | Før første merge/deploy fra sporene |
 | R04 Historiske branches | Modtag Kimis originale population; derefter triage efter konsekvens med ejer pr. spor | Kimi har tilbudt arbejdet; start ikke bekræftet. Codex integrerer evidens, når leveret | Næste reviewoverdragelse |
-| R05 Formel status | Peter beslutter Accepted eller fortsat operationel status med revurderingsdato | Peter; beslutning udestår | Efter målrettet genreview |
+| R05 Formel status | **Afgjort:** Peter besluttede Accepted 2026-09-13 efter begge genreviews (Claude, Kimi) | Peter; beslutning registreret i ADR-003 | Afsluttet |
 | R06 Framework-feedback | Udarbejd forslag til eksisterende Findings-proces og platformreview, ingen nye id'er uden opslag | Codex efter accept/afgrænsning | Efter R05 |
 
 ## Målrettet genreview
 
 Claude: bekræft især CLAUDE-01/02/04/05/07 og den indsnævrede kodepåstand i CLAUDE-09. Kimi: bekræft KIMI-01–10, især ændringerne til -04/-07/-08, hvor erstatningsteksten ikke er kopieret ordret. Begge: læs slutkandidatens nye SHA og kontrollér at ingen rettelse skaber en ny modsigelse. Svar med fund-ID → lukket / restindsigelse + præcis tekst. Ingen ny hel sweep eller driftshandling kræves til genreview.
 
-Når indsigelserne er dispositioneret og eventuelle materielle ændringer genreviewet, får Peter én kort beslutning. ADR står indtil da Proposed. Kimis manglende historiske rådata blokerer ikke et sandfærdigt dokumentforslag, men den gamle måling må ikke behandles som reproduceret eller bruges til oprydning.
+Begge genreviews (Claude, Kimi) er modtaget og lukkede alle fund uden materielle indsigelser. Peter har derefter registreret ADR-003 + §14 som Accepted (2026-09-13) — "ADR står indtil da Proposed" i denne sætnings oprindelige form gælder derfor ikke længere; se ADR-003 Accept-linje. Kimis manglende historiske rådata blokerede ikke det dokumentforslag der blev accepteret, men den gamle måling må fortsat ikke behandles som reproduceret eller bruges til oprydning uden ny verifikation.
 
 
 ## Modtaget evidensbilag — 499d266d
