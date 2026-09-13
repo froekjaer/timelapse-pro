@@ -78,7 +78,9 @@ eller -undersøgelse i denne opgave):
   image-deletion rebuild", `stash@{2}` "pre-headend-deploy-cmdb-main-duplicate-20260824",
   `stash@{3}` "edge-terminal-renderer safety backup", `stash@{4}` "wp4-in-progress".
   Status: **Kimi-reported / local verification pending** — fremstilles ikke som verificeret
-  repository-state.
+  repository-state. `stash@{3}` er nu read-only inspiceret (ikke poppet/droppet) i forbindelse
+  med shell-endpoint-assessmenten nedenfor: dens eneste berøring af `edge/scripts/totp-service.py`
+  er en urelateret kosmetisk UI-tekstændring, ikke relevant for shell-sikkerhedsspørgsmålet.
 - **Claude rapporterer yderligere lokale worktrees** på maskinen ud over dem der er i aktivt
   brug i denne governance-leverance (fx flere `timelapse-pro-*`-mapper knyttet til ældre
   Codex-spor). Deres clean/uncommitted-tilstand er ikke undersøgt. Status: **reported /
@@ -143,7 +145,8 @@ Hver aktiv post kræver session/ejer, formål/domæne, base/head-SHA, relationer
 | Spor | Koordinationsansvar | Næste handling / blokering | Opfølgning |
 |---|---|---|---|
 | Sammenlægning af de tre input | Codex, denne session | Verificér dokumenter og lever samlet PR | Denne session |
-| Historisk branchtriage | Codex for ejerskabsafklaring; Kimi har tilbudt udførelsen, men start er ikke bekræftet | Aftal aktiv udfører før parallel sweep; genoptæl med faste SHA'er, prioritér sikkerhed, ucommitted materiale og driftskonsekvens før alder | Næste integrationssession, senest ønsket 2026-09-14 |
+| Historisk branchtriage (R04) | **Overdraget til Claude 2026-09-13** (Peter, eksplicit mandat — Kimi utilgængelig et par uger). Kimi pilot 1 (8 branches) + Claude batch 2 (9 branches, 1 stop-gate) udført. Se `R04_BRANCHTRIAGE_PILOT_1_2026-09-13.md` (Kimi, bevaret uændret) og `R04_BRANCHTRIAGE_BATCH_2_2026-09-13_CLAUDE.md` (Claude, ny). | 17 af ~59 branches triageret. `codex/edge-terminal-renderer` er et åbent stop-gate-fund (aktivt shell-endpoint, konflikt med `agent/core-design-principles`, tilknyttet stash@{3}) — afventer Peters beslutning før videre batches. | Efter Peters beslutning om stop-gate-fundet |
+| `agent/core-design-principles` (R04-fund) | Claude, semantisk analyse 2026-09-13 — se `Arkitektur/CORE_DESIGN_PRINCIPLES_ANALYSE_2026-09-13_CLAUDE.md` | Reelt arkitektonisk divergens fundet mellem dokumentets Del II (Bluetooth Local Service Gateway) og mains faktiske, simplere BLE-teknikerløsning. Peter skal beslutte retning (arkivér/udvid/ny ADR) | Peters beslutning |
 | PR #163 og #159 | Codex for næste vurdering | Frisk restanalyse/rebase i isoleret worktree; dette dokumentarbejde udfører ikke kodeintegrationen | Næste integrationssession, senest ønsket 2026-09-14 |
 | PR #214 | Codex for koordinationsafklaring; oprindeligt Claude | Genbekræft ejer, main/head og CI før disposition | Næste integrationssession, senest ønsket 2026-09-14 |
 | PR #229 | Codex for reconciliation | Undersøg restdiff mod #230/fælles resultat før lukning; ingen tavs kassation | Ved fælles PR-afslutning |
@@ -176,6 +179,17 @@ PR #232 udvides efter Peters instruktion med faste deltagere Kimi/Z.ai samt ad h
 ### Cross-repo placeringsoplæg
 
 Peter autoriserede 2026-09-13 undersøgelse og forslag til CI/Framework/Platform. Codex har leveret konkret destinations- og pilotoplæg i kompetencedokumentets §8, inklusive fundet uoverensstemmelse i CI-programkortet. Aktiv leverance: dette oplæg i PR #232. Upstream-ændringer/pilot er ikke udført; næste handling er review og afgrænsede upstream-forslag med frisk overlapkontrol. Den eksisterende §14-procedure kan anvendes uafhængigt af routingforslaget.
+
+## Edge lokal shell-endpoint — sikkerhedsassessment 2026-09-13
+
+Peter mandaterede en read-only arkitektur-/sikkerhedsassessment af main's eksisterende
+`/mgmt/cli/bash/*` (Bluetooth TOTP-portal, `edge/scripts/totp-service.py`), affødt af
+R04-stop-gate-fundet om `codex/edge-terminal-renderer`. Se
+[EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT_2026-09-13_CLAUDE.md](EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT_2026-09-13_CLAUDE.md)
+for fuld evidens. Kernefund: endpointet giver en uaudited, fuldt privilegeret (root)
+interaktiv shell, uden den samme session-audit main allerede har for den sammenlignelige
+break-glass SSH-mekanisme. Eksplicit markeret som en sikkerhedsrisiko til Peters beslutning
+— ingen ændring af endpointet foretaget. R04 batch 3 afventer denne beslutning.
 
 ## Lifecycle-beslutning: edge shell-adgang (ADR-004, Proposed) — 2026-09-13
 
