@@ -1,5 +1,7 @@
 # Pakke-/spor-register — åbne branches og PR'er på tværs af AI-sessioner
 
+> **Fælles reviewrunde (historisk):** [Reviewpakke v1.0](PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md) — fastlåst baseline, beslutningspunkter og fælles svarskabelon brugt frem til Peters accept af ADR-003 + §14 (2026-09-13). Se §Governance-afslutning nedenfor for den aktuelt gældende status.
+
 **Formål:** supplement til `HANDOVER_LOG.md`. Handover-loggen er kronologisk og god til
 "hvad skete der i denne opgave"; dette register er et **stående overblik** over hvilke
 pakker (branches/PR'er) der er åbne *lige nu*, så ingen session — Claude, Codex, Kimi
@@ -10,17 +12,86 @@ og ingen glemt branch rådner uden at nogen bemærker det.
 register understøtter. Kort version: før du merger eller opdaterer en pakke, tjek denne
 liste for overlap; efter merge, ret listen til.
 
-**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status; Kimi: tilføjet målt branch-sweep, se §Backlog)
+**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status; Kimi: tilføjet målt branch-sweep, se §Backlog; Claude igen: #159/#163/#214/#229 migreret til §14.6 fulde felter, rapporterede stashes/worktrees tilføjet, intern modsigelse om accept-status rettet; Claude igen (F2): stash-observation opdateret fra 3 til 5 efter Kimis nyere rapport)
 
 ---
 
-## Åbne spor (aktive PR'er)
+## Åbne spor — fulde felter (§14.6)
 
-| Pakke / branch | PR | Forfatter | Berører (domæner) | Status | Handling |
-|---|---|---|---|---|---|
-| `claude/globalconfig-parallel-load` | [#214](https://github.com/froekjaer/timelapse-pro/pull/214) | Claude | `timelapse-ui/src/pages/GlobalConfigPage.tsx` (frontend, ingen overlap med andre spor) | CI grøn, `BEHIND` main (ingen konflikt — main har ikke rørt samme fil) | Klar til opdatering + merge når Peter godkender |
-| `codex/edge-post-restart-health-handshake` | [#163](https://github.com/froekjaer/timelapse-pro/pull/163) | Codex | `edge/agent.py`, `edge/update_lifecycle.py`, `edge/scripts/watchdog.sh`, `headend/main.py`, `headend/services/post_restart_health.py` | **CONFLICTING** mod main (main har selvstændigt videreudviklet samme kodeområde, se analyse i PR-kommentar) — **ikke overhalet**, funktionaliteten (stabilitetsvindue + Headend-sweeper for hængende handshakes) findes ikke andre steder i main | Afventer rebase mod aktuel main + gentest. Se PR-kommentar for detaljeret konfliktanalyse. |
-| `codex/fix-capture-time-and-edge2-evidence` | [#159](https://github.com/froekjaer/timelapse-pro/pull/159) | Codex | `headend/main.py`, `headend/capture_api_helpers.py` (ny, ren tilføjelse), `timelapse-ui/src/pages/DevicePage.tsx`, `timelapse-ui/src/components/CaptureThumbnailCard.tsx`, `timelapse-ui/src/lib/captureTime.ts`, `timelapse-ui/src/types/index.ts` | **CONFLICTING** mod main (DevicePage/CaptureThumbnailCard ændret uafhængigt af senere lightbox/prefetch-arbejde) — **ikke overhalet**, de eksplicitte `captured_at_local/_utc/_timezone`-felter fra capture-listen/timeline-API'et findes stadig ikke i main | Afventer rebase mod aktuel main + gentest. Se PR-kommentar for detaljeret konfliktanalyse. |
+Disse fire spor ændrer kode, sikkerhed eller den fælles governance-tekst og er derfor
+**fulde spor** efter §14.6 — ikke lette spor. Base/head-SHA'er er hentet frisk
+2026-09-13T10:58Z (`gh pr view` + `git ls-remote origin refs/heads/main`); de ældes med
+tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
+
+### #214 — `claude/globalconfig-parallel-load`
+
+- **Mandat/session:** Claude (oprindelig forfatter, denne sessionskæde). Ikke reoverdraget.
+- **Formål/scope:** Fjern unødig sekventiel netværkstur i `GlobalConfigPage.tsx::loadBase()` — samme waterfall-mønster som #213 (UsersPage).
+- **Berørte domæner/kontrakter:** `timelapse-ui/src/pages/GlobalConfigPage.tsx` (frontend). Ingen kendt overlap med andre åbne spor.
+- **Base/head:** PR #214, head `bed3cf14ce5952843f6688ab331f81f666811db8`, base `main`. Ved hentning 2026-09-13T10:58Z: `mergeStateStatus=BEHIND`, `mergeable=MERGEABLE`.
+- **Overlap/restdisposition:** Ingen overlappende pakke rører samme fil (verificeret ved diff mod main). Intet restkrav udestår.
+- **Seneste verificerede aktivitet/evidens:** CI grøn (Web UI Build Check, Python Syntax Check) ved oprettelse 2026-09-09; ikke genkørt siden.
+- **Næste handling:** Opdatér branch mod aktuel main og merge, når Peter godkender.
+- **Blokeringsansvarlig:** Ingen aktiv blokering — afventer Peters merge-godkendelse, ikke en teknisk afklaring.
+- **Opfølgning:** Ved næste integrationssession.
+
+### #163 — `codex/edge-post-restart-health-handshake`
+
+- **Mandat/session:** Ingen aktiv udfører bekræftet. Oprindeligt Codex (branch oprettet 2026-08-30). Claude har leveret en PR-kommentar med konfliktanalyse, ikke kodeintegration.
+- **Formål/scope:** Post-restart health-stabilitetsvindue for app-updates + Headend-sweeper der markerer hængende post-restart-handshakes som `failed`/`blocked`.
+- **Berørte domæner/kontrakter:** `edge/agent.py`, `edge/update_lifecycle.py`, `edge/scripts/watchdog.sh`, `headend/main.py`, `headend/services/post_restart_health.py`.
+- **Base/head:** PR #163, head `4c0cfba268da35af3b213a1a628ffb5d40cfdfa3`, base `main`. Ved hentning 2026-09-13T10:58Z: `mergeStateStatus=DIRTY`, `mergeable=CONFLICTING`.
+- **Overlap/restdisposition:** Main har selvstændigt videreudviklet samme kodeområde under andre navne (`mark_pending_app_update_health_confirmed`/`awaiting_restart_health` i `edge/update_lifecycle.py`, verificeret ved `git merge-tree`). Claudes strengsøgning fandt ikke et tilsvarende stabilitetsvindue/sweeper i main — det er en foreløbig indikation, **ikke** en uafhængig semantisk verifikation (jf. ADR-003 §Kontekst). Genverifikation udestår før integration.
+- **Seneste verificerede aktivitet/evidens:** PR-kommentar med konfliktanalyse, 2026-09-13. Ingen ny commit på branchen siden 2026-08-30.
+- **Næste handling:** Frisk semantisk restanalyse (fil + adfærd, ikke kun strengsøgning) + rebase mod aktuel main + gentest, før merge/deploy. Sporet som R03 i `Pakke_Governance_Review_2026-09/DISPOSITION.md`.
+- **Blokeringsansvarlig:** Udfører ikke bekræftet — afventer eksplicit overdragelse (§14.5). Ingen automatisk tildeling til seneste forfatter.
+- **Opfølgning:** Før første merge/deploy fra sporet.
+
+### #159 — `codex/fix-capture-time-and-edge2-evidence`
+
+- **Mandat/session:** Ingen aktiv udfører bekræftet. Oprindeligt Codex (branch oprettet 2026-08-29). Claude har leveret en PR-kommentar med konfliktanalyse, ikke kodeintegration.
+- **Formål/scope:** Eksplicitte lokal-/UTC-/tidszonefelter fra capture-liste- og timeline-API'et, så thumbnail-tidsstempler ikke afhænger af browserens tidszonegæt.
+- **Berørte domæner/kontrakter:** `headend/main.py`, `headend/capture_api_helpers.py` (ny, ren tilføjelse — ingen konflikt), `timelapse-ui/src/pages/DevicePage.tsx`, `timelapse-ui/src/components/CaptureThumbnailCard.tsx`, `timelapse-ui/src/lib/captureTime.ts`, `timelapse-ui/src/types/index.ts`.
+- **Base/head:** PR #159, head `eaa0289267f67edd734a7aa28ea18380d4afd0e8`, base `main`. Ved hentning 2026-09-13T10:58Z: `mergeStateStatus=DIRTY`, `mergeable=CONFLICTING`.
+- **Overlap/restdisposition:** `DevicePage.tsx`/`CaptureThumbnailCard.tsx` er ændret uafhængigt på main af senere lightbox-/prefetch-arbejde. Claudes strengsøgning fandt ikke de omtalte `captured_at_local/_utc/_timezone`-felter i mains nuværende API-svar — foreløbig indikation, ikke uafhængig semantisk verifikation. Genverifikation udestår før integration.
+- **Seneste verificerede aktivitet/evidens:** PR-kommentar med konfliktanalyse, 2026-09-13. Ingen ny commit på branchen siden 2026-08-29.
+- **Næste handling:** Frisk semantisk restanalyse + rebase mod aktuel main + gentest, før merge/deploy. Sporet som R03 i `Pakke_Governance_Review_2026-09/DISPOSITION.md`.
+- **Blokeringsansvarlig:** Udfører ikke bekræftet — afventer eksplicit overdragelse (§14.5).
+- **Opfølgning:** Før første merge/deploy fra sporet.
+
+### #229 — `claude/pakke-hygiejne-adr`
+
+- **Mandat/session:** Claude (oprindelig forfatter). Codex for reconciliation mod #230/#231/#232.
+- **Formål/scope:** Oprindeligt udkast til ADR-003 + `PAKKE_SPOR_REGISTER.md`. Indholdsmæssigt supersedet: #230 (Claude+Kimi) → #231 (Codex-syntese, merged til main) → #232 (denne governance-lukning).
+- **Berørte domæner/kontrakter:** Samme dokumentationsfiler som #232 rører (ADR-003, register, agentloadere, samarbejdsmodel).
+- **Base/head:** PR #229, head `989bcd224074f94d7453fd095477d13597ba7c2f`, base `main`. Ved hentning 2026-09-13T10:58Z: `mergeStateStatus=DIRTY`, `mergeable=CONFLICTING` (forventeligt — main har allerede al senere governance-tekst).
+- **Overlap/restdisposition:** Indhold er fuldt supersedet via #230→#231, som er merget til main, og videreudviklet i #232. Ingen kendt rest ud over selve PR-lukningen. Ikke verificeret linje-for-linje mod #232's endelige tekst i denne leverance.
+- **Seneste verificerede aktivitet/evidens:** Ingen ny commit siden oprettelse 2026-09-13. Superseding-kæden er verificeret ved at main indeholder #230/#231's indhold.
+- **Næste handling:** Luk PR #229 med henvisning til #232 som erstatning, når #232 er merged. Ingen kodeændring nødvendig — kun PR-lukning.
+- **Blokeringsansvarlig:** Ingen — afventer blot #232-merge før lukning.
+- **Opfølgning:** Ved #232-merge.
+
+### Rapporterede, ikke-verificerede lokale tilstande
+
+Disse er reconciliation-input fra andre sessioner, **ikke** verificeret af denne leverance,
+og ikke inspiceret eller ændret her (jf. scope-grænsen "ingen branch-/worktree-/stash-sletning
+eller -undersøgelse i denne opgave):
+
+- **Kimi rapporterer 5 delte, lokale stashes** i det fælles repository (nyere observation,
+  afløser den tidligere rapport om 3 — ikke undersøgt her, og GitHub kan ikke verificere
+  lokal stash-state):
+  `stash@{0}` "codex preserve generated source inventory", `stash@{1}` "PR #92 edge
+  image-deletion rebuild", `stash@{2}` "pre-headend-deploy-cmdb-main-duplicate-20260824",
+  `stash@{3}` "edge-terminal-renderer safety backup", `stash@{4}` "wp4-in-progress".
+  Status: **Kimi-reported / local verification pending** — fremstilles ikke som verificeret
+  repository-state.
+- **Claude rapporterer yderligere lokale worktrees** på maskinen ud over dem der er i aktivt
+  brug i denne governance-leverance (fx flere `timelapse-pro-*`-mapper knyttet til ældre
+  Codex-spor). Deres clean/uncommitted-tilstand er ikke undersøgt. Status: **reported /
+  local verification pending**.
+
+Ingen af disse må antages tomme, forældede eller sikre at fjerne, før en session med
+mandat til det faktisk har inspiceret dem.
 
 ## Reserverede/planlagte spor (ikke startet endnu — nævnt i eksisterende dokumentation)
 
@@ -30,25 +101,21 @@ liste for overlap; efter merge, ret listen til.
 
 ## Backlog — historisk oprydning (ikke del af denne ADR's proces, men samme bekymring)
 
-Repoet havde **127 remote branches** i alt (talt 2026-09-13). Kun de tre ovenfor var
-trieret i første omgang, fordi de var det konkrete udgangspunkt for Peters forespørgsel.
+Ved den oprindelige forespørgsel blev **127 remote branches** rapporteret uden en bevaret, frosset population. Det er en historisk kontekst-observation, ikke et verificeret beslutningsgrundlag. De senere bevarede populationer er 122 og 123 reelle branches; deres indbyrdes forskel er dokumenteret nedenfor. Forskellen til 127 kan ikke rekonstrueres præcist uden den oprindelige råliste og må ikke tilskrives bestemte mutationer som bevist. De tre oprindelige PR'er blev kun indledningsvist screenet.
 
-### Målt sweep 2026-09-13 (Kimi) — første kortlægning er udført
+### Branchscreening med bevaret population
 
-Metodekorrektion ved sammenlægning: `git log main..branch` måler ancestry, mens
-`git cherry` sammenligner individuelle patches. Ingen af dem afgør alene semantisk
-restværdi. Flere commits samlet i ét squash-commit kan ikke generelt genkendes af
-`git cherry`; forskelle i patch-ID kan derfor både være forventede og relevante.
+Aktuelt evidenssæt: [BRANCH_SCREENING.json](Pakke_Governance_Review_2026-09/BRANCH_SCREENING.json) og [rå remote-refs](Pakke_Governance_Review_2026-09/BRANCH_REFS_FROSSET.tsv). Metode og reproduktion findes i [dispositionspakken](Pakke_Governance_Review_2026-09/DISPOSITION.md).
 
-Kimis rapport angiver 127 remote branches, 112 ikke-merged, 57 absorberede og 56
-med rester. **57 + 56 = 113**, så population/tidspunkt/klassifikation er endnu ikke
-afklaret. Tallene bevares som historisk rapport, ikke som verificeret partitionssum
-eller slettegrundlag. En branchliste med base/head-SHA og metodeoutput kræves ved
-næste sweep. Påstanden om fulde rådata i denne fils historik er ikke verificeret her.
+Codex-observation `2026-09-13T08:45:40.420260+00:00`, base `13a0d3b3af67a36adf9115d0911aaf2a687bca15`: **123** remote branches ekskl. main = **13** ancestry-merged + **110** ikke-ancestry-merged; de 110 = **51** uden plus-markerede patches + **59** med plus-markerede patches. Alle summer kontrolleret. Hver post indeholder head/base-SHA og rå git-cherry-output. Ingen af kategorierne er sletteautorisation eller semantisk triage.
 
-Kimi rapporterer sletning af syv egne remote branches knyttet til PR #218–#224.
-Denne sammenlægning har ikke selv slettet eller genverificeret disse refs. Den
-rapporterede handling er ikke en generel regel om automatisk sletning ved merge.
+Historisk korrektion: de tidligere 127/112/57/56-tal er trukket tilbage som uafklaret population. [Kimis originale evidensbilag fra 499d266d](Pakke_Governance_Review_2026-09/KIMI_EVIDENS_ORIGINAL.md) er nu bevaret uændret med checksum. Dets 124 refs omfatter main og et HEAD-alias `origin`. Når begge udelades, er den reelle population **122 = 13 ancestry-merged + 109 øvrige; 109 = 51 plusfri + 58 med restpatches**. Refantal, klassifikationsantal, SHA-sammenhæng og summer er kontrolleret mod bilaget; den historiske kommandokørsel er ikke rekonstrueret ud fra hukommelse.
+
+Sammenligning af de to bevarede populationer viser præcis én tilføjelse i Codex' senere måling: `origin/kimi/review-pakke-governance-20260913`. Ingen fælles head-SHA'er har ændret sig, og ingen refs fra Kimis reelle population mangler. Dermed er forskellen 122/123 og 58/59 forklaret ved konkrete data. Det er populations-/konsistenskontrol, ikke semantisk triage eller sikker sletning.
+
+`git cherry` sammenligner individuelle patch-ID'er. Aggregate squash-merges, merge-commits og semantisk ækvivalens kræver særskilt review. Ved gentagelse klassificeres de gemte SHA'er, ikke levende branchnavne. En ny remote-liste er en ny observation.
+
+Kimi har rapporteret syv remote-branchsletninger; originalrapporten bevares. Ingen branch er slettet i denne review-/slutkandidatrunde.
 
 ### Resterende oprydning
 
@@ -98,3 +165,24 @@ Datoer er opfølgningskrav, ikke bevis for kørende baggrundsarbejde. Ingen sche
 - Kimi: historisk sweep og fokus på squash/patch-ækvivalens bevares; tal og slettekonklusion korrigeres ovenfor, ingen sikker slettepopulation erklæret.
 - Codex: §14/§15, agentloadere, opfølgning og rest-/recoverykrav integreres. Den lange historiske inventarliste kopieres ikke ind som et andet aktivt register; den er stadig genskabelig fra `dc171e42` på den bevarede forslagsbranch.
 - Fravalgt: automatisk sletning ud fra alder/0 patches; implicit ADR-accept ved merge; udokumenteret påstand om fuld triage. Selve indholdet og historikken bevares med begrundelse.
+
+
+## Ejerskab og aktivitet — præcisering efter review
+
+Koordinationstabellens tidligere "Codex"-rækker er forslag til næste koordinering, ikke permanent mandat eller bevis for aktivitet. Bekræftet mandat i denne runde (historisk, forud for accept): **Codex / session med PR #232, udpeget af Peter til reviewsammenlægning**; senest verificeret aktivitet ved den tid: kandidatens commit og handover. **Opdateret 2026-09-13:** Peter har siden registreret formel accept af ADR-003 + §14 (se ADR-003 Accept-linje og §Governance-afslutning nedenfor); "før endelig ADR-accept" beskriver derfor ikke længere den aktuelle tilstand. Mandatet for de resterende konsistensrettelser på #232 blev efterfølgende midlertidigt overdraget til Claude, mens Codex-sessionen var utilgængelig (se HANDOVER_LOG.md, denne dato).
+
+For branchtriage, PR-rebases, scheduler og Platform-implementering er aktiv udfører **ikke bekræftet**; blokering: prioritering/overdragelse skal afklares. Peter er beslutningsejer, Codex samler de konkrete næste leverancer i dispositionspakken. Ved næste session skal de tidligere opfølgningsdatoer kontrolleres, og aktivitet markeres uverificeret, hvis der ikke foreligger nyt bevis. Ingen automatisk overtagelse eller stille fristforlængelse.
+
+Let spor og fuldt spor følger §14.6; kontrakt-/governanceændringer er fulde spor. Git/PR leverer revisioner og commits, så de ikke skal kopieres manuelt i alle felter. Oprindeligt reviewmateriale og alle fund/dispositioner findes i [reviewdispositionen](Pakke_Governance_Review_2026-09/DISPOSITION.md).
+
+## Partner- og kompetenceudvidelse 2026-09-13
+
+PR #232 udvides efter Peters instruktion med faste deltagere Kimi/Z.ai samt ad hoc-onboarding og [kompetence-/routingforslag](AI_KOMPETENCER_OG_OPGAVEROUTING.md). Udfører: Codex i samme isolerede reviewspor. Næste handling: dokumentreview af udvidelsen og budgetafklaring før eventuel pilot. Tidligere genreviews gælder den tidligere kandidat, ikke dette nye scope. Ingen runtime- eller upstream-ændring.
+
+### Cross-repo placeringsoplæg
+
+Peter autoriserede 2026-09-13 undersøgelse og forslag til CI/Framework/Platform. Codex har leveret konkret destinations- og pilotoplæg i kompetencedokumentets §8, inklusive fundet uoverensstemmelse i CI-programkortet. Aktiv leverance: dette oplæg i PR #232. Upstream-ændringer/pilot er ikke udført; næste handling er review og afgrænsede upstream-forslag med frisk overlapkontrol. Den eksisterende §14-procedure kan anvendes uafhængigt af routingforslaget.
+
+## Governance-afslutning 2026-09-13
+
+Peter har accepteret ADR-003/§14 og autoriseret afslutning af PR #232. Review/syntese er afsluttet; de åbne implementeringsspor forbliver synlige i dispositionslisten. Routing og upstream-placering er Proposed; Solar Eclipse er udskudt efter Peters instruktion og blokerer ikke disse spor.

@@ -1,35 +1,27 @@
 # ADR-003: Pakke-hygiejne — forebyggelse af overhalet/glemt arbejde på tværs af AI-sessioner
 
-- **Status:** Proposed
-- **Accept:** PR #230 merger dokumentet, men status er fortsat Proposed. Formel accept skal registreres eksplicit med beslutningsejer og dato, jf. ADR/README.md. Peters konkrete operationelle instruktioner gælder imens.
+- **Status:** Accepted
+- **Accept:** Peter, 2026-09-13, efter Claude/Kimi-genreviews og instruktion om at afslutte det reviewede arbejde. Omfatter ADR-003 og §14; ikke implementering af de åbne opfølgningsspor.
 - **Dato:** 2026-09-13
-- **Beslutningstagere:** Peter, Claude, Codex (Kimi inviteres til samme review, jf. §Afgrænsning)
-- **Review:** Kimi 2026-09-13 — **tiltræder ADR'en uden ændringskrav**. Verificerede kontekst-påstandene mod repoet (127 branches, #163/#159-conflicts) og bidrog med den målte branch-klassificering i `PAKKE_SPOR_REGISTER.md` §Backlog. Én metode-præcisering: sweeps skal bruge patch-ækvivalens (`git cherry`), da `git log main..<branch>` fejlagtigt viser squash-mergede branches som ikke-mergede.
+- **Beslutningsejer:** Peter. Reviewbidrag: Claude, Kimi og Codex (se bevarede reviews/disposition).
+- **Historisk review af #230, selvrapporteret identitet; ikke accept af senere syntese:** Kimi 2026-09-13 — **tiltræder ADR'en uden ændringskrav**. Verificerede kontekst-påstandene mod repoet (127 branches, #163/#159-conflicts) og bidrog med den målte branch-klassificering i `PAKKE_SPOR_REGISTER.md` §Backlog. Én metode-præcisering: sweeps skal bruge patch-ækvivalens (`git cherry`), da `git log main..<branch>` fejlagtigt viser squash-mergede branches som ikke-mergede.
 - **Kontekst-referencer:** `HANDOVER_Claude_Codex_arbejdsdeling.md`, `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` (§3 Fælles source of truth, §9 Uenighed og konfliktløsning), `PAKKE_SPOR_REGISTER.md` (nyt, indføres sammen med denne ADR), PR #214, #163, #159.
 
 ## Kontekst
 
 Peter rejste en konkret bekymring 2026-09-13: da PR #214 viste sig at være `BEHIND` main, opstod spørgsmålet om hvorvidt en opdatering til branchen risikerer at overskrive eller kritikløst "overhale" arbejde, der reelt stadig mangler at blive integreret. En efterfølgende gennemgang bekræftede at bekymringen er velbegrundet i praksis, ikke kun i teori:
 
-- Repoet har **127 remote branches**, hvoraf kun en håndfuld har en åben PR.
+- Ved den oprindelige forespørgsel blev der uformelt talt **ca. 127 remote branches** (`git branch -r`, ikke frosset/verificeret) — historisk kontekst-estimat, ikke et verificeret grundlag. Kun en håndfuld havde en åben PR. Det senere bevarede, reproducerbare grundlag er **122–123 branches** ekskl. main (to uafhængigt frosne populationer, forskel forklaret); se `PAKKE_SPOR_REGISTER.md` §Backlog for metode og data.
 - To Codex-PR'er (**#163** og **#159**) har ligget åbne i 2+ uger uden opfølgning og er nu i reel Git-konflikt med main, fordi main er ændret uafhængigt i de samme filer (bl.a. `edge/agent.py`-refaktorering og `headend/main.py`-modularisering).
-- Ved nærmere undersøgelse viste ingen af de to PR'er sig at være overhalet — den funktionalitet de tilføjer (post-restart health-stabilitetsvindue + Headend-sweeper i #163; eksplicitte lokal/UTC-tidsfelter fra capture-API'et i #159) findes ikke andre steder i main. De var blot **glemte**, ikke forkastede.
+- Claudes foreløbige strengsøgning gav indikation af, at de to PR'er ikke var fuldt overhalet — den funktionalitet de tilføjer (post-restart health-stabilitetsvindue + Headend-sweeper i #163; eksplicitte lokal/UTC-tidsfelter fra capture-API'et i #159) blev ikke fundet ved den beskrevne søgning. Det er screening fra samme forfatter, ikke en fuld uafhængig semantisk gennemgang; genverifikation udestår før integration.
 - Årsagen er strukturel, ikke en enkelt fejl: **flere AI-sessioner (Claude-instanser, Codex, evt. Kimi) arbejder asynkront og taler ikke direkte sammen** (jf. `HANDOVER_Claude_Codex_arbejdsdeling.md` §0: "Vi to assistenter taler ikke direkte sammen"). Uden et fælles, levende overblik over *alle* åbne spor — ikke kun det spor man selv sidder i — er der intet der fanger et glemt branch, før det enten rådner eller (værre) bliver overskrevet af en anden sessions uafhængige, parallelle løsning på samme problem.
 - Eksisterende `HANDOVER_LOG.md` løser kontinuitet **inden for** en opgave godt, men er kronologisk og ikke beregnet til at svare på: "hvilke ikke-merged spor findes lige nu, og overlapper noget af det med det jeg er ved at lave?"
 
-## Beslutning
+## Beslutning — hvad og hvorfor
 
-**Før en ny pakke (PR/branch) merges eller en eksisterende pakke opdateres til at følge main, skal den udførende session (menneske eller AI) udføre et pakke-hygiejnetjek:**
+Beslutningen fastlægger bevaring af relevant restindhold, synlig koordinering før ændringer og dokumenteret disposition før oprydning. Det skal forebygge tab af kode, tests, idéer og beslutningshistorik på tværs af parallelle sessioner. Registret giver overblik; handover bevarer hændelser; faktiske Git/GRC/CMDB-kilder forbliver autoritative for deres respektive tilstande.
 
-1. **Slå op i `PAKKE_SPOR_REGISTER.md`** om der findes andre åbne pakker der rører de samme filer/domæner. Registret er den autoritative liste over kendte åbne spor — ikke `git branch -r` alene, som ikke skelner reelt arbejde fra rådne eksperimenter.
-2. **Ved overlap:** afgør om det overlappende spor er
-   - **overhalet** (samme problem allerede løst i main på en måde der dækker sporets formål) → dokumentér *hvorfor* i registret med reference til den commit/PR der overtog det, og luk sporet med en kommentar der forklarer beslutningen. Slet aldrig en branch/PR tavst.
-   - **stadig gyldigt, men i konflikt** (som #163/#159) → sporet rebases/genforenes mod aktuel main før det merges. Det kasseres ikke, og det merges heller ikke blindt hen over konflikten.
-   - **uafklaret** → markeres i registret som `Afventer review` og eskaleres til Peter, hvis ingen AI-session kan afgøre det alene (jf. samarbejdsmodellens §9).
-3. **Efter merge af en ny pakke:** opdatér `PAKKE_SPOR_REGISTER.md` — fjern den mergede pakke fra "åbne spor", og tilføj en linje hvis merget hvis noget af det man netop lavede gør et *andet* åbent spor helt eller delvist overflødigt (proaktiv retning, ikke kun reaktiv).
-4. **Ved oprettelse af en ny branch/PR:** tilføj den til registret med kort formål, berørte domæner (filstier/moduler) og forfatter (Claude/Codex/Kimi/Peter), så den er synlig for den næste session, før den selv risikerer at rådne.
-
-Dette er et **obligatorisk procestjek uden implementeret CI-gate** — det kræver ikke CI-håndhævelse i denne omgang (kan tilføjes senere som et let advarselstjek, analogt til handover-evidenstjekket foreslået i samarbejdsmodellens §13). Det er bindende adfærd for enhver session, menneskelig eller AI, der merger eller opdaterer en pakke.
+Den eneste operative procedurespecifikation er [samarbejdsmodellen §14](../SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md#14-bindende-regel-for-pakker-spor-og-reconciliation). Denne ADR gentager ikke dens trin. Proceduren er accepteret af Peter sammen med denne ADR 2026-09-13. Teknisk CI-/serverhåndhævelse følger ikke af dokumentet.
 
 ## Alternativer overvejet
 
@@ -50,7 +42,7 @@ Dette er et **obligatorisk procestjek uden implementeret CI-gate** — det kræv
 - Kræver at hver session bruger et par minutter på opslag før merge — en lille, men reel friktion.
 
 **Neutrale:**
-- Løser ikke i sig selv de 124 branches der endnu ikke er trieret (se `PAKKE_SPOR_REGISTER.md` §Backlog). Denne ADR fastlægger *processen fremadrettet*; den fulde historiske oprydning er et separat, afgrænset arbejde.
+- Løser ikke i sig selv de branches der endnu ikke er trieret (127/124 var ubekræftede tidlige estimater, ikke et verificeret tal; det bevarede, reproducerbare grundlag er 122–123 branches ekskl. main — se `PAKKE_SPOR_REGISTER.md` §Backlog). Denne ADR fastlægger *processen fremadrettet*; den fulde historiske oprydning er et separat, afgrænset arbejde.
 
 ## Standardmapping
 
@@ -60,10 +52,7 @@ Dette er et **obligatorisk procestjek uden implementeret CI-gate** — det kræv
 
 ## Afgrænsning
 
-- Denne ADR beslutter **ikke** hvordan Kimi konkret onboardes til samarbejdsmodellen (separat fra `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`, som i dag kun navngiver Claude og Codex). Peter har bedt om at samle Claude, Codex og Kimis arbejde til fælles review — denne ADR forudsætter at Kimi følger samme registerpraksis, men formaliserer ikke Kimis rolle i samarbejdsmodellen. Det bør ske som en opdatering af `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` selv, med Peters accept.
-- Beslutter **ikke** en CI-håndhævet gate. Kan foreslås som fremtidig ADR-tilføjelse, analogt til handover-evidenstjekket i `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §13.
-- Beslutter **ikke** hvordan de resterende ~124 utrierede branches skal håndteres én for én — kun at nye/kendte spor fremover registreres og tjekkes for overlap. Den historiske oprydning listes som backlog i `PAKKE_SPOR_REGISTER.md`.
-
+Reglen er leverandørneutral og gælder mennesker, alle AI-sessioner og underagenter. Teknisk håndhævelse, historisk branchtriage og Framework/Platform-udvidelser er separate leverancer; dokumentet påstår ikke at de er udført. Samarbejdskanaler afhænger af faktisk autoriseret tooling; ingen bestemt AI-kommunikationsmulighed eller -begrænsning antages universel.
 
 ## Samlet præcisering — Claude, Kimi og Codex, 2026-09-13
 

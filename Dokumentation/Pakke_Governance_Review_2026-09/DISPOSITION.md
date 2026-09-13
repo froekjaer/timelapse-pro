@@ -1,0 +1,99 @@
+# Reviewdisposition og slutkandidat
+
+Status: **HISTORISK — rettelser indarbejdet, begge genreviews modtaget og lukket, Peter har registreret formel accept af ADR-003 + §14 (2026-09-13).** Dette skema forbliver Codex' disposition af de originale fund, ikke en løbende beslutningsstatus. Baseline for originalreviews: `13a0d3b3`; kandidat der blev genreviewet og accepteret: `8cb96638`. Denne fils indhold nedenfor beskriver forløbet frem til accept og er ikke opdateret til at fjerne hvert enkelt "udestår"/"Proposed"-udsagn fra selve forløbet — se `PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md` og ADR-003's Accept-linje for den aktuelt gældende status.
+
+## Originaler og proveniens
+
+- [Claude — originalt modtaget tekst](CLAUDE_REVIEW_ORIGINAL.txt).
+- [Kimi — original fil fra commit 0c2e2c78](KIMI_REVIEW_ORIGINAL.md).
+- [Checksums og kildeangivelser](REVIEW_PROVENIENS.json).
+- [Codex — særskilt, informeret selvreview](CODEX_REVIEW.md). Codex har læst begge andre reviews og tæller ikke som blind/uafhængig tredje reviewer.
+
+Begge eksterne reviews tiltræder efter konkrete rettelser. Alle 20 fund bevares særskilt nedenfor; overlappende fund er ikke slettet. Originaltekster er uændrede.
+
+## Disposition af alle fund
+
+| ID | Disposition | Rettelse, evidens eller åben handling |
+|---|---|---|
+| CLAUDE-01 | Accepteret tekst; beslutning registreret | Header/agentloadere skelner operationel §14, Proposed ADR og uvedtaget §15. Peter har siden besluttet: ADR-003 + §14 Accepted 2026-09-13. |
+| CLAUDE-02 | Accepteret med sikring | §14.4: annoteret remote-arkivtag eller verificeret backup/bundle; kollision/retention/readback. Isoleret restore-pilot rapporteret; nedgraderet 2026-09-13 til selvrapporteret historisk resultat efter #232-review — se RECOVERY_PILOT.json. Ingen rigtig branch slettet. |
+| CLAUDE-03 | Accepteret | Frosset Codex-population og per-SHA råoutput vedlagt; ingen sletteautorisation. Kimis historiske råliste afventes særskilt. |
+| CLAUDE-04 | Accepteret | ADR/register nedtoner #159/#163 til Claudes ikke-uafhængige strengscreening; semantisk genverifikation udestår. |
+| CLAUDE-05 | Accepteret | §14.5: selvrapporteret identitet ≠ attestering; originaler/checksums og begrænsninger ved reviews bevaret. |
+| CLAUDE-06 | Accepteret med afgrænsning | Neutral titel/rolle, filnavn bevaret; §15 er fortsat forslag og erklæres ikke gældende. |
+| CLAUDE-07 | Accepteret delvist | Mandat pr. opgave og overdragelse tydeliggøres. Default til sidste forfatter afvises som implicit autoritet, CODEX-02. |
+| CLAUDE-08 | Udskudt teknik, ikke afvist | Read-only opfølgningsmekanisme/CI-advarsel planlægges særskilt; ingen scheduler eller beskeder oprettet under reviewmandat. Åben rest R01. |
+| CLAUDE-09 | Accepteret præciseret | §14.3 citerer konkret kvitteringskontrol; undgår at fremstille den som signatur-/targetbevis, CODEX-03. |
+| CLAUDE-10 | Accepteret som fremtidig handling | Frisk diff/adfærd/mergeanalyse og relevante tests før #159/#163-integration; ikke udført i dokumentrunden, R03. |
+| KIMI-01 | Accepteret | Header v1.1 splitter status; deltagerneutral titel og roller, Proposed ADR uændret. |
+| KIMI-02 | Accepteret | ADR Beslutning reduceret til hvad/hvorfor og pointer til eneste procedure §14. |
+| KIMI-03 | Accepteret med evidensforbehold | Kimis 08:25-genmåling citeres som rapport, ikke uafhængigt reproduceret. Nyt frosset Codex-sæt vedlagt; CODEX-01. |
+| KIMI-04 | Accepteret med race-forbehold | Synlig autoriseret draft-PR/fælles post før substantiel implementering; efterkontrol og overlap-afklaring. PR-listen er ikke en lås. |
+| KIMI-05 | Accepteret | Data≠instruktioner ind i §14.2 og begge loadere. Ingen påstand om teknisk prompt-injection-lukning. |
+| KIMI-06 | Accepteret afgrænset | Let/fuldt spor; governance/sikkerhed/kontrakter er fulde, selv om ændringen kun er dokumentation. |
+| KIMI-07 | Accepteret delvist | Sidst verificeret aktivitet og session; ved overskredet aftalt frist markeres aktivitet uverificeret. Ingen automatisk syvdages-overtagelse. |
+| KIMI-08 | Accepteret delvist | Konkrete ref-/backupkrav og restore. PR-nummer alene afvises som generel retentiongaranti. |
+| KIMI-09 | Accepteret | Tilgængelighed begrænses til lokal maskine og eksplicit autoriserede tilsluttede værter; resten er ukendt. |
+| KIMI-10 | Accepteret | Standset mutation får parter, blokeringsejer og opfølgning, ikke tavs ventetilstand. |
+| CODEX-01 | Indarbejdet; historisk bilag afventes | Nyt evidenssæt vedlagt, historiske populationer holdes adskilt. |
+| CODEX-02 | Indarbejdet | Mandat og aktivitet holdes adskilt; forældelse giver ingen rettigheder. |
+| CODEX-03 | Indarbejdet | Eksisterende kodehenvisning afgrænset til faktisk kvitteringskontrol. |
+
+## Evidens og reproduktion
+
+[BRANCH_REFS_FROSSET.tsv](BRANCH_REFS_FROSSET.tsv) er én gemt `git ls-remote --heads origin`-respons. [BRANCH_SCREENING.json](BRANCH_SCREENING.json) gemmer UTC-tid, population-checksum, main-SHA, hver branch-SHA, kommandoer og råt `git cherry`-output. Snapshot er observation af én remote-respons; ikke en distribueret lås. Klassifikation blev udført på de gemte SHA'er, ikke flyttelige refs.
+
+Reproduktion: hent nødvendige commit-objekter uden at flytte arbejdsbranches; for hver gemt head køres `git merge-base --is-ancestor <head> <base>` og `git cherry <base> <head>`. Sammenlign med de gemte outputs. Summer ancestry-merged + ikke-merged til total; summer sidstnævntes plusfri/plusmarkerede grupper særskilt. En ny ls-remote-liste er et nyt datasæt, ikke genbevis af det gamle.
+
+Codex-datasæt: 123 = 13 + 110; 110 = 51 + 59. Kimis oplyste tidligere observation: 123 = 14 + 109; 109 = 51 + 58. Hans oprindelige råliste er endnu ikke vedlagt; Peter har fået en præcis anmodning til Kimi. Ingen af de to målinger beviser sikker sletning eller manglende funktionalitet.
+
+[RECOVERY_PILOT.json](RECOVERY_PILOT.json): isolerede midlertidige repositories, annoteret tag til separat lokal bare remote, hentning i tomt repository, commit/tree og filindhold sammenlignet — rapporteret som PASS ved selve pilotkørslen. **Nedgraderet 2026-09-13:** ingen af fixture-materialerne (commit, tree, tag, bare remote) er bevaret i dette repository eller andetsteds holdbart, og der er intet committet script eller kommandotransskript. Resultatet er derfor omklassificeret til selvrapporteret/historisk og kan ikke uafhængigt genskabes fra det aktuelle repo alene. Ingen produktionsbranch slettet. Pilot beviste (dengang den kørte) ikke GitHub-retention, adgangsbeskyttelse eller backup af uncommitted materiale, og beviser det fortsat ikke.
+
+Dokumentkontroller: statusheader, enkelt procedurespecifikation, relative links, diff-whitespace, komplette fund-ID'er og review-checksums. Runtime-tests og fuld branchtriage er ikke udført. Ingen installations-/sletnings-/schedulerhandlinger.
+
+## Åbne næste leverancer
+
+Peter er beslutningsejer; Codex er udpeget til **denne** sammenlægning, ikke stående systemejer. Tabellen skelner planlægning fra bekræftet udførelse. Ingen dato er en kørende alarm.
+
+| Rest | Næste konkrete handling | Ansvar og status | Opfølgning |
+|---|---|---|---|
+| R01 Fremdriftskontrol | Forelæg en lille read-only scheduler/CI-advarsel med kanal, kadence og test mod forfalden fixture; ingen auto-merge/sletning | Codex udarbejder beslutningsoplæg efter denne runde; udførelse endnu ikke startet | Ved beslutning om ibrugtagning |
+| R02 Teknisk generations-/mandatkontrol | Afgræns Platform-kontrakt og testcase S01/S02/S06 | Codex som foreslået forfatter; mandat/implementering skal bekræftes | Efter governance-accept |
+| R03 PR #159/#163 | Frisk semantisk restanalyse, konfliktgenforening og relevante tests | Udfører skal overtages eksplicit; Codex registrerer afklaringsbehov | Før første merge/deploy fra sporene |
+| R04 Historiske branches | Modtag Kimis originale population; derefter triage efter konsekvens med ejer pr. spor | Kimi har tilbudt arbejdet; start ikke bekræftet. Codex integrerer evidens, når leveret | Næste reviewoverdragelse |
+| R05 Formel status | **Afgjort:** Peter besluttede Accepted 2026-09-13 efter begge genreviews (Claude, Kimi) | Peter; beslutning registreret i ADR-003 | Afsluttet |
+| R06 Framework-feedback | Udarbejd forslag til eksisterende Findings-proces og platformreview, ingen nye id'er uden opslag | Codex efter accept/afgrænsning | Efter R05 |
+
+## Målrettet genreview
+
+Claude: bekræft især CLAUDE-01/02/04/05/07 og den indsnævrede kodepåstand i CLAUDE-09. Kimi: bekræft KIMI-01–10, især ændringerne til -04/-07/-08, hvor erstatningsteksten ikke er kopieret ordret. Begge: læs slutkandidatens nye SHA og kontrollér at ingen rettelse skaber en ny modsigelse. Svar med fund-ID → lukket / restindsigelse + præcis tekst. Ingen ny hel sweep eller driftshandling kræves til genreview.
+
+Begge genreviews (Claude, Kimi) er modtaget og lukkede alle fund uden materielle indsigelser. Peter har derefter registreret ADR-003 + §14 som Accepted (2026-09-13) — "ADR står indtil da Proposed" i denne sætnings oprindelige form gælder derfor ikke længere; se ADR-003 Accept-linje. Kimis manglende historiske rådata blokerede ikke det dokumentforslag der blev accepteret, men den gamle måling må fortsat ikke behandles som reproduceret eller bruges til oprydning uden ny verifikation.
+
+
+## Modtaget evidensbilag — 499d266d
+
+[Kimis originale bilag](KIMI_EVIDENS_ORIGINAL.md) er nu bevaret byte-for-byte; SHA-256 og Git-blob fremgår af REVIEW_PROVENIENS.json. 124 inputrefs, 123 klassificerede linjer, hvoraf én er HEAD-aliaset `origin`: reel population uden main/alias = 122 = 13 + 109, og 109 = 51 + 58. Ref/head-sammenhæng og alle summer er kontrolleret.
+
+Sammenholdt med Codex' senere gemte liste findes kun én ekstra branch: `origin/kimi/review-pakke-governance-20260913`; alle fælles head-SHA'er er ens, ingen tidligere refs mangler. Dette forklarer forskellen mellem de to målinger. Kontrollen er read-only konsistens-/populationsanalyse, ikke ny semantisk triage eller godkendelse af sletning.
+
+**Opdateret disposition:** KIMI-03, CLAUDE-03 og CODEX-01's efterspurgte råbilag er modtaget og konsistenskontrolleret. Den tidligere bemærkning om manglende rådata er historisk; dette afsnit erstatter den aktuelle ventestatus. R04's første handling er nu fuldført. Selve branchtriagen og målrettet genreview er fortsat åbne. Ingen konklusion om sikker sletning følger heraf.
+
+
+## Afsluttet genreview — kandidat 8cb96638
+
+- [Claude, originalt genreview](CLAUDE_GENREVIEW_ORIGINAL.txt): oprindelige tekstfund lukket; CLAUDE-08/10 accepteret som korrekt sporede åbne handlinger. Tiltræder efter én ikke-blokerende præcisering af registerets indledende 127-tal. Den rettelse er nu indarbejdet: historisk, ubekræftet population, ikke beslutningsgrundlag. En præcis forklaring på forskellen til 127 opfindes ikke.
+- [Kimi, originalt genreview fra 179d689f](KIMI_GENREVIEW_ORIGINAL.md): alle KIMI-01–10 lukket uden restindsigelser. Rapporteret typo `fuldtlger` blev kontrolleret og findes ikke i kandidaten; korrekt `følger` står allerede. Kimis tidligere CONFLICTING-screening kan indgå som historisk input til R03, aldrig som frisk semantisk dom eller erstatning for genkontrol.
+- Proveniens/checksums er bevaret. Begge reviews gælder 8cb96638; ændringen efter dette review er begrænset til den efterspurgte tællepræcisering samt modtagelses-/evidenslog. Ingen nye procedureregler eller materielle ændringer indføres i denne afslutning.
+
+**Aktuel status:** klar til Peters eksplicitte beslutning om ADR-003. Dette afsnit afløser tidligere ventestatus for genreview i denne fil; historiske beskrivelser af modtagelsesforløbet bevares. R01 scheduler/fremdriftsmekanisme, R02 Platform-kontrol, R03 kodeintegration, R04 historisk triage og R06 upstream-feedback er stadig reelle åbne leverancer. Accept af dokumentet lukker dem ikke.
+
+**Foreslået beslutning til Peter:** Acceptér ADR-003 og den reviewede §14-procedure som fælles regel for alle AI-sessioner og underagenter; behold §15 som uvedtaget Framework/Platform-forslag; tillad merge af PR #232 med registreret accept-dato. Beslutningen omfatter ingen branchsletning, installation eller automatisk igangsættelse af de åbne implementeringsspor.
+
+## Ny udvidelse efter genreview — 2026-09-13
+
+Peter ønsker Kimi og Z.ai som faste projektdeltagere samt ad hoc-deltagelse. Samarbejdsmodellen §4 præciserer dette uden leverandørendorsement eller udvidet adgang. Nyt kompetence-/routingforslag er tilføjet og linket fra start/register. Denne udvidelse var ikke del af kandidaten 8cb96638 eller dens genreviews. Tidligere lukkede fund genåbnes ikke automatisk, men tiltrædelserne må ikke bruges som godkendelse af det nye indhold. ADR-003 er ikke automatisk markeret Accepted.
+
+## Afsluttende beslutning — Peter, 2026-09-13
+
+Peter har instrueret, at det tidligere reviewede arbejde afsluttes. **R05 er lukket: ADR-003 og §14 Accepted.** Dette afsnit afløser tidligere ventestatus og acceptforslag. Originale reviews bevares uændret. R01/R02/R03/R04/R06 er fortsat særskilte åbne leverancer; nye partner-/routingforslag er ikke foregivet genreviewet. Solar Eclipse er efter Peters prioritering udskudt og er ikke en gate for det nye Platform-arbejde; historiske referencepåstande bevares som historik.

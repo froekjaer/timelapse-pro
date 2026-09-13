@@ -1,5 +1,9 @@
 # 00 — START HER (master-indeks & onboarding)
 
+> **AI-samarbejde:** [Faste deltagere og ad hoc-onboarding](SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md#4-roller) · [Kompetencer og dynamisk routing — forslag](AI_KOMPETENCER_OG_OPGAVEROUTING.md).
+
+> **Fælles reviewrunde (historisk, afsluttet):** [Reviewpakke v1.0](PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md) — fastlåst baseline, beslutningspunkter og fælles svarskabelon fra reviewrunde v1. Runden er afsluttet: ADR-003 + §14 blev accepteret af Peter 2026-09-13, efter Claude- og Kimi-genreviews. Dokumentet bevares for sin historiske værdi (proces, spændinger, scenarier) — det beskriver ikke længere ADR-003's aktuelle status.
+
 > **Navigationsdiagnostik 2026-09-10:** [aktivering, installation, test og målegrænser](NAVIGATION_DIAGNOSTICS_2026-09.md). Opt-in diagnostik for sporadiske menupauser; se handover for faktisk rollout-status.
 
 > **GRC single source of truth:** Testcases, testkørsler, risici, fund,

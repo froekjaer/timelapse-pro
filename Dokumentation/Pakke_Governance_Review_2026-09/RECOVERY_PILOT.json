@@ -1,0 +1,23 @@
+{
+  "result": "SELF_REPORTED_HISTORICAL_PASS_NOT_INDEPENDENTLY_REPRODUCIBLE",
+  "result_note": "Downgraded 2026-09-13 after PR #232 review feedback. The original 'PASS' described a real pilot run, but none of its fixture material is preserved in this repository or any other durable location: no bundle, no retained tag, no deterministic fixture-generation script, no command transcript. A fresh session cannot rerun or independently verify this result from committed material today. Treat as a historical, self-reported observation about the recovery procedure design, not as proof the procedure currently works.",
+  "scope": "isolated temporary repositories only; no actual project ref deleted",
+  "checks_reported_at_the_time": [
+    "annotated tag pushed to separate local bare remote",
+    "fetched into empty repository",
+    "commit and tree match",
+    "file content read back"
+  ],
+  "limitations": [
+    "does not verify GitHub retention/protection",
+    "does not preserve uncommitted work",
+    "does not authorize any real branch deletion",
+    "fixture commit/tree/tag existed only in temporary local repositories that no longer exist; they are not retained in this repository, in a Git bundle, or in any other durable/inspectable location",
+    "no deterministic fixture-generation script or raw command transcript was committed, so the run cannot be repeated or independently checked from repository state alone"
+  ],
+  "fixture_commit": "4de0a3931052b71772cde1ebc211e747bc39fa09",
+  "fixture_tree": "a601aa7168cc4bd070a8e1440a49b67c7f7fe951",
+  "tag": "archive/review-fixture/2026-09-13-4de0a393",
+  "fixture_reference_note": "These object IDs and tag name are the reporting session's own record of what it ran. They are not resolvable against this repository or any known remote; do not treat them as verifiable evidence without a fresh, reproducible pilot.",
+  "next_action_if_durable_evidence_is_needed": "Re-run the pilot with a committed fixture-generation script (or a checked-in bundle of the fixture repo) plus a saved command transcript, in a follow-up track owned explicitly per SAMARBEJDSMODEL §14.5 — not invented retroactively for this record."
+}

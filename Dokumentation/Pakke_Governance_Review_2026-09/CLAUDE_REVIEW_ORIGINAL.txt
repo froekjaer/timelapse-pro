@@ -1,0 +1,171 @@
+Selvstændigt review — Claude, 2026-09-13
+Reviewer / session: Claude (Sonnet 5, denne Claude Code-session)
+Dato: 2026-09-13
+Reviewet baseline-SHA: 13a0d3b3af67a36adf9115d0911aaf2a687bca15 (PR #231, låst reviewbase)
+Eget tidligere bidrag / begrænsninger i uafhængighed:
+  Jeg er IKKE en uafhængig tredjepart på store dele af dette. Jeg skrev selv:
+  - Den oprindelige ADR-003 + PAKKE_SPOR_REGISTER.md (PR #229, senere supersedet ind i #230).
+  - PR-kommentarerne på #163/#159 med "ikke overhalet"-konklusionen, som nu er citeret
+    som afgjort faktum i selve ADR-003's Kontekst-afsnit og i registret.
+  Det betyder: mit review nedenfor af §Kontekst/#163/#159-konklusionen og af selve
+  ADR-designet er selv-review, ikke uafhængig verifikation (jf. kilde 1, §"AI self-review
+  is useful but is not independent verification by itself" og reviewpakkens egen §1:
+  "Flere AI-navne giver ikke i sig selv uafhængighed"). Jeg har forsøgt at kompensere ved
+  aktivt at lede efter huller i mit eget tidligere arbejde (se CLAUDE-04, CLAUDE-10), men
+  Peter/Codex bør ikke tælle dette som en uafhængig bekræftelse af #163/#159-konklusionen.
+
+Faktisk læste kilder:
+  - Reviewpakken (given URL, commit hvor den blev linket).
+  - Dokumentation/ADR/ADR-003-... , SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md (fuld, §1-15),
+    PAKKE_SPOR_REGISTER.md, AGENTS.md, CLAUDE.md, 00_START_HER.md, ADR/README.md — alle ved
+    pinnet SHA 13a0d3b3af67a36adf9115d0911aaf2a687bca15.
+  - HANDOVER_LOG.md fuldt (2984 linjer), inkl. 2026-08-16/17-entries citeret som evidens,
+    og alle 2026-09-11 til 2026-09-13-entries (Kimi/Codex/Claude).
+  - Live GitHub-tilstand: PR #214, #229 (OPEN), #230, #231 (MERGED), #163, #159 (OPEN,
+    stadig CONFLICTING/UNKNOWN, ingen ny commit siden mine kommentarer).
+  - Live branch-optælling: 123 remote branches, 109 --no-merged mod origin/main (frisk
+    tælling 2026-09-13, egen metode, samme ancestry-begrænsning som git log-metoden).
+  - Eksterne kilder ved pinnede SHA'er (hentet direkte fra GitHub, verificeret at de findes):
+    ENGINEERING_CONTINUITY_AND_INDEPENDENT_VERIFICATION.md, FRAMEWORK_FINDINGS.md,
+    MISSION_INTELLIGENCE.md (mission-framework); mission-meta-model.md, ADR-0002,
+    architecture-tests.md (Mission-Platform).
+  - Stikprøve i edge/agent.py + edge/update_lifecycle.py (origin/main) for at vurdere
+    om §14.3's krav allerede har teknisk dækning (signerede artifacts, target-binding).
+
+Ikke verificeret / manglende adgang:
+  - Fuld historisk triage af de resterende ~109-113 utrierede branches (eksplicit uden
+    for denne rundes scope, jf. reviewpakkens §2 — ikke forsøgt af mig).
+  - Ingen rå kommando-output/branchliste fra Kimis sweep er committet noget sted; jeg kan
+    derfor ikke selv genskabe 127/112/57/56-tallene, kun konstatere at de ikke går op
+    internt (se CLAUDE-03).
+
+Samlet vurdering: tiltræder efter konkrete rettelser
+Kort begrundelse:
+  Retningen (ét ADR + én procedure + ét register + handover som hændelseslog) er rigtig
+  og løser et reelt, dokumenteret problem (#163/#159 var reelt glemt arbejde, ikke
+  paranoia). Men dokumentet har stadig en uafklaret accept-model (Proposed vs. allerede
+  merget/operationel), mangler en konkret recovery-mekanisme for slettede branch-refs,
+  hviler på selvrapporterede AI-identiteter uden proveniens, og de eneste "harde" tal i
+  sagen (127/112/57/56) modsiger sig selv og er ikke bakket af et reproducerbart artefakt.
+  Ingen af disse er grund til at forkaste retningen — de er grund til at rette teksten
+  før Peter registrerer formel accept.
+Beslutninger D01–D10
+ID	Svar	Begrundelse / fund-ID
+D01	Tiltræder	ADR (hvad/hvorfor) + §14 (hvordan) + register (tilstand) + handover (hændelse) er en fornuftig og allerede afprøvet opdeling — den brugte sig selv til at fange #163/#159. Ingen strukturel indvending.
+D02	Tiltræder efter rettelser	Metoden (pr. krav/idé, ikke pr. commit) er rigtig i teksten, men mit eget #163/#159-arbejde — som er det eneste konkrete eksempel proceduren hviler på — var en hurtig strengsøgning, ikke en udtømmende fil+adfærd-gennemgang. Se CLAUDE-04.
+D03	Tiltræder efter rettelser	Proportionalt i princippet, men 100 % Markdown-håndhævet i dag. Ingen gate, selv en let en, findes. Ikke blokerende (ADR erkender det selv), men bør have en konkret, ikke-blokerende første-CI-check foreslået. Se CLAUDE-08.
+D04	Tiltræder efter rettelser	Worktree-isolation og "ingen stiltiende overtagelse" er beskrevet klart i §14.2. Men "integrationsansvarlig" (§14.5) er en unavngiven, ikke-tildelt rolle — lige nu er det Codex af vane, ikke af beslutning. Se CLAUDE-07. Det reelle mandat-/generationsnummer-lag (§15.3) er kun forslag, ikke implementeret — det bør stå eksplicit, ikke kun antydes.
+D05	Mere evidens/ændring kræves	§14.6 er den rigtige regel, men "dateret opfølgning" uden nogen kørende mekanisme er strukturelt den samme fejl der lod #163/#159 rådne i 2 uger — bare med en tabel i stedet for tavshed. Se CLAUDE-08 for et konkret, faktisk implementerbart forslag (denne sessions egne værktøjer understøtter det).
+D06	Ændring kræves	§14.4 navngiver risikoen korrekt ("en SHA alene er ikke en bevaringsgaranti hvis sidste ref slettes") men giver ingen konkret mekanisme. Se CLAUDE-02 for præcis erstatningstekst.
+D07	Tiltræder	§14.3 er allerede delvist teknisk (ikke kun proces) dækket af eksisterende kode i edge/update_lifecycle.py/edge/agent.py (signerede artifacts, release_receipt_matches_artifact, target-binding). Bør nævnes eksplicit som eksisterende evidens. Se CLAUDE-09.
+D08	Tiltræder	Placeringen (Framework = generelle principper via Findings; Platform = konkrete kontrakter; TimeLapse = afprøvning) matcher det jeg faktisk læste i de tre eksterne kilder. §15 er tydeligt markeret som forslag, ikke vedtaget — ingen ny konkurrerende agentplatform introduceres her.
+D09	Ændring kræves	Ikke entydig lige nu: ADR-003 er Proposed, men #230/#231 er allerede merged til main, og AGENTS.md/CLAUDE.md kalder §14 "Mandatory" uden forbehold. Det er præcis den uklarhed reviewpakkens eget §4 advarer om — bare allerede skrevet ind i produktionskoden (agentloaderne), ikke kun i en planlagt tekst. Se CLAUDE-01.
+D10	Tiltræder	Enig i "lille brugbar proces nu, teknisk håndhævelse/fuld historisk triage som separat, ejet arbejde senere." Det er den rigtige indsats-allokering givet at intet her er irreversibelt.
+Fund
+ID: CLAUDE-01
+Prioritet: skal rettes
+Kilde: ADR-003 header ("Accept"-linje) + AGENTS.md/CLAUDE.md §"Mandatory package/track reconciliation", ved review-SHA
+Observation (faktum): ADR-003's status er "Proposed". #230 og #231, som begge indeholder og udbygger ADR-003/§14, er allerede MERGED til main (bekræftet: #230 merged 2026-09-13T07:00:50Z, #231 merged 2026-09-13T08:01:43Z). AGENTS.md og CLAUDE.md linker til §14 som "Mandatory" uden at nævne at den underliggende ADR stadig er Proposed.
+Fortolkning / konsekvens: En session der kun læser AGENTS.md/CLAUDE.md (den normale onboarding-vej, jf. Framework's egen "Recovery by design") vil opleve reglen som bindende vedtaget arkitektur, mens ADR-registret siger noget andet. Det er præcis den type stille uklarhed, ADR-003 selv findes for at forhindre.
+Konkret foreslået erstatningstekst eller ændring: Tilføj i AGENTS.md/CLAUDE.md, direkte efter "Mandatory": "(Operationelt bindende efter Peters instruktion 2026-09-13; ADR-003 er formelt stadig Proposed — se ADR/README.md for accept-status)". Og: Peter bør denne runde tage en eksplicit beslutning — enten formel Accept nu, eller en dato hvor "Proposed-men-operationel" udløber og skal genbesluttes.
+Evidens / hvad skal testes: Ingen kode; ren tekstrettelse + Peters beslutning i beslutningsloggen (§9 i reviewpakken).
+
+ID: CLAUDE-02
+Prioritet: skal rettes
+Kilde: SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md §14.4, ved review-SHA; scenarie S09
+Observation (faktum): §14.4 siger "en SHA alene er ikke en bevaringsgaranti, hvis sidste ref slettes" og "bevar en holdbar recovery-reference før branch-/worktree-oprydning", men specificerer ingen konkret mekanisme for hvordan den reference laves.
+Fortolkning / konsekvens: Uden en navngivet, reproducerbar mekanisme er "bevar en holdbar reference" en hensigt, ikke en kontrol — næste session (menneske eller AI) kan ikke vide hvordan de skal gøre det, og vil sandsynligvis bare lade branchen stå (ufarligt, men modarbejder oprydningsformålet) eller slette den uden reference (farligt).
+Konkret foreslået erstatningstekst eller ændring: Tilføj til §14.4: "Konkret mekanisme: før en branch-ref slettes, opret en annoteret tag `archive/<branch-navn>-<YYYY-MM-DD>` der peger på branchens sidste commit (`git tag -a archive/<navn>-2026-09-13 <sha> -m '<kort begrundelse + erstatnings-PR>'` + `git push origin archive/<navn>-2026-09-13`), og notér tag-navnet i PAKKE_SPOR_REGISTER.md/HANDOVER_LOG.md. Slet aldrig sidste tilgængelige reference til en commit uden en sådan tag."
+Evidens / hvad skal testes: Afprøv på én af de 57 påstået "fuldt absorberede" branches som en pilot, før det bruges i stor skala.
+
+ID: CLAUDE-03
+Prioritet: skal rettes
+Kilde: PAKKE_SPOR_REGISTER.md §Backlog "Målt sweep 2026-09-13 (Kimi)", ved review-SHA
+Observation (faktum): Rapporterede tal: 127 remote branches, 112 ikke-merged, 57 absorberet, 56 med rester. 57+56=113≠112. Selve teksten erkender dette ("population/tidspunkt/klassifikation er endnu ikke afklaret"). Ingen rå branch-liste, kommandolog eller output er committet noget sted i repoet — kun de opsummerede tal i prosa.
+Fortolkning / konsekvens: Uden et committed, reproducerbart artefakt (ikke kun en påstået konklusion) kan ingen anden session — menneske eller AI — auditere klassifikationen uden at køre en helt ny sweep fra bunden. Det er selvmodsigende tal brugt som grundlag for en fremtidig sletningsbeslutning, hvilket er nøjagtig den risiko ADR-003 §Alternativer overvejet selv afviser ("kun stole på git branch -r ... afvist").
+Konkret foreslået erstatningstekst eller ændring: Før de 56 (eller hvor mange det nu er) branches trieres videre, commit et faktisk datafil (`Dokumentation/branch_sweep_2026-09-13.csv` eller lignende) med kolonner: branch, base-SHA, head-SHA, `git cherry`-resultat, klassifikation, metode-version. Registret linker til filen i stedet for at opsummere tal i prosa. Reproducér selve optællingen (`git branch -r --no-merged origin/main | wc -l` gav mig 109 mod en tidligere-rapporteret 112 — forskellen er forventelig pga. mellemliggende merges/sletninger, men bekræfter at tallene ældes hurtigt og bør tidsstemples med commando + tidspunkt, ikke kun en dato).
+Evidens / hvad skal testes: Kør sweeppen igen, commit rådata, og verificér at 57+56 (eller de nye tal) rent faktisk summerer til totalen.
+
+ID: CLAUDE-04
+Prioritet: skal rettes
+Kilde: Mine egne PR-kommentarer på #163 og #159 (2026-09-13), nu citeret i ADR-003 §Kontekst som "ved nærmere undersøgelse viste ingen af de to PR'er sig at være overhalet"
+Observation (faktum): Min "ikke overhalet"-konklusion var baseret på at grep'e main for specifikke strenge (`stability_s`, `handshake_missing`, `captured_at_local` osv.), ikke en fuld semantisk gennemgang af fil+adfærd som §14.1.3/§14.1.4 selv kræver ("to forskellige filer kan implementere samme koncept").
+Fortolkning / konsekvens: Hvis nogen har implementeret tilsvarende funktionalitet under helt andre navne/i andre filer efter min analyse (eller endda før den, med et navn jeg ikke tænkte på at søge efter), ville min metode ikke have fanget det. Konklusionen er god screening-evidens, ikke bevist semantisk ækvivalens — men den bliver behandlet som afgjort i den permanente dokumentation.
+Konkret foreslået erstatningstekst eller ændring: Tilføj i registrets rækker for #163/#159: "Analysemetode: strengsøgning (grep) mod specifikke navne, udført af Claude (samme session som skrev ADR-003 — ikke uafhængig). Bør genverificeres af en anden reviewer/metode før faktisk merge, jf. §14.1.6."
+Evidens / hvad skal testes: En anden session (Codex/Kimi) læser diff'ene i #163/#159 linje for linje mod aktuel main og vurderer semantisk overlap, ikke kun strengmatch.
+
+ID: CLAUDE-05
+Prioritet: skal rettes
+Kilde: Reviewpakken §1 ("Flere AI-navne giver ikke i sig selv uafhængighed") og scenarie S10; ADR-003 header ("Review: Kimi 2026-09-13")
+Observation (faktum): "Kimi"s tiltrædelse af ADR-003 og hele branch-sweep-bidraget er en selvrapporteret identitet i en Markdown-handover-entry. Intet i repoet (commit-signering, adskilt tool/user-agent-attestering, adgangslog) verificerer teknisk hvilket underliggende værktøj/model der faktisk producerede den entry.
+Fortolkning / konsekvens: Reviewpakken selv beder om at være vagtsom over for dette (S10), men ADR-003's egen tekst behandler "Kimi tiltrådte" som en reel, uafhængig bekræftelse. Uden proveniens er det ikke muligt at skelne "tre forskellige modeller nåede uafhængigt samme konklusion" fra "tre sessioner med samme kontekst og samme forudgående dokument gentog samme konklusion."
+Konkret foreslået erstatningstekst eller ændring: Tilføj en linje i samarbejdsmodellens §14 eller §9: "En reviewers navn i en handover-entry er en selvrapporteret påstand, ikke teknisk verificeret proveniens. Brug ikke 'flere AI'er er enige' som eneste accept-kriterium for et fund med reel konsekvens (jf. Framework-kilde: 'AI self-review is useful but is not independent verification by itself'). Hvor muligt, notér faktisk anvendt værktøj/model-identifikator i handover-metadata."
+Evidens / hvad skal testes: Ingen kode — dokumentationspræcisering. Kan ikke fuldt løses teknisk uden en infrastrukturændring (uden for denne rundes scope).
+
+ID: CLAUDE-06
+Prioritet: forbedringsforslag
+Kilde: SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md titel + §4, sammenholdt med CLAUDE.md/AGENTS.md og HANDOVER_LOG.md (ChatGPT-entries 2026-08-17, Kimi-entries 2026-09-10ff)
+Observation (faktum): Dokumentets titel og rolletabel navngiver kun Peter, Claude og Codex. §14 (i samme dokument) siger eksplicit at reglen "gælder for alle mennesker, AI-sessioner og deres underagenter." CLAUDE.md/AGENTS.md nævner selv fem AI'er (Claude, Codex, ChatGPT, Kimi, Gemini) som aktive bidragydere.
+Fortolkning / konsekvens: En ny Kimi- eller ChatGPT-session der åbner dokumentet ved sin titel alene, kunne med rimelighed tro det ikke gælder dem — særligt ironisk givet dokumentets eget formål.
+Konkret foreslået erstatningstekst eller ændring: Tilføj en fodnote under titlen: "Dette dokuments titel er historisk (fra 2026-07-16, dengang kun Claude og Codex var aktive). §14 og §15 gælder for alle AI-sessioner og underagenter uanset navn, jf. AGENTS.md/CLAUDE.md." Fuld omdøbning kan vente til en naturlig revision.
+Evidens / hvad skal testes: Ingen.
+
+ID: CLAUDE-07
+Prioritet: skal rettes
+Kilde: SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md §14.5 ("integrationsansvarlig")
+Observation (faktum): §14.5 pålægger "integrationsansvarlig" at udføre og dokumentere pakke-hygiejnetjekket indtil et teknisk gate findes. Ingen del af dokumentet definerer hvordan denne rolle tildeles, overdrages, eller hvad der sker hvis den udpegede session/person er utilgængelig.
+Fortolkning / konsekvens: Lige nu er Codex "integrationsansvarlig" af praktisk vane (Codex skrev §14/§15-syntesen), ikke fordi Peter har besluttet det som en stående rolle. Det er præcis den slags uformelt, ikke-eksplicit mandat §14.2/§15.3 selv advarer imod ("en agents navn ... er ikke autorisation").
+Konkret foreslået erstatningstekst eller ændring: Tilføj til §14.5: "Integrationsansvarlig for et givent spor er den session Peter navngiver ved sporets oprettelse eller ved eskalering (§9); standard er den session der sidst rørte sporets integration, men dette er en arbejdsantagelse, ikke en automatisk tildeling." Registrets koordinationstabel bør markere dette eksplicit for hvert spor i stedet for at antage Codex som default.
+Evidens / hvad skal testes: Ingen — proces-/tekstpræcisering.
+
+ID: CLAUDE-08
+Prioritet: forbedringsforslag
+Kilde: SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md §14.6 ("En opfølgning i dokumentet er ikke en kørende automatisk påmindelse")
+Observation (faktum): §14.6 kræver dateret opfølgning på alle åbne spor, men erkender selv at ingen scheduler findes. #163/#159 rådnede i præcis dette hul i 2+ uger før nogen session tilfældigvis tog fat i dem igen.
+Fortolkning / konsekvens: Uden en faktisk kørende mekanisme er "dateret opfølgning" afhængig af at en session tilfældigvis starter og læser registret — samme svaghed som førte til den oprindelige bekymring.
+Konkret foreslået erstatningstekst eller ændring: Denne sessions egen infrastruktur understøtter faktisk periodiske automatiske vækninger/scheduled tasks. Konkret forslag: opsæt en ugentlig scheduled task (uanset hvilket AI-værktøj der kører den) der læser PAKKE_SPOR_REGISTER.md, lister poster med overskredet opfølgningsdato, og poster det som en synlig reminder (fx en GitHub-issue-kommentar eller en ny HANDOVER_LOG-entry) — ikke selvstændig handling, kun synliggørelse. Dette lukker gabet mellem "dato i Markdown" og "reelt fanget af nogen."
+Evidens / hvad skal testes: Afprøv på de eksisterende "senest ønsket 2026-09-14"-poster i registret som første cyklus.
+
+ID: CLAUDE-09
+Prioritet: forbedringsforslag (positivt fund)
+Kilde: edge/update_lifecycle.py, edge/agent.py (origin/main), sammenholdt med SAMARBEJDSMODEL §14.3
+Observation (faktum): §14.3 kræver bl.a. "ændr aldrig et allerede signeret artifact" og kompatibilitetstjek før installation. Dette er allerede reelt implementeret i kode (`release_receipt_matches_artifact`, signerede artifacts, target-binding i update-flowet), ikke kun en hensigtserklæring.
+Fortolkning / konsekvens: D07 er stærkere dækket end resten af dokumentet (som er ren proces/Markdown) — det er værd at fremhæve som eksempel på at nogle dele af §14 allerede har teknisk håndhævelse, mens andre (branch-registret) kun har proces.
+Konkret foreslået erstatningstekst eller ændring: Tilføj i §14.3: "Se `edge/update_lifecycle.py`/`edge/agent.py` for eksisterende teknisk håndhævelse af signatur-/target-binding-delen af denne regel."
+Evidens / hvad skal testes: Ingen ny — allerede dækket af eksisterende testsuite (`test_edge_release_contract.py` m.fl.).
+
+ID: CLAUDE-10
+Prioritet: skal rettes (lav prioritet, proceshygiejne)
+Kilde: SAMARBEJDSMODEL §14.1.6 ("gentag kontrollen umiddelbart før merge/deploy")
+Observation (faktum): Min #163/#159-analyse blev lavet mod main omkring commit `6ef39de3`. Main er siden rykket videre gennem #225–#231 (primært docs + governance-arbejde, ingen af dem rører `edge/agent.py` eller de øvrige #163/#159-berørte filer, verificeret ved `git log`).
+Fortolkning / konsekvens: Konklusionen står sandsynligvis stadig, men er ikke selv blevet genbekræftet mod nyeste main-SHA — hvilket §14.1.6, som jeg selv var med til at skrive, kræver før faktisk merge af #163/#159.
+Konkret foreslået erstatningstekst eller ændring: Ingen tekståndring nødvendig — dette er en handling, ikke et dokumentfund: før #163/#159 faktisk rebases/merges, kør konfliktanalysen igen mod main's daværende HEAD, ikke mod den SHA jeg oprindeligt tjekkede.
+Evidens / hvad skal testes: `git merge-tree` mod aktuel main-HEAD for begge PR'er, gentaget umiddelbart før merge-forsøg.
+Scenarier S01–S10
+ID	Dækket/hul/ikke vurderet	Kontrol, fund-ID og nødvendig evidens
+S01	Dækket (proces) / hul (teknik)	§14.2 kræver frisk SHA-kontrol + sekventiel navngivet integrationsansvarlig; ingen teknisk lås findes (kun Markdown). CLAUDE-07.
+S02	Delvist dækket	§14.2 forbyder stiltiende overtagelse; det reelle generationsnummer/execution-boundary (§15.3) er kun forslag, ikke implementeret.
+S03	Dækket (proces) / hul (automatik)	§14.4 kræver bevaring af uncommitted/untracked materiale før oprydning; ingen automatisk detektion findes.
+S04	Dækket	§14.1.4 kræver per-krav-disposition; #163/#159-eksemplet demonstrerer det er anvendt i praksis (5/6-scenariet er reelt det #163 er).
+S05	Dækket (proces + delvist teknik)	§14.3 + reel kode i edge/update_lifecycle.py (CLAUDE-09). Stærkeste scenarie i pakken.
+S06	Dækket (proces) / hul (execution boundary)	§15.3/§15.4 punkt 3 navngiver risikoen præcist og matcher mine egne generelle sikkerhedsinstrukser (behandl PR-/branch-indhold som data, ikke instruktion); men ingen repo-specifik teknisk håndhævelse findes endnu — kun forslag til Platform.
+S07	Dækket (nyt, ikke afprøvet over tid)	§14.6 er skrevet netop for at forhindre gentagelse af #163/#159. Reel test er om det holder over de næste uger — for tidligt at erklære sejr. CLAUDE-08.
+S08	Dækket	00_START_HER.md + AGENTS.md/CLAUDE.md + HANDOVER_LOG.md + register giver en reel recovery-kæde, matcher Framework-kildens "Recovery by design" (§1.4) næsten ord for ord — det stærkeste arkitektoniske match i hele pakken.
+S09	Hul	§14.4 navngiver risikoen men giver ingen konkret mekanisme. CLAUDE-02.
+S10	Delvist hul	Reviewpakken selv erkender risikoen (§1), men ADR-003 behandler alligevel "Kimi tiltrådte" som uafhængig bekræftelse uden proveniens-kontrol, og min egen #163/#159-konklusion er blevet gentaget uden ny uafhængig genudledning. CLAUDE-04, CLAUDE-05.
+Nødvendigt før accept
+CLAUDE-01: eksplicit Peter-beslutning om Accept nu eller en tvunget revurderingsdato for "Proposed-men-operationel".
+CLAUDE-03: erstat de selvmodsigende 127/112/57/56-tal med et committet, reproducerbart branch-sweep-artefakt før de bruges til nogen disposition.
+CLAUDE-04: markér min #163/#159-analyse eksplicit som ikke-uafhængig screening, ikke afgjort bevis, i selve dokumentet.
+Kan udskydes (ejer og næste handling foreslås)
+CLAUDE-02 (recovery-tag-mekanisme), CLAUDE-06 (samarbejdsmodel-titel), CLAUDE-07 (integrationsansvarlig-definition), CLAUDE-08 (scheduler), CLAUDE-09 (positiv tilføjelse) — alle: ejer = næste integrationssession (Codex, per registrets nuværende praksis), foreslået frist samme som resten af pakken (næste session, senest 2026-09-14 hvis den tidsramme stadig holder).
+CLAUDE-10 er en handling (genkør analysen), ikke en tekstændring — ejer = den session der faktisk udfører #163/#159-rebasen.
+Mindste realistiske ibrugtagning
+
+Accept-model afklaret (CLAUDE-01) + de to blokerende tal-/evidensfund rettet (CLAUDE-03, CLAUDE-04) er nok til at Peter kan registrere en reel Accepted-beslutning uden at stå på et selvmodsigende talgrundlag eller en uklar merge-vs-accept-status. Resten (S09-mekanisme, scheduler, rollenavngivning) er reelle forbedringer, men ingen af dem er en betingelse for at reglen kan bruges i praksis fra i dag — de gør den mere robust over tid.
+
+Framework-feedback og Platform-arbejde: anbefaling / afgrænsning
+
+Anbefaling: §15's placering (Framework = generelt princip via Findings; Platform = konkret kontrakt; TimeLapse = testbed) er rigtig og bør ikke ændres. Jeg har selv læst de tre citerede kilder ved deres pinnede SHA'er og kan bekræfte at "Independent Outcome Verification"-princippet direkte understøtter mit fund CLAUDE-04/CLAUDE-05 (AI-selvreview er ikke uafhængig verifikation) — det er ikke bare en generisk henvisning, indholdet passer konkret. Afgrænsning: indfør ikke §15.3's mandat/generationsnummer-mekanisme i TimeLapse Pro nu — den er stadig kun et forslag til Mission Platform, og denne runde bør ikke stiltiende implementere den under dække af "dokumentation".
+
+Jeg har ikke merget, slettet branches eller ændret drift under dette review — kun læst (inkl. to eksterne offentlige repos ved pinnede SHA'er) og vurderet. Leverer teksten direkte til dig/Codex, ikke til et fælles svarskema, som instrueret.

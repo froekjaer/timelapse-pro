@@ -1,0 +1,41 @@
+{
+  "claude": {
+    "source": "Peter attachment 0314f17b-aec4-4ee5-8c73-8aeb33b93f72/pasted-text.txt",
+    "sha256": "98589a3c9584825aafacf358cab4c99c2ea860f5c4b470b46dd38fedf80d790d",
+    "identity": "selvrapporteret; ikke teknisk modelattesteret"
+  },
+  "kimi": {
+    "source": "commit 0c2e2c78, Dokumentation/KIMI_REVIEW_PAKKE_GOVERNANCE_2026-09-13.md",
+    "git_blob": "95d5c445b8d190d325d1eba52292f4427b22c155",
+    "sha256": "d2cc207899460f5cf21953ccf84e5fef8b96a05b37729689686f87c594b31a83",
+    "identity": "selvrapporteret; ikke teknisk modelattesteret"
+  },
+  "kimi_evidence": {
+    "source": "499d266d, Dokumentation/KIMI_REVIEW_EVIDENS_BRANCHMALING_2026-09-13.md",
+    "sha256": "343d5874a0d49cbb9eba1f9b210ca5a558010a726e88e97e34cd60c88f518d9a",
+    "git_blob": "f7e7337bb538f3f8dd65259845dfddb73956d58f",
+    "validated_counts": {
+      "ancestry": 13,
+      "absorbed": 51,
+      "rest": 58
+    },
+    "comparison_to_codex": {
+      "added_in_later_codex": [
+        "origin/kimi/review-pakke-governance-20260913"
+      ],
+      "absent_in_later_codex": [],
+      "changed_heads": []
+    }
+  },
+  "claude_genreview": {
+    "source": "Peter attachment 407936ea-fca7-45e2-bc6a-ca750e724bfb/pasted-text.txt",
+    "candidate": "8cb96638",
+    "sha256": "1ffff45c28cbe28106458bb8528c5b56d5b759654597693dc2af94e15dc9c1ee"
+  },
+  "kimi_genreview": {
+    "source": "179d689f, Dokumentation/KIMI_GENREVIEW_SLUTKANDIDAT_2026-09-13.md",
+    "candidate": "8cb96638",
+    "git_blob": "bc1baa7a2d44ea62c2ab429f5f341ed6b5254b83",
+    "sha256": "0fad993d2f611358f972ef729cee683a6ad71fa41a51e3671dd97244bea7a20f"
+  }
+}

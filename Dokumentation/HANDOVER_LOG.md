@@ -29,6 +29,86 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Claude: PR #232 konsistensrettelser (reviewpakke-lukning, ADR-003-tal, recovery-pilot, fulde spor)
+
+- Hvad er gjort: Peter gav mandat (via Codex/ChatGPT, mens Codex' egen session sov) til at rette de resterende governance-konsistenspunkter direkte på `codex/package-governance-review-pack`, ved at hente aktuel head og de tre åbne P2-reviewtråde fra ChatGPT/Codex-connector. Fire punkter rettet:
+  1. `PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md`: status/opfølgning/§9-tabel/afslutningsafsnit rettet fra "afventer accept" til "historisk, ADR-003+§14 accepteret 2026-09-13" — reviewinstruktionerne (§1-8) er urørt og bevaret som historisk skabelon.
+  2. ADR-003: Kontekst- og Konsekvens-afsnittets ukvalificerede "127"/"124 branches" erstattet med eksplicit "ubekræftet historisk estimat" + henvisning til de to bevarede, reproducerbare populationer (122/123 ekskl. main).
+  3. `RECOVERY_PILOT.json`: PASS nedgraderet til `SELF_REPORTED_HISTORICAL_PASS_NOT_INDEPENDENTLY_REPRODUCIBLE` — fixture-commit/tree/tag er ikke bevaret nogetsteds holdbart, intet script/transskript er committet, så resultatet kan ikke genskabes fra repoet alene. Ingen ny evidens opfundet. `DISPOSITION.md`s to referencer til denne pilot er opdateret til samme nedgradering, så de ikke modsiger den rettede JSON.
+  4. `PAKKE_SPOR_REGISTER.md`: #159/#163/#214/#229 migreret fra det lette seks-kolonne-skema til §14.6's fulde feltsæt (mandat, formål/scope, berørte domæner, base/head-SHA med hentningstidspunkt, overlap/restdisposition, seneste verificerede aktivitet, næste handling, blokeringsansvarlig, opfølgning). Kimis rapporterede 3 delte stashes og de øvrige lokalt rapporterede worktrees er tilføjet som `reported / local verification pending` — hverken inspiceret eller ændret, kun registreret som reconciliation-input. En stående intern modsigelse i registrets "Ejerskab og aktivitet"-afsnit ("før endelig ADR-accept") er rettet til at matche den nu accepterede status.
+- Hvad mangler / næste skridt: Kimi skal genreviewe denne nye head uafhængigt, før #232 merges. Ingen merge udført af mig. Selve branchtriage (#R04), #163/#159-rebase (#R03) og scheduler/CI-håndhævelse (#R01/#R02) er fortsat åbne, ikke rørt i denne leverance.
+- Kommandoer kørt: `gh pr view 232/163/159/214/229 --json ...` (frisk head-SHA + mergeable-status), `git ls-remote origin refs/heads/main`, `gh api repos/froekjaer/timelapse-pro/pulls/232/comments` (reviewtråde). Ingen kodetests relevante — rent dokumentationsarbejde.
+- Filer rørt: `Dokumentation/PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md`, `Dokumentation/ADR/ADR-003-pakke-hygiejne-mod-legacy-branches.md`, `Dokumentation/Pakke_Governance_Review_2026-09/RECOVERY_PILOT.json`, `Dokumentation/Pakke_Governance_Review_2026-09/DISPOSITION.md`, `Dokumentation/PAKKE_SPOR_REGISTER.md`, denne log.
+- Risici / pas på: Ingen branch/worktree/stash slettet eller undersøgt destruktivt. Ingen merge af #159/#163/#214/#229. `AI_KOMPETENCER_OG_OPGAVEROUTING.md`/§15 er ikke rørt og forbliver Proposed. Kimis og Codex' originale reviewtekster (`*_ORIGINAL.txt/.md`) er ikke redigeret — kun den levende `DISPOSITION.md`-syntese er opdateret, i tråd med princippet om at bevare originaler uændret.
+
+### Handover 2026-09-13 — Codex: formel afslutning autoriseret
+
+- Peter bad om at lukke det tidligere reviewede arbejde og sætte Solar Eclipse på sidelinjen. Registrerer accept af ADR-003/§14 og afslutter PR #232; nye routing-/upstream-forslag forbliver Proposed. Ingen runtimeændring eller branchsletning.
+
+### Handover 2026-09-13 — fra Codex: integrationsoplæg leveret
+
+- Kompetencedokument §8 indeholder kildefastlåst CI/Framework/Platform-placering, forskningsspørgsmål, afgrænset pilot og accept-/stopkriterier. Register opdateret. Peters $72/måned er registreret som rapporteret udgift, ikke ekstra forbrugsmandat.
+- Dokumentation verificeret med diff-kontrol og læst tilbage. Ingen runtimeændring eller tests af runtime nødvendig. Upstream-implementering, API-aktivering og formel ADR-accept udestår. PR #232 var OPEN på b02057b6 ved kontrol; §14 er operationel, ADR-003 Proposed.
+
+### Handover 2026-09-13 — fra Codex: cross-repo routingplacering startet
+
+- Peter har autoriseret arbejdet med Collaborative-Intelligence/Framework/Platform-placering. Læst CI AI_CONTEXT.md og README.md på 278d8698373e46a28191c065e223dc5c0d98d5b3; Platform README og aktuelle upstream-SHAer kontrolleret.
+- CI fastholder Solar Eclipse som første referenceimplementering og advarer mod tidlig abstraktion. Derfor forberedes reviewbart integrationsforslag, ikke tavs omskrivning af programarkitekturen.
+
+### Handover 2026-09-13 — fra Codex: partner- og routingforslag leveret
+
+- Samarbejdsmodel v1.2 angiver Codex, ChatGPT, Claude, Kimi og Z.ai som faste projektdeltagere, fælles ad hoc-onboarding og ingen implicit leverandørendorsement/adgang.
+- Nyt AI_KOMPETENCER_OG_OPGAVEROUTING.md beskriver ni deltagere, evidensgrænser, kompetencekort, begrænset pilot, budget/risikostyret routing, fire eksisterende værktøjer samt Framework/Platform-feedbackforslag. Startindeks, register og disposition er opdateret.
+- Verifikation: dokumenter læst tilbage, relative links kontrolleret, git diff --check bestået. Ingen runtimekode ændret; ingen runtime-tests, API-køb, installation eller deployment.
+- Næste: review af nyt scope og Peters budget/abonnementer før eventuel pilot. Tidligere genreviews bevares uændret; ADR-003 fortsat Proposed.
+
+### Handover 2026-09-13 — fra Codex: partner- og routingudvidelse startet
+
+- Peter har anmodet om Kimi og Z.ai som formelle projektdeltagere, ad hoc-onboarding og kompetenceafklaring for ni AI-produkter. Arbejdet fortsætter isoleret i PR #232 efter 101fd2d6.
+- Scope: dokumentation og forslag; tidligere genreviews omfatter ikke denne nye udvidelse. Ingen installation, API-forbrug, driftsændring eller automatisk ADR-accept. Budget og aktuelle abonnementer er endnu ikke afklaret.
+
+### Handover 2026-09-13 — fra Codex: genreviews modtaget; sidste redaktionelle rettelse
+
+- Claude/Kimi genreview af 8cb96638 modtaget via Peter. Kimi lukker KIMI-01–10; Claude tiltræder efter præcisering af den indledende 127-observation, CLAUDE-08/10 forbliver korrekt dispositionerede åbne handlinger.
+- Originale genreviews bevares med checksum. Retter kun den historiske tællepåstand og opdaterer modtagelses-/beslutningsstatus. Kimis rapporterede typo `fuldtlger` findes ikke i kontrolleret kandidat/arbejdsfil (`følger`); ingen opdigtet rettelse.
+- Formel accept af ADR-003 afventes fra Peter. Ingen merge/sletning/driftsændring.
+
+
+### Handover 2026-09-13 — fra Codex: KIMI-03 originalt råbilag modtaget og afstemt
+
+- Modtaget via Peter; hentet fra 499d266d og bevaret byte-for-byte som KIMI_EVIDENS_ORIGINAL.md med checksum/proveniens. Bilagets 124 refs inkluderer main og HEAD-alias; 122 reelle branches = 13 ancestry-merged + 51 plusfri + 58 restpatches. Ref-/SHA-sammenhæng og summer verificeret.
+- Sammenligning med Codex' senere frosne population: alene kimi/review-pakke-governance-20260913 er tilføjet; alle fælles heads ens, ingen refs mangler. Den præcise forskel er dermed forklaret. Ingen semantisk triage eller slettebevis påstået.
+- Register, modtagelseslog og disposition opdateret; CLAUDE-03/KIMI-03/CODEX-01-rådatabehov opfyldt. Målrettet genreview af ny kandidat-SHA udestår. Ingen merge, sletning eller driftsændring.
+
+
+### Handover 2026-09-13 — fra Codex: slutkandidat efter Claude/Kimi-review
+
+- Begge originalreviews bevaret byte-for-byte med SHA-256/kilde; 20 eksterne fund + 3 Codex-selvreviewfund dispositioneret i Pakke_Governance_Review_2026-09/DISPOSITION.md. Codex-review er eksplicit informeret selvreview efter læsning af de andre; ingen tredje uafhængig stemme påstået.
+- Rettet statusheader/rolle/loader, fjernet ADR-proceduredublet, tilføjet operativ data≠instruktioner-regel, synlig intentionsregistrering med race-forbehold, let/fuldt spor, konkret mandat, aktivitet/opfølgning og recovery-procedure. #159/#163-status præciseret som foreløbig strengscreening. Eksisterende kvitteringskontrol nævnes uden at overdrive signatur-/targetbevis.
+- Frosset Codex-screening: base 13a0d3b3, 123 remote branches ekskl. main = 13 ancestry-merged + 110 øvrige; 110 = 51 plusfri + 59 med pluspatches. Ref/head/base og rå outputs committes som evidens. Kimis tidligere 14/51/58 er separat rapport; hans historiske råliste afventes, Peter har fået konkret anmodning. Ingen sletteautorisation.
+- Verifikation: isoleret recovery-pilot (lokal bare remote + nyt repository, annoteret tag/commit/tree/indhold) PASS; ingen rigtige refs slettet. Dokumentlinks, checksums, summer, funddækning og diff-whitespace kontrolleres før push. Ingen live-/runtime-tests eller scheduler oprettet.
+- Kandidaten bliver på draft PR #232 til målrettet genreview, især delvist accepterede forslag. ADR stadig Proposed; endelig beslutning og udskudt teknik fremgår af R01–R06. Ingen reviewkonsensus på ny tekst påstået.
+
+
+### Handover 2026-09-13 — fra Codex: START — reviews modtaget, disposition og slutkandidat
+
+- Claude-review modtaget fra Peters attachment; Kimi-review hentes byte-for-byte fra commit 0c2e2c78. Begge ved baseline 13a0d3b3. Arbejde fortsætter isoleret på reviewpakke-branch/PR #232, ikke live checkout.
+- Plan: bevar originalerne, lav særskilt transparent Codex-selvreview, dispositionér alle 20 eksterne fund, ret tekster, tilføj fastfrosset branchescreening med rådata. Ingen installation, branchsletning, scheduler eller upstream-ændring. Slutkandidaten får ny revision til opfølgende review; ADR forbliver Proposed.
+
+
+### Handover 2026-09-13 — fra Codex: reviewpakke v1.0 klar til deling
+
+- Skrevet PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md med fastlåst #231-baseline, kildepakke, kendte spændinger, 10 beslutningspunkter, 10 scenarier, ens svarskabelon, dispositions-/acceptproces og tom modtagelseslog. Pointere i startindeks/register.
+- Kontroller: links/fastlåste lokale kildefiler, readback og diff-whitespace. Kun dokumentation; ingen runtime-tests påstået. Ingen revieweres enighed eller ADR-accept forudfyldt, ingen invitationer sendt.
+- Næste handling: Peter deler pakken til reviewerne. Codex indsamler og sammenholder originale reviews, når de foreligger, og udarbejder endelig diff med disposition pr. fund. Uafklarede indsigelser kræver synlig afgørelse.
+
+
+### Handover 2026-09-13 — fra Codex: START — fælles reviewpakke før endelig beslutning
+
+- Peter ønsker samme reviewpakke til alle, derefter endelig version. Baseline låses til `13a0d3b3af67a36adf9115d0911aaf2a687bca15` (#231); separat branch `codex/package-governance-review-pack`.
+- Leverance: reviewbrief med præcise kilder, kendte spændinger, beslutningspunkter, scenarier, svarskabelon og dispositionsproces. Ingen forhåndsregistreret enighed eller ADR-accept. Ingen kode-/driftsændringer.
+
+
 ### Handover 2026-09-13 — fra Codex: samlet dokumentforslag verificeret
 
 - Sammenlagt Claude/Kimi-main `252bb157` med Codex `dc171e42`/`1a26103e`: én ADR, ét aktivt register og én detaljeret procedure med Framework/Platform-input. Historisk Codex-inventar bevares i original branch; ingen refs slettet.
