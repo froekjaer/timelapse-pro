@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-13 15:30 — fra Kimi: Reconciliation-mandat udført (#229 lukket, #214 rebased, #163/#159 semantisk restanalyse)
+
+- **Mandat:** Peter 2026-09-13 ~15:44-dansk-tid instruktion: verificér #229 mod aktuel main og luk uden merge hvis superseded; rebase #214 mod aktuel main uden merge; semantisk restanalyse af #163/#159 uden merge; registeropdatering på separat branch.
+- **Baseline:** origin/main `ebd98fffc8d506be252ccd930ac8ef2f53aea809` (uændret siden #232-merge; verificeret ved fetch ved arbejdets start).
+- **#229 (`claude/pakke-hygiejne-adr`):** Verificeret fuldt superseded — alle 4 berørte filer findes på main i videreudviklet form via #230→#231→#232; kerneindhold spot-tjekket. **Lukket uden merge** med begrundelse og reference til #232. Branchen er ikke slettet (R04/§14.4).
+- **#214 (`claude/globalconfig-parallel-load`):** Rebaseret på main `ebd98fff` uden konflikter, ny head **`bde560eb0c0922e631d997edfb8284f6af4464e1`** (force-with-lease). Ændringen genlæst: `api('/api/admin/users')` flyttet ind i eksisterende `Promise.all` med bevaret `.catch(() => [])`. Verifikation: lokal `npm run build` (tsc+vite) bestået; CI efter push: Python Syntax Check SUCCESS, Web UI Build Check SUCCESS; GitHub: `mergeStateStatus=CLEAN`, `mergeable=MERGEABLE`. **Klar til Peters merge-beslutning.**
+- **#163 (`codex/edge-post-restart-health-handshake`):** Semantisk restanalyse i eksisterende clean worktree (`timelapse-pro-edge-health-handshake`, head `4c0cfba2`). Branchens kerne — stabilitetsvindue (`record_pending_app_update_health_probe`, kræver vedvarende sundhed i N sekunder) og Headend-sweeper (`sweep_stale_post_restart_update_handshakes` i ny `headend/services/post_restart_health.py`) — findes **ikke** på main. Main's `mark_pending_app_update_health_confirmed` er et engangs-flag, ikke et vindue. Korrekt integration kræver genimplementering mod main's refaktorerede struktur, ikke blot rebase.
+- **#159 (`codex/fix-capture-time-and-edge2-evidence`):** Semantisk restanalyse: `captured_at_local/_utc/_timezone` findes **ikke** i main's API-svar (0 forekomster i `headend/main.py`; kun en lignende `_to_local`-linje i `headend/importer.py:229`, import-stien). Merge-test: auto-merge lykkes for UI-filerne; konflikt kun i `headend/main.py` (modularisering) + HANDOVER_LOG (triviel). Integration kræver genplacering i main's modulstruktur.
+- **Filer rørt:** `Dokumentation/PAKKE_SPOR_REGISTER.md` (denne branch), denne log. Ingen kodeændringer. Ingen sletninger. Peters uncommitted state i `kind-shamir-29fe84` er ikke rørt.
+- **Næste skridt:** Peter beslutter: merge af #214; go/no-go på genimplementering af #163-stabilitetsvindue+sweeper og #159-tidsfelter. R04-piloten venter fortsat på go til resterende 50 branches.
+
 ### Handover 2026-09-13 — fra Claude: PR #232 konsistensrettelser (reviewpakke-lukning, ADR-003-tal, recovery-pilot, fulde spor)
 
 - Hvad er gjort: Peter gav mandat (via Codex/ChatGPT, mens Codex' egen session sov) til at rette de resterende governance-konsistenspunkter direkte på `codex/package-governance-review-pack`, ved at hente aktuel head og de tre åbne P2-reviewtråde fra ChatGPT/Codex-connector. Fire punkter rettet:
