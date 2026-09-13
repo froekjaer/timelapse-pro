@@ -105,3 +105,7 @@ Koordinationstabellens tidligere "Codex"-rækker er forslag til næste koordiner
 For branchtriage, PR-rebases, scheduler og Platform-implementering er aktiv udfører **ikke bekræftet**; blokering: prioritering/overdragelse skal afklares. Peter er beslutningsejer, Codex samler de konkrete næste leverancer i dispositionspakken. Ved næste session skal de tidligere opfølgningsdatoer kontrolleres, og aktivitet markeres uverificeret, hvis der ikke foreligger nyt bevis. Ingen automatisk overtagelse eller stille fristforlængelse.
 
 Let spor og fuldt spor følger §14.6; kontrakt-/governanceændringer er fulde spor. Git/PR leverer revisioner og commits, så de ikke skal kopieres manuelt i alle felter. Oprindeligt reviewmateriale og alle fund/dispositioner findes i [reviewdispositionen](Pakke_Governance_Review_2026-09/DISPOSITION.md).
+
+## Partner- og kompetenceudvidelse 2026-09-13
+
+PR #232 udvides efter Peters instruktion med faste deltagere Kimi/Z.ai samt ad hoc-onboarding og [kompetence-/routingforslag](AI_KOMPETENCER_OG_OPGAVEROUTING.md). Udfører: Codex i samme isolerede reviewspor. Næste handling: dokumentreview af udvidelsen og budgetafklaring før eventuel pilot. Tidligere genreviews gælder den tidligere kandidat, ikke dette nye scope. Ingen runtime- eller upstream-ændring.

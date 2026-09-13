@@ -89,3 +89,7 @@ Sammenholdt med Codex' senere gemte liste findes kun én ekstra branch: `origin/
 **Aktuel status:** klar til Peters eksplicitte beslutning om ADR-003. Dette afsnit afløser tidligere ventestatus for genreview i denne fil; historiske beskrivelser af modtagelsesforløbet bevares. R01 scheduler/fremdriftsmekanisme, R02 Platform-kontrol, R03 kodeintegration, R04 historisk triage og R06 upstream-feedback er stadig reelle åbne leverancer. Accept af dokumentet lukker dem ikke.
 
 **Foreslået beslutning til Peter:** Acceptér ADR-003 og den reviewede §14-procedure som fælles regel for alle AI-sessioner og underagenter; behold §15 som uvedtaget Framework/Platform-forslag; tillad merge af PR #232 med registreret accept-dato. Beslutningen omfatter ingen branchsletning, installation eller automatisk igangsættelse af de åbne implementeringsspor.
+
+## Ny udvidelse efter genreview — 2026-09-13
+
+Peter ønsker Kimi og Z.ai som faste projektdeltagere samt ad hoc-deltagelse. Samarbejdsmodellen §4 præciserer dette uden leverandørendorsement eller udvidet adgang. Nyt kompetence-/routingforslag er tilføjet og linket fra start/register. Denne udvidelse var ikke del af kandidaten 8cb96638 eller dens genreviews. Tidligere lukkede fund genåbnes ikke automatisk, men tiltrædelserne må ikke bruges som godkendelse af det nye indhold. ADR-003 er ikke automatisk markeret Accepted.

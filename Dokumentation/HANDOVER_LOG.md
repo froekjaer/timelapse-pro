@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Codex: partner- og routingforslag leveret
+
+- Samarbejdsmodel v1.2 angiver Codex, ChatGPT, Claude, Kimi og Z.ai som faste projektdeltagere, fælles ad hoc-onboarding og ingen implicit leverandørendorsement/adgang.
+- Nyt AI_KOMPETENCER_OG_OPGAVEROUTING.md beskriver ni deltagere, evidensgrænser, kompetencekort, begrænset pilot, budget/risikostyret routing, fire eksisterende værktøjer samt Framework/Platform-feedbackforslag. Startindeks, register og disposition er opdateret.
+- Verifikation: dokumenter læst tilbage, relative links kontrolleret, git diff --check bestået. Ingen runtimekode ændret; ingen runtime-tests, API-køb, installation eller deployment.
+- Næste: review af nyt scope og Peters budget/abonnementer før eventuel pilot. Tidligere genreviews bevares uændret; ADR-003 fortsat Proposed.
+
+### Handover 2026-09-13 — fra Codex: partner- og routingudvidelse startet
+
+- Peter har anmodet om Kimi og Z.ai som formelle projektdeltagere, ad hoc-onboarding og kompetenceafklaring for ni AI-produkter. Arbejdet fortsætter isoleret i PR #232 efter 101fd2d6.
+- Scope: dokumentation og forslag; tidligere genreviews omfatter ikke denne nye udvidelse. Ingen installation, API-forbrug, driftsændring eller automatisk ADR-accept. Budget og aktuelle abonnementer er endnu ikke afklaret.
+
 ### Handover 2026-09-13 — fra Codex: genreviews modtaget; sidste redaktionelle rettelse
 
 - Claude/Kimi genreview af 8cb96638 modtaget via Peter. Kimi lukker KIMI-01–10; Claude tiltræder efter præcisering af den indledende 127-observation, CLAUDE-08/10 forbliver korrekt dispositionerede åbne handlinger.

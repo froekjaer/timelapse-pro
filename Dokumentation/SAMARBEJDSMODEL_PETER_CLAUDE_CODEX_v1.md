@@ -1,6 +1,6 @@
 # Samarbejdsmodel for Peter og AI-sessioner
 
-**Version:** 1.1 — slutkandidat til opfølgende review
+**Version:** 1.2 — partnerudvidelse og routingforslag til review
 **Dato:** 2026-09-13 (oprindelig 2026-07-16)
 **Status pr. afsnit:** §1–13 er historiske Proposed-forslag; §14 er den operationelle procedure efter Peters instruktion 2026-09-13; §15 er uvedtaget Framework/Platform-forslag. ADR-003 er fortsat Proposed. Rettelserne i denne slutkandidat afventer opfølgende review og Peters beslutning; merge er ikke formel accept.
 
@@ -8,7 +8,7 @@ Filnavnet bevares for eksisterende links. Deltagerne omfatter alle AI-værktøje
 
 ## 1. Formål
 
-Samarbejdet skal gøre TimeLapse Pro sikkert, forståeligt og produktionsklart, samtidig med at arkitekturen kan udvikles til en genbrugelig platform. Dokumentet beskriver, hvordan Peter, Claude og Codex udnytter forskellige perspektiver uden at blande kontekst, gentage arbejde eller gøre Peter til manuel synkroniseringsmekanisme.
+Samarbejdet skal gøre TimeLapse Pro sikkert, forståeligt og produktionsklart, samtidig med at arkitekturen kan udvikles til en genbrugelig platform. Dokumentet beskriver, hvordan Peter og projektets AI-deltagere udnytter forskellige perspektiver uden at blande kontekst, gentage arbejde eller gøre Peter til manuel synkroniseringsmekanisme.
 
 ## 2. Det samarbejdet allerede giver
 
@@ -41,10 +41,20 @@ Uoverensstemmelser skjules ikke. De registreres med kilde, evidens, konsekvens, 
 
 ### AI-sessioner og underagenter
 
-- Arbejder begge ud fra samme dokumentation og runtime-evidens, uanset hvem der oprindeligt skrev koden.
+- Arbejder alle ud fra samme dokumentation og runtime-evidens, uanset hvem der oprindeligt skrev koden.
 - Må udfordre hinandens antagelser sagligt og skal skelne mellem dokumenteret faktum, inference og forslag.
 - Skal efterlade systemet i en kendt tilstand, køre relevante tests og dokumentere resterende risiko.
 - En AI må gerne implementere; den anden bør ved væsentlige ændringer udføre uafhængigt review af kontrakter, sikkerhed og testdækning.
+
+### Formelle deltagere og ad hoc-deltagelse — Peters udvidelse 2026-09-13
+
+Projektets faste AI-samarbejdspartnere er **Codex, ChatGPT, Claude, Kimi og Z.ai**. Dette er en projektrolle for de anvendte værktøjer og sessioner, ikke et partnerskab med eller en godkendelse fra leverandørvirksomhederne. Peter beholder beslutnings- og risikoejerskab. Denne deltagerudvidelse følger Peters udtrykkelige instruktion; den gør ikke resten af §1–13 Accepted.
+
+Gemini, DeepSeek, Grok, GitHub Copilot og andre kan deltage ad hoc efter samme regler. Før udførelse registreres konkret session, produkt, model/version hvis synlig, opgave, mandat, datagrænser, tilladte værktøjer, budgetramme, leverance, reviewer ved behov og næste opfølgning i det eksisterende pakkespor. Ukendt modelidentitet angives som ukendt. Ingen deltagertype får automatisk produktions-, merge- eller delegationsret.
+
+Alle deltagere læser startdokument, handover og §14. Ved afslutning eller overdragelse bevares evidens og resterende arbejde; eventuelle midlertidige adgange tilbagekaldes. Opgaveskift mellem modeller ændrer ikke mandatet. Regler om samtidighed, eksternt indhold og recovery findes fortsat kun i §14.
+
+[Kompetenceafklaring og opgaverouting](AI_KOMPETENCER_OG_OPGAVEROUTING.md) beskriver foreslåede startroller og måling. Et produktnavn er hverken et kompetencebevis eller garanti for et uafhængigt review.
 
 ## 5. Handover-kontrakt
 
