@@ -12,86 +12,75 @@ og ingen glemt branch rådner uden at nogen bemærker det.
 register understøtter. Kort version: før du merger eller opdaterer en pakke, tjek denne
 liste for overlap; efter merge, ret listen til.
 
-**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status; Kimi: tilføjet målt branch-sweep, se §Backlog; Claude igen: #159/#163/#214/#229 migreret til §14.6 fulde felter, rapporterede stashes/worktrees tilføjet, intern modsigelse om accept-status rettet; Claude igen (F2): stash-observation opdateret fra 3 til 5 efter Kimis nyere rapport)
+**Sidst opdateret:** 2026-09-13T14:20Z (Claude — verificeret reconciliation efter #232-merge, mandat fra Peter. Baseline frisk-kontrolleret mod `origin/main` = `ebd98fffc8d506be252ccd930ac8ef2f53aea809` via `gh api` + `git ls-remote`, ikke antaget uændret. #229 lukket; #214 verificeret klar men ikke pushet — se kollisionsfund; #163/#159 semantisk restanalyse tilføjet.)
 
 ---
 
 ## Åbne spor — fulde felter (§14.6)
 
-Disse fire spor ændrer kode, sikkerhed eller den fælles governance-tekst og er derfor
-**fulde spor** efter §14.6 — ikke lette spor. Base/head-SHA'er er hentet frisk
-2026-09-13T10:58Z (`gh pr view` + `git ls-remote origin refs/heads/main`); de ældes med
-tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
+Base/head-SHA'er og mergeable-status er hentet frisk 2026-09-13T14:20Z; de ældes med
+tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her. Main er verificeret
+uændret siden #232-merge (`git log ebd98fff..origin/main` = tom).
 
 ### #214 — `claude/globalconfig-parallel-load`
 
-- **Mandat/session:** Claude (oprindelig forfatter, denne sessionskæde). Ikke reoverdraget.
+- **Mandat/session:** Claude (oprindelig forfatter). **Kollisionsfund 2026-09-13:** en anden sessions worktree på denne maskine (`timelapse-pro-kimi-ratelimit`, formodet Kimi) havde allerede en **ny, ikke-pushet lokal commit** `bde560eb` på præcis denne branch — en ren rebase af samme fix oven på aktuel main (`ebd98fff` som forælder). Worktreen var clean (intet uncommitted). Jeg har **ikke** rørt den, rebaset over den eller pushet noget, jf. §14.2. Verificerede i stedet indholdet i en isoleret, separat kopi.
 - **Formål/scope:** Fjern unødig sekventiel netværkstur i `GlobalConfigPage.tsx::loadBase()` — samme waterfall-mønster som #213 (UsersPage).
 - **Berørte domæner/kontrakter:** `timelapse-ui/src/pages/GlobalConfigPage.tsx` (frontend). Ingen kendt overlap med andre åbne spor.
-- **Base/head:** PR #214, head `bed3cf14ce5952843f6688ab331f81f666811db8`, base `main`. Ved hentning 2026-09-13T10:58Z: `mergeStateStatus=BEHIND`, `mergeable=MERGEABLE`.
-- **Overlap/restdisposition:** Ingen overlappende pakke rører samme fil (verificeret ved diff mod main). Intet restkrav udestår.
-- **Seneste verificerede aktivitet/evidens:** CI grøn (Web UI Build Check, Python Syntax Check) ved oprettelse 2026-09-09; ikke genkørt siden.
-- **Næste handling:** Opdatér branch mod aktuel main og merge, når Peter godkender.
-- **Blokeringsansvarlig:** Ingen aktiv blokering — afventer Peters merge-godkendelse, ikke en teknisk afklaring.
-- **Opfølgning:** Ved næste integrationssession.
+- **Base/head:** PR #214 på origin er stadig `bed3cf14ce5952843f6688ab331f81f666811db8` (ikke opdateret). Den klar-til-push, endnu ikke-pushede kandidat er `bde560eb0c0922e631d997edfb8284f6af4464e1` (parent = `ebd98fff` = aktuel main — ren, konfliktfri rebase, verificeret med `git merge-base --is-ancestor`).
+- **Overlap/restdisposition:** Ingen overlappende pakke rører samme fil. Intet indholdsmæssigt restkrav.
+- **Seneste verificerede aktivitet/evidens:** Kandidaten `bde560eb` verificeret af Claude 2026-09-13 i isoleret kopi: `npx tsc --noEmit` rent, `npm run lint:gate` → 183 problemer (3 færre end baseline 186, ingen nye). Indholdet (Promise.all-flatning) er identisk med det oprindeligt godkendte.
+- **Næste handling:** **Afventer koordinering, ikke teknik.** Nogen skal beslutte hvem der pusher `bde560eb` til `origin/claude/globalconfig-parallel-load` — enten den session der forberedte den (formodet Kimi), eller Claude efter eksplicit go, for at undgå at to sessioner pusher divergerende versioner af samme rebase.
+- **Blokeringsansvarlig:** Uafklaret — Peter bør bekræfte hvem der fuldfører pushet.
+- **Opfølgning:** Før næste forsøg på at opdatere denne PR.
 
 ### #163 — `codex/edge-post-restart-health-handshake`
 
-- **Mandat/session:** Ingen aktiv udfører bekræftet. Oprindeligt Codex (branch oprettet 2026-08-30). Claude har leveret en PR-kommentar med konfliktanalyse, ikke kodeintegration.
+- **Mandat/session:** Claude fik mandat til semantisk restanalyse 2026-09-13 (ikke merge). Brugt den eksisterende clean worktree `timelapse-pro-edge-health-handshake` (uændret, stadig på PR-head, ingen andre sessioner registreret der).
 - **Formål/scope:** Post-restart health-stabilitetsvindue for app-updates + Headend-sweeper der markerer hængende post-restart-handshakes som `failed`/`blocked`.
 - **Berørte domæner/kontrakter:** `edge/agent.py`, `edge/update_lifecycle.py`, `edge/scripts/watchdog.sh`, `headend/main.py`, `headend/services/post_restart_health.py`.
-- **Base/head:** PR #163, head `4c0cfba268da35af3b213a1a628ffb5d40cfdfa3`, base `main`. Ved hentning 2026-09-13T10:58Z: `mergeStateStatus=DIRTY`, `mergeable=CONFLICTING`.
-- **Overlap/restdisposition:** Main har selvstændigt videreudviklet samme kodeområde under andre navne (`mark_pending_app_update_health_confirmed`/`awaiting_restart_health` i `edge/update_lifecycle.py`, verificeret ved `git merge-tree`). Claudes strengsøgning fandt ikke et tilsvarende stabilitetsvindue/sweeper i main — det er en foreløbig indikation, **ikke** en uafhængig semantisk verifikation (jf. ADR-003 §Kontekst). Genverifikation udestår før integration.
-- **Seneste verificerede aktivitet/evidens:** PR-kommentar med konfliktanalyse, 2026-09-13. Ingen ny commit på branchen siden 2026-08-30.
-- **Næste handling:** Frisk semantisk restanalyse (fil + adfærd, ikke kun strengsøgning) + rebase mod aktuel main + gentest, før merge/deploy. Sporet som R03 i `Pakke_Governance_Review_2026-09/DISPOSITION.md`.
-- **Blokeringsansvarlig:** Udfører ikke bekræftet — afventer eksplicit overdragelse (§14.5). Ingen automatisk tildeling til seneste forfatter.
+- **Base/head:** PR #163, head `4c0cfba268da35af3b213a1a628ffb5d40cfdfa3`, base `main`. Reel konflikt genbekræftet mod aktuel main med `git merge-tree`: `edge/agent.py`, `headend/main.py`, `headend/tests/test_update_lifecycle.py`, `HANDOVER_LOG.md`.
+- **Semantisk restanalyse (ny, 2026-09-13):**
+  - **Allerede på main (ikke en rest):** en fungerende, men enklere mekanisme — `awaiting_restart_health` → `health_confirmed` i `edge/update_lifecycle.py`, sat via `mark_pending_app_update_health_confirmed()` når `_finalize_pending_app_update_health()` (agent.py:2394) bekræfter at release-kvitteringen matcher (`release_receipt_matches_artifact`). Der er også en **eksisterende, uafhængig sikkerhedsmekanisme** #163 ikke nævner: en `systemd-run`-guard-unit (`timelapse-app-update-guard-{id}`) startes før genstart og kan rulle tilbage hvis `health_timeout_s` (default 180s) overskrides. Class-strukturen (`EdgeAgent`, samme metodenavne) er uændret — main.py's agent.py er vokset (4231 linjer mod #163's 3916), ikke omstruktureret her.
+  - **Stadig manglende på main (reel rest, ikke bare screening):** (1) intet stabilitetsvindue efter health_confirmed — main markerer bekræftet ved første succesfulde tjek, ikke efter en vedvarende periode; (2) ingen `ssh_tunnel_connected`-tjek i selve health-checket; (3) **ingen Headend-side sweeper overhovedet** — bekræftet ved grep i `headend/services/` og `headend/main.py`: intet matcher `stale.*installing`, `handshake_missing` eller lignende. Kun en generisk `legacy_backlog_sweep.py` for helt andre ting (thumbnails/AI-tags) findes.
+  - **Hvad korrekt integration kræver:** **Ikke** en ren cherry-pick/rebase af #163's diff — den forudsætter at omdøbe `mark_pending_app_update_health_confirmed`/`awaiting_restart_health` til `record_pending_app_update_health_probe`, hvilket ville ændre schemaet for `state`-feltet i den lokale pending-update-marker-fil på edges. Da denne mekanisme er i reel produktions-/lab-brug (jf. HANDOVER_LOG's update-flow-arbejde), risikerer en navn-/schema-ændring at være inkompatibel med allerede afventende opdateringer på rigtige enheder. **Anbefalet tilgang:** genimplementér #163's forbedringer (stabilitetsvindue, ekstra tjek, Headend-sweeper) som et **additivt lag oven på** de eksisterende `awaiting_restart_health`/`health_confirmed`-navne og den eksisterende guard-unit — ikke som en erstatning af dem.
+- **Næste handling:** Implementering (ikke udført her — uden for dagens mandat) af ovenstående additive tilgang, i den eksisterende worktree.
+- **Blokeringsansvarlig:** Udfører ikke bekræftet — afventer eksplicit tildeling.
 - **Opfølgning:** Før første merge/deploy fra sporet.
 
 ### #159 — `codex/fix-capture-time-and-edge2-evidence`
 
-- **Mandat/session:** Ingen aktiv udfører bekræftet. Oprindeligt Codex (branch oprettet 2026-08-29). Claude har leveret en PR-kommentar med konfliktanalyse, ikke kodeintegration.
+- **Mandat/session:** Claude fik mandat til semantisk restanalyse 2026-09-13 (ikke merge). Ingen dedikeret lokal worktree fundet for denne branch på maskinen — analyse udført via fetch af PR-refs, ingen ny worktree oprettet unødigt.
 - **Formål/scope:** Eksplicitte lokal-/UTC-/tidszonefelter fra capture-liste- og timeline-API'et, så thumbnail-tidsstempler ikke afhænger af browserens tidszonegæt.
-- **Berørte domæner/kontrakter:** `headend/main.py`, `headend/capture_api_helpers.py` (ny, ren tilføjelse — ingen konflikt), `timelapse-ui/src/pages/DevicePage.tsx`, `timelapse-ui/src/components/CaptureThumbnailCard.tsx`, `timelapse-ui/src/lib/captureTime.ts`, `timelapse-ui/src/types/index.ts`.
-- **Base/head:** PR #159, head `eaa0289267f67edd734a7aa28ea18380d4afd0e8`, base `main`. Ved hentning 2026-09-13T10:58Z: `mergeStateStatus=DIRTY`, `mergeable=CONFLICTING`.
-- **Overlap/restdisposition:** `DevicePage.tsx`/`CaptureThumbnailCard.tsx` er ændret uafhængigt på main af senere lightbox-/prefetch-arbejde. Claudes strengsøgning fandt ikke de omtalte `captured_at_local/_utc/_timezone`-felter i mains nuværende API-svar — foreløbig indikation, ikke uafhængig semantisk verifikation. Genverifikation udestår før integration.
-- **Seneste verificerede aktivitet/evidens:** PR-kommentar med konfliktanalyse, 2026-09-13. Ingen ny commit på branchen siden 2026-08-29.
-- **Næste handling:** Frisk semantisk restanalyse + rebase mod aktuel main + gentest, før merge/deploy. Sporet som R03 i `Pakke_Governance_Review_2026-09/DISPOSITION.md`.
-- **Blokeringsansvarlig:** Udfører ikke bekræftet — afventer eksplicit overdragelse (§14.5).
+- **Berørte domæner/kontrakter:** `headend/main.py`, `headend/capture_api_helpers.py` (ny, ren tilføjelse), `timelapse-ui/src/pages/DevicePage.tsx`, `timelapse-ui/src/components/CaptureThumbnailCard.tsx`, `timelapse-ui/src/lib/captureTime.ts`, `timelapse-ui/src/types/index.ts`.
+- **Base/head:** PR #159, head `eaa0289267f67edd734a7aa28ea18380d4afd0e8`, base `main`. Reel konflikt genbekræftet med `git merge-tree`: `headend/main.py`, `headend/requirements.txt`, `CaptureThumbnailCard.tsx`, `DevicePage.tsx`, `types/index.ts`, `HANDOVER_LOG.md`.
+- **Semantisk restanalyse (ny, 2026-09-13):**
+  - **Allerede på main (ikke en rest):** `headend/main.py::list_captures()` (linje ~11223) findes uændret i navn/placering og returnerer stadig kun ét naivt `captured_at`-felt (`c.captured_at.isoformat()`) — ingen anden kode andetsteds i main dækker samme behov.
+  - **Stadig manglende på main (reel rest):** de eksplicitte `captured_at_local`/`captured_at_utc`/`captured_timezone`-felter i selve API-svaret findes fortsat ikke. `headend/capture_api_helpers.py` (som ville levere dem) findes stadig ikke i main — bekræftet ren, konfliktfri tilføjelse.
+  - **Hvad korrekt integration kræver:** Fordi `list_captures()` stadig er let identificerbart og uændret i struktur, er patch-overfladen lille og lokaliseret — det er ikke et arkitektur-konflikt som #163, men et almindeligt rebase-konflikt pga. main's uafhængige lightbox-/prefetch-arbejde i `DevicePage.tsx`/`CaptureThumbnailCard.tsx` (proximity, ikke design-uenighed). Anbefalet tilgang: rebase, tilføj `capture_api_helpers.py` uændret, kald den fra `list_captures()`, og genforen UI-filerne manuelt linje for linje (mindre risiko end #163).
+- **Næste handling:** Implementering (ikke udført her — uden for dagens mandat) af ovenstående.
+- **Blokeringsansvarlig:** Udfører ikke bekræftet — afventer eksplicit tildeling.
 - **Opfølgning:** Før første merge/deploy fra sporet.
 
-### #229 — `claude/pakke-hygiejne-adr`
+### #229 — `claude/pakke-hygiejne-adr` — **LUKKET 2026-09-13, uden merge**
 
-- **Mandat/session:** Claude (oprindelig forfatter). Codex for reconciliation mod #230/#231/#232.
-- **Formål/scope:** Oprindeligt udkast til ADR-003 + `PAKKE_SPOR_REGISTER.md`. Indholdsmæssigt supersedet: #230 (Claude+Kimi) → #231 (Codex-syntese, merged til main) → #232 (denne governance-lukning).
-- **Berørte domæner/kontrakter:** Samme dokumentationsfiler som #232 rører (ADR-003, register, agentloadere, samarbejdsmodel).
-- **Base/head:** PR #229, head `989bcd224074f94d7453fd095477d13597ba7c2f`, base `main`. Ved hentning 2026-09-13T10:58Z: `mergeStateStatus=DIRTY`, `mergeable=CONFLICTING` (forventeligt — main har allerede al senere governance-tekst).
-- **Overlap/restdisposition:** Indhold er fuldt supersedet via #230→#231, som er merget til main, og videreudviklet i #232. Ingen kendt rest ud over selve PR-lukningen. Ikke verificeret linje-for-linje mod #232's endelige tekst i denne leverance.
-- **Seneste verificerede aktivitet/evidens:** Ingen ny commit siden oprettelse 2026-09-13. Superseding-kæden er verificeret ved at main indeholder #230/#231's indhold.
-- **Næste handling:** Luk PR #229 med henvisning til #232 som erstatning, når #232 er merged. Ingen kodeændring nødvendig — kun PR-lukning.
-- **Blokeringsansvarlig:** Ingen — afventer blot #232-merge før lukning.
-- **Opfølgning:** Ved #232-merge.
+- **Disposition:** Lukket. Verificeret linje-for-linje (`git diff origin/main origin/claude/pakke-hygiejne-adr`) at hver eneste linje branchen tilføjer i forhold til main er en tidligere, ukorrigeret version af noget main allerede har i forbedret form (gammel "Proposed"-header, det ukvalificerede "127 branches", den gamle letvægts-tabel, samarbejdsmodellens gamle titel). Intet unikt indhold tabt.
+- **Bemærkning om samtidighed:** Kimi lukkede PR'en (via Peters GitHub-konto) med samme konklusion **ét sekund før** Claudes eget lukningsforsøg landede som kommentar på den allerede lukkede PR. Ufarligt dobbeltarbejde — begge nåede uafhængigt samme, korrekte konklusion. Branch `claude/pakke-hygiejne-adr` er **ikke** slettet (afventer samlet R04-triage, jf. begge lukningskommentarer).
+- **Erstatningsreference:** #232 (merged som `ebd98fff`).
 
-### Rapporterede, ikke-verificerede lokale tilstande
+### Rapporterede lokale tilstande — nu delvist verificeret
 
-Disse er reconciliation-input fra andre sessioner, **ikke** verificeret af denne leverance,
-og ikke inspiceret eller ændret her (jf. scope-grænsen "ingen branch-/worktree-/stash-sletning
-eller -undersøgelse i denne opgave):
+- **Kimis 5 rapporterede stashes: bekræftet at eksistere** ved `git stash list` i det delte repository (`/Volumes/data-fast/peter-home/projects/timelapse-pro`), 2026-09-13. Fulde, faktiske beskeder (mere præcise end den tidligere paraphrase):
+  `stash@{0}` "codex preserve generated source inventory" (branch `codex/fix-capture-time-and-edge2-evidence`);
+  `stash@{1}` "PR #92 edge image-deletion rebuild — awaiting Peter's review, unrelated to SSH-fix deploy, stashed only to unblock Deploy-to-Mac-mini-Headend's tracked-changes guard" (branch `fix/sshd-authorized-keys-command-missing-u-token`);
+  `stash@{2}` "pre-headend-deploy-cmdb-main-duplicate-20260824" (branch `codex/update-queue-hygiene`);
+  `stash@{3}` "pre-main-deploy-safety-backup-20260815T125231Z" (branch `codex/edge-terminal-renderer`);
+  `stash@{4}` "wp4-in-progress-before-ci-hotfix" (branch `codex/wp4-edge-image-provisioning`).
+  Status opgraderet fra "reported/pending" til **existence verified via `git stash list` 2026-09-13; content not inspected, not popped**. GitHub kan stadig ikke verificere dette — det er en lokal maskine-observation.
+- **Worktrees direkte relevante for dagens fire spor — verificeret clean** (ingen uncommitted ændringer) 2026-09-13: `timelapse-pro-edge-health-handshake` (#163, klar til brug), `timelapse-pro-governance-review` (**stale** — stadig på `786c4bdb`, før F1/F2 og #232-merge; harmløst, men bør opdateres før brug), `timelapse-pro-governance-merged`, `timelapse-pro-package-governance` (begge Codex' ældre, nu fuldt supersedede governance-forslag). `timelapse-pro-kimi-ratelimit` var ved sidste tjek på `kimi/review-pakke-governance-20260913`, men er nu (se #214 ovenfor) på `claude/globalconfig-parallel-load` med en ny, ikke-pushet commit — mappenavnet ("ratelimit") matcher ikke det aktuelt checked-out spor, hvilket kan indikere et navneskifte i formål. Ikke rørt.
+- **Øvrige ~15 worktrees og alle `/private/tmp/*`-worktrees:** ikke undersøgt i denne runde (hører til R04's fulde historiske triage, eksplicit separat scope). De prunable `/private/tmp/*`-poster er bekræftet at pege på allerede-forsvundne mapper — ingen data at redde der, kun stale Git-metadata; underliggende branches er intakte (stikprøve: `codex/capture-assignment-metadata` findes stadig lokalt og på remote).
 
-- **Kimi rapporterer 5 delte, lokale stashes** i det fælles repository (nyere observation,
-  afløser den tidligere rapport om 3 — ikke undersøgt her, og GitHub kan ikke verificere
-  lokal stash-state):
-  `stash@{0}` "codex preserve generated source inventory", `stash@{1}` "PR #92 edge
-  image-deletion rebuild", `stash@{2}` "pre-headend-deploy-cmdb-main-duplicate-20260824",
-  `stash@{3}` "edge-terminal-renderer safety backup", `stash@{4}` "wp4-in-progress".
-  Status: **Kimi-reported / local verification pending** — fremstilles ikke som verificeret
-  repository-state.
-- **Claude rapporterer yderligere lokale worktrees** på maskinen ud over dem der er i aktivt
-  brug i denne governance-leverance (fx flere `timelapse-pro-*`-mapper knyttet til ældre
-  Codex-spor). Deres clean/uncommitted-tilstand er ikke undersøgt. Status: **reported /
-  local verification pending**.
-
-Ingen af disse må antages tomme, forældede eller sikre at fjerne, før en session med
-mandat til det faktisk har inspiceret dem.
+Ingen stash poppet, intet worktree ændret eller slettet.
 
 ## Reserverede/planlagte spor (ikke startet endnu — nævnt i eksisterende dokumentation)
 
@@ -152,7 +141,7 @@ Hver aktiv post kræver session/ejer, formål/domæne, base/head-SHA, relationer
 | Historisk branchtriage | Codex for ejerskabsafklaring; Kimi har tilbudt udførelsen, men start er ikke bekræftet | Aftal aktiv udfører før parallel sweep; genoptæl med faste SHA'er, prioritér sikkerhed, ucommitted materiale og driftskonsekvens før alder | Næste integrationssession, senest ønsket 2026-09-14 |
 | PR #163 og #159 | Codex for næste vurdering | Frisk restanalyse/rebase i isoleret worktree; dette dokumentarbejde udfører ikke kodeintegrationen | Næste integrationssession, senest ønsket 2026-09-14 |
 | PR #214 | Codex for koordinationsafklaring; oprindeligt Claude | Genbekræft ejer, main/head og CI før disposition | Næste integrationssession, senest ønsket 2026-09-14 |
-| PR #229 | Codex for reconciliation | Undersøg restdiff mod #230/fælles resultat før lukning; ingen tavs kassation | Ved fælles PR-afslutning |
+| PR #229 | **Afsluttet 2026-09-13:** lukket uden merge (Kimi + Claude, uafhængigt, samme konklusion) — se fulde felter ovenfor | Restdiff verificeret linje-for-linje; fuldt supersedet af #232 | Afsluttet |
 | Codex-forslag dc171e42 / 1a26103e | Codex | Procedure og Framework/Platform-input overført; historisk 333-ref/27-worktree-snapshot bevares i original commit som recovery-indeks, ikke aktuel status | Ved fælles PR-afslutning |
 | Updates #273/#298/#272/#275–#280 | Codex for næste kontrol, Peter for nødvendige driftsbeslutninger | Frisk CMDB/pakkesæt og kompatibilitet/recovery før installation. Ingen installation som del af governance-merge | Før genoptagelse af update-opgaven |
 | Framework/Platform-feedback | Codex | Samlet input §15 findes; upstream-review/disposition udestår | Efter fælles dokumentreview |
