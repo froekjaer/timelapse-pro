@@ -9,5 +9,22 @@
     "git_blob": "95d5c445b8d190d325d1eba52292f4427b22c155",
     "sha256": "d2cc207899460f5cf21953ccf84e5fef8b96a05b37729689686f87c594b31a83",
     "identity": "selvrapporteret; ikke teknisk modelattesteret"
+  },
+  "kimi_evidence": {
+    "source": "499d266d, Dokumentation/KIMI_REVIEW_EVIDENS_BRANCHMALING_2026-09-13.md",
+    "sha256": "343d5874a0d49cbb9eba1f9b210ca5a558010a726e88e97e34cd60c88f518d9a",
+    "git_blob": "f7e7337bb538f3f8dd65259845dfddb73956d58f",
+    "validated_counts": {
+      "ancestry": 13,
+      "absorbed": 51,
+      "rest": 58
+    },
+    "comparison_to_codex": {
+      "added_in_later_codex": [
+        "origin/kimi/review-pakke-governance-20260913"
+      ],
+      "absent_in_later_codex": [],
+      "changed_heads": []
+    }
   }
 }

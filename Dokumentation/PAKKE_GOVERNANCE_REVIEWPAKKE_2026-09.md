@@ -140,7 +140,7 @@ Framework-feedback og Platform-arbejde: anbefaling / afgrænsning
 | Reviewer | Status ved pakkens oprettelse | Baseline / svarreference |
 |---|---|---|
 | Claude | Modtaget via Peter; tiltræder efter rettelser | Original bevaret i dispositionspakken; nyt kandidat-review udestår |
-| Kimi | Modtaget fra commit 0c2e2c78; tiltræder efter rettelser | Original bevaret; historisk råpopulation og kandidat-review udestår |
+| Kimi | Modtaget fra commit 0c2e2c78; tiltræder efter rettelser | Original bevaret; råbilag modtaget og konsistenskontrolleret; kandidat-review udestår |
 | Codex | Informeret selvreview afleveret | Ikke blind/uafhængig tredje stemme; se dispositionspakken |
 | Peter | Endelig beslutning udestår | ADR fortsat Proposed |
 

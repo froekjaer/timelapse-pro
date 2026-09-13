@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Codex: KIMI-03 originalt råbilag modtaget og afstemt
+
+- Modtaget via Peter; hentet fra 499d266d og bevaret byte-for-byte som KIMI_EVIDENS_ORIGINAL.md med checksum/proveniens. Bilagets 124 refs inkluderer main og HEAD-alias; 122 reelle branches = 13 ancestry-merged + 51 plusfri + 58 restpatches. Ref-/SHA-sammenhæng og summer verificeret.
+- Sammenligning med Codex' senere frosne population: alene kimi/review-pakke-governance-20260913 er tilføjet; alle fælles heads ens, ingen refs mangler. Den præcise forskel er dermed forklaret. Ingen semantisk triage eller slettebevis påstået.
+- Register, modtagelseslog og disposition opdateret; CLAUDE-03/KIMI-03/CODEX-01-rådatabehov opfyldt. Målrettet genreview af ny kandidat-SHA udestår. Ingen merge, sletning eller driftsændring.
+
+
 ### Handover 2026-09-13 — fra Codex: slutkandidat efter Claude/Kimi-review
 
 - Begge originalreviews bevaret byte-for-byte med SHA-256/kilde; 20 eksterne fund + 3 Codex-selvreviewfund dispositioneret i Pakke_Governance_Review_2026-09/DISPOSITION.md. Codex-review er eksplicit informeret selvreview efter læsning af de andre; ingen tredje uafhængig stemme påstået.

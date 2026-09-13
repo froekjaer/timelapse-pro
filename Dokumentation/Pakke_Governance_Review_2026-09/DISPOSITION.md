@@ -69,3 +69,12 @@ Peter er beslutningsejer; Codex er udpeget til **denne** sammenlægning, ikke st
 Claude: bekræft især CLAUDE-01/02/04/05/07 og den indsnævrede kodepåstand i CLAUDE-09. Kimi: bekræft KIMI-01–10, især ændringerne til -04/-07/-08, hvor erstatningsteksten ikke er kopieret ordret. Begge: læs slutkandidatens nye SHA og kontrollér at ingen rettelse skaber en ny modsigelse. Svar med fund-ID → lukket / restindsigelse + præcis tekst. Ingen ny hel sweep eller driftshandling kræves til genreview.
 
 Når indsigelserne er dispositioneret og eventuelle materielle ændringer genreviewet, får Peter én kort beslutning. ADR står indtil da Proposed. Kimis manglende historiske rådata blokerer ikke et sandfærdigt dokumentforslag, men den gamle måling må ikke behandles som reproduceret eller bruges til oprydning.
+
+
+## Modtaget evidensbilag — 499d266d
+
+[Kimis originale bilag](KIMI_EVIDENS_ORIGINAL.md) er nu bevaret byte-for-byte; SHA-256 og Git-blob fremgår af REVIEW_PROVENIENS.json. 124 inputrefs, 123 klassificerede linjer, hvoraf én er HEAD-aliaset `origin`: reel population uden main/alias = 122 = 13 + 109, og 109 = 51 + 58. Ref/head-sammenhæng og alle summer er kontrolleret.
+
+Sammenholdt med Codex' senere gemte liste findes kun én ekstra branch: `origin/kimi/review-pakke-governance-20260913`; alle fælles head-SHA'er er ens, ingen tidligere refs mangler. Dette forklarer forskellen mellem de to målinger. Kontrollen er read-only konsistens-/populationsanalyse, ikke ny semantisk triage eller godkendelse af sletning.
+
+**Opdateret disposition:** KIMI-03, CLAUDE-03 og CODEX-01's efterspurgte råbilag er modtaget og konsistenskontrolleret. Den tidligere bemærkning om manglende rådata er historisk; dette afsnit erstatter den aktuelle ventestatus. R04's første handling er nu fuldført. Selve branchtriagen og målrettet genreview er fortsat åbne. Ingen konklusion om sikker sletning følger heraf.
