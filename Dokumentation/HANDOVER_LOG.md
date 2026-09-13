@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Codex: integrationsoplæg leveret
+
+- Kompetencedokument §8 indeholder kildefastlåst CI/Framework/Platform-placering, forskningsspørgsmål, afgrænset pilot og accept-/stopkriterier. Register opdateret. Peters $72/måned er registreret som rapporteret udgift, ikke ekstra forbrugsmandat.
+- Dokumentation verificeret med diff-kontrol og læst tilbage. Ingen runtimeændring eller tests af runtime nødvendig. Upstream-implementering, API-aktivering og formel ADR-accept udestår. PR #232 var OPEN på b02057b6 ved kontrol; §14 er operationel, ADR-003 Proposed.
+
+### Handover 2026-09-13 — fra Codex: cross-repo routingplacering startet
+
+- Peter har autoriseret arbejdet med Collaborative-Intelligence/Framework/Platform-placering. Læst CI AI_CONTEXT.md og README.md på 278d8698373e46a28191c065e223dc5c0d98d5b3; Platform README og aktuelle upstream-SHAer kontrolleret.
+- CI fastholder Solar Eclipse som første referenceimplementering og advarer mod tidlig abstraktion. Derfor forberedes reviewbart integrationsforslag, ikke tavs omskrivning af programarkitekturen.
+
 ### Handover 2026-09-13 — fra Codex: partner- og routingforslag leveret
 
 - Samarbejdsmodel v1.2 angiver Codex, ChatGPT, Claude, Kimi og Z.ai som faste projektdeltagere, fælles ad hoc-onboarding og ingen implicit leverandørendorsement/adgang.

@@ -80,3 +80,37 @@ Framework har allerede principper, vi bør genbruge:
 ## 7. Næste afklaring og ansvar
 
 Codex har udarbejdet forslaget efter Peters instruktion. Peter afklarer eksisterende abonnementer og ekstra forbrugsramme; derefter kan en konkret lille pilot prissættes og fordeles. Review af denne udvidelse udestår. Aktive leverancer føres i det eksisterende pakkesporregister, ikke i en ny konkurrerende backlog. Ingen automatisk genmåling eller scheduler er oprettet.
+
+## 8. Konkret integrationsforslag — Collaborative Intelligence
+
+**Status:** foreslået placering, ikke vedtaget upstream. Peter har autoriseret udarbejdelsen. Kildebaseline: Collaborative Intelligence `278d8698373e46a28191c065e223dc5c0d98d5b3`, Mission Framework `a6234ba4232a4e337843189fe6f9b4f497bb1527`, Mission Platform `782ef287ef3ae4767503a50c1085f823ec4707d4`.
+
+Læsningen af [CI AI_CONTEXT.md](https://github.com/froekjaer/collaborative-intelligence/blob/278d8698373e46a28191c065e223dc5c0d98d5b3/AI_CONTEXT.md) og [README.md](https://github.com/froekjaer/collaborative-intelligence/blob/278d8698373e46a28191c065e223dc5c0d98d5b3/README.md) ændrer det foreløbige forslag: CI ejer programvision og forskningsarkitektur, mens normative begreber tilhører Framework. CI nævner Solar Eclipse som første referenceimplementering og kræver konkret behov før platformabstraktion. Mission-Platform og TimeLapse Pro er ikke med i den viste programarkitektur. Dette hul kræver eksplicit review; vi omdøber ikke TimeLapse Pro til programmets første referenceimplementering.
+
+### Foreslået indhold pr. repository
+
+| Destination | Konkret ændringsforslag | Afgrænsning |
+|---|---|---|
+| CI README, Research posture | Tilføj forskningsspørgsmålet: Under hvilke forhold giver dynamisk arbejdsdeling mellem menneske og AI bedre accepterede resultater pr. samlet ressourceforbrug end én fast udfører? | Hypotese; ingen påstand om empirisk gevinst |
+| CI README, Programme architecture + AI_CONTEXT authority map | Foreslå Mission-Platform som implementationsmiljø og TimeLapse Pro som supplerende engineering-case, med links og eksplicit status | Bevar Solar Eclipse-rollen; programudvidelsen reviewes før indarbejdelse |
+| Mission Framework, eksisterende Findings-proces | Indsend observeret koordinationsbehov og eventuelle semantiske huller, knyttet til allerede eksisterende mandat-, evidens- og kontinuitetsbegreber | Intet nyt begreb eller FF-ID uden overlapkontrol og disposition |
+| Mission Platform, eksisterende arkitektur og ADR-proces | Afgrænset forslag til konfigurerbare forbindelser, egnethedsregler, opgavekø og resultatrekord | Ikke en ny Mission Core; ingen automatisk adgang eller produktionseksekvering |
+| TimeLapse Pro | Behold §14, lokale deltagere, handover og missionens konkrete evidens; henvis til accepteret fælles løsning, når den findes | Fjern ikke lokale regler før erstatningen er accepteret og afhængigheder kontrolleret |
+
+### Mindste afprøvning og beslutningsgrundlag
+
+Afprøv få afgrænsede opgaver på offentligt eller eksplicit godkendt materiale, uden produktionsadgang. Sammenlign en fast udfører med routing på samme opgavegrundlag og forud fastlagte acceptkriterier. Registrér faktisk model/provider, konfiguration, kildecommit, kvalitet, reviewrettelser, gennemløbstid og samlet ressourceforbrug. Hold lærerunder adskilt fra den efterfølgende vurdering.
+
+Gevinsthypotesen svækkes, hvis routing øger fejl eller efterarbejde, eller hvis besparelsen forsvinder efter review og drift. Flere enige modeller tæller ikke i sig selv som korrekthed. Gratis kvote må ikke tælles som ubegrænset kapacitet; lokal kørsel har også hardware- og driftsomkostninger.
+
+Platform-piloten skal kunne demonstrere: fravalgt provider bruges aldrig; data sendes kun til tilladte forbindelser; opbrugt gratis kvote giver vent/stop uden betalt fallback; modelsvigt har begrænset retry; reviewer kan identificere input og faktisk udfører; parallelle opgaver kan ikke overskride et fælles loft. Brug simulerede forbindelser til disse kontroltests før eventuelle eksterne kald.
+
+### Budget og gratis ressourcer — Peters oplysninger
+
+Rapporteret abonnement: Codex/ChatGPT $20, Claude $17, Kimi $19 og Z.ai $16 pr. måned; samlet $72/måned ($864/år ved uændrede priser). Dette er brugeroplyst udgift, ikke verificerede fakturaer eller godkendt forbrugsloft. Peter ønsker gratis ressourcer og routing undersøgt; der er ikke godkendt ekstra betaling.
+
+Kandidater: [OpenRouter Free Router](https://openrouter.ai/docs/faq) og [Groq Free Plan](https://console.groq.com/docs/rate-limits). Brug kun godkendte modeller/providers og registrér faktisk valg. OpenRouter `openrouter/free` adskilles fra betalt Auto-routing. [Z.ai Coding Plan](https://docs.z.ai/guides/overview/quick-start) har særskilt endpoint til understøttede værktøjer; det er ikke dokumentation for ret til vilkårlig generel API-routing. Kontoadgang, datavilkår og kvoter verificeres før aktivering. Ingen API-nøgler skal placeres i Git, handover eller reviewmateriale.
+
+### Leverancer og status
+
+Dette afsnit er integrationsoplægget til samlet review. Næste leverance er afgrænsede upstream-forslag efter kontrol af hvert repositories aktive arbejde og bidragsregler. Codex er udfører på dette oplæg; ingen andre sessioner er automatisk tildelt arbejde. Upstream-filer er endnu ikke ændret, og ingen pilot er kørt. Afgrænsning og review skal bevare CI's eksisterende forskningsposture og Frameworks semantiske ejerskab.

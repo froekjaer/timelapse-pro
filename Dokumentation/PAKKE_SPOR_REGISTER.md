@@ -109,3 +109,7 @@ Let spor og fuldt spor følger §14.6; kontrakt-/governanceændringer er fulde s
 ## Partner- og kompetenceudvidelse 2026-09-13
 
 PR #232 udvides efter Peters instruktion med faste deltagere Kimi/Z.ai samt ad hoc-onboarding og [kompetence-/routingforslag](AI_KOMPETENCER_OG_OPGAVEROUTING.md). Udfører: Codex i samme isolerede reviewspor. Næste handling: dokumentreview af udvidelsen og budgetafklaring før eventuel pilot. Tidligere genreviews gælder den tidligere kandidat, ikke dette nye scope. Ingen runtime- eller upstream-ændring.
+
+### Cross-repo placeringsoplæg
+
+Peter autoriserede 2026-09-13 undersøgelse og forslag til CI/Framework/Platform. Codex har leveret konkret destinations- og pilotoplæg i kompetencedokumentets §8, inklusive fundet uoverensstemmelse i CI-programkortet. Aktiv leverance: dette oplæg i PR #232. Upstream-ændringer/pilot er ikke udført; næste handling er review og afgrænsede upstream-forslag med frisk overlapkontrol. Den eksisterende §14-procedure kan anvendes uafhængigt af routingforslaget.
