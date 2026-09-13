@@ -49,21 +49,62 @@ fordi det viser at selv en "uafhaengig review" kan have smaa faktuelle
 upraecisioner, der er vaerd at checke — hvilket bekraefter Peters instruks om
 selvstaendig verifikation frem for blind tillid.
 
-## 3. `COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md` — IKKE fundet nogen steder
+## 3. `COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md` — KORREKTION: falsk negativ i foerste soegning
 
-Grundig soegning gav **intet resultat**:
-- Ingen fil med dette navn (eller lignende, fx `*TEST_CONTINUITY*`,
-  `*Testkontinuitet*`) findes i det nuvaerende tree.
-- `git log --all --diff-filter=A` for dette filnavnmoenster: ingen commits —
-  filen er aldrig blevet tilfoejet i noget kendt branch, heller ikke slettet
-  senere (ellers ville `--diff-filter=A` stadig finde tilfoejelsen).
-- Ingen tekstreference til filnavnet nogen steder i `Dokumentation/`
-  (inkl. `HANDOVER_LOG.md`), hverken i naevaerende form eller med
-  variationer i stavning/store bogstaver.
-- `gh search code`/`gh search prs`/`gh search issues` for
-  "COMPLETE_TEST_CONTINUITY_PLAN"/"test continuity plan" i repoet: **ingen
-  hits**.
-- Ingen af de 5 aktive git-stashes naevner den.
+**RETTELSE (Peter, 2026-09-13):** Peter tjekkede selv `HANDOVER_LOG.md` og
+fandt referencen jeg konkluderede ikke fandtes. Min oprindelige paastand
+nedenfor ("ingen tekstreference til filnavnet nogen steder... inkl.
+HANDOVER_LOG.md") var **forkert** og er hermed registreret som en falsk
+negativ, ikke forklaret vaek eller stiltiende rettet.
+
+**VERIFICERET (efter korrektionen, med reproducerbar kilde):** Referencen
+findes faktisk, praecis ét sted, i den autoritative `origin/main`-version af
+`HANDOVER_LOG.md`, linje 1208, i handover-posten dateret **2026-08-19**
+("NPU-runner deployment-hul rettet ved roden (PR #75) + frontend-
+testkontinuitet"):
+
+> (6) Fortsæt Tier 1-testdækning (UpdatesPage.tsx, SystemAdminPage.tsx
+> CMDB-drift-UI) jf. `Dokumentation/COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md`.
+
+Reproducerbar kommando: `git show origin/main:Dokumentation/HANDOVER_LOG.md
+| grep -n COMPLETE_TEST_CONTINUITY_PLAN` -> linje 1208.
+
+**Rodaarsag for den falske negativ (verificeret, ikke gaettet):** Jeg koerte
+den oprindelige soegning i `git`-worktreet `kind-shamir-29fe84` (denne
+sessions "hjemme"-worktree), hvis `HEAD` viste sig at staa paa commit
+`b25703ed` — langt bagud for `origin/main` (`8452c5ef` paa daetidspunktet).
+Den lokale arbejdskopi af `HANDOVER_LOG.md` i det worktree er **1664
+linjer**; den autoritative `origin/main`-version er **3119 linjer** — over
+halvdelen af filens indhold, inklusive netop den relevante 2026-08-19-post,
+manglede simpelthen i den fil jeg faktisk laeste. Jeg rapporterede "soegt i
+HANDOVER_LOG" uden foerst at verificere at den lokale kopi var frisk/
+identisk med `origin/main` — en fil-friskheds-antagelse, ikke en
+noegleords-soegningsfejl. (De øvrige dele af soegningen — `git log --all
+--diff-filter=A`, stash-indhold, `gh search`, som alle forespørger direkte
+mod git-objektdatabasen/GitHub og ikke en enkelt arbejdskopi — var ikke
+paavirket af denne specifikke fejl og holder fortsat ved efterproevning.)
+
+**Adskilt status, som instrueret:**
+- **VERIFICERET:** planen ER refereret i `HANDOVER_LOG.md` (linje 1208,
+  origin/main, 2026-08-19-posten) — reproducerbart, citeret ovenfor.
+- **IKKE ENDNU VERIFICERET:** om selve filen `COMPLETE_TEST_CONTINUITY_PLAN_
+  2026-08.md` nogensinde blev committet. Genkontrolleret efter korrektionen
+  (denne gang mod korrekt frisk `origin/main`-data): `git log --oneline
+  --all --diff-filter=A` for filnavnmoenstret giver stadig ingen hits paa
+  nogen branch; ingen af de 5 stashes indeholder den; `gh search
+  code/prs/issues` giver stadig ingen hits. Filen er ikke fundet
+  committet nogen steder i selve repoet — men se naeste punkt.
+- **UKENDT:** om en genfindelig kopi eksisterer et andet sted (en anden
+  AI-sessions lokale, aldrig-pushede arbejdskopi; et eksternt dokument der
+  aldrig blev git-tracket; eller en session/kanal uden for dette repos
+  synlighed). Ikke rekonstrueret, som instrueret.
+
+### Oprindelig (fejlagtig) paastand, bevaret for sporbarhed
+
+> ~~Grundig soegning gav intet resultat: ... Ingen tekstreference til
+> filnavnet nogen steder i `Dokumentation/` (inkl. `HANDOVER_LOG.md`),
+> hverken i naevaerende form eller med variationer i stavning/store
+> bogstaver.~~ — **Forkert, jf. korrektionen ovenfor.**
 
 **Jeg kan derfor hverken bekraefte at HANDOVER_LOG faktisk refererer til
 denne fil, eller at filen nogensinde er blevet committet.** Enten:

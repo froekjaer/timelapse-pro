@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Claude: falsk negativ rettet — COMPLETE_TEST_CONTINUITY_PLAN ER refereret i HANDOVER_LOG
+
+- **Rettelse fra Peter:** min tidligere konklusion ("ingen reference til `COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md` nogen steder, inkl. HANDOVER_LOG") var forkert. Peter fandt selv referencen ved manuel kontrol.
+- **Verificeret (reproducerbart):** `git show origin/main:Dokumentation/HANDOVER_LOG.md | grep -n COMPLETE_TEST_CONTINUITY_PLAN` -> linje 1208, i handover-posten 2026-08-19 ("NPU-runner deployment-hul rettet ved roden (PR #75) + frontend-testkontinuitet"): "(6) Fortsæt Tier 1-testdækning... jf. `Dokumentation/COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md`."
+- **Rodaarsag for den falske negativ:** min oprindelige soegning koerte mod worktreet `kind-shamir-29fe84`s lokale kopi af `HANDOVER_LOG.md`, hvis `HEAD` (`b25703ed`) stod langt bagud for `origin/main` — 1664 af filens faktiske 3119 linjer, under halvdelen. En fil-friskheds-antagelse, ikke en noegleordsfejl; genkontrolleret nu mod frisk `origin/main`-indhold.
+- **Fortsat adskilt, som instrueret:** VERIFICERET at referencen findes; IKKE ENDNU VERIFICERET at selve filen nogensinde blev committet (genkontrolleret efter korrektionen: stadig nul hits i `git log --all --diff-filter=A`, stashes, `gh search code/prs/issues`); UKENDT om en genfindelig kopi findes uden for dette repos synlighed. Ikke rekonstrueret.
+- **Governance-tilfoejelse:** en fjerde klausul foreslaaet til §16 — en konsekvent "ikke fundet/eksisterer ikke"-konklusion kraever bekraeftet kildefriskhed (`origin/<branch>`, ikke en muligvis-forældet lokal arbejdskopi) og mindst to uafhaengige soegemetoder, foer den behandles som etableret faktum; ellers rapporteres den som IKKE VERIFICERET. Se opdateret `CAPABILITY_REGISTER_PROPOSAL_2026-09-13_CLAUDE.md` og `UI_USECASE_CATALOG_DISCOVERY_AND_SEARCH_FAILURE_2026-09-13_CLAUDE.md` (afsnit 3, korrigeret med synlig fejlmarkering, ikke stiltiende rettet).
+- **Ikke gjort:** planen er ikke rekonstrueret. ADR-004 forbliver Proposed. #239 ikke merged. Ingen R04 batch 3. Ingen oprydning.
+
 ### Handover 2026-09-13 — fra Claude: Capability Register-forslag revideret efter fund af UI_USECASE_CATALOG
 
 - **Mandat:** Peter, 2026-09-13 — en parallel, uafhaengig repository-arkaeologi-review fandt at mit tidligere Capability Register-forslag (samme dag, paa branch `claude/edge-terminal-emulator-2026-09-13`/PR #239) oversaa `Dokumentation/UI_USECASE_CATALOG_2026-08-26.md`, et allerede-eksisterende 294-linjers praktisk usecase-katalog (PR #141, forfattet af Peter). Mandat: verificer historikken selvstaendigt (ikke tage den for givet), forklar hvorfor kataloget blev overset baade under R04/#235-#238 og under mit eget forslag, tjek om `COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md` faktisk findes, og reviser forslaget.

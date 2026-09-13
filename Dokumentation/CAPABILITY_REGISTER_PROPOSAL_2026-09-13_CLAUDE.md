@@ -143,6 +143,59 @@ netop fordi dagens erfaring viser at et rent GRC-/ADR-fokuseret tjek ikke
 i sig selv ville have fundet hverken usecase-kataloget eller den tabte
 `d67ca26d`-implementering.
 
+## Tredje fejl fundet i dag: en "ikke fundet"-konklusion var selv en falsk negativ
+
+Under udarbejdelsen af dette forslag konkluderede jeg fejlagtigt at
+`Dokumentation/COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md` ikke var refereret
+noget sted, inklusive i `HANDOVER_LOG.md`. Peter fandt selv referencen ved
+manuelt at tjekke filen. Rodaarsagen (fuldt dokumenteret i
+`UI_USECASE_CATALOG_DISCOVERY_AND_SEARCH_FAILURE_2026-09-13_CLAUDE.md`,
+afsnit 3): soegningen blev koert mod en lokal worktree-kopi af
+`HANDOVER_LOG.md` der stod paa en commit langt bagud for `origin/main` (1664
+af 3119 linjer — under halvdelen af filens faktiske indhold var til stede).
+En fil-friskheds-antagelse, ikke en noegleordsfejl.
+
+Dette er en **tredje**, selvstaendig fejlklasse ud over de to Peter allerede
+bad om at daekke (capability ikke tjekket foer aendring; historisk
+implementering ikke genfundet foer genimplementering): **en "ikke fundet /
+eksisterer ikke"-konklusion blev behandlet som et faktum uden at dens egen
+grundlagsforudsaetning (frisk, autoritativ datakilde) blev verificeret
+foerst.**
+
+**Princip:** Et negativt soegeresultat er evidens for fravaer, ikke bevis
+for fravaer. En "IKKE FUNDET"/"EKSISTERER IKKE"-konklusion, der har
+konsekvens (fx: retfaerdiggoer at springe et genfindingstrin over, eller
+klassificerer noget som endeligt tabt), maa foerst opfylde et minimums-
+reproducerbarhedskrav, foer den behandles som etableret:
+
+1. **Kildefriskhed eksplicit bekraeftet:** for git-baserede kilder, opslag
+   skal ske mod `origin/<default-branch>` (eller en eksplicit angivet,
+   verificeret commit/tag) — ikke mod en lokal arbejdskopis nuvaerende
+   `HEAD` uden foerst at sammenligne `git rev-parse HEAD` mod `git
+   rev-parse origin/main` og bekraefte de matcher (eller eksplicit
+   begrunde hvorfor en aeldre reference bruges).
+2. **Mindst to uafhaengige soegemetoder** for en konsekvent "ikke fundet"-
+   konklusion: fx baade indholds-`grep` OG `git log --diff-filter=A`/`gh
+   search`, ikke kun én metode — saadan at en enkelt kildes staleness eller
+   en enkelt vaerktoejsbegraensning ikke alene kan producere konklusionen.
+3. **Eksplicit skelnen mellem tre svarkategorier**, ikke kun "fundet"/"ikke
+   fundet": (a) VERIFICERET FRAVAER (flere friske, uafhaengige metoder gav
+   alle nul hits), (b) IKKE VERIFICERET (soegningen blev ikke udfoert med
+   tilstraekkelig grundighed/friskhed til at konkludere noget), (c) UKENDT
+   (spoergsmaalet ligger uden for det soegbare rum, fx en aldrig-pushet
+   lokal kopi et andet sted).
+4. **Reproducerbar kommando citeret i konklusionen**, saa en anden
+   (menneske eller AI) kan koere noejagtig samme opslag og faa samme
+   resultat — som demonstreret i korrektionen ovenfor
+   (`git show origin/main:Dokumentation/HANDOVER_LOG.md | grep -n
+   COMPLETE_TEST_CONTINUITY_PLAN` -> linje 1208).
+
+Dette foreslaas tilfoejet som en fjerde, staaende klausul i §16-forslaget
+ovenfor: **en konsekvent "ikke fundet/eksisterer ikke"-konklusion kraever
+bekraeftet kildefriskhed og mindst to uafhaengige soegemetoder foer den
+behandles som et etableret faktum; ellers rapporteres den som IKKE
+VERIFICERET, ikke som fravaer.**
+
 ## Omfang - uaendret fra v1
 
 Samme indledende liste af consequential capabilities som i v1
