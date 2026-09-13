@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Codex: reviewpakke v1.0 klar til deling
+
+- Skrevet PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md med fastlåst #231-baseline, kildepakke, kendte spændinger, 10 beslutningspunkter, 10 scenarier, ens svarskabelon, dispositions-/acceptproces og tom modtagelseslog. Pointere i startindeks/register.
+- Kontroller: links/fastlåste lokale kildefiler, readback og diff-whitespace. Kun dokumentation; ingen runtime-tests påstået. Ingen revieweres enighed eller ADR-accept forudfyldt, ingen invitationer sendt.
+- Næste handling: Peter deler pakken til reviewerne. Codex indsamler og sammenholder originale reviews, når de foreligger, og udarbejder endelig diff med disposition pr. fund. Uafklarede indsigelser kræver synlig afgørelse.
+
+
+### Handover 2026-09-13 — fra Codex: START — fælles reviewpakke før endelig beslutning
+
+- Peter ønsker samme reviewpakke til alle, derefter endelig version. Baseline låses til `13a0d3b3af67a36adf9115d0911aaf2a687bca15` (#231); separat branch `codex/package-governance-review-pack`.
+- Leverance: reviewbrief med præcise kilder, kendte spændinger, beslutningspunkter, scenarier, svarskabelon og dispositionsproces. Ingen forhåndsregistreret enighed eller ADR-accept. Ingen kode-/driftsændringer.
+
+
 ### Handover 2026-09-13 — fra Codex: samlet dokumentforslag verificeret
 
 - Sammenlagt Claude/Kimi-main `252bb157` med Codex `dc171e42`/`1a26103e`: én ADR, ét aktivt register og én detaljeret procedure med Framework/Platform-input. Historisk Codex-inventar bevares i original branch; ingen refs slettet.

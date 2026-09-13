@@ -1,5 +1,7 @@
 # 00 — START HER (master-indeks & onboarding)
 
+> **Fælles reviewrunde:** [Reviewpakke v1.0](PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md) — fastlåst baseline, beslutningspunkter og fælles svarskabelon før endelig accept.
+
 > **Navigationsdiagnostik 2026-09-10:** [aktivering, installation, test og målegrænser](NAVIGATION_DIAGNOSTICS_2026-09.md). Opt-in diagnostik for sporadiske menupauser; se handover for faktisk rollout-status.
 
 > **GRC single source of truth:** Testcases, testkørsler, risici, fund,

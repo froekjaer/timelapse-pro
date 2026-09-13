@@ -1,5 +1,7 @@
 # Pakke-/spor-register — åbne branches og PR'er på tværs af AI-sessioner
 
+> **Fælles reviewrunde:** [Reviewpakke v1.0](PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md) — fastlåst baseline, beslutningspunkter og fælles svarskabelon før endelig accept.
+
 **Formål:** supplement til `HANDOVER_LOG.md`. Handover-loggen er kronologisk og god til
 "hvad skete der i denne opgave"; dette register er et **stående overblik** over hvilke
 pakker (branches/PR'er) der er åbne *lige nu*, så ingen session — Claude, Codex, Kimi
