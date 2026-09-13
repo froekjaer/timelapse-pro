@@ -29,6 +29,10 @@
 
 ## Log
 
+### Handover 2026-09-13 — Codex: formel afslutning autoriseret
+
+- Peter bad om at lukke det tidligere reviewede arbejde og sætte Solar Eclipse på sidelinjen. Registrerer accept af ADR-003/§14 og afslutter PR #232; nye routing-/upstream-forslag forbliver Proposed. Ingen runtimeændring eller branchsletning.
+
 ### Handover 2026-09-13 — fra Codex: integrationsoplæg leveret
 
 - Kompetencedokument §8 indeholder kildefastlåst CI/Framework/Platform-placering, forskningsspørgsmål, afgrænset pilot og accept-/stopkriterier. Register opdateret. Peters $72/måned er registreret som rapporteret udgift, ikke ekstra forbrugsmandat.

@@ -114,3 +114,7 @@ Kandidater: [OpenRouter Free Router](https://openrouter.ai/docs/faq) og [Groq Fr
 ### Leverancer og status
 
 Dette afsnit er integrationsoplægget til samlet review. Næste leverance er afgrænsede upstream-forslag efter kontrol af hvert repositories aktive arbejde og bidragsregler. Codex er udfører på dette oplæg; ingen andre sessioner er automatisk tildelt arbejde. Upstream-filer er endnu ikke ændret, og ingen pilot er kørt. Afgrænsning og review skal bevare CI's eksisterende forskningsposture og Frameworks semantiske ejerskab.
+
+### Prioriteringsbeslutning — Peter, 2026-09-13
+
+Solar Eclipse sættes på sidelinjen indtil en senere eksplicit genoptagelse. Den er ikke en forudsætning for routingafprøvning eller Mission-Platform-arbejde. Dette afløser tidligere forslag i dette oplæg om at bevare den som aktiv gate. Historisk rolle slettes ikke. Upstream AI_CONTEXT/README skal ved næste afgrænsede ændring afspejle beslutningen; de er endnu ikke opdateret. TimeLapse Pro er den planlagte aktuelle engineering-case, ikke omskrevet til historisk første referenceimplementering.

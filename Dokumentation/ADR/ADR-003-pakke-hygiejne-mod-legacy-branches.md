@@ -1,9 +1,9 @@
 # ADR-003: Pakke-hygiejne — forebyggelse af overhalet/glemt arbejde på tværs af AI-sessioner
 
-- **Status:** Proposed
-- **Accept:** PR #230 merger dokumentet, men status er fortsat Proposed. Formel accept skal registreres eksplicit med beslutningsejer og dato, jf. ADR/README.md. Peters konkrete operationelle instruktioner gælder imens.
+- **Status:** Accepted
+- **Accept:** Peter, 2026-09-13, efter Claude/Kimi-genreviews og instruktion om at afslutte det reviewede arbejde. Omfatter ADR-003 og §14; ikke implementering af de åbne opfølgningsspor.
 - **Dato:** 2026-09-13
-- **Beslutningstagere:** Peter, Claude, Codex (Kimi inviteres til samme review, jf. §Afgrænsning)
+- **Beslutningsejer:** Peter. Reviewbidrag: Claude, Kimi og Codex (se bevarede reviews/disposition).
 - **Historisk review af #230, selvrapporteret identitet; ikke accept af senere syntese:** Kimi 2026-09-13 — **tiltræder ADR'en uden ændringskrav**. Verificerede kontekst-påstandene mod repoet (127 branches, #163/#159-conflicts) og bidrog med den målte branch-klassificering i `PAKKE_SPOR_REGISTER.md` §Backlog. Én metode-præcisering: sweeps skal bruge patch-ækvivalens (`git cherry`), da `git log main..<branch>` fejlagtigt viser squash-mergede branches som ikke-mergede.
 - **Kontekst-referencer:** `HANDOVER_Claude_Codex_arbejdsdeling.md`, `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` (§3 Fælles source of truth, §9 Uenighed og konfliktløsning), `PAKKE_SPOR_REGISTER.md` (nyt, indføres sammen med denne ADR), PR #214, #163, #159.
 
@@ -19,9 +19,9 @@ Peter rejste en konkret bekymring 2026-09-13: da PR #214 viste sig at være `BEH
 
 ## Beslutning — hvad og hvorfor
 
-Forslaget fastlægger bevaring af relevant restindhold, synlig koordinering før ændringer og dokumenteret disposition før oprydning. Det skal forebygge tab af kode, tests, idéer og beslutningshistorik på tværs af parallelle sessioner. Registret giver overblik; handover bevarer hændelser; faktiske Git/GRC/CMDB-kilder forbliver autoritative for deres respektive tilstande.
+Beslutningen fastlægger bevaring af relevant restindhold, synlig koordinering før ændringer og dokumenteret disposition før oprydning. Det skal forebygge tab af kode, tests, idéer og beslutningshistorik på tværs af parallelle sessioner. Registret giver overblik; handover bevarer hændelser; faktiske Git/GRC/CMDB-kilder forbliver autoritative for deres respektive tilstande.
 
-Den eneste operative procedurespecifikation er [samarbejdsmodellen §14](../SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md#14-bindende-regel-for-pakker-spor-og-reconciliation). Denne ADR gentager ikke dens trin. Proceduren gælder operationelt efter Peters instruktion; ADR-accept kræver fortsat en særskilt registreret beslutning. Teknisk CI-/serverhåndhævelse følger ikke af dokumentet.
+Den eneste operative procedurespecifikation er [samarbejdsmodellen §14](../SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md#14-bindende-regel-for-pakker-spor-og-reconciliation). Denne ADR gentager ikke dens trin. Proceduren er accepteret af Peter sammen med denne ADR 2026-09-13. Teknisk CI-/serverhåndhævelse følger ikke af dokumentet.
 
 ## Alternativer overvejet
 

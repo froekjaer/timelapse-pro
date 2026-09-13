@@ -1,10 +1,10 @@
 # Samarbejdsmodel for Peter og AI-sessioner
 
-**Version:** 1.2 — partnerudvidelse og routingforslag til review
-**Dato:** 2026-09-13 (oprindelig 2026-07-16)
-**Status pr. afsnit:** §1–13 er historiske Proposed-forslag; §14 er den operationelle procedure efter Peters instruktion 2026-09-13; §15 er uvedtaget Framework/Platform-forslag. ADR-003 er fortsat Proposed. Rettelserne i denne slutkandidat afventer opfølgende review og Peters beslutning; merge er ikke formel accept.
+**Version:** 1.3 — accepteret §14; øvrige forslag afgrænset
+**Dato:** 2026-09-13
+**Status pr. afsnit:** §1–13 er historiske Proposed-forslag, bortset fra Peters udtrykkeligt instruerede deltagerudvidelse i §4. §14 og ADR-003 er Accepted af Peter 2026-09-13 efter genreview og instruktion om afslutning. §15 og kompetence-/routingforslaget er fortsat Proposed og giver intet yderligere mandat.
 
-Filnavnet bevares for eksisterende links. Deltagerne omfatter alle AI-værktøjer, sessioner og underagenter, uanset leverandør eller navn. §15 beskriver fremtidige muligheder, ikke gældende mandater. Ved næste endelige beslutning skal Peter registrere Accepted eller fortsat operationel status med eksplicit revurderingsdato; ingen udløbsdato eller accept opfindes af en AI.
+Filnavnet bevares for eksisterende links. Reglen gælder alle AI-værktøjer, sessioner og underagenter. Accepten afslutter dokumentreviewet, ikke de registrerede opfølgningsleverancer.
 
 ## 1. Formål
 

@@ -49,4 +49,4 @@ Korte, nummererede beslutningsnotater. Én ADR = én arkitekturbeslutning, der e
 | ADR | Titel | Status |
 |-----|-------|--------|
 | [ADR-001](ADR-001-platform-payload-split.md) | Platform/Payload-snit for edge-arkitekturen | **Accepted 2026-07-16** |
-| [ADR-003](ADR-003-pakke-hygiejne-mod-legacy-branches.md) | Pakke-hygiejne — forebyggelse af overhalet/glemt arbejde på tværs af AI-sessioner | Proposed 2026-09-13 |
+| [ADR-003](ADR-003-pakke-hygiejne-mod-legacy-branches.md) | Pakke-hygiejne — forebyggelse af overhalet/glemt arbejde på tværs af AI-sessioner | Accepted 2026-09-13 |

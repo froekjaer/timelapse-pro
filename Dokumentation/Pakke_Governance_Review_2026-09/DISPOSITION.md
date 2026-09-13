@@ -93,3 +93,7 @@ Sammenholdt med Codex' senere gemte liste findes kun én ekstra branch: `origin/
 ## Ny udvidelse efter genreview — 2026-09-13
 
 Peter ønsker Kimi og Z.ai som faste projektdeltagere samt ad hoc-deltagelse. Samarbejdsmodellen §4 præciserer dette uden leverandørendorsement eller udvidet adgang. Nyt kompetence-/routingforslag er tilføjet og linket fra start/register. Denne udvidelse var ikke del af kandidaten 8cb96638 eller dens genreviews. Tidligere lukkede fund genåbnes ikke automatisk, men tiltrædelserne må ikke bruges som godkendelse af det nye indhold. ADR-003 er ikke automatisk markeret Accepted.
+
+## Afsluttende beslutning — Peter, 2026-09-13
+
+Peter har instrueret, at det tidligere reviewede arbejde afsluttes. **R05 er lukket: ADR-003 og §14 Accepted.** Dette afsnit afløser tidligere ventestatus og acceptforslag. Originale reviews bevares uændret. R01/R02/R03/R04/R06 er fortsat særskilte åbne leverancer; nye partner-/routingforslag er ikke foregivet genreviewet. Solar Eclipse er efter Peters prioritering udskudt og er ikke en gate for det nye Platform-arbejde; historiske referencepåstande bevares som historik.
