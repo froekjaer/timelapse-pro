@@ -126,21 +126,21 @@ def test_expiry_removes_all_tracked_ips_not_just_the_current_one(monkeypatch):
 
 # -- /logout closes shells and un-whitelists every tracked IP -----------------
 
-def test_logout_closes_shell_and_removes_all_tracked_ips():
+def test_logout_closes_shell_and_removes_all_tracked_ips(monkeypatch):
     import asyncio
 
     totp_service = _load_totp_service()
 
     iptables_remove_calls = []
     forget_peer_calls = []
-    totp_service._iptables_remove = lambda ip: iptables_remove_calls.append(ip)
-    totp_service._forget_bluetooth_peer_for_ip = lambda ip: forget_peer_calls.append(ip)
+    monkeypatch.setattr(totp_service, "_iptables_remove", lambda ip: iptables_remove_calls.append(ip))
+    monkeypatch.setattr(totp_service, "_forget_bluetooth_peer_for_ip", lambda ip: forget_peer_calls.append(ip))
     kill_calls = []
-    totp_service.os.kill = lambda pid, sig: kill_calls.append(pid)
-    totp_service.os.waitpid = lambda pid, opt: (0, 0)
-    totp_service.os.close = lambda fd: None
+    monkeypatch.setattr(totp_service.os, "kill", lambda pid, sig: kill_calls.append(pid))
+    monkeypatch.setattr(totp_service.os, "waitpid", lambda pid, opt: (0, 0))
+    monkeypatch.setattr(totp_service.os, "close", lambda fd: None)
     audit_calls = []
-    totp_service._emit_shell_audit_event = lambda *a, **k: audit_calls.append((a, k))
+    monkeypatch.setattr(totp_service, "_emit_shell_audit_event", lambda *a, **k: audit_calls.append((a, k)))
 
     token = "tok-logout"
     totp_service._sessions[token] = {
