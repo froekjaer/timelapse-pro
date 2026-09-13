@@ -1769,6 +1769,15 @@ class EdgeAgent:
     BREAKGLASS_EVENTS_PATH = BREAKGLASS_LOG_DIR / "pending_events.jsonl"
     BREAKGLASS_SUDOERS_PATH = Path("/etc/sudoers.d/timelapse-breakglass")
 
+    # Sibling audit queue for the Bluetooth TOTP portal's interactive shell
+    # (/mgmt/cli/bash/ws in edge/scripts/totp-service.py, ADR-004). Same
+    # local-first pattern as BREAKGLASS_EVENTS_PATH above, drained by
+    # _collect_totp_shell_events_for_sync() below. totp-service.py runs as
+    # root (timelapse-totp.service), same as this agent, so unlike
+    # break-glass's "emergency" unprivileged-user account there is no
+    # cross-user ownership problem to compensate for here.
+    TOTP_SHELL_EVENTS_PATH = Path("/var/log.hdd/timelapse/totp-shell/pending_events.jsonl")
+
     def _chown_to_emergency(self, *paths: Path) -> None:
         """Best-effort chown of the given paths to the "emergency" user.
         This agent runs as root, which bypasses DAC permission checks, so
@@ -2009,6 +2018,68 @@ class EdgeAgent:
             sending_path.unlink(missing_ok=True)
         except Exception as exc:
             log.debug("Kunne ikke rydde break-glass .sending-fil: %s", exc)
+
+    def _collect_totp_shell_events_for_sync(self) -> list[dict]:
+        """Pick up interactive-shell session events queued locally by
+        edge/scripts/totp-service.py's /mgmt/cli/bash/ws (ADR-004) and fold
+        them into the same consolidated sync poll's siem_events — identical
+        drain/rename-to-.sending/only-clear-on-confirmed-send pattern as
+        _collect_breakglass_events_for_sync() above; see that method's
+        docstring for the full rationale. No chown-to-emergency step is
+        needed here: totp-service.py runs as root, the same user as this
+        agent, so there is no cross-account ownership problem to work
+        around."""
+        path = self.TOTP_SHELL_EVENTS_PATH
+        sending_path = path.with_suffix(path.suffix + ".sending")
+        try:
+            if path.exists() and path.stat().st_size > 0:
+                if sending_path.exists():
+                    with path.open("r", encoding="utf-8") as src, \
+                         sending_path.open("a", encoding="utf-8") as dst:
+                        dst.write(src.read())
+                    path.write_text("", encoding="utf-8")
+                else:
+                    os.rename(path, sending_path)
+                    path.write_text("", encoding="utf-8")
+                    os.chmod(path, 0o600)
+            if not sending_path.exists():
+                return []
+            raw = sending_path.read_text(encoding="utf-8")
+            if not raw.strip():
+                return []
+        except Exception as exc:
+            log.debug("TOTP shell-audit-kø kunne ikke læses: %s", exc)
+            return []
+
+        events = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+            events.append({
+                "event_type": entry.get("event_type", "totp_shell_event"),
+                "severity": entry.get("severity", "warning"),
+                "username": None,
+                "source_ip": entry.get("source_ip"),
+                "raw_message": json.dumps(entry),
+                "occurred_at": entry.get("occurred_at"),
+            })
+        return events
+
+    def _persist_totp_shell_cursor_after_sync(self) -> None:
+        """Delete the .sending side file once the sync poll that carried its
+        events actually succeeded — same "only advance on confirmed send"
+        semantics as _persist_breakglass_cursor_after_sync()."""
+        path = self.TOTP_SHELL_EVENTS_PATH
+        sending_path = path.with_suffix(path.suffix + ".sending")
+        try:
+            sending_path.unlink(missing_ok=True)
+        except Exception as exc:
+            log.debug("Kunne ikke rydde totp-shell .sending-fil: %s", exc)
 
     def _apply_technician_keys(self, keys: list[dict]) -> None:
         """Write the RBAC-replicated technician SSH public keys to a local
@@ -3324,7 +3395,11 @@ class EdgeAgent:
             if hasattr(self, "_last_cam_diag") and self._last_cam_diag:
                 diag_data["camera"] = self._last_cam_diag
 
-            siem_events = self._collect_siem_events_for_sync() + self._collect_breakglass_events_for_sync()
+            siem_events = (
+                self._collect_siem_events_for_sync()
+                + self._collect_breakglass_events_for_sync()
+                + self._collect_totp_shell_events_for_sync()
+            )
             inventory_payload = self._collect_inventory_if_due()
 
             ok, resp = self._api.sync(diag_data, capture_stats, siem_events, inventory_payload)
@@ -3338,6 +3413,7 @@ class EdgeAgent:
                 if siem_events:
                     self._persist_siem_cursor_after_sync()
                     self._persist_breakglass_cursor_after_sync()
+                    self._persist_totp_shell_cursor_after_sync()
                 config = resp.get("config")
                 if config:
                     self._apply_fetched_config(config)

@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Claude: ADR-004 scoped implementering (multi-IP session, shell-cleanup, local-first audit)
+
+- **Mandat:** Peter godkendte ADR-004's retning og gav mandat til scoped implementering af multi-IP session-tracking, shell-session-cleanup ved expiry/logout, og local-first audit-logging (genbrug break-glass-mønster). Polling-transport og xterm.js kun implementeret hvis demonstrably mere robust — vurderet, men udskudt (kræver fysisk-edge-verifikation). Fuld transskript-logging eksplicit ikke et krav.
+- **Implementeret** i `edge/scripts/totp-service.py`: `_sessions` sporer nu et sæt IP'er pr. session (ikke én), `_valid_token()` afviser ikke længere ved IP-skift (BT-PAN/WiFi/Ethernet-reconnect); ny `SHELL_SESSIONS`-registry + idempotent `_close_shell_session()` kaldt fra expiry-, logout- og websocket-disconnect-stier; ny lokal, netværksfri `_emit_shell_audit_event()` (JSONL, samme filsti-mønster som break-glass); udvidede terminal-keydown med piletaster/Home/End/Delete/Escape.
+- **Bug fundet og rettet undervejs:** `/logout` fjernede tidligere kun iptables/bluetooth for den aktuelle request-IP og lukkede slet ikke en åben shell — rettet til at bruge sessionens fulde IP-sæt og kalde `_close_shell_session()`.
+- **Regression fundet og rettet undervejs:** min første websocket-finally-refaktorering brød den eksisterende kontrakttest `test_shell_cleanup_terminates_and_reaps_child` (krævede den fulde SIGTERM→200ms→SIGKILL→blocking-waitpid-sekvens bevaret ordret) — rettet ved at bevare den sekvens i selve websocket-handleren og kun bruge registry-pop som idempotens-guard mod dobbelt-oprydning fra expiry-stien.
+- I `edge/agent.py`: to nye søsterfunktioner til `_collect_breakglass_events_for_sync()`/`_persist_breakglass_cursor_after_sync()`, drænet ind i samme konsoliderede sync-poll.
+- **Tests:** 19 nye tests på tværs af to nye filer (`tests/test_totp_service_shell_session_robustness.py`, `tests/test_totp_shell_events_for_sync.py`), alle grønne. Fuld relevant sweep (totp/agent/break-glass/architecture-ratchet) grøn. Bred `tests/`-sweep: 937 passed — resterende fejl er pre-eksisterende, urelaterede miljøbegrænsninger (Postgres/GPG/mTLS-CA ikke tilgængelig i denne sandkasse), ingen af dem rører de ændrede filer.
+- **Ikke gjort, kræver fysisk edge:** faktisk `pty.fork()`/iptables/Bluetooth-PAN-reconnect-adfærd i praksis; om Headend-siden håndterer de nye `shell_session_*`-hændelser fornuftigt; polling-transport og xterm.js.
+- **Filer rørt:** `edge/scripts/totp-service.py`, `edge/agent.py`, to nye testfiler, `Dokumentation/SHELL_ROBUSTNESS_IMPLEMENTATION_2026-09-13_CLAUDE.md` (ny, fuld detalje), `Dokumentation/PAKKE_SPOR_REGISTER.md`, denne log.
+- **Ingen merge udført.** Separat PR fra #235/#236/#237, som instrueret.
+
 ### Handover 2026-09-13 15:30 — fra Kimi: Reconciliation-mandat udført (#229 lukket, #214 rebased, #163/#159 semantisk restanalyse)
 
 - **Mandat:** Peter 2026-09-13 ~15:44-dansk-tid instruktion: verificér #229 mod aktuel main og luk uden merge hvis superseded; rebase #214 mod aktuel main uden merge; semantisk restanalyse af #163/#159 uden merge; registeropdatering på separat branch.

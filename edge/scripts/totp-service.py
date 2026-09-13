@@ -305,9 +305,28 @@ def save_config(cfg: dict) -> None:
 
 
 # ── Session store (in-memory) ─────────────────────────────────────────────────
-# { token: {"ip": str, "expires": float} }
+# { token: {"ips": set[str], "expires": float, "sid": str} }
 _sessions: dict = {}
 _SECRET_KEY = os.urandom(32)
+
+# ── Interactive shell session registry ────────────────────────────────────────
+# One entry per open /mgmt/cli/bash/ws connection, keyed by the owning
+# session token, so an expired TOTP session can terminate its shell even if
+# the underlying connection hasn't itself noticed a disconnect yet (relevant
+# on a flaky Bluetooth PAN link, where a dropped interface doesn't always
+# deliver a clean TCP FIN). { token: {"pid": int, "master_fd": int} }
+SHELL_SESSIONS: dict[str, dict] = {}
+SHELL_SESSIONS_LOCK = threading.RLock()
+
+# Local-first audit trail for interactive shell sessions, mirroring the
+# proven break-glass SSH audit pattern (edge/scripts/breakglass_shell_wrapper.sh
+# + edge/agent.py::_collect_breakglass_events_for_sync()). Writing here is a
+# plain local file append — it never depends on Headend or network
+# reachability. edge/agent.py drains and forwards this file to SIEM on its
+# normal sync cycle, exactly like break-glass events; if Headend is
+# unreachable, events simply queue locally until the next successful sync.
+TOTP_SHELL_EVENTS_DIR = Path(os.getenv("TIMELAPSE_TOTP_SHELL_LOG_DIR", "/var/log.hdd/timelapse/totp-shell"))
+TOTP_SHELL_EVENTS_PATH = TOTP_SHELL_EVENTS_DIR / "pending_events.jsonl"
 
 
 def _make_token(ip: str) -> str:
@@ -316,19 +335,91 @@ def _make_token(ip: str) -> str:
     return f"{ts}.{sig}"
 
 
+def _emit_shell_audit_event(event_type: str, token: str, **extra) -> None:
+    """Append one local, best-effort audit event for an interactive shell
+    session. Never raises — a logging failure must not affect the shell
+    itself. No network call is made here; see TOTP_SHELL_EVENTS_PATH's
+    docstring above for how this reaches SIEM."""
+    try:
+        TOTP_SHELL_EVENTS_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        entry = {
+            "event_type": event_type,
+            "severity": "warning",
+            # Only a short, non-secret prefix of the session token is logged —
+            # enough to correlate start/end pairs, not enough to be replayed.
+            "session_id": token[:12] if token else "",
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            **extra,
+        }
+        with TOTP_SHELL_EVENTS_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        log.warning("Kunne ikke skrive shell-audit-hændelse lokalt: %s", exc)
+
+
+def _register_shell_session(token: str, child_pid: int, master_fd: int) -> None:
+    with SHELL_SESSIONS_LOCK:
+        SHELL_SESSIONS[token] = {"pid": child_pid, "master_fd": master_fd}
+
+
+def _close_shell_session(token: str, reason: str = "closed") -> None:
+    """Idempotently terminate the interactive shell (if any) owned by this
+    session token, and emit the matching audit event exactly once. Safe to
+    call from both the websocket handler's own cleanup and from
+    _valid_token()'s expiry path — whichever caller observes the entry first
+    performs the actual teardown; a second call is a no-op."""
+    with SHELL_SESSIONS_LOCK:
+        session = SHELL_SESSIONS.pop(token, None)
+    if not session:
+        return
+    pid = session["pid"]
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except Exception as exc:
+        log.warning("Kunne ikke sende SIGTERM til shell-proces %s: %s", pid, exc)
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        pass
+    except Exception:
+        pass
+    try:
+        os.close(session["master_fd"])
+    except Exception:
+        pass
+    _emit_shell_audit_event("shell_session_end", token, reason=reason)
+
+
 def _valid_token(token: str, ip: str) -> bool:
     if token not in _sessions:
         return False
     sess = _sessions[token]
-    if sess["ip"] != ip:
-        return False
     cfg = load_config()
     timeout = cfg["management"].get("session_timeout", 3600)
     if timeout > 0 and time.time() > sess["expires"]:
         _sessions.pop(token, None)
-        _iptables_remove(ip)
-        _forget_bluetooth_peer_for_ip(ip)
+        for seen_ip in sess["ips"]:
+            _iptables_remove(seen_ip)
+            _forget_bluetooth_peer_for_ip(seen_ip)
+        _close_shell_session(token, reason="session_expired")
         return False
+    if ip not in sess["ips"]:
+        # Deliberately not pinned to the single IP a session was first seen
+        # from: a technician's apparent source IP can legitimately change
+        # mid-session on Bluetooth PAN, WiFi or a routed network (BT-PAN
+        # reconnect hands out a new DHCP lease, WiFi roams between APs).
+        # The session token itself — a 256-bit HMAC-derived value, only ever
+        # issued after a correct TOTP code — is the real access boundary,
+        # not the source IP. Every IP a valid session is seen from is
+        # tracked and logged, and all of them are un-whitelisted together on
+        # expiry (see above). Provenance: this fix mirrors the reasoning
+        # already applied on codex/edge-terminal-renderer (commit d67ca26d,
+        # never merged) for the same TOTP portal.
+        log.info(f"Session {token[:8]}… set fra ny IP {ip} (tidligere: {sorted(sess['ips'])})")
+        sess["ips"].add(ip)
+        _iptables_add(ip)
     return True
 
 
@@ -587,8 +678,9 @@ async def verify(request: Request, code: str = Form(...)):
     token = _make_token(client_ip)
     timeout = cfg["management"].get("session_timeout", 3600)
     _sessions[token] = {
-        "ip": client_ip,
+        "ips": {client_ip},
         "expires": time.time() + timeout if timeout > 0 else float("inf"),
+        "sid": totp_cfg.get("sid", "?"),
     }
     try:
         from service_platform import ServicePlatform
@@ -616,13 +708,20 @@ async def health():
 
 @app.get("/logout")
 async def logout(request: Request):
-    """End the local session and forget only its Bluetooth PAN peer."""
+    """End the local session: un-whitelist every IP it was ever seen from
+    (not just the current request's), forget the matching Bluetooth PAN
+    peer(s), and close any shell the session had open — logout is a normal,
+    common end-of-session path and must not leave an orphaned shell running
+    the way only the timeout path used to be handled."""
     client_ip = request.client.host
     token = request.cookies.get(SESSION_COOKIE)
+    sess = _sessions.pop(token, None) if token else None
+    ips = sess["ips"] if sess else {client_ip}
+    for seen_ip in ips:
+        _iptables_remove(seen_ip)
+        _forget_bluetooth_peer_for_ip(seen_ip)
     if token:
-        _sessions.pop(token, None)
-    _iptables_remove(client_ip)
-    _forget_bluetooth_peer_for_ip(client_ip)
+        _close_shell_session(token, reason="logout")
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(SESSION_COOKIE)
     return response
@@ -1363,11 +1462,21 @@ function openShell() {
 function closeShell() { if (shellWs) shellWs.close(); }
 term.addEventListener('keydown', (event) => {
   if (!shellWs || shellWs.readyState !== WebSocket.OPEN) return;
-  if (event.key === 'Enter') { shellWs.send('\\n'); event.preventDefault(); }
-  else if (event.key === 'Backspace') { shellWs.send('\\x7f'); event.preventDefault(); }
-  else if (event.key === 'Tab') { shellWs.send('\\t'); event.preventDefault(); }
-  else if (event.ctrlKey && event.key.length === 1) { shellWs.send(String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64)); event.preventDefault(); }
-  else if (!event.metaKey && !event.altKey && event.key.length === 1) { shellWs.send(event.key); event.preventDefault(); }
+  let data = null;
+  if (event.key === 'Enter') data = '\\n';
+  else if (event.key === 'Backspace') data = '\\x7f';
+  else if (event.key === 'Delete') data = '\\x1b[3~';
+  else if (event.key === 'Tab') data = '\\t';
+  else if (event.key === 'Escape') data = '\\x1b';
+  else if (event.key === 'ArrowUp') data = '\\x1b[A';
+  else if (event.key === 'ArrowDown') data = '\\x1b[B';
+  else if (event.key === 'ArrowRight') data = '\\x1b[C';
+  else if (event.key === 'ArrowLeft') data = '\\x1b[D';
+  else if (event.key === 'Home') data = '\\x1b[H';
+  else if (event.key === 'End') data = '\\x1b[F';
+  else if (event.ctrlKey && event.key.length === 1) data = String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64);
+  else if (!event.metaKey && !event.altKey && event.key.length === 1) data = event.key;
+  if (data !== null) { shellWs.send(data); event.preventDefault(); }
 });"""
     return f"""<!DOCTYPE html>
 <html lang="da">
@@ -1812,7 +1921,17 @@ async def mgmt_cli_bash_ws(websocket: WebSocket):
         os.chdir(str(EDGE_ROOT))
         os.execvpe(BASH_PATH, [BASH_PATH, "-l"], env)
 
+    _register_shell_session(token, child_pid, master_fd)
+    sess = _sessions.get(token, {})
+    _emit_shell_audit_event(
+        "shell_session_start", token,
+        totp_sid=sess.get("sid", "?"), source_ip=client_ip,
+    )
+
     def child_alive() -> bool:
+        # A concurrent _close_shell_session() call (session-expiry path) may
+        # already have reaped this pid — WNOHANG then raises ChildProcessError
+        # rather than returning, so treat that the same as "no longer alive".
         try:
             waited_pid, _ = os.waitpid(child_pid, os.WNOHANG)
         except ChildProcessError:
@@ -1846,21 +1965,29 @@ async def mgmt_cli_bash_ws(websocket: WebSocket):
         pass
     finally:
         pump_task.cancel()
-        try:
-            os.kill(child_pid, signal.SIGTERM)
-            await asyncio.sleep(0.2)
-            if child_alive():
-                os.kill(child_pid, signal.SIGKILL)
+        # Claim ownership of this session's registry entry before doing any
+        # teardown: if _valid_token() already handled this token's expiry
+        # concurrently (SHELL_SESSIONS.pop() already returned it there), skip
+        # re-killing an already-reaped pid and re-emitting the end event.
+        with SHELL_SESSIONS_LOCK:
+            already_closed = SHELL_SESSIONS.pop(token, None) is None
+        if not already_closed:
             try:
-                os.waitpid(child_pid, 0)
-            except ChildProcessError:
+                os.kill(child_pid, signal.SIGTERM)
+                await asyncio.sleep(0.2)
+                if child_alive():
+                    os.kill(child_pid, signal.SIGKILL)
+                try:
+                    os.waitpid(child_pid, 0)
+                except ChildProcessError:
+                    pass
+            except Exception:
                 pass
-        except Exception:
-            pass
-        try:
-            os.close(master_fd)
-        except Exception:
-            pass
+            try:
+                os.close(master_fd)
+            except Exception:
+                pass
+            _emit_shell_audit_event("shell_session_end", token, reason="disconnected")
 
 
 @app.get("/mgmt/technician/image/{name}")
