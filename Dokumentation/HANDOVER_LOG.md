@@ -29,6 +29,21 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Codex: slutkandidat efter Claude/Kimi-review
+
+- Begge originalreviews bevaret byte-for-byte med SHA-256/kilde; 20 eksterne fund + 3 Codex-selvreviewfund dispositioneret i Pakke_Governance_Review_2026-09/DISPOSITION.md. Codex-review er eksplicit informeret selvreview efter læsning af de andre; ingen tredje uafhængig stemme påstået.
+- Rettet statusheader/rolle/loader, fjernet ADR-proceduredublet, tilføjet operativ data≠instruktioner-regel, synlig intentionsregistrering med race-forbehold, let/fuldt spor, konkret mandat, aktivitet/opfølgning og recovery-procedure. #159/#163-status præciseret som foreløbig strengscreening. Eksisterende kvitteringskontrol nævnes uden at overdrive signatur-/targetbevis.
+- Frosset Codex-screening: base 13a0d3b3, 123 remote branches ekskl. main = 13 ancestry-merged + 110 øvrige; 110 = 51 plusfri + 59 med pluspatches. Ref/head/base og rå outputs committes som evidens. Kimis tidligere 14/51/58 er separat rapport; hans historiske råliste afventes, Peter har fået konkret anmodning. Ingen sletteautorisation.
+- Verifikation: isoleret recovery-pilot (lokal bare remote + nyt repository, annoteret tag/commit/tree/indhold) PASS; ingen rigtige refs slettet. Dokumentlinks, checksums, summer, funddækning og diff-whitespace kontrolleres før push. Ingen live-/runtime-tests eller scheduler oprettet.
+- Kandidaten bliver på draft PR #232 til målrettet genreview, især delvist accepterede forslag. ADR stadig Proposed; endelig beslutning og udskudt teknik fremgår af R01–R06. Ingen reviewkonsensus på ny tekst påstået.
+
+
+### Handover 2026-09-13 — fra Codex: START — reviews modtaget, disposition og slutkandidat
+
+- Claude-review modtaget fra Peters attachment; Kimi-review hentes byte-for-byte fra commit 0c2e2c78. Begge ved baseline 13a0d3b3. Arbejde fortsætter isoleret på reviewpakke-branch/PR #232, ikke live checkout.
+- Plan: bevar originalerne, lav særskilt transparent Codex-selvreview, dispositionér alle 20 eksterne fund, ret tekster, tilføj fastfrosset branchescreening med rådata. Ingen installation, branchsletning, scheduler eller upstream-ændring. Slutkandidaten får ny revision til opfølgende review; ADR forbliver Proposed.
+
+
 ### Handover 2026-09-13 — fra Codex: reviewpakke v1.0 klar til deling
 
 - Skrevet PAKKE_GOVERNANCE_REVIEWPAKKE_2026-09.md med fastlåst #231-baseline, kildepakke, kendte spændinger, 10 beslutningspunkter, 10 scenarier, ens svarskabelon, dispositions-/acceptproces og tom modtagelseslog. Pointere i startindeks/register.

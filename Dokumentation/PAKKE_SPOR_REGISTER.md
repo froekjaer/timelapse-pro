@@ -21,8 +21,8 @@ liste for overlap; efter merge, ret listen til.
 | Pakke / branch | PR | Forfatter | Berører (domæner) | Status | Handling |
 |---|---|---|---|---|---|
 | `claude/globalconfig-parallel-load` | [#214](https://github.com/froekjaer/timelapse-pro/pull/214) | Claude | `timelapse-ui/src/pages/GlobalConfigPage.tsx` (frontend, ingen overlap med andre spor) | CI grøn, `BEHIND` main (ingen konflikt — main har ikke rørt samme fil) | Klar til opdatering + merge når Peter godkender |
-| `codex/edge-post-restart-health-handshake` | [#163](https://github.com/froekjaer/timelapse-pro/pull/163) | Codex | `edge/agent.py`, `edge/update_lifecycle.py`, `edge/scripts/watchdog.sh`, `headend/main.py`, `headend/services/post_restart_health.py` | **CONFLICTING** mod main (main har selvstændigt videreudviklet samme kodeområde, se analyse i PR-kommentar) — **ikke overhalet**, funktionaliteten (stabilitetsvindue + Headend-sweeper for hængende handshakes) findes ikke andre steder i main | Afventer rebase mod aktuel main + gentest. Se PR-kommentar for detaljeret konfliktanalyse. |
-| `codex/fix-capture-time-and-edge2-evidence` | [#159](https://github.com/froekjaer/timelapse-pro/pull/159) | Codex | `headend/main.py`, `headend/capture_api_helpers.py` (ny, ren tilføjelse), `timelapse-ui/src/pages/DevicePage.tsx`, `timelapse-ui/src/components/CaptureThumbnailCard.tsx`, `timelapse-ui/src/lib/captureTime.ts`, `timelapse-ui/src/types/index.ts` | **CONFLICTING** mod main (DevicePage/CaptureThumbnailCard ændret uafhængigt af senere lightbox/prefetch-arbejde) — **ikke overhalet**, de eksplicitte `captured_at_local/_utc/_timezone`-felter fra capture-listen/timeline-API'et findes stadig ikke i main | Afventer rebase mod aktuel main + gentest. Se PR-kommentar for detaljeret konfliktanalyse. |
+| `codex/edge-post-restart-health-handshake` | [#163](https://github.com/froekjaer/timelapse-pro/pull/163) | Codex | `edge/agent.py`, `edge/update_lifecycle.py`, `edge/scripts/watchdog.sh`, `headend/main.py`, `headend/services/post_restart_health.py` | **CONFLICTING** mod main (main har selvstændigt videreudviklet samme kodeområde, se analyse i PR-kommentar) — **foreløbigt ikke fuldt overhalet ifølge Claudes strengsøgning**; ikke uafhængig semantisk verifikation. Funktionaliteten (stabilitetsvindue + Headend-sweeper for hængende handshakes) blev ikke fundet ved den søgning | Afventer rebase mod aktuel main + gentest. Se PR-kommentar for detaljeret konfliktanalyse. |
+| `codex/fix-capture-time-and-edge2-evidence` | [#159](https://github.com/froekjaer/timelapse-pro/pull/159) | Codex | `headend/main.py`, `headend/capture_api_helpers.py` (ny, ren tilføjelse), `timelapse-ui/src/pages/DevicePage.tsx`, `timelapse-ui/src/components/CaptureThumbnailCard.tsx`, `timelapse-ui/src/lib/captureTime.ts`, `timelapse-ui/src/types/index.ts` | **CONFLICTING** mod main (DevicePage/CaptureThumbnailCard ændret uafhængigt af senere lightbox/prefetch-arbejde) — **foreløbigt ikke fuldt overhalet ifølge Claudes strengsøgning**; ikke uafhængig semantisk verifikation. De eksplicitte `captured_at_local/_utc/_timezone`-felter fra capture-listen/timeline-API'et blev ikke fundet ved den søgning | Afventer rebase mod aktuel main + gentest. Se PR-kommentar for detaljeret konfliktanalyse. |
 
 ## Reserverede/planlagte spor (ikke startet endnu — nævnt i eksisterende dokumentation)
 
@@ -35,22 +35,17 @@ liste for overlap; efter merge, ret listen til.
 Repoet havde **127 remote branches** i alt (talt 2026-09-13). Kun de tre ovenfor var
 trieret i første omgang, fordi de var det konkrete udgangspunkt for Peters forespørgsel.
 
-### Målt sweep 2026-09-13 (Kimi) — første kortlægning er udført
+### Branchscreening med bevaret population
 
-Metodekorrektion ved sammenlægning: `git log main..branch` måler ancestry, mens
-`git cherry` sammenligner individuelle patches. Ingen af dem afgør alene semantisk
-restværdi. Flere commits samlet i ét squash-commit kan ikke generelt genkendes af
-`git cherry`; forskelle i patch-ID kan derfor både være forventede og relevante.
+Aktuelt evidenssæt: [BRANCH_SCREENING.json](Pakke_Governance_Review_2026-09/BRANCH_SCREENING.json) og [rå remote-refs](Pakke_Governance_Review_2026-09/BRANCH_REFS_FROSSET.tsv). Metode og reproduktion findes i [dispositionspakken](Pakke_Governance_Review_2026-09/DISPOSITION.md).
 
-Kimis rapport angiver 127 remote branches, 112 ikke-merged, 57 absorberede og 56
-med rester. **57 + 56 = 113**, så population/tidspunkt/klassifikation er endnu ikke
-afklaret. Tallene bevares som historisk rapport, ikke som verificeret partitionssum
-eller slettegrundlag. En branchliste med base/head-SHA og metodeoutput kræves ved
-næste sweep. Påstanden om fulde rådata i denne fils historik er ikke verificeret her.
+Codex-observation `2026-09-13T08:45:40.420260+00:00`, base `13a0d3b3af67a36adf9115d0911aaf2a687bca15`: **123** remote branches ekskl. main = **13** ancestry-merged + **110** ikke-ancestry-merged; de 110 = **51** uden plus-markerede patches + **59** med plus-markerede patches. Alle summer kontrolleret. Hver post indeholder head/base-SHA og rå git-cherry-output. Ingen af kategorierne er sletteautorisation eller semantisk triage.
 
-Kimi rapporterer sletning af syv egne remote branches knyttet til PR #218–#224.
-Denne sammenlægning har ikke selv slettet eller genverificeret disse refs. Den
-rapporterede handling er ikke en generel regel om automatisk sletning ved merge.
+Historisk korrektion: de tidligere 127/112/57/56-tal er trukket tilbage som uafklaret population. Kimi rapporterer i sit bevarede review en ny måling kl. 08:25:46Z: 123 = 14 + 109, og 109 = 51 + 58. Reviewet oplyser, at rålisten ligger lokalt hos reviewer; den er ikke vedlagt. Den historiske population er derfor **ikke uafhængigt reproduceret her**. Codex' senere population har egne faste SHA'er; forskellen må ikke forklares mere præcist uden begge råsæt.
+
+`git cherry` sammenligner individuelle patch-ID'er. Aggregate squash-merges, merge-commits og semantisk ækvivalens kræver særskilt review. Ved gentagelse klassificeres de gemte SHA'er, ikke levende branchnavne. En ny remote-liste er en ny observation.
+
+Kimi har rapporteret syv remote-branchsletninger; originalrapporten bevares. Ingen branch er slettet i denne review-/slutkandidatrunde.
 
 ### Resterende oprydning
 
@@ -100,3 +95,12 @@ Datoer er opfølgningskrav, ikke bevis for kørende baggrundsarbejde. Ingen sche
 - Kimi: historisk sweep og fokus på squash/patch-ækvivalens bevares; tal og slettekonklusion korrigeres ovenfor, ingen sikker slettepopulation erklæret.
 - Codex: §14/§15, agentloadere, opfølgning og rest-/recoverykrav integreres. Den lange historiske inventarliste kopieres ikke ind som et andet aktivt register; den er stadig genskabelig fra `dc171e42` på den bevarede forslagsbranch.
 - Fravalgt: automatisk sletning ud fra alder/0 patches; implicit ADR-accept ved merge; udokumenteret påstand om fuld triage. Selve indholdet og historikken bevares med begrundelse.
+
+
+## Ejerskab og aktivitet — præcisering efter review
+
+Koordinationstabellens tidligere "Codex"-rækker er forslag til næste koordinering, ikke permanent mandat eller bevis for aktivitet. Bekræftet mandat i denne runde: **Codex / session med PR #232, udpeget af Peter til reviewsammenlægning**; senest verificeret aktivitet: denne slutkandidats commit og handover. Næste handling er at levere kandidat/disposition til Peter og målrettet genreview, før endelig ADR-accept.
+
+For branchtriage, PR-rebases, scheduler og Platform-implementering er aktiv udfører **ikke bekræftet**; blokering: prioritering/overdragelse skal afklares. Peter er beslutningsejer, Codex samler de konkrete næste leverancer i dispositionspakken. Ved næste session skal de tidligere opfølgningsdatoer kontrolleres, og aktivitet markeres uverificeret, hvis der ikke foreligger nyt bevis. Ingen automatisk overtagelse eller stille fristforlængelse.
+
+Let spor og fuldt spor følger §14.6; kontrakt-/governanceændringer er fulde spor. Git/PR leverer revisioner og commits, så de ikke skal kopieres manuelt i alle felter. Oprindeligt reviewmateriale og alle fund/dispositioner findes i [reviewdispositionen](Pakke_Governance_Review_2026-09/DISPOSITION.md).

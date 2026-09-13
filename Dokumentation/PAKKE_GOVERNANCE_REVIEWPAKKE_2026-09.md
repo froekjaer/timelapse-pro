@@ -5,6 +5,8 @@
 **Reviewbase:** `13a0d3b3af67a36adf9115d0911aaf2a687bca15` (PR #231). Reviewpakken tilføjer reviewinstruktioner; den ændrer ikke denne baseline.  
 **Bestiller/beslutningsejer:** Peter. **Redaktør/integrator:** Codex. **Inviterede reviewere:** Claude, Kimi og Codex; Peter kan invitere andre. Ingen reviews er indhentet automatisk.
 
+> **Opfølgning:** Claude og Kimi har nu afleveret reviews; se [originaler, Codex-selvreview og samlet disposition](Pakke_Governance_Review_2026-09/DISPOSITION.md). Instruktionerne nedenfor bevares som reviewrunde v1. Slutkandidaten på PR #232 skal genreviewes ved sin nye commit, ikke ved den gamle baseline. Ingen endelig accept er registreret.
+
 ## 1. Opgaven til hver reviewer
 
 Vurdér om dette samlede forslag beskytter værdifuldt arbejde, sikrer fremdrift og kan bruges sikkert af samtidige AI-sessioner uden urimelig administration. Find fejl og nødvendige ændringer — målet er et holdbart resultat, ikke at fremkalde enighed.
@@ -137,9 +139,9 @@ Framework-feedback og Platform-arbejde: anbefaling / afgrænsning
 
 | Reviewer | Status ved pakkens oprettelse | Baseline / svarreference |
 |---|---|---|
-| Claude | Afventer invitation fra Peter / nyt review | Intet review af denne pakke modtaget |
-| Kimi | Afventer invitation fra Peter / nyt review | Tidligere tiltrædelse af #230 er baggrund, ikke slutreview |
-| Codex | Forfatter/integrator; særskilt review udestår | Tidligere syntese er ikke et uafhængigt review |
+| Claude | Modtaget via Peter; tiltræder efter rettelser | Original bevaret i dispositionspakken; nyt kandidat-review udestår |
+| Kimi | Modtaget fra commit 0c2e2c78; tiltræder efter rettelser | Original bevaret; historisk råpopulation og kandidat-review udestår |
+| Codex | Informeret selvreview afleveret | Ikke blind/uafhængig tredje stemme; se dispositionspakken |
 | Peter | Endelig beslutning udestår | ADR fortsat Proposed |
 
-Ingen timer, baggrundsmonitor eller automatisk besked er oprettet. Næste konkrete handling: Peter deler pakken; derefter indsamles reviews til det samlede dispositionsskema.
+Ingen timer, baggrundsmonitor eller automatisk besked er oprettet. Næste konkrete handling: Peter deler slutkandidatens nye revision til målrettet genreview; dispositionen foreligger.

@@ -1,0 +1,13 @@
+{
+  "claude": {
+    "source": "Peter attachment 0314f17b-aec4-4ee5-8c73-8aeb33b93f72/pasted-text.txt",
+    "sha256": "98589a3c9584825aafacf358cab4c99c2ea860f5c4b470b46dd38fedf80d790d",
+    "identity": "selvrapporteret; ikke teknisk modelattesteret"
+  },
+  "kimi": {
+    "source": "commit 0c2e2c78, Dokumentation/KIMI_REVIEW_PAKKE_GOVERNANCE_2026-09-13.md",
+    "git_blob": "95d5c445b8d190d325d1eba52292f4427b22c155",
+    "sha256": "d2cc207899460f5cf21953ccf84e5fef8b96a05b37729689686f87c594b31a83",
+    "identity": "selvrapporteret; ikke teknisk modelattesteret"
+  }
+}

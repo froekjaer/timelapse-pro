@@ -1,0 +1,18 @@
+{
+  "result": "PASS",
+  "scope": "isolated temporary repositories only; no actual project ref deleted",
+  "checks": [
+    "annotated tag pushed to separate local bare remote",
+    "fetched into empty repository",
+    "commit and tree match",
+    "file content read back"
+  ],
+  "limitations": [
+    "does not verify GitHub retention/protection",
+    "does not preserve uncommitted work",
+    "does not authorize any real branch deletion"
+  ],
+  "fixture_commit": "4de0a3931052b71772cde1ebc211e747bc39fa09",
+  "fixture_tree": "a601aa7168cc4bd070a8e1440a49b67c7f7fe951",
+  "tag": "archive/review-fixture/2026-09-13-4de0a393"
+}
