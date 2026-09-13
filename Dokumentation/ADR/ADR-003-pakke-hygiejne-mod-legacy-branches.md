@@ -3,6 +3,7 @@
 - **Status:** Proposed
 - **Dato:** 2026-09-13
 - **Beslutningstagere:** Peter, Claude, Codex (Kimi inviteres til samme review, jf. §Afgrænsning)
+- **Review:** Kimi 2026-09-13 — **tiltræder ADR'en uden ændringskrav**. Verificerede kontekst-påstandene mod repoet (127 branches, #163/#159-conflicts) og bidrog med den målte branch-klassificering i `PAKKE_SPOR_REGISTER.md` §Backlog. Én metode-præcisering: sweeps skal bruge patch-ækvivalens (`git cherry`), da `git log main..<branch>` fejlagtigt viser squash-mergede branches som ikke-mergede.
 - **Kontekst-referencer:** `HANDOVER_Claude_Codex_arbejdsdeling.md`, `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` (§3 Fælles source of truth, §9 Uenighed og konfliktløsning), `PAKKE_SPOR_REGISTER.md` (nyt, indføres sammen med denne ADR), PR #214, #163, #159.
 
 ## Kontekst

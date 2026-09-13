@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-13 09:10 — fra Kimi: ADR-003 reviewet og tiltrådt + målt branch-sweep + egne merged branches slettet
+
+- Kontekst: Peter bad 2026-09-13 om regel mod "overhalet"/glemt arbejde på tværs af AI-sessioner. Claude havde allerede bygget ADR-003 + `PAKKE_SPOR_REGISTER.md` på branchen `claude/pakke-hygiejne-adr`. I stedet for et konkurrerende spor byggede Kimi VIDERE på Claudes branch (selve reglen anvendt på sig selv).
+- Hvad er gjort:
+  1. ADR-003 reviewet: kontekst-påstande verificeret mod repo (127 branches, #163/#159 CONFLICTING men ikke overhalet). Tiltrådt uden ændringskrav — review-linje tilføjet ADR-headeren. Metode-præcisering: sweeps skal bruge `git cherry` (patch-ækvivalens), fordi `git log main..<branch>` fejlagtigt viser squash-mergede branches som ikke-mergede.
+  2. Første fulde branch-sweep UDFØRT og indsat i registerets §Backlog: 112 ikke-mergede → **57 fuldt absorberet i main** (kan slettes risikofrit) + **56 med uabsorberede patches** (kræver ADR-003-vurdering én for én — flere `security/closure-*` fra 15.-16/8 har fået indhold reappliceret ad anden vej, så patch-ID alene afgør det ikke). Kommando til regeneration står i registeret.
+  3. Kimis 7 egne squash-mergede branches fra 11/9 (PR #218–#224) SLETTET på remote — demonstrerer reglen "slet branch ved merge".
+- Hvad mangler / næste skridt: (a) Peter godkender ADR-003 (status: Proposed → Accepted); (b) Claude poster sin konflikt-analyse som PR-kommentarer på #163/#159 (Claude foreslog det, afventer Peters go); (c) triage af de 56 uabsorberede branches — foreslås som ét afgrænset arbejde, nyeste først; (d) kontrolleret sletning af de 57 absorberede branches med liste her i loggen.
+- Filer rørt: `Dokumentation/ADR/ADR-003-...md` (review-linje), `Dokumentation/PAKKE_SPOR_REGISTER.md` (målt sweep i §Backlog), denne log. Remote: 7 kimi-branches slettet. Ingen kode-/driftsændring.
+- Risici / pas på: slet IKKE de 56 uabsorberede branches uden per-branch-vurdering; "gammel" ⇏ "overhalet" (jf. ADR-003 afviste alternativer).
+
 ### Handover 2026-09-11 23:00 — fra Claude: SLUT — update-flow end-to-end, 3 opdateringer live, 2 nye reelle fejl rettet, 9 tilbage bevidst urørt
 
 - Fortsættelse af FORTSAT-entryen nedenfor (PR #225 var da allerede merget og deployet). Peter gik i seng og gav eksplicit lov til selvstændigt at gennemføre hele opgaven, rette fejl undervejs, og tjekke browseren løbende.

@@ -10,7 +10,7 @@ og ingen glemt branch rådner uden at nogen bemærker det.
 register understøtter. Kort version: før du merger eller opdaterer en pakke, tjek denne
 liste for overlap; efter merge, ret listen til.
 
-**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status)
+**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status; Kimi: tilføjet målt branch-sweep, se §Backlog)
 
 ---
 
@@ -30,17 +30,43 @@ liste for overlap; efter merge, ret listen til.
 
 ## Backlog — historisk oprydning (ikke del af denne ADR's proces, men samme bekymring)
 
-Repoet har **127 remote branches** i alt (talt 2026-09-13). Kun de tre ovenfor er
-trieret i denne omgang, fordi de var det konkrete udgangspunkt for Peters forespørgsel.
-De resterende ~124 er **ikke** gennemgået endnu — nogle er formodentlig allerede mergede
-og blot ikke pruned, andre kan være reelt, glemt arbejde som #163/#159 viste sig at være.
+Repoet havde **127 remote branches** i alt (talt 2026-09-13). Kun de tre ovenfor var
+trieret i første omgang, fordi de var det konkrete udgangspunkt for Peters forespørgsel.
 
-- [ ] Kør en fuld sweep: for hver remote branch uden åben PR, tjek `git log main..<branch>`
-      for unikt indhold. Branches med 0 unikke commits kan slettes uden risiko. Branches
-      med unikke commits skal vurderes som #163/#159 blev det her.
-- [ ] Overvej at lave dette til et engangsscript (ikke en stående proces) — det er en
-      oprydningsopgave, ikke noget der gentages, når §"Åbne spor" ovenfor holdes ved lige
-      fremadrettet.
+### Målt sweep 2026-09-13 (Kimi) — første kortlægning er udført
+
+Metode: `git cherry origin/main <branch>` pr. branch (patch-ækvivalens, **ikke**
+`git log main..<branch>` — sidstnævnte overser squash-merges, fordi en squash-merget
+branch får et nyt commit-SHA men samme diff; `git cherry` fanger begge dele).
+
+- **112 branches** var ikke-merget i Git-forstand (`git branch -r --no-merged`).
+- Heraf er **57 fuldt absorberet** i main (merge eller squash-merge) — de kan slettes
+  uden risiko for tab af indhold.
+- **56 branches har uabsorberede patches** og skal vurderes én for én efter ADR-003-processen
+  (overhalet-med-begrundelse / rebase-og-merge / afventer review). Bemærk: "uabsorberet"
+  betyder ikke nødvendigvis "glemt værdi" — flere `security/closure-*`-brancher fra
+  2026-08-15/16 har fx fået deres indhold reappliceret via andre commits (jf. F-001/F-002
+  i `kimi-2026-08-15-AFSTEMNING-2026-09-11.md`), men patch-ID'erne matcher ikke, så de kræver
+  manuel vurdering før sletning.
+- Kimis 7 egne branches fra 2026-09-11 (`kimi/ratelimit-dashboard-*`, `kimi/lightbox-*`,
+  `kimi/grc-performance-*`, `kimi/master-review-closure-*`, `kimi/f005-risk-acceptance-*`,
+  `kimi/os-baseline-anbefaling-*`, `kimi/handover-nginx-service-*`) er alle squash-merget
+  (PR #218–#224) og slettet som demonstreret praksis: **slet branch ved merge.**
+
+Fulde data ligger i commit-historikken for denne fil (2026-09-13) og kan regenereres med:
+
+```bash
+for b in $(git branch -r --no-merged origin/main | grep -v HEAD); do
+  echo "$(git log -1 --format=%cs $b) | $(git cherry origin/main $b | grep -c '^+') | $b"
+done | sort -r
+```
+
+### Resterende oprydning
+
+- [ ] Triage de 56 branches med uabsorberede patches én for én (ADR-003-processen:
+      overhalet-med-begrundelse / rebase-og-merge / afventer Peter). Prioritér nyeste først.
+- [ ] Slet de 57 fuldt absorberede branches (0 uabsorberede patches). Lav risiko, men
+      gør det i én kontrolleret omgang med liste i HANDOVER_LOG.md, ikke løbende.
 - [ ] Efter sweep: opdatér denne sektion med resultat, eller fjern den hvis sweepen er
       udført og ikke fandt yderligere glemt arbejde.
 
