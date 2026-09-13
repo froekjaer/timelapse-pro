@@ -84,6 +84,7 @@ Som ny i vores projekt (~/projects/timelapse-pro/Documentation), vil jeg gerne b
 | - | - |
 | `HANDOVER\_LOG.md` | Løbende session-log — hvad, hvornår, hvorfor. Roteret 2026-07-18: entries før 2026-07-08 ligger i `HANDOVER\_LOG\_ARKIV\_2026-06-28\_til\_2026-07-07.md` (kun historik) |
 | `HANDOVER\_Claude\_Codex\_arbejdsdeling.md` | Arbejdsdeling Claude/Codex, åbne tråde, Edge-QA-kontrakt |
+| `PAKKE\_SPOR\_REGISTER.md` | **Tjek før merge/opdatering af en pakke:** stående overblik over åbne branches/PR'er på tværs af AI-sessioner, så intet reelt-men-glemt arbejde (jf. ADR-003) overskrives kritikløst |
 | `SERVICES\_OG\_DRIFT\_kilde\_til\_sandhed.md` | Kilde-til-sandhed for services/drift |
 | `FAQ\_og\_fejlsøgning.md` | FAQ + fejlsøgning |
 | `SYSTEM\_HEALTH\_REGISTER.md` | Health-register |
