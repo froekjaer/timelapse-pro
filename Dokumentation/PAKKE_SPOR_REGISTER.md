@@ -78,7 +78,9 @@ eller -undersøgelse i denne opgave):
   image-deletion rebuild", `stash@{2}` "pre-headend-deploy-cmdb-main-duplicate-20260824",
   `stash@{3}` "edge-terminal-renderer safety backup", `stash@{4}` "wp4-in-progress".
   Status: **Kimi-reported / local verification pending** — fremstilles ikke som verificeret
-  repository-state.
+  repository-state. `stash@{3}` er nu read-only inspiceret (ikke poppet/droppet) i forbindelse
+  med shell-endpoint-assessmenten nedenfor: dens eneste berøring af `edge/scripts/totp-service.py`
+  er en urelateret kosmetisk UI-tekstændring, ikke relevant for shell-sikkerhedsspørgsmålet.
 - **Claude rapporterer yderligere lokale worktrees** på maskinen ud over dem der er i aktivt
   brug i denne governance-leverance (fx flere `timelapse-pro-*`-mapper knyttet til ældre
   Codex-spor). Deres clean/uncommitted-tilstand er ikke undersøgt. Status: **reported /
@@ -176,6 +178,17 @@ PR #232 udvides efter Peters instruktion med faste deltagere Kimi/Z.ai samt ad h
 ### Cross-repo placeringsoplæg
 
 Peter autoriserede 2026-09-13 undersøgelse og forslag til CI/Framework/Platform. Codex har leveret konkret destinations- og pilotoplæg i kompetencedokumentets §8, inklusive fundet uoverensstemmelse i CI-programkortet. Aktiv leverance: dette oplæg i PR #232. Upstream-ændringer/pilot er ikke udført; næste handling er review og afgrænsede upstream-forslag med frisk overlapkontrol. Den eksisterende §14-procedure kan anvendes uafhængigt af routingforslaget.
+
+## Edge lokal shell-endpoint — sikkerhedsassessment 2026-09-13
+
+Peter mandaterede en read-only arkitektur-/sikkerhedsassessment af main's eksisterende
+`/mgmt/cli/bash/*` (Bluetooth TOTP-portal, `edge/scripts/totp-service.py`), affødt af
+R04-stop-gate-fundet om `codex/edge-terminal-renderer`. Se
+[EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT_2026-09-13_CLAUDE.md](EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT_2026-09-13_CLAUDE.md)
+for fuld evidens. Kernefund: endpointet giver en uaudited, fuldt privilegeret (root)
+interaktiv shell, uden den samme session-audit main allerede har for den sammenlignelige
+break-glass SSH-mekanisme. Eksplicit markeret som en sikkerhedsrisiko til Peters beslutning
+— ingen ændring af endpointet foretaget. R04 batch 3 afventer denne beslutning.
 
 ## Governance-afslutning 2026-09-13
 
