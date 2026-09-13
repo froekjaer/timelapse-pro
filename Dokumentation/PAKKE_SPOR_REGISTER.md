@@ -12,7 +12,7 @@ og ingen glemt branch rådner uden at nogen bemærker det.
 register understøtter. Kort version: før du merger eller opdaterer en pakke, tjek denne
 liste for overlap; efter merge, ret listen til.
 
-**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status; Kimi: tilføjet målt branch-sweep, se §Backlog; Claude igen: #159/#163/#214/#229 migreret til §14.6 fulde felter, rapporterede stashes/worktrees tilføjet, intern modsigelse om accept-status rettet)
+**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status; Kimi: tilføjet målt branch-sweep, se §Backlog; Claude igen: #159/#163/#214/#229 migreret til §14.6 fulde felter, rapporterede stashes/worktrees tilføjet, intern modsigelse om accept-status rettet; Claude igen (F2): stash-observation opdateret fra 3 til 5 efter Kimis nyere rapport)
 
 ---
 
@@ -77,10 +77,14 @@ Disse er reconciliation-input fra andre sessioner, **ikke** verificeret af denne
 og ikke inspiceret eller ændret her (jf. scope-grænsen "ingen branch-/worktree-/stash-sletning
 eller -undersøgelse i denne opgave):
 
-- **Kimi rapporterer 3 delte, lokale stashes** i det fælles repository (ikke undersøgt her):
+- **Kimi rapporterer 5 delte, lokale stashes** i det fælles repository (nyere observation,
+  afløser den tidligere rapport om 3 — ikke undersøgt her, og GitHub kan ikke verificere
+  lokal stash-state):
   `stash@{0}` "codex preserve generated source inventory", `stash@{1}` "PR #92 edge
-  image-deletion rebuild", `stash@{2}` "pre-headend-deploy-cmdb-main-duplicate-20260824".
-  Status: **reported / local verification pending**.
+  image-deletion rebuild", `stash@{2}` "pre-headend-deploy-cmdb-main-duplicate-20260824",
+  `stash@{3}` "edge-terminal-renderer safety backup", `stash@{4}` "wp4-in-progress".
+  Status: **Kimi-reported / local verification pending** — fremstilles ikke som verificeret
+  repository-state.
 - **Claude rapporterer yderligere lokale worktrees** på maskinen ud over dem der er i aktivt
   brug i denne governance-leverance (fx flere `timelapse-pro-*`-mapper knyttet til ældre
   Codex-spor). Deres clean/uncommitted-tilstand er ikke undersøgt. Status: **reported /
