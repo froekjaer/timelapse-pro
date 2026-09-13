@@ -207,6 +207,17 @@ To opfølgende anbefalinger (ingen implementering udført endnu):
 `agent/core-design-principles`s "No General-purpose Shell"-princip er **ikke** kasseret — det
 forbliver et muligt fremtidigt målprincip, som ADR-004 midlertidigt fraviger i denne fase.
 
+## Edge shell-robusthed — scoped implementering 2026-09-13 (afventer fysisk-edge-test)
+
+Peter godkendte retningen i ADR-004 (Proposed, afventer afprøvning på rigtig edge før
+formel accept) og gav mandat til scoped implementering af multi-IP session-tracking,
+shell-session-cleanup ved expiry/logout, og local-first audit-logging (genbrug af
+break-glass-mønstret). Implementeret mod `origin/main` = `d04798e4`, se
+[SHELL_ROBUSTNESS_IMPLEMENTATION_2026-09-13_CLAUDE.md](SHELL_ROBUSTNESS_IMPLEMENTATION_2026-09-13_CLAUDE.md)
+for fuld detalje, tests og kendte rests. Polling-transport og xterm.js er bevidst
+udskudt — kræver fysisk-edge/live-browser-verifikation. Ingen merge udført; separat PR
+fra #235/#236/#237.
+
 ## Governance-afslutning 2026-09-13
 
 Peter har accepteret ADR-003/§14 og autoriseret afslutning af PR #232. Review/syntese er afsluttet; de åbne implementeringsspor forbliver synlige i dispositionslisten. Routing og upstream-placering er Proposed; Solar Eclipse er udskudt efter Peters instruktion og blokerer ikke disse spor.
