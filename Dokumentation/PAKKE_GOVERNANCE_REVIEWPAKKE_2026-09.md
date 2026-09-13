@@ -145,3 +145,8 @@ Framework-feedback og Platform-arbejde: anbefaling / afgrænsning
 | Peter | Endelig beslutning udestår | ADR fortsat Proposed |
 
 Ingen timer, baggrundsmonitor eller automatisk besked er oprettet. Næste konkrete handling: Peter deler slutkandidatens nye revision til målrettet genreview; dispositionen foreligger.
+
+
+## Reviewrunden afsluttet — beslutning udestår
+
+Begge genreviews af 8cb96638 er modtaget og bevaret i dispositionspakken. Kimi lukker alle ti fund; Claude accepterer dispositionerne med én redaktionel tællepræcisering, som er indarbejdet. Tidligere ventestatus ovenfor er historisk. Ingen materiel ændring efter genreview; ingen formel accept registreret endnu. Næste handling: Peter tager stilling til beslutningen nederst i DISPOSITION.md.

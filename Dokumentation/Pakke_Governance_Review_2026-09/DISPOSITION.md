@@ -78,3 +78,14 @@ Når indsigelserne er dispositioneret og eventuelle materielle ændringer genrev
 Sammenholdt med Codex' senere gemte liste findes kun én ekstra branch: `origin/kimi/review-pakke-governance-20260913`; alle fælles head-SHA'er er ens, ingen tidligere refs mangler. Dette forklarer forskellen mellem de to målinger. Kontrollen er read-only konsistens-/populationsanalyse, ikke ny semantisk triage eller godkendelse af sletning.
 
 **Opdateret disposition:** KIMI-03, CLAUDE-03 og CODEX-01's efterspurgte råbilag er modtaget og konsistenskontrolleret. Den tidligere bemærkning om manglende rådata er historisk; dette afsnit erstatter den aktuelle ventestatus. R04's første handling er nu fuldført. Selve branchtriagen og målrettet genreview er fortsat åbne. Ingen konklusion om sikker sletning følger heraf.
+
+
+## Afsluttet genreview — kandidat 8cb96638
+
+- [Claude, originalt genreview](CLAUDE_GENREVIEW_ORIGINAL.txt): oprindelige tekstfund lukket; CLAUDE-08/10 accepteret som korrekt sporede åbne handlinger. Tiltræder efter én ikke-blokerende præcisering af registerets indledende 127-tal. Den rettelse er nu indarbejdet: historisk, ubekræftet population, ikke beslutningsgrundlag. En præcis forklaring på forskellen til 127 opfindes ikke.
+- [Kimi, originalt genreview fra 179d689f](KIMI_GENREVIEW_ORIGINAL.md): alle KIMI-01–10 lukket uden restindsigelser. Rapporteret typo `fuldtlger` blev kontrolleret og findes ikke i kandidaten; korrekt `følger` står allerede. Kimis tidligere CONFLICTING-screening kan indgå som historisk input til R03, aldrig som frisk semantisk dom eller erstatning for genkontrol.
+- Proveniens/checksums er bevaret. Begge reviews gælder 8cb96638; ændringen efter dette review er begrænset til den efterspurgte tællepræcisering samt modtagelses-/evidenslog. Ingen nye procedureregler eller materielle ændringer indføres i denne afslutning.
+
+**Aktuel status:** klar til Peters eksplicitte beslutning om ADR-003. Dette afsnit afløser tidligere ventestatus for genreview i denne fil; historiske beskrivelser af modtagelsesforløbet bevares. R01 scheduler/fremdriftsmekanisme, R02 Platform-kontrol, R03 kodeintegration, R04 historisk triage og R06 upstream-feedback er stadig reelle åbne leverancer. Accept af dokumentet lukker dem ikke.
+
+**Foreslået beslutning til Peter:** Acceptér ADR-003 og den reviewede §14-procedure som fælles regel for alle AI-sessioner og underagenter; behold §15 som uvedtaget Framework/Platform-forslag; tillad merge af PR #232 med registreret accept-dato. Beslutningen omfatter ingen branchsletning, installation eller automatisk igangsættelse af de åbne implementeringsspor.

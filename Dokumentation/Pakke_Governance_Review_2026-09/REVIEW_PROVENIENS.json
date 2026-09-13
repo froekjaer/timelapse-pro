@@ -26,5 +26,16 @@
       "absent_in_later_codex": [],
       "changed_heads": []
     }
+  },
+  "claude_genreview": {
+    "source": "Peter attachment 407936ea-fca7-45e2-bc6a-ca750e724bfb/pasted-text.txt",
+    "candidate": "8cb96638",
+    "sha256": "1ffff45c28cbe28106458bb8528c5b56d5b759654597693dc2af94e15dc9c1ee"
+  },
+  "kimi_genreview": {
+    "source": "179d689f, Dokumentation/KIMI_GENREVIEW_SLUTKANDIDAT_2026-09-13.md",
+    "candidate": "8cb96638",
+    "git_blob": "bc1baa7a2d44ea62c2ab429f5f341ed6b5254b83",
+    "sha256": "0fad993d2f611358f972ef729cee683a6ad71fa41a51e3671dd97244bea7a20f"
   }
 }

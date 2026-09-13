@@ -32,8 +32,7 @@ liste for overlap; efter merge, ret listen til.
 
 ## Backlog — historisk oprydning (ikke del af denne ADR's proces, men samme bekymring)
 
-Repoet havde **127 remote branches** i alt (talt 2026-09-13). Kun de tre ovenfor var
-trieret i første omgang, fordi de var det konkrete udgangspunkt for Peters forespørgsel.
+Ved den oprindelige forespørgsel blev **127 remote branches** rapporteret uden en bevaret, frosset population. Det er en historisk kontekst-observation, ikke et verificeret beslutningsgrundlag. De senere bevarede populationer er 122 og 123 reelle branches; deres indbyrdes forskel er dokumenteret nedenfor. Forskellen til 127 kan ikke rekonstrueres præcist uden den oprindelige råliste og må ikke tilskrives bestemte mutationer som bevist. De tre oprindelige PR'er blev kun indledningsvist screenet.
 
 ### Branchscreening med bevaret population
 

@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Codex: genreviews modtaget; sidste redaktionelle rettelse
+
+- Claude/Kimi genreview af 8cb96638 modtaget via Peter. Kimi lukker KIMI-01–10; Claude tiltræder efter præcisering af den indledende 127-observation, CLAUDE-08/10 forbliver korrekt dispositionerede åbne handlinger.
+- Originale genreviews bevares med checksum. Retter kun den historiske tællepåstand og opdaterer modtagelses-/beslutningsstatus. Kimis rapporterede typo `fuldtlger` findes ikke i kontrolleret kandidat/arbejdsfil (`følger`); ingen opdigtet rettelse.
+- Formel accept af ADR-003 afventes fra Peter. Ingen merge/sletning/driftsændring.
+
+
 ### Handover 2026-09-13 — fra Codex: KIMI-03 originalt råbilag modtaget og afstemt
 
 - Modtaget via Peter; hentet fra 499d266d og bevaret byte-for-byte som KIMI_EVIDENS_ORIGINAL.md med checksum/proveniens. Bilagets 124 refs inkluderer main og HEAD-alias; 122 reelle branches = 13 ancestry-merged + 51 plusfri + 58 restpatches. Ref-/SHA-sammenhæng og summer verificeret.
