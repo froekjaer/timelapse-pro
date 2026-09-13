@@ -1,6 +1,7 @@
 # ADR-003: Pakke-hygiejne — forebyggelse af overhalet/glemt arbejde på tværs af AI-sessioner
 
 - **Status:** Proposed
+- **Accept:** PR #230 merger dokumentet, men status er fortsat Proposed. Formel accept skal registreres eksplicit med beslutningsejer og dato, jf. ADR/README.md. Peters konkrete operationelle instruktioner gælder imens.
 - **Dato:** 2026-09-13
 - **Beslutningstagere:** Peter, Claude, Codex (Kimi inviteres til samme review, jf. §Afgrænsning)
 - **Review:** Kimi 2026-09-13 — **tiltræder ADR'en uden ændringskrav**. Verificerede kontekst-påstandene mod repoet (127 branches, #163/#159-conflicts) og bidrog med den målte branch-klassificering i `PAKKE_SPOR_REGISTER.md` §Backlog. Én metode-præcisering: sweeps skal bruge patch-ækvivalens (`git cherry`), da `git log main..<branch>` fejlagtigt viser squash-mergede branches som ikke-mergede.
@@ -28,7 +29,7 @@ Peter rejste en konkret bekymring 2026-09-13: da PR #214 viste sig at være `BEH
 3. **Efter merge af en ny pakke:** opdatér `PAKKE_SPOR_REGISTER.md` — fjern den mergede pakke fra "åbne spor", og tilføj en linje hvis merget hvis noget af det man netop lavede gør et *andet* åbent spor helt eller delvist overflødigt (proaktiv retning, ikke kun reaktiv).
 4. **Ved oprettelse af en ny branch/PR:** tilføj den til registret med kort formål, berørte domæner (filstier/moduler) og forfatter (Claude/Codex/Kimi/Peter), så den er synlig for den næste session, før den selv risikerer at rådne.
 
-Dette er en **proces-tjek, ikke en blokerende gate** — det kræver ikke CI-håndhævelse i denne omgang (kan tilføjes senere som et let advarselstjek, analogt til handover-evidenstjekket foreslået i samarbejdsmodellens §13). Det er bindende adfærd for enhver session, menneskelig eller AI, der merger eller opdaterer en pakke.
+Dette er et **obligatorisk procestjek uden implementeret CI-gate** — det kræver ikke CI-håndhævelse i denne omgang (kan tilføjes senere som et let advarselstjek, analogt til handover-evidenstjekket foreslået i samarbejdsmodellens §13). Det er bindende adfærd for enhver session, menneskelig eller AI, der merger eller opdaterer en pakke.
 
 ## Alternativer overvejet
 
@@ -62,3 +63,14 @@ Dette er en **proces-tjek, ikke en blokerende gate** — det kræver ikke CI-hå
 - Denne ADR beslutter **ikke** hvordan Kimi konkret onboardes til samarbejdsmodellen (separat fra `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`, som i dag kun navngiver Claude og Codex). Peter har bedt om at samle Claude, Codex og Kimis arbejde til fælles review — denne ADR forudsætter at Kimi følger samme registerpraksis, men formaliserer ikke Kimis rolle i samarbejdsmodellen. Det bør ske som en opdatering af `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` selv, med Peters accept.
 - Beslutter **ikke** en CI-håndhævet gate. Kan foreslås som fremtidig ADR-tilføjelse, analogt til handover-evidenstjekket i `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §13.
 - Beslutter **ikke** hvordan de resterende ~124 utrierede branches skal håndteres én for én — kun at nye/kendte spor fremover registreres og tjekkes for overlap. Den historiske oprydning listes som backlog i `PAKKE_SPOR_REGISTER.md`.
+
+
+## Samlet præcisering — Claude, Kimi og Codex, 2026-09-13
+
+Claude leverer ADR/register og konkrete konfliktanalyser; Kimi bidrager med historisk sweep og patch-ækvivalens som supplerende metode; Codex supplerer med restdisposition, samtidighed, driftskandidater, fremdrift og Framework/Platform-feedback. Kilder: PR #229 head `989bcd22`, PR #230 merge `252bb157`, Codex `dc171e42`/`1a26103e`. Denne syntese er udført af Codex; den er ikke en påstand om at alle tre har reviewet slutteksten.
+
+Den konkrete procedure findes ét sted: [samarbejdsmodellen §14](../SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md#14-bindende-regel-for-pakker-spor-og-reconciliation). Den omfatter alle AI'er og underagenter, også ved start og installation, samt register/ejer/opfølgning, frisk main/head-kontrol og kontrolleret overtagelse. Uafklaret væsentligt overlap stopper den berørte mutation; ingen automatisk CI-lås er indført.
+
+`git cherry` sammenligner individuelle patch-ID'er og er et screeningsværktøj. Flere commits squash-merget til én kan stadig fremstå unikke. Hverken 0 unikke commits, patch-ækvivalens, alder eller en lukket PR er alene slettebevis. Restindhold, worktrees, uncommitted/untracked materiale, aktive sessioner, release-/rollbackreferencer og holdbar recovery skal være afklaret. Delvist overhalede spor gennemgås pr. krav/idé; beslutningshistorik bevares.
+
+Registerets ældre tal er historiske observationer og ikke autoriseret slettekø. Se korrektion og metodebegrænsning dér. Framework/Platform-input i samarbejdsmodellens §15 er foreslået videre arbejde, ikke en vedtaget udvidelse af nogen af de to repositories.

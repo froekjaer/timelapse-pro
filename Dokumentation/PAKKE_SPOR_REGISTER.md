@@ -35,38 +35,26 @@ trieret i første omgang, fordi de var det konkrete udgangspunkt for Peters fore
 
 ### Målt sweep 2026-09-13 (Kimi) — første kortlægning er udført
 
-Metode: `git cherry origin/main <branch>` pr. branch (patch-ækvivalens, **ikke**
-`git log main..<branch>` — sidstnævnte overser squash-merges, fordi en squash-merget
-branch får et nyt commit-SHA men samme diff; `git cherry` fanger begge dele).
+Metodekorrektion ved sammenlægning: `git log main..branch` måler ancestry, mens
+`git cherry` sammenligner individuelle patches. Ingen af dem afgør alene semantisk
+restværdi. Flere commits samlet i ét squash-commit kan ikke generelt genkendes af
+`git cherry`; forskelle i patch-ID kan derfor både være forventede og relevante.
 
-- **112 branches** var ikke-merget i Git-forstand (`git branch -r --no-merged`).
-- Heraf er **57 fuldt absorberet** i main (merge eller squash-merge) — de kan slettes
-  uden risiko for tab af indhold.
-- **56 branches har uabsorberede patches** og skal vurderes én for én efter ADR-003-processen
-  (overhalet-med-begrundelse / rebase-og-merge / afventer review). Bemærk: "uabsorberet"
-  betyder ikke nødvendigvis "glemt værdi" — flere `security/closure-*`-brancher fra
-  2026-08-15/16 har fx fået deres indhold reappliceret via andre commits (jf. F-001/F-002
-  i `kimi-2026-08-15-AFSTEMNING-2026-09-11.md`), men patch-ID'erne matcher ikke, så de kræver
-  manuel vurdering før sletning.
-- Kimis 7 egne branches fra 2026-09-11 (`kimi/ratelimit-dashboard-*`, `kimi/lightbox-*`,
-  `kimi/grc-performance-*`, `kimi/master-review-closure-*`, `kimi/f005-risk-acceptance-*`,
-  `kimi/os-baseline-anbefaling-*`, `kimi/handover-nginx-service-*`) er alle squash-merget
-  (PR #218–#224) og slettet som demonstreret praksis: **slet branch ved merge.**
+Kimis rapport angiver 127 remote branches, 112 ikke-merged, 57 absorberede og 56
+med rester. **57 + 56 = 113**, så population/tidspunkt/klassifikation er endnu ikke
+afklaret. Tallene bevares som historisk rapport, ikke som verificeret partitionssum
+eller slettegrundlag. En branchliste med base/head-SHA og metodeoutput kræves ved
+næste sweep. Påstanden om fulde rådata i denne fils historik er ikke verificeret her.
 
-Fulde data ligger i commit-historikken for denne fil (2026-09-13) og kan regenereres med:
-
-```bash
-for b in $(git branch -r --no-merged origin/main | grep -v HEAD); do
-  echo "$(git log -1 --format=%cs $b) | $(git cherry origin/main $b | grep -c '^+') | $b"
-done | sort -r
-```
+Kimi rapporterer sletning af syv egne remote branches knyttet til PR #218–#224.
+Denne sammenlægning har ikke selv slettet eller genverificeret disse refs. Den
+rapporterede handling er ikke en generel regel om automatisk sletning ved merge.
 
 ### Resterende oprydning
 
-- [ ] Triage de 56 branches med uabsorberede patches én for én (ADR-003-processen:
+- [ ] Genoptæl og triagér branches med uabsorberede patches én for én (ADR-003-processen:
       overhalet-med-begrundelse / rebase-og-merge / afventer Peter). Prioritér nyeste først.
-- [ ] Slet de 57 fuldt absorberede branches (0 uabsorberede patches). Lav risiko, men
-      gør det i én kontrolleret omgang med liste i HANDOVER_LOG.md, ikke løbende.
+- [ ] Revurder kandidater med patch-ækvivalens. Før eventuel oprydning: afklar restindhold, aktive ejere/worktrees, uncommitted/untracked data, release/rollback-afhængigheder og holdbar recovery-reference. Ingen automatisk sletning.
 - [ ] Efter sweep: opdatér denne sektion med resultat, eller fjern den hvis sweepen er
       udført og ikke fandt yderligere glemt arbejde.
 
@@ -83,3 +71,30 @@ fulde proces.
 **Efter en merge:** flyt den mergede pakke ud af "Åbne spor". Hvis dit arbejde gør et
 andet åbent spor helt eller delvist overflødigt, noter det i sporets række (ikke bare
 tavshed) og giv besked i `HANDOVER_LOG.md`.
+
+
+## Fælles drift af registeret
+
+Følg [samarbejdsmodellen §14](SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md#14-bindende-regel-for-pakker-spor-og-reconciliation). Registeret er et dateret koordineringsindeks, ikke en distribueret lås eller erstatning for Git/GitHub, GRC og CMDB. Skriv altid PR # eller update #; numrene er forskellige identiteter.
+
+Hver aktiv post kræver session/ejer, formål/domæne, base/head-SHA, relationer/overlap, restkrav og disposition, test-/runtimebevis, næste handling, blokeringens ansvarlige og dateret opfølgning. Status skelner registreret, aktiv, afventer reconciliation, blokeret, integreret, verificeret og overhalet-og-arkiveret. Ukendt ejerskab er en afklaringsopgave, ikke accepteret permanent tilstand. En forældet dato giver ikke ret til at overtage en andens arbejdsmappe.
+
+| Spor | Koordinationsansvar | Næste handling / blokering | Opfølgning |
+|---|---|---|---|
+| Sammenlægning af de tre input | Codex, denne session | Verificér dokumenter og lever samlet PR | Denne session |
+| Historisk branchtriage | Codex for ejerskabsafklaring; Kimi har tilbudt udførelsen, men start er ikke bekræftet | Aftal aktiv udfører før parallel sweep; genoptæl med faste SHA'er, prioritér sikkerhed, ucommitted materiale og driftskonsekvens før alder | Næste integrationssession, senest ønsket 2026-09-14 |
+| PR #163 og #159 | Codex for næste vurdering | Frisk restanalyse/rebase i isoleret worktree; dette dokumentarbejde udfører ikke kodeintegrationen | Næste integrationssession, senest ønsket 2026-09-14 |
+| PR #214 | Codex for koordinationsafklaring; oprindeligt Claude | Genbekræft ejer, main/head og CI før disposition | Næste integrationssession, senest ønsket 2026-09-14 |
+| PR #229 | Codex for reconciliation | Undersøg restdiff mod #230/fælles resultat før lukning; ingen tavs kassation | Ved fælles PR-afslutning |
+| Codex-forslag dc171e42 / 1a26103e | Codex | Procedure og Framework/Platform-input overført; historisk 333-ref/27-worktree-snapshot bevares i original commit som recovery-indeks, ikke aktuel status | Ved fælles PR-afslutning |
+| Updates #273/#298/#272/#275–#280 | Codex for næste kontrol, Peter for nødvendige driftsbeslutninger | Frisk CMDB/pakkesæt og kompatibilitet/recovery før installation. Ingen installation som del af governance-merge | Før genoptagelse af update-opgaven |
+| Framework/Platform-feedback | Codex | Samlet input §15 findes; upstream-review/disposition udestår | Efter fælles dokumentreview |
+
+Datoer er opfølgningskrav, ikke bevis for kørende baggrundsarbejde. Ingen scheduler er oprettet. Udføreren skal ved næste session gennemgå forfaldne/uejede opgaver og udføre næste skridt eller synliggøre prioriteringsbeslutningen. Påstå ikke at alle opgaver allerede er under udførelse.
+
+### Disposition af de tre forslag
+
+- Claude: ADR-003, oprindeligt register, indekshenvisninger og konfliktanalyse bevares fra #230.
+- Kimi: historisk sweep og fokus på squash/patch-ækvivalens bevares; tal og slettekonklusion korrigeres ovenfor, ingen sikker slettepopulation erklæret.
+- Codex: §14/§15, agentloadere, opfølgning og rest-/recoverykrav integreres. Den lange historiske inventarliste kopieres ikke ind som et andet aktivt register; den er stadig genskabelig fra `dc171e42` på den bevarede forslagsbranch.
+- Fravalgt: automatisk sletning ud fra alder/0 patches; implicit ADR-accept ved merge; udokumenteret påstand om fuld triage. Selve indholdet og historikken bevares med begrundelse.
