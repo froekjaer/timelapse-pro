@@ -28,7 +28,10 @@ import json
 import pty
 import select
 import signal
+import struct
 import sys
+import termios
+import fcntl
 import threading
 import yaml
 import pyotp
@@ -37,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, Request, Form, Response, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from typing import Optional
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -596,6 +600,24 @@ def _success_page() -> str:
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+# Vendored xterm.js (same terminal emulator/library Headend's own "Åbn
+# terminal" SSH view uses - timelapse-ui/src/components/SshTerminalModal.tsx,
+# @xterm/xterm + @xterm/addon-fit) - not loaded from a CDN, since this portal
+# must keep working with no internet access (BT-PAN/isolated site networks).
+# See Dokumentation/ for provenance: this replaces a hand-rolled ANSI-stripping
+# textarea renderer that could not support Ctrl-C/job control, Tab completion,
+# history or resize.
+app.mount(
+    "/mgmt/static",
+    # check_dir=False: some test modules import this file with
+    # TIMELAPSE_EDGE_ROOT unset/pointing at a non-existent path (they
+    # only need unrelated functions, not the shell/static assets) - the
+    # eager directory-exists check would otherwise raise at import time
+    # and break test collection for code that never touches this route.
+    StaticFiles(directory=str(EDGE_ROOT / "scripts" / "static"), check_dir=False),
+    name="mgmt-static",
+)
 
 
 @app.on_event("shutdown")
@@ -1429,6 +1451,7 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
     shell_panel = ""
     if shell_enabled:
         shell_panel = """
+    <link rel=\"stylesheet\" href=\"/mgmt/static/xterm/xterm.css\">
     <div class=\"card wide\">
       <h2>Terminal og SSH-klient</h2>
       <p class=\"hint\">Interaktiv lokal shell på Edge. Den indbyggede OpenSSH-klient kan anvendes herfra med en godkendt nøgle og verificeret host key. Luk terminalen når du er færdig.</p>
@@ -1436,47 +1459,55 @@ def _cli_page(msg: str = "", output: str = "", command: str = "") -> str:
         <button type=\"button\" onclick=\"openShell()\">Åbn terminal</button>
         <button class=\"secondary\" type=\"button\" onclick=\"closeShell()\">Luk terminal</button>
       </div>
-      <textarea id=\"term\" spellcheck=\"false\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\"></textarea>
-    </div>"""
+      <div id=\"term\" class=\"term-container\"></div>
+    </div>
+    <script src=\"/mgmt/static/xterm/xterm.js\"></script>
+    <script src=\"/mgmt/static/xterm/addon-fit.js\"></script>"""
     shell_script = ""
     if shell_enabled:
         shell_script = """
 let shellWs = null;
-const term = document.getElementById('term');
-function renderShellOutput(data) {
-  // The Edge fallback UI is intentionally dependency-free. Remove terminal
-  // control sequences instead of exposing them as literal text in the textarea.
-  return data
-    .replace(/\\x1b\\][^\\x07]*(?:\\x07|\\x1b\\\\)/g, '')
-    .replace(/\\x1b\\[[0-?]*[ -\\/]*[@-~]/g, '')
-    .replace(/[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]/g, '');
+let shellFit = null;
+
+// Real terminal emulator (xterm.js, vendored locally under /mgmt/static/xterm/
+// - no CDN, so the portal keeps working with no internet access). This is
+// the SAME terminal component Headend's own \"Åbn terminal\" SSH view uses
+// (timelapse-ui/src/components/SshTerminalModal.tsx, @xterm/xterm +
+// @xterm/addon-fit) - one known-good terminal component, not two. Replaces
+// a hand-rolled ANSI-stripping textarea renderer that could not support
+// Ctrl-C/job control, Tab completion, history (arrow keys) or resize.
+const term = new Terminal({
+  cursorBlink: true,
+  fontSize: 13,
+  fontFamily: \"ui-monospace, SFMono-Regular, Menlo, monospace\",
+  theme: { background: '#050812', foreground: '#d6e4ff' },
+  convertEol: false,
+  scrollback: 5000,
+});
+shellFit = new FitAddon.FitAddon();
+term.loadAddon(shellFit);
+term.open(document.getElementById('term'));
+shellFit.fit();
+
+function sendResize() {
+  if (!shellWs || shellWs.readyState !== WebSocket.OPEN) return;
+  shellFit.fit();
+  shellWs.send('\\x01RESIZE:' + term.cols + ':' + term.rows);
 }
+window.addEventListener('resize', sendResize);
+
 function openShell() {
   if (shellWs && shellWs.readyState === WebSocket.OPEN) return;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   shellWs = new WebSocket(proto + '//' + location.host + '/mgmt/cli/bash/ws');
-  shellWs.onopen = () => { term.value += '\\n[connected]\\n'; term.focus(); };
-  shellWs.onmessage = (event) => { term.value += renderShellOutput(event.data); term.scrollTop = term.scrollHeight; };
-  shellWs.onclose = () => { term.value += '\\n[closed]\\n'; };
+  shellWs.onopen = () => { term.reset(); term.write('[connected]\\r\\n'); term.focus(); sendResize(); };
+  shellWs.onmessage = (event) => { term.write(event.data); };
+  shellWs.onclose = () => { term.write('\\r\\n[closed]\\r\\n'); };
 }
 function closeShell() { if (shellWs) shellWs.close(); }
-term.addEventListener('keydown', (event) => {
+term.onData((data) => {
   if (!shellWs || shellWs.readyState !== WebSocket.OPEN) return;
-  let data = null;
-  if (event.key === 'Enter') data = '\\n';
-  else if (event.key === 'Backspace') data = '\\x7f';
-  else if (event.key === 'Delete') data = '\\x1b[3~';
-  else if (event.key === 'Tab') data = '\\t';
-  else if (event.key === 'Escape') data = '\\x1b';
-  else if (event.key === 'ArrowUp') data = '\\x1b[A';
-  else if (event.key === 'ArrowDown') data = '\\x1b[B';
-  else if (event.key === 'ArrowRight') data = '\\x1b[C';
-  else if (event.key === 'ArrowLeft') data = '\\x1b[D';
-  else if (event.key === 'Home') data = '\\x1b[H';
-  else if (event.key === 'End') data = '\\x1b[F';
-  else if (event.ctrlKey && event.key.length === 1) data = String.fromCharCode(event.key.toUpperCase().charCodeAt(0) - 64);
-  else if (!event.metaKey && !event.altKey && event.key.length === 1) data = event.key;
-  if (data !== null) { shellWs.send(data); event.preventDefault(); }
+  shellWs.send(data);
 });"""
     return f"""<!DOCTYPE html>
 <html lang="da">
@@ -1500,7 +1531,8 @@ term.addEventListener('keydown', (event) => {
   h2 {{ font-size: 0.82rem; color: #4fc3f7; margin-bottom: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }}
   label {{ display: block; color: #8aa0bf; font-size: 0.76rem; margin: 0.55rem 0 0.25rem; }}
   input {{ width: 100%; background: #0f3460; color: #fff; border: 1px solid #334; border-radius: 7px; padding: 0.58rem 0.65rem; font-size: 0.85rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
-  textarea {{ width: 100%; min-height: 360px; background: #050812; color: #d6e4ff; border: 1px solid #26385a; border-radius: 8px; padding: 0.8rem; font-size: 0.82rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }}
+  .term-container {{ width: 100%; height: 420px; background: #050812; border: 1px solid #26385a; border-radius: 8px; padding: 0.5rem; overflow: hidden; }}
+  .term-container .xterm-viewport {{ border-radius: 6px; }}
   .actions {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 0.5rem; }}
   button {{ border-radius: 7px; border: 1px solid #334; padding: 0.62rem 0.7rem; font-size: 0.85rem; background: #4fc3f7; color: #001018; font-weight: 700; cursor: pointer; margin-top: 0.7rem; }}
   button.secondary {{ background: #26385a; color: #dbeafe; border-color: #3b5279; }}
@@ -1921,6 +1953,12 @@ async def mgmt_cli_bash_ws(websocket: WebSocket):
         os.chdir(str(EDGE_ROOT))
         os.execvpe(BASH_PATH, [BASH_PATH, "-l"], env)
 
+    # 80x24 matches xterm.js's default cols/rows on the frontend - the
+    # browser sends its real size via the RESIZE control frame right after
+    # the websocket opens (see sendResize() in _cli_page's shell_script),
+    # this is just a sane starting point before that first message arrives.
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+
     _register_shell_session(token, child_pid, master_fd)
     sess = _sessions.get(token, {})
     _emit_shell_audit_event(
@@ -1954,10 +1992,26 @@ async def mgmt_cli_bash_ws(websocket: WebSocket):
         except Exception:
             pass
 
+    RESIZE_PREFIX = "\x01RESIZE:"
+
     pump_task = asyncio.create_task(pump_shell())
     try:
         while child_alive():
             msg = await websocket.receive_text()
+            if msg.startswith(RESIZE_PREFIX):
+                # Sent by the xterm.js frontend's FitAddon on open/window-resize
+                # (see sendResize() in _cli_page). Setting TIOCSWINSZ on the pty
+                # makes the kernel deliver SIGWINCH to bash's foreground process
+                # group itself - no separate signal needed here.
+                try:
+                    cols_s, rows_s = msg[len(RESIZE_PREFIX):].split(":", 1)
+                    fcntl.ioctl(
+                        master_fd, termios.TIOCSWINSZ,
+                        struct.pack("HHHH", int(rows_s), int(cols_s), 0, 0),
+                    )
+                except (ValueError, OSError):
+                    pass
+                continue
             os.write(master_fd, msg.encode())
     except WebSocketDisconnect:
         pass
