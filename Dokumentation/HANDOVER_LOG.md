@@ -41,6 +41,17 @@
 - **Filer rørt:** `Dokumentation/Arkitektur/CORE_DESIGN_PRINCIPLES_ANALYSE_2026-09-13_CLAUDE.md` (ny), `Dokumentation/R04_BRANCHTRIAGE_BATCH_2_2026-09-13_CLAUDE.md` (ny), `Dokumentation/PAKKE_SPOR_REGISTER.md`, denne log. Ingen kode rørt. Ingen implementering af #159/#163/#214 udført i denne leverance.
 - **Risici / pas på:** Ingen branch/worktree/stash slettet eller inspiceret destruktivt. `codex/edge-terminal-renderer` og `stash@{3}` må ikke disponeres uden Peters stilling. Fortsætter ikke automatisk til batch 3 — afventer Peter, som instrueret.
 
+### Handover 2026-09-13 — fra Claude: Read-only sikkerhedsassessment af edge lokal shell-endpoint
+
+- **Mandat:** Peter — efter R04-stop-gate-fundet om `codex/edge-terminal-renderer` (batch 2), lav en selvstændig read-only architectural/security assessment af main's eksisterende `/mgmt/cli/bash/*`-funktionalitet i `edge/scripts/totp-service.py`. Ingen ændring af selve endpointet.
+- **Metode:** Fuld læsning af `totp-service.py` (2212 linjer) + `timelapse-totp.service`; `git log -S`/`git blame` for at datofæste introduktion (2026-07-04, `00aa40a4`) og hærdning (2026-07-14, `aaaa5917`, tilføjede `enable_interactive_shell`-fail-closed-gaten); read-only inspektion af `stash@{3}` (kun `git diff`/`git stash show`, ingen pop/drop).
+- **Kernefund:** Endpointet kører som root (`User=root`, `NoNewPrivileges=no`), giver ubegrænset PTY-bash uden kommandofiltrering, er gated af TOTP + session + et `enable_interactive_shell`-policyflag (default fail-closed) samt fysisk Bluetooth-PAN-nærhed + iptables-default-deny — men **logger/auditerer intet af selve shell-sessionens indhold**. Til sammenligning har main allerede en fuldt auditeret, sammenlignelig mekanisme (break-glass SSH, `breakglass_shell_wrapper.sh`, session-recording forwarded til SIEM) for en anden adgangsvej — samme kontrol er ikke anvendt konsekvent her.
+- **`codex/edge-terminal-renderer` præciseret:** dens ændringer til selve `/mgmt/cli/bash/ws` er stabilisering (websocket→polling-transport, xterm.js-rendering), ikke en sikkerhedsforbedring af denne portals autorisations-/auditmodel. En separat, urelateret del af samme commit (`d67ca26d`) rører break-glass-SSH-audit og session-IP-pinning — ikke verificeret om identisk med mains nuværende break-glass-implementering, uden for denne assessments scope.
+- **`stash@{3}`:** read-only bekræftet urelateret til shell-sikkerhedsspørgsmålet (kun en kosmetisk UI-tekstændring i `totp-service.py`, resten er ikke-relateret WP-0/WP-1-arbejde).
+- **Sikkerhedsrisiko eksplicit markeret** til Peters beslutning, som instrueret. Ingen ændring, fjernelse eller forbedring af endpointet foretaget. R04 batch 3 afventer Peters stilling.
+- **Filer rørt:** `Dokumentation/EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT_2026-09-13_CLAUDE.md` (ny), `Dokumentation/PAKKE_SPOR_REGISTER.md`, denne log. Ingen kode rørt.
+- **Risici / pas på:** Ingen branch/worktree/stash rørt destruktivt. Assessmenten er en analyse, ikke en anbefaling om at fjerne eller ændre endpointet — det er Peters beslutning.
+
 ### Handover 2026-09-13 15:30 — fra Kimi: Reconciliation-mandat udført (#229 lukket, #214 rebased, #163/#159 semantisk restanalyse)
 
 - **Mandat:** Peter 2026-09-13 ~15:44-dansk-tid instruktion: verificér #229 mod aktuel main og luk uden merge hvis superseded; rebase #214 mod aktuel main uden merge; semantisk restanalyse af #163/#159 uden merge; registeropdatering på separat branch.
