@@ -191,6 +191,22 @@ interaktiv shell, uden den samme session-audit main allerede har for den sammenl
 break-glass SSH-mekanisme. Eksplicit markeret som en sikkerhedsrisiko til Peters beslutning
 — ingen ændring af endpointet foretaget. R04 batch 3 afventer denne beslutning.
 
+## Lifecycle-beslutning: edge shell-adgang (ADR-004, Proposed) — 2026-09-13
+
+Efter R04-stop-gate-fundet om `codex/edge-terminal-renderer` (se PR #235) og en read-only
+sikkerhedsassessment af `/mgmt/cli/bash/*` (se PR #236) har Peter truffet en eksplicit
+lifecycle-beslutning: general-purpose/root shell-adgang på edge er en **bevidst accepteret
+development/stabilization-capability** i denne fase — den fjernes, begrænses eller erstattes
+IKKE af typed operations før et fremtidigt, evidens-udløst review (ikke en dato). Se
+[ADR-004](ADR/ADR-004-development-and-recovery-shell-access.md) (Proposed).
+
+To opfølgende anbefalinger (ingen implementering udført endnu):
+- [SHELL_SECURITY_IMPROVEMENTS_2026-09-13_CLAUDE.md](SHELL_SECURITY_IMPROVEMENTS_2026-09-13_CLAUDE.md) — additive audit-/session-logging der genbruger det eksisterende break-glass-mønster, uden ny Headend/netværksafhængighed.
+- [R04_EDGE_TERMINAL_RENDERER_ANBEFALING_2026-09-13_CLAUDE.md](R04_EDGE_TERMINAL_RENDERER_ANBEFALING_2026-09-13_CLAUDE.md) — `codex/edge-terminal-renderer` omklassificeret fra "stop-gate/uønsket" til "indeholder reelle, genbrugelige robusthedsforbedringer" (multi-IP session-tracking, aktiv shell-oprydning ved session-udløb, polling-transport, xterm.js). Anbefaling: scoped reimplementering, ikke direkte merge af hele branchen. Stash/provenance urørt.
+
+`agent/core-design-principles`s "No General-purpose Shell"-princip er **ikke** kasseret — det
+forbliver et muligt fremtidigt målprincip, som ADR-004 midlertidigt fraviger i denne fase.
+
 ## Governance-afslutning 2026-09-13
 
 Peter har accepteret ADR-003/§14 og autoriseret afslutning af PR #232. Review/syntese er afsluttet; de åbne implementeringsspor forbliver synlige i dispositionslisten. Routing og upstream-placering er Proposed; Solar Eclipse er udskudt efter Peters instruktion og blokerer ikke disse spor.
