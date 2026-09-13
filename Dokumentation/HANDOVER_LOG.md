@@ -29,6 +29,21 @@
 
 ## Log
 
+### Handover 2026-09-13 — fra Codex: samlet dokumentforslag verificeret
+
+- Sammenlagt Claude/Kimi-main `252bb157` med Codex `dc171e42`/`1a26103e`: én ADR, ét aktivt register og én detaljeret procedure med Framework/Platform-input. Historisk Codex-inventar bevares i original branch; ingen refs slettet.
+- Rettelser: 57+56≠112 markeret uafklaret; git cherry er ikke generelt squash-/semantisk bevis; slettekø erstattet af recovery-/ejer-/restkontrol; merge ændrer ikke Proposed til Accepted. Alle AI'er/underagenter dækkes. Åbne spor får koordineringsansvar, næste handling og opfølgning uden falsk aktiv-status.
+- Verificeret: diff-whitespace, readback og lokale relative dokumenthenvisninger. Ren dokumentation, derfor ingen runtime-tests/deploy. Nye kontrolmekanismer er proceskrav/forslag; CI/serverhåndhævelse er ikke implementeret.
+- Rest: PR #229 disposition efter fælles integration; genoptælling/indholdstriage, kode-PR'er, update-preflight og upstream-feedback er synligt åbne. Ikke en påstand om færdig historisk oprydning eller tre uafhængige reviews af slutteksten.
+
+
+### Handover 2026-09-13 — fra Codex: START — samlet Claude/Kimi/Codex-forslag
+
+- Peter har nu leveret alle tre input og tidligere bestilt sammenlægning. Base `252bb157` / PR #230 (Claude+Kimi); Codex-kilder `dc171e42` og `1a26103e`; særskilt worktree/branch `codex/reconcile-package-governance`.
+- Bevar ADR-003/register fra main; tilføj Codex-procedure, agentloadere og Framework/Platform-input. Ret usikre slettekonklusioner, patch-metode og uafklaret tællegrundlag. ADR forbliver Proposed efter repoets ADR-regler; merge er ikke en registreret Accepted-beslutning.
+- Ingen branch-/artifact-sletning, installation eller upstream-ændring. Eksisterende branchtriage og PR #159/#163 genforening udføres ikke implicit som del af dokument-sammenlægningen.
+
+
 ### Handover 2026-09-13 09:10 — fra Kimi: ADR-003 reviewet og tiltrådt + målt branch-sweep + egne merged branches slettet
 
 - Kontekst: Peter bad 2026-09-13 om regel mod "overhalet"/glemt arbejde på tværs af AI-sessioner. Claude havde allerede bygget ADR-003 + `PAKKE_SPOR_REGISTER.md` på branchen `claude/pakke-hygiejne-adr`. I stedet for et konkurrerende spor byggede Kimi VIDERE på Claudes branch (selve reglen anvendt på sig selv).

@@ -16,3 +16,8 @@ TimeLapse Pro is a Mission Framework reference mission (`github.com/froekjaer/mi
 5. Show only a compact preamble status unless full detail is requested.
 
 Do not activate this procedure for routine conversation or explanation that cannot alter operational or canonical state.
+
+
+## Mandatory package / track reconciliation
+
+Before implementation, merge or installation, follow [the shared reconciliation rule, §14](Dokumentation/SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md#14-bindende-regel-for-pakker-spor-og-reconciliation) and update [PAKKE_SPOR_REGISTER.md](Dokumentation/PAKKE_SPOR_REGISTER.md) with HANDOVER_LOG.md. Check parallel PRs, branches, worktrees, uncommitted work and deployment candidates. Preserve and reconcile useful residual code, tests, ideas and documents before superseding or archiving a track. Recheck exact main/head revisions before overlapping merges; coordinate all sessions and delegated agents. A stale branch is not proof of obsolete content. The register is not a lock, and this rule does not bypass update/security gates.

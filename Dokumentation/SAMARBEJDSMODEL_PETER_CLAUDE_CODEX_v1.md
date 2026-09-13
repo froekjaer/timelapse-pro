@@ -137,3 +137,109 @@ Konkrete ting fra dagens fælles arbejde, der bør være fælles praksis (tilfø
 - **Kend grænsen for hvad en AI-sandkasse må skrive.** En stale `.git/index.lock` (efterladt af en dræbt proces) kunne ikke fjernes fra sandkassen ("Operation not permitted"), og git-symlinks kunne ikke ændres. Selve commit/push (og dermed deploy-trigger) sker på Peters maskine. **Regel:** AI forbereder rene, verificerede ændringer + eksakte copy-paste-kommandoer; den irreversible git-write/deploy er Peters/menneskets skridt (jf. §6.8 og §9).
 - **Absolutte symlinks er en latent fælde.** `deploy/*.sh` var committet som absolutte symlinks der kun resolverede på Peters maskine → brød CI (og ville bryde staging/prod). **Regel:** commit kun relative symlinks; CI-shell-tjek skal skippe uresolverbare stier fail-safe uden at maskere reelle syntaksfejl (implementeret 2026-07-15).
 - **Handover-evidens bør maskinvalideres (konkretisering af §12.4).** Foreslået CI-tjek: en commit der rører `headend/`, `edge/`, `deploy/` eller `*.sql` uden en tilføjet `HANDOVER_LOG.md`-blok i samme PR → advarsel (ikke hård fejl). Fanger "kode uden evidens" tidligt.
+
+
+## 14. Bindende regel for pakker, spor og reconciliation
+
+**Operationel regel efter Peters instruktion; sammenlagt 2026-09-13.** Denne paragraf gælder for alle mennesker, AI-sessioner og deres underagenter; dokumentets ældre Proposed-status ændres ikke for de øvrige forslag. Reglen konkretiserer OP-001's kontinuitet og search-before-create. Den ændrer ikke produktets accepterede arkitektur eller sikkerhedsgrænser.
+
+### 14.1 Obligatorisk ved start, før merge og før installation
+
+1. Læs [pakke-/sporregisteret](PAKKE_SPOR_REGISTER.md) og seneste handover. Hent frisk GitHub-status og main; undersøg åbne PR'er, lokale/remote branches, worktrees og uncommitted/untracked arbejde. Medtag lukkede PR'er uden merge, stashes og andre tilgængelige agent-workspaces når relevante; ukendt/utilgængeligt materiale registreres, ikke gættet.
+2. Registrér din leverance, session/ejer, formål, berørte domæner og kontrakter, præcis base/head og relationer til andre spor **før implementering**. Hvert delegeret spor får en reference til sin overordnede pakke; den overordnede session har ansvaret for integration af agenternes resultater.
+3. Find overlap i både filer og adfærd: API, databaser, konfiguration, sikkerhed, afhængigheder, dokumentation og drift. To forskellige filer kan implementere samme koncept; to ændringer i samme fil kan være uafhængige. Vurder begge dele.
+4. Sammenlign restindhold i relevante forgængere/parallelle spor med aktuel main **pr. krav eller idé**, ikke kun hele commits. Registrér for hver rest: allerede implementeret med konkret evidens; skal integreres med ejer/næste handling; bevidst fravalgt med begrundelse og beslutningsejer; eller uafklaret. Bevar også tests, dokumenter og delvise løsninger. En ren rebase, grønt build, alder, PR-lukning eller patch-id er ikke alene bevis for semantisk dækning.
+5. Integrér manglende, fortsat relevante dele i et afgrænset spor. Test den samlede adfærd mod ny main og de eksisterende kontrakter. Uafklaret overlap i den berørte leverance blokerer dens merge/installation; urelateret backlog kan forblive åben med ejer og næste handling.
+6. Gentag kontrollen umiddelbart før merge/deploy. Bind review og testbevis til main/head-SHA, dependency-lock/manifest og eventuelt artifact-hash. Hvis disse eller relevante parallelle spor ændrer sig, er det gamle bevis ikke tilstrækkeligt: revurder overlap og kør de berørte tests igen.
+
+### 14.2 Samtidige AI'er og commit-rækkefølge
+
+- Brug isolerede worktrees. Læs andres status, men reset, rebase, stash, flyt, force-push eller fjern aldrig deres arbejde uden aftalt overtagelse. En gammel tidsstempel er ikke en frigivelse af ejerskab.
+- Registeret er koordinering, **ikke en distribueret lås**. En session registrerer sin intention og relevante overlap. Modstridende aktivitet afklares gennem eksisterende godkendte samarbejdskanaler eller Peter; ingen stiltiende overtagelse. Der er ikke automatisk tilladelse til at sende beskeder på brugerens vegne.
+- Overlappende merge/deploy udføres sekventielt af en navngivet integrationsansvarlig. Brug beskyttet branch/merge queue med kontrol af forventet SHA hvor tilgængeligt; ellers frisk SHA-kontrol og eksplicit koordineret mergevindue. Et Markdown-felt eller en check-then-push-sekvens garanterer ikke atomaritet. Kan samtidighed ikke afklares, stands den overlappende mutation.
+- Handover er hændelsesloggen; registeret viser aktuel disposition. Opdatér begge i samme leverance. Ved konflikt flettes begge sessioners oplysninger, aldrig "vores version vinder". Overtagelse angiver fra/til-session, præcis revision, ucommittede filer og åbne risici.
+
+### 14.3 Softwarepakker og ventende update #numre
+
+Før installation sammenholdes kandidatens **hele** pakkesæt og afhængighedslukning med frisk inventory, faktisk installerede versioner, OS/arkitektur/Python-krav og målmiljø. Kontroller også åbne kode-/konfigurationsændringer, kompatibilitet, backup, recovery og driftsvindue. En højere version kan både mangle lokale rettelser og ændre en kontrakt.
+
+En delvist overhalet kandidat må ikke installeres samlet eller lukkes samlet uden at dens rester er håndteret. Byg et nyt kompatibelt, testet, signeret artifact til de relevante rester; ændr aldrig et allerede signeret artifact. Bevar sporbar relation fra gammel kandidat til erstatning og per-pakke disposition. Frisk Edge-/Headend-verifikation efter installation og rapporteret inventory kræves før "færdig". GRC-fund/risici opdateres ved deres eksisterende identitet.
+
+Ingen genveje omkring signatur, miljø-/tenant-isolation, backup, rollback eller opdateringsautoritet. Dokumentér forskel på foreslået, merget, released, installeret og verificeret; ingen af dem betyder automatisk de andre.
+
+### 14.4 Oprydning med bevaring af viden
+
+Et spor må markeres **overhalet-og-arkiveret**, når alle restkrav har dokumenteret disposition, erstatningen er verificeret hvor relevant, og ingen aktive sessioner, releases eller rollbackforløb afhænger af det. Registrér kilde/head-SHA, erstatningscommit/PR/dokument, tests, beslutning og ansvarlig.
+
+Fjern derefter kandidaten fra aktiv kø gennem det normale supersede-/lukningsflow med begrundelse og erstatningsreference. Arkivér branch/spor og bevar en holdbar recovery-reference før branch-/worktree-oprydning. En SHA alene er ikke en bevaringsgaranti, hvis sidste ref slettes. Uncommitted/untracked arbejde skal bevares og gennemgås først. Slet ikke audit trail, signerede artifacts i brug, rollbackkilder, idéer eller dokumenthistorik for at gøre listen pæn.
+
+### 14.5 Håndhævelse og afslutningsbevis
+
+Reglen er et obligatorisk review-/driftskrav via AGENTS.md og CLAUDE.md. **Denne dokumentationsændring indfører ikke en teknisk CI- eller serverlås.** Et fremtidigt automatisk gate skal verificere referencer, aktuelle SHA'er, nødvendige dispositioner og overlap; en afkrydset formular kan ikke bevise funktionel ækvivalens. Indtil sådan et gate findes, skal integrationsansvarlig udføre og dokumentere kontrollen.
+
+En leverance er først afsluttet, når register/handover indeholder restdispositioner, relevant test-/runtimebevis og konkret udført oprydning — eller eksplicit åbne rester med ejer/næste handling. Påstå aldrig at hele branchlandskabet er ryddet op, når kun et snapshot er oprettet.
+
+
+### 14.6 Intet åbent spor må være uden fremdrift
+
+Hvert åbent spor skal have navngiven ansvarlig session/person, konkret næste handling og en dateret opfølgning. Status **aktiv** kræver aktuel aktivitet/evidens; **afventer** kræver navngiven blokering, ansvarlig for at fjerne den og næste kontroltidspunkt. En opfølgning i dokumentet er ikke en kørende automatisk påmindelse.
+
+Ved hver sessionsstart gennemgås uejede, forfaldne og blokerede spor. Den udførende session tager inden for sit autoriserede scope et konkret næste skridt, koordinerer overdragelse eller forelægger en samlet prioriterings-/kapacitetsbeslutning for Peter. Ingen opgave må skjules ved blot at flytte datoen eller markere aktiv uden arbejde. Kan alt ikke udføres samtidigt, fastlægges en synlig rækkefølge og en begrundet start-/opfølgningsdato; der gives ikke falske løfter om baggrundsarbejde fra inaktive AI-sessioner.
+
+Legacy-registreringen er en overgang: poster med ukendt ejer eller manglende opfølgning er åbne afklaringsopgaver, ikke accepteret permanent backlog. Efter registreringen skal næste integrationssession tildele ejere og datoer eller få Peter til at prioritere uafklaret scope.
+
+
+## 15. Forslag til Mission Framework / Mission Platform — review-input
+
+**Status: Codex-forslag 2026-09-13.** Arkitekturinput bevaret i fælles sammenlægning; ikke vedtaget eller implementeret upstream.
+
+### 15.1 Genbrug det eksisterende grundlag
+
+Mission Framework har allerede [Engineering Continuity og Independent Outcome Verification](https://github.com/froekjaer/mission-framework/blob/a6234ba4232a4e337843189fe6f9b4f497bb1527/docs/ENGINEERING_CONTINUITY_AND_INDEPENDENT_VERIFICATION.md): autoritativ tilstand skal være holdbar, tab af betydning er en regression, og AI-selvkontrol er ikke alene uafhængig verifikation. [Mission Intelligence](https://github.com/froekjaer/mission-framework/blob/a6234ba4232a4e337843189fe6f9b4f497bb1527/MISSION_INTELLIGENCE.md) adskiller analyse fra beslutningsmyndighed.
+
+Mission Platform har allerede [identitet, ejerskab, tid, tilstand og evidensrelationer](https://github.com/froekjaer/Mission-Platform/blob/782ef287ef3ae4767503a50c1085f823ec4707d4/docs/architecture/mission-meta-model.md), og [ADR-0002](https://github.com/froekjaer/Mission-Platform/blob/782ef287ef3ae4767503a50c1085f823ec4707d4/docs/adr/ADR-0002-trust-edge-action-request-device-adapters.md) fastholder lokal beslutningsmyndighed over signerede Action Requests. Disse begreber skal anvendes frem for at opfinde en konkurrerende Mission Core.
+
+**Observation:** I TimeLapse Pro findes åbne PR'er, branches og uncommitted dokumentarbejde uden samlet verificeret restdisposition. Claudes PR-kommentarer peger på stadig relevante dele i #159/#163; de er input til kommende uafhængig genverifikation, ikke allerede bevist ækvivalensanalyse fra Codex. Et register kan bevare denne observation, men kan ikke alene styre samtidige mutationer eller sikre fremdrift.
+
+**Fortolkning:** De gennemgåede platformdokumenter beskriver relevante principper, men ikke en konkret protokol for samtidige AI-sessioners arbejdsmandater, overtagelse, forældede beslutninger og forældreløse opgaver. Dette er et kandidatbehov for implementation/operationalisering; ikke bevis for at hele Framework mangler kontinuitetsprincipper eller at ingen beslægtet løsning findes andetsteds.
+
+### 15.2 Placering af ansvar
+
+| Sted | Foreslået ansvar | Afgrænsning |
+|---|---|---|
+| Mission Framework | Præcisér eventuelt continuity/reconciliation for parallelt og uafsluttet arbejde gennem Framework Findings | Generelle krav og evidens; ingen Git-/AI-leverandørspecifik scheduler i semantisk kerne |
+| Mission Platform | Genbrugelige kontrakter og kontroller for arbejdsmandater, delegation, koordination, evidens og overdragelse | Implementér som workflows/policy-/evidenstjenester under eksisterende meta-model; teknologineutralt |
+| TimeLapse Pro | Afprøv med konkrete PR'er, branches, update-kandidater, GRC og runtime-evidens | GitHub-/CMDB-adaptere og lokal praksis; ikke automatisk universel regel |
+
+### 15.3 Mindste kontrakt for kontrolleret agentarbejde
+
+- **Mandat:** stabil opgave- og sessionsidentitet, ansvarlig menneskelig rolle, scope/målressourcer, tilladte handlinger, begrænsninger, gyldighed, stopbetingelser og forventet resultat. En agents navn, selvsikkerhed eller læste dokument er ikke autorisation.
+- **Delegation:** relation fra hovedopgave til hver underagent, eksplicit overdraget scope og resultatreference. Underagentens rettigheder må ikke overstige forælderens eller kunne forøges gennem yderligere delegation. Forælderen ejer integration og restarbejde. Hemmeligheder/tokens kopieres ikke ind i register/handover.
+- **Koordination:** versionerede tilstandsovergange med forventet revision; tidsbegrænset reservation hvor nødvendigt og et generationsnummer, som den udførende tjeneste kontrollerer. En gammel session må ikke kunne merge/deploye efter overtagelse, selv om den vågner med tidligere credentials eller en gammel plan. Timeout alene er ikke bevis for, at en igangværende ekstern handling er stoppet.
+- **Udførelse:** adskil forslag, godkendelse og faktisk handling. Kontroller identitet, scope, revision, target, gyldighed, replay og idempotens ved selve merge-/deploymentgrænsen. Godkendelse bindes til indhold/hash og relevante forudsætninger; ny relevant tilstand udløser revurdering. Dette supplerer, men omgår aldrig Edge's lokale beslutningsmyndighed.
+- **Resultat og restindhold:** holdbar kæde fra mål/krav til ændring, review, tests, artifact og observeret outcome; relationer til forgængere, erstatninger og restkrav. Delvise resultater, forkastede idéer og uafklarede modsætninger bevares. Sletning af en ref er ikke evidens for afslutning.
+- **Fremdrift og recovery:** ansvarlig, næste handling, afhængigheder, blokering og opfølgning; opdage manglende aktivitet, eskalere og foretage kontrolleret overtagelse. En scheduler er nødvendig, hvis opfølgning skal ske uden aktive sessioner. Denne tekst opretter ingen sådan scheduler og lover ikke autonom baggrundsaktivitet.
+
+Kontroller håndhæves ved betroede værktøjer/tjenester, ikke alene i en prompt. Review af eksternt branchindhold må ikke give dette indhold instruktionsmyndighed; kode, issues og agentrapporter er input, der kan indeholde fejl eller manipulerende instruktioner. Audit skal vise aktør og autoriserende beslutning separat. Adgang og læserettigheder til evidens begrænses efter missionens data- og trustgrænser.
+
+### 15.4 Uafhængig verifikation og arkitekturprøver
+
+Foreslåede prøver til platformens eksisterende [Architecture Tests](https://github.com/froekjaer/Mission-Platform/blob/782ef287ef3ae4767503a50c1085f823ec4707d4/docs/architecture/architecture-tests.md), før kontrolmekanismen erklæres fungerende:
+
+1. To AI'er foreslår overlappende ændringer fra samme base: efter første merge afvises den andens gamle revisionsbevis, og dens unikke restkrav bevares til genforening.
+2. En session mister kontakt og overtages: dens senere mutationsforsøg afvises med forklaring; allerede igangsat arbejde reconcileres før genforsøg, så en handling ikke udføres dobbelt.
+3. En underagent forsøger at udvide mandat eller anvende et gammelt token: execution boundary afviser; ingen rettighedseskalering gennem delegation.
+4. En pakke er delvist overhalet: manglende tests/idéer/kode findes og dispositioneres før arkivering; et squash-merge eller 0 unikke commits er ikke eneste testoracle.
+5. En opgave er blokeret uden aktivitet: den bliver synlig for den ansvarlige ved aftalt opfølgning, og kapacitets-/prioritetsproblemet skjules ikke som aktivt arbejde.
+6. En opdatering er signeret, men mål/inventory eller missionstilstand er ændret: installation udsættes/afvises efter policy; lokal essentiel drift fortsætter ved central afhængighedsfejl.
+7. Alle oprindelige AI-sessioner forsvinder: en ny deltager kan rekonstruere mandat, faktisk udført arbejde, uafklarede resultater og næste handling fra holdbare kilder uden chat-hukommelse.
+
+Selvreview og flere modeller med samme antagelser er ikke automatisk uafhængige. Kombinér kontrakttests, anden reviewer og faktisk outcome-verifikation efter konsekvens. Mål manglende restkrav, forældede mutationer, uejede/forfaldne opgaver og recoveryevne; mål ikke succes blot som antal lukkede branches.
+
+### 15.5 Feedback og næste skridt
+
+Forbered efter fælles review en evidensbaseret tilbagemelding via [Framework Findings-processen](https://github.com/froekjaer/mission-framework/blob/a6234ba4232a4e337843189fe6f9b4f497bb1527/docs/FRAMEWORK_FINDINGS.md). Kandidattitel: **Continuity of concurrent unfinished work and bounded AI delegation**; stabilt FF-id tildeles først efter opslag i upstream-registeret. Status foreslås Proposed; observation har høj sikkerhed for de konkret registrerede spor, fortolkningen moderat sikkerhed og kræver platformreview. Foreløbig disposition: præcisér eksisterende continuity-praksis og returnér den konkrete kontrolprotokol til Mission Platform som implementationsarbejde.
+
+Knyt TimeLapse-evidens og reelle begrænsninger til tilbagemeldingen. Få disposition og eventuelt platforms-ADR gennem det eksisterende reviewforløb; bring derpå vedtagne ændringer tilbage til agentloadere, lokal regel og tests. Første leverance er en lille kontrakt og testbar prototype, ikke en ny stor agentplatform eller tre konkurrerende registre.
+
+Dette input er endnu ikke sendt upstream. De tre input er nu samlet lokalt; upstream-disposition udestår. Ingen af forslagene får kanonisk forrang ved blot at være skrevet først.
