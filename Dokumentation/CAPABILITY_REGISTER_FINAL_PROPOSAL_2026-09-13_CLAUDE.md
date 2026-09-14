@@ -6,7 +6,12 @@ Edge1-incidenten. Se §0 og §5. · **v4+-tilføjelser:** Claude Sonnet 5, 2026-
 paa z.ai's v4 uden at overskrive den (§2a, §5a, §5b): fire skemahuller Codex-reviewet fandt som
 v4 ikke daekkede; en direkte LAN-adgang-til-8443-undersoegelse; og en EKSPLICIT, uafklaret
 modsigelse mellem denne sessions Pi-hole-fund og z.ai's Edge1-fund (jf. §16.8's egen regel om
-ikke at harmonisere modstridende evidens stiltiende).
+ikke at harmonisere modstridende evidens stiltiende). · **Beslutningsejer-disposition,
+2026-09-14 (§5b):** Peter har afklaret :8443-management-capabilitys tiltaenkte scope som
+bevidst multi-netvaerk (IKKE BT-PAN-only) — `0.0.0.0`-binding er korrekt adfaerd, dokumentation
+der siger BT-PAN-only er forældet. Provenance for denne intent-konflikt (dokumenteret intent →
+observeret runtime → konflikt rapporteret → beslutningsejer-disposition) er bevaret i sin fulde
+fire-trins-form i §5b, ikke stiltiende omskrevet.
 **Status:** FORSLAG, review-klar — INTET implementeret. GRC-skema uændret, §16 ikke tilføjet noget
 governance-dokument, `UI_USECASE_CATALOG_2026-08-26.md` ikke selv rettet. Peter er beslutningsejer.
 **Konsoliderer:** `CAPABILITY_REGISTER_PROPOSAL_2026-09-13_CLAUDE.md` (v1 på PR #239, v2 på denne
@@ -312,36 +317,90 @@ separat efter Peters beslutning)."
   om Sec16c (sundhedsalarmering) ogsaa boer daekke "uventet software paa en
   registreret capability's vaert", ikke kun service-crash-loops.
 
-## 5b. NYT fund: direkte LAN-adgang til Edge:8443 (uafhaengig undersoegelse, read-only, ingen firewall-aendring)
+**STATUS 2026-09-14, samme dag:** Peter refererede til "the already
+supplied Pi-hole evidence correction" i et opfoelgende mandat. Jeg har
+tjekket denne PR-branch for nye commits (ingen fundet ud over min egen
+seneste push) og har ikke selv modtaget en saadan korrektionstekst nogen
+andet sted i denne samtale. **Jeg fabrikerer IKKE en loesning paa
+modsigelsen ovenfor uden den faktiske korrektionstekst.** Dette punkt
+forbliver derfor AABENT, praecis som beskrevet ovenfor, indtil den
+refererede korrektion faktisk er tilgaengelig for denne session (fx via
+endnu et push til branchen, eller gengivet direkte i en besked).
 
-**Tilføjet (Claude Sonnet 5), 2026-09-14**, som svar paa Peters bede om at
-"investigate direct LAN -> Edge:8443 intent without changing firewall
-rules." Muligvis relateret til 5a's uafklarede spoergsmaal, men rapporteret
-selvstaendigt da det er en separat, kodeverificeret observation:
+## 5b. Direkte LAN-adgang til Edge:8443 — intent nu AFKLARET af Peter (beslutningsejer), 2026-09-14
 
-- **[Verificeret]** `totp-service.py`s egen docstring (linje 4): *"Koerer
-  paa br-bt (192.168.42.1:8443 HTTPS)"* — dokumenteret intent er
-  BT-PAN-bro-interfacet ALENE.
-- **[Verificeret]** Den faktiske `uvicorn.run(app, host="0.0.0.0", ...)`
-  (linje ~2332) binder til ALLE interfaces, ikke kun `br-bt`.
-- **[Verificeret]** `timelapse-captive.sh`s `TL_MGMT`-iptables-kaede
-  anvender udelukkende `-i br-bt` — intet filtreres paa det almindelige
-  LAN/WiFi-interface.
-- **[Verificeret, observeret tidligere i denne session]** `curl` mod
-  `https://192.168.86.144:8443` (Edge2's almindelige LAN-IP, IKKE
-  `192.168.42.1`) gav et gyldigt HTTP 200-svar med login-siden.
-- **Konklusion:** servicens FAKTISKE netvaerkseksponering er bredere end
-  baade dens egen dokumenterede intent OG min tidligere `EDGE_LOCAL_SHELL_
-  ENDPOINT_ASSESSMENT`-paastand ("[Verificeret] Kun br-bt... Ingen ekstern/
-  offentlig eksponering identificeret") — den paastand var forkert, baseret
-  paa at laese `iptables`-scriptets omfang uden at tjekke uvicorns
-  faktiske bind-adresse. TOTP-login-formularen (applikationslag) staar
-  fortsat i vejen for reel shell-adgang, men netvaerkslaget haandhaever
-  IKKE den dokumenterede "kun fysisk BT-PAN-naerhed"-graense.
-- **Ingen firewall-/iptables-aendring foretaget**, som instrueret. Dette er
-  et fund, ikke en rettelse — og understoetter direkte v4's forslag om at
-  runtime-konfiguration skal observeres, ikke kun kodelaeses (beslaegtet
-  med v4's Sec16.9, men om netvaerkstopologi snarere end tjenestesundhed).
+**Status: LUKKET som et intent-spoergsmaal. Klassifikationen "INTENT NOT
+YET VERIFIED" er AFLOEST af en eksplicit beslutningsejer-disposition.**
+Provenance bevaret nedenfor i fire trin, ikke stiltiende omskrevet.
+
+**Trin 1 — dokumenteret intent (fundet 2026-09-14, tidligere i denne
+session):** `totp-service.py`s egen docstring (linje 4): *"Koerer paa
+br-bt (192.168.42.1:8443 HTTPS)"* — laest som BT-PAN-bro-interfacet ALENE.
+Samme antagelse laa til grund for `EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT_
+2026-09-13_CLAUDE.md`s tidligere paastand ("[Verificeret] Kun br-bt...
+Ingen ekstern/offentlig eksponering identificeret") — det dokument ligger
+paa PR #239's branch og roeres IKKE af denne PR (uden for #240's scope),
+men er hermed noteret som forældet/ufuldstaendigt paa dette punkt.
+
+**Trin 2 — observeret runtime (fundet 2026-09-14, tidligere i denne
+session):** Den faktiske `uvicorn.run(app, host="0.0.0.0", ...)` (linje
+~2332) binder til ALLE interfaces; `timelapse-captive.sh`s `TL_MGMT`-
+iptables-kaede anvender udelukkende `-i br-bt` og filtrerer intet paa det
+almindelige LAN/WiFi-interface; `curl` mod `https://192.168.86.144:8443`
+(Edge2's almindelige LAN-IP) gav et gyldigt HTTP 200-svar med login-siden.
+
+**Trin 3 — den dermed opstaaede intent-konflikt (rapporteret i forrige
+revision af denne fil):** dokumenteret intent (BT-PAN-only) stemte ikke
+overens med observeret runtime (0.0.0.0, reelt LAN-tilgaengeligt). Dette
+blev rapporteret som et aabent fund, ikke en konklusion om fejl/korrekthed.
+
+**Trin 4 — Peters disposition som beslutningsejer (2026-09-14, denne
+revision):** Den tiltaenkte capability er **eksplicit AFKLARET til IKKE at
+vaere BT-PAN-only**. Den lokale Edge-management-/recovery-graenseflade paa
+:8443 skal vaere teknisk tilgaengelig via alle relevante Edge-netvaerks-
+interfaces/-net, underlagt routing og passende sikkerhedskontroller —
+BT-PAN/direkte lokal recovery-netvaerk, lokal WiFi/Ethernet/LAN, kunde-LAN,
+og potentielt kunde-WAN/routede net hvor deployment-krav og omgivende
+netvaerkspolitik tillader det. "Lokal" beskriver den Edge-hostede
+management-plan, ikke en BT-PAN-eksklusiv bindings-/accept-graense.
+Fremtidige udrulninger kan kraeve at teknikere/administratorer naar Edge-
+management-graensefladen via en kundes LAN/WAN i stedet for BT-PAN.
+
+**Konsekvenser af denne disposition (eksplicit, ikke udledt):**
+- `0.0.0.0:8443`-binding er **i overensstemmelse med** den tiltaenkte
+  capability og maa IKKE "rettes" til BT-PAN-only blot for at matche
+  forældet dokumentation.
+- Dokumentation der beskriver capability'en som BT-PAN-only (`totp-
+  service.py`s docstring, `EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT`) er
+  forældet/ufuldstaendig og skal behandles som saadan — en fremtidig,
+  separat rettelse, ikke udfoert her (uden for #240's scope, og
+  `EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT` ligger desuden paa en anden PR).
+- Der maa IKKE indfoeres interface-specifikke firewall-restriktioner der
+  ville underminere denne capability.
+- Netvaerks-naaelighed kan fortsat vaere begraenset af kunde-/site-routing og
+  firewall-politik; Edge-arkitekturen selv maa ikke antage BT-PAN som den
+  eneste vej.
+- Autentificering/autorisation og recovery-sikkerhedskontroller (TOTP-login,
+  session-model) skal beskytte management-graensefladen UAFHAENGIGT af hvilken
+  tilladt netvaerksvej der bruges — dette aendrer ikke #238/#239s allerede
+  implementerede TOTP/session-lag.
+- **Ingen firewall-/iptables-/runtime-aendring er foretaget eller
+  foreslaaet i denne revision**, som eksplicit instrueret. Dette er en
+  intent-afklaring, ikke en godkendelse af urelaterede netvaerksaendringer.
+
+**Praecisering af §16.8 (modstridende evidens), ikke af z.ais §16c
+(sundhedsalarmering — et andet emne):** 8443-sagen viser at naar
+dokumenteret intent og observeret runtime divergerer, er det IKKE
+automatisk givet hvilken af de to der er "den rigtige." Her var runtime
+faktisk korrekt og dokumentationen forældet — det modsatte af hvad man
+kunne antage ved foerste øjekast (og det modsatte af min egen oprindelige,
+forkerte konklusion i en tidligere revision af denne fil, som brugte
+sagen som bevis for at "runtime afveg fra intent" uden at overveje at
+INTENT selv kunne vaere det forældede led). §16.8 daekker allerede at
+saadanne modsigelser skal forblive eksplicitte indtil afklaret — denne
+sag er et konkret, gennemfoert eksempel paa noejagtigt det: en
+beslutningsejer-disposition (Peter, ovenfor), ikke en automatisk "runtime
+er forkert"-antagelse, afgjorde den.
 
 ## 6. Navngivne, valgfrie udvidelser (disposition v4)
 
@@ -401,9 +460,12 @@ uden at opfinde en ny kontrolstruktur.
    bekræft at de afledes/afejes dér og valideres af ejer, ikke i denne PR.
 9. **NY:** §5a — sad Pi-hole fysisk paa Edge1's egen hardware, paa en separat DHCP-delt enhed,
    eller noget tredje? De to sessioners fund harmoniserer ikke automatisk.
-10. **NY:** §5b — skal LAN/8443-eksponeringsfundet (dokumenteret BT-PAN-only-intent vs. faktisk
-    0.0.0.0-binding) eskaleres som en selvstaendig sikkerhedssag, uafhaengigt af Capability
-    Register-forslaget? Ingen aendring er foretaget; dette flages kun.
+10. **AFGJORT (§5b, 2026-09-14):** Peter har som beslutningsejer afklaret at
+    :8443-managementgraensefladen bevidst IKKE skal vaere BT-PAN-only — multi-netvaerks-
+    tilgaengelighed (BT-PAN, lokal WiFi/Ethernet, kunde-LAN, potentielt kunde-WAN) ER den
+    tiltaenkte capability. `0.0.0.0`-binding skal IKKE "rettes." Dokumentation der siger
+    BT-PAN-only er forældet (fremtidig, separat rettelse — uden for #240's scope). Ingen
+    firewall-/runtime-aendring foretaget eller foreslaaet.
 11. **NY:** §2a — skal implementeringsomfanget (link-design, `database.py`-duplikat,
     UI-hardkodning, manglende link-API) indgaa i en evt. GRC-migrationsbeslutning (sp. 3),
     eller udskydes til en separat opfoelgende PR naar migrationen faktisk igangsaettes?
