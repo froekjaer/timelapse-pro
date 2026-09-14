@@ -8,11 +8,20 @@ Denne version retter det og tilfoejer et lag, ikke kun en type-udvidelse.
 
 ## Hvad der aendrede sig siden v1
 
-En uafhaengig arkaeologi-review fandt `Dokumentation/UI_USECASE_CATALOG_
-2026-08-26.md` — et allerede-eksisterende, 294-linjers praktisk
-usecase-katalog (oprettet af Peter i PR #141), som v1 af dette forslag
-ikke fandt. Se `UI_USECASE_CATALOG_DISCOVERY_AND_SEARCH_FAILURE_2026-09-13_
-CLAUDE.md` for fuld, selvstaendigt verificeret evidens (historikkaeden er
+**RETTELSE (2026-09-14):** dette dokument (v2) er selv erstattet af
+`CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (v3), som
+retter ni konkrete fejl en automatiseret review fandt i BAADE dette
+dokument og `UI_USECASE_CATALOG_DISCOVERY_AND_SEARCH_FAILURE_2026-09-13_CLAUDE.md`
+(deriblandt: skematisk ugyldigt `has_usecase`-link-design nedenfor i
+Sec"Foreslaaet skemaforslag"; undervurderet implementeringsomfang;
+manglende link-API). Se v3 for den korrigerede, review-klare version.
+Dette dokument bevares uaendret som korrektionsspor.
+
+En uafhaengig arkaeologi-review fandt `Dokumentation/UI_USECASE_CATALOG_2026-08-26.md`
+— et allerede-eksisterende, 294-linjers praktisk usecase-katalog
+(oprettet af Peter i PR #141), som v1 af dette forslag ikke fandt. Se
+`UI_USECASE_CATALOG_DISCOVERY_AND_SEARCH_FAILURE_2026-09-13_CLAUDE.md`
+for fuld, selvstaendigt verificeret evidens (historikkaeden er
 efterproevet punkt for punkt, ikke antaget) og en aerlig analyse af hvorfor
 hverken R04/#235-#238 eller min egen v1-soegning fandt den.
 

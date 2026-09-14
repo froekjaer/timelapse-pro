@@ -2,7 +2,11 @@
 
 **Forfatter:** Claude Sonnet 5, 2026-09-13 · **v4-revision:** z.ai (GLM-5.3), 2026-09-14 — efter
 uafhængig adversarial review af den frosne v3 (`a5422a60`) og out-of-sample crash-test mod
-Edge1-incidenten. Se §0 og §5.
+Edge1-incidenten. Se §0 og §5. · **v4+-tilføjelser:** Claude Sonnet 5, 2026-09-14 — lagt oven
+paa z.ai's v4 uden at overskrive den (§2a, §5a, §5b): fire skemahuller Codex-reviewet fandt som
+v4 ikke daekkede; en direkte LAN-adgang-til-8443-undersoegelse; og en EKSPLICIT, uafklaret
+modsigelse mellem denne sessions Pi-hole-fund og z.ai's Edge1-fund (jf. §16.8's egen regel om
+ikke at harmonisere modstridende evidens stiltiende).
 **Status:** FORSLAG, review-klar — INTET implementeret. GRC-skema uændret, §16 ikke tilføjet noget
 governance-dokument, `UI_USECASE_CATALOG_2026-08-26.md` ikke selv rettet. Peter er beslutningsejer.
 **Konsoliderer:** `CAPABILITY_REGISTER_PROPOSAL_2026-09-13_CLAUDE.md` (v1 på PR #239, v2 på denne
@@ -73,6 +77,45 @@ Runtime-/fysisk observation og evidens
 3. Konvention (ikke skema-håndhævet; `relationship`/`evidence_type` er allerede frie strenge):
    `relationship` får `has_usecase`, `evidence_type` får `usecase_catalog_entry` og
    `known_good_reference`.
+
+## 2a. Yderligere skemahuller fundet ved automatiseret review (ikke daekket af v4's Sec2)
+
+**Tilføjet (Claude Sonnet 5), 2026-09-14 — uafhaengigt genverificeret,
+ikke blot accepteret.** v4's Sec2 er markeret "uændret fra v1-v3, minimal"
+og daekker derfor ikke fire konkrete, verificerede implementeringshuller
+den automatiserede review (`chatgpt-codex-connector[bot]`, PR #240) fandt
+i v1/v2. De staar stadig aabne mod DENNE version og boer indgaa i en evt.
+implementeringsbeslutning:
+
+1. **Skematisk ugyldigt link-design:** at knytte en usecase-kataloglinje
+   til en capability via `grc_evidence` fungerer ikke — `grc_links.source_
+   item_id`/`target_item_id` er begge NOT NULL foreign keys til
+   `grc_items.id` (`v23_grc_register.sql`), mens `grc_evidence` har sit
+   eget, adskilte primaernoegle-rum. Et `has_usecase`-link kan derfor enten
+   fejle paa foreign-key-tjekket, eller ved et uheld ramme et forkert
+   `grc_items`-opslag med samme numeriske id. Reel loesning: enten en
+   `grc_items`-raekke pr. usecase, eller evidence knyttet direkte til
+   capability-item'et (`grc_evidence.item_id`), ikke et `grc_links`-forsoeg.
+2. **Duplikeret skema-sandhedskilde:** `headend/database.py:1368-1371`
+   definerer sin EGEN, uafhaengige `ck_grc_items_type`-CHECK-constraint med
+   kun de oprindelige seks typer. Databaser initialiseret via ORM (ikke kun
+   via migrationsscriptet) ville stadig afvise `capability`-raekker uden
+   denne rettet parallelt med migrationen.
+3. **UI-hardkodning:** Compliance-UI'et hardkoder den samme seks-vaerdis
+   TypeScript-union og filterliste to steder
+   (`timelapse-ui/src/pages/CompliancePage.tsx:181` og `:698`) — uden
+   opdatering her er den nye type usynlig/ufiltrerbar i selve UI'et.
+4. **Ingen link-API/UI:** der findes i dag ingen generisk API/UI til at
+   oprette eller inspicere `grc_links`-relationer — `grc_register_api.py`
+   opretter kun ét fast, hardkodet link i sit bootstrap-endpoint. Uden en
+   skrive-/laesesti forbliver capability-til-usecase-sporbarhed usynlig og
+   kun tilgaengelig via direkte SQL.
+
+**Konklusion:** "minimal ny struktur" (v4's F6-praecisering) er korrekt
+paa SKEMA-niveau (én ny item-type, to konventionsvaerdier), men en
+FUNGERENDE implementering kraever ogsaa punkt 1-4 ovenfor. Dette forslag
+forbliver et forslag om skemaet; punkt 1-4 er dokumenteret her saa en
+fremtidig implementeringsbeslutning ikke undervurderer det reelle omfang.
 
 ## 3. Forslag til §16 (additiv til det allerede accepterede §14; underklausuler renummureret 16.1–16.9 pr. F4)
 
@@ -232,6 +275,74 @@ og er formuleret generelt (ingen henvisning til pydantic, Edge1 eller TOTP i sel
 uden at være designet til det; manglende flapping-alarm lod 13.039 genstarter passere uomtalt →
 forslået som valgfri **§16c** (nedenunder) + som observation til update-governance-sporet.
 
+## 5a. MODSTRIDENDE EVIDENS (Sec16.8-praecedens): Pi-hole og Edge1 — ikke stiltiende harmoniseret
+
+**Tilføjet (Claude Sonnet 5), 2026-09-14.** Foer z.ai's v4-revision var
+tilgaengelig, havde jeg allerede udfoert en selvstaendig, netvaerksbaseret
+undersoegelse af Edge1's `.134`-uopnaaelighed
+(`EDGE1_8443_UNREACHABLE_ROOT_CAUSE_2026-09-13_CLAUDE.md`, ikke aendret af
+denne revision). Min konklusion dengang: `.134` svarede som en **Pi-hole-
+enhed** (lighttpd, Pi-hole blocking-page paa port 80), og jeg konkluderede
+at IP'en sandsynligvis var DHCP-genudlejet til en ANDEN, urelateret fysisk
+enhed — baseret UDELUKKENDE paa netvaerks-scanning (ping/curl/openssl),
+UDEN SSH-adgang til nogen Edge.
+
+z.ai's v4 (Sec5, baseret paa en "uafhaengig recovery-undersoegelse" —
+formentlig med reel SSH/enhedsadgang jeg ikke selv havde) giver en anden
+forklaring: Edge1 crash-loopede pga. et `pydantic`/`pydantic_core`-
+version-mismatch, og "Pi-hole var installeret men **urelateret** (fjernet
+separat efter Peters beslutning)."
+
+**Disse to fund er IKKE identiske, og jeg harmoniserer dem IKKE stiltiende
+(jf. Sec16.8, som denne fil selv foreslaar):**
+- Hvis Pi-hole faktisk kørte PAA/naer Edge1's egen IP og blev "fjernet" —
+  betyder det at Pi-hole var installeret OVENPAA eller VED SIDEN AF Edge1
+  (ikke en helt urelateret tredje enhed andetsteds paa DHCP-lejemaalet, som
+  jeg antog), hvilket rejser et nyt, uafklaret spoergsmaal: **hvordan og
+  hvorfor endte en Pi-hole-installation paa/naer en produktions-Edge, og er
+  det relateret til eller uafhaengigt af pydantic-crashloopet?**
+- Min egen `.134`-observation (Pi-hole svarende paa port 80/8443-refused)
+  var et faktisk, reproducerbart netvaerksfund paa undersoegelsestidspunktet
+  — den er ikke forkert i sig selv, men min FORTOLKNING af det
+  ("sandsynligvis en anden fysisk enhed via DHCP") staar nu i spaending
+  med z.ai's "installeret men urelateret, fjernet."
+- **Jeg beder Peter om en praecisering** frem for selv at vaelge mellem de
+  to fortolkninger: sad Pi-hole fysisk paa Edge1's egen hardware, paa en
+  separat enhed der delte IP via DHCP, eller noget tredje? Dette paavirker
+  om Sec16c (sundhedsalarmering) ogsaa boer daekke "uventet software paa en
+  registreret capability's vaert", ikke kun service-crash-loops.
+
+## 5b. NYT fund: direkte LAN-adgang til Edge:8443 (uafhaengig undersoegelse, read-only, ingen firewall-aendring)
+
+**Tilføjet (Claude Sonnet 5), 2026-09-14**, som svar paa Peters bede om at
+"investigate direct LAN -> Edge:8443 intent without changing firewall
+rules." Muligvis relateret til 5a's uafklarede spoergsmaal, men rapporteret
+selvstaendigt da det er en separat, kodeverificeret observation:
+
+- **[Verificeret]** `totp-service.py`s egen docstring (linje 4): *"Koerer
+  paa br-bt (192.168.42.1:8443 HTTPS)"* — dokumenteret intent er
+  BT-PAN-bro-interfacet ALENE.
+- **[Verificeret]** Den faktiske `uvicorn.run(app, host="0.0.0.0", ...)`
+  (linje ~2332) binder til ALLE interfaces, ikke kun `br-bt`.
+- **[Verificeret]** `timelapse-captive.sh`s `TL_MGMT`-iptables-kaede
+  anvender udelukkende `-i br-bt` — intet filtreres paa det almindelige
+  LAN/WiFi-interface.
+- **[Verificeret, observeret tidligere i denne session]** `curl` mod
+  `https://192.168.86.144:8443` (Edge2's almindelige LAN-IP, IKKE
+  `192.168.42.1`) gav et gyldigt HTTP 200-svar med login-siden.
+- **Konklusion:** servicens FAKTISKE netvaerkseksponering er bredere end
+  baade dens egen dokumenterede intent OG min tidligere `EDGE_LOCAL_SHELL_
+  ENDPOINT_ASSESSMENT`-paastand ("[Verificeret] Kun br-bt... Ingen ekstern/
+  offentlig eksponering identificeret") — den paastand var forkert, baseret
+  paa at laese `iptables`-scriptets omfang uden at tjekke uvicorns
+  faktiske bind-adresse. TOTP-login-formularen (applikationslag) staar
+  fortsat i vejen for reel shell-adgang, men netvaerkslaget haandhaever
+  IKKE den dokumenterede "kun fysisk BT-PAN-naerhed"-graense.
+- **Ingen firewall-/iptables-aendring foretaget**, som instrueret. Dette er
+  et fund, ikke en rettelse — og understoetter direkte v4's forslag om at
+  runtime-konfiguration skal observeres, ikke kun kodelaeses (beslaegtet
+  med v4's Sec16.9, men om netvaerkstopologi snarere end tjenestesundhed).
+
 ## 6. Navngivne, valgfrie udvidelser (disposition v4)
 
 - **§16a — drift-modstandsdygtige invarianter (FASTHOLDT som valgfri):** registrerede
@@ -288,6 +399,14 @@ uden at opfinde en ny kontrolstruktur.
 8. Edge1-implementationsobservationer (pin-par-validering i `fetch_python_bundle.py`,
    postflight-gate i update-flow, flapping-alarm) er noteret til update-governance-sporet —
    bekræft at de afledes/afejes dér og valideres af ejer, ikke i denne PR.
+9. **NY:** §5a — sad Pi-hole fysisk paa Edge1's egen hardware, paa en separat DHCP-delt enhed,
+   eller noget tredje? De to sessioners fund harmoniserer ikke automatisk.
+10. **NY:** §5b — skal LAN/8443-eksponeringsfundet (dokumenteret BT-PAN-only-intent vs. faktisk
+    0.0.0.0-binding) eskaleres som en selvstaendig sikkerhedssag, uafhaengigt af Capability
+    Register-forslaget? Ingen aendring er foretaget; dette flages kun.
+11. **NY:** §2a — skal implementeringsomfanget (link-design, `database.py`-duplikat,
+    UI-hardkodning, manglende link-API) indgaa i en evt. GRC-migrationsbeslutning (sp. 3),
+    eller udskydes til en separat opfoelgende PR naar migrationen faktisk igangsaettes?
 
 ## 9. Korrektionsspor (bevaret, ikke omskrevet)
 

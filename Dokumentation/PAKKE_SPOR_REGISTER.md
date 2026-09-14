@@ -12,7 +12,7 @@ og ingen glemt branch rådner uden at nogen bemærker det.
 register understøtter. Kort version: før du merger eller opdaterer en pakke, tjek denne
 liste for overlap; efter merge, ret listen til.
 
-**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status; Kimi: tilføjet målt branch-sweep, se §Backlog; Claude igen: #159/#163/#214/#229 migreret til §14.6 fulde felter, rapporterede stashes/worktrees tilføjet, intern modsigelse om accept-status rettet; Claude igen (F2): stash-observation opdateret fra 3 til 5 efter Kimis nyere rapport; **Kimi senest (reconciliation-mandat 2026-09-13):** #229 lukket uden merge, #214 rebased til `bde560eb` (CLEAN, CI grøn), semantisk restanalyse af #163 og #159 udført — se de enkelte spor)
+**Sidst opdateret:** 2026-09-13 (Claude, efter Peters forespørgsel om #214/BEHIND-status; Kimi: tilføjet målt branch-sweep, se §Backlog; Claude igen: #159/#163/#214/#229 migreret til §14.6 fulde felter, rapporterede stashes/worktrees tilføjet, intern modsigelse om accept-status rettet; Claude igen (F2): stash-observation opdateret fra 3 til 5 efter Kimis nyere rapport; **Kimi senest (reconciliation-mandat 2026-09-13):** #229 lukket uden merge, #214 rebased til `bde560eb` (CLEAN, CI grøn), semantisk restanalyse af #163 og #159 udført — se de enkelte spor; **Claude (2026-09-14):** #239 (edge-terminal xterm.js) og #240 (Capability Register-forslag) registreret som fulde §14.6-spor efter et P1-fund i #240s egen adversarial review paapegede at de manglede)
 
 ---
 
@@ -217,6 +217,30 @@ break-glass-mønstret). Implementeret mod `origin/main` = `d04798e4`, se
 for fuld detalje, tests og kendte rests. Polling-transport og xterm.js er bevidst
 udskudt — kræver fysisk-edge/live-browser-verifikation. Ingen merge udført; separat PR
 fra #235/#236/#237.
+
+## Edge-terminal xterm.js-genbrug — #239 (afventer fysisk-edge-test)
+
+- **Mandat/session:** Claude, 2026-09-13, efter Peters fysiske test viste at #238s direct-Edge-terminal havde en daarlig emulator (Ctrl-C/Tab/pil-taster/Home-End fejlede).
+- **Formaal/scope:** Erstat den haandrullede ANSI-strippende textarea-renderer med xterm.js (samme bibliotek/version som Headends "Aabn terminal"), vendoret lokalt. Behold #238s websocket-transport, multi-IP-robusthed, session-cleanup og local-first audit uaendret. Ny dynamisk resize.
+- **Berørte domæner/kontrakter:** `edge/scripts/totp-service.py`, nye vendorede filer under `edge/scripts/static/xterm/`, `tests/test_edge_technician_terminal_runtime.py`.
+- **Base/head:** PR #239, head **`e6e690588dec95a41ef83f4bfdd3ffb59ae0a589`**, base `main`. `mergeStateStatus=CLEAN`, `mergeable=MERGEABLE`.
+- **Overlap/restdisposition:** Ingen kendt overlap med andre aabne spor. Se `EDGE_TERMINAL_CAPABILITY_REGRESSION_2026-09-13_CLAUDE.md` for fuld genbrugsarkitektur-begrundelse.
+- **Seneste verificerede aktivitet/evidens:** CI groen (Python Syntax Check, Web UI Build Check) efter en `check_dir=False`-rettelse af en StaticFiles-regression. 86/86 relevante tests PASS lokalt. Fysisk Edge-acceptancetest (Ctrl-C, Tab, history, Home/End, resize, offline) IKKE udfoert endnu.
+- **Naeste handling:** Afventer Peters review + fysisk Edge-test foer merge.
+- **Blokeringsansvarlig:** Peter (fysisk test).
+- **Opfoelgning:** Ved fysisk-test-resultat.
+
+## Capability Register-governance-forslag — #240 (review-klart forslag, IKKE implementeret)
+
+- **Mandat/session:** Claude, 2026-09-13/14, efter en uafhaengig arkaeologi-review fandt at Capability Register-forslaget oversaa `UI_USECASE_CATALOG_2026-08-26.md`; videreudviklet efter en automatiseret adversarial review (`chatgpt-codex-connector[bot]`, 11 punkter) og en parallel revision af z.ai (GLM-5.3, v4, Edge1/pydantic out-of-sample-test).
+- **Formaal/scope:** Foreslaa (ikke implementere) et Capability Register (GRC `item_type='capability'`) der forbinder capability -> usecase (`UI_USECASE_CATALOG`) -> autoritativ+historisk implementering -> automatisk verifikation -> runtime-/fysisk observation. Foreslaar en ny §16-governance-regel. Ren dokumentation, ingen kode-/skemaaendring.
+- **Berørte domæner/kontrakter:** `Dokumentation/CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (v1-v4+), `UI_USECASE_CATALOG_DISCOVERY_AND_SEARCH_FAILURE_2026-09-13_CLAUDE.md`, denne registerpost. Ingen kodefiler.
+- **Base/head:** PR #240, head opdateres ved naeste push (se PR'en for aktuel SHA — flere sessioner (Claude + z.ai) skriver til samme branch, saa SHA'et her aeldes hurtigt).
+- **Overlap/restdisposition:** Ingen kendt overlap med andre kodeaendrende spor (rent dokumentationsforslag). Bemaerk selv-reference: denne registerpost eksisterede ikke foer PR #240s egen adversarial review paapegede det (P1-fund) — et konkret eksempel paa det forslaget selv adresserer.
+- **Seneste verificerede aktivitet/evidens:** Historisk selvtest mod 6 kendte haendelser + et out-of-sample-crash-test mod Edge1/pydantic-incidenten (klassificeret NOT PREVENTED af den frosne v3, se §5 i final-proposal-dokumentet). En uafklaret modsigelse mellem to sessioners Pi-hole/Edge1-fund er eksplicit flaget (§5a), ikke harmoniseret.
+- **Naeste handling:** Afventer Peters stilling til §16/§16a/§16b/§16c-kerneteksten, GRC-migrationsomfang, og de resterende aabne spoergsmaal (se dokumentets §8).
+- **Blokeringsansvarlig:** Peter (governance-beslutning).
+- **Opfoelgning:** Ved Peters §16-stilling.
 
 ## Governance-afslutning 2026-09-13
 

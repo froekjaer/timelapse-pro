@@ -23,12 +23,22 @@ R04/#235-#238 eller under dagens Capability Register-soegning.
   `UC-DEV-*`, `UC-SSH-*`, `UC-TECH-*`, m.fl.), hver med Start/Handling/
   Forventet resultat/Sikkerhed-audit/Status (`READY`, `NEEDS TESTDATA`,
   `CONTROLLED UAT`, `BLOCKED`, `READ-ONLY PASS`).
-- **Direkte relevant for dagens terminal-sag:** `UC-SSH-002` ("Aabn
-  browserterminal | Kun trusted host + capability + MFA", status **NEEDS
-  TESTDATA**) og `UC-TECH-001..003` (ServiceSession/lease/revoke-flows,
-  status **NEEDS EDGE**) er nøjagtigt den capability jeg netop implementerede
-  om (PR #239) — og de har staaet uafklarede siden 2026-08-26, gennem hele
-  R04-, ADR-004- og #238/#239-arbejdet, uden at nogen af analyserne saa dem.
+- **RETTELSE (fundet ved automatiseret review, 2026-09-14, uafhaengigt
+  genverificeret og korrekt):** Jeg paastod her oprindeligt at `UC-SSH-002`
+  og `UC-TECH-001..003` "noejagtigt" var den capability PR #239 aendrer.
+  Det er FORKERT. `UC-SSH-002` staar i kataloget under gruppen "SSH
+  Tunnels" sammen med `UC-SSH-001` ("Se tunnelkommando... `ssh -p ... -i
+  ... orangepi@localhost`") — det er Headends SSH-tunnel-medierede
+  "Aabn terminal"-flow (`headend/api/ssh_tunnel_terminal_api.py`,
+  reverse-tunnel + registreret host-trust + MFA), en HELT ANDEN capability
+  end den Edge-lokale TOTP-shell (`edge/scripts/totp-service.py`,
+  `/mgmt/cli/bash/ws`) som #238/#239 faktisk aendrer. `UC-TECH-001..003`
+  daekker separate ServiceSession-/kamera-lease-flows via Edge Technician
+  UI, heller ikke det samme. **Der findes reelt ingen eksisterende
+  usecase-post for den specifikke direct-Edge TOTP-browserterminal** —
+  det er selv et dokumentationshul, ikke en post der blot stod uafklaret.
+  Se `CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` Sec4 for
+  den rettede selvtest.
 
 ## 2. Den paastaaede historiske kaede — uafhaengigt verificeret via `git log`
 
@@ -40,7 +50,7 @@ punkt er slaaet op selvstaendigt i `git log`/commit-indhold:
 | 2026-08-16 | Produktions-regression/tabte Edge-moduler + SEC-016 capability-tab | **Bekraeftet.** `f1100e30 fix(headend): release artifact manifest was missing 4 top-level edge modules` + parallel SEC-016-kaede samme dag (`b4a69cbd feat(edge): auto-sync BT-TOTP secret...(SEC-016-BOOTSTRAP-GAP)`, PR #71/#73, `92d71414 docs: SEC-016 factory BT-TOTP bootstrap gap`). |
 | 2026-08-17 | OP-001 / operationelle loaders | **Bekraeftet.** `b537edf0 docs: vendor Mission Framework OP-001 + add operational loaders for Claude, Codex, ChatGPT, Kimi and Gemini`, PR #74. (Min foerste soegning med `grep "OP-001"` paa filnavne/dokumentindhold fandt IKKE dette — kun `git log --grep` paa commit-beskeder gjorde. Se afsnit 4.) |
 | 2026-08-19 | Dokumentations-gap-analyse | **Bekraeftet.** `40f0ed89 docs: Kimi GRC decision-pending list + documentation gap analysis 2026-08-19`, PR #81. |
-| 2026-08-23 | Bruger-/admin-menuguides | **Delvist bekraeftet, praecision afviger 3 dage.** De faktiske menuguides (`MENUGUIDE_BRUGER_v1.md`/`MENUGUIDE_ADMIN_v1.md`) blev merged **2026-08-20** (commit `aec738e1`/`510dadaa`, PR #83), ikke 2026-08-23. Der ER en relateret, ægte 08-23-begivenhed (`9bda9405 docs: opdateret GRC-beslutningsliste 2026-08-23`, PR #104) — sandsynligvis kilden til datoen i den uafhaengige opsummering, men det er en GRC-beslutningsliste-opdatering, ikke menuguidernes egen commit-dato. |
+| 2026-08-23 | Bruger-/admin-menuguides | **Bekraeftet — min tidligere "korrektion" af dette punkt var selv forkert, rettet igen 2026-09-14 efter automatiseret review.** Jeg paastod fejlagtigt at menuguiderne blev merged 2026-08-20, baseret paa commit `aec738e1`'s AUTHOR-dato paa en feature-branch. Den faktiske merge-commit til `main` er `510dadaa` ("...(#83)"), med author/committer-tidsstempel **2026-08-23T17:30:26+02:00** — uafhaengigt genverificeret direkte (`git show 510dadaa --format=%ad`). "2026-08-20" er kun filernes interne, selvrapporterede `Dato:`-felt, ikke deres merge-dato. Den oprindelige paastand (08-23) var korrekt hele tiden. |
 | 2026-08-26 | UI_USECASE_CATALOG | **Bekraeftet**, se afsnit 1. |
 
 **Konklusion om historikken:** Kaeden holder overordnet, med én mindre,
@@ -106,31 +116,42 @@ paavirket af denne specifikke fejl og holder fortsat ved efterproevning.)
 > hverken i naevaerende form eller med variationer i stavning/store
 > bogstaver.~~ — **Forkert, jf. korrektionen ovenfor.**
 
-**Jeg kan derfor hverken bekraefte at HANDOVER_LOG faktisk refererer til
-denne fil, eller at filen nogensinde er blevet committet.** Enten:
-(a) den uafhaengige reviews paastand om selve HANDOVER-referencen er
-unøjagtig/fejlagtig, eller (b) referencen/filen findes et sted mit repo-
-niveau-soegning ikke daekker (fx en anden AI-sessions lokale, aldrig-pushede
-worktree, en ekstern kanal, eller et dokument der aldrig blev git-tracket
-overhovedet). Jeg rekonstruerer den IKKE, som instrueret — dette er kun en
+**RETTELSE (fundet ved automatiseret review, 2026-09-14):** Denne
+afsnit indeholdt tidligere endnu en (ikke overstreget) paastand om at
+HANDOVER-referencen "hverken kan bekraeftes" — hvilket direkte modsagde
+den VERIFICEREDE konklusion ovenfor (linje 1208). Det var en rest fra
+foer korrektionen, som jeg glemte at fjerne ved forrige revision. Fjernet
+her. Den eneste gaeldende konklusion om selve FILEN (ikke referencen) er
+"IKKE ENDNU VERIFICERET" som angivet i den adskilte status-liste ovenfor —
+ikke "kan ikke bekraeftes" om referencen, som ER bekraeftet. Jeg
+rekonstruerer filen IKKE, som instrueret — dette er kun en
 verifikationsrapport.
 
 ## 4. Hvorfor blev `UI_USECASE_CATALOG` ikke fundet — aerlig rodaarsagsanalyse
 
-**Under R04/#235-#238 (hele terminal-/shell-sagaen):** Ingen af de fire
-dokumenter jeg producerede i den periode
-(`EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT_2026-09-13_CLAUDE.md`,
-`ADR-004-development-and-recovery-shell-access.md`,
-`R04_BRANCHTRIAGE_BATCH_2_2026-09-13_CLAUDE.md`,
-`SHELL_ROBUSTNESS_IMPLEMENTATION_2026-09-13_CLAUDE.md`) indeholder ordet
-"usecase" eller nogen `UC-SSH-*`/`UC-TECH-*`-reference — verificeret direkte
-(`grep` gav nul hits). Hele sagaen var udelukkende rammet som
-**kode-/git-arkaeologi + sikkerhedsvurdering**: "hvordan virker dette
-endpoint", "hvilken risiko har det", "hvad forbedrer den gamle branch
-teknisk". Jeg spurgte aldrig "findes der et eksisterende UAT-/usecase-
-katalog med dokumenterede acceptkriterier for netop denne feature." Det er
-en kategorisk blind vinkel, ikke en enkeltstaaende forglemmelse — samme
-mangel gentog sig konsekvent gennem fire separate dokumenter/PR'er.
+**Under R04/#235-#238 (hele terminal-/shell-sagaen) — RETTET, mere
+praecis og faktisk skarpere karakteristik (fundet ved automatiseret
+review, 2026-09-14):** Min oprindelige paastand ("nul hits for ordet
+'usecase' i alle fire dokumenter, udelukkende kode-/sikkerhedsfokus") var
+for kategorisk og delvist forkert — genverificeret direkte.
+`EDGE_LOCAL_SHELL_ENDPOINT_ASSESSMENT_2026-09-13_CLAUDE.md` har et helt
+afsnit ("## 10. Konkrete operationelle use cases shell'en løser") der
+eksplicit analyserer "use cases" (med mellemrum), og konkluderer selv:
+*"Der findes ikke en skriftlig liste over tiltænkte use cases."*
+`ADR-004-development-and-recovery-shell-access.md` naevner tilsvarende
+at fremtidige typede operationer kraever "at disse use cases først
+registreres." **Den faktiske, mere praecise fejl er derfor ikke at jeg
+aldrig taenkte paa usecases som begreb — jeg gjorde, og skrev endda
+eksplicit at ingen skriftlig liste fandtes — men at jeg IKKE fandt
+`UI_USECASE_CATALOG_2026-08-26.md`, som allerede var netop den liste jeg
+selv efterlyste.** Dette er en skarpere, mere alvorlig version af
+soegefejlen end min oprindelige formulering: det var ikke fravaer af
+spoergsmaalet, det var en mislykket soegning efter svaret paa et
+spoergsmaal jeg faktisk stillede. `R04_BRANCHTRIAGE_BATCH_2_2026-09-13_
+CLAUDE.md` og `SHELL_ROBUSTNESS_IMPLEMENTATION_2026-09-13_CLAUDE.md`
+indeholder fortsat ingen saadan diskussion (verificeret), saa det er
+stadig kun 2 af 4 dokumenter, ikke 0, der reelt engagerede sig med
+begrebet.
 
 **Under dagens Capability Register-soegning:** Jeg soegte specifikt efter
 "capability register", "capability-register" og "kapabilitet" i
