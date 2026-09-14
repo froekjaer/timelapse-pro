@@ -529,22 +529,50 @@ er forkert"-antagelse, afgjorde den.
   verifikation, core, obligatorisk for fuldfoerelse) — §16c er LOEBENDE overvaagning, §16.9 er
   ÉN engangs-kontrol ved aendringens afslutning.
 
-## 7. Minimum wiring-forslag for §16 (DEL AF ACCEPTPAKKEN — ikke valgfri senere forbedring)
+## 7. Wiring for §16 — EKSEKVERET (v5, 2026-09-14, Peter bekraeftede "eksekvér nu")
 
-**RETTELSE (v5, 2026-09-14, fundet ved gennemgang efter Peters arkitekturgodkendelse):** W1's
-tidligere ordlyd henviste fejlagtigt til "`Dokumentation/PAKKE_SPOR_REGISTER.md` §16" — men
-§16 er konsekvent foreslaaet gennem hele dette dokument som **additiv til det allerede
-accepterede §14** (§3's egen overskrift), og §14 findes bekraeftet i
-`SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` (§14.1-14.6, Accepted 2026-09-13), IKKE i
-PAKKE_SPOR_REGISTER (som kun INDEHOLDER en enkelt §14.6-henvisning, ikke selve §14/§16-teksten).
-Referencen nedenfor er rettet til den korrekte placering.
+**RETTELSE (fundet ved gennemgang efter Peters arkitekturgodkendelse):** W1's tidligere ordlyd
+henviste fejlagtigt til "`Dokumentation/PAKKE_SPOR_REGISTER.md` §16" — men §16 er konsekvent
+foreslaaet gennem hele dette dokument som **additiv til det allerede accepterede §14** (§3's
+egen overskrift), og §14 findes bekraeftet i `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`
+(§14.1-14.6, Accepted 2026-09-13), IKKE i PAKKE_SPOR_REGISTER (som kun INDEHOLDER en enkelt
+§14.6-henvisning, ikke selve §14/§16-teksten). Rettet nedenfor.
 
-Princip (F3): **én kanonisk regel** (`SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §16) + **routing
-fra den obligatoriske operationelle path**. Ingen duplikering af §16-tekst i flere filer.
-Foelgende er foreslaaede *eksakte* aendringer — **eksekvering (faktisk redigering af de fem
-loader-filer) afventer fortsat eksplicit bekraeftelse af omfanget, jf. Peters godkendelse §0a's
-skelnen mellem "bringes i overensstemmelse" og "acceptance og merge"; denne PR har ikke
-eksekveret dem endnu:**
+**ANDEN RETTELSE, fundet under selve eksekveringen:** W2's oprindelige forslag ("tilfoej til
+OP-001 Step 5") ville have redigeret `Dokumentation/mission-framework/OP-001-Mission-
+Operational-Preamble.md` — men denne fil er ALLE STEDER i repoet (inkl. hvert loader-dokuments
+egen punkt 1) eksplicit beskrevet som **"a vendored, verbatim copy of the canonical
+procedure"**. At tilfoeje TimeLapse-lokalt indhold direkte i en vendoret, verbatim-kopi ville
+selv vaere et brud paa den samme disciplin denne PR i oevrigt haandhaever (skab ikke en
+TimeLapse-laast parallel af noget opstroems). Det etablerede, allerede-eksisterende moenster
+(bekraeftet i alle fire loader-filer: punkt 1 henviser til OP-001, punkt 2-5 er TimeLapse-lokal
+uddybning UDENFOR den vendorede fil) fulgt i stedet: W1+W2's samlede indhold er foldet ind i
+loader-filerne selv, IKKE i OP-001, som forbliver uaendret og verbatim.
+
+**Eksekveret, ikke laengere kun foreslaaet:** Peter bekraeftede eksplicit "Eksekvér wiring nu"
+som svar paa det praecise spoergsmaal om §8 punkt 7's tvetydighed. Foelgende fem filer er nu
+faktisk redigeret paa denne PR-branch:
+
+- **`AGENTS.md`** (Codex/Kimi Code) — nyt afsnit tilfoejet efter den eksisterende "Mandatory
+  package / track reconciliation"-sektion.
+- **`CLAUDE.md`** (Claude Code) — samme tilfoejelse, samme placering (identisk sektion i begge
+  filer).
+- **`GEMINI.md`** (Gemini CLI) — tilfoejet til punkt 3 (denne fil har ingen separat
+  reconciliation-sektion; punkt 3 er naermeste eksisterende krog).
+- **`Dokumentation/CHATGPT-PROJECT-INSTRUCTIONS.md`** (ChatGPT, manuel indsaettelse — autoloades
+  IKKE, kraever fortsat manuel synkronisering ved fremtidige aendringer, jf. §8 punkt 12) —
+  tilfoejet til den tilsvarende afsluttende paragraf.
+- **`Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md`** — **BEVIDST
+  IKKE aendret** (se rettelsen ovenfor).
+
+Hver tilfoejelse siger eksplicit at §16 er "architecture-approved-but-not-yet-formally-accepted"
+— ingen loader-fil paastaar at §16 er bindende governance endnu, kun at dets disciplin skal
+foelges "i spirit" foran den formelle accept, praecis som Peters godkendelse §0a beskriver.
+
+Princip (F3, uaendret): **én kanonisk regel** (`SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §16,
+naar formelt accepteret) + **routing fra den obligatoriske operationelle path**. Ingen
+duplikering af selve §16-TEKSTEN i flere filer — hver loader-fil linker til denne PR's
+proposal-dokument for den fulde tekst, i stedet for at gengive den.
 
 - **W1 — `AGENTS.md`, punkt 3 udvidelse (og søster-loaders `CLAUDE.md`/`GEMINI.md`/
   `CHATGPT-PROJECT-INSTRUCTIONS.md` m.fl., samme sætning):**
@@ -560,9 +588,9 @@ eksekveret dem endnu:**
   > "For consequential capabilities, the search extends to capability equivalence per
   > `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §16, and observed runtime health is part of
   > completion (§16.9)."
-- **W3 — PR-template (valgfri sekundær forstærkning):** tjekpunkt
+- **W3 — PR-template (valgfri sekundær forstærkning, IKKE eksekveret):** tjekpunkt
   "§16-tjek udført: ___ (capability berørt: nej / ___)", med link. Kun hvis Peter finder
-  det nyttigt udover W1/W2.
+  det nyttigt udover W1/W2 — afventer separat stilling.
 
 Hvorfor dette er minimum: AGENTS.md/OP-001 er de to steder alle agenter *allerede* er tvunget
 igennem (AGENTS.md punkt 1 + punkt 3); §14/§16 (SAMARBEJDSMODEL) er allerede konsulteret ved
@@ -584,17 +612,13 @@ uden at opfinde en ny kontrolstruktur.
    `DOKUMENTPAKKE_OVERSIGT_v10.md` som uafhængig lavrisiko-rettelse?
 5. Hvem/hvad driver eksekvering af eksisterende `NEEDS TESTDATA`-poster (sag 4 viser reelt tab)?
 6. `COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md`: videre sporing eller tabt/erstattet?
-7. **PRAECIST AABENT PUNKT, IKKE ANTAGET AFGJORT AF ARKITEKTURGODKENDELSEN:** Peters
-   godkendelse siger "§16... samt W1/W2 skal nu bringes i overensstemmelse med den godkendte
-   arkitektur" — denne revision (v5) har bragt W1/W2's FORESLAAEDE TEKST i overensstemmelse
-   (§7, rettet reference + REUSE>EXTEND>NEW-sprog tilfoejet). Der er IKKE eksekveret nogen
-   aendring til de faktiske loader-filer (`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/
-   `CHATGPT-PROJECT-INSTRUCTIONS.md`) i denne PR. **Spoergsmaal til Peter:** skal disse fem
-   filer faktisk redigeres NU (foer formel §16-accept, som en forberedende "wiring"-fase
-   adskilt fra "acceptance og merge"), eller skal den faktiske eksekvering foerst ske SAMTIDIG
-   med/efter formel §16-accept? Begge laesninger er forenelige med den ordrette godkendelsestekst
-   i §0a; denne PR har bevidst IKKE gaettet, for at undgaa at redigere fem filer der styrer alle
-   fremtidige agent-sessioners obligatoriske adfaerd paa en tvetydig bemyndigelse.
+7. **LUKKET (2026-09-14):** Peter bekraeftede eksplicit "Eksekvér wiring nu" som svar paa det
+   stillede spoergsmaal. W1+W2's indhold er nu foldet ind i `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/
+   `Dokumentation/CHATGPT-PROJECT-INSTRUCTIONS.md` (§7). `OP-001` selv er bevidst IKKE aendret
+   (bevaret som vendoret, verbatim kopi — se §7's anden rettelse). Kraever ikke laengere en
+   Peter-beslutning — men bemaerk: dette er WIRING, ikke FORMEL §16-ACCEPT (SAMARBEJDSMODEL er
+   ikke aendret, §16 er IKKE markeret "Accepted" noget sted) — den distinktion Peter selv
+   eksplicit fastholdt i godkendelsen (§0a) staar fortsat.
 8. Edge1-implementationsobservationer (pin-par-validering i `fetch_python_bundle.py`,
    postflight-gate i update-flow, flapping-alarm) er noteret til update-governance-sporet —
    bekræft at de afledes/afejes dér og valideres af ejer, ikke i denne PR.
@@ -611,10 +635,12 @@ uden at opfinde en ny kontrolstruktur.
 11. **NY:** §2a — skal implementeringsomfanget (link-design, `database.py`-duplikat,
     UI-hardkodning, manglende link-API) indgaa i en evt. GRC-migrationsbeslutning (sp. 3),
     eller udskydes til en separat opfoelgende PR naar migrationen faktisk igangsaettes?
-12. **NY (v5):** naar/hvis punkt 7 afklares til "eksekvér W1/W2 nu" — skal `CHATGPT-PROJECT-
-    INSTRUCTIONS.md`s manuelle synkroniseringsbehov (bekraeftet i analyserapportens §1.3 — denne
-    fil autoloades ikke, saa aendringer der her kraever separat, manuel opmaerksomhed hver gang)
-    haandteres saerskilt fra de fire autoloadede filer?
+12. **DELVIST LUKKET (2026-09-14):** `CHATGPT-PROJECT-INSTRUCTIONS.md` er nu opdateret manuelt
+    i denne PR (§7), saa den er synkroniseret paa committime. Det resterende, aabne punkt er
+    PROCESSEN fremadrettet — denne fil autoloades stadig ikke, saa enhver FREMTIDIG aendring til
+    §16-teksten kraever fortsat en separat, manuel opmaerksomhed for at holde den synkroniseret;
+    ingen mekanisme haandhaever det automatisk. Ingen Peter-beslutning kraeves nu, men flaget som
+    en kendt, vedvarende driftsrisiko.
 
 ## 9. Korrektionsspor (bevaret, ikke omskrevet)
 

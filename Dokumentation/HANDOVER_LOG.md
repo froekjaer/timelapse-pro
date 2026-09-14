@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-14 — fra Claude: W1/W2-wiring EKSEKVERET (§16 arkitektur-disciplin foldet ind i alle fem agent-loader-filer)
+
+- **Mandat:** Peter bekraeftede eksplicit "Eksekvér wiring nu" som svar paa det stillede spoergsmaal om §8 punkt 7's tvetydighed (skulle W1/W2 eksekveres nu, eller vente til formel §16-accept). Wiring FOER formel accept, som forberedende fase.
+- **Eksekveret paa fem filer:** `AGENTS.md`, `CLAUDE.md` (ny paragraf efter den eksisterende "Mandatory package / track reconciliation"-sektion), `GEMINI.md`, `Dokumentation/CHATGPT-PROJECT-INSTRUCTIONS.md` (tilfoejet til punkt 3/tilsvarende afsluttende paragraf, da disse to filer mangler en separat reconciliation-sektion). Hver tilfoejelse siger eksplicit "architecture-approved-but-not-yet-formally-accepted" — ingen fil paastaar §16 er bindende governance endnu.
+- **Reel fejl fundet og rettet under eksekveringen:** det oprindelige W2-forslag ("tilfoej til OP-001 Step 5") ville have redigeret `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` direkte — men denne fil er alle steder eksplicit beskrevet som en "vendored, verbatim copy" af den kanoniske opstroems-procedure. At tilfoeje TimeLapse-lokalt indhold der ville selv vaere et brud paa den disciplin PR'en ellers haandhaever (undgaa TimeLapse-laasning af opstroems-generisk indhold). **`OP-001` er bevidst IKKE aendret** — det etablerede moenster (loader-filer elaborerer lokalt, OP-001 forbliver uaendret) fulgt i stedet.
+- **W1's forkerte "PAKKE_SPOR_REGISTER.md §16"-reference rettet** (fra forrige revision) til korrekt `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §16 i selve loader-tilfoejelserne.
+- **Ikke gjort:** ingen formel §16-accept (SAMARBEJDSMODEL selv er ikke aendret, §16 er ikke markeret "Accepted" noget sted); ingen merge; W3 (PR-template-tjekpunkt) forbliver ueksekveret, afventer separat stilling; ingen GRC-migration; ingen runtime-/netvaerks-/Compliance-Cockpit-/monitoring-/AI-routing-aendring; ingen af de resterende DECISION REQUIRED-punkter antaget afgjort.
+- **Filer rørt:** `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `Dokumentation/CHATGPT-PROJECT-INSTRUCTIONS.md` (wiring udfoert), `CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (§7/§8 opdateret til at reflektere eksekvering + OP-001-rettelsen), denne log.
+
 ### Handover 2026-09-14 — fra Claude: Peters arkitekturgodkendelse anvendt paa §16/§16a/§16b/§16c/W1-W2 (proposal-tekst, ikke eksekvering)
 
 - **Mandat:** Peter godkendte som beslutningsejer arkitekturretningen i PR #240 ved head `7ed3e3dd` — de 16 principper + deres analyserede placering — som grundlag for videre implementering. Eksplicit praeciseret: godkendelsen betyder IKKE at capabilities/GRC/Compliance-Cockpit/AI-routing/monitoring/upstream-komponenter allerede er implementeret/compliant/verificeret; REUSE>EXTEND>NEW-praeference og "opstroems foerst, tynd prototype kun hvis ikke-konkurrerende/ikke-laasende" som ny disposition-regel; §16abc+W1/W2 skal "bringes i overensstemmelse," men accept+merge afventer fortsat wiring+verificering; resterende DECISION REQUIRED-punkter IKKE antaget loest.
