@@ -238,7 +238,7 @@ fra #235/#236/#237.
 - **Base/head:** PR #240, head opdateres ved naeste push (se PR'en for aktuel SHA — flere sessioner (Claude + z.ai) skriver til samme branch, saa SHA'et her aeldes hurtigt).
 - **Overlap/restdisposition:** Ingen kendt overlap med andre kodeaendrende spor (rent dokumentationsforslag). Bemaerk selv-reference: denne registerpost eksisterede ikke foer PR #240s egen adversarial review paapegede det (P1-fund) — et konkret eksempel paa det forslaget selv adresserer.
 - **Seneste verificerede aktivitet/evidens:** Historisk selvtest mod 6 kendte haendelser + et out-of-sample-crash-test mod Edge1/pydantic-incidenten (klassificeret NOT PREVENTED af den frosne v3, se §5 i final-proposal-dokumentet). En uafklaret modsigelse mellem to sessioners Pi-hole/Edge1-fund er eksplicit flaget (§5a), ikke harmoniseret.
-- **Naeste handling:** Afventer Peters stilling til §16/§16a/§16b/§16c-kerneteksten, GRC-migrationsomfang, og de resterende aabne spoergsmaal (se dokumentets §8).
+- **Naeste handling:** En fuld arkitektur-/impact-analyse af 16 Peter-godkendte governance-principper er udfoert 2026-09-14 (`16_PRINCIPLES_GOVERNANCE_ARCHITECTURE_IMPACT_ANALYSIS_2026-09-14_CLAUDE.md`, analyse alene, intet implementeret) — afventer nu Peters OG ChatGPTs gennemgang af analysen foer nogen implementering autoriseres.
 - **Blokeringsansvarlig:** Peter (governance-beslutning).
 - **Opfoelgning:** Ved Peters §16-stilling.
 
