@@ -34,8 +34,33 @@ stiltiende; egne v3-fejl korrigeres med synlig markering, ikke sletning.
 | v2 | `50a1cd31` | Revideret efter arkæologi-fundet af kataloget |
 | v3 | `a5422a60` (frossen review-SHA) | Konsolideret "review-ready" + historisk selvtest |
 | **v4** | denne revision | Korrigeret efter uafhængig adversarial review (fund F1–F6, alle efterverificeret) + **out-of-sample crash-test mod Edge1-incidenten** (§5). Hovedændringer: (a) selvtest sag 1 og 2 korrigeret (F1/F2); (b) test-fejlklasser adskilt (F5); (c) ny **§16.9** (deployment-accept: observeret runtime-sundhed som succeskriterium) udledt af Edge1-fejlklassen; (d) ny valgfri **§16c** (sundhedsalarmering); (e) præcisering af "minimal ny struktur" (F6); (f) underklausuler renummureret 3.x → 16.x (F4); (g) **minimum wiring-forslag som del af acceptpakken** (F3, §7). |
+| **v5** | denne revision, 2026-09-14 | Efter Peters ARKITEKTURGODKENDELSE (§0a, bevaret ordret) af PR #240 ved `7ed3e3dd`: §16b/§16c's tidligere "anbefalet, ikke anvendt"-formuleringer fra analyserapporten er nu ANVENDT direkte i selve klausulteksten (materiel-paavirkning i §16b, risiko/impact ikke varighed i §16c); ny REUSE>EXTEND>NEW-disposition tilfoejet; "tynd prototype tilladt hvis ikke konkurrerende source-of-truth"-kriterium tilfoejet til de AI-routing-relaterede DECISION REQUIRED-punkter; W1's forkerte "PAKKE_SPOR_REGISTER §16"-reference rettet til korrekt placering. **Godkendelsen daekker arkitekturretningen, IKKE formel §16-accept eller merge — begge afventer fortsat wiring+verificering.** |
 
 ---
+
+## 0a. Peters arkitekturgodkendelse, 2026-09-14 (bevaret ordret)
+
+Peter godkendte arkitekturretningen i PR #240 ved head `7ed3e3ddab56997ad41067b4ba73e36093f310f2` (analyserapportens sidste, adversarial-review-korrigerede revision). Bevaret ordret som provenance:
+
+> Jeg godkender arkitekturretningen i PR #240 ved head `7ed3e3ddab56997ad41067b4ba73e36093f310f2` som grundlag for den videre implementering.
+>
+> Godkendelsen omfatter mine 16 godkendte governance-principper og den analyserede arkitektoniske placering af dem.
+>
+> Godkendelsen betyder ikke, at de identificerede capabilities, GRC-/Compliance Cockpit-funktioner, AI-routing/autonomi, monitoring eller upstream Mission-komponenter allerede er implementeret, compliant eller verificeret.
+>
+> REUSE skal foretrækkes før EXTEND, EXTEND før NEW, og generiske cross-project funktioner skal som udgangspunkt placeres i det korrekte upstream-lag frem for at skabe parallelle TimeLapse-specifikke løsninger.
+>
+> Hvor upstream-arkitekturen endnu ikke er moden nok, må en tynd TimeLapse-implementering/prototype anvendes til at validere behov og arkitektur, hvis den ikke etablerer en konkurrerende source of truth eller låser den generiske løsning til TimeLapse.
+>
+> §16, §16a, §16b og §16c samt W1/W2 skal nu bringes i overensstemmelse med den godkendte arkitektur, men acceptance og merge sker først efter den nødvendige wiring og verificering.
+>
+> De resterende DECISION REQUIRED-punkter må ikke antages løst af denne godkendelse. De skal enten forelægges mig, når de bliver materielle for implementeringen, eller løses inden for et allerede eksplicit delegeret mandat.
+>
+> Peter, Decision owner, 2026-09-14
+
+**Praecist omfang af godkendelsen (ikke udvidet, ikke indskraenket):**
+- **Godkendt:** de 16 principper selv; deres arkitektoniske placering (§2's fire-lags-kortlaegning); REUSE>EXTEND>NEW som disposition-raekkefoelge; "tynd prototype tilladt hvis den ikke etablerer en konkurrerende source-of-truth eller laaser en generisk loesning til TimeLapse" som kriterium for fremtidige lignende afvejninger (IKKE en forudbestemt konklusion for nogen konkret DECISION REQUIRED-sag); at §16/§16a/§16b/§16c/W1/W2 nu bringes i overensstemmelse med denne arkitektur.
+- **IKKE godkendt/IKKE antaget loest:** nogen konkret capability, GRC-/Compliance-Cockpit-funktion, AI-routing/autonomi-mekanisme, overvaagning, eller upstream Mission-komponent som allerede implementeret/compliant/verificeret; nogen af de resterende DECISION REQUIRED-punkter (herunder om `AI_KOMPETENCER_OG_OPGAVEROUTING.md` skal danne grundlag for en tynd lokal prototype — det AFGOERES IKKE her, kun kriteriet for en fremtidig afgoerelse er nu givet); formel §16-accept (markering af §16 som "Accepted" i SAMARBEJDSMODEL); merge af PR #239/#240.
 
 ## 1. Den endelige model
 
@@ -470,59 +495,106 @@ sag er et konkret, gennemfoert eksempel paa noejagtigt det: en
 beslutningsejer-disposition (Peter, ovenfor), ikke en automatisk "runtime
 er forkert"-antagelse, afgjorde den.
 
-## 6. Navngivne, valgfrie udvidelser (disposition v4)
+## 6. Navngivne, valgfrie udvidelser (v5 — §16b/§16c-ordlyd nu ENDELIG, jf. Peters godkendelse §0a)
+
+**Disposition-raekkefoelge (Peters godkendelse, §0a, ny i v5):** naar en consequential capability-aendring har flere gyldige implementeringsveje, praefereres i raekkefoelge **REUSE foer EXTEND, EXTEND foer NEW** — og generiske, tvaergaaende funktioner (jf. §2's Mission-Platform/Collaborative-Intelligence-klassificerede principper) placeres som udgangspunkt i det korrekte OPSTROEMS-lag frem for en parallel TimeLapse-specifik loesning. En TYND, lokal TimeLapse-prototype er tilladt hvor opstroems-arkitekturen endnu ikke er moden nok TIL AT validere behov/arkitektur — men KUN hvis den (a) ikke etablerer en konkurrerende source of truth, og (b) ikke laaser den generiske loesning til TimeLapse. Dette kriterium afgoer IKKE i sig selv nogen konkret DECISION REQUIRED-sag (fx AI_KOMPETENCER_OG_OPGAVEROUTING.md's rolle, §7 nedenfor) — det er den godkendte MAALESTOK en saadan sag skal vurderes imod, naar den forelaegges Peter eller loeses inden for et allerede delegeret mandat.
 
 - **§16a — drift-modstandsdygtige invarianter (FASTHOLDT som valgfri):** registrerede
   capability-items markerer afhængighed af håndholdte lister/konstanter (release-manifests,
   hardcodede versions-/imagenavne) og kræver programmatisk udledning eller eksplicit
   fuldstændigheds-/ratchet-test. Bevis: sag 3 (adfærds-lock-in). Edge1 tilføjer intet nyt
-  bevis for/immer imod — uændret.
-- **§16b — manuelle/ad hoc operationelle handlinger (FASTHOLDT som valgfri, med afklaret
-  afgrænsning):** dokumentationskrav for engangs-operationelle handlinger mod en registreret
-  capabilitys data (Travbyen-klassen). Kerne-triggeren (16.1) dækker fra v4 **automatiserede
-  leveranceflow** (deployment/update); rene manuelle data-operationer forbliver i §16b, så
-  kernen ikke bykratiseres.
-- **§16c — sundhedsalarmering (NY, valgfri):** vedvarende fejlsignaler for en registreret
-  capability (fx service-restart-løkker, gentagne health-check-fejl) skal rejse en synlig
-  alarm/GRC-finding uden manuel opdagelse. Bevis: 13.039 genstarter uden alarm (Edge1) og
-  BT-TOTP/kapabiliteter der "fejlede stille siden hardeningen" (HANDOVER 2026-08-24-klassen).
+  bevis for/imod — uændret.
+- **§16b — manuelle/ad hoc operationelle handlinger (FASTHOLDT som valgfri; ordlyd nu ENDELIG,
+  ikke laengere kun "anbefalet"):** §16b's dokumentationskrav udløses kun når en manuel/ad hoc
+  operationel handling har **potentiel materiel påvirkning** på en registreret capabilitys
+  eksistens, data, eller recovery-egenskab (Travbyen-klassen) — ikke for triviel, ubetydelig,
+  daglig drift. **En handling der er teknisk reversibel er IKKE af den grund alene undtaget** —
+  Travbyen var netop en "reversibel" (rekonstruerbar) sletning, der alligevel udgjorde den
+  reelle regressionssag, fordi capabiliteten (synlige kameralokationer) faktisk gik tabt i
+  mellemtiden. Reversibilitet kan hoejst tjene som ÉT eksempel paa triviel drift, aldrig som et
+  selvstændigt kriterium der overtrumfer materiel paavirkning. Kerne-triggeren (16.1) dækker
+  fortsat **automatiserede leveranceflow** (deployment/update); rene manuelle
+  data-operationer med potentiel materiel paavirkning forbliver i §16b, saa kernen ikke
+  bykratiseres med triviel drift.
+- **§16c — sundhedsalarmering (NY, valgfri; ordlyd nu ENDELIG, ikke laengere kun
+  "anbefalet"):** udløsningskriteriet for §16c er den **forventede konsekvens/risiko** ved en
+  vedvarende fejlsignal for en registreret capability (fx service-restart-løkker, gentagne
+  health-check-fejl), IKKE fejlens varighed. En kortvarig fejl med potentielt kritisk
+  konsekvens kraever oejeblikkelig detektion/alarm; en langvarig fejl med lav konsekvens
+  kraever det ikke noedvendigvis paa samme maade. **§16c maa IKKE kodificere en fast "X
+  minutter foer alarm"-taerskel som det styrende kriterium.** Naar udloest, skal fejlen rejse
+  en synlig alarm/GRC-finding uden manuel opdagelse. Bevis: 13.039 genstarter uden alarm
+  (Edge1) og BT-TOTP/kapabiliteter der "fejlede stille siden hardeningen" (HANDOVER
+  2026-08-24-klassen). Adskilt fra og IKKE en erstatning for §16.9 (post-aendrings-
+  verifikation, core, obligatorisk for fuldfoerelse) — §16c er LOEBENDE overvaagning, §16.9 er
+  ÉN engangs-kontrol ved aendringens afslutning.
 
 ## 7. Minimum wiring-forslag for §16 (DEL AF ACCEPTPAKKEN — ikke valgfri senere forbedring)
 
-Princip (F3): **én kanonisk regel** (PAKKE_SPOR_REGISTER §16) + **routing fra den obligatoriske
-operationelle path**. Ingen duplikering af §16-tekst i flere filer. Følgende er foreslåede
-*eksakte* ændringer — implementeres først ved Peters accept af §16 (denne PR implementerer intet):
+**RETTELSE (v5, 2026-09-14, fundet ved gennemgang efter Peters arkitekturgodkendelse):** W1's
+tidligere ordlyd henviste fejlagtigt til "`Dokumentation/PAKKE_SPOR_REGISTER.md` §16" — men
+§16 er konsekvent foreslaaet gennem hele dette dokument som **additiv til det allerede
+accepterede §14** (§3's egen overskrift), og §14 findes bekraeftet i
+`SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` (§14.1-14.6, Accepted 2026-09-13), IKKE i
+PAKKE_SPOR_REGISTER (som kun INDEHOLDER en enkelt §14.6-henvisning, ikke selve §14/§16-teksten).
+Referencen nedenfor er rettet til den korrekte placering.
+
+Princip (F3): **én kanonisk regel** (`SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §16) + **routing
+fra den obligatoriske operationelle path**. Ingen duplikering af §16-tekst i flere filer.
+Foelgende er foreslaaede *eksakte* aendringer — **eksekvering (faktisk redigering af de fem
+loader-filer) afventer fortsat eksplicit bekraeftelse af omfanget, jf. Peters godkendelse §0a's
+skelnen mellem "bringes i overensstemmelse" og "acceptance og merge"; denne PR har ikke
+eksekveret dem endnu:**
 
 - **W1 — `AGENTS.md`, punkt 3 udvidelse (og søster-loaders `CLAUDE.md`/`GEMINI.md`/
   `CHATGPT-PROJECT-INSTRUCTIONS.md` m.fl., samme sætning):**
   > "Before superseding/disposing of branches, or starting or delivering a consequential
   > capability change (new implementation, or deployment/update/dependency rollout), follow
-  > `Dokumentation/PAKKE_SPOR_REGISTER.md` §16: capability intent/invariants, relevant
-  > usecases, authoritative + historical implementation, and verification. A capability
-  > change is not complete until runtime health is observed (§16.9)."
+  > `Dokumentation/SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §16: capability intent/invariants,
+  > relevant usecases, authoritative + historical implementation, and verification. Prefer
+  > REUSE over EXTEND, EXTEND over NEW; generic cross-project functionality belongs upstream
+  > (Mission Framework/Platform/Collaborative Intelligence) unless a thin, non-competing,
+  > non-locking local prototype is explicitly justified. A capability change is not complete
+  > until runtime health is observed (§16.9)."
 - **W2 — `OP-001` (vendored preamble), Step 5 "Search Before Create" tilføjelse:**
   > "For consequential capabilities, the search extends to capability equivalence per
-  > `PAKKE_SPOR_REGISTER` §16, and observed runtime health is part of completion (§16.9)."
+  > `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §16, and observed runtime health is part of
+  > completion (§16.9)."
 - **W3 — PR-template (valgfri sekundær forstærkning):** tjekpunkt
   "§16-tjek udført: ___ (capability berørt: nej / ___)", med link. Kun hvis Peter finder
   det nyttigt udover W1/W2.
 
 Hvorfor dette er minimum: AGENTS.md/OP-001 er de to steder alle agenter *allerede* er tvunget
-igennem (AGENTS.md punkt 1 + punkt 3); PAKKE_SPOR §16 er allerede konsulteret ved
+igennem (AGENTS.md punkt 1 + punkt 3); §14/§16 (SAMARBEJDSMODEL) er allerede konsulteret ved
 R04/disposition. W1+W2 lukker det manglende led — "agent påbegynder/implementerer/leverer" —
 uden at opfinde en ny kontrolstruktur.
 
-## 8. Spørgsmål der kræver Peters beslutning (v4)
+## 8. Spørgsmål der kræver Peters beslutning (v5)
 
-1. Acceptér §16 kernetekst (§3, nu 16.1–16.9) som formuleret?
-2. Tilføj/udskyd/afvis §16a og/eller §16b — og den nye §16c?
+1. **ARKITEKTURRETNING GODKENDT (§0a, 2026-09-14) — formel §16-ACCEPT staar stadig aaben.**
+   §16 kernetekst (§3, 16.1–16.9) er godkendt som arkitektonisk grundlag, men "acceptance og
+   merge sker foerst efter den noedvendige wiring og verificering" (Peters ord). Formel accept
+   (markering som "Accepted" i SAMARBEJDSMODEL) afventer stadig.
+2. **ARKITEKTURRETNING GODKENDT (§0a) — §16a/§16b/§16c's ordlyd er nu FINALISERET (§6), ikke
+   laengere kun "anbefalet."** Formel tilfoejelse/accept afventer samme gate som punkt 1.
 3. Kør GRC-migrationen (`item_type='capability'`) nu eller ved første behov (fx
-   `CAP-EDGE-RECOVERY-TERMINAL` for #239)?
+   `CAP-EDGE-RECOVERY-TERMINAL` for #239)? **Uaendret aabent — arkitekturgodkendelsen betyder
+   IKKE at dette allerede er besluttet (§0a's eksplicitte praecisering).**
 4. Link `UI_USECASE_CATALOG_2026-08-26.md` fra `00_START_HER.md`/
    `DOKUMENTPAKKE_OVERSIGT_v10.md` som uafhængig lavrisiko-rettelse?
 5. Hvem/hvad driver eksekvering af eksisterende `NEEDS TESTDATA`-poster (sag 4 viser reelt tab)?
 6. `COMPLETE_TEST_CONTINUITY_PLAN_2026-08.md`: videre sporing eller tabt/erstattet?
-7. Acceptér wiring-pakken (W1+W2 obligatorisk, W3 valgfri) som betinget del af §16-accept?
+7. **PRAECIST AABENT PUNKT, IKKE ANTAGET AFGJORT AF ARKITEKTURGODKENDELSEN:** Peters
+   godkendelse siger "§16... samt W1/W2 skal nu bringes i overensstemmelse med den godkendte
+   arkitektur" — denne revision (v5) har bragt W1/W2's FORESLAAEDE TEKST i overensstemmelse
+   (§7, rettet reference + REUSE>EXTEND>NEW-sprog tilfoejet). Der er IKKE eksekveret nogen
+   aendring til de faktiske loader-filer (`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/
+   `CHATGPT-PROJECT-INSTRUCTIONS.md`) i denne PR. **Spoergsmaal til Peter:** skal disse fem
+   filer faktisk redigeres NU (foer formel §16-accept, som en forberedende "wiring"-fase
+   adskilt fra "acceptance og merge"), eller skal den faktiske eksekvering foerst ske SAMTIDIG
+   med/efter formel §16-accept? Begge laesninger er forenelige med den ordrette godkendelsestekst
+   i §0a; denne PR har bevidst IKKE gaettet, for at undgaa at redigere fem filer der styrer alle
+   fremtidige agent-sessioners obligatoriske adfaerd paa en tvetydig bemyndigelse.
 8. Edge1-implementationsobservationer (pin-par-validering i `fetch_python_bundle.py`,
    postflight-gate i update-flow, flapping-alarm) er noteret til update-governance-sporet —
    bekræft at de afledes/afejes dér og valideres af ejer, ikke i denne PR.
@@ -539,6 +611,10 @@ uden at opfinde en ny kontrolstruktur.
 11. **NY:** §2a — skal implementeringsomfanget (link-design, `database.py`-duplikat,
     UI-hardkodning, manglende link-API) indgaa i en evt. GRC-migrationsbeslutning (sp. 3),
     eller udskydes til en separat opfoelgende PR naar migrationen faktisk igangsaettes?
+12. **NY (v5):** naar/hvis punkt 7 afklares til "eksekvér W1/W2 nu" — skal `CHATGPT-PROJECT-
+    INSTRUCTIONS.md`s manuelle synkroniseringsbehov (bekraeftet i analyserapportens §1.3 — denne
+    fil autoloades ikke, saa aendringer der her kraever separat, manuel opmaerksomhed hver gang)
+    haandteres saerskilt fra de fire autoloadede filer?
 
 ## 9. Korrektionsspor (bevaret, ikke omskrevet)
 
