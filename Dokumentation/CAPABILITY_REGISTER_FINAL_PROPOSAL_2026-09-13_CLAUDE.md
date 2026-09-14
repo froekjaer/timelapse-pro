@@ -4,9 +4,10 @@
 uafhængig adversarial review af den frosne v3 (`a5422a60`) og out-of-sample crash-test mod
 Edge1-incidenten. Se §0 og §5. · **v4+-tilføjelser:** Claude Sonnet 5, 2026-09-14 — lagt oven
 paa z.ai's v4 uden at overskrive den (§2a, §5a, §5b): fire skemahuller Codex-reviewet fandt som
-v4 ikke daekkede; en direkte LAN-adgang-til-8443-undersoegelse; og en EKSPLICIT, uafklaret
-modsigelse mellem denne sessions Pi-hole-fund og z.ai's Edge1-fund (jf. §16.8's egen regel om
-ikke at harmonisere modstridende evidens stiltiende). · **Beslutningsejer-disposition,
+v4 ikke daekkede; en direkte LAN-adgang-til-8443-undersoegelse; og en (siden LUKKET, se §5a)
+EKSPLICIT modsigelse mellem denne sessions Pi-hole-fund og z.ai's Edge1-fund (jf. §16.8's egen
+regel om ikke at harmonisere modstridende evidens stiltiende — modsigelsen blev holdt aaben
+indtil Peter leverede autoritativ, fysisk/SSH-verificeret evidens, ikke gaettet paa). · **Beslutningsejer-disposition,
 2026-09-14 (§5b):** Peter har afklaret :8443-management-capabilitys tiltaenkte scope som
 bevidst multi-netvaerk (IKKE BT-PAN-only) — `0.0.0.0`-binding er korrekt adfaerd, dokumentation
 der siger BT-PAN-only er forældet. Provenance for denne intent-konflikt (dokumenteret intent →
@@ -14,6 +15,10 @@ observeret runtime → konflikt rapporteret → beslutningsejer-disposition) er 
 fire-trins-form i §5b, ikke stiltiende omskrevet.
 **Status:** FORSLAG, review-klar — INTET implementeret. GRC-skema uændret, §16 ikke tilføjet noget
 governance-dokument, `UI_USECASE_CATALOG_2026-08-26.md` ikke selv rettet. Peter er beslutningsejer.
+**z.ai's endelige uafhaengige verifikation, 2026-09-14** (mod `2b270323`): "READY AFTER
+NON-MATERIAL FIX" — to ikke-materielle rettelser identificeret (Pi-hole-provenance-lukning,
+§16.3 self-accept-bypass), begge udfoert i denne revision. Ingen §16-accept udfoert af denne
+verifikation eller af denne revision — det forbliver Peters separate, fremtidige handling.
 **Konsoliderer:** `CAPABILITY_REGISTER_PROPOSAL_2026-09-13_CLAUDE.md` (v1 på PR #239, v2 på denne
 PR) og `UI_USECASE_CATALOG_DISCOVERY_AND_SEARCH_FAILURE_2026-09-13_CLAUDE.md`. De forudgående
 dokumenter er **bevaret uændrede** som korrektionsspor — se §9. Intet i denne fil omskriver dem
@@ -154,7 +159,13 @@ fremtidig implementeringsbeslutning ikke undervurderer det reelle omfang.
 > capability- eller usecase-opslag for et område der åbenlyst påvirker en consequential
 > capability er IKKE tilladelse til at fortsætte uden videre — det skal disponeres eksplicit
 > (registreres som en ny `capability`/`usecase`-post, eller bevidst noteret som en accepteret
-> mangel, med begrundelse).
+> mangel, med begrundelse). **En accepteret mangel der påvirker en consequential capability
+> kræver eksplicit godkendelse af beslutningsejeren. En agent kan identificere, dokumentere
+> og anbefale accept af manglen, men kan ikke acceptere manglen på beslutningsejerens vegne**
+> — agenten identificerer, dokumenterer evidens/risiko/muligheder og kan anbefale en
+> disposition; beslutningsejeren accepterer, udskyder eller afviser den. *(Tilføjet 2026-09-14
+> efter et fund fra z.ai: uden dette kunne en agent formelt "acceptere" sin egen undtagelse
+> ved blot at kalde den en "accepteret mangel med begrundelse.")*
 >
 > **16.4 Capability-ækvivalens, ikke patch-ækvivalens.** Commits, filer, funktioner, tests
 > eller ren patch-/diff-ækvivalens er IKKE i sig selv tilstrækkeligt bevis for at en
@@ -280,7 +291,7 @@ og er formuleret generelt (ingen henvisning til pydantic, Edge1 eller TOTP i sel
 uden at være designet til det; manglende flapping-alarm lod 13.039 genstarter passere uomtalt →
 forslået som valgfri **§16c** (nedenunder) + som observation til update-governance-sporet.
 
-## 5a. MODSTRIDENDE EVIDENS (Sec16.8-praecedens): Pi-hole og Edge1 — ikke stiltiende harmoniseret
+## 5a. Pi-hole og Edge1 — LUKKET 2026-09-14 (var modstridende evidens, nu afklaret; korrektionsspor bevaret nedenfor)
 
 **Tilføjet (Claude Sonnet 5), 2026-09-14.** Foer z.ai's v4-revision var
 tilgaengelig, havde jeg allerede udfoert en selvstaendig, netvaerksbaseret
@@ -317,16 +328,49 @@ separat efter Peters beslutning)."
   om Sec16c (sundhedsalarmering) ogsaa boer daekke "uventet software paa en
   registreret capability's vaert", ikke kun service-crash-loops.
 
-**STATUS 2026-09-14 (opdateret, tredje forespoergsel):** Peter har nu to
-gange refereret til "the already supplied Pi-hole evidence correction."
-Jeg har hver gang tjekket denne PR-branch for nye commits — ingen fundet
-ud over mine egne pushes — og har ikke paa noget tidspunkt modtaget selve
-korrektionsteksten i denne samtale. **Jeg fabrikerer fortsat IKKE en
-loesning paa modsigelsen ovenfor.** Punktet forbliver AABENT. Den
-efterfoelgende Edge:8443-invariant-praecisering (§5b) er anvendt fuldt ud,
-da den blev leveret direkte og fuldstaendigt i selve mandatet — denne
-sag adskiller sig ved at jeg reelt ikke har modtaget indholdet, kun en
-reference til at det skulle vaere sendt.
+**STATUS (historisk, bevaret uaendret):** Punktet forblev AABENT gennem to
+foregaaende forespoergsler — Peter refererede til en "already supplied
+Pi-hole evidence correction" som ikke var modtaget i denne samtale eller
+som ny commit paa branchen. Ingen loesning blev fabrikeret i den periode.
+
+**LUKKET 2026-09-14 — autoritativ evidens nu modtaget direkte fra Peter
+(beslutningsejer, fysisk/SSH-verificeret via reverse-tunnel til
+`TL-C87FF9587CA0`):**
+
+1. Peter forbandt gennem den verificerede reverse-tunnel til
+   `TL-C87FF9587CA0`.
+2. Runtime identificerede maskinen som hostname `timelapse0101`, LAN-IP
+   `192.168.86.134`.
+3. Pi-hole var DIREKTE observeret installeret paa netop denne Edge1
+   (pakkerne `pihole`, `pihole-FTL`).
+4. Pi-hole blev efterfoelgende fjernet fra samme Edge1.
+5. Netvaerks-/DNS-drift blev verificeret bevaret efter fjernelsen.
+6. Pi-hole var UREL­ATERET til :8443-udfaldet.
+7. Den faktiske :8443-rodaarsag var det inkompatible afhaengighedspar:
+   `pydantic 2.13.5` + forkert `pydantic_core 2.49.0` (kompatibel
+   kendt-god core: `2.46.5`) — uaendret fra z.ai's v4-fund (§5).
+8. Den tidligere hypotese om at `.134` var DHCP-genudlejet til en
+   SEPARAT Pi-hole-enhed er derfor **AFKRAEFTET**.
+
+**Praecis rekonciliering (begge observationer var korrekte; kun
+FORTOLKNINGEN var forkert):**
+- At `.134` eksponerede Pi-hole — **korrekt observeret**.
+- At `.134` er Edge1 — **korrekt observeret** (ogsaa i min egen tidligere
+  undersoegelse, som identificerede `.134` korrekt via mDNS-navnet
+  `timelapse0101.local`, jf. `EDGE1_8443_UNREACHABLE_ROOT_CAUSE_2026-09-13_
+  CLAUDE.md`).
+- At disse to observationer sammen indebar TO FORSKELLIGE fysiske enheder
+  — **forkert fortolkning**. Pi-hole var installeret PAA Edge1's egen
+  hardware, ikke paa en separat, DHCP-genudlejet enhed.
+
+Min oprindelige DHCP-genudlejnings-hypotese (§5a's foerste udgave, ovenfor,
+IKKE slettet) var dermed en rimelig, men forkert, fortolkning af korrekt
+observeret netvaerksdata — begaaet uden SSH/fysisk enhedsadgang, som denne
+sessions sandbox aldrig har haft. Den bevares synligt her som korrektions-
+spor, ikke fjernet.
+
+**Den tilsvarende aabne spoergsmaal (tidligere §8, punkt 9) er lukket —
+kraever ikke laengere en Peter-beslutning.**
 
 ## 5b. Direkte LAN-adgang til Edge:8443 — intent nu AFKLARET af Peter (beslutningsejer), 2026-09-14
 
@@ -482,8 +526,10 @@ uden at opfinde en ny kontrolstruktur.
 8. Edge1-implementationsobservationer (pin-par-validering i `fetch_python_bundle.py`,
    postflight-gate i update-flow, flapping-alarm) er noteret til update-governance-sporet —
    bekræft at de afledes/afejes dér og valideres af ejer, ikke i denne PR.
-9. **NY:** §5a — sad Pi-hole fysisk paa Edge1's egen hardware, paa en separat DHCP-delt enhed,
-   eller noget tredje? De to sessioners fund harmoniserer ikke automatisk.
+9. **LUKKET (§5a, 2026-09-14):** Pi-hole sad direkte paa Edge1's egen hardware
+   (`pihole`/`pihole-FTL`-pakker verificeret, fysisk/SSH via reverse-tunnel), ikke paa en
+   separat DHCP-delt enhed. DHCP-genudlejningshypotesen er afkraeftet. Kraever ikke laengere
+   en Peter-beslutning.
 10. **AFGJORT (§5b, 2026-09-14):** Peter har som beslutningsejer afklaret at
     :8443-managementgraensefladen bevidst IKKE skal vaere BT-PAN-only — multi-netvaerks-
     tilgaengelighed (BT-PAN, lokal WiFi/Ethernet, kunde-LAN, potentielt kunde-WAN) ER den
