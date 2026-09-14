@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-14 — fra z.ai: PR #240 revideret (v4) efter adversarial review + Edge1 out-of-sample crash-test
+
+- **Mandat:** Peter, 2026-09-14 — revidér PR #240 på basis af z.ai's adversarial review af den frosne v3 (`a5422a60`) og den efterfølgende Edge1-incident som NY out-of-sample test. Ikke merge #240, ikke acceptere §16, ikke implementere GRC-migrationen, ikke merge #239, ikke starte R04 batch 3, ingen oprydning. Korrektionsspor bevares som provenance.
+- **Hvad er gjort:** `CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` revideret til v4 med synligt markerede korrektioner: (F1) selvtest sag 1 (direct-Edge terminal) nedgraderet fra "usecase-gate" til "historisk søgning alene" — kataloget har ingen dækkende usecase for portal-terminalens interaktive capability (UC-SSH-002/003 = headend-tunnel-fladen; UC-TECH-001–003 = ServiceSession/relæ); (F2) sag 2 (SEC-016) omklassificeret: oprindeligt fund uden for scope, men lukning-uden-erstatning = PARTIELT inden for 16.1.1; (F5) test-fejlklasser adskilt (dækningsgap vs. adfærds-lock-in); (F4) underklausuler renummureret 16.1–16.9; (F6) GRC `capability` præciseret som bevidst minimal NY struktur i eksisterende butik.
+- **Out-of-sample crash-test (§5):** Edge1-incidenten testet mod frossen v3 med de otte pålagte spørgsmål; klassifikation **NOT PREVENTED** (alle otte ærligt besvaret; en fuldt compliant agent kunne have forårsaget præcis incidenten). Udledt mindste generelle regel optaget som ny **§16.9** (deployment-accept: observeret runtime-sundhed er en gate, ikke en rapport) + ny valgfri **§16c** (sundhedsalarmering). Ingen incident-specifik klausul; modellen er ikke strakt retroaktivt.
+- **Wiring (F3, §7 i dokumentet):** minimum wiring-forslag med eksakt ordlyd til AGENTS.md-punkt 3 + søster-loaders (W1), OP-001 Step 5 (W2) og valgfrit PR-template-punkt (W3) — foreslået som betinget del af §16-acceptpakken, da ellers §16 risikerer at reproducere den "existing protection not wired"-fejlklasse forslaget selv diagnosticerer.
+- **Separat rapporteret til Peter (ikke del af PR'en):** LAN-intent-efterforskning vedr. direkte adgang til Edge:8443 fra almindeligt LAN — konklusion og bevisførelse leveres udenfor denne revision; ingen firewall-ændringer foretaget.
+- **Ikke gjort (per mandat):** #240/#239 ikke merged. §16/§16a/§16b/§16c ikke accepteret eller tilføjet governance-dokumenter. GRC-migration ikke kørt. AGENTS.md/OP-001 ikke ændret (wiring er kun foreslået tekst). UI_USECASE_CATALOG ikke rettet/linket. Ingen R04 batch 3, ingen oprydning.
+- **Filer rørt:** `Dokumentation/CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (v3→v4, med inline korrektionsmarkering), denne log. v1/v2- og discovery-dokumenterne samt alt andet bevaret uændret.
+- **Arbejdsmiljø:** isoleret detached worktree `/tmp/timelapse-pr240-revision` fra `a5422a60`; Claudes eksisterende worktree for branchen var rent og urørt; push til branch-ref uden merge.
+
 ### Handover 2026-09-13 — fra Claude: Capability Register-forslag konsolideret til review-klar version + historisk selvtest
 
 - **Mandat:** Peter, 2026-09-13 — faerdiggoer PR #240 som review-klart forslag, uden at implementere GRC-migrationen, acceptere §16, eller merge #239/#240. Inkorporer ti verificerede laeringspunkter fra dagens arbejde og selvtest forslaget mod mindst seks kendte haendelser uden at svaekke det for at faa alle til at "bestaa."
