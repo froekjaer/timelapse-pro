@@ -317,15 +317,16 @@ separat efter Peters beslutning)."
   om Sec16c (sundhedsalarmering) ogsaa boer daekke "uventet software paa en
   registreret capability's vaert", ikke kun service-crash-loops.
 
-**STATUS 2026-09-14, samme dag:** Peter refererede til "the already
-supplied Pi-hole evidence correction" i et opfoelgende mandat. Jeg har
-tjekket denne PR-branch for nye commits (ingen fundet ud over min egen
-seneste push) og har ikke selv modtaget en saadan korrektionstekst nogen
-andet sted i denne samtale. **Jeg fabrikerer IKKE en loesning paa
-modsigelsen ovenfor uden den faktiske korrektionstekst.** Dette punkt
-forbliver derfor AABENT, praecis som beskrevet ovenfor, indtil den
-refererede korrektion faktisk er tilgaengelig for denne session (fx via
-endnu et push til branchen, eller gengivet direkte i en besked).
+**STATUS 2026-09-14 (opdateret, tredje forespoergsel):** Peter har nu to
+gange refereret til "the already supplied Pi-hole evidence correction."
+Jeg har hver gang tjekket denne PR-branch for nye commits — ingen fundet
+ud over mine egne pushes — og har ikke paa noget tidspunkt modtaget selve
+korrektionsteksten i denne samtale. **Jeg fabrikerer fortsat IKKE en
+loesning paa modsigelsen ovenfor.** Punktet forbliver AABENT. Den
+efterfoelgende Edge:8443-invariant-praecisering (§5b) er anvendt fuldt ud,
+da den blev leveret direkte og fuldstaendigt i selve mandatet — denne
+sag adskiller sig ved at jeg reelt ikke har modtaget indholdet, kun en
+reference til at det skulle vaere sendt.
 
 ## 5b. Direkte LAN-adgang til Edge:8443 — intent nu AFKLARET af Peter (beslutningsejer), 2026-09-14
 
@@ -365,6 +366,29 @@ netvaerkspolitik tillader det. "Lokal" beskriver den Edge-hostede
 management-plan, ikke en BT-PAN-eksklusiv bindings-/accept-graense.
 Fremtidige udrulninger kan kraeve at teknikere/administratorer naar Edge-
 management-graensefladen via en kundes LAN/WAN i stedet for BT-PAN.
+
+**Formel invariant (Peter, 2026-09-14 — praeciseret efter opfoelgende
+mandat, den kanoniske formulering til en fremtidig `CAP-EDGE-MANAGEMENT-
+REACHABILITY`-post i GRC, jf. formatet i Sec2a):**
+
+> **Edge Management Reachability invariant.** Edge-hostede management- og
+> recovery-capabilities maa ikke afhaenge af et enkelt management-netvaerk,
+> -interface eller -transport. Management-/recovery-graensefladen paa
+> :8443 skal vaere teknisk i stand til at blive naaet via:
+> - BT-PAN / direkte recovery-netvaerk;
+> - lokal WiFi/Ethernet/LAN;
+> - routet/kunde-LAN;
+> - kunde-WAN eller andre routede net, hvor deployment-politik, routing og
+>   omgivende sikkerhedskontroller tillader det.
+>
+> TimeLapse Edge-implementeringen maa derfor IKKE hardkode BT-PAN som den
+> eneste tilladte vej. Sikkerhed maa IKKE afhaenge af netvaerksvej-
+> isolation — autentificering, autorisation, session-kontroller og andre
+> gaeldende management-plan-beskyttelser skal beskytte graensefladen
+> UAFHAENGIGT af hvilken tilladt netvaerksvej der bruges. "Naaelig via alle
+> relevante netvaerk" betyder IKKE ubegraenset offentlig internet-
+> eksponering — faktisk naaelighed er fortsat underlagt site-/kunde-
+> deployment-politik, routing, firewall-regler og sikkerhedskrav.
 
 **Konsekvenser af denne disposition (eksplicit, ikke udledt):**
 - `0.0.0.0:8443`-binding er **i overensstemmelse med** den tiltaenkte

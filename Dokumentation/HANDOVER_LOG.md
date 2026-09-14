@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-14 — fra Claude: Edge Management Reachability invariant formaliseret (praecisering af §5b)
+
+- **Mandat:** Peter gav en praeciseret, kanonisk formulering af Edge:8443-reachability-beslutningen som en formel "Edge Management Reachability invariant" — samme materielle disposition som forrige mandat (multi-netvaerk, ikke BT-PAN-only), nu i en form der er klar til en fremtidig GRC `CAP-EDGE-MANAGEMENT-REACHABILITY`-post.
+- **Anvendt:** invarianten indsat ordret/naer-ordret i §5b som et formelt, citerbart blok — Edge-hostede management-/recovery-capabilities maa ikke afhaenge af et enkelt netvaerk/interface/transport; sikkerhed maa ikke afhaenge af netvaerksvej-isolation (autentificering/autorisation/session-kontroller beskytter uafhaengigt af vej); "naaelig via alle relevante netvaerk" betyder ikke ubegraenset internet-eksponering — faktisk naaelighed forbliver underlagt site-/kunde-policy, routing og firewall. De fire-trins-provenance (dokumenteret BT-PAN-only-intent -> observeret bredere runtime -> konflikt identificeret -> beslutningsejer-disposition) er bevaret uaendret fra forrige revision.
+- **Pi-hole-korrektionen (§5a) forbliver AABEN** — anden gang Peter refererer til den, stadig ikke modtaget i denne samtale eller som ny commit paa branchen. Ikke fabrikeret.
+- **Ingen runtime-/netvaerks-/kodeaendring foretaget**, som eksplicit instrueret. Ren dokumentationsrettelse.
+- **Ikke gjort:** ingen §16-accept, ingen GRC-migration, #239/#240 ikke merged, ADR-004 forbliver Proposed, ingen R04 batch 3, ingen oprydning, ingen scope-udvidelse.
+- **Filer rørt:** `CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (formel invariant-blok i §5b, §5a-status opdateret), denne log.
+
 ### Handover 2026-09-14 — fra Claude: Edge:8443-intent afklaret af Peter — BT-PAN-only var forældet dokumentation, ikke en runtime-fejl
 
 - **Mandat:** Peter, beslutningsejer, afklarede eksplicit det tidligere aabne "direkte LAN-adgang til Edge:8443"-fund (§5b i `CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md`): den lokale Edge-management-/recovery-graenseflade paa :8443 SKAL vaere tilgaengelig via alle relevante netvaerksinterfaces (BT-PAN, lokal WiFi/Ethernet/LAN, kunde-LAN, potentielt kunde-WAN), underlagt routing/sikkerhedskontroller — ikke kun BT-PAN. "Lokal" beskriver den Edge-hostede management-plan, ikke en BT-PAN-eksklusiv netvaerksgraense.
