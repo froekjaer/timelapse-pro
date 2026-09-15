@@ -29,6 +29,20 @@
 
 ## Log
 
+### Handover 2026-09-15 — fra Claude: konsolideret dokumentationskorrektion af cross-repository governance propagation-analysen (PR #240)
+
+Efter to uafhaengige adversarielle gennemgange af `CROSS_REPOSITORY_GOVERNANCE_PROPAGATION_ANALYSIS_2026-09-14_CLAUDE.md` (begge konkluderede at kernearkitekturen — GENBRUG/UDVID OP-001 Step 7 + Framework Findings, ingen tredje mekanisme — holder), udfoerte jeg en konsolideret dokumentationskorrektionspas. Alle 12 punkter i rettelsesanmodningen blev direkte, uafhaengigt verificeret (frisk clone/fetch/live-hentning, 2026-09-15) foer indarbejdning — intet blev accepteret paa tillid.
+
+Vaesentligste faktuelle rettelser (original tekst bevaret, ikke slettet, jf. korrektionsspor-disciplinen):
+- "Nul findings eksisterer noget sted"-paastanden var upraecis: seks reelt eksisterende findings blev fundet i to perifere repos (FF-PUB-001..004 i `-Publication-Pipeline`, FF-0001/FF-0002 i `mission-solar-eclipse`) — ingen af dem centralt registreret i mission-framework, hvilket STYRKER (ikke svaekker) anbefalingen om at udvide den eksisterende mekanisme.
+- Regressionstabellen (§11) havde en intern inkonsistens: tre scenarier (Direct Edge terminal, Edge1-canary, stale-worktree-friskhed) var scoret PASS paa trods af samme strukturelle mangel der korrekt gav §16 selv en PARTIAL — nedgraderet til PARTIAL for konsistens.
+- Ny, mere alvorlig anti-moenster-instans fundet: Mission-Platforms LIVE website praesenterer fire fabrikerede ADR-beskrivelser der ikke svarer til nogen faktiske ADR-filer i repoet (kun ADR-0001/ADR-0002 eksisterer reelt).
+- To live GitHub Pages-sites (`waterworks-pro`, `water-treatment-interface`) var udeladt fra websitematrixen uden begrundelse — tilfoejet.
+- Ny DECISION REQUIRED for Peter: mission-frameworks egen dokumentation anbefaler eksplicit IKKE at vendorere OP-001 ("load canonical, don't copy") — TimeLapse's nuvaerende vendoring-model afviger fra dette; om TimeLapse skal fortsaette med vendoring (kontrolleret sync) eller skifte til direkte indlaesning er nu et aabent punkt.
+- En selvkorrektion: en tidligere adversariel gennemgangsrundes paastand om at `publication-catalog.json`-referencen var "fabrikeret" var selv forkert — filen er et reelt, live, CI-genereret (ikke committed) artefakt; bekraeftet direkte.
+
+Ingen implementering udfoert. Ingen Mission Framework/OP-001/Collaborative Intelligence/Mission Platform/website/GRC-aendring. §16 ikke formelt accepteret. Ingen ny adversariel gennemgang startet. PR #240 ikke merged. De 16 principper og den godkendte Governance Propagation-princip er uaendrede (ingen redigering af SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md i denne omgang). Dette korrigerede hoved er nu kandidaten for Peters formelle governance-/arkitekturbeslutning.
+
 ### Handover 2026-09-14 — fra Claude: cross-repository governance propagation-analyse (fire eksterne repos + websites undersoegt, intet aendret)
 
 - **Mandat:** Peter godkendte en ny "Cross-Repository Governance Propagation Rule" (bidirektionel: Mission Framework ↔ Collaborative Intelligence ↔ Mission Platform ↔ TimeLapse Pro ↔ observeret runtime/evidens) som ny beslutningsinput, ikke en erstatning for de 16 tidligere godkendte principper. Eksplicit mandat: search-before-create + impact/placerings-analyse ALENE — ingen implementering, ingen aendring af Mission Framework/Collaborative Intelligence/Mission Platform/websites, ingen W3-eksekvering, ingen §16-accept, ingen merge.

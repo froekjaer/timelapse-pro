@@ -2,6 +2,8 @@
 
 **Forfatter:** Claude Sonnet 5, 2026-09-14. **Status:** ANALYSE ALENE — intet implementeret, intet accepteret, ingen aendring til Mission Framework/Collaborative Intelligence/Mission Platform/websites, ingen W3-eksekvering, ingen §16-accept, ingen merge. Peter (og ChatGPT ved gennemgang) er beslutningsejer for enhver videre handling.
 
+**Rettelsespas 2026-09-15:** Dette dokument er nu opdateret med en konsolideret dokumentationskorrektion efter to uafhaengige adversarielle gennemgange. Rettelsen er UDELUKKENDE dokumentationskorrektion — ingen ny arkitektur-konklusion, ingen implementering. Kernekonklusionen (GENBRUG/UDVID OP-001 Step 7 + Framework Findings; ingen tredje mekanisme nu) er UAENDRET og bekraeftet at holde efter rettelsen. Se nyt §17 for den fulde rettelsesredegoerelse, samt inline-rettelser i §3, §4, §11, §12 og §16 nedenfor (original tekst er bevaret, ikke slettet, jf. denne sessions korrektionsspor-disciplin).
+
 ## 0. Repositories/brancher/SHA'er gennemgaaet
 
 | Repo | Default branch | HEAD SHA ved gennemgang | Metode |
@@ -65,8 +67,12 @@
 | Publication Pipeline (vaerktoejets egen side) | `froekjaer.github.io/-Publication-Pipeline/` | `-Publication-Pipeline` | Statisk landingsside | Jekyll (`jekyll-gh-pages.yml`) | Beskriver kun vaerktoejet selv, publicerer INTET fra de andre repos | HTTP 200, live |
 | froekjaer.dk | Ingen — **repo tomt** | `froekjaer.dk` | Ingen | Ingen — `has_pages:false`, ingen CNAME, ingen workflow | **VERIFIED NOT FOUND** — to uafhaengige metoder (git clone + GitHub API) | N/A, aldrig pushet siden oprettelse 2022-02-04 |
 | TimeLapse Pro | Ingen fundet i denne analyses scope | `timelapse-pro` | — | — | Ikke undersoegt i denne fase (uden for de fire kernerepos + publikationskaeden som eksplicit efterspurgt) | Ikke verificeret |
+| `waterworks-pro` (tilfoejet 2026-09-15 rettelse) | `froekjaer.github.io/waterworks-pro/` (Pages aktiveret) | `waterworks-pro` | — | GitHub Actions workflow, men seneste build er **cancelled** | Ikke vurderet for autoritetsstatus i denne fase | Verificeret 2026-09-15: `has_pages:true`, men siden svarer p.t. **HTTP 404** — IKKE aktuelt live |
+| `water-treatment-interface` (tilfoejet 2026-09-15 rettelse) | `froekjaer.github.io/water-treatment-interface/` | `water-treatment-interface` | — | GitHub Actions workflow | Ikke vurderet for autoritetsstatus i denne fase | Verificeret 2026-09-15: **HTTP 200, live**, sidst pushet 2026-09-06 |
 
 **Central konklusion for websitescopet:** der findes **INGEN samlet, faktisk fungerende publikationspipeline** der forbinder de tre live sider til hinanden eller til `-Publication-Pipeline`s vaerktoej — hver side er bygget af sin egen, uafhaengige mekanisme. `-Publication-Pipeline`s README's paastand om at "supporte publikation fra Mission Framework, Mission Platform, Mission Solar Eclipse" er et erklaeret design-maal, **ikke noget nogen faktisk kode-sti demonstrerer**.
+
+**Rettelse 2026-09-15:** `waterworks-pro` og `water-treatment-interface` blev oprindeligt udelukket fra denne matrix som "uden for scope" uden yderligere begrundelse (§0's note om "andre downstream-implementeringer"). Begge er nu tilfoejet fordi de faktisk har (forsoegt, hhv. faktisk) GitHub Pages-tilstedevaerelse og begge optraeder i Collaborative Intelligences egen "Research Ecosystem"-tabel — de er derfor en del af den samlede publikations-graf uanset om deres indholdsmaessige autoritetsstatus er vurderet. Dette udvider, men aendrer ikke, den centrale konklusion ovenfor.
 
 
 ## 4. Eksisterende propagations-/aendringsstyrings-mekanismer genfundet
@@ -74,6 +80,14 @@
 - **OP-001 Step 7 "Check Cross-Repository Consistency"** — findes allerede, men er sessions-/opgave-niveau HYGIEJNE ("sammenlign strukturer/terminologi/governance naar du arbejder paa tvaers af repos"), IKKE en staaende regel om at EN consequential beslutning ét sted automatisk udloeser en vurdering andre steder. Ingen defineret repo-liste, ingen retning (opstroems/nedstroems), ingen udloesertaerskel, ingen kobling til et register.
 - **OP-001 Rule 7 "Protect architectural and cross-repository consistency"** — samme begraensning, en generel regel, ikke en proces.
 - **Framework Findings-processen** (`mission-framework/docs/FRAMEWORK_FINDINGS.md`) — den MEST relevante eksisterende mekanisme. Har en reel skema (Identifier/Title/Source/Context/Canonical reference/Observation/Interpretation/Evidence/Consequence/Proposed disposition/Confidence/Status), en livscyklus der EKSPLICIT inkluderer **"Propagation to affected repositories and publications"** som sidste trin, og en autoritetsregel (kun mennesker kan godkende normative aendringer). **MEN: eksplicit erklaeret ufaerdig** ("until a dedicated cross-repository registry is established") og **helt ubefolket** — nul faktiske findings eksisterer noget sted i noget af de fire kernerepos.
+
+  **RETTELSE 2026-09-15 — verificeret direkte, ikke kun paastaaet:** paastanden "nul faktiske findings eksisterer noget sted" var UPRAECIS. Direkte inspektion (frisk clone, 2026-09-15) viser: **ingen populerede findings i de tre kernerepos** (mission-framework, collaborative-intelligence, Mission-Platform — bekraeftet uaendret), MEN populerede findings **eksisterer faktisk** i to perifere repos:
+  - `-Publication-Pipeline/docs/framework-findings.md`: FF-PUB-001 til FF-PUB-004, alle status `proposed`/"Open", hver med fuld Observation/Evidence/Impact/Recommendation/Framework area/Resolution status. FF-PUB-001 erkender selv sin begraensning: "This repository records an implementation finding only; it does not change Mission Framework."
+  - `mission-solar-eclipse/docs/findings/`: FF-0001 (Proposed → Deferred, "insufficient evidence... revisit after mission has executed 10+ delegated research tasks") og FF-0002 (Proposed, "Requires: Mission Framework maintainer review").
+
+  Bekraeftet direkte, 2026-09-15: `mission-framework/docs/FRAMEWORK_FINDINGS.md` indeholder INGEN henvisning til nogen af disse seks findings (grep-verificeret paa tvaers af hele repoet — kun skemaets eget eksempel-`FF-0001` findes).
+
+  **Arkitektonisk betydning:** Findings-mekanismen er ikke rent hypotetisk — den ER faktisk blevet brugt, flere gange. Men den nuvaerende brug foelger IKKE processens egen regel om at "accepted or actively reviewed findings should be documented... in mission-framework... until a dedicated cross-repository registry is established." De seks findings er reelle, men usynlige fra det centrale sted der skulle goere dem synlige paa tvaers af repos. Dette STYRKER anbefalingen om at UDVIDE/forbinde den eksisterende mekanisme frem for at opfinde en ny — problemet er sammenhaengs-/registreringsdisciplin, ikke mekanismens fravaer. Denne rettelse flytter IKKE de seks findings og opretter INGEN ny registrering.
 - **`docs/VERSIONING.md`** (mission-framework) — kraever at en semantisk aendring erklaerer paavirkning paa "reference missions, schemas, publications" + migrationsvejledning — det naermeste til en formel "impact statement"-pligt, men KUN for semantiske normative aendringer, ikke generel governance/arkitektur/capability-viden.
 - **`review-lab/REVIEW-001/BASELINE.md`** (Mission-Platform) — kraever at en sen rettelse til en frosset TimeLapse-baseline registreres med paavirkede filer/commits, aarsag, "impact on all reviewer workspaces," og Mission Owner-godkendelse. **Reel, men snaever** — scoped til ét enkelt, frosset reviewevent, ikke en staaende regel.
 - **Mission Framework's publication-catalog.json** naevner allerede eksplicit TimeLapse Pro som en `reference_platform` — et konkret, om end minimalt, eksisterende spor af opstroems-anerkendelse af TimeLapse som downstream-deltager.
@@ -156,6 +170,16 @@ Vurderet punkt for punkt (Peters liste, §10):
 | **§16 selv** (hele denne PRs governance-forslag) | **PARTIAL, aerligt rapporteret, ikke tvunget til PASS.** Regelen ville korrekt identificere §16 som en KANDIDAT til opstroems-relevans (capability-preservation, evidens-standarder, korrektions-disciplin er alle generiske principper, ikke TimeLapse-specifikke). MEN: **ingen mekanisme i denne analyse tvinger dette til faktisk at ske** — uden en aktiv, udfoert Framework Finding-indsendelse (som stadig ikke findes, nul `FF-000x`-poster eksisterer noget sted), forbliver §16 permanent en TimeLapse-oe, selv EFTER denne analyse har identificeret det korrekt. Dette er PRAECIS den risiko Peter navngiver i opgavens §12, punkt 5 ("uden at det permanent bliver en TimeLapse-only governance-oe") — og den er IKKE loest af at identificere den, kun af faktisk at handle paa den. | **PARTIAL** | Framework Finding (endnu ikke indsendt — genuint AABENT, DECISION REQUIRED om og hvornaar) |
 
 
+**RETTELSE 2026-09-15 (intern konsistens-korrektion, tabellen ovenfor):** ved konsekvent genanvendelse af tabellens egen praecise toetstesporgsmaal ("ville den nye regel faa laeringen til FAKTISK at naa det korrekte autoritative lag OG derefter paavirkede nedstroems-artefakter, uden at kopiere TimeLapse-specifikke detaljer opstroems?") paa alle fem raekker, ikke kun raekke 5, maa raekke 1-3 nedgraderes fra PASS til PARTIAL:
+
+- **Direct Edge terminal: PASS → PARTIAL.** Laeringen er korrekt identificeret som generisk-relevant (§16.4), men intet i arkitekturen TVINGER en faktisk Framework Finding-indsendelse — praecis samme strukturelle mangel som giver §16-raekken dens PARTIAL.
+- **Edge1 doede canary: PASS → PARTIAL.** Analysen erkender selv at princippet kun er "beslaegtet med, men mere specifikt end" OP-001 Step 9 — dvs. IKKE allerede opstroems, og intet tvinger det til at blive det.
+- **COMPLETE_TEST_CONTINUITY_PLAN-friskhed: PASS → PARTIAL.** Analysen erkender selv at "opstroems OP-001 ikke selv specificerer saa praecist" — samme mangel.
+- **Pi-hole: PASS forbliver korrekt** — her kraeves INGEN ny opstroems-handling; princippet er allerede fuldt resident opstroems (Rule 6/Governing Maxim), intet skal "naa" et nyt sted.
+- **§16 selv: PARTIAL forbliver korrekt** (uaendret begrundelse).
+
+Det var en reel intern inkonsistens at score raekke 1-3 mere gunstigt end den strukturelt identiske raekke 5. De underliggende historiske facts (hvad der faktisk skete i hver sag) aendres IKKE af denne rettelse — kun klassifikationen af om den FORESLAAEDE arkitektur ville faa laeringen til rent faktisk at naa opstroems.
+
 ## 12. Anti-moenster — inkl. TRE FAKTISK OBSERVEREDE, ikke kun hypotetiske, tilfaelde
 
 Peters liste vurderet punkt for punkt. **Markeret "OBSERVERET" hvor denne undersoegelse fandt et REELT, eksisterende eksempel, ikke kun en teoretisk mulighed:**
@@ -176,6 +200,12 @@ Peters liste vurderet punkt for punkt. **Markeret "OBSERVERET" hvor denne unders
 12. **Erklaeret kapacitet uden faktisk brug** (ny kategori): `-Publication-Pipeline`s README paastaar at den "supporter publikation fra Mission Framework, Mission Platform, Mission Solar Eclipse" — men INGEN af disse repos faktisk bruger dens `docgen`-vaerktoej til deres live sider (§3). En laeser af READMEen ville faa en forkert opfattelse af den faktiske arkitektur.
 13. **Udpeget referenceimplementering gaar forældet, mens en uofficiel bliver den faktiske:** Mission Solar Eclipse er navngivet "the first reference implementation" i Collaborative Intelligences README — men er ~7 uger forældet og mangler helt fra CIs egen publicerede side, MENS TimeLapse Pro (aldrig formelt udpeget som "first reference implementation" noget sted) er den mest aktive, mest udviklede, og eneste med en reel §16-governance-model. **Dette er maaske det vigtigste enkeltfund for Peters beslutning om videre retning** — den FAKTISKE, evidensbaserede referenceimplementering (TimeLapse) er ikke den FORMELT UDPEGEDE (Solar Eclipse).
 
+
+**Yderligere anti-moenstre, tilfoejet ved rettelsespas 2026-09-15 (verificeret direkte):**
+
+14. **Website praesenterer fabrikeret/ubegrundet ADR-indhold, ikke kun forældet indeks (mere alvorlig end punkt 2 ovenfor):** Mission-Platforms LIVE website (`froekjaer.github.io/Mission-Platform/`) viser fire ADR-beskrivelser — "ADR-1: Platform / Payload Separation", "ADR-2: Edge State Machine", "ADR-3: HMAC-Signed Uploads", "ADR-4: Operational Trust Overrides Computational" — der IKKE svarer til nogen faktiske ADR-filer i repoet. De eneste to reelle ADR'er er `ADR-0001-mission-platform-vision.md` og `ADR-0002-trust-edge-action-request-device-adapters.md` (Accepted, 2026-08-12); en `grep -i hmac` mod ADR-0002's faktiske tekst giver nul traeffer. Dette er distinkt fra og alvorligere end punkt 2 (som kun gjaldt ADR-INDEKSET — en dokument-til-dokument-forældelse): her har websiten selv praesenteret ADR-INDHOLD der aldrig er blevet en reel, godkendt ADR. Bekraeftet direkte, 2026-09-15, mod baade repoets fil-trae og live-sidens HTML.
+
+15. **CI's egen "Research Ecosystem"-tabel udelader Mission Solar Eclipse:** Den live side (`froekjaer.github.io/collaborative-intelligence/`) lister praecis seks repos i sin "Research Ecosystem"-tabel (collaborative-intelligence, mission-framework, Mission-Platform, timelapse-pro, waterworks-pro, water-treatment-interface) — `mission-solar-eclipse` er FRAVAERENDE, selvom repoets eget README/AI_CONTEXT.md navngiver Solar Eclipse som "the first reference implementation." Samme fejlklasse som punkt 3/9 (websiten er blevet en utilsigtet, selvstaendig kilde til "hvad der taeller som del af oekosystemet"), paa et andet konkret punkt end oprindeligt navngivet.
 
 ## 13. Minimum sammenhaengende propagations-livscyklus (afledt af EKSISTERENDE arkitektur, ikke opfundet)
 
@@ -228,6 +258,69 @@ Peters liste vurderet punkt for punkt. **Markeret "OBSERVERET" hvor denne unders
 6. Skal OP-001 Step 7 udvides nu (opstroems), eller afvente yderligere evidens fra flere nedstroems-implementeringer foerst?
 7. Skal et faktisk cross-repo-propagations-register bygges i Mission Platform nu, eller er den manuelle, dokument-baserede tilgang (Framework Findings + PAKKE_SPOR_REGISTER-udvidelse) tilstraekkelig for naervaerende skala?
 8. Hvordan skal `froekjaer.dk`s tomme, vildledende "Website on Cloudflare"-beskrivelse haandteres — slettes, udfyldes, eller ignoreres som irrelevant for denne governance-sag?
+
+9. **(Tilfoejet ved rettelsespas 2026-09-15) OP-001-vendoring — bevar TimeLapse's nuvaerende model, eller skift til direkte indlaesning af den kanoniske kilde?** Bekraeftet direkte: mission-frameworks egen `docs/operational/README.md` siger eksplicit: "Do not copy OP-001 into every prompt. Each integration uses a short loader that instructs the AI to retrieve the canonical file only for substantive Mission Framework work" og "[each integration] loads the canonical OP-001 rather than a copied version." Alle fem officielle integrationer i mission-framework (Claude, Codex, Mistral, Z.ai, ChatGPT) foelger dette moenster — INGEN af dem vendorerer en statisk kopi. TimeLapse's nuvaerende model (en lokal, statisk, periodisk-genvendoret kopi under `Dokumentation/mission-framework/`) afviger fra dette opstroems-anbefalede moenster. Peter skal afgoere:
+   - **A. Fortsaet med vendoring** og indfoer en kontrolleret friskheds-/sync-verifikationsdisciplin, ELLER
+   - **B. Ophoer med vendoring** og lad TimeLapse's loader-filer i stedet henvise til/hente den kanoniske OP-001 direkte, i overensstemmelse med Mission Frameworks eget tilsigtede integrationsmoenster.
+   Denne analyse tager IKKE stilling til A vs. B. Den umiddelbare regel bevares uaendret: en lokal TimeLapse-redigering maa ikke stiltiende aendre en kopi der udgiver sig for at vaere verbatim opstroems (fortsat bekraeftet byte-for-byte identisk, 2026-09-15).
+
+## 17. Konsolideret dokumentationskorrektionspas — verificeret 2026-09-15
+
+**Scope:** Dette er UDELUKKENDE en dokumentationskorrektionspas paa analysen i §0-§16 ovenfor, bestilt efter to uafhaengige adversarielle gennemgange der begge konkluderede at kernearkitekturen holder. Ingen ny arkitektur-konklusion drages her. Ingen Mission Framework-, OP-001-, Collaborative Intelligence-, Mission Platform-, website- eller GRC-aendring er foretaget. §16 (SAMARBEJDSMODEL) er ikke formelt accepteret. PR #240 er ikke merged. W3 er ikke eksekveret. Ingen ny adversariel gennemgang er startet i denne omgang.
+
+**PR #240-tilstand ved denne rettelses start:** `head=4a618a6b995020d0d75e9e229f357358af2d35fd`, `state=OPEN`, `mergedAt=null` — INGEN drift i forhold til sidste uafhaengigt gennemgaaede kandidat, bekraeftet via frisk `git fetch origin main`+`git fetch origin <branch>` + `gh pr view` foer redigering.
+
+### 17.1 OP-001 Visible Preamble Record daekker ikke Step 7-9 (bekraeftet direkte)
+
+`docs/operational/OP-001-Mission-Operational-Preamble.md` §8's tjekliste indeholder praecis otte linjer, svarende 1:1 til Steps 0-6 plus en generisk "Ready to execute"-linje. **Step 7 (Cross-Repository Consistency), Step 8 (Execute) og Step 9 (Verify the Outcome) har INGEN tilsvarende linje.** Bekraeftet ved direkte laesning af filen, 2026-09-15.
+
+**Konsekvens for en fremtidig implementeringsanbefaling (IKKE udfoert her):** at udvide Step 7's PROSE alene er UTILSTRAEKKELIGT. En agent kan i princippet vise en fuldt groen "Visible Preamble Record" og alligevel aldrig have udfoert eller registreret Step 7's cross-repo-/website-vurdering, fordi tjeklisten selv ikke rummer et felt for det. En fremtidig opstroems-aendring boer derfor tilfoeje en niende tjeklistelinje (fx "✓ Cross-repository/website impact assessed"), ikke kun udvide Step 7's beskrivende tekst.
+
+### 17.2 Framework Findings mangler et Owner-felt (bekraeftet direkte)
+
+`docs/FRAMEWORK_FINDINGS.md`s "Minimum finding record"-skema (Identifier/Title/Source/Context/Canonical reference/Observation/Interpretation/Evidence/Consequence/Proposed disposition/Confidence/Status) har INGEN Owner-/assignee-/accountable-felt (grep-verificeret, nul traeffer). Relevant gjort konkret af §4-rettelsen ovenfor: de seks reelt eksisterende findings (FF-PUB-001..004, FF-0001, FF-0002) har alle en "Source"-repo, men ingen navngiven ansvarlig for disposition.
+
+**Minimal EXTEND (IKKE udfoert her):** tilfoej et Owner-/disposition-ansvarlig-felt til skemaet. Uafklarede propagations-gab kraever eksplicit ejer + disposition/status — dette er en udvidelse af Framework Findings, IKKE oprettelse af et separat register.
+
+### 17.3 "Ingen paavirkning fundet" er en paastand, ikke et bevis
+
+Konklusionen "ingen cross-repo-/website-paavirkning fundet" kraever proportional, efterproevelig evidens — ikke blot fravaer af et modsat fund. Dette genbruger allerede-eksisterende Mission Framework-evidens-/friskhedsprincipper (OP-001 §6's Verified/Derived/Assumed-model; TimeLapse's egen §16.6/16.7 to-uafhaengige-soegemetoder-standard som et EKSEMPEL, ikke en universel, tvungen metodetaelling). Der indfoeres INGEN ny, rigid, universel metodetaelling her — kun kravet om at "intet fundet" skal vaere en eksplicit, sporet konklusion (VERIFIED/NOT VERIFIED/UNKNOWN-moenstret), ikke en stiltiende antagelse.
+
+### 17.4 W2-omfang praeciseret: ikke alt §16 er automatisk opstroems-egnet
+
+Tre kategorier, ikke en udifferentieret masse:
+- **Generisk-egnet til Mission Framework/OP-001 nu:** §16.2 (soeg efter selve PROBLEMET, ikke kun det foreslaaede navn) — en ren generalisering af OP-001 Step 5.
+- **TimeLapse-specifik, boer forblive lokal:** §16.1/§16.9 (TimeLapse's konkrete GRC-register, rollout-mekanik, sundhedstjek-implementering) — implementeringsdetaljer, ikke generiske principper.
+- **Abstrakt laering der KAN propagere UDEN at kopiere implementeringsdetaljer:** fx canary-/runtime-sundhed-foer-faerdiggoerelse-princippet (§16.9's kerne, adskilt fra dens pydantic-/Edge1-specifikke detaljer) og to-metode-friskhedsstandarden (§16.6/16.7's kerne, adskilt fra TimeLapse's konkrete `git fetch`-kommandoer).
+
+Denne skelnen fandtes ikke eksplicit i den oprindelige §10/§14 W2-vurdering, som behandlede "W2" som én samlet enhed.
+
+### 17.5 W3 praeciseret
+
+Bekraeftet direkte, 2026-09-15: **INGEN PR-template findes noget sted i repoet** (hverken paa denne branch eller paa `main` — `git ls-tree` bekraefter fravaer). Hvis W3 senere implementeres, er det derfor **NYT** template-/haandhaevelsesarbejde, ikke en redigering af noget eksisterende. Et rent afkrydsningsfelt er fortsat utilstraekkeligt (jf. §9/§10's eksisterende advarsel); en konsequential fuldfoerelses-paastand boer henvise til konkret evidens (en PAKKE_SPOR_REGISTER-post-ID, en faktisk gennemfoert soegning/diff), ikke kun et flueben. W3 eksekveres IKKE i denne omgang.
+
+### 17.6 Publikations-praecisering (understoettende fund, ikke-materielle medmindre andet er angivet)
+
+- **`publication-catalog.json` er genereret, ikke committed** — bekraeftet direkte 2026-09-15: filen findes IKKE i mission-frameworks git-traet, men GENERERES af `.github/workflows/publication-pipeline.yml` (linje 161) og er LIVE paa den publicerede side (`https://froekjaer.github.io/mission-framework/publication-catalog.json`, HTTP 200, `source_commit: a6234ba4...` — praecis matchende den SHA denne analyse citerer). Den navngiver faktisk TimeLapse Pro OG Waterworks Pro som `reference_platforms`. **Selvkorrektion:** en tidligere adversariel gennemgangsrunde paastod denne reference var "fabrikeret" (nul traeffer i git-traeet, fordi den kun soegte efter en committed fil) — det var en falsk alarm; den oprindelige analyses paastand var faktuelt korrekt, blot ikke markeret som genereret snarere end committed. Bekraeftet hermed eksplicit, evidens over selvtillid ogsaa naar det gaelder egne rettelsesforsoeg.
+- **`book.yml`s kildefiltrering bekraeftet:** `publication/book.yml` erklaerer 16 kildefiler; den genererede katalog viser eksplicit `missing_declared_sources` (7 filer: `PRINCIPIA_MISSIONIS.md`, `MISSION_THEORY.md`, `REALITY_MODEL.md`, `EVIDENCE_MODEL.md`, `COMPUTATIONAL_TRUST_ENGINEERING.md`, `ARCHITECTURE.md`, `docs/V0.2_SEMANTIC_FOUNDATION.md`) — den publicerede bog indeholder faktisk FAERRE kilder end erklaeret, og pipelinen registrerer selv dette gab i sin egen output. Et allerede-fungerende selvrapporterings-moenster, ikke en fejl der kraever handling her.
+- **Uudnyttede/dublerede Pages-workflows bekraeftet:** baade `Mission-Platform` og `collaborative-intelligence` har en ubrugt standard-`jekyll-gh-pages.yml` ved siden af deres faktiske `pages.yml` — kosmetisk, ikke konsequential.
+- **De fire TimeLapse loader-filers manuelle synkroniseringsrisiko** forbliver som tidligere beskrevet (ingen automatisk konsistenstjek mellem `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/`CHATGPT-PROJECT-INSTRUCTIONS.md`) — ingen ny verifikation udfoert her, uaendret fra tidligere rapportering.
+
+### 17.7 Arkitektur-konklusionen bevares
+
+Ingen af rettelserne i denne §17 eller de inline-rettelser der er foretaget i §3/§4/§11/§12/§16 falsificerer den centrale konklusion. Den forbliver: **GENBRUG/UDVID de eksisterende OP-001 Step 7 + Framework Findings-mekanismer. Ingen tredje styringsmekanisme paa nuvaerende tidspunkt.** Et fremtidigt struktureret Mission Platform-register (§8/§14 punkt 3) forbliver en MULIG fremtidig udvidelse, kun hvis senere operationel evidens berettiger det — det beskrives fortsat IKKE som en nuvaerende arkitektonisk noedvendighed.
+
+### 17.8 Autoritetsmodellen bevares
+
+Laerings-/evidens-strommen forbliver bidirektional (Mission Framework ↔ Collaborative Intelligence ↔ Mission Platform ↔ TimeLapse Pro ↔ runtime/evidens), men autoritet forbliver eksplicit og IKKE automatisk bidirektional: runtime-evidens kan udfordre opstroems-antagelser, men omskriver ikke i sig selv normativ styring. Websites er deriverede/publikations-artefakter medmindre eksplicit andet er udpeget. Vendorerede kopier er ikke konkurrerende normative autoriteter.
+
+### 17.9 Paastande der IKKE kunne reproduceres uafhaengigt
+
+Ingen. Samtlige punkter i denne rettelsesanmodning blev direkte, uafhaengigt verificeret (frisk clone/fetch/live-hentning, 2026-09-15) — ingen kraevede accept paa tillid alene.
+
+### 17.10 De 16 principper og den godkendte Governance Propagation-princip er uaendrede
+
+Denne rettelsespas har ikke redigeret `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` (hvor de 16 principper og §16-teksten bor) eller nogen anden fil der definerer den godkendte Cross-Repository Governance Propagation-princip. Begge forbliver som senest godkendt af Peter.
 
 ## Konklusion
 
