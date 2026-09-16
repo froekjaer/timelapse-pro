@@ -147,7 +147,14 @@ Hver aktiv post kræver session/ejer, formål/domæne, base/head-SHA, relationer
 2. **Ingen paavirkning fundet, evidensbaseret** — den negative konklusion er understøttet (jf. OP-001 Step 7's evidensstandard: Verified/Derived, ikke Assumed), ikke en antagelse; angiv hvad der blev tjekket.
 3. **Uafklaret gab** — henvis til en Mission Framework Finding (fx `FF-TLP-0001`) eller et navngivet opfølgningspunkt i dette register, med ejer og disposition.
 
-Feltet gælder fremadrettet fra denne dato og ved næste substantielle review af et eksisterende spor — eksisterende åbne spor (#214/#163/#159 nedenfor) er **ikke** baglæns udfyldt med dette felt alene for fuldstændighedens skyld; det tilføjes når sporet alligevel revideres.
+Feltet gælder fremadrettet fra denne dato og ved næste substantielle review ELLER HANDLING paa et
+eksisterende spor — **"handling" inkluderer eksplicit merge, lukning, genoptagelse af implementering,
+eller enhver anden disposition af sporet, ikke kun en formel skriftlig gennemgang.** Et spor der blot
+staar og venter paa Peters merge-beslutning (fx #214, som pt. ikke har feltet) skal faa feltet udfyldt
+**som en del af** den handling der merger/afslutter det — merge alene, uden at udfylde feltet foerst,
+er en bypass af denne regel, ikke en undtagelse fra den. Eksisterende åbne spor (#214/#163/#159
+nedenfor) er **ikke** baglæns udfyldt med dette felt alene for fuldstændighedens skyld; det tilføjes
+naar sporet alligevel revideres ELLER der handles paa det.
 
 | Spor | Koordinationsansvar | Næste handling / blokering | Opfølgning |
 |---|---|---|---|

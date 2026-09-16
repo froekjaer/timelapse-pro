@@ -13,8 +13,13 @@ bevidst multi-netvaerk (IKKE BT-PAN-only) — `0.0.0.0`-binding er korrekt adfae
 der siger BT-PAN-only er forældet. Provenance for denne intent-konflikt (dokumenteret intent →
 observeret runtime → konflikt rapporteret → beslutningsejer-disposition) er bevaret i sin fulde
 fire-trins-form i §5b, ikke stiltiende omskrevet.
-**Status:** FORSLAG, review-klar — INTET implementeret. GRC-skema uændret, §16 ikke tilføjet noget
-governance-dokument, `UI_USECASE_CATALOG_2026-08-26.md` ikke selv rettet. Peter er beslutningsejer.
+**Status (opdateret v6, 2026-09-16):** FORSLAG, IKKE formelt accepteret i SAMARBEJDSMODEL — §16-teksten
+selv er stadig ikke tilfoejet noget governance-dokument dér. Men "INTET implementeret" er nu STALE og
+ERSTATTES her, ikke stiltiende: arkitekturretningen er godkendt (§0a), Mission Framework-opstroems-
+propagationsreglen ER implementeret og merged (`mission-framework` PR #13), og TimeLapse-siden (OP-001
+cache/arkitektur C, W1/W2/W3, PAKKE_SPOR-udvidelse) ER implementeret og testet (Wave 2, se §7). GRC-skema
+fortsat uændret; `UI_USECASE_CATALOG_2026-08-26.md` fortsat ikke selv rettet. Peter er beslutningsejer for
+den resterende, adskilte formelle §16-accept-handling.
 **z.ai's endelige uafhaengige verifikation, 2026-09-14** (mod `2b270323`): "READY AFTER
 NON-MATERIAL FIX" — to ikke-materielle rettelser identificeret (Pi-hole-provenance-lukning,
 §16.3 self-accept-bypass), begge udfoert i denne revision. Ingen §16-accept udfoert af denne
@@ -153,7 +158,7 @@ FUNGERENDE implementering kraever ogsaa punkt 1-4 ovenfor. Dette forslag
 forbliver et forslag om skemaet; punkt 1-4 er dokumenteret her saa en
 fremtidig implementeringsbeslutning ikke undervurderer det reelle omfang.
 
-## 3. Forslag til §16 (additiv til det allerede accepterede §14; underklausuler renummureret 16.1–16.9 pr. F4)
+## 3. Forslag til §16 (additiv til det allerede accepterede §14; underklausuler renummureret 16.1–16.9 pr. F4, 16.10 tilfoejet i v6)
 
 > **§16 — Capability- og usecase-tjek før ændring af en consequential capability.**
 >

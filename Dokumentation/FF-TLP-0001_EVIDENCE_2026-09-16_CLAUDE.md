@@ -30,6 +30,17 @@
 - Mission Platform: published site presents ADR content matching no real ADR file; ADR index omits `ADR-0002`.
 - No TimeLapse action was taken on either — both remain the respective repository owners' decisions, per Peter's explicit instruction not to modify those repositories in this wave.
 
+## Verification and hardening lineage (updated 2026-09-16, ChatGPT-directed review)
+
+Beyond the initial implementation, this mechanism went through two further rounds of adversarial verification before being considered ready for merge review, all on TimeLapse PR #241 (stacked on #240):
+
+1. **z.ai adversarial review** reproduced two real defects (VERIFIED surviving local tampering; a non-transactional refresh write path that could leave a mixed content+provenance pair with an uncaught traceback on failure). Both independently reproduced, then fixed: a content digest now binds local bytes to recorded provenance (checked before any freshness claim, no network required), a new `CORRUPTED` state for a positive mismatch, and a backup-then-atomic-replace refresh transaction with automatic detect-and-recover via `*.prev`.
+2. **ChatGPT-directed review** found a further, real semantic gap: the mandatory loader instruction told an agent to run the integrity check but never gated consequential work on what it reported — a compliant-but-hostile reading could run the script, ignore its output, and proceed anyway. Fixed: all four loader files now map each of VERIFIED/STALE/UNKNOWN/CORRUPTED to a required action, verified for semantic parity across all four by an automated test (`tests/test_op001_loader_instructions.py`). Also fixed: canonical authority was not explicitly named in CLI output; the `.prev` recovery mechanism was adversarially re-tested (active+backup both corrupted; two consecutive interrupted refreshes) with no further defect found.
+
+31+ automated tests now cover this mechanism (`tests/test_op001_cache.py`, `tests/test_op001_loader_instructions.py`), plus repeated manual failure-mode verification with actual byte/metadata inspection (not exit-code inference alone).
+
 ## Recommendation for the Finding's propagation-target entries
 
 Based on the above, Mission Framework's maintainer may wish to update `FF-TLP-0001`'s "Propagation targets (not yet closed)" list to move the "TimeLapse §16 sub-clause" and "TimeLapse OP-001 integration decision" entries to closed/addressed, with a reference to this document and to TimeLapse PR(s) implementing Wave 2 (see HANDOVER_LOG.md, 2026-09-16 entry, for exact PR reference once opened). This document does not itself make that edit — it is evidence for whoever holds that decision.
+
+**Evidence reference to send upstream after merge:** once TimeLapse PR #240 and #241 are merged, the reference to send to Mission Framework's maintainer is the final post-merge commit SHA on TimeLapse `main` (not a pre-merge branch SHA, which will no longer resolve the same way) plus this document's path (`Dokumentation/FF-TLP-0001_EVIDENCE_2026-09-16_CLAUDE.md`). This has **not** been sent upstream yet, and `FF-TLP-0001` itself has **not** been marked closed — both remain explicitly open, pending Peter's merge authorization and Mission Framework's own review of this evidence.
