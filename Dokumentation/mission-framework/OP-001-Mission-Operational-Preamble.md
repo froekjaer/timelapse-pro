@@ -1,14 +1,3 @@
-> **Vendored copy** — mirrored verbatim from `github.com/froekjaer/mission-framework`
-> (`docs/operational/OP-001-Mission-Operational-Preamble.md`, commit `2db8c2ba`,
-> 2026-07-22) into this repository on 2026-08-17, per the framework's own
-> continuity principle (§1.3/§1.4 below): "No human, AI model, connector,
-> conversation or runtime session shall be the sole carrier of mission-critical
-> knowledge or state." TimeLapse Pro is named as a reference mission for this
-> framework's continuity/verification proposition (see mission-framework's
-> `README.md` and `MISSION.md`). If this copy and the upstream repo ever
-> disagree, treat the disagreement itself as a Framework Finding (see
-> `docs/FRAMEWORK_FINDINGS.md` upstream) rather than silently picking one.
-
 # OP-001 — Mission Operational Preamble (MOP)
 
 **Status:** Canonical Operational Procedure  
@@ -222,6 +211,23 @@ When multiple repositories participate in the same mission or framework:
 
 Do not assume repositories remain synchronized.
 
+**Cross-repository and publication impact assessment.** This step also governs impact assessment for consequential decisions and changes. A consequential governance, architecture, capability or operational decision or change shall be assessed for its impact on relevant authoritative and derived artefacts across participating repositories and publications, in both directions:
+
+- **Downstream:** when an authoritative Mission Framework artefact changes, identify implementations, vendored or copied artefacts, and publications that consume it, and assess whether they require updating.
+- **Upstream:** when a reference implementation's own work reveals a generic lesson, pattern or principle that is not specific to that implementation, assess whether it should be raised as a Framework Finding (see [`FRAMEWORK_FINDINGS.md`](../FRAMEWORK_FINDINGS.md)) rather than remaining local to that implementation.
+
+Distinguish authoritative sources from derived, vendored and published artefacts (see §6, Operational Knowledge States). A derived, vendored or published artefact shall never be treated as, or silently become, a competing normative source of truth; it shall be brought into agreement with its authoritative source, not edited independently of it.
+
+This assessment is not blind copying: only the generic principle or lesson propagates upstream; implementation-specific mechanics remain in the repository where they arose. Every normative rule or decision retains identifiable authoritative ownership.
+
+The cross-repository/publication impact assessment for a consequential change is complete only when one of the following holds:
+
+1. relevant cross-repository and publication impact has been identified, and the affected artefacts have been updated and independently verified; or
+2. no relevant impact was found, and that negative conclusion is itself supported by proportionate, reviewable evidence at the standard of §6 (Verified or reproducibly Derived, not Assumed) — an unsupported assertion of "no impact" does not satisfy this step; or
+3. a genuine gap remains and cannot yet be resolved, and it is explicitly registered as an unresolved propagation gap in Framework Findings with an identifiable owner and disposition, rather than left undocumented.
+
+Do not treat the absence of a discovered problem as proof that none exists.
+
 ### Step 8 — Execute
 
 Only after completing Steps 0–7 shall implementation begin.
@@ -289,10 +295,24 @@ Mission Operational Preamble
 ✓ Architectural consistency checked
 ✓ Search-before-create completed
 ✓ Dependencies assessed
-✓ Ready to execute
+✓ Cross-repository / website impact assessed — propagated: <what was updated> | no relevant impact found: <evidence> | unresolved gap: <Finding reference>
+✓ Executed
+✓ Outcome independently verified
 ```
 
 If a step cannot be completed, it shall be marked as blocked or unverified rather than shown as complete.
+
+The record shall represent all applicable steps of the mandatory procedure (Steps 0–9), not only the steps that precede execution. A record that omits Step 7, Step 8 or Step 9 while presenting itself as complete misrepresents the procedure and is itself a Step 9 verification failure.
+
+**Step 7 entry.** The Step 7 line shall state which of the following applies, with a reference sufficient for another participant to check it:
+
+- `propagated` — relevant impact was identified and the affected artefacts were updated and verified (state what was updated);
+- `no relevant impact found: <evidence/reference>` — a negative conclusion, supported by the evidence required in Step 7 (not a bare assertion);
+- `unresolved gap: <Finding or work-track reference>` — impact could not yet be assessed or resolved, and has been explicitly registered in Framework Findings or an equivalent tracked work item, with an owner.
+
+An unexplained `N/A` is not a permitted value for the Step 7 entry: if Step 7 genuinely does not apply (for example, work confined to a single file with no other participating repository or publication), state that explicitly as the reference (for example, `no relevant impact found: single-repository change, no other participating repository or publication`).
+
+**Step 8 and Step 9 entries.** `Executed` shall only be shown once execution has actually taken place. `Outcome independently verified` shall only be shown once the outcome has been read back or otherwise independently confirmed as required by Step 9; it is not satisfied merely because an operation returned success.
 
 The visible record is an execution trace, not a substitute for performing the procedure.
 
