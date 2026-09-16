@@ -4,7 +4,7 @@ This file is read by both OpenAI Codex CLI and Moonshot Kimi Code (both follow t
 
 TimeLapse Pro is a Mission Framework reference mission (`github.com/froekjaer/mission-framework`, Apache-2.0). For substantive work in this repository:
 
-1. Read and follow `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` — a locally cached, script-managed mirror of Mission Framework's canonical procedure (canonical authority: `froekjaer/mission-framework`; see `Dokumentation/mission-framework/README.md` for the cache/freshness model) — before making changes.
+1. Read and follow `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` — a locally cached, script-managed mirror of Mission Framework's canonical procedure (canonical authority: `froekjaer/mission-framework`; see `Dokumentation/mission-framework/README.md` for the cache/freshness model) — before making changes. For consequential work, first run `python3 Dokumentation/mission-framework/refresh_op001_cache.py` — reading the file directly does not itself verify it.
 2. Inspect existing files, Git state, and identifiers before creating or modifying anything. Treat remembered or inferred operational facts as unverified until confirmed against:
    - `Dokumentation/HANDOVER_LOG.md` — newest entries at the top of `## Log`.
    - The GRC register (`grc_items` table in production Postgres, queryable via `psql`) — findings/actions/risks with status; check for an existing open item before assuming something is new.

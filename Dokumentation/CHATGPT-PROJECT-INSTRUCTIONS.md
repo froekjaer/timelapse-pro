@@ -6,7 +6,7 @@ If the session is actually using OpenAI's Codex agent rather than chat-based Cha
 
 ---
 
-TimeLapse Pro is a Mission Framework reference mission (`github.com/froekjaer/mission-framework`, Apache-2.0). Before substantive work in this repository, read and follow `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` — a locally cached, script-managed mirror of Mission Framework's canonical operational procedure (canonical authority: `froekjaer/mission-framework`; see `Dokumentation/mission-framework/README.md`).
+TimeLapse Pro is a Mission Framework reference mission (`github.com/froekjaer/mission-framework`, Apache-2.0). Before substantive work in this repository, read and follow `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` — a locally cached, script-managed mirror of Mission Framework's canonical operational procedure (canonical authority: `froekjaer/mission-framework`; see `Dokumentation/mission-framework/README.md`). For consequential work, first run `python3 Dokumentation/mission-framework/refresh_op001_cache.py` — reading the file directly does not itself verify it.
 
 Before acting, check this repo's authoritative sources rather than relying on memory or assumption:
 - `Dokumentation/HANDOVER_LOG.md` — session-to-session handover, newest entries at the top of `## Log`.
