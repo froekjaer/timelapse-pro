@@ -391,7 +391,26 @@ Operatøren skal gennem den faktiske UI kunne forstå status, udføre relevante 
 **Aktuel status:** **IMPLEMENTED / PARTIAL**  
 **Gap:** samlet UAT/acceptance med capability-sporbarhed mangler.
 
-## 5. Foreløbig capability × kendte åbne spor
+## 5. Verificerede source-ankre på baseline
+
+Følgende implementation-stier er verificeret direkte på baseline-`main` og kan bruges som konkrete startpunkter for næste sporbarhedsrunde:
+
+| Capability | Verificeret source-anker | Hvad det dokumenterer |
+|---|---|---|
+| CAP-01 Autonom capture | `edge/agent.py`, `edge/camera/`, `edge/capture/` | Edge-agent, kameraabstraktion og capture-delmoduler findes på baseline |
+| CAP-02 Kamera/strøm | `edge/camera/relay.py`, `edge/hal/`, `edge/service_operations.py` | Relay/HAL/service-operation lag er konkrete implementationsoverflader |
+| CAP-04 Billedkvalitet/provenance | `edge/capture/quality.py`, `edge/capture/buffer.py` | Capture-kvalitet og lokal buffer er eksplicitte moduler |
+| CAP-05 Lokal dataoverlevelse | `edge/capture/buffer.py` | Lokal capture-buffer er en konkret implementation, men runtime-outcome skal stadig testes |
+| CAP-06 Store-and-forward | `edge/upload/headend_client.py`, `edge/upload/sftp.py`, `edge/capture/buffer.py` | Upload- og bufferlag findes; dette er ikke alene bevis for korrekt backlog-drain |
+| CAP-07 Edge↔Headend | `edge/upload/headend_client.py`, `edge/agent.py` | Central klient/sync-adfærd har konkrete implementationsoverflader |
+| CAP-09 Lokal management | `edge/scripts/totp-service.py`, `edge/technician_ui.py`, `edge/technician_auth.py`, `edge/service_operations.py` | Direct-Edge portal, technician UI/auth og service operations |
+| CAP-10 Remote recovery | `edge/tunnel/`, `edge/agent.py` | Reverse-tunnel/agent-overflader findes |
+| CAP-11 Updates | `edge/update_lifecycle.py`, `edge/agent.py` | Update-lifecycle og agentintegration er konkrete implementationsoverflader |
+| CAP-13 Boot/recovery | `edge/provisioning_first_boot.py`, service/unit-materiale i repoet | Provisioning/boot-path findes, men Builder/runtime reproducerbarhed skal vurderes separat |
+
+**Vigtigt:** Tabellen viser kun verificeret **implementation presence** på baseline. Den løfter ikke en capability fra IMPLEMENTED til RUNTIME VERIFIED eller CAPABILITY VERIFIED.
+
+## 6. Foreløbig capability × kendte åbne spor
 
 | Capability | Kendt åbent spor / evidens |
 |---|---|
@@ -402,7 +421,7 @@ Operatøren skal gennem den faktiske UI kunne forstå status, udføre relevante 
 | CAP-13 Boot/recovery | Builder/watchdog/reproducibility fra #242 |
 | CAP-16 Human-operable UI | UI usecase-katalog; OBS-UI-001..005 |
 
-## 6. Capability preservation rule
+## 7. Capability preservation rule
 
 Ved en consequential ændring skal følgende spørgsmål besvares før disposition:
 
@@ -416,7 +435,7 @@ Ved en consequential ændring skal følgende spørgsmål besvares før dispositi
 
 En branch må ikke klassificeres som absorberet/superseded alene fordi filer/funktioner/tests ser dækket ud, hvis den indeholder en consequential capability med særskilt intention eller runtime-adfærd.
 
-## 7. Næste iteration
+## 8. Næste iteration
 
 Før dette map kan blive et stabilt baseline-dokument skal følgende verificeres mod aktuel source og runtime:
 
