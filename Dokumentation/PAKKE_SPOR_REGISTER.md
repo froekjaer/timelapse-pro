@@ -142,6 +142,13 @@ Følg [samarbejdsmodellen §14](SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md#14-bind
 
 Hver aktiv post kræver session/ejer, formål/domæne, base/head-SHA, relationer/overlap, restkrav og disposition, test-/runtimebevis, næste handling, blokeringens ansvarlige og dateret opfølgning. Status skelner registreret, aktiv, afventer reconciliation, blokeret, integreret, verificeret og overhalet-og-arkiveret. Ukendt ejerskab er en afklaringsopgave, ikke accepteret permanent tilstand. En forældet dato giver ikke ret til at overtage en andens arbejdsmappe.
 
+**Tilføjet 2026-09-16 (Governance Propagation-integration, jf. §16.10 og OP-001 Step 7):** et fuldt spor (§14.6) for en consequential ændring kræver desuden et **cross-repo/website-paavirkning**-felt, med præcis ét af tre reviewbare svar (ingen bar afkrydsning):
+1. **Identificeret + propageret** — berørte mål (repo/artefakt/publikation) navngivet, og opdateringen dér udført/verificeret; henvis til den konkrete ændring.
+2. **Ingen paavirkning fundet, evidensbaseret** — den negative konklusion er understøttet (jf. OP-001 Step 7's evidensstandard: Verified/Derived, ikke Assumed), ikke en antagelse; angiv hvad der blev tjekket.
+3. **Uafklaret gab** — henvis til en Mission Framework Finding (fx `FF-TLP-0001`) eller et navngivet opfølgningspunkt i dette register, med ejer og disposition.
+
+Feltet gælder fremadrettet fra denne dato og ved næste substantielle review af et eksisterende spor — eksisterende åbne spor (#214/#163/#159 nedenfor) er **ikke** baglæns udfyldt med dette felt alene for fuldstændighedens skyld; det tilføjes når sporet alligevel revideres.
+
 | Spor | Koordinationsansvar | Næste handling / blokering | Opfølgning |
 |---|---|---|---|
 | Sammenlægning af de tre input | Codex, denne session | Verificér dokumenter og lever samlet PR | Denne session |

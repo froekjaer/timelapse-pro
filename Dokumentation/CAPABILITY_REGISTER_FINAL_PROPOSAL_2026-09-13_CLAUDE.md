@@ -35,6 +35,7 @@ stiltiende; egne v3-fejl korrigeres med synlig markering, ikke sletning.
 | v3 | `a5422a60` (frossen review-SHA) | Konsolideret "review-ready" + historisk selvtest |
 | **v4** | denne revision | Korrigeret efter uafhængig adversarial review (fund F1–F6, alle efterverificeret) + **out-of-sample crash-test mod Edge1-incidenten** (§5). Hovedændringer: (a) selvtest sag 1 og 2 korrigeret (F1/F2); (b) test-fejlklasser adskilt (F5); (c) ny **§16.9** (deployment-accept: observeret runtime-sundhed som succeskriterium) udledt af Edge1-fejlklassen; (d) ny valgfri **§16c** (sundhedsalarmering); (e) præcisering af "minimal ny struktur" (F6); (f) underklausuler renummureret 3.x → 16.x (F4); (g) **minimum wiring-forslag som del af acceptpakken** (F3, §7). |
 | **v5** | denne revision, 2026-09-14 | Efter Peters ARKITEKTURGODKENDELSE (§0a, bevaret ordret) af PR #240 ved `7ed3e3dd`: §16b/§16c's tidligere "anbefalet, ikke anvendt"-formuleringer fra analyserapporten er nu ANVENDT direkte i selve klausulteksten (materiel-paavirkning i §16b, risiko/impact ikke varighed i §16c); ny REUSE>EXTEND>NEW-disposition tilfoejet; "tynd prototype tilladt hvis ikke konkurrerende source-of-truth"-kriterium tilfoejet til de AI-routing-relaterede DECISION REQUIRED-punkter; W1's forkerte "PAKKE_SPOR_REGISTER §16"-reference rettet til korrekt placering. **Godkendelsen daekker arkitekturretningen, IKKE formel §16-accept eller merge — begge afventer fortsat wiring+verificering.** |
+| **v6** | denne revision, 2026-09-16 (Wave 2, Claude Sonnet 5) | Efter Mission Framework Wave 1 (canonical OP-001 Step 7 + Framework Findings faktisk implementeret og merged, `mission-framework` PR #13) og Peters valg af OP-001-integrationsarkitektur **C** (canonical + kontrolleret lokal cache/fallback): ny **§16.10** (cross-repo/publikations-propagation, reference til kanonisk kilde, ikke fork); TimeLapse's OP-001-kopi migreret fra "vendoret, verbatim" til scriptet cache (`refresh_op001_cache.py`, `OP-001.provenance.json`, VERIFIED/STALE/UNKNOWN); alle fire loader-filer opdateret (terminologi + §16-status, inter-fil-drift fundet og rettet — se §7); `PAKKE_SPOR_REGISTER.md`s §14.6-felter udvidet med cross-repo/website-paavirkningsfelt; **W3 (PR-template) EKSEKVERET**, tidligere "IKKE eksekveret." Formel §16-ACCEPT (SAMARBEJDSMODEL) fortsat IKKE udfoert — uaendret fra v5, ingen mandat i denne boelge til at aendre det. |
 
 ---
 
@@ -231,6 +232,22 @@ fremtidig implementeringsbeslutning ikke undervurderer det reelle omfang.
 > automatiserede leveranceflow (fx update-godkendelse/rollout) indgår denne observation som
 > en **gate**: et target/canary der ikke er **observeret sundt**, er ikke en bestået
 > udrulning — uanset rapporteret deploy-status i database eller UI.
+>
+> **16.10 Cross-repository/publikations-propagation (reference, ikke fork — ny i v6, 2026-09-16).**
+> En consequential ændring omfattet af 16.1 skal ogsaa opfylde den kanoniske Mission Framework
+> Governance Propagation-regel: OP-001 Step 7 (cross-repo/publikations-paavirkning, begge
+> retninger, evidenskrav for negative konklusioner, gab-registrering) + Framework Findings
+> (opstroems-kanal for generiske laeringer). **Denne klausul gengiver IKKE Step 7's tekst** —
+> se den kanoniske kilde (`froekjaer/mission-framework`, `docs/operational/OP-001-Mission-
+> Operational-Preamble.md`), cachet lokalt per dette repos C-arkitektur (`Dokumentation/
+> mission-framework/README.md`). Det TimeLapse-specifikke bidrag her er UDELUKKENDE hvor
+> fuldfoerelsesevidensen for et TimeLapse-arbejdsspor registreres: `PAKKE_SPOR_REGISTER.md`s
+> §14.6-felter (udvidet, se HANDOVER 2026-09-16) for lokale/ingen-paavirkning-konklusioner, og
+> en Mission Framework Finding (jf. `FF-TLP-0001`) naar en generisk opstroems-relevant laering
+> identificeres. §16.1's Visible-Preamble-Record-agtige fuldfoerelseskrav (punkt 6, runtime-
+> evidens) og OP-001 Step 7's fuldfoerelseskrav er bevidst parallelle, ikke duplikerede: OP-001
+> Step 7 gaelder for enhver Mission Framework-deltager generelt; 16.10 praeciserer kun HVOR
+> TimeLapse konkret registrerer sin del af den samme forpligtelse.
 
 > **Note om test-fejlklasser (F5, v4):** 16.1 pkt. 5 skelner mellem (1) **dækningsgap** —
 > tests øver aldrig den faktiske capability (direct-Edge-terminalens renderer var dette:
@@ -584,13 +601,31 @@ proposal-dokument for den fulde tekst, i stedet for at gengive den.
   > (Mission Framework/Platform/Collaborative Intelligence) unless a thin, non-competing,
   > non-locking local prototype is explicitly justified. A capability change is not complete
   > until runtime health is observed (§16.9)."
-- **W2 — `OP-001` (vendored preamble), Step 5 "Search Before Create" tilføjelse:**
+- **W2 — oprindeligt foreslaaet som `OP-001` (cached preamble) Step 5-tilfoejelse, men IKKE
+  saadan eksekveret** (se "ANDEN RETTELSE" ovenfor) — indholdet blev i stedet foldet ind i
+  loader-filernes eget §16-afsnit (samme sted som W1, se ovenfor):
   > "For consequential capabilities, the search extends to capability equivalence per
   > `SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md` §16, and observed runtime health is part of
   > completion (§16.9)."
-- **W3 — PR-template (valgfri sekundær forstærkning, IKKE eksekveret):** tjekpunkt
-  "§16-tjek udført: ___ (capability berørt: nej / ___)", med link. Kun hvis Peter finder
-  det nyttigt udover W1/W2 — afventer separat stilling.
+- **W3 — PR-template — EKSEKVERET (Wave 2, 2026-09-16):** `.github/PULL_REQUEST_TEMPLATE.md`
+  oprettet (NYT — ingen template fandtes tidligere, bekræftet frisk før oprettelse). Kræver for
+  consequential ændringer ét af tre reviewbare svar (identified/no impact/unresolved gap) +
+  evidens/begrundelse + berørte maal + Finding/spor-reference ved uafklaret gab — IKKE en bar
+  afkrydsning. Rutinemæssige, ikke-consequential PR'er kan skrive "Not consequential" og
+  slette resten af blokken.
+
+**Wave 2-genvurdering af W1 (2026-09-16), efter at Mission Framework Wave 1 faktisk blev merged:**
+alle fire loader-filer (`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/`Dokumentation/CHATGPT-PROJECT-
+INSTRUCTIONS.md`) opdateret to steder: (1) punkt 1's "vendored, verbatim copy"-sprog erstattet
+med den nye C-arkitekturs "locally cached, script-managed mirror"-sprog (jf. `Dokumentation/mission-framework/README.md`); (2) §16-statusafsnittet opdateret til at skelne eksplicit mellem TO ting der IKKE
+laengere er identiske: den KANONISKE Mission Framework Governance Propagation-regel (OP-001
+Step 7 + Framework Findings) er nu FAKTISK implementeret og merged opstroems (`mission-framework`
+PR #13, merge-commit `9a1a45435ed0781f987760b00722d4a7700d5052`), MENS TimeLapse's egen §16-tekst stadig IKKE er formelt accepteret her — denne
+distinktion var uklar i den gamle "architecture-approved-but-not-yet-formally-accepted"-formulering
+og er nu eksplicit. Reelt fundet inter-fil-drift ved gennemgang: `AGENTS.md`/`CLAUDE.md` brugte én
+ordlyd, `GEMINI.md`/`Dokumentation/CHATGPT-PROJECT-INSTRUCTIONS.md` en anden (kortere) — begge par
+er nu internt ajourførte og konsistente med hinanden (2 synkroniseringspunkter i stedet for at
+antage 4 identiske filer, hvilket de aldrig reelt var).
 
 Hvorfor dette er minimum: AGENTS.md/OP-001 er de to steder alle agenter *allerede* er tvunget
 igennem (AGENTS.md punkt 1 + punkt 3); §14/§16 (SAMARBEJDSMODEL) er allerede konsulteret ved
@@ -641,6 +676,18 @@ uden at opfinde en ny kontrolstruktur.
     §16-teksten kraever fortsat en separat, manuel opmaerksomhed for at holde den synkroniseret;
     ingen mekanisme haandhaever det automatisk. Ingen Peter-beslutning kraeves nu, men flaget som
     en kendt, vedvarende driftsrisiko.
+13. **NY (Wave 2, 2026-09-16) — punkt 7's "OP-001 bevidst IKKE aendret" er delvist afloest, ikke
+    modsagt:** OP-001's INDHOLD er nu opdateret til canonical Mission Framework Wave 1's version
+    (Step 7 + §8 udvidelserne, PR #13 merged) — men fortsat KUN via den scriptede cache-mekanisme
+    (`refresh_op001_cache.py --bootstrap`), aldrig ved haandredigering; se `Dokumentation/mission-
+    framework/README.md` for den fulde C-arkitektur (canonical + kontrolleret lokal cache,
+    Peters beslutning 2026-09-16). Formel §16-ACCEPT (punkt 1/2 ovenfor) er FORTSAT AABEN — Wave
+    2 har IKKE markeret §16 "Accepted" i SAMARBEJDSMODEL og har ingen mandat til at goere det.
+14. **NY (Wave 2, 2026-09-16):** TimeLapse's OP-001-integrationsmodel (tidligere DECISION
+    REQUIRED: vendor+sync (A) / canonical-live (B) / cache+fallback (C)) er nu AFGJORT af Peter
+    som **C**. Implementeret denne bølge: `Dokumentation/mission-framework/refresh_op001_cache.py`
+    + `OP-001.provenance.json` (VERIFIED/STALE/UNKNOWN-friskhedsmodel) + opdateret `README.md`.
+    Kraever ikke laengere en Peter-beslutning.
 
 ## 9. Korrektionsspor (bevaret, ikke omskrevet)
 
