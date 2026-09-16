@@ -2,7 +2,13 @@
 
 TimeLapse Pro is a Mission Framework reference mission (`github.com/froekjaer/mission-framework`, Apache-2.0). Before substantive work in this repository:
 
-1. Read `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` in full — a locally cached, script-managed mirror of Mission Framework's canonical procedure (canonical authority: `froekjaer/mission-framework`; see `Dokumentation/mission-framework/README.md` for the cache/freshness model). For consequential work, first run `python3 Dokumentation/mission-framework/refresh_op001_cache.py` — reading the file directly does not itself verify it. Apply it: classify the task, verify identifiers, recover existing context, check architectural consistency, search before creating, assess dependencies, execute, then verify the outcome.
+1. Read `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` in full — a locally cached, script-managed mirror of Mission Framework's canonical procedure (canonical authority: `froekjaer/mission-framework`; see `Dokumentation/mission-framework/README.md` for the cache/freshness model). **For consequential work (section 16), reading this file is not enough — establish and act on its actual state, not merely run the command:** run `python3 Dokumentation/mission-framework/refresh_op001_cache.py` and act on the state it reports:
+   - `VERIFIED` — proceed.
+   - `STALE` — do not treat the cache as current; re-run with `--refresh`; if that fails, apply section 16's own risk/materiality judgement rather than a blanket block.
+   - `UNKNOWN` (e.g. canonical unreachable) — the cache remains usable, but make this visible in your work and apply the same risk judgement; never silently treat it as VERIFIED.
+   - `CORRUPTED` — do not use the cache as normative OP-001. If the script does not report automatic recovery, OP-001-dependent consequential work stops until governance is recovered (`--bootstrap`, or escalate to Peter).
+
+   Then apply it: classify the task, verify identifiers, recover existing context, check architectural consistency, search before creating, assess dependencies, execute, then verify the outcome.
 2. This repo's authoritative sources — check these before assuming or reconstructing from memory:
    - `Dokumentation/HANDOVER_LOG.md` — session-to-session handover, newest entries at the top of `## Log`.
    - The GRC register (`grc_items` table in production Postgres — `psql "$DATABASE_URL" -c "SELECT external_id, item_type, title, status FROM grc_items WHERE ..."`) — findings, actions, risks, controls with a status field. Check for an existing open item before treating something as new.

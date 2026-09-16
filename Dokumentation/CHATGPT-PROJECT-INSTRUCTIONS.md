@@ -6,7 +6,11 @@ If the session is actually using OpenAI's Codex agent rather than chat-based Cha
 
 ---
 
-TimeLapse Pro is a Mission Framework reference mission (`github.com/froekjaer/mission-framework`, Apache-2.0). Before substantive work in this repository, read and follow `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` — a locally cached, script-managed mirror of Mission Framework's canonical operational procedure (canonical authority: `froekjaer/mission-framework`; see `Dokumentation/mission-framework/README.md`). For consequential work, first run `python3 Dokumentation/mission-framework/refresh_op001_cache.py` — reading the file directly does not itself verify it.
+TimeLapse Pro is a Mission Framework reference mission (`github.com/froekjaer/mission-framework`, Apache-2.0). Before substantive work in this repository, read and follow `Dokumentation/mission-framework/OP-001-Mission-Operational-Preamble.md` — a locally cached, script-managed mirror of Mission Framework's canonical operational procedure (canonical authority: `froekjaer/mission-framework`; see `Dokumentation/mission-framework/README.md`). **For consequential work (section 16), reading this file is not enough — establish and act on its actual state, not merely run the command:** run `python3 Dokumentation/mission-framework/refresh_op001_cache.py` and act on the state it reports:
+- `VERIFIED` — proceed.
+- `STALE` — do not treat the cache as current; re-run with `--refresh`; if that fails, apply section 16's own risk/materiality judgement rather than a blanket block.
+- `UNKNOWN` (e.g. canonical unreachable) — the cache remains usable, but make this visible in your work and apply the same risk judgement; never silently treat it as VERIFIED.
+- `CORRUPTED` — do not use the cache as normative OP-001. If the script does not report automatic recovery, OP-001-dependent consequential work stops until governance is recovered (`--bootstrap`, or escalate to Peter).
 
 Before acting, check this repo's authoritative sources rather than relying on memory or assumption:
 - `Dokumentation/HANDOVER_LOG.md` — session-to-session handover, newest entries at the top of `## Log`.

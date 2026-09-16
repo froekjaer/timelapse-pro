@@ -296,7 +296,13 @@ def bootstrap() -> dict:
 
 
 def check(apply_refresh: bool) -> dict:
-    result: dict = {"checked_at": _now_iso()}
+    # Always present, regardless of outcome: an operator/agent must be able to
+    # see canonical authority without inferring it from context.
+    result: dict = {
+        "checked_at": _now_iso(),
+        "canonical_repository": CANONICAL_REPOSITORY,
+        "canonical_path": CANONICAL_PATH,
+    }
 
     if not any(p.exists() for p in (CACHED_FILE, PROVENANCE_FILE, CACHED_FILE_PREV, PROVENANCE_FILE_PREV)):
         # Nothing has ever been created here - this is a setup gap, not
@@ -447,6 +453,7 @@ def main() -> int:
         print(json.dumps(result, indent=2))
         return 0 if result.get("last_check_result") != "CORRUPTED" else 1
 
+    print(f"Canonical authority: {result['canonical_repository']} ({result['canonical_path']})")
     state = result["last_check_result"]
     if state == "VERIFIED":
         if result.get("recovered_from_backup"):

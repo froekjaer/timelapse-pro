@@ -261,6 +261,71 @@ def test_recovery_from_backup_when_active_is_corrupted(cache_dir):
     assert (cache_dir / "OP-001-Mission-Operational-Preamble.md").read_bytes() == REAL_CONTENT
 
 
+def test_both_active_and_backup_corrupted_never_reports_verified(cache_dir):
+    """Adversarial sanity: if the backup is itself inconsistent, its mere
+    existence must not be treated as sufficient - promotion requires the
+    backup to pass the same integrity check as the active pair."""
+    _write_active(cache_dir, content_sha256="0" * 64)  # active broken
+    _write_backup(cache_dir, content_sha256="1" * 64)  # backup ALSO broken
+
+    result = op001cache.check(apply_refresh=False)
+
+    assert result["last_check_result"] != "VERIFIED"
+    assert result["last_check_result"] == "CORRUPTED"
+    assert result.get("recovered_from_backup") is not True
+    assert result["cache_usable"] is False
+
+
+def test_repeated_failed_refresh_never_loses_last_known_valid_state(cache_dir, monkeypatch):
+    """Two consecutive interrupted refreshes (toward two different new
+    generations) must never lose or corrupt the original, genuinely valid
+    state - each attempt's backup step must capture whatever was valid
+    immediately before that attempt, not compound damage across attempts."""
+    gen_a = REAL_CONTENT
+    gen_b = OTHER_CONTENT
+    gen_c = op001cache.EXPECTED_CONTENT_MARKER + b"\n\n" + b"z" * 3000
+    sha_a, sha_b, sha_c = CANONICAL_HEAD, "b" * 40, "c" * 40
+
+    _write_active(cache_dir, content=gen_a, cached_revision=sha_a)
+
+    orig_replace = op001cache.os.replace
+
+    def flaky_on_second_call(src, dst):
+        flaky_on_second_call.n += 1
+        if flaky_on_second_call.n == 2:
+            raise OSError("simulated failure")
+        return orig_replace(src, dst)
+
+    # Attempt 1: refresh toward gen B, fails on the provenance commit.
+    flaky_on_second_call.n = 0
+    monkeypatch.setattr(op001cache.os, "replace", flaky_on_second_call)
+    monkeypatch.setattr(op001cache, "_fetch_canonical_head_sha", lambda: sha_b)
+    monkeypatch.setattr(op001cache, "_fetch_canonical_content", lambda sha: gen_b)
+    r1 = op001cache.check(apply_refresh=True)
+    assert r1.get("refreshed") is not True
+    monkeypatch.setattr(op001cache.os, "replace", orig_replace)
+
+    # Recovery must restore gen A.
+    r2 = op001cache.check(apply_refresh=False)
+    assert (cache_dir / "OP-001-Mission-Operational-Preamble.md").read_bytes() == gen_a
+    assert r2.get("recovered_from_backup") is True
+
+    # Attempt 2: refresh toward gen C, also fails on the provenance commit.
+    flaky_on_second_call.n = 0
+    monkeypatch.setattr(op001cache.os, "replace", flaky_on_second_call)
+    monkeypatch.setattr(op001cache, "_fetch_canonical_head_sha", lambda: sha_c)
+    monkeypatch.setattr(op001cache, "_fetch_canonical_content", lambda sha: gen_c)
+    r3 = op001cache.check(apply_refresh=True)
+    assert r3.get("refreshed") is not True
+    monkeypatch.setattr(op001cache.os, "replace", orig_replace)
+
+    # gen A must still be recoverable - not lost, not replaced by a mix of B/C.
+    r4 = op001cache.check(apply_refresh=False)
+    final_content = (cache_dir / "OP-001-Mission-Operational-Preamble.md").read_bytes()
+    assert final_content == gen_a, "last known valid state (gen A) was lost after repeated failed refreshes"
+    assert r4["last_check_result"] != "CORRUPTED"
+
+
 # --- 1/2 original scenarios, re-verified against the new schema ---
 def test_verified_when_head_matches_cache(cache_dir, monkeypatch):
     _write_active(cache_dir)
