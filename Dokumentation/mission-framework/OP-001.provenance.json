@@ -1,0 +1,9 @@
+{
+  "canonical_repository": "froekjaer/mission-framework",
+  "canonical_path": "docs/operational/OP-001-Mission-Operational-Preamble.md",
+  "cached_revision": "9a1a45435ed0781f987760b00722d4a7700d5052",
+  "cached_at": "2026-09-16T16:01:01Z",
+  "last_check_at": "2026-09-16T16:01:01Z",
+  "last_check_result": "VERIFIED",
+  "last_check_note": "bootstrapped from canonical HEAD"
+}
