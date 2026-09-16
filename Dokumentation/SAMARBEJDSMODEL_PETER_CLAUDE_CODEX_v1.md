@@ -1,8 +1,8 @@
 # Samarbejdsmodel for Peter og AI-sessioner
 
-**Version:** 1.3 — accepteret §14; øvrige forslag afgrænset
-**Dato:** 2026-09-13
-**Status pr. afsnit:** §1–13 er historiske Proposed-forslag, bortset fra Peters udtrykkeligt instruerede deltagerudvidelse i §4. §14 og ADR-003 er Accepted af Peter 2026-09-13 efter genreview og instruktion om afslutning. §15 og kompetence-/routingforslaget er fortsat Proposed og giver intet yderligere mandat.
+**Version:** 1.4 — accepteret §14 og §16; øvrige forslag afgrænset
+**Dato:** 2026-09-13 (§14); 2026-09-16 (§16)
+**Status pr. afsnit:** §1–13 er historiske Proposed-forslag, bortset fra Peters udtrykkeligt instruerede deltagerudvidelse i §4. §14 og ADR-003 er Accepted af Peter 2026-09-13 efter genreview og instruktion om afslutning. §15 er fortsat Proposed og giver intet yderligere mandat. **§16 (kapitlerne 16.1–16.10) er Accepted af Peter 2026-09-16** — se §16 nedenfor for fuld provenance; §16a/§16b/§16c er fortsat Proposed, ikke del af denne accept.
 
 Filnavnet bevares for eksisterende links. Reglen gælder alle AI-værktøjer, sessioner og underagenter. Accepten afslutter dokumentreviewet, ikke de registrerede opfølgningsleverancer.
 
@@ -275,3 +275,130 @@ Forbered efter fælles review en evidensbaseret tilbagemelding via [Framework Fi
 Knyt TimeLapse-evidens og reelle begrænsninger til tilbagemeldingen. Få disposition og eventuelt platforms-ADR gennem det eksisterende reviewforløb; bring derpå vedtagne ændringer tilbage til agentloadere, lokal regel og tests. Første leverance er en lille kontrakt og testbar prototype, ikke en ny stor agentplatform eller tre konkurrerende registre.
 
 Dette input er endnu ikke sendt upstream. De tre input er nu samlet lokalt; upstream-disposition udestår. Ingen af forslagene får kanonisk forrang ved blot at være skrevet først.
+
+
+## 16. Capability- og usecase-tjek før ændring af en consequential capability — Accepted
+
+**Status:** Accepted af Peter (beslutningsejer), 2026-09-16, svar "godkendt" til foelgende praecise disposition: *"Peter formally accepts §16.1–§16.10 in the currently verified wording from `Dokumentation/CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` and authorizes its incorporation as Accepted into `Dokumentation/SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`, additive to the already Accepted §14."*
+
+**Relation til §14:** Additivt til det allerede accepterede §14 (bindende regel for pakker, spor og reconciliation, ovenfor) — §14 forbliver uaendret og fuldt gyldigt. §16 tilfoejer et selvstaendigt, yderligere krav for consequential capability-aendringer; det erstatter eller begraenser ikke §14.
+
+**Provenance:** Ordlyden nedenfor er kopieret verbatim fra §3 i `Dokumentation/CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (v6, 2026-09-16 — den senest verificerede version paa tidspunktet for accepten, inkl. §16.10 tilfoejet efter Mission Framework Wave 1). Forslaget gennemgik flere uafhaengige adversarial review-runder (z.ai, Codex, ChatGPT) og en formel arkitekturgodkendelse af Peter (§0a i samme dokument, 2026-09-14) foer denne formelle §16-accept. Selve forslagsdokumentet — inkl. dets fulde korrektionsspor, historiske selvtest (§4), out-of-sample crash-test (§5) og §16a/§16b/§16c-udvidelserne — forbliver den fulde historiske kilde og AeNDRES IKKE af denne accept; historisk materiale omskrives ikke for at foregive at §16 altid har vaeret Accepted.
+
+**Scope for denne accept — praecist afgraenset:** UDELUKKENDE §16.1–16.10 nedenfor.
+- §16a (drift-modstandsdygtige invarianter), §16b (manuelle/ad hoc operationelle handlinger) og §16c (sundhedsalarmering) forbliver **Proposed/valgfrie udvidelser** — IKKE del af denne accept.
+- Denne accept lukker IKKE Mission Framework Finding `FF-TLP-0001`.
+- Denne accept accepterer IKKE nogen PR #242-remedieringsforslag.
+- Denne accept indebaerer IKKE at al opstroems-/nedstroems-propagation er fuldfoert — se §16.10 og `FF-TLP-0001` for resterende aabne propagations-maal.
+- Denne accept autoriserer INGEN urelaterede arkitekturaendringer.
+- Denne accept goer IKKE arkitektur C (OP-001 canonical + kontrolleret lokal cache) obligatorisk for andre, urelaterede OP-001-forbrugere end TimeLapse selv.
+- Denne accept opretter **intet 17. princip** i den separate, allerede godkendte 16-principper-arkitekturplacering (`Dokumentation/16_PRINCIPLES_GOVERNANCE_ARCHITECTURE_IMPACT_ANALYSIS_2026-09-14_CLAUDE.md`, uaendret af denne accept) — §16.10 (Governance Propagation) forbliver en tvaergaaende fuldfoerelsesregel omkring de eksisterende, allerede godkendte principper, ikke et nyt principnummer i den liste.
+
+---
+
+> **§16 — Capability- og usecase-tjek før ændring af en consequential capability.**
+>
+> **16.1 Før disposition eller ændring.** Før en branch/change klassificeres
+> `absorbed`/`superseded`, ELLER før en consequential ændring af en bruger-, drifts-,
+> recovery-, sikkerheds- eller anden consequential capability påbegyndes — **herunder
+> ændring af capability'ens leverance via deployment-, update- eller dependency-flow** —
+> skal følgende identificeres og dokumenteres eksplicit:
+> 1. Capability-intent/invarianter (GRC `item_type='capability'`, hvis registreret).
+> 2. Relevante usecase(r) (`UI_USECASE_CATALOG_2026-08-26.md` eller dens efterfølger)
+>    og deres aktuelle status. **Fravær af en dækkende usecase er selv et fund** (jf. 16.3),
+>    ikke et grønt lys.
+> 3. Nuværende autoritativ implementering (fil/komponent-reference).
+> 4. Historisk/kendt-god implementering, hvor en sådan findes — via en **eksplicit
+>    `git log --all`/branch-/stash-søgning for den pågældende komponent eller det
+>    pågældende problem**, ikke kun nuværende mains historik.
+> 5. Automatisk verifikation (hvilke tests håndhæver invarianterne i dag — og hvilken
+>    fejlklasse de i så fald har: **dækningsgap** vs. **adfærds-lock-in**, jf. nedenfor).
+> 6. Runtime-/fysisk verifikation, hvor det er relevant — **et bestået testsuite er ikke
+>    i sig selv bevis for at capability'en faktisk virker i drift**; observeret
+>    runtime-adfærd er en selvstændig evidenskilde, ikke en delmængde af testresultatet.
+>
+> **16.2 Søg efter problemet, ikke kun efter løsningens navn.** Søgningen i 16.1 pkt. 1–4
+> skal dække det underliggende problem/den ønskede capability, ikke kun den terminologi en
+> foreslået ny løsning selv introducerer. En søgning der kun bruger ens egne foreslåede
+> navne/termer og konkluderer "intet fundet" er ikke tilstrækkelig.
+>
+> **16.3 Fravær er et dokumentationshul, ikke tilladelse.** Fravær af et registreret
+> capability- eller usecase-opslag for et område der åbenlyst påvirker en consequential
+> capability er IKKE tilladelse til at fortsætte uden videre — det skal disponeres eksplicit
+> (registreres som en ny `capability`/`usecase`-post, eller bevidst noteret som en accepteret
+> mangel, med begrundelse). **En accepteret mangel der påvirker en consequential capability
+> kræver eksplicit godkendelse af beslutningsejeren. En agent kan identificere, dokumentere
+> og anbefale accept af manglen, men kan ikke acceptere manglen på beslutningsejerens vegne**
+> — agenten identificerer, dokumenterer evidens/risiko/muligheder og kan anbefale en
+> disposition; beslutningsejeren accepterer, udskyder eller afviser den. *(Tilføjet 2026-09-14
+> efter et fund fra z.ai: uden dette kunne en agent formelt "acceptere" sin egen undtagelse
+> ved blot at kalde den en "accepteret mangel med begrundelse.")*
+>
+> **16.4 Capability-ækvivalens, ikke patch-ækvivalens.** Commits, filer, funktioner, tests
+> eller ren patch-/diff-ækvivalens er IKKE i sig selv tilstrækkeligt bevis for at en
+> historisk branch/change er `absorbed` eller `superseded`, når den påvirker en registreret
+> capability. Den aktuelle implementering skal sammenholdes med capability'ens intent og
+> invarianter, ikke kun med dens kode.
+>
+> **16.5 Ingen stiltiende degradering.** En forbedring af én del af en registreret
+> capability må ikke stiltiende forringe en anden del af samme capability (fx: en ny
+> renderer må ikke fjerne en allerede-fungerende sessionsmodel; en ny sessionsmodel må
+> ikke fjerne en allerede-fungerende renderer).
+>
+> **16.6 Kildefriskhed før søgning.** Enhver søgning der skal understøtte 16.1 pkt. 1–4
+> skal først bekræfte at dens datakilde er autoritativ/frisk (for git: eksplicit
+> `origin/<default-branch>` eller en navngiven, verificeret commit — ikke en lokal
+> arbejdskopis `HEAD` uden først at sammenligne `git rev-parse HEAD` mod
+> `git rev-parse origin/main`).
+>
+> **16.7 Standard for en konsekvent fraværskonklusion.** En "IKKE
+> FUNDET/EKSISTERER IKKE"-konklusion, der har konsekvens (fx retfærdiggør at springe et
+> genfindingstrin over), må først opfylde: (a) bekræftet kildefriskhed (jf. 16.6), og
+> (b) mindst to uafhængige søgemetoder (fx både indholds-`grep` OG
+> `git log --diff-filter=A`/`gh search`). Uden begge dele rapporteres konklusionen som
+> **IKKE VERIFICERET**, ikke som fravær. En sådan konklusion skal citere den
+> reproducerbare kommando/metode, så den kan efterprøves uafhængigt.
+>
+> **16.8 Modstridende evidens forbliver eksplicit.** Når to kilder (fx en commit-besked
+> og en observeret systemtilstand, eller to sessioners fund) modsiger hinanden, skal begge
+> udsagn bevares synligt side om side, indtil modsigelsen er aktivt afklaret — ikke
+> stiltiende harmoniseret.
+>
+> **16.9 Deployment-accept: observeret runtime-sundhed er en del af succeskriteriet.**
+> *(Ny i v4 — udledt af Edge1-out-of-sample-testen, §5; generel regel, ikke
+> incident-specifik.)* En ændring der leverer kode, konfiguration eller afhængigheder til
+> en registreret consequential capability er **først gennemført/succesfuld, når den berørte
+> capability er observeret sund i drift efter ændringen** — servicen oppe og svarende,
+> kritisk funktionskontrol gennemført, og de tiltænkte adgangsveje fungerende. For
+> automatiserede leveranceflow (fx update-godkendelse/rollout) indgår denne observation som
+> en **gate**: et target/canary der ikke er **observeret sundt**, er ikke en bestået
+> udrulning — uanset rapporteret deploy-status i database eller UI.
+>
+> **16.10 Cross-repository/publikations-propagation (reference, ikke fork — ny i v6, 2026-09-16).**
+> En consequential ændring omfattet af 16.1 skal ogsaa opfylde den kanoniske Mission Framework
+> Governance Propagation-regel: OP-001 Step 7 (cross-repo/publikations-paavirkning, begge
+> retninger, evidenskrav for negative konklusioner, gab-registrering) + Framework Findings
+> (opstroems-kanal for generiske laeringer). **Denne klausul gengiver IKKE Step 7's tekst** —
+> se den kanoniske kilde (`froekjaer/mission-framework`, `docs/operational/OP-001-Mission-
+> Operational-Preamble.md`), cachet lokalt per dette repos C-arkitektur (`Dokumentation/
+> mission-framework/README.md`). Det TimeLapse-specifikke bidrag her er UDELUKKENDE hvor
+> fuldfoerelsesevidensen for et TimeLapse-arbejdsspor registreres: `PAKKE_SPOR_REGISTER.md`s
+> §14.6-felter (udvidet, se HANDOVER 2026-09-16) for lokale/ingen-paavirkning-konklusioner, og
+> en Mission Framework Finding (jf. `FF-TLP-0001`) naar en generisk opstroems-relevant laering
+> identificeres. §16.1's Visible-Preamble-Record-agtige fuldfoerelseskrav (punkt 6, runtime-
+> evidens) og OP-001 Step 7's fuldfoerelseskrav er bevidst parallelle, ikke duplikerede: OP-001
+> Step 7 gaelder for enhver Mission Framework-deltager generelt; 16.10 praeciserer kun HVOR
+> TimeLapse konkret registrerer sin del af den samme forpligtelse.
+
+> **Note om test-fejlklasser (F5, v4):** 16.1 pkt. 5 skelner mellem (1) **dækningsgap** —
+> tests øver aldrig den faktiske capability (direct-Edge-terminalens renderer var dette:
+> tests verificerede session/transport, aldrig interaktiv terminal-adfærd) — og (2)
+> **adfærds-lock-in** — tests gennemtvinger aktivt degraderet/forkert adfærd som korrekt
+> (release-artifact-håndlisten, hvor kontrakttesten selv kodificerede den forkerte liste).
+> Klasserne er ikke ækvivalente: 16.9 (runtime-observation) adresserer hul-blindhed;
+> ratchet-krav (§16a) adresserer lock-in. [KORRIGERET v4: v3 brugte lock-in-formuleringen
+> om terminal-sagen.]
+
+---
+
+**Sammenfatning af §16's krav** (ikke en erstatning for teksten ovenfor): foer en consequential capability-aendring identificeres og dokumenteres intent/invarianter, relevante usecases, autoritativ og historisk implementering, automatisk og runtime-verifikation (16.1); soegning daekker problemet, ikke kun loesningens navn (16.2); fravaer af dokumentation er et hul, ikke tilladelse, og en accepteret mangel kraever beslutningsejerens eksplicitte godkendelse (16.3); capability-aekvivalens afgoer disposition, ikke patch-aekvivalens (16.4); ingen stiltiende degradering af andre dele af samme capability (16.5); kildefriskhed bekraeftes foer soegning (16.6); en konsekvent fravaerskonklusion kraever bekraeftet friskhed + mindst to uafhaengige soegemetoder (16.7); modstridende evidens forbliver eksplicit til den er afklaret (16.8); en aendring er foerst gennemfoert naar den paavirkede capability er observeret sund i drift (16.9); en consequential aendring skal ogsaa opfylde den kanoniske Mission Framework Governance Propagation-regel, via reference til kilden — ikke gengivelse af dens tekst (16.10).

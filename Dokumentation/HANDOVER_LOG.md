@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-09-16 (senere) — fra Claude: §16 formelt Accepted af Peter
+
+Peter svarede eksplicit "godkendt" til den praecise disposition: acceptér §16.1–§16.10 i den senest verificerede ordlyd fra `Dokumentation/CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (v6, 2026-09-16, inkl. §16.10 tilfoejet efter Mission Framework Wave 1) og inkorporér den som Accepted i `Dokumentation/SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`, additivt til det allerede accepterede §14.
+
+Udfoert paa denne branch (#240): §16.1–16.10 kopieret verbatim (diff-bekraeftet byte-identisk mod kilden) ind som nyt §16 i SAMARBEJDSMODEL, med fuld provenance (beslutningsejer, dato, relation til §14, kilde-SHA/version) og eksplicit afgraenset scope — §16a/§16b/§16c forbliver Proposed, FF-TLP-0001 IKKE lukket, ingen #242-remediering accepteret, ingen antagelse om fuldfoert propagation, ingen urelateret arkitekturaendring, arkitektur C IKKE gjort obligatorisk for andre forbrugere, intet 17. princip oprettet. §14 selv urørt (kun toplinjens statusresumé opdateret til at naevne §16).
+
+**Bemaerkning om resterende "pending accept"-sprog:** Loader-filerne (`AGENTS.md`/`CLAUDE.md`/`GEMINI.md`/`Dokumentation/CHATGPT-PROJECT-INSTRUCTIONS.md`) og forslagsdokumentets egne §8-punkter 1/2 siger stadig "architecture-approved-but-not-yet-formally-accepted" / "formel accept afventer" — men den AKTUELLE, levende ordlyd af disse filer findes kun paa #241-branchen (Wave 2 opdaterede dem der, ikke paa #240, som er frosset foer Wave 2). At rette dem her paa #240 ville rette en aeldre, snart-overhalet version. Rettelsen udfoeres i stedet paa #241 som del af klargoeringen til rebase/merge (Phase C), hvor den rammer den version der faktisk lander paa main.
+
 ### Handover 2026-09-15 — fra Claude: konsolideret dokumentationskorrektion af cross-repository governance propagation-analysen (PR #240)
 
 Efter to uafhaengige adversarielle gennemgange af `CROSS_REPOSITORY_GOVERNANCE_PROPAGATION_ANALYSIS_2026-09-14_CLAUDE.md` (begge konkluderede at kernearkitekturen — GENBRUG/UDVID OP-001 Step 7 + Framework Findings, ingen tredje mekanisme — holder), udfoerte jeg en konsolideret dokumentationskorrektionspas. Alle 12 punkter i rettelsesanmodningen blev direkte, uafhaengigt verificeret (frisk clone/fetch/live-hentning, 2026-09-15) foer indarbejdning — intet blev accepteret paa tillid.
