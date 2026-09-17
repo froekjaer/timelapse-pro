@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-09-17 (senere) — fra ChatGPT: reverse-SSH Edge2 cutover og systemd startup-fix fysisk E2E-verificeret
+
+- **Hvad er gjort:** PR #246 branch `chatgpt/api-mtls-20260917` har runtime-verificeret kode-head `966429a711b1662f596f50d04c4a1ffc845e7db0`. CI run #1099 er SUCCESS på præcis denne SHA. Edge2 `TL-043EB9E72EFD` (`tl-modbaggarddlvc`) er fysisk cuttet over til den dedikerede reverse-SSH ingress `timelapse_tunnel@tunnel.timelapse-pro.dk:22022` med explicit loopback-forward `127.0.0.1:2204:localhost:22`. Headend -> `127.0.0.1:2204` -> Edge2 er E2E-verificeret: hostname `tl-modbaggarddlvc`, user `orangepi`, `timelapse-edge.service=active`.
+- **Systemd-defect fundet og rettet:** fysisk restart af Edge2 afdækkede en latent startup-fejl i `timelapse-edge.service`: `ProtectSystem=strict` kombineret med `ReadWritePaths=-/var/log.hdd/timelapse` kunne ikke gøre en endnu ikke eksisterende sti writable, så det gamle `ExecStartPre=/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions` fejlede med EROFS. Backing ext4/NVMe var verificeret RW; fejlen var service-sandbox/path-existence, ikke storage.
+- **Permanent fix:** commit `966429a7` ændrer kun mkdir-prestarten til `ExecStartPre=+/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions`. `ProtectSystem=strict` og den smalle `ReadWritePaths=-/var/log.hdd/timelapse` beholdes. `+`-semantikken blev først bevist på fysisk Edge2/systemd 249 med isoleret probe (`Result=success`, `ExecMainStatus=0`) og derefter låst med regressionstest.
+- **Tests:** targeted regression på Mac mini: 53/53 passed (`test_edge_capture_runtime_safety.py`, `test_edge_log_hdd_dir_creation.py`, `test_edge_release_contract.py`); `git diff --check` ren; CI #1099 SUCCESS.
+- **Deployment Edge2:** installeret unit SHA256 `9603e768b36fdd2d6b0e39658683e34f1135c778972bd68cba6eddfeac6f00f2`. Rollback-backup bevaret som `/etc/systemd/system/timelapse-edge.service.pre-966429a7-20260917`. Kontrolleret restart gav `Result=success`; ny agent og ny 22022-tunnel kom op; heartbeat/config/inventory returnerede HTTP 200; ingen nye `Read-only file system`-advarsler efter restart.
+- **Reverse-SSH status:** Edge1 (`127.0.0.1:2201`) og Edge2 (`127.0.0.1:2204`) er nu begge på den dedikerede 22022-ingress med per-device nøgle og loopback-only remote forward. Legacy-pathen beholdes foreløbig som rollback og fjernes IKKE uden særskilt beslutning.
+- **Hvad mangler / næste skridt:** PR #246 forbliver DRAFT. Sub-track B reverse-SSH er fysisk gennemført; Sub-track A Edge API-mTLS er fortsat foundation/incomplete og må ikke fremstilles som runtime-enforced. Legacy tunnel-oprydning er en separat kontrolleret beslutning.
+- **Separat fund:** `systemd-analyze verify` rapporterer fortsat `/etc/systemd/system/timelapse-breakglass-setup.service:25: Unknown key name 'StartLimitIntervalSec' in section 'Service'`. Dette er ikke årsagen til Edge2-startfejlen og skal behandles som separat remediation.
+- **Filer rørt i fixet:** `edge/scripts/timelapse-edge.service`, `tests/test_edge_capture_runtime_safety.py`. Denne handover samt `PAKKE_SPOR_REGISTER.md` opdateres efter fysisk verifikation.
+- **Risici / pas på:** merge ikke #246 endnu; fjern ikke Edge rollback-backups eller legacy tunnelkonfiguration endnu; bland ikke det afsluttede reverse-SSH-spor sammen med det endnu uafsluttede mTLS-spor.
+
 ### Handover 2026-09-17 (senere) — fra z.ai: tre blocking defects rettet efter eksternt review af `ea8c4826` (ingen runtime ændret)
 
 - **Mandat:** Peter videredele det eksterne reviews tre blocking defects. Verificeret alle tre som reelle (ingen runtime-aktivering var sket — Peter har IKKE kørt installeret; fysisk headend upåvirket).
