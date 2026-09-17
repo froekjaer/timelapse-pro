@@ -261,17 +261,35 @@ if [[ "$MODE" == "selftest" ]]; then
     fi
     log "selftest: command execution neutralised ✓"
 
-    # Negative 2: a remote forward on a NON-allowed port must be refused.
-    BADPORT="${SELFTEST_LISTEN}7"
-    ssh "${SSHOPTS[@]}" -N -R "127.0.0.1:${BADPORT}:127.0.0.1:8000" "${USER_NAME}@127.0.0.1" >/dev/null 2>&1 &
-    BAD_PID=$!
-    sleep 3
+    # Negative 2: use a VALID but NON-allowed remote port so the refusal proves
+    # the server-side permitlisten policy, not merely client-side port parsing.
+    BADPORT=$((SELFTEST_LISTEN + 1))
+    if (( BADPORT < 1 || BADPORT > 65535 || BADPORT == SELFTEST_LISTEN )); then
+        selftest_fail "selftest: BADPORT=${BADPORT} is not a distinct valid TCP port"
+    fi
     if lsof -nP -iTCP:"$BADPORT" -sTCP:LISTEN >/dev/null 2>&1; then
-        kill "$BAD_PID" 2>/dev/null || true
+        selftest_fail "selftest: BADPORT ${BADPORT} already has a listener; cannot prove permitlisten refusal"
+    fi
+
+    set +e
+    OUT_BAD="$(ssh "${SSHOPTS[@]}" -N \
+        -R "127.0.0.1:${BADPORT}:127.0.0.1:8000" \
+        "${USER_NAME}@127.0.0.1" 2>&1)"
+    BAD_RC=$?
+    set -e
+
+    if (( BAD_RC == 0 )); then
+        selftest_fail "selftest: non-allowed forward request on ${BADPORT} unexpectedly succeeded"
+    fi
+    if lsof -nP -iTCP:"$BADPORT" -sTCP:LISTEN >/dev/null 2>&1; then
         selftest_fail "selftest: non-allowed forward port (${BADPORT}) was PERMITTED — allowlist broken!"
     fi
-    kill "$BAD_PID" 2>/dev/null || true
-    log "selftest: non-allowed forward port refused ✓"
+    if [[ "$OUT_BAD" != *"remote port forwarding failed"* &&
+          "$OUT_BAD" != *"administratively prohibited"* &&
+          "$OUT_BAD" != *"cannot listen"* ]]; then
+        selftest_fail "selftest: non-allowed forward failed without forwarding-refusal evidence: ${OUT_BAD}"
+    fi
+    log "selftest: valid non-allowed forward port ${BADPORT} refused by sshd policy ✓"
 
     # Negative 3: password authentication must be refused.
     OUT_PW="$(ssh -p "$TUNNEL_PORT" -o BatchMode=yes -o PubkeyAuthentication=no \
