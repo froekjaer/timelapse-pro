@@ -14,9 +14,9 @@ silently regress:
    destination host (options after the destination are parsed as a remote
    command).
 
-3. `--verify-only` must be provably read-only: its branch must exit before
-   the first mutating command, and the verify section must contain no
-   mutating commands at all.
+3. `--verify-only` must be provably read-only: both root and non-root exits
+   must occur before the first mutation, and the complete verify branch must
+   contain no mutating commands at all.
 
 4. The negative permitlisten self-test must challenge sshd with a distinct,
    valid TCP port and require an actual forwarding refusal; an out-of-range
@@ -125,28 +125,34 @@ def _line_no(needle: str) -> int:
     return INSTALLER_SRC[:idx].count("\n") + 1
 
 
+def _verify_section() -> str:
+    start_marker = 'if [[ "$MODE" == "verify" ]]; then'
+    end_marker = 'am_root || die "install/self-test/uninstall require root. Re-run with sudo."'
+    start = INSTALLER_SRC.find(start_marker)
+    end = INSTALLER_SRC.find(end_marker)
+    assert start >= 0, "missing verify-only branch"
+    assert end > start, "verify-only branch must finish before root mutation guard"
+    return INSTALLER_SRC[start:end]
+
+
 def test_verify_branch_exits_before_first_mutation() -> None:
     verify_start = _line_no('if [[ "$MODE" == "verify" ]]; then')
-    verify_exit = _line_no('verify-only complete — NOTHING was modified.')
     first_mutation = _line_no("MUTATIONS BEGIN HERE")
     assert verify_start < first_mutation, "verify branch must precede the mutation section"
-    assert verify_exit < first_mutation, (
-        f"verify-only must exit (line {verify_exit}) before mutations begin (line {first_mutation})"
+
+    section = _verify_section()
+    exits = [m.start() for m in re.finditer(r"^\s*exit 0\s*$", section, re.MULTILINE)]
+    assert len(exits) == 2, "verify-only must have explicit non-root and root success exits"
+    assert section.count("NOTHING was modified.") == 2, (
+        "both non-root and root verify-only paths must report the read-only result"
     )
 
 
 def test_verify_section_contains_no_mutating_commands() -> None:
-    start = _line_no('if [[ "$MODE" == "verify" ]]; then')
-    end = _line_no('verify-only complete — NOTHING was modified.')
-    section = "\n".join(INSTALLER_SRC.splitlines()[start - 1 : end])
+    section = _verify_section()
     for pat in MUTATING_PATTERNS:
         hits = re.findall(pat, section)
         assert not hits, f"verify-only section contains mutating command ({pat}): {hits}"
-
-
-def test_verify_marker_appears_once_per_mode_branch() -> None:
-    # The read-only exit marker must exist exactly once (single verify exit).
-    assert INSTALLER_SRC.count("NOTHING was modified.") == 1
 
 
 # ── Defect 4: negative forwarding test must reach sshd policy ─────────────
