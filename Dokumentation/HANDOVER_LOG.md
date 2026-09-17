@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-17 (senere) — fra z.ai: tre blocking defects rettet efter eksternt review af `ea8c4826` (ingen runtime ændret)
+
+- **Mandat:** Peter videredele det eksterne reviews tre blocking defects. Verificeret alle tre som reelle (ingen runtime-aktivering var sket — Peter har IKKE kørt installeret; fysisk headend upåvirket).
+- **Defect 1 (korrekt):** `restrict,permitlisten=…` etablerer INGEN forwards — `restrict` slår al forwarding fra, og `permitlisten` genaktiverer den ikke. Rettet overalt til `restrict,port-forwarding,permitlisten="127.0.0.1:<port>"` (`port-forwarding` genaktiverer; `permitlisten` indsnævrer): authorized_keys-skabelon, installerens self-test-entry, sshd_config-kommentar, PAKKE_SPOR-post — og alle steder, hvor teksten fejlagtigt hævdede, at `permitlisten` selv genaktiverer forwarding.
+- **Defect 2 (korrekt):** self-testens positive ssh-kommando havde `"${SSHOPTS[@]}"` EFTER destinationen (fortolkes som remote-kommando). Alle ssh-kald gennemgået; samtlige options står nu FØR destinationen.
+- **Defect 3 (korrekt):** `--verify-only` muterede som root (konto/config/hostkey/launchd). Control flow omskrevet: verify-grenen eksisterer FØR mutationssektionen (tydeligt markeret `MUTATIONS BEGIN HERE`) og er for både root og ikke-root beviseligt read-only (kun eksistens-tjek + `sshd -t` mod allerede installerede filer + rapportering).
+- **Defect 5 (failure semantics):** self-test aktiverer servicen FØR test. Alle fejlstier rydder nu altid throwaway-nøglen (EXIT-trap) og udskriver en deterministisk RUNTIME STATE REPORT (config/authkeys/hostkey/plist/launchd/listener-tilstand + fingerprint) med eksplicit erklæring om at 22022 forbliver installeret/kørende samt fjernkommando (`--uninstall`, som også er tilføjet med authorized_keys-backup). Bevidst valg: ingen automatisk rollback (diagnosticerbar tilstand > blind nedrivning); alternativet (sikker førstegangs-rollback) dokumenteret som afvejet.
+- **Defect 4 (tests):** ny `tests/test_timelapse_tunnel_sshd_config.py`: (1) kræver `restrict,port-forwarding,permitlisten` i skabelon+installer og forbyder bar `restrict,permitlisten` samt forældede "permitlisten genaktiverer"-påstande; (2) alle ssh-invokationer i installer har options før destination; (3) verify-only-grenen eksisterer og `exit 0`-er FØR første mutationskommando (strukturelt parset), samt ingen muterende kommandoer i verify-sektionen.
+- **Kørt:** bash -n ✓, sshd -t (repo-config, temp hostkey) ✓, plutil -lint ✓, nye+ gamle relevante tests ✓, diff/secrets-gennemgang ✓. Ingen sudo, ingen runtime, ingen Edge, ingen NAT, ingen merge.
+- **Filer rørt:** `deploy/ssh/install_timelapse_tunnel_sshd.sh` (omskrevet), `deploy/ssh/authorized_keys.timelapse_tunnel`, `deploy/ssh/timelapse-tunnel-sshd.conf` (kommentar), `tests/test_timelapse_tunnel_sshd_config.py` (ny), `Dokumentation/PAKKE_SPOR_REGISTER.md`, denne log.
+
 ### Handover 2026-09-17 — fra z.ai: dedikeret reverse-SSH ingress 22022 implementeret i repo (runtime-aktivering afventer Peters sudo)
 
 - **Mandat:** Peter, 2026-09-17 — permanent, dedikeret reverse-SSH ingress på TCP/22022 på headend Mac mini, på eksisterende spor `chatgpt/api-mtls-20260917` (PR #246). Reality-before-assumptions; ingen Edge-ændring; ingen ændring af SFTP 22222/admin SSH; loopback-only reverse forwards; pr.-device least-privilege; ingen secrets i git.
