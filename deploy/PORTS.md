@@ -12,6 +12,7 @@ on a production headend.
 | 443 | Not TimeLapse directly | Existing public HTTPS entrypoint with hostname routing |
 | 2222 | Not TimeLapse | Reserved for other production application use |
 | 22222 | TimeLapse inbound | Dedicated SFTP upload from Edge to Headend |
+| 22022 | TimeLapse inbound | Dedicated reverse-SSH control/management ingress — `timelapse_tunnel@backend.timelapse-pro.dk:22022`, own sshd instance (`deploy/ssh/timelapse-tunnel-sshd.conf`), pubkey-only, remote-forward-only, per-Edge `permitlisten` allowlist, forwards bound to headend loopback |
 | 5514 | TimeLapse internal/lab | Optional local SIEM syslog receiver (UDP/TCP). Production external logs should normally arrive via Edge/site collector API forwarding. |
 | 8000 | Loopback/internal | Headend FastAPI service behind reverse proxy |
 | 8080 | Loopback/internal or changed | Open WebUI only behind authenticated TimeLapse/reverse proxy |
@@ -22,6 +23,9 @@ on a production headend.
 - Headend must not require direct inbound access to Edge except during explicit
   manual debug via SSH tunnel.
 - `sftp_*` site upload users are only valid on TCP/22222.
+- Edge reverse-SSH control connections must use TCP/22022 and the `timelapse_tunnel` service identity (pubkey-only, no shell/PTY, `ForceCommand /usr/bin/false`, remote-forwarding only). The admin sshd on 22/22222 must NOT be the production tunnel ingress.
+- Reverse remote ports are per-device and must remain loopback-only on the headend: `TL-C87FF9587CA0` → `127.0.0.1:2201`, `TL-043EB9E72EFD` → `127.0.0.1:2204`. Each Edge's tunnel key may `permitlisten` only its own port.
+- Tunnel private keys are per-Edge and must never be shared or reused from API-mTLS keys; the tunnel host key (dedicated instance) is pinned per Edge at cutover.
 - `sftp_*` users must not be allowed to authenticate on TCP/22 or TCP/2222.
 - Customer/site data isolation is enforced by separate site SFTP users and by
   application-level RBAC for search, thumbnails, tags, AI/Ollama, CMDB and SIEM.

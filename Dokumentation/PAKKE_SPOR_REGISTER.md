@@ -256,6 +256,19 @@ fra #235/#236/#237.
 - **Blokeringsansvarlig:** Peter (governance-beslutning).
 - **Opfoelgning:** Ved Peters §16-stilling.
 
+## Edge API-mTLS + dedikeret reverse-SSH ingress (22022) — #246 (draft, igangværende)
+
+- **Mandat/session:** ChatGPT-spor påbegyndt 2026-09-17 (Edge API mTLS enrollment, commits `df0aa9b4`/`030b74ea`/`486fb78e`); tunnel-ingress-delen implementeret af z.ai (GLM-5.3), 2026-09-17, på samme branch per Peters mandat ("permanent, dedikeret reverse-SSH ingress på TCP/22022 — genbrug edge/tunnel/ssh_manager.py-mekanismen, ingen ny parallel tunnelimplementation").
+- **Formål/scope:** (a) Edge API-mTLS-enrollment (øvrige commits); (b) dedikeret sshd-instance på 22022 til Edge-reverse-tunnels: `timelapse_tunnel`-servicekonto (pubkey-only, ingen shell/PTY, remote-forward alene), pr.-device `restrict,permitlisten="127.0.0.1:2201|2204"` authorized_keys, `GatewayPorts no` (loopback-binding — erstatter dagens wildcard-bindende `Match User tunnel`/`GatewayPorts yes`-sti ved cutover), dedikeret hostnøgle pr. instance til Edge-pinning, launchd LaunchDaemon med `sshd -t`-validering før aktivering.
+- **Berørte domæner/kontrakter:** `deploy/ssh/timelapse-tunnel-sshd.conf`, `deploy/ssh/authorized_keys.timelapse_tunnel`, `deploy/ssh/install_timelapse_tunnel_sshd.sh`, `deploy/launchd/dk.froekjaer.timelapse-tunnel-sshd.plist`, `deploy/PORTS.md`, denne post, HANDOVER_LOG. Rører IKKE: admin-sshd (22/22222), SFTP-22222, nginx/8443, eksisterende Edge-forbindelser.
+- **Base/head:** PR #246 (draft), branch `chatgpt/api-mtls-20260917`, main-baseline `928134be`.
+- **Implementeringsstatus (skal ikke over-/underdrives):** IMPLEMENTERET i repo (config/plist/installer/nøgleskabelon; installer idempotent med `--verify-only`/`--self-test`); VERIFIED LOCALLY: `sshd -t` syntaks (repo-config + temp hostkey), `plutil -lint`, `bash -n`, launcher-preflight, regressionstests `test_macos_startup_contract`+`test_node_agent_launchd` (24 passed/9 env-skips) — **runtime-aktivering afventer root-udførelse (passwordless sudo utilgængeligt for agenten; installer-forberedt og valideret)**; EXTERNAL NETWORK NOT YET VERIFIED (NAT/firewall 22022 → headend); EDGE CUTOVER NOT PERFORMED (ingen fysisk Edge rørt — separat fase efter review).
+- **Cross-repo/website-påvirkning (§16.10-felt):** *Ingen påvirkning fundet, evidensbaseret* — ændringen er TimeLapse-lokal headend-infrastruktur (deploy/-konfiguration + dokumentation); tjekket: mission-framework (ingen OP-001/governance-tekst berørt — OP-001-cache urørt, freshness VERIFIED mod `9a1a4543`), ingen publikationsoverflader (TimeLapse `has_pages:false`, www/website urørte), ingen andre repos berørt. Negativ konklusion baseret på diff-inspektion af samtlige rørte filer.
+- **Seneste verificerede aktivitet/evidens:** Fase-1-discovery gemt i HANDOVER_LOG 2026-09-17 (OpenSSH 10.3p1 bekræfter `permitlisten`-semantik; 22022 var ubrugt; eksisterende forwards binder wildcard — ny sti binder loopback).
+- **Næste handling:** (1) Peter kører installer med sudo (`--self-test`), (2) NAT/firewall 22022, (3) Edge-cutover-fase: per-device nøgler + `permitlisten`-entries + hostnøgle-pinning + `ssh_manager`-endpointskifte til `timelapse_tunnel@backend.timelapse-pro.dk:22022`, (4) derefter oprydning af legacy `Match User tunnel`-blok (særskilt beslutning).
+- **Blokeringsansvarlig:** Peter (root-udførelse + ekstern NAT + cutover-godkendelse).
+- **Opfølgning:** Ved denne spors næste substantielle revision.
+
 ## Governance-afslutning 2026-09-13
 
 Peter har accepteret ADR-003/§14 og autoriseret afslutning af PR #232. Review/syntese er afsluttet; de åbne implementeringsspor forbliver synlige i dispositionslisten. Routing og upstream-placering er Proposed; Solar Eclipse er udskudt efter Peters instruktion og blokerer ikke disse spor.

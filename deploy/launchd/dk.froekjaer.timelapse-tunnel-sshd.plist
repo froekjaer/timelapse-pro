@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dk.froekjaer.timelapse-tunnel-sshd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/sbin/sshd</string>
+        <string>-D</string>
+        <string>-f</string>
+        <string>/etc/ssh/timelapse-tunnel/sshd_config</string>
+    </array>
+
+    <!-- Tunnel ingress must survive reboots and crashes. sshd -D runs in the
+         foreground; launchd supervises it directly (KeepAlive always). -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Diagnosable logs. sshd also logs to the unified log (facility AUTH,
+         LogLevel VERBOSE in the sshd_config); these files capture stderr
+         (config errors, binding failures) that never reach syslog. -->
+    <key>StandardOutPath</key>
+    <string>/var/log/timelapse-tunnel-sshd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/timelapse-tunnel-sshd.log</string>
+
+    <!-- Hardened runtime is not applicable to /usr/sbin/sshd (Apple system
+         binary, already entitled). No EnvironmentVariables: config path is
+         explicit above. -->
+</dict>
+</plist>
