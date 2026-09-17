@@ -122,11 +122,8 @@ def test_headend_api_mtls_routers_are_registered_in_runtime():
         root / "headend" / "main.py"
     ).read_text(encoding="utf-8")
 
-    assert (
-        "from api.edge_api_mtls_api import "
-        "create_headend_api_mtls_admin_router"
-        in admin_bundle
-    )
+    assert "create_headend_api_mtls_admin_router" in admin_bundle
+    assert "create_headend_api_mtls_edge_router" in admin_bundle
     assert (
         "app.include_router("
         "create_headend_api_mtls_admin_router(require_role)"
@@ -135,14 +132,11 @@ def test_headend_api_mtls_routers_are_registered_in_runtime():
     )
 
     assert (
-        "from api.edge_api_mtls_api import "
-        "create_headend_api_mtls_edge_router"
-        in main
+        "create_headend_api_mtls_edge_router(verify_device_token)"
+        in admin_bundle
     )
     assert (
-        "app.include_router("
-        "create_headend_api_mtls_edge_router(_verify_device_token)"
-        ")"
+        "_reconcile_edge_lifecycle, _verify_device_token)"
         in main
     )
 
