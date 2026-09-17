@@ -104,7 +104,25 @@ def test_gps_time_reader_uses_wall_clock_deadline_not_fixed_line_count() -> None
 
 def test_edge_service_creates_persistent_breakglass_log_root_before_agent() -> None:
     source = _source("edge/scripts/timelapse-edge.service")
-    assert "ExecStartPre=/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions" in source
+
+    # Regression: with ProtectSystem=strict, the writable exception cannot
+    # make an absent path writable after the service namespace is created.
+    # The fixed mkdir therefore has to run outside that filesystem namespace.
+    assert (
+        "ExecStartPre=+/bin/mkdir -p "
+        "/var/log.hdd/timelapse/breakglass/sessions"
+    ) in source
+
+    # Keep the main edge agent hardened.  The fix must not regress into
+    # weakening ProtectSystem or widening the writable log area.
+    assert "ProtectSystem=strict" in source
+    assert "ReadWritePaths=-/var/log.hdd/timelapse" in source
+
+    # Do not silently reintroduce the sandboxed form that failed on Edge2.
+    assert (
+        "ExecStartPre=/bin/mkdir -p "
+        "/var/log.hdd/timelapse/breakglass/sessions"
+    ) not in source
 
 
 def test_new_edge_images_remove_competing_legacy_tunnel_unit() -> None:
