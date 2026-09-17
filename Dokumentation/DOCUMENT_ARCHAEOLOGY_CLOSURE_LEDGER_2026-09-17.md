@@ -5,187 +5,187 @@
 **Branch:** `chatgpt/capability-map-v0-20260916`  
 **Relation:** Supplement til `DOCUMENT_ARCHAEOLOGY_INDEX_2026-09-16.md` og `KNOWLEDGE_ARCHAEOLOGY_REGISTER_2026-09-16.md`.
 
-## 1. Formål
-
-Dette dokument fastholder closure-evidence fra den branch-aware Knowledge Archaeology. Det eksisterende archaeology-index er fortsat coverage-indeks; denne ledger registrerer de afsluttende fresh checks, kendte gaps og de vigtigste historiske provenance-kæder, så dataindsamlingen senere kan lukkes uden at forveksle manglende originalkilder med manglende viden.
-
-Ingen historisk status promoveres automatisk til current GRC-status. Supersession er ikke deletion.
-
-## 2. Fresh branch-universum
-
-Fresh pagineret branch-inventering 2026-09-17 viser **139 remote branches** i `froekjaer/timelapse-pro`:
-
-- side 1: 100 branches, næste cursor `100`;
-- side 2: 39 branches, næste cursor `139`;
-- opslag efter cursor `139`: 0 branches.
-
-Det tidligere tal **138** i `DOCUMENT_ARCHAEOLOGY_INDEX_2026-09-16.md` er derfor stale og skal ikke anvendes som closure-baseline.
-
-Ny branch siden det tidligere snapshot omfatter `chatgpt/api-mtls-20260917`. Første tree/delta-pass viste ikke et nyt historisk dokumentunivers; branchens dokumentation er i høj grad allerede kendte blobs/provenances. Den skal stadig indgå i blob/provenance-regnskabet.
-
-## 3. Closure pipeline og stopregel
+## 1. Formål og stopregel
 
 Closure følger:
 
 `branches inventoried → document paths discovered → unique blobs → READ/DEDUP/GAP → extracted → conflicts/supersession → proposed authoritative home`
 
-Data collection må først erklæres lukket når:
+Data collection må først erklæres lukket når alle aktuelle remote branches er accounted for, alle opdagede dokumentpaths er knyttet til blob SHA/provenance, ingen unik dokumentblob står uklassificeret, alle teknisk læsbare relevante tekstblobs er READ/DEDUP, binære/oversized kilder er eksplicit GAP-klassificeret, potentielt unikke knowledge gaps er vurderet, current `main` er reconcilet, og et sidste fresh branch-check er udført.
 
-1. alle 139 aktuelle remote branches er accounted for;
-2. alle opdagede dokumentpaths er knyttet til blob SHA/provenance;
-3. ingen unik dokumentblob står uklassificeret;
-4. alle teknisk læsbare relevante tekstblobs er READ eller DEDUP;
-5. binære/oversized/pre-Git-kilder er eksplicit GAP-klassificeret;
-6. alle potentielt unikke knowledge gaps er vurderet;
-7. current `main` er reconcilet mod archaeology-baselinen;
-8. afsluttende fresh branch-check er udført.
+Closure betyder ikke nødvendigvis nul tekniske gaps. Closure kan ske med eksplicitte gaps, hvis ingen kendt ulæst kilde efterlader et uidentificeret requirement/capability-domæne.
 
-**Vigtigt:** Closure betyder ikke nødvendigvis nul tekniske gaps. Closure kan ske med eksplicitte gaps, hvis ingen kendt ulæst kilde efterlader et uidentificeret requirement/capability-domæne.
+Ingen historisk status promoveres automatisk til current GRC-status. **Supersession er ikke deletion.**
 
-## 4. GAP-taxonomi
+## 2. Fresh branch-universum
+
+Fresh pagineret branch-inventering 2026-09-17 viser **139 remote branches** i `froekjaer/timelapse-pro`: 100 + 39; opslag efter cursor 139 gav 0. Det tidligere tal 138 i archaeology-indexet er stale.
+
+Ny branch siden det tidligere snapshot omfatter `chatgpt/api-mtls-20260917`. Første tree/delta-pass viste ikke et nyt historisk dokumentunivers; branchens dokumentation er i høj grad kendte blobs/provenances. Den skal stadig indgå i endeligt blob/provenance-regnskab.
+
+## 3. GAP-taxonomi
 
 | GAP-type | Betydning | Closure-effekt |
 |---|---|---|
-| `SOURCE_GAP` | Original/pre-Git kilde er kendt eller refereret, men original blob er ikke recoveret | Blokerer kun hvis unik viden ikke findes andetsteds |
-| `BINARY_GAP` | DOCX/PDF/blob er inventorieret, men tekst er ikke faktisk ekstraheret og strict-read | Skal have sekundær evidens eller forblive unresolved |
-| `TECHNICAL_GAP` | Kilden/blob findes, men connector/tooling kan ikke levere den læsbart, fx pga. størrelse | Registreres med teknisk årsag og evt. descendants |
-| `COVERED_GAP` | Originalen mangler/kan ikke læses, men dokumenteret extraction eller senere direkte kilder bevarer requirement-intent/provenance | Evidence-quality gap, normalt ikke knowledge-loss blocker |
+| `SOURCE_GAP` | Refereret original kilde/blob kan ikke recoveres | Blokerer kun hvis unik viden ikke findes andetsteds |
+| `BINARY_GAP` | DOCX/PDF/blob er inventorieret/recoveret, men tekst er ikke faktisk ekstraheret og strict-read | Skal have sekundær evidens eller forblive unresolved |
+| `TECHNICAL_GAP` | Kilden findes, men connector/tooling kan ikke levere den læsbart, fx pga. størrelse | Registreres med teknisk årsag og evt. descendants |
+| `COVERED_GAP` | Originalen kan ikke strict-reades, men dokumenteret extraction eller senere direkte kilder bevarer requirement-intent/provenance | Evidence-quality gap, normalt ikke knowledge-loss blocker |
 | `CRITICAL_KNOWLEDGE_GAP` | Kendt ulæst kilde kan indeholde et unikt requirement/capability-domæne uden anden evidens | Blokerer knowledge closure |
 
-Status pr. 2026-09-17: der er endnu **ikke identificeret en dokumenteret `CRITICAL_KNOWLEDGE_GAP`**, men dette er ikke det samme som endelig closure. Blob/path reconciliation skal færdiggøres først.
+Status: der er endnu **ikke identificeret en dokumenteret `CRITICAL_KNOWLEDGE_GAP`**, men blob/path reconciliation skal færdiggøres før endelig closure.
 
-## 5. Pre-Git og tidlig historie
+## 4. Pre-Git projektstart vs Git provenance
 
-Git-repositoriets første commit 2026-04-01 behandles som **første bevarede Git implementation baseline**, ikke som projektets begyndelse.
+Git-repositoriets første commit 2026-04-01 er **første bevarede Git implementation baseline**, ikke projektets begyndelse. Tidlige projektkilder kan være skabt før Git og senere indført i repository history.
 
-Tidlige kilder som `Startkrav.docx`, `ChatGpt-input.docx`, `Chat with Gemini.docx` og `Timelaps-chat.docx` er kendt gennem senere dokumenteret extraction/provenance. De må ikke markeres READ, medmindre originalt indhold faktisk recoveres og gennemlæses.
+### 4.1 Vigtig recovery 2026-09-17
 
-`AGGREGATED_REQUIREMENTS_UPDATE_PROVISIONING.md` fra 2026-05-22 er strict-read og fungerer som vigtig sekundær bro til pre-Git-materialet. Dokumentet beskriver extraction fra 47 dokumenter og bevarer bl.a. update/provisioning/configuration/offline/security-intent fra de ældre kilder.
+Et recursive tree-pass på `feature-camera-hardware-cmdb` (`Dokumentation` tree `c8e5776704b812452785a4d82965294db0014987`, `truncated=false`) recoverede de eksakte repository paths og blob SHA'er for de tidligere formodede pre-Git originals:
 
-Evidence-strength skal derfor skelne mellem:
+| Kilde | Eksakt path på historisk branch | Blob SHA | Size | Status |
+|---|---|---|---:|---|
+| Startkrav | `Dokumentation/Empiri og kilder/Startkrav.docx` | `f3533f333652792ea3779a6e349f090a339ae61c` | 17,312 | `BINARY_GAP`, original blob recoveret |
+| ChatGPT input | `Dokumentation/Empiri og kilder/ChatGpt-input.docx` | `f77615324fa67fc2f1a8038d4260e6f40fd7d09f` | 120,503 | `BINARY_GAP`, original blob recoveret |
+| Gemini chat | `Dokumentation/Empiri og kilder/Chat with Gemini.docx` | `36d2f83db622b5f96c1abf75e25e263263cb8feb` | 81,727 | `BINARY_GAP`, original blob recoveret |
+| Timelaps chat | `Dokumentation/Empiri og kilder/Timelaps-chat.docx` | `844a4e692373553ca6f1a6adb01fc5bbfd2727f7` | 503,401 | `BINARY_GAP`, original blob recoveret |
+
+Dette korrigerer den tidligere foreløbige `SOURCE_GAP`-klassifikation: originalerne er **ikke tabt fra Git-history**. De er binære og endnu ikke strict-read.
+
+`Startkrav.docx` blev derefter hentet via GitHub connector med den eksakte path og `encoding=base64`. Connectoren returnerede DOCX/ZIP-data, men output blev trunkeret af response-budgettet. Det beviser blob/path recovery, men er **ikke** text extraction og må ikke markeres READ.
+
+Konsekvens: pre-Git provenance-risikoen er reduceret fra “original source not recovered” til “original binary recovered, extraction pending/limited by connector”.
+
+### 4.2 Historisk Dokumentation-tree og Gamle versioner
+
+Samme non-truncated recursive tree identificerede `Dokumentation/Gamle versioner` som tree:
+
+`241d43a0cf6c93bde88e2883e2bf3fb62c1aeb38`
+
+Det erstatter den tidligere fejlagtige/ufuldstændige tree-SHA-antagelse og giver et reproducerbart historisk inventory-anchor.
+
+Tree'et bekræfter desuden eksakte binary families og SHA'er, bl.a.:
+
+- Configuration Guide: `04cf2284...`, `e87b88f...`, `e6951210...`;
+- Edge Runbook v2–v7: `882abf04...`, `c0d1cdf6...`, `db28089e...`, `4e65f6a2...`, `aaecbeb2...`, `77e7d5aa...`;
+- Roadmap v1–v4: `deba2e21...`, `47cf4328...`, `4948047f...`, `5b85539e...`;
+- SABSA Architecture original/v3–v9: `d0e64a24...`, `aca63339...`, `20b235d3...`, `62a63c2a...`, `272f65ad...`, `4564ce71...`, `d0ebd551...`, `7cdda53c...`;
+- SABSA Risk original/v2–v6: `8509188e...`, `2e3060d8...`, `5faf3cf1...`, `8aabddcc...`, `496a3719...`, `1b054703...`;
+- RBAC Remote Operational v1: `afc39dfe...`;
+- Security/Compliance v2: `8b5506ef...` (samme blob som `timelapse_full_security.docx`, dermed dedupe provenance);
+- System Inventory v1: `02f8adae...`;
+- `timelapse_security.docx`: `6ffe0c55...`.
+
+Disse er inventorierede originals, ikke `SOURCE_GAP`. De forbliver `BINARY_GAP`/`BINARY_PENDING_EXTRACTION` indtil tekst er faktisk ekstraheret eller de dispositioneres som `COVERED_GAP` med dokumenteret secondary extraction.
+
+## 5. Historical extraction bridge
+
+`AGGREGATED_REQUIREMENTS_UPDATE_PROVISIONING.md` fra 2026-05-22 er strict-read og beskriver extraction fra 47 dokumenter, herunder Startkrav, chats, Roadmaps, Edge Runbooks, SABSA/Risk, RBAC, Security/Compliance og System Inventory.
+
+Det giver secondary evidence for kravfamilier som Headend-medieret production update, signeret/immutable artifact, hierarchical update/config scope, per-target state, staged rollout/rollback, Edge capture/store-forward autonomy, zero/near-zero-touch provisioning, certificate lifecycle, backup/restore/RTO/RPO og governed operational configuration.
+
+Evidence-strength:
 
 `original directly READ → documented historical extraction → later corroborating source/implementation → reference-only GAP`
 
-## 6. Historisk provenance-kæde: requirements → observed implementation gaps
+Recovered-but-unextracted DOCX ligger mellem første og andet niveau: original blob/provenance er kendt, men content evidence kommer indtil videre fra documented extraction.
 
-### 6.1 2026-05-22 — aggregated requirements
+## 6. Requirements → observed implementation gaps
 
-Det aggregerede kravregister formaliserer bl.a.:
+Den eksakte historiske `Dokumentation/SYSTEM_HEALTH_REGISTER.md` blev oprettet 2026-05-23:
 
-- Headend-medieret production update frem for direkte Edge→GitHub;
-- signeret/immutable artifact med exact source/hash/signer/SBOM;
-- hierarchical update/config scope;
-- per-target deployment status;
-- staged rollout og rollback;
-- Edge capture/store-forward-autonomi under netværks-/Headend-udfald;
-- zero/near-zero-touch provisioning;
-- device key/certificate lifecycle;
-- backup/restore/RTO/RPO;
-- all operational configuration manageable through governed UI/configuration rather than raw DB/code edits.
+- blob `58bf9b155dd40e8aae67e470558b98e4da058f38`;
+- commit `443c5e0bd9f926f8838143d9fc51f7283fa9072c`;
+- parent `35e937db1fac960c5dba0552315ab1879189e2fe`;
+- GPG-verificeret commit;
+- 273 tilføjede linjer.
 
-### 6.2 2026-05-23 — `SYSTEM_HEALTH_REGISTER.md`
+Den daterede assessment viser bl.a.:
 
-Eksakt historisk kilde:
+- Edge direct GitHub update i konflikt med Headend-mediated intent;
+- tag-signatur ikke bundet til faktisk installeret `origin/main`;
+- UI approval-valg ikke sendt til backend;
+- manglende fuld `global|customer|site|camera|device` scope;
+- behov for `DeviceAssignment`-binding så fysisk device replacement ikke mister policyhistorik;
+- manglende per-target deployment truth;
+- configured/returned policy uden sikker consumed/enforced semantics;
+- konkrete secret/data leakage-risici;
+- test/build-presence uden stærk runtime evidence.
 
-- path: `Dokumentation/SYSTEM_HEALTH_REGISTER.md`;
-- blob SHA: `58bf9b155dd40e8aae67e470558b98e4da058f38`;
-- commit: `443c5e0bd9f926f8838143d9fc51f7283fa9072c`;
-- parent: `35e937db1fac960c5dba0552315ab1879189e2fe`;
-- commit er GPG-verificeret;
-- filen blev tilføjet som 273 nye linjer.
+Dette giver en direkte provenance-chain:
 
-Dokumentet er en dateret health/implementation assessment, ikke current runtime truth. Det viser imidlertid direkte, hvordan kravene fra dagen før blev holdt op mod faktisk implementation.
+`early need → 2026-05-22 formalized requirement → 2026-05-23 observed implementation gap → remediation intent → later implementation/evolution`.
 
-Vigtige historiske findings:
+## 7. Candidate invariants med historisk provenance
 
-- `HLTH-003`: Edge brugte stadig direkte `git fetch/pull origin main`, i konflikt med Headend-medieret/offline update-intent.
-- `HLTH-004`: systemet verificerede signatur på et tag, men installerede derefter `origin/main`; signaturen var derfor ikke nødvendigvis bundet til den faktisk installerede revision.
-- `HLTH-005`: UI approval viste environment/scope, men de valgte værdier blev ikke sendt til backend; operatorens forståede approval kunne afvige fra faktisk handling.
-- `HLTH-007`: update scope manglede fuld `global|customer|site|camera|device` semantics; camera-scope skulle bindes til `DeviceAssignment`, så fysisk device-udskiftning ikke mister policyhistorik.
-- `HLTH-008`: global `PendingUpdate.status` kunne ikke repræsentere sandheden for individuelle rollout-targets; separat `update_targets` blev foreslået.
-- `HLTH-009`: policy/maintenance-window kunne være configured/returned uden at blive consumed/enforced af Edge.
-- `HLTH-001/002`: exports og secrets i/omkring repo-worktree skabte konkret secret/data leakage-risk.
-- `HLTH-010`: manglende production JWT secret kunne falde tilbage til process-generated secret, hvilket gjorde sikker drift afhængig af korrekt miljøkonfiguration.
-- `HLTH-012/013/014`: lint/testmiljø/testkvalitet viste, at build/test-presence ikke i sig selv var stærk runtime evidence.
+Disse er archaeology findings, ikke automatisk authoritative GRC requirements:
 
-## 7. Invariants med historisk provenance
-
-Følgende invariants er archaeology findings/candidates. De er ikke automatisk nye authoritative GRC-requirements, men skal vurderes under syntesen:
-
-1. **Authorized object = executed object.** Det artifact/state der autoriseres og verificeres skal være identisk med det, der faktisk installeres/eksekveres.
-2. **Operator approval binding.** Det mennesket ser og godkender skal være bundet til faktisk action, scope, target-set og relevante constraints.
-3. **Aggregate state må ikke erstatte target truth.** Fleet/update-status skal bevare individuel target-state og failures.
-4. **Configured ≠ consumed ≠ executed ≠ verified.** En parameter/policy er ikke operational evidence blot fordi den findes eller returneres.
-5. **Logical assignment survives physical replacement.** Governance, konfiguration, historik og capture provenance skal følge logisk camera/site assignment ved hardwareudskiftning, mens hardware/private trust identity ikke ukritisk kopieres.
-6. **Supersession ≠ deletion.** Et gammelt krav må ikke dø alene ved at forsvinde fra nyere dokumenter; change/supersession skal kunne forklares.
-7. **Security enforcement at authority boundary.** UI hiding/labels er ikke adgangskontrol; restrictions skal håndhæves ved autoritativ enforcement boundary.
-8. **Evidence scope is bounded.** Automated tests kan ikke alene attestere fysisk/runtime capability, som de ikke faktisk har exercised.
-9. **Recovery/safety failure-domain separation.** En safety/recovery-mekanisme bør ikke afhænge af samme runtime/dependencies/failure domain som komponenten den skal redde.
-10. **Capture-plane priority.** Scheduled capture må ikke være afhængig af eller unødigt forsinket af Headend, Internet, upload, heartbeat, inventory eller management communication.
+1. **Authorized object = executed object.**
+2. **Operator approval binding:** visible approval skal bindes til faktisk action/scope/targets/constraints.
+3. **Aggregate state må ikke erstatte target truth.**
+4. **Declared/configured ≠ consumed ≠ executed ≠ runtime reconciled ≠ outcome verified ≠ evidence retained.**
+5. **Logical assignment survives physical replacement**, mens private hardware trust identity ikke kopieres ukritisk.
+6. **Supersession ≠ deletion**; disappearance er ikke documented change.
+7. **Security enforcement at authority boundary**, ikke kun UI.
+8. **Evidence scope is bounded**; automated test kan ikke attestere fysisk/runtime capability den ikke exercised.
+9. **Recovery/safety failure-domain separation.**
+10. **Capture-plane priority:** scheduled capture må ikke afhænge af Headend/Internet/upload/heartbeat/inventory/management.
+11. **Configured parameter semantics must match runtime consumption**; ellers er surface falsk.
+12. **Production trust must fail closed**; missing trust anchor må ikke stiltiende blive TOFU.
 
 ## 8. Camera direction og migration
 
-Archaeology skal bevare følgende distinction:
-
 - Nikon er strategisk/default retning for nye installationer.
-- Fungerende understøttede legacy Canon-kameraer er ikke automatisk obsolete.
+- Fungerende understøttede legacy Canon-kameraer er fortsat migration/backward-compatibility intent.
 - En defekt legacy Edge skal kunne erstattes af TimeLapse Pro Edge uden tvunget udskiftning af et fungerende understøttet kamera.
-- Camera compatibility skal evidensklassificeres: `declared compatible → lab verified → physical production verified → currently supported`.
-
-Dette er både camera-abstraction og lifecycle/migration-intent.
+- Camera compatibility evidence: `declared compatible → lab verified → physical production verified → currently supported`.
 
 ## 9. Current-main reconciliation
 
-Archaeology PR #243 blev oprettet mod en ældre `main`-base. Fresh check 2026-09-17 viste, at `main` siden var flyttet frem.
+PR #243 blev oprettet mod en ældre `main`-base. Fresh delta-pass 2026-09-17 viste primært governance/capability documentation, loader/preamble og tests; intet nyt historisk requirement-domæne blev identificeret.
 
-Delta-pass fra den tidligere archaeology-base til fresh `main` viste primært governance/capability documentation, loader/preamble og tests; der blev ikke identificeret et nyt historisk requirement-domæne i dette delta.
-
-Nyere capability/governance-materiale understøtter separationen:
+Nyere governance understøtter separationen:
 
 `decision/architecture accepted ≠ implemented ≠ verified`
 
-og kæden:
+og:
 
 `Capability/invariants → Usecases → implementation/history → automated verification → runtime/physical evidence`.
 
-Archaeology-resultatet skal derfor fodre eksisterende authoritative homes; det må ikke blive et konkurrerende GRC-register.
+Archaeology skal fodre eksisterende authoritative homes; den må ikke blive et konkurrerende GRC-register.
 
-## 10. Kendte tekniske/source gaps
+## 10. Kendte tekniske/binary gaps
 
-### 10.1 `Startkrav.docx` og øvrige pre-Git originals
+### 10.1 Oversized historical markdown
 
-Originalerne er endnu ikke direct-read. `Startkrav.docx` blev forsøgt hentet via en antaget historisk path, men pathen returnerede 404. Det beviser ikke, at dokumentet aldrig var i historikken; exact historical path/tree recovery skal være grundlaget for endelig disposition.
+`Dokumentation/Gamle versioner/2026-06-03-Timelapse - Risk og plan videre.md`, blob `b8b44eeb02c15b365d84e90b208cbb447d2ceef8`, size 1,158,581 bytes, kan ikke direct-read gennem nuværende connector pga. response-size-begrænsning.
 
-Krav fra `Startkrav.docx` og relaterede tidlige kilder findes delvist som documented secondary extraction i 2026-05-22-registeret. Indtil original recovery er udtømt klassificeres de som `SOURCE_GAP`, med mulighed for `COVERED_GAP` pr. requirement.
+Status: `TECHNICAL_GAP / OVERSIZE_SOURCE`. Senere extraction/descendants kan være secondary evidence; originalen må ikke markeres READ.
 
-### 10.2 Oversized historical markdown
+### 10.2 Recovered historical DOCX
 
-`Dokumentation/Gamle versioner/2026-06-03-Timelapse - Risk og plan videre.md`, kendt blob SHA `b8b44eeb02c15b365d84e90b208cbb447d2ceef8`, er ca. 1.16 MB og har ikke kunnet direct-read gennem den aktuelle connector pga. response-size-begrænsning.
+De tidlige DOCX-originals og version families er nu path/SHA-recoveret. Deres primære status er derfor `BINARY_GAP`, ikke `SOURCE_GAP`. Hvor 2026-05-22 extraction eller senere strict-read descendants bevarer samme requirement-intent, kan enkelte requirements dispositioneres som `COVERED_GAP`; det ændrer ikke originalblobens READ-status.
 
-Status: `TECHNICAL_GAP / OVERSIZE_SOURCE`. Senere extraction/descendants kan bruges som sekundær evidens, men originalen må ikke markeres READ.
+### 10.3 Hardware manuals og pointer formats
 
-### 10.3 Historical DOCX families
-
-Flere kendte historiske DOCX-versioner — bl.a. Configuration Guide, SABSA Architecture/Risk, Edge Runbook og Roadmap-familier — må stå `BINARY_GAP`/`BINARY_PENDING_EXTRACTION`, indtil teksten faktisk er ekstraheret og strict-read eller en eksplicit covered-gap disposition er dokumenteret.
+Store hardware-PDF'er og Google pointer-filer (`.gslides`/eventuelle `.gdoc`) skal klassificeres særskilt. Vendor/manual reference-materiale er ikke automatisk product requirement authority. De skal kun kunne blokere knowledge closure, hvis de er eneste kendte evidens for et product requirement/capability-domæne.
 
 ## 11. Closure assessment — foreløbig
 
-Archaeology har efterhånden vist et stabilt mønster: senere fundne historiske kilder giver hovedsageligt bedre provenance, rationale og conflict chains til allerede identificerede requirement/capability-familier frem for helt nye domæner.
+Vigtig ændring denne run: de fire centrale tidlige originals (`Startkrav`, `ChatGpt-input`, `Chat with Gemini`, `Timelaps-chat`) er **recovered as exact historical blobs**. Den tidligere source-loss-hypotese er derfor korrigeret. Det reducerer den væsentligste pre-Git uncertainty til binary extraction/evidence quality.
 
-Der er pr. denne ledger ikke evidens nok til at erklære **100 %** eller `DATA COLLECTION CLOSED`. Der mangler især:
+Der er stadig ikke evidens nok til `DATA COLLECTION CLOSED`. Der mangler især:
 
 - endelig branch→path→blob reconciliation for alle 139 branches;
-- endelig unique-blob count;
-- disposition af resterende binary/pre-Git/oversize sources;
-- dokumenteret vurdering af om nogen af disse er `CRITICAL_KNOWLEDGE_GAP`;
+- endelig unique-document-blob count;
+- endelig disposition af recovered binary/oversize sources;
+- dokumenteret vurdering af om nogen er `CRITICAL_KNOWLEDGE_GAP`;
 - sidste fresh branch/main reconciliation ved closure-tidspunktet.
 
-Når disse punkter er opfyldt, kan dataindsamlingen lukkes med eksplicitte tekniske/source gaps, hvis antallet af `CRITICAL_KNOWLEDGE_GAP` er nul.
+Hvis disse checks ender med `CRITICAL_KNOWLEDGE_GAP = 0`, kan dataindsamlingen lukkes med eksplicitte `BINARY_GAP`/`TECHNICAL_GAP`/`COVERED_GAP` uden at foregive, at original tekst er læst.
 
 ## 12. Næste fase efter closure
 
-Efter closure skal knowledge ikke blot kopieres til GRC. Syntesen skal følge:
+`Knowledge Register → dedupe → requirement/change/conflict chains → current intent determination → authoritative GRC/capability/ADR/usecase/history placement → implementation mapping → verification → runtime evidence`
 
-`Knowledge Register → dedupe → requirement/change/conflict chains → current intent determination → authoritative GRC/capability/ADR/usecase/history placement → implementation mapping → verification → runtime evidence`.
-
-Golden Capabilities fryses først efter denne syntese og efter at historiske krav har fået mulighed for at udfordre nyere dokumentation.
+Golden Capabilities fryses først efter syntese og efter at historiske krav har fået mulighed for at udfordre nyere dokumentation.
