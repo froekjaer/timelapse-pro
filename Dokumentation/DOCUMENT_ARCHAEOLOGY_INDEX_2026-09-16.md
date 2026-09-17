@@ -114,7 +114,7 @@ Den detaljerede blob/provenance-matrix udbygges løbende. Den må gerne blive ma
 
 De oprindelige 16 Golden Capabilities behandles som foreløbige. Arkæologien har allerede indikationer på yderligere selvstændige capability-familier, som ikke må tabes:
 
-- camera abstraction / multi-camera-family support — Canon og Nikon er begge supported intent; Canon må ikke klassificeres som retired alene pga. nyere Nikon-referencehardware;
+- camera abstraction / multi-camera-family support — **Nikon er strategisk/default retning for nye installationer; understøttede eksisterende Canon-kameraer forbliver current migration/backward-compatibility intent, så en defekt legacy Edge kan erstattes af TimeLapse Pro Edge uden tvunget kameraskift**;
 - image quality / photographic consistency;
 - timelapse video production;
 - AI analysis/tagging/search;
@@ -163,7 +163,34 @@ Branch `feature-camera-hardware-cmdb` er nu aktivt traverseret. Følgende unikke
 - Release evidence skal bindes til exact artifact/source/SBOM/deployed revision og efterfølges af post-deploy outcome verification.
 - Compliance/readiness-templates og kundevendte claims må aldrig promoveres til verified compliance uden relevant site-, kontrakt-, runtime- og evt. licenseret/certificeret evidence.
 
-## 11. Completion statement
+## 11. Historical consolidation / implementation verification wave
+
+Følgende yderligere historiske blobs er strict-complete læst og klassificeret i archaeology-arbejdsgrundlaget:
+
+| Dokument / evidence | Blob SHA | Status | Archaeology-note |
+|---|---|---|---|
+| `Codex_ADMINISTRATORMANUAL_2026-06-23.md` (historisk variant) | `8180cb5a4214f1a3c85f26a409c0f1344371f5aa` | READ / EXTRACTED | Logical camera vs physical device; config inheritance; Nikon primary; governed update authority. |
+| `Codex_BRUGERMANUAL_2026-06-23.md` (historisk variant) | `f65eda7566a390f4069a17b554c9b570f3f074c8` | READ / EXTRACTED | Customer UX, stale/offline semantics, canonical tags, AI as helper metadata, video not production-ready. |
+| `Codex_DOKUMENTPAKKE_OVERSIGT_2026-06-23.md` (historisk variant) | `23c0b5c83007e4e00c827f29fdd7ff40040291f0` | READ / EXTRACTED | Historical coverage checkpoint: 79 files / 54,470 extracted lines; explicit DOCX/PDF/GDrive limitations. |
+| `Codex_Timelapse_pro_full_documentation_v1.md` | `a4f4047fc6a537f5d178c672bb3446d1e5c6dc99` | READ / EXTRACTED | Parallel 'authoritative' consolidation; authority claim itself is not sufficient provenance. |
+| `Claude_Timelapse_pro_full_documentation_v1.md` | `ee01c3ae231d4fa973129006512387f532470459` | READ / EXTRACTED | Distinct parallel consolidation; contains claim/evidence tensions that must not silently promote to current product claims. |
+| `Headend_Installationsguide_Mac_Mini.md` | `59e60189214315121447df370dcb49a9093663e1` | READ / EXTRACTED | Known historical implementation generation; concrete platform paths/services are not current invariants by themselves. |
+
+### Verified implementation/history corrections
+
+- WP-3 Unified Technician Platform was not merely proposed: merged implementation evidence exists, and current `main` retains `edge/service_operations.py` plus `edge/service_platform.py`. Archaeology classification is therefore `IMPLEMENTED + MERGED + PRESENT`, while remote Headend-to-Edge dispatch remains a separate capability question.
+- Camera direction is now explicitly classified as **Nikon strategic/default for new deployments** plus **Canon current migration/backward compatibility**. A supported legacy Canon camera must be retainable when a failed legacy Edge is replaced with TimeLapse Pro Edge. This is compatible with the longstanding logical-camera/physical-device separation and later Canon+Nikon implementation evidence.
+- Commit-history evidence on 2026-07-12 implements site-wide look matching with Nikon Picture Controls and Canon Picture Styles; 2026-09-02 CMDB camera-hardware reporting includes Canon EOS vendor-extension paths plus generic PTP fields for Nikon/other cameras. Canon support is therefore not to be marked retired solely because Nikon became primary.
+
+## 12. Explicit unresolved extraction gaps
+
+These remain unresolved and MUST NOT be counted READ:
+
+- `Dokumentation/Gamle versioner/2026-06-03-Timelapse - Risk og plan videre.md` — historical text blob approx. 1.16 MB; normal connector retrieval has exceeded response limits. Status: `GAP / OVERSIZE_PENDING_EXTRACTION`.
+- Historical `.docx` generations (including Configuration Guide, Edge Runbook, SABSA Architecture/Risk and update-flow variants) — status remains `BINARY_PENDING_EXTRACTION` until actual document text is extracted and reviewed.
+- Historical hardware-manual PDFs — inventoried where known, but not READ merely from filename/metadata.
+
+## 13. Completion statement
 
 **IKKE KOMPLET.**
 
