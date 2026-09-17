@@ -7,7 +7,7 @@ support identities remain independently rotatable and revocable.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography import x509
@@ -183,6 +183,39 @@ def install_certificate_bundle(
     _secure_write(cert_path, certificate_pem.encode("ascii"), 0o644)
     _secure_write(ca_path, ca_certificate_pem.encode("ascii"), 0o644)
     return cert_path, ca_path
+
+
+
+def certificate_renewal_needed(
+    device_id: str,
+    *,
+    renew_before: timedelta = timedelta(days=30),
+    key_path: Path = DEFAULT_KEY_PATH,
+    cert_path: Path = DEFAULT_CERT_PATH,
+    ca_path: Path = DEFAULT_CA_PATH,
+) -> bool:
+    """Return True when the Edge needs initial enrollment or renewal.
+
+    Existing certificate material is validated against the Edge-owned private
+    key and supplied Headend API CA before it is considered current.
+    """
+    if not key_path.exists() or not cert_path.exists() or not ca_path.exists():
+        return True
+
+    try:
+        cert, _ca = _validate_certificate_bundle(
+            device_id,
+            cert_path.read_text(encoding="ascii"),
+            ca_path.read_text(encoding="ascii"),
+            key_path=key_path,
+        )
+    except Exception:
+        # Invalid or inconsistent public material can be repaired by
+        # authenticated re-enrollment. Private-key validation remains
+        # fail-closed in ensure_key_and_csr().
+        return True
+
+    return cert.not_valid_after_utc <= datetime.now(timezone.utc) + renew_before
 
 
 def client_certificate_paths(

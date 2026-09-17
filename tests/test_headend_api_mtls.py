@@ -6,7 +6,11 @@ import pytest
 from cryptography import x509
 from cryptography.x509.oid import ExtensionOID
 
-from edge.api_mtls import ensure_key_and_csr, install_certificate_bundle
+from edge.api_mtls import (
+    certificate_renewal_needed,
+    ensure_key_and_csr,
+    install_certificate_bundle,
+)
 from headend.services import headend_api_mtls
 from headend.api.edge_api_mtls_api import (
     create_headend_api_mtls_admin_router,
@@ -184,3 +188,34 @@ def test_headend_api_mtls_router_contracts_and_auth_dependencies():
         dependency.call is fake_verify_device_token
         for dependency in enroll.dependant.dependencies
     )
+
+
+def test_installed_headend_api_certificate_does_not_need_immediate_renewal(monkeypatch, tmp_path):
+    key_path, issued = _issue(monkeypatch, tmp_path, DEVICE_1)
+    cert_path = tmp_path / "headend-api.crt"
+    ca_path = tmp_path / "headend-api-ca.crt"
+
+    install_certificate_bundle(
+        DEVICE_1,
+        str(issued["certificate_pem"]),
+        str(issued["ca_certificate_pem"]),
+        key_path=key_path,
+        cert_path=cert_path,
+        ca_path=ca_path,
+    )
+
+    assert certificate_renewal_needed(
+        DEVICE_1,
+        key_path=key_path,
+        cert_path=cert_path,
+        ca_path=ca_path,
+    ) is False
+
+
+def test_missing_headend_api_certificate_requires_enrollment(tmp_path):
+    assert certificate_renewal_needed(
+        DEVICE_1,
+        key_path=tmp_path / "missing.key",
+        cert_path=tmp_path / "missing.crt",
+        ca_path=tmp_path / "missing-ca.crt",
+    ) is True

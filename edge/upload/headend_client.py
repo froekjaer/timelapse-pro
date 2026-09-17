@@ -25,6 +25,11 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from security import canonical_json, edge_attestation_headers, ensure_edge_signing_key, request_signature_headers
+from api_mtls import (
+    certificate_renewal_needed,
+    ensure_key_and_csr,
+    install_certificate_bundle,
+)
 
 log = logging.getLogger(__name__)
 
@@ -172,6 +177,49 @@ class HeadendClient:
             return ok, data
         except Exception as exc:
             log.warning("Edge signing key enrollment failed: %s", exc)
+            return False, None
+
+    def ensure_api_mtls_enrolled(self) -> tuple[bool, Optional[dict]]:
+        """Ensure this Edge owns a current Headend API client certificate.
+
+        Enrollment itself continues to use the existing Bearer credential,
+        request signature and Edge attestation. The private key never leaves
+        the Edge. Returned certificate material is validated before install.
+        """
+        if not self._cfg_mgr.api_token:
+            log.warning("Headend API mTLS enrollment deferred: API token is missing")
+            return False, None
+
+        try:
+            if not certificate_renewal_needed(self._device_id):
+                return True, {"status": "certificate_current"}
+
+            key_path, csr_pem = ensure_key_and_csr(self._device_id)
+            path = f"/trust/headend-api-mtls/{self._device_id}/enroll"
+            ok, data = self._post(path, {"csr_pem": csr_pem})
+            if not ok or not isinstance(data, dict):
+                return False, None
+
+            certificate_pem = data.get("certificate_pem")
+            ca_certificate_pem = data.get("ca_certificate_pem")
+            if not isinstance(certificate_pem, str) or not isinstance(ca_certificate_pem, str):
+                log.warning("Headend API mTLS enrollment returned incomplete certificate material")
+                return False, None
+
+            install_certificate_bundle(
+                self._device_id,
+                certificate_pem,
+                ca_certificate_pem,
+                key_path=key_path,
+            )
+            log.info(
+                "Headend API mTLS certificate installed: device_id=%s serial=%s",
+                self._device_id,
+                data.get("serial_number", "unknown"),
+            )
+            return True, data
+        except Exception as exc:
+            log.warning("Headend API mTLS enrollment failed: %s", exc)
             return False, None
 
     # ── Heartbeat ───────────────────────────────────────────────────────────
