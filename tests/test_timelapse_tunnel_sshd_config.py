@@ -1,7 +1,7 @@
 """Regression tests for the dedicated tunnel-sshd ingress artefacts.
 
-Locks in three externally reviewed blocking defects (2026-09-17) so they
-cannot silently regress:
+Locks in externally reviewed blocking defects (2026-09-17) so they cannot
+silently regress:
 
 1. authorized_keys entries must use
        restrict,port-forwarding,permitlisten="127.0.0.1:<port>"
@@ -17,6 +17,10 @@ cannot silently regress:
 3. `--verify-only` must be provably read-only: its branch must exit before
    the first mutating command, and the verify section must contain no
    mutating commands at all.
+
+4. The negative permitlisten self-test must challenge sshd with a distinct,
+   valid TCP port and require an actual forwarding refusal; an out-of-range
+   port only proves local argument rejection, not server-side policy.
 """
 from __future__ import annotations
 
@@ -72,7 +76,7 @@ def test_no_false_claim_that_permitlisten_reenables_forwarding() -> None:
         for m in re.finditer(r"permitlisten", src, re.IGNORECASE):
             ctx = src[max(0, m.start() - 160) : m.end() + 160]
             flat = " ".join(ctx.split()).lower()
-                # Portuguese/Danish/English phrasings of the false claim:
+            # Portuguese/Danish/English phrasings of the false claim:
             for phrase in (
                 "permitlisten re-enables",
                 "permitlisten genaktiverer",
@@ -104,7 +108,6 @@ def test_all_ssh_options_precede_destination() -> None:
         dest = re.search(r'"\$\{USER_NAME\}@127\.0\.0\.1"', line)
         if not dest:
             continue  # no destination on this (continuation) line
-        head = line[: dest.start()]
         tail = line[dest.end() :]
         if '"${SSHOPTS[@]}"' in tail:
             offenders.append("SSHOPTS after destination: ssh " + line.strip())
@@ -125,9 +128,7 @@ def _line_no(needle: str) -> int:
 def test_verify_branch_exits_before_first_mutation() -> None:
     verify_start = _line_no('if [[ "$MODE" == "verify" ]]; then')
     verify_exit = _line_no('verify-only complete — NOTHING was modified.')
-    first_mutation = _line_no(
-        "MUTATIONS BEGIN HERE"
-    )
+    first_mutation = _line_no("MUTATIONS BEGIN HERE")
     assert verify_start < first_mutation, "verify branch must precede the mutation section"
     assert verify_exit < first_mutation, (
         f"verify-only must exit (line {verify_exit}) before mutations begin (line {first_mutation})"
@@ -146,6 +147,25 @@ def test_verify_section_contains_no_mutating_commands() -> None:
 def test_verify_marker_appears_once_per_mode_branch() -> None:
     # The read-only exit marker must exist exactly once (single verify exit).
     assert INSTALLER_SRC.count("NOTHING was modified.") == 1
+
+
+# ── Defect 4: negative forwarding test must reach sshd policy ─────────────
+
+def test_badport_is_valid_numeric_neighbor_not_string_concatenation() -> None:
+    assert "BADPORT=$((SELFTEST_LISTEN + 1))" in INSTALLER_SRC
+    assert 'BADPORT="${SELFTEST_LISTEN}7"' not in INSTALLER_SRC
+    assert "BADPORT < 1 || BADPORT > 65535 || BADPORT == SELFTEST_LISTEN" in INSTALLER_SRC
+
+
+def test_badport_negative_test_requires_real_forwarding_refusal() -> None:
+    assert 'lsof -nP -iTCP:"$BADPORT" -sTCP:LISTEN' in INSTALLER_SRC
+    assert "ExitOnForwardFailure=yes" in INSTALLER_SRC
+    assert "BAD_RC=$?" in INSTALLER_SRC
+    assert "BAD_RC == 0" in INSTALLER_SRC
+    assert "remote port forwarding failed" in INSTALLER_SRC
+    assert "administratively prohibited" in INSTALLER_SRC
+    assert "cannot listen" in INSTALLER_SRC
+    assert "valid non-allowed forward port ${BADPORT} refused by sshd policy" in INSTALLER_SRC
 
 
 # ── Supporting artefact sanity ─────────────────────────────────────────────
