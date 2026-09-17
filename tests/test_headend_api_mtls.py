@@ -8,6 +8,10 @@ from cryptography.x509.oid import ExtensionOID
 
 from edge.api_mtls import ensure_key_and_csr, install_certificate_bundle
 from headend.services import headend_api_mtls
+from headend.api.edge_api_mtls_api import (
+    create_headend_api_mtls_admin_router,
+    create_headend_api_mtls_edge_router,
+)
 
 
 DEVICE_1 = "TL-C87FF9587CA0"
@@ -105,3 +109,84 @@ def test_ca_initialization_fails_closed_on_inconsistent_storage(monkeypatch, tmp
 
     with pytest.raises(headend_api_mtls.HeadendApiMtlsError, match="inconsistent"):
         headend_api_mtls.initialize_ca()
+
+
+def test_headend_api_mtls_routers_are_registered_in_runtime():
+    """Both mTLS router factories must be wired into the production app."""
+    root = Path(__file__).resolve().parents[1]
+
+    admin_bundle = (
+        root / "headend" / "api" / "admin_route_bundle.py"
+    ).read_text(encoding="utf-8")
+    main = (
+        root / "headend" / "main.py"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "from api.edge_api_mtls_api import "
+        "create_headend_api_mtls_admin_router"
+        in admin_bundle
+    )
+    assert (
+        "app.include_router("
+        "create_headend_api_mtls_admin_router(require_role)"
+        ")"
+        in admin_bundle
+    )
+
+    assert (
+        "from api.edge_api_mtls_api import "
+        "create_headend_api_mtls_edge_router"
+        in main
+    )
+    assert (
+        "app.include_router("
+        "create_headend_api_mtls_edge_router(_verify_device_token)"
+        ")"
+        in main
+    )
+
+
+def test_headend_api_mtls_router_contracts_and_auth_dependencies():
+    """Router factories expose the intended methods and preserve auth boundaries."""
+    requested_roles = []
+
+    def fake_require_role(role):
+        requested_roles.append(role)
+        return None
+
+    admin_router = create_headend_api_mtls_admin_router(fake_require_role)
+    admin_routes = {
+        (route.path, method)
+        for route in admin_router.routes
+        for method in getattr(route, "methods", set())
+    }
+
+    assert (
+        "/api/admin/trust/headend-api-mtls/status",
+        "GET",
+    ) in admin_routes
+    assert (
+        "/api/admin/trust/headend-api-mtls/initialize",
+        "POST",
+    ) in admin_routes
+    assert requested_roles == ["admin", "super_admin"]
+
+    async def fake_verify_device_token():
+        return None
+
+    edge_router = create_headend_api_mtls_edge_router(
+        fake_verify_device_token
+    )
+
+    enroll = next(
+        route
+        for route in edge_router.routes
+        if route.path == "/api/trust/headend-api-mtls/{device_id}/enroll"
+    )
+
+    assert "POST" in enroll.methods
+    assert any(
+        dependency.call is fake_verify_device_token
+        for dependency in enroll.dependant.dependencies
+    )

@@ -16024,6 +16024,7 @@ from api.cameras_api import router as cameras_router
 app.include_router(cameras_router)
 
 from api.admin_route_bundle import register_admin_route_bundle
+from api.edge_api_mtls_api import create_headend_api_mtls_edge_router
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
 from api.ssh_tunnel_terminal_api import (
@@ -16032,6 +16033,7 @@ from api.ssh_tunnel_terminal_api import (
     terminal_trust_status,
 )
 register_admin_route_bundle(app, require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle)
+app.include_router(create_headend_api_mtls_edge_router(_verify_device_token))
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).
