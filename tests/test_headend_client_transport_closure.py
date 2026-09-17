@@ -134,3 +134,26 @@ def test_api_mtls_enrollment_skips_when_certificate_is_current(monkeypatch):
 
     assert ok is True
     assert data == {"status": "certificate_current"}
+
+
+def test_edge_startup_attempts_api_mtls_after_config_pull():
+    source = Path("edge/agent.py").read_text(encoding="utf-8")
+    startup = _method_slice(source, "_startup", "_auto_bootstrap_cameras")
+
+    config_pull = startup.index("self._pull_config()")
+    mtls_enrollment = startup.index("self._ensure_api_mtls_enrollment()")
+
+    assert config_pull < mtls_enrollment
+
+
+def test_edge_api_mtls_startup_boundary_is_fail_open():
+    source = Path("edge/agent.py").read_text(encoding="utf-8")
+    method = _method_slice(
+        source,
+        "_ensure_api_mtls_enrollment",
+        "_startup",
+    )
+
+    assert "self._api.ensure_api_mtls_enrolled()" in method
+    assert "except Exception as exc:" in method
+    assert "continuing normal startup" in method
