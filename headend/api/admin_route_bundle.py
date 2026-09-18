@@ -6,6 +6,10 @@ from collections.abc import Callable
 from api import customer_risk_api, grc_register_api, headend_generator_api, storage_api
 from api.edge_communication_debug_api import install_edge_communication_logger, router as edge_communication_debug_router
 from api.edge_lifecycle_api import create_edge_lifecycle_router
+from api.edge_api_mtls_api import (
+    create_headend_api_mtls_admin_router,
+    create_headend_api_mtls_edge_router,
+)
 from api.trust_service_api import create_trust_service_router
 
 
@@ -15,6 +19,7 @@ def register_admin_route_bundle(
     sanitize_device_id: Callable,
     audit_key_event: Callable,
     reconcile_edge_lifecycle: Callable,
+    verify_device_token: Callable,
 ) -> None:
     app.include_router(customer_risk_api.router)
     app.include_router(grc_register_api.router)
@@ -27,5 +32,7 @@ def register_admin_route_bundle(
         audit_key_event,
         reconcile_edge_lifecycle,
     ))
+    app.include_router(create_headend_api_mtls_admin_router(require_role))
+    app.include_router(create_headend_api_mtls_edge_router(verify_device_token))
     app.include_router(create_trust_service_router(require_role))
     install_edge_communication_logger(app)

@@ -74,3 +74,9 @@ def test_source_has_no_undrained_direct_stderr_read_contract():
     assert "deque(maxlen=20)" in source
     assert ".stderr.read()" not in source
     assert "self._join_stderr_drain(timeout=1.0)" in source
+
+
+def test_remote_forward_requests_exact_ipv4_loopback_bind_for_permitlisten():
+    source = Path("edge/tunnel/ssh_manager.py").read_text(encoding="utf-8")
+    assert 'f"127.0.0.1:{remote_port}:localhost:{local_port}"' in source
+    assert 'f"{remote_port}:localhost:{local_port}"' not in source

@@ -369,7 +369,7 @@ class SshTunnelManager:
                 f"{user}@{host}",
             ]
             for remote_port, local_port, name in reversed(self._remote_forwards()):
-                cmd[2:2] = ["-R", f"{remote_port}:localhost:{local_port}"]
+                cmd[2:2] = ["-R", f"127.0.0.1:{remote_port}:localhost:{local_port}"]
                 log.info("SSH tunnel forward: %s remote=%d local=%d", name, remote_port, local_port)
 
             log.info("SSH tunnel: starter %s@%s:%d remote_port=%d",

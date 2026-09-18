@@ -33,10 +33,11 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=timelapse-edge
 
-# The edge agent may start before timelapse-totp.service.  Create the
-# persistent audit root here so boot ordering cannot cause repeated
-# break-glass read-only failures.
-ExecStartPre=/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions
+# The persistent audit root must exist before the service filesystem
+# sandbox is applied.  The '+' prefix makes only this fixed mkdir command
+# run outside the service filesystem namespace; ExecStart remains protected
+# by ProtectSystem=strict and the ReadWritePaths allow-list below.
+ExecStartPre=+/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions
 
 # Security hardening
 NoNewPrivileges=yes

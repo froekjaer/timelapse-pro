@@ -16031,7 +16031,7 @@ from api.ssh_tunnel_terminal_api import (
     create_ssh_tunnel_terminal_router,
     terminal_trust_status,
 )
-register_admin_route_bundle(app, require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle)
+register_admin_route_bundle(app, require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle, _verify_device_token)
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).

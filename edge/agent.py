@@ -401,12 +401,42 @@ class EdgeAgent:
 
     # ── Startup ────────────────────────────────────────────────────────────
 
+    def _ensure_api_mtls_enrollment(self) -> None:
+        """Attempt API client-certificate enrollment without blocking startup."""
+        try:
+            ok, data = self._api.ensure_api_mtls_enrolled()
+            if not ok:
+                log.warning(
+                    "Headend API mTLS enrollment unavailable; "
+                    "continuing with existing authenticated API transport"
+                )
+                return
+
+            if isinstance(data, dict) and data.get("status") == "certificate_current":
+                log.debug("Headend API mTLS certificate is current")
+            else:
+                log.info("Headend API mTLS enrollment completed")
+        except Exception as exc:
+            # Defence in depth: HeadendClient currently catches enrollment
+            # failures itself, but startup must remain fail-open even if that
+            # implementation changes later.
+            log.warning(
+                "Headend API mTLS enrollment error; continuing normal startup: %s",
+                exc,
+            )
+
     def _startup(self) -> None:
         """Perform startup tasks after boot/resume."""
         log.info("Running startup sequence…")
 
         # 1. Pull fresh config from headend
         self._pull_config()
+
+        # Opportunistic Edge -> Headend API mTLS enrollment.
+        # Migration remains fail-open until proxy enforcement is enabled:
+        # failure here must never prevent normal Edge startup.
+        self._ensure_api_mtls_enrollment()
+
         self._check_backup_request()
         self._repair_sshd_authorized_keys_command_missing_u_token()
         self._repair_emergency_breakglass_account()

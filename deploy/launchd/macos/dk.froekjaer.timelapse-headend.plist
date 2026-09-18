@@ -19,6 +19,10 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>TIMELAPSE_HEADEND_ENV_FILE</key>
     <string>/etc/timelapse/headend.env</string>
+    <key>TIMELAPSE_HEADEND_API_MTLS_CA_DIR</key>
+    <string>/Library/Application Support/TimeLapse Pro/pki/headend-api-mtls-ca</string>
+    <key>TIMELAPSE_HEADEND_API_MTLS_KEYCHAIN_HELPER</key>
+    <string>/usr/local/libexec/timelapse-ca-keychain</string>
   </dict>
   <key>StandardOutPath</key>
   <string>/Users/peter/Library/Logs/timelapse-headend.log</string>
