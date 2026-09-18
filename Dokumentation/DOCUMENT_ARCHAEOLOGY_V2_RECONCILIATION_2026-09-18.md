@@ -7,9 +7,10 @@
 ## Fresh GitHub state
 
 - Fresh paginated GitHub branch inventory on 2026-09-18 remains **139 repository branches** (100 on page 1 + 39 on page 2).
-- `main` is currently `928134be847eb96df25455736f6acd766aff84f2`.
-- PR #243 remains **OPEN / UNMERGED**, head `chatgpt/capability-map-v0-20260916` at `e9c06f07cc2f704d389126318b185c456ea28790`; it must not be merged as part of archaeology.
-- Fresh compare shows archaeology branch **diverged** from current `main`: 26 commits ahead, 2 behind, merge base `8452c5ef264d85823dce149a3bb371142d598569`. Current-main reconciliation therefore remains a closure check; archaeology must not mistake branch-local documentation for merged/current product authority.
+- `main` remains `928134be847eb96df25455736f6acd766aff84f2` at this reconciliation pass.
+- PR #243 remains **OPEN / UNMERGED**, head `chatgpt/capability-map-v0-20260916` at `8650e731a37a7dc2918324dbc7e562e8eebce7d6`; it must not be merged as part of archaeology.
+- Fresh compare against current `main` shows archaeology branch **diverged**: **28 commits ahead, 2 behind**, merge base `8452c5ef264d85823dce149a3bb371142d598569`.
+- The branch-local archaeology material therefore remains working evidence, not merged/current product authority.
 
 ## Local forensic extraction v2 — accounting
 
@@ -31,7 +32,7 @@ Important: this balance proves disposition of artifacts *discovered by v2*; it d
 
 The very large unique-artifact count includes a substantial forensic pathless/unreachable candidate population. These candidates must not be represented as 20,126 equivalent human documentation documents. Named/path-provenanced documents and pathless forensic candidates are separate evidence populations.
 
-The local run also exposed one explicit technical issue: Git-history enumeration for `timelapse-pro-backup` failed on malformed ref `refs/Icon?`. Its filesystem was still scanned (97 candidate docs), but that local copy's Git-history pass is not proven complete. Status: **TECHNICAL_GAP pending object-database/provenance reconciliation**; it only becomes closure-blocking if it can contain a unique documentation domain not recovered elsewhere.
+The local run exposed one explicit technical issue: Git-history enumeration for `timelapse-pro-backup` failed on malformed ref `refs/Icon?`. Its filesystem was still scanned (97 candidate docs), but that local copy's Git-history pass is not proven complete. Status: **TECHNICAL_GAP pending object-database/provenance reconciliation**; it only becomes closure-blocking if it can contain a unique documentation domain not recovered elsewhere.
 
 ## Binary/pre-Git gap correction
 
@@ -45,11 +46,11 @@ This includes the early project-source family (`Startkrav`, ChatGPT input, Gemin
 
 ## Strict-read delta
 
-Historical `Dokumentation/SYSTEM_HEALTH_REGISTER.md` at commit `443c5e0bd9f926f8838143d9fc51f7283fa9072c`, blob `58bf9b155dd40e8aae67e470558b98e4da058f38`, has now been read completely in non-overlapping connector ranges. It contains HLTH-001..HLTH-015. The final section confirms that text/presence tests were only smoke evidence, not integration/runtime proof; the README was still a Vite template; and the proposed first remediation package explicitly coupled secret hygiene, approval binding, update API state and legacy/LAB-only treatment of direct Edge Git update. Status: **READ / EXTRACTED**. No new `CRITICAL_KNOWLEDGE_GAP` was identified from completing this source.
+Historical `Dokumentation/SYSTEM_HEALTH_REGISTER.md` at commit `443c5e0bd9f926f8838143d9fc51f7283fa9072c`, blob `58bf9b155dd40e8aae67e470558b98e4da058f38`, has been read completely in non-overlapping connector ranges. It contains HLTH-001..HLTH-015. The final section confirms that text/presence tests were only smoke evidence, not integration/runtime proof; the README was still a Vite template; and the proposed first remediation package explicitly coupled secret hygiene, approval binding, update API state and legacy/LAB-only treatment of direct Edge Git update. Status: **READ / EXTRACTED**. No new `CRITICAL_KNOWLEDGE_GAP` was identified from completing this source.
 
-## Closure discipline
+## Current closure position
 
-The closure ledger remains authoritative for accounting. This file is a reconciliation evidence artifact and must be linked from the ledger.
+The closure ledger remains the accounting authority. This file is reconciliation evidence and must be linked from the ledger.
 
 Before `DATA COLLECTION CLOSED WITH EXPLICIT GAPS`:
 
