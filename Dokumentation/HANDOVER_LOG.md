@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-09-18 (senere) — fra ChatGPT: Headend CA key-at-rest hardening kodeklar; fysisk Keychain-gate afventer
+
+- **Verificeret kode-head:** `8137833fd1274317e5390defea2a60a251ff73ea`; CI #1116 **SUCCESS** på præcis denne SHA (Python syntax, shell syntax, unit/contract suite og UI build grøn; deploy-jobs skipped).
+- **CA key-at-rest:** `headend/services/headend_api_mtls.py` bruger nu krypteret PKCS#8 via `BestAvailableEncryption`; live CA-default er flyttet til `/Library/Application Support/TimeLapse Pro/pki/headend-api-mtls-ca`. Key mode 0600, cert mode 0644, P-256 og cert/key-binding valideres før issuance.
+- **Fail-closed uden Headend-outage:** ny `HeadendApiMtlsUnavailableError` skelner driftsutilgængelig CA/Keychain fra ugyldig CSR. CA-unavailability returnerer 503 på initialize/enroll; CSR/policy-fejl forbliver 400/409. `ca_status()` prøver nu reelt at unlocke og validere signing key, så manglende/forkert passphrase rapporteres unhealthy i stedet for falsk healthy.
+- **System Keychain boundary:** ny native helper `deploy/macos/timelapse-ca-keychain.c` læser kun én hardcoded service/account fra `/Library/Keychains/System.keychain` via Security.framework. Den accepterer kun `--read` og `--probe`, deaktiverer UI-interaktion og tillader kun root eller runtime-user `peter`. Runtime bruger ikke `/usr/bin/security`; passphrasen sendes kun via stdout-pipe til Headend-processen, ikke via env/argv/log.
+- **Installation/hardening:** `deploy/macos/install_timelapse_ca_keychain_helper.sh` kompilerer helperen lokalt på macOS, installerer den root:wheel 0755, holder PKI-parent directories root-owned og CA-directory `peter:staff` 0700. Live CA-directory får en fixed-path Time Machine exclusion (`tmutil addexclusion -p`) for at holde den aktive signing key ude af rutinebackup; CA-DR skal ske som separat kontrolleret, krypteret export.
+- **LaunchDaemon-kontrakt:** repo-plisten deklarerer kun de ikke-hemmelige paths `TIMELAPSE_HEADEND_API_MTLS_CA_DIR` og `TIMELAPSE_HEADEND_API_MTLS_KEYCHAIN_HELPER`; ingen passphrase tilføjes til plist eller `headend.env`.
+- **Tests:** nye kontrakter dækker encrypted PEM, korrekt/wrong/missing passphrase, unhealthy status, 503-mapping, helperens faste System-keychain scope, non-interactive path, root-owned helper/PKI parents og Time Machine exclusion. CI #1112/#1115 fandt hver én test-only forventningsfejl; begge blev korrigeret uden ændring af den valgte sikkerhedsarkitektur. Final CI #1116 er grøn.
+- **Fysisk status:** **INTET installeret endnu** på Headend fra denne ændring; ingen Keychain-item er oprettet/ændret, ingen CA-directory er provisioneret af installer-scriptet, og produktions-CA er fortsat **IKKE initialiseret**.
+- **Næste gate:** synk fysisk Mac mini til denne branch, kør installerens `--verify-only`, derefter fysisk compile/install af helper + tom live-PKI directory/Time Machine exclusion. Først herefter laves et **dummy** System-keychain item og `--probe`; derefter kræves unattended reboot-test uden interaktiv login før nogen produktions-CA ceremoni.
+- **Stadig åbent:** normal HeadendClient præsenterer endnu ikke client-certifikatet; fysisk Edge enrollment, nginx staged enforcement og revocation/CRL er ikke færdige. PR #246 forbliver DRAFT og må ikke merges endnu.
+
 ### Handover 2026-09-18 — fra ChatGPT: Edge API-mTLS runtime enrollment fremført; CA initialisering bevidst holdt tilbage
 
 - **Branch/PR-status:** arbejdet fortsætter på `chatgpt/api-mtls-20260917` / PR #246, som fortsat skal være **DRAFT** og **må ikke merges endnu**. Sub-track B reverse-SSH er fysisk gennemført; denne post opdaterer Sub-track A.
