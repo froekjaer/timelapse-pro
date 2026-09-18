@@ -5,7 +5,9 @@
 set -euo pipefail
 
 HELPER_DST="/usr/local/libexec/timelapse-ca-keychain"
-CA_DIR="/Library/Application Support/TimeLapse Pro/pki/headend-api-mtls-ca"
+APP_DIR="/Library/Application Support/TimeLapse Pro"
+PKI_DIR="${APP_DIR}/pki"
+CA_DIR="${PKI_DIR}/headend-api-mtls-ca"
 HEADEND_USER="peter"
 HEADEND_GROUP="staff"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,6 +34,7 @@ if [[ "$MODE" == "--verify-only" ]]; then
   fi
   if [[ -d "$CA_DIR" ]]; then
     stat -f 'ca-dir: %N owner=%Su group=%Sg mode=%Sp (%OLp)' "$CA_DIR"
+    /usr/bin/tmutil isexcluded "$CA_DIR" 2>/dev/null || true
   else
     log "ca-dir: not provisioned"
   fi
@@ -53,9 +56,13 @@ trap 'rm -f "$TMP_BIN"' EXIT
 
 install -d -o root -g wheel -m 0755 /usr/local/libexec
 install -o root -g wheel -m 0755 "$TMP_BIN" "$HELPER_DST"
+install -d -o root -g wheel -m 0755 "$APP_DIR"
+install -d -o root -g wheel -m 0755 "$PKI_DIR"
 install -d -o "$HEADEND_USER" -g "$HEADEND_GROUP" -m 0700 "$CA_DIR"
+/usr/bin/tmutil addexclusion -p "$CA_DIR"
 
 log "installed root-owned helper: $HELPER_DST"
-log "provisioned live CA directory: $CA_DIR"
+log "provisioned root-owned PKI parent and 0700 live CA directory: $CA_DIR"
+log "excluded live CA directory from routine Time Machine backup"
 log "Keychain item was NOT created or modified"
 log "next gate is a separate dummy System-keychain ACL/probe test"

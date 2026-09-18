@@ -62,6 +62,9 @@ def test_mtls_ca_keychain_helper_is_narrow_and_noninteractive():
     assert "-framework Security" in installer
     assert "/usr/local/libexec/timelapse-ca-keychain" in installer
     assert "/Library/Application Support/TimeLapse Pro/pki/headend-api-mtls-ca" in installer
+    assert 'install -d -o root -g wheel -m 0755 "$APP_DIR"' in installer
+    assert 'install -d -o root -g wheel -m 0755 "$PKI_DIR"' in installer
+    assert '/usr/bin/tmutil addexclusion -p "$CA_DIR"' in installer
     assert "Keychain item was NOT created or modified" in installer
 
 

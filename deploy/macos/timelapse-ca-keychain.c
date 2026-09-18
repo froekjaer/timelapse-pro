@@ -10,6 +10,7 @@
  * root-owned so the runtime user cannot replace the binary trusted by the
  * file-based keychain ACL.
  */
+#include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #include <pwd.h>
 #include <stdio.h>
