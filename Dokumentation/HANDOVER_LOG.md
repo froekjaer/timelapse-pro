@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-09-18 (fysisk) — fra ChatGPT: System-keychain helper fysisk installeret og dummy-ACL verificeret
+
+- **Branch/head:** `chatgpt/api-mtls-20260917` fysisk synkroniseret til `8725b73b4e0b804420ee83085135ea19cb4422ee`. CI #1118 er SUCCESS på præcis denne SHA.
+- **Helper API-hardening:** første fysiske compile af den ældre helper viste macOS deprecation-warnings for `SecKeychain*`. Dette blev behandlet som et reelt platformsignal før secrets/CA-materiale blev oprettet. Helperen blev omskrevet til `SecItemCopyMatching` med file-based keychain (`kSecUseDataProtectionKeychain=@NO`) og non-interactive `LAContext.interactionNotAllowed=YES`; ny fysisk compile gav ingen `SecKeychain*` warnings.
+- **Fysisk installation:** `/usr/local/libexec/timelapse-ca-keychain` installeret root:wheel 0755, Mach-O arm64. `/Library/Application Support/TimeLapse Pro` og `.../pki` er root:wheel 0755; live CA-dir `.../pki/headend-api-mtls-ca` er `peter:staff` 0700 og fortsat tom.
+- **Backup isolation:** live CA-dir er fysisk markeret `[Excluded]` via fixed-path Time Machine exclusion.
+- **Fail-closed uden item:** helper `--probe` som runtime-user fejlede med exit 66 og `-25300` (item not found), som forventet.
+- **Dummy System-keychain ACL-test:** et midlertidigt, ikke-produktions dummy generic-password item blev oprettet i `/Library/Keychains/System.keychain` for service `dk.froekjaer.timelapse.headend-api-mtls-ca` / account `timelapse-headend`, med trusted-app ACL til den root-owned helper. `sudo -u peter ... --probe` returnerede `OK` uden dialog; `--read` blev SHA-256-verificeret byte-for-byte mod dummy-værdien uden at printe hemmeligheden. Itemet blev derefter slettet.
+- **Cleanup-bevis:** efter sletning fejlede `--probe` igen med exit 66 / `-25300`; CA-dir var stadig tom. Der findes fortsat **ingen produktions-passphrase, ingen CA-key og intet CA-certifikat**.
+- **Næste gate:** bevis samme helper-adgang fra en midlertidig rigtig system LaunchDaemon, stadig med dummy-item og automatisk cleanup. Først derefter planlægges unattended reboot/pre-login test. Produktions-CA må fortsat ikke initialiseres før reboot-gaten er bestået.
+- **PR-status:** PR #246 forbliver DRAFT / DO NOT MERGE; normal HeadendClient client-cert use, fysisk Edge enrollment, proxy enforcement og revocation/CRL er fortsat åbne.
+
 ### Handover 2026-09-18 (senere) — fra ChatGPT: Headend CA key-at-rest hardening kodeklar; fysisk Keychain-gate afventer
 
 - **Verificeret kode-head:** `8137833fd1274317e5390defea2a60a251ff73ea`; CI #1116 **SUCCESS** på præcis denne SHA (Python syntax, shell syntax, unit/contract suite og UI build grøn; deploy-jobs skipped).
