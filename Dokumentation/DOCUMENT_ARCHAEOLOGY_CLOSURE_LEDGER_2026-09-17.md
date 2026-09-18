@@ -189,3 +189,19 @@ Hvis disse checks ender med `CRITICAL_KNOWLEDGE_GAP = 0`, kan dataindsamlingen l
 `Knowledge Register → dedupe → requirement/change/conflict chains → current intent determination → authoritative GRC/capability/ADR/usecase/history placement → implementation mapping → verification → runtime evidence`
 
 Golden Capabilities fryses først efter syntese og efter at historiske krav har fået mulighed for at udfordre nyere dokumentation.
+
+
+## 13. Strict-read closure delta — System Health Register
+
+Den historiske `Dokumentation/SYSTEM_HEALTH_REGISTER.md` ved commit `443c5e0bd9f926f8838143d9fc51f7283fa9072c`, blob `58bf9b155dd40e8aae67e470558b98e4da058f38`, er nu hentet i tre ikke-overlappende line ranges (1–120, 121–240, 241–320) og dermed **strict-complete READ**. Tidligere connector-truncation er lukket for denne kilde.
+
+Registeret indeholder HLTH-001..HLTH-015. De tidligere kendte HLTH-001..014 er bekræftet direkte; den afsluttende del tilføjer især:
+
+- HLTH-014: tekst-/presence-tests er smoke checks, ikke stærk API/datamodel/integration-evidens; anbefaler TestClient-, migration- og Edge API contract-tests.
+- HLTH-015: README var stadig Vite-template og gav derfor ikke korrekt TimeLapse Pro build/run/security/onboarding-overblik.
+- Første foreslåede remediation-pakke kobler Git/secrets hygiene, approval-binding i UI/API, API statusfelter og eksplicit legacy/LAB-only disposition af direkte Edge Git update.
+- Åbne beslutninger viser, at registeret er en dateret health assessment og remediation-plan, ikke bevis for senere lukning.
+
+Archaeology-konsekvens: `SYSTEM_HEALTH_REGISTER.md` flyttes fra partial/truncated evidence til `READ / EXTRACTED`. Ingen ny `CRITICAL_KNOWLEDGE_GAP` blev identificeret ved strict completion.
+
+Yderligere invariant: **presence/text tests må ikke bruges som evidens for faktisk integration eller runtime outcome; testens attestationsscope følger den adfærd, testen faktisk exercises.**
