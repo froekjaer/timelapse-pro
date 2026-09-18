@@ -11,7 +11,7 @@ CA_DIR="${PKI_DIR}/headend-api-mtls-ca"
 HEADEND_USER="peter"
 HEADEND_GROUP="staff"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE="${SCRIPT_DIR}/timelapse-ca-keychain.c"
+SOURCE="${SCRIPT_DIR}/timelapse-ca-keychain.m"
 
 log() { printf '[install-ca-keychain-helper] %s\n' "$*"; }
 die() { printf '[install-ca-keychain-helper] FEJL: %s\n' "$*" >&2; exit 1; }
@@ -50,8 +50,8 @@ TMP_BIN="$(mktemp /tmp/timelapse-ca-keychain.XXXXXX)"
 trap 'rm -f "$TMP_BIN"' EXIT
 
 /usr/bin/clang \
-  -O2 -Wall -Wextra \
-  -framework Security -framework CoreFoundation \
+  -O2 -Wall -Wextra -fobjc-arc \
+  -framework Foundation -framework LocalAuthentication -framework Security \
   "$SOURCE" -o "$TMP_BIN"
 
 install -d -o root -g wheel -m 0755 /usr/local/libexec
