@@ -223,7 +223,11 @@ def test_admin_initialize_maps_ca_unavailability_to_503(monkeypatch):
     )
 
     def unavailable():
-        raise headend_api_mtls.HeadendApiMtlsUnavailableError(
+        # The router imports the service module as "services.headend_api_mtls"
+        # in production. Raise the exact class object used by that module so
+        # this unit test exercises the router's 503 mapping rather than Python
+        # package-alias identity.
+        raise edge_api_mtls_api.HeadendApiMtlsUnavailableError(
             "Headend API mTLS CA passphrase is unavailable"
         )
 
