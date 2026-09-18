@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-09-18 (fysisk reboot-gate) — fra ChatGPT: System Keychain pre-login adgang E2E-verificeret
+
+- **Formål:** lukke den sidste fysiske gate før produktions-CA-ceremoni: bevise at Headend-runtime-user `peter` kan hente CA-passphrase fra macOS System Keychain gennem den root-owned native helper fra en rigtig system LaunchDaemon **før interaktiv/automatisk GUI-login**.
+- **Driftsbaseline før reboot:** fysisk Mac mini blev read-only verificeret med Headend som `system/dk.froekjaer.timelapse-headend` (`RunAtLoad=true`, `KeepAlive=true`, `UserName=peter`), data-mount som system LaunchDaemon/root, PostgreSQL på `127.0.0.1:5432`, nginx som systemservice og `/Volumes/data-fast` mounted. Eksisterende `autoLoginUser=peter` blev bevidst **ikke ændret**, så testen ikke ændrede produktionsdriftsadfærden.
+- **Testsetup:** midlertidigt ikke-produktions generic-password item i `/Library/Keychains/System.keychain` med service `dk.froekjaer.timelapse.headend-api-mtls-ca`, account `timelapse-headend` og trusted-app ACL til `/usr/local/libexec/timelapse-ca-keychain`. Midlertidig system LaunchDaemon kørte helperens `--probe` som `peter` ved boot. Produktions-CA blev ikke initialiseret.
+- **Reboot-evidens:** macOS boot-tid `2026-09-18 19:06:39 +0200`; probe startede `2026-09-18T17:06:46Z`, ca. 7 sekunder efter boot. På probe-tidspunktet var `console_user=root`, mens processen kørte som `uid=502`, `user=peter`. Helper returnerede `helper_exit=0` og `helper_output=OK`. Senere var current console-user `peter`; sammen med `console_user=root` på probe-tidspunktet dokumenterer dette, at Keychain-opslaget lykkedes **før console-login var etableret**.
+- **Runtime efter reboot:** Headend kom op som system LaunchDaemon (`runs=1`, running), Uvicorn lyttede på `127.0.0.1:8000`; nginx var running; `/Volumes/data-fast` var mounted. CA-directory var fortsat tom.
+- **Teardown:** probe-LaunchDaemon, probe-script/result/stdout/stderr og dummy-Keychain-item blev fjernet. Efter teardown returnerede helper `--probe` igen exit `66` med Security status `-25300` (item not found). `autoLoginUser=peter` var uændret. Live CA-directory var fortsat tom.
+- **Bevaret evidens:** `Dokumentation/evidence/mtls-system-keychain-prelogin-2026-09-18.txt`, SHA-256 `095cbe7cd6991051d6e00c88252b62a730d58b4e5217275c8a74d7a8f66f5047`.
+- **Gate-resultat:** **PASS**. Den valgte System-Keychain/file-based helper-model er fysisk verificeret i den reelle boot-kontekst uden afhængighed af GUI-login for Keychain-adgangen.
+- **Sikkerhedsstatus:** dummy-item er væk; helper er tilbage i fail-closed tilstand; der findes fortsat **ingen produktions-passphrase, ingen CA-private-key og intet CA-certifikat**.
+- **Næste gate:** før fysisk produktions-CA-ceremoni udføres den aftalte smalle adversarial review med fokus kun på konkrete blockers i den nu fysisk verificerede CA storage/unlock-model. PR #246 forbliver DRAFT / DO NOT MERGE.
+
 ### Handover 2026-09-18 (fysisk) — fra ChatGPT: System-keychain helper fysisk installeret og dummy-ACL verificeret
 
 - **Branch/head:** `chatgpt/api-mtls-20260917` fysisk synkroniseret til `8725b73b4e0b804420ee83085135ea19cb4422ee`. CI #1118 er SUCCESS på præcis denne SHA.
