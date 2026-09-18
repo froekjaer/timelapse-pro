@@ -12,6 +12,8 @@ PLISTS = (
     ROOT / "deploy/launchd/dk.froekjaer.timelapse-headend.plist",
 )
 MOUNT_PLIST = ROOT / "deploy/launchd/macos/dk.froekjaer.timelapse-mount.plist"
+CA_HELPER_SOURCE = ROOT / "deploy/macos/timelapse-ca-keychain.c"
+CA_HELPER_INSTALLER = ROOT / "deploy/macos/install_timelapse_ca_keychain_helper.sh"
 
 
 def test_headend_waits_for_real_writable_volume():
@@ -42,3 +44,34 @@ def test_mount_script_rejects_apfs_physical_store_as_volume():
     assert "diskutil info" in source
     assert "Volume Name" in source
     assert "expected_volume_device" in source
+
+
+def test_mtls_ca_keychain_helper_is_narrow_and_noninteractive():
+    source = CA_HELPER_SOURCE.read_text(encoding="utf-8")
+    installer = CA_HELPER_INSTALLER.read_text(encoding="utf-8")
+
+    assert '"/Library/Keychains/System.keychain"' in source
+    assert '"dk.froekjaer.timelapse.headend-api-mtls-ca"' in source
+    assert '"timelapse-headend"' in source
+    assert 'HEADEND_RUNTIME_USER "peter"' in source
+    assert "SecKeychainSetUserInteractionAllowed(false)" in source
+    assert '"--read"' in source
+    assert '"--probe"' in source
+    assert "/usr/bin/security" not in source
+
+    assert "-framework Security" in installer
+    assert "/usr/local/libexec/timelapse-ca-keychain" in installer
+    assert "/Library/Application Support/TimeLapse Pro/pki/headend-api-mtls-ca" in installer
+    assert "Keychain item was NOT created or modified" in installer
+
+
+def test_headend_launchd_declares_non_secret_mtls_ca_paths():
+    plist = plistlib.loads(PLISTS[0].read_bytes())
+    env = plist["EnvironmentVariables"]
+
+    assert env["TIMELAPSE_HEADEND_API_MTLS_CA_DIR"] == (
+        "/Library/Application Support/TimeLapse Pro/pki/headend-api-mtls-ca"
+    )
+    assert env["TIMELAPSE_HEADEND_API_MTLS_KEYCHAIN_HELPER"] == (
+        "/usr/local/libexec/timelapse-ca-keychain"
+    )

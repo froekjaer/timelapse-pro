@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 from cryptography import x509
+from cryptography.hazmat.primitives import serialization
 from cryptography.x509.oid import ExtensionOID
+from fastapi import HTTPException
 
 from edge.api_mtls import (
     certificate_renewal_needed,
@@ -12,6 +14,7 @@ from edge.api_mtls import (
     install_certificate_bundle,
 )
 from headend.services import headend_api_mtls
+from headend.api import edge_api_mtls_api
 from headend.api.edge_api_mtls_api import (
     create_headend_api_mtls_admin_router,
     create_headend_api_mtls_edge_router,
@@ -20,11 +23,17 @@ from headend.api.edge_api_mtls_api import (
 
 DEVICE_1 = "TL-C87FF9587CA0"
 DEVICE_2 = "TL-043EB9E72EFD"
+TEST_CA_PASSPHRASE = b"test-only-headend-api-mtls-ca-passphrase"
 
 
 def _issue(monkeypatch, tmp_path: Path, device_id: str, key_name: str = "device.key"):
     ca_dir = tmp_path / "ca"
     monkeypatch.setenv(headend_api_mtls.CA_DIR_ENV, str(ca_dir))
+    monkeypatch.setattr(
+        headend_api_mtls,
+        "_ca_passphrase",
+        lambda: TEST_CA_PASSPHRASE,
+    )
     headend_api_mtls.initialize_ca()
     key_path = tmp_path / key_name
     _, csr = ensure_key_and_csr(device_id, key_path=key_path)
@@ -58,6 +67,11 @@ def test_edge_owned_key_and_csr_are_bound_to_exact_device(monkeypatch, tmp_path)
 def test_headend_rejects_csr_for_different_device_identity(monkeypatch, tmp_path):
     ca_dir = tmp_path / "ca"
     monkeypatch.setenv(headend_api_mtls.CA_DIR_ENV, str(ca_dir))
+    monkeypatch.setattr(
+        headend_api_mtls,
+        "_ca_passphrase",
+        lambda: TEST_CA_PASSPHRASE,
+    )
     headend_api_mtls.initialize_ca()
     _, csr = ensure_key_and_csr(DEVICE_1, key_path=tmp_path / "edge1.key")
 
@@ -113,6 +127,112 @@ def test_ca_initialization_fails_closed_on_inconsistent_storage(monkeypatch, tmp
 
     with pytest.raises(headend_api_mtls.HeadendApiMtlsError, match="inconsistent"):
         headend_api_mtls.initialize_ca()
+
+
+
+def test_default_ca_storage_is_not_under_data_fast_backup(monkeypatch):
+    monkeypatch.delenv(headend_api_mtls.CA_DIR_ENV, raising=False)
+
+    assert headend_api_mtls.DEFAULT_CA_DIR == Path(
+        "/Library/Application Support/TimeLapse Pro/pki/headend-api-mtls-ca"
+    )
+    assert "/data-fast/backup" not in str(headend_api_mtls.DEFAULT_CA_DIR)
+
+
+def test_ca_private_key_is_encrypted_at_rest(monkeypatch, tmp_path):
+    ca_dir = tmp_path / "ca"
+    monkeypatch.setenv(headend_api_mtls.CA_DIR_ENV, str(ca_dir))
+    monkeypatch.setattr(
+        headend_api_mtls,
+        "_ca_passphrase",
+        lambda: TEST_CA_PASSPHRASE,
+    )
+
+    _, key_path = headend_api_mtls.initialize_ca()
+    pem = key_path.read_bytes()
+
+    assert pem.startswith(b"-----BEGIN ENCRYPTED PRIVATE KEY-----")
+    with pytest.raises(TypeError):
+        serialization.load_pem_private_key(pem, password=None)
+
+    key = serialization.load_pem_private_key(
+        pem,
+        password=TEST_CA_PASSPHRASE,
+    )
+    assert key_path.stat().st_mode & 0o077 == 0
+    assert key.curve.name == "secp256r1"
+    assert headend_api_mtls.ca_status()["healthy"] is True
+
+
+def test_ca_status_fails_closed_when_passphrase_is_unavailable(monkeypatch, tmp_path):
+    ca_dir = tmp_path / "ca"
+    monkeypatch.setenv(headend_api_mtls.CA_DIR_ENV, str(ca_dir))
+    monkeypatch.setattr(
+        headend_api_mtls,
+        "_ca_passphrase",
+        lambda: TEST_CA_PASSPHRASE,
+    )
+    headend_api_mtls.initialize_ca()
+
+    def unavailable():
+        raise headend_api_mtls.HeadendApiMtlsUnavailableError(
+            "Headend API mTLS CA passphrase is unavailable"
+        )
+
+    monkeypatch.setattr(headend_api_mtls, "_ca_passphrase", unavailable)
+
+    status = headend_api_mtls.ca_status()
+    assert status["initialized"] is True
+    assert status["healthy"] is False
+    assert "passphrase is unavailable" in str(status["detail"])
+    with pytest.raises(headend_api_mtls.HeadendApiMtlsUnavailableError):
+        headend_api_mtls.require_ca()
+
+
+def test_ca_status_fails_closed_on_wrong_passphrase(monkeypatch, tmp_path):
+    ca_dir = tmp_path / "ca"
+    monkeypatch.setenv(headend_api_mtls.CA_DIR_ENV, str(ca_dir))
+    monkeypatch.setattr(
+        headend_api_mtls,
+        "_ca_passphrase",
+        lambda: TEST_CA_PASSPHRASE,
+    )
+    headend_api_mtls.initialize_ca()
+
+    monkeypatch.setattr(
+        headend_api_mtls,
+        "_ca_passphrase",
+        lambda: b"wrong-passphrase",
+    )
+    status = headend_api_mtls.ca_status()
+
+    assert status["initialized"] is True
+    assert status["healthy"] is False
+    assert "cannot be unlocked" in str(status["detail"])
+
+
+def test_admin_initialize_maps_ca_unavailability_to_503(monkeypatch):
+    def fake_require_role(_role):
+        return None
+
+    router = create_headend_api_mtls_admin_router(fake_require_role)
+    route = next(
+        item
+        for item in router.routes
+        if item.path == "/api/admin/trust/headend-api-mtls/initialize"
+    )
+
+    def unavailable():
+        raise headend_api_mtls.HeadendApiMtlsUnavailableError(
+            "Headend API mTLS CA passphrase is unavailable"
+        )
+
+    monkeypatch.setattr(edge_api_mtls_api, "initialize_ca", unavailable)
+
+    with pytest.raises(HTTPException) as exc_info:
+        route.endpoint()
+
+    assert exc_info.value.status_code == 503
 
 
 def test_headend_api_mtls_routers_are_registered_in_runtime():

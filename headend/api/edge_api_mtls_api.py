@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from database import Device, EdgeCredentialInventory, EdgeLifecycleRecord, get_db, now_utc
 from services.headend_api_mtls import (
     HeadendApiMtlsError,
+    HeadendApiMtlsUnavailableError,
     ca_status,
     initialize_ca,
     issue_client_certificate,
@@ -101,6 +102,8 @@ def create_headend_api_mtls_admin_router(require_role: Callable) -> APIRouter:
     def initialize(_user=require_role("super_admin")):
         try:
             initialize_ca()
+        except HeadendApiMtlsUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except HeadendApiMtlsError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return ca_status()
@@ -128,10 +131,10 @@ def create_headend_api_mtls_edge_router(verify_device_token: Callable) -> APIRou
             raise HTTPException(status_code=413, detail="CSR too large")
         try:
             issued = issue_client_certificate(device_id, payload.csr_pem)
+        except HeadendApiMtlsUnavailableError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except HeadendApiMtlsError as exc:
-            # CA not initialized is operationally distinct from a malformed CSR.
-            code = 503 if "CA is not initialized" in str(exc) else 400
-            raise HTTPException(status_code=code, detail=str(exc)) from exc
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         row = _record_inventory(db, device_id=device_id, issued=issued)
         db.commit()
         return {
