@@ -8,8 +8,8 @@
 
 - Fresh paginated GitHub branch inventory on 2026-09-18 remains **139 repository branches** (100 on page 1 + 39 on page 2).
 - `main` remains `928134be847eb96df25455736f6acd766aff84f2` at this reconciliation pass.
-- PR #243 remains **OPEN / UNMERGED**, head `chatgpt/capability-map-v0-20260916` at `8650e731a37a7dc2918324dbc7e562e8eebce7d6`; it must not be merged as part of archaeology.
-- Fresh compare against current `main` shows archaeology branch **diverged**: **28 commits ahead, 2 behind**, merge base `8452c5ef264d85823dce149a3bb371142d598569`.
+- PR #243 remains **OPEN / UNMERGED**, head `chatgpt/capability-map-v0-20260916` at `d87deeb7680ad8333155b9d553537f88e6a54efe`; it must not be merged as part of archaeology.
+- Fresh compare against current `main` shows archaeology branch **diverged**: **29 commits ahead, 2 behind**, merge base `8452c5ef264d85823dce149a3bb371142d598569`.
 - The branch-local archaeology material therefore remains working evidence, not merged/current product authority.
 
 ## Local forensic extraction v2 — accounting
@@ -46,7 +46,26 @@ This includes the early project-source family (`Startkrav`, ChatGPT input, Gemin
 
 ## Strict-read delta
 
-Historical `Dokumentation/SYSTEM_HEALTH_REGISTER.md` at commit `443c5e0bd9f926f8838143d9fc51f7283fa9072c`, blob `58bf9b155dd40e8aae67e470558b98e4da058f38`, has been read completely in non-overlapping connector ranges. It contains HLTH-001..HLTH-015. The final section confirms that text/presence tests were only smoke evidence, not integration/runtime proof; the README was still a Vite template; and the proposed first remediation package explicitly coupled secret hygiene, approval binding, update API state and legacy/LAB-only treatment of direct Edge Git update. Status: **READ / EXTRACTED**. No new `CRITICAL_KNOWLEDGE_GAP` was identified from completing this source.
+Historical `Dokumentation/SYSTEM_HEALTH_REGISTER.md` at commit `443c5e0bd9f926f8838143d9fc51f7283fa9072c`, blob `58bf9b155dd40e8aae67e470558b98e4da058f38`, has now been re-read completely in non-overlapping connector ranges during fresh reconciliation. It contains **HLTH-001..HLTH-015** and confirms directly:
+
+- direct Edge GitHub/origin update conflicted with the Headend-mediated production-update requirement;
+- signed-tag verification was not bound to the exact installed `origin/main` object;
+- visible UI approval options were not bound to the backend approval action;
+- required update scope was broader than implemented UI/model scope;
+- aggregate `PendingUpdate.status` could not represent per-target deployment truth;
+- policy could be returned/configured without maintenance/reboot semantics actually being consumed;
+- production JWT trust configuration needed fail-closed behavior rather than silent runtime fallback;
+- build/presence/smoke checks were not integration/runtime evidence.
+
+The closing remediation section also explicitly treats direct Edge Git update as **legacy/LAB-only pending Headend artifact flow**, preserving the rationale for supersession rather than deleting the historical implementation. Status: **READ / EXTRACTED**. No new `CRITICAL_KNOWLEDGE_GAP` was identified from completing this source.
+
+## Fresh reconciliation delta — 2026-09-18
+
+- The branch universe remains exactly **139** at this pass; no branch-count drift was observed.
+- `main` remains at `928134be847eb96df25455736f6acd766aff84f2`.
+- PR #243 is still open and unmerged. Its head advanced since the previous reconciliation snapshot from `8650e731...` to `d87deeb...`; the branch is now 29 commits ahead / 2 behind `main`.
+- This advancement is archaeology/documentation work on the same unmerged evidence branch and does not change current product authority.
+- The completed strict-read of System Health Register strengthens four archaeology invariants: **authorized object = executed object**, **operator approval must bind the actual action**, **aggregate state cannot replace target truth**, and **configured/declared is not evidence of consumed/executed/runtime-verified behavior**.
 
 ## Current closure position
 
