@@ -3,6 +3,11 @@
 
 The service is deliberately a transport adapter. It exposes no shell and
 delegates authenticated operation requests to BleTechnicianSession.
+
+The Bluetooth device name (both the classic adapter Alias and the BLE
+advertisement LocalName) is derived from current network status
+(edge.network_status) via edge.bluetooth_name and kept in sync on a periodic
+timer (see Runtime.refresh_bluetooth_name / BLUETOOTH_NAME_REFRESH_INTERVAL_SECONDS).
 """
 
 from __future__ import annotations
@@ -37,8 +42,16 @@ from ble_technician_protocol import (  # noqa: E402
     STATUS_UUID,
 )
 from ble_technician_service import BleTechnicianSession  # noqa: E402
+from bluetooth_name import compute_bluetooth_names  # noqa: E402
+from network_status import get_network_status  # noqa: E402
 from service_operations import create_service_platform  # noqa: E402
 from totp_verifier import verify_totp  # noqa: E402
+
+# How often the advertised/adapter Bluetooth name is recomputed from current
+# network status. Independent of, and much slower than, anything on the
+# capture path — a missed or failed tick only leaves the previous name in
+# place (see Runtime.refresh_bluetooth_name).
+BLUETOOTH_NAME_REFRESH_INTERVAL_SECONDS = 15
 
 
 BLUEZ = "org.bluez"
@@ -211,6 +224,12 @@ class Advertisement(dbus.service.Object):
 
     def __init__(self, bus):
         super().__init__(bus, self.PATH)
+        # Placeholder until Runtime computes the real network-derived name
+        # before the first RegisterAdvertisement call (see Runtime.__init__).
+        self.local_name = os.uname().nodename[:26]
+
+    def set_local_name(self, name: str) -> None:
+        self.local_name = name
 
     @dbus.service.method(PROPERTIES, in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
@@ -218,7 +237,7 @@ class Advertisement(dbus.service.Object):
             return {}
         return {
             "Type": dbus.String("peripheral"),
-            "LocalName": dbus.String(os.uname().nodename[:26]),
+            "LocalName": dbus.String(self.local_name),
             "ServiceUUIDs": dbus.Array([SERVICE_UUID], signature="s"),
             "Includes": dbus.Array(["tx-power"], signature="s"),
         }
@@ -231,6 +250,7 @@ class Advertisement(dbus.service.Object):
 class Runtime:
     def __init__(self, bus):
         self.bus = bus
+        self.adapter_path = dbus.ObjectPath("/org/bluez/hci0")
         self.application = Application(bus)
         self.advertisement = Advertisement(bus)
         self.platform = create_service_platform(base_dir=EDGE_ROOT)
@@ -239,13 +259,82 @@ class Runtime:
             self.platform,
             totp_verifier=lambda code: _verify_totp(secret, code),
         )
+        self._advertised_name: str | None = None
+        # Compute the real network-derived name before the advertisement is
+        # ever registered, so startup doesn't need an immediate unregister/
+        # re-register churn (see refresh_bluetooth_name for the update path).
+        self._apply_bluetooth_name(self._compute_bluetooth_names())
 
     def register(self):
-        adapter = dbus.ObjectPath("/org/bluez/hci0")
-        manager = dbus.Interface(self.bus.get_object(BLUEZ, adapter), GATT_MANAGER)
+        manager = dbus.Interface(self.bus.get_object(BLUEZ, self.adapter_path), GATT_MANAGER)
         manager.RegisterApplication(APPLICATION_PATH, {}, reply_handler=self._ok, error_handler=self._error)
-        advertising = dbus.Interface(self.bus.get_object(BLUEZ, adapter), LE_ADVERTISING_MANAGER)
+        self._register_advertisement()
+        self._set_adapter_alias(self._pending_full_alias)
+
+    def _register_advertisement(self):
+        advertising = dbus.Interface(self.bus.get_object(BLUEZ, self.adapter_path), LE_ADVERTISING_MANAGER)
         advertising.RegisterAdvertisement(Advertisement.PATH, {}, reply_handler=self._ok, error_handler=self._error)
+
+    def _unregister_advertisement(self):
+        try:
+            advertising = dbus.Interface(self.bus.get_object(BLUEZ, self.adapter_path), LE_ADVERTISING_MANAGER)
+            advertising.UnregisterAdvertisement(Advertisement.PATH)
+        except dbus.exceptions.DBusException as exc:
+            # BlueZ only picks up a new LocalName on (re-)registration, so an
+            # update always unregisters first. If nothing was registered yet
+            # (or BlueZ already dropped it), that's fine — proceed to
+            # register the new one regardless.
+            log.debug("BLE advertisement unregister before refresh: %s", exc)
+
+    def _compute_bluetooth_names(self):
+        """Never raises: a network-status/name-computation failure must never
+        prevent BLE GATT/advertisement registration or crash this process,
+        let alone anything on the capture path (product requirement: BT/
+        network-discovery failure must never stop scheduled capture, and
+        this module has no coupling to capture at all)."""
+        try:
+            hostname = os.uname().nodename
+            status = get_network_status()
+            return compute_bluetooth_names(hostname, status)
+        except Exception:
+            log.exception("Network-status lookup failed; falling back to static hostname")
+            fallback = os.uname().nodename[:26]
+
+            class _Fallback:
+                full = fallback
+                advertisement = fallback
+
+            return _Fallback()
+
+    def _apply_bluetooth_name(self, names) -> None:
+        self.advertisement.set_local_name(names.advertisement)
+        self._pending_full_alias = names.full
+        self._advertised_name = names.advertisement
+
+    def _set_adapter_alias(self, alias: str) -> None:
+        try:
+            props = dbus.Interface(self.bus.get_object(BLUEZ, self.adapter_path), PROPERTIES)
+            props.Set("org.bluez.Adapter1", "Alias", dbus.String(alias))
+        except dbus.exceptions.DBusException:
+            log.exception("Failed to set adapter Alias (classic BT-PAN/inquiry name); advertisement name unaffected")
+
+    def refresh_bluetooth_name(self) -> None:
+        """Recompute the network-derived Bluetooth name and apply it if it
+        changed. Called periodically from the GLib main loop (see main()).
+        Defensive by design: any failure here is logged and swallowed so
+        Bluetooth naming can never affect anything else on the Edge.
+        """
+        names = self._compute_bluetooth_names()
+        try:
+            self._set_adapter_alias(names.full)  # idempotent D-Bus property set; cheap even if unchanged
+            if names.advertisement != self._advertised_name:
+                self.advertisement.set_local_name(names.advertisement)
+                self._unregister_advertisement()
+                self._register_advertisement()
+                self._advertised_name = names.advertisement
+                log.info("Bluetooth name updated: full=%s advertisement=%s", names.full, names.advertisement)
+        except Exception:
+            log.exception("Failed to apply updated Bluetooth name; will retry on next refresh")
 
     def _ok(self):
         log.info("BLE GATT component registered")
@@ -292,6 +381,12 @@ def _verify_totp(secret: str, code: str) -> bool:
     return verify_totp(secret, code, window=3)
 
 
+def _refresh_bluetooth_name_tick() -> bool:
+    if _RUNTIME is not None:
+        _RUNTIME.refresh_bluetooth_name()
+    return True  # keep the GLib timeout repeating
+
+
 def main():
     global _RUNTIME
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [ble-gatt] %(message)s")
@@ -299,6 +394,7 @@ def main():
     bus = dbus.SystemBus()
     _RUNTIME = Runtime(bus)
     _RUNTIME.register()
+    GLib.timeout_add_seconds(BLUETOOTH_NAME_REFRESH_INTERVAL_SECONDS, _refresh_bluetooth_name_tick)
     try:
         GLib.MainLoop().run()
     finally:
