@@ -62,7 +62,7 @@ from sqlalchemy import and_, case, false as _sql_false, func, or_, text
 import subprocess as _subprocess
 import threading as _threading
 import json as _json
-import os, tempfile
+import os, tempfile, api.display_image_api as display_image_api
 from collections import defaultdict as _defaultdict
 import gzip as _gzip
 import lzma as _lzma
@@ -836,9 +836,6 @@ class ReverseSshRequest(BaseModel):
 # Tenant-scoping cluster (_is_platform_admin .. _visible_device_query)
 # moved to tenant_scope.py (2026-08-27, fast-follow to the auth.py
 # extraction) — imported near the top of this file.
-
-
-
 
 
 @app.get("/api/auth/session-policy")
@@ -1825,8 +1822,6 @@ def delete_user(
         raise HTTPException(status_code=400, detail="Kan ikke slette primær super_admin")
     db.delete(u); db.commit()
     return {"ok": True}
-
-
 
 
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
@@ -12050,7 +12045,7 @@ def _bounded_generate_thumbnail(src: _Path, thumb: _Path) -> tuple[bool, str | N
 
 def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
     deleted = False
-    for directory in (_thumbs_dir_for(image_path), _generated_thumbs_dir_for(image_path)):
+    for directory in (_thumbs_dir_for(image_path), _generated_thumbs_dir_for(image_path), display_image_api.display_dir_for(image_path)):
         try:
             thumb = directory / filename
             if thumb.exists():
@@ -17141,6 +17136,9 @@ def _ensure_capture_file_access(db: Session, user: User | None, device_id: str, 
     if not _capture_is_allowed(db, user, capture):
         raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
     return capture
+
+
+app.include_router(display_image_api.setup_display_router(_find_image, _ensure_capture_file_access, _log_capture_access_deduplicated, _xaccel_redirect, _sanitize_device_id))
 
 
 def _capture_quality_score(capture: Capture) -> float:
