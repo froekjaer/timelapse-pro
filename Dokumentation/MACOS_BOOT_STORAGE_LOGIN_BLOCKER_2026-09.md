@@ -1,7 +1,9 @@
 # macOS Boot Storage/Login Blocker
 
 **Date:** 2026-09-07  
-**Status:** Open operational finding; temporary workaround active
+**Status:** Open operational finding; temporary workaround active — now exercised nightly, not fixed
+
+**2026-09-21 update:** The nightly full-server-reboot rehearsal (`deploy/scripts/timelapse-nightly-maintenance`, see `Dokumentation/HANDOVER_LOG.md` same date) triggers a real `shutdown -r now` every night at 03:00, which now depends on this exact workaround (auto-login) succeeding every single night, not just once during a manual test. This raises this finding's operational weight — it is no longer an edge case exercised occasionally, it is load-bearing for a daily automated process. The permanent fix below remains unimplemented. Peter has explicitly accepted proceeding on the current workaround for now, with the instruction to keep investigating a real fix (not to let this quietly become permanent by default).
 
 ## Finding
 
