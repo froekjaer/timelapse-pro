@@ -1243,7 +1243,34 @@ def gphoto_config_exists(path: str) -> bool:
     return result.returncode == 0
 
 
+def print_network_management_summary() -> None:
+    """Print the same structured management-path answer (mode/interface/
+    SSID/IPv4) that drives the Bluetooth device name — this CLI, the
+    technician portal (which shells out to this same `--network-status`
+    flag via `_run_tech_cli`) and Bluetooth naming are all adapters over
+    edge.network_status.get_network_status(), not separate implementations.
+    Best-effort: never raises, since this is a diagnostic convenience on top
+    of the detailed raw dump below, not a required part of it.
+    """
+    try:
+        sys.path.insert(0, str(EDGE_ROOT))
+        from network_status import get_network_status  # noqa: PLC0415
+
+        status = get_network_status()
+        print("Management-path netværksstatus (authoritative, delt med Bluetooth-navn)")
+        print("-------------------------------------------------------------------------")
+        print(
+            f"mode={status.mode} interface={status.interface or '-'} "
+            f"ssid={status.ssid or '-'} ipv4={status.ipv4 or '-'} connected={status.connected}"
+        )
+        print()
+    except Exception as exc:  # pragma: no cover - diagnostic best-effort only
+        print(f"(kunne ikke beregne management-path status: {exc})")
+        print()
+
+
 def print_network_status(detailed: bool = False) -> None:
+    print_network_management_summary()
     if command_exists("nmcli"):
         print("NetworkManager devices")
         print("----------------------")
