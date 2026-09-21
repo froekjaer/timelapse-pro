@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-21 — fra Codex: Edge-netværksskift og tunnel-recovery implementeret i draft-PR #253
+
+- **Hvad er gjort:** Edge lukker nu sin egen reverse SSH-proces før WiFi-skift og starter en frisk tunnel bagefter, både fra lokalt servicetekniker-UI og Headend LAB-flow. Servicetekniker-UI's eksisterende bind til `0.0.0.0:8443` er fastholdt som kontrakt for alle Edge-netværksinterfaces. Headend viser kun en tunnel som aktiv efter en gyldig SSH-bannerudveksling og viser tidspunktet for denne friske verifikation adskilt fra det historiske connect-event.
+- **Headend recovery:** SSH-tunnelsiden har en enhedsspecifik “Luk tunnel”-handling. Den kræver MFA samt `admin`/`super_admin`, finder porten server-side fra enhedens tunnelhistorik, kalder en fast root-owned helper og auditerer både succes og fejl. Helperen accepterer ingen PID/kommando fra API'et og sender kun SIGTERM til en listener, der kører som den root-konfigurerede tunnelkonto med forventet `sshd-session`-identitet.
+- **Installation:** `deploy/macos/install_tunnel_control.sh` installerer helper, root-owned konto-konfiguration og en snæver sudoers-regel. Den er også koblet ind i den fulde Headend-installer. Ingen live-installation eller tunnelafbrydelse er udført.
+- **Evidens:** Gårsdagens journald-indhold var ikke bevaret, og applikationsloggen var roteret/overskrevet; dagens tilstand bruges derfor ikke som årsagsbevis. Read-only live-check viste dog, at 2201 og 2204 leverede rigtige SSH-bannere på ca. 282/155 ms, hvilket validerer den nye probe. Den første security-gennemgang fandt en konkret parserfejl mod macOS' `ps`-format; den er rettet og read-only verificeret mod live `sshd-session`-metadata.
+- **Verifikation:** 25 målrettede Python-tests bestået; arkitekturratchet bestået; UI production-build bestået; Python/shell syntax og `git diff --check` bestået. CI-ækvivalent suite: 1465 bestået, 5 skipped, 1 ændringsrelateret regression fundet og rettet; de 4 resterende errors er den kendte lokale GPG-agent/path-length-miljøfejl. Codex Security diff-scan fandt ingen rapporterbare fund i sit frosne 8-fils snapshot; root-helperen var untracked i snapshottet og skal derfor indgå i en ny post-commit scan.
+- **Filer rørt:** tunnel-API/service, Edge tunnelmanager/agent/bootstrap, SSH-tunnel-UI, macOS helper/installere, kontrakttests, register og handover.
+- **Hvad mangler / næste skridt:** Commit/push, post-commit security-diff-scan der inkluderer de nye helperfiler, review og kontrolleret installation/deployment. Efter deployment skal runtime observeres med et faktisk WiFi-skift og en manuel force-close/reconnect på Edge 1.
+- **Risici / pas på:** Force-close skal aldrig implementeres som generel `pkill`, vilkårlig PID eller bred sudo. “SSH verificeret” betyder banner-reachability; browserterminalen kræver fortsat separat host-key trust. NPM rapporterer 14 eksisterende dependency advisories; de er ikke ændret eller auto-fixet i dette spor.
+
 ### Handover 2026-09-21 — fra Codex: hændelsesdato og mandat korrigeret for Edge 1
 
 - **Hvad er gjort:** Peters test fandt sted 2026-09-20, så dagens Edge-/netværkstilstand er fjernet som årsagsbevis. Mandatet er udvidet: servicetekniker-UI skal kunne nås via alle Edge-netværk, og Headend skal kunne lukke én bestemt reverse tunnel kontrolleret, auditere handlingen og gøre porten klar til en ny Edge-forbindelse.

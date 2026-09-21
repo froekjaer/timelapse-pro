@@ -551,7 +551,25 @@ def connect_wifi(ssid: str, password: str = "") -> bool:
     cmd = ["nmcli", "device", "wifi", "connect", ssid]
     if password:
         cmd.extend(["password", password])
-    result = run(cmd, check=False, timeout=45)
+    edge_was_active = run(
+        ["systemctl", "is-active", "--quiet", "timelapse-edge.service"],
+        check=False,
+    ).returncode == 0
+    if edge_was_active:
+        print("Lukker reverse SSH-tunnel før netværksskift...")
+        stopped = run(
+            ["systemctl", "stop", "timelapse-edge.service"],
+            check=False,
+            timeout=20,
+        )
+        if stopped.returncode != 0:
+            print("Kunne ikke stoppe Edge/tunnel sikkert; netværksskift afbrudt")
+            return False
+    try:
+        result = run(cmd, check=False, timeout=45)
+    finally:
+        if edge_was_active:
+            run(["systemctl", "start", "timelapse-edge.service"], check=False, timeout=20)
     if result.returncode == 0:
         print("WiFi tilsluttet")
         return True

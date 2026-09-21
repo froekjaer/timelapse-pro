@@ -32,7 +32,7 @@ tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 - **Base/head:** draft-PR #253; base `origin/main` `928134be847eb96df25455736f6acd766aff84f2`; aktuel head fremgår af PR'en.
 - **Overlap/restdisposition:** PR #239 rører terminalrenderer, #249 netværksnavn og #246 mTLS; ingen af dem ændrer den planlagte statuskontrakt. Deres aktuelle diff genkontrolleres før merge. Historisk tunnelstatusarbejde i #193/#238 bevares og udbygges.
 - **Evidens:** Dagens tilstand er ikke evidens for hændelsen 2026-09-20. Historikken viser gentagne `connected`-events og senere portkonflikt/adfærdsændringer, som kræver korrelation med Edge-journal. Koden binder allerede servicetekniker-UI til `0.0.0.0:8443`, og captive-reglerne er afgrænset til `br-bt`; den tidligere påstand om generel LAN-blokering er derfor trukket tilbage. En TCP-listener alene beviser ikke en brugbar SSH-tunnel.
-- **Næste handling:** Indhent gårsdagens Edge-journal, implementér og test SSH-banner-probe, UI-tilgængelighedskontrakt og den snævert privilegerede force-close-handling. Sikkerhedsreview før merge; ingen deployment i dette spor uden særskilt driftstrin.
+- **Næste handling:** Implementeringen ligger i draft-PR #253. Post-commit security-scan skal inkludere de nye helperfiler; derefter review og kontrolleret deployment med runtime-observation af WiFi-skift og force-close/reconnect. Ingen live-installation eller tunnelafbrydelse er udført.
 - **Opfølgning:** Denne session.
 
 ### #214 — `claude/globalconfig-parallel-load`

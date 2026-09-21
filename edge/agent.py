@@ -3999,8 +3999,13 @@ class EdgeAgent:
                 ssid     = lab_cmd.get("ssid", "")
                 password = lab_cmd.get("password", "")
                 log.info("LAB — WiFi connect: %s", ssid)
+                tunnel = getattr(self, "_tunnel", None)
+                tunnel_paused = False
                 try:
                     from diagnostics.wifi import connect, status
+                    if tunnel is not None:
+                        tunnel.pause_for_network_change()
+                        tunnel_paused = True
                     result  = connect(ssid, password)
                     current = status()
                     self._api._post("/lab/" + self._device_id + "/wifi/result", {
@@ -4008,6 +4013,9 @@ class EdgeAgent:
                     })
                 except Exception as exc:
                     log.warning("LAB — WiFi connect failed: %s", exc)
+                finally:
+                    if tunnel is not None and tunnel_paused:
+                        tunnel.resume_after_network_change()
                 _, resp = self._api.clear_lab_command(self._device_id)
                 self._check_config_version(resp)
 

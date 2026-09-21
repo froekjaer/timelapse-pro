@@ -3,20 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import secrets
 import socket
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session
 
 from database import (
     Device,
     EdgeServiceGrant,
     Event,
+    SshTunnelLog,
     SshHostKeyTrust,
     SshTerminalSessionAudit,
     ensure_utc,
@@ -35,6 +39,10 @@ CAPABILITY = "edge.shell.remote"
 TERMINAL_TTL_SECONDS = int(os.getenv("TIMELAPSE_SSH_TERMINAL_TTL_SECONDS", "900"))
 TUNNEL_STALE_SECONDS = int(os.getenv("TIMELAPSE_SSH_TUNNEL_STALE_SECONDS", "300"))
 TUNNEL_TCP_TIMEOUT_SECONDS = float(os.getenv("TIMELAPSE_SSH_TUNNEL_TCP_TIMEOUT_SECONDS", "0.5"))
+TUNNEL_CONTROL_HELPER = os.getenv(
+    "TIMELAPSE_TUNNEL_CONTROL_HELPER",
+    "/usr/local/libexec/timelapse-tunnel-control",
+)
 RESIZE_PREFIX = "\x01RESIZE:"
 TRUSTED_HOST_STATES = {"trusted", "verified"}
 
@@ -66,7 +74,12 @@ def _trusted_host_key(db: Session, device_id: str) -> SshHostKeyTrust | None:
     )
 
 
-def terminal_trust_status(db: Session, device_id: str) -> dict:
+def terminal_trust_status(
+    db: Session,
+    device_id: str,
+    *,
+    tunnel_reachable: bool | None = None,
+) -> dict:
     trusted = _trusted_host_key(db, device_id)
     if not trusted:
         trusted = migrate_legacy_known_host_trust(db, device_id)
@@ -76,8 +89,9 @@ def terminal_trust_status(db: Session, device_id: str) -> dict:
             "reason": "SSH server host identity is not trusted/verified",
             "required_state": sorted(TRUSTED_HOST_STATES),
         }
-    tunnel = _active_reverse_tunnel(db, device_id)
-    if not tunnel:
+    if tunnel_reachable is None:
+        tunnel_reachable = _active_reverse_tunnel(db, device_id) is not None
+    if not tunnel_reachable:
         return {
             "allowed": False,
             "reason": "No active reverse SSH tunnel",
@@ -94,7 +108,7 @@ def terminal_trust_status(db: Session, device_id: str) -> dict:
     }
 
 
-def _localhost_tcp_reachable(port: int) -> bool:
+def _localhost_ssh_banner_reachable(port: int) -> bool:
     # Reverse-forward listeners can be exposed on IPv6 localhost only (or on
     # IPv4 depending on sshd). Probe the same localhost name SSH uses rather
     # than assuming 127.0.0.1, while keeping the check local and bounded.
@@ -105,15 +119,18 @@ def _localhost_tcp_reachable(port: int) -> bool:
             with socket.socket(family, socktype, proto) as sock:
                 sock.settimeout(TUNNEL_TCP_TIMEOUT_SECONDS)
                 sock.connect(sockaddr)
-                return True
+                return sock.recv(255).startswith(b"SSH-")
         except OSError:
             continue
     return False
 
 
-def _active_reverse_tunnel(db: Session, device_id: str):
-    from database import SshTunnelLog
+# Compatibility for older callers. The check is intentionally stronger than
+# its historical name: a listener must now return an SSH protocol banner.
+_localhost_tcp_reachable = _localhost_ssh_banner_reachable
 
+
+def _active_reverse_tunnel(db: Session, device_id: str):
     latest = (
         db.query(SshTunnelLog)
         .filter(SshTunnelLog.device_id == device_id)
@@ -129,6 +146,75 @@ def _active_reverse_tunnel(db: Session, device_id: str):
     if not event_at:
         return None
     return latest
+
+
+def active_reverse_tunnels(db: Session) -> list[dict]:
+    """Return only reverse forwards that complete an SSH banner exchange."""
+    rows = db.execute(sql_text("""
+        SELECT s.device_id, s.remote_port, s.local_port, s.event_at, s.extra
+        FROM ssh_tunnel_log s
+        INNER JOIN (
+            SELECT device_id, MAX(event_at) as max_at
+            FROM ssh_tunnel_log
+            WHERE event = 'connected'
+            GROUP BY device_id
+        ) latest ON s.device_id = latest.device_id AND s.event_at = latest.max_at
+        WHERE s.event = 'connected'
+        ORDER BY s.event_at DESC
+    """)).fetchall()
+    verified_rows = [
+        (row, now_utc())
+        for row in rows
+        if row[1] and _localhost_ssh_banner_reachable(int(row[1]))
+    ]
+    device_ips = {
+        d.device_id: d.ip_address
+        for d in db.query(Device)
+        .filter(Device.device_id.in_([row[0] for row, _ in verified_rows]))
+        .all()
+    }
+    identity = ssh_identity_display_path()
+    return [{
+        "device_id": row[0],
+        "remote_port": row[1],
+        "local_port": row[2],
+        "connected_at": row[3],
+        "last_verified_at": verified_at,
+        "verification_method": "headend_ssh_banner_probe",
+        "ssh_user": ssh_login_user(),
+        "ssh_identity_path": identity,
+        "ssh_command": ssh_client_command(row[1]),
+        "terminal": terminal_trust_status(db, row[0], tunnel_reachable=True),
+        "device_ip": device_ips.get(row[0]),
+        "servicetekniker_command": (
+            f"ssh -i <din-private-nøgle> servicetekniker@{device_ips[row[0]]}"
+            if device_ips.get(row[0]) else None
+        ),
+    } for row, verified_at in verified_rows]
+
+
+def _force_close_reverse_tunnel(port: int) -> dict:
+    """Ask the root-owned, narrowly-scoped helper to terminate one listener."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/sudo", "-n", TUNNEL_CONTROL_HELPER, "close", str(int(port))],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"tunnel-control helper unavailable: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "tunnel-control failed").strip()
+        raise RuntimeError(detail[:500])
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("tunnel-control returned invalid output") from exc
+    if payload.get("status") != "closed":
+        raise RuntimeError("tunnel-control did not confirm closure")
+    return payload
 
 
 def _deny_terminal(db: Session, session: SshTerminalSessionAudit | None, reason: str, status: str = "denied") -> None:
@@ -180,6 +266,60 @@ def create_ssh_tunnel_terminal_router(
 
     def _check(request: Request, db: Session = Depends(get_db)):
         return _require_terminal_user(request, db)
+
+    @router.post("/{device_id}/force-close")
+    def force_close_tunnel(
+        device_id: str,
+        request: Request,
+        user=Depends(_check),
+        db: Session = Depends(get_db),
+    ):
+        ensure_device_access(db, user, device_id)
+        if getattr(user, "role", "") not in {"super_admin", "admin"}:
+            raise HTTPException(status_code=403, detail="Admin-rolle kræves for at lukke tunnel")
+        tunnel = (
+            db.query(SshTunnelLog)
+            .filter(SshTunnelLog.device_id == device_id)
+            .filter(SshTunnelLog.event == "connected")
+            .order_by(SshTunnelLog.event_at.desc())
+            .first()
+        )
+        if not tunnel or not tunnel.remote_port:
+            raise HTTPException(status_code=409, detail="Ingen registreret tunnelport for enheden")
+        try:
+            outcome = _force_close_reverse_tunnel(int(tunnel.remote_port))
+        except RuntimeError as exc:
+            db.add(Event(
+                device_id=device_id,
+                level="ERROR",
+                category="security",
+                message=f"Reverse SSH tunnel force-close failed by {user.username}",
+                extra=json.dumps({"remote_port": tunnel.remote_port, "error": str(exc)}),
+            ))
+            db.commit()
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        db.add(SshTunnelLog(
+            device_id=device_id,
+            event="force_closed",
+            remote_port=tunnel.remote_port,
+            local_port=tunnel.local_port,
+            initiated_by=f"admin:{user.username}",
+            extra=json.dumps({"terminated_pids": outcome.get("terminated_pids", [])}),
+        ))
+        db.add(Event(
+            device_id=device_id,
+            level="WARNING",
+            category="security",
+            message=f"Reverse SSH tunnel force-closed by {user.username}",
+            extra=json.dumps({"remote_port": tunnel.remote_port}),
+        ))
+        db.commit()
+        return {
+            "status": "closed",
+            "device_id": device_id,
+            "remote_port": tunnel.remote_port,
+            "ready_for_reconnect": True,
+        }
 
     @router.post("/{device_id}/terminal-sessions")
     def start_terminal_session(device_id: str, request: Request, user=Depends(_check), db: Session = Depends(get_db)):

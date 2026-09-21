@@ -219,6 +219,11 @@ command -v openssl >/dev/null 2>&1 || die "openssl mangler"
 
 log "Forudsætninger OK."
 
+# Root owns inbound sshd-session processes. Install one fixed helper plus a
+# sudoers rule for that exact executable; the API never receives an arbitrary
+# PID or command from the caller.
+run "sudo '$TL_REPO_DIR/deploy/macos/install_tunnel_control.sh' --service-user '$TL_SERVICE_USER' --tunnel-user '$TL_TUNNEL_USER'"
+
 # ── 3. Kataloger (data + config UDENFOR repoet, jf. eksisterende konvention) ──
 # /etc/timelapse/ holder secrets/config, adskilt fra Git-repoet — samme mønster
 # som det eksisterende headend.env på rd-systemet (se SERVICES_OG_DRIFT-dokumentet).
