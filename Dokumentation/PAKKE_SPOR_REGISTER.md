@@ -24,6 +24,17 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### Edge 1 WiFi-skift og reverse-tunnel-sundhed — `codex/edge-network-tunnel-health`
+
+- **Mandat/session:** Codex, efter Peters observation fra 2026-09-20 af tabt lokal adgang og uklar tunnelstatus efter SSID-skift; præciseret 2026-09-21.
+- **Formål/scope:** Gør SSH-tunnelstatus sandfærdig med særskilt oprettelsestid og en frisk SSH-protokolverifikation. Sikr servicetekniker-UI på alle Edge-netværksinterfaces. Tilføj en auditeret, enhedsspecifik Headend-handling, der lukker den aktuelle server-side tunnelproces og frigør porten til en ny forbindelse. Ingen live-deployment i sporet.
+- **Berørte domæner/kontrakter:** `GET /api/ssh-tunnel/active`, SSH-tunnelsiden, tunnel-liveness-test, lokal UI-bind/firewall-kontrakt, privilegieafgrænset tunnel-control samt hændelsesdokumentation.
+- **Base/head:** draft-PR #253; base `origin/main` `928134be847eb96df25455736f6acd766aff84f2`; aktuel head fremgår af PR'en.
+- **Overlap/restdisposition:** PR #239 rører terminalrenderer, #249 netværksnavn og #246 mTLS; ingen af dem ændrer den planlagte statuskontrakt. Deres aktuelle diff genkontrolleres før merge. Historisk tunnelstatusarbejde i #193/#238 bevares og udbygges.
+- **Evidens:** Dagens tilstand er ikke evidens for hændelsen 2026-09-20. Historikken viser gentagne `connected`-events og senere portkonflikt/adfærdsændringer, som kræver korrelation med Edge-journal. Koden binder allerede servicetekniker-UI til `0.0.0.0:8443`, og captive-reglerne er afgrænset til `br-bt`; den tidligere påstand om generel LAN-blokering er derfor trukket tilbage. En TCP-listener alene beviser ikke en brugbar SSH-tunnel.
+- **Næste handling:** Implementeringen ligger i draft-PR #253. Post-commit security-scan skal inkludere de nye helperfiler; derefter review og kontrolleret deployment med runtime-observation af WiFi-skift og force-close/reconnect. Ingen live-installation eller tunnelafbrydelse er udført.
+- **Opfølgning:** Denne session.
+
 ### #214 — `claude/globalconfig-parallel-load`
 
 - **Mandat/session:** Claude (oprindelig forfatter). Rebase udført af Kimi 2026-09-13 under Peters mandat.

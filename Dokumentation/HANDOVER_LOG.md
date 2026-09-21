@@ -108,6 +108,40 @@ Live, overvåget genstartstest udført sammen med Peter (deployment via `sudo cp
 - **Filer rørt:** `edge/network_status.py` (ny), `edge/bluetooth_name.py` (ny), `edge/scripts/ble-technician-gatt.py`, `edge/tools/bootstrap_cli.py`, `tests/test_network_status.py` (ny), `tests/test_bluetooth_name.py` (ny), `tests/test_ble_gatt_bluetooth_name_isolation.py` (ny), `tests/test_bootstrap_cli_network_status_adapter.py` (ny), denne log. Branch: `claude/edge-bluetooth-network-name-20260919` fra `main`. **Ingen merge til main udført.**
 - **Hvad mangler / næste skridt:** Fysisk Edge-test (begge devices) af: BLE-scan viser opdateret `LocalName` efter Wi-Fi→AP/AP→Wi-Fi-transition; klassisk BT-PAN-parring viser fuldt `Alias`; ingen indvirkning på scheduled capture under en netværks-flap. Peters beslutning om AP-SSID-format (kort `TL-Service-XXXX` vs. nuværende fulde `device_id`).
 
+### Handover 2026-09-21 — fra Codex: Edge-netværksskift og tunnel-recovery implementeret i draft-PR #253
+
+- **Hvad er gjort:** Edge lukker nu sin egen reverse SSH-proces før WiFi-skift og starter en frisk tunnel bagefter, både fra lokalt servicetekniker-UI og Headend LAB-flow. Servicetekniker-UI's eksisterende bind til `0.0.0.0:8443` er fastholdt som kontrakt for alle Edge-netværksinterfaces. Headend viser kun en tunnel som aktiv efter en gyldig SSH-bannerudveksling og viser tidspunktet for denne friske verifikation adskilt fra det historiske connect-event.
+- **Headend recovery:** SSH-tunnelsiden har en enhedsspecifik “Luk tunnel”-handling. Den kræver MFA samt `admin`/`super_admin`, finder porten server-side fra enhedens tunnelhistorik, kalder en fast root-owned helper og auditerer både succes og fejl. Helperen accepterer ingen PID/kommando fra API'et og sender kun SIGTERM til en listener, der kører som den root-konfigurerede tunnelkonto med forventet `sshd-session`-identitet.
+- **Installation:** `deploy/macos/install_tunnel_control.sh` installerer `timelapse_tunnel_control.py` som det faste root-owned runtime-navn `/usr/local/libexec/timelapse-tunnel-control`, sammen med konto-konfiguration og en snæver sudoers-regel. Den er også koblet ind i den fulde Headend-installer. Ingen live-installation eller tunnelafbrydelse er udført.
+- **Evidens:** Gårsdagens journald-indhold var ikke bevaret, og applikationsloggen var roteret/overskrevet; dagens tilstand bruges derfor ikke som årsagsbevis. Read-only live-check viste dog, at 2201 og 2204 leverede rigtige SSH-bannere på ca. 282/155 ms, hvilket validerer den nye probe. Den første security-gennemgang fandt en konkret parserfejl mod macOS' `ps`-format; den er rettet og read-only verificeret mod live `sshd-session`-metadata.
+- **Verifikation:** 25 målrettede Python-tests bestået; arkitekturratchet bestået; UI production-build bestået; Python/shell syntax og `git diff --check` bestået. CI-ækvivalent suite: 1465 bestået, 5 skipped, 1 ændringsrelateret regression fundet og rettet; de 4 resterende errors er den kendte lokale GPG-agent/path-length-miljøfejl. Codex Security diff-scan fandt ingen rapporterbare fund i sit frosne 8-fils snapshot; root-helperen var untracked i snapshottet og skal derfor indgå i en ny post-commit scan.
+- **Filer rørt:** tunnel-API/service, Edge tunnelmanager/agent/bootstrap, SSH-tunnel-UI, macOS helper/installere, kontrakttests, register og handover.
+- **Hvad mangler / næste skridt:** Commit/push, post-commit security-diff-scan der inkluderer de nye helperfiler, review og kontrolleret installation/deployment. Efter deployment skal runtime observeres med et faktisk WiFi-skift og en manuel force-close/reconnect på Edge 1.
+- **Risici / pas på:** Force-close skal aldrig implementeres som generel `pkill`, vilkårlig PID eller bred sudo. “SSH verificeret” betyder banner-reachability; browserterminalen kræver fortsat separat host-key trust. NPM rapporterer 14 eksisterende dependency advisories; de er ikke ændret eller auto-fixet i dette spor.
+
+### Handover 2026-09-21 — fra Codex: hændelsesdato og mandat korrigeret for Edge 1
+
+- **Hvad er gjort:** Peters test fandt sted 2026-09-20, så dagens Edge-/netværkstilstand er fjernet som årsagsbevis. Mandatet er udvidet: servicetekniker-UI skal kunne nås via alle Edge-netværk, og Headend skal kunne lukke én bestemt reverse tunnel kontrolleret, auditere handlingen og gøre porten klar til en ny Edge-forbindelse.
+- **Hvad mangler / næste skridt:** Gårsdagens Edge-journal skal korreleres med Headend-historikken. Statusproben skal verificere en SSH-bannerudveksling i stedet for kun en TCP-listener. Force-close kræver en snæver root-helper, fordi Headend-processen ikke ejer `sshd-session`-processen.
+- **Korrigeret evidens:** `totp-service.py` binder allerede til `0.0.0.0:8443`, og captive-firewallens regler er knyttet til `br-bt`. Den tidligere konklusion om at almindeligt WiFi/LAN var blokeret af denne regel var forkert og er trukket tilbage.
+- **Risici / pas på:** En generel proces-kill eller bred `sudo`-regel accepteres ikke. Hjælperen skal kun kunne ramme den DB-tildelte reverse-tunnelport og en verificeret `sshd-session`; alle forsøg skal auditeres. Ingen live-ændring er udført.
+
+### Handover 2026-09-21 — fra Codex: tunnelstatusrettelse klar i draft-PR #253
+
+- **Hvad er gjort:** `GET /api/ssh-tunnel/active` skelner nu det historiske connect-event fra tidspunktet for den friske Headend-side TCP-probe. SSH-tunnelsiden viser “Oprettet” og “Senest verificeret fra Headend”.
+- **Verifikation:** 20 relevante Python-tests bestået; Python compile bestået; UI production-build bestået; `git diff --check` bestået. Repoets fulde Ruff-baseline har mange eksisterende fund og blev ikke omskrevet i dette spor.
+- **Hvad mangler / næste skridt:** Den foreløbige TCP-probe skal erstattes af en SSH-protokolverifikation. Derefter review, merge og kontrolleret deployment. Servicetekniker-UI på alle Edge-netværk og Headend-initieret tunnel-close er nu del af samme autoriserede spor.
+- **Filer rørt:** `headend/main.py`, `timelapse-ui/src/pages/SshTunnelPage.tsx`, `tests/test_ssh_tunnel_ux_convergence.py`, register og handover.
+- **Risici / pas på:** Den nuværende kandidat må ikke kalde en TCP-listener et handshake. Den ændres til mindst at kræve en gyldig SSH-bannerudveksling; host-key-verifikation forbliver den stærkere terminalgate.
+
+### Handover 2026-09-21 — fra Codex: Edge 1 WiFi-/tunnelundersøgelse startet (senere korrigeret ovenfor)
+
+- **Hvad er gjort:** OP-001 VERIFIED. Hændelsen er korreleret mellem Headend DB, lokale sockets og Edge-journal via eksisterende tunnel. Tunnelen lukkede selv efter keepalive-fejl og genoprettede korrekt; `Forbundet` viser kun seneste connect-event. Direkte management på WiFi/LAN er blokeret af den eksisterende `br-bt`-afgrænsede firewallregel, mens servicen selv er sund.
+- **Hvad mangler / næste skridt:** Draft-PR og lille statusændring med oprettelsestid + frisk verificering. LAN-adgang og Headend-initieret lukning forbliver særskilte sikkerhedsdesigns.
+- **Runtime-evidens:** Edge 1 tunnel disconnect 15:42:58, reconnect 15:43:06, SSH public-key accept 15:43:35; WiFi DHCP `.134` igen 15:44:23; tunnelport 2201 og heartbeat verificeret aktuelle.
+- **Filer rørt:** Kun register og denne handover før intentionen offentliggøres.
+- **Risici / pas på:** Ingen firewallåbning, tunnellukning, Edge-konfigurationsændring eller deployment er autoriseret/udført i dette trin.
+
 ### Handover 2026-09-16 (senere) — fra Claude: §16 formelt Accepted af Peter
 
 Peter svarede eksplicit "godkendt" til den praecise disposition: acceptér §16.1–§16.10 i den senest verificerede ordlyd fra `Dokumentation/CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (v6, 2026-09-16, inkl. §16.10 tilfoejet efter Mission Framework Wave 1) og inkorporér den som Accepted i `Dokumentation/SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`, additivt til det allerede accepterede §14.

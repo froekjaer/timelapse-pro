@@ -4760,50 +4760,8 @@ def ssh_tunnel_active(
     _user=require_role("super_admin", "admin", "operator"),
     db: Session = Depends(get_db)
 ):
-    """Returnerer liste af devices med aktiv SSH tunnel."""
-    from database import SshTunnelLog
-    from sqlalchemy import text as _t
-
-    # A reconnect can fail with EADDRINUSE while the previous reverse tunnel is
-    # still serving traffic. Select the latest connected event and verify the
-    # actual listener instead of letting that failed retry hide the tunnel.
-    rows = db.execute(_t("""
-        SELECT s.device_id, s.remote_port, s.local_port, s.event_at, s.extra
-        FROM ssh_tunnel_log s
-        INNER JOIN (
-            SELECT device_id, MAX(event_at) as max_at
-            FROM ssh_tunnel_log
-            WHERE event = 'connected'
-            GROUP BY device_id
-        ) latest ON s.device_id = latest.device_id AND s.event_at = latest.max_at
-        WHERE s.event = 'connected'
-        ORDER BY s.event_at DESC
-    """)).fetchall()
-    rows = [r for r in rows if r[1] and _localhost_tcp_reachable(int(r[1]))]
-
-    device_ips = {d.device_id: d.ip_address for d in db.query(Device).filter(Device.device_id.in_([r[0] for r in rows])).all()}
-
-    return [
-        {
-            "device_id":   r[0],
-            "remote_port": r[1],
-            "local_port":  r[2],
-            "connected_at": r[3],
-            "ssh_user": "orangepi",
-            "ssh_identity_path": os.getenv("TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY", "~/.ssh/timelapse_headend_ed25519"),
-            "ssh_command": f"ssh -p {r[1]} -i {os.getenv('TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY', '~/.ssh/timelapse_headend_ed25519')} orangepi@localhost",
-            "terminal": terminal_trust_status(db, r[0]),
-            # Direct LAN servicetekniker login template — separate from the
-            # orangepi/tunnel path above; the operator's private key never
-            # touches headend, so this is a command to run themselves.
-            "device_ip": device_ips.get(r[0]),
-            "servicetekniker_command": (
-                f"ssh -i <din-private-nøgle> servicetekniker@{device_ips[r[0]]}"
-                if device_ips.get(r[0]) else None
-            ),
-        }
-        for r in rows
-    ]
+    """Return devices whose reverse tunnel completes an SSH banner exchange."""
+    return active_reverse_tunnels(db)
 
 @app.get("/api/ssh-tunnel/log/{device_id}")
 def ssh_tunnel_log(
@@ -16022,9 +15980,8 @@ from api.admin_route_bundle import register_admin_route_bundle
 from api.service_access_api import create_service_access_router
 from api.edge_local_pki_api import create_edge_local_pki_router
 from api.ssh_tunnel_terminal_api import (
-    _localhost_tcp_reachable,
+    active_reverse_tunnels,
     create_ssh_tunnel_terminal_router,
-    terminal_trust_status,
 )
 register_admin_route_bundle(app, require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle)
 

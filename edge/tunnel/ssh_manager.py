@@ -77,6 +77,7 @@ class SshTunnelManager:
         self._thread: Optional[threading.Thread] = None
         self._running    = False
         self._connected  = False
+        self._suspended_for_network_change = False
         self._using_fallback = False
         self._connect_time: Optional[float] = None
         self._lock       = threading.Lock()
@@ -137,9 +138,24 @@ class SshTunnelManager:
             log.warning("SSH tunnel: forbrug afvist (deny=true eller ikke enabled)")
             return
         with self._lock:
-            if not self._connected:
-                log.info("SSH tunnel: øjeblikkelig connect anmodet")
-                self._connect()
+            should_connect = not self._connected and self._proc is None
+        # _connect() acquires the same lock while publishing its subprocess;
+        # never call it while holding the non-reentrant lock.
+        if should_connect:
+            log.info("SSH tunnel: øjeblikkelig connect anmodet")
+            self._connect()
+
+    def pause_for_network_change(self) -> None:
+        """Close the reverse forward before the active network route changes."""
+        self._suspended_for_network_change = True
+        if self._connected or self._proc:
+            self._disconnect()
+        log.info("SSH tunnel: paused before network change")
+
+    def resume_after_network_change(self) -> None:
+        """Allow the monitor to establish a fresh server-side session."""
+        self._suspended_for_network_change = False
+        self.request_connect()
 
     @property
     def is_connected(self) -> bool:
@@ -206,6 +222,10 @@ class SshTunnelManager:
             try:
                 # Genindlæs config (kan ændre sig)
                 tcfg = self._tunnel_cfg()
+
+                if self._suspended_for_network_change:
+                    time.sleep(1)
+                    continue
 
                 # Tjek om tunnel er konfigureret
                 if not self._is_allowed():

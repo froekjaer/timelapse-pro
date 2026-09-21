@@ -6,7 +6,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, Terminal, RefreshCw, ChevronDown, ChevronRight,
-  Wifi, WifiOff, Clock, Activity, Copy, CheckCircle, KeyRound, ShieldAlert, ShieldCheck
+  Wifi, WifiOff, Clock, Activity, Copy, CheckCircle, KeyRound, ShieldAlert, ShieldCheck, Unplug
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { SshTerminalModal } from '../components/SshTerminalModal'
@@ -26,6 +26,8 @@ interface ActiveTunnel {
   remote_port:  number
   local_port:   number | null
   connected_at: string
+  last_verified_at: string
+  verification_method: 'headend_ssh_banner_probe'
   ssh_user?: string
   ssh_identity_path?: string
   ssh_command?: string
@@ -235,6 +237,8 @@ export function SshTunnelPage() {
   const [lastRefresh, setLast]      = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [terminalDevice, setTerminalDevice] = useState<string | null>(null)
+  const [closingDevice, setClosingDevice] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true)
@@ -254,6 +258,20 @@ export function SshTunnelPage() {
 
   const sshCmd = (t: ActiveTunnel) =>
     t.ssh_command ?? `ssh -p ${t.remote_port} -i ${t.ssh_identity_path ?? '~/.ssh/timelapse_headend_ed25519'} ${t.ssh_user ?? 'orangepi'}@localhost`
+
+  async function forceClose(t: ActiveTunnel) {
+    if (!window.confirm(`Luk tunnel ${t.device_id} på port ${t.remote_port}? Edge må derefter oprette en ny forbindelse.`)) return
+    setClosingDevice(t.device_id)
+    setActionError(null)
+    try {
+      await api(`/api/admin/ssh-tunnel/${t.device_id}/force-close`, { method: 'POST' })
+      await load(true)
+    } catch (err) {
+      setActionError(`Tunnelen kunne ikke lukkes: ${err instanceof Error ? err.message : 'ukendt fejl'}`)
+    } finally {
+      setClosingDevice(null)
+    }
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -283,6 +301,12 @@ export function SshTunnelPage() {
         </div>
       </div>
 
+      {actionError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {actionError}
+        </div>
+      )}
+
       {loading ? (
         <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
           <Activity className="w-6 h-6 text-gray-300 mx-auto mb-2 animate-pulse" />
@@ -308,11 +332,26 @@ export function SshTunnelPage() {
                     <p className="text-sm font-semibold text-gray-800 font-mono">{t.device_id}</p>
                     <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
                       <Wifi className="w-3 h-3" />
-                      Forbundet {fmt(t.connected_at)}
+                      Oprettet {fmt(t.connected_at)}
+                    </p>
+                    <p className="text-xs text-green-600 mt-0.5 flex items-center gap-1">
+                      <Activity className="w-3 h-3" />
+                      Senest verificeret fra Headend {fmt(t.last_verified_at)}
                     </p>
                   </div>
                 </div>
-                <span className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full font-medium">Aktiv</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => forceClose(t)}
+                    disabled={closingDevice === t.device_id}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Luk kun denne server-side tunnel og frigør porten til en ny forbindelse"
+                  >
+                    <Unplug className="w-3.5 h-3.5" />
+                    {closingDevice === t.device_id ? 'Lukker…' : 'Luk tunnel'}
+                  </button>
+                  <span className="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full font-medium">SSH verificeret</span>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="bg-gray-50 rounded-lg px-3 py-2.5">
@@ -351,7 +390,7 @@ export function SshTunnelPage() {
               {t.servicetekniker_command && (
                 <div className="mt-3">
                   <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">
-                    Login som servicetekniker (direkte, egen nøgle — kræver samme netværk som enheden)
+                    Login som servicetekniker (direkte på enhedens aktuelle IP, via ethvert tilsluttet Edge-netværk)
                   </p>
                   <div className="bg-gray-900 rounded-lg px-3 py-2.5 flex items-center justify-between gap-3">
                     <code className="text-xs text-sky-300 font-mono break-all">{t.servicetekniker_command}</code>
