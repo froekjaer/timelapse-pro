@@ -26,6 +26,8 @@ interface ActiveTunnel {
   remote_port:  number
   local_port:   number | null
   connected_at: string
+  last_verified_at: string
+  verification_method: 'headend_tcp_probe'
   ssh_user?: string
   ssh_identity_path?: string
   ssh_command?: string
@@ -308,7 +310,11 @@ export function SshTunnelPage() {
                     <p className="text-sm font-semibold text-gray-800 font-mono">{t.device_id}</p>
                     <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
                       <Wifi className="w-3 h-3" />
-                      Forbundet {fmt(t.connected_at)}
+                      Oprettet {fmt(t.connected_at)}
+                    </p>
+                    <p className="text-xs text-green-600 mt-0.5 flex items-center gap-1">
+                      <Activity className="w-3 h-3" />
+                      Senest verificeret fra Headend {fmt(t.last_verified_at)}
                     </p>
                   </div>
                 </div>

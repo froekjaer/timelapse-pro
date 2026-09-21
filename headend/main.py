@@ -4784,9 +4784,20 @@ def ssh_tunnel_active(
         WHERE s.event = 'connected'
         ORDER BY s.event_at DESC
     """)).fetchall()
-    rows = [r for r in rows if r[1] and _localhost_tcp_reachable(int(r[1]))]
+    # The timestamp on the connected event is historical.  Capture a separate
+    # observation time for the live Headend-side reachability probe so the UI
+    # never presents an old connect event as a current handshake.
+    verified_rows = []
+    for row in rows:
+        if row[1] and _localhost_tcp_reachable(int(row[1])):
+            verified_rows.append((row, now_utc()))
 
-    device_ips = {d.device_id: d.ip_address for d in db.query(Device).filter(Device.device_id.in_([r[0] for r in rows])).all()}
+    device_ips = {
+        d.device_id: d.ip_address
+        for d in db.query(Device)
+        .filter(Device.device_id.in_([row[0] for row, _ in verified_rows]))
+        .all()
+    }
 
     return [
         {
@@ -4794,6 +4805,8 @@ def ssh_tunnel_active(
             "remote_port": r[1],
             "local_port":  r[2],
             "connected_at": r[3],
+            "last_verified_at": verified_at,
+            "verification_method": "headend_tcp_probe",
             "ssh_user": "orangepi",
             "ssh_identity_path": os.getenv("TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY", "~/.ssh/timelapse_headend_ed25519"),
             "ssh_command": f"ssh -p {r[1]} -i {os.getenv('TIMELAPSE_HEADEND_SSH_IDENTITY_DISPLAY', '~/.ssh/timelapse_headend_ed25519')} orangepi@localhost",
@@ -4807,7 +4820,7 @@ def ssh_tunnel_active(
                 if device_ips.get(r[0]) else None
             ),
         }
-        for r in rows
+        for r, verified_at in verified_rows
     ]
 
 @app.get("/api/ssh-tunnel/log/{device_id}")

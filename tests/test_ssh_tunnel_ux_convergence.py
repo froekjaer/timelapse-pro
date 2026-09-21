@@ -24,8 +24,18 @@ def test_external_ssh_command_includes_identity_key_path() -> None:
 def test_failed_reconnect_must_not_hide_a_live_tunnel() -> None:
     active_block = MAIN.split('@app.get("/api/ssh-tunnel/active")', 1)[1].split('@app.get("/api/ssh-tunnel/log', 1)[0]
     assert 'WHERE event = \'connected\'' in active_block
-    assert "_localhost_tcp_reachable(int(r[1]))" in active_block
+    assert "_localhost_tcp_reachable(int(row[1]))" in active_block
     assert "failed retry hide the tunnel" in active_block
+
+
+def test_active_tunnel_separates_connect_event_from_fresh_verification() -> None:
+    active_block = MAIN.split('@app.get("/api/ssh-tunnel/active")', 1)[1].split('@app.get("/api/ssh-tunnel/log', 1)[0]
+    assert '"connected_at": r[3]' in active_block
+    assert '"last_verified_at": verified_at' in active_block
+    assert '"verification_method": "headend_tcp_probe"' in active_block
+    assert "verified_rows.append((row, now_utc()))" in active_block
+    assert "Oprettet {fmt(t.connected_at)}" in UI_PAGE
+    assert "Senest verificeret fra Headend {fmt(t.last_verified_at)}" in UI_PAGE
 
 
 def test_tunnel_liveness_probes_localhost_ipv4_and_ipv6():

@@ -29,10 +29,10 @@ tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 - **Mandat/session:** Codex, efter Peters observation 2026-09-21 af tabt lokal adgang og uklar tunnelstatus efter SSID-skift.
 - **Formål/scope:** Gør SSH-tunnelstatus sandfærdig med særskilt oprettelsestid og frisk Headend-verifikation. Dokumentér den observerede forskel mellem Bluetooth-isoleret servicetekniker-UI og almindeligt LAN. Ingen firewallåbning eller live-deployment i sporet.
 - **Berørte domæner/kontrakter:** `GET /api/ssh-tunnel/active`, SSH-tunnelsiden, tunnel-liveness-test og hændelsesdokumentation. Sikkerhedsgrænsen for lokal management ændres ikke.
-- **Base/head:** base `origin/main` `928134be847eb96df25455736f6acd766aff84f2`; head fastlægges i draft-PR.
+- **Base/head:** draft-PR #253; base `origin/main` `928134be847eb96df25455736f6acd766aff84f2`; aktuel head fremgår af PR'en.
 - **Overlap/restdisposition:** PR #239 rører terminalrenderer, #249 netværksnavn og #246 mTLS; ingen af dem ændrer den planlagte statuskontrakt. Deres aktuelle diff genkontrolleres før merge. Historisk tunnelstatusarbejde i #193/#238 bevares og udbygges.
 - **Evidens:** Edge 1 afbrød tunnelen efter keepalive-fejl 15:42:58, genoprettede 15:43:06, og browserterminalen autentificerede 15:43:35. Headend-port 2201 og Edge heartbeat var aktuelle ved diagnosen. Lokalt UI lyttede på 8443, mens firewall kun tillod `br-bt`/192.168.42.1.
-- **Næste handling:** Opret draft-PR, implementér og test statuskontrakten. Separat sikkerhedsreview kræves før eventuelt LAN-tilvalg eller auditeret Headend-close.
+- **Næste handling:** Review/merge af statuskontrakten. Separat sikkerhedsreview kræves før eventuelt LAN-tilvalg eller auditeret Headend-close.
 - **Opfølgning:** Denne session.
 
 ### #214 — `claude/globalconfig-parallel-load`

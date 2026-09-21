@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-09-21 — fra Codex: tunnelstatusrettelse klar i draft-PR #253
+
+- **Hvad er gjort:** `GET /api/ssh-tunnel/active` skelner nu det historiske connect-event fra tidspunktet for den friske Headend-side TCP-probe. SSH-tunnelsiden viser “Oprettet” og “Senest verificeret fra Headend”.
+- **Verifikation:** 20 relevante Python-tests bestået; Python compile bestået; UI production-build bestået; `git diff --check` bestået. Repoets fulde Ruff-baseline har mange eksisterende fund og blev ikke omskrevet i dette spor.
+- **Hvad mangler / næste skridt:** Review, merge og kontrolleret deployment før UI-ændringen bliver synlig. Direkte servicetekniker-UI via almindeligt LAN og Headend-initieret tunnel-close er registrerede, særskilte sikkerhedsdesigns.
+- **Filer rørt:** `headend/main.py`, `timelapse-ui/src/pages/SshTunnelPage.tsx`, `tests/test_ssh_tunnel_ux_convergence.py`, register og handover.
+- **Risici / pas på:** “Senest verificeret” betyder en frisk TCP-reachability probe fra Headend, ikke brugerlogin eller kryptografisk SSH-host-key-verifikation. UI må ikke kalde det et handshake.
+
 ### Handover 2026-09-21 — fra Codex: Edge 1 WiFi-/tunnelundersøgelse startet
 
 - **Hvad er gjort:** OP-001 VERIFIED. Hændelsen er korreleret mellem Headend DB, lokale sockets og Edge-journal via eksisterende tunnel. Tunnelen lukkede selv efter keepalive-fejl og genoprettede korrekt; `Forbundet` viser kun seneste connect-event. Direkte management på WiFi/LAN er blokeret af den eksisterende `br-bt`-afgrænsede firewallregel, mens servicen selv er sund.
