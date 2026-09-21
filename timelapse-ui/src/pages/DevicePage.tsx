@@ -18,7 +18,7 @@ import { InfoTooltip } from '../components/InfoTooltip'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { FlaskConical, Film, Check, ArrowLeft, RefreshCw, Thermometer, HardDrive, Wifi, Clock, Settings, Camera, BarChart2, X, ChevronLeft, ChevronRight, Heart, CalendarDays } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid, ReferenceLine } from 'recharts'
-import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getThumbnailUrl, setParam, pathSegment, getApiUrl } from '../api/client'
+import { getDevice, getCaptures, getConfig, updateConfig, getImageUrl, getDisplayImageUrl, getThumbnailUrl, setParam, pathSegment, getApiUrl } from '../api/client'
 import { setPrefetchTargets, cancelPrefetch } from '../lib/prefetchQueue'
 import { TimelineNavigator } from '../components/TimelineNavigator'
 import { StatusBadge } from '../components/StatusBadge'
@@ -316,30 +316,45 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
     setExif(null)
   }, [cur])
 
-  // Progressiv indlæsning + baggrundsprefetch ved billedskift (2026-09-11, Kimi):
+  // Progressiv indlæsning + baggrundsprefetch ved billedskift (2026-09-11, Kimi;
+  // sekventering tilføjet 2026-09-20 efter bufferbloat-fund på trænge forbindelser):
   // 1) Nulstil → thumbnail vises med det samme (den er som regel allerede i
   //    browser-cachen fra galleriet, så skiftet er øjeblikkeligt).
   // 2) Fuld opløsning hentes i baggrunden og swappes ind når klar.
-  // 3) Køen fyldes nærmest-først (naboer øverst, derefter resten af galleriet),
-  //    så piletast-browsing bliver øjeblikkelig efter få sekunder, og "alt er
-  //    hurtigt bagefter" uden at prefetchen mætter linket (én ad gangen, idle).
+  // 3) Nabo-prefetch-køen startes FØRST når det aktuelle billede er færdigt
+  //    (succes ELLER fejl) — ikke samtidig. To 5-6 MB-hentninger i flugt på én
+  //    gang fordobler den øjeblikkelige båndbredde-efterspørgsel, hvilket på en
+  //    forbindelse med bufferbloat (målt: responsivitet falder fra 581 til 79
+  //    RPM under belastning) udløser præcis den slags køopbygning der gør ALLE
+  //    samtidige overførsler langsommere, ikke kun hurtigere i sum. Køen er i
+  //    forvejen internt sekventiel (prefetchQueue.ts: kun ét billede ad gangen),
+  //    men det hjalp ikke når det aktuelle billede løb samtidig med den.
   useEffect(() => {
     let cancelled = false
     setFullReady(false)
     setThumbFailed(false)
-    const fullUrl = getImageUrl(c.device_id, c.filename)
+    // Display-resolution (2026-09-20), not the true original — on-screen
+    // viewing never needs the full 5-8 MB camera-native file; Download still
+    // does (see the <a download> link below, which keeps using getImageUrl).
+    const fullUrl = getDisplayImageUrl(c.device_id, c.filename)
     const img = new Image()
-    img.onload = () => { if (!cancelled) setFullReady(true) }
+
+    const startNeighborPrefetch = () => {
+      if (cancelled) return
+      const ordered: string[] = []
+      for (let d = 1; d < captures.length; d++) {
+        const fwd = captures[cur + d]
+        const back = captures[cur - d]
+        if (fwd) ordered.push(getDisplayImageUrl(fwd.device_id, fwd.filename))
+        if (back) ordered.push(getDisplayImageUrl(back.device_id, back.filename))
+      }
+      setPrefetchTargets(ordered)
+    }
+
+    img.onload = () => { if (!cancelled) setFullReady(true); startNeighborPrefetch() }
+    img.onerror = () => { startNeighborPrefetch() } // fejl på aktuelt billede må ikke blokere naboprefetch
     img.src = fullUrl
 
-    const ordered: string[] = []
-    for (let d = 1; d < captures.length; d++) {
-      const fwd = captures[cur + d]
-      const back = captures[cur - d]
-      if (fwd) ordered.push(getImageUrl(fwd.device_id, fwd.filename))
-      if (back) ordered.push(getImageUrl(back.device_id, back.filename))
-    }
-    setPrefetchTargets(ordered)
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cur, captures])
@@ -460,7 +475,7 @@ export function Lightbox({ captures, index, onClose }: { captures: Capture[]; in
         <img
           ref={imgRef}
           key={c.filename}
-          src={fullReady || thumbFailed ? getImageUrl(c.device_id, c.filename) : getThumbnailUrl(c.device_id, c.filename)}
+          src={fullReady || thumbFailed ? getDisplayImageUrl(c.device_id, c.filename) : getThumbnailUrl(c.device_id, c.filename)}
           alt={c.filename}
           draggable={false}
           onError={() => { if (!fullReady && !thumbFailed) setThumbFailed(true) }}
