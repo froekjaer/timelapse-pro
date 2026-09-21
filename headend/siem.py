@@ -526,6 +526,17 @@ async def ingest_events(
                     norm = _normalize_event(ev)
                     sev = str(norm.get("severity", "")).upper()
                     if sev in ("CRITICAL", "ERROR"):
+                        # Planned-maintenance suppression (2026-09-21): connectivity
+                        # events (ssh_tunnel_connect_failed/remote_port_busy) are
+                        # exactly what a full server reboot generates while edges
+                        # retry their tunnels. The event itself is already recorded
+                        # by record_events() above; only the notification is skipped,
+                        # and only for this category. See maintenance_window.py.
+                        if norm.get("category") == "connectivity":
+                            from maintenance_window import is_maintenance_window_active
+                            if is_maintenance_window_active():
+                                log.debug("SIEM notify suppressed (planned maintenance window): %s / %s", device_id, norm.get("event_type"))
+                                continue
                         ev_type = norm.get("event_type", ev.get("category", "event"))
                         cooldown_key = (device_id, ev_type)
                         now_ts = time.time()
