@@ -29,6 +29,26 @@
 
 ## Log
 
+### Handover 2026-09-21 (senere) — fra Claude til Peter: live genstartstest af nightly-reboot-rehearsal — bestået, med ét dokumenteret kendt hul
+
+Live, overvåget genstartstest udført sammen med Peter (deployment via `sudo cp`/`launchctl bootstrap`, derefter manuel trigger af `timelapse-nightly-maintenance`), jf. planen fra forrige entry.
+
+**Bestået rent:**
+- Marker skrevet 15:41:59 CEST → `shutdown -r now` → `timelapse-post-reboot-verify` (RunAtLoad) fangede boot 15:42:29 → **PASS: full recovery confirmed in 38s** (15:43:07).
+- Headend `/api/health`, Postgres, nginx alle sunde efter genstart.
+- Begge rigtige Edges (`TL-043EB9E72EFD`, `TL-C87FF9587CA0`) heartbeatede ind igen automatisk.
+- Nul `connectivity`-kategori-events, nul ITIM `up`-metric alert-events overhovedet i vinduet — den 38s lange nedetid var kortere end "Service nede"-reglens 60s `for_seconds`-sustained-failure-tærskel, så den udløste aldrig, hverken undertrykt eller ej.
+- Marker udløb naturligt 16:01:59 CEST; `is_maintenance_window_active()` bekræftet `False` derefter — normal alarmering genoptaget.
+
+**Kendt hul fundet, IKKE lukket (Peters eksplicitte valg: "Decide later"):** To CRITICAL-emails ("🚨 CRITICAL — SIEM: service_crash") blev sendt til `timelapse-pro@froekjaer.dk` under vinduet (15:43:29 og 15:51:46) — begge fra harmløs macOS `launchd`-boot-støj (`Unknown key for plist importer`, `posix_spawn() failed: 2: No such file or directory` for en pre-reboot-opgave), IKKE en reel TimeLapse Pro-fejl. Disse er klassificeret `category=security`/`event_type=service_crash`, ikke `connectivity` — suppression-gaten (`headend/siem.py`) undertrykker per Peters eksplicitte, snævre instruktion ("suppress the connection related error messages") kun `category == "connectivity"`, og virkede derfor korrekt efter sit scope. Dette betyder at hver uovervåget 03:00-genstart formentlig vil generere 1-2 af disse samme støj-emails fremover. Præsenteret for Peter som eksplicit valg (lade stå / udvide suppression til `service_crash` / rette klassifikationen ved kilden / beslut senere) — Peter valgte **"Decide later"**: shippes som kendt, dokumenteret hul, genbesøges efter et par flere nattlige kørsler.
+
+**Sekundært, ikke-relateret fund (ikke rettet, uden for scope):** `security_events.occurred_at` for disse specifikke launchd-sourcede events viser et 2-timers spring i forhold til tidsstemplet indlejret i `raw_message` (fx `occurred_at=2026-09-21 17:41:59+02` mod besked-tekstens `2026-09-21 15:41:59.307947+0200`) — tyder på et dobbelt-anvendt tidszone-offset i SIEM-ingestion for denne specifikke kildetype. Ikke undersøgt yderligere her.
+
+**Konklusion:** Nightly full-server-reboot rehearsal er nu live og verificeret at virke for den centrale use case (stack overlever fuld OS-genstart, kritisk connectivity-støj undertrykkes korrekt). Det uovervågede 03:00-skema kan nu betragtes som troværdigt for selve genstarts-/recovery-mekanikken; det dokumenterede email-støj-hul er en separat, bevidst udskudt beslutning, ikke en blokering.
+
+- **Filer rørt:** Ingen kodeændringer i denne entry — kun verifikation + dokumentation. `/usr/local/sbin/timelapse-nightly-maintenance`, `/usr/local/sbin/timelapse-post-reboot-verify` og de to LaunchDaemon-plists er nu installeret og aktive på den fysiske Mac Mini (uden for git).
+- **Risici / pas på:** Se ovenstående kendte hul (service_crash-emails) og den ikke-relaterede timestamp-observation. GRC-fundet `FIND-MACOS-BOOT-STORAGE-LOGIN-BLOCKER` forbliver åbent og load-bearing, uændret af denne test.
+
 ### Handover 2026-09-21 — fra Claude til Peter: nightly full-server-reboot rehearsal + planned-maintenance alert suppression
 
 - **Hvad er gjort:** Peter skal snart over på en produktionsserver der genstarter uden for vores kontrol hver nat, og ønskede bevis for at TimeLapse Pro-stakken overlever en fuld OS-genstart rent, ikke kun et service-niveau-restart — samt at SIEM/ITIM ikke spammer alarmer under den planlagte genstart. Live-verificeret at `fdesetup status` nu viser FileVault Off (den tidligere blokerende antagelse fra 2026-08-02/03-fundene gælder ikke længere).
