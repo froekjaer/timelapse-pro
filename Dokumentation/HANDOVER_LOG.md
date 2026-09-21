@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-09-21 — fra Codex: Edge 1 WiFi-/tunnelundersøgelse startet
+
+- **Hvad er gjort:** OP-001 VERIFIED. Hændelsen er korreleret mellem Headend DB, lokale sockets og Edge-journal via eksisterende tunnel. Tunnelen lukkede selv efter keepalive-fejl og genoprettede korrekt; `Forbundet` viser kun seneste connect-event. Direkte management på WiFi/LAN er blokeret af den eksisterende `br-bt`-afgrænsede firewallregel, mens servicen selv er sund.
+- **Hvad mangler / næste skridt:** Draft-PR og lille statusændring med oprettelsestid + frisk verificering. LAN-adgang og Headend-initieret lukning forbliver særskilte sikkerhedsdesigns.
+- **Runtime-evidens:** Edge 1 tunnel disconnect 15:42:58, reconnect 15:43:06, SSH public-key accept 15:43:35; WiFi DHCP `.134` igen 15:44:23; tunnelport 2201 og heartbeat verificeret aktuelle.
+- **Filer rørt:** Kun register og denne handover før intentionen offentliggøres.
+- **Risici / pas på:** Ingen firewallåbning, tunnellukning, Edge-konfigurationsændring eller deployment er autoriseret/udført i dette trin.
+
 ### Handover 2026-09-16 (senere) — fra Claude: §16 formelt Accepted af Peter
 
 Peter svarede eksplicit "godkendt" til den praecise disposition: acceptér §16.1–§16.10 i den senest verificerede ordlyd fra `Dokumentation/CAPABILITY_REGISTER_FINAL_PROPOSAL_2026-09-13_CLAUDE.md` (v6, 2026-09-16, inkl. §16.10 tilfoejet efter Mission Framework Wave 1) og inkorporér den som Accepted i `Dokumentation/SAMARBEJDSMODEL_PETER_CLAUDE_CODEX_v1.md`, additivt til det allerede accepterede §14.
