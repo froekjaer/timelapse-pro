@@ -635,6 +635,17 @@ def _notify_alert(
     db: Session, rule: ItimAlertRule, target: ItimTarget, ev: ItimAlertEvent,
     resolved: bool = False,
 ) -> None:
+    # Planned-maintenance suppression (2026-09-21): "up"-metric rules
+    # (svc:* "Service nede", edge:* "Edge offline") are exactly the noise a
+    # full server reboot generates about itself. The event row above is
+    # already committed by evaluate_alerts() regardless — only the outbound
+    # notification is skipped, and only for this narrow, reachability-only
+    # rule class. See headend/maintenance_window.py for why this fails open.
+    if rule.metric == "up":
+        from maintenance_window import is_maintenance_window_active
+        if is_maintenance_window_active():
+            log.debug("ITIM notify suppressed (planned maintenance window): %s / %s", target.target_key, rule.name)
+            return
     key = (target.target_key, rule.metric, "resolved" if resolved else "firing")
     now_ts = time.time()
     with _notify_cooldown_lock:

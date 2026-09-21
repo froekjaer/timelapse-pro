@@ -1,0 +1,78 @@
+#!/bin/zsh
+# Nightly full server reboot rehearsal for the TimeLapse Pro headend (2026-09-21).
+#
+# History: this used to do a controlled service-only restart (launchctl
+# kickstart + nginx reload), never a full OS reboot, because FileVault was
+# active at the time — an unattended reboot could land on the FileVault
+# unlock screen with no network/services (see HANDOVER_LOG.md 2026-08-02/03).
+# `fdesetup status` now shows FileVault is Off on this machine, confirmed
+# live before this change — that specific blocker no longer applies.
+#
+# Why a full reboot at all: the production server TimeLapse Pro is moving to
+# restarts nightly, outside our control. This rehearses that exact scenario
+# on this machine first, so a real production restart isn't the first time
+# we find out whether the whole stack (Postgres, nginx, Headend, node-agent,
+# data-mount, edge reconnection) survives one cleanly.
+#
+# Known, still-open, DELIBERATELY NOT fixed here: without auto-login, the
+# external data volume mounts after the login window appears, so Headend
+# can't start until someone logs in (see
+# Dokumentation/MACOS_BOOT_STORAGE_LOGIN_BLOCKER_2026-09.md). Auto-login is
+# left enabled as the existing workaround — meaning physical access to this
+# Mac is an unlocked desktop, no password. This script does not change
+# that; it exercises it nightly, which is itself useful evidence of whether
+# the workaround holds up, but it is not a fix. Track separately.
+set -euo pipefail
+
+PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG="/var/log/timelapse-nightly-maintenance.log"
+DATA_ROOT="/Volumes/data-fast"
+MAINTENANCE_MARKER="/etc/timelapse/maintenance-until"
+MAINTENANCE_WINDOW_MINUTES=20
+
+log() {
+  print -r -- "$(date '+%Y-%m-%d %H:%M:%S') [nightly-maintenance] $*" | tee -a "$LOG"
+  logger -t timelapse-nightly-maintenance -- "$*"
+}
+
+wait_for() {
+  local description="$1"
+  local command="$2"
+  local timeout="${3:-120}"
+  local waited=0
+  while ! eval "$command"; do
+    if (( waited >= timeout )); then
+      log "ERROR: timed out waiting for $description"
+      return 1
+    fi
+    sleep 5
+    (( waited += 5 ))
+  done
+}
+
+log "started"
+
+if ! wait_for "data volume" "mount | grep -Fq ' on $DATA_ROOT '" 120; then
+  exit 1
+fi
+if [[ ! -d "$DATA_ROOT/peter-home/projects/timelapse-pro/headend" ]]; then
+  log "ERROR: headend worktree is unavailable on $DATA_ROOT"
+  exit 1
+fi
+
+# Mark the planned-maintenance window BEFORE rebooting, so headend/itim.py
+# and headend/siem.py suppress connectivity-alert notifications (not the
+# alerts themselves — those are still recorded) for the reachability-only
+# rule class while everything reconnects post-boot. Fails open: if this
+# write fails for any reason, normal alerting simply isn't suppressed —
+# see headend/maintenance_window.py.
+mkdir -p "$(dirname "$MAINTENANCE_MARKER")"
+if date -v+"${MAINTENANCE_WINDOW_MINUTES}"M -u "+%Y-%m-%dT%H:%M:%SZ" > "$MAINTENANCE_MARKER"; then
+  log "maintenance window marker written: suppressing connectivity alerts for ${MAINTENANCE_WINDOW_MINUTES}m"
+else
+  log "WARNING: could not write maintenance marker — reboot will proceed, alerts will NOT be suppressed"
+fi
+
+log "rebooting now (full OS restart, not a service restart)"
+sync
+exec shutdown -r now
