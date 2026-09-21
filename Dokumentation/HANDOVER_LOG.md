@@ -29,15 +29,22 @@
 
 ## Log
 
+### Handover 2026-09-21 — fra Codex: hændelsesdato og mandat korrigeret for Edge 1
+
+- **Hvad er gjort:** Peters test fandt sted 2026-09-20, så dagens Edge-/netværkstilstand er fjernet som årsagsbevis. Mandatet er udvidet: servicetekniker-UI skal kunne nås via alle Edge-netværk, og Headend skal kunne lukke én bestemt reverse tunnel kontrolleret, auditere handlingen og gøre porten klar til en ny Edge-forbindelse.
+- **Hvad mangler / næste skridt:** Gårsdagens Edge-journal skal korreleres med Headend-historikken. Statusproben skal verificere en SSH-bannerudveksling i stedet for kun en TCP-listener. Force-close kræver en snæver root-helper, fordi Headend-processen ikke ejer `sshd-session`-processen.
+- **Korrigeret evidens:** `totp-service.py` binder allerede til `0.0.0.0:8443`, og captive-firewallens regler er knyttet til `br-bt`. Den tidligere konklusion om at almindeligt WiFi/LAN var blokeret af denne regel var forkert og er trukket tilbage.
+- **Risici / pas på:** En generel proces-kill eller bred `sudo`-regel accepteres ikke. Hjælperen skal kun kunne ramme den DB-tildelte reverse-tunnelport og en verificeret `sshd-session`; alle forsøg skal auditeres. Ingen live-ændring er udført.
+
 ### Handover 2026-09-21 — fra Codex: tunnelstatusrettelse klar i draft-PR #253
 
 - **Hvad er gjort:** `GET /api/ssh-tunnel/active` skelner nu det historiske connect-event fra tidspunktet for den friske Headend-side TCP-probe. SSH-tunnelsiden viser “Oprettet” og “Senest verificeret fra Headend”.
 - **Verifikation:** 20 relevante Python-tests bestået; Python compile bestået; UI production-build bestået; `git diff --check` bestået. Repoets fulde Ruff-baseline har mange eksisterende fund og blev ikke omskrevet i dette spor.
-- **Hvad mangler / næste skridt:** Review, merge og kontrolleret deployment før UI-ændringen bliver synlig. Direkte servicetekniker-UI via almindeligt LAN og Headend-initieret tunnel-close er registrerede, særskilte sikkerhedsdesigns.
+- **Hvad mangler / næste skridt:** Den foreløbige TCP-probe skal erstattes af en SSH-protokolverifikation. Derefter review, merge og kontrolleret deployment. Servicetekniker-UI på alle Edge-netværk og Headend-initieret tunnel-close er nu del af samme autoriserede spor.
 - **Filer rørt:** `headend/main.py`, `timelapse-ui/src/pages/SshTunnelPage.tsx`, `tests/test_ssh_tunnel_ux_convergence.py`, register og handover.
-- **Risici / pas på:** “Senest verificeret” betyder en frisk TCP-reachability probe fra Headend, ikke brugerlogin eller kryptografisk SSH-host-key-verifikation. UI må ikke kalde det et handshake.
+- **Risici / pas på:** Den nuværende kandidat må ikke kalde en TCP-listener et handshake. Den ændres til mindst at kræve en gyldig SSH-bannerudveksling; host-key-verifikation forbliver den stærkere terminalgate.
 
-### Handover 2026-09-21 — fra Codex: Edge 1 WiFi-/tunnelundersøgelse startet
+### Handover 2026-09-21 — fra Codex: Edge 1 WiFi-/tunnelundersøgelse startet (senere korrigeret ovenfor)
 
 - **Hvad er gjort:** OP-001 VERIFIED. Hændelsen er korreleret mellem Headend DB, lokale sockets og Edge-journal via eksisterende tunnel. Tunnelen lukkede selv efter keepalive-fejl og genoprettede korrekt; `Forbundet` viser kun seneste connect-event. Direkte management på WiFi/LAN er blokeret af den eksisterende `br-bt`-afgrænsede firewallregel, mens servicen selv er sund.
 - **Hvad mangler / næste skridt:** Draft-PR og lille statusændring med oprettelsestid + frisk verificering. LAN-adgang og Headend-initieret lukning forbliver særskilte sikkerhedsdesigns.

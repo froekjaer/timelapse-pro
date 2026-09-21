@@ -26,13 +26,13 @@ tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
 ### Edge 1 WiFi-skift og reverse-tunnel-sundhed — `codex/edge-network-tunnel-health`
 
-- **Mandat/session:** Codex, efter Peters observation 2026-09-21 af tabt lokal adgang og uklar tunnelstatus efter SSID-skift.
-- **Formål/scope:** Gør SSH-tunnelstatus sandfærdig med særskilt oprettelsestid og frisk Headend-verifikation. Dokumentér den observerede forskel mellem Bluetooth-isoleret servicetekniker-UI og almindeligt LAN. Ingen firewallåbning eller live-deployment i sporet.
-- **Berørte domæner/kontrakter:** `GET /api/ssh-tunnel/active`, SSH-tunnelsiden, tunnel-liveness-test og hændelsesdokumentation. Sikkerhedsgrænsen for lokal management ændres ikke.
+- **Mandat/session:** Codex, efter Peters observation fra 2026-09-20 af tabt lokal adgang og uklar tunnelstatus efter SSID-skift; præciseret 2026-09-21.
+- **Formål/scope:** Gør SSH-tunnelstatus sandfærdig med særskilt oprettelsestid og en frisk SSH-protokolverifikation. Sikr servicetekniker-UI på alle Edge-netværksinterfaces. Tilføj en auditeret, enhedsspecifik Headend-handling, der lukker den aktuelle server-side tunnelproces og frigør porten til en ny forbindelse. Ingen live-deployment i sporet.
+- **Berørte domæner/kontrakter:** `GET /api/ssh-tunnel/active`, SSH-tunnelsiden, tunnel-liveness-test, lokal UI-bind/firewall-kontrakt, privilegieafgrænset tunnel-control samt hændelsesdokumentation.
 - **Base/head:** draft-PR #253; base `origin/main` `928134be847eb96df25455736f6acd766aff84f2`; aktuel head fremgår af PR'en.
 - **Overlap/restdisposition:** PR #239 rører terminalrenderer, #249 netværksnavn og #246 mTLS; ingen af dem ændrer den planlagte statuskontrakt. Deres aktuelle diff genkontrolleres før merge. Historisk tunnelstatusarbejde i #193/#238 bevares og udbygges.
-- **Evidens:** Edge 1 afbrød tunnelen efter keepalive-fejl 15:42:58, genoprettede 15:43:06, og browserterminalen autentificerede 15:43:35. Headend-port 2201 og Edge heartbeat var aktuelle ved diagnosen. Lokalt UI lyttede på 8443, mens firewall kun tillod `br-bt`/192.168.42.1.
-- **Næste handling:** Review/merge af statuskontrakten. Separat sikkerhedsreview kræves før eventuelt LAN-tilvalg eller auditeret Headend-close.
+- **Evidens:** Dagens tilstand er ikke evidens for hændelsen 2026-09-20. Historikken viser gentagne `connected`-events og senere portkonflikt/adfærdsændringer, som kræver korrelation med Edge-journal. Koden binder allerede servicetekniker-UI til `0.0.0.0:8443`, og captive-reglerne er afgrænset til `br-bt`; den tidligere påstand om generel LAN-blokering er derfor trukket tilbage. En TCP-listener alene beviser ikke en brugbar SSH-tunnel.
+- **Næste handling:** Indhent gårsdagens Edge-journal, implementér og test SSH-banner-probe, UI-tilgængelighedskontrakt og den snævert privilegerede force-close-handling. Sikkerhedsreview før merge; ingen deployment i dette spor uden særskilt driftstrin.
 - **Opfølgning:** Denne session.
 
 ### #214 — `claude/globalconfig-parallel-load`
