@@ -76,6 +76,12 @@ export const updateConfig = (deviceId: string, config: DeviceConfig) =>
 export const getImageUrl = (deviceId: string, filename: string) =>
   `${getApiUrl()}/api/images/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`
 
+// Display-resolution variant (~2048px, 2026-09-20) for on-screen viewing —
+// 5-10x smaller than the true original, which stays available via
+// getImageUrl for Download. See headend/api/display_image_api.py.
+export const getDisplayImageUrl = (deviceId: string, filename: string) =>
+  `${getApiUrl()}/api/display/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`
+
 export const getThumbnailUrl = (deviceId: string, filename: string) =>
   `${getApiUrl()}/api/thumbnails/${encodeURIComponent(deviceId)}/${encodeURIComponent(filename)}`
 
