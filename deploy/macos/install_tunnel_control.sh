@@ -8,7 +8,7 @@ usage() {
 
 SERVICE_USER=""
 TUNNEL_USER=""
-SOURCE="$(cd "$(dirname "$0")" && pwd)/timelapse-tunnel-control"
+SOURCE="$(cd "$(dirname "$0")" && pwd)/timelapse_tunnel_control.py"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --service-user) SERVICE_USER="$2"; shift 2 ;;
