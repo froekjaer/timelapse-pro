@@ -455,8 +455,8 @@ def startup():
 
     from commissioning_key import migrate_commissioning_key_columns
     migrate_commissioning_key_columns(_db_engine_field_role)
-    from cmdb import migrate_break_glass_applied_at_column as _mbgc
-    _mbgc(_db_engine_field_role)
+    from cmdb import migrate_break_glass_applied_at_column as _mbgc, migrate_camera_reported_hardware_columns as _mcrh
+    _mbgc(_db_engine_field_role); _mcrh(_db_engine_field_role)
 
     # ── DB migration v9: BT PAN TOTP per kamera ──────────────────────────
     try:

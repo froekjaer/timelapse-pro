@@ -84,6 +84,51 @@ def migrate_break_glass_applied_at_column(engine) -> None:
     except Exception as exc:
         log.error("DB migration break-glass fejl: %s", exc)
 
+
+def migrate_camera_reported_hardware_columns(engine) -> None:
+    """Additive migration for headend/migrations/v35_camera_reported_hardware.sql,
+    called once from main.py::startup().
+
+    v35 shipped the .sql file (2026-09-01) but — unlike every other numbered
+    migration in this codebase — was never wired into any Python migration
+    path, so no database this app has actually booted against (including
+    production) ever received these columns. Found via the same
+    already-exists-only except idiom as migrate_break_glass_applied_at_column
+    above, for the same reason (2026-08-25 incident): a blanket except/pass
+    would silently accept e.g. InsufficientPrivilege too.
+    """
+    columns = [
+        ("reported_model", "VARCHAR(100)"),
+        ("reported_manufacturer", "VARCHAR(100)"),
+        ("reported_serial_number", "VARCHAR(100)"),
+        ("reported_firmware_version", "VARCHAR(50)"),
+        ("reported_at", "TIMESTAMP"),
+        ("latest_known_firmware_version", "VARCHAR(50)"),
+        ("latest_firmware_checked_at", "TIMESTAMP"),
+    ]
+    try:
+        with engine.connect() as conn:
+            for col, typ in columns:
+                try:
+                    conn.execute(text(f"ALTER TABLE cameras ADD COLUMN {col} {typ}"))
+                    conn.commit()
+                    log.info("DB migration v35: cameras.%s tilføjet", col)
+                except Exception as exc:
+                    if "already exists" in str(exc).lower() or "duplicate column" in str(exc).lower():
+                        pass
+                    else:
+                        log.error("DB migration v35: ALTER TABLE cameras.%s fejlede: %s", col, exc)
+            try:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_cameras_reported_serial "
+                    "ON cameras(reported_serial_number)"
+                ))
+                conn.commit()
+            except Exception as exc:
+                log.error("DB migration v35: index idx_cameras_reported_serial fejlede: %s", exc)
+    except Exception as exc:
+        log.error("DB migration v35 fejl: %s", exc)
+
 # ── Break-glass checkout-hærdning (opt-in, default slået FRA) ─────────────────
 # Lukker en del af det dokumenterede SABSA-/compliance-hul i checkout_break_glass.
 # MFA er stadig en opfølgning (kræver auth-integration), men rate-limit + valgfri
@@ -1137,7 +1182,7 @@ def create_break_glass(device_id: str, payload: dict, _user=Depends(_require_cmd
     db.commit()
     db.refresh(account)
 
-    log.info("Break-glass oprettet: device=%s admin=%s id=%d", device_id, admin_username, account.id)
+    log.info("Break-glass oprettet: device=%s admin=%s id=%s", device_id, admin_username, account.id)
 
     # Vi returnerer IKKE passwordet her — admin skal bruge /checkout
     return {
