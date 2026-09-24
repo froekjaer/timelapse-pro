@@ -421,7 +421,7 @@ def _sudo_users() -> list[str]:
 # Nøgleservices vi altid rapporterer status for
 _TRACKED_SERVICES = [
     "timelapse-edge.service",
-    "timelapse-edge-watchdog.service",
+    "timelapse-watchdog.service",
     "ssh.service",
     "sshd.service",
     "systemd-timesyncd.service",

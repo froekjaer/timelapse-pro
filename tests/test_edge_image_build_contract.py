@@ -60,6 +60,47 @@ def test_dockerfile_contains_edge_qa_and_management_runtime() -> None:
     assert "libnss-mdns" in source
 
 
+def test_dockerfile_installs_network_manager_and_chrony() -> None:
+    """2026-09-24: a fresh image had no NetworkManager (WiFi client
+    connectivity never comes up) or chrony (sync-time.sh's hard dependency,
+    with no NTP fallback beyond GPS) — confirmed by independent codebase
+    research and a live cross-check against both physical edges."""
+    source = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
+    assert "network-manager" in source
+    assert "chrony" in source
+
+
+def test_dockerfile_pins_gphoto2_version() -> None:
+    """An unpinned gphoto2 means the exact same Dockerfile can produce a
+    different, untested binary on a later build. Pinned to jammy's real
+    available version (2.5.27-1) — TL-C87FF9587CA0's 2.5.28 runs on Ubuntu
+    24.04 (Noble), not this Dockerfile's 22.04 (Jammy) base, and is not a
+    reproducible reference for this pin."""
+    source = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
+    assert "gphoto2=2.5.27-1" in source
+
+
+def test_dockerfile_copies_timesync_and_watchdog_units() -> None:
+    """timelapse-timesync.service/.timer and timelapse-watchdog.service ran
+    live on TL-C87FF9587CA0 only because that device was hand-configured
+    outside the pipeline — a fresh image never got them at all."""
+    source = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
+    for unit in ("timelapse-timesync.service", "timelapse-timesync.timer", "timelapse-watchdog.service"):
+        assert f"COPY edge/scripts/{unit} /etc/systemd/system/{unit}" in source
+
+
+def test_dockerfile_copies_gpio_udev_rule_and_self_restart_sudoers() -> None:
+    """Without the udev rule, GPIO relay sysfs files stay root:root and the
+    relay (camera power) can never be driven by the agent's runtime user.
+    Without the sudoers entry, the agent can't restart itself after an app
+    update without a blanket sudo grant. Both only existed on
+    TL-C87FF9587CA0 via hand configuration outside this pipeline."""
+    source = (ROOT / "headend" / "tools" / "Dockerfile.edge").read_text()
+    assert "COPY edge/config/99-timelapse-gpio.rules /etc/udev/rules.d/99-timelapse-gpio.rules" in source
+    assert "COPY edge/config/timelapse-edge-sudoers /etc/sudoers.d/timelapse-edge" in source
+    assert "chmod 0440 /etc/sudoers.d/timelapse-edge" in source
+
+
 def test_flashable_injection_copies_and_enables_all_local_management_units() -> None:
     source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
     for unit in (
@@ -72,6 +113,29 @@ def test_flashable_injection_copies_and_enables_all_local_management_units() -> 
     ):
         assert f'"etc/systemd/system/{unit}"' in source
         assert unit in source
+
+
+def test_flashable_injection_extracts_and_enables_timesync_and_watchdog() -> None:
+    """2026-09-24: neither unit was extracted from the rootfs tar nor
+    symlinked into any *.target.wants/ — a fresh image booted without
+    time-sync or the watchdog, both only present on the physical edges
+    because someone set them up by hand outside this pipeline."""
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    for path in (
+        '"etc/systemd/system/timelapse-timesync.service"',
+        '"etc/systemd/system/timelapse-timesync.timer"',
+        '"etc/systemd/system/timelapse-watchdog.service"',
+    ):
+        assert path in source
+    assert "timelapse-watchdog.service" in source.split("for UNIT in", 1)[1].split(";", 1)[0]
+    assert "TIMERS_WANTS_DIR" in source
+    assert "timelapse-timesync.timer" in source.split("TIMERS_WANTS_DIR", 1)[1]
+
+
+def test_flashable_injection_extracts_gpio_udev_rule_and_sudoers() -> None:
+    source = (ROOT / "headend" / "tools" / "inject_edge_image.py").read_text()
+    assert '"etc/udev/rules.d/99-timelapse-gpio.rules"' in source
+    assert '"etc/sudoers.d/timelapse-edge"' in source
     assert "INTERACTIVE_SHELL_ENABLED" in source
     assert "/etc/timelapse/bt-config.yaml" in source
     assert "BT_TOTP_SECRET" in source
@@ -81,6 +145,18 @@ def test_flashable_injection_copies_and_enables_all_local_management_units() -> 
     assert "centralt CA-udstedt lokalt TLS-certifikat" in source
     assert "forventet fysisk Edge-ID til MAC-binding" in source
     assert "expected_device_id" in source
+
+
+def test_requirements_include_totp_portal_dependencies() -> None:
+    """2026-09-24: edge/scripts/totp-service.py does top-level `import
+    pyotp` and `from fastapi import ...`, and serves via uvicorn — none were
+    declared, so the local technician TOTP portal crash-looped from first
+    boot on any freshly-built image until an app update happened to
+    pip-install them into the persistent venv."""
+    source = (ROOT / "edge" / "requirements.txt").read_text()
+    assert "fastapi" in source
+    assert "uvicorn" in source
+    assert "pyotp" in source
 
 
 def test_wifi_ap_is_isolated_and_client_profile_wins() -> None:

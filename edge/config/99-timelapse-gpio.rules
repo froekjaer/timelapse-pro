@@ -1,0 +1,11 @@
+# TimeLapse Pro — GPIO relay permissions (rk3588 / Orange Pi 4 Pro).
+# Matches the pins hardcoded in edge/camera/relay.py's PLATFORM_PINS
+# ("rk3588": {"camera_pin": 356, "modem_pin": 361}) — without this rule,
+# the sysfs value/direction files stay root:root and the relay (camera
+# power, and the optional modem power-cycle relay) cannot be driven by the
+# timelapse-edge service's non-root runtime user.
+#
+# Only present in the current pipeline because TL-C87FF9587CA0 was
+# hand-configured outside it — a fresh image never got it (2026-09-24).
+SUBSYSTEM=="gpio", KERNEL=="gpio356", RUN+="/bin/chown root:gpio /sys/class/gpio/gpio356/value /sys/class/gpio/gpio356/direction"
+SUBSYSTEM=="gpio", KERNEL=="gpio361", RUN+="/bin/chown root:gpio /sys/class/gpio/gpio361/value /sys/class/gpio/gpio361/direction"

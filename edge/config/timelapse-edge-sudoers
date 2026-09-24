@@ -1,0 +1,6 @@
+# TimeLapse Pro — lets the non-root edge runtime user restart its own
+# capture agent (e.g. after an app update applies a new version) without a
+# blanket sudo grant. Only present in the current pipeline because
+# TL-C87FF9587CA0 was hand-configured outside it — a fresh image never got
+# it (2026-09-24).
+orangepi ALL=(ALL) NOPASSWD: /bin/systemctl restart timelapse-edge
