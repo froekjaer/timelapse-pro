@@ -27,6 +27,19 @@
 - Risici / pas på:
 ```
 
+## Log
+
+### Handover 2026-09-24 — fra Claude til Peter/næste session: macOS 27-opgradering + live-serving-mappe kørte forældet kode (billede-hæng var en tilbagerulning, ikke en ny fejl)
+
+- **macOS-opgradering (til info, Peters egen handling):** Peter har opgraderet både Headend-Mac Mini'en og sin MacBook til **macOS 27.0 (build 26A428)** — bekræftet via `sw_vers`/`uname -a` på Headend. Ikke udført af mig; ingen kode- eller konfigurationsændring foretaget som følge af opgraderingen i denne omgang (se dog WebAuthn-fundet nedenfor, som kan hænge sammen med den).
+- **Root cause fundet for genopstået "Henter fuld opløsning…"-hæng:** Selve repo-mappen (`/Volumes/data-fast/peter-home/projects/timelapse-pro`) fungerer BÅDE som min udviklingsmappe OG som Headend/nginx' faktiske live-serveringsmappe (uvicorn's cwd = `.../headend`; nginx' `root` peger direkte på `timelapse-ui/dist` i samme træ). Da jeg 2026-09-21 skiftede denne mappe til min egen `claude/nightly-reboot-rehearsal-20260921`-branch for at arbejde på genstarts-rehearsalen, rullede det (uden at jeg opdagede det da) den KØRENDE server tilbage til kode fra FØR PR #251 (billede-opløsnings-fix) blev merget — selvom GitHub main så korrekt ud hele tiden. Live-produktionen kørte altså forældet kode i ca. 3 dage.
+  - **Rettet:** denne mappe er nu checket ud på det korrekte, fuldt mergede `origin/main` (`1df4a628`, indeholder #247/#249/#251/#252). `timelapse-ui` genbygget (nginx bekræftet server nyt build-ID `1df4a6282158`). Headend genstartet rent (detached, health-checked) og kører nu korrekt backend-kode inkl. `headend/api/display_image_api.py`.
+  - **Peter bekræftede:** billedet loader nu igen på `TL-C87FF9587CA0`.
+- **Strukturel risiko flagget, IKKE rettet endnu:** samme fejlklasse kan ske igen så længe udviklingsarbejde og live-servering deler mappe. Peter har bedt om at få dette fikset før test-produktion ("Vi må hellere fikse det, for vi går i test-produktion om lidt") — se separat kommende entry for den løsning.
+- **Ny, uafklaret fejl under undersøgelse:** Peter rapporterer at WebAuthn/passkey-login ("Log ind med Windows Hello / Touch ID" på `https://timelapse.froekjaer.dk/login`) virker fra en browser kørende PÅ selve Headend-maskinen, men hænger uden fejl når han prøver fra sin MacBook. Tidsmæssigt sammenfaldende med macOS 27-opgraderingen på begge maskiner — kan være relateret (platform-authenticator-adfærd/RP-ID/origin), men ikke bekræftet endnu. Undersøges nu.
+- **Filer rørt:** ingen kodeændring i denne entry — kun mappe-tilstand (git checkout) + rebuild + genstart. `timelapse-ui/dist/*` regenereret (ikke git-sporet).
+- **Risici / pas på:** Denne hændelse er et konkret eksempel på hvorfor §14-reconciliation-reglen om at tjekke faktisk kørende tilstand (ikke kun GitHub main) er vigtig — "main ser rigtig ud" var IKKE nok til at konkludere at produktionen kørte den rigtige kode.
+
 ### Handover 2026-09-20 (senere) — fra Claude (Sonnet 5) til Peter/næste session: display-opløsning-tier + Lightbox-sekventering (root cause: bufferbloat, se tidligere entry samme dag)
 
 - **Baggrund:** Efter Time Machine-fundet (se tidligere entry) viste opfølgende `networkQuality`-måling at Peters forbindelse er ~45-50 Mbit/s symmetrisk (fint), men **responsivitet kollapser under belastning** (581→79 RPM, 103ms→757ms) — klassisk bufferbloat. Fuldopløste billeder (5-8 MB kamera-native) er derfor unødigt eksponerede: selv en fin forbindelse bliver ramt hårdt af en pludselig 6 MB-byrde. Peter: "Everything you can do to make this a better user experience would be awesome."
