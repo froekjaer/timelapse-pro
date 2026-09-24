@@ -19,6 +19,7 @@ ENGINE_EDGE_CV = "edge_cv_v1"
 ENGINE_EDGE_NPU = "edge_npu"
 ENGINE_HEADEND_OLLAMA = "headend_ollama"
 ENGINE_GEMINI_CLOUD = "gemini_cloud"
+ENGINE_APPLE_FOUNDATION = "apple_foundation_on_device"
 
 
 def _dict(value: Any) -> dict[str, Any]:
@@ -216,6 +217,8 @@ def engine_from_legacy_payload(payload: dict[str, Any], fallback_model: str | No
     model = str(payload.get("model") or fallback_model or "").strip().lower()
     if engine == "cloud" or "gemini" in model:
         return ENGINE_GEMINI_CLOUD
+    if engine == "apple" or "apple-foundation" in model:
+        return ENGINE_APPLE_FOUNDATION
     if engine == "local" or model:
         return ENGINE_HEADEND_OLLAMA
     return "headend_ai"
