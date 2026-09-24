@@ -29,6 +29,22 @@
 
 ## Log
 
+### Handover 2026-09-24 — fra Codex: Edge1 preservation / re-image gate RESULT — BLOCKED
+
+- **Resultat:** `Dokumentation/EDGE1_PRESERVATION_REIMAGE_GATE_2026-09-24_CODEX.md`. Edge1 må ikke re-images endnu. Current main `b901d486` kan ikke deterministisk genskabe den produktkrævede timesync-/watchdog-state, deklarerer ikke NetworkManager/chrony i Golden Edge-baselinen, og der foreligger ingen accepteret clean-image runtime-/identity-recovery-receipt. AP fallback er samtidig kendt P0-fejlet på begge fysiske edges.
+- **Falsifikation/counterexamples:** Edge1 har aktiv TimeLapse-watchdog uden unit i current main; timesync service/timer findes i source men installeres ikke af current Builder; fysisk package/state afhænger af vendor-image/manual historik. Et Edge1-only `camera/technician_session.py` er urefereret runtime-rest, men produktideen er bevaret i Git commit `6c5e3cac` og skal reconcileres før branch-disposition.
+- **Sikkerhed/disposition:** Edge1's iperf3, svage SSH-policy, legacy updater, desktop/CUPS/Snap/Samba-rester og historiske sudoers/TLS-paths skal ikke migreres. Unik identity, TLS, TOTP, Wi-Fi og assignment/config skal re-provisioneres; private nøgler/secrets blev ikke læst eller kopieret.
+- **Read-only bekræftelse:** Kun SSH-/system-/filmetadata, public state og read-only GRC/source/historik blev læst. Ingen ændringer på Edge1/Edge2, ingen servicehandling og ingen re-image. Security-scannen blev ikke gennemført pga. den tidligere canonical-path-fejl; ingen omgåelse eller nyt forsøg.
+- **Reconciliation:** Claudes parallelle `af2eca61` foreslår Builder-baseline-fixes, men er ikke current main eller acceptance-evidens og blev ikke rørt. Draft PR #256 indeholder kun gate-dokumentation.
+
+### Handover 2026-09-24 — fra Codex: Edge1 preservation / re-image gate START
+
+- **Mandat:** Find enhver `PRODUCT-REQUIRED` eller `UNKNOWN` capability, configuration, dependency eller manuel state på Edge1, som ikke er reproducerbar via Edge2 + current main + ISO Builder/first-boot/provisioning. Slut med en eksplicit PASS/BLOCKED-gate.
+- **Sikkerhedsgrænse:** Edge1 og Edge2 er strengt read-only. Ingen installation, package removal, service restart/stop/start, config-/permission-/cert-/updateændring eller re-image. Behov for mutation klassificeres `RUNTIME TEST REQUIRED`.
+- **Reconciliation:** Separat branch `codex/edge1-preservation-gate` fra `origin/main` `b901d486`. Claudes samtidige Builder-fixspor røres ikke. `GOLDEN_EDGE_VERIFICATION_2026-09-24_ZAI.md` findes som untracked fil i Claudes worktree og bruges kun som hypoteseinput.
+- **Security-scan-begrænsning:** Den tidligere tunnelændrings security-scan blev ikke gennemført, fordi værktøjet afviste sin midlertidige scanmappe som ikke-eksisterende/ikke-kanonisk. Ingen omgåelse forsøges i denne omgang; preservation-analysen er read-only og fortsætter uafhængigt.
+- **Hvad mangler / næste skridt:** Frossen fysisk inventering, GRC-/historikopslag, source/builder-trace, capability-matrix, Edge1-only delta, preservation-manifest og adversarial cross-check.
+
 ### Handover 2026-09-24 — fra Claude til Peter/næste session: macOS 27-opgradering + live-serving-mappe kørte forældet kode (billede-hæng var en tilbagerulning, ikke en ny fejl)
 
 - **macOS-opgradering (til info, Peters egen handling):** Peter har opgraderet både Headend-Mac Mini'en og sin MacBook til **macOS 27.0 (build 26A428)** — bekræftet via `sw_vers`/`uname -a` på Headend. Ikke udført af mig; ingen kode- eller konfigurationsændring foretaget som følge af opgraderingen i denne omgang (se dog WebAuthn-fundet nedenfor, som kan hænge sammen med den).
