@@ -24,6 +24,17 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### Edge1 preservation / re-image gate — `codex/edge1-preservation-gate`
+
+- **Mandat/session:** Codex, 2026-09-24, efter Peters eksplicitte preservation-gate. Edge1 og Edge2 er strengt read-only; ingen installation, serviceændring, konfigurationsændring, update eller re-image.
+- **Formål/scope:** Afgør om Edge1 indeholder `PRODUCT-REQUIRED` eller `UNKNOWN` capability/configuration/manual state, som ikke kan reproduceres via Edge2 + current main + ISO Builder/first-boot/provisioning. Lever kun dokumentation/evidens og en eksplicit PASS/BLOCKED-gate.
+- **Berørte domæner/kontrakter:** Fysiske Edge-inventarer, Golden Edge builder/injector/first-boot, per-device identity/config/secrets-disposition, capability-reconciliation og pre-reimage preservation manifest. Ingen runtime-state ændres.
+- **Base/head:** separat branch fra `origin/main` `b901d486733d69733bad2f21dfa42354573b6aba`; head fremgår efter første dokumentationscommit.
+- **Overlap/restdisposition:** Claudes samtidige lokale spor `claude/golden-edge-builder-gaps-20260924` ændrer Builder/Edge-kode og har en untracked z.ai-rapport. Dette gate-spor bruger rapporten som hypotese, rører ingen af Claudes filer og implementerer ingen fixes. Åbne #242 og historiske Edge-audits er evidens, ikke autoritet.
+- **Evidens:** OP-001 VERIFIED mod canonical SHA `9a1a4543`. Security-scan af det tidligere tunnelspor blev ikke gennemført, fordi scanmappen fejlede canonical-path-kontrollen; fejlen forsøges ikke omgået og blokerer ikke denne read-only preservation-analyse.
+- **Næste handling:** Frossen read-only inventering af begge Edges, reproducerbarheds-trace mod current main og falsifikation af hypotesen “alt vigtigt er allerede i Golden Edge”.
+- **Opfølgning:** Denne session; ingen merge eller re-image.
+
 ### #214 — `claude/globalconfig-parallel-load`
 
 - **Mandat/session:** Claude (oprindelig forfatter). Rebase udført af Kimi 2026-09-13 under Peters mandat.
