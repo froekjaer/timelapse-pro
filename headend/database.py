@@ -979,6 +979,7 @@ class WebAuthnCredential(Base):
     public_key    = Column(LargeBinary, nullable=False)
     sign_count    = Column(BigInteger, nullable=False, default=0)
     device_name   = Column(String(200))
+    transports    = Column(Text)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
