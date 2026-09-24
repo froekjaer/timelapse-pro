@@ -1,5 +1,6 @@
 from ai.ai_strategy import AIConfig, VALID_STRATEGIES
 from ai.apple_foundation_service import AppleFoundationVisionService
+from ai.model_results import ENGINE_APPLE_FOUNDATION, engine_from_legacy_payload
 
 
 def test_apple_strategy_is_declared():
@@ -36,3 +37,9 @@ def test_apple_response_parser_accepts_fenced_json():
         'prefix\n' + chr(96) * 3 + 'json\n{"scene":"test","tags":[]}\n' + chr(96) * 3
     )
     assert parsed["scene"] == "test"
+
+
+def test_apple_engine_provenance_is_separate_from_ollama():
+    assert engine_from_legacy_payload(
+        {"engine": "apple", "model": "apple-foundation-model-on-device"}
+    ) == ENGINE_APPLE_FOUNDATION
