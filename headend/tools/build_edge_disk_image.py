@@ -42,6 +42,15 @@ from typing import Callable
 
 import yaml
 
+try:
+    from headend.tools.golden_edge_baseline import verify_golden_edge_baseline
+except ImportError:
+    # Direct-script invocation (`python build_edge_disk_image.py ...`) puts
+    # this file's own directory on sys.path, not the repo root — the
+    # package-qualified import above only resolves when imported as
+    # headend.tools.build_edge_disk_image (e.g. from the API layer).
+    from golden_edge_baseline import verify_golden_edge_baseline
+
 
 # ── Target-definition loader ──────────────────────────────────────────────────
 
@@ -442,6 +451,19 @@ def build_edge_image(
 
     if not sbom_packages or not pip_packages:
         raise RuntimeError("SBOM er tom; Edge-image må ikke signeres uden komplet pakkeevidens")
+
+    # ── Golden Edge Baseline gate ────────────────────────────────────────────
+    # Checks the ACTUAL built image (real dpkg/pip output + the real rootfs
+    # tar), not source-code strings — a build that silently drops a required
+    # package/unit must fail here, not surface as a live-device incident
+    # months later. See headend/tools/golden_edge_baseline.py.
+    baseline_violations = verify_golden_edge_baseline(sbom_packages, pip_packages, rootfs_path)
+    if baseline_violations:
+        raise RuntimeError(
+            "Golden Edge Baseline ikke opfyldt — image signeres ikke:\n"
+            + "\n".join(f"  - {v}" for v in baseline_violations)
+        )
+    progress_cb("✅ Golden Edge Baseline opfyldt")
 
     # ── Step 4: Manifest + signatur ────────────────────────────────────────
     progress_cb(f"\n🔏 Step 4/4: Bygger og signerer manifest...")

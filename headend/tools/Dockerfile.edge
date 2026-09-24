@@ -27,12 +27,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1
 
 # ── Base packages ───────────────────────────────────────────────
+# gphoto2/libgphoto2 pinned (2026-09-24): jammy's repo carries 2.5.27-1, not
+# a newer version — pin so a fresh build can't silently drift onto whatever
+# happens to be latest at build time. TL-C87FF9587CA0 runs 2.5.28, but that
+# device also runs Ubuntu 24.04 (Noble), not this Dockerfile's 22.04 (Jammy)
+# base — it is not a reproducible reference for this pin (see HANDOVER_LOG).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv python3-dbus python3-gi \
         ca-certificates curl gnupg2 \
         openssh-server openssh-client \
         iproute2 iputils-ping dnsutils iw \
-        rsync autossh gphoto2 libgphoto2-6 libgphoto2-port12 \
+        network-manager chrony \
+        rsync autossh gphoto2=2.5.27-1 libgphoto2-6=2.5.27-1ubuntu0.1 libgphoto2-port12=2.5.27-1ubuntu0.1 \
         gpsd gpsd-clients bluez avahi-daemon libnss-mdns hostapd dnsmasq \
     && rm -rf /var/lib/apt/lists/*
 
@@ -119,11 +125,28 @@ COPY edge/scripts/timelapse-ble-technician.service /etc/systemd/system/timelapse
 COPY edge/scripts/timelapse-captive.service /etc/systemd/system/timelapse-captive.service
 COPY edge/scripts/timelapse-wifi-ap.service /etc/systemd/system/timelapse-wifi-ap.service
 COPY edge/scripts/timelapse-totp.service /etc/systemd/system/timelapse-totp.service
+# 2026-09-24: timesync + watchdog ran live on TL-C87FF9587CA0 only because
+# that device was set up manually, outside this pipeline — a fresh image
+# never got either. watchdog.service itself didn't exist anywhere in the
+# repo (only its .sh); recreated in edge/scripts/ alongside this fix.
+COPY edge/scripts/timelapse-timesync.service /etc/systemd/system/timelapse-timesync.service
+COPY edge/scripts/timelapse-timesync.timer /etc/systemd/system/timelapse-timesync.timer
+COPY edge/scripts/timelapse-watchdog.service /etc/systemd/system/timelapse-watchdog.service
 COPY edge/scripts/bootstrap_agent.py /opt/timelapse/edge/scripts/bootstrap_agent.py
-RUN chmod 0644 /etc/systemd/system/timelapse-*.service \
+RUN chmod 0644 /etc/systemd/system/timelapse-*.service /etc/systemd/system/timelapse-*.timer \
     && chmod 0755 /opt/timelapse/edge/scripts/*.sh \
     && rm -f /etc/systemd/system/timelapse-ssh-tunnel.service \
              /etc/systemd/system/multi-user.target.wants/timelapse-ssh-tunnel.service
+
+# ── GPIO relay permissions + self-restart sudo (2026-09-24) ────────────────
+# Both only existed on TL-C87FF9587CA0 via hand configuration outside this
+# pipeline — a fresh image had the relay's sysfs files stuck root:root
+# (relay could never be driven) and no way for the agent to restart itself
+# after an app update without a blanket sudo grant.
+COPY edge/config/99-timelapse-gpio.rules /etc/udev/rules.d/99-timelapse-gpio.rules
+COPY edge/config/timelapse-edge-sudoers /etc/sudoers.d/timelapse-edge
+RUN chmod 0644 /etc/udev/rules.d/99-timelapse-gpio.rules \
+    && chmod 0440 /etc/sudoers.d/timelapse-edge
 
 EXPOSE 22
 

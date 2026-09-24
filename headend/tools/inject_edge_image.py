@@ -496,7 +496,12 @@ for TAR_PATH in \
     "etc/systemd/system/timelapse-ble-technician.service" \
     "etc/systemd/system/timelapse-captive.service" \
     "etc/systemd/system/timelapse-wifi-ap.service" \
-    "etc/systemd/system/timelapse-totp.service"
+    "etc/systemd/system/timelapse-totp.service" \
+    "etc/systemd/system/timelapse-timesync.service" \
+    "etc/systemd/system/timelapse-timesync.timer" \
+    "etc/systemd/system/timelapse-watchdog.service" \
+    "etc/udev/rules.d/99-timelapse-gpio.rules" \
+    "etc/sudoers.d/timelapse-edge"
 do
     echo "[inject] Udpakker: $TAR_PATH"
     tar -xzf "$ROOTFS_TAR" -C /mnt/root \
@@ -655,7 +660,7 @@ fi
 
 # First boot must include the complete local technician surface. Previously
 # these signed unit files were built but not copied into flashable images.
-for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-ble-technician.service timelapse-captive.service timelapse-wifi-ap.service timelapse-totp.service; do
+for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-ble-technician.service timelapse-captive.service timelapse-wifi-ap.service timelapse-totp.service timelapse-timesync.service timelapse-watchdog.service; do
     if [ -f "/mnt/root/etc/systemd/system/$UNIT" ]; then
         ln -sf "/etc/systemd/system/$UNIT" "$WANTS_DIR/$UNIT"
         echo "[inject]   $UNIT aktiveret"
@@ -663,6 +668,19 @@ for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-ble-te
         echo "[inject]   ADVARSEL: $UNIT mangler i rootfs"
     fi
 done
+
+# timelapse-timesync.timer er en .timer, ikke en almindelig service —
+# aktiveres via timers.target.wants (matcher dens eget [Install]
+# WantedBy=timers.target), ikke multi-user.target.wants.
+TIMERS_WANTS_DIR=/mnt/root/etc/systemd/system/timers.target.wants
+mkdir -p "$TIMERS_WANTS_DIR"
+if [ -f "/mnt/root/etc/systemd/system/timelapse-timesync.timer" ]; then
+    ln -sf "/etc/systemd/system/timelapse-timesync.timer" \
+        "$TIMERS_WANTS_DIR/timelapse-timesync.timer"
+    echo "[inject]   timelapse-timesync.timer aktiveret"
+else
+    echo "[inject]   ADVARSEL: timelapse-timesync.timer mangler i rootfs"
+fi
 
 # ── WiFi konfiguration ───────────────────────────────────────────────────────
 # WIFI_METHOD, WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY sættes via env-vars fra Python

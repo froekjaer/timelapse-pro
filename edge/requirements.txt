@@ -13,6 +13,15 @@ opencv-python-headless>=4.8.0
 # Technician authentication (QR code login)
 qrcode>=7.4.0
 
+# Local technician TOTP portal (edge/scripts/totp-service.py) — a fresh image
+# crash-loops from first boot without these. Floors match headend/requirements.txt's
+# exact pins (both files install into the same CI environment; a higher floor
+# here — e.g. matching TL-C87FF9587CA0's live 0.141.1 — conflicts with
+# headend's ==0.136.1 and breaks `pip install -r` for both together).
+fastapi>=0.136.1
+uvicorn>=0.46.0
+pyotp>=2.9.0
+
 # Scheduling & timezone support
 # (zoneinfo is stdlib in Python 3.9+, backport for older)
 # tzdata>=2024.1  # uncomment if zoneinfo data not on system

@@ -77,6 +77,9 @@ expected_enabled_services:
   - timelapse-ble-technician.service
   - timelapse-captive.service
   - timelapse-wifi-ap.service
+  - timelapse-timesync.service
+  - timelapse-timesync.timer
+  - timelapse-watchdog.service
   - ssh.service
 
 expected_local_users:
