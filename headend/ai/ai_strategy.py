@@ -8,6 +8,7 @@ Strategier:
   local_only       → kun Ollama (vælg model)
   local_then_cloud → Ollama først, Gemini ved usikkerhed
   cloud_only       → direkte til Gemini Flash
+  apple_only       → Apple Foundation Model lokalt på macOS 27
 
 Konfiguration hentes i prioriteret rækkefølge:
   1. Site-specifik config  (ai_config WHERE site_id = ...)
@@ -39,7 +40,7 @@ GLOBAL_DEFAULTS = {
     "enabled":               True,
 }
 
-VALID_STRATEGIES = {"technical_only", "local_only", "local_then_cloud", "cloud_only"}
+VALID_STRATEGIES = {"technical_only", "local_only", "local_then_cloud", "cloud_only", "apple_only"}
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -87,7 +88,7 @@ COMMENT ON TABLE ai_config IS
 @dataclass
 class AIConfig:
     """Effektiv AI-konfiguration for én kunde/site."""
-    strategy:              str        # technical_only | local_only | local_then_cloud | cloud_only
+    strategy:              str        # technical_only | local_only | local_then_cloud | cloud_only | apple_only
     local_model:           str
     cloud_model:           str
     escalation_threshold:  float
