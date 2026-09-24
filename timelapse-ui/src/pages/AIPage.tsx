@@ -26,7 +26,7 @@ const api = (path: string, opts?: RequestInit) =>
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-type Strategy = 'technical_only' | 'local_only' | 'local_then_cloud' | 'cloud_only'
+type Strategy = 'technical_only' | 'local_only' | 'local_then_cloud' | 'cloud_only' | 'apple_only'
 
 interface AIConfig {
   id: number
@@ -123,6 +123,7 @@ const STRATEGY_META: Record<Strategy, { label: string; color: string; icon: Reac
   local_only:       { label: 'Lokal Ollama',       color: 'text-emerald-400 bg-emerald-950', icon: <Cpu className="w-3.5 h-3.5" />,   desc: 'Kun lokal model, ingen cloud' },
   local_then_cloud: { label: 'Lokal → Cloud',      color: 'text-amber-400 bg-amber-950',  icon: <Zap className="w-3.5 h-3.5" />,   desc: 'Lokal model, Gemini ved usikkerhed' },
   cloud_only:       { label: 'Kun Gemini',         color: 'text-sky-400 bg-sky-950',      icon: <Cloud className="w-3.5 h-3.5" />, desc: 'Alt til Gemini Flash' },
+  apple_only:       { label: 'Apple Intelligence', color: 'text-violet-300 bg-violet-950', icon: <Brain className="w-3.5 h-3.5" />, desc: 'Apple Foundation Model lokalt på Headend' },
 }
 
 function StrategyBadge({ strategy }: { strategy: Strategy }) {
