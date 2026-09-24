@@ -135,6 +135,7 @@ _ai_stats: dict = {
     "skipped_ollama_down": 0,
     "deferred_ollama_paused": 0,
     "skipped_no_cloud_credentials": 0,
+    "skipped_apple_unavailable": 0,
     "skipped_already_done": 0,
     "skipped_queue_full":  0,
     "recovered_after_restart": 0,
@@ -298,6 +299,7 @@ def _worker(get_db_fn, find_image_fn):
     Respekterer AIConfig.strategy:
       local_only       → kun Ollama
       cloud_only       → kun Gemini (Ollama-status er IRRELEVANT her)
+      apple_only       → kun Apple Foundation Models på Headend (macOS 27)
       local_then_cloud → Ollama først, eskalerer til Gemini ved usikkerhed
       technical_only   → springes over højere oppe i loopet
     """
@@ -407,7 +409,27 @@ def _worker(get_db_fn, find_image_fn):
             model_used = ai_config.local_model
             used_cloud = False
 
-            if ai_config.strategy == "cloud_only":
+            if ai_config.strategy == "apple_only":
+                from ai.apple_foundation_service import AppleFoundationVisionService
+
+                apple_svc = AppleFoundationVisionService()
+                availability = apple_svc.availability()
+                if not availability["available"]:
+                    log.warning(
+                        "AI: apple_only konfigureret men Apple Foundation Models er ikke tilgængelig: %s",
+                        availability.get("reason"),
+                    )
+                    _ai_stat_inc("skipped_apple_unavailable")
+                    continue
+                result = apple_svc.analyse(
+                    image_path=image_path,
+                    vocabulary_by_cat=vocabulary_by_cat,
+                    approved_tag_set=approved_tag_set,
+                    context_block=context_block,
+                )
+                model_used = result.model
+
+            elif ai_config.strategy == "cloud_only":
                 # Ollama skal IKKE køre eller være tilgængelig her — kun Gemini.
                 cloud_svc = _build_gemini_service(get_db_fn, ai_config.cloud_model)
                 if not cloud_svc:
@@ -473,7 +495,7 @@ def _worker(get_db_fn, find_image_fn):
             payload["model"] = model_used
             # 2026-07-04 (Claude, proveniens-UI task #28): eksplicit lokal/cloud-flag,
             # så UI'en kan vise en tydelig kilde-label uden at gætte ud fra modelnavnet.
-            payload["engine"] = "cloud" if used_cloud else "local"
+            payload["engine"] = "apple" if ai_config.strategy == "apple_only" else ("cloud" if used_cloud else "local")
             tags = result.approved_tags + result.new_tags
 
             db_gen = get_db_fn()
