@@ -32,8 +32,9 @@ tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 - **Base/head:** separat branch fra `origin/main` `b901d486733d69733bad2f21dfa42354573b6aba`; head fremgår efter første dokumentationscommit.
 - **Overlap/restdisposition:** Claudes samtidige lokale spor `claude/golden-edge-builder-gaps-20260924` ændrer Builder/Edge-kode og har en untracked z.ai-rapport. Dette gate-spor bruger rapporten som hypotese, rører ingen af Claudes filer og implementerer ingen fixes. Åbne #242 og historiske Edge-audits er evidens, ikke autoritet.
 - **Evidens:** OP-001 VERIFIED mod canonical SHA `9a1a4543`. Security-scan af det tidligere tunnelspor blev ikke gennemført, fordi scanmappen fejlede canonical-path-kontrollen; fejlen forsøges ikke omgået og blokerer ikke denne read-only preservation-analyse.
-- **Næste handling:** Frossen read-only inventering af begge Edges, reproducerbarheds-trace mod current main og falsifikation af hypotesen “alt vigtigt er allerede i Golden Edge”.
-- **Opfølgning:** Denne session; ingen merge eller re-image.
+- **Resultat:** `BLOCKED`; fuld evidens og preservation-manifest i `Dokumentation/EDGE1_PRESERVATION_REIMAGE_GATE_2026-09-24_CODEX.md`. Counterexamples: timesync installeres ikke af current Builder, watchdog-unit mangler i current main, NetworkManager/chrony er ikke deklareret, og clean-image/recovery-acceptance mangler.
+- **Næste handling:** Reconcile/merge og review Claudes Golden Edge-fixspor, gennemfør clean-image capability acceptance + identity recovery rehearsal, bevis Edge1-backlog tom/bevaret, og genkør gaten. Edge1/Edge2 forbliver read-only; ingen re-image.
+- **Opfølgning:** Draft PR #256; ingen merge eller re-image.
 
 ### #214 — `claude/globalconfig-parallel-load`
 

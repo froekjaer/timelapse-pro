@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-09-24 — fra Codex: Edge1 preservation / re-image gate RESULT — BLOCKED
+
+- **Resultat:** `Dokumentation/EDGE1_PRESERVATION_REIMAGE_GATE_2026-09-24_CODEX.md`. Edge1 må ikke re-images endnu. Current main `b901d486` kan ikke deterministisk genskabe den produktkrævede timesync-/watchdog-state, deklarerer ikke NetworkManager/chrony i Golden Edge-baselinen, og der foreligger ingen accepteret clean-image runtime-/identity-recovery-receipt. AP fallback er samtidig kendt P0-fejlet på begge fysiske edges.
+- **Falsifikation/counterexamples:** Edge1 har aktiv TimeLapse-watchdog uden unit i current main; timesync service/timer findes i source men installeres ikke af current Builder; fysisk package/state afhænger af vendor-image/manual historik. Et Edge1-only `camera/technician_session.py` er urefereret runtime-rest, men produktideen er bevaret i Git commit `6c5e3cac` og skal reconcileres før branch-disposition.
+- **Sikkerhed/disposition:** Edge1's iperf3, svage SSH-policy, legacy updater, desktop/CUPS/Snap/Samba-rester og historiske sudoers/TLS-paths skal ikke migreres. Unik identity, TLS, TOTP, Wi-Fi og assignment/config skal re-provisioneres; private nøgler/secrets blev ikke læst eller kopieret.
+- **Read-only bekræftelse:** Kun SSH-/system-/filmetadata, public state og read-only GRC/source/historik blev læst. Ingen ændringer på Edge1/Edge2, ingen servicehandling og ingen re-image. Security-scannen blev ikke gennemført pga. den tidligere canonical-path-fejl; ingen omgåelse eller nyt forsøg.
+- **Reconciliation:** Claudes parallelle `af2eca61` foreslår Builder-baseline-fixes, men er ikke current main eller acceptance-evidens og blev ikke rørt. Draft PR #256 indeholder kun gate-dokumentation.
+
 ### Handover 2026-09-24 — fra Codex: Edge1 preservation / re-image gate START
 
 - **Mandat:** Find enhver `PRODUCT-REQUIRED` eller `UNKNOWN` capability, configuration, dependency eller manuel state på Edge1, som ikke er reproducerbar via Edge2 + current main + ISO Builder/first-boot/provisioning. Slut med en eksplicit PASS/BLOCKED-gate.
