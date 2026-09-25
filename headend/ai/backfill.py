@@ -36,6 +36,8 @@ from repositories    import TagRepository, AnalysisRepository
 from ai_strategy     import AIConfigManager, AIConfig, VALID_STRATEGIES, GLOBAL_DEFAULTS as GD
 from settings_helper import get_setting
 from model_results import engine_from_legacy_payload, upsert_capture_model_result
+from ai.capability_router import CapabilityRouter
+from ai.provider_contract import ProviderUnavailable
 
 
 def find_image(filename):
@@ -135,35 +137,72 @@ def _limited_vocab(vocab_by_cat, limit):
     return vocab
 
 
-def run_analysis(img, config, vocab_by_cat, approved_set, local_svc, cloud_svc, context_block=""):
+def _router_get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def run_analysis(img, config, vocab_by_cat, approved_set, router, context_block=""):
     limit = config.tag_vocabulary_limit or 80
-    vocab_local = _limited_vocab(vocab_by_cat, limit)   # trimmet til den lille lokale model
-    vocab_cloud = vocab_by_cat                          # HELE vokabularet til Gemini
+    vocab_local = _limited_vocab(vocab_by_cat, limit)
+    plan = router.image_plan(config.strategy)
 
-    if config.strategy == "cloud_only":
-        return cloud_svc.analyse(img, vocab_cloud, approved_set, context_block=context_block), config.cloud_model
+    if not plan.enabled:
+        from ollama_service import ImageAnalysisResult
+        return ImageAnalysisResult(
+            scene_dk="Teknisk QA kun", approved_tags=[], new_tags=[],
+            change_detected=False, change_summary=None, change_tags=[],
+            quality_flag="ukendt", quality_ok=True, has_gdpr_data=False,
+            gdpr_detections=[], model="technical_only", duration_ms=0, raw_response={},
+        ), "technical_only", "none"
 
-    if config.strategy == "local_only":
-        return local_svc.analyse(img, vocab_local, approved_set, context_block=context_block), config.local_model
+    if router.image_runtime_deferred(plan):
+        raise ProviderUnavailable(plan.primary or "none", "lokal runtime er midlertidigt pauset")
 
-    if config.strategy == "local_then_cloud":
-        result = local_svc.analyse(img, vocab_local, approved_set, context_block=context_block)
-        esc, reasons = config.should_escalate(
-            confidence=0.75, new_tags=result.new_tags, tags=result.approved_tags,
-            change_detected=result.change_detected, quality_ok=result.quality_ok,
+    routed = router.analyse_image_plan(
+        plan=plan,
+        phase="primary",
+        image_path=img,
+        vocabulary_full=vocab_by_cat,
+        vocabulary_local=vocab_local,
+        approved_tag_set=approved_set,
+        context_block=context_block,
+        local_model=config.local_model,
+        cloud_model=config.cloud_model,
+    )
+    result = routed.result
+    provider_used = routed.provider
+
+    if plan.escalation:
+        escalate, _reasons = config.should_escalate(
+            confidence=0.75,
+            new_tags=result.new_tags,
+            tags=result.approved_tags,
+            change_detected=result.change_detected,
+            quality_ok=result.quality_ok,
         )
-        if esc and cloud_svc:
-            r2 = cloud_svc.analyse(img, vocab_cloud, approved_set, context_block=context_block)
-            return r2, f"{config.cloud_model}(esc)"
-        return result, config.local_model
+        if escalate:
+            try:
+                routed = router.analyse_image_plan(
+                    plan=plan,
+                    phase="escalation",
+                    image_path=img,
+                    vocabulary_full=vocab_by_cat,
+                    vocabulary_local=vocab_local,
+                    approved_tag_set=approved_set,
+                    context_block=context_block,
+                    local_model=config.local_model,
+                    cloud_model=config.cloud_model,
+                )
+                result = routed.result
+                provider_used = routed.provider
+            except ProviderUnavailable:
+                pass
 
-    from ollama_service import ImageAnalysisResult
-    return ImageAnalysisResult(
-        scene_dk="Teknisk QA kun", approved_tags=[], new_tags=[],
-        change_detected=False, change_summary=None, change_tags=[],
-        quality_flag="ukendt", quality_ok=True, has_gdpr_data=False,
-        gdpr_detections=[], model="technical_only", duration_ms=0, raw_response={},
-    ), "technical_only"
+    return result, result.model, provider_used
 
 
 def main():
@@ -201,21 +240,7 @@ def main():
     except Exception:
         print("  ❌ ai_analyses mangler — kør fix_schema.sh"); sys.exit(1)
 
-    # Hent API-nøgle fra DB hvis ikke sat i env
-    gemini_key = os.getenv("GEMINI_API_KEY", "") or get_setting(db, "gemini_api_key")
-    gemini_sa_path = (
-        os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-        or get_setting(db, "gemini_service_account_path")
-    )
-    gemini_project_id = (
-        os.getenv("GOOGLE_CLOUD_PROJECT", "")
-        or get_setting(db, "gemini_project_id")
-    )
-    gemini_location = (
-        os.getenv("GOOGLE_CLOUD_LOCATION", "")
-        or get_setting(db, "gemini_location", "europe-west1")
-    )
-    ollama_url = os.getenv("OLLAMA_URL", "") or get_setting(db, "ollama_url", OLLAMA_URL)
+    capability_router = CapabilityRouter(_router_get_db)
 
     captures = get_captures(db, args)
     if not captures:
@@ -238,42 +263,10 @@ def main():
         if len(captures) > 20: print(f"  ... og {len(captures)-20} mere")
         db.close(); return
 
-    # Init services
-    local_svc = cloud_svc = None
     strategy_hint = args.strategy or ""
-
-    if strategy_hint not in ("cloud_only",):
-        try:
-            from ollama_service import OllamaVisionService
-            model = args.model or get_setting(db, "local_model", GD["local_model"])
-            svc = OllamaVisionService(base_url=ollama_url, vision_model=model)
-            if svc.health_check():
-                local_svc = svc
-                print(f"  ✅ Lokal model: {model}")
-            else:
-                print(f"  ⚠️  Lokal model ikke klar: {model}")
-        except Exception as e:
-            print(f"  ⚠️  Lokal model: {e}")
-
-    if strategy_hint not in ("local_only", "technical_only"):
-        if gemini_sa_path or gemini_key:
-            try:
-                from gemini_service import GeminiVisionService
-                cloud_model = args.cloud_model or get_setting(db, "gemini_model", "gemini-2.5-flash")
-                cloud_svc = GeminiVisionService(
-                    service_account_path=gemini_sa_path,
-                    project_id=gemini_project_id,
-                    location=gemini_location,
-                    api_key=gemini_key,
-                    model=cloud_model,
-                )
-                provider = f"Vertex AI ({gemini_location})" if gemini_sa_path else "AI Studio"
-                print(f"  Gemini provider: {provider}")
-                print(f"  ✅ Gemini: {cloud_model}")
-            except Exception as e:
-                print(f"  ⚠️  Gemini: {e}")
-        else:
-            print("  ⚠️  Ingen Gemini API-nøgle — gem den i UI under Indstillinger → AI")
+    print("  ✅ AI provider-layer: CapabilityRouter")
+    if strategy_hint:
+        print(f"  Provider-plan: {capability_router.image_plan(strategy_hint)}")
     print()
 
     tag_repo      = TagRepository(db)
@@ -346,7 +339,14 @@ def main():
             pass
 
         try:
-            result, model_used = run_analysis(img, cur_cfg, vocab_by_cat, approved_set, local_svc, cloud_svc, context_block=context_block)
+            result, model_used, provider_used = run_analysis(
+                img,
+                cur_cfg,
+                vocab_by_cat,
+                approved_set,
+                capability_router,
+                context_block=context_block,
+            )
             aid = analysis_repo.save_analysis(
                 capture_id=cap["id"], location_id=None, model_vision=model_used,
                 scene_dk=result.scene_dk, change_detected=result.change_detected,
@@ -408,7 +408,7 @@ def main():
                 "ai_analyzed_at": datetime.now(timezone.utc),
             })
             db.commit()
-            is_cloud = any(x in model_used for x in ["gemini","gpt","claude"])
+            is_cloud = provider_used == "gemini"
             stats["sky" if is_cloud else "lokal"] += 1
             flags = ("☁️ " if is_cloud else "") + (f"+{len(result.new_tags)}ny " if result.new_tags else "")
             all_tags = list(dict.fromkeys(tags))
@@ -417,7 +417,7 @@ def main():
             results_out.append({
                 "id": cap["id"], "filename": name,
                 "captured_at": str(cap.get("captured_at")),
-                "site": site, "model": model_used,
+                "site": site, "model": model_used, "provider": provider_used,
                 "scene_dk": result.scene_dk, "tags": all_tags,
             })
             stats["ok"] += 1; stats["ms"] += result.duration_ms
