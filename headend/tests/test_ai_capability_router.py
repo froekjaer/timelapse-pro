@@ -9,6 +9,7 @@ from ai.capability_router import (
     DEFAULT_FUNCTION_PROVIDER_ORDER,
 )
 from ai.provider_adapters import GeminiProvider
+from ai.provider_config import resolve_gemini_location
 from ai.provider_contract import (
     AICapability,
     NoEligibleProvider,
@@ -205,36 +206,66 @@ def test_capability_smoke_tool_uses_authoritative_router():
     assert "AppleFoundationVisionService(" not in smoke
 
 
-def test_gemini_availability_probe_uses_runtime_health_check():
+def test_gemini_availability_probe_performs_remote_generation():
+    class Response:
+        text = "TIMELAPSE_OK"
+
     class HealthyService:
         model = "gemini-test"
 
-        def health_check(self):
-            return True
+        def __init__(self):
+            self.called = False
 
-    class UnhealthyService:
-        model = "gemini-test"
+        def _generate_content_with_retry(self, contents, config):
+            self.called = True
+            assert contents == ["Reply exactly: TIMELAPSE_OK"]
+            return Response()
 
-        def health_check(self):
-            return False
+    service = HealthyService()
+    status = GeminiProvider(service).availability(AICapability.STRUCTURED)
 
-    healthy = GeminiProvider(HealthyService()).availability(AICapability.STRUCTURED)
-    unhealthy = GeminiProvider(UnhealthyService()).availability(AICapability.STRUCTURED)
-
-    assert healthy["available"] is True
-    assert healthy["reason"] is None
-    assert unhealthy["available"] is False
-    assert unhealthy["reason"] == "health_check_failed"
+    assert service.called is True
+    assert status["available"] is True
+    assert status["reason"] is None
 
 
-def test_gemini_availability_probe_fails_closed_on_health_exception():
+def test_gemini_availability_probe_fails_closed_with_safe_reason():
     class BrokenService:
         model = "gemini-test"
 
-        def health_check(self):
-            raise RuntimeError("network down")
+        def _generate_content_with_retry(self, contents, config):
+            raise RuntimeError("404 publisher model not found in location europe-west1")
 
     status = GeminiProvider(BrokenService()).availability(AICapability.TEXT)
 
     assert status["available"] is False
-    assert status["reason"] == "RuntimeError"
+    assert status["reason"] == "model_or_endpoint_not_found"
+
+
+def test_gemini_38_region_resolution_preserves_residency_family():
+    assert resolve_gemini_location("gemini-3.8-flash", "europe-west1") == "eu"
+    assert resolve_gemini_location("gemini-3.8-flash", "europe-north1") == "eu"
+    assert resolve_gemini_location("gemini-3.8-flash", "us-central1") == "us"
+    assert resolve_gemini_location("gemini-3.8-flash", "eu") == "eu"
+
+
+def test_gemini_region_resolution_does_not_rewrite_legacy_or_unknown_regions():
+    assert resolve_gemini_location("gemini-2.5-flash", "europe-west1") == "europe-west1"
+    assert resolve_gemini_location("gemini-3.8-flash", "asia-northeast1") == "asia-northeast1"
+
+
+def test_gemini_runtime_settings_separate_text_region_from_vision_region():
+    settings = (HEADEND_DIR / "ai" / "settings_api.py").read_text(encoding="utf-8")
+
+    assert '"gemini_location"' in settings
+    assert '"gemini_text_location"' in settings
+    assert '"default": "eu"' in settings
+    assert 'payload.get("cloud_model", "gemini-3.8-flash")' in settings
+
+
+def test_capability_smoke_reports_safe_provider_attempts():
+    smoke = (HEADEND_DIR / "tools" / "smoke_ai_capabilities.py").read_text(encoding="utf-8")
+    router = (HEADEND_DIR / "ai" / "capability_router.py").read_text(encoding="utf-8")
+
+    assert 'row["attempts"] = exc.attempts' in smoke
+    assert 'attempt["reason"] = exc.reason' in router
