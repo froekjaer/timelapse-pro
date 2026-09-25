@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-09-25 — fra ChatGPT/Peter til næste session: benchmark v3 fysisk PASS med live vocabulary + CI grøn
+
+- **Fysisk acceptance udført af Peter:** Isoleret worktree blev hard-reset til PR #258 head `90f264843d39f5d9a760d57563e42a413347544e` og TRAVBYEN-001 blev kørt sekventielt med `--vocabulary-source database`, Apple + Ollama, reviewed annotations og benchmark v3.
+- **Vocabulary gate PASS:** Rapporten viser `requested_source=database`, `effective_source=database`, `fallback_reason=null`, **37 kategorier / 664 approved canonical tags**. Benchmarken brugte dermed Headends aktuelle approved vocabulary og ikke tom/predefined fallback. Read-only/no-write-kontrakten er fortsat gældende.
+- **Reviewed privacy evidence:** Apple: person presence korrekt = 1/1; recognizable face korrekt = 1/1. Ollama/MiniCPM-V 8B: person presence korrekt = 0/1 (missede de fjerne personer); recognizable face korrekt = 1/1. Det er fortsat TRAVBYEN-001 case-evidence, ikke en generel provider-ranking.
+- **Latency observation:** Apple wall 14.622 s; Ollama wall 35.476 s. Ollama raw timing viser load ~21.703 s, prompt eval ~8.415 s, eval ~5.044 s, så dette er endnu en cold-start-lignende måling. Apples tidligere tom-vocabulary run var hurtigere; én måling er utilstrækkelig til at attribuere forskellen til vocabulary alene.
+- **Output quality observation:** Apple returnerede canonical approved tags bl.a. `construction_site`, `residential_area`, `grass`, `road` samt to nye tags. Ollama returnerede `apartment_building` som approved tag og svarede fortsat med engelsk scene-tekst. Scene-/objektkorrekthed er ikke scoret uden menneskereviewet ground truth.
+- **Privacy normalization:** Apple raw provider payload indeholder stadig intern modstrid (`gdpr_has_data=false` samtidig med `gdpr.has_data=true` + `person_counted`). Canonical TimeLapse-adapteren normaliserer korrekt til `has_gdpr_data=true`. Raw modstrid er provider/schema-quality evidence og ikke længere en canonical privacy-fejl.
+- **CI gate PASS:** GitHub Actions `TimeLapse Pro CI` run **36113897612** på head `90f26484...` er completed/success. Den tidligere testfejl (manglende module-level `Path` import) er dermed verificeret lukket.
+- **PR-status:** PR #258 er fortsat **draft/open**, GitHub rapporterer `mergeable=true`, base `main@b901d486...`. Ingen mergebeslutning er taget.
+- **Næste gate:** Udvid corpus til 10–20 repræsentative Travbyen captures med menneskereviewede annotations før prompt-tuning/provider-default. Brug live database vocabulary. Gemini tilføjes via shared autoritativ Headend config-path; ingen secrets kopieres til repo eller benchmark-output.
+- **Risici / pas på:** 37/664 dokumenterer vocabulary-context, ikke model-accuracy. Latency fra én cold/warm state må ikke bruges som generel performance-ranking. Tomme bounding boxes betyder, at person-presence kan bruges til tagging/privacy routing, men ikke til automatisk lokaliseret sløring uden separat detector/localisation path.
+
 ### Handover 2026-09-25 — fra ChatGPT til Peter/næste session: benchmark v3 autoritativ kontekst + governance-sync
 
 - **Hvad er gjort:** Læst `Dokumentation/00_START_HER.md` (repoets faktiske filnavn) og `Dokumentation/HANDOVER_LOG.md` før fortsat arbejde. PR #258 er videreført uden merge. Benchmark er hævet til v3 med read-only autoritativ vocabulary-kontekst: `--vocabulary-source auto|database|predefined|empty`. `auto` forsøger approved `ai_tag_vocabulary` read-only og falder eksplicit tilbage til repoets `PREDEFINED_TAGS`; `database` fail-closer hvis live vocabulary ikke kan læses. Rapporten gemmer kun source/count/failure-type — ikke DB-/secret-detaljer.
