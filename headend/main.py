@@ -16325,7 +16325,7 @@ Vurder CMDB, SIEM, updates, key management, resilience og SAST-signaler.
 
 Returner KUN JSON:
 {{
-  "mode": "ollama",
+  "mode": "ai_provider",
   "summary": "kort dansk status",
   "risk_level": "low|medium|high|critical",
   "recommendations": [
@@ -17292,7 +17292,7 @@ Svar praktisk på dansk for en admin.
 
 Returner KUN JSON:
 {{
-  "mode": "ollama",
+  "mode": "ai_provider",
   "answer": "kort, konkret svar",
   "risk_level": "low|medium|high|critical",
   "recommendations": [
