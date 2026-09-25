@@ -22,7 +22,7 @@ class GeminiConfig:
         return bool(self.api_key or self.service_account_path)
 
 
-def read_gemini_config(db) -> GeminiConfig:
+def read_gemini_config(db, *, location_override: str | None = None) -> GeminiConfig:
     from ai.settings_helper import get_setting
 
     return GeminiConfig(
@@ -36,17 +36,18 @@ def read_gemini_config(db) -> GeminiConfig:
             or get_setting(db, "gemini_project_id")
         ),
         location=(
-            os.getenv("GOOGLE_CLOUD_LOCATION", "")
+            str(location_override or "").strip()
+            or os.getenv("GOOGLE_CLOUD_LOCATION", "")
             or get_setting(db, "gemini_location", "europe-west1")
         ),
     )
 
 
-def build_gemini_vision_service_from_db(db, cloud_model: str):
+def build_gemini_vision_service_from_db(db, cloud_model: str, *, location_override: str | None = None):
     """Build GeminiVisionService from one existing Headend DB session."""
     from ai.gemini_service import GeminiVisionService
 
-    config = read_gemini_config(db)
+    config = read_gemini_config(db, location_override=location_override)
     if not config.configured:
         return None
     return GeminiVisionService(
