@@ -10,6 +10,7 @@ queue, persistence, vocabulary, alarm and sidecar paths stay authoritative.
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import logging
 import time
 from dataclasses import asdict
@@ -205,7 +206,8 @@ class AppleFoundationVisionService:
         # SDK 0.2.1 returns the generated dataclass directly in the physical
         # Headend POC. Keep a content fallback for SDK compatibility.
         generated = getattr(typed, "content", typed)
-        parsed = asdict(generated)
+        provider_response = asdict(generated)
+        parsed = deepcopy(provider_response)
         promoted_unknown_tags = _promote_unknown_tags(parsed, approved_tag_set)
 
         # Adapt the flat SDK observation to the existing canonical result builder.
@@ -245,7 +247,8 @@ class AppleFoundationVisionService:
             raw_response={
                 "provider": "apple_foundation_models",
                 "runtime": "apple_fm_sdk",
-                "response": parsed,
+                "response": provider_response,
+                "adapter_response": parsed,
                 "adapter_promoted_unknown_tags": promoted_unknown_tags,
             },
         )
