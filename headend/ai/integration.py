@@ -252,44 +252,9 @@ def _analysis_payload(result) -> dict:
 
 
 def _build_gemini_service(get_db_fn, cloud_model: str):
-    """Byg GeminiVisionService fra system_settings — samme nøgler som backfill.py.
-    Returnerer None hvis ingen credentials er konfigureret (ikke en fejl —
-    bare ikke sat op endnu).
-    """
-    from ai.gemini_service import GeminiVisionService
-    from ai.settings_helper import get_setting
-    import os as _os_local
-
-    db_gen = get_db_fn()
-    db = next(db_gen)
-    try:
-        gemini_key = _os_local.getenv("GEMINI_API_KEY", "") or get_setting(db, "gemini_api_key")
-        gemini_sa_path = (
-            _os_local.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-            or get_setting(db, "gemini_service_account_path")
-        )
-        gemini_project_id = (
-            _os_local.getenv("GOOGLE_CLOUD_PROJECT", "")
-            or get_setting(db, "gemini_project_id")
-        )
-        gemini_location = (
-            _os_local.getenv("GOOGLE_CLOUD_LOCATION", "")
-            or get_setting(db, "gemini_location", "europe-west1")
-        )
-    finally:
-        db_gen.close()
-
-    if not gemini_key and not gemini_sa_path:
-        return None  # Ikke konfigureret — ikke en fejl
-
-    return GeminiVisionService(
-        service_account_path=gemini_sa_path,
-        project_id=gemini_project_id,
-        location=gemini_location,
-        api_key=gemini_key,
-        model=cloud_model,
-    )
-
+    """Compatibility wrapper around the shared authoritative provider config."""
+    from ai.provider_config import build_gemini_vision_service
+    return build_gemini_vision_service(get_db_fn, cloud_model)
 
 def _worker(get_db_fn, find_image_fn):
     """
