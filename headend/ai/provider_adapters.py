@@ -291,6 +291,39 @@ class GeminiProvider(_BaseProvider):
         kwargs.pop("model", None)
         return self.service.analyse(**kwargs)
 
+    def batch_info(self) -> dict[str, Any]:
+        return {
+            "provider": self.name,
+            "model": self.model,
+            "is_vertex": bool(getattr(self.service, "is_vertex", False)),
+            "location": getattr(self.service, "location", None),
+        }
+
+    def submit_image_batch(
+        self,
+        *,
+        items,
+        vocabulary_by_cat,
+        display_name: str,
+        gcs_bucket: str,
+        bucket_region: str = "",
+        context_by_key=None,
+    ):
+        self._require(AICapability.VISION)
+        if getattr(self.service, "is_vertex", False):
+            from ai.gemini_service import validate_batch_bucket_region
+            validate_batch_bucket_region(
+                str(getattr(self.service, "location", "") or ""),
+                str(bucket_region or ""),
+            )
+        return self.service.submit_batch_job(
+            items=items,
+            vocabulary_by_cat=vocabulary_by_cat,
+            display_name=display_name,
+            gcs_bucket=gcs_bucket,
+            context_by_key=context_by_key or {},
+        )
+
     def _generate(self, prompt: str, *, structured: bool) -> ProviderOutput:
         capability = AICapability.STRUCTURED if structured else AICapability.TEXT
         self._require(capability)
