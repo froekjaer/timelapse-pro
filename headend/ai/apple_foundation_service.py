@@ -104,33 +104,71 @@ def _run(coro):
         return pool.submit(lambda: asyncio.run(coro)).result()
 
 
-def _promote_unknown_tags(parsed: dict, approved_tag_set: set[str]) -> list[str]:
-    """Preserve Apple observations that violate the guided known/new tag split.
+def _reclassify_apple_tags(parsed: dict, approved_tag_set: set[str]) -> dict[str, list[str]]:
+    """Reclassify Apple's guided tag buckets against TimeLapse authority.
 
-    Foundation Models may place an unknown/open-vocabulary observation in
-    `tags` even though the schema asks for unknown values in `new_tags`.
-    The shared Ollama normalizer intentionally moderates unknown values from
-    `tags`, which would otherwise drop those Apple observations entirely.
-    Reclassify them as unapproved new-tag candidates so they remain available
-    for TimeLapse review without becoming approved truth.
+    Foundation Models may put unknown observations in `tags` and already-approved
+    canonical tags in `new_tags`. The provider bucket is therefore treated as a
+    hint only. TimeLapse's approved vocabulary decides the canonical bucket.
+
+    Unknown observations remain unapproved review candidates. Existing Danish
+    translations stay aligned with the surviving unknown `new_tags`.
     """
     normalizer = object.__new__(OllamaVisionService)
-    known: list[str] = []
-    unknown: list[str] = []
+
+    approved: list[str] = []
+    unknown_from_tags: list[str] = []
+    recovered_approved_from_new: list[str] = []
+    unknown_new_pairs: list[tuple[str, str]] = []
 
     for value in parsed.get("tags", []) or []:
         tag = normalizer._normalize_tag(value)
         if not tag:
             continue
         if tag in approved_tag_set:
-            known.append(tag)
+            approved.append(tag)
         else:
-            unknown.append(tag)
+            unknown_from_tags.append(tag)
 
-    parsed["tags"] = list(dict.fromkeys(known))
-    existing_new = list(parsed.get("new_tags", []) or [])
-    parsed["new_tags"] = list(dict.fromkeys(existing_new + unknown))
-    return list(dict.fromkeys(unknown))
+    raw_new = list(parsed.get("new_tags", []) or [])
+    raw_new_da = [str(value or "").strip() for value in (parsed.get("new_tags_da", []) or [])]
+    for index, value in enumerate(raw_new):
+        tag = normalizer._normalize_tag(value)
+        if not tag:
+            continue
+        if tag in approved_tag_set:
+            approved.append(tag)
+            recovered_approved_from_new.append(tag)
+            continue
+        da = raw_new_da[index] if index < len(raw_new_da) else ""
+        unknown_new_pairs.append((tag, da))
+
+    parsed["tags"] = list(dict.fromkeys(approved))
+
+    new_tags: list[str] = []
+    new_tags_da: list[str] = []
+    seen_new: set[str] = set()
+    for tag, da in unknown_new_pairs:
+        if tag in seen_new:
+            continue
+        seen_new.add(tag)
+        new_tags.append(tag)
+        new_tags_da.append(da)
+
+    for tag in unknown_from_tags:
+        if tag in seen_new:
+            continue
+        seen_new.add(tag)
+        new_tags.append(tag)
+        new_tags_da.append("")
+
+    parsed["new_tags"] = new_tags
+    parsed["new_tags_da"] = new_tags_da
+
+    return {
+        "promoted_unknown_tags": list(dict.fromkeys(unknown_from_tags)),
+        "recovered_approved_tags": list(dict.fromkeys(recovered_approved_from_new)),
+    }
 
 
 class AppleFoundationVisionService:
@@ -208,7 +246,7 @@ class AppleFoundationVisionService:
         generated = getattr(typed, "content", typed)
         provider_response = asdict(generated)
         parsed = deepcopy(provider_response)
-        promoted_unknown_tags = _promote_unknown_tags(parsed, approved_tag_set)
+        tag_reclassification = _reclassify_apple_tags(parsed, approved_tag_set)
 
         # Adapt the flat SDK observation to the existing canonical result builder.
         # Canonical vocabulary/alarm semantics remain TimeLapse-owned.
@@ -249,7 +287,8 @@ class AppleFoundationVisionService:
                 "runtime": "apple_fm_sdk",
                 "response": provider_response,
                 "adapter_response": parsed,
-                "adapter_promoted_unknown_tags": promoted_unknown_tags,
+                "adapter_promoted_unknown_tags": tag_reclassification["promoted_unknown_tags"],
+                "adapter_recovered_approved_tags": tag_reclassification["recovered_approved_tags"],
             },
         )
         return result
