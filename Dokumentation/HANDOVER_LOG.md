@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-25 09:45 — fra ChatGPT til Peter/næste session: Apple/Ollama/Gemini parallel benchmark testability
+
+- **Hvad er gjort:** fysisk LAB-run på separat worktree afdækkede tre konkrete pre-inference fejl. PR #258 er rettet så Apple SDK får `Path` direkte i `ImageAttachment`; Ollama runtime-control importfejl falder tilbage til normal configured model i isoleret LAB i stedet for `UnboundLocalError`; benchmark-scriptet bootstrapper selv `headend/` på `sys.path`, så `PYTHONPATH` workaround ikke længere skal være nødvendig. GDPR Apple type er tidligere rettet til canonical `person_counted`. Regressionstests tilføjet for Apple attachment og benchmark import-path.
+- **Fysisk evidens før rettelser:** Python 3.14.7 + apple_fm_sdk import OK. Parallel runner nåede provider-init og viste: Apple `AttributeError: 'str' object has no attribute 'is_file'`; Ollama `UnboundLocalError ... OllamaRuntimePaused`; Gemini `ImportError: Koer: pip install google-genai`. Det er testability/dependency-evidence, ikke model-quality evidence.
+- **Hvad mangler / næste skridt:** Peter skal opdatere det isolerede `timelapse-pro-apple-test` worktree til seneste PR #258 head, installere/benytte deklarerede LAB dependencies (Gemini kræver `google-genai`) og genkøre samme Travbyen-capture. Derefter vurderes provider-resultater, latency og eventuelle runtime-fejl. Ingen merge før fysisk acceptance og CI.
+- **Kommando:** `python tools/compare_ai_providers.py <Travbyen.jpg> --providers apple ollama gemini --output /tmp/travbyen-ai-benchmark.json` fra `headend` i test-worktree.
+- **Filer rørt:** `headend/ai/apple_foundation_service.py`, `headend/ai/ollama_service.py`, `headend/tools/compare_ai_providers.py`, `headend/tests/test_apple_foundation_provider.py`, `Dokumentation/HANDOVER_LOG.md`.
+- **Risici / pas på:** benchmark er LAB og skriver ikke canonical captures/vocabulary/alarmer. Provider-output er observation, ikke ground truth. Gemini model/location migration og generisk provider-router er fortsat åbne før production merge.
+
 ### Handover 2026-09-24 — fra Claude til Peter/næste session: macOS 27-opgradering + live-serving-mappe kørte forældet kode (billede-hæng var en tilbagerulning, ikke en ny fejl)
 
 - **macOS-opgradering (til info, Peters egen handling):** Peter har opgraderet både Headend-Mac Mini'en og sin MacBook til **macOS 27.0 (build 26A428)** — bekræftet via `sw_vers`/`uname -a` på Headend. Ikke udført af mig; ingen kode- eller konfigurationsændring foretaget som følge af opgraderingen i denne omgang (se dog WebAuthn-fundet nedenfor, som kan hænge sammen med den).
