@@ -85,6 +85,36 @@ def _parse_provider_order(value: str | None, fallback: Iterable[str]) -> tuple[s
     return tuple(ordered)
 
 
+def generate_structured_data(
+    get_db_fn: Callable,
+    *,
+    function: str,
+    prompt: str,
+) -> dict[str, Any] | None:
+    """Provider-neutral structured generation for product entrypoints.
+
+    Trusted TimeLapse provenance is attached after provider parsing, so model
+    output cannot spoof the provider/model/capability identity.
+    """
+    try:
+        output = CapabilityRouter(get_db_fn).generate_structured(
+            function=function,
+            prompt=prompt,
+        )
+    except Exception as exc:
+        log.warning(
+            "AI capability analyse fejlede: function=%s error=%s",
+            function,
+            type(exc).__name__,
+        )
+        return None
+    if not isinstance(output.data, dict):
+        return None
+    data = dict(output.data)
+    data["_timelapse_provider"] = output.provenance()
+    return data
+
+
 class CapabilityRouter:
     def __init__(self, get_db_fn: Callable | None = None):
         if get_db_fn is None:
