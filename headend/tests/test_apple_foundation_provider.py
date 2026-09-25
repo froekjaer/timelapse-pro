@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from ai.ai_strategy import AIConfig, GLOBAL_DEFAULTS, VALID_STRATEGIES
-from ai.apple_foundation_service import APPLE_MODEL_NAME, AppleFoundationVisionService, _promote_unknown_tags
+from ai.apple_foundation_service import APPLE_MODEL_NAME, AppleFoundationVisionService, _reclassify_apple_tags
 from ai.model_results import ENGINE_APPLE_FOUNDATION, engine_from_legacy_payload
 
 
@@ -75,21 +75,45 @@ def test_apple_privacy_adapter_derives_has_data_from_validated_detections():
     assert 'if item in {"person_counted", "face", "license_plate"}' in source
 
 
-def test_apple_unknown_tags_are_preserved_for_review():
+def test_apple_tag_buckets_are_reclassified_against_canonical_vocabulary():
     parsed = {
         "tags": ["construction_site", "houses", "temporary_structures"],
-        "new_tags": ["new_building_phase"],
-        "new_tags_da": ["ny_byggefase"],
+        "new_tags": ["roof_structure", "new_building_phase"],
+        "new_tags_da": ["tagkonstruktion", "ny_byggefase"],
     }
 
-    promoted = _promote_unknown_tags(parsed, {"construction_site"})
+    provenance = _reclassify_apple_tags(
+        parsed,
+        {"construction_site", "roof_structure"},
+    )
 
-    assert parsed["tags"] == ["construction_site"]
+    assert parsed["tags"] == ["construction_site", "roof_structure"]
     assert parsed["new_tags"] == [
         "new_building_phase",
         "houses",
         "temporary_structures",
     ]
-    assert promoted == ["houses", "temporary_structures"]
-    # Existing new-tag translations keep their original positional alignment.
-    assert parsed["new_tags_da"] == ["ny_byggefase"]
+    assert parsed["new_tags_da"] == [
+        "ny_byggefase",
+        "",
+        "",
+    ]
+    assert provenance == {
+        "promoted_unknown_tags": ["houses", "temporary_structures"],
+        "recovered_approved_tags": ["roof_structure"],
+    }
+
+
+def test_apple_tag_reclassification_deduplicates_cross_bucket_values():
+    parsed = {
+        "tags": ["roof_structure", "unknown_object"],
+        "new_tags": ["roof_structure", "unknown_object"],
+        "new_tags_da": ["tagkonstruktion", "ukendt objekt"],
+    }
+
+    provenance = _reclassify_apple_tags(parsed, {"roof_structure"})
+
+    assert parsed["tags"] == ["roof_structure"]
+    assert parsed["new_tags"] == ["unknown_object"]
+    assert parsed["new_tags_da"] == ["ukendt objekt"]
+    assert provenance["recovered_approved_tags"] == ["roof_structure"]
