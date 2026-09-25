@@ -1,0 +1,59 @@
+# TimeLapse Pro — System Keychain pre-login reboot evidence
+# Date: 2026-09-18
+# Purpose: prove Headend runtime user can access the System-keychain item
+#          from a system LaunchDaemon before interactive/auto login.
+
+## Raw reboot probe result
+probe_started_utc=2026-09-18T17:06:46Z
+uid=502
+user=peter
+console_user=root
+boot_time={ sec = 1789751199, usec = 613555 } Fri Sep 18 19:06:39 2026
+helper_exit=0
+helper_output=OK
+probe_finished_utc=2026-09-18T17:06:46Z
+
+## Post-boot validation
+current_console_user=peter
+current_boot_time={ sec = 1789751199, usec = 613555 } Fri Sep 18 19:06:39 2026
+
+## Probe LaunchDaemon
+	path = /Library/LaunchDaemons/dk.froekjaer.timelapse-ca-keychain-reboot-probe.plist
+	state = not running
+	program = /usr/local/libexec/timelapse-ca-keychain-reboot-probe
+	stdout path = /var/tmp/dk.froekjaer.timelapse-ca-keychain-reboot-probe.out
+	stderr path = /var/tmp/dk.froekjaer.timelapse-ca-keychain-reboot-probe.err
+	runs = 1
+	last exit code = 0
+		state = active
+		state = active
+
+## Headend
+	path = /Library/LaunchDaemons/dk.froekjaer.timelapse-headend.plist
+	state = running
+	program = /usr/local/sbin/timelapse-headend-start
+	stdout path = /Users/peter/Library/Logs/timelapse-headend.log
+	stderr path = /Users/peter/Library/Logs/timelapse-headend.log
+	runs = 1
+	last exit code = (never exited)
+		state = active
+		state = active
+	job state = running
+
+## Port 8000
+COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+python3.1 351 peter   20u  IPv4 0x755ee6c8f668237c      0t0  TCP 127.0.0.1:8000 (LISTEN)
+
+## Nginx
+	path = /Library/LaunchDaemons/homebrew.mxcl.nginx.plist
+	state = running
+	program = /opt/homebrew/opt/nginx/bin/nginx
+	runs = 1
+	last exit code = (never exited)
+		state = active
+		state = active
+
+## Data volume
+/dev/disk7s1 on /Volumes/data-fast (apfs, local, nodev, nosuid, journaled)
+
+## CA directory contents

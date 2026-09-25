@@ -2256,6 +2256,10 @@ async def _verify_device_token(
     require_signature = bool(inventory_metadata.get("require_request_signature")) and not inventory_credential.legacy_path
     await _verify_edge_request_signature(request, provided, required=require_signature)
     await _verify_edge_attestation_signature(request, device_id, db)
+
+    from api.edge_api_mtls_api import enforce_edge_api_mtls_identity
+    enforce_edge_api_mtls_identity(db, device_id=device_id, request=request)
+
     inventory_credential.updated_at = now_utc()
     db.commit()
 
@@ -16024,7 +16028,7 @@ from api.ssh_tunnel_terminal_api import (
     create_ssh_tunnel_terminal_router,
     terminal_trust_status,
 )
-register_admin_route_bundle(app, require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle)
+register_admin_route_bundle(app, require_role, _sanitize_device_id, _audit_key_event, _reconcile_edge_lifecycle, _verify_device_token)
 
 # Rene stinavne der altid skal springes over ved SAST-scan (skal matche en HEL path-del,
 # ikke bare være en delstreng af den).

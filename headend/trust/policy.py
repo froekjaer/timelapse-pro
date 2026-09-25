@@ -91,15 +91,21 @@ def evaluate_legacy_role_capability_check(
     capability: str | None,
     tenant_id: str | None = None,
     mfa_verified: bool = False,
+    mfa_required: bool = True,
     context: dict | None = None,
 ) -> PolicyDecision:
-    """Compatibility entrypoint for old role/capability checks during WP-2 migration."""
+    """Compatibility entrypoint for privileged legacy checks.
+
+    MFA requirement and MFA evidence are deliberately separate inputs. The
+    compatibility boundary defaults to requiring MFA so a caller cannot turn
+    the policy check into a tautology merely by supplying mfa_verified=False.
+    """
     return evaluate_policy(PolicyRequest(
         principal=principal_from_legacy_user(user, mfa_verified=mfa_verified),
         action=action,
         resource=resource,
         tenant_id=tenant_id,
         capability=capability,
-        mfa_required=mfa_verified,
+        mfa_required=mfa_required,
         context={"compatibility_layer": "legacy_role_capability", **(context or {})},
     ))

@@ -25,6 +25,12 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from security import canonical_json, edge_attestation_headers, ensure_edge_signing_key, request_signature_headers
+from api_mtls import (
+    certificate_renewal_needed,
+    client_certificate_paths,
+    ensure_key_and_csr,
+    install_certificate_bundle,
+)
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +39,10 @@ MAX_RETRIES      = 3
 BACKOFF_FACTOR   = 1.0   # 1s, 2s, 4s between retries
 
 
-def _build_session(token: Optional[str]) -> requests.Session:
+def _build_session(
+    token: Optional[str],
+    client_certificate: tuple[str, str] | None = None,
+) -> requests.Session:
     session = requests.Session()
     retry = Retry(
         total         = MAX_RETRIES,
@@ -47,6 +56,8 @@ def _build_session(token: Optional[str]) -> requests.Session:
 
     if token:
         session.headers["Authorization"] = f"Bearer {token}"
+    if client_certificate:
+        session.cert = client_certificate
     session.headers["Content-Type"] = "application/json"
     session.headers["User-Agent"]   = "TimeLapsePro-EdgeAgent/1.0"
     return session
@@ -124,8 +135,24 @@ class HeadendClient:
         self._base_url   = device.get("headend_url", "").rstrip("/")
         self._cfg_mgr    = config_manager
 
+    def _client_certificate(self) -> tuple[str, str] | None:
+        """Return the installed Edge API identity while the certificate is valid."""
+        try:
+            return client_certificate_paths(self._device_id)
+        except Exception as exc:
+            log.warning("Headend API mTLS client identity unavailable: %s", exc)
+            return None
+
     @property
     def _session(self) -> requests.Session:
+        return _build_session(
+            self._cfg_mgr.api_token,
+            client_certificate=self._client_certificate(),
+        )
+
+    @property
+    def _legacy_session(self) -> requests.Session:
+        """Migration/enrollment transport without client-certificate coupling."""
         return _build_session(self._cfg_mgr.api_token)
 
     # ── Bootstrap ──────────────────────────────────────────────────────────
@@ -172,6 +199,49 @@ class HeadendClient:
             return ok, data
         except Exception as exc:
             log.warning("Edge signing key enrollment failed: %s", exc)
+            return False, None
+
+    def ensure_api_mtls_enrolled(self) -> tuple[bool, Optional[dict]]:
+        """Ensure this Edge owns a current Headend API client certificate.
+
+        Enrollment itself continues to use the existing Bearer credential,
+        request signature and Edge attestation. The private key never leaves
+        the Edge. Returned certificate material is validated before install.
+        """
+        if not self._cfg_mgr.api_token:
+            log.warning("Headend API mTLS enrollment deferred: API token is missing")
+            return False, None
+
+        try:
+            if not certificate_renewal_needed(self._device_id):
+                return True, {"status": "certificate_current"}
+
+            key_path, csr_pem = ensure_key_and_csr(self._device_id)
+            path = f"/trust/headend-api-mtls/{self._device_id}/enroll"
+            ok, data = self._post(path, {"csr_pem": csr_pem})
+            if not ok or not isinstance(data, dict):
+                return False, None
+
+            certificate_pem = data.get("certificate_pem")
+            ca_certificate_pem = data.get("ca_certificate_pem")
+            if not isinstance(certificate_pem, str) or not isinstance(ca_certificate_pem, str):
+                log.warning("Headend API mTLS enrollment returned incomplete certificate material")
+                return False, None
+
+            install_certificate_bundle(
+                self._device_id,
+                certificate_pem,
+                ca_certificate_pem,
+                key_path=key_path,
+            )
+            log.info(
+                "Headend API mTLS certificate installed: device_id=%s serial=%s",
+                self._device_id,
+                data.get("serial_number", "unknown"),
+            )
+            return True, data
+        except Exception as exc:
+            log.warning("Headend API mTLS enrollment failed: %s", exc)
             return False, None
 
     # ── Heartbeat ───────────────────────────────────────────────────────────
@@ -319,9 +389,7 @@ class HeadendClient:
                 path,
                 payload_hash=manifest_hash,
             ))
-            session = requests.Session()
-            session.headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
-            session.headers["User-Agent"] = "TimeLapsePro-EdgeAgent/1.0"
+            session = self._session
             session.headers.pop("Content-Type", None)
             with ExitStack() as stack:
                 files = {
@@ -416,9 +484,7 @@ class HeadendClient:
                 path,
                 payload_hash=manifest_hash,
             ))
-            session = requests.Session()
-            session.headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
-            session.headers["User-Agent"] = "TimeLapsePro-EdgeAgent/1.0"
+            session = self._session
             session.headers.pop("Content-Type", None)
             with open(path_obj, "rb") as fh:
                 started = time.monotonic()
@@ -472,7 +538,7 @@ class HeadendClient:
             # Upload as multipart/form-data
             files = {"frame": ("live.jpg", frame_data, "image/jpeg")}
 
-            resp = requests.post(
+            resp = self._session.post(
                 url,
                 files=files,
                 headers=headers,
@@ -522,7 +588,7 @@ class HeadendClient:
                 path,
                 payload_hash=sha256,
             ))
-            session = _build_session(self._cfg_mgr.api_token)
+            session = self._session
             session.headers.pop("Content-Type", None)
             with open(path_obj, "rb") as fh:
                 resp = session.post(
@@ -598,7 +664,7 @@ class HeadendClient:
     def ping(self) -> bool:
         """Returnerer True hvis headend API er tilgængeligt."""
         try:
-            session = _build_session(self._cfg_mgr.api_token)
+            session = self._session
             r = session.get(f"{self._base_url}/health", timeout=5)
             return r.status_code == 200
         except Exception:
@@ -611,7 +677,12 @@ class HeadendClient:
             headers = request_signature_headers(self._cfg_mgr.api_token, "POST", path, payload)
             if not path.startswith("/keys/signing/enroll/"):
                 headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "POST", path, payload))
-            resp = self._session.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
+            session = (
+                self._legacy_session
+                if path.startswith("/trust/headend-api-mtls/")
+                else self._session
+            )
+            resp = session.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if resp.status_code in (200, 201):
                 log.info("API call complete: method=POST path=%s status=%s duration_ms=%s", path, resp.status_code, elapsed_ms)

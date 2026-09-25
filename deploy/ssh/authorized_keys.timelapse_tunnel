@@ -1,0 +1,26 @@
+# authorized_keys — timelapse_tunnel @ dedicated tunnel sshd (TCP/22022)
+#
+# Canonical authority: froekjaer/timelapse-pro → deploy/ssh/authorized_keys.timelapse_tunnel
+# Installed to: /etc/ssh/timelapse-tunnel/authorized_keys (root:wheel 0644; root-only write)
+#
+# POLICY:
+#   * One dedicated keypair PER EDGE DEVICE. Never shared. Never the API-mTLS
+#     key. Private keys live only on their Edge.
+#   * Every entry MUST use this exact option prefix:
+#         restrict,port-forwarding,permitlisten="127.0.0.1:<port>"
+#     Semantics (sshd(8), AUTHORIZED_KEYS):
+#       restrict         → disables EVERYTHING, including all forwarding;
+#       port-forwarding  → re-enables port forwarding (this is what turns
+#                          forwarding back on — permitlisten does NOT do that);
+#       permitlisten=…   → narrows remote (-R) listening to exactly this
+#                          loopback address:port on the headend.
+#     Without the port-forwarding option, a restrict+permitlisten-only entry
+#     can establish NO forwards at all (silent tunnel failure).
+#     authorized_keys options can
+#     only restrict below sshd_config, never broaden it.
+#   * Entries are provisioned at Edge cutover (separate phase), e.g.:
+#
+# restrict,port-forwarding,permitlisten="127.0.0.1:2201" ssh-ed25519 AAAA…placeholder… TL-C87FF9587CA0
+# restrict,port-forwarding,permitlisten="127.0.0.1:2204" ssh-ed25519 AAAA…placeholder… TL-043EB9E72EFD
+#
+# This template intentionally contains NO valid keys.

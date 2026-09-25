@@ -27,6 +27,40 @@ class TrustServiceConfigurationError(RuntimeError):
     """Raised when no safe Trust Service signing authority can be resolved."""
 
 
+MAX_CHALLENGES_PER_GRANT = 4096
+
+
+def _consume_challenge(row: EdgeServiceGrant, challenge_id: str) -> str | None:
+    """Atomically-accountable replay protection state for one grant row.
+
+    The caller must hold the database row lock before invoking this helper.
+    Challenge IDs are retained for the full grant lifetime; when the bounded
+    budget is exhausted the grant fails closed rather than evicting old IDs and
+    making them replayable again.
+    """
+    if not challenge_id:
+        return "challenge required"
+    try:
+        metadata = json.loads(row.metadata_json or "{}")
+        if not isinstance(metadata, dict):
+            metadata = {}
+    except Exception:
+        metadata = {}
+
+    raw_used = metadata.get("used_challenge_ids", [])
+    used = [str(value) for value in raw_used] if isinstance(raw_used, list) else []
+    if challenge_id in used:
+        return "replayed technician challenge denied"
+    if len(used) >= MAX_CHALLENGES_PER_GRANT:
+        return "grant challenge budget exhausted"
+
+    used.append(challenge_id)
+    metadata["used_challenge_ids"] = used
+    row.metadata_json = _canonical(metadata)
+    row.last_challenge_id = challenge_id
+    return None
+
+
 def _is_explicit_test_or_lab_environment() -> bool:
     env = (os.getenv("TIMELAPSE_ENV") or "").strip().lower()
     if env in {"prod", "production", "staging"}:
@@ -170,7 +204,11 @@ def validate_edge_service_grant(db: Session, token: str, *, edge_id: str, tenant
         return GrantValidation(False, str(exc))
     if payload.get("typ") != "EdgeServiceGrant":
         return GrantValidation(False, "normal Headend session token rejected")
-    row = db.query(EdgeServiceGrant).filter_by(grant_id=payload.get("grant_id"), jti=payload.get("jti")).first()
+    query = db.query(EdgeServiceGrant).filter_by(
+        grant_id=payload.get("grant_id"),
+        jti=payload.get("jti"),
+    )
+    row = query.with_for_update().first()
     if not row:
         return GrantValidation(False, "grant record not found")
     if row.status != "active":
@@ -189,11 +227,9 @@ def validate_edge_service_grant(db: Session, token: str, *, edge_id: str, tenant
         return GrantValidation(False, "grant resource scope denied", row.grant_id)
     if row.mfa_required and not row.mfa_verified:
         return GrantValidation(False, "grant missing required MFA", row.grant_id)
-    if not challenge_id:
-        return GrantValidation(False, "challenge required", row.grant_id)
-    if row.last_challenge_id == challenge_id:
-        return GrantValidation(False, "replayed technician challenge denied", row.grant_id)
-    row.last_challenge_id = challenge_id
+    challenge_error = _consume_challenge(row, challenge_id)
+    if challenge_error:
+        return GrantValidation(False, challenge_error, row.grant_id)
     row.last_used_at = now_utc()
     row.use_count = (row.use_count or 0) + 1
     return GrantValidation(True, "grant accepted", row.grant_id, row.username, row.expires_at)
