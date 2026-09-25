@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from ai.ai_strategy import AIConfig, GLOBAL_DEFAULTS, VALID_STRATEGIES
-from ai.apple_foundation_service import APPLE_MODEL_NAME, AppleFoundationVisionService
+from ai.apple_foundation_service import APPLE_MODEL_NAME, AppleFoundationVisionService, _promote_unknown_tags
 from ai.model_results import ENGINE_APPLE_FOUNDATION, engine_from_legacy_payload
 
 
@@ -73,3 +73,23 @@ def test_apple_privacy_adapter_derives_has_data_from_validated_detections():
     source = Path(__file__).resolve().parents[1].joinpath("ai", "apple_foundation_service.py").read_text()
     assert '"has_data": bool(detection_types)' in source
     assert 'if item in {"person_counted", "face", "license_plate"}' in source
+
+
+def test_apple_unknown_tags_are_preserved_for_review():
+    parsed = {
+        "tags": ["construction_site", "houses", "temporary_structures"],
+        "new_tags": ["new_building_phase"],
+        "new_tags_da": ["ny_byggefase"],
+    }
+
+    promoted = _promote_unknown_tags(parsed, {"construction_site"})
+
+    assert parsed["tags"] == ["construction_site"]
+    assert parsed["new_tags"] == [
+        "new_building_phase",
+        "houses",
+        "temporary_structures",
+    ]
+    assert promoted == ["houses", "temporary_structures"]
+    # Existing new-tag translations keep their original positional alignment.
+    assert parsed["new_tags_da"] == ["ny_byggefase"]
