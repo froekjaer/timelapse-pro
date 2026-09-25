@@ -511,15 +511,6 @@ class OllamaVisionService:
             else:
                 log.warning("Ollama runtime-override kunne ikke læses; bruger normal model: %s", exc)
                 self.vision_model = configured_model
-        if not hasattr(self, "vision_model"):
-            self.vision_model = configured_model
-        if False:
-            pass
-        elif False:
-            pass
-        # legacy exception body removed
-        if False:
-            pass
         fallback_raw = _db_setting("ollama_fallback_models", ",".join(FALLBACK_MODELS))
         self.fallback_models = fallback_models if fallback_models is not None else [m.strip() for m in fallback_raw.split(",") if m.strip()]
         if self.runtime_low_memory:
