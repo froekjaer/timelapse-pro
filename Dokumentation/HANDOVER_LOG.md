@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-25 — ChatGPT/Peter: unknown-tag fysisk PASS, cv2-støj fjernet, provenance hardening
+
+- **Fysisk acceptance PASS på head `6c610f59...`:** Peter genkørte TRAVBYEN-001 med benchmark v3, live DB-vocabulary (37 kategorier / 664 tags, ingen fallback), Apple + Ollama. Apple-promotionsfixet virkede fysisk: `building_site`, `house_under_construction`, `construction_equipment`, `grass_area` og `road_work` blev bevaret som `new_tags` og samtidig listet i `raw_response.adapter_promoted_unknown_tags`. De blev ikke auto-approved.
+- **Reviewed privacy i samme run:** Apple fandt personforekomst korrekt og ingen genkendelig face; Ollama missede fortsat personforekomst men rapporterede ingen face. Fortsat kun TRAVBYEN-001 case-evidence.
+- **cv2 warning fix:** Manglende OpenCV er nu behandlet som forventet optional runtime. `OllamaVisionService._resize_image()` går direkte til Pillow ved `ImportError` uden warning. Kun fejl efter succesfuld cv2/numpy-import logges som warning. Der tilføjes ikke en tung OpenCV-dependency kun for at fjerne støjen. Regressionstest: `headend/tests/test_ollama_resize_fallback.py`.
+- **Raw provenance fix:** Apples SDK-output gemmes nu uændret som `raw_response.response` før adapter-mutation; den adapter-normaliserede form ligger separat som `raw_response.adapter_response`. Dermed kan audit/reproducerbarhed skelne provider-output fra TimeLapse-adapteren.
+- **Vocabulary provenance fix:** `TagVocabulary.record_usage(...)` har nu provider-aware `translation_source`. AI-oversættelsesforslag kan mærkes `apple_foundation`, `ollama` eller `gemini`; tags uden dansk forslag står `pending` med `translation_source=system`. Worker-flowet sender korrekt provider, og manuel Ollama-analyse bevarer nu også `new_tags_da`.
+- **Tests:** Nye provenance-kontrakter dækker raw-vs-adapter response samt translation-source semantics. Aktuel kode-head ved denne handover: `592b2cd1671348b955170e2038efa047f767ea96`; GitHub Actions run `36115141110` var queued og er derfor **ikke endnu verificeret grøn**.
+- **Næste fysiske gate:** Når CI er grøn, reset test-worktree til seneste PR #258 head og genkør TRAVBYEN-001. Forvent ingen `No module named 'cv2'` warning; verificér samtidig at `raw_response.response` viser providerens oprindelige guided fields, mens `adapter_response` viser normaliseret `change/quality/gdpr` og promoted tags.
+- **Derefter:** Gå videre til 10–20 repræsentative, menneskereviewede captures. Ikke mere prompt-tuning på TRAVBYEN-001 alene.
+
 ### Handover 2026-09-25 — ChatGPT: fysisk benchmark afslørede og lukkede Apple unknown-tag tab
 
 - **Fund fra Peters benchmark v3:** Apple raw `tags` indeholdt bl.a. `houses`, `roofs`, `building_materials`, `temporary_structures`, men de fire observationer nåede hverken `approved_tags` eller `new_tags`. Dette var et faktisk adapter-/normaliseringsgap, ikke kun model-output.
