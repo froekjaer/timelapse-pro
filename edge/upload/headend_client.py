@@ -588,7 +588,7 @@ class HeadendClient:
                 path,
                 payload_hash=sha256,
             ))
-            session = _build_session(self._cfg_mgr.api_token)
+            session = self._session
             session.headers.pop("Content-Type", None)
             with open(path_obj, "rb") as fh:
                 resp = session.post(
