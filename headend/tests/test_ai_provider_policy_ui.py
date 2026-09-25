@@ -15,6 +15,9 @@ def test_ai_page_uses_visual_provider_policy_editor():
     assert "fields.filter(field => field.type === 'provider_order')" in source
     assert "fields.filter(field => field.type !== 'provider_order')" in source
     assert "/api/settings/ai-providers?probe=true" in source
+    assert "const saveProviderPolicies = async () => {" in source
+    assert "fields.filter(field => field.type === 'provider_order')" in source
+    assert "onSave={saveProviderPolicies}" in source
 
 
 def test_provider_policy_editor_supports_order_fallback_and_minimum_one_provider():
