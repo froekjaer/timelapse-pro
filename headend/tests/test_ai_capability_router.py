@@ -191,3 +191,14 @@ def test_provider_policy_is_admin_managed_and_allowlisted():
     assert "ai_provider_cmdb_order" in settings
     assert "KNOWN_PROVIDERS" in settings
     assert '@settings_router.get("/ai-providers")' in settings
+
+
+def test_capability_smoke_tool_uses_authoritative_router():
+    smoke = (HEADEND_DIR / "tools" / "smoke_ai_capabilities.py").read_text(encoding="utf-8")
+
+    assert "CapabilityRouter(get_db)" in smoke
+    assert "generate_text(" in smoke
+    assert "generate_structured(" in smoke
+    assert "GeminiVisionService(" not in smoke
+    assert "OllamaVisionService(" not in smoke
+    assert "AppleFoundationVisionService(" not in smoke
