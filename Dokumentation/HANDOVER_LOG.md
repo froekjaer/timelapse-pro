@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-09-25 — Apple physical PASS + dataset benchmark v2
+
+- **Physical evidence:** Travbyen capture `Kirkbi_A_S_Travbyen_Kamera_1_20260508_130015.jpg` completed through native `apple_fm_sdk` and TimeLapse canonical result: Apple `ok=true`, ~10.1 s wall; prior Ollama run `ok=true`, ~43.6 s wall. This is runtime evidence, not an accuracy verdict. Gemini remains blocked in isolated LAB by missing configured credential.
+- **Finding/fix:** Apple raw output emitted contradictory privacy state (`gdpr_has_data=false` with person/face detections). Adapter now derives canonical has_data from validated detection types. Provider remains observation-only; policy stays TimeLapse-owned.
+- **Benchmark v2:** `headend/tools/compare_ai_providers.py` now accepts a single image or recursive capture directory, `--limit`, `--repeat`, sequential/parallel mode, per-image SHA256, raw runs and aggregate success/latency summary. Sequential is default for cleaner latency evidence; parallel is retained for contention testing.
+- **Next:** run 10–20 representative Travbyen captures Apple+Ollama first, preferably repeat=2. Establish reviewed ground-truth annotations before scoring hallucination/privacy accuracy. Resolve Gemini credentials from authoritative Headend configuration without copying secrets into repo/output, then add Gemini to same benchmark.
+
 ### Handover 2026-09-25 09:45 — fra ChatGPT til Peter/næste session: Apple/Ollama/Gemini parallel benchmark testability
 
 - **Hvad er gjort:** fysisk LAB-run på separat worktree afdækkede tre konkrete pre-inference fejl. PR #258 er rettet så Apple SDK får `Path` direkte i `ImageAttachment`; Ollama runtime-control importfejl falder tilbage til normal configured model i isoleret LAB i stedet for `UnboundLocalError`; benchmark-scriptet bootstrapper selv `headend/` på `sys.path`, så `PYTHONPATH` workaround ikke længere skal være nødvendig. GDPR Apple type er tidligere rettet til canonical `person_counted`. Regressionstests tilføjet for Apple attachment og benchmark import-path.
