@@ -12330,36 +12330,37 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
     if not thumbnails and not ai:
         raise HTTPException(status_code=400, detail="Vælg thumbnails og/eller AI")
 
-    # Advar synligt hvis AI er valgt, men den konfigurerede strategi reelt ikke
-    # kan analysere noget lige nu — fx Ollama nede (når strategien bruger lokal
-    # model) eller manglende Gemini-credentials (når strategien bruger cloud).
-    # cloud_only kræver IKKE Ollama — kun Open WebUI-prioritet og selve
-    # strategien afgør om Ollama-status er relevant.
-    ollama_warning = None
+    # Advar synligt hvis den konfigurerede image-provider ikke kan analysere
+    # lige nu. Provider-valg og availability kommer fra capability-routeren;
+    # produktkoden konstruerer ikke vendor-klienter.
+    ollama_warning = None  # legacy response-field name retained for UI compatibility
     ai_strategy = None
     if ai:
         try:
             from ai.integration import _open_webui_priority_enabled
             from ai.ai_strategy import AIConfigManager
-            from ai.settings_helper import get_setting as _ai_get_setting
+            from ai.capability_router import CapabilityRouter
+            from ai.provider_contract import AICapability
 
             default_cfg = AIConfigManager(db).get_config(customer_id=None, site_id=None)
             ai_strategy = default_cfg.strategy
+            capability_router = CapabilityRouter(get_db)
+            image_plan = capability_router.image_plan(default_cfg.strategy)
 
-            if _open_webui_priority_enabled(get_db):
-                ollama_warning = "⚠ Open WebUI-prioritet er aktiveret — AI-analyse er PAUSET indtil den slås fra"
-            elif default_cfg.strategy == "local_only":
-                from ai.ollama_service import OllamaVisionService
-                if not OllamaVisionService().health_check():
-                    ollama_warning = "⚠ Ollama svarer ikke (strategi: local_only) — billeder bliver køet, men ikke analyseret"
-            elif default_cfg.strategy == "cloud_only":
-                has_gemini = bool(_ai_get_setting(db, "gemini_api_key") or _ai_get_setting(db, "gemini_service_account_path"))
-                if not has_gemini:
-                    ollama_warning = "⚠ Strategi er cloud_only, men ingen Gemini API-nøgle er konfigureret — billeder bliver køet, men ikke analyseret"
-            elif default_cfg.strategy == "local_then_cloud":
-                from ai.ollama_service import OllamaVisionService
-                if not OllamaVisionService().health_check():
-                    ollama_warning = "⚠ Ollama svarer ikke (strategi: local_then_cloud) — kun cloud-eskalering vil virke"
+            if _open_webui_priority_enabled(get_db) and image_plan.primary == "ollama":
+                ollama_warning = "⚠ Open WebUI-prioritet er aktiveret — lokal AI-analyse er PAUSET indtil den slås fra"
+            elif image_plan.primary:
+                availability = capability_router.provider_availability(
+                    image_plan.primary,
+                    AICapability.VISION,
+                    local_model=default_cfg.local_model,
+                    cloud_model=default_cfg.cloud_model,
+                )
+                if not availability.get("available"):
+                    ollama_warning = (
+                        f"⚠ AI-provider '{image_plan.primary}' er ikke tilgængelig "
+                        f"(strategi: {default_cfg.strategy}) — billeder bliver køet, men ikke analyseret"
+                    )
         except Exception:
             pass
 
@@ -17321,7 +17322,7 @@ SNAPSHOT:
         )
     except Exception:
         prompt = prompt_fallback
-    analysis = _call_ollama_text(prompt, db=db)
+    analysis = _call_ai_structured(prompt, function="aiops")
     if not isinstance(analysis, dict) or "answer" not in analysis:
         analysis = _aiops_question_fallback(question, area, snapshot)
     return {
