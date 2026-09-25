@@ -417,7 +417,7 @@ class CMDBEnricher(_OllamaTextBase):
             log.error("CMDB assessment fejlede for %s: %s", device_id, e)
             return CMDBAssessment(
                 device_id=device_id, health_status="unknown",
-                issues=["assessment_failed"], recommendations=["Tjek Ollama-service"],
+                issues=["assessment_failed"], recommendations=["Tjek AI-provider status"],
                 maintenance_due=False, estimated_days_to_issue=None,
                 tags=[], summary=f"Vurdering fejlede: {e}",
             )
