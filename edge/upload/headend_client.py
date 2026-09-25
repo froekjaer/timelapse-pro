@@ -538,7 +538,7 @@ class HeadendClient:
             # Upload as multipart/form-data
             files = {"frame": ("live.jpg", frame_data, "image/jpeg")}
 
-            resp = requests.post(
+            resp = self._session.post(
                 url,
                 files=files,
                 headers=headers,
