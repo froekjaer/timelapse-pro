@@ -664,7 +664,7 @@ class HeadendClient:
     def ping(self) -> bool:
         """Returnerer True hvis headend API er tilgængeligt."""
         try:
-            session = _build_session(self._cfg_mgr.api_token)
+            session = self._session
             r = session.get(f"{self._base_url}/health", timeout=5)
             return r.status_code == 200
         except Exception:
