@@ -43,6 +43,23 @@ def read_gemini_config(db, *, location_override: str | None = None) -> GeminiCon
     )
 
 
+def resolve_gemini_location(cloud_model: str, configured_location: str) -> str:
+    """Resolve legacy regional config to a supported locality for newer Gemini.
+
+    Gemini 3.8 Flash on Vertex is offered in global/us/eu multi-regions rather
+    than legacy in-country Vertex locations such as europe-west1. Preserve the
+    operator's residency family without silently widening to global.
+    """
+    model = str(cloud_model or "").strip().lower()
+    location = str(configured_location or "").strip().lower() or "europe-west1"
+    if model.startswith("gemini-3.8-"):
+        if location.startswith("europe-"):
+            return "eu"
+        if location.startswith("us-"):
+            return "us"
+    return location
+
+
 def build_gemini_vision_service_from_db(db, cloud_model: str, *, location_override: str | None = None):
     """Build GeminiVisionService from one existing Headend DB session."""
     from ai.gemini_service import GeminiVisionService
@@ -50,10 +67,11 @@ def build_gemini_vision_service_from_db(db, cloud_model: str, *, location_overri
     config = read_gemini_config(db, location_override=location_override)
     if not config.configured:
         return None
+    effective_location = resolve_gemini_location(cloud_model, config.location)
     return GeminiVisionService(
         service_account_path=config.service_account_path,
         project_id=config.project_id,
-        location=config.location,
+        location=effective_location,
         api_key=config.api_key,
         model=cloud_model,
     )
