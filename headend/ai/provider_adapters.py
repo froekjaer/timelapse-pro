@@ -314,6 +314,7 @@ class GeminiProvider(_BaseProvider):
                 "provider": self.name,
                 "model": self.model,
                 "execution": "cloud",
+                "location": getattr(self.service, "location", None),
             }
         return {
             "available": available,
@@ -321,6 +322,7 @@ class GeminiProvider(_BaseProvider):
             "provider": self.name,
             "model": self.model,
             "execution": "cloud",
+            "location": getattr(self.service, "location", None),
         }
 
     def analyse_image(self, **kwargs):
