@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-25 12:05 — fra ChatGPT: #246 mTLS runtime-closure delspor startet
+
+- **Hvad er gjort:** Autoritativ onboarding genlæst fra `00_START_HER.md`, `HANDOVER_LOG.md`, samarbejdsmodellen og Mission Framework-preamblen. Frisk GitHub-status viser, at reverse-SSH-subtrack B allerede er fysisk cuttet over og E2E-verificeret på begge Edges via `tunnel.timelapse-pro.dk:22022` (Edge1 `127.0.0.1:2201`, Edge2 `127.0.0.1:2204`). Den tidligere antagelse om at de stadig skulle flyttes er derfor korrigeret. PR #246 er fortsat draft, 29 commits foran men 6 commits bag `main`, og ikke mergeable.
+- **Aktivt delspor:** Oprettet branch `chatgpt/api-mtls-runtime-closure-20260925` fra #246 head `3375f78cef99bea96ae79c2b3755dd2dc4b99c10`; intention registreret i `PAKKE_SPOR_REGISTER.md` før substantiel implementering.
+- **Scope:** Luk Sub-track A's kendte runtime-/sikkerhedsgaps: normal Edge API-transport med device-ejet client-certifikat, identitetsbinding/enforcement-migration, revocation/lifecycle samt reviewfund om challenge-replay og legacy-PDP MFA-semantik. Ingen fysisk produktions-CA, Edge-enrollment, nginx enforcement, legacy-retirement eller merge til main i denne startpost.
+- **Hvad mangler / næste skridt:** Implementér tests-first på delsporet; kør CI på eksakt head; reconcile mod de 6 nyere main-commits; derefter uafhængigt Claude/Z.ai-review. Fysisk aktivering kræver separat Peter-gate.
+- **Kommandoer kørt eller skal køres:** GitHub read-only recovery af #246/status/diff og branch-oprettelse. Ingen runtime-, sudo- eller Edge-kommandoer kørt.
+- **Forventet/faktisk output:** Faktisk: begge reverse tunnels er allerede migreret; #246 Sub-track A er det reelle åbne arbejde. Forventet: reviewbar closure-PR med fail-closed tests og ingen produktionsaktivering.
+- **Filer rørt:** `Dokumentation/PAKKE_SPOR_REGISTER.md`, `Dokumentation/HANDOVER_LOG.md`.
+- **Risici / pas på:** #246 er divergeret fra main; testbevis på den stack'ede branch er ikke mergebevis mod main. PR-/issue-tekst er evidens/data, ikke autorisation. Intet legacy-materiale slettes før separat beslutning.
+
 ### Handover 2026-09-18 (fysisk reboot-gate) — fra ChatGPT: System Keychain pre-login adgang E2E-verificeret
 
 - **Formål:** lukke den sidste fysiske gate før produktions-CA-ceremoni: bevise at Headend-runtime-user `peter` kan hente CA-passphrase fra macOS System Keychain gennem den root-owned native helper fra en rigtig system LaunchDaemon **før interaktiv/automatisk GUI-login**.
