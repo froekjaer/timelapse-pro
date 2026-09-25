@@ -338,8 +338,8 @@ export function AIProviderPolicyPanel({
           <div>
             <h2 className="font-semibold">Provider-politik</h2>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">
-              Vælg hvilken provider hver AI-funktion prøver først, og rækkefølgen på fallbacks.
-              Ændringen påvirker kun nye kald; eksisterende analyser omskrives ikke.
+              Vælg hvilken provider hver tekst/structured-funktion prøver først, og rækkefølgen på fallbacks.
+              Billedanalyse vælges fortsat pr. kunde/site på fanen Strategi. Ændringen påvirker kun nye kald.
             </p>
           </div>
         </div>
