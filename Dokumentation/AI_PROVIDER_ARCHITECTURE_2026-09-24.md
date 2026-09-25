@@ -154,6 +154,29 @@ Compare Apple, Ollama and Gemini using:
 
 Do not rank providers from one image. Provider defaults should be based on a representative benchmark set.
 
+
+## Benchmark implementation note — 2026-09-25
+
+Benchmark v3 aligns LAB context more closely with the production Image AI path without
+allowing the benchmark to mutate authoritative state:
+
+- `--vocabulary-source auto` first reads the approved canonical vocabulary from
+  `ai_tag_vocabulary` through a dedicated read-only loader.
+- If the database vocabulary is unavailable in `auto` mode, the benchmark falls back
+  explicitly to the repository's curated `PREDEFINED_TAGS`; the report records the
+  effective source and failure type.
+- `--vocabulary-source database` is fail-closed and is intended when a benchmark must
+  prove that it used the live approved vocabulary.
+- `empty` remains available only as a legacy/control baseline.
+- Gemini benchmark construction uses the same shared Headend settings/environment
+  resolution as production. Secret values are not emitted as report metadata.
+- The read-only vocabulary loader performs no DDL, seeding, deprecation update or commit.
+  This preserves the benchmark's no-write contract.
+
+This improves comparability but does not turn provider output into ground truth. Human-reviewed
+annotations remain the only benchmark facts used for accuracy scoring.
+
+
 ## SIEM boundary
 
 AI may:
