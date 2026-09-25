@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
+import { AIProviderPolicyPanel } from '../components/AIProviderPolicyPanel'
+import type { ProviderStatusSnapshot } from '../components/AIProviderPolicyPanel'
 import type { Capture } from '../types'
 
 const api = (path: string, opts?: RequestInit) =>
@@ -236,12 +238,6 @@ interface OllamaRuntimeControl {
   }
 }
 
-interface AIProviderStatus {
-  providers: Record<string, { configured: boolean; capabilities: string[]; error_type?: string }>
-  policies: Record<string, string[]>
-  image_strategies: Record<string, { primary: string | null; escalation: string | null }>
-}
-
 interface PromptVersion {
   id: number
   version: number
@@ -267,7 +263,8 @@ function AIRuntimeTab() {
   const [fields, setFields] = useState<RuntimeField[]>([])
   const [models, setModels] = useState<string[]>([])
   const [prompts, setPrompts] = useState<AIPrompt[]>([])
-  const [providerStatus, setProviderStatus] = useState<AIProviderStatus | null>(null)
+  const [providerStatus, setProviderStatus] = useState<ProviderStatusSnapshot | null>(null)
+  const [providerProbeBusy, setProviderProbeBusy] = useState(false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -343,6 +340,27 @@ function AIRuntimeTab() {
     ? null
     : `${Math.floor(runtimeControl.remaining_seconds / 3600)}t ${Math.floor((runtimeControl.remaining_seconds % 3600) / 60)}m`
 
+  const probeProviders = async () => {
+    setProviderProbeBusy(true)
+    setMessage(null)
+    try {
+      const status = await api('/api/settings/ai-providers?probe=true')
+      setProviderStatus(status)
+      const unavailable = Object.entries(status.providers || {})
+        .filter(([, provider]: [string, { availability?: { available?: boolean } }]) =>
+          provider.availability?.available === false
+        )
+        .map(([name]) => name)
+      setMessage(unavailable.length
+        ? `Provider-test færdig. Ikke tilgængelig: ${unavailable.join(', ')}.`
+        : 'Provider-test færdig. Alle konfigurerede providers svarer.')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Provider-status kunne ikke testes')
+    } finally {
+      setProviderProbeBusy(false)
+    }
+  }
+
   const saveRuntime = async () => {
     setBusy(true)
     try {
@@ -392,34 +410,15 @@ function AIRuntimeTab() {
     </div>
     {message && <div className="border border-white/10 bg-gray-900 rounded-lg px-4 py-3 text-sm text-slate-300">{message}</div>}
 
-    <section className="rounded-lg border border-white/10 bg-gray-900 p-4 sm:p-5">
-      <div className="flex items-start gap-3">
-        <Brain className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
-        <div className="min-w-0">
-          <h2 className="font-semibold">Capability Router</h2>
-          <p className="mt-1 text-xs text-slate-500">Produktfunktioner vælger capability; provider-politikken vælger Apple, Ollama eller Gemini. Defaults er bevaret.</p>
-        </div>
-      </div>
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-        {Object.entries(providerStatus?.providers || {}).map(([name, provider]) => (
-          <div key={name} className="rounded-lg border border-white/8 bg-gray-950/40 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-sm text-slate-200">{name}</span>
-              <span className={`text-xs ${provider.configured ? 'text-emerald-400' : 'text-slate-500'}`}>{provider.configured ? '● konfigureret' : '○ ikke konfigureret'}</span>
-            </div>
-            <p className="mt-2 text-xs text-slate-500">{provider.capabilities.join(' · ') || 'ingen capabilities'}</p>
-          </div>
-        ))}
-      </div>
-      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-        {Object.entries(providerStatus?.policies || {}).map(([fn, order]) => (
-          <div key={fn} className="rounded-md border border-white/5 bg-gray-950/30 px-3 py-2 text-xs">
-            <span className="text-slate-500">{fn}</span>
-            <span className="ml-2 font-mono text-slate-300">{order.join(' → ')}</span>
-          </div>
-        ))}
-      </div>
-    </section>
+    <AIProviderPolicyPanel
+      fields={fields.filter(field => field.type === 'provider_order')}
+      status={providerStatus}
+      probing={providerProbeBusy}
+      saving={busy}
+      onProbe={probeProviders}
+      onChange={(key, value) => setFields(all => all.map(field => field.key === key ? { ...field, value } : field))}
+      onSave={saveRuntime}
+    />
 
     <section className="rounded-lg border border-white/10 bg-gray-900 p-4 sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -494,7 +493,7 @@ function AIRuntimeTab() {
         <button onClick={saveRuntime} disabled={busy} className="flex items-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded-lg text-sm"><Save className="w-4 h-4" />Gem alle</button>
       </div>
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {fields.map(field => <label key={field.key} className="bg-gray-900 border border-white/8 rounded-lg p-3 block">
+        {fields.filter(field => field.type !== 'provider_order').map(field => <label key={field.key} className="bg-gray-900 border border-white/8 rounded-lg p-3 block">
           <span className="text-xs text-slate-400 block mb-1.5">{field.label}</span>
           {field.type === 'model' ? (
             <select
