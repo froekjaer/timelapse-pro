@@ -330,13 +330,13 @@ export function GlobalConfigPage() {
   async function loadBase() {
     setLoading(true)
     try {
-      const [d, c, s, cams] = await Promise.all([
+      const [d, c, s, cams, users] = await Promise.all([
         api('/api/admin/config-defaults'),
         api('/api/admin/customers'),
         api('/api/admin/sites'),
         api('/api/admin/cameras'),
+        api('/api/admin/users').catch(() => []),
       ])
-      const users = await api('/api/admin/users').catch(() => [])
       setDefaults({ system: {}, session_policy: {}, ...d })
       setCustomers(Array.isArray(c) ? c : [])
       setSites(Array.isArray(s) ? s : [])
