@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable
 
@@ -43,6 +44,16 @@ IMAGE_STRATEGY_POLICY: dict[str, tuple[str | None, str | None]] = {
     "apple_only": ("apple", None),
     "local_then_cloud": ("ollama", "gemini"),
 }
+
+
+_OLLAMA_VISION_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class RoutedImageResult:
+    result: Any
+    provider: str
+    execution: str
 
 
 @dataclass(frozen=True)
@@ -90,6 +101,63 @@ class CapabilityRouter:
             strategy=str(strategy or "cloud_only"),
             primary=primary,
             escalation=escalation,
+        )
+
+    def image_runtime_deferred(self, plan: ImageProviderPlan) -> bool:
+        """Return True when the configured primary runtime is intentionally paused.
+
+        This preserves the existing Open WebUI/Ollama resource-control contract
+        without exposing Ollama checks to product business logic.
+        """
+        if plan.primary != "ollama":
+            return False
+        try:
+            from ai.ollama_runtime_control import runtime_is_paused
+            db_gen = self._get_db()
+            db = next(db_gen)
+            try:
+                return bool(runtime_is_paused(db))
+            finally:
+                db_gen.close()
+        except Exception:
+            return False
+
+    def analyse_image_plan(
+        self,
+        *,
+        plan: ImageProviderPlan,
+        phase: str,
+        image_path,
+        vocabulary_full: dict[str, list[str]],
+        vocabulary_local: dict[str, list[str]],
+        approved_tag_set: set[str],
+        context_block: str = "",
+        reference_image_path=None,
+        local_model: str | None = None,
+        cloud_model: str | None = None,
+    ) -> RoutedImageResult:
+        if phase not in {"primary", "escalation"}:
+            raise ValueError("phase skal være primary eller escalation")
+        provider_name = plan.primary if phase == "primary" else plan.escalation
+        if not provider_name:
+            raise ProviderUnavailable("none", f"ingen {phase} image-provider konfigureret")
+        vocabulary = vocabulary_local if provider_name == "ollama" else vocabulary_full
+        result = self.analyse_image(
+            provider_name=provider_name,
+            image_path=image_path,
+            vocabulary_by_cat=vocabulary,
+            approved_tag_set=approved_tag_set,
+            reference_image_path=reference_image_path,
+            context_block=context_block,
+            local_model=local_model,
+            cloud_model=cloud_model,
+            function="image",
+        )
+        execution = "cloud" if provider_name == "gemini" else "local"
+        return RoutedImageResult(
+            result=result,
+            provider=provider_name,
+            execution=execution,
         )
 
     def provider_order(self, function: str) -> tuple[str, ...]:
@@ -259,7 +327,7 @@ class CapabilityRouter:
         )
         if not provider.supports(AICapability.VISION):
             raise ProviderUnavailable(provider_name, "vision understøttes ikke")
-        result = provider.analyse_image(
+        call = lambda: provider.analyse_image(
             image_path=image_path,
             vocabulary_by_cat=vocabulary_by_cat,
             approved_tag_set=approved_tag_set,
@@ -268,6 +336,11 @@ class CapabilityRouter:
             context_block=context_block,
             model=local_model if provider_name == "ollama" else cloud_model,
         )
+        if provider_name == "ollama":
+            with _OLLAMA_VISION_LOCK:
+                result = call()
+        else:
+            result = call()
         raw = getattr(result, "raw_response", None)
         if isinstance(raw, dict):
             raw.setdefault("router", {
