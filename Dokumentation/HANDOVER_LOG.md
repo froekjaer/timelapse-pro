@@ -3419,3 +3419,12 @@ person vide".
 - **Benchmark scoring:** `compare_ai_providers.py --annotations ...` can now score person-presence and recognizable-face detection against reviewed annotations. Unknown fields remain unscored instead of being guessed.
 - **Boundary:** Model confidence is not factual confidence. Scene facts beyond the explicitly reviewed annotations are not treated as ground truth.
 - **Next:** Expand to 10–20 diverse Travbyen captures, use real TimeLapse vocabulary, add reviewed scene/privacy annotations, then compare Apple/Ollama/Gemini. Gemini credentials must use the authoritative Headend configuration rather than copied secrets.
+
+
+### Progress 2026-09-25 — ChatGPT: TRAVBYEN-001 reviewed benchmark executed
+- **Physical reviewed run:** Peter executed benchmark v2 against TRAVBYEN-001 with the reviewed annotation file. Apple and Ollama both completed successfully.
+- **Reviewed privacy score:** Apple correctly detected person presence and correctly did not emit a recognizable face in this run. Ollama missed person presence but correctly did not emit a recognizable face.
+- **Latency:** Apple 8.702 s wall time. Ollama 33.707 s on this cold run; prior evidence shows warm Ollama around 5.5–5.6 s, so this run must not be used as a general latency ranking.
+- **Scoring improvement:** Benchmark summary now aggregates reviewed person-presence and recognizable-face correctness per provider. This remains case-count evidence, not a provider score/ranking.
+- **Open quality observations:** Apple scene wording is linguistically weak and may over-specify equipment; scene/equipment claims are not scored until human-reviewed annotations exist. Empty benchmark vocabulary still means tag quality is not production-representative.
+- **Next gate:** Expand reviewed corpus before prompt tuning; load authoritative TimeLapse vocabulary into benchmark; then add Gemini through existing Headend credential/config path.
