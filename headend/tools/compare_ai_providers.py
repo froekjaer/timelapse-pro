@@ -23,6 +23,10 @@ if str(HEADEND_DIR) not in sys.path:
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 
+# Reviewed human annotations for benchmark cases. These are deliberately
+# separate from provider output: a model never writes its own ground truth.
+GROUND_TRUTH_VERSION = 1
+
 
 def _service(name: str, model: str | None):
     if name == "apple":
@@ -38,6 +42,43 @@ def _service(name: str, model: str | None):
             location=os.getenv("GOOGLE_CLOUD_LOCATION", "eu"),
         )
     raise ValueError(f"Ukendt provider: {name}")
+
+
+def _load_annotations(path: Path | None) -> dict[str, dict]:
+    if path is None:
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    cases = payload.get("cases", []) if isinstance(payload, dict) else payload
+    out = {}
+    for case in cases:
+        sha = str(case.get("sha256", "")).strip().lower()
+        if sha:
+            out[sha] = case
+    return out
+
+
+def _privacy_score(result: dict, annotation: dict | None) -> dict | None:
+    if not annotation:
+        return None
+    privacy = annotation.get("privacy") or {}
+    expected_person = privacy.get("person_present")
+    if expected_person is None:
+        return None
+    detections = result.get("gdpr_detections") or []
+    types = {str(d.get("detection_type", "")) for d in detections}
+    predicted_person = "person_counted" in types
+    expected_face = privacy.get("recognizable_face")
+    predicted_face = "face" in types
+    score = {
+        "person_present_expected": bool(expected_person),
+        "person_present_predicted": predicted_person,
+        "person_detection_correct": predicted_person == bool(expected_person),
+        "recognizable_face_expected": expected_face,
+        "face_predicted": predicted_face,
+    }
+    if expected_face is not None:
+        score["face_detection_correct"] = predicted_face == bool(expected_face)
+    return score
 
 
 def _run(name: str, image: Path, model: str | None) -> dict:
@@ -110,6 +151,8 @@ def main() -> int:
                    help="Runs per provider/image; use >1 for warm-run evidence")
     p.add_argument("--mode", choices=("parallel", "sequential"), default="sequential",
                    help="Sequential gives cleaner latency; parallel tests contention")
+    p.add_argument("--annotations", type=Path, default=None,
+                   help="Reviewed JSON ground truth; matched by image SHA-256")
     p.add_argument("--output", type=Path, default=None)
     args = p.parse_args()
 
@@ -117,6 +160,7 @@ def main() -> int:
     if not images:
         p.error("Ingen billeder fundet")
     models = {"apple": None, "ollama": args.ollama_model, "gemini": args.gemini_model}
+    annotations = _load_annotations(args.annotations)
     runs = []
 
     jobs = [(image, provider, n + 1)
@@ -126,11 +170,17 @@ def main() -> int:
     def execute(job):
         image, provider, iteration = job
         row = _run(provider, image, models[provider])
+        sha256 = hashlib.sha256(image.read_bytes()).hexdigest()
         row.update({
             "image": str(image),
-            "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+            "sha256": sha256,
             "iteration": iteration,
         })
+        annotation = annotations.get(sha256)
+        if annotation:
+            row["annotation_case_id"] = annotation.get("case_id")
+            if row["ok"]:
+                row["reviewed_score"] = _privacy_score(row["result"], annotation)
         return row
 
     if args.mode == "parallel":
@@ -148,6 +198,8 @@ def main() -> int:
         "repeat": args.repeat,
         "mode": args.mode,
         "providers": args.providers,
+        "annotations": str(args.annotations) if args.annotations else None,
+        "ground_truth_version": GROUND_TRUTH_VERSION if args.annotations else None,
         "summary": _summary(runs, args.providers),
         "runs": runs,
         "note": (
