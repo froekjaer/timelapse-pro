@@ -38,7 +38,10 @@ MAX_RETRIES      = 3
 BACKOFF_FACTOR   = 1.0   # 1s, 2s, 4s between retries
 
 
-def _build_session(token: Optional[str]) -> requests.Session:
+def _build_session(
+    token: Optional[str],
+    client_certificate: tuple[str, str] | None = None,
+) -> requests.Session:
     session = requests.Session()
     retry = Retry(
         total         = MAX_RETRIES,
