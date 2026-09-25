@@ -278,9 +278,19 @@ class GeminiProvider(_BaseProvider):
 
     def availability(self, capability: AICapability) -> dict[str, Any]:
         self._require(capability)
+        try:
+            available = bool(self.service.health_check())
+        except Exception as exc:
+            return {
+                "available": False,
+                "reason": type(exc).__name__,
+                "provider": self.name,
+                "model": self.model,
+                "execution": "cloud",
+            }
         return {
-            "available": True,
-            "reason": None,
+            "available": available,
+            "reason": None if available else "health_check_failed",
             "provider": self.name,
             "model": self.model,
             "execution": "cloud",
