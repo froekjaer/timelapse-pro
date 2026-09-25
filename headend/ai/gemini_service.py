@@ -214,7 +214,7 @@ class GeminiVisionService:
         service_account_path: str = "",
         project_id: str = "",
         location: str = "",
-        model: str = "gemini-2.5-flash-lite-preview-06-17",
+        model: str = "gemini-3.8-flash",
         api_key: str = "",
     ):
         service_account_path = service_account_path or os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
