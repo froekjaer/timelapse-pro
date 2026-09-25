@@ -257,7 +257,7 @@ Current status is tracked separately as **code/CI evidence** versus **physical/p
 1. **PASS — code/install contract:** Apple SDK dependency is pinned for Darwin/Python 3.14+ in Headend requirements; physical SDK/image execution has already succeeded in the isolated Headend worktree. Full restore-path repetition remains part of normal restore evidence.
 2. **PASS — code/CI:** Apple availability is lazy/fail-closed and unrelated Headend functions remain importable without the Darwin-only SDK.
 3. **PASS — code + physical image evidence:** Image AI selects Apple through normal strategy/capability routing and retains canonical plus provider/adapter provenance.
-4. **PASS — code/CI:** Ollama and Gemini adapters remain supported; existing image strategies are translated centrally for compatibility.
+4. **PASS — code/CI + physical capability smoke:** Apple, Ollama and Gemini adapters are supported. On the Mac Mini Headend, all three providers physically passed both Text and Structured through the authoritative CapabilityRouter. Existing image strategies remain translated centrally for compatibility.
 5. **PASS — code/CI:** AI Search, AI Ops, SIEM and CMDB consume generic structured/text capability paths instead of constructing vendor clients in product business logic.
 6. **PASS for current product paths — code/CI:** Natural Search remains authenticated and TimeLapse applies tenant filtering after model-produced filter specs; generic unrestricted provider tool-calling is not enabled. Any future tool-calling capability requires a new RBAC/tool-contract acceptance gate.
 7. **PASS — code/CI:** deterministic `headend/siem.py` is independent of AI capability routing and remains authoritative.
@@ -265,8 +265,13 @@ Current status is tracked separately as **code/CI evidence** versus **physical/p
 9. **OPEN — physical production gate:** representative concurrency/RAM/thermal behaviour must be measured before production-scale enablement/default changes.
 10. **PARTIAL — implementation ready, DB import pending:** idempotent GRC import exists in `headend/tools/import_grc_ai_provider_architecture_20260925.py`, including the open resource-acceptance finding. It must still be run against the authoritative Headend DB and verified there.
 
+Physical capability smoke status:
+- **PASS 2026-09-25:** Apple Text + Structured through CapabilityRouter.
+- **PASS 2026-09-25:** Ollama Text + Structured through CapabilityRouter.
+- **PASS 2026-09-25:** Gemini 3.8 Flash Text + Structured through CapabilityRouter using Vertex `eu`.
+- The Gemini smoke initially exposed a model/region mismatch (`gemini-3.8-flash` with legacy `europe-west1`); the router/provider config now preserves residency while mapping 3.8 `europe-*` to supported `eu`. The corrected code-head `370ae29a...` is green in GitHub Actions run `36122688710`.
+
 Additional physical acceptance still required before changing defaults:
-- run `headend/tools/smoke_ai_capabilities.py` for configured Apple/Ollama/Gemini Text + Structured capabilities;
 - expand reviewed image ground truth to 10–20 representative captures;
-- record resource/concurrency observations and fallback behaviour;
+- record resource/concurrency/RAM/thermal observations and configured fallback behaviour;
 - run and verify the GRC import in the Headend GRC register.
