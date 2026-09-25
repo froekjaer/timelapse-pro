@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dk.froekjaer.timelapse-post-reboot-verify</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/sbin/timelapse-post-reboot-verify</string>
+  </array>
+
+  <!-- Runs on every boot, planned or not — see the script's own header for
+       why there is deliberately no notify-on-failure here. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/timelapse-nightly-maintenance.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/timelapse-nightly-maintenance.log</string>
+</dict>
+</plist>

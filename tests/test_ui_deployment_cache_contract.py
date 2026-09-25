@@ -1,5 +1,6 @@
 """Contracts preventing a green deploy from serving stale administration UI."""
 
+import re
 from pathlib import Path
 
 
@@ -22,7 +23,7 @@ def test_nginx_templates_revalidate_ui_documents_and_assets():
 def test_nginx_compresses_and_long_caches_content_addressed_assets():
     for relative in ("deploy/nginx/timelapse.froekjaer.dk.conf", "deploy/install/install_headend.sh"):
         source = (ROOT / relative).read_text(encoding="utf-8")
-        assert "gzip              on;" in source
+        assert re.search(r"gzip\s+on;", source)
         assert "gzip_types" in source
         assert 'Cache-Control "public, max-age=31536000, immutable"' in source
         assert "expires 1y;" in source

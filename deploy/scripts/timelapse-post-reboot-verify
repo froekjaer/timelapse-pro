@@ -1,0 +1,57 @@
+#!/bin/zsh
+# Post-boot recovery verification for the TimeLapse Pro headend (2026-09-21).
+#
+# Runs on EVERY boot (RunAtLoad), planned or not — not just after the
+# nightly reboot rehearsal. Confirms the data volume mounted, Postgres and
+# Headend's /api/health are reachable, and logs a clear PASS/FAIL with
+# elapsed time. This is deliberately the only source of truth for "did the
+# reboot actually work" — no email/notification is sent from here.
+#
+# Why no notify-on-failure here: if recovery never completes, the
+# planned-maintenance marker (written by timelapse-nightly-maintenance,
+# see headend/maintenance_window.py) simply expires after its window
+# (20 minutes) and headend/itim.py's existing "Service nede" alert rule
+# resumes firing normally, completely unsuppressed — that IS the failure
+# notification, via the alerting system that already exists, not a
+# second bespoke one that could itself go stale or wrong.
+set -uo pipefail  # deliberately not -e: every check below has its own timeout/failure handling
+
+PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+LOG="/var/log/timelapse-nightly-maintenance.log"
+DATA_ROOT="/Volumes/data-fast"
+START_TS=$(date +%s)
+
+log() {
+  print -r -- "$(date '+%Y-%m-%d %H:%M:%S') [post-reboot-verify] $*" | tee -a "$LOG"
+  logger -t timelapse-post-reboot-verify -- "$*"
+}
+
+wait_for() {
+  local description="$1"
+  local command="$2"
+  local timeout="${3:-120}"
+  local waited=0
+  while ! eval "$command"; do
+    if (( waited >= timeout )); then
+      log "FAIL: timed out waiting for $description (${timeout}s)"
+      return 1
+    fi
+    sleep 5
+    (( waited += 5 ))
+  done
+  return 0
+}
+
+log "started"
+
+ok=1
+wait_for "data volume" "mount | grep -Fq ' on $DATA_ROOT '" 120 || ok=0
+wait_for "PostgreSQL (127.0.0.1:5432)" "nc -z 127.0.0.1 5432" 180 || ok=0
+wait_for "Headend health endpoint" "curl -fsS --max-time 5 http://127.0.0.1:8000/api/health >/dev/null" 300 || ok=0
+
+elapsed=$(( $(date +%s) - START_TS ))
+if (( ok )); then
+  log "PASS: full recovery confirmed in ${elapsed}s"
+else
+  log "FAIL: recovery incomplete after ${elapsed}s — see timeouts above. No notification sent from here; the planned-maintenance suppression window will expire and normal ITIM alerting will resume and report this on its own."
+fi

@@ -62,7 +62,7 @@ from sqlalchemy import and_, case, false as _sql_false, func, or_, text
 import subprocess as _subprocess
 import threading as _threading
 import json as _json
-import os, tempfile
+import os, tempfile, api.display_image_api as display_image_api
 from collections import defaultdict as _defaultdict
 import gzip as _gzip
 import lzma as _lzma
@@ -838,9 +838,6 @@ class ReverseSshRequest(BaseModel):
 # extraction) — imported near the top of this file.
 
 
-
-
-
 @app.get("/api/auth/session-policy")
 def get_session_policy(request: Request, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     """Returnerer resolved session policy for den indloggede bruger."""
@@ -854,6 +851,16 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
     }
 
 # ── WebAuthn / FIDO2 ───────────────────────────────────────────────────────
+
+def _webauthn_credential_transports(transports_json: str | None):
+    """Decode stored transports JSON to AuthenticatorTransport list; fails open (None = unrestricted)."""
+    import webauthn, json as _json
+    if not transports_json:
+        return None
+    try:
+        return [webauthn.helpers.structs.AuthenticatorTransport(t) for t in _json.loads(transports_json)]
+    except (ValueError, TypeError):
+        return None
 
 def _webauthn_settings(db: Session, request: Request | None = None) -> tuple[str, str, str]:
     """Return WebAuthn RP settings from request allowlist, DB, env, then defaults."""
@@ -876,7 +883,9 @@ def webauthn_register_begin(payload: dict, request: Request, current_user=Depend
 
     existing = db.query(WebAuthnCredential).filter_by(user_id=current_user.id).all()
     exclude_creds = [
-        webauthn.helpers.structs.PublicKeyCredentialDescriptor(id=c.credential_id)
+        webauthn.helpers.structs.PublicKeyCredentialDescriptor(
+            id=c.credential_id, transports=_webauthn_credential_transports(c.transports)
+        )
         for c in existing
     ]
 
@@ -928,12 +937,14 @@ def webauthn_register_complete(payload: dict, request: Request, current_user=Dep
         raise HTTPException(status_code=400, detail=f"Verifikation fejlede: {e}")
 
     device_name = payload.get("deviceName", "Ukendt enhed")
+    transports = payload.get("response", {}).get("transports") or None
     db.add(WebAuthnCredential(
         user_id       = current_user.id,
         credential_id = verification.credential_id,
         public_key    = verification.credential_public_key,
         sign_count    = verification.sign_count,
         device_name   = device_name,
+        transports    = _json.dumps(transports) if transports else None,
     ))
     db.query(Settings).filter_by(key=f"wabauthn_challenge_{current_user.id}").delete()
     db.commit()
@@ -955,7 +966,9 @@ def webauthn_login_begin(payload: dict, request: Request, db: Session = Depends(
         raise HTTPException(status_code=404, detail="Ingen WebAuthn credentials registreret")
 
     allow_creds = [
-        webauthn.helpers.structs.PublicKeyCredentialDescriptor(id=c.credential_id)
+        webauthn.helpers.structs.PublicKeyCredentialDescriptor(
+            id=c.credential_id, transports=_webauthn_credential_transports(c.transports)
+        )
         for c in creds
     ]
     rp_id, _rp_name, _origin = _webauthn_settings(db, request)
@@ -1827,8 +1840,6 @@ def delete_user(
     return {"ok": True}
 
 
-
-
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/bootstrap", response_model=BootstrapResponse)
@@ -2218,8 +2229,6 @@ def assign_device_to_site(
 
 
 # ── API Token auth ───────────────────────────────────────────────────────────
-
-
 
 
 async def _verify_device_token(
@@ -3958,7 +3967,6 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
     return cfg
 
 
-
 @app.get("/api/edge/site-look/{device_id}/config")
 def get_edge_site_look_config(
     device_id: str,
@@ -3996,7 +4004,6 @@ def get_edge_site_look_config(
     )
     service.update_edge_cache(device_id, resolved)
     return resolved
-
 
 
 @app.get("/api/admin/devices/{device_id}/config")
@@ -4051,7 +4058,6 @@ def update_device_config(
     db.commit()
     log.info("Updated device config for %s: %s", device_id, list(config.keys()))
     return {"status": "ok", "device_id": device_id, "config": existing}
-
 
 
 def _process_update_report(device_id: str, diag: dict, db) -> None:
@@ -4736,8 +4742,6 @@ def receive_event(
     ))
     db.commit()
     return {"status": "ok"}
-
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -10755,9 +10759,6 @@ def report_update(
     return {"ok": True}
 
 
-
-
-
 # ════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/updates/available")
@@ -11009,12 +11010,9 @@ ssh -T -i /opt/timelapse/edge/ssh/tunnel_key tunnel@<headend-host>
 """
 
 
-
-
 # Password policy moved to headend/api/admin_settings_api.py (2026-08-26,
 # Phase 1 of the main.py modularization plan) — imported near the top of
 # this file, mounted below.
-
 
 
 # ── Bootstrap Token CRUD ──────────────────────────────────────────────────────
@@ -11203,7 +11201,6 @@ def list_devices(_user=require_role("viewer"), db: Session = Depends(get_db)):
     return result
 
 
-
 _AI_RESULT_LIST_STRIP_TOP_KEYS = ("raw_response", "prompt")
 _AI_RESULT_LIST_STRIP_EDGE_KEYS = ("npu", "autonomous_optimizer", "cv_features")
 
@@ -11375,7 +11372,6 @@ def get_sidecar(
                 headers={"Cache-Control": "no-store"},
             )
     raise HTTPException(status_code=404, detail="Sidecar ikke fundet")
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -11760,7 +11756,6 @@ def list_timelapse_jobs(_user=require_role("admin")):
 # ── API Token auth ────────────────────────────────────────────────────────────
 
 
-
 # ── CMDB ──────────────────────────────────────────────────────────────────
 app.include_router(import_router, prefix="/api/import", dependencies=[require_role("admin")])
 app.include_router(siem_router, prefix="/api/siem")
@@ -12066,7 +12061,7 @@ def _bounded_generate_thumbnail(src: _Path, thumb: _Path) -> tuple[bool, str | N
 
 def _unlink_thumbnail_variants(image_path: _Path, filename: str) -> bool:
     deleted = False
-    for directory in (_thumbs_dir_for(image_path), _generated_thumbs_dir_for(image_path)):
+    for directory in (_thumbs_dir_for(image_path), _generated_thumbs_dir_for(image_path), display_image_api.display_dir_for(image_path)):
         try:
             thumb = directory / filename
             if thumb.exists():
@@ -13944,7 +13939,6 @@ def update_config_layer_override(
         return {"status": "ok", "layer": "camera", "entity_id": camera.id}
 
     raise HTTPException(status_code=400, detail="layer skal være global, customer, site eller camera")
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -15902,7 +15896,6 @@ def get_exif(
         return {"exif": {}, "error": str(exc)}
 
 
-
 # ── Diagnostics historik ──────────────────────────────────────────────────
 
 @app.get("/api/admin/devices/{device_id}/diagnostics/history")
@@ -17157,6 +17150,9 @@ def _ensure_capture_file_access(db: Session, user: User | None, device_id: str, 
     if not _capture_is_allowed(db, user, capture):
         raise HTTPException(status_code=403, detail="Ingen adgang til dette billede")
     return capture
+
+
+app.include_router(display_image_api.setup_display_router(_find_image, _ensure_capture_file_access, _log_capture_access_deduplicated, _xaccel_redirect, _sanitize_device_id))
 
 
 def _capture_quality_score(capture: Capture) -> float:
