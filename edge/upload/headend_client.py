@@ -389,9 +389,7 @@ class HeadendClient:
                 path,
                 payload_hash=manifest_hash,
             ))
-            session = requests.Session()
-            session.headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
-            session.headers["User-Agent"] = "TimeLapsePro-EdgeAgent/1.0"
+            session = self._session
             session.headers.pop("Content-Type", None)
             with ExitStack() as stack:
                 files = {
@@ -486,9 +484,7 @@ class HeadendClient:
                 path,
                 payload_hash=manifest_hash,
             ))
-            session = requests.Session()
-            session.headers["Authorization"] = f"Bearer {self._cfg_mgr.api_token}"
-            session.headers["User-Agent"] = "TimeLapsePro-EdgeAgent/1.0"
+            session = self._session
             session.headers.pop("Content-Type", None)
             with open(path_obj, "rb") as fh:
                 started = time.monotonic()
