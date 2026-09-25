@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-25 13:00 — fra ChatGPT: PR #259 CI-fejl analyseret og rettet uden at svække architecture-ratchet
+
+- **Hvad er gjort:** Første CI-kørsel på den reconcilerede main-baserede PR #259 (`1e9ae882`) fejlede med præcis 2 tests: architecture-ratchet fordi `headend/main.py` var vokset til 17.562 linjer mod max 17.550, samt en transport-contract-test der stadig krævede den gamle direkte `_build_session(...)` i Edge backup-upload. Begge fund er rettet på branch-head.
+- **Arkitekturrettelse:** mTLS' HTTP/enrollment-mapping er flyttet til `headend/api/edge_api_mtls_api.py::enforce_edge_api_mtls_identity`; `headend/main.py` delegerer nu kun til API-boundary helperen. Baseline er **ikke** hævet.
+- **Transportrettelse:** `upload_edge_backup()` beholder den fælles `self._session`, som både er retry-aware og præsenterer Edge-ejet klientcertifikat når tilgængeligt. Den gamle testforventning blev opdateret; vi genindførte ikke en legacy transportvej.
+- **CI-status:** Ny CI på head `a25e1b672b3b9c2d16b131a78f64c856f1b0d703` er startet som Actions run `36126742051` og var stadig `in_progress` ved denne handover-opdatering. Ingen produktionsaktivering er udført.
+- **Independent review:** PR #259 har allerede en eksplicit review-request med fokus på mTLS-bypasses, certifikat→device binding, migration semantics, revocation, challenge replay/concurrency og MFA-semantik. Claude/Z.ai kan bruge den eksisterende request som review-kontrakt.
+- **Reverse SSH-status korrigeret:** Nyere autoritativ handover viser, at begge fysiske Edges allerede er cuttet over til `tunnel.timelapse-pro.dk:22022` (Edge1 remote `2201`, Edge2 remote `2204`). Den gamle sessionsplan om først at flytte reverse SSH er derfor superseded.
+- **Risici / pas på:** Den live Headend-serveringsmappe må fortsat ikke bruges som development checkout. Nginx mTLS enforcement, CA-init og fysisk Edge enrollment må først ske efter grøn CI + independent review + særskilt canary/rollback-gate.
+
 ### Handover 2026-09-25 12:50 — fra ChatGPT: #246/#259 reconcileret frem på frisk main uden runtime-aktivering
 
 - **Hvad er gjort:** Closure-sporet fra #246/#259 er samlet med frisk `main@b901d486733d69733bad2f21dfa42354573b6aba` i en to-parent merge på `chatgpt/api-mtls-runtime-closure-20260925`. Alle ikke-konfliktende #246/#259-filer er portet som deres eksakte blobs; `headend/main.py` er manuelt merged, så de nyere main-ændringer fra bl.a. #251/#252/#254/#255 bevares samtidig med mTLS-verifier/wiring. Denne log og PAKKE-registeret er manuelt reconcileret for at bevare begge historiklinjer.
