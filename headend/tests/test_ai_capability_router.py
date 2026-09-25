@@ -145,6 +145,20 @@ def test_product_entrypoints_use_capability_router_not_vendor_clients():
     assert "GeminiVisionService(" not in review_api
 
 
+def test_bulk_analysis_paths_use_capability_router():
+    backfill = (HEADEND_DIR / "ai" / "backfill.py").read_text(encoding="utf-8")
+    batch = (HEADEND_DIR / "ai" / "ai_batch_submit.py").read_text(encoding="utf-8")
+
+    for source in (backfill, batch):
+        assert "CapabilityRouter" in source
+        assert "GeminiVisionService(" not in source
+        assert "OllamaVisionService(" not in source
+        assert "AppleFoundationVisionService(" not in source
+
+    assert "submit_image_batch(" in batch
+    assert "analyse_image_plan(" in backfill
+
+
 def test_deterministic_siem_stays_independent_of_model_router():
     deterministic_siem = (HEADEND_DIR / "siem.py").read_text(encoding="utf-8")
     ai_text = (HEADEND_DIR / "ai" / "text_services.py").read_text(encoding="utf-8")
