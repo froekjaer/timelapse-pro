@@ -27,6 +27,7 @@ from urllib3.util.retry import Retry
 from security import canonical_json, edge_attestation_headers, ensure_edge_signing_key, request_signature_headers
 from api_mtls import (
     certificate_renewal_needed,
+    client_certificate_paths,
     ensure_key_and_csr,
     install_certificate_bundle,
 )
