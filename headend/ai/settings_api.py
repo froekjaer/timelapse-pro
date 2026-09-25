@@ -54,6 +54,14 @@ AI_RUNTIME_FIELDS = {
     "ollama_text_timeout_s": {"label": "Tekst timeout (sek.)", "type": "int", "default": "90", "min": 10, "max": 900},
     "ollama_text_num_predict": {"label": "Tekst output tokens", "type": "int", "default": "1800", "min": 128, "max": 16384},
     "ollama_text_temperature": {"label": "Tekst temperature", "type": "float", "default": "0.1", "min": 0, "max": 2},
+    "apple_ai_timeout_s": {"label": "Apple AI timeout (sek.)", "type": "int", "default": "120", "min": 10, "max": 900},
+    "apple_ai_temperature": {"label": "Apple AI temperature", "type": "float", "default": "0.2", "min": 0, "max": 2},
+    "gemini_text_model": {"label": "Gemini tekst/structured-model", "type": "text", "default": "gemini-3.8-flash"},
+    "ai_provider_search_order": {"label": "Provider-rækkefølge · AI Search", "type": "provider_order", "default": "ollama"},
+    "ai_provider_siem_order": {"label": "Provider-rækkefølge · SIEM AI", "type": "provider_order", "default": "ollama"},
+    "ai_provider_aiops_order": {"label": "Provider-rækkefølge · AI Ops", "type": "provider_order", "default": "ollama"},
+    "ai_provider_cmdb_order": {"label": "Provider-rækkefølge · CMDB AI", "type": "provider_order", "default": "ollama"},
+    "ai_provider_summarization_order": {"label": "Provider-rækkefølge · Summarization", "type": "provider_order", "default": "ollama"},
 }
 
 
@@ -79,6 +87,18 @@ def _validate_runtime_value(key: str, value: str) -> str:
     value = str(value).strip()
     if not value:
         raise HTTPException(status_code=400, detail=f"{spec['label']} må ikke være tom")
+    if spec["type"] == "provider_order":
+        from ai.capability_router import KNOWN_PROVIDERS
+        providers = [item.strip().lower() for item in value.split(",") if item.strip()]
+        if not providers:
+            raise HTTPException(status_code=400, detail=f"{spec['label']} må ikke være tom")
+        invalid = [item for item in providers if item not in KNOWN_PROVIDERS]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{spec['label']} indeholder ukendt provider: {', '.join(invalid)}",
+            )
+        value = ",".join(dict.fromkeys(providers))
     if spec["type"] in {"int", "float"}:
         try:
             number = int(value) if spec["type"] == "int" else float(value)
@@ -136,6 +156,16 @@ def update_ai_runtime(payload: RuntimeUpdate, user=Depends(_require_platform_adm
     for key, value in validated.items():
         set_setting(db, key, value, user.username)
     return {"ok": True, "updated": sorted(validated)}
+
+
+@settings_router.get("/ai-providers")
+def get_ai_provider_status(
+    probe: bool = False,
+    _user=Depends(_require_platform_admin),
+):
+    """Provider capabilities/policies. probe=true performs runtime availability probes."""
+    from ai.capability_router import CapabilityRouter
+    return CapabilityRouter(get_db).status(probe=probe)
 
 
 def _audit_ollama_control(db: Session, user, payload: OllamaRuntimeControlUpdate, status: dict) -> None:
