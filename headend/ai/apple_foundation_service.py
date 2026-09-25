@@ -63,11 +63,18 @@ def _schema_types(fm):
             anyOf=["person_counted", "face", "license_plate"],
         )
 
+    # apple_fm_sdk resolves type hints through module globals. These classes are
+    # intentionally created lazily inside this function, so a nested Generable
+    # reference (list[GDPRDetection]) cannot be resolved reliably by SDK 0.2.1.
+    # Keep the privacy observations flat in the provider schema and adapt them
+    # to TimeLapse canonical detections below.
     @fm.generable
     class GDPR:
         has_data: bool = fm.guide("Om person, ansigt eller nummerplade er synlig")
-        detections: list[GDPRDetection] = fm.guide(
-            "Observerede persondata-typer uden identitet", max_items=50
+        detection_types: list[str] = fm.guide(
+            "Observerede persondata-typer uden identitet",
+            element=fm.guide(anyOf=["person_counted", "face", "license_plate"]),
+            max_items=50,
         )
 
     @fm.generable
@@ -187,8 +194,8 @@ class AppleFoundationVisionService:
         # Canonical vocabulary/alarm semantics remain TimeLapse-owned.
         parsed["change"]["summary"] = parsed["change"].get("summary") or None
         parsed["gdpr"]["detections"] = [
-            {"type": item.get("type"), "detail": {}, "bbox": []}
-            for item in parsed["gdpr"].get("detections", [])
+            {"type": item, "detail": {}, "bbox": []}
+            for item in parsed["gdpr"].pop("detection_types", [])
         ]
 
         normalizer = object.__new__(OllamaVisionService)
