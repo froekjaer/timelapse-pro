@@ -373,6 +373,41 @@ class CapabilityRouter:
             })
         return result
 
+    def image_batch_info(
+        self,
+        *,
+        provider_name: str,
+        cloud_model: str | None = None,
+    ) -> dict[str, Any]:
+        provider = self._provider(provider_name, cloud_model=cloud_model)
+        if not hasattr(provider, "batch_info"):
+            raise ProviderUnavailable(provider_name, "batch vision transport understøttes ikke")
+        return provider.batch_info()
+
+    def submit_image_batch(
+        self,
+        *,
+        provider_name: str,
+        items,
+        vocabulary_by_cat: dict[str, list[str]],
+        display_name: str,
+        gcs_bucket: str = "",
+        bucket_region: str = "",
+        context_by_key: dict[str, str] | None = None,
+        cloud_model: str | None = None,
+    ):
+        provider = self._provider(provider_name, cloud_model=cloud_model)
+        if not hasattr(provider, "submit_image_batch"):
+            raise ProviderUnavailable(provider_name, "batch vision transport understøttes ikke")
+        return provider.submit_image_batch(
+            items=items,
+            vocabulary_by_cat=vocabulary_by_cat,
+            display_name=display_name,
+            gcs_bucket=gcs_bucket,
+            bucket_region=bucket_region,
+            context_by_key=context_by_key or {},
+        )
+
     def status(self, *, probe: bool = False) -> dict[str, Any]:
         providers: dict[str, Any] = {}
         for name in KNOWN_PROVIDERS:
