@@ -359,6 +359,26 @@ function AIRuntimeTab() {
     }
   }
 
+  const saveProviderPolicies = async () => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const policyFields = fields.filter(field => field.type === 'provider_order')
+      await api('/api/settings/ai-runtime', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          values: Object.fromEntries(policyFields.map(field => [field.key, field.value])),
+        }),
+      })
+      setMessage('Provider-politikken er gemt. Nye AI-kald bruger den valgte prioritet og fallback-rækkefølge.')
+      await load()
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Provider-politikken kunne ikke gemmes')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const saveRuntime = async () => {
     setBusy(true)
     try {
@@ -415,7 +435,7 @@ function AIRuntimeTab() {
       saving={busy}
       onProbe={probeProviders}
       onChange={(key, value) => setFields(all => all.map(field => field.key === key ? { ...field, value } : field))}
-      onSave={saveRuntime}
+      onSave={saveProviderPolicies}
     />
 
     <section className="rounded-lg border border-white/10 bg-gray-900 p-4 sm:p-5">
