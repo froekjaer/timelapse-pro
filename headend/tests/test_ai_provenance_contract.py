@@ -79,4 +79,5 @@ def test_worker_records_provider_specific_vocabulary_provenance():
 
     assert '"apple_foundation" if provider_used == "apple" else provider_used' in source
     assert 'payload["provider"] = provider_used' in source
-    assert 'translation_source="ollama"' in source
+    assert 'translation_source=translation_source' in source
+    assert '"apple_foundation" if provider_used == "apple" else provider_used' in source
