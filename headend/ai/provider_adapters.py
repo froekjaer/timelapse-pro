@@ -15,6 +15,24 @@ from ai.provider_contract import (
 )
 
 
+def _safe_provider_failure(exc: Exception) -> str:
+    """Classify provider failures without emitting secrets or raw request payloads."""
+    message = str(exc or "").lower()
+    if any(token in message for token in ("401", "unauthenticated", "invalid api key", "authentication")):
+        return "authentication_failed"
+    if any(token in message for token in ("403", "permission denied", "permission_denied", "forbidden")):
+        return "permission_denied"
+    if any(token in message for token in ("404", "not found", "model not found")):
+        return "model_or_endpoint_not_found"
+    if any(token in message for token in ("429", "resource_exhausted", "rate limit", "quota")):
+        return "quota_or_rate_limit"
+    if any(token in message for token in ("region", "location")):
+        return "region_or_location_error"
+    if any(token in message for token in ("timeout", "timed out")):
+        return "timeout"
+    return type(exc).__name__
+
+
 def _json_payload(text: str) -> dict[str, Any] | list[Any]:
     candidate = str(text or "").strip()
     if not candidate:
@@ -279,18 +297,27 @@ class GeminiProvider(_BaseProvider):
     def availability(self, capability: AICapability) -> dict[str, Any]:
         self._require(capability)
         try:
-            available = bool(self.service.health_check())
+            from google.genai import types
+
+            response = self.service._generate_content_with_retry(
+                contents=["Reply exactly: TIMELAPSE_OK"],
+                config=types.GenerateContentConfig(
+                    temperature=0,
+                    max_output_tokens=16,
+                ),
+            )
+            available = bool(str(getattr(response, "text", "") or "").strip())
         except Exception as exc:
             return {
                 "available": False,
-                "reason": type(exc).__name__,
+                "reason": _safe_provider_failure(exc),
                 "provider": self.name,
                 "model": self.model,
                 "execution": "cloud",
             }
         return {
             "available": available,
-            "reason": None if available else "health_check_failed",
+            "reason": None if available else "empty_response",
             "provider": self.name,
             "model": self.model,
             "execution": "cloud",
@@ -356,7 +383,7 @@ class GeminiProvider(_BaseProvider):
                 config=types.GenerateContentConfig(**config_kwargs),
             )
         except Exception as exc:
-            raise ProviderUnavailable(self.name, type(exc).__name__) from exc
+            raise ProviderUnavailable(self.name, _safe_provider_failure(exc)) from exc
 
         content = str(response.text or "")
         data = _json_payload(content) if structured else None
