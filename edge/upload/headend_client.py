@@ -135,8 +135,26 @@ class HeadendClient:
         self._base_url   = device.get("headend_url", "").rstrip("/")
         self._cfg_mgr    = config_manager
 
+    def _client_certificate(self) -> tuple[str, str] | None:
+        """Return the installed Edge API identity only while it is current."""
+        try:
+            if certificate_renewal_needed(self._device_id):
+                return None
+            return client_certificate_paths()
+        except Exception as exc:
+            log.warning("Headend API mTLS client identity unavailable: %s", exc)
+            return None
+
     @property
     def _session(self) -> requests.Session:
+        return _build_session(
+            self._cfg_mgr.api_token,
+            client_certificate=self._client_certificate(),
+        )
+
+    @property
+    def _legacy_session(self) -> requests.Session:
+        """Migration/enrollment transport without client-certificate coupling."""
         return _build_session(self._cfg_mgr.api_token)
 
     # ── Bootstrap ──────────────────────────────────────────────────────────
