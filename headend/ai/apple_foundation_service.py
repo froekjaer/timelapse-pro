@@ -42,32 +42,13 @@ def _sdk():
 
 
 def _schema_types(fm):
-    """Create SDK Generable types lazily so non-macOS imports remain safe."""
+    """Create one flat SDK Generable type lazily.
 
-    @fm.generable
-    class Change:
-        detected: bool = fm.guide("Om en reel ændring er observeret")
-        summary: str = fm.guide("Kort dansk ændringsbeskrivelse; tom streng hvis ingen")
-        new_items: list[str] = fm.guide("Nye synlige elementer", max_items=20)
-        removed_items: list[str] = fm.guide("Elementer der ikke længere ses", max_items=20)
-
-    @fm.generable
-    class Quality:
-        flag: str = fm.guide("Primær billedkvalitet", anyOf=QUALITY_FLAGS)
-        ok: bool = fm.guide("Om billedet er anvendeligt til dokumentation")
-
-    # apple_fm_sdk resolves type hints through module globals. These classes are
-    # intentionally created lazily inside this function, so a nested Generable
-    # reference (list[GDPRDetection]) cannot be resolved reliably by SDK 0.2.1.
-    # Keep the privacy observations flat in the provider schema and adapt them
-    # to TimeLapse canonical detections below.
-    @fm.generable
-    class GDPR:
-        has_data: bool = fm.guide("Om person, ansigt eller nummerplade er synlig")
-        detection_types: list[str] = fm.guide(
-            "Observerede persondata-typer uden identitet",
-            max_items=50,
-        )
+    apple_fm_sdk 0.2.1 resolves annotations on nested local Generable classes
+    through module globals. A flat schema avoids forward-reference failures
+    while TimeLapse still adapts the observations into its canonical nested
+    result contract below.
+    """
 
     @fm.generable
     class TimeLapseAnalysis:
@@ -84,9 +65,23 @@ def _schema_types(fm):
         confidence: float = fm.guide(
             "Samlet model-confidence; ikke verificeret sandhed", range=(0.0, 1.0)
         )
-        change: Change
-        quality: Quality
-        gdpr: GDPR
+        change_detected: bool = fm.guide("Om en reel ændring er observeret")
+        change_summary: str = fm.guide(
+            "Kort dansk ændringsbeskrivelse; tom streng hvis ingen"
+        )
+        change_new_items: list[str] = fm.guide("Nye synlige elementer", max_items=20)
+        change_removed_items: list[str] = fm.guide(
+            "Elementer der ikke længere ses", max_items=20
+        )
+        quality_flag: str = fm.guide("Primær billedkvalitet", anyOf=QUALITY_FLAGS)
+        quality_ok: bool = fm.guide("Om billedet er anvendeligt til dokumentation")
+        gdpr_has_data: bool = fm.guide(
+            "Om person, ansigt eller nummerplade er synlig"
+        )
+        gdpr_detection_types: list[str] = fm.guide(
+            "Kun privacy-typerne person_counted, face eller license_plate; ingen identitet",
+            max_items=50,
+        )
 
     return TimeLapseAnalysis
 
@@ -157,7 +152,7 @@ class AppleFoundationVisionService:
             "\n\nAPPLE GUIDED OUTPUT: Beskriv kun det, der faktisk kan observeres. "
             "Provider-confidence er kun modellens egen usikkerhed og er ikke ground truth. "
             "Gæt ikke på identitet eller andre personoplysninger. "
-            "gdpr.detection_types må kun indeholde: person_counted, face, license_plate."
+            "gdpr_detection_types må kun indeholde: person_counted, face, license_plate."
         )
 
         attachments = [prompt]
@@ -183,13 +178,27 @@ class AppleFoundationVisionService:
         generated = getattr(typed, "content", typed)
         parsed = asdict(generated)
 
-        # Adapt the typed observation to the existing canonical result builder.
+        # Adapt the flat SDK observation to the existing canonical result builder.
         # Canonical vocabulary/alarm semantics remain TimeLapse-owned.
-        parsed["change"]["summary"] = parsed["change"].get("summary") or None
-        parsed["gdpr"]["detections"] = [
-            {"type": item, "detail": {}, "bbox": []}
-            for item in parsed["gdpr"].pop("detection_types", [])
-        ]
+        parsed["change"] = {
+            "detected": bool(parsed.pop("change_detected", False)),
+            "summary": parsed.pop("change_summary", "") or None,
+            "new_items": parsed.pop("change_new_items", []),
+            "removed_items": parsed.pop("change_removed_items", []),
+        }
+        parsed["quality"] = {
+            "flag": parsed.pop("quality_flag", "clear_image"),
+            "ok": bool(parsed.pop("quality_ok", True)),
+        }
+        detection_types = parsed.pop("gdpr_detection_types", [])
+        parsed["gdpr"] = {
+            "has_data": bool(parsed.pop("gdpr_has_data", False)),
+            "detections": [
+                {"type": item, "detail": {}, "bbox": []}
+                for item in detection_types
+                if item in {"person_counted", "face", "license_plate"}
+            ],
+        }
 
         normalizer = object.__new__(OllamaVisionService)
         result = normalizer._build_result(
