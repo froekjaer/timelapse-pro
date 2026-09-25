@@ -57,6 +57,7 @@ AI_RUNTIME_FIELDS = {
     "apple_ai_timeout_s": {"label": "Apple AI timeout (sek.)", "type": "int", "default": "120", "min": 10, "max": 900},
     "apple_ai_temperature": {"label": "Apple AI temperature", "type": "float", "default": "0.2", "min": 0, "max": 2},
     "gemini_text_model": {"label": "Gemini tekst/structured-model", "type": "text", "default": "gemini-3.8-flash"},
+    "gemini_text_location": {"label": "Gemini tekst/structured-region", "type": "text", "default": "eu"},
     "ai_provider_search_order": {"label": "Provider-rækkefølge · AI Search", "type": "provider_order", "default": "ollama"},
     "ai_provider_siem_order": {"label": "Provider-rækkefølge · SIEM AI", "type": "provider_order", "default": "ollama"},
     "ai_provider_aiops_order": {"label": "Provider-rækkefølge · AI Ops", "type": "provider_order", "default": "ollama"},
