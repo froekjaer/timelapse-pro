@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-09-25 — ChatGPT: brugervenlig provider-skift i AI Styring implementeret
+
+- **Peter-request:** Gør skift mellem Apple/Ollama/Gemini pænt og brugervenligt i UI'en i stedet for rå komma-separerede `provider_order`-felter.
+- **UI-resultat:** Ny modulær `timelapse-ui/src/components/AIProviderPolicyPanel.tsx` er koblet ind under **AI Styring -> Modeller & prompts**. Den styrer tekst/structured-funktionerne AI Search, SIEM AI, AI Ops, CMDB AI og Opsummering.
+- **Interaktion:** Hver funktion viser en prioriteret provider-kæde med nummereret **Primær** og **Fallback 1/2**. Admin kan flytte providers op/ned, fjerne fallbacks og tilføje Apple/Ollama/Gemini med ét klik. UI tillader ikke at den sidste provider fjernes; backendens eksisterende allowlist/ikke-tom validation er fortsat anden kontrolbarriere.
+- **Status/probe:** Provider-kort viser capabilities og konfigurationsstatus. Knappen **Test forbindelser** kalder `/api/settings/ai-providers?probe=true` og viser runtime-status. Gemini-probe-status inkluderer nu den sikre effective region (fx `eu`) uden credentials.
+- **Save-scope:** **Gem provider-politik** sender kun felter med `type=provider_order`; andre halvredigerede runtime-felter gemmes ikke utilsigtet. Den eksisterende **Gem alle** under Modeller og inferens fungerer fortsat som før.
+- **Image/Vision:** Bevidst ikke blandet ind i den globale tekst-policy. Billedanalyse vælges fortsat pr. kunde/site på fanen **Strategi**, hvor `technical_only/local_only/local_then_cloud/cloud_only/apple_only` allerede har visuel styring.
+- **Business/security boundary:** UI ændrer kun provider-policy. RBAC, tenant-scope, canonical vocabulary, GDPR-policy og deterministic SIEM forbliver TimeLapse-authority.
+- **Tests:** `headend/tests/test_ai_provider_policy_ui.py` beskytter mod regression til rå provider-order inputs, sikrer UI-order/fallback/minimum-one semantics, de fem produktfunktioner og runtime-probe visibility. GitHub Actions på implementation-head `b8297d46c022d9d7128d4ef3a8aade99446d2549` er completed/success (run `36123886521`). Efterfølgende save-scope/tekst-polish ligger ovenpå og kræver frisk CI før merge.
+- **Næste fysiske UX-check:** reset den isolerede worktree til branch-head, build UI, og åbn AI Styring -> Modeller & prompts. Verificér at provider-kæder kan ændres/gemmes og at Test forbindelser viser Apple/Ollama/Gemini-status uden at ændre policies.
+
 ### Handover 2026-09-25 — ChatGPT/Peter: Capability Router physical smoke COMPLETE
 
 - **Physical acceptance PASS:** Peter genkørte `tools/smoke_ai_capabilities.py` fra branch-head `a3d18a5e...` på Mac Mini Headend med Apple, Ollama og Gemini for både Text og Structured. Rapporten returnerede `all_ok=true`.
