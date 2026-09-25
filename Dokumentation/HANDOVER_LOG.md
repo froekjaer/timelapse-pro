@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-25 — ChatGPT/Peter: Capability Router physical smoke COMPLETE
+
+- **Physical acceptance PASS:** Peter genkørte `tools/smoke_ai_capabilities.py` fra branch-head `a3d18a5e...` på Mac Mini Headend med Apple, Ollama og Gemini for både Text og Structured. Rapporten returnerede `all_ok=true`.
+- **Apple:** Text PASS, `TIMELAPSE_OK`, wall ~1.915 s; Structured PASS, korrekt JSON, wall ~0.492 s. Provider provenance: `apple-foundation-model-on-device`, local, `apple_fm_sdk`.
+- **Ollama:** Text PASS, wall ~49.295 s; Structured PASS, korrekt JSON, wall ~0.554 s. Provider provenance: `llama3.2:latest`, local. Den store forskel mellem første Text-run og efterfølgende Structured-run er konsistent med cold-load/warm-state overhead, men er ikke i sig selv en performance-konklusion. Text-modellen var fortsat mere verbose end exact-output prompten bad om.
+- **Gemini:** Text PASS, wall ~4.241 s; Structured PASS, korrekt JSON, wall ~3.151 s. Provider provenance: `gemini-3.8-flash`, cloud/Vertex, effective location `eu`. Dette fysisk verificerer model-aware region-fixet og EU-residency-pathen.
+- **CI:** Gemini region/diagnostics kode-head `370ae29ab3bcbb650b0aa7a623296772061bd492` er GitHub Actions completed/success i run `36122688710`.
+- **Arkitekturkonklusion:** Vision er allerede fysisk verificeret på Apple/Ollama benchmark-sporet, og Text/Structured er nu fysisk verificeret på Apple/Ollama/Gemini gennem samme CapabilityRouter. Den centrale providerarkitektur er derfor både code-complete og fysisk capability-verificeret.
+- **Ikke lukket endnu:** production-defaults må fortsat ikke ændres på basis af disse smoke cases. Åbne acceptance-gates er repræsentativt reviewed image corpus (10–20), resource/concurrency/RAM/thermal + fallback-behaviour og GRC-import/verifikation mod autoritativ Headend DB.
+- **Næste rationelle handling:** kør den idempotente GRC-import `headend/tools/import_grc_ai_provider_architecture_20260925.py` mod Headend DB og verificér items/evidence i Compliance -> GRC register; derefter bygges den repræsentative benchmark-corpus/resource-test.
+
 ### Handover 2026-09-25 — ChatGPT/Peter: physical capability smoke Apple/Ollama PASS, Gemini region root cause fixed
 
 - **Fysisk smoke på head `ab5c51a1...`:** `tools/smoke_ai_capabilities.py --providers apple ollama gemini --capabilities text structured` blev kørt på Mac Mini Headend.
