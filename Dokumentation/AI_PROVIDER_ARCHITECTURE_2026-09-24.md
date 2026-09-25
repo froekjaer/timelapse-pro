@@ -244,7 +244,7 @@ The architecture shown in the Decision section is now implemented for the capabi
 - **Image:** live worker, manual analysis, backfill and Gemini batch transport route through the capability layer.
 - **Search / AI Ops:** natural-language capture search and AI Ops structured analysis call the generic structured capability; database access, tenant filtering and actions remain TimeLapse-owned.
 - **SIEM / CMDB:** AI-assisted structured analysis routes through the capability layer. Deterministic `headend/siem.py` remains independent and authoritative.
-- **Management:** admin settings expose allowlisted per-function provider order and provider capability/status inspection.
+- **Management:** AI Styring exposes a visual provider-policy editor for Search, SIEM AI, AI Ops, CMDB AI and Summarization. Admins can select primary/fallback order across Apple/Ollama/Gemini, reorder or remove fallbacks, and run explicit runtime probes. At least one provider is always retained by the UI and the backend independently allowlists/validates provider names. Image/Vision selection remains scoped per customer/site on the existing Strategi tab.
 - **Policy / normalization:** canonical vocabulary, privacy normalization, alarm semantics, persistence and provider-vs-adapter provenance remain outside providers.
 - **Tool calling:** intentionally not enabled as a generic provider capability in product flows. Existing Open WebUI tools remain narrow, TimeLapse-owned operations with their existing trust boundary; unrestricted provider tools/shell/SQL are not introduced.
 
