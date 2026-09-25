@@ -39,3 +39,17 @@ def test_apple_provider_is_constructible_without_importing_sdk():
     # Apple SDK dependency is Darwin-only. Runtime availability is lazy.
     provider = AppleFoundationVisionService()
     assert provider.timeout_s > 0
+
+
+def test_apple_source_uses_path_objects_for_sdk_attachments():
+    import inspect
+    source = inspect.getsource(AppleFoundationVisionService.analyse)
+    assert "ImageAttachment(str(" not in source
+    assert "ImageAttachment(image_path)" in source
+
+
+def test_benchmark_bootstraps_headend_import_path():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "tools" / "compare_ai_providers.py").read_text()
+    assert "HEADEND_DIR" in source
+    assert "sys.path.insert" in source
