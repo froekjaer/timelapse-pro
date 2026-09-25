@@ -3410,3 +3410,12 @@ person vide".
 - **Rotate-out:** Existing image-injected TLS og Headend-held SSH credentials kan markeres rotated, så de ikke længere står som parallel authority efter successor credentials er aktive.
 - **Dokumentation:** `Dokumentation/WP4_EDGE_IMAGE_PROVISIONING_PKI_CONVERGENCE_2026-08.md` opdateret med exit-gate, remaining legacy writer paths og rollback.
 - **Tests:** Syntax check OK. Fokuseret WP-4/Edge lifecycle/image/mTLS suite: 79 passed, 12 eksisterende mTLS skips. CI-lignende suite: 795 passed, 4 eksisterende smoke skips, 544 deselected.
+
+### Handover 2026-09-25 — ChatGPT: reviewed AI benchmark ground truth
+- **Physical benchmark evidence:** Travbyen Case 001 completed 3 sequential runs each for Apple Foundation Models and Ollama. Both providers completed 3/3 runs. Apple latency was stable at 7.991–8.666 s; Ollama cold start was 34.766 s and warm runs 5.625/5.545 s.
+- **Human review:** Peter verified that several people are visible in Case 001, but very far away and not recognizable/identifiable; recognizable faces are not observed.
+- **Privacy result:** Apple emitted `person_counted` in all 3 benchmark runs; Ollama emitted no person/privacy detection in all 3. This is Case-001 evidence only, not a general provider ranking.
+- **Ground truth:** Added `headend/tools/ai_benchmark_ground_truth.json` keyed by image SHA-256. Reviewed privacy facts are kept separate from model output.
+- **Benchmark scoring:** `compare_ai_providers.py --annotations ...` can now score person-presence and recognizable-face detection against reviewed annotations. Unknown fields remain unscored instead of being guessed.
+- **Boundary:** Model confidence is not factual confidence. Scene facts beyond the explicitly reviewed annotations are not treated as ground truth.
+- **Next:** Expand to 10–20 diverse Travbyen captures, use real TimeLapse vocabulary, add reviewed scene/privacy annotations, then compare Apple/Ollama/Gemini. Gemini credentials must use the authoritative Headend configuration rather than copied secrets.
