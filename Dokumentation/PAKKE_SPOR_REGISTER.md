@@ -24,6 +24,18 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### #258 — `chatgpt/apple-intelligence-provider-20260924`
+
+- **Mandat/session:** ChatGPT, fortsat under Peters eksplicitte mandat til at arbejde videre 2026-09-25.
+- **Formål/scope:** Generisk AI-provider-arkitektur med Apple Foundation Models som lokal provider uden at fjerne Ollama/Gemini; fysisk LAB-benchmark og menneskereviewet ground truth. Seneste delspor bringer benchmark-konteksten tættere på produktion ved read-only autoritativ vocabulary og samme Gemini settings/environment-path som Headend.
+- **Berørte domæner/kontrakter:** `headend/ai/apple_foundation_service.py`, `headend/ai/integration.py`, `headend/ai/provider_config.py`, `headend/ai/tag_vocabulary.py`, `headend/tools/compare_ai_providers.py`, AI strategy/UI, provider provenance, benchmark/GRC-dokumentation.
+- **Base/head:** PR #258, draft mod `main`. Verificeret 2026-09-25: base `b901d486733d69733bad2f21dfa42354573b6aba`, head `c2a712f59e127a0f0678ac6ea34e23abe7bfeffc`, GitHub rapporterer mergeable=true. SHA'er er snapshots og skal genhentes før merge.
+- **Overlap/restdisposition:** Ingen eksisterende post i dette register dækkede #258. Sporet overlapper funktionelt med eksisterende Image AI/Ollama/Gemini-integration, men ændringerne ligger på én samlet PR og må ikke splittes ud som parallel provider-implementation uden ny overlap-analyse. Provider-output forbliver observation, ikke autoritativ sandhed.
+- **Seneste verificerede aktivitet/evidens:** TRAVBYEN-001 er menneskereviewet for privacy. Apple fandt personforekomst i den reviewede kørsel; Ollama missede den. Det er case-evidence, ikke provider-ranking. Benchmark v3 bruger nu read-only approved DB-vocabulary med kurateret predefined fallback og shared Gemini config helper; no-write kontrakt har regressionstest. CI for head `c2a712f5` var `in_progress` ved registreringen — ikke endnu verificeret grøn.
+- **Næste handling:** Lad CI afslutte; kør derefter TRAVBYEN-001 fysisk med benchmark v3 og verificer `vocabulary.effective_source`, Apple/Ollama-resultater og Gemini via autoritativ Headend-konfiguration. Udvid derefter til 10–20 menneskereviewede captures før provider-defaults/prompttuning.
+- **Blokeringsansvarlig:** Teknisk acceptance: ChatGPT/næste AI-session. Fysisk Headend-run og merge-beslutning: Peter.
+- **Opfølgning:** Før merge, efter fysisk benchmark v3 og når reviewed corpus udvides.
+
 ### #214 — `claude/globalconfig-parallel-load`
 
 - **Mandat/session:** Claude (oprindelig forfatter). Rebase udført af Kimi 2026-09-13 under Peters mandat.
