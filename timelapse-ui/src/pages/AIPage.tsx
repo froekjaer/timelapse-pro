@@ -370,8 +370,8 @@ function AIRuntimeTab() {
           values: Object.fromEntries(policyFields.map(field => [field.key, field.value])),
         }),
       })
-      setMessage('Provider-politikken er gemt. Nye AI-kald bruger den valgte prioritet og fallback-rækkefølge.')
       await load()
+      setMessage('Provider-politikken er gemt. Nye AI-kald bruger den valgte prioritet og fallback-rækkefølge.')
     } catch (e: unknown) {
       setMessage(e instanceof Error ? e.message : 'Provider-politikken kunne ikke gemmes')
     } finally {
