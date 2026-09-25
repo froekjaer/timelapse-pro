@@ -147,7 +147,12 @@ def get_ai_runtime(_user=Depends(_require_platform_admin), db: Session = Depends
         models = OllamaVisionService().list_models()
     except Exception:
         pass
-    return {"fields": fields, "installed_models": models}
+    from ai.capability_router import CapabilityRouter
+    return {
+        "fields": fields,
+        "installed_models": models,
+        "provider_status": CapabilityRouter(get_db).status(probe=False),
+    }
 
 
 @settings_router.put("/ai-runtime")
