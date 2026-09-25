@@ -136,11 +136,9 @@ class HeadendClient:
         self._cfg_mgr    = config_manager
 
     def _client_certificate(self) -> tuple[str, str] | None:
-        """Return the installed Edge API identity only while it is current."""
+        """Return the installed Edge API identity while the certificate is valid."""
         try:
-            if certificate_renewal_needed(self._device_id):
-                return None
-            return client_certificate_paths()
+            return client_certificate_paths(self._device_id)
         except Exception as exc:
             log.warning("Headend API mTLS client identity unavailable: %s", exc)
             return None
