@@ -117,7 +117,7 @@ def test_product_entrypoints_use_capability_router_not_vendor_clients():
     text_services = (HEADEND_DIR / "ai" / "text_services.py").read_text(encoding="utf-8")
     review_api = (HEADEND_DIR / "ai" / "review_api.py").read_text(encoding="utf-8")
 
-    assert "def _call_ai_structured(" in main
+    assert "from ai.capability_router import generate_structured_data" in main
     assert "_call_ollama_text" not in main
     assert "def _capture_spec_from_ai(" in main
     assert "_capture_spec_from_ollama" not in main
