@@ -164,8 +164,8 @@ class AppleFoundationVisionService:
         if reference_image_path:
             ref = Path(reference_image_path)
             if ref.exists():
-                attachments.append(fm.ImageAttachment(str(ref)))
-        attachments.append(fm.ImageAttachment(str(image_path)))
+                attachments.append(fm.ImageAttachment(ref))
+        attachments.append(fm.ImageAttachment(image_path))
 
         result_type = _schema_types(fm)
         session = fm.LanguageModelSession()
