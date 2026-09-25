@@ -18,6 +18,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import Device, EdgeCredentialInventory, EdgeLifecycleRecord, get_db, now_utc
+from services.edge_api_mtls_identity import (
+    EdgeApiMtlsIdentityError,
+    verify_edge_api_mtls_identity,
+)
 from services.headend_api_mtls import (
     HeadendApiMtlsError,
     HeadendApiMtlsUnavailableError,
@@ -89,6 +93,20 @@ def _record_inventory(db: Session, *, device_id: str, issued: dict[str, object])
     }, sort_keys=True)
     db.add(row)
     return row
+
+
+def enforce_edge_api_mtls_identity(db: Session, *, device_id: str, request) -> None:
+    """Map the Edge mTLS identity verifier into the HTTP auth boundary."""
+    enrollment_path = f"/api/trust/headend-api-mtls/{device_id}/enroll"
+    try:
+        verify_edge_api_mtls_identity(
+            db,
+            device_id=device_id,
+            headers=request.headers,
+            allow_legacy_enrollment=(request.url.path == enrollment_path),
+        )
+    except EdgeApiMtlsIdentityError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 def create_headend_api_mtls_admin_router(require_role: Callable) -> APIRouter:
