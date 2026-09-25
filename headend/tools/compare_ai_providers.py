@@ -14,9 +14,16 @@ import argparse
 import concurrent.futures
 import json
 import os
+import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
+
+# Direct script execution adds headend/tools, not headend, to sys.path.
+# Make the sibling ai package resolvable without requiring PYTHONPATH.
+HEADEND_DIR = Path(__file__).resolve().parents[1]
+if str(HEADEND_DIR) not in sys.path:
+    sys.path.insert(0, str(HEADEND_DIR))
 
 
 def _run(name: str, image: Path, model: str | None) -> dict:
