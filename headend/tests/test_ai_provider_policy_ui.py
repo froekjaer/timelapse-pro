@@ -23,7 +23,7 @@ def test_ai_page_uses_visual_provider_policy_editor():
 def test_provider_policy_editor_supports_order_fallback_and_minimum_one_provider():
     source = POLICY_PANEL.read_text(encoding="utf-8")
 
-    assert "Vælg hvilken provider hver AI-funktion prøver først" in source
+    assert "Vælg hvilken provider hver tekst/structured-funktion prøver først" in source
     assert "Primær" in source
     assert "Fallback" in source
     assert "Flyt" in source
