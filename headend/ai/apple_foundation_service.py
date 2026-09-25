@@ -60,7 +60,7 @@ def _schema_types(fm):
     class GDPRDetection:
         type: str = fm.guide(
             "Kun type af persondata; transskriber aldrig identitet eller nummerplade",
-            anyOf=["person", "face", "license_plate"],
+            anyOf=["person_counted", "face", "license_plate"],
         )
 
     @fm.generable
