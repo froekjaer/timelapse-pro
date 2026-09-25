@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-25 — ChatGPT: fysisk benchmark afslørede og lukkede Apple unknown-tag tab
+
+- **Fund fra Peters benchmark v3:** Apple raw `tags` indeholdt bl.a. `houses`, `roofs`, `building_materials`, `temporary_structures`, men de fire observationer nåede hverken `approved_tags` eller `new_tags`. Dette var et faktisk adapter-/normaliseringsgap, ikke kun model-output.
+- **Root cause:** Apple bruger den fælles `OllamaVisionService._build_result`, som med vilje modererer ukendte værdier fra `tags`. Apple Foundation Models kan trods guided schema placere open-vocabulary observationer i `tags` i stedet for `new_tags`, så observationerne kunne blive droppet.
+- **Fix:** `apple_foundation_service._promote_unknown_tags(...)` klassificerer Apples `tags` mod det approved canonical set før fælles normalisering. Kendte tags forbliver i `tags`; ukendte observationer flyttes til `new_tags` som **unapproved review-kandidater**. De bliver ikke automatisk godkendt eller gjort til ground truth. `raw_response.adapter_promoted_unknown_tags` bevarer adapter-provenance.
+- **Scope:** Provider-lokal Apple-fix. Ollamas eksisterende moderation/anti-hallucination-semantik er ikke ændret.
+- **Regressionstest:** `test_apple_unknown_tags_are_preserved_for_review` verificerer at ukendte Apple-observationer overlever som new-tag candidates, mens eksisterende `new_tags_da` alignment bevares.
+- **Commits:** kodefix `8f31420b1a61cb5e37b8acbbbbb85f22de2047b9`; regressionstest `130829dc0f860215e5009893432525868f67d356`.
+- **Næste acceptance:** Afvent/verificer CI på ny PR-head. Derefter genkør TRAVBYEN-001 én gang med live DB vocabulary og bekræft at de tidligere tabte unknown tags nu ses i `new_tags`/adapter provenance; nøjagtigheden af disse scene-tags kræver stadig menneskereview.
+
 ### Handover 2026-09-25 — fra ChatGPT/Peter til næste session: benchmark v3 fysisk PASS med live vocabulary + CI grøn
 
 - **Fysisk acceptance udført af Peter:** Isoleret worktree blev hard-reset til PR #258 head `90f264843d39f5d9a760d57563e42a413347544e` og TRAVBYEN-001 blev kørt sekventielt med `--vocabulary-source database`, Apple + Ollama, reviewed annotations og benchmark v3.
