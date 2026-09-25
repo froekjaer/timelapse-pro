@@ -8,6 +8,7 @@ from ai.capability_router import (
     CapabilityRouter,
     DEFAULT_FUNCTION_PROVIDER_ORDER,
 )
+from ai.provider_adapters import GeminiProvider
 from ai.provider_contract import (
     AICapability,
     NoEligibleProvider,
@@ -202,3 +203,38 @@ def test_capability_smoke_tool_uses_authoritative_router():
     assert "GeminiVisionService(" not in smoke
     assert "OllamaVisionService(" not in smoke
     assert "AppleFoundationVisionService(" not in smoke
+
+
+def test_gemini_availability_probe_uses_runtime_health_check():
+    class HealthyService:
+        model = "gemini-test"
+
+        def health_check(self):
+            return True
+
+    class UnhealthyService:
+        model = "gemini-test"
+
+        def health_check(self):
+            return False
+
+    healthy = GeminiProvider(HealthyService()).availability(AICapability.STRUCTURED)
+    unhealthy = GeminiProvider(UnhealthyService()).availability(AICapability.STRUCTURED)
+
+    assert healthy["available"] is True
+    assert healthy["reason"] is None
+    assert unhealthy["available"] is False
+    assert unhealthy["reason"] == "health_check_failed"
+
+
+def test_gemini_availability_probe_fails_closed_on_health_exception():
+    class BrokenService:
+        model = "gemini-test"
+
+        def health_check(self):
+            raise RuntimeError("network down")
+
+    status = GeminiProvider(BrokenService()).availability(AICapability.TEXT)
+
+    assert status["available"] is False
+    assert status["reason"] == "RuntimeError"
