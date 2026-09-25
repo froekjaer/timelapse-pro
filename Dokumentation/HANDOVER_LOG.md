@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-09-25 — ChatGPT/Peter: provenance regression PASS, bidirectional Apple tag reclassification
+
+- **Fysisk regression udført af Peter på head `91d6bfea...`:** benchmark v3 kørte Apple + Ollama med live DB-vocabulary (37 kategorier / 664 tags, ingen fallback). Der kom **ingen cv2 warning**, så optional OpenCV/Pillow-fallback-fixet er fysisk verificeret.
+- **Raw provenance PASS:** `raw_response.response` viser nu Apple SDK'ets oprindelige flade guided output, mens `raw_response.adapter_response` viser TimeLapse-adapterens normaliserede `change/quality/gdpr` og tag-buckets. Audit-grænsen provider-vs-adapter er dermed fysisk verificeret.
+- **Unknown-tag promotion PASS:** Apple raw `tags` indeholdt `windows`, `ground_cover`, `road_surface`, `building_blocks`; adapteren bevarede dem som unapproved `new_tags` og registrerede dem i `adapter_promoted_unknown_tags`.
+- **Nyt fund i samme fysiske run:** Apple raw `new_tags` indeholdt `roof_structure`, `wall_insulation`, `foundation_pour`, `exterior_painting`. Alle fire findes allerede i TimeLapse's kuraterede canonical vocabulary. Den tidligere adapter håndterede kun unknown-in-`tags` retningen, så known-in-`new_tags` blev filtreret ud af canonical resultatet i stedet for at lande i `approved_tags`.
+- **Fix:** Apple-adapteren bruger nu `_reclassify_apple_tags(...)` og behandler providerens `tags/new_tags` buckets som hints. TimeLapse vocabulary er authority: kendte tags fra begge buckets samles som approved candidates; ukendte fra begge buckets bliver unapproved review candidates. `new_tags_da` filtreres/re-alignes med de ukendte tags. Provenance indeholder både `adapter_promoted_unknown_tags` og `adapter_recovered_approved_tags`.
+- **Regressionstests:** Dækker begge retninger samt cross-bucket deduplikering.
+- **CI:** Forrige provenance/cv2 kode-head `592b2cd1671348b955170e2038efa047f767ea96` er nu verificeret grøn i GitHub Actions run `36115141110`. Ny bidirectional-reclassification head `6bfa0096b38c56cc667598e148a30e235affa593` har run `36118641188` queued ved denne handover og må endnu ikke kaldes grøn.
+- **Næste fysiske gate:** Når ny CI er grøn, genkør samme TRAVBYEN-001 benchmark. Forvent at de fire kendte tags fra Apples raw `new_tags` nu dukker op i canonical `approved_tags`, samtidig med at ukendte tags fortsat ligger i `new_tags`. Derefter stop single-image tuning og gå videre til repræsentativt corpus.
+
 ### Handover 2026-09-25 — ChatGPT/Peter: unknown-tag fysisk PASS, cv2-støj fjernet, provenance hardening
 
 - **Fysisk acceptance PASS på head `6c610f59...`:** Peter genkørte TRAVBYEN-001 med benchmark v3, live DB-vocabulary (37 kategorier / 664 tags, ingen fallback), Apple + Ollama. Apple-promotionsfixet virkede fysisk: `building_site`, `house_under_construction`, `construction_equipment`, `grass_area` og `road_work` blev bevaret som `new_tags` og samtidig listet i `raw_response.adapter_promoted_unknown_tags`. De blev ikke auto-approved.
