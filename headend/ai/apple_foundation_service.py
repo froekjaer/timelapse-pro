@@ -56,13 +56,6 @@ def _schema_types(fm):
         flag: str = fm.guide("Primær billedkvalitet", anyOf=QUALITY_FLAGS)
         ok: bool = fm.guide("Om billedet er anvendeligt til dokumentation")
 
-    @fm.generable
-    class GDPRDetection:
-        type: str = fm.guide(
-            "Kun type af persondata; transskriber aldrig identitet eller nummerplade",
-            anyOf=["person_counted", "face", "license_plate"],
-        )
-
     # apple_fm_sdk resolves type hints through module globals. These classes are
     # intentionally created lazily inside this function, so a nested Generable
     # reference (list[GDPRDetection]) cannot be resolved reliably by SDK 0.2.1.
@@ -73,7 +66,6 @@ def _schema_types(fm):
         has_data: bool = fm.guide("Om person, ansigt eller nummerplade er synlig")
         detection_types: list[str] = fm.guide(
             "Observerede persondata-typer uden identitet",
-            element=fm.guide(anyOf=["person_counted", "face", "license_plate"]),
             max_items=50,
         )
 
@@ -164,7 +156,8 @@ class AppleFoundationVisionService:
         prompt += (
             "\n\nAPPLE GUIDED OUTPUT: Beskriv kun det, der faktisk kan observeres. "
             "Provider-confidence er kun modellens egen usikkerhed og er ikke ground truth. "
-            "Gæt ikke på identitet eller andre personoplysninger."
+            "Gæt ikke på identitet eller andre personoplysninger. "
+            "gdpr.detection_types må kun indeholde: person_counted, face, license_plate."
         )
 
         attachments = [prompt]
