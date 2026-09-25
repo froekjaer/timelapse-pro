@@ -19,8 +19,9 @@ def _method_slice(source: str, name: str, next_name: str) -> str:
 def test_edge_backup_upload_uses_retry_aware_session():
     source = Path("edge/upload/headend_client.py").read_text(encoding="utf-8")
     method = _method_slice(source, "upload_edge_backup", "notify_tunnel_ready")
-    assert "session = _build_session(self._cfg_mgr.api_token)" in method
+    assert "session = self._session" in method
     assert "session = requests.Session()" not in method
+    assert "_build_session(self._cfg_mgr.api_token)" not in method
     assert 'session.headers.pop("Content-Type", None)' in method
 
 
