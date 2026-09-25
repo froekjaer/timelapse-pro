@@ -2247,6 +2247,22 @@ async def _verify_device_token(
     require_signature = bool(inventory_metadata.get("require_request_signature")) and not inventory_credential.legacy_path
     await _verify_edge_request_signature(request, provided, required=require_signature)
     await _verify_edge_attestation_signature(request, device_id, db)
+
+    from services.edge_api_mtls_identity import (
+        EdgeApiMtlsIdentityError,
+        verify_edge_api_mtls_identity,
+    )
+    enrollment_path = f"/api/trust/headend-api-mtls/{device_id}/enroll"
+    try:
+        verify_edge_api_mtls_identity(
+            db,
+            device_id=device_id,
+            headers=request.headers,
+            allow_legacy_enrollment=(request.url.path == enrollment_path),
+        )
+    except EdgeApiMtlsIdentityError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
     inventory_credential.updated_at = now_utc()
     db.commit()
 
