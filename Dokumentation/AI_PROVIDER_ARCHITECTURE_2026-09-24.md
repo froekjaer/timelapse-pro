@@ -1,6 +1,6 @@
 # TimeLapse Pro — AI Provider Architecture
 
-**Status:** Proposed architecture / implementation baseline  
+**Status:** Implemented architecture baseline / physical production acceptance pending  
 **Date:** 2026-09-24  
 **Scope:** Headend AI capabilities: Image AI, AI Search, SIEM, summarisation and future AI-assisted functions.
 
@@ -234,17 +234,39 @@ Before merge, replace/rework the CLI implementation around:
 
 Do not remove Ollama. Do not change the global production default merely because the POC succeeded.
 
+## Implementation status — 2026-09-25
+
+The architecture shown in the Decision section is now implemented for the capabilities in current scope:
+
+- **Provider contract:** `headend/ai/provider_contract.py` defines `AICapability`, provider output/provenance and the provider protocol.
+- **Provider adapters:** `headend/ai/provider_adapters.py` implements Apple Foundation Models, Ollama and Gemini adapters for Vision, Text and Structured generation where supported.
+- **Capability router:** `headend/ai/capability_router.py` owns provider selection, fallback order, legacy image-strategy compatibility and capability provenance.
+- **Image:** live worker, manual analysis, backfill and Gemini batch transport route through the capability layer.
+- **Search / AI Ops:** natural-language capture search and AI Ops structured analysis call the generic structured capability; database access, tenant filtering and actions remain TimeLapse-owned.
+- **SIEM / CMDB:** AI-assisted structured analysis routes through the capability layer. Deterministic `headend/siem.py` remains independent and authoritative.
+- **Management:** admin settings expose allowlisted per-function provider order and provider capability/status inspection.
+- **Policy / normalization:** canonical vocabulary, privacy normalization, alarm semantics, persistence and provider-vs-adapter provenance remain outside providers.
+- **Tool calling:** intentionally not enabled as a generic provider capability in product flows. Existing Open WebUI tools remain narrow, TimeLapse-owned operations with their existing trust boundary; unrestricted provider tools/shell/SQL are not introduced.
+
+"Code complete" here does **not** mean production-scale acceptance. Physical text/structured smoke tests, representative reviewed image corpus, resource/concurrency measurements and GRC import against the authoritative Headend database remain acceptance evidence before changing production defaults.
+
 ## Acceptance gates
 
-The provider architecture is not complete until:
+Current status is tracked separately as **code/CI evidence** versus **physical/production evidence**:
 
-1. Apple SDK dependency/install is reproducible in the Headend deployment/restore path.
-2. Apple availability failure is handled without blocking unrelated Headend functions.
-3. Image AI can select Apple through the normal AI management path and persist canonical + provider provenance.
-4. Existing Ollama and Gemini behaviour remains supported.
-5. At least AI Search and SIEM can consume the generic provider text/structured capability without Apple-specific business logic.
-6. Tenant/RBAC tests cover AI Search/tool paths.
-7. Deterministic SIEM alarms remain independent of AI judgement.
-8. Benchmark evidence is retained and provider defaults are not selected from a single capture.
-9. Headend resource/concurrency behaviour is measured before production-scale enablement.
-10. GRC records requirements, implementation evidence, limitations and open findings separately.
+1. **PASS — code/install contract:** Apple SDK dependency is pinned for Darwin/Python 3.14+ in Headend requirements; physical SDK/image execution has already succeeded in the isolated Headend worktree. Full restore-path repetition remains part of normal restore evidence.
+2. **PASS — code/CI:** Apple availability is lazy/fail-closed and unrelated Headend functions remain importable without the Darwin-only SDK.
+3. **PASS — code + physical image evidence:** Image AI selects Apple through normal strategy/capability routing and retains canonical plus provider/adapter provenance.
+4. **PASS — code/CI:** Ollama and Gemini adapters remain supported; existing image strategies are translated centrally for compatibility.
+5. **PASS — code/CI:** AI Search, AI Ops, SIEM and CMDB consume generic structured/text capability paths instead of constructing vendor clients in product business logic.
+6. **PASS for current product paths — code/CI:** Natural Search remains authenticated and TimeLapse applies tenant filtering after model-produced filter specs; generic unrestricted provider tool-calling is not enabled. Any future tool-calling capability requires a new RBAC/tool-contract acceptance gate.
+7. **PASS — code/CI:** deterministic `headend/siem.py` is independent of AI capability routing and remains authoritative.
+8. **PASS for evidence discipline:** benchmark output and reviewed ground truth are retained; no provider default is changed from the single Travbyen case.
+9. **OPEN — physical production gate:** representative concurrency/RAM/thermal behaviour must be measured before production-scale enablement/default changes.
+10. **PARTIAL — implementation ready, DB import pending:** idempotent GRC import exists in `headend/tools/import_grc_ai_provider_architecture_20260925.py`, including the open resource-acceptance finding. It must still be run against the authoritative Headend DB and verified there.
+
+Additional physical acceptance still required before changing defaults:
+- run `headend/tools/smoke_ai_capabilities.py` for configured Apple/Ollama/Gemini Text + Structured capabilities;
+- expand reviewed image ground truth to 10–20 representative captures;
+- record resource/concurrency observations and fallback behaviour;
+- run and verify the GRC import in the Headend GRC register.
