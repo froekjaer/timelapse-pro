@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "description": "Human-reviewed benchmark annotations. Provider output/confidence is never ground truth.",
+  "cases": [
+    {
+      "case_id": "TRAVBYEN-001",
+      "sha256": "c8bc0dbdfef321da988c7b3fa0dd3b9c7e4d742ec2c7683e385a24a6cbf8bf95",
+      "source_hint": "Kirkbi_A_S/Travbyen/Kamera_1/2026/05/08/Kirkbi_A_S_Travbyen_Kamera_1_20260508_130015.jpg",
+      "review_status": "human_reviewed",
+      "privacy": {
+        "person_present": true,
+        "person_count": "multiple",
+        "recognizable_person": false,
+        "recognizable_face": false,
+        "license_plate": null,
+        "note": "Flere personer er synlige meget langt fra kameraet. De kan ikke genkendes/identificeres; genkendelige ansigter er ikke observeret."
+      },
+      "scene_facts": {
+        "construction_site": true,
+        "note": "Kun privacy-felterne ovenfor er reviewet som benchmark-facit i denne revision. Andre scene-detaljer scores ikke endnu."
+      }
+    }
+  ]
+}
