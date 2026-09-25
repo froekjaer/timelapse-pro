@@ -123,6 +123,9 @@ def _summary(runs: list[dict], providers: list[str]) -> dict:
         rows = [r for r in runs if r["provider"] == provider]
         ok = [r for r in rows if r["ok"]]
         lat = [r["wall_ms"] for r in ok]
+        reviewed = [r["reviewed_score"] for r in ok if r.get("reviewed_score")]
+        person_scored = [s for s in reviewed if s.get("person_detection_correct") is not None]
+        face_scored = [s for s in reviewed if s.get("face_detection_correct") is not None]
         out[provider] = {
             "runs": len(rows),
             "ok": len(ok),
@@ -134,6 +137,12 @@ def _summary(runs: list[dict], providers: list[str]) -> dict:
                 "max": max(lat) if lat else None,
                 "mean": int(statistics.mean(lat)) if lat else None,
             },
+            "reviewed_privacy": {
+                "person_cases_scored": len(person_scored),
+                "person_correct": sum(bool(s["person_detection_correct"]) for s in person_scored),
+                "recognizable_face_cases_scored": len(face_scored),
+                "recognizable_face_correct": sum(bool(s["face_detection_correct"]) for s in face_scored),
+            } if reviewed else None,
         }
     return out
 
