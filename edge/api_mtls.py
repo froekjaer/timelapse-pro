@@ -219,12 +219,25 @@ def certificate_renewal_needed(
 
 
 def client_certificate_paths(
+    device_id: str,
     *,
     key_path: Path = DEFAULT_KEY_PATH,
     cert_path: Path = DEFAULT_CERT_PATH,
+    ca_path: Path = DEFAULT_CA_PATH,
 ) -> tuple[str, str] | None:
-    if not key_path.exists() or not cert_path.exists():
+    """Return requests-compatible client identity only for a valid bundle.
+
+    A certificate that is merely approaching renewal remains usable until its
+    actual expiry. Missing material returns None for migration bootstrap;
+    present-but-invalid material fails closed so it cannot be silently used as
+    an identity for another Edge.
+    """
+    if not key_path.exists() or not cert_path.exists() or not ca_path.exists():
         return None
-    if (key_path.stat().st_mode & 0o077) != 0:
-        raise RuntimeError("Headend API mTLS private key permissions are too broad")
+    _validate_certificate_bundle(
+        device_id,
+        cert_path.read_text(encoding="ascii"),
+        ca_path.read_text(encoding="ascii"),
+        key_path=key_path,
+    )
     return str(cert_path), str(key_path)
