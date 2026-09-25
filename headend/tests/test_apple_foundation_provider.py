@@ -65,3 +65,9 @@ def test_apple_guided_schema_is_flat_for_sdk_0_2_1():
     assert "change_detected" in source
     assert "quality_flag" in source
     assert "gdpr_detection_types" in source
+
+
+def test_apple_privacy_adapter_derives_has_data_from_validated_detections():
+    source = Path(__file__).resolve().parents[1].joinpath("ai", "apple_foundation_service.py").read_text()
+    assert '"has_data": bool(detection_types)' in source
+    assert 'if item in {"person_counted", "face", "license_plate"}' in source
