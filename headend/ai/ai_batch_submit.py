@@ -36,7 +36,8 @@ from sqlalchemy.orm import sessionmaker
 from settings_helper import get_setting
 from repositories    import TagRepository
 from capture_context import build_capture_context, format_context_block
-from gemini_service  import GeminiVisionService, validate_batch_bucket_region
+from ai.capability_router import CapabilityRouter
+from ai.provider_contract import ProviderUnavailable
 from database        import AiBatchJob
 
 engine = create_engine(DATABASE_URL)
@@ -111,25 +112,32 @@ def _setting(db, key: str, default: str = "") -> str:
     return default
 
 
-def build_gemini(db, model_override=None):
-    key  = os.getenv("GEMINI_API_KEY", "") or _setting(db, "gemini_api_key")
-    sa   = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "") or _setting(db, "gemini_service_account_path")
-    proj = os.getenv("GOOGLE_CLOUD_PROJECT", "") or _setting(db, "gemini_project_id")
-    loc  = os.getenv("GOOGLE_CLOUD_LOCATION", "") or _setting(db, "gemini_location", "europe-west1")
+def _router_get_db():
+    db = Session()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def build_gemini_batch(db, model_override=None):
+    """Resolve Gemini batch transport through the authoritative provider layer."""
     model = model_override or _setting(db, "gemini_model", "gemini-2.5-flash")
-    if not key and not sa:
-        return None, None, ""
-    svc = GeminiVisionService(service_account_path=sa, project_id=proj, location=loc, api_key=key, model=model)
+    router = CapabilityRouter(_router_get_db)
+    try:
+        info = router.image_batch_info(
+            provider_name="gemini",
+            cloud_model=model,
+        )
+    except ProviderUnavailable:
+        return None, None, "", "", {}
+
     gcs_bucket = ""
-    if getattr(svc, "is_vertex", False):
+    bucket_region = ""
+    if info.get("is_vertex"):
         gcs_bucket = (_setting(db, "gemini_gcs_bucket", "") or "").strip()
-        # GDPR-guard (samme som API-stien i headend/main.py — se
-        # gemini_service.validate_batch_bucket_region() for begrundelse). Denne CLI
-        # havde IKKE dette tjek før 2026-07-05 (Claude, periodisk tjek), selvom den
-        # udfører præcis samme Vertex-batch-upload som API-endepunktet.
         bucket_region = (_setting(db, "gemini_gcs_bucket_region", "") or "").strip()
-        validate_batch_bucket_region(svc.location, bucket_region)  # rejser ValueError ved mismatch
-    return svc, model, gcs_bucket
+    return router, model, gcs_bucket, bucket_region, info
 
 
 def main():
@@ -168,14 +176,18 @@ def main():
     print(f"  DB: {DATABASE_URL}\n  SFTP: {SFTP_BASE}\n  Chunk: {args.chunk_size}  Force: {args.force}  Kontekst: {not args.no_context}\n")
 
     try:
-        svc, model, gcs_bucket = build_gemini(db, args.model)
+        capability_router, model, gcs_bucket, bucket_region, provider_info = build_gemini_batch(db, args.model)
     except ValueError as exc:
         print(f"  ❌ {exc}"); db.close(); return
-    if not svc:
-        print("  ❌ Ingen Gemini-credentials (Indstillinger → AI)."); db.close(); return
-    if getattr(svc, "is_vertex", False) and not gcs_bucket:
+    if not capability_router:
+        print("  ❌ Gemini-provider er ikke konfigureret (Indstillinger → AI)."); db.close(); return
+    if provider_info.get("is_vertex") and not gcs_bucket:
         print("  ❌ Vertex AI kræver et GCS-bucket — sæt 'gemini_gcs_bucket' i Indstillinger → AI."); db.close(); return
-    print(f"  Gemini: {model} ({'Vertex/'+svc.location+' bucket='+gcs_bucket if getattr(svc,'is_vertex',False) else 'AI Studio'})")
+    provider_label = (
+        f"Vertex/{provider_info.get('location')} bucket={gcs_bucket}"
+        if provider_info.get("is_vertex") else "AI Studio"
+    )
+    print(f"  Gemini via CapabilityRouter: {model} ({provider_label})")
 
     caps = select_captures(db, args)
     total = len(caps)
@@ -214,10 +226,15 @@ def main():
             continue
         job_id = str(_uuid.uuid4())
         try:
-            job_name = svc.submit_batch_job(
-                items=items, vocabulary_by_cat=vocab_by_cat,
+            job_name = capability_router.submit_image_batch(
+                provider_name="gemini",
+                items=items,
+                vocabulary_by_cat=vocab_by_cat,
                 display_name=f"bulk-{ci:03d}-{job_id[:6]}",
-                gcs_bucket=gcs_bucket, context_by_key=ctx_by_key,
+                gcs_bucket=gcs_bucket,
+                bucket_region=bucket_region,
+                context_by_key=ctx_by_key,
+                cloud_model=model,
             )
         except Exception as exc:
             print(f"  [bid {ci}/{len(chunks)}] ❌ indsendelse fejlede: {exc}")
