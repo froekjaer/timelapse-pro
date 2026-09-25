@@ -18,6 +18,7 @@ if str(HEADEND_DIR) not in sys.path:
     sys.path.insert(0, str(HEADEND_DIR))
 
 from ai.capability_router import CapabilityRouter  # noqa: E402
+from ai.provider_contract import NoEligibleProvider  # noqa: E402
 from database import get_db  # noqa: E402
 
 
@@ -57,13 +58,16 @@ def _run_one(router: CapabilityRouter, provider: str, capability: str) -> dict:
             **detail,
         }
     except Exception as exc:
-        return {
+        row = {
             "provider": provider,
             "capability": capability,
             "ok": False,
             "wall_ms": int((time.monotonic() - started) * 1000),
             "error_type": type(exc).__name__,
         }
+        if isinstance(exc, NoEligibleProvider):
+            row["attempts"] = exc.attempts
+        return row
 
 
 def main() -> int:
