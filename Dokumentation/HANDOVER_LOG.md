@@ -29,6 +29,23 @@
 
 ## Log
 
+### Handover 2026-09-25 — ChatGPT: Capability Router-arkitekturen code-complete
+
+- **Mandat:** Peter bad eksplicit om at bygge den nye AI-arkitektur færdig.
+- **Autoritativ session-start:** `Dokumentation/00_START_HER.md`, `Dokumentation/HANDOVER_LOG.md`, `Dokumentation/AI_PROVIDER_ARCHITECTURE_2026-09-24.md` og Mission Framework behavioural preamble er genlæst før disposition.
+- **Aktuel implementering:** Branch/PR #258 indeholder nu en rigtig generisk provider-capability arkitektur: `provider_contract.py` (`AICapability`, provider protocol, provider-output/provenance), `provider_adapters.py` (Apple/Ollama/Gemini), `capability_router.py` (provider policy/fallback/image-strategy compatibility) samt tests.
+- **Vision routed:** live Image worker, manuel analyse, review-escalation, backfill og Gemini batch transport går gennem capability/provider-laget; product code konstruerer ikke længere konkrete Apple/Ollama/Gemini vision-klienter i disse paths.
+- **Text/Structured routed:** Natural Search, AI Ops, AI-assisteret SIEM og CMDB bruger generic Text/Structured capability. Default provider order bevarer eksisterende Ollama-adfærd, men kan administreres pr. funktion via allowlisted settings (`apple,ollama,gemini`).
+- **Policy boundary:** DB-adgang, tenant/RBAC, canonical vocabulary, privacy-normalisering, alarm-semantik, persistence og deterministic SIEM forbliver TimeLapse-authority. Generic provider tool-calling er bevidst ikke aktiveret; der er ikke introduceret fri shell/SQL/tool-adgang.
+- **Deterministic SIEM:** `headend/siem.py` er fortsat uafhængig af capability-routeren. AI kan analysere/sammenfatte, men kan ikke undertrykke deterministiske alarmer.
+- **Management/UI:** AI runtime/settings viser provider-policy og capability status. `probe=true` udfører runtime availability-checks. Reviewet fandt og lukkede et konkret hul hvor Gemini tidligere blev rapporteret available blot fordi config kunne bygges; `GeminiProvider.availability()` bruger nu reel `service.health_check()`, med fail-closed status. Tests tilføjet.
+- **Reproducibility:** Darwin/Python 3.14+ dependency `apple-fm-sdk==0.2.1` er pinned i Headend requirements; Linux/dev installs er marker-safe.
+- **Code/CI baseline før sidste probe-fix:** branch head `f62f2463...` var GitHub Actions SUCCESS. Probe-fix/test ligger på kode-head `c3229e0a...`; CI run `36121484729` var in_progress ved implementeringen og skal verificeres før merge.
+- **Arkitekturdokument:** status er ændret fra “Proposed architecture / implementation baseline” til “Implemented architecture baseline / physical production acceptance pending”. Acceptance-gates er omskrevet med PASS/PARTIAL/OPEN baseret på faktisk evidens.
+- **Fysisk acceptance der fortsat mangler før produktions-defaults ændres:** (1) `smoke_ai_capabilities.py` mod konfigurerede Apple/Ollama/Gemini Text+Structured, (2) 10–20 menneskereviewede billeder, (3) RAM/concurrency/thermal + fallback-behaviour, (4) kør/verificér idempotent GRC-import mod autoritativ Headend DB.
+- **GRC:** `headend/tools/import_grc_ai_provider_architecture_20260925.py` findes og adskiller implementerede controls fra åbent resource-acceptance finding; scriptet er ikke påstået kørt mod live DB.
+- **Konklusion:** Diagrammets Vision/Text/Structured capability-router er code-complete. Arkitekturen er ikke endnu production-accepted; de åbne punkter er fysisk evidens/operational acceptance, ikke manglende central provider-routing.
+
 ### Handover 2026-09-25 — ChatGPT/Peter: provenance regression PASS, bidirectional Apple tag reclassification
 
 - **Fysisk regression udført af Peter på head `91d6bfea...`:** benchmark v3 kørte Apple + Ollama med live DB-vocabulary (37 kategorier / 664 tags, ingen fallback). Der kom **ingen cv2 warning**, så optional OpenCV/Pillow-fallback-fixet er fysisk verificeret.
