@@ -213,6 +213,7 @@ class CapabilityRouter:
         *,
         vision_model: str | None = None,
         cloud_model: str | None = None,
+        cloud_capability: AICapability | None = None,
     ):
         from ai.provider_config import build_gemini_vision_service_from_db
         from ai.settings_helper import get_setting
@@ -248,7 +249,14 @@ class CapabilityRouter:
             selected_cloud_model = cloud_model or get_setting(
                 db, "gemini_text_model", "gemini-3.8-flash"
             )
-            service = build_gemini_vision_service_from_db(db, selected_cloud_model)
+            location_override = None
+            if cloud_capability in {AICapability.TEXT, AICapability.STRUCTURED}:
+                location_override = get_setting(db, "gemini_text_location", "eu")
+            service = build_gemini_vision_service_from_db(
+                db,
+                selected_cloud_model,
+                location_override=location_override,
+            )
             if service is None:
                 raise ProviderUnavailable("gemini", "credentials ikke konfigureret")
             return GeminiProvider(service)
@@ -269,6 +277,7 @@ class CapabilityRouter:
                 provider_name,
                 vision_model=local_model,
                 cloud_model=cloud_model,
+                cloud_capability=capability,
             )
             return provider.availability(capability)
         except Exception as exc:
@@ -297,7 +306,11 @@ class CapabilityRouter:
         attempts: list[dict[str, str]] = []
         for provider_name in order:
             try:
-                provider = self._provider(provider_name, cloud_model=model)
+                provider = self._provider(
+                    provider_name,
+                    cloud_model=model,
+                    cloud_capability=AICapability.STRUCTURED,
+                )
                 if not provider.supports(AICapability.STRUCTURED):
                     raise ProviderUnavailable(provider_name, "structured understøttes ikke")
                 output = provider.generate_structured(prompt, model=model)
@@ -334,7 +347,11 @@ class CapabilityRouter:
         attempts: list[dict[str, str]] = []
         for provider_name in order:
             try:
-                provider = self._provider(provider_name, cloud_model=model)
+                provider = self._provider(
+                    provider_name,
+                    cloud_model=model,
+                    cloud_capability=AICapability.TEXT,
+                )
                 if not provider.supports(AICapability.TEXT):
                     raise ProviderUnavailable(provider_name, "text understøttes ikke")
                 output = provider.generate_text(prompt, model=model)
@@ -377,6 +394,7 @@ class CapabilityRouter:
             provider_name,
             vision_model=local_model,
             cloud_model=cloud_model,
+            cloud_capability=AICapability.VISION,
         )
         if not provider.supports(AICapability.VISION):
             raise ProviderUnavailable(provider_name, "vision understøttes ikke")
@@ -409,7 +427,11 @@ class CapabilityRouter:
         provider_name: str,
         cloud_model: str | None = None,
     ) -> dict[str, Any]:
-        provider = self._provider(provider_name, cloud_model=cloud_model)
+        provider = self._provider(
+            provider_name,
+            cloud_model=cloud_model,
+            cloud_capability=AICapability.VISION,
+        )
         if not hasattr(provider, "batch_info"):
             raise ProviderUnavailable(provider_name, "batch vision transport understøttes ikke")
         return provider.batch_info()
@@ -426,7 +448,11 @@ class CapabilityRouter:
         context_by_key: dict[str, str] | None = None,
         cloud_model: str | None = None,
     ):
-        provider = self._provider(provider_name, cloud_model=cloud_model)
+        provider = self._provider(
+            provider_name,
+            cloud_model=cloud_model,
+            cloud_capability=AICapability.VISION,
+        )
         if not hasattr(provider, "submit_image_batch"):
             raise ProviderUnavailable(provider_name, "batch vision transport understøttes ikke")
         return provider.submit_image_batch(
