@@ -346,10 +346,8 @@ function AIRuntimeTab() {
     try {
       const status = await api('/api/settings/ai-providers?probe=true')
       setProviderStatus(status)
-      const unavailable = Object.entries(status.providers || {})
-        .filter(([, provider]: [string, { availability?: { available?: boolean } }]) =>
-          provider.availability?.available === false
-        )
+      const unavailable = Object.entries((status as ProviderStatusSnapshot).providers || {})
+        .filter(([, provider]) => provider.availability?.available === false)
         .map(([name]) => name)
       setMessage(unavailable.length
         ? `Provider-test færdig. Ikke tilgængelig: ${unavailable.join(', ')}.`
