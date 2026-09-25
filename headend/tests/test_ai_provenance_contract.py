@@ -77,6 +77,6 @@ def test_apple_raw_response_is_preserved_before_adapter_mutation():
 def test_worker_records_provider_specific_vocabulary_provenance():
     source = (HEADEND_DIR / "ai" / "integration.py").read_text(encoding="utf-8")
 
-    assert '"apple_foundation" if ai_config.strategy == "apple_only"' in source
-    assert '("gemini" if used_cloud else "ollama")' in source
+    assert '"apple_foundation" if provider_used == "apple" else provider_used' in source
+    assert 'payload["provider"] = provider_used' in source
     assert 'translation_source="ollama"' in source
