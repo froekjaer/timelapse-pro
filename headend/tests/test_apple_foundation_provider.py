@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from ai.ai_strategy import AIConfig, GLOBAL_DEFAULTS, VALID_STRATEGIES
 from ai.apple_foundation_service import APPLE_MODEL_NAME, AppleFoundationVisionService
 from ai.model_results import ENGINE_APPLE_FOUNDATION, engine_from_legacy_payload
