@@ -704,8 +704,12 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
 
     @ai_router.post("/analyze/{capture_id}")
     def analyze_capture(capture_id: int, user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
-        """Tving AI-analyse af et specifikt capture (synkront)."""
-        from database import Capture
+        """Tving AI-analyse via samme capability-policy som baggrundsworkeren."""
+        from database import Capture, Device
+        from ai.ai_strategy import AIConfigManager
+        from ai.capability_router import CapabilityRouter
+        from ai.provider_contract import ProviderUnavailable
+
         _require_admin(user)
         capture = db.query(Capture).filter_by(id=capture_id).first()
         if not capture:
@@ -716,24 +720,80 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         blur_score = capture.blur_score
         quality_flag = capture.quality_flag
         quality_passed = capture.quality_passed
+        device = db.query(Device).filter_by(device_id=device_id).first()
+        ai_config = AIConfigManager(db).get_config(
+            customer_id=device.customer_id if device else None,
+            site_id=device.site_id if device else None,
+        )
         db.rollback()
+
+        if not ai_config.enabled or ai_config.strategy == "technical_only":
+            raise HTTPException(status_code=409, detail="AI vision er ikke aktiveret for denne konfiguration")
 
         image_path = find_image_fn(device_id, filename)
         if not image_path:
             raise HTTPException(status_code=404, detail="Billedfil ikke fundet på disk")
 
-        svc = get_ollama_service()
-        if not svc.health_check():
-            raise HTTPException(status_code=503, detail="Ollama ikke tilgængelig")
+        capability_router = CapabilityRouter(get_db_fn)
+        image_plan = capability_router.image_plan(ai_config.strategy)
+        if capability_router.image_runtime_deferred(image_plan):
+            raise HTTPException(status_code=503, detail="Primær lokal AI-runtime er midlertidigt pauset")
 
-        vocab, vocabulary_by_cat, approved_tag_set = _load_vocabulary(get_db_fn)
-        with _ollama_analysis_lock:
-            result = svc.analyse(
+        vocab, vocabulary_full, approved_tag_set = _load_vocabulary(get_db_fn)
+        vocabulary_local = _limit_vocabulary(
+            vocabulary_full,
+            ai_config.tag_vocabulary_limit or 45,
+        )
+        try:
+            routed = capability_router.analyse_image_plan(
+                plan=image_plan,
+                phase="primary",
                 image_path=image_path,
-                vocabulary_by_cat=vocabulary_by_cat,
+                vocabulary_full=vocabulary_full,
+                vocabulary_local=vocabulary_local,
                 approved_tag_set=approved_tag_set,
+                local_model=ai_config.local_model,
+                cloud_model=ai_config.cloud_model,
             )
+        except ProviderUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Konfigureret AI-provider er ikke tilgængelig ({exc.provider})",
+            )
+
+        result = routed.result
+        provider_used = routed.provider
+        if image_plan.escalation:
+            escalate, _reasons = ai_config.should_escalate(
+                confidence=0.75,
+                new_tags=result.new_tags,
+                tags=result.approved_tags,
+                change_detected=result.change_detected,
+                quality_ok=result.quality_ok,
+            )
+            if escalate:
+                try:
+                    routed = capability_router.analyse_image_plan(
+                        plan=image_plan,
+                        phase="escalation",
+                        image_path=image_path,
+                        vocabulary_full=vocabulary_full,
+                        vocabulary_local=vocabulary_local,
+                        approved_tag_set=approved_tag_set,
+                        local_model=ai_config.local_model,
+                        cloud_model=ai_config.cloud_model,
+                    )
+                    result = routed.result
+                    provider_used = routed.provider
+                except ProviderUnavailable:
+                    pass
+
         payload = _analysis_payload(result)
+        payload["provider"] = provider_used
+        payload["engine"] = (
+            "apple" if provider_used == "apple"
+            else ("cloud" if routed.execution == "cloud" else "local")
+        )
         tags = result.approved_tags + result.new_tags
 
         capture = db.query(Capture).filter_by(id=capture_id).first()
@@ -748,8 +808,8 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
                         payload["edge_ai"] = _prev
                 except Exception:
                     pass
-            capture.ai_result      = json.dumps(payload, ensure_ascii=False)
-            capture.ai_tags        = json.dumps(tags, ensure_ascii=False)
+            capture.ai_result = json.dumps(payload, ensure_ascii=False)
+            capture.ai_tags = json.dumps(tags, ensure_ascii=False)
             upsert_capture_model_result(
                 db,
                 capture_id=capture.id,
@@ -763,21 +823,23 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
             )
             capture.ai_analyzed_at = datetime.now(timezone.utc)
             db.commit()
+
         vocab.record_usage(
             result.approved_tags,
             result.new_tags,
             getattr(result, "new_tags_da", None),
-            translation_source="ollama",
+            translation_source=(
+                "apple_foundation" if provider_used == "apple" else provider_used
+            ),
         )
-
         update_sidecar_with_ai(image_path, payload)
 
         return {
             "capture_id": capture_id,
-            "filename":   filename,
+            "filename": filename,
             "opencv": {
-                "blur_score":    blur_score,
-                "quality_flag":  quality_flag,
+                "blur_score": blur_score,
+                "quality_flag": quality_flag,
                 "quality_passed": quality_passed,
             },
             "ai": payload,
