@@ -499,14 +499,18 @@ class OllamaVisionService:
         self.runtime_paused = False
         self.runtime_low_memory = False
         try:
-            from ai.ollama_runtime_control import OllamaRuntimePaused, vision_model_override
-            self.vision_model, self.runtime_low_memory = vision_model_override(configured_model)
-        except OllamaRuntimePaused:
-            self.vision_model = configured_model
-            self.runtime_paused = True
+            from ai import ollama_runtime_control
+            self.vision_model, self.runtime_low_memory = ollama_runtime_control.vision_model_override(configured_model)
         except Exception as exc:
-            log.warning("Ollama runtime-override kunne ikke læses; bruger normal model: %s", exc)
-            self.vision_model = configured_model
+            # Runtime control is optional for isolated LAB/provider tests. Only
+            # treat its explicit paused signal as paused; missing DB/runtime
+            # dependencies must fall back to the configured model.
+            if exc.__class__.__name__ == "OllamaRuntimePaused":
+                self.vision_model = configured_model
+                self.runtime_paused = True
+            else:
+                log.warning("Ollama runtime-override kunne ikke læses; bruger normal model: %s", exc)
+                self.vision_model = configured_model
         fallback_raw = _db_setting("ollama_fallback_models", ",".join(FALLBACK_MODELS))
         self.fallback_models = fallback_models if fallback_models is not None else [m.strip() for m in fallback_raw.split(",") if m.strip()]
         if self.runtime_low_memory:
@@ -723,10 +727,19 @@ class OllamaVisionService:
         return list(dict.fromkeys(self._normalize_tag(tag) for tag in found if tag))
 
     def _resize_image(self, data: bytes) -> bytes:
-        """Reducer billedstørrelse og pixel-dimensioner til vision-modeller."""
+        """Reducer billedstørrelse og pixel-dimensioner til vision-modeller.
+
+        OpenCV er en valgfri accelereret path. Hvis cv2/numpy ikke er installeret,
+        bruges Pillow direkte uden warning; det er en forventet og understøttet
+        runtime-konfiguration. Kun reelle fejl efter succesfuld import logges.
+        """
         try:
             import cv2
             import numpy as np
+        except ImportError:
+            return _resize_with_pil(data, self.max_image_edge, self.max_image_bytes)
+
+        try:
             arr = np.frombuffer(data, np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             if img is None:
@@ -748,7 +761,7 @@ class OllamaVisionService:
                       len(data) // 1024, w, h, len(buf) // 1024, img.shape[1], img.shape[0])
             return buf.tobytes()
         except Exception as e:
-            log.warning("Resize via cv2 fejlede (%s) — prøver PIL-fallback", e)
+            log.warning("Resize via cv2 fejlede efter import (%s) — prøver PIL-fallback", e)
             return _resize_with_pil(data, self.max_image_edge, self.max_image_bytes)
 
     # ── Intern: JSON-parsing ──────────────────────────────────────────────────

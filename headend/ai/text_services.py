@@ -1,7 +1,7 @@
 """
 TimeLapse Pro — Tekst-model Services
 ======================================
-SIEM-analyse og CMDB-enrichment via llama3.2:latest (tekstmodel).
+SIEM-analyse og CMDB-enrichment via den generiske AI capability-router.
 
 SIEMAnalyser:
   - Korrelerer heartbeats, fejllog og capture-statistik
@@ -68,6 +68,9 @@ class SIEMEvent:
     affects_captures: bool
     raw_indicators:   list[str]     # de faktiske datapunkter der trigede det
     confidence:       float         # 0.0–1.0
+    provider:          Optional[str] = None
+    model:             Optional[str] = None
+    duration_ms:       Optional[int] = None
 
 
 @dataclass
@@ -80,52 +83,54 @@ class CMDBAssessment:
     estimated_days_to_issue:  Optional[int] # None = ukendt
     tags:                     list[str]     # cmdb-tags: outdoor / indoor / high_humidity / osv.
     summary:                  str
+    provider:                 Optional[str] = None
+    model:                    Optional[str] = None
+    duration_ms:              Optional[int] = None
 
 
 # =============================================================================
-# BASE — fælles HTTP-klient
+# BASE — capability-routed structured generation
 # =============================================================================
 
-class _OllamaTextBase:
+class _RoutedTextBase:
+    """Compatibility name; execution is provider-neutral through CapabilityRouter."""
 
-    def __init__(self, base_url: str | None = None, model: str | None = None):
-        self.base_url = (base_url or _db_setting("ollama_url", OLLAMA_BASE_URL)).rstrip("/")
-        self.model    = model or _db_setting("ollama_text_model", TEXT_MODEL)
-        self.keep_alive_s = int(_db_setting("ollama_keep_alive_s", "30"))
-        try:
-            self.timeout_text = int(_db_setting("ollama_text_timeout_s", str(TIMEOUT_TEXT)))
-        except Exception:
-            self.timeout_text = TIMEOUT_TEXT
-        self._client  = httpx.Client(timeout=self.timeout_text)
+    router_function = "text"
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        model: str | None = None,
+        capability_router=None,
+    ):
+        from ai.capability_router import CapabilityRouter
+
+        # Keep public attributes for compatibility/status views, but do not use
+        # them to bypass provider routing.
+        self.base_url = base_url or ""
+        self.model = model or "capability-router"
+        self._router = capability_router or CapabilityRouter()
+        self._last_output = None
 
     def _call(self, prompt: str, system: str = "") -> str:
-        """Kald tekstmodel. Returnerer rå tekst fra modellen."""
-        payload: dict[str, Any] = {
-            "model":  self.model,
-            "stream": False,
-            "keep_alive": self.keep_alive_s,
-            "options": {"temperature": 0.1, "num_predict": 800},
-        }
-        if system:
-            payload["system"] = system
-            payload["prompt"] = prompt
-        else:
-            payload["prompt"] = prompt
+        """Generate structured provider output through the authoritative router."""
+        combined = f"{system}\n\n{prompt}" if system else prompt
+        output = self._router.generate_structured(
+            function=self.router_function,
+            prompt=combined,
+        )
+        self._last_output = output
+        return output.content
 
-        try:
-            resp = self._client.post(
-                f"{self.base_url}/api/generate",
-                json=payload,
-                timeout=self.timeout_text,
-            )
-            resp.raise_for_status()
-            return resp.json().get("response", "")
-        except httpx.TimeoutException:
-            log.error("Ollama tekst-model timeout")
-            raise
-        except Exception as e:
-            log.error("Ollama tekst-fejl: %s", e)
-            raise
+    def _provenance(self) -> dict[str, Any]:
+        output = self._last_output
+        if output is None:
+            return {}
+        return {
+            "provider": output.provider,
+            "model": output.model,
+            "duration_ms": output.duration_ms,
+        }
 
     def _parse_json(self, text: str) -> dict:
         """Robust JSON-parsing af model-output."""
@@ -179,7 +184,12 @@ Mulige event_type-værdier:
 Returner KUN JSON."""
 
 
-class SIEMAnalyser(_OllamaTextBase):
+_OllamaTextBase = _RoutedTextBase  # backward-compatible import alias
+
+
+class SIEMAnalyser(_RoutedTextBase):
+    router_function = "siem"
+
     """
     Analyserer systemhændelser og returnerer strukturerede SIEM-events.
 
@@ -225,6 +235,7 @@ class SIEMAnalyser(_OllamaTextBase):
                 affects_captures  = bool(parsed.get("affects_captures", False)),
                 raw_indicators    = list(parsed.get("raw_indicators", [])),
                 confidence        = float(parsed.get("confidence", 0.5)),
+                **self._provenance(),
             )
         except Exception as e:
             log.error("SIEM analyse fejlede for %s: %s", device_id, e)
@@ -232,7 +243,7 @@ class SIEMAnalyser(_OllamaTextBase):
                 severity="warning", event_type="analysis_error",
                 summary=f"SIEM-analyse fejlede: {e}",
                 device_id=device_id, location_id=location_id,
-                recommended_action="Tjek Ollama-service",
+                recommended_action="Tjek AI-provider status",
                 affects_captures=False, raw_indicators=[], confidence=0.0,
             )
 
@@ -266,6 +277,7 @@ class SIEMAnalyser(_OllamaTextBase):
             affects_captures  = bool(parsed.get("affects_captures", False)),
             raw_indicators    = [f"admin:{admin_id}", f"duration:{duration_s}s"],
             confidence        = 0.95,
+            **self._provenance(),
         )
 
     def correlate_events(self, events: list[SIEMEvent]) -> Optional[SIEMEvent]:
@@ -302,6 +314,7 @@ class SIEMAnalyser(_OllamaTextBase):
             affects_captures  = any(e.affects_captures for e in events),
             raw_indicators    = [e.event_type for e in events],
             confidence        = float(parsed.get("confidence", 0.6)),
+            **self._provenance(),
         )
 
 
@@ -345,7 +358,9 @@ Mulige tags:
 Returner KUN JSON."""
 
 
-class CMDBEnricher(_OllamaTextBase):
+class CMDBEnricher(_RoutedTextBase):
+    router_function = "cmdb"
+
     """
     Beriger CMDB-data med AI-vurdering af device-helbred.
     """
@@ -399,12 +414,13 @@ class CMDBEnricher(_OllamaTextBase):
                 estimated_days_to_issue  = parsed.get("estimated_days_to_issue"),
                 tags                     = list(parsed.get("tags", [])),
                 summary                  = parsed.get("summary", "Ingen vurdering tilgængelig"),
+                **self._provenance(),
             )
         except Exception as e:
             log.error("CMDB assessment fejlede for %s: %s", device_id, e)
             return CMDBAssessment(
                 device_id=device_id, health_status="unknown",
-                issues=["assessment_failed"], recommendations=["Tjek Ollama-service"],
+                issues=["assessment_failed"], recommendations=["Tjek AI-provider status"],
                 maintenance_due=False, estimated_days_to_issue=None,
                 tags=[], summary=f"Vurdering fejlede: {e}",
             )

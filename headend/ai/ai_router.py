@@ -36,8 +36,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable
 
-from ollama_service import OllamaVisionService, ImageAnalysisResult
-from text_services import SIEMAnalyser, CMDBEnricher, SIEMEvent, CMDBAssessment
+from ai.capability_router import CapabilityRouter
+from ai.provider_contract import ProviderUnavailable
+from ai.text_services import SIEMAnalyser, CMDBEnricher, SIEMEvent, CMDBAssessment
 from repositories import CaptureRepository, TagRepository, AnalysisRepository
 from database import Capture, Device
 # 2026-07-04 (Claude): gdpr_manager.py findes IKKE i kodebasen (kun importeret,
@@ -109,10 +110,17 @@ class AIRouter:
         self._gdpr_db_factory = gdpr_db_factory
         self.image_base_path  = Path(image_base_path)
 
-        # Services
-        self._vision = OllamaVisionService(base_url=ollama_url)
-        self.siem    = SIEMAnalyser(base_url=ollama_url)
-        self.cmdb    = CMDBEnricher(base_url=ollama_url)
+        # Provider-neutral capability layer. base_url is retained only for
+        # constructor compatibility; authoritative provider settings come from DB.
+        self.capabilities = CapabilityRouter(db_factory)
+        self.siem = SIEMAnalyser(
+            base_url=ollama_url,
+            capability_router=self.capabilities,
+        )
+        self.cmdb = CMDBEnricher(
+            base_url=ollama_url,
+            capability_router=self.capabilities,
+        )
 
     # ── Enkelt-capture analyse ────────────────────────────────────────────────
 
@@ -154,9 +162,23 @@ class AIRouter:
                         has_gdpr_data=existing.get("has_gdpr_data", False),
                     )
 
+            # Resolve the configured image policy for this capture.
+            from ai.ai_strategy import AIConfigManager
+            capture_row = db.query(Capture).filter_by(id=capture_id).first()
+            device = db.query(Device).filter_by(
+                device_id=capture_row.device_id
+            ).first() if capture_row else None
+            ai_config = AIConfigManager(db).get_config(
+                customer_id=device.customer_id if device else None,
+                site_id=device.site_id if device else None,
+            )
+            image_plan = self.capabilities.image_plan(ai_config.strategy)
+            if not ai_config.enabled or not image_plan.enabled:
+                raise ProviderUnavailable("none", "AI vision er deaktiveret")
+
             # Hent vokabular
-            vocab_by_cat   = tag_repo.get_approved_by_category()
-            approved_set   = set(tag_repo.get_approved_tags())
+            vocab_by_cat = tag_repo.get_approved_by_category()
+            approved_set = set(tag_repo.get_approved_tags())
 
             # Find referencebillede
             reference_path: Optional[Path] = None
@@ -187,13 +209,45 @@ class AIRouter:
             except Exception as exc:
                 log.debug("Kunne ikke bygge capture context for %d: %s", capture_id, exc)
 
-            result: ImageAnalysisResult = self._vision.analyse(
-                image_path           = image_path,
-                vocabulary_by_cat    = vocab_by_cat,
-                approved_tag_set     = approved_set,
-                reference_image_path = reference_path,
-                context_block        = context_block,
+            routed = self.capabilities.analyse_image_plan(
+                plan=image_plan,
+                phase="primary",
+                image_path=image_path,
+                vocabulary_full=vocab_by_cat,
+                vocabulary_local=vocab_by_cat,
+                approved_tag_set=approved_set,
+                reference_image_path=reference_path,
+                context_block=context_block,
+                local_model=ai_config.local_model,
+                cloud_model=ai_config.cloud_model,
             )
+            result = routed.result
+
+            if image_plan.escalation:
+                escalate, _reasons = ai_config.should_escalate(
+                    confidence=0.75,
+                    new_tags=result.new_tags,
+                    tags=result.approved_tags,
+                    change_detected=result.change_detected,
+                    quality_ok=result.quality_ok,
+                )
+                if escalate:
+                    try:
+                        routed = self.capabilities.analyse_image_plan(
+                            plan=image_plan,
+                            phase="escalation",
+                            image_path=image_path,
+                            vocabulary_full=vocab_by_cat,
+                            vocabulary_local=vocab_by_cat,
+                            approved_tag_set=approved_set,
+                            reference_image_path=reference_path,
+                            context_block=context_block,
+                            local_model=ai_config.local_model,
+                            cloud_model=ai_config.cloud_model,
+                        )
+                        result = routed.result
+                    except ProviderUnavailable:
+                        pass
 
             # Gem analyse
             change_tags_all = result.approved_tags + result.change_tags
@@ -358,14 +412,10 @@ class AIRouter:
     # ── Health check ──────────────────────────────────────────────────────────
 
     def health_check(self) -> dict:
-        """Tjek status på alle AI-services."""
-        vision_ok = self._vision.health_check()
+        """Tjek capability/provider-konfiguration uden at ændre product state."""
         return {
-            "vision_model": self._vision.vision_model,
-            "text_model":   self.siem.model,
-            "vision_ok":    vision_ok,
-            "ollama_url":   self._vision.base_url,
-            "checked_at":   datetime.now(timezone.utc).isoformat(),
+            **self.capabilities.status(probe=False),
+            "checked_at": datetime.now(timezone.utc).isoformat(),
         }
 
     # ── Private helpers ───────────────────────────────────────────────────────
@@ -487,6 +537,5 @@ def init_ai_router(
         image_base_path = image_base_path,
         ollama_url      = ollama_url,
     )
-    log.info("AIRouter initialiseret — vision=%s text=%s",
-             _router_instance._vision.vision_model, _router_instance.siem.model)
+    log.info("AIRouter initialiseret med provider-neutral capability-router")
     return _router_instance

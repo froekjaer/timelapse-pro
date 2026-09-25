@@ -135,6 +135,7 @@ _ai_stats: dict = {
     "skipped_ollama_down": 0,
     "deferred_ollama_paused": 0,
     "skipped_no_cloud_credentials": 0,
+    "skipped_apple_unavailable": 0,
     "skipped_already_done": 0,
     "skipped_queue_full":  0,
     "recovered_after_restart": 0,
@@ -251,44 +252,9 @@ def _analysis_payload(result) -> dict:
 
 
 def _build_gemini_service(get_db_fn, cloud_model: str):
-    """Byg GeminiVisionService fra system_settings — samme nøgler som backfill.py.
-    Returnerer None hvis ingen credentials er konfigureret (ikke en fejl —
-    bare ikke sat op endnu).
-    """
-    from ai.gemini_service import GeminiVisionService
-    from ai.settings_helper import get_setting
-    import os as _os_local
-
-    db_gen = get_db_fn()
-    db = next(db_gen)
-    try:
-        gemini_key = _os_local.getenv("GEMINI_API_KEY", "") or get_setting(db, "gemini_api_key")
-        gemini_sa_path = (
-            _os_local.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-            or get_setting(db, "gemini_service_account_path")
-        )
-        gemini_project_id = (
-            _os_local.getenv("GOOGLE_CLOUD_PROJECT", "")
-            or get_setting(db, "gemini_project_id")
-        )
-        gemini_location = (
-            _os_local.getenv("GOOGLE_CLOUD_LOCATION", "")
-            or get_setting(db, "gemini_location", "europe-west1")
-        )
-    finally:
-        db_gen.close()
-
-    if not gemini_key and not gemini_sa_path:
-        return None  # Ikke konfigureret — ikke en fejl
-
-    return GeminiVisionService(
-        service_account_path=gemini_sa_path,
-        project_id=gemini_project_id,
-        location=gemini_location,
-        api_key=gemini_key,
-        model=cloud_model,
-    )
-
+    """Compatibility wrapper around the shared authoritative provider config."""
+    from ai.provider_config import build_gemini_vision_service
+    return build_gemini_vision_service(get_db_fn, cloud_model)
 
 def _worker(get_db_fn, find_image_fn):
     """
@@ -298,11 +264,12 @@ def _worker(get_db_fn, find_image_fn):
     Respekterer AIConfig.strategy:
       local_only       → kun Ollama
       cloud_only       → kun Gemini (Ollama-status er IRRELEVANT her)
+      apple_only       → kun Apple Foundation Models på Headend (macOS 27)
       local_then_cloud → Ollama først, eskalerer til Gemini ved usikkerhed
       technical_only   → springes over højere oppe i loopet
     """
-    from ai.ollama_service import OllamaVisionService; get_ollama_service = lambda *a, **kw: OllamaVisionService(*a, **kw)
-    from ai.ollama_runtime_control import runtime_is_paused
+    from ai.capability_router import CapabilityRouter
+    from ai.provider_contract import ProviderUnavailable
     from ai.alarm_engine import AlarmEngine, run_alarm_migration
 
     log.info("AI analyse-worker startet")
@@ -377,103 +344,101 @@ def _worker(get_db_fn, find_image_fn):
                 _ai_stat_inc("skipped_technical_only")
                 continue
 
-            if ai_config.strategy in {"local_only", "local_then_cloud"}:
-                runtime_db_gen = get_db_fn()
-                runtime_db = next(runtime_db_gen)
-                try:
-                    ollama_paused = runtime_is_paused(runtime_db)
-                finally:
-                    runtime_db_gen.close()
-                if ollama_paused:
-                    # Preserve the work item. Database state remains canonical,
-                    # and the queue item is rotated until the timed pause ends.
-                    queue_capture_for_analysis(capture_id)
-                    _ai_stat_inc("deferred_ollama_paused")
-                    global _last_runtime_pause_log
-                    now = time.monotonic()
-                    if now - _last_runtime_pause_log > 60:
-                        log.info("AI: lokal analyse udskudt; Ollama er tidsbegrænset pauset")
-                        _last_runtime_pause_log = now
-                    time.sleep(5)
-                    continue
+            capability_router = CapabilityRouter(get_db_fn)
+            image_plan = capability_router.image_plan(ai_config.strategy)
+            if capability_router.image_runtime_deferred(image_plan):
+                # Preserve the work item. Database state remains canonical,
+                # and the queue item is rotated until the configured primary
+                # provider's timed resource pause ends.
+                queue_capture_for_analysis(capture_id)
+                _ai_stat_inc("deferred_ollama_paused")
+                global _last_runtime_pause_log
+                now = time.monotonic()
+                if now - _last_runtime_pause_log > 60:
+                    log.info("AI: lokal analyse udskudt; primær lokal runtime er tidsbegrænset pauset")
+                    _last_runtime_pause_log = now
+                time.sleep(5)
+                continue
 
             vocab, vocabulary_full, approved_tag_set = _load_vocabulary(get_db_fn)
-            # Gemini (cloud) får HELE vokabularet — det er stort nok til at rumme
-            # scene-kategorierne (structures/surroundings/building_types), så modellen
-            # ikke kun griber vejr/kvalitet. Den lokale (lille) model får en trimmet
-            # version for at holde prompten kort.
-            vocabulary_by_cat = vocabulary_full
-            vocabulary_local = _limit_vocabulary(vocabulary_full, ai_config.tag_vocabulary_limit or 45)
-            model_used = ai_config.local_model
-            used_cloud = False
+            vocabulary_local = _limit_vocabulary(
+                vocabulary_full,
+                ai_config.tag_vocabulary_limit or 45,
+            )
 
-            if ai_config.strategy == "cloud_only":
-                # Ollama skal IKKE køre eller være tilgængelig her — kun Gemini.
-                cloud_svc = _build_gemini_service(get_db_fn, ai_config.cloud_model)
-                if not cloud_svc:
-                    log.warning("AI: cloud_only konfigureret men ingen Gemini credentials — springer over capture %d", capture_id)
-                    _ai_stat_inc("skipped_no_cloud_credentials")
-                    continue
-                result = cloud_svc.analyse(
+            try:
+                routed = capability_router.analyse_image_plan(
+                    plan=image_plan,
+                    phase="primary",
                     image_path=image_path,
-                    vocabulary_by_cat=vocabulary_by_cat,
+                    vocabulary_full=vocabulary_full,
+                    vocabulary_local=vocabulary_local,
                     approved_tag_set=approved_tag_set,
                     context_block=context_block,
+                    local_model=ai_config.local_model,
+                    cloud_model=ai_config.cloud_model,
                 )
-                model_used, used_cloud = ai_config.cloud_model, True
-
-            elif ai_config.strategy == "local_only":
-                svc = get_ollama_service(vision_model=ai_config.local_model)
-                if not svc.health_check():
-                    log.warning("AI: Ollama ikke tilgængelig — springer over capture %d", capture_id)
+            except ProviderUnavailable as exc:
+                log.warning(
+                    "AI: configured image provider unavailable for capture %d: %s",
+                    capture_id,
+                    exc.provider,
+                )
+                if exc.provider == "apple":
+                    _ai_stat_inc("skipped_apple_unavailable")
+                elif exc.provider == "gemini":
+                    _ai_stat_inc("skipped_no_cloud_credentials")
+                else:
                     _ai_stat_inc("skipped_ollama_down")
-                    continue
-                with _ollama_analysis_lock:
-                    result = svc.analyse(
-                        image_path=image_path,
-                        vocabulary_by_cat=vocabulary_local,
-                        approved_tag_set=approved_tag_set,
-                        context_block=context_block,
-                    )
-                model_used = result.model
+                continue
 
-            else:  # local_then_cloud — Ollama først, eskalér til Gemini ved usikkerhed
-                svc = get_ollama_service(vision_model=ai_config.local_model)
-                if not svc.health_check():
-                    log.warning("AI: Ollama ikke tilgængelig (local_then_cloud) — springer over capture %d", capture_id)
-                    _ai_stat_inc("skipped_ollama_down")
-                    continue
-                with _ollama_analysis_lock:
-                    result = svc.analyse(
-                        image_path=image_path,
-                        vocabulary_by_cat=vocabulary_local,
-                        approved_tag_set=approved_tag_set,
-                        context_block=context_block,
-                    )
-                model_used = result.model
+            result = routed.result
+            provider_used = routed.provider
+            model_used = result.model
+            used_cloud = routed.execution == "cloud"
+
+            if image_plan.escalation:
                 escalate, reasons = ai_config.should_escalate(
-                    confidence=0.75, new_tags=result.new_tags, tags=result.approved_tags,
-                    change_detected=result.change_detected, quality_ok=result.quality_ok,
+                    confidence=0.75,
+                    new_tags=result.new_tags,
+                    tags=result.approved_tags,
+                    change_detected=result.change_detected,
+                    quality_ok=result.quality_ok,
                 )
                 if escalate:
-                    cloud_svc = _build_gemini_service(get_db_fn, ai_config.cloud_model)
-                    if cloud_svc:
-                        log.info("AI: eskalerer capture %d til Gemini (%s)", capture_id, ",".join(reasons))
-                        result = cloud_svc.analyse(
+                    try:
+                        escalated = capability_router.analyse_image_plan(
+                            plan=image_plan,
+                            phase="escalation",
                             image_path=image_path,
-                            vocabulary_by_cat=vocabulary_by_cat,
+                            vocabulary_full=vocabulary_full,
+                            vocabulary_local=vocabulary_local,
                             approved_tag_set=approved_tag_set,
                             context_block=context_block,
+                            local_model=ai_config.local_model,
+                            cloud_model=ai_config.cloud_model,
                         )
-                        model_used, used_cloud = ai_config.cloud_model, True
-                    else:
-                        log.debug("AI: eskalering ønsket men ingen Gemini credentials — bruger lokalt resultat for capture %d", capture_id)
+                        log.info(
+                            "AI: eskalerer capture %d via capability router (%s)",
+                            capture_id,
+                            ",".join(reasons),
+                        )
+                        result = escalated.result
+                        provider_used = escalated.provider
+                        model_used = result.model
+                        used_cloud = escalated.execution == "cloud"
+                    except ProviderUnavailable:
+                        log.debug(
+                            "AI: escalation provider unavailable; bruger primary-resultat for capture %d",
+                            capture_id,
+                        )
 
             payload = _analysis_payload(result)
             payload["model"] = model_used
             # 2026-07-04 (Claude, proveniens-UI task #28): eksplicit lokal/cloud-flag,
             # så UI'en kan vise en tydelig kilde-label uden at gætte ud fra modelnavnet.
-            payload["engine"] = "cloud" if used_cloud else "local"
+            payload["engine"] = "apple" if provider_used == "apple" else ("cloud" if used_cloud else "local")
+            payload["provider"] = provider_used
             tags = result.approved_tags + result.new_tags
 
             db_gen = get_db_fn()
@@ -537,7 +502,15 @@ def _worker(get_db_fn, find_image_fn):
             finally:
                 db_gen.close()
 
-            vocab.record_usage(result.approved_tags, result.new_tags, getattr(result, "new_tags_da", None))
+            translation_source = (
+                "apple_foundation" if provider_used == "apple" else provider_used
+            )
+            vocab.record_usage(
+                result.approved_tags,
+                result.new_tags,
+                getattr(result, "new_tags_da", None),
+                translation_source=translation_source,
+            )
             update_sidecar_with_ai(image_path, payload)
 
             log.info(
@@ -647,7 +620,6 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
     Konfigurér AI-router med de rigtige afhængigheder fra main.py.
     Kald én gang ved startup.
     """
-    from ai.ollama_service import OllamaVisionService; get_ollama_service = lambda *a, **kw: OllamaVisionService(*a, **kw)
     from ai.alarm_engine import AlarmEngine, run_alarm_migration
 
     def _current_user_dep():
@@ -681,21 +653,32 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
 
     @ai_router.get("/status")
     def ai_status(user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
-        """Ollama status, tilgængelige modeller og worker-statistik.
-        worker_stats viser hvad der reelt sker med køede billeder — ikke kun
-        hvor mange der er sat i kø (se /api/admin/post-processing/status).
-        """
-        _require_admin(user)
-        svc = get_ollama_service()
+        """AI provider/capability status plus legacy Ollama runtime-control fields."""
+        from ai.capability_router import CapabilityRouter
         from ai.ollama_runtime_control import get_runtime_status
+
+        _require_admin(user)
+        provider_status = CapabilityRouter(get_db_fn).status(probe=False)
+        ollama = provider_status.get("providers", {}).get("ollama", {})
+        runtime = get_runtime_status(db)
+        installed = runtime.get("installed_models") or []
+        model_names = [
+            item.get("name") if isinstance(item, dict) else str(item)
+            for item in installed
+        ]
+        model_names = [name for name in model_names if name]
         return {
-            "ollama_running": len(svc.list_models()) > 0,
-            "vision_ready":   svc.health_check(),
-            "models":         svc.list_models(),
-            "queue_size":     _analysis_queue.qsize(),
+            # Legacy fields retained for current UI clients.
+            "ollama_running": bool(runtime.get("service", {}).get("api_healthy")),
+            "vision_ready": bool(runtime.get("service", {}).get("api_healthy")),
+            "models": model_names,
+            "queue_size": _analysis_queue.qsize(),
             "open_webui_priority": _open_webui_priority_enabled(get_db_fn),
-            "runtime_control": get_runtime_status(db),
-            "worker_stats":   get_ai_stats(),
+            "runtime_control": runtime,
+            "worker_stats": get_ai_stats(),
+            # New authoritative provider-neutral view.
+            "ai_providers": provider_status,
+            "ollama_capabilities": ollama.get("capabilities", []),
         }
 
     @ai_router.get("/ollama-priority")
@@ -731,8 +714,12 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
 
     @ai_router.post("/analyze/{capture_id}")
     def analyze_capture(capture_id: int, user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
-        """Tving AI-analyse af et specifikt capture (synkront)."""
-        from database import Capture
+        """Tving AI-analyse via samme capability-policy som baggrundsworkeren."""
+        from database import Capture, Device
+        from ai.ai_strategy import AIConfigManager
+        from ai.capability_router import CapabilityRouter
+        from ai.provider_contract import ProviderUnavailable
+
         _require_admin(user)
         capture = db.query(Capture).filter_by(id=capture_id).first()
         if not capture:
@@ -743,24 +730,80 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
         blur_score = capture.blur_score
         quality_flag = capture.quality_flag
         quality_passed = capture.quality_passed
+        device = db.query(Device).filter_by(device_id=device_id).first()
+        ai_config = AIConfigManager(db).get_config(
+            customer_id=device.customer_id if device else None,
+            site_id=device.site_id if device else None,
+        )
         db.rollback()
+
+        if not ai_config.enabled or ai_config.strategy == "technical_only":
+            raise HTTPException(status_code=409, detail="AI vision er ikke aktiveret for denne konfiguration")
 
         image_path = find_image_fn(device_id, filename)
         if not image_path:
             raise HTTPException(status_code=404, detail="Billedfil ikke fundet på disk")
 
-        svc = get_ollama_service()
-        if not svc.health_check():
-            raise HTTPException(status_code=503, detail="Ollama ikke tilgængelig")
+        capability_router = CapabilityRouter(get_db_fn)
+        image_plan = capability_router.image_plan(ai_config.strategy)
+        if capability_router.image_runtime_deferred(image_plan):
+            raise HTTPException(status_code=503, detail="Primær lokal AI-runtime er midlertidigt pauset")
 
-        vocab, vocabulary_by_cat, approved_tag_set = _load_vocabulary(get_db_fn)
-        with _ollama_analysis_lock:
-            result = svc.analyse(
+        vocab, vocabulary_full, approved_tag_set = _load_vocabulary(get_db_fn)
+        vocabulary_local = _limit_vocabulary(
+            vocabulary_full,
+            ai_config.tag_vocabulary_limit or 45,
+        )
+        try:
+            routed = capability_router.analyse_image_plan(
+                plan=image_plan,
+                phase="primary",
                 image_path=image_path,
-                vocabulary_by_cat=vocabulary_by_cat,
+                vocabulary_full=vocabulary_full,
+                vocabulary_local=vocabulary_local,
                 approved_tag_set=approved_tag_set,
+                local_model=ai_config.local_model,
+                cloud_model=ai_config.cloud_model,
             )
+        except ProviderUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Konfigureret AI-provider er ikke tilgængelig ({exc.provider})",
+            )
+
+        result = routed.result
+        provider_used = routed.provider
+        if image_plan.escalation:
+            escalate, _reasons = ai_config.should_escalate(
+                confidence=0.75,
+                new_tags=result.new_tags,
+                tags=result.approved_tags,
+                change_detected=result.change_detected,
+                quality_ok=result.quality_ok,
+            )
+            if escalate:
+                try:
+                    routed = capability_router.analyse_image_plan(
+                        plan=image_plan,
+                        phase="escalation",
+                        image_path=image_path,
+                        vocabulary_full=vocabulary_full,
+                        vocabulary_local=vocabulary_local,
+                        approved_tag_set=approved_tag_set,
+                        local_model=ai_config.local_model,
+                        cloud_model=ai_config.cloud_model,
+                    )
+                    result = routed.result
+                    provider_used = routed.provider
+                except ProviderUnavailable:
+                    pass
+
         payload = _analysis_payload(result)
+        payload["provider"] = provider_used
+        payload["engine"] = (
+            "apple" if provider_used == "apple"
+            else ("cloud" if routed.execution == "cloud" else "local")
+        )
         tags = result.approved_tags + result.new_tags
 
         capture = db.query(Capture).filter_by(id=capture_id).first()
@@ -775,8 +818,8 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
                         payload["edge_ai"] = _prev
                 except Exception:
                     pass
-            capture.ai_result      = json.dumps(payload, ensure_ascii=False)
-            capture.ai_tags        = json.dumps(tags, ensure_ascii=False)
+            capture.ai_result = json.dumps(payload, ensure_ascii=False)
+            capture.ai_tags = json.dumps(tags, ensure_ascii=False)
             upsert_capture_model_result(
                 db,
                 capture_id=capture.id,
@@ -790,16 +833,23 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
             )
             capture.ai_analyzed_at = datetime.now(timezone.utc)
             db.commit()
-        vocab.record_usage(result.approved_tags, result.new_tags)
 
+        vocab.record_usage(
+            result.approved_tags,
+            result.new_tags,
+            getattr(result, "new_tags_da", None),
+            translation_source=(
+                "apple_foundation" if provider_used == "apple" else provider_used
+            ),
+        )
         update_sidecar_with_ai(image_path, payload)
 
         return {
             "capture_id": capture_id,
-            "filename":   filename,
+            "filename": filename,
             "opencv": {
-                "blur_score":    blur_score,
-                "quality_flag":  quality_flag,
+                "blur_score": blur_score,
+                "quality_flag": quality_flag,
                 "quality_passed": quality_passed,
             },
             "ai": payload,

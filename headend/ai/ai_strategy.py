@@ -8,6 +8,7 @@ Strategier:
   local_only       → kun Ollama (vælg model)
   local_then_cloud → Ollama først, Gemini ved usikkerhed
   cloud_only       → direkte til Gemini Flash
+  apple_only       → Apple Foundation Model lokalt på macOS 27
 
 Konfiguration hentes i prioriteret rækkefølge:
   1. Site-specifik config  (ai_config WHERE site_id = ...)
@@ -29,7 +30,7 @@ log = logging.getLogger(__name__)
 GLOBAL_DEFAULTS = {
     "strategy":              "cloud_only",      # sikreste default
     "local_model":           "qwen2.5vl:7b",
-    "cloud_model":           "gemini-2.5-flash",
+    "cloud_model":           "gemini-3.8-flash",
     "escalation_threshold":  0.70,              # confidence under denne → eskalér
     "escalation_new_tags":   4,                 # >N nye tags → eskalér
     "always_escalate_tags":  ["brand", "røg", "ild", "vandskade", "ulykke", "hærværk"],
@@ -39,7 +40,7 @@ GLOBAL_DEFAULTS = {
     "enabled":               True,
 }
 
-VALID_STRATEGIES = {"technical_only", "local_only", "local_then_cloud", "cloud_only"}
+VALID_STRATEGIES = {"technical_only", "local_only", "local_then_cloud", "cloud_only", "apple_only"}
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -53,7 +54,7 @@ CREATE TABLE IF NOT EXISTS ai_config (
 
     strategy        TEXT NOT NULL DEFAULT 'cloud_only',
     local_model     TEXT DEFAULT 'qwen2.5vl:7b',
-    cloud_model     TEXT DEFAULT 'gemini-2.5-flash',
+    cloud_model     TEXT DEFAULT 'gemini-3.8-flash',
 
     -- Eskaleringstærskler
     escalation_threshold    REAL DEFAULT 0.70,
@@ -87,7 +88,7 @@ COMMENT ON TABLE ai_config IS
 @dataclass
 class AIConfig:
     """Effektiv AI-konfiguration for én kunde/site."""
-    strategy:              str        # technical_only | local_only | local_then_cloud | cloud_only
+    strategy:              str        # technical_only | local_only | local_then_cloud | cloud_only | apple_only
     local_model:           str
     cloud_model:           str
     escalation_threshold:  float
@@ -293,7 +294,7 @@ class AIConfigManager:
         customer_name:        Optional[str] = None,
         site_name:            Optional[str] = None,
         local_model:          str  = "qwen2.5vl:7b",
-        cloud_model:          str  = "gemini-2.5-flash",
+        cloud_model:          str  = "gemini-3.8-flash",
         escalation_threshold: float = 0.70,
         escalation_new_tags:  int   = 4,
         always_escalate_tags: Optional[list] = None,

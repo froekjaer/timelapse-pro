@@ -24,6 +24,21 @@ i sektionen) og er ikke længere et åbent spor. Base/head-SHA'er er hentet fris
 2026-09-13T10:58Z; #214's SHA er opdateret efter rebase 2026-09-13T~15:10Z. SHA'er ældes med
 tiden — se PR'en for den aktuelt gældende SHA, ikke kun tallet her.
 
+### #258 — `chatgpt/apple-intelligence-provider-20260924`
+
+- **Mandat/session:** ChatGPT under Peters eksplicitte mandat til at bygge den nye AI-providerarkitektur færdig 2026-09-25.
+- **Formål/scope:** Generisk capability-baseret AI-providerarkitektur for Vision, Text og Structured med Apple Foundation Models, Ollama og Gemini; TimeLapse-ejet policy/normalization/provenance; fysisk LAB-benchmark og GRC-evidence path.
+- **Berørte domæner/kontrakter:** `headend/ai/provider_contract.py`, `provider_adapters.py`, `capability_router.py`, `integration.py`, `ai_router.py`, `text_services.py`, `provider_config.py`, `tag_vocabulary.py`, backfill/batch/review paths, AI settings/UI, benchmark/smoke/GRC tooling og dokumentation.
+- **Base/head:** PR #258, draft mod `main`. Ved seneste code-review: base `b901d486733d69733bad2f21dfa42354573b6aba`; tidligere code-complete baseline `f62f2463bbbb6db50172c9c5d2c25184447e3ebb` havde grøn CI. Seneste Gemini runtime-probe kode/test-head `c3229e0a2d95cfd4bba01af1e0e4adaca88bfeeb`; efterfølgende docs commits findes ovenpå. Genhent PR-head/CI før merge.
+- **Overlap/restdisposition:** Sporet erstatter ikke Ollama/Gemini; det flytter provider-valg/fallback til én capability-router og bevarer legacy image-strategier som compatibility-policy. Der må ikke oprettes parallel vendor-specifik business logic uden ny arkitektur-/overlap-analyse.
+- **Seneste verificerede aktivitet/evidens:** Capability architecture og physical Apple/Ollama/Gemini smoke er PASS. AI Styring har nu en visuel provider-policy editor for Search/SIEM AI/AI Ops/CMDB AI/Opsummering: primary/fallback ordering, add/remove/reorder, minimum-one guard, explicit runtime probe og separat policy-save. Image/Vision forbliver visuelt styret pr. kunde/site på Strategi-fanen. Endelig kode/test-head `57128f07bed957f164b1f23d9e9fd1051401b3ac` er grøn i GitHub Actions run `36124207492` (Web UI build PASS; Python 1566 passed / 7 skipped). Dette ændrer ingen production-defaults.
+- **Arkitekturstatus:** **Code-complete for diagrammets Vision/Text/Structured scope.** Ikke production-accepted endnu.
+- **Åbne acceptance-gates:** Provider capability smoke er fysisk PASS for Apple/Ollama/Gemini. Resterende: 10–20 reviewede image cases; RAM/concurrency/thermal/fallback evidence; idempotent GRC-import kørt og verificeret i autoritativ Headend DB. Ingen production-default ændres før disse gates er accepteret.
+- **Cross-repo/website-påvirkning:** **Ingen påvirkning fundet, evidensbaseret.** Reviewet scope er Headend AI-providerlag, Headend AI management UI og repo-intern dokumentation. Der er ikke ændret public website-kontrakt eller Mission Framework/Platform-kontrakt; Mission Framework bruges som governing guidance, ikke som implementeringsmål. Hvis en senere providerændring ændrer offentlig API/produktbeskrivelse, kræver det separat propagation-review.
+- **Blokeringsansvarlig:** Kode/CI: ChatGPT/næste AI-session. Fysisk Headend-acceptance og merge/default-beslutning: Peter.
+- **Næste handling:** Lav en kort fysisk UX-check af provider-policy panelet. Kør derefter AI-provider GRC-import på Headend, efterfulgt af corpus/resource gates før merge/defaultændring.
+- **Opfølgning:** Før merge og efter hver fysisk acceptance-gate.
+
 ### #214 — `claude/globalconfig-parallel-load`
 
 - **Mandat/session:** Claude (oprindelig forfatter). Rebase udført af Kimi 2026-09-13 under Peters mandat.

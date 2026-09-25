@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
 import { CaptureThumbnailCard } from '../components/CaptureThumbnailCard'
+import { AIProviderPolicyPanel } from '../components/AIProviderPolicyPanel'
+import type { ProviderStatusSnapshot } from '../components/AIProviderPolicyPanel'
 import type { Capture } from '../types'
 
 const api = (path: string, opts?: RequestInit) =>
@@ -26,7 +28,7 @@ const api = (path: string, opts?: RequestInit) =>
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-type Strategy = 'technical_only' | 'local_only' | 'local_then_cloud' | 'cloud_only'
+type Strategy = 'technical_only' | 'local_only' | 'local_then_cloud' | 'cloud_only' | 'apple_only'
 
 interface AIConfig {
   id: number
@@ -123,6 +125,7 @@ const STRATEGY_META: Record<Strategy, { label: string; color: string; icon: Reac
   local_only:       { label: 'Lokal Ollama',       color: 'text-emerald-400 bg-emerald-950', icon: <Cpu className="w-3.5 h-3.5" />,   desc: 'Kun lokal model, ingen cloud' },
   local_then_cloud: { label: 'Lokal → Cloud',      color: 'text-amber-400 bg-amber-950',  icon: <Zap className="w-3.5 h-3.5" />,   desc: 'Lokal model, Gemini ved usikkerhed' },
   cloud_only:       { label: 'Kun Gemini',         color: 'text-sky-400 bg-sky-950',      icon: <Cloud className="w-3.5 h-3.5" />, desc: 'Alt til Gemini Flash' },
+  apple_only:       { label: 'Apple Intelligence', color: 'text-violet-300 bg-violet-950', icon: <Brain className="w-3.5 h-3.5" />, desc: 'Apple Foundation Model lokalt på Headend' },
 }
 
 function StrategyBadge({ strategy }: { strategy: Strategy }) {
@@ -201,7 +204,7 @@ export default function AIPage() {
 interface RuntimeField {
   key: string
   label: string
-  type: 'text' | 'model' | 'int' | 'float'
+  type: 'text' | 'model' | 'int' | 'float' | 'provider_order'
   value: string
   default: string
   min?: number
@@ -260,6 +263,8 @@ function AIRuntimeTab() {
   const [fields, setFields] = useState<RuntimeField[]>([])
   const [models, setModels] = useState<string[]>([])
   const [prompts, setPrompts] = useState<AIPrompt[]>([])
+  const [providerStatus, setProviderStatus] = useState<ProviderStatusSnapshot | null>(null)
+  const [providerProbeBusy, setProviderProbeBusy] = useState(false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -280,6 +285,7 @@ function AIRuntimeTab() {
       ])
       setFields(runtime.fields || [])
       setModels(runtime.installed_models || [])
+      setProviderStatus(runtime.provider_status || null)
       setPrompts(promptData || [])
       setDrafts(Object.fromEntries((promptData || []).map((p: AIPrompt) => [p.purpose, p.template])))
       setRuntimeControl(control)
@@ -334,6 +340,45 @@ function AIRuntimeTab() {
     ? null
     : `${Math.floor(runtimeControl.remaining_seconds / 3600)}t ${Math.floor((runtimeControl.remaining_seconds % 3600) / 60)}m`
 
+  const probeProviders = async () => {
+    setProviderProbeBusy(true)
+    setMessage(null)
+    try {
+      const status = await api('/api/settings/ai-providers?probe=true')
+      setProviderStatus(status)
+      const unavailable = Object.entries((status as ProviderStatusSnapshot).providers || {})
+        .filter(([, provider]) => provider.availability?.available === false)
+        .map(([name]) => name)
+      setMessage(unavailable.length
+        ? `Provider-test færdig. Ikke tilgængelig: ${unavailable.join(', ')}.`
+        : 'Provider-test færdig. Alle konfigurerede providers svarer.')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Provider-status kunne ikke testes')
+    } finally {
+      setProviderProbeBusy(false)
+    }
+  }
+
+  const saveProviderPolicies = async () => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      const policyFields = fields.filter(field => field.type === 'provider_order')
+      await api('/api/settings/ai-runtime', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          values: Object.fromEntries(policyFields.map(field => [field.key, field.value])),
+        }),
+      })
+      await load()
+      setMessage('Provider-politikken er gemt. Nye AI-kald bruger den valgte prioritet og fallback-rækkefølge.')
+    } catch (e: unknown) {
+      setMessage(e instanceof Error ? e.message : 'Provider-politikken kunne ikke gemmes')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const saveRuntime = async () => {
     setBusy(true)
     try {
@@ -377,11 +422,21 @@ function AIRuntimeTab() {
     <div className="border border-violet-800/40 bg-violet-950/30 rounded-lg p-4 flex gap-3">
       <Info className="w-4 h-4 text-violet-400 mt-0.5 shrink-0" />
       <div className="text-sm text-slate-300">
-        <p>Dette er den autoritative konfiguration for lokal billedanalyse og AI Ops.</p>
+        <p>Dette er den autoritative konfiguration for TimeLapse AI-providerlaget, billedanalyse og AI Ops.</p>
         <p className="text-xs text-slate-500 mt-1">Promptændringer gemmes først som kladde og påvirker ikke drift, før en version aktiveres.</p>
       </div>
     </div>
     {message && <div className="border border-white/10 bg-gray-900 rounded-lg px-4 py-3 text-sm text-slate-300">{message}</div>}
+
+    <AIProviderPolicyPanel
+      fields={fields.filter(field => field.type === 'provider_order')}
+      status={providerStatus}
+      probing={providerProbeBusy}
+      saving={busy}
+      onProbe={probeProviders}
+      onChange={(key, value) => setFields(all => all.map(field => field.key === key ? { ...field, value } : field))}
+      onSave={saveProviderPolicies}
+    />
 
     <section className="rounded-lg border border-white/10 bg-gray-900 p-4 sm:p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -456,7 +511,7 @@ function AIRuntimeTab() {
         <button onClick={saveRuntime} disabled={busy} className="flex items-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 rounded-lg text-sm"><Save className="w-4 h-4" />Gem alle</button>
       </div>
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {fields.map(field => <label key={field.key} className="bg-gray-900 border border-white/8 rounded-lg p-3 block">
+        {fields.filter(field => field.type !== 'provider_order').map(field => <label key={field.key} className="bg-gray-900 border border-white/8 rounded-lg p-3 block">
           <span className="text-xs text-slate-400 block mb-1.5">{field.label}</span>
           {field.type === 'model' ? (
             <select
@@ -600,7 +655,7 @@ function AIOpsTab() {
       <div className="bg-violet-950/40 border border-violet-800/30 rounded-xl p-4 flex gap-3">
         <ShieldCheck className="w-4 h-4 text-violet-400 mt-0.5 shrink-0" />
         <div className="text-sm text-slate-300 space-y-1">
-          <p>AI Ops bruger Ollama som read-only co-pilot på CMDB, SIEM, updates, key management, resilience og SAST-signaler.</p>
+          <p>AI Ops bruger capability-routeren som read-only co-pilot på CMDB, SIEM, updates, key management, resilience og SAST-signaler.</p>
           <p className="text-slate-400 text-xs">Modellen må ikke ændre database, køre kommandoer eller remediate uden menneskelig accept. Forslag skal videre som change tickets eller manuelle beslutninger.</p>
         </div>
       </div>
@@ -615,7 +670,7 @@ function AIOpsTab() {
         <button onClick={runAnalysis} disabled={loading}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-sm font-medium">
           <Brain className="w-4 h-4" />
-          Kør Ollama AI Ops analyse
+          Kør AI Ops analyse
         </button>
         <button onClick={loadSnapshot} disabled={loading}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-900 border border-white/10 hover:bg-white/5 disabled:opacity-50 text-sm text-slate-300">
@@ -742,7 +797,7 @@ function StrategyTab() {
       <div className="bg-violet-950/40 border border-violet-800/30 rounded-xl p-4 flex gap-3">
         <Info className="w-4 h-4 text-violet-400 mt-0.5 shrink-0" />
         <div className="text-sm text-slate-300 space-y-1">
-          <p>Strategi bestemmer hvilken AI der bruges pr. kunde. Fallback-hierarki: <strong>Site → Kunde → Global</strong></p>
+          <p>Image-strategi bestemmer provider-policy pr. kunde. Capability-routeren oversætter de eksisterende strategier. Fallback-hierarki: <strong>Site → Kunde → Global</strong></p>
           <p className="text-slate-400 text-xs">Ændringer træder i kraft ved næste analyse. Eksisterende analyser påvirkes ikke.</p>
         </div>
       </div>

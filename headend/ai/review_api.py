@@ -116,15 +116,13 @@ def escalation_stats(days: int = 7, db: Session = Depends(get_db)):
 
 async def _run_gemini_for_approved(analysis_ids: list[int]):
     """Baggrundsjob: kald Gemini for godkendte analyser."""
-    from database import SessionLocal
-    from ai.gemini_service import GeminiVisionService
+    from database import SessionLocal, get_db
+    from ai.capability_router import CapabilityRouter
     from ai.repositories import TagRepository
-    from pathlib import Path
-    import os
 
     db = SessionLocal()
     try:
-        gemini = GeminiVisionService()
+        capability_router = CapabilityRouter(get_db)
         esc_manager = EscalationManager(db)
         tag_repo    = TagRepository(db)
         from ai.ai_router import get_ai_router; router = get_ai_router()
@@ -140,10 +138,12 @@ async def _run_gemini_for_approved(analysis_ids: list[int]):
                 if not image_path:
                     continue
 
-                result = gemini.analyse(
-                    image_path        = image_path,
-                    vocabulary_by_cat = vocab_by_cat,
-                    approved_tag_set  = approved_set,
+                result = capability_router.analyse_image(
+                    provider_name="gemini",
+                    image_path=image_path,
+                    vocabulary_by_cat=vocab_by_cat,
+                    approved_tag_set=approved_set,
+                    function="review_escalation",
                 )
 
                 esc_manager.save_gemini_result(

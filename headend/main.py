@@ -113,6 +113,7 @@ from tenant_scope import (
 from importer import router as import_router
 from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
 from ai.settings_api import settings_router
+from ai.capability_router import generate_structured_data
 from siem import router as siem_router, start_headend_log_collector, record_events as _siem_record_events
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from edge_sync import router as edge_sync_router
@@ -12330,36 +12331,37 @@ def start_post_processing(payload: dict, current_user=require_role("admin"), db:
     if not thumbnails and not ai:
         raise HTTPException(status_code=400, detail="Vælg thumbnails og/eller AI")
 
-    # Advar synligt hvis AI er valgt, men den konfigurerede strategi reelt ikke
-    # kan analysere noget lige nu — fx Ollama nede (når strategien bruger lokal
-    # model) eller manglende Gemini-credentials (når strategien bruger cloud).
-    # cloud_only kræver IKKE Ollama — kun Open WebUI-prioritet og selve
-    # strategien afgør om Ollama-status er relevant.
-    ollama_warning = None
+    # Advar synligt hvis den konfigurerede image-provider ikke kan analysere
+    # lige nu. Provider-valg og availability kommer fra capability-routeren;
+    # produktkoden konstruerer ikke vendor-klienter.
+    ollama_warning = None  # legacy response-field name retained for UI compatibility
     ai_strategy = None
     if ai:
         try:
             from ai.integration import _open_webui_priority_enabled
             from ai.ai_strategy import AIConfigManager
-            from ai.settings_helper import get_setting as _ai_get_setting
+            from ai.capability_router import CapabilityRouter
+            from ai.provider_contract import AICapability
 
             default_cfg = AIConfigManager(db).get_config(customer_id=None, site_id=None)
             ai_strategy = default_cfg.strategy
+            capability_router = CapabilityRouter(get_db)
+            image_plan = capability_router.image_plan(default_cfg.strategy)
 
-            if _open_webui_priority_enabled(get_db):
-                ollama_warning = "⚠ Open WebUI-prioritet er aktiveret — AI-analyse er PAUSET indtil den slås fra"
-            elif default_cfg.strategy == "local_only":
-                from ai.ollama_service import OllamaVisionService
-                if not OllamaVisionService().health_check():
-                    ollama_warning = "⚠ Ollama svarer ikke (strategi: local_only) — billeder bliver køet, men ikke analyseret"
-            elif default_cfg.strategy == "cloud_only":
-                has_gemini = bool(_ai_get_setting(db, "gemini_api_key") or _ai_get_setting(db, "gemini_service_account_path"))
-                if not has_gemini:
-                    ollama_warning = "⚠ Strategi er cloud_only, men ingen Gemini API-nøgle er konfigureret — billeder bliver køet, men ikke analyseret"
-            elif default_cfg.strategy == "local_then_cloud":
-                from ai.ollama_service import OllamaVisionService
-                if not OllamaVisionService().health_check():
-                    ollama_warning = "⚠ Ollama svarer ikke (strategi: local_then_cloud) — kun cloud-eskalering vil virke"
+            if _open_webui_priority_enabled(get_db) and image_plan.primary == "ollama":
+                ollama_warning = "⚠ Open WebUI-prioritet er aktiveret — lokal AI-analyse er PAUSET indtil den slås fra"
+            elif image_plan.primary:
+                availability = capability_router.provider_availability(
+                    image_plan.primary,
+                    AICapability.VISION,
+                    local_model=default_cfg.local_model,
+                    cloud_model=default_cfg.cloud_model,
+                )
+                if not availability.get("available"):
+                    ollama_warning = (
+                        f"⚠ AI-provider '{image_plan.primary}' er ikke tilgængelig "
+                        f"(strategi: {default_cfg.strategy}) — billeder bliver køet, men ikke analyseret"
+                    )
         except Exception:
             pass
 
@@ -16260,40 +16262,11 @@ def _aiops_fallback(snapshot: dict) -> dict:
         })
     return {
         "mode": "deterministic_fallback",
-        "summary": "Ollama var ikke tilgængelig eller returnerede ikke gyldigt JSON; anbefalinger er lavet deterministisk fra snapshot.",
+        "summary": "AI-providerlaget var ikke tilgængeligt eller returnerede ikke gyldigt JSON; anbefalinger er lavet deterministisk fra snapshot.",
         "risk_level": "high" if any(r["severity"] == "high" for r in recommendations) else "medium",
         "recommendations": recommendations,
         "next_checks": ["SAST review", "DAST smoke tests", "Edge signing key rollout", "artifact rollback drill"],
     }
-
-
-def _call_ollama_text(prompt: str, model: str | None = None, db: Session | None = None) -> dict | None:
-    try:
-        import httpx
-        from ai.settings_helper import get_setting
-        model = model or (get_setting(db, "ollama_text_model", "llama3.2:latest") if db else "llama3.2:latest")
-        base_url = get_setting(db, "ollama_url", "http://127.0.0.1:11434") if db else os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-        timeout = int(get_setting(db, "ollama_text_timeout_s", "90")) if db else 90
-        num_predict = int(get_setting(db, "ollama_text_num_predict", "1800")) if db else 1800
-        temperature = float(get_setting(db, "ollama_text_temperature", "0.1")) if db else 0.1
-        resp = httpx.post(
-            f"{base_url.rstrip('/')}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "options": {"temperature": temperature, "num_predict": num_predict},
-            },
-            timeout=timeout,
-        )
-        resp.raise_for_status()
-        raw_text = resp.json().get("response", "")
-        match = _re.search(r"(\{.*\})", raw_text, _re.DOTALL)
-        return json.loads(match.group(1) if match else raw_text)
-    except Exception as exc:
-        log.warning("AI Ops Ollama analyse fejlede: %s", exc)
-        return None
 
 
 @app.get("/api/ai/ops/snapshot")
@@ -16322,7 +16295,7 @@ Vurder CMDB, SIEM, updates, key management, resilience og SAST-signaler.
 
 Returner KUN JSON:
 {{
-  "mode": "ollama",
+  "mode": "ai_provider",
   "summary": "kort dansk status",
   "risk_level": "low|medium|high|critical",
   "recommendations": [
@@ -16346,7 +16319,7 @@ SNAPSHOT:
         prompt = render_prompt(db, "aiops_assessment", snapshot=json.dumps(snapshot, ensure_ascii=False, default=str)[:24000])
     except Exception:
         prompt = prompt_fallback
-    analysis = _call_ollama_text(prompt, db=db) or _aiops_fallback(snapshot)
+    analysis = generate_structured_data(get_db, function="aiops", prompt=prompt) or _aiops_fallback(snapshot)
     if not isinstance(analysis, dict) or "recommendations" not in analysis:
         analysis = _aiops_fallback(snapshot)
     return {"snapshot": snapshot, "analysis": analysis}
@@ -16961,7 +16934,7 @@ def _normalise_capture_search_spec(spec: dict, fallback: dict, known_tags: set[s
     return safe
 
 
-def _capture_spec_from_ollama(query: str, known_tags: set[str], purpose: str = "search") -> dict:
+def _capture_spec_from_ai(query: str, known_tags: set[str], purpose: str = "search") -> dict:
     fallback = _parse_capture_natural_query(query, known_tags)
     fallback["purpose"] = purpose or fallback.get("purpose") or "search"
     prompt = f"""
@@ -16990,8 +16963,11 @@ Kendte tags:
 Formål: {purpose}
 Brugerforespørgsel: {query[:1000]}
 """
-    parsed = _call_ollama_text(prompt, model=os.getenv("TIMELAPSE_QUERY_MODEL", "llama3.2:latest"))
-    return _normalise_capture_search_spec(parsed or {}, fallback, known_tags)
+    parsed = generate_structured_data(get_db, function="search", prompt=prompt)
+    safe = _normalise_capture_search_spec(parsed or {}, fallback, known_tags)
+    if isinstance(parsed, dict) and parsed.get("_timelapse_provider"):
+        safe["_timelapse_provider"] = parsed["_timelapse_provider"]
+    return safe
 
 
 def _parse_capture_range(payload: dict, spec: dict) -> tuple[datetime | None, datetime | None]:
@@ -17205,7 +17181,7 @@ def ai_capture_natural_search(
         raise HTTPException(status_code=400, detail="query mangler")
     purpose = str(payload.get("purpose") or "search")
     known_tags = _known_capture_tags(db)
-    spec = _capture_spec_from_ollama(query, known_tags, purpose=purpose)
+    spec = _capture_spec_from_ai(query, known_tags, purpose=purpose)
     if payload.get("limit"):
         try:
             spec["limit"] = max(1, min(int(payload.get("limit")), 500))
@@ -17222,7 +17198,8 @@ def ai_capture_natural_search(
     selected_ids = [c.id for c in selected]
     candidate_ids = [c.id for c in candidates]
     return {
-        "mode": "ollama" if spec.get("explanation") else "deterministic_fallback",
+        "mode": "ai_provider" if spec.get("_timelapse_provider") else "deterministic_fallback",
+        "provider": spec.get("_timelapse_provider"),
         "query": query,
         "selection": spec,
         "total_candidates": len(candidates),
@@ -17249,7 +17226,7 @@ def _aiops_question_fallback(question: str, area: str, snapshot: dict) -> dict:
     risk_level = "high" if snapshot.get("siem", {}).get("latest_critical") else "medium"
     return {
         "mode": "deterministic_fallback",
-        "answer": "Ollama returnerede ikke gyldigt JSON. Her er en deterministisk read-only vurdering baseret på seneste snapshot.",
+        "answer": "AI-providerlaget returnerede ikke gyldigt JSON. Her er en deterministisk read-only vurdering baseret på seneste snapshot.",
         "risk_level": risk_level,
         "recommendations": recommendations[:5],
         "evidence": {
@@ -17285,7 +17262,7 @@ Svar praktisk på dansk for en admin.
 
 Returner KUN JSON:
 {{
-  "mode": "ollama",
+  "mode": "ai_provider",
   "answer": "kort, konkret svar",
   "risk_level": "low|medium|high|critical",
   "recommendations": [
@@ -17315,7 +17292,7 @@ SNAPSHOT:
         )
     except Exception:
         prompt = prompt_fallback
-    analysis = _call_ollama_text(prompt, db=db)
+    analysis = generate_structured_data(get_db, function="aiops", prompt=prompt)
     if not isinstance(analysis, dict) or "answer" not in analysis:
         analysis = _aiops_question_fallback(question, area, snapshot)
     return {

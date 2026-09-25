@@ -597,6 +597,40 @@ CREATE INDEX IF NOT EXISTS idx_vocab_approved ON ai_tag_vocabulary(approved, rej
 """
 
 
+def load_approved_vocabulary_readonly(db_session_factory) -> tuple[dict[str, list[str]], set[str]]:
+    """Load the currently approved canonical vocabulary without mutating DB state.
+
+    Unlike TagVocabulary(), this helper performs no DDL, seeding, migration,
+    deprecation update or commit. It is intended for LAB/benchmark consumers
+    that need production-equivalent prompt context while preserving the
+    benchmark's no-write contract.
+    """
+    from sqlalchemy import text
+
+    db_gen = db_session_factory()
+    db = next(db_gen)
+    try:
+        rows = db.execute(text(
+            "SELECT COALESCE(canonical_tag, tag), category "
+            "FROM ai_tag_vocabulary "
+            "WHERE approved=TRUE AND rejected=FALSE "
+            "ORDER BY category, tag"
+        )).fetchall()
+    finally:
+        db_gen.close()
+
+    by_category: dict[str, list[str]] = {}
+    approved: set[str] = set()
+    for tag, category in rows:
+        if not tag:
+            continue
+        canonical = str(tag)
+        cat = str(category or "øvrige")
+        by_category.setdefault(cat, []).append(canonical)
+        approved.add(canonical)
+    return by_category, approved
+
+
 class TagVocabulary:
     """
     Dynamisk tag-vokabular der vokser med systemet.
@@ -809,14 +843,18 @@ class TagVocabulary:
         tags: list[str],
         new_tags: list[str] | None = None,
         new_tags_da: dict[str, str] | None = None,
+        translation_source: str = "model",
     ):
         """
         Registrér at tags blev brugt.
         new_tags: tags modellen opfandt selv (ENGELSK) — gemmes med approved=False til review.
-        new_tags_da: AI-foreslået dansk oversættelse pr. nyt tag (fra Gemini/Ollama-svaret).
+        new_tags_da: AI-foreslået dansk oversættelse pr. nyt tag.
                      Hvis angivet, sættes translation_status='ai_suggested' i stedet for
-                     'pending' — admin kan se i UI at det ER et forslag, ikke en fastlåst værdi,
-                     og kan rette det hvis Gemini gættede helt skævt.
+                     'pending' — admin kan se i UI at det ER et forslag, ikke en fastlåst værdi.
+        translation_source: Provider/provenance for et AI-oversættelsesforslag
+                            (fx apple_foundation, ollama, gemini). Hvis der ikke
+                            findes et dansk forslag, bruges 'system' sammen med
+                            translation_status='pending'.
         """
         from sqlalchemy import text
         now = datetime.now(timezone.utc)
@@ -838,6 +876,7 @@ class TagVocabulary:
                     da_hint = new_tags_da.get(tag) or new_tags_da.get(tag_clean) or ""
                     canonical, label_da, label_en = canonical_metadata(tag_clean, da_hint=da_hint)
                     status = "ai_suggested" if da_hint else "pending"
+                    source = str(translation_source or "model") if da_hint else "system"
                     db.execute(text("""
                         INSERT INTO ai_tag_vocabulary (
                             tag, canonical_tag, display_name_da, display_name_en,
@@ -846,7 +885,7 @@ class TagVocabulary:
                         )
                         VALUES (
                             :tag, :canonical, :label_da, :label_en,
-                            :status, 'gemini', :now,
+                            :status, :source, :now,
                             'model_invented', FALSE, FALSE, :now, :now
                         )
                         ON CONFLICT (tag) DO UPDATE SET
@@ -855,7 +894,7 @@ class TagVocabulary:
                             canonical_tag = COALESCE(ai_tag_vocabulary.canonical_tag, EXCLUDED.canonical_tag),
                             display_name_da = COALESCE(ai_tag_vocabulary.display_name_da, EXCLUDED.display_name_da),
                             display_name_en = COALESCE(ai_tag_vocabulary.display_name_en, EXCLUDED.display_name_en)
-                    """), {"tag": tag_clean, "canonical": canonical, "label_da": label_da, "label_en": label_en, "status": status, "now": now})
+                    """), {"tag": tag_clean, "canonical": canonical, "label_da": label_da, "label_en": label_en, "status": status, "source": source, "now": now})
                 log.info("Stored %d new model-invented tags for review (%d med dansk forslag)",
                          len(new_tags), sum(1 for t in new_tags if new_tags_da.get(t)))
 
