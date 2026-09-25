@@ -92,7 +92,7 @@ class CMDBAssessment:
 # BASE — capability-routed structured generation
 # =============================================================================
 
-class _OllamaTextBase:
+class _RoutedTextBase:
     """Compatibility name; execution is provider-neutral through CapabilityRouter."""
 
     router_function = "text"
@@ -184,7 +184,10 @@ Mulige event_type-værdier:
 Returner KUN JSON."""
 
 
-class SIEMAnalyser(_OllamaTextBase):
+_OllamaTextBase = _RoutedTextBase  # backward-compatible import alias
+
+
+class SIEMAnalyser(_RoutedTextBase):
     router_function = "siem"
 
     """
@@ -355,7 +358,7 @@ Mulige tags:
 Returner KUN JSON."""
 
 
-class CMDBEnricher(_OllamaTextBase):
+class CMDBEnricher(_RoutedTextBase):
     router_function = "cmdb"
 
     """
