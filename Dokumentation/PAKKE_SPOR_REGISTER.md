@@ -257,6 +257,7 @@ fra #235/#236/#237.
 - **Opfoelgning:** Ved Peters §16-stilling.
 
 ## Edge API-mTLS + dedikeret reverse-SSH ingress (22022) — #246 (draft, igangværende)
+- **Aktivt stack'et closure-delspor 2026-09-25:** ChatGPT (GPT-5.6 Sol), branch `chatgpt/api-mtls-runtime-closure-20260925`, base `chatgpt/api-mtls-20260917@3375f78cef99bea96ae79c2b3755dd2dc4b99c10`. Formål: luk Sub-track A's runtime gaps (normal HeadendClient client-cert transport, identity binding/enforcement, revocation/lifecycle) samt de to dokumenterede pre-merge sikkerhedsfund (challenge-replay og legacy-PDP MFA-semantik), uden fysisk CA-ceremoni, Edge-enrollment, nginx enforcement, legacy-retirement eller merge til main. Relation: stack'et under #246 for isoleret review. Review: uafhængigt Claude/Z.ai-review kræves før integration; Peter ejer fysisk aktivering/merge/legacy-retirement. Cross-repo/website-påvirkning: **no impact** — TimeLapse-lokal auth/transport- og testkode; ingen Mission Framework- eller publikationskontrakt ændres.
 
 - **Mandat/session:** ChatGPT-spor påbegyndt 2026-09-17. Samme branch rummer to eksplicit adskilte sub-tracks: (A) Edge API-mTLS enrollment/runtime og (B) dedikeret reverse-SSH ingress TCP/22022.
 - **Formål/scope:** (A) per-device Edge API-identitet/mTLS; (B) dedikeret sshd-instance på TCP/22022 med servicekonto `timelapse_tunnel`, public-key-only, ingen shell/PTY/agent/X11, remote-forward alene, pr.-device `restrict,port-forwarding,permitlisten="127.0.0.1:<port>"`, `GatewayPorts no`, dedikeret hostnøgle og loopback-only Headend endpoints.
