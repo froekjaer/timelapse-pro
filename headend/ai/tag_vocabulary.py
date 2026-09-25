@@ -597,6 +597,40 @@ CREATE INDEX IF NOT EXISTS idx_vocab_approved ON ai_tag_vocabulary(approved, rej
 """
 
 
+def load_approved_vocabulary_readonly(db_session_factory) -> tuple[dict[str, list[str]], set[str]]:
+    """Load the currently approved canonical vocabulary without mutating DB state.
+
+    Unlike TagVocabulary(), this helper performs no DDL, seeding, migration,
+    deprecation update or commit. It is intended for LAB/benchmark consumers
+    that need production-equivalent prompt context while preserving the
+    benchmark's no-write contract.
+    """
+    from sqlalchemy import text
+
+    db_gen = db_session_factory()
+    db = next(db_gen)
+    try:
+        rows = db.execute(text(
+            "SELECT COALESCE(canonical_tag, tag), category "
+            "FROM ai_tag_vocabulary "
+            "WHERE approved=TRUE AND rejected=FALSE "
+            "ORDER BY category, tag"
+        )).fetchall()
+    finally:
+        db_gen.close()
+
+    by_category: dict[str, list[str]] = {}
+    approved: set[str] = set()
+    for tag, category in rows:
+        if not tag:
+            continue
+        canonical = str(tag)
+        cat = str(category or "øvrige")
+        by_category.setdefault(cat, []).append(canonical)
+        approved.add(canonical)
+    return by_category, approved
+
+
 class TagVocabulary:
     """
     Dynamisk tag-vokabular der vokser med systemet.
