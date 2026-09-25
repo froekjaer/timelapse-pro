@@ -55,6 +55,8 @@ def _build_session(
 
     if token:
         session.headers["Authorization"] = f"Bearer {token}"
+    if client_certificate:
+        session.cert = client_certificate
     session.headers["Content-Type"] = "application/json"
     session.headers["User-Agent"]   = "TimeLapsePro-EdgeAgent/1.0"
     return session
