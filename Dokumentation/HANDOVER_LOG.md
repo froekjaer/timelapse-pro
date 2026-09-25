@@ -29,6 +29,20 @@
 
 ## Log
 
+### Handover 2026-09-25 — ChatGPT/Peter: physical capability smoke Apple/Ollama PASS, Gemini region root cause fixed
+
+- **Fysisk smoke på head `ab5c51a1...`:** `tools/smoke_ai_capabilities.py --providers apple ollama gemini --capabilities text structured` blev kørt på Mac Mini Headend.
+- **Apple PASS:** Text `TIMELAPSE_OK` via `apple-foundation-model-on-device` (~2.1 s wall) og Structured korrekt JSON (~0.5 s). Provenance viser lokal `apple_fm_sdk`.
+- **Ollama PASS:** Text producerede svar med den forventede token `TIMELAPSE_OK` (~10.4 s cold-ish run) og Structured returnerede korrekt JSON (~0.54 s). Model `llama3.2:latest`. Text-formatet var mere verbost end prompten bad om, men smoke-kontrakten krævede token presence, ikke exact-match; semantisk tuning er ikke arkitektur-gate.
+- **Gemini FAIL i samme run:** både Text og Structured endte som `NoEligibleProvider` efter ca. 1–1.5 s. Router/capability-kontrakten var dermed aktiv, men smoke-v1 skjulte den underliggende provider-årsag.
+- **Root cause:** repo-default for Gemini Text/Structured er `gemini-3.8-flash`, mens den delte legacy Vertex-region stadig var `europe-west1`. Google dokumenterer Gemini 3.8 Flash på Vertex i `global`, `us` og `eu` multi-regions, ikke legacy `europe-west1`. Dette er en model/region-kompatibilitetsfejl, ikke en CapabilityRouter-fejl.
+- **Fix:** provider config er nu model-aware. For Gemini 3.8 bevares residency-familien deterministisk: `europe-*` -> `eu`, `us-*` -> `us`; der foretages aldrig automatisk widening til `global`. Legacy-modeller som 2.5 beholder eksisterende region. Text/Structured har desuden separat admin-setting `gemini_text_location` default `eu`; Vision beholder `gemini_location` men model-aware normalization beskytter 3.8-upgrades.
+- **Diagnostics hardening:** Gemini availability probe laver nu et reelt minimal cloud generation-call i stedet for kun import-check. Provider-fejl klassificeres i sikre kategorier (auth/permission/model-endpoint/quota/region/timeout) uden rå exception/request/secrets. Smoke output bevarer sikre provider-attempt reasons.
+- **Default alignment:** AI config save-path er rettet fra stale `gemini-2.5-flash` fallback til `gemini-3.8-flash`, så UI/runtime ikke kan reintroducere 2.5 ved manglende felt.
+- **Tests:** nye kontrakter dækker remote Gemini probe, sikker fejlklassifikation, 3.8 EU/US mapping, legacy-region preservation, separate region-settings og smoke diagnostics.
+- **Aktuel kode/test-head:** `370ae29ab3bcbb650b0aa7a623296772061bd492`. CI var endnu ikke startet ved denne handover; må ikke kaldes grøn før faktisk run.
+- **Næste fysiske gate:** efter grøn CI: reset isoleret worktree og genkør samme capability smoke. Forvent Apple/Ollama fortsat PASS og Gemini Text+Structured via effective Vertex region `eu`. Hvis Gemini stadig fejler, smoke v2-lignende output vil nu vise en sikker reason-kategori til næste root-cause-trin.
+
 ### Handover 2026-09-25 — ChatGPT: Capability Router-arkitekturen code-complete
 
 - **Mandat:** Peter bad eksplicit om at bygge den nye AI-arkitektur færdig.
