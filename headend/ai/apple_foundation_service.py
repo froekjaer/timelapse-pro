@@ -190,13 +190,18 @@ class AppleFoundationVisionService:
             "flag": parsed.pop("quality_flag", "clear_image"),
             "ok": bool(parsed.pop("quality_ok", True)),
         }
-        detection_types = parsed.pop("gdpr_detection_types", [])
+        detection_types = [
+            item for item in parsed.pop("gdpr_detection_types", [])
+            if item in {"person_counted", "face", "license_plate"}
+        ]
+        # Keep privacy metadata internally consistent. The model may emit an
+        # inconsistent boolean/list pair; canonical TimeLapse semantics derive
+        # has_data from validated detections rather than trusting that boolean.
         parsed["gdpr"] = {
-            "has_data": bool(parsed.pop("gdpr_has_data", False)),
+            "has_data": bool(detection_types),
             "detections": [
                 {"type": item, "detail": {}, "bbox": []}
                 for item in detection_types
-                if item in {"person_counted", "face", "license_plate"}
             ],
         }
 
