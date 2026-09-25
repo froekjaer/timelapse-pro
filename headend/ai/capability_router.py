@@ -225,6 +225,29 @@ class CapabilityRouter:
         finally:
             db_gen.close()
 
+    def provider_availability(
+        self,
+        provider_name: str,
+        capability: AICapability,
+        *,
+        local_model: str | None = None,
+        cloud_model: str | None = None,
+    ) -> dict[str, Any]:
+        """Probe one selected provider/capability without exposing credentials."""
+        try:
+            provider = self._provider(
+                provider_name,
+                vision_model=local_model,
+                cloud_model=cloud_model,
+            )
+            return provider.availability(capability)
+        except Exception as exc:
+            return {
+                "available": False,
+                "reason": type(exc).__name__,
+                "provider": provider_name,
+            }
+
     def _attempts_error(
         self,
         capability: AICapability,
