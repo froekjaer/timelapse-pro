@@ -499,14 +499,27 @@ class OllamaVisionService:
         self.runtime_paused = False
         self.runtime_low_memory = False
         try:
-            from ai.ollama_runtime_control import OllamaRuntimePaused, vision_model_override
-            self.vision_model, self.runtime_low_memory = vision_model_override(configured_model)
-        except OllamaRuntimePaused:
-            self.vision_model = configured_model
-            self.runtime_paused = True
+            from ai import ollama_runtime_control
+            self.vision_model, self.runtime_low_memory = ollama_runtime_control.vision_model_override(configured_model)
         except Exception as exc:
-            log.warning("Ollama runtime-override kunne ikke læses; bruger normal model: %s", exc)
+            # Runtime control is optional for isolated LAB/provider tests. Only
+            # treat its explicit paused signal as paused; missing DB/runtime
+            # dependencies must fall back to the configured model.
+            if exc.__class__.__name__ == "OllamaRuntimePaused":
+                self.vision_model = configured_model
+                self.runtime_paused = True
+            else:
+                log.warning("Ollama runtime-override kunne ikke læses; bruger normal model: %s", exc)
+                self.vision_model = configured_model
+        if not hasattr(self, "vision_model"):
             self.vision_model = configured_model
+        if False:
+            pass
+        elif False:
+            pass
+        # legacy exception body removed
+        if False:
+            pass
         fallback_raw = _db_setting("ollama_fallback_models", ",".join(FALLBACK_MODELS))
         self.fallback_models = fallback_models if fallback_models is not None else [m.strip() for m in fallback_raw.split(",") if m.strip()]
         if self.runtime_low_memory:
