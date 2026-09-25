@@ -126,7 +126,7 @@ from services.update_promotion import build_update_promotion_context, serialize_
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
-from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings
+from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings, credential_transports as _webauthn_credential_transports, credential_descriptors as _webauthn_credential_descriptors
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
 from services.edge_lifecycle import LifecycleTransitionError as EdgeLifecycleError, key_management_lifecycle_summary, mark_bootstrap_consumed, reconcile_edge_lifecycle as _reconcile_edge_lifecycle, resolve_device_api_credential
@@ -852,16 +852,6 @@ def get_session_policy(request: Request, current_user=Depends(get_current_user),
 
 # ── WebAuthn / FIDO2 ───────────────────────────────────────────────────────
 
-def _webauthn_credential_transports(transports_json: str | None):
-    """Decode stored transports JSON to AuthenticatorTransport list; fails open (None = unrestricted)."""
-    import webauthn, json as _json
-    if not transports_json:
-        return None
-    try:
-        return [webauthn.helpers.structs.AuthenticatorTransport(t) for t in _json.loads(transports_json)]
-    except (ValueError, TypeError):
-        return None
-
 def _webauthn_settings(db: Session, request: Request | None = None) -> tuple[str, str, str]:
     """Return WebAuthn RP settings from request allowlist, DB, env, then defaults."""
     try:
@@ -882,14 +872,8 @@ def webauthn_register_begin(payload: dict, request: Request, current_user=Depend
         raise HTTPException(status_code=401)
 
     existing = db.query(WebAuthnCredential).filter_by(user_id=current_user.id).all()
-    exclude_creds = [
-        webauthn.helpers.structs.PublicKeyCredentialDescriptor(
-            id=c.credential_id, transports=_webauthn_credential_transports(c.transports)
-        )
-        for c in existing
-    ]
-
     rp_id, rp_name, _origin = _webauthn_settings(db, request)
+    exclude_creds = _webauthn_credential_descriptors(existing, rp_id)
     options = webauthn.generate_registration_options(
         rp_id                    = rp_id,
         rp_name                  = rp_name,
@@ -945,6 +929,7 @@ def webauthn_register_complete(payload: dict, request: Request, current_user=Dep
         sign_count    = verification.sign_count,
         device_name   = device_name,
         transports    = _json.dumps(transports) if transports else None,
+        rp_id         = rp_id,
     ))
     db.query(Settings).filter_by(key=f"wabauthn_challenge_{current_user.id}").delete()
     db.commit()
@@ -965,13 +950,10 @@ def webauthn_login_begin(payload: dict, request: Request, db: Session = Depends(
     if not creds:
         raise HTTPException(status_code=404, detail="Ingen WebAuthn credentials registreret")
 
-    allow_creds = [
-        webauthn.helpers.structs.PublicKeyCredentialDescriptor(
-            id=c.credential_id, transports=_webauthn_credential_transports(c.transports)
-        )
-        for c in creds
-    ]
     rp_id, _rp_name, _origin = _webauthn_settings(db, request)
+    allow_creds = _webauthn_credential_descriptors(creds, rp_id)
+    if not allow_creds:
+        raise HTTPException(status_code=404, detail="Ingen WebAuthn credentials registreret for dette domæne")
     options = webauthn.generate_authentication_options(
         rp_id             = rp_id,
         allow_credentials = allow_creds,
@@ -1019,6 +1001,7 @@ def webauthn_login_complete(payload: dict, request: Request, db: Session = Depen
         raise HTTPException(status_code=401, detail=f"Autentificering fejlede: {e}")
 
     cred.sign_count = verification.new_sign_count
+    cred.rp_id = cred.rp_id or rp_id  # bind legacy credentials to the RP they just proved
     db.query(Settings).filter_by(key=f"wabauthn_auth_challenge_{user.id}").delete()
     db.commit()
 

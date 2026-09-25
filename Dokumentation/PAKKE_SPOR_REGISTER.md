@@ -166,6 +166,7 @@ naar sporet alligevel revideres ELLER der handles paa det.
 | PR #229 | Codex for reconciliation | Undersøg restdiff mod #230/fælles resultat før lukning; ingen tavs kassation | Ved fælles PR-afslutning |
 | Codex-forslag dc171e42 / 1a26103e | Codex | Procedure og Framework/Platform-input overført; historisk 333-ref/27-worktree-snapshot bevares i original commit som recovery-indeks, ikke aktuel status | Ved fælles PR-afslutning |
 | Updates #273/#298/#272/#275–#280 | Codex for næste kontrol, Peter for nødvendige driftsbeslutninger | Frisk CMDB/pakkesæt og kompatibilitet/recovery før installation. Ingen installation som del af governance-merge | Før genoptagelse af update-opgaven |
+| `claude/webauthn-safari-hang-20260925` (passkey-hæng, opfølgning på #254) | Claude, 2026-09-25 | Kode + tests klar i PR. Deploy kræver Peters go: v39-migration SKAL køres på live-DB FØR ny Headend-kode startes; derefter UI-rebuild + Headend-genstart + login-test fra MacBook Safari. Ingen overlap med åbne PR'er (tjekket #214–#259) | Ved deploy |
 | Framework/Platform-feedback | Codex | Samlet input §15 findes; upstream-review/disposition udestår | Efter fælles dokumentreview |
 
 Datoer er opfølgningskrav, ikke bevis for kørende baggrundsarbejde. Ingen scheduler er oprettet. Udføreren skal ved næste session gennemgå forfaldne/uejede opgaver og udføre næste skridt eller synliggøre prioriteringsbeslutningen. Påstå ikke at alle opgaver allerede er under udførelse.

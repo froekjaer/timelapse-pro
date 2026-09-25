@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-09-25 — fra Claude til Peter/næste session: passkey-login hænger stadig i Safari 27 efter #254
+
+- **Symptom (Peter, skærmbillede):** "Log ind med Windows Hello / Touch ID" på både `backend.timelapse-pro.dk:8443` og `timelapse.froekjaer.dk` hænger fra MacBook (Safari 27/macOS 27). Intet Touch ID-vindue, ingen fejl, knappen står fast på "Logger ind…".
+- **Evidens:** nginx-access-log 2026-09-25 viser `login-begin` 200 på ~15 ms hver gang, men `login-complete` kommer aldrig. Undtagelse: froekjaer 11:38:49→11:38:52 lykkedes, mens samme domæne og samme Mac hang 12:26. Serverens svar er identisk bortset fra challenge, så selve hænget sker i browseren. iPhone-login på backend 2026-09-24 21:43 lykkedes. Live Headend kørte #254 (uvicorn startet 2026-09-25 03:25).
+- **Serverfejl fundet:** `login-begin` sendte ALLE brugerens 6 credentials til BEGGE RP ID'er (`timelapse-pro.dk` og `timelapse.froekjaer.dk`), selvom en passkey kun virker for sit eget RP ID. 5 af 6 manglede transports (#254 gælder kun nyregistrerede). Frontend'en havde ingen timeout.
+- **Rettelse (branch `claude/webauthn-safari-hang-20260925`):**
+  - Ny kolonne `webauthn_credentials.rp_id` (migration `v39_webauthn_credential_rp_id.sql`). Sættes ved registrering. **Eksisterende rækker backfilles i migrationen** ud fra nginx-access-loggen. Alle 7 vellykkede `register-complete` nogensinde: 4 på froekjaer (28/5–16/7), 3 på backend (7/9, 11/9, 24/9), og ingen imellem. Derfor sætter migrationen `created_at < 2026-08-01` til `timelapse.froekjaer.dk` og resten til `timelapse-pro.dk`. Uden backfill ville alle NULL-rækker stadig blive sendt til begge domæner (Codex-review på PR #260). Eventuelle rester med NULL tilbydes stadig og bindes ved første vellykkede login.
+  - `login-begin` og `register-begin` (exclude) tilbyder kun credentials for det aktuelle RP. Helpers er flyttet til `headend/services/webauthn_origin.py` (`main.py` −17 linjer).
+  - `LoginPage.tsx`: én samlet deadline (75 s) for hele forløbet (login-begin, authenticator og login-complete) med `AbortController` og `WebAuthnAbortService.cancelCeremony()`, så knappen aldrig hænger for evigt. En første version med prefetch af login-begin blev fjernet igen: den ville overskrive en challenge, som en anden fane eller enhed var i gang med at bruge.
+- **Verificeret:** 18 tests grønne (rp-binding, transports, origin-contract, UI-contract, architecture ratchet). `tsc --noEmit` rent, `npm run build` grønt (i worktree, ikke live).
+- **IKKE verificeret / pas på:** Rettelsen er IKKE deployet. Rækkefølge ved deploy: (1) kør v39 på live-DB (inkl. backfill), (2) byg UI og genstart Headend, (3) test fra MacBook Safari på begge domæner. Kører ny kode uden migrationen, fejler alle WebAuthn-queries på den manglende kolonne. Om RP-filtreringen alene fjerner Safari 27-hænget er ikke bevist. Timeouten garanterer kun, at brugeren får en fejl i stedet for et hæng. Hvis det stadig hænger, er næste skridt Safari Web Inspector-konsollen under et forsøg.
+
 ### Handover 2026-09-24 — fra Claude til Peter/næste session: macOS 27-opgradering + live-serving-mappe kørte forældet kode (billede-hæng var en tilbagerulning, ikke en ny fejl)
 
 - **macOS-opgradering (til info, Peters egen handling):** Peter har opgraderet både Headend-Mac Mini'en og sin MacBook til **macOS 27.0 (build 26A428)** — bekræftet via `sw_vers`/`uname -a` på Headend. Ikke udført af mig; ingen kode- eller konfigurationsændring foretaget som følge af opgraderingen i denne omgang (se dog WebAuthn-fundet nedenfor, som kan hænge sammen med den).

@@ -5,7 +5,7 @@ import { useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
-import { startAuthentication } from '@simplewebauthn/browser'
+import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
@@ -99,29 +99,51 @@ export default function LoginPage() {
     const typedUsername = currentUsername()
     if (!typedUsername) { setError('Indtast brugernavn først'); return }
     setError(null); setLoading(true)
+    // One deadline for the whole ceremony (login-begin, authenticator,
+    // login-complete): never leave the button spinning if any step stalls —
+    // seen with Safari 27 / macOS 27 never showing the sheet (2026-09-25).
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        WebAuthnAbortService.cancelCeremony()
+        reject(new Error('Touch ID / Windows Hello svarede ikke. Prøv igen, eller log ind med adgangskode.'))
+      }, 75_000)
+    })
+    deadline.catch(() => {})  // only surfaced through withDeadline()
+    const withDeadline = <T,>(p: Promise<T>) => Promise.race([p, deadline])
     try {
-      const opts = await fetch(`${(await import('../api/client')).getApiUrl()}/api/auth/webauthn/login-begin`, {
+      const apiUrl = (await import('../api/client')).getApiUrl()
+      const opts = await withDeadline(fetch(`${apiUrl}/api/auth/webauthn/login-begin`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: typedUsername })
-      }).then(r => { if (!r.ok) throw new Error('Ingen registreret enhed for denne bruger'); return r.json() })
+        body: JSON.stringify({ username: typedUsername }),
+        signal: controller.signal,
+      }).then(r => { if (!r.ok) throw new Error('Ingen registreret enhed for denne bruger på dette domæne'); return r.json() }))
 
-      const result = await startAuthentication({ optionsJSON: opts })
+      const result = await withDeadline(startAuthentication({ optionsJSON: opts }))
 
-      const data = await fetch(`${(await import('../api/client')).getApiUrl()}/api/auth/webauthn/login-complete`, {
+      const data = await withDeadline(fetch(`${apiUrl}/api/auth/webauthn/login-complete`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...result, username: typedUsername })
-      }).then(r => { if (!r.ok) throw new Error('Autentificering fejlede'); return r.json() })
+        body: JSON.stringify({ ...result, username: typedUsername }),
+        signal: controller.signal,
+      }).then(r => { if (!r.ok) throw new Error('Autentificering fejlede'); return r.json() }))
 
       const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
       acceptSessionUser(u)
       navigate(from, { replace: true })
     } catch (e: any) {
-      setError(e.message ?? 'WebAuthn fejlede')
-    } finally { setLoading(false) }
+      setError(e?.name === 'NotAllowedError'
+        ? 'Touch ID / Windows Hello blev annulleret eller fandt ingen passkey for dette domæne.'
+        : (e.message ?? 'WebAuthn fejlede'))
+    } finally {
+      clearTimeout(timer)
+      setLoading(false)
+    }
   }
 
   return (
