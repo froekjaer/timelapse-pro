@@ -283,7 +283,7 @@ class CapabilityRouter:
         except Exception as exc:
             return {
                 "available": False,
-                "reason": type(exc).__name__,
+                "reason": exc.reason if isinstance(exc, ProviderUnavailable) else type(exc).__name__,
                 "provider": provider_name,
             }
 
@@ -323,10 +323,13 @@ class CapabilityRouter:
                     },
                 )
             except Exception as exc:
-                attempts.append({
+                attempt = {
                     "provider": provider_name,
                     "error_type": type(exc).__name__,
-                })
+                }
+                if isinstance(exc, ProviderUnavailable):
+                    attempt["reason"] = exc.reason
+                attempts.append(attempt)
                 log.warning(
                     "AI capability fallback: function=%s capability=structured provider=%s error=%s",
                     function,
@@ -364,10 +367,13 @@ class CapabilityRouter:
                     },
                 )
             except Exception as exc:
-                attempts.append({
+                attempt = {
                     "provider": provider_name,
                     "error_type": type(exc).__name__,
-                })
+                }
+                if isinstance(exc, ProviderUnavailable):
+                    attempt["reason"] = exc.reason
+                attempts.append(attempt)
                 log.warning(
                     "AI capability fallback: function=%s capability=text provider=%s error=%s",
                     function,
