@@ -43,12 +43,21 @@ def test_main_stores_and_backfills_rp_id():
     login_complete = main.split("def webauthn_login_complete", 1)[1].split("@app.", 1)[0]
     assert "rp_id         = rp_id," in register_complete
     assert "cred.rp_id = cred.rp_id or rp_id" in login_complete
-    assert (ROOT / "headend/migrations/v39_webauthn_credential_rp_id.sql").exists()
+    migration = (ROOT / "headend/migrations/v39_webauthn_credential_rp_id.sql").read_text(encoding="utf-8")
+    # Existing rows must be backfilled, otherwise NULL rows keep being offered
+    # to both RPs and the fix only helps after a login that already works.
+    assert "SET rp_id = 'timelapse.froekjaer.dk'" in migration
+    assert "SET rp_id = 'timelapse-pro.dk'" in migration
 
 
 def test_login_page_never_waits_forever_on_the_authenticator():
     login_page = (ROOT / "timelapse-ui/src/pages/LoginPage.tsx").read_text(encoding="utf-8")
     handler = login_page.split("async function handleWebAuthn()", 1)[1]
     assert "WebAuthnAbortService.cancelCeremony()" in handler
+    # the deadline covers login-begin and login-complete, not only the authenticator
+    assert handler.count("withDeadline(fetch(") == 2
+    assert "withDeadline(startAuthentication(" in handler
+    # no background login-begin: it would overwrite a challenge in use elsewhere
+    assert "prefetch" not in login_page.lower()
     assert "clearTimeout(timer)" in handler
     assert "setLoading(false)" in handler

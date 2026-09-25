@@ -6,7 +6,6 @@ import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
 import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
-import type { PublicKeyCredentialRequestOptionsJSON } from '@simplewebauthn/browser'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
@@ -27,10 +26,6 @@ export default function LoginPage() {
   const [mfaQr,       setMfaQr]       = useState('')
   const [mfaSecret,   setMfaSecret]   = useState('')
   const [remember,     setRemember]     = useState(false)
-  // Safari only shows the Touch ID sheet reliably when navigator.credentials.get()
-  // runs directly in the click handler, so login-begin options are prefetched
-  // when the username is known and reused if still fresh on click.
-  const webauthnPrefetch = useRef<{ username: string; at: number; opts: Promise<PublicKeyCredentialRequestOptionsJSON> } | null>(null)
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
 
@@ -100,59 +95,43 @@ export default function LoginPage() {
     }
   }
 
-  async function fetchWebAuthnOptions(user: string): Promise<PublicKeyCredentialRequestOptionsJSON> {
-    const r = await fetch(`${(await import('../api/client')).getApiUrl()}/api/auth/webauthn/login-begin`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: user })
-    })
-    if (!r.ok) throw new Error('Ingen registreret enhed for denne bruger på dette domæne')
-    return r.json()
-  }
-
-  function prefetchWebAuthnOptions() {
-    const user = currentUsername()
-    if (!user) return
-    // One outstanding challenge per user server-side: don't let a second
-    // prefetch overwrite the challenge the cached options were issued with.
-    const cached = webauthnPrefetch.current
-    if (cached && cached.username === user && Date.now() - cached.at < 30_000) return
-    const opts = fetchWebAuthnOptions(user)
-    opts.catch(() => {})  // surfaced on click, not here
-    webauthnPrefetch.current = { username: user, at: Date.now(), opts }
-  }
-
   async function handleWebAuthn() {
     const typedUsername = currentUsername()
     if (!typedUsername) { setError('Indtast brugernavn først'); return }
     setError(null); setLoading(true)
-    const cached = webauthnPrefetch.current
-    webauthnPrefetch.current = null
-    const fresh = cached && cached.username === typedUsername && Date.now() - cached.at < 40_000
+    // One deadline for the whole ceremony (login-begin, authenticator,
+    // login-complete): never leave the button spinning if any step stalls —
+    // seen with Safari 27 / macOS 27 never showing the sheet (2026-09-25).
+    const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        WebAuthnAbortService.cancelCeremony()
+        reject(new Error('Touch ID / Windows Hello svarede ikke. Prøv igen, eller log ind med adgangskode.'))
+      }, 75_000)
+    })
+    deadline.catch(() => {})  // only surfaced through withDeadline()
+    const withDeadline = <T,>(p: Promise<T>) => Promise.race([p, deadline])
     try {
-      const opts = await (fresh ? cached!.opts : fetchWebAuthnOptions(typedUsername))
-
-      // Never leave the button spinning if the browser neither shows the
-      // sheet nor rejects (seen with Safari 27 / macOS 27, 2026-09-25).
-      const timeoutMs = (opts.timeout ?? 60_000) + 5_000
-      const result = await Promise.race([
-        startAuthentication({ optionsJSON: opts }),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            WebAuthnAbortService.cancelCeremony()
-            reject(new Error('Touch ID / Windows Hello svarede ikke. Prøv igen, eller log ind med adgangskode.'))
-          }, timeoutMs)
-        }),
-      ])
-
-      const data = await fetch(`${(await import('../api/client')).getApiUrl()}/api/auth/webauthn/login-complete`, {
+      const apiUrl = (await import('../api/client')).getApiUrl()
+      const opts = await withDeadline(fetch(`${apiUrl}/api/auth/webauthn/login-begin`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...result, username: typedUsername })
-      }).then(r => { if (!r.ok) throw new Error('Autentificering fejlede'); return r.json() })
+        body: JSON.stringify({ username: typedUsername }),
+        signal: controller.signal,
+      }).then(r => { if (!r.ok) throw new Error('Ingen registreret enhed for denne bruger på dette domæne'); return r.json() }))
+
+      const result = await withDeadline(startAuthentication({ optionsJSON: opts }))
+
+      const data = await withDeadline(fetch(`${apiUrl}/api/auth/webauthn/login-complete`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...result, username: typedUsername }),
+        signal: controller.signal,
+      }).then(r => { if (!r.ok) throw new Error('Autentificering fejlede'); return r.json() }))
 
       const u = { username: data.username, role: data.role, customer_id: data.customer_id ?? null }
       acceptSessionUser(u)
@@ -202,7 +181,6 @@ export default function LoginPage() {
                 value={username}
                 onChange={e => { if (mfaRequired || mfaSetupRequired) resetMfaStep(); setUsername(e.target.value) }}
                 onInput={e => setUsername(e.currentTarget.value)}
-                onBlur={prefetchWebAuthnOptions}
                 className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm
                            focus:outline-none focus:ring-2 focus:ring-sky-300"
                 placeholder="admin"
@@ -287,7 +265,6 @@ export default function LoginPage() {
 
           {/* WebAuthn / biometrisk login */}
           <button type="button" onClick={handleWebAuthn} disabled={loading}
-            onPointerEnter={prefetchWebAuthnOptions} onFocus={prefetchWebAuthnOptions}
             className="w-full flex items-center justify-center gap-2 py-2.5 px-4 border border-gray-200 text-gray-600 text-sm font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50">
             <Fingerprint className="w-4 h-4 text-sky-500" />
             Log ind med Windows Hello / Touch ID
