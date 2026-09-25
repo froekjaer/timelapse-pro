@@ -677,7 +677,12 @@ class HeadendClient:
             headers = request_signature_headers(self._cfg_mgr.api_token, "POST", path, payload)
             if not path.startswith("/keys/signing/enroll/"):
                 headers.update(edge_attestation_headers(self._cfg_mgr.base_dir, self._device_id, "POST", path, payload))
-            resp = self._session.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
+            session = (
+                self._legacy_session
+                if path.startswith("/trust/headend-api-mtls/")
+                else self._session
+            )
+            resp = session.post(url, json=payload, headers=headers, timeout=REQUEST_TIMEOUT, verify=True)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             if resp.status_code in (200, 201):
                 log.info("API call complete: method=POST path=%s status=%s duration_ms=%s", path, resp.status_code, elapsed_ms)
