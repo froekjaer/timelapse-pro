@@ -50,3 +50,31 @@ def replace_setting_value(db, settings_model, key: str, value: str) -> None:
         row.value = value
     else:
         db.add(settings_model(key=key, value=value))
+
+
+def credential_transports(transports_json: str | None):
+    """Decode stored transports JSON to AuthenticatorTransport list; fails open (None = unrestricted)."""
+    import json
+    from webauthn.helpers.structs import AuthenticatorTransport
+    if not transports_json:
+        return None
+    try:
+        return [AuthenticatorTransport(t) for t in json.loads(transports_json)]
+    except (ValueError, TypeError):
+        return None
+
+
+def credential_descriptors(creds, rp_id: str) -> list:
+    """Descriptors for credentials usable under ``rp_id``.
+
+    A passkey only works for the RP ID it was registered under, so credentials
+    bound to another RP (backend.timelapse-pro.dk vs. timelapse.froekjaer.dk)
+    are left out. Legacy rows with no stored rp_id are still offered; they get
+    bound on their first successful login (see webauthn_login_complete).
+    """
+    from webauthn.helpers.structs import PublicKeyCredentialDescriptor
+    return [
+        PublicKeyCredentialDescriptor(id=c.credential_id, transports=credential_transports(c.transports))
+        for c in creds
+        if getattr(c, "rp_id", None) in (None, rp_id)
+    ]
