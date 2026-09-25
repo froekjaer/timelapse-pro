@@ -87,9 +87,9 @@ def verify_edge_api_mtls_identity(
             device_id=device_id,
         )
 
-    verify_status = str(headers.get(VERIFY_HEADER, "") or "").strip()
+    verify_status = str(headers.get(VERIFY_HEADER, "") or "").strip().upper()
     serial_raw = str(headers.get(SERIAL_HEADER, "") or "").strip()
-    presented = bool(verify_status or serial_raw)
+    presented = bool(serial_raw) or verify_status not in {"", "NONE"}
 
     if not presented:
         if resolved_mode == "required" and not allow_legacy_enrollment:
