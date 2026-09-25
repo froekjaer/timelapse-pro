@@ -53,3 +53,15 @@ def test_benchmark_bootstraps_headend_import_path():
     source = (Path(__file__).resolve().parents[1] / "tools" / "compare_ai_providers.py").read_text()
     assert "HEADEND_DIR" in source
     assert "sys.path.insert" in source
+
+
+def test_apple_guided_schema_is_flat_for_sdk_0_2_1():
+    import inspect
+    import ai.apple_foundation_service as service
+    source = inspect.getsource(service._schema_types)
+    assert "change: Change" not in source
+    assert "quality: Quality" not in source
+    assert "gdpr: GDPR" not in source
+    assert "change_detected" in source
+    assert "quality_flag" in source
+    assert "gdpr_detection_types" in source
