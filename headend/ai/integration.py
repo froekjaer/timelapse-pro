@@ -620,7 +620,6 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
     Konfigurér AI-router med de rigtige afhængigheder fra main.py.
     Kald én gang ved startup.
     """
-    from ai.ollama_service import OllamaVisionService; get_ollama_service = lambda *a, **kw: OllamaVisionService(*a, **kw)
     from ai.alarm_engine import AlarmEngine, run_alarm_migration
 
     def _current_user_dep():
@@ -654,21 +653,32 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
 
     @ai_router.get("/status")
     def ai_status(user=Depends(auth_dep), db: Session = Depends(get_db_fn)):
-        """Ollama status, tilgængelige modeller og worker-statistik.
-        worker_stats viser hvad der reelt sker med køede billeder — ikke kun
-        hvor mange der er sat i kø (se /api/admin/post-processing/status).
-        """
-        _require_admin(user)
-        svc = get_ollama_service()
+        """AI provider/capability status plus legacy Ollama runtime-control fields."""
+        from ai.capability_router import CapabilityRouter
         from ai.ollama_runtime_control import get_runtime_status
+
+        _require_admin(user)
+        provider_status = CapabilityRouter(get_db_fn).status(probe=False)
+        ollama = provider_status.get("providers", {}).get("ollama", {})
+        runtime = get_runtime_status(db)
+        installed = runtime.get("installed_models") or []
+        model_names = [
+            item.get("name") if isinstance(item, dict) else str(item)
+            for item in installed
+        ]
+        model_names = [name for name in model_names if name]
         return {
-            "ollama_running": len(svc.list_models()) > 0,
-            "vision_ready":   svc.health_check(),
-            "models":         svc.list_models(),
-            "queue_size":     _analysis_queue.qsize(),
+            # Legacy fields retained for current UI clients.
+            "ollama_running": bool(runtime.get("service", {}).get("api_healthy")),
+            "vision_ready": bool(runtime.get("service", {}).get("api_healthy")),
+            "models": model_names,
+            "queue_size": _analysis_queue.qsize(),
             "open_webui_priority": _open_webui_priority_enabled(get_db_fn),
-            "runtime_control": get_runtime_status(db),
-            "worker_stats":   get_ai_stats(),
+            "runtime_control": runtime,
+            "worker_stats": get_ai_stats(),
+            # New authoritative provider-neutral view.
+            "ai_providers": provider_status,
+            "ollama_capabilities": ollama.get("capabilities", []),
         }
 
     @ai_router.get("/ollama-priority")
