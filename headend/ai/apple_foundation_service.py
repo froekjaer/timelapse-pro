@@ -103,6 +103,35 @@ def _run(coro):
         return pool.submit(lambda: asyncio.run(coro)).result()
 
 
+def _promote_unknown_tags(parsed: dict, approved_tag_set: set[str]) -> list[str]:
+    """Preserve Apple observations that violate the guided known/new tag split.
+
+    Foundation Models may place an unknown/open-vocabulary observation in
+    `tags` even though the schema asks for unknown values in `new_tags`.
+    The shared Ollama normalizer intentionally moderates unknown values from
+    `tags`, which would otherwise drop those Apple observations entirely.
+    Reclassify them as unapproved new-tag candidates so they remain available
+    for TimeLapse review without becoming approved truth.
+    """
+    normalizer = object.__new__(OllamaVisionService)
+    known: list[str] = []
+    unknown: list[str] = []
+
+    for value in parsed.get("tags", []) or []:
+        tag = normalizer._normalize_tag(value)
+        if not tag:
+            continue
+        if tag in approved_tag_set:
+            known.append(tag)
+        else:
+            unknown.append(tag)
+
+    parsed["tags"] = list(dict.fromkeys(known))
+    existing_new = list(parsed.get("new_tags", []) or [])
+    parsed["new_tags"] = list(dict.fromkeys(existing_new + unknown))
+    return list(dict.fromkeys(unknown))
+
+
 class AppleFoundationVisionService:
     def __init__(self, timeout_s: int = 120, temperature: float = 0.2):
         self.timeout_s = timeout_s
@@ -177,6 +206,7 @@ class AppleFoundationVisionService:
         # Headend POC. Keep a content fallback for SDK compatibility.
         generated = getattr(typed, "content", typed)
         parsed = asdict(generated)
+        promoted_unknown_tags = _promote_unknown_tags(parsed, approved_tag_set)
 
         # Adapt the flat SDK observation to the existing canonical result builder.
         # Canonical vocabulary/alarm semantics remain TimeLapse-owned.
@@ -216,6 +246,7 @@ class AppleFoundationVisionService:
                 "provider": "apple_foundation_models",
                 "runtime": "apple_fm_sdk",
                 "response": parsed,
+                "adapter_promoted_unknown_tags": promoted_unknown_tags,
             },
         )
         return result
