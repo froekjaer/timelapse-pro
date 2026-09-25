@@ -113,6 +113,7 @@ from tenant_scope import (
 from importer import router as import_router
 from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
 from ai.settings_api import settings_router
+from ai.capability_router import generate_structured_data
 from siem import router as siem_router, start_headend_log_collector, record_events as _siem_record_events
 from cmdb import router as cmdb_router, report_inventory as _cmdb_report_inventory
 from edge_sync import router as edge_sync_router
@@ -16268,37 +16269,6 @@ def _aiops_fallback(snapshot: dict) -> dict:
     }
 
 
-def _call_ai_structured(
-    prompt: str,
-    *,
-    function: str,
-) -> dict | None:
-    """Call structured AI through the provider-neutral capability router.
-
-    Product code never receives provider clients/credentials. Provenance is
-    attached under a TimeLapse-owned key after parsing so a model cannot spoof it.
-    """
-    try:
-        from ai.capability_router import CapabilityRouter
-
-        output = CapabilityRouter(get_db).generate_structured(
-            function=function,
-            prompt=prompt,
-        )
-        if not isinstance(output.data, dict):
-            return None
-        data = dict(output.data)
-        data["_timelapse_provider"] = output.provenance()
-        return data
-    except Exception as exc:
-        log.warning(
-            "AI capability analyse fejlede: function=%s error=%s",
-            function,
-            type(exc).__name__,
-        )
-        return None
-
-
 @app.get("/api/ai/ops/snapshot")
 def aiops_snapshot(
     _user=require_role("super_admin", "admin"),
@@ -16349,7 +16319,7 @@ SNAPSHOT:
         prompt = render_prompt(db, "aiops_assessment", snapshot=json.dumps(snapshot, ensure_ascii=False, default=str)[:24000])
     except Exception:
         prompt = prompt_fallback
-    analysis = _call_ai_structured(prompt, function="aiops") or _aiops_fallback(snapshot)
+    analysis = generate_structured_data(get_db, function="aiops", prompt=prompt) or _aiops_fallback(snapshot)
     if not isinstance(analysis, dict) or "recommendations" not in analysis:
         analysis = _aiops_fallback(snapshot)
     return {"snapshot": snapshot, "analysis": analysis}
@@ -16993,7 +16963,7 @@ Kendte tags:
 Formål: {purpose}
 Brugerforespørgsel: {query[:1000]}
 """
-    parsed = _call_ai_structured(prompt, function="search")
+    parsed = generate_structured_data(get_db, function="search", prompt=prompt)
     safe = _normalise_capture_search_spec(parsed or {}, fallback, known_tags)
     if isinstance(parsed, dict) and parsed.get("_timelapse_provider"):
         safe["_timelapse_provider"] = parsed["_timelapse_provider"]
@@ -17322,7 +17292,7 @@ SNAPSHOT:
         )
     except Exception:
         prompt = prompt_fallback
-    analysis = _call_ai_structured(prompt, function="aiops")
+    analysis = generate_structured_data(get_db, function="aiops", prompt=prompt)
     if not isinstance(analysis, dict) or "answer" not in analysis:
         analysis = _aiops_question_fallback(question, area, snapshot)
     return {
