@@ -524,7 +524,16 @@ def _worker(get_db_fn, find_image_fn):
             finally:
                 db_gen.close()
 
-            vocab.record_usage(result.approved_tags, result.new_tags, getattr(result, "new_tags_da", None))
+            translation_source = (
+                "apple_foundation" if ai_config.strategy == "apple_only"
+                else ("gemini" if used_cloud else "ollama")
+            )
+            vocab.record_usage(
+                result.approved_tags,
+                result.new_tags,
+                getattr(result, "new_tags_da", None),
+                translation_source=translation_source,
+            )
             update_sidecar_with_ai(image_path, payload)
 
             log.info(
@@ -777,7 +786,12 @@ def setup_ai_router(get_db_fn, find_image_fn, current_user_fn=None, allowed_devi
             )
             capture.ai_analyzed_at = datetime.now(timezone.utc)
             db.commit()
-        vocab.record_usage(result.approved_tags, result.new_tags)
+        vocab.record_usage(
+            result.approved_tags,
+            result.new_tags,
+            getattr(result, "new_tags_da", None),
+            translation_source="ollama",
+        )
 
         update_sidecar_with_ai(image_path, payload)
 
