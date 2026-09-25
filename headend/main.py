@@ -16260,39 +16260,41 @@ def _aiops_fallback(snapshot: dict) -> dict:
         })
     return {
         "mode": "deterministic_fallback",
-        "summary": "Ollama var ikke tilgængelig eller returnerede ikke gyldigt JSON; anbefalinger er lavet deterministisk fra snapshot.",
+        "summary": "AI-providerlaget var ikke tilgængeligt eller returnerede ikke gyldigt JSON; anbefalinger er lavet deterministisk fra snapshot.",
         "risk_level": "high" if any(r["severity"] == "high" for r in recommendations) else "medium",
         "recommendations": recommendations,
         "next_checks": ["SAST review", "DAST smoke tests", "Edge signing key rollout", "artifact rollback drill"],
     }
 
 
-def _call_ollama_text(prompt: str, model: str | None = None, db: Session | None = None) -> dict | None:
+def _call_ai_structured(
+    prompt: str,
+    *,
+    function: str,
+) -> dict | None:
+    """Call structured AI through the provider-neutral capability router.
+
+    Product code never receives provider clients/credentials. Provenance is
+    attached under a TimeLapse-owned key after parsing so a model cannot spoof it.
+    """
     try:
-        import httpx
-        from ai.settings_helper import get_setting
-        model = model or (get_setting(db, "ollama_text_model", "llama3.2:latest") if db else "llama3.2:latest")
-        base_url = get_setting(db, "ollama_url", "http://127.0.0.1:11434") if db else os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-        timeout = int(get_setting(db, "ollama_text_timeout_s", "90")) if db else 90
-        num_predict = int(get_setting(db, "ollama_text_num_predict", "1800")) if db else 1800
-        temperature = float(get_setting(db, "ollama_text_temperature", "0.1")) if db else 0.1
-        resp = httpx.post(
-            f"{base_url.rstrip('/')}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "options": {"temperature": temperature, "num_predict": num_predict},
-            },
-            timeout=timeout,
+        from ai.capability_router import CapabilityRouter
+
+        output = CapabilityRouter(get_db).generate_structured(
+            function=function,
+            prompt=prompt,
         )
-        resp.raise_for_status()
-        raw_text = resp.json().get("response", "")
-        match = _re.search(r"(\{.*\})", raw_text, _re.DOTALL)
-        return json.loads(match.group(1) if match else raw_text)
+        if not isinstance(output.data, dict):
+            return None
+        data = dict(output.data)
+        data["_timelapse_provider"] = output.provenance()
+        return data
     except Exception as exc:
-        log.warning("AI Ops Ollama analyse fejlede: %s", exc)
+        log.warning(
+            "AI capability analyse fejlede: function=%s error=%s",
+            function,
+            type(exc).__name__,
+        )
         return None
 
 
@@ -16346,7 +16348,7 @@ SNAPSHOT:
         prompt = render_prompt(db, "aiops_assessment", snapshot=json.dumps(snapshot, ensure_ascii=False, default=str)[:24000])
     except Exception:
         prompt = prompt_fallback
-    analysis = _call_ollama_text(prompt, db=db) or _aiops_fallback(snapshot)
+    analysis = _call_ai_structured(prompt, function="aiops") or _aiops_fallback(snapshot)
     if not isinstance(analysis, dict) or "recommendations" not in analysis:
         analysis = _aiops_fallback(snapshot)
     return {"snapshot": snapshot, "analysis": analysis}
@@ -16961,7 +16963,7 @@ def _normalise_capture_search_spec(spec: dict, fallback: dict, known_tags: set[s
     return safe
 
 
-def _capture_spec_from_ollama(query: str, known_tags: set[str], purpose: str = "search") -> dict:
+def _capture_spec_from_ai(query: str, known_tags: set[str], purpose: str = "search") -> dict:
     fallback = _parse_capture_natural_query(query, known_tags)
     fallback["purpose"] = purpose or fallback.get("purpose") or "search"
     prompt = f"""
@@ -16990,8 +16992,11 @@ Kendte tags:
 Formål: {purpose}
 Brugerforespørgsel: {query[:1000]}
 """
-    parsed = _call_ollama_text(prompt, model=os.getenv("TIMELAPSE_QUERY_MODEL", "llama3.2:latest"))
-    return _normalise_capture_search_spec(parsed or {}, fallback, known_tags)
+    parsed = _call_ai_structured(prompt, function="search")
+    safe = _normalise_capture_search_spec(parsed or {}, fallback, known_tags)
+    if isinstance(parsed, dict) and parsed.get("_timelapse_provider"):
+        safe["_timelapse_provider"] = parsed["_timelapse_provider"]
+    return safe
 
 
 def _parse_capture_range(payload: dict, spec: dict) -> tuple[datetime | None, datetime | None]:
@@ -17205,7 +17210,7 @@ def ai_capture_natural_search(
         raise HTTPException(status_code=400, detail="query mangler")
     purpose = str(payload.get("purpose") or "search")
     known_tags = _known_capture_tags(db)
-    spec = _capture_spec_from_ollama(query, known_tags, purpose=purpose)
+    spec = _capture_spec_from_ai(query, known_tags, purpose=purpose)
     if payload.get("limit"):
         try:
             spec["limit"] = max(1, min(int(payload.get("limit")), 500))
@@ -17222,7 +17227,8 @@ def ai_capture_natural_search(
     selected_ids = [c.id for c in selected]
     candidate_ids = [c.id for c in candidates]
     return {
-        "mode": "ollama" if spec.get("explanation") else "deterministic_fallback",
+        "mode": "ai_provider" if spec.get("_timelapse_provider") else "deterministic_fallback",
+        "provider": spec.get("_timelapse_provider"),
         "query": query,
         "selection": spec,
         "total_candidates": len(candidates),
@@ -17249,7 +17255,7 @@ def _aiops_question_fallback(question: str, area: str, snapshot: dict) -> dict:
     risk_level = "high" if snapshot.get("siem", {}).get("latest_critical") else "medium"
     return {
         "mode": "deterministic_fallback",
-        "answer": "Ollama returnerede ikke gyldigt JSON. Her er en deterministisk read-only vurdering baseret på seneste snapshot.",
+        "answer": "AI-providerlaget returnerede ikke gyldigt JSON. Her er en deterministisk read-only vurdering baseret på seneste snapshot.",
         "risk_level": risk_level,
         "recommendations": recommendations[:5],
         "evidence": {
