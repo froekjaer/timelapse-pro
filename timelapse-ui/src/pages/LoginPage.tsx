@@ -1,7 +1,7 @@
 // ───────────────────────────────────────────────────────────────────
 // LoginPage.tsx — RBAC Login til TimeLapse Pro
 // ───────────────────────────────────────────────────────────────────
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
@@ -95,6 +95,17 @@ export default function LoginPage() {
     }
   }
 
+  // Abort a pending passkey request when the page is left (tab closed,
+  // reloaded, navigated away or unmounted). Safari runs one WebAuthn request
+  // at a time per browsing session; an abandoned one can leave every later
+  // Touch ID request in other tabs waiting (2026-09-25, Safari 27/macOS 27).
+  const webauthnFlow = useRef<AbortController | null>(null)
+  useEffect(() => {
+    const abort = () => { webauthnFlow.current?.abort(); WebAuthnAbortService.cancelCeremony() }
+    window.addEventListener('pagehide', abort)
+    return () => { window.removeEventListener('pagehide', abort); abort() }
+  }, [])
+
   async function handleWebAuthn() {
     const typedUsername = currentUsername()
     if (!typedUsername) { setError('Indtast brugernavn først'); return }
@@ -103,6 +114,7 @@ export default function LoginPage() {
     // login-complete): never leave the button spinning if any step stalls —
     // seen with Safari 27 / macOS 27 never showing the sheet (2026-09-25).
     const controller = new AbortController()
+    webauthnFlow.current = controller
     let timer: ReturnType<typeof setTimeout> | undefined
     const deadline = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
@@ -123,6 +135,9 @@ export default function LoginPage() {
         signal: controller.signal,
       }).then(r => { if (!r.ok) throw new Error('Ingen registreret enhed for denne bruger på dette domæne'); return r.json() }))
 
+      // Page left while login-begin was in flight: don't start a ceremony
+      // from an abandoned page (it is exactly what the pagehide abort prevents).
+      if (controller.signal.aborted) return
       const result = await withDeadline(startAuthentication({ optionsJSON: opts }))
 
       const data = await withDeadline(fetch(`${apiUrl}/api/auth/webauthn/login-complete`, {
