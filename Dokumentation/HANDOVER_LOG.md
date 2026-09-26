@@ -29,6 +29,19 @@
 
 ## Log
 
+### Handover 2026-09-26 — fra Claude til Peter/næste session: passkey-hæng er Safari-lokalt på Peters MacBook, ikke serveren
+
+- **#260 deployet og verificeret live 2026-09-25 13:04.** Migration v39 kørt af Peter, og backfillen passede til sekundet med nginx-loggen. Serveren sender nu 2 credentials til `timelapse-pro.dk` og 4 til `timelapse.froekjaer.dk`. Peter bekræftede, at timeout-fejlen vises på begge domæner.
+- **Deploy-fælde:** CI-jobbet "Deploy to Mac mini Headend" deployer til `~/projects/timelapse-pro-deploy`, men den kørende Headend og nginx' `root` bruger stadig repo-mappen, fordi `headend.env`-skiftet ikke er gennemført. Jobbet blev grønt, men serverede gammel kode. Den reelle deploy var: live-mappen til `origin/main`, `npm run build` og `launchctl kickstart`. Live-mappen står nu detached på main; #257-branchen er urørt på GitHub, og `OP-001.provenance.json` ligger i git stash.
+- **Afgrænsning af fejlen (Peters tests fra MacBook, Safari 27/macOS 27):**
+  - Hænger stadig i almindeligt Safari-vindue, både med og uden forudgående password-login. Hypotesen om at password-submit blokerer er afvist.
+  - **Virker i Chrome** på samme Mac og **virker i et privat Safari-vindue**.
+  - Hjalp ikke: at slå udvidelser fra, at fjerne webstedsdata for sitet.
+  - nginx-historikken viser, at det virkede stabilt fra MacBook'en til 2026-08-31, altså før macOS 27.
+  - Konklusion: serveren og siden er i orden. Fejlen sidder i Safaris almindelige browsing-session på MacBook'en.
+- **Aktuel hypotese:** en forladt passkey-forespørgsel sidder fast i Safaris session (én WebAuthn-forespørgsel ad gangen pr. session). Peter tester Cmd+Q. Hjælper det ikke, er næste skridt `log stream` for AuthenticationServices/WebAuthn på MacBook'en under et forsøg.
+- **Denne PR:** `LoginPage.tsx` afbryder en ventende passkey-forespørgsel ved `pagehide` og unmount, så en lukket eller forladt login-fane ikke efterlader en forespørgsel, der kan blokere senere. Ikke bevist at det løser Peters tilfælde, men det fjerner en mulig kilde. Tests og build er grønne.
+
 ### Handover 2026-09-25 — fra Claude til Peter/næste session: passkey-login hænger stadig i Safari 27 efter #254
 
 - **Symptom (Peter, skærmbillede):** "Log ind med Windows Hello / Touch ID" på både `backend.timelapse-pro.dk:8443` og `timelapse.froekjaer.dk` hænger fra MacBook (Safari 27/macOS 27). Intet Touch ID-vindue, ingen fejl, knappen står fast på "Logger ind…".

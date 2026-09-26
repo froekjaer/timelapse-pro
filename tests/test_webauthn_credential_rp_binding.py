@@ -61,3 +61,9 @@ def test_login_page_never_waits_forever_on_the_authenticator():
     assert "prefetch" not in login_page.lower()
     assert "clearTimeout(timer)" in handler
     assert "setLoading(false)" in handler
+
+
+def test_login_page_aborts_pending_passkey_request_when_left():
+    login_page = (ROOT / "timelapse-ui/src/pages/LoginPage.tsx").read_text(encoding="utf-8")
+    assert "window.addEventListener('pagehide', abort)" in login_page
+    assert "window.removeEventListener('pagehide', abort); abort()" in login_page

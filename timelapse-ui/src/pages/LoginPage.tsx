@@ -1,7 +1,7 @@
 // ───────────────────────────────────────────────────────────────────
 // LoginPage.tsx — RBAC Login til TimeLapse Pro
 // ───────────────────────────────────────────────────────────────────
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
@@ -94,6 +94,16 @@ export default function LoginPage() {
       setLoading(false)
     }
   }
+
+  // Abort a pending passkey request when the page is left (tab closed,
+  // reloaded, navigated away or unmounted). Safari runs one WebAuthn request
+  // at a time per browsing session; an abandoned one can leave every later
+  // Touch ID request in other tabs waiting (2026-09-25, Safari 27/macOS 27).
+  useEffect(() => {
+    const abort = () => WebAuthnAbortService.cancelCeremony()
+    window.addEventListener('pagehide', abort)
+    return () => { window.removeEventListener('pagehide', abort); abort() }
+  }, [])
 
   async function handleWebAuthn() {
     const typedUsername = currentUsername()
