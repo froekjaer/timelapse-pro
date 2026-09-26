@@ -78,3 +78,19 @@ def credential_descriptors(creds, rp_id: str) -> list:
         for c in creds
         if getattr(c, "rp_id", None) in (None, rp_id)
     ]
+
+
+def login_allow_credentials(descriptors: list, mode: str | None) -> list:
+    """allowCredentials for login-begin.
+
+    Default ("discoverable"): an empty list, so the browser offers the passkeys
+    it has stored for the RP itself (Apple's recommended flow). A non-empty
+    list with transport-less entries lets Safari also wait on security keys /
+    hybrid, which is where Safari 27 on macOS 27 hung (2026-09-25..27).
+    login-complete still binds the credential to the user and the RP.
+    Setting ``webauthn_login_allow_credentials=list`` restores the explicit
+    list without a deploy (needed for non-discoverable security keys).
+    """
+    if (mode or "discoverable").strip().lower() == "list":
+        return descriptors
+    return []

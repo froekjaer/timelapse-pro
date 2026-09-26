@@ -126,7 +126,7 @@ from services.update_promotion import build_update_promotion_context, serialize_
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
-from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings, credential_transports as _webauthn_credential_transports, credential_descriptors as _webauthn_credential_descriptors
+from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings, credential_transports as _webauthn_credential_transports, credential_descriptors as _webauthn_credential_descriptors, login_allow_credentials as _webauthn_login_allow_credentials
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
 from services.edge_lifecycle import LifecycleTransitionError as EdgeLifecycleError, key_management_lifecycle_summary, mark_bootstrap_consumed, reconcile_edge_lifecycle as _reconcile_edge_lifecycle, resolve_device_api_credential
@@ -956,7 +956,7 @@ def webauthn_login_begin(payload: dict, request: Request, db: Session = Depends(
         raise HTTPException(status_code=404, detail="Ingen WebAuthn credentials registreret for dette domæne")
     options = webauthn.generate_authentication_options(
         rp_id             = rp_id,
-        allow_credentials = allow_creds,
+        allow_credentials = _webauthn_login_allow_credentials(allow_creds, _get_setting(db, "webauthn_login_allow_credentials", "discoverable")),
     )
     opts_json = webauthn.options_to_json(options)
     _replace_setting_value(db, Settings, f"wabauthn_auth_challenge_{user.id}", opts_json)

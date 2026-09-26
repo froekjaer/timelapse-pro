@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-09-27 — fra Claude til Peter/næste session: forsøg med tom allowCredentials (discoverable passkey-login)
+
+- **Status før:** Efter Cmd+Q virkede Safari-passkey-login på `timelapse.froekjaer.dk` (2026-09-26 23:05), men `backend.timelapse-pro.dk:8443` hang stadig i almindeligt vindue (5 timeouts 23:04–23:09). Samme backend-passkey virkede 2026-09-25 i Chrome (13:11) og i et privat Safari-vindue (13:13). Serveren er udelukket. Se også PR #261 (abort ved pagehide) og 2026-09-26-entry'en i sammes branch.
+- **Forsøg (Peters beslutning 2026-09-27):** `login-begin` sender nu som standard `allowCredentials: []`, så Safari selv tilbyder de passkeys, den har gemt for RP'et. Det er Apples anbefalede flow og undgår Safaris ventetid på sikkerhedsnøgle/hybrid for transport-løse entries.
+  - Stadig 404, hvis brugeren ingen credential har for RP'et.
+  - `login-complete` binder fortsat credential til bruger (`user_id` + `credential_id`) og RP (`expected_rp_id`). Sikkerhedsniveauet er uændret.
+- **Tilbagerulning uden deploy:** sæt setting `webauthn_login_allow_credentials=list`. Det kan blive nødvendigt, hvis en ikke-discoverable sikkerhedsnøgle skal virke (muligvis froekjaer-credential med det lange ID `owBY…`).
+- **Filer:** `headend/services/webauthn_origin.py` (`login_allow_credentials`), `headend/main.py` (én linje, størrelsen uændret), `tests/test_webauthn_discoverable_login.py`.
+- **Verificeret:** 20 WebAuthn- og ratchet-tests grønne. `generate_authentication_options(allow_credentials=[])` giver `"allowCredentials": []`. **Ikke verificeret:** om det løser Safari-hænget. Det kræver Peters test efter deploy.
+
 ### Handover 2026-09-25 — fra Claude til Peter/næste session: passkey-login hænger stadig i Safari 27 efter #254
 
 - **Symptom (Peter, skærmbillede):** "Log ind med Windows Hello / Touch ID" på både `backend.timelapse-pro.dk:8443` og `timelapse.froekjaer.dk` hænger fra MacBook (Safari 27/macOS 27). Intet Touch ID-vindue, ingen fejl, knappen står fast på "Logger ind…".
