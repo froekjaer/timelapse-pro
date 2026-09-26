@@ -67,3 +67,7 @@ def test_login_page_aborts_pending_passkey_request_when_left():
     login_page = (ROOT / "timelapse-ui/src/pages/LoginPage.tsx").read_text(encoding="utf-8")
     assert "window.addEventListener('pagehide', abort)" in login_page
     assert "window.removeEventListener('pagehide', abort); abort()" in login_page
+    # the whole flow is aborted, and no ceremony starts after the page was left
+    assert "webauthnFlow.current?.abort()" in login_page
+    handler = login_page.split("async function handleWebAuthn()", 1)[1]
+    assert handler.index("if (controller.signal.aborted) return") < handler.index("startAuthentication(")
