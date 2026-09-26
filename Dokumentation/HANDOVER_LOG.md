@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-09-27 01:35 — fra Claude til Peter/næste session: tom allowCredentials hjalp IKKE, Safari-hæng på backend består
+
+- **Deployet og verificeret live:** #262 (inkl. #261) er merget (`c1f449f6`). Peter flyttede live-mappen til `origin/main`, byggede UI'et og genstartede Headend kl. 01:29. Verificeret mod live: `login-begin` returnerer `allowCredentials: []` på begge domæner, og den serverede `LoginPage` indeholder pagehide-afbrydelsen.
+  - NB: et første forsøg kl. 01:26–01:27 kørte endnu på #260-kode, fordi #262 ikke var merget på det tidspunkt. Tjek altid det live `login-begin`-svar før en test.
+- **Resultat:** Peter på MacBook (Safari 27, almindeligt vindue, backend.timelapse-pro.dk:8443) hænger stadig på "Logger ind…". nginx viser `login-begin` 01:29:57 og 01:30:19, men ingen `login-complete`.
+- **Konklusion:** Hverken filtrering pr. RP (#260), transports (#254), abort ved pagehide (#261) eller tom liste (#262) ændrer Safaris adfærd. To server-side forsøg er afvist. Fejlen ligger i Safaris almindelige session for `timelapse-pro.dk` på Peters MacBook. Chrome og privat Safari-vindue virker med samme passkey, og froekjaer.dk virkede efter Cmd+Q.
+- **Beholdt:** Tom liste er Apples anbefalede flow og ufarlig for iCloud-/Windows Hello-passkeys. Tilbagerulning uden deploy: setting `webauthn_login_allow_credentials=list`. Ikke testet endnu: om froekjaer-login i Safari stadig virker med tom liste.
+- **Næste skridt (kræver Peter/MacBook):** `log stream --style compact --predicate 'subsystem CONTAINS "AuthenticationServices" OR subsystem CONTAINS "WebAuthn" OR process CONTAINS "AuthenticationServices" OR process CONTAINS "WebAuthn"'` under et forsøg. Derefter eventuelt en Apple Feedback-rapport. Midlertidig løsning: adgangskode + engangskode med "Husk denne enhed", eller Chrome.
+
 ### Handover 2026-09-27 — fra Claude til Peter/næste session: forsøg med tom allowCredentials (discoverable passkey-login)
 
 - **Status før:** Efter Cmd+Q virkede Safari-passkey-login på `timelapse.froekjaer.dk` (2026-09-26 23:05), men `backend.timelapse-pro.dk:8443` hang stadig i almindeligt vindue (5 timeouts 23:04–23:09). Samme backend-passkey virkede 2026-09-25 i Chrome (13:11) og i et privat Safari-vindue (13:13). Serveren er udelukket. Cmd+Q-testen (2026-09-26-entry'en nedenfor) bekræftede kun delvist hypotesen om en fastlåst forespørgsel: froekjaer kom igennem, backend gjorde ikke.
