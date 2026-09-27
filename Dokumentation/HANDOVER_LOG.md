@@ -29,6 +29,21 @@
 
 ## Log
 
+### Handover 2026-09-27 (eftermiddag) — fra Claude til Peter/næste session: passkey-login virker nu på BEGGE domæner; froekjaer krævede ny passkey
+
+- **Retter entry'en nedenfor:** Genstarten løste kun backend. `timelapse.froekjaer.dk` hang stadig i Safari på MacBook'en efter genstart (nginx: `login-begin` 13:11:40 og 13:15:39, ingen `login-complete`). Der kørte kun én frisk `AuthenticationServices.Helper` (startet 13:04:12 ved det vellykkede backend-login), så det var ikke en fastlåst proces denne gang.
+- **Tom liste vs. liste afvist som årsag:** Setting `webauthn_login_allow_credentials=list` blev sat af Peter på live-DB kl. ~13:15 (verificeret: backend 2, froekjaer 4 credentials i `login-begin`). froekjaer hang også med listen. **Settingen står stadig på `list`.** Den er ufarlig, men betyder at #262's tomme liste i praksis er slået fra.
+- **Root cause for froekjaer:**
+  - `device_name` viste, at ingen froekjaer-credential var oprettet på MacBook'en. Nr. 1 "Timelapse Pro" (iPhone, Safari, 2026-05-28) er en iCloud-passkey, som MacBook'en historisk brugte via iCloud Nøglering-synkronisering. Nr. 2–4 er Chrome, Surface/Windows Hello og Codex-browser.
+  - Et registreringsforsøg fra MacBook'en fejlede med **"The authenticator was previously registered"**. Safari genkendte altså nr. 1 via `excludeCredentials`, men hang når den skulle bruges til login.
+  - Tolkning: den synkroniserede kopi af nr. 1 var gået i stykker på Mac'en. Muligvis relateret til macOS 27-opgraderingen, ikke bevist.
+- **Løsning:** Peter slettede credential nr. 1 via UI'et og oprettede en ny passkey fra MacBook'en på froekjaer.dk. **Touch ID-login virker nu på både backend og froekjaer i Safari** (Peter 2026-09-27).
+- **Ikke verificeret:** om iPhonen stadig kan logge ind på froekjaer.dk. Den gamle iCloud-passkey (nr. 1) er erstattet af den nye fra MacBook'en, som bør synkronisere til iPhonen. Ellers skal der oprettes en passkey fra iPhonen.
+- **Runbook, samlet:** "Touch ID hænger i Safari, men virker i Chrome/privat vindue" →
+  1. `ps -o pid,lstart,command -A | grep AuthenticationServices.Helper` på klienten. En gammel instans betyder genstart (killall + Cmd+Q var ikke nok).
+  2. Hænger det stadig for ét domæne, så prøv at oprette en passkey. Giver det "previously registered", så slet den synkroniserede credential i UI'et og opret en ny fra den pågældende Mac.
+- **Åben opfølgning (tilbudt, ikke startet):** giv passkey-*registrering* (`UsersPage.tsx`, `startRegistration`) samme timeout og pagehide-abort som login. En hængende registrering satte hjælperen fast 2026-09-24.
+
 ### Handover 2026-09-27 — fra Claude til Peter/næste session: passkey-hæng LØST ved genstart af MacBook (fastlåst AuthenticationServices.Helper)
 
 - **Løsning:** Peter genstartede MacBook'en, og Touch ID virker igen i Safari. Safari hang så hårdt, at den måtte tvinges ned via Aktivitetsovervågning før genstarten.
