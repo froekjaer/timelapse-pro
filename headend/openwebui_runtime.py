@@ -10,20 +10,46 @@ from datetime import datetime, timezone
 
 
 LABEL = "dk.froekjaer.open-webui"
+# Open WebUI runs as a system LaunchDaemon (UserName=peter) on the Headend
+# since 2026-07-07; older installs used a per-user LaunchAgent. Controlling a
+# system-domain job needs root, via the existing NOPASSWD sudoers rule for
+# /bin/launchctl (also used by the CI deploy job). Mutations use
+# bootstrap/bootout because the plist has KeepAlive=true: a plain SIGTERM is
+# restarted by launchd immediately and never actually stops the service.
+SYSTEM_PLIST = f"/Library/LaunchDaemons/{LABEL}.plist"
+
+
+def _is_system_daemon() -> bool:
+    return os.path.exists(SYSTEM_PLIST)
+
+
+def _domain() -> str:
+    return "system" if _is_system_daemon() else f"gui/{os.getuid()}"
 
 
 def _target() -> str:
-    return f"gui/{os.getuid()}/{LABEL}"
+    return f"{_domain()}/{LABEL}"
 
 
-def _launchctl(*args: str, timeout: int = 15) -> subprocess.CompletedProcess[str]:
+def _plist() -> str:
+    return SYSTEM_PLIST if _is_system_daemon() else os.path.expanduser(f"~/Library/LaunchAgents/{LABEL}.plist")
+
+
+def _launchctl(*args: str, timeout: int = 15, privileged: bool = False) -> subprocess.CompletedProcess[str]:
+    command = ["/bin/launchctl", *args]
+    if privileged and _is_system_daemon():
+        command = ["/usr/bin/sudo", "-n", *command]
     return subprocess.run(
-        ["/bin/launchctl", *args],
+        command,
         capture_output=True,
         text=True,
         timeout=timeout,
         check=False,
     )
+
+
+def _is_loaded() -> bool:
+    return _launchctl("print", _target()).returncode == 0
 
 
 def service_status() -> dict:
@@ -49,15 +75,17 @@ def service_status() -> dict:
 
 
 def start_service() -> None:
-    result = _launchctl("kickstart", "-k", _target(), timeout=30)
+    if _is_loaded():
+        result = _launchctl("kickstart", "-k", _target(), timeout=30, privileged=True)
+    else:
+        result = _launchctl("bootstrap", _domain(), _plist(), timeout=30, privileged=True)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "launchctl start failed").strip())
 
 
 def stop_service() -> None:
-    status = service_status()
-    if status["running"]:
-        result = _launchctl("kill", "SIGTERM", _target())
+    if _is_loaded():
+        result = _launchctl("bootout", _target(), timeout=30, privileged=True)
         if result.returncode != 0:
             raise RuntimeError((result.stderr or result.stdout or "launchctl stop failed").strip())
     unload_ollama_models()

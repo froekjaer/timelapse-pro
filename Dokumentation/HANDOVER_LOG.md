@@ -29,6 +29,22 @@
 
 ## Log
 
+### Handover 2026-09-27 (aften) — fra Claude til Peter/næste session: Open WebUI servicekontrol ramte forkert launchd-domæne
+
+- **Symptom (Peter):** "Open WebUI servicekontrol fejlede: Could not find service "dk.froekjaer.open-webui" in domain for user gui: 502".
+- **Root cause:**
+  - `headend/openwebui_runtime.py` (fra 3e26dcac, 2026-07-15) styrede altid `gui/<uid>/dk.froekjaer.open-webui`.
+  - På Headend er Open WebUI en **system-LaunchDaemon**: `/Library/LaunchDaemons/dk.froekjaer.open-webui.plist`, root:wheel, dateret 2026-07-07, `UserName=peter`, `KeepAlive=true`, `RunAtLoad=true`. Den kører fint (verificeret: `launchctl print system/...` viser state = running, pid 956).
+  - Start/stop fejlede derfor altid. Status meldte altid "kører ikke", så auto-timeout har aldrig reelt stoppet tjenesten, kun unloadet Ollama-modeller.
+  - Selv i det rigtige domæne ville det gamle stop (`kill SIGTERM`) være blevet genstartet med det samme af launchd pga. `KeepAlive=true`.
+- **Fix (branch `claude/openwebui-system-daemon-control-20260927`):**
+  - Domænet vælges ud fra hvor plisten ligger: `system` hvis `/Library/LaunchDaemons/<label>.plist` findes, ellers `gui/<uid>`.
+  - Mutationer i system-domænet går via `sudo -n /bin/launchctl`, med den eksisterende NOPASSWD-sudoers-regel for `/bin/launchctl`, som CI-deployet også bruger.
+  - Stop er nu `bootout` (reelt stop trods KeepAlive). Start er `bootstrap` hvis tjenesten ikke er loaded, ellers `kickstart -k`.
+  - Verificeret read-only mod live: `service_status()` giver `running: True, healthy: True, pid: 956`. 7 tests grønne i `headend/tests/test_openwebui_runtime.py`.
+- **Adfærdsændring efter deploy:** Auto-timeout virker nu for alvor. Står der en udløbet `OPENWEBUI_DEADLINE_KEY` i DB, stopper timeout-loopet Open WebUI inden for 30 s efter Headend-genstart. Da tjenesten har `RunAtLoad=true` i system-domænet, starter den igen ved næste reboot uanset indstillingen. Det er uændret fra før og ikke rettet her.
+- **Ikke verificeret endnu:** selve start/stop mod live. Det kræver deploy og et klik på Open WebUI-siden. Deploy: live-mappen til `origin/main` og `sudo launchctl kickstart -k system/dk.froekjaer.timelapse-headend`. Ingen UI-build nødvendig.
+
 ### Handover 2026-09-27 (eftermiddag) — fra Claude til Peter/næste session: passkey-login virker nu på BEGGE domæner; froekjaer krævede ny passkey
 
 - **Retter entry'en nedenfor:** Genstarten løste kun backend. `timelapse.froekjaer.dk` hang stadig i Safari på MacBook'en efter genstart (nginx: `login-begin` 13:11:40 og 13:15:39, ingen `login-complete`). Der kørte kun én frisk `AuthenticationServices.Helper` (startet 13:04:12 ved det vellykkede backend-login), så det var ikke en fastlåst proces denne gang.
