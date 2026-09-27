@@ -29,6 +29,26 @@
 
 ## Log
 
+### Handover 2026-09-27 — fra Claude til Peter/næste session: passkey-hæng LØST ved genstart af MacBook (fastlåst AuthenticationServices.Helper)
+
+- **Løsning:** Peter genstartede MacBook'en, og Touch ID virker igen i Safari. Safari hang så hårdt, at den måtte tvinges ned via Aktivitetsovervågning før genstarten.
+- **Root cause (evidens fra `log stream` + `ps` på MacBook'en):**
+  - Der kørte to instanser af `com.apple.AuthenticationServices.Helper`, den proces der viser passkey-/Touch ID-vinduet.
+  - PID 12837 var startet **2026-09-24 15:38:09**, præcis da Peter i Safari prøvede at oprette en passkey på froekjaer.dk (nginx: `register-begin` 15:38:08 og 15:38:21, aldrig `register-complete`). Den hang siden da, og nye passkey-forespørgsler fra Safaris almindelige session ventede bag den.
+  - PID 34101 (2026-09-25 13:11:37) svarede til Peters vellykkede Chrome-login på backend (13:11:40).
+  - Hverken `killall` af hjælperen eller Cmd+Q på Safari var nok. Genstart ryddede tilstanden.
+- **Hvorfor symptomerne så ud som de gjorde:** Privat vindue og Chrome virkede, fordi de ikke delte den fastlåste tilstand. At froekjaer.dk en enkelt gang kom igennem efter Cmd+Q, er ikke fuldt forklaret.
+- **Server-side ændringer undervejs (#254, #260, #261, #262) var ikke årsagen og ikke løsningen**, men de beholdes som reelle forbedringer:
+  - passkeys bundet til deres RP ID med backfill (v39)
+  - 75 sekunders timeout i stedet for evigt hæng
+  - abort ved pagehide
+  - tom `allowCredentials` (tilbagerulning: setting `webauthn_login_allow_credentials=list`)
+- **Til næste gang nogen melder "Touch ID hænger":**
+  1. Tjek om det virker i Chrome og i privat vindue. Gør det, er det klientsiden.
+  2. `ps -o pid,lstart,command -A | grep AuthenticationServices.Helper` på klienten. Er der en gammel instans, så genstart maskinen. `killall` + Cmd+Q var ikke nok her.
+- **Mulig opfølgning (ikke startet):** Passkey-*registreringen* i UI'et (brugersiden, `startRegistration`) har ikke samme timeout og pagehide-abort som login. Det var netop en hængende registrering, der satte hjælperen fast. Overvej samme beskyttelse dér.
+- **Stadig ikke testet:** froekjaer.dk-login i Safari med tom `allowCredentials`.
+
 ### Handover 2026-09-27 01:35 — fra Claude til Peter/næste session: tom allowCredentials hjalp IKKE, Safari-hæng på backend består
 
 - **Deployet og verificeret live:** #262 (inkl. #261) er merget (`c1f449f6`). Peter flyttede live-mappen til `origin/main`, byggede UI'et og genstartede Headend kl. 01:29. Verificeret mod live: `login-begin` returnerer `allowCredentials: []` på begge domæner, og den serverede `LoginPage` indeholder pagehide-afbrydelsen.
