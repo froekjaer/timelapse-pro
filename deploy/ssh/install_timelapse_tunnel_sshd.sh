@@ -214,9 +214,13 @@ for p in "${TUNNEL_PORTS[@]}"; do
     log "listener ${p}: dedicated sshd (pid ${NEW_PID}) ✓"
 done
 
-for p in 8443 22222; do
-    lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && log "regression: :$p still listening ✓" || post_fail ":$p stopped listening — REGRESSION"
+lsof -nP -iTCP:8443 -sTCP:LISTEN >/dev/null 2>&1 && log "regression: :8443 still listening ✓" || post_fail ":8443 stopped listening — REGRESSION"
+# SFTP socket: 9022 (since 2026-10) and/or transitional 22222 — at least one.
+sftp_up=""
+for p in 9022 22222; do
+    lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && sftp_up="${sftp_up} ${p}"
 done
+[[ -n "$sftp_up" ]] && log "regression: SFTP still listening on:${sftp_up} ✓" || post_fail "SFTP (9022/22222) stopped listening — REGRESSION"
 for p in 2201 2204; do
     if lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1; then
         log "regression: reverse :$p still listening (unchanged) ✓"

@@ -16,6 +16,17 @@ KH="${4:-/opt/timelapse/edge/ssh/known_hosts}"
 PINNED_HOST="${5:-$HOST}"
 
 fp_pinned() { ssh-keygen -l -F "[$1]:$2" -f "$KH" 2>/dev/null | grep -v '^#' | grep -o 'SHA256:[^ ]*' | sort -u || true; }
+# @revoked / @cert-authority entries are reported by ssh-keygen -F only on the
+# "# Host ... found: line N <MARKER>" comment line. Refuse to reason about
+# fingerprints for a host:port that carries any marker.
+marker_check() {
+  local m; m="$(ssh-keygen -F "[$1]:$2" -f "$KH" 2>/dev/null | grep -E '^# Host .* found: line [0-9]+ [A-Z]' || true)"
+  if [ -n "$m" ]; then
+    echo "FEJL: [$1]:$2 har en markeret known_hosts-linje (fx @revoked/@cert-authority) i $KH: $m — håndtér manuelt." >&2; exit 2
+  fi
+}
+marker_check "$PINNED_HOST" "$OLD"
+marker_check "$HOST" "$NEW"
 
 old_fps="$(fp_pinned "$PINNED_HOST" "$OLD")"
 if [ -z "$old_fps" ]; then
