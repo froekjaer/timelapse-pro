@@ -56,6 +56,13 @@ if str(EDGE_ROOT) not in sys.path:
     sys.path.insert(0, str(EDGE_ROOT))
 
 from camera.service_stream import TechnicianStreamManager
+from totp_login_guard import DEFAULT_STATE_PATH as _TOTP_STATE_DEFAULT, TotpLoginGuard
+
+# Single-use codes + "last known good time" floor for the local login.
+LOGIN_GUARD = TotpLoginGuard(Path(os.getenv("TIMELAPSE_TOTP_LOGIN_STATE", str(_TOTP_STATE_DEFAULT))))
+# Above this Edge-vs-browser difference the login page warns, and (only while
+# the Edge clock is unsynchronised) offers to set the clock at login.
+CLOCK_WARN_S = 90
 
 TECH_CLI = EDGE_ROOT / "tools" / "bootstrap_cli.py"
 TECH_CAPTURE_DIR = Path(os.getenv("TIMELAPSE_TECH_CAPTURE_DIR", "/tmp/timelapse-tech-captures"))
@@ -505,6 +512,86 @@ def _clear_totp_failures(client_ip: str) -> None:
 
 
 # ── HTML templates ────────────────────────────────────────────────────────────
+def _display_tz() -> str:
+    try:
+        cfg = yaml.safe_load((EDGE_ROOT / "config.yaml").read_text(encoding="utf-8")) or {}
+        return str((cfg.get("schedule") or {}).get("timezone") or (cfg.get("time") or {}).get("timezone") or "Europe/Copenhagen")
+    except Exception:
+        return "Europe/Copenhagen"
+
+
+def _edge_clock_synced() -> bool:
+    try:
+        return bool(_get_time_status().get("synced")) or _systemd_ntp_active()
+    except Exception:
+        return False
+
+
+def _set_system_time_utc(epoch: float) -> tuple[bool, str]:
+    try:
+        value = datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        result = subprocess.run(["timedatectl", "set-time", value],
+                                capture_output=True, text=True, timeout=15, check=False)
+        if result.returncode != 0:
+            return False, result.stderr.strip() or "timedatectl afviste tidsændringen"
+        return True, value
+    except Exception as exc:
+        return False, f"Kunne ikke sætte tid: {exc}"
+
+
+def _clock_block_html() -> str:
+    """Read-only Edge clock on the login page + browser comparison (JS)."""
+    from zoneinfo import ZoneInfo
+    now = time.time()
+    tz_name = _display_tz()
+    try:
+        local = datetime.fromtimestamp(now, tz=ZoneInfo(tz_name)).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        tz_name, local = "UTC", datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    utc = datetime.fromtimestamp(now, tz=timezone.utc).strftime("%H:%M:%S")
+    synced = _edge_clock_synced()
+    sync_html = ('<span style="color:#66bb6a">synkroniseret</span>' if synced
+                 else '<span style="color:#ffb74d">ikke synkroniseret</span>')
+    return f"""
+  <div class="clock" id="edge-clock" data-epoch="{now:.3f}" data-synced="{'1' if synced else '0'}" data-warn="{CLOCK_WARN_S}" data-tz="{html.escape(tz_name)}">
+    <div>Edge-ur: <b id="edge-clock-local">{html.escape(local)}</b> ({html.escape(tz_name)}) · {utc} UTC · {sync_html}</div>
+    <div id="clock-diff" class="clock-diff"></div>
+  </div>"""
+
+
+_CLOCK_JS = """
+<script>
+(function () {
+  var box = document.getElementById('edge-clock');
+  if (!box) return;
+  var edge0 = parseFloat(box.dataset.epoch) * 1000, t0 = Date.now();
+  var synced = box.dataset.synced === '1', warn = parseFloat(box.dataset.warn) * 1000;
+  var diffEl = document.getElementById('clock-diff');
+  var setRow = document.getElementById('set-clock-row');
+  var localEl = document.getElementById('edge-clock-local');
+  function tick() {
+    var edgeNow = edge0 + (Date.now() - t0), diff = edgeNow - Date.now();
+    try { localEl.textContent = new Date(edgeNow).toLocaleString('sv-SE', {timeZone: box.dataset.tz}); } catch (e) {}
+    var mins = Math.round(Math.abs(diff) / 60000), secs = Math.round(Math.abs(diff) / 1000);
+    if (Math.abs(diff) > warn) {
+      diffEl.textContent = 'Edge-uret afviger ' + (secs >= 120 ? mins + ' min' : secs + ' sek') +
+        (diff > 0 ? ' foran' : ' bagud') + ' i forhold til denne enhed — koden vil fejle.';
+      diffEl.className = 'clock-diff warn';
+      if (setRow && !synced) setRow.style.display = 'block';
+    } else {
+      diffEl.textContent = 'Afvigelse til denne enhed: ' + secs + ' sek';
+      diffEl.className = 'clock-diff';
+    }
+  }
+  tick(); setInterval(tick, 1000);
+  var form = document.getElementById('login-form');
+  if (form) form.addEventListener('submit', function () {
+    document.getElementById('client-epoch').value = (Date.now() / 1000).toFixed(3);
+  });
+})();
+</script>"""
+
+
 def _login_page(error: str = "") -> str:
     err_html = f'<p class="error">{error}</p>' if error else ""
     # A missing secret is a provisioning fault, not a usable factory fallback.
@@ -525,11 +612,17 @@ def _login_page(error: str = "") -> str:
         _badge_hint = "Brug den QR-kode fra CMDB der svarer til dette kamera/site/kunde"
 
     form_html = "" if _is_unprovisioned else """
-  <form method="post" action="/verify">
+  <form method="post" action="/verify" id="login-form">
     <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}"
            maxlength="6" placeholder="000000" autocomplete="off" autofocus required>
+    <input type="hidden" name="client_epoch" id="client-epoch" value="">
+    <label id="set-clock-row" class="set-clock" style="display:none">
+      <input type="checkbox" name="set_clock" value="1">
+      Stil Edge-uret efter denne enhed ved login (kun muligt når Edge-uret ikke er synkroniseret, og koden er gyldig)
+    </label>
     <button type="submit">Log ind</button>
   </form>"""
+    clock_html = "" if _is_unprovisioned else _clock_block_html()
     return f"""<!DOCTYPE html>
 <html lang="da">
 <head>
@@ -554,6 +647,11 @@ def _login_page(error: str = "") -> str:
   button:hover {{ background: #81d4fa; }}
   .error {{ color: #ef5350; font-size: 0.85rem; margin-bottom: 1rem; text-align: center; }}
   .hostname {{ font-size: 0.75rem; color: #555; text-align: center; margin-top: 1.5rem; }}
+  .clock {{ font-size: 0.75rem; color: #aaa; background: #0f3460; border-radius: 8px; padding: 0.5rem 0.6rem; margin-bottom: 1rem; }}
+  .clock-diff {{ margin-top: 0.3rem; color: #888; }}
+  .clock-diff.warn {{ color: #ffb74d; font-weight: 600; }}
+  .set-clock {{ font-size: 0.75rem; color: #ffb74d; margin: -0.4rem 0 1rem; line-height: 1.3; }}
+  .set-clock input {{ width: auto; margin: 0 0.4rem 0 0; padding: 0; }}
 </style>
 </head>
 <body>
@@ -563,9 +661,11 @@ def _login_page(error: str = "") -> str:
   <div class="badge">{_badge_text}</div>
   <p class="badge-hint">{_badge_hint}</p>
   {err_html}
+  {clock_html}
   {form_html}
   <div class="hostname">{os.uname().nodename}</div>
 </div>
+{_CLOCK_JS if not _is_unprovisioned else ""}
 </body>
 </html>"""
 
@@ -648,7 +748,8 @@ async def index():
 
 
 @app.post("/verify")
-async def verify(request: Request, code: str = Form(...)):
+async def verify(request: Request, code: str = Form(...),
+                 client_epoch: Optional[str] = Form(None), set_clock: Optional[str] = Form(None)):
     cfg = load_config()
     totp_cfg = cfg["totp"]
     if not totp_cfg.get("secret"):
@@ -665,10 +766,33 @@ async def verify(request: Request, code: str = Form(...)):
     if not totp_cfg.get("enabled", True):
         return RedirectResponse("/mgmt/", status_code=303)
 
-    totp = pyotp.TOTP(totp_cfg["secret"])
     valid_window = totp_cfg.get("valid_window", 1)
 
-    if not totp.verify(code, valid_window=valid_window):
+    if set_clock == "1":
+        # Set the clock from the technician's browser time — only while the
+        # Edge clock is unsynchronised, only to a plausible time not before the
+        # last known good time, and only with a code valid at that time.
+        if _edge_clock_synced():
+            return HTMLResponse(_login_page(error="Edge-uret er synkroniseret og kan ikke stilles fra login — log ind normalt"), status_code=409)
+        try:
+            browser_epoch = float(client_epoch or "")
+        except ValueError:
+            return HTMLResponse(_login_page(error="Enhedens tid mangler — prøv igen"), status_code=400)
+        ok_time, why = LOGIN_GUARD.browser_time_acceptable(browser_epoch)
+        if not ok_time:
+            _record_totp_failure(client_ip)
+            return HTMLResponse(_login_page(error=why), status_code=400)
+        if LOGIN_GUARD.verify_and_consume(totp_cfg["secret"], code, browser_epoch, valid_window) is None:
+            _record_totp_failure(client_ip)
+            log.warning(f"TOTP fejl (stil ur) fra {client_ip}")
+            return HTMLResponse(_login_page(error="Forkert kode — prøv igen"), status_code=401)
+        old_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        ok_set, detail = _set_system_time_utc(browser_epoch)
+        if not ok_set:
+            log.error("Ur kunne ikke stilles ved login fra %s: %s", client_ip, detail)
+            return HTMLResponse(_login_page(error=f"Koden var gyldig, men uret kunne ikke stilles: {detail}"), status_code=500)
+        log.warning("Edge-ur stillet ved login fra %s: %s -> %s (sid=%s)", client_ip, old_utc, detail, totp_cfg.get("sid", "?"))
+    elif LOGIN_GUARD.verify_and_consume(totp_cfg["secret"], code, time.time(), valid_window) is None:
         _record_totp_failure(client_ip)
         log.warning(f"TOTP fejl fra {client_ip}")
         return HTMLResponse(_login_page(error="Forkert kode — prøv igen"), status_code=401)
