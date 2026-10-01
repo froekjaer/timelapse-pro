@@ -11,11 +11,16 @@
 #   sudo install_gphoto2_from_source.sh --remove-build-deps  # image build: drop -dev pkgs afterwards
 #   install_gphoto2_from_source.sh --check                   # read-only verification
 #   sudo install_gphoto2_from_source.sh --build-artifact OUT.tar.gz   # Headend build host (arm64 Jammy container)
-#   sudo install_gphoto2_from_source.sh --install-artifact FILE SHA256  # Edge: no apt, no internet
+#   sudo install_gphoto2_from_source.sh --install-artifact FILE SIG.asc # Edge: no apt, no internet
 #
 # Edges never install software from the internet (inject_edge_image.py): on a
 # field Edge use --install-artifact with a tarball built on the Headend; the
 # download/build modes are for the image build and the Headend build host.
+# The artifact must carry a detached OpenPGP signature by one of the release
+# signers pinned in the Edge trust policy (config.yaml
+# security.trusted_release_signers) — verified against the pinned public keys
+# only, in a throwaway keyring, like edge/security.py. A bare SHA-256 supplied
+# next to the file is not a trust anchor.
 #
 # Tarballs are pinned by SHA256. Those hashes were taken from tarballs whose
 # detached GPG signatures verified against the gphoto maintainer key
@@ -98,13 +103,49 @@ post_install() { # udev rules/hwdb from the new library + remove distro gphoto2 
     fi
 }
 
-MODE="install"; REMOVE_BUILD_DEPS=0; ARTIFACT=""; ARTIFACT_SHA256=""
+MODE="install"; REMOVE_BUILD_DEPS=0; ARTIFACT=""; ARTIFACT_SIG=""
+EDGE_CONFIG="${EDGE_CONFIG:-/opt/timelapse/edge/config.yaml}"
+META_REL="usr/local/share/timelapse-gphoto2/ARTIFACT"
+
+platform_id() { . /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-unknown}/$(dpkg --print-architecture 2>/dev/null || uname -m)"; }
+
+verify_signature() { # artifact sig — against the Edge trust policy's pinned release signers only
+    local gh; gh="$(mktemp -d)"; chmod 700 "$gh"
+    python3 - "$EDGE_CONFIG" "$gh" <<'PY' || { rm -rf "$gh"; die "kunne ikke læse trusted_release_signers fra ${EDGE_CONFIG}"; }
+import subprocess, sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1])) or {}
+signers = (cfg.get("security") or {}).get("trusted_release_signers") or []
+n = 0
+for i, s in enumerate(signers):
+    key, fpr = (s or {}).get("public_key"), "".join(c for c in str((s or {}).get("gpg_fingerprint") or "").upper() if c in "0123456789ABCDEF")
+    if not key or len(fpr) != 40:
+        continue
+    path = f"{sys.argv[2]}/k{i}.asc"; open(path, "w").write(key)
+    out = subprocess.run(["gpg", "--batch", "--homedir", sys.argv[2], "--with-colons", "--show-keys", path], capture_output=True, text=True).stdout
+    actual = next((l.split(":")[9] for l in out.splitlines() if l.startswith("fpr:")), "")
+    if actual != fpr:
+        continue  # pinned key does not match pinned fingerprint: ignore it
+    subprocess.run(["gpg", "--batch", "--homedir", sys.argv[2], "--import", path], capture_output=True)
+    open(f"{sys.argv[2]}/pinned", "a").write(fpr + "\n"); n += 1
+sys.exit(0 if n else 1)
+PY
+    local status validsig
+    status="$(gpg --batch --homedir "$gh" --status-fd 1 --verify "$2" "$1" 2>/dev/null || true)"
+    validsig="$(awk '$2=="VALIDSIG"{print $3}' <<<"$status")"
+    if [[ -z "$validsig" ]] || ! grep -qxF "$validsig" "${gh}/pinned"; then
+        rm -rf "$gh"; die "artefaktets signatur er ikke gyldig fra en pinned release-signer (${EDGE_CONFIG})"
+    fi
+    rm -rf "$gh"
+    log "signatur OK: ${validsig}"
+}
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check) MODE="check" ;;
         --remove-build-deps) REMOVE_BUILD_DEPS=1 ;;
-        --build-artifact) MODE="build-artifact"; ARTIFACT="${2:?sti til output .tar.gz}"; shift ;;
-        --install-artifact) MODE="install-artifact"; ARTIFACT="${2:?sti til artefakt}"; ARTIFACT_SHA256="${3:?forventet SHA256}"; shift 2 ;;
+        --build-artifact) MODE="build-artifact"
+            out="${2:?sti til output .tar.gz}"; mkdir -p "$(dirname "$out")"
+            ARTIFACT="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"; shift ;;
+        --install-artifact) MODE="install-artifact"; ARTIFACT="${2:?sti til artefakt}"; ARTIFACT_SIG="${3:?sti til detached signatur (.asc)}"; shift 2 ;;
         *) die "ukendt argument: $1" ;;
     esac
     shift
@@ -113,9 +154,10 @@ if [[ "$MODE" == check ]]; then check; exit $?; fi
 [[ "$(id -u)" == 0 ]] || die "kør som root (sudo)"
 
 if [[ "$MODE" == install-artifact ]]; then
-    # Field Edge: no apt, no internet. Runtime libs come with Jammy's
-    # libgphoto2-6/gphoto2 dependencies; refuse rather than half-install.
-    echo "${ARTIFACT_SHA256}  ${ARTIFACT}" | sha256sum -c --quiet - || die "SHA256 matcher ikke for ${ARTIFACT}"
+    # Field Edge: no apt, no internet. Runtime libs come with the distro's
+    # libgphoto2/gphoto2 dependencies; refuse rather than half-install.
+    [[ -f "$ARTIFACT" && -f "$ARTIFACT_SIG" ]] || die "artefakt eller signatur mangler"
+    verify_signature "$ARTIFACT" "$ARTIFACT_SIG"
     missing=""
     # Capture once: `ldconfig -p | grep -q` under pipefail is a false negative
     # whenever grep exits early and ldconfig gets SIGPIPE (hit on Edge2).
@@ -124,8 +166,15 @@ if [[ "$MODE" == install-artifact ]]; then
         grep -qF "$lib" <<<"$libcache" || missing="$missing $lib"
     done
     [[ -z "$missing" ]] || die "runtime-biblioteker mangler:${missing} — kan ikke installere uden apt"
-    tar -C / -xzf "$ARTIFACT" --no-same-owner
-    log "artefakt udpakket til ${PREFIX}"
+    # Stage, check platform + that the staged binary runs, THEN replace /usr/local.
+    STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
+    tar -C "$STAGE" -xzf "$ARTIFACT" --no-same-owner
+    want="$(platform_id)"; have="$(awk -F= '$1=="platform"{print $2}' "${STAGE}/${META_REL}" 2>/dev/null || true)"
+    [[ -n "$have" && "$have" == "$want" ]] || die "artefaktet er bygget til '${have:-ukendt}', denne Edge er '${want}' — intet ændret"
+    staged="$(LD_LIBRARY_PATH="${STAGE}${PREFIX}/lib" CAMLIBS="${STAGE}${PREFIX}/lib/libgphoto2/${LIBGPHOTO2_VERSION}" IOLIBS="${STAGE}${PREFIX}/lib/libgphoto2_port/0.12.2" "${STAGE}${PREFIX}/bin/gphoto2" --version 2>&1 || true)"
+    grep -qE "^libgphoto2 +${LIBGPHOTO2_VERSION//./\\.} " <<<"$staged" || die "staged gphoto2 kører ikke korrekt på denne Edge — intet ændret: $(head -3 <<<"$staged")"
+    cp -a "${STAGE}${PREFIX}/." "${PREFIX}/"
+    log "artefakt (${have}) installeret i ${PREFIX}"
     post_install
     check || die "verifikation fejlede"
     log "FÆRDIG: libgphoto2 ${LIBGPHOTO2_VERSION} + gphoto2 ${GPHOTO2_VERSION} i ${PREFIX} (artefakt)"
@@ -187,8 +236,10 @@ fi
 
 check || die "verifikation fejlede"
 if [[ "$MODE" == build-artifact ]]; then
+    mkdir -p "/$(dirname "$META_REL")"
+    printf 'platform=%s\nlibgphoto2=%s\ngphoto2=%s\n' "$(platform_id)" "$LIBGPHOTO2_VERSION" "$GPHOTO2_VERSION" > "/${META_REL}"
     # shellcheck disable=SC2086
-    (cd / && tar -czf "$ARTIFACT" $ARTIFACT_PATHS)
+    (cd / && tar -czf "$ARTIFACT" $ARTIFACT_PATHS "$META_REL")
     log "artefakt: ${ARTIFACT} sha256=$(sha256sum "$ARTIFACT" | awk '{print $1}')"
 fi
 log "FÆRDIG: libgphoto2 ${LIBGPHOTO2_VERSION} + gphoto2 ${GPHOTO2_VERSION} i ${PREFIX}"

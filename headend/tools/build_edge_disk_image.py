@@ -453,18 +453,22 @@ def build_edge_image(
         raise RuntimeError(f"SBOM for OS-pakker kunne ikke genereres: {exc}") from exc
 
     # Source-built components outside dpkg (deploy/edge/install_gphoto2_from_source.sh).
-    try:
-        gp_out = subprocess.check_output(
-            [docker_bin, "run", "--rm", "--platform", docker_platform, "--entrypoint", "/usr/local/bin/gphoto2",
-             image_tag, "--version"],
-            text=True, timeout=60,
-        )
-        sbom_packages.extend(_source_built_sbom_components(gp_out, arch))
+    # Required whenever the Dockerfile builds them: a manifest without them must
+    # not be signed.
+    if "install_gphoto2_from_source.sh" in Path(dockerfile).read_text(encoding="utf-8"):
+        try:
+            gp_out = subprocess.check_output(
+                [docker_bin, "run", "--rm", "--platform", docker_platform, "--entrypoint", "/usr/local/bin/gphoto2",
+                 image_tag, "--version"],
+                text=True, timeout=60,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"SBOM for source-built gphoto2 kunne ikke genereres: {exc}") from exc
+        source_components = _source_built_sbom_components(gp_out, arch)
+        if {c["name"] for c in source_components} != {"gphoto2", "libgphoto2"}:
+            raise RuntimeError("SBOM mangler source-built gphoto2/libgphoto2 — imaget signeres ikke")
+        sbom_packages.extend(source_components)
         progress_cb("   gphoto2/libgphoto2 (source-build, /usr/local) i SBOM")
-    except FileNotFoundError:
-        raise
-    except Exception:
-        pass  # image without the source build: dpkg entries above cover gphoto2
 
     pip_packages: list[dict] = []
     try:

@@ -56,10 +56,13 @@ def test_baseline_drift_accepts_source_build():
     assert compute_package_drift(exp, {}, {"_gphoto2_source": "distro"}).missing == sorted(exp)
 
 
-def test_field_edge_install_needs_no_apt_or_internet():
+def test_field_edge_install_needs_no_apt_or_internet_and_requires_signature():
     body = SCRIPT.split('if [[ "$MODE" == install-artifact ]]; then', 1)[1].split("\nfi\n", 1)[0]
-    assert "sha256sum -c" in body and "apt-get install" not in body and "curl" not in body
-    assert "ldconfig -p" in body  # refuses if runtime libs are missing instead of fetching them
+    assert "apt-get install" not in body and "curl" not in body
+    assert 'verify_signature "$ARTIFACT" "$ARTIFACT_SIG"' in body          # pinned signer, not a bare sha
+    assert "ldconfig -p" in body                                          # refuses if runtime libs are missing
+    assert "platform_id" in body and 'cp -a "${STAGE}${PREFIX}/."' in body  # platform check + staged run before replace
+    assert "trusted_release_signers" in SCRIPT and "VALIDSIG" in SCRIPT
 
 
 def test_no_pipe_into_early_exiting_grep_or_head_under_pipefail():
@@ -82,3 +85,14 @@ def test_flashable_image_carries_source_build_into_vendor_base():
     for needle in ("usr/local/bin/gphoto2$", "usr/local/lib/libgphoto2", "60-libgphoto2-local", "20-libgphoto2-local",
                    "grep -v '/$'", "tar -xzf \"$ROOTFS_TAR\" -C /mnt/root -T", "ldconfig -r /mnt/root"):
         assert needle in block, needle
+
+
+def test_image_build_fails_closed():
+    inj = (ROOT / "headend/tools/inject_edge_image.py").read_text(encoding="utf-8")
+    assert "imaget bygges ikke\" >&2\n        exit 1" in inj
+    bedi = (ROOT / "headend/tools/build_edge_disk_image.py").read_text(encoding="utf-8")
+    assert "SBOM mangler source-built gphoto2/libgphoto2 — imaget signeres ikke" in bedi
+
+
+def test_build_artifact_resolves_relative_output():
+    assert 'ARTIFACT="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"' in SCRIPT

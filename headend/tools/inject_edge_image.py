@@ -524,7 +524,11 @@ if [ -n "$GPHOTO_PATHS" ]; then
         ls /mnt/root/usr/lib/*-linux-gnu*/"$LIB" /mnt/root/lib/*-linux-gnu*/"$LIB" >/dev/null 2>&1 || GP_MISSING="$GP_MISSING $LIB"
     done
     if [ -n "$GP_MISSING" ]; then
-        echo "[inject]   ADVARSEL: base-imaget mangler runtime-biblioteker til gphoto2:$GP_MISSING — leveres som offline bundle efter enrollment"
+        # Fail closed: an image whose /usr/local/bin/gphoto2 cannot start must
+        # not be compressed and signed (inventory would still call it a source
+        # build and suppress the missing-package drift).
+        echo "[inject]   FEJL: base-imaget mangler runtime-biblioteker til gphoto2:$GP_MISSING — imaget bygges ikke" >&2
+        exit 1
     fi
     echo "[inject]   OK: $(printf '%s\n' "$GPHOTO_PATHS" | wc -l | tr -d ' ') gphoto2-stier (libgphoto2 source-build)"
 else
