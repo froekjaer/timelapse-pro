@@ -5,20 +5,24 @@
 # (SFTP 22222 -> 9022, reverse-SSH 22022 -> 9222); see
 # Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md.
 #
-# Usage: sudo add_known_hosts_port.sh HOST OLD_PORT NEW_PORT [KNOWN_HOSTS]
+# Usage: sudo add_known_hosts_port.sh HOST OLD_PORT NEW_PORT [KNOWN_HOSTS] [PINNED_HOST]
+#   PINNED_HOST: host name the key is currently pinned under, if it differs
+#   from HOST (e.g. SFTP moving from timelapse.froekjaer.dk:22222 to
+#   backend.timelapse-pro.dk:9022). Defaults to HOST.
 set -euo pipefail
 
 HOST="${1:?host}"; OLD="${2:?old port}"; NEW="${3:?new port}"
 KH="${4:-/opt/timelapse/edge/ssh/known_hosts}"
+PINNED_HOST="${5:-$HOST}"
 
-fp_pinned() { ssh-keygen -l -F "[$HOST]:$1" -f "$KH" 2>/dev/null | grep -v '^#' | grep -o 'SHA256:[^ ]*' | sort -u || true; }
+fp_pinned() { ssh-keygen -l -F "[$1]:$2" -f "$KH" 2>/dev/null | grep -v '^#' | grep -o 'SHA256:[^ ]*' | sort -u || true; }
 
-old_fps="$(fp_pinned "$OLD")"
+old_fps="$(fp_pinned "$PINNED_HOST" "$OLD")"
 if [ -z "$old_fps" ]; then
-  echo "FEJL: ingen pinned nøgle for [$HOST]:$OLD i $KH — afbryder (ingen TOFU)." >&2; exit 1
+  echo "FEJL: ingen pinned nøgle for [$PINNED_HOST]:$OLD i $KH — afbryder (ingen TOFU)." >&2; exit 1
 fi
-if [ -n "$(fp_pinned "$NEW")" ]; then
-  echo "OK: [$HOST]:$NEW findes allerede i $KH:"; fp_pinned "$NEW"; exit 0
+if [ -n "$(fp_pinned "$HOST" "$NEW")" ]; then
+  echo "OK: [$HOST]:$NEW findes allerede i $KH:"; fp_pinned "$HOST" "$NEW"; exit 0
 fi
 
 tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.one"' EXIT
@@ -37,4 +41,4 @@ while read -r line; do
   fi
 done < "$tmp"
 
-[ "$matched" = 1 ] || { echo "FEJL: nøglen på $HOST:$NEW matcher IKKE den pinned nøgle for :$OLD — intet tilføjet." >&2; exit 2; }
+[ "$matched" = 1 ] || { echo "FEJL: nøglen på $HOST:$NEW matcher IKKE den pinned nøgle for [$PINNED_HOST]:$OLD — intet tilføjet." >&2; exit 2; }
