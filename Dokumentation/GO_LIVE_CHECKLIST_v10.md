@@ -45,7 +45,7 @@ CrushFTP) er upåvirket, ikke kundevendt og ikke en go-live-blocker.**
 | A-05 | TCP/21 (FTP) ikke åben fra TimeLapse Pro — ejes af CrushFTP på staging/prod | 🔴 Blocker | Audit |
 | A-06 | TCP/22 (SSH) ikke direkte Internet-eksponeret for admin-brug — enten lukket eller stærkt begrænset (IP-allowlist/VPN, evt. ikke-standard admin-SSH-port); kan også være CrushFTP-ejet på staging/prod, bekræft pr. maskine | 🟠 Anbefalet | Firewall |
 | A-07 | TCP/8080 ikke eksponeret direkte | 🔴 Blocker | Audit |
-| A-08 | SFTP-port (device-upload, 22222) forbliver adskilt fra kunde-webtrafikken på 8443 — og fra CrushFTP's egen FTP/SFTP på 21/22 | 🟠 Anbefalet | Konfiguration |
+| A-08 | SFTP-port (device-upload, 9022 — tidligere 22222, se PORT_OMLAEGNING_9022_9222_2026-10-01.md) forbliver adskilt fra kunde-webtrafikken på 8443 — og fra CrushFTP's egen FTP/SFTP på 21/22 | 🟠 Anbefalet | Konfiguration |
 | A-09 | Alle ukendte porte (2201, 5000, 7000) klassificeret | ✅ Klassificeret 2026-07-05 | Asset-register |
 | A-10 | fail2ban aktivt og konfigureret (API login + scanner) — vigtigt uanset Cloudflare-valg, da 8443 er direkte offentligt eksponeret | 🟠 Anbefalet | Drift |
 | A-11 | Mac firewall (pf/macOS): hvis Cloudflare bruges som DNS-proxy (orange cloud, IKKE Tunnel) foran port 8443 for ekstra WAF/DDoS-beskyttelse, begræns 8443 til Cloudflares IP-ranges; hvis fuldt direkte eksponering uden Cloudflare-proxy, tillad 8443 bredt og læn dig på fail2ban+rate-limiting i stedet. Peter skal vælge hvilken af de to undervarianter | 🟠 Anbefalet — undervariant ikke valgt endnu | Konfiguration |

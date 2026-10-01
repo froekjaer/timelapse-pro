@@ -297,7 +297,7 @@ def inject_wifi_image(
     headend_ssh_public_key: str | None = None,
     reverse_tunnel_port: int | None = None,
     headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
-    headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222")),
+    headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "9022")),
     headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel"),
 ) -> dict:
     """
@@ -318,7 +318,7 @@ def inject_wifi_image(
         headend_ssh_public_key: Headend public key — tilføjes device's authorized_keys
         reverse_tunnel_port:    Port på headend til reverse tunnel (fx 2202)
         headend_host:           Headend hostname (default: TIMELAPSE_TUNNEL_HOST)
-        headend_port:           Dedikeret Headend SSH port (default: 22222)
+        headend_port:           Dedikeret Headend SSH port (default: 9022)
         headend_user:           Headend SSH bruger (default: TIMELAPSE_TUNNEL_USER)
 
     Returnerer dict med:

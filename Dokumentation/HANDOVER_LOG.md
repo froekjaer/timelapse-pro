@@ -29,6 +29,70 @@
 
 ## Log
 
+### Handover 2026-10-01 17:20 — fra Claude til Peter/næste session: begge Edges på 9222 + API via backend.timelapse-pro.dk; froekjaer.dk fjernet fra Edge-config
+
+- **Edge1 (`TL-C87FF9587CA0`):** tunnel på **9222** (verificeret pr. session). Uploader via `https://backend.timelapse-pro.dk:8443/api`.
+- **Edge2 (`TL-043EB9E72EFD`, `tl-modbaggarddlvc`, nu fra offentlig IP 87.49.43.56):**
+  - Peter kørte B0–B4. Hjælpescriptet kom over som base64, fordi Headend-brugeren ikke har nøgle til Edge2 (`scp -P 2204` → publickey denied).
+  - Tunnel-`known_hosts` er `/etc/timelapse/device_keys/known_hosts`. Lokal `headend_url` er rettet.
+  - Efter genstart: config-hentning fra 17:16, captures/API fra 17:17:56, tunnel-session på **9222** fra 17:17:19.
+  - Edge2 har intet batteri-ur ("Failed to read RTC"), så tiden kommer kun fra synk. Det matcher TOTP-fejlen tidligere (PR #269).
+- **froekjaer.dk i DB:** `devices.device_config` på 4 enheder (Edge1, Edge2 og 2× `TL-IMPORT-Kirkbi…`) havde `sftp.host/port` = timelapse.froekjaer.dk/22222, `time.sources.headend.url` og `device.headend_url` med froekjaer. Det **overstyrede** de globale settings. Rettet med målrettede `jsonb_set` i én transaktion; 0 forekomster tilbage. Edge1 bekræftet: synk 17:07:22 gav `time…url` = backend.timelapse-pro.dk:8443.
+- **Globale settings sat af Peter:** `base_url`=`https://backend.timelapse-pro.dk:8443`, `sftp_host`=`backend.timelapse-pro.dk`, `sftp_port`=9022.
+- **Åbne beslutninger (Peter):**
+  - `webauthn_allowed_origins` indeholder stadig `https://timelapse.froekjaer.dk`.
+  - Open WebUI på `openwebui.froekjaer.dk` (`openwebui_public_url`/`openwebui_cookie_domain`).
+  - Notifikations-mail `timelapse-pro@froekjaer.dk` er en e-mailadresse, ikke web-domænet.
+- **Øvrigt åbent:** certifikat med SAN `api.timelapse-pro.dk` på 8443. SFTP-backup verificeres med en reel upload på 9022. Oprydning af 22022/22222 (plan R) først på Peters beslutning. Merge/deploy af #267, #268 og #269.
+
+### Handover 2026-10-01 16:10 — fra Claude til Peter/næste session: Edge-upload stoppede ved netværksskift 11:46 — Edge1 genetableret via backend.timelapse-pro.dk:8443
+
+- **Symptom (Peter):** ingen billeder efter cirka 11:40.
+- **Root cause:**
+  - Headend skiftede netværk cirka 11:46: nu `192.168.5.90` bag ny router med offentlig IP `93.165.255.138`.
+  - Edges brugte `headend_url: https://timelapse.froekjaer.dk/api`, og navnet resolver (også offentligt) til Headends gamle LAN-adresse `192.168.86.102`. Port 443 er heller ikke viderestillet i den nye router.
+  - Edge1 tog fortsat billeder og lagde dem i kø ("headend unreachable"). Ingen Edge-API-kald fra 11:46:21 til 16:04.
+  - Ikke relateret til portflytningen.
+- **Beslutning (Peter):** `timelapse.froekjaer.dk` udfases. Kun `tunnel.timelapse-pro.dk`, `api.timelapse-pro.dk` og `backend.timelapse-pro.dk`. Billeder skal over API, SFTP bliver backup i næste trin.
+- **Udført:**
+  - Peter: `settings.base_url` = `https://backend.timelapse-pro.dk:8443`. Den bruges til `device.headend_url` og `time.sources.headend.url` i `get_config` samt bootstrap-fallback.
+  - Edge1 (`timelapse0101`): backup `*.bak-20261001`, derefter `sed` timelapse.froekjaer.dk → backend.timelapse-pro.dk:8443 i `bootstrap.yaml` (1 forekomst) og `config.yaml` (2 forekomster), derefter `systemctl restart timelapse-edge`.
+- **Verificeret 16:04–16:07:** Edge1 henter config, sender heartbeat/inventory og uploader køen (`POST /captures/TL-C87FF9587CA0/files` 200, Edge-log `API upload complete`). Reverse-SSH kom op igen (stadig 22022). Config-synk har **ikke** sat `headend_url` tilbage.
+- **Åbne punkter:**
+  - `time.sources.headend.url` på Edge1 blev sat tilbage til `https://timelapse.froekjaer.dk` ved synk. Et override-lag (`devices.device_config`/site/kamera `time`-sektion) har den gamle URL og skal findes og rettes. Tidssynk falder tilbage til GPS/NTP i mellemtiden.
+  - **Edge2** (TL-043EB9E72EFD, 192.168.86.144): ingen kontakt siden 11:22 og ingen tunnel. Kræver samme lokale rettelse og lokal adgang.
+  - **`api.timelapse-pro.dk`:** DNS ok (93.165.255.138), men certifikatet på 8443 har kun SAN `backend.timelapse-pro.dk`. Det kræver nyt certifikat og `server_name`, før Edges kan bruge `api`.
+  - `sftp_host`/`sftp_port` → backend.timelapse-pro.dk/9022 er foreslået (SFTP er backup), men ikke bekræftet udført.
+
+### Handover 2026-10-01 — fra Claude til Peter/næste session: offentlige porte under 10000 (SFTP 22222→9022, reverse-SSH 22022→9222)
+
+- **Beslutning (Peter):** alle offentligt eksponerede TimeLapse-porte skal under TCP 10000. 2222 blev afvist, fordi `deploy/PORTS.md` reserverer den til en anden produktionsapplikation. Valg: **9222** (dedikeret reverse-SSH `timelapse_tunnel`) og **9022** (SFTP `sftp_*` og legacy-tunnel-brugeren `tunnel` på samme launchd-socket).
+- **Kortlægning (live 2026-10-01):**
+  - 22022 = `dk.froekjaer.timelapse-tunnel-sshd` med én aktiv Edge-tunnel. Koden findes **kun** i #259 (ChatGPT-sporet), ikke i main.
+  - 22222 = launchd-socket `com.openssh.sshd-2222` med `Match ... LocalPort 22222` i `/etc/ssh/sshd_config`.
+  - Ingen andre TimeLapse-porte ≥10000 eksponeres: 11434 Ollama er kun lokal. Ingen Edge-tjenester ≥10000 i koden.
+  - Edge får tunnel-endepunktet via `device_config.ssh_tunnel.primary` og SFTP-porten via setting `sftp_port` (System Administration), begge leveret over 8443.
+- **Router:** Peter har NAT for 2222, 22022, 22222, 9022 og 9222. 22022/22222 fjernes efter migreringen. 2222 bør fjernes, da intet lytter og porten er reserveret.
+- **Plan:** `Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md`. Headend lytter på gammel og ny port, Edges flyttes én ad gangen (Edge1 først), oprydning efter cirka 1 uge.
+- **Kode-PR (main):**
+  - Alle 22222-defaults → 9022: `main.py` `sftp_port`-default, installer/generator, `render_sftp_rbac_config`, hardening-conf, inject-værktøjer, UI-defaults, tests og `PORTS.md`.
+  - UI-fejl rettet: "Gem tunnel" overskrev hele `ssh_tunnel` og smed `fallback`/`extra_forwards`/`strict_host_checking`.
+  - Nyt `deploy/edge/add_known_hosts_port.sh`: tilføjer kun en `known_hosts`-linje for en ny port, hvis host-nøglen matcher den fastlåste nøgle på den gamle port. Testet: match, idempotens, mismatch (exit 2) og intet svar (exit 1).
+  - Tests: 86 grønne. tsc, lint-gate og build grønne.
+- **Fundet undervejs:**
+  - `Match ... LocalPort 22222,9022` er **ugyldigt** ("Bad Match condition", OpenSSH 10.3). Planen kopierer i stedet hver blok. Verificeret med `sshd -T`.
+  - **Den deploy-farlige standardværdi:** er `sftp_port` ikke sat eksplicit i DB, flytter kode-deployet alle Edges til 9022 før de har `known_hosts` (Edge-SFTP bruger `RejectPolicy`). Trin 0 i planen sætter den eksplicit til 22222 først.
+  - **Sikkerhedsfund:** live `sshd_config` mangler `Match User sftp_* LocalPort 22` (afvisning på admin-SSH), som hardening-profilen kræver. Skal verificeres og registreres i GRC.
+- **Live-fremskridt samme dag:**
+  - Trin 0: `sftp_port`=22222 var allerede sat. `sftp_enabled`=true.
+  - H1 + H2 kørt af Peter og verificeret af Claude: tunnel-sshd pid 367 lytter på 22022 og 9222 med samme dedikerede nøgle, og den eksisterende Edge-tunnel overlevede. launchd-socket'en lytter på 22222 og 9022 med samme system-nøgle. NAT for 9022/9222 er verificeret via hairpin.
+- **Nyt fund:** `sftp_host`=`timelapse.froekjaer.dk` resolver (også offentligt) til 192.168.86.102, Headends gamle LAN-adresse. Headend er nu 192.168.5.90. SFTP-værten kan ikke nås (timeout også på 22222), og der er ingen nye SFTP-filer siden 2026-08-06.
+  - Anbefaling: `sftp_host`=`backend.timelapse-pro.dk` i trin E4. Hjælpescriptet kan nu fastlåse nøglen under det nye navn (5. argument = gammelt navn).
+  - DNS for `timelapse.froekjaer.dk` skal rettes af Peter.
+- **E1 Edge1 (`timelapse0101`, 192.168.86.134) udført af Peter:** `[tunnel.timelapse-pro.dk]:9222` og `[backend.timelapse-pro.dk]:9022` er fastlåst og matchet mod de gamle nøgler.
+- **Peter:** 22022 og 22222 bliver på Headend indtil videre. Oprydningen (trin R) sker først på hans beslutning. Generatoren af SFTP-regler (`SFTP_PORTS`) og hardening-conf'en dækker derfor midlertidigt begge porte.
+- **Ikke udført (kræver Peter):** E2–E3 (tunnel pr. Edge, efter deploy af #267's "Gem tunnel"-rettelse), E1 for Edge2, E4 og R. 22022 → 9222 i #259's filer er PR #268 (ind i #259's branch). Kode-PR i main: #267.
+
 ### Handover 2026-09-27 (aften) — fra Claude til Peter/næste session: Open WebUI servicekontrol ramte forkert launchd-domæne
 
 - **Symptom (Peter):** "Open WebUI servicekontrol fejlede: Could not find service "dk.froekjaer.open-webui" in domain for user gui: 502".

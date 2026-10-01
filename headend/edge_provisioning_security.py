@@ -47,7 +47,7 @@ def load_hardware_targets(hardware_dir: Path, logger) -> list[dict]:
 def resolve_tunnel_settings(headend_url: str) -> tuple[str, int, str]:
     """Resolve the dedicated reverse-tunnel ingress from governed settings."""
     host = os.getenv("TIMELAPSE_TUNNEL_HOST") or urlparse(headend_url).hostname or ""
-    port = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222"))
+    port = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "9022"))
     user = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel")
     return host, port, user
 
