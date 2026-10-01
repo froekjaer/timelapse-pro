@@ -29,6 +29,25 @@
 
 ## Log
 
+### Handover 2026-10-01 23:00 — fra Claude til Peter/næste session: gphoto2/libgphoto2 fra kildekode (2.5.34/2.5.32) på Jammy-Edges + generator — midlertidigt indtil 24.04-baseline
+
+- **Fund:** Edge2 (Ubuntu 22.04.5) har libgphoto2 **2.5.27** og viser Nikon Z30 som `USB PTP Class Camera`. Edge1 (24.04.4) har **2.5.31** og viser `Nikon Z30`. Z30 kom i libgphoto2 2.5.30. Generatoren (`headend/tools/Dockerfile.edge`, `arm64v8/ubuntu:22.04`) gav samme 2.5.27 som Edge2.
+- **CMDB fangede det ikke, og det var korrekt:** opdateringsdetektionen er apt-baseret pr. Ubuntu-suite. Jammy har ingen nyere libgphoto2, og Ubuntu har allerede backportet CVE-2026-40333/40334/40335 til `2.5.27-1ubuntu0.1` (Jammy) og `2.5.31-2.1ubuntu1.1` (Noble). Det er verificeret i Ubuntus CVE-tracker.
+  - **Fejl fundet og rettet:** `edge/utils/inventory.py` rapporterede CLI-linjen som `libgphoto2`. Nu rapporteres den rigtige biblioteksversion plus `gphoto2_path`/`gphoto2_source` (distro/source-build).
+- **Beslutning (Peter):** "A nu og B senere".
+  - **A:** pinned kildekode-byg via `deploy/edge/install_gphoto2_from_source.sh`.
+    - libgphoto2 **2.5.34** + gphoto2 **2.5.32**: nyeste, Nikon Z-forbedringer, rettet capture-regression fra 2.5.32.
+    - Tarballs er GPG-verificeret mod gphoto-vedligeholderens nøgle `7C4AFD61D8AAE7570796A5172209D6902F969C95` og SHA256-pinned.
+    - Installeres i `/usr/local` med rpath. udev-regler + hwdb genereres af det nye bibliotek. Jammys gphoto2/libgphoto2-6 fjernes, når intet andet kræver dem.
+  - **B senere:** fælles Edge-baseline Ubuntu 24.04 (apt-styret 2.5.31+, Ubuntus sikkerhedsrettelser og CMDB-synlighed).
+- **Konsekvens af A, som skal huskes:** libgphoto2 får ikke længere Ubuntus sikkerhedsrettelser på Jammy-Edges, og apt/CMDB melder ikke opdateringer for den. Upstream-udgivelser og CVE'er skal følges manuelt, indtil B er gennemført. Det står i PAKKE_SPOR_REGISTER som en undtagelse.
+- **Verificeret:**
+  - Scriptet i `arm64v8/ubuntu:22.04`-container: før 2.5.27, efter 2.5.34/2.5.32, Z30 kendt, gcc og distro-lib fjernet, idempotent.
+  - **Hele `Dockerfile.edge`** bygget (1:35 min): image har 2.5.34/2.5.32 i `/usr/local`, og agentens inventar rapporterer `libgphoto2 2.5.34`/`source-build`.
+  - Under udviklingen er fundet og rettet: `grep -q` + pipefail-falsk-negativ, udev-regler genereret af det gamle bibliotek, manglende `/etc/udev/rules.d` i container.
+- **Overlap:** #257 (Golden Edge) låser `gphoto2=2.5.27-1` i `Dockerfile.edge`. Ved merge af #257 skal den lås erstattes af denne PR's kildekode-byg.
+- **Edge2:** Peter kører scriptet. Status opdateres her.
+
 ### Handover 2026-10-01 22:00 — fra Claude til Peter/næste session: remote admin-SSH 9122 med adgangskode + TOTP; Headend-sshd var åben for password-login fra internettet
 
 - **Peters ønske:** én sikker remote-vej til Headend fra MacBook, der også er den eneste, og som kan tunnelere skærmdeling (5900). Peter valgte brugernavn/adgangskode + TOTP (ikke certifikat).

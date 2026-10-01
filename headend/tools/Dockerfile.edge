@@ -32,9 +32,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg2 \
         openssh-server openssh-client \
         iproute2 iputils-ping dnsutils iw \
-        rsync autossh gphoto2 libgphoto2-6 libgphoto2-port12 \
+        rsync autossh \
         gpsd gpsd-clients bluez avahi-daemon libnss-mdns hostapd dnsmasq \
     && rm -rf /var/lib/apt/lists/*
+
+# ── gphoto2 / libgphoto2 from verified source (2026-10-01) ─────────
+# Jammy ships libgphoto2 2.5.27, which does not know the Nikon Z30 (needs
+# >= 2.5.30). Build pinned libgphoto2 2.5.34 + gphoto2 2.5.32 (SHA256-pinned,
+# GPG-verified upstream tarballs) into /usr/local; build deps are removed in
+# the same layer. Temporary exception until the Edge baseline moves to Ubuntu
+# 24.04 (apt-managed 2.5.31+) — see PAKKE_SPOR_REGISTER.
+COPY deploy/edge/install_gphoto2_from_source.sh /tmp/install_gphoto2_from_source.sh
+RUN bash /tmp/install_gphoto2_from_source.sh --remove-build-deps \
+    && rm -f /tmp/install_gphoto2_from_source.sh
 
 # ── Service user ─────────────────────────────────────────────────
 RUN useradd -m -s /bin/bash timelapse \
