@@ -142,9 +142,11 @@ log "  syntax OK"
 # not merely "the label is loaded" — before the running instance is booted out.
 TUNNEL_PORTS=($(awk '$1=="Port"{print $2}' "$CONF_SRC"))
 [[ ${#TUNNEL_PORTS[@]} -gt 0 ]] || die "no Port lines in ${CONF_SRC}"
-SERVICE_PID="$(launchctl print "system/${LABEL}" 2>/dev/null | awk '$1=="pid"{print $3; exit}')"
+# Expected no-match probes (fresh install, or a still-free port) must not trip
+# set -e/pipefail; the ownership checks below decide.
+SERVICE_PID="$( { launchctl print "system/${LABEL}" 2>/dev/null || true; } | awk '$1=="pid"{print $3; exit}')"
 for p in "${TUNNEL_PORTS[@]}"; do
-    pids="$(lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | sort -u | paste -sd, -)"
+    pids="$( { lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null || true; } | sort -u | paste -sd, -)"
     [[ -z "$pids" ]] && continue
     [[ -n "$SERVICE_PID" && "$pids" == "$SERVICE_PID" ]] || \
         die "TCP/${p} is in use by pid ${pids}, which is NOT ${LABEL} (service pid: ${SERVICE_PID:-not running}) — refusing before touching the running service"
@@ -203,10 +205,10 @@ sleep 2
 
 post_fail() { report_runtime_state; die "$* (service may remain installed/running; remove with: sudo ${SCRIPT_PATH} --uninstall)"; }
 
-NEW_PID="$(launchctl print "system/${LABEL}" 2>/dev/null | awk '$1=="pid"{print $3; exit}')"
+NEW_PID="$( { launchctl print "system/${LABEL}" 2>/dev/null || true; } | awk '$1=="pid"{print $3; exit}')"
 [[ -n "$NEW_PID" ]] || post_fail "${LABEL} has no pid after activation"
 for p in "${TUNNEL_PORTS[@]}"; do
-    pids="$(lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | sort -u | paste -sd, -)"
+    pids="$( { lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null || true; } | sort -u | paste -sd, -)"
     [[ -n "$pids" ]] || post_fail "no listener on ${p} after activation"
     [[ "$pids" == "$NEW_PID" ]] || post_fail "listener on ${p} is pid ${pids}, expected ${LABEL} pid ${NEW_PID}"
     log "listener ${p}: dedicated sshd (pid ${NEW_PID}) ✓"
