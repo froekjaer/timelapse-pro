@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-10-01 22:00 — fra Claude til Peter/næste session: remote admin-SSH 9122 med adgangskode + TOTP; Headend-sshd var åben for password-login fra internettet
+
+- **Peters ønske:** én sikker remote-vej til Headend fra MacBook, der også er den eneste, og som kan tunnelere skærmdeling (5900). Peter valgte brugernavn/adgangskode + TOTP (ikke certifikat).
+- **Fund 🔴:** port 9022/22222 (NAT) er macOS' almindelige sshd og tilbød `peter` `password`/`keyboard-interactive` fra internettet. **Fund 🟠:** offentlig IP port 22 er en Debian-OpenSSH (routerens WAN-SSH?). Peter er selv forbundet via 22222 lige nu, så lukningen venter, til 9122 er bevist fra MacBook.
+- **Genbrugsvurdering:** eksisterende PKI (`edge_local_pki`, API-mTLS, trust service) er X.509 og bevidst formålsadskilt, så intet kunne bruges til sshd. Tunnel-sshd-mønsteret (#259) er genbrugt.
+- **Design og status:** se `Dokumentation/ADMIN_REMOTE_ACCESS_9122_2026-10-01.md`.
+  - PAM TOTP (`google-authenticator-libpam` 1.11 via Homebrew, med Peters tilladelse), root-ejet kopi i `/usr/local/lib/pam`.
+  - Trin 1–4 er udført og verificeret (PAM-linje, TOTP-nøgle, login kræver kode).
+  - Trin 5–9 afventer.
+  - En første `ForceCommand`-gate (genbrug af #269's TOTP-vagt) blev droppet før installation, fordi den ikke kan beskytte `ssh -N -L`-tunneller.
+- **Konsekvens:** `peter` skal fremover bruge TOTP ved alle sshd-logins, også port 22 på LAN. `sftp_*` (nullok) og Edge-tunneller (pubkey) påvirkes ikke.
+
 ### Handover 2026-10-01 — fra Claude til Peter/næste session: Edge lokal login — ur på login-siden, stil ur ved login, TOTP-koder kun én gang
 
 - **Anledning (Peter):** Edge2's lokale UI afviste TOTP ("Forkert kode", SID `cam-d554a5c9`). Peter kom til sidst ind. Mistanke: Edge-uret var forkert (ingen Headend-forbindelse siden netværksskiftet og ingen NTP), og når uret er forkert, kan man ikke logge ind for at rette det. Ingen TOTP-regenerering i dag (seneste 2026-08-16), så rotation er udelukket.
