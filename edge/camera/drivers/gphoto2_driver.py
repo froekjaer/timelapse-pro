@@ -1168,8 +1168,68 @@ class GPhoto2Driver(CameraBase):
             log.debug("Failed to read camera datetime: %s", exc)
             return None
 
-    def run_autofocus(self) -> bool:
-        """Trigger autofocus on cameras that expose an autofocus action."""
+    # Focus lock (Peter, 2026-10-02). All values come from the camera config
+    # hierarchy in the Headend DB (Global Config -> ... -> camera) and are
+    # editable in the UI; empty = off. A relay-powered Nikon Z30 comes back in
+    # AF-S after every power-up, so the body re-ran AF at the shutter and
+    # overwrote the good LAB focus (blurry images), while AF wears the lens
+    # motor. Typical Z30 values:
+    #   focus_lock_commands:      liveviewaffocus=Manual Focus (selection); d0cd=1
+    #   autofocus_commands:       viewfinder=1; liveviewaffocus=Single-servo AF; autofocusdrive=1
+    #   autofocus_settle_seconds: 2
+    #   after_autofocus_commands: viewfinder=0
+    # (d0cd = Nikon "Save focus position"; focusmode is read-only over PTP.)
+    def _command_setting(self, cfg: dict, key: str) -> list[tuple[str, str]]:
+        """Parse a 'k=v; k=v' string (or list of 'k=v') from the camera config."""
+        raw = cfg.get(key)
+        items = raw if isinstance(raw, list) else str(raw or "").split(";")
+        pairs = []
+        for item in items:
+            name, sep, value = str(item).partition("=")
+            if sep and name.strip():
+                pairs.append((name.strip(), value.strip()))
+        return pairs
+
+    def _set_configs(self, settings: list[tuple[str, str]], label: str) -> bool:
+        """Apply several key=value settings in ONE gphoto2 invocation (each
+        gphoto2 call costs ~3 s of USB session setup on the Edge). Keys may be
+        leaf names (gphoto2 resolves them) or full /main/... paths."""
+        if not settings:
+            return True
+        args = [GPHOTO2_CMD, "--port", self._port]
+        for key, value in settings:
+            args += ["--set-config", f"{key}={value}"]
+        result = _run(args, timeout=STATUS_TIMEOUT_S * 2, check=False)
+        self._settings_cache = None
+        if result.returncode != 0:
+            log.warning("%s fejlede: %s", label, (result.stderr or result.stdout).strip()[:300])
+            return False
+        return True
+
+    def prepare_focus_for_capture(self, camera_cfg: dict | None = None) -> bool:
+        """Send camera.focus_lock_commands before a real capture (no autofocus;
+        the lens motor only moves on explicit AF requests). A failure is logged
+        but does not block the capture."""
+        cfg = self._config if camera_cfg is None else camera_cfg
+        return self._set_configs(self._command_setting(cfg, "focus_lock_commands"), "Fokuslås før optagelse")
+
+    def run_autofocus(self, camera_cfg: dict | None = None) -> bool:
+        """Trigger autofocus on cameras that expose an autofocus action.
+
+        With camera.autofocus_commands configured: run them, wait
+        autofocus_settle_seconds, then re-apply focus_lock_commands +
+        after_autofocus_commands so later captures keep the new focus.
+        """
+        cfg = self._config if camera_cfg is None else camera_cfg
+        af_commands = self._command_setting(cfg, "autofocus_commands")
+        if af_commands:
+            ok = self._set_configs(af_commands, "Autofokus")
+            time.sleep(float(cfg.get("autofocus_settle_seconds") or 2))
+            locked = self._set_configs(
+                self._command_setting(cfg, "focus_lock_commands") + self._command_setting(cfg, "after_autofocus_commands"),
+                "Fokuslås efter autofokus",
+            )
+            return ok and locked
         action = self._profile.get("actions", {}).get("autofocus")
         if not action:
             return False

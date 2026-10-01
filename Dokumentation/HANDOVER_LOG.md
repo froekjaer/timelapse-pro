@@ -29,6 +29,18 @@
 
 ## Log
 
+### Handover 2026-10-02 — fra Claude til Peter/næste session: Edge2 Nikon Z30 uskarpe billeder — fokuslås fra DB/UI (ingen AF ved hvert billede)
+
+- **Symptom (Peter):** LAB-preview på Edge2 er skarpt, rigtige billeder er uskarpe. Edge1 har samme kamerahus (andet objektiv) og fejler ikke — den kører kameraets egen AF ved udløsning.
+- **Årsag (verificeret med Peter på Edge2):** kameraet er relay-styret og slukkes mellem billeder. Efter opstart står `/main/capturesettings/liveviewaffocus` igen på `Single-servo AF` (Peter: sat til MF, power-cycle → `Current: Single-servo AF`), så kroppen kører AF ved udløsning og overskriver LAB-fokus. `focusmode` er read-only over PTP. Nikon "Save focus position" = `/main/other/d0cd` (skrivbar, var allerede 1). Edge2's `camera.initial_commands` er `None` og ingen camera-overrides → **intet** sendes til kameraet før optagelse; LAB "Lås parametre" låser kun 8 eksponeringsparametre (ikke fokus) og overskriver listen.
+- **Forkastet første udkast (samme session):** hardkodet `focus_lock` i Z30-driverprofilen. Peter: "ALLE variable skal ligge i databasen og kunne ændres i UI'en" og kommandoer før billeder er en del af designet. Erstattet før commit.
+- **Løsning (branch `claude/z30-focus-lock-20261002`):** fire nye kamera-config-nøgler i DB-hierarkiet (Global Config → … → kamera), redigerbare på kamerasiden (ny sektion "Fokus") og i Global Config; tom = slået fra (Edge1 og andre kameraer uændret):
+  - `camera.focus_lock_commands` — sendes efter hver opstart før hvert billede i ét gphoto2-kald (trin 2b, før health check/præcis ventetid; også i multi-kamera-tråden). Ingen AF. Z30: `liveviewaffocus=Manual Focus (selection); d0cd=1`.
+  - `camera.autofocus_commands` + `camera.autofocus_settle_seconds` + `camera.after_autofocus_commands` — bruges af LAB autofokus-test/focus-slice: AF → vent → fokuslås + efter-kommandoer igen. Z30: `viewfinder=1; liveviewaffocus=Single-servo AF; autofocusdrive=1`, `2`, `viewfinder=0`. Tom = gammel profil-AF.
+  - Driveren bygges kun ved agent-start og ser ikke nye configs; agenten sender derfor sin aktuelle `self._cfg["camera"]` med ved hvert kald (UI-ændring virker ved næste billede uden genstart). `prepare_focus_for_capture`/`run_autofocus(camera_cfg)` i begge base-klasser.
+- **Test:** `tests/test_z30_focus_lock.py` 8/8; 104 relaterede edge-tests + ratchet grønne; fuld suite: samme 78 DB-afhængige fejl som på main, ingen nye. `tsc` grøn.
+- **Ikke gjort / næste:** ikke merged, ikke deployet til Edge2. Efter merge+Edge-opdatering: Peter udfylder de fire felter på Edge2's kameraside, kører LAB autofokus-test, verificerer at næste rigtige billede er skarpt. Uskarpheds-udløst AF (via `quality.drift_detection.focus`) er næste trin. Åbent spørgsmål: hvorfor AF ved udløsning rammer forkert på Edge2 men ikke Edge1 (objektiv/AF-område/rude) — sammenlign fokusindstillinger på begge.
+
 ### Handover 2026-10-01 22:00 — fra Claude til Peter/næste session: remote admin-SSH 9122 med adgangskode + TOTP; Headend-sshd var åben for password-login fra internettet
 
 - **Peters ønske:** én sikker remote-vej til Headend fra MacBook, der også er den eneste, og som kan tunnelere skærmdeling (5900). Peter valgte brugernavn/adgangskode + TOTP (ikke certifikat).

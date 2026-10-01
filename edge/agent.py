@@ -838,6 +838,7 @@ class EdgeAgent:
             commands = self._build_camera_commands()
             if commands:
                 driver.apply_initial_commands(commands)
+            driver.prepare_focus_for_capture(cam_cfg["camera"])
             result = driver.capture_image(dest_dir)
             driver.disconnect()
             quality_report = self._quality_report(result.filepath, result.sha256)
@@ -1203,6 +1204,12 @@ class EdgeAgent:
                     log.warning("Some camera commands failed: %s", failed)
                 else:
                     log.info("Camera commands applied OK")
+
+            # 2b. Focus lock: camera.focus_lock_commands (DB/UI, e.g. Nikon Z30
+            #     manual focus + saved focus position), sent after every
+            #     power-up and BEFORE the precise fixed-time wait — never an
+            #     autofocus run (lens motor wear).
+            self._driver.prepare_focus_for_capture(self._cfg.get("camera", {}))
 
             # 3. Health check before capture
             if not self._driver.health_check():
@@ -3897,7 +3904,7 @@ class EdgeAgent:
                 try:
                     # Reconnect driver for autofocus
                     self._driver.connect()
-                    result["ok"] = bool(self._driver.run_autofocus())
+                    result["ok"] = bool(self._driver.run_autofocus(self._cfg.get("camera", {})))
                     preview = self._lab_capture_preview()
                     if preview:
                         result["quality"] = self._lab_quality_summary(preview)
@@ -4113,7 +4120,7 @@ class EdgeAgent:
             return result
         try:
             if run_autofocus_first and self._driver.supports_autofocus():
-                result["autofocus_ok"] = bool(self._driver.run_autofocus())
+                result["autofocus_ok"] = bool(self._driver.run_autofocus(self._cfg.get("camera", {})))
                 time.sleep(0.5)
 
             best = None
