@@ -17,7 +17,7 @@ def test_versions_and_hashes_pinned():
 
 def test_cli_uses_new_library_and_rules_from_new_library():
     assert '-Wl,-rpath,${PREFIX}/lib' in SCRIPT
-    assert 'LD_LIBRARY_PATH="${PREFIX}/lib" "$PCL" udev-rules' in SCRIPT
+    assert 'LD_LIBRARY_PATH="${PREFIX}/lib" "$pcl" udev-rules' in SCRIPT
     # pipefail-safe Z30 check (grep -q on a pipe aborts the producer)
     assert 'grep -q \'"Nikon Z30"\' <<<"$cams"' in SCRIPT
 
