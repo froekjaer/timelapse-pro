@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # TimeLapse Pro — install/verify the dedicated reverse-SSH tunnel ingress
-# (TCP/22022, service identity timelapse_tunnel).
+# (TCP/9222, service identity timelapse_tunnel; was 22022 until 2026-10).
 #
 # Canonical authority: froekjaer/timelapse-pro → deploy/ssh/install_timelapse_tunnel_sshd.sh
 #
-# Design contract: one dedicated sshd instance on 22022, public-key only,
+# Design contract: one dedicated sshd instance on 9222 (plus 22022 during the 2026-10 migration), public-key only,
 # no PTY/shell/agent/X11, remote-forwarding only, loopback-bound forwards,
 # and per-Edge authorized_keys entries of the form:
 #   restrict,port-forwarding,permitlisten="127.0.0.1:<port>" <pubkey> <id>
@@ -37,7 +37,7 @@ PLIST_SRC="$(cd "${SCRIPT_DIR}/.." && pwd)/launchd/${LABEL}.plist"
 CONF_SRC="${SCRIPT_DIR}/timelapse-tunnel-sshd.conf"
 AK_TEMPLATE="${SCRIPT_DIR}/authorized_keys.timelapse_tunnel"
 USER_NAME="timelapse_tunnel"
-TUNNEL_PORT=22022
+TUNNEL_PORT=9222
 SELFTEST_LISTEN=22998
 
 log() { printf '[install-tunnel-sshd] %s\n' "$*"; }

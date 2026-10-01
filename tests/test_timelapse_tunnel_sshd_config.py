@@ -192,3 +192,15 @@ def test_template_contains_no_real_key_material() -> None:
     )
     assert not re.search(r"(ssh-(rsa|ed25519)|ecdsa-[a-z0-9-]+) +AAAA[A-Za-z0-9+/]{40,}", body.replace("AAAA…placeholder…", "")), \
         "template must not contain real key material"
+
+
+def test_tunnel_ingress_listens_below_10000() -> None:
+    """2026-10-01 (Peter): every public TimeLapse port must be below 10000.
+    The dedicated ingress moved 22022 -> 9222; 22022 stays only until all
+    Edges have moved (PORT_OMLAEGNING_9022_9222_2026-10-01.md step R)."""
+    conf = (ROOT / "deploy/ssh/timelapse-tunnel-sshd.conf").read_text(encoding="utf-8")
+    ports = re.findall(r"^Port (\d+)$", conf, flags=re.M)
+    assert "9222" in ports
+    assert set(ports) <= {"9222", "22022"}
+    installer = (ROOT / "deploy/ssh/install_timelapse_tunnel_sshd.sh").read_text(encoding="utf-8")
+    assert "TUNNEL_PORT=9222" in installer
