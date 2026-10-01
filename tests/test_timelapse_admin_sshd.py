@@ -43,3 +43,21 @@ def test_installer_refuses_password_only_and_uses_root_owned_module():
     assert "/opt/homebrew" not in INSTALLER.split("PAM_MODULE=", 1)[1].split("\n", 1)[0]
     assert 'check_totp_prereqs || die' in INSTALLER
     assert "8#022" in INSTALLER  # module must not be group/world-writable
+
+
+def test_ipv4_only_listener():
+    d = _d()
+    assert d["ListenAddress"] == ["0.0.0.0"]
+
+
+def test_installer_has_fail_closed_guard_and_safe_lifecycle():
+    # nullok stays (site SFTP users authenticate with passwords through the same
+    # PAM stack), so a root guard must close 9122 if TOTP prerequisites vanish.
+    assert 'GUARD_LABEL="dk.froekjaer.timelapse-admin-sshd-guard"' in INSTALLER
+    assert "<key>StartInterval</key><integer>60</integer>" in INSTALLER
+    assert 'launchctl bootout "system/${LABEL}"' in INSTALLER.split('cat > "${TMP}/guard.sh"', 1)[1]
+    # loaded-but-stopped job is restarted, not re-bootstrapped
+    assert 'launchctl kickstart -k "system/${LABEL}"' in INSTALLER and "job_loaded()" in INSTALLER
+    # uninstall verifies bootout before deleting anything
+    assert 'die "bootout af ${job} fejlede — intet slettet"' in INSTALLER
+    assert 'lytter stadig' in INSTALLER

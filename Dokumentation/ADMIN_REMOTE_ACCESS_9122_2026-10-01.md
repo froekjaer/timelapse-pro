@@ -14,12 +14,16 @@
 - **TOTP-nøgle:** `~peter/.google_authenticator`, oprettet med `google-authenticator -t -d -f -r 3 -R 30 -w 3`: TOTP, engangskoder, maks 3 forsøg pr. 30 s, ±30 s. 5 nødkoder gemmes af Peter.
 - **Tunnel:** kun lokal forwarding til `127.0.0.1:5900`/`localhost:5900`. Alt andet er slået fra: remote/dynamic/stream/agent/X11/tun.
 - **Installeren nægter at starte**, hvis modul, PAM-linje eller TOTP-nøgle mangler, så 9122 aldrig bliver password-only.
+- **`nullok` bevares med vilje.** Site-SFTP-brugerne (fx `sftp_nvj17c`, Edges' `sftp_password`) logger ind med **adgangskode** gennem samme PAM-auth-stak. Uden `nullok` ville de blive afvist uden TOTP-nøgle.
+  - Til gengæld kunne 9122 falde tilbage til password-only, hvis TOTP-nøglen forsvandt. Derfor er der en **fail-closed vagt**: launchd-job `dk.froekjaer.timelapse-admin-sshd-guard`, kører hvert 60. s som root.
+  - Mangler `~peter/.google_authenticator`, PAM-modulet (root-ejet) eller PAM-linjen, så logger vagten `auth.crit` og laver `bootout` af admin-sshd'en. 9122 er dermed lukket, indtil installeren køres igen.
+- **Kun IPv4** (`ListenAddress 0.0.0.0`). Offentlig eksponering styres alene af routerens IPv4-NAT. Pr. 2026-10-01 har Headend ingen global IPv6 og ingen AAAA-post.
 
 ## Brug fra MacBook
 ```bash
-ssh -p 9122 -L 5901:127.0.0.1:5900 peter@backend.timelapse-pro.dk
+ssh -p 9122 -o ExitOnForwardFailure=yes -L 55900:127.0.0.1:5900 peter@backend.timelapse-pro.dk
 ```
-Åbn derefter `vnc://localhost:5901`. Lokal port 5901 undgår konflikt med MacBook'ens egen skærmdeling.
+Åbn derefter `vnc://localhost:55900`. Den lokale port er vilkårlig og ikke offentlig. 5901 var optaget på Peters MacBook.
 
 ## Rækkefølge og status (2026-10-01)
 | Trin | Status |
@@ -28,10 +32,10 @@ ssh -p 9122 -L 5901:127.0.0.1:5900 peter@backend.timelapse-pro.dk
 | 2. Password-login uændret | ✅ Peter |
 | 3. TOTP-nøgle oprettet | ✅ Peter. Fil verificeret (TOTP_AUTH, DISALLOW_REUSE, RATE_LIMIT 3 30, WINDOW_SIZE 3) |
 | 4. Login kræver password + kode | ✅ Peter. DISALLOW_REUSE har registreret brugt kode |
-| 5. Installér admin-sshd 9122 | afventer |
-| 6. Lokal test 9122 | afventer |
-| 7. Router NAT 9122 | afventer |
-| 8. Test fra MacBook udefra + tunnel 5900 | afventer |
+| 5. Installér admin-sshd 9122 | ✅ Peter (host-nøgle `SHA256:rCH8T/ne6m/vv8t0gB/29y1ViMku5d1MEDrFlYdr930`). Bemærk: kør installeren **igen** for at få vagten + IPv4-only (tilføjet efter review) |
+| 6. Lokal test 9122 | (sprunget over, se 8) |
+| 7. Router NAT 9122 | ✅ Peter. Verificeret via NAT: kun `keyboard-interactive`, samme host-nøgle |
+| 8. Test fra MacBook udefra + tunnel 5900 | ✅ Peter: adgangskode + TOTP → shell; skærmdeling via `-L 55900:127.0.0.1:5900` + `vnc://localhost:55900` (5901 var optaget lokalt) |
 | 9. Luk password-adgang på 9022/22222 (Match-blokke) + fjern NAT 2222/22022/22222 + slå routerens WAN-SSH (port 22) fra | afventer, **først efter 8** |
 
 ## Fund 2026-10-01
