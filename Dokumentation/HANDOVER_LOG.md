@@ -29,6 +29,22 @@
 
 ## Log
 
+### Handover 2026-10-01 17:20 — fra Claude til Peter/næste session: begge Edges på 9222 + API via backend.timelapse-pro.dk; froekjaer.dk fjernet fra Edge-config
+
+- **Edge1 (`TL-C87FF9587CA0`):** tunnel på **9222** (verificeret pr. session). Uploader via `https://backend.timelapse-pro.dk:8443/api`.
+- **Edge2 (`TL-043EB9E72EFD`, `tl-modbaggarddlvc`, nu fra offentlig IP 87.49.43.56):**
+  - Peter kørte B0–B4. Hjælpescriptet kom over som base64, fordi Headend-brugeren ikke har nøgle til Edge2 (`scp -P 2204` → publickey denied).
+  - Tunnel-`known_hosts` er `/etc/timelapse/device_keys/known_hosts`. Lokal `headend_url` er rettet.
+  - Efter genstart: config-hentning fra 17:16, captures/API fra 17:17:56, tunnel-session på **9222** fra 17:17:19.
+  - Edge2 har intet batteri-ur ("Failed to read RTC"), så tiden kommer kun fra synk. Det matcher TOTP-fejlen tidligere (PR #269).
+- **froekjaer.dk i DB:** `devices.device_config` på 4 enheder (Edge1, Edge2 og 2× `TL-IMPORT-Kirkbi…`) havde `sftp.host/port` = timelapse.froekjaer.dk/22222, `time.sources.headend.url` og `device.headend_url` med froekjaer. Det **overstyrede** de globale settings. Rettet med målrettede `jsonb_set` i én transaktion; 0 forekomster tilbage. Edge1 bekræftet: synk 17:07:22 gav `time…url` = backend.timelapse-pro.dk:8443.
+- **Globale settings sat af Peter:** `base_url`=`https://backend.timelapse-pro.dk:8443`, `sftp_host`=`backend.timelapse-pro.dk`, `sftp_port`=9022.
+- **Åbne beslutninger (Peter):**
+  - `webauthn_allowed_origins` indeholder stadig `https://timelapse.froekjaer.dk`.
+  - Open WebUI på `openwebui.froekjaer.dk` (`openwebui_public_url`/`openwebui_cookie_domain`).
+  - Notifikations-mail `timelapse-pro@froekjaer.dk` er en e-mailadresse, ikke web-domænet.
+- **Øvrigt åbent:** certifikat med SAN `api.timelapse-pro.dk` på 8443. SFTP-backup verificeres med en reel upload på 9022. Oprydning af 22022/22222 (plan R) først på Peters beslutning. Merge/deploy af #267, #268 og #269.
+
 ### Handover 2026-10-01 16:10 — fra Claude til Peter/næste session: Edge-upload stoppede ved netværksskift 11:46 — Edge1 genetableret via backend.timelapse-pro.dk:8443
 
 - **Symptom (Peter):** ingen billeder efter cirka 11:40.
