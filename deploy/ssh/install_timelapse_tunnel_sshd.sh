@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # TimeLapse Pro — install/verify the dedicated reverse-SSH tunnel ingress
-# (TCP/22022, service identity timelapse_tunnel).
+# (TCP/9222, service identity timelapse_tunnel; was 22022 until 2026-10).
 #
 # Canonical authority: froekjaer/timelapse-pro → deploy/ssh/install_timelapse_tunnel_sshd.sh
 #
-# Design contract: one dedicated sshd instance on 22022, public-key only,
+# Design contract: one dedicated sshd instance on 9222 (plus 22022 during the 2026-10 migration), public-key only,
 # no PTY/shell/agent/X11, remote-forwarding only, loopback-bound forwards,
 # and per-Edge authorized_keys entries of the form:
 #   restrict,port-forwarding,permitlisten="127.0.0.1:<port>" <pubkey> <id>
@@ -37,7 +37,7 @@ PLIST_SRC="$(cd "${SCRIPT_DIR}/.." && pwd)/launchd/${LABEL}.plist"
 CONF_SRC="${SCRIPT_DIR}/timelapse-tunnel-sshd.conf"
 AK_TEMPLATE="${SCRIPT_DIR}/authorized_keys.timelapse_tunnel"
 USER_NAME="timelapse_tunnel"
-TUNNEL_PORT=22022
+TUNNEL_PORT=9222
 SELFTEST_LISTEN=22998
 
 log() { printf '[install-tunnel-sshd] %s\n' "$*"; }
@@ -137,10 +137,20 @@ cleanup_preflight
 trap - EXIT
 log "  syntax OK"
 
-if lsof -nP -iTCP:"$TUNNEL_PORT" -sTCP:LISTEN >/dev/null 2>&1 && \
-   ! launchctl print "system/${LABEL}" >/dev/null 2>&1; then
-    die "TCP/${TUNNEL_PORT} is already in use by something that is NOT ${LABEL}"
-fi
+# Every port the repo config will bind (9222, plus 22022 during the 2026-10
+# migration) must be free or owned by THIS service's own sshd — proven by pid,
+# not merely "the label is loaded" — before the running instance is booted out.
+TUNNEL_PORTS=($(awk '$1=="Port"{print $2}' "$CONF_SRC"))
+[[ ${#TUNNEL_PORTS[@]} -gt 0 ]] || die "no Port lines in ${CONF_SRC}"
+# Expected no-match probes (fresh install, or a still-free port) must not trip
+# set -e/pipefail; the ownership checks below decide.
+SERVICE_PID="$( { launchctl print "system/${LABEL}" 2>/dev/null || true; } | awk '$1=="pid"{print $3; exit}')"
+for p in "${TUNNEL_PORTS[@]}"; do
+    pids="$( { lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null || true; } | sort -u | paste -sd, -)"
+    [[ -z "$pids" ]] && continue
+    [[ -n "$SERVICE_PID" && "$pids" == "$SERVICE_PID" ]] || \
+        die "TCP/${p} is in use by pid ${pids}, which is NOT ${LABEL} (service pid: ${SERVICE_PID:-not running}) — refusing before touching the running service"
+done
 
 # ═══════════════════ MUTATIONS BEGIN HERE (root only) ══════════════════════
 if ! dscl . -read "/Users/${USER_NAME}" >/dev/null 2>&1; then
@@ -195,14 +205,22 @@ sleep 2
 
 post_fail() { report_runtime_state; die "$* (service may remain installed/running; remove with: sudo ${SCRIPT_PATH} --uninstall)"; }
 
-lsof -nP -iTCP:"$TUNNEL_PORT" -sTCP:LISTEN >/dev/null 2>&1 || post_fail "no listener on ${TUNNEL_PORT} after activation"
-LISTEN_OWNER="$(lsof -nP -iTCP:"$TUNNEL_PORT" -sTCP:LISTEN | tail -1 | awk '{print $1}')"
-[[ "$LISTEN_OWNER" == sshd ]] || post_fail "listener on ${TUNNEL_PORT} is '${LISTEN_OWNER}', expected sshd"
-log "listener ${TUNNEL_PORT}: dedicated sshd ✓"
-
-for p in 8443 22222; do
-    lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && log "regression: :$p still listening ✓" || post_fail ":$p stopped listening — REGRESSION"
+NEW_PID="$( { launchctl print "system/${LABEL}" 2>/dev/null || true; } | awk '$1=="pid"{print $3; exit}')"
+[[ -n "$NEW_PID" ]] || post_fail "${LABEL} has no pid after activation"
+for p in "${TUNNEL_PORTS[@]}"; do
+    pids="$( { lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null || true; } | sort -u | paste -sd, -)"
+    [[ -n "$pids" ]] || post_fail "no listener on ${p} after activation"
+    [[ "$pids" == "$NEW_PID" ]] || post_fail "listener on ${p} is pid ${pids}, expected ${LABEL} pid ${NEW_PID}"
+    log "listener ${p}: dedicated sshd (pid ${NEW_PID}) ✓"
 done
+
+lsof -nP -iTCP:8443 -sTCP:LISTEN >/dev/null 2>&1 && log "regression: :8443 still listening ✓" || post_fail ":8443 stopped listening — REGRESSION"
+# SFTP socket: 9022 (since 2026-10) and/or transitional 22222 — at least one.
+sftp_up=""
+for p in 9022 22222; do
+    lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && sftp_up="${sftp_up} ${p}"
+done
+[[ -n "$sftp_up" ]] && log "regression: SFTP still listening on:${sftp_up} ✓" || post_fail "SFTP (9022/22222) stopped listening — REGRESSION"
 for p in 2201 2204; do
     if lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1; then
         log "regression: reverse :$p still listening (unchanged) ✓"

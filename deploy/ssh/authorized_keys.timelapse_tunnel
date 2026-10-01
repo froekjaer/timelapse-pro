@@ -1,4 +1,4 @@
-# authorized_keys — timelapse_tunnel @ dedicated tunnel sshd (TCP/22022)
+# authorized_keys — timelapse_tunnel @ dedicated tunnel sshd (TCP/9222; was 22022)
 #
 # Canonical authority: froekjaer/timelapse-pro → deploy/ssh/authorized_keys.timelapse_tunnel
 # Installed to: /etc/ssh/timelapse-tunnel/authorized_keys (root:wheel 0644; root-only write)

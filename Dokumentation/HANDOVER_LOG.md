@@ -29,6 +29,20 @@
 
 ## Log
 
+### Handover 2026-10-01 — fra Claude til ChatGPT-sporet (#259)/Peter: dedikeret reverse-SSH-ingress flyttes 22022 → 9222
+
+- **Beslutning (Peter, 2026-10-01):** alle offentlige TimeLapse-porte skal under TCP 10000. Den dedikerede `timelapse_tunnel`-ingress flytter til **9222**. SFTP flytter 22222 → 9022 i main (#267). Plan: `Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md` (samme fil som i #267).
+- **Leveret til dette spor som PR #268 (base = denne branch):**
+  - `timelapse-tunnel-sshd.conf`: `Port 9222` + `Port 22022` (midlertidig).
+  - Installer: `TUNNEL_PORT=9222`. Preflight kontrollerer nu pr. pid, at alle konfigurerede porte er frie eller ejet af denne tjeneste, før den kørende instans røres (Codex-review). Post-check kræver samme pid på alle porte.
+  - `PORTS.md`, kommentar i `authorized_keys`-skabelonen og ny test.
+- **Live-status 2026-10-01 (udført af Peter, verificeret af Claude):**
+  - Tunnel-sshd (pid 367) lytter på **både 22022 og 9222** efter `kill -HUP`, med samme dedikerede host-nøgle `SHA256:TwExDmMYpnXX+qK/ZrLwpN2rb8bQiP/FLHKOkfTdbP4`.
+  - Den eksisterende Edge-tunnel på 22022 overlevede.
+  - Router-NAT for 9222 er sat. `tunnel.timelapse-pro.dk:9222` giver den rigtige nøgle via NAT.
+- **Ikke udført endnu:** Edge-cutover til 9222 (plan E1–E3: først `known_hosts` via `deploy/edge/add_known_hosts_port.sh`, derefter `ssh_tunnel.primary` i System Administration). 22022 er fortsat den aktive ingress, indtil alle Edges er flyttet. Oprydning sker i plantrin R.
+- **Åben beslutning for dette spor:** nye Edge-images provisioneres stadig til legacy-stien (`tunnel` på admin-socket'en), ikke `timelapse_tunnel@…:9222`.
+
 ### Handover 2026-09-25 13:00 — fra ChatGPT: PR #259 CI-fejl analyseret og rettet uden at svække architecture-ratchet
 
 - **Hvad er gjort:** Første CI-kørsel på den reconcilerede main-baserede PR #259 (`1e9ae882`) fejlede med præcis 2 tests: architecture-ratchet fordi `headend/main.py` var vokset til 17.562 linjer mod max 17.550, samt en transport-contract-test der stadig krævede den gamle direkte `_build_session(...)` i Edge backup-upload. Begge fund er rettet på branch-head.
