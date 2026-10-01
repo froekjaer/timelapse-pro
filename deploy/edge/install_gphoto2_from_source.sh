@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build and install pinned, signature-verified libgphoto2 + gphoto2 from source
-# into /usr/local on an Ubuntu 22.04 (Jammy) Edge or in the Edge image build.
+# into /usr/local on an Ubuntu 22.04 (Jammy) or 24.04 (Noble) Edge, or in the
+# Edge image build. Artifacts are per release (built against that release's libs).
 #
 # Why (Peter, 2026-10-01): Jammy ships libgphoto2 2.5.27, which does not know
 # the Nikon Z30 (added in 2.5.30) and falls back to "USB PTP Class Camera".
@@ -30,7 +31,12 @@ PREFIX="/usr/local"
 SRC_BASE="${GPHOTO2_SRC_BASE:-https://github.com/gphoto}"
 
 BUILD_DEPS="gcc make pkg-config libc6-dev libusb-1.0-0-dev libexif-dev libltdl-dev libpopt-dev libjpeg-dev libreadline-dev"
-RUNTIME_LIBS="libusb-1.0-0 libexif12 libltdl7 libpopt0 libjpeg8 libreadline8"
+# Runtime package names differ per Ubuntu release (24.04's 64-bit time_t transition).
+. /etc/os-release 2>/dev/null || true
+case "${VERSION_CODENAME:-jammy}" in
+    noble) RUNTIME_LIBS="libusb-1.0-0 libexif12 libltdl7 libpopt0 libjpeg8 libreadline8t64" ;;
+    *)     RUNTIME_LIBS="libusb-1.0-0 libexif12 libltdl7 libpopt0 libjpeg8 libreadline8" ;;
+esac
 
 log() { printf '[gphoto2-src] %s\n' "$*"; }
 die() { printf '[gphoto2-src] FEJL: %s\n' "$*" >&2; exit 1; }
@@ -72,16 +78,22 @@ post_install() { # udev rules/hwdb from the new library + remove distro gphoto2 
         log "udev-regler + hwdb skrevet fra libgphoto2 ${LIBGPHOTO2_VERSION}"
     fi
     if dpkg -s gphoto2 >/dev/null 2>&1; then
-        dpkg --remove gphoto2 >/dev/null 2>&1 && log "distro-pakken gphoto2 (2.5.27-CLI) fjernet"
+        dpkg --remove gphoto2 >/dev/null 2>&1 && log "distro-pakken gphoto2 (CLI) fjernet"
     fi
-    if dpkg -s libgphoto2-6 >/dev/null 2>&1; then
-        local would
-        would="$(apt-get remove --simulate libgphoto2-6 libgphoto2-port12 2>/dev/null | awk '/^Remv /{print $2}' | grep -v -E '^libgphoto2' || true)"
+    # Jammy: libgphoto2-6/-port12; Noble (t64): libgphoto2-6t64/-port12t64.
+    local pkgs="" p would
+    for p in libgphoto2-6 libgphoto2-6t64 libgphoto2-port12 libgphoto2-port12t64 libgphoto2-l10n; do
+        dpkg -s "$p" >/dev/null 2>&1 && pkgs="$pkgs $p"
+    done
+    if [[ -n "$pkgs" ]]; then
+        # shellcheck disable=SC2086
+        would="$(apt-get remove --simulate $pkgs 2>/dev/null | awk '/^Remv /{print $2}' | grep -v -E '^libgphoto2' || true)"
         if [[ -z "$would" ]]; then
-            dpkg --remove libgphoto2-6 libgphoto2-port12 libgphoto2-l10n >/dev/null 2>&1 || dpkg --remove libgphoto2-6 libgphoto2-port12 >/dev/null 2>&1 || true
-            dpkg -s libgphoto2-6 >/dev/null 2>&1 || log "distro-biblioteket libgphoto2-6 (2.5.27) fjernet"
+            # shellcheck disable=SC2086
+            dpkg --remove $pkgs >/dev/null 2>&1 || true
+            log "distro-libgphoto2 fjernet:${pkgs}"
         else
-            log "distro-libgphoto2-6 bevares (krævet af: $(echo $would | tr '\n' ' ')); gphoto2 bruger ${PREFIX} via rpath"
+            log "distro-libgphoto2 bevares (krævet af: $(echo $would | tr '\n' ' ')); gphoto2 bruger ${PREFIX} via rpath"
         fi
     fi
 }
