@@ -753,7 +753,7 @@ ls /Volumes/data-fast/
 sudo journalctl -u timelapse-edge --since "1 hour ago" | grep -i "error\|upload\|sftp"
 
 # Test SFTP manuelt fra edge
-sftp -P 22222 sftp_nvj17c@timelapse.froekjaer.dk
+sftp -P 9022 sftp_nvj17c@backend.timelapse-pro.dk   # 9022 siden 2026-10; 22222 kun midlertidigt indtil plantrin R
 ```
 
 ### CI fejler

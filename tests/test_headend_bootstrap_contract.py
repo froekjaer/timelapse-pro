@@ -110,3 +110,11 @@ def test_sftp_rbac_covers_both_ports_during_migration():
     conf = (ROOT / "deploy/ssh/timelapse-sshd-sftp.conf").read_text(encoding="utf-8")
     assert "Match User sftp_* LocalPort 9022" in conf
     assert "Match User sftp_* LocalPort 22222" in conf
+
+
+def test_installer_tolerates_persisted_transitional_tunnel_port():
+    """Headend conf files generated before 2026-10 persist TL_TUNNEL_PORT=22222;
+    the installer warns instead of aborting until plan step R."""
+    source = (ROOT / "deploy/install/install_headend.sh").read_text(encoding="utf-8")
+    assert 'if [[ "$TL_TUNNEL_PORT" == 22222 ]]; then' in source
+    assert "plantrin R" in source

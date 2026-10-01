@@ -127,8 +127,17 @@ esac
   || die "TL_TUNNEL_HOST er ugyldigt"
 [[ "$TL_TUNNEL_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]] \
   || die "TL_TUNNEL_USER er ugyldig"
-[[ "$TL_TUNNEL_PORT" =~ ^[0-9]+$ ]] && (( TL_TUNNEL_PORT >= 1024 && TL_TUNNEL_PORT <= 9999 )) \
-  || die "TL_TUNNEL_PORT skal være et heltal mellem 1024 og 9999 (offentlige porte under 10000, PORTS.md)"
+# Transitional (2026-10 port move): conf files generated before the move
+# persist TL_TUNNEL_PORT=22222. Accept it with a warning so the normal apply
+# flow keeps working while the Headend listens on both 22222 and 9022; the
+# exception is removed at plan step R
+# (Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md).
+if [[ "$TL_TUNNEL_PORT" == 22222 ]]; then
+  printf '[install] ADVARSEL: TL_TUNNEL_PORT=22222 er en udfaset port (offentlige porte skal under 10000). Ret den genererede conf til 9022 — accepteres kun indtil plantrin R.\n' >&2
+else
+  [[ "$TL_TUNNEL_PORT" =~ ^[0-9]+$ ]] && (( TL_TUNNEL_PORT >= 1024 && TL_TUNNEL_PORT <= 9999 )) \
+    || die "TL_TUNNEL_PORT skal være et heltal mellem 1024 og 9999 (offentlige porte under 10000, PORTS.md)"
+fi
 [[ "$TL_TUNNEL_PORT" != 21 && "$TL_TUNNEL_PORT" != 22 && "$TL_TUNNEL_PORT" != 80 \
    && "$TL_TUNNEL_PORT" != 443 && "$TL_TUNNEL_PORT" != 8080 ]] \
   || die "TL_TUNNEL_PORT bruger en reserveret port"
