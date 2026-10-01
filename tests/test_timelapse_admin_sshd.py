@@ -76,3 +76,13 @@ def test_guard_is_event_driven_and_checks_full_pam_stack():
 def test_uninstall_does_not_require_admin_account():
     head = INSTALLER.split('case "$MODE" in', 1)[0]
     assert 'if [[ "$MODE" != uninstall ]]; then' in head
+
+
+def test_nullok_required_in_preflight_not_in_guard():
+    assert "pam_nullok_ok()" in INSTALLER and "pam_nullok_ok; then" in INSTALLER
+    guard = INSTALLER.split('cat > "${TMP}/guard.sh" <<GUARD', 1)[1].split("\nGUARD\n", 1)[0]
+    assert "nullok" not in guard
+
+
+def test_existing_host_key_must_be_root_owned_0600():
+    assert "8#077" in INSTALLER and "er ikke en root-ejet fil med 0600" in INSTALLER

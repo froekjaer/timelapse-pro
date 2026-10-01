@@ -72,6 +72,14 @@ pam_stack_ok() {
         }' "$PAM_FILE"
 }
 
+# The TOTP rule must keep `nullok`: site SFTP users authenticate with
+# passwords through the same PAM auth stack and have no TOTP secret; without
+# nullok their uploads are rejected. Checked by preflight/verify only — the
+# guard does not close 9122 for this, because admin login stays two-factor.
+pam_nullok_ok() {
+    awk -v mod="$PAM_MODULE" '$1=="auth" && $2=="required" && $3==mod { for (i=4;i<=NF;i++) if ($i=="nullok") found=1 } END { exit !found }' "$PAM_FILE"
+}
+
 check_totp_prereqs() {
     local ok=0 home
     home="$(admin_home)"
@@ -87,6 +95,11 @@ check_totp_prereqs() {
         log "PAM: ${PAM_FILE} kræver adgangskode (pam_opendirectory) og derefter TOTP; ingen sufficient/binding-regler"
     else
         log "PAM: ${PAM_FILE} er ikke sikker: ${why}"; ok=1
+    fi
+    if pam_nullok_ok; then
+        log "PAM: TOTP-reglen har nullok (SFTP-brugere med adgangskode påvirkes ikke)"
+    else
+        log "PAM: TOTP-reglen mangler nullok — site-SFTP-uploads med adgangskode ville blive afvist"; ok=1
     fi
     if [[ -s "${home}/.google_authenticator" ]]; then
         log "TOTP-nøgle: ${home}/.google_authenticator ($(stat -f '%Lp %Su' "${home}/.google_authenticator"))"
@@ -153,6 +166,10 @@ if [[ ! -f "$HOST_KEY" ]]; then
     chmod 600 "$HOST_KEY"
     log "ny host-nøgle: $(ssh-keygen -lf "${HOST_KEY}.pub")"
 else
+    hk_mode="$(stat -f '%Lp' "$HOST_KEY")"
+    if [[ -L "$HOST_KEY" || ! -f "$HOST_KEY" || "$(stat -f '%Su' "$HOST_KEY")" != root || $(( 8#$hk_mode & 8#077 )) -ne 0 ]]; then
+        die "eksisterende host-nøgle ${HOST_KEY} er ikke en root-ejet fil med 0600 (ejer $(stat -f '%Su' "$HOST_KEY"), mode ${hk_mode}). Den kan være kopieret — slet ${HOST_KEY}* og kør igen for en ny nøgle (klienter vil se et nyt fingeraftryk)."
+    fi
     log "eksisterende host-nøgle bevaret: $(ssh-keygen -lf "${HOST_KEY}.pub")"
 fi
 /usr/sbin/sshd -t -f "$CONF_FILE" || die "installeret konfiguration fejlede sshd -t"
