@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 import glob
+import time
 from pathlib import Path
 
 # BlueZ D-Bus bindings belong to system Python, while ServiceOperations and
@@ -377,8 +378,17 @@ def _load_totp_secret() -> str:
         return ""
 
 
+_LOGIN_GUARD = None
+
+
 def _verify_totp(secret: str, code: str) -> bool:
-    return verify_totp(secret, code, window=3)
+    """Single-use: shares the web login's state, so a code used once (here or
+    on the local web UI) cannot be replayed within its validity window."""
+    global _LOGIN_GUARD
+    if _LOGIN_GUARD is None:
+        from totp_login_guard import DEFAULT_STATE_PATH, TotpLoginGuard
+        _LOGIN_GUARD = TotpLoginGuard(Path(os.getenv("TIMELAPSE_TOTP_LOGIN_STATE", str(DEFAULT_STATE_PATH))))
+    return _LOGIN_GUARD.verify_and_consume(secret, code, time.time(), 3) is not None
 
 
 def _refresh_bluetooth_name_tick() -> bool:

@@ -45,6 +45,22 @@
   - Notifikations-mail `timelapse-pro@froekjaer.dk` er en e-mailadresse, ikke web-domænet.
 - **Øvrigt åbent:** certifikat med SAN `api.timelapse-pro.dk` på 8443. SFTP-backup verificeres med en reel upload på 9022. Oprydning af 22022/22222 (plan R) først på Peters beslutning. Merge/deploy af #267, #268 og #269.
 
+### Handover 2026-10-01 — fra Claude til Peter/næste session: Edge lokal login — ur på login-siden, stil ur ved login, TOTP-koder kun én gang
+
+- **Anledning (Peter):** Edge2's lokale UI afviste TOTP ("Forkert kode", SID `cam-d554a5c9`). Peter kom til sidst ind. Mistanke: Edge-uret var forkert (ingen Headend-forbindelse siden netværksskiftet og ingen NTP), og når uret er forkert, kan man ikke logge ind for at rette det. Ingen TOTP-regenerering i dag (seneste 2026-08-16), så rotation er udelukket.
+- **Fund:** `/verify` (`pyotp.verify(valid_window=3)`) og Bluetooth-teknikeren (`totp_verifier.verify_totp(window=3)`) accepterede **samme kode flere gange** inden for cirka ±90 s.
+- **Ændring (Peter godkendte designet):**
+  - Nyt `edge/totp_login_guard.py`: engangskoder (kun tidstrin efter det senest accepterede) og en gemt "sidst kendte korrekte tid". Tilstanden ligger i `/etc/timelapse/totp-login-state.json` med fil-lås på tværs af processer, delt af web-login og Bluetooth-tekniker. Modulet er afhængighedsfrit (`totp_verifier.matching_steps`).
+  - Login-siden viser Edge-uret (lokal tid + UTC + synk-status, tikker) og afvigelsen til browserens ur, med advarsel over 90 s.
+  - "Stil Edge-uret efter denne enhed ved login" er kun tilladt når:
+    - Edge-uret **ikke** er synkroniseret (chrony/NTP), ellers 409.
+    - Browsertiden er plausibel (2026–2100) og ikke før den sidst kendte korrekte tid.
+    - Koden er gyldig **ved browsertiden** og ikke brugt før.
+  - Derefter `timedatectl set-time` og en log-advarsel med gammel og ny tid.
+- **Verificeret:** 11 nye tests (vagt + `/verify` end-to-end via TestClient: replay afvist, stil-ur ok, kode kun gyldig ved Edge-tid afvist, synkroniseret ur afvist, tid før gulvet afvist, uret vises). 104 TOTP-/BLE-/login-tests grønne. Login-siden er visuelt kontrolleret med simuleret 60 min afvigelse.
+- **Ikke deployet:** Kræver Edge-opdatering. Edge1 og Edge2 kører den gamle version.
+- **Bemærk:** `timedatectl set-time` fejler, hvis systemd-NTP er aktiv. Fejlen vises så på login-siden.
+
 ### Handover 2026-10-01 16:10 — fra Claude til Peter/næste session: Edge-upload stoppede ved netværksskift 11:46 — Edge1 genetableret via backend.timelapse-pro.dk:8443
 
 - **Symptom (Peter):** ingen billeder efter cirka 11:40.
