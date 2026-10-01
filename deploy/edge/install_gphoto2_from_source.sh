@@ -39,10 +39,15 @@ check() {
     local rc=0 bin ver
     bin="$(command -v gphoto2 || true)"
     [[ "$bin" == "${PREFIX}/bin/gphoto2" ]] && log "gphoto2 i PATH: ${bin} ✓" || { log "gphoto2 i PATH er '${bin}', forventet ${PREFIX}/bin/gphoto2"; rc=1; }
-    ver="$("${PREFIX}/bin/gphoto2" --version 2>/dev/null | awk '$1=="libgphoto2"{print $2; exit}')"
+    ver="$("${PREFIX}/bin/gphoto2" --version 2>/dev/null | awk '$1=="libgphoto2"{v=$2} END{print v}' || true)"
     [[ "$ver" == "$LIBGPHOTO2_VERSION" ]] && log "libgphoto2 ${ver} ✓" || { log "libgphoto2 er '${ver}', forventet ${LIBGPHOTO2_VERSION}"; rc=1; }
-    "${PREFIX}/bin/gphoto2" --version 2>/dev/null | head -1 | grep -q "gphoto2 ${GPHOTO2_VERSION}" && log "gphoto2 ${GPHOTO2_VERSION} ✓" || { log "gphoto2-version afviger"; rc=1; }
-    ldd "${PREFIX}/bin/gphoto2" 2>/dev/null | grep -q "${PREFIX}/lib/libgphoto2.so" && log "linker mod ${PREFIX}/lib/libgphoto2 ✓" || { log "gphoto2 linker IKKE mod ${PREFIX}/lib/libgphoto2"; rc=1; }
+    # No `cmd | grep -q` anywhere: under pipefail an early-exiting grep/head
+    # SIGPIPEs the producer and turns a match into a failure. Capture first.
+    local verout lddout
+    verout="$("${PREFIX}/bin/gphoto2" --version 2>/dev/null || true)"
+    lddout="$(ldd "${PREFIX}/bin/gphoto2" 2>/dev/null || true)"
+    [[ "$(head -1 <<<"$verout")" == "gphoto2 ${GPHOTO2_VERSION}"* ]] && log "gphoto2 ${GPHOTO2_VERSION} ✓" || { log "gphoto2-version afviger"; rc=1; }
+    grep -qF "${PREFIX}/lib/libgphoto2.so" <<<"$lddout" && log "linker mod ${PREFIX}/lib/libgphoto2 ✓" || { log "gphoto2 linker IKKE mod ${PREFIX}/lib/libgphoto2"; rc=1; }
     # Capture first: `cmd | grep -q` under pipefail fails when grep exits early (SIGPIPE).
     local cams; cams="$("${PREFIX}/bin/gphoto2" --list-cameras 2>/dev/null || true)"
     grep -q '"Nikon Z30"' <<<"$cams" && log "kender Nikon Z30 ✓" || { log "kender IKKE Nikon Z30"; rc=1; }
@@ -100,8 +105,11 @@ if [[ "$MODE" == install-artifact ]]; then
     # libgphoto2-6/gphoto2 dependencies; refuse rather than half-install.
     echo "${ARTIFACT_SHA256}  ${ARTIFACT}" | sha256sum -c --quiet - || die "SHA256 matcher ikke for ${ARTIFACT}"
     missing=""
+    # Capture once: `ldconfig -p | grep -q` under pipefail is a false negative
+    # whenever grep exits early and ldconfig gets SIGPIPE (hit on Edge2).
+    libcache="$(ldconfig -p 2>/dev/null || true)"
     for lib in libusb-1.0.so.0 libexif.so.12 libltdl.so.7 libpopt.so.0 libjpeg.so.8 libreadline.so.8; do
-        ldconfig -p | grep -q "$lib" || missing="$missing $lib"
+        grep -qF "$lib" <<<"$libcache" || missing="$missing $lib"
     done
     [[ -z "$missing" ]] || die "runtime-biblioteker mangler:${missing} — kan ikke installere uden apt"
     tar -C / -xzf "$ARTIFACT" --no-same-owner

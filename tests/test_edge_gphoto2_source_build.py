@@ -60,3 +60,11 @@ def test_field_edge_install_needs_no_apt_or_internet():
     body = SCRIPT.split('if [[ "$MODE" == install-artifact ]]; then', 1)[1].split("\nfi\n", 1)[0]
     assert "sha256sum -c" in body and "apt-get install" not in body and "curl" not in body
     assert "ldconfig -p" in body  # refuses if runtime libs are missing instead of fetching them
+
+
+def test_no_pipe_into_early_exiting_grep_or_head_under_pipefail():
+    """`cmd | grep -q` / `| head` under `set -o pipefail` SIGPIPEs the producer
+    and reports a match as failure — hit on Edge2 2026-10-01 (ldconfig -p)."""
+    code = [l for l in SCRIPT.splitlines() if not l.lstrip().startswith("#")]
+    offenders = [l for l in code if re.search(r"\|\s*(grep\s+-q|head\b)", l)]
+    assert offenders == []
