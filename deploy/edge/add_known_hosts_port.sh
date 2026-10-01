@@ -44,15 +44,18 @@ fi
 
 # Always check what the new port serves right now — also when an entry
 # already exists (rotated key, wrong NAT target, other service).
-tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.one"' EXIT
+# Private scratch directory (0700): no predictable sibling files in /tmp
+# that another local user could pre-create as symlinks while we run as root.
+scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
+tmp="$scratch/scan"; one="$scratch/one"
 ssh-keyscan -p "$NEW" -T 10 "$HOST" 2>/dev/null > "$tmp" || true
 [ -s "$tmp" ] || { echo "FEJL: ingen svar fra $HOST:$NEW (lytter Headend/NAT?)" >&2; exit 1; }
 
 live_ok=()
 while read -r line; do
   case "$line" in ''|'#'*) continue ;; esac
-  printf '%s\n' "$line" > "$tmp.one"
-  fp="$(ssh-keygen -l -f "$tmp.one" 2>/dev/null | grep -o 'SHA256:[^ ]*' || true)"
+  printf '%s\n' "$line" > "$one"
+  fp="$(ssh-keygen -l -f "$one" 2>/dev/null | grep -o 'SHA256:[^ ]*' || true)"
   if [ -n "$fp" ] && grep -qxF "$fp" <<<"$old_fps"; then
     live_ok+=("$fp	$line")
   fi
