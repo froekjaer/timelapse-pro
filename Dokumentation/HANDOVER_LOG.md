@@ -29,6 +29,25 @@
 
 ## Log
 
+### Handover 2026-10-01 16:10 — fra Claude til Peter/næste session: Edge-upload stoppede ved netværksskift 11:46 — Edge1 genetableret via backend.timelapse-pro.dk:8443
+
+- **Symptom (Peter):** ingen billeder efter cirka 11:40.
+- **Root cause:**
+  - Headend skiftede netværk cirka 11:46: nu `192.168.5.90` bag ny router med offentlig IP `93.165.255.138`.
+  - Edges brugte `headend_url: https://timelapse.froekjaer.dk/api`, og navnet resolver (også offentligt) til Headends gamle LAN-adresse `192.168.86.102`. Port 443 er heller ikke viderestillet i den nye router.
+  - Edge1 tog fortsat billeder og lagde dem i kø ("headend unreachable"). Ingen Edge-API-kald fra 11:46:21 til 16:04.
+  - Ikke relateret til portflytningen.
+- **Beslutning (Peter):** `timelapse.froekjaer.dk` udfases. Kun `tunnel.timelapse-pro.dk`, `api.timelapse-pro.dk` og `backend.timelapse-pro.dk`. Billeder skal over API, SFTP bliver backup i næste trin.
+- **Udført:**
+  - Peter: `settings.base_url` = `https://backend.timelapse-pro.dk:8443`. Den bruges til `device.headend_url` og `time.sources.headend.url` i `get_config` samt bootstrap-fallback.
+  - Edge1 (`timelapse0101`): backup `*.bak-20261001`, derefter `sed` timelapse.froekjaer.dk → backend.timelapse-pro.dk:8443 i `bootstrap.yaml` (1 forekomst) og `config.yaml` (2 forekomster), derefter `systemctl restart timelapse-edge`.
+- **Verificeret 16:04–16:07:** Edge1 henter config, sender heartbeat/inventory og uploader køen (`POST /captures/TL-C87FF9587CA0/files` 200, Edge-log `API upload complete`). Reverse-SSH kom op igen (stadig 22022). Config-synk har **ikke** sat `headend_url` tilbage.
+- **Åbne punkter:**
+  - `time.sources.headend.url` på Edge1 blev sat tilbage til `https://timelapse.froekjaer.dk` ved synk. Et override-lag (`devices.device_config`/site/kamera `time`-sektion) har den gamle URL og skal findes og rettes. Tidssynk falder tilbage til GPS/NTP i mellemtiden.
+  - **Edge2** (TL-043EB9E72EFD, 192.168.86.144): ingen kontakt siden 11:22 og ingen tunnel. Kræver samme lokale rettelse og lokal adgang.
+  - **`api.timelapse-pro.dk`:** DNS ok (93.165.255.138), men certifikatet på 8443 har kun SAN `backend.timelapse-pro.dk`. Det kræver nyt certifikat og `server_name`, før Edges kan bruge `api`.
+  - `sftp_host`/`sftp_port` → backend.timelapse-pro.dk/9022 er foreslået (SFTP er backup), men ikke bekræftet udført.
+
 ### Handover 2026-10-01 — fra Claude til Peter/næste session: offentlige porte under 10000 (SFTP 22222→9022, reverse-SSH 22022→9222)
 
 - **Beslutning (Peter):** alle offentligt eksponerede TimeLapse-porte skal under TCP 10000. 2222 blev afvist, fordi `deploy/PORTS.md` reserverer den til en anden produktionsapplikation. Valg: **9222** (dedikeret reverse-SSH `timelapse_tunnel`) og **9022** (SFTP `sftp_*` og legacy-tunnel-brugeren `tunnel` på samme launchd-socket).
