@@ -61,3 +61,18 @@ def test_installer_has_fail_closed_guard_and_safe_lifecycle():
     # uninstall verifies bootout before deleting anything
     assert 'die "bootout af ${job} fejlede — intet slettet"' in INSTALLER
     assert 'lytter stadig' in INSTALLER
+
+
+def test_guard_is_event_driven_and_checks_full_pam_stack():
+    assert "<key>WatchPaths</key>" in INSTALLER
+    assert "pam_stack_ok()" in INSTALLER and "$(declare -f pam_stack_ok)" in INSTALLER
+    body = INSTALLER.split("pam_stack_ok() {", 1)[1].split("\n}\n", 1)[0]
+    for needle in ('"sufficient"', '"binding"', "pam_opendirectory.so", "ga < od"):
+        assert needle in body
+    guard = INSTALLER.split('cat > "${TMP}/guard.sh" <<GUARD', 1)[1].split("\nGUARD\n", 1)[0]
+    assert "8#022" in guard  # module must not become group/world-writable
+
+
+def test_uninstall_does_not_require_admin_account():
+    head = INSTALLER.split('case "$MODE" in', 1)[0]
+    assert 'if [[ "$MODE" != uninstall ]]; then' in head

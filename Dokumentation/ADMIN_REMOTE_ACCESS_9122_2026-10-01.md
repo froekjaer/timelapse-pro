@@ -15,7 +15,10 @@
 - **Tunnel:** kun lokal forwarding til `127.0.0.1:5900`/`localhost:5900`. Alt andet er slået fra: remote/dynamic/stream/agent/X11/tun.
 - **Installeren nægter at starte**, hvis modul, PAM-linje eller TOTP-nøgle mangler, så 9122 aldrig bliver password-only.
 - **`nullok` bevares med vilje.** Site-SFTP-brugerne (fx `sftp_nvj17c`, Edges' `sftp_password`) logger ind med **adgangskode** gennem samme PAM-auth-stak. Uden `nullok` ville de blive afvist uden TOTP-nøgle.
-  - Til gengæld kunne 9122 falde tilbage til password-only, hvis TOTP-nøglen forsvandt. Derfor er der en **fail-closed vagt**: launchd-job `dk.froekjaer.timelapse-admin-sshd-guard`, kører hvert 60. s som root.
+  - Til gengæld kunne 9122 falde tilbage til password-only, hvis TOTP-nøglen forsvandt. Derfor er der en **fail-closed vagt**: launchd-job `dk.froekjaer.timelapse-admin-sshd-guard`, kører som root.
+    - **Hændelsesstyret** via `WatchPaths` på `~peter/.google_authenticator`, `/etc/pam.d/sshd` og PAM-modulet, plus hvert 60. s som backstop.
+    - En separat PAM-tjeneste til admin-sshd'en er ikke mulig: OpenSSH bruger fast `SSHD_PAM_SERVICE` = `sshd`.
+  - Vagten (og installerens preflight) kræver, at `auth required pam_opendirectory.so` står **før** TOTP-linjen, at begge er `required`, og at ingen `auth`-regel er `sufficient`/`binding`. Modulet skal være root-ejet og ikke skrivbart for gruppe/andre.
   - Mangler `~peter/.google_authenticator`, PAM-modulet (root-ejet) eller PAM-linjen, så logger vagten `auth.crit` og laver `bootout` af admin-sshd'en. 9122 er dermed lukket, indtil installeren køres igen.
 - **Kun IPv4** (`ListenAddress 0.0.0.0`). Offentlig eksponering styres alene af routerens IPv4-NAT. Pr. 2026-10-01 har Headend ingen global IPv6 og ingen AAAA-post.
 
@@ -36,8 +39,10 @@ ssh -p 9122 -o ExitOnForwardFailure=yes -L 55900:127.0.0.1:5900 peter@backend.ti
 | 6. Lokal test 9122 | (sprunget over, se 8) |
 | 7. Router NAT 9122 | ✅ Peter. Verificeret via NAT: kun `keyboard-interactive`, samme host-nøgle |
 | 8. Test fra MacBook udefra + tunnel 5900 | ✅ Peter: adgangskode + TOTP → shell; skærmdeling via `-L 55900:127.0.0.1:5900` + `vnc://localhost:55900` (5901 var optaget lokalt) |
-| 9. Luk password-adgang på 9022/22222 (Match-blokke) + fjern NAT 2222/22022/22222 + slå routerens WAN-SSH (port 22) fra | afventer, **først efter 8** |
+| 9a. Luk password-login på 9022/22222 (Match-blokke i `/etc/ssh/sshd_config`) | afventer |
+| 9b. Fjern NAT 2222/22022/22222 | ✅ Peter 2026-10-01; verificeret udefra: alle tre `refused` |
+| 9c. Port 22 på den offentlige IP | **Ikke Headend og ikke vores**, se fund nedenfor. Afklares med ejeren |
 
 ## Fund 2026-10-01
 - 🔴 Headends almindelige sshd (port 9022/22222 via NAT) tilbød `password`/`keyboard-interactive` til `peter` fra internettet. Det betyder fuld shell med kun Mac-adgangskode. Lukkes i trin 9.
-- 🟠 Offentlig IP port 22 svarer med `OpenSSH_8.4p1 Debian-5+deb11u7` (ikke Headend). Sandsynligvis routerens egen SSH-administration på WAN.
+- 🟠 Offentlig IP (93.165.255.138) port 22 svarer med `OpenSSH_8.4p1 Debian-5+deb11u7`, og det er ikke Headend. Port 80/443 på samme IP er **CrushFTP** (`ftp.hyldager.net`, `Server: CrushFTP HTTP Server`). Headend står altså på et netværk, hvor den offentlige IP deles med Hyldagers produktions-CrushFTP (jf. `PORTS.md`: CrushFTP ejer 21/22/80/443). Port 22 tilhører sandsynligvis en Debian-server i det miljø. **Rør den ikke uden ejerens accept.** Den er ikke en vej ind på Headend.
