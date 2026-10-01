@@ -512,6 +512,13 @@ done
 # (deploy/edge/install_gphoto2_from_source.sh) because the Jammy base only has
 # 2.5.27 (no Nikon Z30). Only timelapse paths were copied above, so carry the
 # source build and its udev rules/hwdb over into the vendor base image too.
+# Only for targets whose baseline includes gphoto2 (extra_packages). The
+# common injector also serves rpi4/rpi5/orangepi-pc-plus, whose vendor bases
+# do not carry the Ubuntu runtime set; they keep the base image's gphoto2.
+if ! echo " ${EXTRA_PACKAGES:-} " | grep -q " gphoto2 "; then
+    echo "[inject] gphoto2 ikke i target-baseline — source-build injiceres ikke"
+    GPHOTO_PATHS=""
+else
 echo "[inject] Udpakker gphoto2/libgphoto2 (source-build) fra rootfs..."
 GPHOTO_PATHS="$(tar -tzf "$ROOTFS_TAR" 2>/dev/null | grep -E '^(usr/local/bin/gphoto2$|usr/local/lib/libgphoto2|usr/local/share/libgphoto2|etc/udev/rules\.d/60-libgphoto2-local\.rules$|etc/udev/hwdb\.d/20-libgphoto2-local\.hwdb$)' | grep -v '/$' || true)"
 if [ -n "$GPHOTO_PATHS" ]; then
@@ -533,6 +540,7 @@ if [ -n "$GPHOTO_PATHS" ]; then
     echo "[inject]   OK: $(printf '%s\n' "$GPHOTO_PATHS" | wc -l | tr -d ' ') gphoto2-stier (libgphoto2 source-build)"
 else
     echo "[inject]   ADVARSEL: ingen gphoto2 source-build i rootfs — imaget beholder base-imagets gphoto2"
+fi
 fi
 
 # ── Bootstrap config ──────────────────────────────────────────────────────────

@@ -69,7 +69,7 @@ def test_no_pipe_into_early_exiting_grep_or_head_under_pipefail():
     """`cmd | grep -q` / `| head` under `set -o pipefail` SIGPIPEs the producer
     and reports a match as failure — hit on Edge2 2026-10-01 (ldconfig -p)."""
     code = [l for l in SCRIPT.splitlines() if not l.lstrip().startswith("#")]
-    offenders = [l for l in code if re.search(r"\|\s*(grep\s+-q|head\b)", l)]
+    offenders = [l for l in code if re.search(r"(?<!\|)\|(?!\|)\s*(grep\s+-q|head\b)", l)]
     assert offenders == []
 
 
@@ -96,3 +96,14 @@ def test_image_build_fails_closed():
 
 def test_build_artifact_resolves_relative_output():
     assert 'ARTIFACT="$(cd "$(dirname "$out")" && pwd)/$(basename "$out")"' in SCRIPT
+
+
+def test_signature_uses_venv_python_and_accepts_signing_subkeys():
+    vs = SCRIPT.split("verify_signature() {", 1)[1].split("\n}\n", 1)[0]
+    assert "/opt/timelapse/venv/bin/python" in vs
+    assert "print $NF" in vs  # VALIDSIG primary-key fingerprint (subkey signatures)
+
+
+def test_inject_scoped_to_targets_with_gphoto2_baseline():
+    inj = (ROOT / "headend/tools/inject_edge_image.py").read_text(encoding="utf-8")
+    assert 'grep -q " gphoto2 "' in inj and "source-build injiceres ikke" in inj

@@ -111,7 +111,10 @@ platform_id() { . /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-unknown
 
 verify_signature() { # artifact sig — against the Edge trust policy's pinned release signers only
     local gh; gh="$(mktemp -d)"; chmod 700 "$gh"
-    python3 - "$EDGE_CONFIG" "$gh" <<'PY' || { rm -rf "$gh"; die "kunne ikke læse trusted_release_signers fra ${EDGE_CONFIG}"; }
+    # PyYAML ships in the Edge venv, not necessarily in the system Python.
+    local py=/opt/timelapse/venv/bin/python
+    [[ -x "$py" ]] || py=python3
+    "$py" - "$EDGE_CONFIG" "$gh" <<'PY' || { rm -rf "$gh"; die "kunne ikke læse trusted_release_signers fra ${EDGE_CONFIG}"; }
 import subprocess, sys, yaml
 cfg = yaml.safe_load(open(sys.argv[1])) or {}
 signers = (cfg.get("security") or {}).get("trusted_release_signers") or []
@@ -129,14 +132,17 @@ for i, s in enumerate(signers):
     open(f"{sys.argv[2]}/pinned", "a").write(fpr + "\n"); n += 1
 sys.exit(0 if n else 1)
 PY
-    local status validsig
+    local status validsig primary
     status="$(gpg --batch --homedir "$gh" --status-fd 1 --verify "$2" "$1" 2>/dev/null || true)"
+    # VALIDSIG <signing-key fpr> ... <primary-key fpr>: with a signing subkey
+    # the pinned (primary) fingerprint is the LAST field, not field 3.
     validsig="$(awk '$2=="VALIDSIG"{print $3}' <<<"$status")"
-    if [[ -z "$validsig" ]] || ! grep -qxF "$validsig" "${gh}/pinned"; then
+    primary="$(awk '$2=="VALIDSIG"{print $NF}' <<<"$status")"
+    if [[ -z "$validsig" ]] || ! { grep -qxF "$primary" "${gh}/pinned" || grep -qxF "$validsig" "${gh}/pinned"; }; then
         rm -rf "$gh"; die "artefaktets signatur er ikke gyldig fra en pinned release-signer (${EDGE_CONFIG})"
     fi
     rm -rf "$gh"
-    log "signatur OK: ${validsig}"
+    log "signatur OK: ${validsig} (primær ${primary})"
 }
 while [[ $# -gt 0 ]]; do
     case "$1" in
