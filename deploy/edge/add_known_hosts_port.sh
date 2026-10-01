@@ -29,23 +29,36 @@ if [ -n "$existing" ]; then
   if [ -n "$bad" ]; then
     echo "FEJL: [$HOST]:$NEW findes allerede i $KH med en nøgle, der IKKE matcher [$PINNED_HOST]:$OLD: $bad — ret/fjern linjen manuelt." >&2; exit 2
   fi
-  echo "OK: [$HOST]:$NEW findes allerede i $KH og matcher [$PINNED_HOST]:$OLD:"; printf '%s\n' "$existing"; exit 0
 fi
 
+# Always check what the new port serves right now — also when an entry
+# already exists (rotated key, wrong NAT target, other service).
 tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.one"' EXIT
 ssh-keyscan -p "$NEW" -T 10 "$HOST" 2>/dev/null > "$tmp" || true
 [ -s "$tmp" ] || { echo "FEJL: ingen svar fra $HOST:$NEW (lytter Headend/NAT?)" >&2; exit 1; }
 
-# Keep only key types whose fingerprint matches the pinned old-port key.
-matched=0
+live_ok=()
 while read -r line; do
   case "$line" in ''|'#'*) continue ;; esac
   printf '%s\n' "$line" > "$tmp.one"
   fp="$(ssh-keygen -l -f "$tmp.one" 2>/dev/null | grep -o 'SHA256:[^ ]*' || true)"
   if [ -n "$fp" ] && grep -qxF "$fp" <<<"$old_fps"; then
-    echo "$line" >> "$KH"; matched=1
-    echo "TILFØJET [$HOST]:$NEW  $fp"
+    live_ok+=("$fp	$line")
   fi
 done < "$tmp"
+[ "${#live_ok[@]}" -gt 0 ] || { echo "FEJL: nøglen på $HOST:$NEW matcher IKKE den pinned nøgle for [$PINNED_HOST]:$OLD — intet tilføjet." >&2; exit 2; }
 
-[ "$matched" = 1 ] || { echo "FEJL: nøglen på $HOST:$NEW matcher IKKE den pinned nøgle for [$PINNED_HOST]:$OLD — intet tilføjet." >&2; exit 2; }
+if [ -n "$existing" ]; then
+  # Existing entries must cover a key the port actually serves now.
+  for item in "${live_ok[@]}"; do
+    if grep -qxF "${item%%	*}" <<<"$existing"; then
+      echo "OK: [$HOST]:$NEW findes allerede i $KH, matcher [$PINNED_HOST]:$OLD og serveres live nu:"; printf '%s\n' "$existing"; exit 0
+    fi
+  done
+  echo "FEJL: [$HOST]:$NEW i $KH matcher ingen nøgle, som porten serverer nu — ret/fjern linjen manuelt." >&2; exit 2
+fi
+
+for item in "${live_ok[@]}"; do
+  printf '%s\n' "${item#*	}" >> "$KH"
+  echo "TILFØJET [$HOST]:$NEW  ${item%%	*}"
+done

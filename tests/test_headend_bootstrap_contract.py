@@ -100,3 +100,13 @@ def test_site_page_does_not_materialise_a_default_sftp_port():
     page = (ROOT / "timelapse-ui/src/pages/SitePage.tsx").read_text(encoding="utf-8")
     assert "useState('9022')" not in page
     assert "...(sftpPort.trim() ? { port: parseInt(sftpPort) } : {})" in page
+
+
+def test_sftp_rbac_covers_both_ports_during_migration():
+    """Regenerating SFTP rules mid-migration must not lock out Edges that
+    still use 22222 (Peter keeps 22022/22222 on the Headend for now)."""
+    src = (ROOT / "headend/tools/render_sftp_rbac_config.py").read_text(encoding="utf-8")
+    assert "SFTP_PORTS = (9022, 22222)" in src
+    conf = (ROOT / "deploy/ssh/timelapse-sshd-sftp.conf").read_text(encoding="utf-8")
+    assert "Match User sftp_* LocalPort 9022" in conf
+    assert "Match User sftp_* LocalPort 22222" in conf

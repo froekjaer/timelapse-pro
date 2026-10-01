@@ -4,7 +4,32 @@
 > er flyttet til `HANDOVER_LOG_ARKIV_2026-06-28_til_2026-07-07.md` ved rotationen 2026-07-18
 > (godkendt af Peter, jf. Claude_QA_Review_2026-07-17.md §2.4). Fuld prærotations-kopi:
 > `Gamle versioner/HANDOVER_LOG_pre-rotation_2026-07-18.md`. Nye entries indsættes KUN under
-> `## Log` nedenfor, nyeste øverst, med `### Handover 2026-10-01 — fra Claude til Peter/næste session: offentlige porte under 10000 (SFTP 22222→9022, reverse-SSH 22022→9222)
+> `## Log` nedenfor, nyeste øverst, med `### Handover`-overskrift jf. skabelonen.
+
+## Medarbejdere og samarbejdspartnere
+
+- **Claude-5 (AI-assistent i denne session)** — LAB mode optimering, 503 error fix, auto powercycle, fullscreen toggle.
+- **Claude-4 (AI-assistent i tidligere session)** — fortsatte arbejdet med prioriteret backlog, commit, dokumentation og main-track merge.
+- Claude-3 (forrige session) — færdiggjorde P1-11 Drift-detection fase 2/3.
+- Claude-2 (tidligere session) — færdiggjorde P0-05 Retention Policy (100% kode + dokumentation).
+- Peter Frøkjær — produkt-/driftsejer og beslutningstager.
+- Codex — samarbejdspartner for kode-, ops- og deployment-spor.
+
+## Skabelon
+
+```md
+### Handover YYYY-MM-DD HH:MM — fra <Claude|Codex|Peter> til <Claude|Codex|Peter>
+- Hvad er gjort:
+- Hvad mangler / næste skridt:
+- Kommandoer kørt eller skal køres:
+- Forventet/faktisk output:
+- Filer rørt:
+- Risici / pas på:
+```
+
+## Log
+
+### Handover 2026-10-01 — fra Claude til Peter/næste session: offentlige porte under 10000 (SFTP 22222→9022, reverse-SSH 22022→9222)
 
 - **Beslutning (Peter):** alle offentligt eksponerede TimeLapse-porte skal under TCP 10000. 2222 blev afvist, fordi `deploy/PORTS.md` reserverer den til en anden produktionsapplikation. Valg: **9222** (dedikeret reverse-SSH `timelapse_tunnel`) og **9022** (SFTP `sftp_*` og legacy-tunnel-brugeren `tunnel` på samme launchd-socket).
 - **Kortlægning (live 2026-10-01):**
@@ -29,32 +54,9 @@
 - **Nyt fund:** `sftp_host`=`timelapse.froekjaer.dk` resolver (også offentligt) til 192.168.86.102, Headends gamle LAN-adresse. Headend er nu 192.168.5.90. SFTP-værten kan ikke nås (timeout også på 22222), og der er ingen nye SFTP-filer siden 2026-08-06.
   - Anbefaling: `sftp_host`=`backend.timelapse-pro.dk` i trin E4. Hjælpescriptet kan nu fastlåse nøglen under det nye navn (5. argument = gammelt navn).
   - DNS for `timelapse.froekjaer.dk` skal rettes af Peter.
-- **Ikke udført (kræver Peter):** E1–E4 og R i planen. 22022 → 9222 i #259's filer er PR #268 (ind i #259's branch). Kode-PR i main: #267.
-
-### Handover`-overskrift jf. skabelonen.
-
-## Medarbejdere og samarbejdspartnere
-
-- **Claude-5 (AI-assistent i denne session)** — LAB mode optimering, 503 error fix, auto powercycle, fullscreen toggle.
-- **Claude-4 (AI-assistent i tidligere session)** — fortsatte arbejdet med prioriteret backlog, commit, dokumentation og main-track merge.
-- Claude-3 (forrige session) — færdiggjorde P1-11 Drift-detection fase 2/3.
-- Claude-2 (tidligere session) — færdiggjorde P0-05 Retention Policy (100% kode + dokumentation).
-- Peter Frøkjær — produkt-/driftsejer og beslutningstager.
-- Codex — samarbejdspartner for kode-, ops- og deployment-spor.
-
-## Skabelon
-
-```md
-### Handover YYYY-MM-DD HH:MM — fra <Claude|Codex|Peter> til <Claude|Codex|Peter>
-- Hvad er gjort:
-- Hvad mangler / næste skridt:
-- Kommandoer kørt eller skal køres:
-- Forventet/faktisk output:
-- Filer rørt:
-- Risici / pas på:
-```
-
-## Log
+- **E1 Edge1 (`timelapse0101`, 192.168.86.134) udført af Peter:** `[tunnel.timelapse-pro.dk]:9222` og `[backend.timelapse-pro.dk]:9022` er fastlåst og matchet mod de gamle nøgler.
+- **Peter:** 22022 og 22222 bliver på Headend indtil videre. Oprydningen (trin R) sker først på hans beslutning. Generatoren af SFTP-regler (`SFTP_PORTS`) og hardening-conf'en dækker derfor midlertidigt begge porte.
+- **Ikke udført (kræver Peter):** E2–E3 (tunnel pr. Edge, efter deploy af #267's "Gem tunnel"-rettelse), E1 for Edge2, E4 og R. 22022 → 9222 i #259's filer er PR #268 (ind i #259's branch). Kode-PR i main: #267.
 
 ### Handover 2026-09-27 (aften) — fra Claude til Peter/næste session: Open WebUI servicekontrol ramte forkert launchd-domæne
 
