@@ -222,6 +222,29 @@ def _sign_manifest(
         raise RuntimeError(f"GPG-signering utilgængelig: {exc}") from exc
 
 
+def _source_built_sbom_components(gphoto2_version_output: str, arch: str) -> list[dict]:
+    """SBOM entries for gphoto2/libgphoto2 built from source into /usr/local.
+
+    dpkg-query cannot see them, but they are central camera dependencies with
+    their own GPL/LGPL and vulnerability-tracking obligations.
+    """
+    licenses = {"gphoto2": "GPL-2.0-or-later", "libgphoto2": "LGPL-2.1-or-later"}
+    found: list[dict] = []
+    for line in gphoto2_version_output.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] in licenses and parts[1][:1].isdigit():
+            if any(c["name"] == parts[0] for c in found):
+                continue
+            found.append({
+                "name": parts[0],
+                "version": parts[1],
+                "arch": arch,
+                "source": "source-build:/usr/local (deploy/edge/install_gphoto2_from_source.sh)",
+                "license": licenses[parts[0]],
+            })
+    return found
+
+
 def _git_provenance(root: Path) -> dict[str, str]:
     """Bind image buildet til rene, reviewbare Edge-inputs."""
     paths = [
@@ -232,6 +255,7 @@ def _git_provenance(root: Path) -> dict[str, str]:
         "headend/tools/inject_edge_image.py",
         "headend/tools/inject_wifi_image.py",
         "headend/tools/hardware",
+        "deploy/edge/install_gphoto2_from_source.sh",
     ]
     dirty = subprocess.run(
         ["git", "status", "--porcelain", "--", *paths], cwd=root,
@@ -427,6 +451,20 @@ def build_edge_image(
         progress_cb(f"   {len(sbom_packages)} OS-pakker i SBOM")
     except Exception as exc:
         raise RuntimeError(f"SBOM for OS-pakker kunne ikke genereres: {exc}") from exc
+
+    # Source-built components outside dpkg (deploy/edge/install_gphoto2_from_source.sh).
+    try:
+        gp_out = subprocess.check_output(
+            [docker_bin, "run", "--rm", "--platform", docker_platform, "--entrypoint", "/usr/local/bin/gphoto2",
+             image_tag, "--version"],
+            text=True, timeout=60,
+        )
+        sbom_packages.extend(_source_built_sbom_components(gp_out, arch))
+        progress_cb("   gphoto2/libgphoto2 (source-build, /usr/local) i SBOM")
+    except FileNotFoundError:
+        raise
+    except Exception:
+        pass  # image without the source build: dpkg entries above cover gphoto2
 
     pip_packages: list[dict] = []
     try:

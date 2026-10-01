@@ -24,10 +24,11 @@ def test_reports_library_version_and_source(monkeypatch):
     inv = inventory._software_inventory()
     assert inv["gphoto2"] == "gphoto2 2.5.32"
     assert inv["libgphoto2"] == "libgphoto2 2.5.34"
-    assert inv["gphoto2_source"] == "source-build"
+    assert inv["_gphoto2_source"] == "source-build"
+    assert "gphoto2_path" not in inv and "gphoto2_source" not in inv
 
 
 def test_distro_install(monkeypatch):
     monkeypatch.setattr(inventory.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=OUT, stderr=""))
     monkeypatch.setattr(inventory.shutil, "which", lambda name: "/usr/bin/gphoto2")
-    assert inventory._software_inventory()["gphoto2_source"] == "distro"
+    assert inventory._software_inventory()["_gphoto2_source"] == "distro"

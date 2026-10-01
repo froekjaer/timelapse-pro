@@ -26,3 +26,37 @@ def test_dockerfile_uses_source_build_not_jammy_packages():
     assert "install_gphoto2_from_source.sh --remove-build-deps" in DOCKERFILE
     apt_block = DOCKERFILE.split("# ── Base packages", 1)[1].split("rm -rf /var/lib/apt/lists/*", 1)[0]
     assert "gphoto2" not in apt_block and "libgphoto2" not in apt_block
+
+
+def test_build_deps_removed_including_libc6_dev():
+    assert 'apt-get remove -y -qq $BUILD_DEPS' in SCRIPT and "libc6-dev" in SCRIPT.split("BUILD_DEPS=", 1)[1].split("\n", 1)[0]
+
+
+def test_artifact_sbom_and_provenance_include_source_build():
+    import sys
+    sys.path.insert(0, str(ROOT / "headend" / "tools"))
+    src = (ROOT / "headend/tools/build_edge_disk_image.py").read_text(encoding="utf-8")
+    assert '"deploy/edge/install_gphoto2_from_source.sh",' in src.split("def _git_provenance", 1)[1]
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bedi", ROOT / "headend/tools/build_edge_disk_image.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    out = "gphoto2 2.5.32\n\ngphoto2         2.5.32         gcc\nlibgphoto2      2.5.34         standard camlibs\n"
+    comps = {c["name"]: c for c in mod._source_built_sbom_components(out, "arm64")}
+    assert comps["gphoto2"]["version"] == "2.5.32" and comps["libgphoto2"]["version"] == "2.5.34"
+    assert comps["libgphoto2"]["license"] == "LGPL-2.1-or-later"
+
+
+def test_baseline_drift_accepts_source_build():
+    import sys
+    sys.path.insert(0, str(ROOT / "headend"))
+    from services.cmdb_baseline_drift import compute_package_drift
+    exp = ["gphoto2", "libgphoto2-6", "libgphoto2-port12", "gpsd"]
+    assert compute_package_drift(exp, {"gpsd": "1"}).missing == ["gphoto2", "libgphoto2-6", "libgphoto2-port12"]
+    assert compute_package_drift(exp, {"gpsd": "1"}, {"_gphoto2_source": "source-build"}).missing == []
+    assert compute_package_drift(exp, {}, {"_gphoto2_source": "distro"}).missing == sorted(exp)
+
+
+def test_field_edge_install_needs_no_apt_or_internet():
+    body = SCRIPT.split('if [[ "$MODE" == install-artifact ]]; then', 1)[1].split("\nfi\n", 1)[0]
+    assert "sha256sum -c" in body and "apt-get install" not in body and "curl" not in body
+    assert "ldconfig -p" in body  # refuses if runtime libs are missing instead of fetching them

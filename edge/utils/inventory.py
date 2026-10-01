@@ -355,8 +355,10 @@ def _software_inventory() -> dict[str, str]:
                 break
         path = shutil.which("gphoto2")
         if path:
-            inventory["gphoto2_path"] = path
-            inventory["gphoto2_source"] = "source-build" if path.startswith("/usr/local/") else "distro"
+            # Underscore keys are metadata, not versioned software: CMDB's SBOM
+            # (headend/cmdb.py::_components_from_mapping) skips them.
+            inventory["_gphoto2_path"] = path
+            inventory["_gphoto2_source"] = "source-build" if path.startswith("/usr/local/") else "distro"
     except Exception:
         pass
     return inventory

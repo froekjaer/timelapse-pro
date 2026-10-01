@@ -46,7 +46,10 @@
   - **Hele `Dockerfile.edge`** bygget (1:35 min): image har 2.5.34/2.5.32 i `/usr/local`, og agentens inventar rapporterer `libgphoto2 2.5.34`/`source-build`.
   - Under udviklingen er fundet og rettet: `grep -q` + pipefail-falsk-negativ, udev-regler genereret af det gamle bibliotek, manglende `/etc/udev/rules.d` i container.
 - **Overlap:** #257 (Golden Edge) låser `gphoto2=2.5.27-1` i `Dockerfile.edge`. Ved merge af #257 skal den lås erstattes af denne PR's kildekode-byg.
-- **Edge2:** Peter kører scriptet. Status opdateres her.
+- **Edge2, første forsøg:** scriptets download/byg-tilstand hang i `apt-get update`. Edge2 har internet (ports.ubuntu.com/github 200), men Orange Pi-imagets apt-spejl `repo.huaweicloud.com` svarer ikke herfra. Det strider desuden mod reglen i `inject_edge_image.py`: *"Softwarepakker installeres aldrig fra internettet på Edge … leveres … som Headend-signerede offline artifacts."*
+- **Ny vej (følger reglen):** `--build-artifact` på Headend (arm64 Jammy-container) og `--install-artifact FIL SHA256` på Edgen, uden apt og uden internet. Den nægter at installere, hvis runtime-biblioteker mangler. Verificeret i en frisk Jammy-container med distro-gphoto2 og `--network none`: 2.5.27 → 2.5.34, Z30 kendt, distro-pakker fjernet. Forkert SHA256 afvises.
+  - Artefakt `libgphoto2-2.5.34-gphoto2-2.5.32-jammy-arm64.tar.gz` (2,8 MB), sha256 `8a34351792449f6d6786d340b63c6dfea84761a75bd63f8734c26e3dedd0fbbb`.
+  - Midlertidigt hostet med scriptet (sha256 `d3f404455483542bbbb48d1dd5d6c068e7e6b7e5a857f41d428bb1f84bcb83c7`) på `https://backend.timelapse-pro.dk:8443/_edge-artifacts/`, dvs. i live `timelapse-ui/dist/_edge-artifacts`. **Fjernes efter Edge2-installationen.** Den varige leverance er Headends signerede offline-artefakt-pipeline (spor B/opfølgning).
 
 ### Handover 2026-10-01 22:00 — fra Claude til Peter/næste session: remote admin-SSH 9122 med adgangskode + TOTP; Headend-sshd var åben for password-login fra internettet
 

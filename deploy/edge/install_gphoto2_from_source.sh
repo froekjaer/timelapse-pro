@@ -9,6 +9,12 @@
 #   sudo install_gphoto2_from_source.sh                      # install / repair
 #   sudo install_gphoto2_from_source.sh --remove-build-deps  # image build: drop -dev pkgs afterwards
 #   install_gphoto2_from_source.sh --check                   # read-only verification
+#   sudo install_gphoto2_from_source.sh --build-artifact OUT.tar.gz   # Headend build host (arm64 Jammy container)
+#   sudo install_gphoto2_from_source.sh --install-artifact FILE SHA256  # Edge: no apt, no internet
+#
+# Edges never install software from the internet (inject_edge_image.py): on a
+# field Edge use --install-artifact with a tarball built on the Headend; the
+# download/build modes are for the image build and the Headend build host.
 #
 # Tarballs are pinned by SHA256. Those hashes were taken from tarballs whose
 # detached GPG signatures verified against the gphoto maintainer key
@@ -43,16 +49,68 @@ check() {
     return $rc
 }
 
-MODE="install"; REMOVE_BUILD_DEPS=0
-for a in "$@"; do
-    case "$a" in
+# Files that make up the installation (relative to /), used by the artifact modes.
+ARTIFACT_PATHS="usr/local/bin/gphoto2 usr/local/lib/libgphoto2.so* usr/local/lib/libgphoto2_port.so* usr/local/lib/libgphoto2 usr/local/lib/libgphoto2_port usr/local/share/libgphoto2 usr/local/share/libgphoto2_port"
+
+post_install() { # udev rules/hwdb from the new library + remove distro gphoto2 — shared by all modes
+    ldconfig
+    local pcl="${PREFIX}/lib/libgphoto2/print-camera-list"
+    if [[ -x "$pcl" ]]; then
+        mkdir -p /etc/udev/rules.d /etc/udev/hwdb.d   # absent in containers / image builds
+        LD_LIBRARY_PATH="${PREFIX}/lib" "$pcl" udev-rules version 201 group plugdev mode 0664 \
+            > /etc/udev/rules.d/60-libgphoto2-local.rules
+        LD_LIBRARY_PATH="${PREFIX}/lib" "$pcl" hwdb > /etc/udev/hwdb.d/20-libgphoto2-local.hwdb
+        grep -q "libgphoto2 *${LIBGPHOTO2_VERSION}" /etc/udev/rules.d/60-libgphoto2-local.rules \
+            || die "udev-regler blev ikke genereret af libgphoto2 ${LIBGPHOTO2_VERSION}"
+        if command -v systemd-hwdb >/dev/null; then systemd-hwdb update 2>/dev/null || true; fi
+        if command -v udevadm >/dev/null; then udevadm control --reload-rules 2>/dev/null || true; fi
+        log "udev-regler + hwdb skrevet fra libgphoto2 ${LIBGPHOTO2_VERSION}"
+    fi
+    if dpkg -s gphoto2 >/dev/null 2>&1; then
+        dpkg --remove gphoto2 >/dev/null 2>&1 && log "distro-pakken gphoto2 (2.5.27-CLI) fjernet"
+    fi
+    if dpkg -s libgphoto2-6 >/dev/null 2>&1; then
+        local would
+        would="$(apt-get remove --simulate libgphoto2-6 libgphoto2-port12 2>/dev/null | awk '/^Remv /{print $2}' | grep -v -E '^libgphoto2' || true)"
+        if [[ -z "$would" ]]; then
+            dpkg --remove libgphoto2-6 libgphoto2-port12 libgphoto2-l10n >/dev/null 2>&1 || dpkg --remove libgphoto2-6 libgphoto2-port12 >/dev/null 2>&1 || true
+            dpkg -s libgphoto2-6 >/dev/null 2>&1 || log "distro-biblioteket libgphoto2-6 (2.5.27) fjernet"
+        else
+            log "distro-libgphoto2-6 bevares (krævet af: $(echo $would | tr '\n' ' ')); gphoto2 bruger ${PREFIX} via rpath"
+        fi
+    fi
+}
+
+MODE="install"; REMOVE_BUILD_DEPS=0; ARTIFACT=""; ARTIFACT_SHA256=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --check) MODE="check" ;;
         --remove-build-deps) REMOVE_BUILD_DEPS=1 ;;
-        *) die "ukendt argument: $a" ;;
+        --build-artifact) MODE="build-artifact"; ARTIFACT="${2:?sti til output .tar.gz}"; shift ;;
+        --install-artifact) MODE="install-artifact"; ARTIFACT="${2:?sti til artefakt}"; ARTIFACT_SHA256="${3:?forventet SHA256}"; shift 2 ;;
+        *) die "ukendt argument: $1" ;;
     esac
+    shift
 done
 if [[ "$MODE" == check ]]; then check; exit $?; fi
 [[ "$(id -u)" == 0 ]] || die "kør som root (sudo)"
+
+if [[ "$MODE" == install-artifact ]]; then
+    # Field Edge: no apt, no internet. Runtime libs come with Jammy's
+    # libgphoto2-6/gphoto2 dependencies; refuse rather than half-install.
+    echo "${ARTIFACT_SHA256}  ${ARTIFACT}" | sha256sum -c --quiet - || die "SHA256 matcher ikke for ${ARTIFACT}"
+    missing=""
+    for lib in libusb-1.0.so.0 libexif.so.12 libltdl.so.7 libpopt.so.0 libjpeg.so.8 libreadline.so.8; do
+        ldconfig -p | grep -q "$lib" || missing="$missing $lib"
+    done
+    [[ -z "$missing" ]] || die "runtime-biblioteker mangler:${missing} — kan ikke installere uden apt"
+    tar -C / -xzf "$ARTIFACT" --no-same-owner
+    log "artefakt udpakket til ${PREFIX}"
+    post_install
+    check || die "verifikation fejlede"
+    log "FÆRDIG: libgphoto2 ${LIBGPHOTO2_VERSION} + gphoto2 ${GPHOTO2_VERSION} i ${PREFIX} (artefakt)"
+    exit 0
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 log "installerer build-afhængigheder og runtime-biblioteker…"
@@ -98,41 +156,19 @@ run_logged make install
 cd /
 ldconfig
 
-# udev permissions for cameras the new library knows (Jammy's rules predate
-# the Z30). Rules + hwdb for udev >= 201; generated by the NEW library.
-PCL="${PREFIX}/lib/libgphoto2/print-camera-list"
-if [[ -x "$PCL" ]]; then
-    mkdir -p /etc/udev/rules.d /etc/udev/hwdb.d   # absent in containers / image builds
-    LD_LIBRARY_PATH="${PREFIX}/lib" "$PCL" udev-rules version 201 group plugdev mode 0664 \
-        > /etc/udev/rules.d/60-libgphoto2-local.rules
-    LD_LIBRARY_PATH="${PREFIX}/lib" "$PCL" hwdb > /etc/udev/hwdb.d/20-libgphoto2-local.hwdb
-    grep -q "libgphoto2 *${LIBGPHOTO2_VERSION}" /etc/udev/rules.d/60-libgphoto2-local.rules \
-        || die "udev-regler blev ikke genereret af libgphoto2 ${LIBGPHOTO2_VERSION}"
-    if command -v systemd-hwdb >/dev/null; then systemd-hwdb update 2>/dev/null || true; fi
-    if command -v udevadm >/dev/null; then udevadm control --reload-rules 2>/dev/null || true; fi
-    log "udev-regler + hwdb skrevet fra libgphoto2 ${LIBGPHOTO2_VERSION}"
-fi
-
-# One libgphoto2 on the system: remove the distro CLI, and the distro library
-# too when nothing but libgphoto2's own packages would be removed with it.
-if dpkg -s gphoto2 >/dev/null 2>&1; then
-    apt-get remove -y -qq gphoto2 >/dev/null && log "distro-pakken gphoto2 (2.5.27-CLI) fjernet"
-fi
-if dpkg -s libgphoto2-6 >/dev/null 2>&1; then
-    would="$(apt-get remove --simulate libgphoto2-6 libgphoto2-port12 2>/dev/null | awk '/^Remv /{print $2}' | grep -v -E '^libgphoto2' || true)"
-    if [[ -z "$would" ]]; then
-        apt-get remove -y -qq libgphoto2-6 libgphoto2-port12 >/dev/null && log "distro-biblioteket libgphoto2-6 (2.5.27) fjernet"
-    else
-        log "distro-libgphoto2-6 bevares (krævet af: $(echo $would | tr '\n' ' ')); gphoto2 bruger ${PREFIX} via rpath"
-    fi
-fi
+post_install
 
 if [[ "$REMOVE_BUILD_DEPS" == 1 ]]; then
     # shellcheck disable=SC2086
-    apt-get remove -y -qq gcc make pkg-config libusb-1.0-0-dev libexif-dev libltdl-dev libpopt-dev libjpeg-dev libreadline-dev >/dev/null || true
+    apt-get remove -y -qq $BUILD_DEPS >/dev/null || true
     rm -rf /var/lib/apt/lists/*
     log "build-afhængigheder fjernet"
 fi
 
 check || die "verifikation fejlede"
+if [[ "$MODE" == build-artifact ]]; then
+    # shellcheck disable=SC2086
+    (cd / && tar -czf "$ARTIFACT" $ARTIFACT_PATHS)
+    log "artefakt: ${ARTIFACT} sha256=$(sha256sum "$ARTIFACT" | awk '{print $1}')"
+fi
 log "FÆRDIG: libgphoto2 ${LIBGPHOTO2_VERSION} + gphoto2 ${GPHOTO2_VERSION} i ${PREFIX}"
