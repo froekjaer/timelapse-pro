@@ -139,7 +139,7 @@ export function SitePage() {
   const [sftpUser, setSftpUser] = useState('')
   const [sftpRemoteBase, setSftpRemoteBase] = useState('')
   const [sftpPassword, setSftpPassword] = useState('')
-  const [sftpPort, setSftpPort] = useState('22222')
+  const [sftpPort, setSftpPort] = useState('9022')
   const [address, setAddress] = useState('')
   const [gpsLat, setGpsLat] = useState('')
   const [gpsLon, setGpsLon] = useState('')
@@ -178,7 +178,7 @@ export function SitePage() {
         const sftp = d.config_overrides?.sftp ?? {}
         setSftpUser(sftp.username ?? '')
         setSftpPassword(sftp.password ?? '')
-        setSftpPort(String(sftp.port ?? '22222'))
+        setSftpPort(String(sftp.port ?? '9022'))
         setSftpRemoteBase(sftp.remote_base ?? '')
         const btTotp = d.config_overrides?.bt_totp ?? {}
         setBtTotpSecret(btTotp.secret ?? '')
@@ -385,10 +385,10 @@ export function SitePage() {
           <div>
             <div className="flex items-center gap-2 mb-1">
               <label className="text-xs text-gray-400">Port</label>
-              <span className="text-xs text-gray-300 cursor-help" title="SFTP server port. Standard 22222 for sikker SFTP. Skal matche server config.">ⓘ</span>
+              <span className="text-xs text-gray-300 cursor-help" title="SFTP server port. Standard 9022 for sikker SFTP. Skal matche server config.">ⓘ</span>
             </div>
             <input type="text" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
-              placeholder="22222"
+              placeholder="9022"
               value={sftpPort} onChange={e => setSftpPort(e.target.value)} />
           </div>
         </div>

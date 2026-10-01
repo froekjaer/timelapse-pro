@@ -106,7 +106,7 @@ run_apply() {
   log "── Fase 2: APPLY (fra verificeret release) ──"
   sudo "$DESTINATION/deploy/install/install_headend.sh" --config "$CONFIG"
   log "Husk: certifikat via DNS-01 + genkør apply for fuldt SSL-block (manual §5),"
-  log "og Fase 2b SFTP-ingress 22222 er stadig et MANUELT trin (manual §7 / GEN-01)."
+  log "og Fase 2b SFTP-ingress 9022 er stadig et MANUELT trin (manual §7 / GEN-01)."
 }
 
 run_enroll() {

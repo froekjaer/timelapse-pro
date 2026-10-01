@@ -63,7 +63,7 @@ Konfigurationsfilen skal sætte som minimum:
   TL_SERVICE_GROUP=_timelapse
   TL_SERVICE_HOME=/var/lib/timelapse
   TL_TUNNEL_HOST=backend.timelapse-pro.dk
-  TL_TUNNEL_PORT=22222
+  TL_TUNNEL_PORT=9022
   TL_TUNNEL_USER=tunnel
 
 TL_BACKEND_PORT: staging- og prod-maskinerne kører allerede CrushFTP på 21/22/80/443
@@ -103,7 +103,7 @@ source "$CONFIG_FILE"
 : "${TL_SERVICE_HOME:=/var/lib/timelapse}"
 : "${TL_POSTGRES_ADMIN_USER:=${SUDO_USER:-}}"
 : "${TL_TUNNEL_HOST:=$TL_DOMAIN_BACKEND}"
-: "${TL_TUNNEL_PORT:=22222}"
+: "${TL_TUNNEL_PORT:=9022}"
 : "${TL_TUNNEL_USER:=tunnel}"
 
 if [[ "$TL_BACKEND_PORT" =~ ^(21|22|80|443)$ ]]; then
@@ -292,7 +292,7 @@ JWT_SECRET=${JWT_SECRET_VALUE}
 TIMELAPSE_INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}
 DATABASE_URL=postgresql://${TL_DB_USER}@localhost/${TL_DB_NAME}
 SFTP_BASE=${TL_DATA_DIR}
-SFTP_PORT=22222
+SFTP_PORT=9022
 BASE_URL=${BASE_URL}
 EDGE_PUBLIC_HEADEND_URL=${BASE_URL}/api
 TIMELAPSE_TUNNEL_HOST=${TL_TUNNEL_HOST}

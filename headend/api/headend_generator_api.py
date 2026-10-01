@@ -217,7 +217,7 @@ def _validate_request(payload: dict) -> dict:
         "service_group": str(payload.get("service_group") or "_timelapse").strip(),
         "service_home": str(payload.get("service_home") or "/var/lib/timelapse").strip(),
         "tunnel_host": str(payload.get("tunnel_host") or domain).strip().lower(),
-        "tunnel_port": int(payload.get("tunnel_port") or 22222),
+        "tunnel_port": int(payload.get("tunnel_port") or 9022),
         "tunnel_user": str(payload.get("tunnel_user") or "tunnel").strip(),
         "db_name": str(payload.get("db_name") or "timelapse_db").strip(),
         "db_user": str(payload.get("db_user") or "timelapse").strip(),
@@ -300,7 +300,7 @@ Fuld manual: Dokumentation/INSTALLATIONSMANUAL_HEADEND_GENERATOR_v1.md (i releas
 
 ## Sameksistens med CrushFTP (ufravigeligt)
 CrushFTP ejer 21/22/80/443 på målmaskinen. Alt TimeLapse kører på port {spec['backend_port']}
-(UI/API), 22222 (SFTP-ingress) og loopback. Preflight NÆGTER at fortsætte hvis
+(UI/API), 9022 (SFTP-ingress) og loopback. Preflight NÆGTER at fortsætte hvis
 port {spec['backend_port']} er optaget, og installeren afviser 21/22/80/443 hårdt.
 Certifikat udstedes via DNS-01 og rører ingen port.
 
@@ -319,8 +319,8 @@ denne pakke.
 1. DNS-01-certifikat (certbot-dns-cloudflare) + genkør apply for fuldt SSL.
 2. FØRSTE LOGIN med installerens unikke initiale adgangskode → MFA + nyt
    password FØR offentlig eksponering. `admin/changeme` er forbudt i staging/prod.
-3. SFTP-ingress på 22222 (Fase 2b — GEN-01/GEN-02): dedikeret sshd-socket,
-   hardening-profil, per-site RBAC-regler OG DB-settings `sftp_port=22222`.
+3. SFTP-ingress på 9022 (Fase 2b — GEN-01/GEN-02): dedikeret sshd-socket,
+   hardening-profil, per-site RBAC-regler OG DB-settings `sftp_port=9022`.
    Uden dette trin peger edge-upload-fallback på port 22 = CrushFTP!
 4. Backup: sæt eksplicit skrivbar BACKUP_BASE (R09) + restore-test.
 """
@@ -385,7 +385,7 @@ def prepare_headend(payload: dict, user=Depends(_require_platform_admin), db: Se
         "commands": _render_commands(spec),
         "manual": "Dokumentation/INSTALLATIONSMANUAL_HEADEND_GENERATOR_v1.md",
         "warnings": [
-            "Fase 2b (SFTP 22222) er et manuelt trin — se README/manual §7 (GEN-01/GEN-02).",
+            "Fase 2b (SFTP 9022) er et manuelt trin — se README/manual §7 (GEN-01/GEN-02).",
             "Gennemfør første login FØR offentlig eksponering (GEN-07).",
         ],
     }

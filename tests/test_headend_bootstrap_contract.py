@@ -76,9 +76,9 @@ def test_new_headend_uses_unique_initial_admin_secret() -> None:
 
 def test_installer_configures_non_reserved_tunnel_ingress() -> None:
     source = INSTALLER.read_text()
-    assert "TL_TUNNEL_PORT:=22222" in source
+    assert "TL_TUNNEL_PORT:=9022" in source
     assert "TIMELAPSE_TUNNEL_USER=${TL_TUNNEL_USER}" in source
-    assert "SFTP_PORT=22222" in source
+    assert "SFTP_PORT=9022" in source
 
 
 def test_installer_validation_is_bash_syntax_check_compatible() -> None:

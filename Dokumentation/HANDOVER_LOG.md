@@ -4,7 +4,28 @@
 > er flyttet til `HANDOVER_LOG_ARKIV_2026-06-28_til_2026-07-07.md` ved rotationen 2026-07-18
 > (godkendt af Peter, jf. Claude_QA_Review_2026-07-17.md §2.4). Fuld prærotations-kopi:
 > `Gamle versioner/HANDOVER_LOG_pre-rotation_2026-07-18.md`. Nye entries indsættes KUN under
-> `## Log` nedenfor, nyeste øverst, med `### Handover`-overskrift jf. skabelonen.
+> `## Log` nedenfor, nyeste øverst, med `### Handover 2026-10-01 — fra Claude til Peter/næste session: offentlige porte under 10000 (SFTP 22222→9022, reverse-SSH 22022→9222)
+
+- **Beslutning (Peter):** alle offentligt eksponerede TimeLapse-porte skal under TCP 10000. 2222 blev afvist, fordi `deploy/PORTS.md` reserverer den til en anden produktionsapplikation. Valg: **9222** (dedikeret reverse-SSH `timelapse_tunnel`) og **9022** (SFTP `sftp_*` og legacy-tunnel-brugeren `tunnel` på samme launchd-socket).
+- **Kortlægning (live 2026-10-01):**
+  - 22022 = `dk.froekjaer.timelapse-tunnel-sshd` med én aktiv Edge-tunnel. Koden findes **kun** i #259 (ChatGPT-sporet), ikke i main.
+  - 22222 = launchd-socket `com.openssh.sshd-2222` med `Match ... LocalPort 22222` i `/etc/ssh/sshd_config`.
+  - Ingen andre TimeLapse-porte ≥10000 eksponeres: 11434 Ollama er kun lokal. Ingen Edge-tjenester ≥10000 i koden.
+  - Edge får tunnel-endepunktet via `device_config.ssh_tunnel.primary` og SFTP-porten via setting `sftp_port` (System Administration), begge leveret over 8443.
+- **Router:** Peter har NAT for 2222, 22022, 22222, 9022 og 9222. 22022/22222 fjernes efter migreringen. 2222 bør fjernes, da intet lytter og porten er reserveret.
+- **Plan:** `Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md`. Headend lytter på gammel og ny port, Edges flyttes én ad gangen (Edge1 først), oprydning efter cirka 1 uge.
+- **Kode-PR (main):**
+  - Alle 22222-defaults → 9022: `main.py` `sftp_port`-default, installer/generator, `render_sftp_rbac_config`, hardening-conf, inject-værktøjer, UI-defaults, tests og `PORTS.md`.
+  - UI-fejl rettet: "Gem tunnel" overskrev hele `ssh_tunnel` og smed `fallback`/`extra_forwards`/`strict_host_checking`.
+  - Nyt `deploy/edge/add_known_hosts_port.sh`: tilføjer kun en `known_hosts`-linje for en ny port, hvis host-nøglen matcher den fastlåste nøgle på den gamle port. Testet: match, idempotens, mismatch (exit 2) og intet svar (exit 1).
+  - Tests: 86 grønne. tsc, lint-gate og build grønne.
+- **Fundet undervejs:**
+  - `Match ... LocalPort 22222,9022` er **ugyldigt** ("Bad Match condition", OpenSSH 10.3). Planen kopierer i stedet hver blok. Verificeret med `sshd -T`.
+  - **Den deploy-farlige standardværdi:** er `sftp_port` ikke sat eksplicit i DB, flytter kode-deployet alle Edges til 9022 før de har `known_hosts` (Edge-SFTP bruger `RejectPolicy`). Trin 0 i planen sætter den eksplicit til 22222 først.
+  - **Sikkerhedsfund:** live `sshd_config` mangler `Match User sftp_* LocalPort 22` (afvisning på admin-SSH), som hardening-profilen kræver. Skal verificeres og registreres i GRC.
+- **Ikke udført (kræver Peter/sudo):** Trin 0, H1–H3, E1–E4 og R i planen. 22022 → 9222 i #259's filer leveres som separat PR ind i #259's branch.
+
+### Handover`-overskrift jf. skabelonen.
 
 ## Medarbejdere og samarbejdspartnere
 

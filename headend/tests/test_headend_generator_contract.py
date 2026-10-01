@@ -36,7 +36,7 @@ def test_defaults_are_filled_in():
     assert spec["service_user"] == "_timelapse"
     assert spec["service_home"] == "/var/lib/timelapse"
     assert spec["tunnel_host"] == "staging.timelapse-pro.dk"
-    assert spec["tunnel_port"] == 22222
+    assert spec["tunnel_port"] == 9022
     assert spec["tunnel_user"] == "tunnel"
     assert spec["repo_dir"] == "/Users/Shared/TimeLapsePro/releases/staging"
     assert 1 <= spec["expires_hours"] <= 24 * 14
@@ -72,7 +72,7 @@ def test_conf_renders_environment_and_forbidden_port_note():
     assert "TL_BACKEND_PORT=8443" in conf
     assert "TL_SERVICE_USER=_timelapse" in conf
     assert "TL_SERVICE_HOME=/var/lib/timelapse" in conf
-    assert "TL_TUNNEL_PORT=22222" in conf
+    assert "TL_TUNNEL_PORT=9022" in conf
     assert "21/22/80/443" in conf  # coexistence warning present
 
 
@@ -132,10 +132,10 @@ def test_tunnel_rejects_reserved_ports(port):
 
 
 def test_readme_flags_manual_sftp_step():
-    """GEN-01/GEN-02: the bundle must warn that SFTP 22222 is still a manual step."""
+    """GEN-01/GEN-02: the bundle must warn that SFTP 9022 is still a manual step."""
     spec = _validate_request(_base_payload())
     readme = _render_readme(spec)
-    assert "22222" in readme
+    assert "9022" in readme
     assert "CrushFTP" in readme
     assert "bootstrap-token" in readme
 

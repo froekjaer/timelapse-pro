@@ -67,7 +67,7 @@ def render() -> tuple[str, list[dict]]:
             })
             lines.extend([
                 f"# {customer_name} / {site.name}",
-                f"Match User {user} LocalPort 22222",
+                f"Match User {user} LocalPort 9022",
                 f"    ForceCommand internal-sftp -d {site_path}",
                 "    AllowTcpForwarding no",
                 "    X11Forwarding no",
@@ -79,7 +79,7 @@ def render() -> tuple[str, list[dict]]:
             ])
         lines.extend([
             "# Default deny for undeclared TimeLapse SFTP users.",
-            "Match User sftp_* LocalPort 22222",
+            "Match User sftp_* LocalPort 9022",
             "    ForceCommand /usr/bin/false",
             "    AllowTcpForwarding no",
             "    X11Forwarding no",
