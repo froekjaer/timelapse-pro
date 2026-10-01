@@ -76,12 +76,45 @@ def test_new_headend_uses_unique_initial_admin_secret() -> None:
 
 def test_installer_configures_non_reserved_tunnel_ingress() -> None:
     source = INSTALLER.read_text()
-    assert "TL_TUNNEL_PORT:=22222" in source
+    assert "TL_TUNNEL_PORT:=9022" in source
     assert "TIMELAPSE_TUNNEL_USER=${TL_TUNNEL_USER}" in source
-    assert "SFTP_PORT=22222" in source
+    assert "SFTP_PORT=9022" in source
 
 
 def test_installer_validation_is_bash_syntax_check_compatible() -> None:
     source = INSTALLER.read_text()
     assert "<->" not in source
     assert r"=~ ^[0-9]+$" in source
+
+
+def test_installer_rejects_public_ports_at_or_above_10000():
+    source = (ROOT / "deploy/install/install_headend.sh").read_text(encoding="utf-8")
+    assert "TL_BACKEND_PORT <= 9999" in source
+    assert "TL_TUNNEL_PORT <= 9999" in source
+    assert "65535" not in source
+
+
+def test_site_page_does_not_materialise_a_default_sftp_port():
+    """A site override outranks the global sftp_port; saving an unrelated
+    site edit must not write a port the Edges cannot use yet."""
+    page = (ROOT / "timelapse-ui/src/pages/SitePage.tsx").read_text(encoding="utf-8")
+    assert "useState('9022')" not in page
+    assert "...(sftpPort.trim() ? { port: parseInt(sftpPort) } : {})" in page
+
+
+def test_sftp_rbac_covers_both_ports_during_migration():
+    """Regenerating SFTP rules mid-migration must not lock out Edges that
+    still use 22222 (Peter keeps 22022/22222 on the Headend for now)."""
+    src = (ROOT / "headend/tools/render_sftp_rbac_config.py").read_text(encoding="utf-8")
+    assert "SFTP_PORTS = (9022, 22222)" in src
+    conf = (ROOT / "deploy/ssh/timelapse-sshd-sftp.conf").read_text(encoding="utf-8")
+    assert "Match User sftp_* LocalPort 9022" in conf
+    assert "Match User sftp_* LocalPort 22222" in conf
+
+
+def test_installer_tolerates_persisted_transitional_tunnel_port():
+    """Headend conf files generated before 2026-10 persist TL_TUNNEL_PORT=22222;
+    the installer warns instead of aborting until plan step R."""
+    source = (ROOT / "deploy/install/install_headend.sh").read_text(encoding="utf-8")
+    assert 'if [[ "$TL_TUNNEL_PORT" == 22222 ]]; then' in source
+    assert "plantrin R" in source

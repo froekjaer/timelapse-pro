@@ -48,7 +48,7 @@ export function HeadendGeneratorTab() {
   const [serviceUser, setServiceUser] = useState('_timelapse')
   const [serviceHome, setServiceHome] = useState('/var/lib/timelapse')
   const [tunnelHost, setTunnelHost] = useState('staging.timelapse-pro.dk')
-  const [tunnelPort, setTunnelPort] = useState('22222')
+  const [tunnelPort, setTunnelPort] = useState('9022')
   const [tunnelUser, setTunnelUser] = useState('tunnel')
   const [releaseTag, setReleaseTag] = useState('')
   const [expectedCommit, setExpectedCommit] = useState('')

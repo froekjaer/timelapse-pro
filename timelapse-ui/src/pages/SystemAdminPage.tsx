@@ -472,7 +472,11 @@ export function SystemAdminPage() {
     const data = await res.json()
     const existing = data.device?.device_config ?? {}
     const cfg = typeof existing === 'string' ? JSON.parse(existing) : existing
+    // Keep fields this form doesn't show (fallback, extra_forwards,
+    // strict_host_checking, ...) — overwriting the whole object silently
+    // dropped them (found during the 9222/9022 port move, 2026-10-01).
     cfg.ssh_tunnel = {
+      ...(cfg.ssh_tunnel ?? {}),
       enabled: tunnelEnabled,
       primary: tunnelPrimary,
       remote_port: parseInt(tunnelRemotePort),
@@ -818,8 +822,8 @@ export function SystemAdminPage() {
           tooltip="IP adresse eller hostname på kundens SFTP server. Kan være local IP (NAS) eller public hostname. Port specificeres separat. Mål være reachable fra headend. DNS issues kan forsinke upload.">
           <Txt value={settings.sftp_host ?? ''} onChange={v => setSettings(s => ({...s, sftp_host: v}))} mono />
         </Field>
-        <Field label="SFTP port" description="Port nummer (standard 22, TimeLapse Pro lab/prod 22222)"
-          tooltip="SFTP port nummer. Standard er 22 for SFTP. TimeLapse Pro lab/prod bruger 22222 for sikkerhed. Skal matche server konfiguration. Forkert port giver connection timeout.">
+        <Field label="SFTP port" description="Port nummer (standard 22, TimeLapse Pro lab/prod 9022)"
+          tooltip="SFTP port nummer. Standard er 22 for SFTP. TimeLapse Pro lab/prod bruger 9022 for sikkerhed. Skal matche server konfiguration. Forkert port giver connection timeout.">
           <Txt value={settings.sftp_port ?? ''} onChange={v => setSettings(s => ({...s, sftp_port: v}))} mono />
         </Field>
         <Field label="SFTP brugernavn"
