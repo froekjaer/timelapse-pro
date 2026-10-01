@@ -23,7 +23,7 @@
   - `Match ... LocalPort 22222,9022` er **ugyldigt** ("Bad Match condition", OpenSSH 10.3). Planen kopierer i stedet hver blok. Verificeret med `sshd -T`.
   - **Den deploy-farlige standardværdi:** er `sftp_port` ikke sat eksplicit i DB, flytter kode-deployet alle Edges til 9022 før de har `known_hosts` (Edge-SFTP bruger `RejectPolicy`). Trin 0 i planen sætter den eksplicit til 22222 først.
   - **Sikkerhedsfund:** live `sshd_config` mangler `Match User sftp_* LocalPort 22` (afvisning på admin-SSH), som hardening-profilen kræver. Skal verificeres og registreres i GRC.
-- **Ikke udført (kræver Peter/sudo):** Trin 0, H1–H3, E1–E4 og R i planen. 22022 → 9222 i #259's filer leveres som separat PR ind i #259's branch.
+- **Ikke udført (kræver Peter/sudo):** Trin 0, H1–H3, E1–E4 og R i planen. 22022 → 9222 i #259's filer er PR #268 (ind i #259's branch). Kode-PR i main: #267.
 
 ### Handover`-overskrift jf. skabelonen.
 
