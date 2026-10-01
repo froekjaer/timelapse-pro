@@ -952,7 +952,7 @@ def _inject_via_docker(
     device_ssh_privkey: str = "",
     ssh_tunnel_port: int = 0,
     tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
-    tunnel_headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222")),
+    tunnel_headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "9022")),
     tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel"),
     interactive_shell_enabled: bool = False,
     bt_totp_secret: str = "",
@@ -1141,7 +1141,7 @@ def inject_edge_image(
     device_ssh_privkey: str = "",
     ssh_tunnel_port: int = 0,
     tunnel_headend_host: str = os.getenv("TIMELAPSE_TUNNEL_HOST", ""),
-    tunnel_headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "22222")),
+    tunnel_headend_port: int = int(os.getenv("TIMELAPSE_TUNNEL_PORT", "9022")),
     tunnel_headend_user: str = os.getenv("TIMELAPSE_TUNNEL_USER", "tunnel"),
     interactive_shell_enabled: bool = False,
     bt_totp_secret: str = "",
@@ -1172,7 +1172,7 @@ def inject_edge_image(
         device_ssh_privkey:   Device Ed25519 private key (PEM) → /etc/timelapse/device_keys/id_ed25519
         ssh_tunnel_port:      Remote port til reverse SSH tunnel (fx 2202)
         tunnel_headend_host:  Headend hostname til tunnel (default: TIMELAPSE_TUNNEL_HOST)
-        tunnel_headend_port:  Dedikeret Headend SSH port (default: 22222)
+        tunnel_headend_port:  Dedikeret Headend SSH port (default: 9022)
         tunnel_headend_user:  Headend SSH bruger (default: TIMELAPSE_TUNNEL_USER)
 
     Returnerer dict med stier, sha256, manifest etc.

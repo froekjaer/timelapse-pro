@@ -63,7 +63,7 @@ Konfigurationsfilen skal sætte som minimum:
   TL_SERVICE_GROUP=_timelapse
   TL_SERVICE_HOME=/var/lib/timelapse
   TL_TUNNEL_HOST=backend.timelapse-pro.dk
-  TL_TUNNEL_PORT=22222
+  TL_TUNNEL_PORT=9022
   TL_TUNNEL_USER=tunnel
 
 TL_BACKEND_PORT: staging- og prod-maskinerne kører allerede CrushFTP på 21/22/80/443
@@ -103,7 +103,7 @@ source "$CONFIG_FILE"
 : "${TL_SERVICE_HOME:=/var/lib/timelapse}"
 : "${TL_POSTGRES_ADMIN_USER:=${SUDO_USER:-}}"
 : "${TL_TUNNEL_HOST:=$TL_DOMAIN_BACKEND}"
-: "${TL_TUNNEL_PORT:=22222}"
+: "${TL_TUNNEL_PORT:=9022}"
 : "${TL_TUNNEL_USER:=tunnel}"
 
 if [[ "$TL_BACKEND_PORT" =~ ^(21|22|80|443)$ ]]; then
@@ -115,8 +115,8 @@ case "$TL_ENV" in
   *) die "TL_ENV skal være rd, staging eller prod — fik: '$TL_ENV'" ;;
 esac
 
-[[ "$TL_BACKEND_PORT" =~ ^[0-9]+$ ]] && (( TL_BACKEND_PORT >= 1024 && TL_BACKEND_PORT <= 65535 )) \
-  || die "TL_BACKEND_PORT skal være et heltal mellem 1024 og 65535"
+[[ "$TL_BACKEND_PORT" =~ ^[0-9]+$ ]] && (( TL_BACKEND_PORT >= 1024 && TL_BACKEND_PORT <= 9999 )) \
+  || die "TL_BACKEND_PORT skal være et heltal mellem 1024 og 9999 (offentlige porte under 10000, PORTS.md)"
 [[ "$TL_DOMAIN_BACKEND" =~ ^[A-Za-z0-9.-]+$ && "$TL_DOMAIN_BACKEND" == *.* ]] \
   || die "TL_DOMAIN_BACKEND er ugyldigt"
 [[ "$TL_SERVICE_USER" =~ ^_?[a-z][a-z0-9_-]{0,30}$ ]] \
@@ -127,8 +127,17 @@ esac
   || die "TL_TUNNEL_HOST er ugyldigt"
 [[ "$TL_TUNNEL_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]{0,31}$ ]] \
   || die "TL_TUNNEL_USER er ugyldig"
-[[ "$TL_TUNNEL_PORT" =~ ^[0-9]+$ ]] && (( TL_TUNNEL_PORT >= 1024 && TL_TUNNEL_PORT <= 65535 )) \
-  || die "TL_TUNNEL_PORT skal være et heltal mellem 1024 og 65535"
+# Transitional (2026-10 port move): conf files generated before the move
+# persist TL_TUNNEL_PORT=22222. Accept it with a warning so the normal apply
+# flow keeps working while the Headend listens on both 22222 and 9022; the
+# exception is removed at plan step R
+# (Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md).
+if [[ "$TL_TUNNEL_PORT" == 22222 ]]; then
+  printf '[install] ADVARSEL: TL_TUNNEL_PORT=22222 er en udfaset port (offentlige porte skal under 10000). Ret den genererede conf til 9022 — accepteres kun indtil plantrin R.\n' >&2
+else
+  [[ "$TL_TUNNEL_PORT" =~ ^[0-9]+$ ]] && (( TL_TUNNEL_PORT >= 1024 && TL_TUNNEL_PORT <= 9999 )) \
+    || die "TL_TUNNEL_PORT skal være et heltal mellem 1024 og 9999 (offentlige porte under 10000, PORTS.md)"
+fi
 [[ "$TL_TUNNEL_PORT" != 21 && "$TL_TUNNEL_PORT" != 22 && "$TL_TUNNEL_PORT" != 80 \
    && "$TL_TUNNEL_PORT" != 443 && "$TL_TUNNEL_PORT" != 8080 ]] \
   || die "TL_TUNNEL_PORT bruger en reserveret port"
@@ -292,7 +301,7 @@ JWT_SECRET=${JWT_SECRET_VALUE}
 TIMELAPSE_INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD_VALUE}
 DATABASE_URL=postgresql://${TL_DB_USER}@localhost/${TL_DB_NAME}
 SFTP_BASE=${TL_DATA_DIR}
-SFTP_PORT=22222
+SFTP_PORT=9022
 BASE_URL=${BASE_URL}
 EDGE_PUBLIC_HEADEND_URL=${BASE_URL}/api
 TIMELAPSE_TUNNEL_HOST=${TL_TUNNEL_HOST}

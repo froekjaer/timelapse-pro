@@ -2,7 +2,7 @@
 
 **Version:** v1.1 · 2026-07-24 · **Forfattere:** Claude/Codex · **Status:** Headend-generator, release trust, least-privilege installation og dry-run er QA-testet. SFTP-listener/per-site RBAC i fase 2b er fortsat en eksplicit go-live-blokering.
 **Målgruppe:** Peter alene — ingen agent (Claude/Codex) må have adgang til staging/prod (`MILJOE_ARKITEKTUR_RD_STAGING_PROD_v1.md` §5).
-**Princip:** Headenden installeres **oven på et kørende macOS-miljø** og skal **sameksistere med CrushFTP**, som ejer 21/22/80/443. TimeLapse rører ALDRIG disse porte. Alt TimeLapse kører på 8443 (UI/API), 22222 (SFTP-ingress), 8000/8080 (loopback), 5514 (valgfri syslog).
+**Princip:** Headenden installeres **oven på et kørende macOS-miljø** og skal **sameksistere med CrushFTP**, som ejer 21/22/80/443. TimeLapse rører ALDRIG disse porte. Alt TimeLapse kører på 8443 (UI/API), 9022 (SFTP-ingress), 8000/8080 (loopback), 5514 (valgfri syslog).
 **Relaterede dokumenter:** `HEADEND_GENERATOR_v1.md` (design), `INSTALLATION_GUIDE_HEADEND_v1.md` (detaljer pr. trin), `deploy/PORTS.md` (portpolitik), `STAGING_TIL_PROD_PROMOTION_v1.md` (promotion).
 
 ---
@@ -13,7 +13,7 @@
  Fase 0  PREFLIGHT   læs-only: er værten klar? er 8443 fri? (evidens-JSON)
  Fase 1  STAGE       vælg SIGNERET release/SHA i UI, hent, GPG-verify, dry-run
  Fase 2  APPLY       installér (venv, DB, UI, nginx:8443, launchd) + DNS-01-cert
- Fase 2b SFTP        ⚠️ MANUELT trin i dag: dedikeret sshd på 22222 + sftp-settings
+ Fase 2b SFTP        ⚠️ MANUELT trin i dag: dedikeret sshd på 9022 + sftp-settings
  Fase 3  ENROLL      node-agent → self-register i CMDB, fail-closed
  Efterspil           første login (MFA), verifikation, backup
 ```
@@ -133,14 +133,16 @@ login og password-skift FØR offentlig DNS/firewall åbnes. Test lokalt via
 5. Fjern `TIMELAPSE_INITIAL_ADMIN_PASSWORD` fra env-filen og genstart Headend
 6. Opret evt. øvrige brugere/roller via UI'en
 
-## 7. Fase 2b — SFTP-ingress på 22222 (⚠️ MANUELT trin i dag — GEN-01/GEN-02)
+## 7. Fase 2b — SFTP-ingress på 9022 (⚠️ MANUELT trin i dag — GEN-01/GEN-02)
+
+> **2026-10-01:** SFTP-porten er flyttet fra 22222 til **9022**, fordi alle offentlige TimeLapse-porte skal under 10000 (`deploy/PORTS.md`). Den dedikerede reverse-SSH-ingress ligger på **9222**. Eksisterende installationer migreres efter `Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md`. Plist-filnavnet `ssh-2222.plist` er bevaret af historiske grunde.
 
 Uden dette trin kan headenden ikke modtage SFTP-uploads fra edges.
-Kode-, generator- og installer-defaulten er nu **22222**, aldrig 22, men en
+Kode-, generator- og installer-defaulten er nu **9022**, aldrig 22, men en
 default åbner ikke en listener eller opretter per-site RBAC. Gør følgende:
 
-**a) Dedikeret sshd-socket på 22222** (launchd; rører IKKE system-SSH/CrushFTP på 22):
-Opret `/Library/LaunchDaemons/ssh-2222.plist` med `Sockets → Listeners → SockServiceName = 22222` der starter `/usr/sbin/sshd -i` (samme mønster som R&D — filnavnet er historisk, porten er 22222). `sudo launchctl bootstrap system /Library/LaunchDaemons/ssh-2222.plist`.
+**a) Dedikeret sshd-socket på 9022** (launchd; rører IKKE system-SSH/CrushFTP på 22):
+Opret `/Library/LaunchDaemons/ssh-2222.plist` med `Sockets → Listeners → SockServiceName = 9022` der starter `/usr/sbin/sshd -i` (samme mønster som R&D — filnavnet er historisk, porten er 9022). `sudo launchctl bootstrap system /Library/LaunchDaemons/ssh-2222.plist`.
 
 **b) Hardening-profil:**
 
@@ -148,7 +150,7 @@ Opret `/Library/LaunchDaemons/ssh-2222.plist` med `Sockets → Listeners → Soc
 sudo bash ~/tl-staging-release/deploy/ssh/apply_timelapse_sftp_hardening.sh
 ```
 
-Den indsætter `deploy/ssh/timelapse-sshd-sftp.conf`-blokken: `sftp_*`-brugere afvises hårdt på 22 og 2222 og er default-deny på 22222 indtil per-site-allowregler genereres.
+Den indsætter `deploy/ssh/timelapse-sshd-sftp.conf`-blokken: `sftp_*`-brugere afvises hårdt på 22 og 2222 og er default-deny på 9022 indtil per-site-allowregler genereres.
 
 **c) Per-site RBAC-regler** (efter kunder/sites er oprettet i DB):
 
@@ -159,7 +161,7 @@ sudo /usr/sbin/sshd -t && sudo launchctl kickstart -k system/ssh-2222  # (label 
 ```
 
 **d) Verificér settings i headend-DB'en:** `sftp_host=<backend-domæne>`,
-**`sftp_port=22222`**, `sftp_remote_base=<TL_DATA_DIR>`. Installeren sætter
+**`sftp_port=9022`**, `sftp_remote_base=<TL_DATA_DIR>`. Installeren sætter
 miljø-defaulten, men config-preview på en rigtig Edge er acceptkriteriet.
 
 **e) Opret ingen SFTP-brugere efter v10-guidens §12-opskrift** — den beskriver den udfasede chroot/port-22-model (GEN-05).
@@ -186,8 +188,8 @@ sudo deploy/install/enroll_headend_cmdb.sh \
 curl -sk https://<domæne>:8443/api/health                          # 200 + ok
 curl -skI https://<domæne>:8443/                                   # UI, HSTS-header
 sudo lsof -nP -iTCP -sTCP:LISTEN | grep -E "(:21|:22|:80|:443)\b"  # KUN CrushFTP/system — intet TimeLapse
-sudo lsof -nP -iTCP -sTCP:LISTEN | grep -E ":8443|:22222|:8000"    # nginx, sshd-socket, uvicorn(loopback)
-sftp -P 22222 sftp_<site>@<domæne>                                 # efter §7c: virker KUN på 22222
+sudo lsof -nP -iTCP -sTCP:LISTEN | grep -E ":8443|:9022|:8000"    # nginx, sshd-socket, uvicorn(loopback)
+sftp -P 9022 sftp_<site>@<domæne>                                 # efter §7c: virker KUN på 9022
 sftp -P 22 sftp_<site>@<domæne>                                    # SKAL afvises (hardening §7b)
 curl -sk https://127.0.0.1:8443/api/cmdb/ | grep TL-HEADEND        # enrolled
 ```

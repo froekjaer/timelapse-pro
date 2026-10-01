@@ -182,6 +182,20 @@ def _validate_release_selection(spec: dict, releases: list[dict] | None = None) 
     return spec
 
 
+# Peter 2026-10-01: every port TimeLapse exposes publicly must be below 10000.
+_MAX_PUBLIC_PORT = 9999
+
+
+def _public_port(value, field: str) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} skal være et heltal")
+    if port in _FORBIDDEN_PORTS or not (1024 <= port <= _MAX_PUBLIC_PORT):
+        raise ValueError(f"{field} skal være 1024-{_MAX_PUBLIC_PORT} og ikke en forbudt port (PORTS.md)")
+    return port
+
+
 def _validate_request(payload: dict) -> dict:
     """Ren valideringshjælper — testbar uden DB/FastAPI."""
     environment = str(payload.get("environment") or "").strip().lower()
@@ -196,8 +210,8 @@ def _validate_request(payload: dict) -> dict:
         raise ValueError("backend_port skal være et heltal")
     if backend_port in _FORBIDDEN_PORTS:
         raise ValueError(f"Port {backend_port} er forbudt — CrushFTP ejer 21/22/80/443 (PORTS.md)")
-    if not (1024 <= backend_port <= 65535):
-        raise ValueError("backend_port skal være 1024-65535")
+    if not (1024 <= backend_port <= _MAX_PUBLIC_PORT):
+        raise ValueError(f"backend_port skal være 1024-{_MAX_PUBLIC_PORT} (offentlige porte under 10000, PORTS.md)")
     device_id = str(payload.get("device_id") or "").strip() or f"TL-HEADEND-{environment.upper()}-1"
     if not _DEVICE_ID_RE.fullmatch(device_id):
         raise ValueError("device_id skal starte med 'TL-' og kun indeholde bogstaver, tal, punktum, _ og -")
@@ -217,7 +231,7 @@ def _validate_request(payload: dict) -> dict:
         "service_group": str(payload.get("service_group") or "_timelapse").strip(),
         "service_home": str(payload.get("service_home") or "/var/lib/timelapse").strip(),
         "tunnel_host": str(payload.get("tunnel_host") or domain).strip().lower(),
-        "tunnel_port": int(payload.get("tunnel_port") or 22222),
+        "tunnel_port": _public_port(payload.get("tunnel_port") or 9022, "tunnel_port"),
         "tunnel_user": str(payload.get("tunnel_user") or "tunnel").strip(),
         "db_name": str(payload.get("db_name") or "timelapse_db").strip(),
         "db_user": str(payload.get("db_user") or "timelapse").strip(),
@@ -300,7 +314,7 @@ Fuld manual: Dokumentation/INSTALLATIONSMANUAL_HEADEND_GENERATOR_v1.md (i releas
 
 ## Sameksistens med CrushFTP (ufravigeligt)
 CrushFTP ejer 21/22/80/443 på målmaskinen. Alt TimeLapse kører på port {spec['backend_port']}
-(UI/API), 22222 (SFTP-ingress) og loopback. Preflight NÆGTER at fortsætte hvis
+(UI/API), 9022 (SFTP-ingress) og loopback. Preflight NÆGTER at fortsætte hvis
 port {spec['backend_port']} er optaget, og installeren afviser 21/22/80/443 hårdt.
 Certifikat udstedes via DNS-01 og rører ingen port.
 
@@ -319,8 +333,8 @@ denne pakke.
 1. DNS-01-certifikat (certbot-dns-cloudflare) + genkør apply for fuldt SSL.
 2. FØRSTE LOGIN med installerens unikke initiale adgangskode → MFA + nyt
    password FØR offentlig eksponering. `admin/changeme` er forbudt i staging/prod.
-3. SFTP-ingress på 22222 (Fase 2b — GEN-01/GEN-02): dedikeret sshd-socket,
-   hardening-profil, per-site RBAC-regler OG DB-settings `sftp_port=22222`.
+3. SFTP-ingress på 9022 (Fase 2b — GEN-01/GEN-02): dedikeret sshd-socket,
+   hardening-profil, per-site RBAC-regler OG DB-settings `sftp_port=9022`.
    Uden dette trin peger edge-upload-fallback på port 22 = CrushFTP!
 4. Backup: sæt eksplicit skrivbar BACKUP_BASE (R09) + restore-test.
 """
@@ -385,7 +399,7 @@ def prepare_headend(payload: dict, user=Depends(_require_platform_admin), db: Se
         "commands": _render_commands(spec),
         "manual": "Dokumentation/INSTALLATIONSMANUAL_HEADEND_GENERATOR_v1.md",
         "warnings": [
-            "Fase 2b (SFTP 22222) er et manuelt trin — se README/manual §7 (GEN-01/GEN-02).",
+            "Fase 2b (SFTP 9022) er et manuelt trin — se README/manual §7 (GEN-01/GEN-02).",
             "Gennemfør første login FØR offentlig eksponering (GEN-07).",
         ],
     }

@@ -3709,7 +3709,7 @@ def get_config(device_id: str, _auth: None = Depends(_verify_device_token), db: 
         "sftp": {
             "enabled":     sftp_enabled,
             "host":        sftp_host,
-            "port":        int(_get_setting(db, "sftp_port", os.getenv("SFTP_PORT", "22222"))),
+            "port":        int(_get_setting(db, "sftp_port", os.getenv("SFTP_PORT", "9022"))),
             "username":    sftp_user,
             "password":    sftp_password,
             "key_file":    "",

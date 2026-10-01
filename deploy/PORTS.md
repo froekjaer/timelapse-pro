@@ -2,6 +2,9 @@
 
 ## Production intent
 
+Every port TimeLapse exposes publicly must be below TCP 10000 (Peter, 2026-10-01).
+Migration: `Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md`.
+
 TimeLapse Pro must not assume ownership of ports that are commonly already used
 on a production headend.
 
@@ -11,7 +14,11 @@ on a production headend.
 | 80 | Not TimeLapse directly | Existing public web entrypoint / ACME HTTP-01 / redirect layer |
 | 443 | Not TimeLapse directly | Existing public HTTPS entrypoint with hostname routing |
 | 2222 | Not TimeLapse | Reserved for other production application use |
-| 22222 | TimeLapse inbound | Dedicated SFTP upload from Edge to Headend |
+| 8443 | TimeLapse inbound | Headend API/UI via nginx (`backend.timelapse-pro.dk:8443`) |
+| 9022 | TimeLapse inbound | Dedicated SFTP upload from Edge to Headend (was 22222 until 2026-10) |
+| 22222 | TimeLapse inbound — **transitional** | Same SFTP launchd socket as 9022 (+ legacy `tunnel` user), kept (listener + router NAT) until every Edge uses 9022; removed at plan step R |
+| 9222 | TimeLapse inbound | Dedicated reverse-SSH ingress for Edge tunnels, `timelapse_tunnel` service identity (was 22022 until 2026-10) |
+| 22022 | TimeLapse inbound — **transitional** | Same dedicated tunnel sshd as 9222, kept (sshd + router NAT) until every Edge is cut over; removed at plan step R |
 | 5514 | TimeLapse internal/lab | Optional local SIEM syslog receiver (UDP/TCP). Production external logs should normally arrive via Edge/site collector API forwarding. |
 | 8000 | Loopback/internal | Headend FastAPI service behind reverse proxy |
 | 8080 | Loopback/internal or changed | Open WebUI only behind authenticated TimeLapse/reverse proxy |
@@ -21,7 +28,7 @@ on a production headend.
 - Edge devices initiate all normal communication to Headend.
 - Headend must not require direct inbound access to Edge except during explicit
   manual debug via SSH tunnel.
-- `sftp_*` site upload users are only valid on TCP/22222.
+- `sftp_*` site upload users are only valid on TCP/9022 (and transitional 22222 until plan step R).
 - `sftp_*` users must not be allowed to authenticate on TCP/22 or TCP/2222.
 - Customer/site data isolation is enforced by separate site SFTP users and by
   application-level RBAC for search, thumbnails, tags, AI/Ollama, CMDB and SIEM.
