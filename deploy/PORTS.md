@@ -16,6 +16,7 @@ on a production headend.
 | 2222 | Not TimeLapse | Reserved for other production application use |
 | 8443 | TimeLapse inbound | Headend API/UI via nginx (`backend.timelapse-pro.dk:8443`) |
 | 9022 | TimeLapse inbound | Dedicated SFTP upload from Edge to Headend (was 22222 until 2026-10) |
+| 22222 | TimeLapse inbound — **transitional** | Same SFTP launchd socket as 9022 (+ legacy `tunnel` user), kept (listener + router NAT) until every Edge uses 9022; removed at plan step R |
 | 9222 | TimeLapse inbound | Dedicated reverse-SSH ingress for Edge tunnels, `timelapse_tunnel` service identity (was 22022 until 2026-10) |
 | 5514 | TimeLapse internal/lab | Optional local SIEM syslog receiver (UDP/TCP). Production external logs should normally arrive via Edge/site collector API forwarding. |
 | 8000 | Loopback/internal | Headend FastAPI service behind reverse proxy |
