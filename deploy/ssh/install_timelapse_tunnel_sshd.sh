@@ -137,10 +137,18 @@ cleanup_preflight
 trap - EXIT
 log "  syntax OK"
 
-if lsof -nP -iTCP:"$TUNNEL_PORT" -sTCP:LISTEN >/dev/null 2>&1 && \
-   ! launchctl print "system/${LABEL}" >/dev/null 2>&1; then
-    die "TCP/${TUNNEL_PORT} is already in use by something that is NOT ${LABEL}"
-fi
+# Every port the repo config will bind (9222, plus 22022 during the 2026-10
+# migration) must be free or owned by THIS service's own sshd — proven by pid,
+# not merely "the label is loaded" — before the running instance is booted out.
+TUNNEL_PORTS=($(awk '$1=="Port"{print $2}' "$CONF_SRC"))
+[[ ${#TUNNEL_PORTS[@]} -gt 0 ]] || die "no Port lines in ${CONF_SRC}"
+SERVICE_PID="$(launchctl print "system/${LABEL}" 2>/dev/null | awk '$1=="pid"{print $3; exit}')"
+for p in "${TUNNEL_PORTS[@]}"; do
+    pids="$(lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | sort -u | paste -sd, -)"
+    [[ -z "$pids" ]] && continue
+    [[ -n "$SERVICE_PID" && "$pids" == "$SERVICE_PID" ]] || \
+        die "TCP/${p} is in use by pid ${pids}, which is NOT ${LABEL} (service pid: ${SERVICE_PID:-not running}) — refusing before touching the running service"
+done
 
 # ═══════════════════ MUTATIONS BEGIN HERE (root only) ══════════════════════
 if ! dscl . -read "/Users/${USER_NAME}" >/dev/null 2>&1; then
@@ -195,10 +203,14 @@ sleep 2
 
 post_fail() { report_runtime_state; die "$* (service may remain installed/running; remove with: sudo ${SCRIPT_PATH} --uninstall)"; }
 
-lsof -nP -iTCP:"$TUNNEL_PORT" -sTCP:LISTEN >/dev/null 2>&1 || post_fail "no listener on ${TUNNEL_PORT} after activation"
-LISTEN_OWNER="$(lsof -nP -iTCP:"$TUNNEL_PORT" -sTCP:LISTEN | tail -1 | awk '{print $1}')"
-[[ "$LISTEN_OWNER" == sshd ]] || post_fail "listener on ${TUNNEL_PORT} is '${LISTEN_OWNER}', expected sshd"
-log "listener ${TUNNEL_PORT}: dedicated sshd ✓"
+NEW_PID="$(launchctl print "system/${LABEL}" 2>/dev/null | awk '$1=="pid"{print $3; exit}')"
+[[ -n "$NEW_PID" ]] || post_fail "${LABEL} has no pid after activation"
+for p in "${TUNNEL_PORTS[@]}"; do
+    pids="$(lsof -nP -t -iTCP:"$p" -sTCP:LISTEN 2>/dev/null | sort -u | paste -sd, -)"
+    [[ -n "$pids" ]] || post_fail "no listener on ${p} after activation"
+    [[ "$pids" == "$NEW_PID" ]] || post_fail "listener on ${p} is pid ${pids}, expected ${LABEL} pid ${NEW_PID}"
+    log "listener ${p}: dedicated sshd (pid ${NEW_PID}) ✓"
+done
 
 for p in 8443 22222; do
     lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && log "regression: :$p still listening ✓" || post_fail ":$p stopped listening — REGRESSION"

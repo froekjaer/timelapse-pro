@@ -4,7 +4,21 @@
 > er flyttet til `HANDOVER_LOG_ARKIV_2026-06-28_til_2026-07-07.md` ved rotationen 2026-07-18
 > (godkendt af Peter, jf. Claude_QA_Review_2026-07-17.md §2.4). Fuld prærotations-kopi:
 > `Gamle versioner/HANDOVER_LOG_pre-rotation_2026-07-18.md`. Nye entries indsættes KUN under
-> `## Log` nedenfor, nyeste øverst, med `### Handover`-overskrift jf. skabelonen.
+> `## Log` nedenfor, nyeste øverst, med `### Handover 2026-10-01 — fra Claude til ChatGPT-sporet (#259)/Peter: dedikeret reverse-SSH-ingress flyttes 22022 → 9222
+
+- **Beslutning (Peter, 2026-10-01):** alle offentlige TimeLapse-porte skal under TCP 10000. Den dedikerede `timelapse_tunnel`-ingress flytter til **9222**. SFTP flytter 22222 → 9022 i main (#267). Plan: `Dokumentation/PORT_OMLAEGNING_9022_9222_2026-10-01.md` (samme fil som i #267).
+- **Leveret til dette spor som PR #268 (base = denne branch):**
+  - `timelapse-tunnel-sshd.conf`: `Port 9222` + `Port 22022` (midlertidig).
+  - Installer: `TUNNEL_PORT=9222`. Preflight kontrollerer nu pr. pid, at alle konfigurerede porte er frie eller ejet af denne tjeneste, før den kørende instans røres (Codex-review). Post-check kræver samme pid på alle porte.
+  - `PORTS.md`, kommentar i `authorized_keys`-skabelonen og ny test.
+- **Live-status 2026-10-01 (udført af Peter, verificeret af Claude):**
+  - Tunnel-sshd (pid 367) lytter på **både 22022 og 9222** efter `kill -HUP`, med samme dedikerede host-nøgle `SHA256:TwExDmMYpnXX+qK/ZrLwpN2rb8bQiP/FLHKOkfTdbP4`.
+  - Den eksisterende Edge-tunnel på 22022 overlevede.
+  - Router-NAT for 9222 er sat. `tunnel.timelapse-pro.dk:9222` giver den rigtige nøgle via NAT.
+- **Ikke udført endnu:** Edge-cutover til 9222 (plan E1–E3: først `known_hosts` via `deploy/edge/add_known_hosts_port.sh`, derefter `ssh_tunnel.primary` i System Administration). 22022 er fortsat den aktive ingress, indtil alle Edges er flyttet. Oprydning sker i plantrin R.
+- **Åben beslutning for dette spor:** nye Edge-images provisioneres stadig til legacy-stien (`tunnel` på admin-socket'en), ikke `timelapse_tunnel@…:9222`.
+
+### Handover`-overskrift jf. skabelonen.
 
 ## Medarbejdere og samarbejdspartnere
 
