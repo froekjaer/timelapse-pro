@@ -16,7 +16,7 @@
 - **Understøttet hardware:** OrangePi 4 Pro (primær), OrangePi PC Plus og
   RPi 4 har pinned base-archive. RPi 5 vises som blokeret, indtil checksum er
   registreret. Jetson Orin Nano bruger det separate offline-spor.
-- Ved ny staging/prod-headend: gennemfør headend-manualens §7 (SFTP 22222 +
+- Ved ny staging/prod-headend: gennemfør headend-manualens §7 (SFTP 9022 +
   settings) FØRST. Port 22 er afvist i generatoren.
 
 ## 2. Trin 1 — Klargør provisionering på headenden (fælles)
@@ -112,7 +112,7 @@ med `--no-index` fra wheelhouse. Mangler et input, stopper installationen.
 |---|---|
 | Enheden dukker aldrig op i Enheder | Token udløbet/allerede brugt (engangslogik) — klargør ny; eller enheden kan ikke nå headend-URL'en (test `curl <headend-url>/health` fra nettet enheden står på) |
 | `401 Ugyldigt bootstrap token` | Tokenet er revokeret (ny klargøring for samme lokation revokerer åbne tokens) — brug det NYESTE |
-| Enrollment ok, men ingen billeder | Kamera-USB, eller upload-vej: tjek at `sftp.port` i enhedens config er 22222 og API-upload svarer (⚠️ GEN-02) |
+| Enrollment ok, men ingen billeder | Kamera-USB, eller upload-vej: tjek at `sftp.port` i enhedens config er 9022 og API-upload svarer (⚠️ GEN-02) |
 | Build fejler straks | Docker Desktop kører ikke på headend-maskinen |
 | Target vises blokeret | Base-image mangler en valideret SHA-256; registrér aldrig en rolling/latest-fil uden pin |
 | Jetson stopper ved wheelhouse | Offline wheelhouse er ikke komplet for JetPack/arm64; byg og test det i lab |

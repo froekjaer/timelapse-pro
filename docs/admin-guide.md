@@ -386,7 +386,7 @@ Site-konfiguration giver mulighed for at styre indstillinger på tværs af alle 
 | `sftp.username` | text | - | Brugernavn til SFTP server hvor edge-enheder uploader billeder. Unik pr. site. Autogenereres typisk. |
 | `sftp.password` | password | - | Password til SFTP auth. Gemmes sikkert og deles med edge-enheder. bør være stærkt og unikt. |
 | `sftp.remote_base` | text | - | Sti på SFTP server hvor billeder gemmes. Typisk /Users/Shared/timelapse/incoming/[site]. Skal eksistere på server. |
-| `sftp.port` | number | 22222 | SFTP server port. Standard 22222 for sikker SFTP. Skal matche server config. |
+| `sftp.port` | number | 9022 | SFTP server port. Standard 9022 for sikker SFTP. Skal matche server config. |
 
 ### GPS og Lokation
 

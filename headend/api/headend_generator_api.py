@@ -182,6 +182,20 @@ def _validate_release_selection(spec: dict, releases: list[dict] | None = None) 
     return spec
 
 
+# Peter 2026-10-01: every port TimeLapse exposes publicly must be below 10000.
+_MAX_PUBLIC_PORT = 9999
+
+
+def _public_port(value, field: str) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} skal være et heltal")
+    if port in _FORBIDDEN_PORTS or not (1024 <= port <= _MAX_PUBLIC_PORT):
+        raise ValueError(f"{field} skal være 1024-{_MAX_PUBLIC_PORT} og ikke en forbudt port (PORTS.md)")
+    return port
+
+
 def _validate_request(payload: dict) -> dict:
     """Ren valideringshjælper — testbar uden DB/FastAPI."""
     environment = str(payload.get("environment") or "").strip().lower()
@@ -196,8 +210,8 @@ def _validate_request(payload: dict) -> dict:
         raise ValueError("backend_port skal være et heltal")
     if backend_port in _FORBIDDEN_PORTS:
         raise ValueError(f"Port {backend_port} er forbudt — CrushFTP ejer 21/22/80/443 (PORTS.md)")
-    if not (1024 <= backend_port <= 65535):
-        raise ValueError("backend_port skal være 1024-65535")
+    if not (1024 <= backend_port <= _MAX_PUBLIC_PORT):
+        raise ValueError(f"backend_port skal være 1024-{_MAX_PUBLIC_PORT} (offentlige porte under 10000, PORTS.md)")
     device_id = str(payload.get("device_id") or "").strip() or f"TL-HEADEND-{environment.upper()}-1"
     if not _DEVICE_ID_RE.fullmatch(device_id):
         raise ValueError("device_id skal starte med 'TL-' og kun indeholde bogstaver, tal, punktum, _ og -")
@@ -217,7 +231,7 @@ def _validate_request(payload: dict) -> dict:
         "service_group": str(payload.get("service_group") or "_timelapse").strip(),
         "service_home": str(payload.get("service_home") or "/var/lib/timelapse").strip(),
         "tunnel_host": str(payload.get("tunnel_host") or domain).strip().lower(),
-        "tunnel_port": int(payload.get("tunnel_port") or 9022),
+        "tunnel_port": _public_port(payload.get("tunnel_port") or 9022, "tunnel_port"),
         "tunnel_user": str(payload.get("tunnel_user") or "tunnel").strip(),
         "db_name": str(payload.get("db_name") or "timelapse_db").strip(),
         "db_user": str(payload.get("db_user") or "timelapse").strip(),

@@ -21,8 +21,15 @@ old_fps="$(fp_pinned "$PINNED_HOST" "$OLD")"
 if [ -z "$old_fps" ]; then
   echo "FEJL: ingen pinned nøgle for [$PINNED_HOST]:$OLD i $KH — afbryder (ingen TOFU)." >&2; exit 1
 fi
-if [ -n "$(fp_pinned "$HOST" "$NEW")" ]; then
-  echo "OK: [$HOST]:$NEW findes allerede i $KH:"; fp_pinned "$HOST" "$NEW"; exit 0
+existing="$(fp_pinned "$HOST" "$NEW")"
+if [ -n "$existing" ]; then
+  # Presence is not proof: every key already pinned for the new port must be
+  # one of the keys pinned for the old port, or the cutover would break.
+  bad="$(grep -vxF -f <(printf '%s\n' "$old_fps") <<<"$existing" || true)"
+  if [ -n "$bad" ]; then
+    echo "FEJL: [$HOST]:$NEW findes allerede i $KH med en nøgle, der IKKE matcher [$PINNED_HOST]:$OLD: $bad — ret/fjern linjen manuelt." >&2; exit 2
+  fi
+  echo "OK: [$HOST]:$NEW findes allerede i $KH og matcher [$PINNED_HOST]:$OLD:"; printf '%s\n' "$existing"; exit 0
 fi
 
 tmp="$(mktemp)"; trap 'rm -f "$tmp" "$tmp.one"' EXIT

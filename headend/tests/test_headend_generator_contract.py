@@ -161,3 +161,21 @@ def test_bundle_storage_dir_honours_env_override(tmp_path, monkeypatch):
     resolved = _bundle_storage_dir(create=True)
     assert resolved == target
     assert target.is_dir()  # write-probe kørte uden fejl
+
+
+@pytest.mark.parametrize("field,value", [
+    ("backend_port", 10000),
+    ("backend_port", 22022),
+    ("tunnel_port", 22022),
+    ("tunnel_port", 22222),
+    ("tunnel_port", 22),
+])
+def test_public_ports_must_be_below_10000(field, value):
+    """Peter 2026-10-01: every publicly exposed TimeLapse port < 10000."""
+    with pytest.raises(ValueError):
+        _validate_request(_base_payload(**{field: value}))
+
+
+def test_public_port_upper_bound_accepted():
+    spec = _validate_request(_base_payload(backend_port=9999, tunnel_port=9222))
+    assert spec["backend_port"] == 9999 and spec["tunnel_port"] == 9222
