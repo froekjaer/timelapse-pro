@@ -505,6 +505,32 @@ do
         echo "[inject]   (ikke fundet i tar — springer over)"
 done
 
+# ── gphoto2/libgphoto2 source build (2026-10-01) ────────────────────────────
+# Files only (no directory members): listing a directory AND its children
+# makes `tar -T` report the children as "Not found" and exit non-zero.
+# Dockerfile.edge builds libgphoto2 2.5.34 + gphoto2 2.5.32 into /usr/local
+# (deploy/edge/install_gphoto2_from_source.sh) because the Jammy base only has
+# 2.5.27 (no Nikon Z30). Only timelapse paths were copied above, so carry the
+# source build and its udev rules/hwdb over into the vendor base image too.
+echo "[inject] Udpakker gphoto2/libgphoto2 (source-build) fra rootfs..."
+GPHOTO_PATHS="$(tar -tzf "$ROOTFS_TAR" 2>/dev/null | grep -E '^(usr/local/bin/gphoto2$|usr/local/lib/libgphoto2|usr/local/share/libgphoto2|etc/udev/rules\.d/60-libgphoto2-local\.rules$|etc/udev/hwdb\.d/20-libgphoto2-local\.hwdb$)' | grep -v '/$' || true)"
+if [ -n "$GPHOTO_PATHS" ]; then
+    printf '%s\n' "$GPHOTO_PATHS" > /tmp/gphoto-paths.txt
+    tar -xzf "$ROOTFS_TAR" -C /mnt/root -T /tmp/gphoto-paths.txt
+    ldconfig -r /mnt/root 2>/dev/null || true
+    if command -v systemd-hwdb >/dev/null 2>&1; then systemd-hwdb --root=/mnt/root update 2>/dev/null || true; fi
+    GP_MISSING=""
+    for LIB in libusb-1.0.so.0 libexif.so.12 libltdl.so.7 libpopt.so.0 libjpeg.so.8 libreadline.so.8; do
+        ls /mnt/root/usr/lib/*-linux-gnu*/"$LIB" /mnt/root/lib/*-linux-gnu*/"$LIB" >/dev/null 2>&1 || GP_MISSING="$GP_MISSING $LIB"
+    done
+    if [ -n "$GP_MISSING" ]; then
+        echo "[inject]   ADVARSEL: base-imaget mangler runtime-biblioteker til gphoto2:$GP_MISSING — leveres som offline bundle efter enrollment"
+    fi
+    echo "[inject]   OK: $(printf '%s\n' "$GPHOTO_PATHS" | wc -l | tr -d ' ') gphoto2-stier (libgphoto2 source-build)"
+else
+    echo "[inject]   ADVARSEL: ingen gphoto2 source-build i rootfs — imaget beholder base-imagets gphoto2"
+fi
+
 # ── Bootstrap config ──────────────────────────────────────────────────────────
 echo "[inject] Injicerer bootstrap.yaml..."
 cp "$BOOTSTRAP_YAML" /mnt/root/etc/timelapse/bootstrap.yaml

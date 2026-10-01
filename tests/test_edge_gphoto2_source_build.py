@@ -68,3 +68,17 @@ def test_no_pipe_into_early_exiting_grep_or_head_under_pipefail():
     code = [l for l in SCRIPT.splitlines() if not l.lstrip().startswith("#")]
     offenders = [l for l in code if re.search(r"\|\s*(grep\s+-q|head\b)", l)]
     assert offenders == []
+
+
+def test_flashable_image_carries_source_build_into_vendor_base():
+    """inject_edge_image.py copies only timelapse paths from the rootfs into the
+    vendor base image; the /usr/local gphoto2 build + udev rules/hwdb must be
+    copied too, as files only (dir + children breaks `tar -T` under set -e)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("inj", ROOT / "headend/tools/inject_edge_image.py")
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    script = mod._INJECT_SCRIPT
+    block = script.split("# ── gphoto2/libgphoto2 source build", 1)[1].split("# ── Bootstrap config", 1)[0]
+    for needle in ("usr/local/bin/gphoto2$", "usr/local/lib/libgphoto2", "60-libgphoto2-local", "20-libgphoto2-local",
+                   "grep -v '/$'", "tar -xzf \"$ROOTFS_TAR\" -C /mnt/root -T", "ldconfig -r /mnt/root"):
+        assert needle in block, needle
