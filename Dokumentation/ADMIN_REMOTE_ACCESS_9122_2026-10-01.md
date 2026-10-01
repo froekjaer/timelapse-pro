@@ -35,14 +35,17 @@ ssh -p 9122 -o ExitOnForwardFailure=yes -L 55900:127.0.0.1:5900 peter@backend.ti
 | 2. Password-login uændret | ✅ Peter |
 | 3. TOTP-nøgle oprettet | ✅ Peter. Fil verificeret (TOTP_AUTH, DISALLOW_REUSE, RATE_LIMIT 3 30, WINDOW_SIZE 3) |
 | 4. Login kræver password + kode | ✅ Peter. DISALLOW_REUSE har registreret brugt kode |
-| 5. Installér admin-sshd 9122 | ✅ Peter (host-nøgle `SHA256:rCH8T/ne6m/vv8t0gB/29y1ViMku5d1MEDrFlYdr930`). Bemærk: kør installeren **igen** for at få vagten + IPv4-only (tilføjet efter review) |
+| 5. Installér admin-sshd 9122 | ✅ Peter (host-nøgle `SHA256:rCH8T/ne6m/vv8t0gB/29y1ViMku5d1MEDrFlYdr930`). Geninstalleret med vagt (WatchPaths) + IPv4-only: verificeret `tcp4 *.9122` og vagt loaded |
 | 6. Lokal test 9122 | (sprunget over, se 8) |
 | 7. Router NAT 9122 | ✅ Peter. Verificeret via NAT: kun `keyboard-interactive`, samme host-nøgle |
 | 8. Test fra MacBook udefra + tunnel 5900 | ✅ Peter: adgangskode + TOTP → shell; skærmdeling via `-L 55900:127.0.0.1:5900` + `vnc://localhost:55900` (5901 var optaget lokalt) |
-| 9a. Luk password-login på 9022/22222 (Match-blokke i `/etc/ssh/sshd_config`) | afventer |
+| 9a. Luk password-login på 9022/22222 (Match-blokke i `/etc/ssh/sshd_config`) | ✅ Peter 2026-10-01 (`CONFIG-OK`). Verificeret udefra: `peter`@9022 → ingen metoder; `sftp_nvj17c`@9022 → publickey,password (SFTP uændret); `peter`@9122 → kun keyboard-interactive |
 | 9b. Fjern NAT 2222/22022/22222 | ✅ Peter 2026-10-01; verificeret udefra: alle tre `refused` |
 | 9c. Port 22 på den offentlige IP | **Ikke Headend og ikke vores**, se fund nedenfor. Afklares med ejeren |
 
 ## Fund 2026-10-01
 - 🔴 Headends almindelige sshd (port 9022/22222 via NAT) tilbød `password`/`keyboard-interactive` til `peter` fra internettet. Det betyder fuld shell med kun Mac-adgangskode. Lukkes i trin 9.
 - 🟠 Offentlig IP (93.165.255.138) port 22 svarer med `OpenSSH_8.4p1 Debian-5+deb11u7`, og det er ikke Headend. Port 80/443 på samme IP er **CrushFTP** (`ftp.hyldager.net`, `Server: CrushFTP HTTP Server`). Headend står altså på et netværk, hvor den offentlige IP deles med Hyldagers produktions-CrushFTP (jf. `PORTS.md`: CrushFTP ejer 21/22/80/443). Port 22 tilhører sandsynligvis en Debian-server i det miljø. **Rør den ikke uden ejerens accept.** Den er ikke en vej ind på Headend.
+
+## Resultat 2026-10-01
+Offentligt eksponeret mod Headend: **8443** (API/UI), **9022** (kun SFTP), **9222** (kun Edge-tunneller) og **9122** (admin: adgangskode + TOTP, tunnel kun til 5900). 2222/22022/22222 er lukket. 22/80/443 på den offentlige IP tilhører CrushFTP-miljøet og ikke Headend.

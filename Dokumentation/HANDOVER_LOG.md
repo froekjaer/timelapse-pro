@@ -38,7 +38,7 @@
   - PAM TOTP (`google-authenticator-libpam` 1.11 via Homebrew, med Peters tilladelse), root-ejet kopi i `/usr/local/lib/pam`.
   - Trin 1–5, 7 og 8 er udført og verificeret: PAM-linje, TOTP-nøgle, admin-sshd installeret (host-nøgle `SHA256:rCH8T/ne6m/vv8t0gB/29y1ViMku5d1MEDrFlYdr930`) og NAT 9122. Fra MacBook udefra: adgangskode + TOTP → shell + skærmdeling via `-L 55900:127.0.0.1:5900`.
   - NAT 2222/22022/22222 er fjernet af Peter (verificeret `refused`).
-  - **Udestår:** installeren køres igen (vagt med WatchPaths + IPv4-only efter review) og trin 9a (luk password-login på 9022/22222).
+  - Installeren er kørt igen (vagt med WatchPaths + IPv4-only, verificeret). **Trin 9a er udført**: Match-blokke i `/etc/ssh/sshd_config`, verificeret udefra (`peter`@9022 → ingen metoder; `sftp_nvj17c`@9022 uændret; 9122 kun keyboard-interactive). 9122 er nu den eneste remote shell-vej.
   - Port 22 og 80/443 på den offentlige IP tilhører CrushFTP-miljøet (`ftp.hyldager.net`), ikke Headend.
   - En første `ForceCommand`-gate (genbrug af #269's TOTP-vagt) blev droppet før installation, fordi den ikke kan beskytte `ssh -N -L`-tunneller.
 - **Konsekvens:** `peter` skal fremover bruge TOTP ved alle sshd-logins, også port 22 på LAN. `sftp_*` (nullok) og Edge-tunneller (pubkey) påvirkes ikke.

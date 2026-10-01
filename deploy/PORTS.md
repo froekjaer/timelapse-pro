@@ -12,7 +12,7 @@ on a production headend.
 | 443 | Not TimeLapse directly | Existing public HTTPS entrypoint with hostname routing |
 | 2222 | Not TimeLapse | Reserved for other production application use |
 | 22222 | TimeLapse inbound | Dedicated SFTP upload from Edge to Headend |
-| 9122 | TimeLapse inbound (admin) | Dedicated remote ADMIN SSH for the Headend: macOS password + TOTP (PAM keyboard-interactive), only forward = 127.0.0.1:5900. **Intended** to be the only remote shell path once plan step 9 closes password login on the SFTP socket (9022); until then 9022 still offers a password shell (`Dokumentation/ADMIN_REMOTE_ACCESS_9122_2026-10-01.md`) |
+| 9122 | TimeLapse inbound (admin) | Dedicated remote ADMIN SSH for the Headend: macOS password + TOTP (PAM keyboard-interactive), only forward = 127.0.0.1:5900. The only remote shell path since 2026-10-01 (plan step 9a closed password login for non-SFTP users on the SFTP socket 9022/22222) (`Dokumentation/ADMIN_REMOTE_ACCESS_9122_2026-10-01.md`) |
 | 5514 | TimeLapse internal/lab | Optional local SIEM syslog receiver (UDP/TCP). Production external logs should normally arrive via Edge/site collector API forwarding. |
 | 8000 | Loopback/internal | Headend FastAPI service behind reverse proxy |
 | 8080 | Loopback/internal or changed | Open WebUI only behind authenticated TimeLapse/reverse proxy |
