@@ -23,7 +23,13 @@
   - `Match ... LocalPort 22222,9022` er **ugyldigt** ("Bad Match condition", OpenSSH 10.3). Planen kopierer i stedet hver blok. Verificeret med `sshd -T`.
   - **Den deploy-farlige standardværdi:** er `sftp_port` ikke sat eksplicit i DB, flytter kode-deployet alle Edges til 9022 før de har `known_hosts` (Edge-SFTP bruger `RejectPolicy`). Trin 0 i planen sætter den eksplicit til 22222 først.
   - **Sikkerhedsfund:** live `sshd_config` mangler `Match User sftp_* LocalPort 22` (afvisning på admin-SSH), som hardening-profilen kræver. Skal verificeres og registreres i GRC.
-- **Ikke udført (kræver Peter/sudo):** Trin 0, H1–H3, E1–E4 og R i planen. 22022 → 9222 i #259's filer er PR #268 (ind i #259's branch). Kode-PR i main: #267.
+- **Live-fremskridt samme dag:**
+  - Trin 0: `sftp_port`=22222 var allerede sat. `sftp_enabled`=true.
+  - H1 + H2 kørt af Peter og verificeret af Claude: tunnel-sshd pid 367 lytter på 22022 og 9222 med samme dedikerede nøgle, og den eksisterende Edge-tunnel overlevede. launchd-socket'en lytter på 22222 og 9022 med samme system-nøgle. NAT for 9022/9222 er verificeret via hairpin.
+- **Nyt fund:** `sftp_host`=`timelapse.froekjaer.dk` resolver (også offentligt) til 192.168.86.102, Headends gamle LAN-adresse. Headend er nu 192.168.5.90. SFTP-værten kan ikke nås (timeout også på 22222), og der er ingen nye SFTP-filer siden 2026-08-06.
+  - Anbefaling: `sftp_host`=`backend.timelapse-pro.dk` i trin E4. Hjælpescriptet kan nu fastlåse nøglen under det nye navn (5. argument = gammelt navn).
+  - DNS for `timelapse.froekjaer.dk` skal rettes af Peter.
+- **Ikke udført (kræver Peter):** E1–E4 og R i planen. 22022 → 9222 i #259's filer er PR #268 (ind i #259's branch). Kode-PR i main: #267.
 
 ### Handover`-overskrift jf. skabelonen.
 
