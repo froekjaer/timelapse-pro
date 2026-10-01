@@ -29,6 +29,20 @@
 
 ## Log
 
+### Handover 2026-10-01 22:00 — fra Claude til Peter/næste session: remote admin-SSH 9122 med adgangskode + TOTP; Headend-sshd var åben for password-login fra internettet
+
+- **Peters ønske:** én sikker remote-vej til Headend fra MacBook, der også er den eneste, og som kan tunnelere skærmdeling (5900). Peter valgte brugernavn/adgangskode + TOTP (ikke certifikat).
+- **Fund 🔴:** port 9022/22222 (NAT) er macOS' almindelige sshd og tilbød `peter` `password`/`keyboard-interactive` fra internettet. **Fund 🟠:** offentlig IP port 22 er en Debian-OpenSSH (routerens WAN-SSH?). Peter er selv forbundet via 22222 lige nu, så lukningen venter, til 9122 er bevist fra MacBook.
+- **Genbrugsvurdering:** eksisterende PKI (`edge_local_pki`, API-mTLS, trust service) er X.509 og bevidst formålsadskilt, så intet kunne bruges til sshd. Tunnel-sshd-mønsteret (#259) er genbrugt.
+- **Design og status:** se `Dokumentation/ADMIN_REMOTE_ACCESS_9122_2026-10-01.md`.
+  - PAM TOTP (`google-authenticator-libpam` 1.11 via Homebrew, med Peters tilladelse), root-ejet kopi i `/usr/local/lib/pam`.
+  - Trin 1–5, 7 og 8 er udført og verificeret: PAM-linje, TOTP-nøgle, admin-sshd installeret (host-nøgle `SHA256:rCH8T/ne6m/vv8t0gB/29y1ViMku5d1MEDrFlYdr930`) og NAT 9122. Fra MacBook udefra: adgangskode + TOTP → shell + skærmdeling via `-L 55900:127.0.0.1:5900`.
+  - NAT 2222/22022/22222 er fjernet af Peter (verificeret `refused`).
+  - Installeren er kørt igen (vagt med WatchPaths + IPv4-only, verificeret). **Trin 9a er udført**: Match-blokke i `/etc/ssh/sshd_config`, verificeret udefra (`peter`@9022 → ingen metoder; `sftp_nvj17c`@9022 uændret; 9122 kun keyboard-interactive). 9122 er nu den eneste remote shell-vej.
+  - Port 22 og 80/443 på den offentlige IP tilhører CrushFTP-miljøet (`ftp.hyldager.net`), ikke Headend.
+  - En første `ForceCommand`-gate (genbrug af #269's TOTP-vagt) blev droppet før installation, fordi den ikke kan beskytte `ssh -N -L`-tunneller.
+- **Konsekvens:** `peter` skal fremover bruge TOTP ved alle sshd-logins, også port 22 på LAN. `sftp_*` (nullok) og Edge-tunneller (pubkey) påvirkes ikke.
+
 ### Handover 2026-10-01 17:20 — fra Claude til Peter/næste session: begge Edges på 9222 + API via backend.timelapse-pro.dk; froekjaer.dk fjernet fra Edge-config
 
 - **Edge1 (`TL-C87FF9587CA0`):** tunnel på **9222** (verificeret pr. session). Uploader via `https://backend.timelapse-pro.dk:8443/api`.
