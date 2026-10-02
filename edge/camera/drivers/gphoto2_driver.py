@@ -383,7 +383,10 @@ CAMERA_PROFILES = {
                 "skip_values": ["Auto", "auto", ""],
             },
             "shutter_speed": {
-                "path": "/main/capturesettings/shutterspeed",
+                # The UI sends fractions ("1/500"). On the Z30 shutterspeed
+                # takes decimals ("0.0020s"); shutterspeed2 is the same setting
+                # with fraction choices (verified on Edge2 2026-10-02).
+                "path": "/main/capturesettings/shutterspeed2",
                 "skip_values": ["Auto", "auto", ""],
             },
             "aperture": {

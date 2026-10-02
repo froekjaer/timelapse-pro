@@ -92,3 +92,10 @@ def test_ui_exposes_all_focus_keys():
     for key in Z30:
         assert f"key: 'camera.{key}'" in camera_page
         assert f"key: '{key}'" in global_page
+
+
+def test_z30_shutter_speed_from_ui_uses_fraction_setting():
+    d = gd.GPhoto2Driver({"gphoto2_port": "usb:"})
+    d._profile_key, d._profile = d._profile_for_model("Nikon Z30")
+    assert d.build_config_command("shutter_speed", "1/500") == "/main/capturesettings/shutterspeed2=1/500"
+    assert d.build_config_command("shutter_speed", "Auto") is None
