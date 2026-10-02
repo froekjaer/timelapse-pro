@@ -1245,26 +1245,11 @@ class GPhoto2Driver(CameraBase):
         action = self._profile.get("actions", {}).get("manual_focus")
         if not action or not value:
             return False
-        for key, context_value in self._profile.get("focus_controls", {}).get("manual_focus_context", {}).items():
-            context_result = _run(
-                [GPHOTO2_CMD, "--port", self._port, "--set-config", f"{key}={context_value}"],
-                timeout=STATUS_TIMEOUT_S,
-                check=False,
-            )
-            if context_result.returncode != 0:
-                log.warning(
-                    "Manual focus context failed: %s=%s: %s",
-                    key,
-                    context_value,
-                    context_result.stderr.strip(),
-                )
-                return False
-        result = _run(
-            [GPHOTO2_CMD, "--port", self._port, "--set-config", f"{action}={value}"],
-            timeout=STATUS_TIMEOUT_S,
-            check=False,
-        )
-        return result.returncode == 0
+        # Context (live view + MF) and the drive in ONE gphoto2 session, like
+        # the autofocus sequence verified on Edge2 2026-10-02: live view set by
+        # a separate gphoto2 process is not guaranteed to survive its exit.
+        context = self._profile.get("focus_controls", {}).get("manual_focus_context", {})
+        return self._set_configs([*context.items(), (action, value)], "Manuel fokus")
 
     def get_config_param(self, path: str) -> Optional[dict]:
         """Read and parse one gphoto2 config parameter."""
