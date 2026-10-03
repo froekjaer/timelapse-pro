@@ -61,6 +61,10 @@ WP-3 registry contains the required operations:
 - `modem.registration`
 - `modem.reconnect_history`
 - `modem.power.cycle`
+- `modem.power.on` (2026-10-03)
+- `modem.power.test` — sluk i 10 s, tændes automatisk fra en løsrevet proces startet FØR sluk (2026-10-03)
+- `relay.status` — pins og faktisk GPIO-tilstand, kun læsning (2026-10-03)
+- `camera.relay.pin_test` — midlertidigt kamera-testpin; permanent pin sættes i UI/DB (2026-10-03)
 - `network.status`
 - `network.diagnostics`
 - `storage.status`
@@ -89,6 +93,9 @@ WP-3 registry contains the required operations:
 | Camera reset | `camera.reset` | no | yes | yes | yes | yes |
 | Modem status/signal/registration/history | `modem.read` | yes | yes | yes | yes | yes |
 | Modem power-cycle | `modem.power` | no | yes | yes | yes | yes |
+| Modem power on / 10 s test | `modem.power` | no | yes | yes | yes | yes |
+| Relay status | `camera.read` | yes | yes | yes | yes | yes |
+| Camera relay test pin | `camera.reset` | no | yes | yes | yes | yes |
 | Network/storage/system/trust/software read | `network.read`, `storage.read`, `system.read`, `trust.read`, `software.read` | yes | yes | yes | yes | yes |
 | TimeLapse controlled restart | `system.service.restart` | no | yes | yes | yes | yes |
 | Controlled reboot | `system.reboot` | no | no | yes | yes | no |
@@ -186,3 +193,7 @@ Safety cleanup:
 ## Boundary
 
 WP-3 establishes the platform and routes current service clients through it. Further user-facing tools should add operations to the registry instead of adding direct hardware logic to UI, CLI, LAB or AI assistant code.
+
+## Modemrelæ-regel (Peter, 2026-10-03)
+
+Modemrelæet må ALDRIG miste strøm uden en eksplicit kommando: ikke ved agent-start (`RelayController` initialiserer modem-pinnet direkte i ON og rører det ikke, hvis det allerede er drevet), ikke ved agent-stop (`cleanup(modem=False)`), ikke som bivirkning af en serviceoperation (`cleanup_modem` er no-op). `RelayController.cleanup()` har `modem=False` som standard. Eksplicitte veje: `modem.power.cycle`, `modem.power.test` og LAB-relækommandoen. Bevidst undtagelse (Peter, 2026-10-03: "Behold som i dag"): `ConnectivityMonitor`'s automatiske power-cycle efter `modem_cycle_after_failures` fejl (højst hvert `modem_min_cycle_interval_s`), konfigureret i UI (System Administration), tæller som tilladt genoprettelse.

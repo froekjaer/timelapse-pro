@@ -4253,7 +4253,9 @@ class EdgeAgent:
                 pass
             self._lab_relay_on = False
         try:
-            self._relay.cleanup(camera=self._camera_uses_relay())
+            # modem=False: a relay-powered 4G modem must keep power when the
+            # agent stops (updates, technician relay menu), or the Edge goes offline.
+            self._relay.cleanup(camera=self._camera_uses_relay(), modem=False)
         except Exception:
             pass
         self._send_heartbeat(check_updates=False)

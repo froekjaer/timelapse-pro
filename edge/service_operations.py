@@ -68,6 +68,8 @@ class ServiceOperations:
         self.base_dir = Path(base_dir or EDGE_DIR)
         self.live_manager = live_manager
         self._restore_service_after_camera = False
+        self._relay_controller = None
+        self._relay_test_pins: set[int] = set()
 
     def register(self, platform: ServicePlatform) -> None:
         handlers = {
@@ -97,6 +99,10 @@ class ServiceOperations:
             "modem.registration": self.modem_registration,
             "modem.reconnect_history": self.modem_reconnect_history,
             "modem.power.cycle": self.modem_power_cycle,
+            "modem.power.on": self.modem_power_on,
+            "modem.power.test": self.modem_power_test,
+            "relay.status": self.relay_status,
+            "camera.relay.pin_test": self.camera_relay_pin_test,
             "network.status": self.network_status,
             "network.diagnostics": self.network_diagnostics,
             "storage.status": self.storage_status,
@@ -119,6 +125,7 @@ class ServiceOperations:
         platform.register_cleanup_handler("LiveViewLease", self.cleanup_live_view)
         platform.register_cleanup_handler("CameraPowerLease", self.cleanup_camera_power)
         platform.register_cleanup_handler("ModemMaintenanceLease", self.cleanup_modem)
+        platform.register_cleanup_handler("DiagnosticLease", self.cleanup_relay_test_pins)
 
     def camera_status(self, platform: ServicePlatform, session, kwargs: dict[str, Any]) -> dict[str, Any]:
         detect = self._gphoto(["--auto-detect"], timeout=15)
@@ -281,6 +288,86 @@ class ServiceOperations:
 
     def modem_reconnect_history(self, _platform, _session, _kwargs):
         return {"ok": True, "history": self._journal("ModemManager", lines=120)}
+
+    MODEM_TEST_OFF_S = 10
+
+    def _relay_pins(self) -> dict[str, Any]:
+        sys.path.insert(0, str(EDGE_ROOT))
+        from camera import relay as relay_module
+
+        cfg = self._config() or {}
+        defaults = relay_module._DEFAULTS[relay_module.PLATFORM]
+        camera_pin = int((cfg.get("camera") or {}).get("relay_gpio_pin", defaults["camera_pin"]))
+        modem_pin = defaults["modem_pin"]
+        if modem_pin is not None:
+            modem_pin = int((cfg.get("modem") or {}).get("modem_relay_gpio_pin", modem_pin))
+        return {"platform": relay_module.PLATFORM, "camera": camera_pin, "modem": modem_pin}
+
+    def relay_status(self, _platform, _session, _kwargs):
+        from camera.relay import read_relay_state
+
+        pins = self._relay_pins()
+        state = self._service_state(SERVICE_NAME)
+        return {
+            "ok": True,
+            "platform": pins["platform"],
+            "camera": {"pin": pins["camera"], "state": read_relay_state(pins["camera"])},
+            "modem": {"pin": pins["modem"], "state": read_relay_state(pins["modem"])},
+            "test_pins": {str(p): read_relay_state(p) for p in sorted(self._relay_test_pins)},
+            "agent": state.get("active") or state.get("ActiveState"),
+        }
+
+    def modem_power_on(self, _platform, _session, _kwargs):
+        from camera.relay import read_relay_state, set_relay_pin
+
+        pin = self._relay_pins()["modem"]
+        if pin is None:
+            return {"ok": False, "warning": "modem relay not fitted"}
+        set_relay_pin(pin, True)
+        return {"ok": True, "modem": read_relay_state(pin)}
+
+    def modem_power_test(self, _platform, _session, kwargs: dict[str, Any]):
+        """Explicit modem test: off for off_s seconds, then back on automatically.
+
+        The switch-on is scheduled in a detached process BEFORE switching off,
+        so a technician connected through this modem cannot leave it off.
+        """
+        from camera.relay import read_relay_state, schedule_relay_on, set_relay_pin
+
+        pin = self._relay_pins()["modem"]
+        if pin is None:
+            return {"ok": False, "warning": "modem relay not fitted"}
+        off_s = int(kwargs.get("off_seconds", self.MODEM_TEST_OFF_S))
+        schedule_relay_on(pin, off_s)
+        set_relay_pin(pin, False)
+        time.sleep(off_s + 1)
+        if read_relay_state(pin) != "ON":
+            set_relay_pin(pin, True)
+        state = read_relay_state(pin)
+        return {"ok": state == "ON", "modem": state, "off_seconds": off_s}
+
+    def camera_relay_pin_test(self, _platform, _session, kwargs: dict[str, Any]):
+        """Drive a candidate camera relay pin (finding the right GPIO). The
+        permanent pin is set in the UI (DB), never here."""
+        from camera.relay import read_relay_state, set_relay_pin
+
+        pin = int(kwargs["pin"])
+        pins = self._relay_pins()
+        if pin == pins["modem"]:
+            return {"ok": False, "error": "modem pin is not a camera test pin"}
+        set_relay_pin(pin, bool(kwargs.get("on", True)))
+        self._relay_test_pins.add(pin)
+        return {"ok": True, "pin": pin, "state": read_relay_state(pin)}
+
+    def cleanup_relay_test_pins(self, _platform, _session, _reason: str) -> None:
+        from camera.relay import release_relay_pin
+
+        for pin in sorted(self._relay_test_pins):
+            try:
+                release_relay_pin(pin)
+            except OSError:
+                pass
+        self._relay_test_pins.clear()
 
     def modem_power_cycle(self, _platform, _session, _kwargs):
         relay = self._relay()
@@ -467,6 +554,7 @@ class ServiceOperations:
                 relay.camera.force_off()
             finally:
                 relay.cleanup(camera=True, modem=False)
+                self._relay_controller = None   # pin was unexported; re-init next time
         if self._restore_service_after_camera:
             self._systemctl("start", SERVICE_NAME, timeout=60)
             self._restore_service_after_camera = False
@@ -475,9 +563,9 @@ class ServiceOperations:
         return None
 
     def cleanup_modem(self, _platform, _session, _reason: str) -> None:
-        relay = self._relay()
-        if relay is not None:
-            relay.cleanup(camera=False, modem=True)
+        # Never switch the modem off as a side effect of a service operation:
+        # only an explicit modem command may cut its power (Peter, 2026-10-03).
+        return None
 
     def _config(self) -> dict[str, Any]:
         for path in (self.base_dir / "config.yaml", EDGE_DIR / "config.yaml"):
@@ -493,11 +581,16 @@ class ServiceOperations:
         return {"device": {"device_id": "TL-UNKNOWN"}, "camera": {}, "schedule": {}, "location": {}}
 
     def _relay(self):
+        # One controller per backend: re-initialising on every operation
+        # switched the camera off between consecutive technician operations.
+        if self._relay_controller is not None:
+            return self._relay_controller
         try:
             sys.path.insert(0, str(EDGE_ROOT))
             from camera.relay import RelayController
 
-            return RelayController(self._config() or {})
+            self._relay_controller = RelayController(self._config() or {})
+            return self._relay_controller
         except Exception:
             return None
 

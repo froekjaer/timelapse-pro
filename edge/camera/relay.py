@@ -81,24 +81,103 @@ _DEFAULTS = {
 }
 
 
+# ── Low-level helpers for Service Operations (WP-3) ───────────────────────────
+# Technician clients (CLI/UI) never touch GPIO themselves; they call Service
+# Operations, which use these helpers. None of them changes a pin the caller
+# did not name, and none switches the modem off implicitly (Peter, 2026-10-03).
+
+def _sysfs_is_output(pin: int) -> bool:
+    try:
+        return (GPIO_ROOT / f"gpio{pin}" / "direction").read_text().strip() == "out"
+    except OSError:
+        return False
+
+
+def read_relay_state(pin: int | None) -> str:
+    """'ON'/'OFF' for a relay pin; 'ikke styret' if nothing drives it."""
+    if pin is None:
+        return "ikke monteret"
+    gpio = GPIO_ROOT / f"gpio{pin}"
+    try:
+        direction = (gpio / "direction").read_text().strip()
+        value = (gpio / "value").read_text().strip()
+    except OSError:
+        return "ikke styret"
+    if direction != "out":
+        return f"input ({value})"
+    return "ON" if value == _RELAY_ON else "OFF"
+
+
+def set_relay_pin(pin: int, on: bool) -> None:
+    """Set one relay pin; export + direction in one step, no wrong-state pulse."""
+    gpio = GPIO_ROOT / f"gpio{pin}"
+    if not gpio.exists():
+        (GPIO_ROOT / "export").write_text(str(pin))
+        time.sleep(0.1)
+    if (gpio / "direction").read_text().strip() != "out":
+        (gpio / "direction").write_text("low" if on else "high")
+        return
+    (gpio / "value").write_text(_RELAY_ON if on else _RELAY_OFF)
+
+
+def release_relay_pin(pin: int) -> None:
+    """Switch a (non-modem) relay pin off and unexport it."""
+    try:
+        set_relay_pin(pin, False)
+    finally:
+        try:
+            (GPIO_ROOT / "unexport").write_text(str(pin))
+        except OSError:
+            pass
+
+
+def schedule_relay_on(pin: int, delay_s: float) -> None:
+    """Switch a relay back ON after delay_s from a detached process.
+
+    Started BEFORE the relay is switched off: the technician may be connected
+    through exactly this modem, and a dropped session must not leave it off.
+    """
+    import subprocess
+    import sys
+
+    value_path = GPIO_ROOT / f"gpio{pin}" / "value"
+    script = (
+        "import time, pathlib\n"
+        f"time.sleep({float(delay_s)})\n"
+        f"pathlib.Path({str(value_path)!r}).write_text({_RELAY_ON!r})\n"
+    )
+    subprocess.Popen(
+        [sys.executable, "-c", script],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
 # ── Backend: sysfs (RK3588S) ──────────────────────────────────────────────────
 
 class _SysfsGPIO:
     """Direct sysfs GPIO driver — no library dependency."""
 
-    def __init__(self, pins: list[int], simulate: bool):
+    def __init__(self, pins: list[int], simulate: bool, on_pins: tuple[int, ...] = ()):
         self._simulate = simulate
         self._pins     = pins
         if not simulate:
-            self._init(pins)
+            self._init(pins, set(on_pins))
 
-    def _init(self, pins: list[int]) -> None:
+    def _init(self, pins: list[int], on_pins: set[int]) -> None:
+        # "high"/"low" sets direction AND initial level in one write, so no
+        # pin ever pulses through the wrong state while being initialised.
+        # The modem pin starts ON: its relay must never drop power without an
+        # explicit command (Peter, 2026-10-03) — not even at agent start.
         for pin in pins:
             try:
+                on = pin in on_pins
+                if on and _sysfs_is_output(pin):
+                    log.debug("sysfs GPIO %d already driven — state kept", pin)
+                    continue
                 self._export(pin)
-                self._set_direction(pin, "out")
-                self._write(pin, _RELAY_OFF)   # safe state: OFF
-                log.debug("sysfs GPIO %d initialised → OFF", pin)
+                self._set_direction(pin, "low" if on else "high")   # active-low
+                log.debug("sysfs GPIO %d initialised → %s", pin, "ON" if on else "OFF")
             except Exception as exc:
                 log.error("Failed to init GPIO %d: %s", pin, exc)
 
@@ -155,23 +234,23 @@ class _SysfsGPIO:
 class _OpiGPIO:
     """OPi.GPIO backend — BOARD numbering, for Orange Pi PC Plus (H3)."""
 
-    def __init__(self, pins: list[int], simulate: bool):
+    def __init__(self, pins: list[int], simulate: bool, on_pins: tuple[int, ...] = ()):
         self._simulate = simulate
         self._pins     = pins
         self._GPIO     = None
         if not simulate:
-            self._init(pins)
+            self._init(pins, set(on_pins))
 
-    def _init(self, pins: list[int]) -> None:
+    def _init(self, pins: list[int], on_pins: set[int]) -> None:
         try:
             import OPi.GPIO as GPIO
             self._GPIO = GPIO
             GPIO.setmode(GPIO.BOARD)
             GPIO.setwarnings(False)
             for pin in pins:
-                GPIO.setup(pin, GPIO.OUT)
-                GPIO.output(pin, GPIO.HIGH)   # active-low: HIGH = OFF (safe state)
-                log.debug("OPi.GPIO BOARD pin %d initialised → OFF", pin)
+                level = GPIO.LOW if pin in on_pins else GPIO.HIGH   # active-low
+                GPIO.setup(pin, GPIO.OUT, initial=level)
+                log.debug("OPi.GPIO BOARD pin %d initialised → %s", pin, "ON" if pin in on_pins else "OFF")
         except Exception as exc:
             log.error("OPi.GPIO init failed: %s", exc)
 
@@ -285,6 +364,11 @@ class ModemRelay:
         self._be.set(self._pin, True)
         self._on = True
 
+    def power_on(self) -> None:
+        log.info("Modem relay ON (pin %d)", self._pin)
+        self._be.set(self._pin, True)
+        self._on = True
+
     def power_cycle(self, reason: str = "manual") -> None:
         log.warning("Modem power-cycle (pin %d) — reason: %s", self._pin, reason)
         self._be.set(self._pin, False)
@@ -341,10 +425,11 @@ class RelayController:
 
         # Select backend
         active_pins = [cam_pin] + ([modem_pin] if modem_pin is not None else [])
+        on_pins = (modem_pin,) if modem_pin is not None else ()
         if PLATFORM == "rk3588":
-            self._backend = _SysfsGPIO(pins=active_pins, simulate=simulate)
+            self._backend = _SysfsGPIO(pins=active_pins, simulate=simulate, on_pins=on_pins)
         else:
-            self._backend = _OpiGPIO(pins=active_pins, simulate=simulate)
+            self._backend = _OpiGPIO(pins=active_pins, simulate=simulate, on_pins=on_pins)
 
         self.camera = CameraRelay(self._backend, cam_cfg, cam_pin)
 
@@ -364,7 +449,9 @@ class RelayController:
     def connectivity(self) -> "ConnectivityMonitor":
         return self._connectivity
 
-    def cleanup(self, *, camera: bool = True, modem: bool = True) -> None:
+    def cleanup(self, *, camera: bool = True, modem: bool = False) -> None:
+        """Release relays. modem defaults to False: the modem relay is only
+        ever switched off by an explicit command (Peter, 2026-10-03)."""
         log.info("RelayController cleanup")
         if camera:
             self.camera.force_off()

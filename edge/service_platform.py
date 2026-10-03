@@ -111,6 +111,10 @@ OPERATION_CAPABILITIES = {
     "modem.registration": "modem.read",
     "modem.reconnect_history": "modem.read",
     "modem.power.cycle": "modem.power",
+    "modem.power.on": "modem.power",
+    "modem.power.test": "modem.power",
+    "relay.status": "camera.read",
+    "camera.relay.pin_test": "camera.reset",
     "network.status": "network.read",
     "network.diagnostics": "network.read",
     "storage.status": "storage.read",
@@ -148,6 +152,9 @@ OPERATION_LEASES = {
     "camera.reset": "CameraPowerLease",
     "camera.diagnostics": "CameraPowerLease",
     "modem.power.cycle": "ModemMaintenanceLease",
+    "modem.power.on": "ModemMaintenanceLease",
+    "modem.power.test": "ModemMaintenanceLease",
+    "camera.relay.pin_test": "DiagnosticLease",
 }
 
 
