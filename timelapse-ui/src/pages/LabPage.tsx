@@ -13,14 +13,14 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   Camera, FlaskConical, Power, PowerOff, RefreshCw,
   Lock, ChevronLeft, ZoomIn, ZoomOut, Settings, X, Check, Wifi, Crosshair, Wand2, Ban,
-  Maximize, Minimize, Info, HelpCircle
+  Maximize, Minimize, Info, HelpCircle, Trash2, Minus, Plus
 } from 'lucide-react'
 import {
   setDebugMode, requestPreview, requestCapture,
   setParam, listPreviews, getPreviewUrl, getPreviewThumbUrl,
   getDevice, pathSegment, getApiUrl,
   requestFocusDrive, requestAutofocus, requestFocusSlice, requestEdgeAiFocusTest,
-  requestCameraParams, setLiveStream
+  requestCameraParams, setLiveStream, deleteLabPreview, deleteAllLabPreviews
 } from '../api/client'
 import type { LabPreview, CameraParam, DebugMode, CameraProfile } from '../types'
 import { InfoTooltip } from '../components/InfoTooltip'
@@ -856,6 +856,30 @@ export default function LabPage() {
     }
   }
 
+  // Fokus −/+ ved billedet: samme focus_drive som "Step focus", med fortegn.
+  function focusNudge(direction: 1 | -1) {
+    const step = Math.abs(Number(focusStepValue) || 0)
+    if (!step) { setStatusMsg('Angiv et fokustrin under Nikon/fokus LAB'); return }
+    driveFocus(String(direction * step))
+  }
+
+  async function deletePreviews(all: boolean) {
+    const target = all ? null : selectedPreview?.filename
+    if (!all && !target) return
+    if (!window.confirm(all ? `Slet alle ${previews.length} LAB-billeder?` : `Slet ${target}?`)) return
+    try {
+      const r = all ? await deleteAllLabPreviews(deviceId) : await deleteLabPreview(deviceId, target!)
+      const p = await listPreviews(deviceId)
+      setPreviews(p)
+      userSelectedRef.current = false
+      setSelectedPreview(p[0] ?? null)
+      setStatusMsg(`${r.deleted} billede(r) slettet`)
+    } catch {
+      setStatusMsg('Sletning fejlede')
+    }
+    setTimeout(() => setStatusMsg(''), 3000)
+  }
+
   async function runAutofocusTest() {
     setFocusBusy(true)
     setStatusMsg('Kører autofocus og kvalitetstest…')
@@ -1228,6 +1252,34 @@ export default function LabPage() {
               </div>
             )}
 
+            {/* Manuel kamerastyring ved billedet */}
+            <div className="px-4 pt-4 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-gray-500 mr-1">Fokus</span>
+              <button onClick={() => focusNudge(-1)} disabled={!canRemoteFocus || focusBusy}
+                title={`Flyt fokus −${Math.abs(Number(focusStepValue) || 0)} og tag nyt preview`}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-600 text-white text-xs font-medium disabled:opacity-50">
+                <Minus className="w-3 h-3" /> Fokus
+              </button>
+              <button onClick={() => focusNudge(1)} disabled={!canRemoteFocus || focusBusy}
+                title={`Flyt fokus +${Math.abs(Number(focusStepValue) || 0)} og tag nyt preview`}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-600 text-white text-xs font-medium disabled:opacity-50">
+                <Plus className="w-3 h-3" /> Fokus
+              </button>
+              <span className="text-xs text-gray-400">trin {Math.abs(Number(focusStepValue) || 0) || '–'}</span>
+              {labResult?.type === 'focus_drive' && labResult.quality && (
+                <span className="text-xs text-gray-600">Skarphed {labResult.quality.blur_score?.toFixed?.(1) ?? '–'}</span>
+              )}
+              <div className="flex-1" />
+              <button onClick={() => deletePreviews(false)} disabled={!selectedPreview}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-medium hover:bg-red-50 hover:text-red-700 disabled:opacity-50">
+                <Trash2 className="w-3 h-3" /> Slet billede
+              </button>
+              <button onClick={() => deletePreviews(true)} disabled={previews.length === 0}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-medium hover:bg-red-50 hover:text-red-700 disabled:opacity-50">
+                <Trash2 className="w-3 h-3" /> Slet alle ({previews.length})
+              </button>
+            </div>
+
             {/* Preview actions */}
             <div className="p-4 flex gap-3">
               <button onClick={toggleLiveStream} disabled={labConnecting || liveFrameBusy}
@@ -1295,49 +1347,8 @@ export default function LabPage() {
               </div>
             </div>
 
-            <CameraProfilePanel profile={cameraProfile} />
-
-            {/* Eksponeringsmode matrix - hjælpetabel for readonly parametre */}
-            <div className="mx-4 mt-4 rounded-xl border border-amber-100 bg-amber-50/60 p-4">
-              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2 mb-3">
-                <HelpCircle className="w-4 h-4 text-amber-600" /> Eksponeringsmode og parametre
-              </h3>
-              <p className="text-xs text-gray-600 mb-3">
-                <strong>Skift eksponeringsmode:</strong> Klik på tandhjulet ud for <span className="text-amber-700">Eksponeringsmode</span> under "Eksponering" gruppen og vælg en mode. Manual (M) giver fuld kontrol over alle parametre.
-              </p>
-              <p className="text-xs text-gray-600 mb-3">
-                Når en parameter er låst (🔒), betyder det at den styres automatisk i den aktuelle mode.
-              </p>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-amber-200">
-                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Mode</th>
-                      <th className="text-center py-2 px-2 font-semibold text-gray-700">Lukker</th>
-                      <th className="text-center py-2 px-2 font-semibold text-gray-700">Blænde</th>
-                      <th className="text-center py-2 px-2 font-semibold text-gray-700">ISO</th>
-                      <th className="text-center py-2 px-2 font-semibold text-gray-700">EV ±</th>
-                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Note</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(EXPOSURE_MODE_MATRIX).map(([mode, data]) => (
-                      <tr key={mode} className="border-b border-amber-100 hover:bg-amber-100/40">
-                        <td className="py-2 px-3 font-medium">{mode}</td>
-                        <td className="text-center py-2 px-2">{data.shutter ? '✅' : '🔒'}</td>
-                        <td className="text-center py-2 px-2">{data.aperture ? '✅' : '🔒'}</td>
-                        <td className="text-center py-2 px-2">{data.iso ? '✅' : '🔒'}</td>
-                        <td className="text-center py-2 px-2">{data.ev ? '✅' : '🔒'}</td>
-                        <td className="py-2 px-3 text-gray-600">{data.note}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-
-            <div className="mx-4 mt-4 rounded-xl border border-sky-100 bg-sky-50/60 p-4">
+            {/* Nikon/fokus LAB øverst ved siden af Live Preview (Peter, 2026-10-02) */}
+            <div className="mx-4 mt-4 mb-1 rounded-xl border border-sky-100 bg-sky-50/60 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
@@ -1419,6 +1430,48 @@ export default function LabPage() {
                 </div>
               )}
             </div>
+
+            <CameraProfilePanel profile={cameraProfile} />
+
+            {/* Eksponeringsmode matrix - hjælpetabel for readonly parametre */}
+            <div className="mx-4 mt-4 rounded-xl border border-amber-100 bg-amber-50/60 p-4">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2 mb-3">
+                <HelpCircle className="w-4 h-4 text-amber-600" /> Eksponeringsmode og parametre
+              </h3>
+              <p className="text-xs text-gray-600 mb-3">
+                <strong>Skift eksponeringsmode:</strong> Klik på tandhjulet ud for <span className="text-amber-700">Eksponeringsmode</span> under "Eksponering" gruppen og vælg en mode. Manual (M) giver fuld kontrol over alle parametre.
+              </p>
+              <p className="text-xs text-gray-600 mb-3">
+                Når en parameter er låst (🔒), betyder det at den styres automatisk i den aktuelle mode.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-amber-200">
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Mode</th>
+                      <th className="text-center py-2 px-2 font-semibold text-gray-700">Lukker</th>
+                      <th className="text-center py-2 px-2 font-semibold text-gray-700">Blænde</th>
+                      <th className="text-center py-2 px-2 font-semibold text-gray-700">ISO</th>
+                      <th className="text-center py-2 px-2 font-semibold text-gray-700">EV ±</th>
+                      <th className="text-left py-2 px-3 font-semibold text-gray-700">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(EXPOSURE_MODE_MATRIX).map(([mode, data]) => (
+                      <tr key={mode} className="border-b border-amber-100 hover:bg-amber-100/40">
+                        <td className="py-2 px-3 font-medium">{mode}</td>
+                        <td className="text-center py-2 px-2">{data.shutter ? '✅' : '🔒'}</td>
+                        <td className="text-center py-2 px-2">{data.aperture ? '✅' : '🔒'}</td>
+                        <td className="text-center py-2 px-2">{data.iso ? '✅' : '🔒'}</td>
+                        <td className="text-center py-2 px-2">{data.ev ? '✅' : '🔒'}</td>
+                        <td className="py-2 px-3 text-gray-600">{data.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
 
             {params.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-gray-400 text-sm flex-col gap-2 p-8">
