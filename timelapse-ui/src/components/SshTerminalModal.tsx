@@ -10,14 +10,21 @@ const RESIZE_PREFIX = '\x01RESIZE:'
 interface TerminalSession {
   session_id: string
   websocket_path: string
-  expires_at: string
-  host_fingerprint: string
-  identity_key_path: string
-  remote_port: number
+  expires_at?: string
+  host_fingerprint?: string
+  identity_key_path?: string
+  remote_port?: number
+  target?: string
 }
 
+// deviceId HEADEND_CONSOLE = the Headend itself, via its admin SSH (password + TOTP)
+export const HEADEND_CONSOLE = '__headend__'
+
 async function startTerminalSession(deviceId: string): Promise<TerminalSession> {
-  const res = await fetch(`${getApiUrl()}/api/admin/ssh-tunnel/${encodeURIComponent(deviceId)}/terminal-sessions`, {
+  const url = deviceId === HEADEND_CONSOLE
+    ? `${getApiUrl()}/api/admin/headend-console/sessions`
+    : `${getApiUrl()}/api/admin/ssh-tunnel/${encodeURIComponent(deviceId)}/terminal-sessions`
+  const res = await fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -71,7 +78,9 @@ export function SshTerminalModal({ deviceId, onClose }: { deviceId: string; onCl
         }
 
         ws.onopen = () => {
-          term?.write(`\x1b[36mForbinder til ${deviceId} via verified reverse tunnel...\x1b[0m\r\n`)
+          term?.write(deviceId === HEADEND_CONSOLE
+            ? `\x1b[36mForbinder til Headend via admin-SSH (${created.target ?? '127.0.0.1:9122'}) — log ind med adgangskode og TOTP-kode\x1b[0m\r\n`
+            : `\x1b[36mForbinder til ${deviceId} via verified reverse tunnel...\x1b[0m\r\n`)
           sendResize()
         }
         ws.onmessage = ev => term?.write(String(ev.data))
@@ -118,10 +127,12 @@ export function SshTerminalModal({ deviceId, onClose }: { deviceId: string; onCl
       >
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800 flex-shrink-0">
           <div>
-            <p className="text-sm text-gray-200 font-mono">{deviceId}</p>
+            <p className="text-sm text-gray-200 font-mono">{deviceId === HEADEND_CONSOLE ? 'Headend (denne server)' : deviceId}</p>
             <p className="text-[11px] text-gray-500">
               {session
-                ? `port ${session.remote_port} · ${session.identity_key_path} · udløber ${new Date(session.expires_at).toLocaleTimeString('da-DK')}`
+                ? (deviceId === HEADEND_CONSOLE
+                    ? `${session.target} · adgangskode + TOTP · maks. 30 min`
+                    : `port ${session.remote_port} · ${session.identity_key_path} · udløber ${session.expires_at ? new Date(session.expires_at).toLocaleTimeString('da-DK') : '–'}`)
                 : 'Starter kontrolleret terminalsession...'}
             </p>
           </div>

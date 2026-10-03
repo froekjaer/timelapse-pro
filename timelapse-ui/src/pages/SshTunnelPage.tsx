@@ -9,7 +9,8 @@ import {
   Wifi, WifiOff, Clock, Activity, Copy, CheckCircle, KeyRound, ShieldAlert, ShieldCheck
 } from 'lucide-react'
 import { getApiUrl } from '../api/client'
-import { SshTerminalModal } from '../components/SshTerminalModal'
+import { SshTerminalModal, HEADEND_CONSOLE } from '../components/SshTerminalModal'
+import { useAuth } from '../context/AuthContext'
 import { InfoTooltip } from '../components/InfoTooltip'
 
 function api(path: string, opts?: RequestInit) {
@@ -235,6 +236,7 @@ export function SshTunnelPage() {
   const [lastRefresh, setLast]      = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [terminalDevice, setTerminalDevice] = useState<string | null>(null)
+  const { user } = useAuth()
 
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true)
@@ -282,6 +284,22 @@ export function SshTunnelPage() {
           </button>
         </div>
       </div>
+
+      {user?.role === 'super_admin' && (
+        <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 flex items-center gap-3">
+          <ShieldCheck className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-gray-800">Headend (denne server)</p>
+            <p className="text-xs text-gray-400">
+              Konsol via admin-SSH på 127.0.0.1:9122 — samme dør som fra MacBook: adgangskode + TOTP. Kun super admin.
+            </p>
+          </div>
+          <button onClick={() => setTerminalDevice(HEADEND_CONSOLE)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-gray-900 rounded-lg hover:bg-gray-700">
+            <Terminal className="w-3.5 h-3.5" /> Åbn konsol
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="bg-white rounded-xl border border-gray-200 p-8 text-center">
