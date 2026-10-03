@@ -145,7 +145,12 @@ export function SshTerminalModal({ deviceId, onClose }: { deviceId: string; onCl
             <p className="text-sm text-red-300">{error}</p>
           </div>
         ) : (
-          <div ref={containerRef} className="flex-1 p-2 min-h-0" />
+          // Padding on the wrapper, not on the element xterm measures: FitAddon
+          // sizes rows from its parent's height, and border-box padding made it
+          // count ~16 px that are not there (bottom row cut in half).
+          <div className="flex-1 p-2 min-h-0 overflow-hidden">
+            <div ref={containerRef} className="h-full w-full" />
+          </div>
         )}
       </div>
     </div>
