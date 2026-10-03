@@ -61,7 +61,7 @@ def test_session_flow_single_use_and_audited(tmp_path, monkeypatch):
     pub.write_text("ssh-ed25519 AAAAKEY\n")
     monkeypatch.setattr(hc, "ADMIN_HOST_KEY_PUB", pub)
     monkeypatch.setattr(hc, "SSH_BIN", "/bin/echo")
-    monkeypatch.setattr(hc, "ssh_command", lambda _kh: ["/bin/echo", "Password:"])
+    monkeypatch.setattr(hc, "ssh_command", lambda _kh, _ident=None: ["/bin/echo", "Password:"])
     client, audits = _app()
     started = client.post("/api/admin/headend-console/sessions").json()
     assert started["target"].endswith("@127.0.0.1:9122")
@@ -82,5 +82,14 @@ def test_session_flow_single_use_and_audited(tmp_path, monkeypatch):
 
 def test_registered_in_main_without_new_direct_route():
     src = (ROOT / "headend/main.py").read_text(encoding="utf-8")
-    assert "create_headend_console_router(get_current_user, _session_payload, _session_is_mfa_verified, _siem_record_events)" in src
+    assert "create_headend_console_router(get_current_user, _session_payload, _session_is_mfa_verified, _siem_record_events, _webauthn_settings)" in src
     assert "@app.websocket(\"/api/admin/headend-console" not in src
+
+
+def test_nginx_template_upgrades_console_websocket():
+    conf = (ROOT / "deploy/nginx/timelapse.froekjaer.dk.conf").read_text(encoding="utf-8")
+    blocks = conf.split("location ^~ /api/admin/headend-console/ {")[1:]
+    assert len(blocks) == 2
+    for block in blocks:
+        body = block.split("}", 1)[0]
+        assert "proxy_set_header Upgrade    $http_upgrade;" in body and "proxy_http_version 1.1;" in body

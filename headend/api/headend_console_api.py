@@ -7,6 +7,15 @@ sshd/PAM ask for the macOS password and the TOTP code exactly as from a laptop.
 The admin sshd host key is pinned (StrictHostKeyChecking=yes against the key
 read from /etc/ssh/timelapse-admin), and the button itself requires a
 super_admin whose UI session is MFA-verified. Every session is written to SIEM.
+
+Passkey SSO (Peter, 2026-10-03): with a FRESH WebAuthn assertion (Touch ID /
+Windows Hello, user verification required) at the moment of opening, the
+Headend mints a one-off ed25519 key and signs it with the console CA: valid
+for ~2 minutes, principal = the admin user, source-address=127.0.0.1, pty
+only, no forwarding. The admin sshd trusts that CA ONLY for connections from
+127.0.0.1 (Match Address block, AuthorizedKeysFile none) — from the internet
+port 9122 still requires password + TOTP. Without a passkey or without the
+CA installed the console falls back to password + TOTP.
 """
 
 from __future__ import annotations
@@ -19,8 +28,10 @@ import os
 import pty
 import secrets
 import select
+import shutil
 import signal
 import struct
+import subprocess
 import tempfile
 import termios
 import time
@@ -38,31 +49,71 @@ ADMIN_SSH_HOST = "127.0.0.1"
 ADMIN_SSH_PORT = int(os.getenv("TIMELAPSE_ADMIN_SSH_PORT", "9122"))
 ADMIN_HOST_KEY_PUB = Path(os.getenv("TIMELAPSE_ADMIN_SSH_HOST_KEY_PUB", "/etc/ssh/timelapse-admin/ssh_host_ed25519_key.pub"))
 SSH_BIN = os.getenv("TIMELAPSE_SSH_BIN", "/usr/bin/ssh")
+SSH_KEYGEN = os.getenv("TIMELAPSE_SSH_KEYGEN", "/usr/bin/ssh-keygen")
+CONSOLE_CA_KEY = Path(os.getenv(
+    "TIMELAPSE_CONSOLE_CA_KEY",
+    str(Path.home() / "Library/Application Support/TimeLapse/headend-console-ca/ca_ed25519"),
+))
+CERT_VALIDITY = "-1m:+2m"   # only for the login itself; the session continues after
+STEPUP_WINDOW_S = 120
 OPEN_WINDOW_S = 60          # the browser must open the websocket within this window
 MAX_SESSION_S = 30 * 60     # hard cap on a console session
 RESIZE_PREFIX = "\x01RESIZE:"
 
-# session_id -> {"principal": str, "expires": float}; single use.
+# session_id -> {"principal", "expires", "workdir"?}; single use.
 _pending: dict[str, dict] = {}
+# username -> (challenge bytes, expires); single use.
+_stepup: dict[str, tuple[bytes, float]] = {}
 
 
 def admin_ssh_user() -> str:
     return os.getenv("TIMELAPSE_ADMIN_SSH_USER") or getpass.getuser()
 
 
-def ssh_command(known_hosts: Path) -> list[str]:
-    return [
+def ssh_command(known_hosts: Path, identity: Path | None = None) -> list[str]:
+    cmd = [
         SSH_BIN, "-tt",
         "-p", str(ADMIN_SSH_PORT),
         "-o", "StrictHostKeyChecking=yes",
         "-o", f"UserKnownHostsFile={known_hosts}",
         "-o", "GlobalKnownHostsFile=/dev/null",
-        "-o", "PubkeyAuthentication=no",
-        "-o", "PreferredAuthentications=keyboard-interactive",
-        "-o", "NumberOfPasswordPrompts=1",
         "-o", "ServerAliveInterval=60",
-        f"{admin_ssh_user()}@{ADMIN_SSH_HOST}",
     ]
+    if identity is not None:   # passkey SSO: the minted certificate, nothing else
+        cmd += [
+            "-i", str(identity),
+            "-o", f"CertificateFile={identity}-cert.pub",
+            "-o", "IdentitiesOnly=yes",
+            "-o", "IdentityAgent=none",
+            "-o", "PubkeyAuthentication=yes",
+            "-o", "PreferredAuthentications=publickey",
+        ]
+    else:
+        cmd += [
+            "-o", "PubkeyAuthentication=no",
+            "-o", "PreferredAuthentications=keyboard-interactive",
+            "-o", "NumberOfPasswordPrompts=1",
+        ]
+    return cmd + [f"{admin_ssh_user()}@{ADMIN_SSH_HOST}"]
+
+
+def sso_available() -> bool:
+    return CONSOLE_CA_KEY.is_file() and os.access(CONSOLE_CA_KEY, os.R_OK)
+
+
+def mint_console_certificate(workdir: Path, key_id: str) -> Path:
+    """One-off key + short-lived user certificate from the console CA."""
+    identity = workdir / "id_ed25519"
+    subprocess.run([SSH_KEYGEN, "-q", "-t", "ed25519", "-N", "", "-C", key_id, "-f", str(identity)],
+                   check=True, capture_output=True, timeout=10)
+    subprocess.run([
+        SSH_KEYGEN, "-q", "-s", str(CONSOLE_CA_KEY), "-I", key_id, "-n", admin_ssh_user(),
+        "-V", CERT_VALIDITY, "-O", "clear", "-O", "permit-pty",
+        "-O", f"source-address={ADMIN_SSH_HOST}", f"{identity}.pub",
+    ], check=True, capture_output=True, timeout=10)
+    if not Path(f"{identity}-cert.pub").is_file():
+        raise RuntimeError("certificate not created")
+    return identity
 
 
 def pinned_known_hosts() -> Path:
@@ -103,6 +154,7 @@ def create_headend_console_router(
     session_payload: Callable,
     session_is_mfa_verified: Callable,
     record_siem: Callable,
+    webauthn_settings: Callable | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/admin/headend-console", tags=["headend-console"])
 
@@ -136,20 +188,92 @@ def create_headend_console_router(
         # Same reviewed auth-dependency pattern as the Edge terminal router.
         return _require_super_admin(request, db)
 
+    def _user_credentials(db: Session, user, rp_id: str) -> list:
+        from database import WebAuthnCredential
+        from services.webauthn_origin import credential_descriptors
+
+        creds = db.query(WebAuthnCredential).filter_by(user_id=user.id).all()
+        return creds, credential_descriptors(creds, rp_id)
+
+    @router.post("/stepup/begin")
+    def stepup_begin(request: Request, user=Depends(_check), db: Session = Depends(get_db)):
+        """Fresh passkey challenge for opening the console (SSO)."""
+        if webauthn_settings is None or not sso_available():
+            return {"available": False, "reason": "Passkey-SSO er ikke installeret på Headend"}
+        import json as _json
+        import webauthn
+        from webauthn.helpers.structs import UserVerificationRequirement
+
+        rp_id, _name, _origin = webauthn_settings(db, request)
+        _creds, descriptors = _user_credentials(db, user, rp_id)
+        if not descriptors:
+            return {"available": False, "reason": "Ingen passkey registreret for dette domæne"}
+        options = webauthn.generate_authentication_options(
+            rp_id=rp_id,
+            allow_credentials=descriptors,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        )
+        _stepup[user.username] = (options.challenge, time.time() + STEPUP_WINDOW_S)
+        return {"available": True, "options": _json.loads(webauthn.options_to_json(options))}
+
+    def _verify_stepup(request: Request, db: Session, user, assertion: dict) -> None:
+        import webauthn
+
+        challenge, expires = _stepup.pop(user.username, (None, 0.0))   # single use
+        if challenge is None or expires < time.time():
+            raise HTTPException(status_code=403, detail="Passkey-udfordring udløbet — prøv igen")
+        rp_id, _name, origin = webauthn_settings(db, request)
+        creds, _desc = _user_credentials(db, user, rp_id)
+        raw_id = webauthn.base64url_to_bytes(assertion.get("rawId", ""))
+        cred = next((c for c in creds if bytes(c.credential_id) == raw_id), None)
+        if cred is None:
+            raise HTTPException(status_code=403, detail="Ukendt passkey")
+        try:
+            result = webauthn.verify_authentication_response(
+                credential=assertion,
+                expected_challenge=challenge,
+                expected_rp_id=rp_id,
+                expected_origin=origin,
+                credential_public_key=cred.public_key,
+                credential_current_sign_count=cred.sign_count,
+                require_user_verification=True,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=403, detail=f"Passkey-bekræftelse fejlede: {exc}") from exc
+        cred.sign_count = result.new_sign_count
+        db.commit()
+
     @router.post("/sessions")
-    def start_console(request: Request, user=Depends(_check), db: Session = Depends(get_db)):
+    def start_console(request: Request, payload: dict | None = None, user=Depends(_check), db: Session = Depends(get_db)):
         now = time.time()
         for sid in [s for s, v in _pending.items() if v["expires"] < now]:
-            _pending.pop(sid, None)
+            stale = _pending.pop(sid, None)
+            if stale and stale.get("workdir"):
+                shutil.rmtree(stale["workdir"], ignore_errors=True)
         session_id = f"TLHC-{secrets.token_urlsafe(18)}"
-        _pending[session_id] = {"principal": user.username, "expires": now + OPEN_WINDOW_S}
+        entry = {"principal": user.username, "expires": now + OPEN_WINDOW_S}
+        mode = "password"
+        assertion = (payload or {}).get("assertion")
+        if assertion:
+            _verify_stepup(request, db, user, assertion)
+            workdir = Path(tempfile.mkdtemp(prefix="tl-console-sso-"))
+            try:
+                mint_console_certificate(workdir, f"headend-console:{user.username}:{session_id}")
+            except Exception as exc:
+                shutil.rmtree(workdir, ignore_errors=True)
+                _audit(db, "headend_console_denied", user.username, f"Konsol-certifikat kunne ikke udstedes: {exc}", "warning")
+                raise HTTPException(status_code=500, detail="Konsol-certifikat kunne ikke udstedes") from exc
+            entry["workdir"] = str(workdir)
+            mode = "passkey"
+        _pending[session_id] = entry
         _audit(db, "headend_console_requested", user.username,
-               f"Headend-konsol anmodet af {user.username} (session {session_id})")
+               f"Headend-konsol anmodet af {user.username} (session {session_id}, login: {mode})")
         return {
             "session_id": session_id,
             "websocket_path": f"/api/admin/headend-console/ws?session_id={session_id}",
             "target": f"{admin_ssh_user()}@{ADMIN_SSH_HOST}:{ADMIN_SSH_PORT}",
             "max_seconds": MAX_SESSION_S,
+            "login": mode,
         }
 
     @router.websocket("/ws")
@@ -157,17 +281,22 @@ def create_headend_console_router(
         user = get_current_user(websocket, db)
         session_id = websocket.query_params.get("session_id") or ""
         pending = _pending.pop(session_id, None)   # single use
+        workdir = Path(pending["workdir"]) if pending and pending.get("workdir") else None
         if (
             user is None or not getattr(user, "is_active", False)
             or getattr(user, "role", "") != "super_admin"
             or not pending or pending["principal"] != user.username
             or pending["expires"] < time.time()
         ):
+            if workdir:
+                shutil.rmtree(workdir, ignore_errors=True)
             await websocket.close(code=1008)
             return
         try:
             known_hosts = pinned_known_hosts()
         except Exception as exc:
+            if workdir:
+                shutil.rmtree(workdir, ignore_errors=True)
             _audit(db, "headend_console_denied", user.username, f"Headend-konsol afvist: {exc}", "warning")
             await websocket.close(code=1011)
             return
@@ -178,7 +307,7 @@ def create_headend_console_router(
 
         # Build everything BEFORE fork: in this multi-threaded process the child
         # must do nothing but exec (no Python locks taken after fork).
-        argv = ssh_command(known_hosts)
+        argv = ssh_command(known_hosts, workdir / "id_ed25519" if workdir else None)
         env = {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color", "LANG": "en_US.UTF-8"}
         child_pid, master_fd = pty.fork()
         if child_pid == 0:  # child: the real ssh client; sshd/PAM ask password + TOTP
@@ -254,6 +383,8 @@ def create_headend_console_router(
             except OSError:
                 pass
             known_hosts.unlink(missing_ok=True)
+            if workdir:
+                shutil.rmtree(workdir, ignore_errors=True)   # one-off key + certificate
             _audit(db, "headend_console_closed", user.username,
                    f"Headend-konsol lukket for {user.username} (session {session_id}): {close_reason}")
             try:

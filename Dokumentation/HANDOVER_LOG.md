@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-04 00:10 — fra Claude til Peter/næste session: Headend-konsol med passkey-SSO (frisk Touch ID → kortlivet SSH-certifikat kun fra 127.0.0.1)
+
+- **Status før:** #276 merged + deployet; nginx fik WebSocket-blok for `/api/admin/headend-console/` (Claude ændrede live `/opt/homebrew/etc/nginx/nginx.conf` med backup `nginx.conf.backup-20261003-headend-console` før classifier stoppede videre arbejde; Peter gennemgik diff, kørte `nginx -t` + reload). Konsollen virker: ssh/PAM spørger Password + Verification code; første forsøg gav `Permission denied` (sandsynligvis genbrugt/skiftende TOTP-kode; ikke bekræftet — sshd-log kræver sudo). **nginx-skabelonen i repoet (`deploy/nginx/…`) er IKKE opdateret endnu** — følges op.
+- **Peters ønske:** SSO — genbrug UI-login (TOTP/passkey) i konsollen. Valgt (AskUserQuestion): passkey + kortlivet certifikat.
+- **Løsning (branch `claude/headend-console-passkey-sso-20261003`):** `POST /api/admin/headend-console/stepup/begin` (frisk WebAuthn-udfordring, user verification REQUIRED, kun brugerens passkeys) → `POST …/sessions {assertion}` verificerer (engangs-udfordring, sign_count opdateres) og udsteder engangs-nøgle + certifikat (konsol-CA, ~2 min, principal admin, source-address 127.0.0.1, kun permit-pty); ws bruger certifikatet (IdentitiesOnly, IdentityAgent=none) og sletter nøglen bagefter. sshd: `TrustedUserCAKeys` + `Match Address 127.0.0.1` (pubkey via CA kun, AuthorizedKeysFile none, ellers kbd-interactive). Installer laver/tjekker CA. UI: Touch ID ved åbning; annulleret → adgangskode + TOTP. Detaljer i `ADMIN_REMOTE_ACCESS_9122_2026-10-01.md` (tillæg).
+- **Test:** `tests/test_headend_console_sso.py` 8 + konsol 7 + admin-sshd-kontrakt (global sektion uændret + ny Match-kontrakt) = 24 grønne; `sshd -t`/`sshd -T` viser publickey|kbd fra 127.0.0.1 og kun kbd udefra. Fuldt cert-login kunne ikke testes lokalt (upriviligeret sshd på macOS afviser forbindelser) → verificeres efter Peters installation.
+- **Ikke gjort:** ikke merged/deployet/installeret.
+
 ### Handover 2026-10-03 23:40 — fra Claude til Peter/næste session: Headend-konsol i UI via admin-SSH (adgangskode + TOTP); Edge1 tilbage på lab.57
 
 - **Edge1 genoprettet:** `v2.8.1-lab.57` (signeret `55e9051a`, artefakt `TL-ART-20261003-55e9051a3f5c`, opdatering #319) godkendt kun for Edge1 → tunnel forbundet 22:25:14 (127.0.0.1:2201 lytter), heartbeat + sync 200 igen (én forbigående 401 kl. 22:27 lige efter genstart, derefter 200). Peter kan åbne konsollen. Edge2's lab.56-kandidat #316 og lab.57-kandidat er IKKE godkendt (Edge2 håndrettet ud over receipt — skal diffes først).

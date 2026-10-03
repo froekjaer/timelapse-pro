@@ -8,14 +8,35 @@ CONF = (ROOT / "deploy/ssh/timelapse-admin-sshd.conf").read_text(encoding="utf-8
 INSTALLER = (ROOT / "deploy/ssh/install_timelapse_admin_sshd.sh").read_text(encoding="utf-8")
 
 
-def _d():
+def _d(section: str = "global"):
+    """Directives of the global section (before the first Match) or of the
+    `Match Address 127.0.0.1` block (console passkey SSO, 2026-10-03)."""
     out = {}
+    current = "global"
     for line in CONF.splitlines():
         line = line.split("#", 1)[0].strip()
-        if line:
-            k, _, v = line.partition(" ")
+        if not line:
+            continue
+        k, _, v = line.partition(" ")
+        if k == "Match":
+            current = "localhost" if v.strip() == "Address 127.0.0.1" else "other"
+            continue
+        if current == section:
             out.setdefault(k, []).append(v.strip())
     return out
+
+
+def test_only_match_block_is_localhost_console_sso():
+    """Certificates (console CA) only from 127.0.0.1, never personal keys;
+    no other Match blocks that could widen access from the internet."""
+    assert [l for l in CONF.splitlines() if l.strip().startswith("Match ")] == ["Match Address 127.0.0.1"]
+    m = _d("localhost")
+    assert m == {
+        "PubkeyAuthentication": ["yes"],
+        "AuthorizedKeysFile": ["none"],
+        "AuthenticationMethods": ["publickey keyboard-interactive"],
+    }
+    assert _d("global")["TrustedUserCAKeys"] == ["/etc/ssh/timelapse-admin/console_user_ca.pub"]
 
 
 def test_second_factor_is_part_of_authentication():
