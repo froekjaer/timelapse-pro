@@ -338,17 +338,29 @@ def _software_inventory() -> dict[str, str]:
         "timelapse_pro": APP_VERSION,
         "python": platform.python_version(),
     }
-    for name, cmd in {
-        "gphoto2": ["gphoto2", "--version"],
-        "libgphoto2": ["gphoto2", "--version"],
-    }.items():
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            line = (result.stdout or result.stderr).strip().splitlines()
-            if line:
-                inventory[name] = line[0]
-        except Exception:
-            pass
+    # `gphoto2 --version` prints the CLI version on its first line and the
+    # library version on the line starting with "libgphoto2". The library line
+    # used to be ignored (both keys got the CLI line), so CMDB never showed the
+    # real libgphoto2 version (found 2026-10-01). Edges may run a source build
+    # in /usr/local (deploy/edge/install_gphoto2_from_source.sh), which apt-based
+    # update detection cannot see — the path makes that visible.
+    try:
+        result = subprocess.run(["gphoto2", "--version"], capture_output=True, text=True, timeout=5)
+        lines = (result.stdout or result.stderr).strip().splitlines()
+        if lines:
+            inventory["gphoto2"] = lines[0].strip()
+        for line in lines:
+            if line.split()[:1] == ["libgphoto2"]:
+                inventory["libgphoto2"] = " ".join(line.split()[:2])
+                break
+        path = shutil.which("gphoto2")
+        if path:
+            # Underscore keys are metadata, not versioned software: CMDB's SBOM
+            # (headend/cmdb.py::_components_from_mapping) skips them.
+            inventory["_gphoto2_path"] = path
+            inventory["_gphoto2_source"] = "source-build" if path.startswith("/usr/local/") else "distro"
+    except Exception:
+        pass
     return inventory
 
 

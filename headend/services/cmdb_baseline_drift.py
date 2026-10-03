@@ -41,13 +41,26 @@ class DriftResult:
         return bool(self.missing or self.unexpected)
 
 
-def compute_package_drift(expected_packages: list[str], installed_packages: dict[str, str]) -> DriftResult:
+# Distro packages that a verified /usr/local source build replaces
+# (deploy/edge/install_gphoto2_from_source.sh). Reported by the Edge inventory
+# as software_inventory["_gphoto2_source"] == "source-build".
+SOURCE_BUILD_REPLACES = {
+    "_gphoto2_source": ("gphoto2", "libgphoto2-6", "libgphoto2-port12"),
+}
+
+
+def compute_package_drift(expected_packages: list[str], installed_packages: dict[str, str],
+                          software_inventory: dict | None = None) -> DriftResult:
     """Packages the hardware target expects that aren't installed.
 
     One-directional by design — see module docstring for why "unexpected
-    package" detection isn't built here.
+    package" detection isn't built here. Packages replaced by a reported
+    source build count as present.
     """
     installed = set(installed_packages or {})
+    for marker, packages in SOURCE_BUILD_REPLACES.items():
+        if (software_inventory or {}).get(marker) == "source-build":
+            installed.update(packages)
     missing = sorted(set(expected_packages or []) - installed)
     return DriftResult(missing=missing, unexpected=[])
 
@@ -103,6 +116,7 @@ def compute_baseline_drift(target: dict, inventory: dict) -> dict[str, DriftResu
         "packages": compute_package_drift(
             target.get("extra_packages") or [],
             inventory.get("os_packages") or {},
+            software,
         ),
         "services": compute_service_drift(
             target.get("expected_enabled_services") or [],
