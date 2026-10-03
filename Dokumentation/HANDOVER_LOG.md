@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-10-03 13:45 — fra Claude til Peter/næste session: Edge1 mistede sync + tunnel efter lab.56; tunnel-loopback-fix fandtes kun på #259-branchen
+
+- **Hvad skete:** #271 + #272 merged, live Headend deployet (`06efb3c8`), Peter cuttede signeret `v2.8.1-lab.56` (release-nøgle EE347E3F…) → Headend GPG-verificerede og byggede `TL-ART-20261003-06efb3c8157b` 13:00:30. Edge1 (TL-C87FF9587CA0) installerede den ~13:13 (4 × `/api/updates/report`). Sidste heartbeat 13:13:14; derefter kun `GET /api/health` (~30 s) og `GET /api/config` (~50 s) i ring, ingen `/api/edge/sync`, og `SSH tunnel failed port=2201` hvert 34. s. LAB kan derfor ikke aktiveres (LAB-kommandoer går via sync). Edge1 henter stadig `/api/updates/policy` hvert ~5. min → en rettet release kan nå frem uden tunnel.
+- **Fundet:** `9b8c1d2a` ("bind reverse SSH forwards to explicit loopback", 2026-09-17: `-R 127.0.0.1:<port>:localhost:<local>`) findes kun på `chatgpt/api-mtls-20260917`, `chatgpt/api-mtls-runtime-closure-20260925` (#259) og `claude/tunnel-port-9222-into-259-20261001` — ikke i main eller lab.55. Tunnel-sshd'ens authorized_keys giver hver Edge `permitlisten="127.0.0.1:<port>"`, som en bar `-R <port>:localhost:22` ikke matcher. Begge Edges havde virkende tunnel før → de kørte kode udover main (sandsynligvis #259-indhold). lab.56 fra main fjernede derfor også #259's øvrige Edge-ændringer (`edge/api_mtls.py`, mTLS i `headend_client.py`, `timelapse-edge.service` `ExecStartPre=+`). Headend-nginx har ingen `ssl_verify_client`, så mTLS-tabet forklarer ikke den manglende sync — **årsagen til manglende sync er ukendt** og kræver Edge1's journal (Peter har lokal adgang i morgen; web-terminalen går via tunnelen).
+- **Proces-fejl (Claude):** release-tag fra main blev foreslået uden at verificere, hvilken kode Edgene faktisk kørte, eller afstemme mod åbne Edge-spor (#259) — præcis §14's krav om at tjekke parallelle PR'er/deployment-kandidater før installation.
+- **Forberedt (denne PR, `claude/edge-tunnel-loopback-bind-20261003`):** cherry-pick af `9b8c1d2a` på main + regressionstest `tests/test_ssh_tunnel_loopback_bind.py` (fejler uden fixet, grøn med). Kun tunnel-delen; #259's øvrige Edge-indhold er ikke afstemt.
+- **Edge2:** 4G-linjen var meget ustabil (`GET /config` 47–93 s, read-timeouts, LAB-uploads "headend unreachable"); Headends internet er hurtigt (72/54 MB/s, 6 ms). Peter flytter Edge2 til kontor-WiFi. **lab.56 må IKKE godkendes til Edge2** før Edge1 er forstået.
+- **Næste (2026-10-04, Peter hjemme):** Edge1 `systemctl status timelapse-edge` + journal siden 13:10 → find årsag til manglende sync; beslut lab.57 = main + dette fix (+ evt. #259's Edge-indhold) og afstem #259 mod main; derefter Edge2.
+
 ### Handover 2026-10-02 — fra Claude til Peter/næste session: Edge2 Nikon Z30 uskarpe billeder — fokuslås fra DB/UI (ingen AF ved hvert billede)
 
 - **Symptom (Peter):** LAB-preview på Edge2 er skarpt, rigtige billeder er uskarpe. Edge1 har samme kamerahus (andet objektiv) og fejler ikke — den kører kameraets egen AF ved udløsning.
