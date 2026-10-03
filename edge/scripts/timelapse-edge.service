@@ -43,6 +43,10 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 RuntimeDirectory=timelapse
 RuntimeDirectoryMode=0755
+# /run/timelapse also holds the shared technician ServiceSession (WP-3). Keep it
+# when the agent stops: technician operations stop the agent (camera power
+# lease) and must not lose their session or leases mid-operation (2026-10-03).
+RuntimeDirectoryPreserve=yes
 ProtectSystem=strict
 # 2026-08-25: four separate incidents in one night (sshd_config, .ssh
 # authorized_keys dirs, /var/log.hdd/timelapse, and finally /etc/passwd's

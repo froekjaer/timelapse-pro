@@ -250,3 +250,8 @@ def test_camera_menu_without_session_still_opens(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, "camera_menu", lambda _b: p.calls.append("camera_menu"))
     cli.camera_menu_powered(tmp_path)
     assert p.calls == ["camera_menu"] and "TOTP" in capsys.readouterr().out
+
+
+def test_agent_stop_keeps_service_session_directory():
+    unit = (ROOT / "edge/scripts/timelapse-edge.service").read_text(encoding="utf-8")
+    assert "RuntimeDirectory=timelapse" in unit and "RuntimeDirectoryPreserve=yes" in unit
