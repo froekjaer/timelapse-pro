@@ -36,7 +36,7 @@
 - **Første udkast forkastet:** direkte GPIO i CLI'en brød WP-3-kontrakten (`tests/test_wp3_client_routing_contract.py`: CLI/UI må ikke skrive GPIO). Bygget om til Service Operations.
 - **Løsning (branch `claude/edge-cli-relay-menu-20261003`):** nye serviceoperationer `relay.status` (camera.read), `modem.power.on`, `modem.power.test` (modem.power, ModemMaintenanceLease; gen-tænding i løsrevet proces startet før sluk), `camera.relay.pin_test` (camera.reset, DiagnosticLease; frigives ved cleanup). Lav-niveau GPIO-hjælpere i `edge/camera/relay.py`. CLI: hovedmenu "7. Relaeer (kamera og modem)" og kamera-menuen (punkt 4) tager kamera-strøm via `camera.power.acquire` og frigiver ved afslutning/Ctrl+C. Kræver aktiv service-session (TOTP-login i lokal tekniker-UI starter den). Modem-regel håndhævet i relay-init, agent-shutdown, `cleanup()`-default og `cleanup_modem`. WP3-dokumentet opdateret.
 - **Test:** `tests/test_relay_modem_never_off.py` 16/16; CI-testtrin lokalt 1612 grønne (kun de 4 kendte lokale GPG-fejl).
-- **Åbent (Peters beslutning):** `ConnectivityMonitor` power-cycler modemet automatisk efter `modem_cycle_after_failures` (standard 3) — ikke en eksplicit kommando. Fjernes, slås fra som standard, eller beholdes som bevidst konfigureret genoprettelse?
+- **Besluttet (Peter):** `ConnectivityMonitor`'s automatiske modem power-cycle efter `modem_cycle_after_failures` (standard 3, højst hvert 10. min) **beholdes som i dag** — bevidst konfigureret genoprettelse, tilladt undtagelse fra modem-reglen.
 - **Ikke gjort:** ikke merged/released. Kommer med næste release efter lab.57 (tunnel-fix, #273).
 
 ### Handover 2026-10-02 — fra Claude til Peter/næste session: Edge2 Nikon Z30 uskarpe billeder — fokuslås fra DB/UI (ingen AF ved hvert billede)
