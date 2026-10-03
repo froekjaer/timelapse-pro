@@ -77,6 +77,27 @@ def pinned_known_hosts() -> Path:
     return Path(name)
 
 
+def _stop_child(pid: int) -> None:
+    """Terminate the ssh client without awaiting (safe during task cancel)."""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    for _ in range(10):
+        try:
+            done, _status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if done:
+            return
+        time.sleep(0.02)
+    try:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+    except (ProcessLookupError, ChildProcessError):
+        pass
+
+
 def create_headend_console_router(
     get_current_user: Callable,
     session_payload: Callable,
@@ -174,29 +195,36 @@ def create_headend_console_router(
             return pid == 0
 
         async def pump() -> None:
-            while child_alive():
+            # Read until the pty reports EOF, not merely until the child exits:
+            # ssh's last words ("Permission denied", "Connection closed") are
+            # still in the pty buffer when the process is already gone.
+            while True:
                 readable, _, _ = select.select([master_fd], [], [], 0)
                 if readable:
                     try:
                         data = os.read(master_fd, 4096)
-                    except OSError:
-                        break
+                    except OSError:      # EIO: slave side closed and drained
+                        return
                     if not data:
-                        break
+                        return
                     await websocket.send_text(data.decode(errors="replace"))
+                elif not child_alive():
+                    readable, _, _ = select.select([master_fd], [], [], 0.1)
+                    if not readable:
+                        return
                 else:
                     await asyncio.sleep(0.02)
 
         pump_task = asyncio.create_task(pump())
         try:
-            while child_alive():
+            while not pump_task.done():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     close_reason = f"max session time {MAX_SESSION_S}s reached"
                     await websocket.send_text("\r\n[Headend-konsol lukket: maksimal sessionstid nået]\r\n")
                     break
                 try:
-                    msg = await asyncio.wait_for(websocket.receive_text(), timeout=min(remaining, 5))
+                    msg = await asyncio.wait_for(websocket.receive_text(), timeout=min(remaining, 1))
                 except asyncio.TimeoutError:
                     continue
                 if msg.startswith(RESIZE_PREFIX):
@@ -211,28 +239,26 @@ def create_headend_console_router(
                 close_reason = "ssh session ended"
         except WebSocketDisconnect:
             close_reason = "websocket disconnected"
+        except asyncio.CancelledError:
+            close_reason = "connection task cancelled"
+            raise
         except Exception as exc:
             close_reason = str(exc)
         finally:
+            # No awaits before the audit and the ssh kill: if the task is being
+            # cancelled (browser gone), an await here would skip the rest.
             pump_task.cancel()
-            try:
-                os.kill(child_pid, signal.SIGTERM)
-                await asyncio.sleep(0.2)
-                if child_alive():
-                    os.kill(child_pid, signal.SIGKILL)
-                os.waitpid(child_pid, 0)
-            except (ProcessLookupError, ChildProcessError):
-                pass
+            _stop_child(child_pid)
             try:
                 os.close(master_fd)
             except OSError:
                 pass
             known_hosts.unlink(missing_ok=True)
-            try:
-                await websocket.close()
-            except Exception:
-                pass
             _audit(db, "headend_console_closed", user.username,
                    f"Headend-konsol lukket for {user.username} (session {session_id}): {close_reason}")
+            try:
+                await websocket.close()
+            except BaseException:
+                pass
 
     return router

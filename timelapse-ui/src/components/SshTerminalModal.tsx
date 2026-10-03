@@ -45,6 +45,7 @@ function websocketUrl(path: string) {
 
 export function SshTerminalModal({ deviceId, onClose }: { deviceId: string; onClose: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const backdropPress = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [session, setSession] = useState<TerminalSession | null>(null)
 
@@ -120,10 +121,16 @@ export function SshTerminalModal({ deviceId, onClose }: { deviceId: string; onCl
   }, [deviceId])
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+    // Close only when BOTH press and release happen on the backdrop. Selecting
+    // text in the terminal and releasing outside the window fires a click on
+    // the backdrop (common ancestor) and used to close the terminal.
+    <div
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+      onMouseDown={e => { backdropPress.current = e.target === e.currentTarget }}
+      onClick={e => { if (backdropPress.current && e.target === e.currentTarget) onClose(); backdropPress.current = false }}
+    >
       <div
         className="bg-gray-950 rounded-lg border border-gray-700 shadow-2xl w-full max-w-5xl h-[72vh] flex flex-col overflow-hidden"
-        onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800 flex-shrink-0">
           <div>

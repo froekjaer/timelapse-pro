@@ -66,7 +66,13 @@ def test_session_flow_single_use_and_audited(tmp_path, monkeypatch):
     started = client.post("/api/admin/headend-console/sessions").json()
     assert started["target"].endswith("@127.0.0.1:9122")
     with client.websocket_connect(started["websocket_path"]) as ws:
+        # ssh's output must arrive even though the process has already exited
         assert "Password:" in ws.receive_text()
+    import time
+    for _ in range(50):   # the server side closes in its own thread
+        if audits and audits[-1]["event_type"] == "headend_console_closed":
+            break
+        time.sleep(0.05)
     types = [a["event_type"] for a in audits]
     assert types[:2] == ["headend_console_requested", "headend_console_opened"] and types[-1] == "headend_console_closed"
     with pytest.raises(Exception):
