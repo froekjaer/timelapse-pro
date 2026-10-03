@@ -15999,8 +15999,6 @@ app.include_router(admin_settings_router)
 from api.cameras_api import router as cameras_router
 app.include_router(cameras_router)
 
-from api.lab_previews_api import create_lab_previews_router
-app.include_router(create_lab_previews_router(require_role, _ensure_capture_device_access, _sftp_base_path))
 
 from api.admin_route_bundle import register_admin_route_bundle
 from api.service_access_api import create_service_access_router
@@ -17091,6 +17089,8 @@ def _ensure_capture_device_access(db: Session, user: User | None, device_id: str
 
 
 app.include_router(create_service_access_router(require_role, _ensure_capture_device_access, _siem_record_events, now_utc))
+from api.lab_previews_api import create_lab_previews_router
+app.include_router(create_lab_previews_router(require_role, _ensure_capture_device_access, _sftp_base_path))
 app.include_router(create_edge_local_pki_router(require_role, _siem_record_events, now_utc))
 app.include_router(create_ssh_tunnel_terminal_router(get_current_user, _ensure_capture_device_access, _session_payload, _session_is_mfa_verified))
 
