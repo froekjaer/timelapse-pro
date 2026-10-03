@@ -49,3 +49,13 @@ ssh -p 9122 -o ExitOnForwardFailure=yes -L 55900:127.0.0.1:5900 peter@backend.ti
 
 ## Resultat 2026-10-01
 Offentligt eksponeret mod Headend: **8443** (API/UI), **9022** (kun SFTP), **9222** (kun Edge-tunneller) og **9122** (admin: adgangskode + TOTP, tunnel kun til 5900). 2222/22022/22222 er lukket. 22/80/443 på den offentlige IP tilhører CrushFTP-miljøet og ikke Headend.
+
+
+## Tillæg 2026-10-03: Headend-konsol i UI og passkey-SSO (Peter)
+
+- **Konsollen** (SSH Tunnels → "Headend (denne server)", kun super_admin med MFA-verificeret UI-session) kører den almindelige `ssh`-klient i en pty mod `127.0.0.1:9122` med fastlåst værtsnøgle. Ingen ny dør: al shell går gennem denne sshd.
+- **Passkey-SSO:** ved "Åbn konsol" kræves en FRISK WebAuthn-bekræftelse (Touch ID / Windows Hello, user verification required). Headend laver derefter et engangs-ed25519-nøglepar og signerer det med konsol-CA'en: gyldigt ca. 2 min (`-V -1m:+2m`), principal = admin-brugeren, `source-address=127.0.0.1`, kun `permit-pty` (ingen forwarding/agent/X11/user-rc). Nøgle og certifikat slettes når sessionen lukker.
+- **sshd:** `TrustedUserCAKeys /etc/ssh/timelapse-admin/console_user_ca.pub` + `Match Address 127.0.0.1` → `PubkeyAuthentication yes`, `AuthorizedKeysFile none` (personlige nøgler læses aldrig), `AuthenticationMethods publickey keyboard-interactive`. **Fra internettet uændret: kun adgangskode + TOTP** (verificeret med `sshd -T` for addr=127.0.0.1 vs. ekstern adresse; kontrakt i `tests/test_timelapse_admin_sshd.py`).
+- **Konsol-CA:** privat nøgle `~<admin>/Library/Application Support/TimeLapse/headend-console-ca/ca_ed25519` (ejer admin-brugeren, 0600 — Headend-processen kører som denne bruger og signerer); offentlig nøgle installeres root-ejet af `install_timelapse_admin_sshd.sh`, som laver CA'en hvis den mangler og tjekker ejer/mode. `--verify-only` tjekker at CA'en matcher.
+- **Afvejning (accepteret af Peter):** Headend-processen kan udstede shell-adgang til admin-brugeren — men kører allerede som den bruger, så en kompromitteret proces har i forvejen samme rettigheder. Den nye risiko (stjålet browser-session) lukkes af den friske passkey-bekræftelse pr. åbning.
+- **Fallback:** uden installeret CA, uden passkey, eller hvis passkey-dialogen annulleres → adgangskode + TOTP som før.

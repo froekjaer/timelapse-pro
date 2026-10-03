@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { X } from 'lucide-react'
+import { startAuthentication } from '@simplewebauthn/browser'
 import { getApiUrl } from '../api/client'
 
 const RESIZE_PREFIX = '\x01RESIZE:'
@@ -15,20 +16,43 @@ interface TerminalSession {
   identity_key_path?: string
   remote_port?: number
   target?: string
+  login?: 'passkey' | 'password'
 }
 
 // deviceId HEADEND_CONSOLE = the Headend itself, via its admin SSH (password + TOTP)
 export const HEADEND_CONSOLE = '__headend__'
 
-async function startTerminalSession(deviceId: string): Promise<TerminalSession> {
-  const url = deviceId === HEADEND_CONSOLE
-    ? `${getApiUrl()}/api/admin/headend-console/sessions`
-    : `${getApiUrl()}/api/admin/ssh-tunnel/${encodeURIComponent(deviceId)}/terminal-sessions`
-  const res = await fetch(url, {
+async function postJson(url: string, body?: unknown) {
+  return fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
   })
+}
+
+// Headend console: fresh passkey (Touch ID / Windows Hello) → SSO login.
+// Without SSO installed or without a passkey it falls back to password + TOTP.
+async function headendAssertion(): Promise<unknown | null> {
+  const res = await postJson(`${getApiUrl()}/api/admin/headend-console/stepup/begin`)
+  if (!res.ok) return null
+  const begin = await res.json()
+  if (!begin.available) return null
+  try {
+    return await startAuthentication({ optionsJSON: begin.options })
+  } catch {
+    return null   // passkey dialog cancelled → password + TOTP instead
+  }
+}
+
+async function startTerminalSession(deviceId: string): Promise<TerminalSession> {
+  let res: Response
+  if (deviceId === HEADEND_CONSOLE) {
+    const assertion = await headendAssertion()
+    res = await postJson(`${getApiUrl()}/api/admin/headend-console/sessions`, assertion ? { assertion } : {})
+  } else {
+    res = await postJson(`${getApiUrl()}/api/admin/ssh-tunnel/${encodeURIComponent(deviceId)}/terminal-sessions`)
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.detail ?? `Terminal afvist (${res.status})`)
@@ -80,7 +104,9 @@ export function SshTerminalModal({ deviceId, onClose }: { deviceId: string; onCl
 
         ws.onopen = () => {
           term?.write(deviceId === HEADEND_CONSOLE
-            ? `\x1b[36mForbinder til Headend via admin-SSH (${created.target ?? '127.0.0.1:9122'}) — log ind med adgangskode og TOTP-kode\x1b[0m\r\n`
+            ? (created.login === 'passkey'
+                ? `\x1b[36mForbinder til Headend via admin-SSH (${created.target ?? '127.0.0.1:9122'}) — logget ind med passkey\x1b[0m\r\n`
+                : `\x1b[36mForbinder til Headend via admin-SSH (${created.target ?? '127.0.0.1:9122'}) — log ind med adgangskode og TOTP-kode\x1b[0m\r\n`)
             : `\x1b[36mForbinder til ${deviceId} via verified reverse tunnel...\x1b[0m\r\n`)
           sendResize()
         }
@@ -138,7 +164,7 @@ export function SshTerminalModal({ deviceId, onClose }: { deviceId: string; onCl
             <p className="text-[11px] text-gray-500">
               {session
                 ? (deviceId === HEADEND_CONSOLE
-                    ? `${session.target} · adgangskode + TOTP · maks. 30 min`
+                    ? `${session.target} · ${session.login === 'passkey' ? 'passkey (SSO)' : 'adgangskode + TOTP'} · maks. 30 min`
                     : `port ${session.remote_port} · ${session.identity_key_path} · udløber ${session.expires_at ? new Date(session.expires_at).toLocaleTimeString('da-DK') : '–'}`)
                 : 'Starter kontrolleret terminalsession...'}
             </p>
