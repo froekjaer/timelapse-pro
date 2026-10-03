@@ -84,3 +84,12 @@ def test_registered_in_main_without_new_direct_route():
     src = (ROOT / "headend/main.py").read_text(encoding="utf-8")
     assert "create_headend_console_router(get_current_user, _session_payload, _session_is_mfa_verified, _siem_record_events, _webauthn_settings)" in src
     assert "@app.websocket(\"/api/admin/headend-console" not in src
+
+
+def test_nginx_template_upgrades_console_websocket():
+    conf = (ROOT / "deploy/nginx/timelapse.froekjaer.dk.conf").read_text(encoding="utf-8")
+    blocks = conf.split("location ^~ /api/admin/headend-console/ {")[1:]
+    assert len(blocks) == 2
+    for block in blocks:
+        body = block.split("}", 1)[0]
+        assert "proxy_set_header Upgrade    $http_upgrade;" in body and "proxy_http_version 1.1;" in body
