@@ -29,6 +29,33 @@
 
 ## Log
 
+### Handover 2026-10-03 — fra Claude til Peter: design for én tydelig SSH-vej til Edge (KUN forslag, afventer godkendelse)
+
+- **Anledning (Peter):** "Der burde være en helt tydelig måde at logge ind på edgen med SSH." Peter kunne ikke finde sin browser-genererede private nøgle, kunne ikke se om nøglen var på Edgen, og web-/Edge-terminal gav ingen forklaring, da Edge1's tunnel var nede.
+- **OP-001:** cache VERIFIED (`9a1a454`). Worktree-branchen pegede på den gamle `codex/edge-terminal-renderer` (319 commits bag main); nyt spor `claude/edge-ssh-access-design-20261003` fra `origin/main` `06efb3c8`. Registreret i PAKKE_SPOR_REGISTER.
+- **Fund (verificeret i kode + live DB):**
+  - `user_ssh_keys` har ingen fingeraftryk. Browser-genererede nøgler har tom kommentar og filnavn `<label saneret>.key` (ø→`-`).
+  - Peters eneste nøgle: "Peters MacBook Pro", 2026-08-23 17:06, `SHA256:Ntih4R/XGHN/QZ4h1yWGuyWDrA+ObERv9B/5Quh3SSc`, forventet fil `Peters-MacBook-Pro.key`. Den findes ikke i `~/Downloads` på Headend.
+  - **`servicetekniker_verified_at` er NULL for Edge1 og Edge2:** teknikernøglevejen er aldrig bevist på nogen Edge.
+  - Edgen rapporterer ikke, hvilke nøgler den har (envejs-levering via sync).
+  - Web-terminalen bruger Headends commissioning-nøgle, ikke brugerens. `terminal_trust_status()` kender årsagen, men UI'en viser den ikke.
+  - `DevicePage` har ingen SSH-info.
+  - 9222-tunnel-sshd'ens config/installer ligger kun på #259-branchen.
+  - Edge `Match User emergency` tillader password, og Edge1 har globalt password-login (GRC `FIND-EDGE1-INSECURE-SSH-…`). Med en jump-host ville det blive internet-nåbart, hvis det ikke lukkes for loopback først.
+  - Ingen tidligere ProxyJump-arbejde (`git log --all`).
+- **9122 som ProxyJump:** frarådes. Den er `AllowUsers peter` + PAM-TOTP pr. macOS-konto og `PermitOpen` kun 5900. Teknikere er ikke macOS-konti, PermitOpen kan ikke tage intervaller, og der er ingen afgrænsning pr. kunde. 9122 forbliver uændret.
+- **Forslag:** `Dokumentation/EDGE_SSH_ADGANG_DESIGN_2026-10-03_CLAUDE.md`.
+  - Dedikeret jump-sshd 9322: kun nøgle, ingen shell.
+  - `AuthorizedKeysCommand` slår live op i Headend og giver `permitopen` kun til Edge-porte med aktivt web-MFA-grant (`EdgeServiceGrant`). Det giver øjeblikkelig central revokering.
+  - Edge-loopback kun-nøgle som forudsætning.
+  - Nøglestatus-rapport fra Edge i sync.
+  - Statusboks + kopierbar kommando + forklaring ved tunnel nede på enhedssiden.
+  - Fingeraftryk, filnavn/kommentar-rettelse og `~/.ssh/config`-snippet på brugersiden.
+  - Alle indstillinger i `settings`, redigerbare i Global Config.
+  - Faser F0–F3.
+- **Ikke gjort:** ingen kode, ingen ændring på Headend/Edges, intet SSH-forsøg mod Edges (fail2ban-risiko, jf. `FIND-SSH-TERMINAL-FAIL2BAN-001`).
+- **Næste:** Peter svarer på designets §7 (5 beslutninger) og kører F0 (find nøglefil på MacBook og sammenlign fingeraftryk; bevis servicetekniker-login på Edge2 via LAN). Derefter F1.
+
 ### Handover 2026-10-02 — fra Claude til Peter/næste session: Edge2 Nikon Z30 uskarpe billeder — fokuslås fra DB/UI (ingen AF ved hvert billede)
 
 - **Symptom (Peter):** LAB-preview på Edge2 er skarpt, rigtige billeder er uskarpe. Edge1 har samme kamerahus (andet objektiv) og fejler ikke — den kører kameraets egen AF ved udløsning.
