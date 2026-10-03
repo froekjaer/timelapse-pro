@@ -146,6 +146,12 @@ export const setLiveStream = (deviceId: string, enabled: boolean) =>
 export const listPreviews = (deviceId: string) =>
   getClient().get(`/api/lab/${pathSegment(deviceId)}/previews`).then(r => r.data)
 
+export const deleteLabPreview = (deviceId: string, filename: string) =>
+  getClient().delete(`/api/lab/${pathSegment(deviceId)}/previews/${encodeURIComponent(filename)}`).then(r => r.data)
+
+export const deleteAllLabPreviews = (deviceId: string) =>
+  getClient().delete(`/api/lab/${pathSegment(deviceId)}/previews`).then(r => r.data)
+
 export const getPreviewUrl = (deviceId: string, filename: string) =>
   `${getApiUrl()}/api/lab/${encodeURIComponent(deviceId)}/preview-image/${encodeURIComponent(filename)}`
 

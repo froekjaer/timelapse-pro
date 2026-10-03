@@ -164,12 +164,19 @@ class CameraBase(abc.ABC):
 
     # ── Optional operations ───────────────────────────────────────────────
 
-    def run_autofocus(self) -> bool:
+    def run_autofocus(self, camera_cfg: dict | None = None) -> bool:
         """
         Trigger autofocus. Returns True on success.
+        camera_cfg: the agent's current camera config (DB hierarchy), so
+        UI changes apply without restarting the agent.
         Default: no-op, returns False. Override in capable drivers.
         """
         return False
+
+    def prepare_focus_for_capture(self, camera_cfg: dict | None = None) -> bool:
+        """Lock focus before a real capture (camera.focus_lock_commands).
+        Default: nothing to do."""
+        return True
 
     def run_refocus(self) -> bool:
         """
