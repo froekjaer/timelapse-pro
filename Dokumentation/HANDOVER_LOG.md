@@ -29,6 +29,16 @@
 
 ## Log
 
+### Handover 2026-10-03 23:00 — fra Claude til Peter/næste session: relæ-menu i tekniker-CLI + modemrelæet slukkes aldrig implicit
+
+- **Peters ønsker:** menupunkt i `bootstrap_cli.py` til at se, rette, tænde og slukke relæerne, frigivet ved afslutning; kameraet skal tænde fra CLI'en ("aldrig rettet som aftalt"); modemrelæet må ALDRIG slukkes uden eksplicit kommando; en test der slukker modemet og tænder det automatisk efter 10 s. Peter: "1" på udgangen = sluk (bekræftet: HW-383A active-low, `_RELAY_OFF = "1"`).
+- **Fund:** kamera-menuen kaldte gphoto2 direkte uden service-backend → tænder aldrig kameraet; `_run_camera_maintenance_callback` er død kode (aldrig kaldt); `RelayController`-init skrev alle pins OFF (modem blinkede ved hver agent-start); agent-nedlukning slukkede modemet (`cleanup()` default `modem=True`); `service_operations.cleanup_modem` slukkede modemet efter enhver modem-serviceoperation; LAB "tænd modem" kaldte ikke-eksisterende `ModemRelay.power_on` (AttributeError); `ServiceOperations._relay()` lavede ny controller pr. operation (kamera OFF mellem operationer).
+- **Første udkast forkastet:** direkte GPIO i CLI'en brød WP-3-kontrakten (`tests/test_wp3_client_routing_contract.py`: CLI/UI må ikke skrive GPIO). Bygget om til Service Operations.
+- **Løsning (branch `claude/edge-cli-relay-menu-20261003`):** nye serviceoperationer `relay.status` (camera.read), `modem.power.on`, `modem.power.test` (modem.power, ModemMaintenanceLease; gen-tænding i løsrevet proces startet før sluk), `camera.relay.pin_test` (camera.reset, DiagnosticLease; frigives ved cleanup). Lav-niveau GPIO-hjælpere i `edge/camera/relay.py`. CLI: hovedmenu "7. Relaeer (kamera og modem)" og kamera-menuen (punkt 4) tager kamera-strøm via `camera.power.acquire` og frigiver ved afslutning/Ctrl+C. Kræver aktiv service-session (TOTP-login i lokal tekniker-UI starter den). Modem-regel håndhævet i relay-init, agent-shutdown, `cleanup()`-default og `cleanup_modem`. WP3-dokumentet opdateret.
+- **Test:** `tests/test_relay_modem_never_off.py` 16/16; CI-testtrin lokalt 1612 grønne (kun de 4 kendte lokale GPG-fejl).
+- **Åbent (Peters beslutning):** `ConnectivityMonitor` power-cycler modemet automatisk efter `modem_cycle_after_failures` (standard 3) — ikke en eksplicit kommando. Fjernes, slås fra som standard, eller beholdes som bevidst konfigureret genoprettelse?
+- **Ikke gjort:** ikke merged/released. Kommer med næste release efter lab.57 (tunnel-fix, #273).
+
 ### Handover 2026-10-02 — fra Claude til Peter/næste session: Edge2 Nikon Z30 uskarpe billeder — fokuslås fra DB/UI (ingen AF ved hvert billede)
 
 - **Symptom (Peter):** LAB-preview på Edge2 er skarpt, rigtige billeder er uskarpe. Edge1 har samme kamerahus (andet objektiv) og fejler ikke — den kører kameraets egen AF ved udløsning.
