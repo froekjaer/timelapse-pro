@@ -1075,18 +1075,42 @@ def _release_relay_leases(platform, session, held: set[str] | None = None) -> No
         held.clear()
 
 
+def _cli_service_session(platform):
+    """Return (session, started_here). Reuse a session from the technician UI;
+    otherwise, when running as root via sudo, start an audited local-CLI
+    session (no extra TOTP login in the web UI)."""
+    session = platform.current_session()
+    if session:
+        return session, False
+    if os.geteuid() != 0:
+        print("Relae- og kamerastroem kraever root: koer vaerktoejet med sudo.")
+        return None, False
+    user = os.getenv("SUDO_USER") or os.getenv("LOGNAME") or "root"
+    session = platform.start_local_cli_session(user)
+    print(f"Service-session startet for cli:{user} (afsluttes naar menuen forlades).")
+    return session, True
+
+
+def _end_cli_session(platform, session, started_here: bool) -> None:
+    if started_here and session is not None:
+        try:
+            platform.invalidate(session, "cli menu exit")
+        except Exception:
+            pass
+
+
 def camera_menu_powered(base_dir: Path) -> None:
     """Kamera-menuen med stroem: tag kameraet via Service Operations (taender
     relaeet og pauser agenten), og frigiv det igen naar menuen forlades."""
     platform = session = None
+    started_here = False
     try:
         platform = _service_platform(base_dir)
-        session = platform.current_session()
+        session, started_here = _cli_service_session(platform)
     except Exception as exc:
         print(f"Service-backend utilgaengelig: {exc}")
     if not session:
         print("Ingen service-session — kameraet taendes ikke automatisk.")
-        print("Log ind i den lokale tekniker-UI med TOTP for at faa stroem paa kameraet.")
         camera_menu(base_dir)
         return
     held: set[str] = set()
@@ -1103,6 +1127,7 @@ def camera_menu_powered(base_dir: Path) -> None:
             _safe_print(f"Kamera-menuen stoppede: {exc}")
         finally:
             _release_relay_leases(platform, session, held)
+            _end_cli_session(platform, session, started_here)
 
 
 def relay_menu(base_dir: Path) -> None:
@@ -1111,19 +1136,19 @@ def relay_menu(base_dir: Path) -> None:
     except Exception as exc:
         print(f"Service-backend kunne ikke startes: {exc}")
         return
-    session = platform.current_session()
+    session, started_here = _cli_service_session(platform)
     if not session:
-        print("Relae-menuen kraever en aktiv service-session.")
-        print("Log ind i den lokale tekniker-UI med TOTP-koden — det starter sessionen —")
-        print("og vaelg derefter dette menupunkt igen.")
         return
     print()
     print("Taendes kameraet herfra, pauses edge-agenten, og der tages ingen planlagte")
     print("billeder, mens du er her. Ved afslutning slukkes kameraet og agenten startes igen.")
     print(_TUNNEL_WARNING)
     held: set[str] = set()
-    with _release_on_hangup():
-        _relay_menu_loop(base_dir, platform, session, held)
+    try:
+        with _release_on_hangup():
+            _relay_menu_loop(base_dir, platform, session, held)
+    finally:
+        _end_cli_session(platform, session, started_here)
 
 
 _TUNNEL_WARNING = (

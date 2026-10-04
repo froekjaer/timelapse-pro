@@ -260,6 +260,21 @@ class ServicePlatform:
             grant=EdgeServiceGrantRef(grant_id=f"lab-{uuid.uuid4().hex[:16]}", expires_at=time.time() + 3600),
         )
 
+    def start_local_cli_session(self, username: str) -> ServiceSession:
+        """Explicit local-CLI authority adapter (Peter, 2026-10-04).
+
+        Only for the technician CLI running as root via sudo: the caller has
+        already authenticated to the OS (SSH key/password + sudo) and as root
+        could drive the hardware directly anyway, so a second TOTP login in
+        the web UI adds no protection. Same registry, capabilities, leases and
+        audit as every other client; senior-technician capabilities (camera
+        power, modem test, test pin), no reboot.
+        """
+        return self.start_session(
+            principal=Principal(username=f"cli:{username}", role="local_cli", capabilities=SENIOR_TECHNICIAN_CAPABILITIES),
+            grant=EdgeServiceGrantRef(grant_id=f"local-cli-{uuid.uuid4().hex[:16]}", expires_at=time.time() + 3600),
+        )
+
     def start_offline_recovery_session(self, username: str = "offline-recovery") -> ServiceSession:
         """Start the explicit offline/break-glass TOTP compatibility authority."""
         return self.start_session(

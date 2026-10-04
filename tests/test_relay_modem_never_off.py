@@ -219,11 +219,43 @@ def test_menu_modem_test_needs_confirmation(monkeypatch, tmp_path):
     assert p.calls.count("modem.power.test") == 1
 
 
-def test_menu_requires_service_session(monkeypatch, tmp_path, capsys):
+def test_menu_without_session_and_without_sudo_asks_for_sudo(monkeypatch, tmp_path, capsys):
     p = _FakePlatform()
     p.current_session = lambda: None
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
     _run_menu(monkeypatch, tmp_path, [], platform=p)
-    assert "TOTP" in capsys.readouterr().out and p.calls == []
+    assert "sudo" in capsys.readouterr().out and p.calls == []
+
+
+def test_menu_as_root_starts_and_ends_its_own_cli_session(monkeypatch, tmp_path):
+    p = _FakePlatform()
+    p.current_session = lambda: None
+    started, ended = [], []
+    p.start_local_cli_session = lambda user: (started.append(user), p.session)[1]
+    p.invalidate = lambda session, reason: ended.append(reason)
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+    monkeypatch.setenv("SUDO_USER", "orangepi")
+    _run_menu(monkeypatch, tmp_path, ["2", "9"], platform=p)
+    assert started == ["orangepi"] and ended == ["cli menu exit"]
+    assert "camera.power.acquire" in p.calls and p.cleaned == ["camera"]
+
+
+def test_existing_ui_session_is_reused_and_not_ended(monkeypatch, tmp_path):
+    p = _FakePlatform()
+    p.start_local_cli_session = lambda user: pytest.fail("must reuse the UI session")
+    p.invalidate = lambda *_a: pytest.fail("must not end the UI session")
+    _run_menu(monkeypatch, tmp_path, ["9"], platform=p)
+
+
+def test_local_cli_session_is_audited_senior_technician(tmp_path):
+    from service_platform import SENIOR_TECHNICIAN_CAPABILITIES
+    platform = ops_mod.create_service_platform(base_dir=tmp_path, state_dir=tmp_path / "run")
+    session = platform.start_local_cli_session("orangepi")
+    assert session.principal.username == "cli:orangepi" and session.principal.role == "local_cli"
+    assert session.capabilities == SENIOR_TECHNICIAN_CAPABILITIES and "system.reboot" not in session.capabilities
+    assert platform.current_session().session_id == session.session_id
+    audit = Path(platform.audit_path).read_text(encoding="utf-8")
+    assert "session.start" in audit and "cli:orangepi" in audit
 
 
 def test_cli_never_touches_gpio_and_lists_menu():
@@ -246,10 +278,11 @@ def test_camera_menu_gets_power_and_releases(monkeypatch, tmp_path):
 def test_camera_menu_without_session_still_opens(monkeypatch, tmp_path, capsys):
     p = _FakePlatform()
     p.current_session = lambda: None
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 1000)
     monkeypatch.setattr(cli, "_service_platform", lambda _b: p)
     monkeypatch.setattr(cli, "camera_menu", lambda _b: p.calls.append("camera_menu"))
     cli.camera_menu_powered(tmp_path)
-    assert p.calls == ["camera_menu"] and "TOTP" in capsys.readouterr().out
+    assert p.calls == ["camera_menu"] and "sudo" in capsys.readouterr().out
 
 
 def test_agent_stop_keeps_service_session_directory():
