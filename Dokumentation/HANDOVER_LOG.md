@@ -36,6 +36,13 @@
 - **Verificeret:** tsc + `npm run build` grønne; eslint-gate 183 (< baseline 186); `tests/test_camera_page_choices_from_scan.py` 5/5. Logikken kørt mod den rigtige Z30-scan fra `timelapse_db` (TL-043EB9E72EFD): ISO 29 valg, lukker 53 (decimal-sti `shutterspeed`), blænde RO, EV 31, hvidbalance 10. UI ikke klikket igennem i browser (kræver rigtigt login) — Peter bør se kamerasiden efter deploy.
 - **Fundet (ikke rettet her):** Nikon Z30-profilen (`edge/camera/drivers/gphoto2_driver.py` ~l.403) mapper `Tungsten → Incandescent`, men Z30 kalder valget `Tungsten` → hvidbalance "Tungsten" ville sendes som en værdi kameraet ikke har. Rettes i del 2 (Edge-PR). Også: eksisterende override `1/500` på `shutter_speed` sendes til decimal-stien `shutterspeed` — kontrollér om nogen kameraer har brøk-overrides.
 - **Ikke i lab.59:** ren Headend-UI-ændring; kræver kun Headend-deploy.
+### Handover 2026-10-04 20:15 — fra Claude til Peter/næste session: lab.59 tagget; "Registrer" valgte gammelt v2.9.0 → rettet til nyeste efter oprettelsesdato
+
+- **Status:** #278 + #279 merged (#279 opdateret med main pga. branch protection, CI grøn), Headend deployet på `cfade21c`, `v2.8.1-lab.59` signeret (EE347E3F…) på `cfade21c`; edge-delta vs lab.58 = kun `edge/tools/bootstrap_cli.py`.
+- **Fejl (min, fra #278):** `latest_release_tag` sorterede `--sort=-version:refname` → det gamle tag `v2.9.0` (2026-05-12, 799 commits bag main) rangerer over alle `v2.8.1-lab.N`, så "Registrer seneste signerede tag" valgte v2.9.0 hver gang og intet nyt kom (to POSTs kl. ~20:00, 200 OK, ingen lab.59-artifact). Git-tag-polleren er ikke ramt (gennemgår alle usete tags).
+- **Rettet:** sorterer nu `--sort=-creatordate`; test med rigtig git-repo (v2.9.0 ældst, lab.59 nyest → lab.59).
+- **Næste:** merge + deploy, derefter "Registrer" → lab.59, godkend Edge1 → Edge2. Overvej om `v2.9.0`-tagget bør omdøbes/slettes (Peters beslutning).
+
 ### Handover 2026-10-04 18:50 — fra Claude til Peter/næste session: tekniker-CLI vælger kameraværdier fra kameraets egne valgmuligheder
 
 - **Status:** lab.58 deployed på begge Edges (#321 Edge1 17:40, **#320 Edge2 18:07**); verificeret på Edge2: `agent-features.json` camera_maintenance_lock=true, receipt lab.58, tunnel-fix bevaret, `timelapse-watchdog` stadig aktiv.
