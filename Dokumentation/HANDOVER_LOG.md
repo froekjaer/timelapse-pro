@@ -31,7 +31,7 @@
 
 ### Handover 2026-10-04 20:30 — fra Claude til Peter/næste session: lab.59 installeret og verificeret på begge Edges
 
-- #282 merged + deployet; "Registrer" valgte lab.59; #322 (Edge1 TL-043EB9E72EFD… se nedenfor) og #323 deployed, 0 fejl.
+- #282 merged + deployet; "Registrer" valgte lab.59; #323 (Edge1 TL-C87FF9587CA0) og #322 (Edge2 TL-043EB9E72EFD) deployed, 0 fejl.
 - **Verificeret på Edgen (via tunnel, så tunnel-fixet er intakt):** `edge/tools/bootstrap_cli.py` blob `9ac8f4ad` = lab.59 på begge (port 2201 `timelapse0101` og 2204 `tl-modbaggarddlvc`); `timelapse-edge` active; `agent-features.json` `camera_maintenance_lock: true`.
 - **Runtime efter opdatering:** port 2201 (`timelapse0101`): capture 20:10 QA PASSED, blur 1317.8 → kameraet svarer igen på USB. Port 2204: captures kører hvert 10. min (QA "too dark" efter solnedgang, forventet). Gammel agent (lab.58) loggede `GPIO 356 write failed: No such file` ved stop 20:06 — kun i nedlukningen af den gamle proces; holdes øje med ved næste opdatering.
 
