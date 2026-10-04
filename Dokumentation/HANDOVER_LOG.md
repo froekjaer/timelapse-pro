@@ -29,6 +29,13 @@
 
 ## Log
 
+### Handover 2026-10-04 20:15 — fra Claude til Peter/næste session: lab.59 tagget; "Registrer" valgte gammelt v2.9.0 → rettet til nyeste efter oprettelsesdato
+
+- **Status:** #278 + #279 merged (#279 opdateret med main pga. branch protection, CI grøn), Headend deployet på `cfade21c`, `v2.8.1-lab.59` signeret (EE347E3F…) på `cfade21c`; edge-delta vs lab.58 = kun `edge/tools/bootstrap_cli.py`.
+- **Fejl (min, fra #278):** `latest_release_tag` sorterede `--sort=-version:refname` → det gamle tag `v2.9.0` (2026-05-12, 799 commits bag main) rangerer over alle `v2.8.1-lab.N`, så "Registrer seneste signerede tag" valgte v2.9.0 hver gang og intet nyt kom (to POSTs kl. ~20:00, 200 OK, ingen lab.59-artifact). Git-tag-polleren er ikke ramt (gennemgår alle usete tags).
+- **Rettet:** sorterer nu `--sort=-creatordate`; test med rigtig git-repo (v2.9.0 ældst, lab.59 nyest → lab.59).
+- **Næste:** merge + deploy, derefter "Registrer" → lab.59, godkend Edge1 → Edge2. Overvej om `v2.9.0`-tagget bør omdøbes/slettes (Peters beslutning).
+
 ### Handover 2026-10-04 18:50 — fra Claude til Peter/næste session: tekniker-CLI vælger kameraværdier fra kameraets egne valgmuligheder
 
 - **Status:** lab.58 deployed på begge Edges (#321 Edge1 17:40, **#320 Edge2 18:07**); verificeret på Edge2: `agent-features.json` camera_maintenance_lock=true, receipt lab.58, tunnel-fix bevaret, `timelapse-watchdog` stadig aktiv.
