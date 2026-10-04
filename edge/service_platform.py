@@ -485,6 +485,10 @@ class ServicePlatform:
             return {"session": None, "leases": {}, "temporary_state": {}, "camera_config_dirty": []}
 
     def _save(self, state: dict[str, Any]) -> None:
+        # /run/timelapse can disappear while a technician operation runs (the
+        # agent's RuntimeDirectory is removed when the agent stops on units
+        # without RuntimeDirectoryPreserve) — recreate instead of failing.
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.state_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         os.replace(tmp, self.state_path)

@@ -255,3 +255,70 @@ def test_camera_menu_without_session_still_opens(monkeypatch, tmp_path, capsys):
 def test_agent_stop_keeps_service_session_directory():
     unit = (ROOT / "edge/scripts/timelapse-edge.service").read_text(encoding="utf-8")
     assert "RuntimeDirectory=timelapse" in unit and "RuntimeDirectoryPreserve=yes" in unit
+
+
+# ── Robustness when the SSH session drops (2026-10-04) ──────────────────────
+# Over the agent's own reverse tunnel, pausing the agent kills the session:
+# SIGHUP, closed terminal, and (on old units) /run/timelapse — with the lease
+# records — removed. The menu must still switch the camera off and restart
+# the agent, or a remote Edge on 4G is stranded.
+
+def test_platform_recreates_vanished_state_dir(tmp_path):
+    import shutil as _sh
+    state = tmp_path / "run"
+    platform = ops_mod.create_service_platform(base_dir=tmp_path, state_dir=state)
+    _sh.rmtree(state)
+    platform._save({"x": 1})
+    assert (state / "service_session.json").exists()
+
+
+def test_release_uses_held_leases_when_state_file_is_gone(monkeypatch, tmp_path):
+    p = _FakePlatform()
+    p.leases.clear()                      # state file lost while the agent was paused
+    cli._release_relay_leases(p, p.session, {"CameraPowerLease"})
+    assert p.cleaned == ["camera"]
+
+
+def test_sighup_releases_camera_and_restarts_agent(monkeypatch, tmp_path):
+    import os
+    import signal as _signal
+    p = _FakePlatform()
+    steps = iter(["2", "HUP"])
+
+    def fake_input(_prompt=""):
+        v = next(steps)
+        if v == "HUP":
+            p.leases.clear()             # /run/timelapse removed with the agent
+            os.kill(os.getpid(), _signal.SIGHUP)
+        return v
+
+    monkeypatch.setattr(cli, "_service_platform", lambda _b: p)
+    monkeypatch.setattr("builtins.input", fake_input)
+    before = _signal.getsignal(_signal.SIGHUP)
+    cli.relay_menu(tmp_path)
+    assert p.cleaned == ["camera"]
+    assert _signal.getsignal(_signal.SIGHUP) == before   # handler restored
+
+
+def test_release_survives_closed_terminal(monkeypatch, tmp_path):
+    p = _FakePlatform()
+
+    def dead_print(*_a, **_k):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("builtins.print", dead_print)
+    cli._release_relay_leases(p, p.session, {"CameraPowerLease", "DiagnosticLease"})
+    assert sorted(p.cleaned) == ["camera", "pins"]
+
+
+def test_camera_menu_powered_releases_on_hangup(monkeypatch, tmp_path):
+    p = _FakePlatform()
+    monkeypatch.setattr(cli, "_service_platform", lambda _b: p)
+
+    def hang(_b):
+        p.leases.clear()
+        raise cli._SessionLost("SIGHUP")
+
+    monkeypatch.setattr(cli, "camera_menu", hang)
+    cli.camera_menu_powered(tmp_path)
+    assert p.calls[0] == "camera.power.acquire" and p.cleaned == ["camera"]

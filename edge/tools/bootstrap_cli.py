@@ -8,6 +8,7 @@ Production operational configuration must still come from Headend/RBAC.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import html
 import json
@@ -15,6 +16,7 @@ import os
 import platform
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -1014,18 +1016,63 @@ def _print_relay_status(status: dict[str, Any]) -> None:
     print(f"Modemrelae   GPIO {modem.get('pin') if modem.get('pin') is not None else '-'}: {modem.get('state')}")
 
 
-def _release_relay_leases(platform, session) -> None:
-    print("Frigiver relaeer…")
-    state = platform._load().get("leases", {})
+def _safe_print(*args) -> None:
+    """print() that never raises: after a dropped SSH session the terminal is
+    gone, and the release below must still run."""
+    try:
+        print(*args, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
+class _SessionLost(BaseException):
+    """SIGHUP/SIGTERM while relays are held (e.g. the SSH session ran through
+    the agent's own reverse tunnel, which disappears when the agent pauses)."""
+
+
+@contextlib.contextmanager
+def _release_on_hangup():
+    def _raise(signum, _frame):
+        raise _SessionLost(signal.Signals(signum).name)
+
+    previous = {sig: signal.getsignal(sig) for sig in (signal.SIGHUP, signal.SIGTERM)}
+    for sig in previous:
+        signal.signal(sig, _raise)
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def _release_relay_leases(platform, session, held: set[str] | None = None) -> None:
+    """Release everything this menu took: the leases it remembers holding
+    (the state file can vanish while the agent is paused) plus any active
+    lease of this session found in the state file."""
+    _safe_print("Frigiver relaeer…")
+    try:
+        state = platform._load().get("leases", {})
+    except Exception:
+        state = {}
+    leases = set(held or ())
+    leases |= {t for t, lease in state.items()
+               if (lease or {}).get("active") and lease.get("session_id") == session.session_id}
     for lease_type in ("DiagnosticLease", "CameraPowerLease"):
-        lease = state.get(lease_type) or {}
-        if lease.get("active") and lease.get("session_id") == session.session_id:
-            cleanup = platform.cleanup_handlers.get(lease_type)
+        if lease_type not in leases:
+            continue
+        cleanup = platform.cleanup_handlers.get(lease_type)
+        try:
+            if cleanup:
+                cleanup(platform, session, "relay menu exit")
+        except Exception as exc:
+            _safe_print(f"Advarsel: frigivelse af {lease_type} fejlede: {exc}")
+        finally:
             try:
-                if cleanup:
-                    cleanup(platform, session, "relay menu exit")
-            finally:
                 platform.release_lease(session, lease_type, "relay menu exit")
+            except Exception:
+                pass
+    if held is not None:
+        held.clear()
 
 
 def camera_menu_powered(base_dir: Path) -> None:
@@ -1042,20 +1089,20 @@ def camera_menu_powered(base_dir: Path) -> None:
         print("Log ind i den lokale tekniker-UI med TOTP for at faa stroem paa kameraet.")
         camera_menu(base_dir)
         return
-    try:
-        print("Taender kamera og pauser edge-agenten…")
-        platform.call("camera.power.acquire", session)
-    except Exception as exc:
-        print(f"Kunne ikke taende kameraet: {exc}")
-    try:
-        camera_menu(base_dir)
-    except KeyboardInterrupt:
-        print()
-    finally:
+    held: set[str] = set()
+    with _release_on_hangup():
         try:
-            _release_relay_leases(platform, session)
+            print(_TUNNEL_WARNING)
+            print("Taender kamera og pauser edge-agenten…")
+            held.add("CameraPowerLease")
+            platform.call("camera.power.acquire", session)
+            camera_menu(base_dir)
+        except (KeyboardInterrupt, EOFError, _SessionLost):
+            _safe_print()
         except Exception as exc:
-            print(f"Advarsel: frigivelse fejlede: {exc}")
+            _safe_print(f"Kamera-menuen stoppede: {exc}")
+        finally:
+            _release_relay_leases(platform, session, held)
 
 
 def relay_menu(base_dir: Path) -> None:
@@ -1073,6 +1120,20 @@ def relay_menu(base_dir: Path) -> None:
     print()
     print("Taendes kameraet herfra, pauses edge-agenten, og der tages ingen planlagte")
     print("billeder, mens du er her. Ved afslutning slukkes kameraet og agenten startes igen.")
+    print(_TUNNEL_WARNING)
+    held: set[str] = set()
+    with _release_on_hangup():
+        _relay_menu_loop(base_dir, platform, session, held)
+
+
+_TUNNEL_WARNING = (
+    "OBS: Er du logget ind via Headend-konsollen (agentens tunnel), mister du\n"
+    "forbindelsen, naar kameraet taendes — relaeerne frigives og agenten startes\n"
+    "automatisk igen, og tunnelen er tilbage efter ca. 1 minut."
+)
+
+
+def _relay_menu_loop(base_dir: Path, platform, session, held: set[str]) -> None:
     try:
         while True:
             try:
@@ -1100,9 +1161,11 @@ def relay_menu(base_dir: Path) -> None:
                     continue
                 elif choice == "2":
                     print("Taender kamera og venter paa opstart…")
+                    held.add("CameraPowerLease")
                     platform.call("camera.power.acquire", session)
                 elif choice == "3":
                     platform.call("camera.power.release", session)
+                    held.discard("CameraPowerLease")
                 elif choice == "4":
                     print(json.dumps(platform.call("modem.power.on", session), ensure_ascii=False))
                 elif choice == "5":
@@ -1113,13 +1176,16 @@ def relay_menu(base_dir: Path) -> None:
                     raw = input("GPIO-nummer at teste: ").strip()
                     if raw.isdigit():
                         on = _confirm(f"Taend GPIO {raw}? (nej = sluk)")
+                        held.add("DiagnosticLease")
                         print(json.dumps(platform.call("camera.relay.pin_test", session, pin=int(raw), on=on), ensure_ascii=False))
                         print("Virker pinnet, saet det permanent i UI'en: Kamera-siden -> Hardware ->")
                         print("'Relay GPIO (kamera)', eller System Administration.")
                 elif choice == "7":
+                    held.add("CameraPowerLease")
                     result = platform.call("camera.detect", session)
                     print((result.get("detect") or {}).get("stdout") or json.dumps(result, ensure_ascii=False, default=str))
                 elif choice == "8":
+                    held.add("CameraPowerLease")
                     platform.call("camera.power.acquire", session)
                     camera_menu(base_dir)
                 elif choice == "9":
@@ -1130,13 +1196,10 @@ def relay_menu(base_dir: Path) -> None:
                 print(f"Ikke tilladt i denne session: {exc}")
             except Exception as exc:
                 print(f"Fejl: {exc}")
-    except KeyboardInterrupt:
-        print()
+    except (KeyboardInterrupt, EOFError, _SessionLost):
+        _safe_print()
     finally:
-        try:
-            _release_relay_leases(platform, session)
-        except Exception as exc:
-            print(f"Advarsel: frigivelse fejlede: {exc}")
+        _release_relay_leases(platform, session, held)
 
 
 def build_relay(base_dir: Path):
