@@ -4,6 +4,8 @@ import { ArrowLeft, Building2, MapPin, Camera, Save, Trash2, ChevronRight,
          CheckCircle, Beaker, Image, PlusCircle } from 'lucide-react'
 import { getApiUrl, pathSegment } from '../api/client'
 import { InfoTooltip } from '../components/InfoTooltip'
+import { useCameraScan, scannedParamFor, cameraOptionsFor, optionLabel, scanAge } from '../lib/cameraScan'
+import { CommandBuilder } from '../components/CameraCommandBuilder'
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -192,6 +194,7 @@ const TZ = () => localStorage.getItem('timelapse_timezone') ?? 'Europe/Copenhage
 export function CameraPage() {
   const { deviceId } = useParams<{ deviceId: string }>()
   const navigate = useNavigate()
+  const cameraScan = useCameraScan(deviceId)
   const [device, setDevice]           = useState<CameraDevice | null>(null)
   const [loading, setLoading]         = useState(true)
   const [saving, setSaving]           = useState(false)
@@ -855,6 +858,11 @@ export function CameraPage() {
           <div className="space-y-4">
             {CAMERA_PARAMS.filter(p => p.section === section).map(param => {
               const val = getNestedValue(overrides, param.key)
+              const scanned = param.key.startsWith('camera.') ? scannedParamFor(cameraScan, param.key) : null
+              const camOptions = param.type === 'select' ? cameraOptionsFor(cameraScan, param.key, val) : null
+              const isScannedSetting = camOptions !== null || scanned === 'skip' || (scanned !== null && scanned.readonly)
+              const readOnlyOnCamera = scanned !== null && scanned !== 'skip' && scanned.readonly
+              const isCommandField = param.key.endsWith('_commands')
               return (
                 <div key={param.key}>
                   <div className="flex items-center gap-2 mb-1">
@@ -866,15 +874,30 @@ export function CameraPage() {
                     {val && <span className="text-xs text-sky-500 font-medium">● Override aktiv</span>}
                   </div>
                   {param.type === 'select' ? (
-                    <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    <select className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400"
+                      disabled={(readOnlyOnCamera || scanned === 'skip') && !val}
                       value={val} onChange={e => setParam(param.key, e.target.value)}>
                       <option value="">— Arv fra overliggende lag —</option>
-                      {param.options?.map(o => <option key={o} value={o}>{o}</option>)}
+                      {(camOptions ?? param.options)?.map(o => <option key={o} value={o}>{optionLabel(o)}</option>)}
                     </select>
                   ) : (
                     <input type={param.type} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                       placeholder={`${param.placeholder ?? ''} (tom = arv fra overliggende lag)`}
                       value={val} onChange={e => setParam(param.key, e.target.value)} />
+                  )}
+                  {isCommandField && (
+                    <CommandBuilder scan={cameraScan} value={val ?? ''} onChange={next => setParam(param.key, next)} />
+                  )}
+                  {param.type === 'select' && param.key.startsWith('camera.') && param.section === 'Kamera' && (
+                    readOnlyOnCamera ? (
+                      <p className="text-[11px] text-amber-600 mt-0.5">Skrivebeskyttet på dette kamera ({scanned.path}) — værdien kan ikke sættes udefra.</p>
+                    ) : scanned === 'skip' ? (
+                      <p className="text-[11px] text-amber-600 mt-0.5">Kameraprofilen sender ikke denne indstilling til dette kamera.</p>
+                    ) : isScannedSetting && scanned ? (
+                      <p className="text-[11px] text-emerald-600 mt-0.5">Kameraets egne valg ({scanned.path.split('/').pop()}, scannet {scanAge(cameraScan)})</p>
+                    ) : (
+                      <p className="text-[11px] text-gray-400 mt-0.5">Generelle værdier — tryk "Hent parametre" i LAB for kameraets egne valg.</p>
+                    )
                   )}
                   {param.description && (
                     <p className="text-xs text-gray-300 mt-0.5">{param.description}</p>

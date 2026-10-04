@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-04 — fra Claude til Peter/næste session: Headend-kamerasiden viser kameraets EGNE valg (fra LAB-scan) + kommando-bygger til fokusfelter
+
+- **Opgave (Peter):** "alle muligheder præsenteres … også alle kamera parametrene på UI på headenden, for det er rigtigt svært at sætte parametrene rigtigt". Del 1 af 2 (del 2 = Edge tekniker-UI + CLI fokus-drev).
+- **Ændret:** `timelapse-ui/src/lib/cameraScan.ts` (ny) læser den seneste LAB "Hent parametre"-scan (`camera_params`, `camera_profile.config_commands`, `camera_params_updated_at` via `/api/config/{device}`) og mapper `camera.iso/shutter_speed/aperture/exposurecompensation/whitebalance` gennem profilens `path` (fallback: Edgens standard-bladnavne). Rullelisterne viser så kameraets egne værdier (Edgens `skip_values` som "Auto" først, value_map-aliaser kun hvis de tilføjer noget); en eksisterende override bevares altid i listen. Skrivebeskyttede indstillinger (Z30: `f-number`) deaktiveres med forklaring; profil-`skip` forklares. Lukkertider i decimal vises "0.0020s (≈ 1/500)". `components/CameraCommandBuilder.tsx` (ny): under fokuskommando-felterne vælges en skrivbar kameraparameter (fokus-relevante først) og en værdi fra kameraets valg/TOGGLE/RANGE → tilføjes som `navn=værdi` (samme nøgle erstattes).
+- **Verificeret:** tsc + `npm run build` grønne; eslint-gate 183 (< baseline 186); `tests/test_camera_page_choices_from_scan.py` 5/5. Logikken kørt mod den rigtige Z30-scan fra `timelapse_db` (TL-043EB9E72EFD): ISO 29 valg, lukker 53 (decimal-sti `shutterspeed`), blænde RO, EV 31, hvidbalance 10. UI ikke klikket igennem i browser (kræver rigtigt login) — Peter bør se kamerasiden efter deploy.
+- **Fundet (ikke rettet her):** Nikon Z30-profilen (`edge/camera/drivers/gphoto2_driver.py` ~l.403) mapper `Tungsten → Incandescent`, men Z30 kalder valget `Tungsten` → hvidbalance "Tungsten" ville sendes som en værdi kameraet ikke har. Rettes i del 2 (Edge-PR). Også: eksisterende override `1/500` på `shutter_speed` sendes til decimal-stien `shutterspeed` — kontrollér om nogen kameraer har brøk-overrides.
+- **Ikke i lab.59:** ren Headend-UI-ændring; kræver kun Headend-deploy.
+
 ### Handover 2026-10-04 00:10 — fra Claude til Peter/næste session: Headend-konsol med passkey-SSO (frisk Touch ID → kortlivet SSH-certifikat kun fra 127.0.0.1)
 
 - **Status før:** #276 merged + deployet; nginx fik WebSocket-blok for `/api/admin/headend-console/` (Claude ændrede live `/opt/homebrew/etc/nginx/nginx.conf` med backup `nginx.conf.backup-20261003-headend-console` før classifier stoppede videre arbejde; Peter gennemgik diff, kørte `nginx -t` + reload). Konsollen virker: ssh/PAM spørger Password + Verification code; første forsøg gav `Permission denied` (sandsynligvis genbrugt/skiftende TOTP-kode; ikke bekræftet — sshd-log kræver sudo). **nginx-skabelonen i repoet (`deploy/nginx/…`) er IKKE opdateret endnu** — følges op.
