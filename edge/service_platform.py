@@ -111,6 +111,10 @@ OPERATION_CAPABILITIES = {
     "modem.registration": "modem.read",
     "modem.reconnect_history": "modem.read",
     "modem.power.cycle": "modem.power",
+    "modem.power.on": "modem.power",
+    "modem.power.test": "modem.power",
+    "relay.status": "camera.read",
+    "camera.relay.pin_test": "camera.reset",
     "network.status": "network.read",
     "network.diagnostics": "network.read",
     "storage.status": "storage.read",
@@ -148,6 +152,9 @@ OPERATION_LEASES = {
     "camera.reset": "CameraPowerLease",
     "camera.diagnostics": "CameraPowerLease",
     "modem.power.cycle": "ModemMaintenanceLease",
+    "modem.power.on": "ModemMaintenanceLease",
+    "modem.power.test": "ModemMaintenanceLease",
+    "camera.relay.pin_test": "DiagnosticLease",
 }
 
 
@@ -251,6 +258,21 @@ class ServicePlatform:
         return self.start_session(
             principal=Principal(username="lab", role="lab", capabilities=LAB_CAPABILITIES),
             grant=EdgeServiceGrantRef(grant_id=f"lab-{uuid.uuid4().hex[:16]}", expires_at=time.time() + 3600),
+        )
+
+    def start_local_cli_session(self, username: str) -> ServiceSession:
+        """Explicit local-CLI authority adapter (Peter, 2026-10-04).
+
+        Only for the technician CLI running as root via sudo: the caller has
+        already authenticated to the OS (SSH key/password + sudo) and as root
+        could drive the hardware directly anyway, so a second TOTP login in
+        the web UI adds no protection. Same registry, capabilities, leases and
+        audit as every other client; senior-technician capabilities (camera
+        power, modem test, test pin), no reboot.
+        """
+        return self.start_session(
+            principal=Principal(username=f"cli:{username}", role="local_cli", capabilities=SENIOR_TECHNICIAN_CAPABILITIES),
+            grant=EdgeServiceGrantRef(grant_id=f"local-cli-{uuid.uuid4().hex[:16]}", expires_at=time.time() + 3600),
         )
 
     def start_offline_recovery_session(self, username: str = "offline-recovery") -> ServiceSession:
@@ -478,6 +500,10 @@ class ServicePlatform:
             return {"session": None, "leases": {}, "temporary_state": {}, "camera_config_dirty": []}
 
     def _save(self, state: dict[str, Any]) -> None:
+        # /run/timelapse can disappear while a technician operation runs (the
+        # agent's RuntimeDirectory is removed when the agent stops on units
+        # without RuntimeDirectoryPreserve) — recreate instead of failing.
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.state_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         os.replace(tmp, self.state_path)
