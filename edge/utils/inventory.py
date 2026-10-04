@@ -433,7 +433,7 @@ def _sudo_users() -> list[str]:
 # Nøgleservices vi altid rapporterer status for
 _TRACKED_SERVICES = [
     "timelapse-edge.service",
-    "timelapse-edge-watchdog.service",
+    "timelapse-watchdog.service",
     "ssh.service",
     "sshd.service",
     "systemd-timesyncd.service",
@@ -509,6 +509,16 @@ def _enabled_service_names() -> list[str]:
                 parts = line.split()
                 if parts:
                     names.append(parts[0])
+        # Our own timers too (timesync, nightly reboot) — the hardware target
+        # expects them; system timers are left out to keep drift readable.
+        timers = subprocess.run(
+            ["systemctl", "list-unit-files", "--type=timer", "--state=enabled",
+             "--no-pager", "--no-legend"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if timers.returncode == 0:
+            names += [p[0] for p in (l.split() for l in timers.stdout.splitlines())
+                      if p and p[0].startswith("timelapse-")]
     except Exception as exc:
         log.debug("enabled_service_names fejl: %s", exc)
     return sorted(set(names))

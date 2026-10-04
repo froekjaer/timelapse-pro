@@ -145,3 +145,19 @@ def test_headend_default_and_ui_fields():
     assert "key: 'nightly_reboot.time'" in ui and "options: NIGHTLY_REBOOT_TIMES" in ui
     cam = (ROOT / "timelapse-ui/src/pages/CameraPage.tsx").read_text(encoding="utf-8")
     assert "key: 'system.nightly_reboot.enabled'" in cam
+
+
+def test_inventory_reports_our_timers_and_the_real_watchdog_name(monkeypatch):
+    sys.path.insert(0, str(ROOT / "edge"))
+    from utils import inventory
+    from types import SimpleNamespace
+
+    def fake_run(cmd, **_kw):
+        if "--type=timer" in cmd:
+            return SimpleNamespace(returncode=0, stdout="apt-daily.timer enabled enabled\ntimelapse-nightly-reboot.timer enabled enabled\n")
+        return SimpleNamespace(returncode=0, stdout="timelapse-watchdog.service enabled enabled\n")
+
+    monkeypatch.setattr(inventory.subprocess, "run", fake_run)
+    assert inventory._enabled_service_names() == ["timelapse-nightly-reboot.timer", "timelapse-watchdog.service"]
+    assert "timelapse-watchdog.service" in inventory._TRACKED_SERVICES
+    assert "timelapse-edge-watchdog.service" not in inventory._TRACKED_SERVICES
