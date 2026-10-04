@@ -15,8 +15,10 @@ from collections.abc import Callable
 
 
 def latest_release_tag(git_text: Callable[[list[str]], str | None]) -> str:
-    """Newest v* tag by version order — same ordering as the tag poller."""
-    raw = git_text(["tag", "--list", "v*", "--sort=-version:refname"]) or ""
+    """Most recently created v* tag. Not version order: the old v2.9.0 tag
+    (2026-05-12) sorts above every v2.8.1-lab.N, so version order kept picking
+    it (Peter, 2026-10-04: "der kommer ingen nye")."""
+    raw = git_text(["tag", "--list", "v*", "--sort=-creatordate"]) or ""
     return next((line.strip() for line in raw.splitlines() if line.strip()), "")
 
 
