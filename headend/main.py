@@ -126,6 +126,7 @@ from services.update_promotion import build_update_promotion_context, serialize_
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
+from services.release_candidates import latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
 from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings, credential_transports as _webauthn_credential_transports, credential_descriptors as _webauthn_credential_descriptors, login_allow_credentials as _webauthn_login_allow_credentials
 from redaction_api import router as redaction_router
 from compliance_intelligence import router as compliance_intelligence_router
@@ -7885,7 +7886,7 @@ def _create_lab_update_candidates_for_artifact(db: Session, artifact: UpdateArti
     lab_inventory = db.query(DeviceInventory).filter(
         DeviceInventory.environment.in_(["lab", "test", "rd"])
     ).all()
-    created = 0
+    created_rows: list = []
     for inv in lab_inventory:
         # App artifacts produced here are consumed by the Edge pull installer.
         # Headend application releases use a separate deployment profile and
@@ -7914,7 +7915,7 @@ def _create_lab_update_candidates_for_artifact(db: Session, artifact: UpdateArti
         ).first()
         if existing:
             continue
-        db.add(PendingUpdate(
+        created_rows.append(PendingUpdate(
             update_type="app_updates",
             version=artifact.source_commit,
             description=(
@@ -7928,11 +7929,13 @@ def _create_lab_update_candidates_for_artifact(db: Session, artifact: UpdateArti
             status="pending",
             environment="test",
         ))
-        created += 1
-    if created:
+        db.add(created_rows[-1])
+    if created_rows:
         db.commit()
-        log.info("Oprettede %d LAB app-update kandidat(er) for artifact %s", created, artifact.artifact_id)
-    return created
+        ids = {r.id for r in created_rows}
+        made = [c for c in _release_candidates(db, PendingUpdate, Device, artifact.source_commit) if c["id"] in ids]
+        log.info("Oprettede LAB app-update kandidat(er) for artifact %s: %s", artifact.artifact_id, _describe_candidates(made))
+    return len(created_rows)
 
 
 def _build_artifact_from_git_tag(
@@ -8923,7 +8926,7 @@ def catalog_artifact_from_git_tag(
 
     if not tag:
         # Find seneste tag
-        tag = _git_text(["describe", "--tags", "--abbrev=0"]) or ""
+        tag = _latest_release_tag(_git_text)   # newest tag, not the one behind HEAD
         if not tag:
             raise HTTPException(status_code=409, detail="Ingen git-tags fundet i repository")
 
@@ -8943,7 +8946,9 @@ def catalog_artifact_from_git_tag(
     with _git_tag_poller_lock:
         _git_tag_poller_seen.add(tag)
 
-    return result
+    candidates = _release_candidates(db, PendingUpdate, Device, result.get("source_commit") or "")
+    log.info("Registrering %s → %s: %s", tag, result.get("artifact_id"), _describe_candidates(candidates))
+    return {**result, "tag": tag, "candidates": candidates}
 
 
 @app.post("/api/updates/artifacts/catalog-os-bundle")

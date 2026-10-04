@@ -94,10 +94,12 @@ def test_doctor_accepts_python_plus_runner_script_command(tmp_path, monkeypatch)
 
 def test_nikon_image_quality_fallback_is_used_when_generic_path_is_absent(monkeypatch):
     configured = []
+    # Paths are resolved through gphoto_config_info (one --get-config call,
+    # also yielding readonly/choices) since 2026-10-04.
     monkeypatch.setattr(
         bootstrap_cli,
-        "gphoto_config_exists",
-        lambda path: path == "/main/capturesettings/imagequality",
+        "gphoto_config_info",
+        lambda path: {"path": path, "readonly": False, "choices": []} if path == "/main/capturesettings/imagequality" else None,
     )
     monkeypatch.setattr(
         bootstrap_cli,

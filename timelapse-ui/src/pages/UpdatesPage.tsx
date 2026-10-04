@@ -2,13 +2,20 @@
 // UpdatesPage.tsx
 // Version: 1.0.0  |  08. maj 2026
 // ═══════════════════════════════════════════════════════════════
-import { type ChangeEvent, useEffect, useState, useCallback } from 'react'
+import { type ChangeEvent, createContext, useContext, useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowLeft, RefreshCw, CheckCircle, XCircle, Clock,
   Package, AlertTriangle, Shield, ChevronDown, ChevronRight, Server, BarChart3, FileCheck, Fingerprint
 } from 'lucide-react'
-import { getApiUrl } from '../api/client'
+import { getApiUrl, getDevices } from '../api/client'
+
+// device_id → readable name (camera/location), so every card and dialog shows
+// which Edge an update #id is for — not just TL-… (Peter, 2026-10-04).
+const DeviceNamesContext = createContext<Record<string, string>>({})
+
+interface RegistrationCandidate { id: number; ref: string; device_id: string; device_name: string; status: string; environment: string | null }
+interface RegistrationResult { tag: string; artifact_id: string; candidates: RegistrationCandidate[] }
 
 function api(path: string, opts?: RequestInit) {
   return fetch(`${getApiUrl()}${path}`, {
@@ -699,8 +706,10 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onStopApprov
   const isOsUpdate = u.update_type === 'os_security' || u.update_type === 'os_updates'
   const osArtifactMissing = isOsUpdate && !flowStatus?.artifact
 
+  const deviceNames = useContext(DeviceNamesContext)
+  const deviceName = u.scope === 'device' && u.scope_id ? deviceNames[u.scope_id] : ''
   return (
-    <div className="border-b border-gray-50 last:border-0">
+    <div id={`update-${u.id}`} className="border-b border-gray-50 last:border-0 scroll-mt-24">
       <button onClick={() => {
         const nextOpen = !open
         setOpen(nextOpen)
@@ -728,7 +737,7 @@ function UpdateRow({ u, onApprove, onReject, onPromote, onRollback, onStopApprov
             )}
             {u.scope !== 'global' && (
               <span className="text-[11px] px-1.5 py-0.5 rounded border bg-gray-50 text-gray-500 border-gray-200">
-                {u.scope}{u.scope_id ? `: ${u.scope_id}` : ''}
+                {u.scope}{u.scope_id ? `: ${u.scope_id}` : ''}{deviceName ? ` · ${deviceName}` : ''}
               </span>
             )}
           </div>
@@ -1329,6 +1338,9 @@ export function UpdatesPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError]           = useState<string | null>(null)
   const [notice, setNotice]         = useState<string | null>(null)
+  const [deviceNames, setDeviceNames] = useState<Record<string, string>>({})
+  const [registering, setRegistering] = useState(false)
+  const [registration, setRegistration] = useState<RegistrationResult | null>(null)
   const [approveId, setApproveId]   = useState<number | null>(null)
   const [headendDeployStatus, setHeadendDeployStatus] = useState<Record<number, HeadendDeployStatus>>({})
   const [flowStatuses, setFlowStatuses] = useState<Record<number, UpdateFlowStatus>>({})
@@ -1340,6 +1352,14 @@ export function UpdatesPage() {
     environment: 'production', scope: 'device', scope_id: ''
   })
   const approveUpdate = approveId === null ? null : updates.find(update => update.id === approveId) ?? null
+
+  useEffect(() => {
+    getDevices().then(list => {
+      const names: Record<string, string> = {}
+      for (const d of list) names[d.device_id] = d.camera_name || d.location_name || ''
+      setDeviceNames(names)
+    }).catch(() => {})
+  }, [])
 
   const load = useCallback(async (spin = false, filterOverride?: Filter) => {
     if (spin) setRefreshing(true)
@@ -1611,15 +1631,19 @@ export function UpdatesPage() {
     setRefreshing(true)
     setError(null)
     try {
-      await api('/api/updates/artifacts/catalog-from-git-tag', {
+      setRegistering(true)
+      setRegistration(null)
+      const result = await api('/api/updates/artifacts/catalog-from-git-tag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
-      })
+      }) as RegistrationResult
+      setRegistration(result)
       await load()
     } catch (e: unknown) {
       setError(`Kunne ikke registrere signeret release-tag (${getErrorMessage(e)})`)
     } finally {
+      setRegistering(false)
       setRefreshing(false)
     }
   }
@@ -1700,6 +1724,7 @@ export function UpdatesPage() {
   })
 
   return (
+    <DeviceNamesContext.Provider value={deviceNames}>
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Link to="/" className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
@@ -1747,6 +1772,37 @@ export function UpdatesPage() {
       {notice && (
         <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm px-4 py-3 rounded-lg mb-4">
           <CheckCircle className="w-4 h-4 flex-shrink-0" /> {notice}
+        </div>
+      )}
+
+      {(registering || registration) && (
+        <div className="border border-sky-200 bg-sky-50/60 rounded-lg px-4 py-3 mb-4 text-sm">
+          {registering ? (
+            <div className="flex items-center gap-2 text-sky-800">
+              <RefreshCw className="w-4 h-4 animate-spin" />
+              Registrerer nyeste signerede tag: henter tags → verificerer GPG-signatur → bygger/finder artefakt → kandidater…
+            </div>
+          ) : registration && (
+            <div>
+              <div className="font-medium text-gray-900">
+                Registreret {registration.tag} → <span className="font-mono">{registration.artifact_id}</span>
+              </div>
+              {registration.candidates.length === 0 ? (
+                <p className="text-xs text-gray-500 mt-1">Ingen opdateringer til enheder for denne release (alle kører den allerede, eller ingen LAB-enheder).</p>
+              ) : (
+                <ul className="mt-1 space-y-0.5">
+                  {registration.candidates.map(c => (
+                    <li key={c.id} className="text-xs">
+                      <a href={`#update-${c.id}`} className="font-mono font-semibold text-sky-700 hover:underline">{c.ref}</a>
+                      {' '}{c.device_id}{(c.device_name || deviceNames[c.device_id]) ? ` · ${c.device_name || deviceNames[c.device_id]}` : ''}
+                      {' — '}<span className="font-medium">{STATUS_LABELS[c.status] ?? c.status}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button onClick={() => setRegistration(null)} className="text-[11px] text-gray-400 hover:text-gray-600 mt-1">Skjul</button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1813,7 +1869,7 @@ export function UpdatesPage() {
           {approveUpdate && (
             <div className="mt-1 mb-3 text-xs text-gray-600">
               <div>{TYPE_LABELS[approveUpdate.update_type] ?? approveUpdate.update_type} · {displayUpdateVersion(approveUpdate)}</div>
-              <div className="font-mono mt-0.5">Mål: {approveUpdate.scope}{approveUpdate.scope_id ? ` / ${approveUpdate.scope_id}` : ''} · Miljø: {approveUpdate.environment || 'ikke angivet'}</div>
+              <div className="font-mono mt-0.5">Mål: {approveUpdate.scope}{approveUpdate.scope_id ? ` / ${approveUpdate.scope_id}` : ''}{approveUpdate.scope_id && deviceNames[approveUpdate.scope_id] ? ` (${deviceNames[approveUpdate.scope_id]})` : ''} · Miljø: {approveUpdate.environment || 'ikke angivet'}</div>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3 mb-3">
@@ -1971,5 +2027,6 @@ export function UpdatesPage() {
         busy={refreshing}
       />
     </div>
+    </DeviceNamesContext.Provider>
   )
 }

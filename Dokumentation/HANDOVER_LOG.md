@@ -36,6 +36,21 @@
 - **Verificeret:** tsc + `npm run build` grønne; eslint-gate 183 (< baseline 186); `tests/test_camera_page_choices_from_scan.py` 5/5. Logikken kørt mod den rigtige Z30-scan fra `timelapse_db` (TL-043EB9E72EFD): ISO 29 valg, lukker 53 (decimal-sti `shutterspeed`), blænde RO, EV 31, hvidbalance 10. UI ikke klikket igennem i browser (kræver rigtigt login) — Peter bør se kamerasiden efter deploy.
 - **Fundet (ikke rettet her):** Nikon Z30-profilen (`edge/camera/drivers/gphoto2_driver.py` ~l.403) mapper `Tungsten → Incandescent`, men Z30 kalder valget `Tungsten` → hvidbalance "Tungsten" ville sendes som en værdi kameraet ikke har. Rettes i del 2 (Edge-PR). Også: eksisterende override `1/500` på `shutter_speed` sendes til decimal-stien `shutterspeed` — kontrollér om nogen kameraer har brøk-overrides.
 - **Ikke i lab.59:** ren Headend-UI-ændring; kræver kun Headend-deploy.
+### Handover 2026-10-04 18:50 — fra Claude til Peter/næste session: tekniker-CLI vælger kameraværdier fra kameraets egne valgmuligheder
+
+- **Status:** lab.58 deployed på begge Edges (#321 Edge1 17:40, **#320 Edge2 18:07**); verificeret på Edge2: `agent-features.json` camera_maintenance_lock=true, receipt lab.58, tunnel-fix bevaret, `timelapse-watchdog` stadig aktiv.
+- **Peters ønske:** "vælg imellem parametre og ikke skrive dem" — eksempel: Fokusmode valgt + `MF` skrevet → `Property /main/capturesettings/focusmode is read only`; Billedformat viste "ikke fundet".
+- **Løsning (branch `claude/cli-choose-camera-values-20261004`):** `gphoto_config_info()` læser label/type/readonly/current/choices/range i ét kald; `choose_config_value()` viser kameraets egne valg nummereret (← nu), 0/1 for TOGGLE, min/max for RANGE, fritekst kun ellers; skrivebeskyttet forklares. `resolve_photo_setting()` foretrækker skrivbar sti: Z30 fokusmode → `liveviewaffocus` (fallback tilføjet), billedformat → `imagequality` (fallback fandtes men blev ikke brugt i listen). Listen viser "(skrivebeskyttet)"/"(via …)"/"findes ikke på dette kamera". Samme valgliste i kamera-menu punkt 11 (rå path).
+- **Test:** `tests/test_cli_choose_camera_values.py` 6 (Z30-svar: readonly focusmode → liveviewaffocus, imagequality, manglende, range/toggle, punkt 11); CI-trin lokalt grønt.
+- **Ikke gjort:** ikke merged/released (kræver lab.59 eller senere for at nå Edges).
+
+### Handover 2026-10-04 18:20 — fra Claude til Peter/næste session: lab.58 på Edge1 (#321); opdateringssiden viser altid #id + enhedsnavn; "Registrer" vælger nyeste tag
+
+- **lab.58 (`cf88b67b`, #275):** Headends tag-poller byggede `TL-ART-20261004-cf88b67bb117` selv kl. 17:34:58 og oprettede 2 kandidater; Peter godkendte **#321 (Edge1)** → backing_up/downloading/verifying/installing/**deployed 17:40**, tunnel 17:39:57, sync/heartbeat 200. Verificeret på Edge1: `/run/timelapse/agent-features.json` = `camera_maintenance_lock: true`, receipt lab.58, `RuntimeDirectoryPreserve` i unit. **#320 = lab.58 til Edge2 (pending)** — Edge2 afstemt (kun tunnel-hand-patch, identisk i lab.58), kan godkendes nu.
+- **Peters klage:** "Registrer" gav ingen ny kandidat og intet #-nummer — artefaktet fandtes allerede (bygget af pollere), så svaret viste intet. Jeg måtte grave #320/#321 ud af loggen.
+- **Løsning (branch `claude/updates-visible-ids-and-latest-tag-20261004`):** ny `headend/services/release_candidates.py`; "Registrer" vælger nyeste tag (`tag --list v* --sort=-version:refname`, som pollere) i stedet for `git describe` (fandt kun tag bag kørende commit — lab.56-fejlen 2026-10-03); svaret indeholder `tag` + `candidates` (#id, enhed, navn, status) også når artefaktet fandtes; loggen skriver "Oprettede … kandidat(er): #320 TL-043… (Mod baggård) pending, …" og "Registrering <tag> → <artefakt>: …". UI: status mens registrering kører, resultatpanel med klikbare #id → kort, enhedsnavn på hvert kort og i godkendelsesdialogen. main.py 17539 ≤ 17550.
+- **Test:** `tests/test_release_candidates_visible.py` 4 + ratchet; CI-trin lokalt 1648 grønne; UI build + lint-gate grønne. Ikke set i browser.
+- **Ikke gjort:** ikke merged/deployet (kræver Headend-genstart + UI-build).
 
 ### Handover 2026-10-04 00:10 — fra Claude til Peter/næste session: Headend-konsol med passkey-SSO (frisk Touch ID → kortlivet SSH-certifikat kun fra 127.0.0.1)
 
