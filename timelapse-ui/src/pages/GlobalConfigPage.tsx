@@ -18,6 +18,9 @@ function api(path: string, opts?: RequestInit) {
 type ConfigObject = Record<string, any>
 type LayerKey = 'global' | 'customer' | 'site' | 'camera'
 
+// Every half hour, for the nightly reboot time dropdown.
+const NIGHTLY_REBOOT_TIMES = Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`)
+
 interface ConfigDefaults {
   schedule: ConfigObject
   camera: ConfigObject
@@ -218,8 +221,16 @@ const SECTIONS: { key: keyof ConfigDefaults; label: string; description: string;
   {
     key: 'system',
     label: 'System',
-    description: 'Timeouts og recovery-parametre.',
+    description: 'Timeouts, recovery-parametre og natlig genstart af Edges.',
     fields: [
+      { key: 'nightly_reboot.enabled', label: 'Natlig genstart', type: 'boolean', default: true,
+        tooltip: 'Edgen genstarter én gang hver nat i det valgte tidsrum. Den venter, hvis kameraet er i gang, en opdatering afventer bekræftelse, eller en tekniker er logget ind. Kan slås fra eller flyttes pr. kunde, site og kamera.' },
+      { key: 'nightly_reboot.time', label: 'Genstart kl.', type: 'select', options: NIGHTLY_REBOOT_TIMES, default: '03:00',
+        tooltip: 'Starttidspunkt (Edgens lokale tid) for vinduet hvor den natlige genstart må ske. Vælg et tidspunkt uden optagelser.' },
+      { key: 'nightly_reboot.window_minutes', label: 'Genstartsvindue', type: 'select', options: ['15', '30', '60', '120'], default: '30', unit: 'min',
+        tooltip: 'Hvor længe efter starttidspunktet genstarten må ske, hvis kameraet eller en opdatering lige er i gang.' },
+      { key: 'nightly_reboot.min_uptime_hours', label: 'Mindste oppetid', type: 'number', unit: 'timer', placeholder: '6', default: 6,
+        tooltip: 'Edgen genstarter kun, hvis den har kørt mindst så længe — så den aldrig genstarter to gange samme nat.' },
       { key: 'error_recovery_sleep_s', label: 'Recovery pause', type: 'number', unit: 'sek', placeholder: '30', default: 30,
         tooltip: 'Sekunder at vente efter fejl før retry. Forhindrer hurtig retry loop der kan forværre problemer. Network timeout: 30-60 sekunder. Camera fejl: 60-120 sekunder. For kort kan spamme logs og API.' },
       { key: 'min_sleep_s', label: 'Minimum sleep', type: 'number', unit: 'sek', placeholder: '60', default: 60,

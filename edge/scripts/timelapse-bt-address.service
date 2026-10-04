@@ -1,0 +1,16 @@
+[Unit]
+Description=TimeLapse Pro — unique Bluetooth address (AIC8800 ships 10:11:12:13:14:15 on every board)
+After=bluetooth.service sys-subsystem-bluetooth-devices-hci0.device timelapse-system-baseline.service
+Wants=bluetooth.service
+Before=timelapse-bt-pan.service timelapse-ble-technician.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/opt/timelapse/venv/bin/python3 /opt/timelapse/edge/scripts/timelapse_bt_address.py
+TimeoutStartSec=60
+SyslogIdentifier=timelapse-bt-address
+
+[Install]
+WantedBy=multi-user.target

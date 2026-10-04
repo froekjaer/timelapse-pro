@@ -496,7 +496,14 @@ for TAR_PATH in \
     "etc/systemd/system/timelapse-ble-technician.service" \
     "etc/systemd/system/timelapse-captive.service" \
     "etc/systemd/system/timelapse-wifi-ap.service" \
-    "etc/systemd/system/timelapse-totp.service"
+    "etc/systemd/system/timelapse-totp.service" \
+    "etc/systemd/system/timelapse-timesync.service" \
+    "etc/systemd/system/timelapse-timesync.timer" \
+    "etc/systemd/system/timelapse-watchdog.service" \
+    "etc/systemd/system/timelapse-system-baseline.service" \
+    "etc/systemd/system/timelapse-bt-address.service" \
+    "etc/systemd/system/timelapse-nightly-reboot.service" \
+    "etc/systemd/system/timelapse-nightly-reboot.timer"
 do
     echo "[inject] Udpakker: $TAR_PATH"
     tar -xzf "$ROOTFS_TAR" -C /mnt/root \
@@ -701,6 +708,26 @@ for UNIT in timelapse-bt-pan.service timelapse-bt-agent.service timelapse-ble-te
         echo "[inject]   ADVARSEL: $UNIT mangler i rootfs"
     fi
 done
+# System baseline (2026-10-04): watchdog, baseline, unique BT address, and the
+# timers (timesync, nightly reboot) — the same set app updates manage.
+TIMERS_WANTS_DIR=/mnt/root/etc/systemd/system/timers.target.wants
+mkdir -p "$TIMERS_WANTS_DIR"
+for UNIT in timelapse-watchdog.service timelapse-system-baseline.service timelapse-bt-address.service; do
+    if [ -f "/mnt/root/etc/systemd/system/$UNIT" ]; then
+        ln -sf "/etc/systemd/system/$UNIT" "$WANTS_DIR/$UNIT"
+        echo "[inject]   $UNIT aktiveret"
+    else
+        echo "[inject]   ADVARSEL: $UNIT mangler i rootfs"
+    fi
+done
+for UNIT in timelapse-timesync.timer timelapse-nightly-reboot.timer; do
+    if [ -f "/mnt/root/etc/systemd/system/$UNIT" ]; then
+        ln -sf "/etc/systemd/system/$UNIT" "$TIMERS_WANTS_DIR/$UNIT"
+        echo "[inject]   $UNIT aktiveret"
+    else
+        echo "[inject]   ADVARSEL: $UNIT mangler i rootfs"
+    fi
+done
 
 # ── WiFi konfiguration ───────────────────────────────────────────────────────
 # WIFI_METHOD, WIFI_SSID, WIFI_PASSWORD, WIFI_COUNTRY sættes via env-vars fra Python
@@ -832,6 +859,16 @@ if [ -n "${DEVICE_SSH_PRIVATE_KEY:-}" ] && [ -n "${SSH_TUNNEL_PORT:-}" ]; then
           /mnt/root/etc/systemd/system/multi-user.target.wants/timelapse-ssh-tunnel.service
     echo "[inject]   Agent-owned SSH tunnel retained; legacy unit removed"
 fi
+
+# ── Unique machine-id per device ─────────────────────────────────────────────
+# The Orange Pi base image ships a fixed /etc/machine-id (Edge2 still had the
+# base image's from 2025-06-12), so every flashed Edge shared it (DHCP client
+# id, journald, D-Bus). An empty file makes systemd generate a fresh one on
+# first boot (2026-10-04).
+: > /mnt/root/etc/machine-id
+rm -f /mnt/root/var/lib/dbus/machine-id
+ln -sf /etc/machine-id /mnt/root/var/lib/dbus/machine-id 2>/dev/null || true
+echo "[inject] machine-id nulstillet (genereres ved første boot)"
 
 # ── SSH hardening ─────────────────────────────────────────────────────────────
 SSHD_CONFIG=/mnt/root/etc/ssh/sshd_config

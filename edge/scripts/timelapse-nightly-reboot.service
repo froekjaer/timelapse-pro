@@ -1,0 +1,9 @@
+[Unit]
+Description=TimeLapse Pro — controlled nightly reboot (system.nightly_reboot from Headend config)
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/timelapse/venv/bin/python3 /opt/timelapse/edge/scripts/timelapse_nightly_reboot.py
+TimeoutStartSec=420
+SyslogIdentifier=timelapse-nightly-reboot

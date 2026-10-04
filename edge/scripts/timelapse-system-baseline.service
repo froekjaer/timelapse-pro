@@ -1,0 +1,16 @@
+[Unit]
+Description=TimeLapse Pro — Edge system baseline (journald, sshd, legacy cron, BT address migration)
+Documentation=file:///opt/timelapse/edge/scripts/timelapse_system_baseline.py
+After=local-fs.target
+Before=timelapse-bt-address.service timelapse-edge.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+ExecStart=/opt/timelapse/venv/bin/python3 /opt/timelapse/edge/scripts/timelapse_system_baseline.py
+TimeoutStartSec=120
+SyslogIdentifier=timelapse-system-baseline
+
+[Install]
+WantedBy=multi-user.target

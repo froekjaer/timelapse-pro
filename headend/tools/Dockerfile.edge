@@ -129,8 +129,14 @@ COPY edge/scripts/timelapse-ble-technician.service /etc/systemd/system/timelapse
 COPY edge/scripts/timelapse-captive.service /etc/systemd/system/timelapse-captive.service
 COPY edge/scripts/timelapse-wifi-ap.service /etc/systemd/system/timelapse-wifi-ap.service
 COPY edge/scripts/timelapse-totp.service /etc/systemd/system/timelapse-totp.service
+# System baseline (Edge1/Edge2 comparison 2026-10-04): same units the app
+# update installs as managed units, so a fresh image matches running Edges.
+COPY edge/scripts/timelapse-timesync.service edge/scripts/timelapse-timesync.timer \
+     edge/scripts/timelapse-watchdog.service edge/scripts/timelapse-system-baseline.service \
+     edge/scripts/timelapse-bt-address.service edge/scripts/timelapse-nightly-reboot.service \
+     edge/scripts/timelapse-nightly-reboot.timer /etc/systemd/system/
 COPY edge/scripts/bootstrap_agent.py /opt/timelapse/edge/scripts/bootstrap_agent.py
-RUN chmod 0644 /etc/systemd/system/timelapse-*.service \
+RUN chmod 0644 /etc/systemd/system/timelapse-*.service /etc/systemd/system/timelapse-*.timer \
     && chmod 0755 /opt/timelapse/edge/scripts/*.sh \
     && rm -f /etc/systemd/system/timelapse-ssh-tunnel.service \
              /etc/systemd/system/multi-user.target.wants/timelapse-ssh-tunnel.service
