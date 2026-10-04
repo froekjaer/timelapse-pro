@@ -126,6 +126,7 @@ from services.update_promotion import build_update_promotion_context, serialize_
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
+from services.python_requirements import missing_required_packages as _missing_required_packages, edge_requirements_text as _edge_requirements_text
 from services.release_candidates import latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
 from services.webauthn_origin import replace_setting_value as _replace_setting_value, resolve_webauthn_settings as _resolve_webauthn_settings, credential_transports as _webauthn_credential_transports, credential_descriptors as _webauthn_credential_descriptors, login_allow_credentials as _webauthn_login_allow_credentials
 from redaction_api import router as redaction_router
@@ -6138,6 +6139,7 @@ def _collect_release_outputs(root: Path) -> list[dict]:
         root / "edge" / "ai",
         root / "edge" / "camera",
         root / "edge" / "capture",
+        root / "edge" / "cmdb",
         root / "edge" / "config",
         root / "edge" / "diagnostics",
         root / "edge" / "hal",
@@ -8237,11 +8239,7 @@ def _reconcile_python_packages_from_pypi(installed: dict) -> dict:
     import urllib.error
     import urllib.request
 
-    outdated = []
-    for name, installed_version in sorted(installed.items()):
-        installed_version = str(installed_version or "").strip()
-        if not name or not installed_version:
-            continue
+    def _latest(name: str) -> str:
         try:
             req = urllib.request.Request(
                 f"https://pypi.org/pypi/{name}/json",
@@ -8249,14 +8247,21 @@ def _reconcile_python_packages_from_pypi(installed: dict) -> dict:
             )
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = json.loads(resp.read())
-            latest = str((data.get("info") or {}).get("version") or "").strip()
+            return str((data.get("info") or {}).get("version") or "").strip()
         except urllib.error.HTTPError as exc:
             if exc.code != 404:
                 log.debug("PyPI-opslag fejlede for %s: %s", name, exc)
-            continue
         except Exception as exc:
             log.debug("PyPI-opslag fejlede for %s: %s", name, exc)
+        return ""
+
+    # Required by edge/requirements.txt but never installed (Edge1: qrcode, websockets).
+    outdated = _missing_required_packages(installed, _edge_requirements_text(_repo_root()), _latest)
+    for name, installed_version in sorted(installed.items()):
+        installed_version = str(installed_version or "").strip()
+        if not name or not installed_version:
             continue
+        latest = _latest(name)
         if not latest or latest == installed_version:
             continue
         outdated.append({
