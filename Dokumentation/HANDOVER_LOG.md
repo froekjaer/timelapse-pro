@@ -29,6 +29,17 @@
 
 ## Log
 
+### Handover 2026-10-04 — fra Claude til Peter/næste session: Edge tekniker-UI + CLI vælger kameraets EGNE værdier; Z30 hvidbalance-fejl rettet (del 2 af 2)
+
+- **Opgave (Peter):** "alle muligheder præsenteres … i både servicetekniker CLI, UI på edgen …". Del 1 = Headend-kamerasiden (#280). Bygger oven på #279 (base-branch), så PR'en retargetes til main når #279 merges.
+- **Ændret:**
+  - `edge/service_operations.py`: `camera.config.read` med `choices=true` returnerer alle kameraparametre (samme parser som LAB-scan, `_parse_gphoto2_config`) + den skrivbare sti pr. fotoindstilling (Z30: focusmode RO → liveviewaffocus; imageformat → imagequality). Ingen ny op/kapabilitet/lease — samme `camera.config.read` + CameraPowerLease (WP-3: UI'en taler aldrig selv med gphoto2).
+  - `edge/scripts/totp-service.py`: nyt kort "Kameraets valgmuligheder" med knap "Hent kameraets valg" (`POST /mgmt/technician/camera-choices`, cache i hukommelsen). Fototeknik viser nuværende værdi pr. parameter, "(skrivebeskyttet)"/"(via …)", værdier = kameraets egne med "← nu"; skrivebeskyttet → deaktiveret. Fotoparameter sættes nu på den *opløste* sti (før: altid `focusmode` → fejlede på Z30). Kamera config: alle skrivbare paths (Z30: 241) med kameraets valg/område/TOGGLE som hint + datalist. Fokus: kameraets område vises; trin-forslag inden for området. Uden hentning: generelle værdier + hint (som før).
+  - `edge/tools/bootstrap_cli.py`: kameramenu 5 (focus drive) bruger kameraets område/valg; menu 10/11 (læs/sæt config path) søger + vælger path ved nummer i stedet for at skrive gphoto2-sti (11 viser kun skrivbare).
+  - `edge/camera/drivers/gphoto2_driver.py` (Nikon Z30-profil): `Tungsten → Tungsten` (var `Incandescent`, som Z30 ikke har — set i LAB-scan 2026-10-03).
+- **Verificeret:** nye/ændrede tests `test_edge_tech_ui_camera_choices.py` (4) + `test_cli_choose_camera_values.py` (9) grønne; bred kørsel 506 passed (kun forud-eksisterende miljø-fejl: ble/bluetooth/break_glass/bt_totp collection + openpgp, samme på main). Tekniker-siden renderet med den rigtige Z30-scan: 7 fotoindstillinger med nuværdier, blænde RO, fokus via liveviewaffocus, område −32767…32767, 241 config paths; side-JS `node --check` OK. Ikke kørt på en rigtig Edge endnu.
+- **Release:** Edge-ændring → kommer med i lab.60 (ikke lab.59, som kun er #279's bootstrap_cli).
+
 ### Handover 2026-10-04 18:50 — fra Claude til Peter/næste session: tekniker-CLI vælger kameraværdier fra kameraets egne valgmuligheder
 
 - **Status:** lab.58 deployed på begge Edges (#321 Edge1 17:40, **#320 Edge2 18:07**); verificeret på Edge2: `agent-features.json` camera_maintenance_lock=true, receipt lab.58, tunnel-fix bevaret, `timelapse-watchdog` stadig aktiv.
