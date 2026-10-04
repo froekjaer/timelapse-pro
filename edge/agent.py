@@ -401,9 +401,22 @@ class EdgeAgent:
 
     # ── Startup ────────────────────────────────────────────────────────────
 
+    AGENT_FEATURES_PATH = Path("/run/timelapse/agent-features.json")
+
+    def _advertise_features(self) -> None:
+        """Tell local technician tools what this agent supports (2026-10-04):
+        camera_maintenance_lock = captures pause while a technician holds the
+        camera lease, so tools must NOT stop the agent (which owns the tunnel)."""
+        try:
+            self.AGENT_FEATURES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            self.AGENT_FEATURES_PATH.write_text(json.dumps({"camera_maintenance_lock": True, "pid": os.getpid()}))
+        except OSError as exc:
+            log.debug("agent-features not written: %s", exc)
+
     def _startup(self) -> None:
         """Perform startup tasks after boot/resume."""
         log.info("Running startup sequence…")
+        self._advertise_features()
 
         # 1. Pull fresh config from headend
         self._pull_config()
@@ -987,40 +1000,56 @@ class EdgeAgent:
                 self._db.complete_capture_slot(slot_id=slot_id, status="skipped", result=suppressed)
                 return
             else:
-                # 2026-07-04 (Peter): læs GPS HER, lige før relæet tænder --
-                # ikke løbende under idle-ventetiden. Relæet dræber fix'et
-                # med det samme, og der går lang tid efter relæet slukkes
-                # før et fix er tilbage. `_should_capture()` returnerer True
-                # `lead_s` (~13s) sekunder før relæet rent faktisk tænder
-                # (se _camera_warmup_seconds/_do_capture_cycle), så dette er
-                # det sidste og bedste tidspunkt at læse på — maksimal tid
-                # siden sidste relæ-slukning er gået, og GPS'en har haft
-                # bedst mulig chance for at nå et fix, inden relæet dræber
-                # det igen om et øjeblik.
+                # Technician camera maintenance (Peter, 2026-10-04): a technician
+                # holding the camera lease pauses CAPTURES only — the agent keeps
+                # running (tunnel, sync, heartbeat). Busy → skip this slot without
+                # touching the relay and without a failure alarm.
+                from camera.maintenance import CameraMaintenanceBusy, CameraMaintenanceLease
+                camera_lease = CameraMaintenanceLease(timeout_s=0)
                 try:
-                    if hasattr(self._driver, "refresh_gps_cache"):
-                        self._driver.refresh_gps_cache()
-                except Exception as _gps_exc:
-                    log.debug("GPS-cache opdatering sprunget over: %s", _gps_exc)
+                    camera_lease.__enter__()
+                except CameraMaintenanceBusy:
+                    log.info("Capture sprunget over: kameraet bruges af en tekniker")
+                    self._db.log_event(self._device_id, "INFO", "capture", "Capture skipped: technician maintenance")
+                    self._db.complete_capture_slot(slot_id=slot_id, status="skipped", result="technician_maintenance")
+                    return
+                try:
+                    # 2026-07-04 (Peter): læs GPS HER, lige før relæet tænder --
+                    # ikke løbende under idle-ventetiden. Relæet dræber fix'et
+                    # med det samme, og der går lang tid efter relæet slukkes
+                    # før et fix er tilbage. `_should_capture()` returnerer True
+                    # `lead_s` (~13s) sekunder før relæet rent faktisk tænder
+                    # (se _camera_warmup_seconds/_do_capture_cycle), så dette er
+                    # det sidste og bedste tidspunkt at læse på — maksimal tid
+                    # siden sidste relæ-slukning er gået, og GPS'en har haft
+                    # bedst mulig chance for at nå et fix, inden relæet dræber
+                    # det igen om et øjeblik.
+                    try:
+                        if hasattr(self._driver, "refresh_gps_cache"):
+                            self._driver.refresh_gps_cache()
+                    except Exception as _gps_exc:
+                        log.debug("GPS-cache opdatering sprunget over: %s", _gps_exc)
 
-                node_cameras = self._cfg.get('node_cameras', [])
-                multi_mode   = self._cfg.get('multi_camera_mode', 'single')
-                if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
-                    cameras = self._discover_cameras()
-                    if len(cameras) > 1:
-                        ok = self._do_multi_capture_cycle(cameras)
+                    node_cameras = self._cfg.get('node_cameras', [])
+                    multi_mode   = self._cfg.get('multi_camera_mode', 'single')
+                    if node_cameras and multi_mode in ('auto_bootstrap', 'manual'):
+                        cameras = self._discover_cameras()
+                        if len(cameras) > 1:
+                            ok = self._do_multi_capture_cycle(cameras)
+                        else:
+                            log.info("Kun %d kamera fundet — single mode", len(cameras))
+                            ok = self._do_capture_cycle()
                     else:
-                        log.info("Kun %d kamera fundet — single mode", len(cameras))
                         ok = self._do_capture_cycle()
-                else:
-                    ok = self._do_capture_cycle()
-                capture_id = (getattr(self, "_last_capture_result", None) or {}).get("capture_id")
-                self._db.complete_capture_slot(
-                    slot_id=slot_id,
-                    status="success" if ok else "failed",
-                    capture_id=capture_id,
-                    result="capture_cycle",
-                )
+                    capture_id = (getattr(self, "_last_capture_result", None) or {}).get("capture_id")
+                    self._db.complete_capture_slot(
+                        slot_id=slot_id,
+                        status="success" if ok else "failed",
+                        capture_id=capture_id,
+                        result="capture_cycle",
+                    )
+                finally:
+                    camera_lease.__exit__(None, None, None)
         except Exception as exc:
             self._db.complete_capture_slot(slot_id=slot_id, status="failed", error=str(exc))
             raise

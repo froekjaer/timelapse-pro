@@ -537,12 +537,35 @@ class ServiceOperations:
     def cleanup_live_view(self, platform: ServicePlatform, session, reason: str) -> None:
         self.camera_live_stop(platform, session, {"reason": reason})
 
+    AGENT_FEATURES_PATH = Path(os.getenv("TIMELAPSE_AGENT_FEATURES", "/run/timelapse/agent-features.json"))
+    CAMERA_LEASE_WAIT_S = 90    # wait for a capture that is already in progress
+
+    def _agent_honours_camera_lock(self) -> bool:
+        try:
+            return bool(json.loads(self.AGENT_FEATURES_PATH.read_text()).get("camera_maintenance_lock"))
+        except (OSError, ValueError, AttributeError):
+            return False
+
     def acquire_camera_power(self, _platform, _session, _reason: str) -> None:
+        """Take the camera for a technician (Peter, 2026-10-04: switching a relay
+        must not cost the network connection). Agents that honour the camera
+        maintenance lock keep running — only their captures pause — so the
+        tunnel, sync and heartbeat stay up. Older agents are still stopped."""
         state = self._service_state(SERVICE_NAME)
         was_active = state.get("active") == "active" or state.get("ActiveState") == "active"
-        self._restore_service_after_camera = was_active or self._service_is_enabled(SERVICE_NAME)
-        if was_active:
-            self._systemctl("stop", SERVICE_NAME, timeout=120)
+        self._agent_running_during_lease = False
+        if was_active and self._agent_honours_camera_lock():
+            from camera.maintenance import CameraMaintenanceLease
+
+            lease = CameraMaintenanceLease(timeout_s=self.CAMERA_LEASE_WAIT_S)
+            lease.__enter__()          # CameraMaintenanceBusy if a capture never ends
+            self._camera_lease = lease
+            self._agent_running_during_lease = True
+            self._restore_service_after_camera = False
+        else:
+            self._restore_service_after_camera = was_active or self._service_is_enabled(SERVICE_NAME)
+            if was_active:
+                self._systemctl("stop", SERVICE_NAME, timeout=120)
         relay = self._relay()
         if relay is not None:
             relay.camera.power_on()
@@ -553,8 +576,16 @@ class ServiceOperations:
             try:
                 relay.camera.force_off()
             finally:
-                relay.cleanup(camera=True, modem=False)
-                self._relay_controller = None   # pin was unexported; re-init next time
+                if not getattr(self, "_agent_running_during_lease", False):
+                    # Agent stopped: release the pin. With the agent running its
+                    # own controller uses the exported pin — never unexport it.
+                    relay.cleanup(camera=True, modem=False)
+                    self._relay_controller = None
+        lease = getattr(self, "_camera_lease", None)
+        if lease is not None:
+            lease.__exit__(None, None, None)
+            self._camera_lease = None
+        self._agent_running_during_lease = False
         if self._restore_service_after_camera:
             self._systemctl("start", SERVICE_NAME, timeout=60)
             self._restore_service_after_camera = False

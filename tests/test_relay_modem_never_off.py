@@ -355,3 +355,66 @@ def test_camera_menu_powered_releases_on_hangup(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "camera_menu", hang)
     cli.camera_menu_powered(tmp_path)
     assert p.calls[0] == "camera.power.acquire" and p.cleaned == ["camera"]
+
+
+# ── Switching the camera relay must not cost the network (Peter, 2026-10-04) ──
+
+def test_agent_skips_capture_while_technician_holds_camera(monkeypatch, tmp_path):
+    import importlib
+    monkeypatch.setenv("TIMELAPSE_CAMERA_MAINTENANCE_LOCK", str(tmp_path / "cam.lock"))
+    from camera.maintenance import CameraMaintenanceLease
+    agent_mod = importlib.import_module("agent")
+    events, slots = [], []
+    fake = SimpleNamespace(
+        _device_id="TL-TEST",
+        _capture_suppressed_by_headend_signal=lambda now: None,
+        _db=SimpleNamespace(log_event=lambda *a: events.append(a),
+                            complete_capture_slot=lambda **kw: slots.append(kw)),
+        _do_capture_cycle=lambda: pytest.fail("must not capture during technician maintenance"),
+    )
+    with CameraMaintenanceLease(timeout_s=0):          # the technician
+        agent_mod.EdgeAgent._run_capture_slot(fake, None, "interval", {"slot_id": "S1"})
+    assert slots == [{"slot_id": "S1", "status": "skipped", "result": "technician_maintenance"}]
+
+
+def _camera_ops(monkeypatch, tmp_path, *, agent_active, honours_lock):
+    monkeypatch.setenv("TIMELAPSE_CAMERA_MAINTENANCE_LOCK", str(tmp_path / "cam.lock"))
+    ops = ops_mod.ServiceOperations()
+    features = tmp_path / "agent-features.json"
+    if honours_lock:
+        features.write_text('{"camera_maintenance_lock": true}')
+    monkeypatch.setattr(ops, "AGENT_FEATURES_PATH", features)
+    monkeypatch.setattr(ops, "_service_state", lambda _s: {"active": "active" if agent_active else "inactive"})
+    monkeypatch.setattr(ops, "_service_is_enabled", lambda _s: True)
+    calls = []
+    monkeypatch.setattr(ops, "_systemctl", lambda action, svc, timeout=0: calls.append(action))
+    relay = SimpleNamespace(camera=SimpleNamespace(power_on=lambda: calls.append("cam_on"),
+                                                   force_off=lambda: calls.append("cam_off")),
+                            cleanup=lambda **kw: calls.append(("cleanup", kw)))
+    monkeypatch.setattr(ops, "_relay", lambda: relay)
+    return ops, calls
+
+
+def test_camera_lease_keeps_agent_running_when_it_honours_the_lock(monkeypatch, tmp_path):
+    from camera.maintenance import CameraMaintenanceBusy, CameraMaintenanceLease
+    ops, calls = _camera_ops(monkeypatch, tmp_path, agent_active=True, honours_lock=True)
+    ops.acquire_camera_power(None, None, "test")
+    assert calls == ["cam_on"]                                   # no systemctl stop
+    with pytest.raises(CameraMaintenanceBusy):                   # agent's capture would skip
+        CameraMaintenanceLease(timeout_s=0).__enter__()
+    ops.cleanup_camera_power(None, None, "exit")
+    assert calls == ["cam_on", "cam_off"]                        # no unexport, no restart
+    with CameraMaintenanceLease(timeout_s=0):                    # lock released again
+        pass
+
+
+def test_old_agent_without_lock_support_is_still_stopped_and_restarted(monkeypatch, tmp_path):
+    ops, calls = _camera_ops(monkeypatch, tmp_path, agent_active=True, honours_lock=False)
+    ops.acquire_camera_power(None, None, "test")
+    ops.cleanup_camera_power(None, None, "exit")
+    assert calls[0] == "stop" and calls[-1] == "start" and ("cleanup", {"camera": True, "modem": False}) in calls
+
+
+def test_agent_advertises_camera_lock_support():
+    src = (ROOT / "edge/agent.py").read_text(encoding="utf-8")
+    assert '"camera_maintenance_lock": True' in src and "self._advertise_features()" in src

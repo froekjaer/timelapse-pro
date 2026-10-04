@@ -1117,7 +1117,7 @@ def camera_menu_powered(base_dir: Path) -> None:
     with _release_on_hangup():
         try:
             print(_TUNNEL_WARNING)
-            print("Taender kamera og pauser edge-agenten…")
+            print("Taender kamera (planlagte billeder pauses)…")
             held.add("CameraPowerLease")
             platform.call("camera.power.acquire", session)
             camera_menu(base_dir)
@@ -1140,8 +1140,8 @@ def relay_menu(base_dir: Path) -> None:
     if not session:
         return
     print()
-    print("Taendes kameraet herfra, pauses edge-agenten, og der tages ingen planlagte")
-    print("billeder, mens du er her. Ved afslutning slukkes kameraet og agenten startes igen.")
+    print("Mens kameraet er taendt herfra, tages ingen planlagte billeder. Ved afslutning")
+    print("slukkes kameraet og agenten tager billeder igen.")
     print(_TUNNEL_WARNING)
     held: set[str] = set()
     try:
@@ -1152,9 +1152,10 @@ def relay_menu(base_dir: Path) -> None:
 
 
 _TUNNEL_WARNING = (
-    "OBS: Er du logget ind via Headend-konsollen (agentens tunnel), mister du\n"
-    "forbindelsen, naar kameraet taendes — relaeerne frigives og agenten startes\n"
-    "automatisk igen, og tunnelen er tilbage efter ca. 1 minut."
+    "Kameraet taendes uden at stoppe agenten: kun planlagte billeder pauses, og\n"
+    "tunnel/forbindelse bevares. OBS: aeldre agenter (uden kamera-laas) stoppes\n"
+    "stadig helt — via Headend-konsollen mister du saa forbindelsen; relaeerne\n"
+    "frigives og agenten startes automatisk igen (tunnel tilbage efter ca. 1 min)."
 )
 
 
@@ -1172,8 +1173,8 @@ def _relay_menu_loop(base_dir: Path, platform, session, held: set[str]) -> None:
             off_s = 10
             print()
             print("1. Opdater status")
-            print("2. Taend kamerarelae (pauser edge-agenten)")
-            print("3. Sluk kamerarelae (agenten genstarter)")
+            print("2. Taend kamerarelae (pauser planlagte billeder)")
+            print("3. Sluk kamerarelae (agenten genoptager billeder)")
             print("4. Taend modemrelae")
             print(f"5. Test modemrelae: sluk i {off_s} s, taendes automatisk")
             print("6. Test et andet GPIO-pin til kameraet (midlertidigt)")
