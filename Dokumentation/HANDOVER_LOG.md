@@ -29,6 +29,12 @@
 
 ## Log
 
+### Handover 2026-10-04 21:00 — fra Claude til Peter/næste session: Edge1/Edge2-sammenligning (fund + plan), lab.60-status
+
+- **lab.60:** #280 og #281 var IKKE merged (Peters `&&`-kæde stoppede: #280 havde HANDOVER-konflikt efter #282). #280 er nu løst og CLEAN; #281 får samme konflikt når #280 merges → løses derefter. lab.60 = #281 (edge-delta mod lab.59 forventet: totp-service.py, service_operations.py, bootstrap_cli.py, gphoto2_driver.py).
+- **Sammenligning:** se `Dokumentation/EDGE1_EDGE2_COMPARISON_2026-10-04_CLAUDE.md`. Vigtigst: Edge1 mangler `qrcode` + `websockets` (tekniker-QR og lokal WS-terminal); Python-bundle-sporet installerer aldrig *manglende* krævede pakker (kun forældede) = rodårsag; Edge1 har gammel legacy `edge/cmdb/executor.py` (cmdb/ og training/ er ikke i release-manifestet); ai-sdk + Edge-QA-modeller kun på Edge1 (ikke i git/builder); #257 (builder-huller) og #239 (xterm) er åbne og i konflikt med main.
+- **Ingen ændringer på Edges foretaget** — alt read-only.
+
 ### Handover 2026-10-04 20:15 — fra Claude til Peter/næste session: lab.59 tagget; "Registrer" valgte gammelt v2.9.0 → rettet til nyeste efter oprettelsesdato
 
 - **Status:** #278 + #279 merged (#279 opdateret med main pga. branch protection, CI grøn), Headend deployet på `cfade21c`, `v2.8.1-lab.59` signeret (EE347E3F…) på `cfade21c`; edge-delta vs lab.58 = kun `edge/tools/bootstrap_cli.py`.
