@@ -11,15 +11,15 @@ sys.path.insert(0, str(ROOT / "headend"))
 from services import release_candidates as rc  # noqa: E402
 
 
-def test_latest_release_tag_uses_version_order_not_describe():
+def test_latest_release_tag_uses_creation_date_not_version_or_describe():
     seen = {}
 
     def git_text(args):
         seen["args"] = args
-        return "v2.8.1-lab.58\nv2.8.1-lab.57\nv2.8.1-lab.9\n"
+        return "v2.8.1-lab.59\nv2.8.1-lab.58\nv2.9.0\n"
 
-    assert rc.latest_release_tag(git_text) == "v2.8.1-lab.58"
-    assert seen["args"] == ["tag", "--list", "v*", "--sort=-version:refname"]
+    assert rc.latest_release_tag(git_text) == "v2.8.1-lab.59"
+    assert seen["args"] == ["tag", "--list", "v*", "--sort=-creatordate"]
     assert rc.latest_release_tag(lambda _a: "") == ""
 
 
@@ -78,3 +78,21 @@ def test_main_uses_newest_tag_and_returns_candidates():
     assert "tag = _latest_release_tag(_git_text)" in src
     assert 'return {**result, "tag": tag, "candidates": candidates}' in src
     assert "_describe_candidates(made)" in src
+
+
+def test_old_higher_version_tag_does_not_win_in_real_git(tmp_path):
+    import os
+    import subprocess
+
+    def git(*args, date="2026-01-01T00:00:00"):
+        env = {**os.environ, "GIT_COMMITTER_DATE": date, "GIT_AUTHOR_DATE": date,
+               "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                              cwd=tmp_path, env=env, capture_output=True, text=True, check=True).stdout
+
+    git("init", "-q")
+    git("commit", "-q", "--allow-empty", "-m", "a", date="2026-05-12T13:00:00")
+    git("tag", "-a", "v2.9.0", "-m", "old", date="2026-05-12T13:08:08")
+    git("commit", "-q", "--allow-empty", "-m", "b", date="2026-10-04T19:00:00")
+    git("tag", "-a", "v2.8.1-lab.59", "-m", "new", date="2026-10-04T19:05:00")
+    assert rc.latest_release_tag(lambda args: git(*args)) == "v2.8.1-lab.59"
