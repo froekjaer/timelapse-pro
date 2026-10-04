@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-04 18:50 — fra Claude til Peter/næste session: tekniker-CLI vælger kameraværdier fra kameraets egne valgmuligheder
+
+- **Status:** lab.58 deployed på begge Edges (#321 Edge1 17:40, **#320 Edge2 18:07**); verificeret på Edge2: `agent-features.json` camera_maintenance_lock=true, receipt lab.58, tunnel-fix bevaret, `timelapse-watchdog` stadig aktiv.
+- **Peters ønske:** "vælg imellem parametre og ikke skrive dem" — eksempel: Fokusmode valgt + `MF` skrevet → `Property /main/capturesettings/focusmode is read only`; Billedformat viste "ikke fundet".
+- **Løsning (branch `claude/cli-choose-camera-values-20261004`):** `gphoto_config_info()` læser label/type/readonly/current/choices/range i ét kald; `choose_config_value()` viser kameraets egne valg nummereret (← nu), 0/1 for TOGGLE, min/max for RANGE, fritekst kun ellers; skrivebeskyttet forklares. `resolve_photo_setting()` foretrækker skrivbar sti: Z30 fokusmode → `liveviewaffocus` (fallback tilføjet), billedformat → `imagequality` (fallback fandtes men blev ikke brugt i listen). Listen viser "(skrivebeskyttet)"/"(via …)"/"findes ikke på dette kamera". Samme valgliste i kamera-menu punkt 11 (rå path).
+- **Test:** `tests/test_cli_choose_camera_values.py` 6 (Z30-svar: readonly focusmode → liveviewaffocus, imagequality, manglende, range/toggle, punkt 11); CI-trin lokalt grønt.
+- **Ikke gjort:** ikke merged/released (kræver lab.59 eller senere for at nå Edges).
+
 ### Handover 2026-10-04 00:10 — fra Claude til Peter/næste session: Headend-konsol med passkey-SSO (frisk Touch ID → kortlivet SSH-certifikat kun fra 127.0.0.1)
 
 - **Status før:** #276 merged + deployet; nginx fik WebSocket-blok for `/api/admin/headend-console/` (Claude ændrede live `/opt/homebrew/etc/nginx/nginx.conf` med backup `nginx.conf.backup-20261003-headend-console` før classifier stoppede videre arbejde; Peter gennemgik diff, kørte `nginx -t` + reload). Konsollen virker: ssh/PAM spørger Password + Verification code; første forsøg gav `Permission denied` (sandsynligvis genbrugt/skiftende TOTP-kode; ikke bekræftet — sshd-log kræver sudo). **nginx-skabelonen i repoet (`deploy/nginx/…`) er IKKE opdateret endnu** — følges op.

@@ -72,6 +72,9 @@ PHOTO_SETTINGS = {
     "focus_mode": {
         "label": "Fokusmode",
         "path": "/main/capturesettings/focusmode",
+        # Nikon Z30: focusmode is read-only over PTP; liveviewaffocus is the
+        # writable AF-S/AF-C/MF switch (same as the focus lock uses).
+        "fallback_paths": ["/main/capturesettings/liveviewaffocus"],
         "hint": "AF/MF afhænger af kamera og objektiv.",
     },
     "image_format": {
@@ -333,10 +336,14 @@ def camera_menu(base_dir: Path) -> None:
             if raw:
                 camera_get_config(raw)
         elif choice == "11":
-            path = input("gphoto2 path: ").strip()
-            value = input("Ny vaerdi: ").strip()
-            if path and value:
-                camera_set_config(path, value)
+            path = input("gphoto2 path, fx /main/capturesettings/liveviewaffocus: ").strip()
+            info = gphoto_config_info(path) if path else None
+            if path and info is None:
+                print(f"{path} findes ikke på dette kamera (se punkt 9 for alle paths)")
+            elif info is not None:
+                value = choose_config_value(info)
+                if value is not None:
+                    camera_set_config(path, value)
         elif choice == "12":
             return
         else:
@@ -1367,23 +1374,108 @@ def print_photo_status() -> bool:
     return ok
 
 
+def gphoto_config_info(path: str) -> dict[str, Any] | None:
+    """One `gphoto2 --get-config` → label, type, readonly, current, choices,
+    range (bottom/top/step). None if the camera has no such path."""
+    result = run(["gphoto2", "--get-config", path], check=False, timeout=10)
+    if result.returncode != 0:
+        return None
+    info: dict[str, Any] = {"path": path, "readonly": False, "choices": []}
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition(":")
+        key, value = key.strip(), value.strip()
+        if key == "Label":
+            info["label"] = value
+        elif key == "Type":
+            info["type"] = value.upper()
+        elif key == "Readonly":
+            info["readonly"] = value == "1"
+        elif key == "Current":
+            info["current"] = value
+        elif key == "Choice":
+            _idx, _, choice = value.partition(" ")
+            info["choices"].append(choice.strip())
+        elif key in {"Bottom", "Top", "Step"}:
+            info[key.lower()] = value
+    return info
+
+
+def resolve_photo_setting(key: str) -> dict[str, Any] | None:
+    """First path the camera has for a named setting, preferring a writable
+    one (e.g. Z30: focusmode read-only → liveviewaffocus)."""
+    spec = PHOTO_SETTINGS.get(key)
+    if not spec:
+        return None
+    found = [i for i in (gphoto_config_info(p) for p in [spec["path"], *spec.get("fallback_paths", [])]) if i]
+    writable = [i for i in found if not i["readonly"]]
+    return (writable or found or [None])[0]
+
+
+def choose_config_value(info: dict[str, Any]) -> str | None:
+    """Let the technician pick from the camera's own options instead of
+    guessing what to type (Peter, 2026-10-04)."""
+    if info.get("readonly"):
+        print(f"{info['path']} er skrivebeskyttet på dette kamera og kan ikke ændres.")
+        return None
+    current = info.get("current", "")
+    choices = info.get("choices") or []
+    if choices:
+        for idx, choice in enumerate(choices, 1):
+            marker = "  ← nu" if choice == current else ""
+            print(f"  {idx:2d}. {choice}{marker}")
+        raw = input("Vaelg nummer (tom = afbryd): ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(choices):
+            return choices[int(raw) - 1]
+        if raw:
+            print("Ugyldigt valg")
+        return None
+    if info.get("type") == "TOGGLE":
+        raw = input(f"Nu: {current}. Ny vaerdi 0 = fra, 1 = til (tom = afbryd): ").strip()
+        return raw if raw in {"0", "1"} else None
+    if "bottom" in info and "top" in info:
+        raw = input(f"Nu: {current}. Ny vaerdi mellem {info['bottom']} og {info['top']} (trin {info.get('step', '1')}, tom = afbryd): ").strip()
+        try:
+            if raw and float(info["bottom"]) <= float(raw) <= float(info["top"]):
+                return raw
+        except ValueError:
+            pass
+        if raw:
+            print("Uden for intervallet")
+        return None
+    raw = input(f"Nu: {current}. Ny vaerdi (tom = afbryd): ").strip()
+    return raw or None
+
+
 def choose_photo_setting() -> bool:
     keys = list(PHOTO_SETTINGS)
+    resolved: dict[str, dict[str, Any] | None] = {}
     for idx, key in enumerate(keys, 1):
         spec = PHOTO_SETTINGS[key]
-        current = read_gphoto_current(spec["path"])
-        print(f"{idx}. {spec['label']} ({key}) = {current if current is not None else 'ikke fundet'}")
+        info = resolved[key] = resolve_photo_setting(key)
+        if info is None:
+            state = "findes ikke på dette kamera"
+        else:
+            state = info.get("current", "")
+            if info["readonly"]:
+                state += "  (skrivebeskyttet)"
+            elif info["path"] != spec["path"]:
+                state += f"  (via {info['path'].rsplit('/', 1)[-1]})"
+        print(f"{idx}. {spec['label']} ({key}) = {state}")
         print(f"   {spec['hint']}")
     raw = input("Vaelg parameter nummer eller key: ").strip()
     key = keys[int(raw) - 1] if raw.isdigit() and 1 <= int(raw) <= len(keys) else raw
     if key not in PHOTO_SETTINGS:
         print("Ukendt fototeknisk parameter")
         return False
-    value = input("Ny vaerdi: ").strip()
-    if not value:
+    info = resolved.get(key)
+    if info is None:
+        print(f"{PHOTO_SETTINGS[key]['label']} findes ikke på dette kamera")
+        return False
+    value = choose_config_value(info)
+    if value is None:
         print("Afbrudt")
         return False
-    return camera_set_photo_setting(key, value)
+    return camera_set_config(info["path"], value)
 
 
 def camera_set_photo_setting(key: str, value: str) -> bool:
@@ -1393,11 +1485,14 @@ def camera_set_photo_setting(key: str, value: str) -> bool:
         print("Mulige keys:", ", ".join(PHOTO_SETTINGS))
         return False
     print(f"{spec['label']}: {value}")
-    for path in [spec["path"], *spec.get("fallback_paths", [])]:
-        if gphoto_config_exists(path):
-            return camera_set_config(path, value)
-    print(f"Ingen understøttet config-path fundet for {spec['label']}")
-    return False
+    info = resolve_photo_setting((key or "").strip())
+    if info is None:
+        print(f"Ingen understøttet config-path fundet for {spec['label']}")
+        return False
+    if info["readonly"]:
+        print(f"{info['path']} er skrivebeskyttet på dette kamera")
+        return False
+    return camera_set_config(info["path"], value)
 
 
 def camera_autofocus() -> bool:
