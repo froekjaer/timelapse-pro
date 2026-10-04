@@ -17093,6 +17093,8 @@ from api.lab_previews_api import create_lab_previews_router
 app.include_router(create_lab_previews_router(require_role, _ensure_capture_device_access, _sftp_base_path))
 app.include_router(create_edge_local_pki_router(require_role, _siem_record_events, now_utc))
 app.include_router(create_ssh_tunnel_terminal_router(get_current_user, _ensure_capture_device_access, _session_payload, _session_is_mfa_verified))
+from api.headend_console_api import create_headend_console_router
+app.include_router(create_headend_console_router(get_current_user, _session_payload, _session_is_mfa_verified, _siem_record_events, _webauthn_settings))
 
 
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:

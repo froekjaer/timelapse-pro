@@ -34,6 +34,10 @@ PAM_MODULE="/usr/local/lib/pam/pam_google_authenticator.so"
 PAM_FILE="/etc/pam.d/sshd"
 PLIST_DST="/Library/LaunchDaemons/${LABEL}.plist"
 ADMIN_USER="${TL_ADMIN_USER:-peter}"
+# Console passkey SSO (2026-10-03): the Headend (running as ADMIN_USER) signs
+# one-off console keys with this CA; sshd trusts it only from 127.0.0.1.
+CA_PUB="${CONF_DIR}/console_user_ca.pub"
+CA_REL="Library/Application Support/TimeLapse/headend-console-ca/ca_ed25519"
 
 log() { printf '[install-admin-sshd] %s\n' "$*"; }
 die() { printf '[install-admin-sshd] FEJL: %s\n' "$*" >&2; exit 1; }
@@ -55,6 +59,7 @@ service_pid() { { launchctl print "system/${LABEL}" 2>/dev/null || true; } | awk
 port_pids() { { lsof -nP -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null || true; } | sort -u | paste -sd, -; }
 
 admin_home() { dscl . -read "/Users/${ADMIN_USER}" NFSHomeDirectory | awk '{print $2}'; }
+ca_key() { printf '%s/%s' "$(admin_home)" "$CA_REL"; }
 
 # Effective auth stack must be: pam_opendirectory REQUIRED, then the TOTP
 # module REQUIRED, and no auth rule may short-circuit (sufficient/binding).
@@ -117,6 +122,11 @@ verify() {
     check_totp_prereqs || rc=1
     launchctl print "system/${GUARD_LABEL}" >/dev/null 2>&1 && log "vagt: ${GUARD_LABEL} loaded (lukker 9122 hvis TOTP-forudsætninger forsvinder)" || { log "vagt: ${GUARD_LABEL} IKKE loaded"; rc=1; }
     /usr/sbin/sshd -t -f "$CONF_FILE" 2>/dev/null && log "sshd -t: OK" || { log "sshd -t: FEJL"; rc=1; }
+    if [[ -f "$CA_PUB" && -f "$(ca_key).pub" ]] && cmp -s <(awk '{print $1, $2}' "$CA_PUB") <(awk '{print $1, $2}' "$(ca_key).pub"); then
+        log "konsol-SSO: CA installeret og matcher Headends signeringsnøgle ✓"
+    else
+        log "konsol-SSO: CA mangler eller matcher ikke (web-konsollen falder tilbage til adgangskode + TOTP)"
+    fi
     return $rc
 }
 
@@ -150,7 +160,8 @@ dseditgroup -o checkmember -m "$ADMIN_USER" com.apple.access_ssh >/dev/null 2>&1
     || log "ADVARSEL: ${ADMIN_USER} er ikke i com.apple.access_ssh (macOS 'Fjernlogin') — password-login vil blive afvist af PAM"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 ssh-keygen -q -t ed25519 -N '' -f "${TMP}/hk" >/dev/null
-sed -e "s|^HostKey .*|HostKey ${TMP}/hk|" -e "s|__ADMIN_USER__|${ADMIN_USER}|" "$CONF_SRC" > "${TMP}/sshd_config"
+ssh-keygen -q -t ed25519 -N '' -f "${TMP}/ca" >/dev/null
+sed -e "s|^HostKey .*|HostKey ${TMP}/hk|" -e "s|^TrustedUserCAKeys .*|TrustedUserCAKeys ${TMP}/ca.pub|" -e "s|__ADMIN_USER__|${ADMIN_USER}|" "$CONF_SRC" > "${TMP}/sshd_config"
 /usr/sbin/sshd -t -f "${TMP}/sshd_config" || die "repo-konfigurationen fejlede sshd -t"
 SERVICE_PID="$(service_pid)"; PIDS="$(port_pids "$ADMIN_PORT")"
 if [[ -n "$PIDS" && "$PIDS" != "$SERVICE_PID" ]]; then
@@ -172,6 +183,20 @@ else
     fi
     log "eksisterende host-nøgle bevaret: $(ssh-keygen -lf "${HOST_KEY}.pub")"
 fi
+# Console CA: private key owned by the admin user (the Headend process signs
+# with it), public key root-owned for sshd. Generated once, never overwritten.
+CA_KEY="$(ca_key)"
+if [[ ! -f "$CA_KEY" ]]; then
+    sudo -u "$ADMIN_USER" mkdir -p -m 700 "$(dirname "$CA_KEY")"
+    sudo -u "$ADMIN_USER" ssh-keygen -q -t ed25519 -N '' -C "timelapse-headend-console-ca" -f "$CA_KEY"
+    log "ny konsol-CA: $(ssh-keygen -lf "${CA_KEY}.pub")"
+fi
+ca_mode="$(stat -f '%Lp' "$CA_KEY")"
+if [[ -L "$CA_KEY" || "$(stat -f '%Su' "$CA_KEY")" != "$ADMIN_USER" || $(( 8#$ca_mode & 8#077 )) -ne 0 ]]; then
+    die "konsol-CA ${CA_KEY} skal være en almindelig fil ejet af ${ADMIN_USER} med 0600 (er: ejer $(stat -f '%Su' "$CA_KEY"), mode ${ca_mode})"
+fi
+install -m 644 -o root -g wheel "${CA_KEY}.pub" "$CA_PUB"
+log "konsol-SSO: CA installeret ($(ssh-keygen -lf "$CA_PUB"))"
 /usr/sbin/sshd -t -f "$CONF_FILE" || die "installeret konfiguration fejlede sshd -t"
 # Fail-closed guard. PAM keeps `nullok` because site SFTP users log in with
 # passwords through the same PAM auth stack; without nullok they would be
