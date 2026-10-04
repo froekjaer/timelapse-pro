@@ -37,6 +37,14 @@
 - **Test:** `tests/test_cli_choose_camera_values.py` 6 (Z30-svar: readonly focusmode → liveviewaffocus, imagequality, manglende, range/toggle, punkt 11); CI-trin lokalt grønt.
 - **Ikke gjort:** ikke merged/released (kræver lab.59 eller senere for at nå Edges).
 
+### Handover 2026-10-04 18:20 — fra Claude til Peter/næste session: lab.58 på Edge1 (#321); opdateringssiden viser altid #id + enhedsnavn; "Registrer" vælger nyeste tag
+
+- **lab.58 (`cf88b67b`, #275):** Headends tag-poller byggede `TL-ART-20261004-cf88b67bb117` selv kl. 17:34:58 og oprettede 2 kandidater; Peter godkendte **#321 (Edge1)** → backing_up/downloading/verifying/installing/**deployed 17:40**, tunnel 17:39:57, sync/heartbeat 200. Verificeret på Edge1: `/run/timelapse/agent-features.json` = `camera_maintenance_lock: true`, receipt lab.58, `RuntimeDirectoryPreserve` i unit. **#320 = lab.58 til Edge2 (pending)** — Edge2 afstemt (kun tunnel-hand-patch, identisk i lab.58), kan godkendes nu.
+- **Peters klage:** "Registrer" gav ingen ny kandidat og intet #-nummer — artefaktet fandtes allerede (bygget af pollere), så svaret viste intet. Jeg måtte grave #320/#321 ud af loggen.
+- **Løsning (branch `claude/updates-visible-ids-and-latest-tag-20261004`):** ny `headend/services/release_candidates.py`; "Registrer" vælger nyeste tag (`tag --list v* --sort=-version:refname`, som pollere) i stedet for `git describe` (fandt kun tag bag kørende commit — lab.56-fejlen 2026-10-03); svaret indeholder `tag` + `candidates` (#id, enhed, navn, status) også når artefaktet fandtes; loggen skriver "Oprettede … kandidat(er): #320 TL-043… (Mod baggård) pending, …" og "Registrering <tag> → <artefakt>: …". UI: status mens registrering kører, resultatpanel med klikbare #id → kort, enhedsnavn på hvert kort og i godkendelsesdialogen. main.py 17539 ≤ 17550.
+- **Test:** `tests/test_release_candidates_visible.py` 4 + ratchet; CI-trin lokalt 1648 grønne; UI build + lint-gate grønne. Ikke set i browser.
+- **Ikke gjort:** ikke merged/deployet (kræver Headend-genstart + UI-build).
+
 ### Handover 2026-10-04 00:10 — fra Claude til Peter/næste session: Headend-konsol med passkey-SSO (frisk Touch ID → kortlivet SSH-certifikat kun fra 127.0.0.1)
 
 - **Status før:** #276 merged + deployet; nginx fik WebSocket-blok for `/api/admin/headend-console/` (Claude ændrede live `/opt/homebrew/etc/nginx/nginx.conf` med backup `nginx.conf.backup-20261003-headend-console` før classifier stoppede videre arbejde; Peter gennemgik diff, kørte `nginx -t` + reload). Konsollen virker: ssh/PAM spørger Password + Verification code; første forsøg gav `Permission denied` (sandsynligvis genbrugt/skiftende TOTP-kode; ikke bekræftet — sshd-log kræver sudo). **nginx-skabelonen i repoet (`deploy/nginx/…`) er IKKE opdateret endnu** — følges op.
