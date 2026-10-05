@@ -11,6 +11,9 @@ from utils import inventory
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# The unit list moved to edge/managed_units.py (shared with agent startup, 2026-10-05).
+MANAGED_UNITS_SRC = (Path(__file__).resolve().parents[1] / "edge" / "managed_units.py").read_text(encoding="utf-8")
+
 def _source(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
 
@@ -203,8 +206,8 @@ def test_timesync_timer_is_installed_and_re_armed_by_app_updates():
     source = _source("edge/agent.py")
     install_block = source.split("def _run_artifact_app_update", 1)[1].split("def _run_artifact_os_update", 1)[0]
 
-    assert '"timelapse-timesync.service"' in install_block
-    assert '"timelapse-timesync.timer"' in install_block
+    assert '"timelapse-timesync.service"' in install_block + MANAGED_UNITS_SRC
+    assert '"timelapse-timesync.timer"' in install_block + MANAGED_UNITS_SRC
     assert '"edge/scripts/sync-time.sh"' in install_block
     # Restarting the *timer* (not just the oneshot service) is required for
     # a unit-file fix to actually re-arm the schedule.
@@ -223,12 +226,13 @@ def test_artifact_install_activates_and_verifies_local_management_services():
     install_block = source.split("def _run_artifact_app_update", 1)[1].split("def _run_artifact_os_update", 1)[0]
     unit = _source("edge/scripts/timelapse-edge.service")
 
-    assert '"timelapse-bt-pan.service"' in install_block
-    assert '"timelapse-bt-agent.service"' in install_block
-    assert '"timelapse-ble-technician.service"' in install_block
-    assert '"timelapse-captive.service"' in install_block
-    assert '"timelapse-totp.service"' in install_block
+    assert '"timelapse-bt-pan.service"' in install_block + MANAGED_UNITS_SRC
+    assert '"timelapse-bt-agent.service"' in install_block + MANAGED_UNITS_SRC
+    assert '"timelapse-ble-technician.service"' in install_block + MANAGED_UNITS_SRC
+    assert '"timelapse-captive.service"' in install_block + MANAGED_UNITS_SRC
+    assert '"timelapse-totp.service"' in install_block + MANAGED_UNITS_SRC
     assert 'managed_unit_files = (*managed_units, "timelapse-edge.service")' in install_block
+    assert 'from managed_units import MANAGED_UNITS, TIMER_DRIVEN_UNITS' in install_block
     assert '["systemctl", "daemon-reload"]' in install_block
     assert '["systemctl", "restart", service]' in install_block
     assert '["systemctl", "is-active", "--quiet", service]' in install_block
