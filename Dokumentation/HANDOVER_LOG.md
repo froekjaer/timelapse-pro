@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-04 21:40 — fra Claude til Peter/næste session: Python-sporet installerer nu også krævede, manglende pakker; edge/cmdb i release-manifest
+
+- **Hvorfor:** Edge1/Edge2-sammenligningen (`EDGE1_EDGE2_COMPARISON_2026-10-04_CLAUDE.md`) viste Edge1 uden `qrcode` + `websockets` i måneder: `_reconcile_python_packages_from_pypi` så kun installerede, forældede pakker.
+- **Ændret:** `headend/services/python_requirements.py` (ny) beregner krævede-men-manglende pakker fra `edge/requirements.txt` (PEP 503-navne, extras/markører ignoreret) → lægges i samme `dependency_updates`-plan → signeret wheel-bundle → godkendelse som før (intet installeres uden godkendelse). `edge/requirements.txt` + `fastapi`, `uvicorn[standard]`, `websockets`, `python-multipart`, `pyotp` (det totp-service importerer; Edge2 har dem allerede). `_collect_release_outputs` medtager `edge/cmdb/` → Edge1's gamle legacy-`executor.py` erstattes ved næste app-opdatering. main.py 17544 linjer (< 17550).
+- **Verificeret:** `tests/test_python_required_missing.py` 5/5 (Edge1-gab = præcis qrcode + websockets), ratchet grøn, relaterede bundle-/manifest-tests grønne.
+- **Oprydning udført (Peter-godkendt):** 19 `.bak/.orig/.pre-*` slettet på Edge1 efter arkivering til `/Volumes/data-fast/peter-home/edge-bak-archive-20261004/` (0600); 4 root-ejede tilbage (Edge1 `bin/edge_qa_viplite.bak-…`, Edge2 `edge/{bootstrap,config}.yaml.bak-20261001`, `edge/tunnel/ssh_manager.py.pre-22022-edge2-…`, `/etc/systemd/system/timelapse-edge.service.pre-966429a7-…`).
+- **Næste:** system-baseline (natlig reboot konfigurerbar, unikt BT-adresse, journald volatile, GPIO-udev, watchdog som managed unit, Edge1 sshd-stramning) i repo + app-opdatering + ISO (#257 rebases).
+
 ### Handover 2026-10-04 20:30 — fra Claude til Peter/næste session: lab.59 installeret og verificeret på begge Edges
 
 - #282 merged + deployet; "Registrer" valgte lab.59; #323 (Edge1 TL-C87FF9587CA0) og #322 (Edge2 TL-043EB9E72EFD) deployed, 0 fejl.

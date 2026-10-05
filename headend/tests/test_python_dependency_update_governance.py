@@ -213,7 +213,7 @@ def test_catalog_refresh_only_processes_devices_with_venv_packages(monkeypatch):
 
         monkeypatch.setattr(
             main, "_reconcile_python_packages_from_pypi",
-            lambda installed: {"dependency_updates": {"package_count": 1, "severity": "medium",
+            lambda installed, required_text="": {"dependency_updates": {"package_count": 1, "severity": "medium",
                                                         "packages": [{"name": "requests", "installed_version": "2.28.0", "available_version": "2.31.0", "source_repo": "pypi"}]}},
         )
         monkeypatch.setattr(main, "_write_update_json", lambda folder, filename, payload: "/tmp/fake-plan.json")

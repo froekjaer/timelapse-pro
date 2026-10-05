@@ -13,6 +13,17 @@ opencv-python-headless>=4.8.0
 # Technician authentication (QR code login)
 qrcode>=7.4.0
 
+# Local technician portal (edge/scripts/totp-service.py imports these at
+# module level). uvicorn[standard] brings websockets, which the local browser
+# terminal (/mgmt/cli/bash/ws) needs — without it uvicorn rejects the
+# WebSocket upgrade (Edge1 2026-10-04). websockets is listed on its own so
+# the Headend's required-but-missing check (it ignores extras) sees it.
+fastapi>=0.136.1
+uvicorn[standard]>=0.46.0
+websockets>=12.0
+python-multipart>=0.0.9
+pyotp>=2.9.0
+
 # Scheduling & timezone support
 # (zoneinfo is stdlib in Python 3.9+, backport for older)
 # tzdata>=2024.1  # uncomment if zoneinfo data not on system
