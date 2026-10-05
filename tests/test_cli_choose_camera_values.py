@@ -29,6 +29,8 @@ def _camera(monkeypatch, inputs):
         if cmd[:2] == ["gphoto2", "--get-config"]:
             out = Z30.get(cmd[2])
             return SimpleNamespace(returncode=0 if out else 1, stdout=out or "", stderr="" if out else "not found")
+        if cmd[:2] == ["gphoto2", "--list-all-config"]:
+            return SimpleNamespace(returncode=0, stdout="".join(f"{path}\n{body}END\n" for path, body in Z30.items()), stderr="")
         if cmd[:2] == ["gphoto2", "--set-config"]:
             sets.append(cmd[2])
             return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -76,7 +78,27 @@ def test_range_and_toggle(monkeypatch):
     assert cli.choose_config_value(tog) == "1"
 
 
-def test_raw_path_menu_offers_choices(monkeypatch):
-    sets = _camera(monkeypatch, ["11", "/main/imgsettings/iso", "2", "12"])
+def test_raw_path_menu_searches_paths_then_offers_choices(monkeypatch, capsys):
+    # 11 → search "iso" → path 1 → value 2 (200) → back
+    sets = _camera(monkeypatch, ["11", "iso", "1", "2", "12"])
     cli.camera_menu(Path("/tmp"))
+    assert "1. /main/imgsettings/iso  ISO Speed" in capsys.readouterr().out
     assert sets == ["/main/imgsettings/iso=200"]
+
+
+def test_set_path_list_hides_readonly_read_list_marks_it(monkeypatch, capsys):
+    _camera(monkeypatch, ["focus", ""])
+    assert cli.choose_config_path(writable_only=True) is None
+    out = capsys.readouterr().out
+    assert "/main/capturesettings/liveviewaffocus" in out and "/main/capturesettings/focusmode" not in out
+    _camera(monkeypatch, ["focus", ""])
+    cli.choose_config_path()
+    assert "/main/capturesettings/focusmode  Focus Mode  (skrivebeskyttet)" in capsys.readouterr().out
+
+
+def test_focus_drive_uses_camera_range(monkeypatch, capsys):
+    # Menu 5 → range prompt → 300 → back
+    sets = _camera(monkeypatch, ["5", "300", "12"])
+    cli.camera_menu(Path("/tmp"))
+    assert "Negativ = fokus naermere kameraet" in capsys.readouterr().out
+    assert sets == ["/main/actions/manualfocusdrive=300"]
