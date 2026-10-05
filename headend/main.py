@@ -8222,7 +8222,7 @@ def _os_catalog_refresh_pending_devices() -> None:
         db.close()
 
 
-def _reconcile_python_packages_from_pypi(installed: dict) -> dict:
+def _reconcile_python_packages_from_pypi(installed: dict, required_text: str = "") -> dict:
     """
     Sammenligner installerede venv-pakker (edge's pip list --format=json) mod
     PyPI's seneste udgivne version pr. pakke, via Headends egen internetadgang.
@@ -8255,8 +8255,8 @@ def _reconcile_python_packages_from_pypi(installed: dict) -> dict:
             log.debug("PyPI-opslag fejlede for %s: %s", name, exc)
         return ""
 
-    # Required by edge/requirements.txt but never installed (Edge1: qrcode, websockets).
-    outdated = _missing_required_packages(installed, _edge_requirements_text(_repo_root()), _latest)
+    # required_text: edge/requirements.txt — required but never installed (Edge1: qrcode, websockets).
+    outdated = _missing_required_packages(installed, required_text, _latest) if required_text else []
     for name, installed_version in sorted(installed.items()):
         installed_version = str(installed_version or "").strip()
         if not name or not installed_version:
@@ -8373,7 +8373,7 @@ def _python_catalog_refresh_pending_devices() -> None:
             if not isinstance(installed, dict) or not installed:
                 continue
             try:
-                decisions = _reconcile_python_packages_from_pypi(installed)
+                decisions = _reconcile_python_packages_from_pypi(installed, _edge_requirements_text(_repo_root()))
                 if not decisions:
                     continue
                 created_at = now_utc()

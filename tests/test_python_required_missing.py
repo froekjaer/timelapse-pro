@@ -42,5 +42,6 @@ def test_unknown_on_pypi_is_skipped_not_planned():
 
 def test_main_wires_missing_into_the_same_plan_and_cmdb_into_release_manifest():
     src = (ROOT / "headend" / "main.py").read_text(encoding="utf-8")
-    assert "outdated = _missing_required_packages(installed, _edge_requirements_text(_repo_root()), _latest)" in src
+    assert "outdated = _missing_required_packages(installed, required_text, _latest) if required_text else []" in src
+    assert "_reconcile_python_packages_from_pypi(installed, _edge_requirements_text(_repo_root()))" in src
     assert 'root / "edge" / "cmdb",' in src
