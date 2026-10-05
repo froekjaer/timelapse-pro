@@ -49,6 +49,14 @@ CAMERA_CONFIG_PATHS = {
     "white_balance": "/main/imgsettings/whitebalance",
     "image_format": "/main/imgsettings/imageformat",
 }
+# Writable alternatives per photo setting, tried after CAMERA_CONFIG_PATHS
+# (Nikon Z30: focusmode is read-only → liveviewaffocus; imageformat →
+# imagequality). Same order as bootstrap_cli.PHOTO_SETTINGS.
+PHOTO_SETTING_FALLBACKS = {
+    "focus_mode": ("/main/capturesettings/liveviewaffocus",),
+    "image_format": ("/main/capturesettings/imagequality",),
+}
+PHOTO_SETTING_KEYS = ("exposure_comp", "iso", "white_balance", "shutter_speed", "aperture", "focus_mode", "image_format")
 
 
 def create_service_platform(
@@ -200,6 +208,8 @@ class ServiceOperations:
         return {"ok": True, "image": str(image), "quality": qa}
 
     def camera_config_read(self, _platform, _session, kwargs: dict[str, Any]):
+        if kwargs.get("choices"):
+            return self._camera_choices()
         path = kwargs.get("path")
         if path:
             return {"ok": True, "path": path, "value": self._read_gphoto_current(str(path))}
@@ -636,6 +646,25 @@ class ServiceOperations:
             if line.startswith("Current:"):
                 return line.split(":", 1)[1].strip()
         return ""
+
+    def _camera_choices(self) -> dict[str, Any]:
+        """Every camera parameter with its own choices/range, so technicians
+        pick values instead of guessing spellings (Peter, 2026-10-04). Same
+        parser as the LAB "Hent parametre" scan."""
+        result = self._gphoto(["--list-all-config"], timeout=60)
+        if not result["ok"]:
+            return {"ok": False, "error": result["stderr"] or "gphoto2 --list-all-config failed"}
+        sys.path.insert(0, str(EDGE_ROOT))
+        from camera.drivers.gphoto2_driver import _parse_gphoto2_config
+
+        params = _parse_gphoto2_config(result["stdout"])
+        by_path = {p["path"]: p for p in params}
+        settings: dict[str, Any] = {}
+        for key in PHOTO_SETTING_KEYS:
+            found = [by_path[p] for p in (CAMERA_CONFIG_PATHS[key], *PHOTO_SETTING_FALLBACKS.get(key, ())) if p in by_path]
+            writable = [p for p in found if not p.get("readonly")]
+            settings[key] = (writable or found or [None])[0]
+        return {"ok": True, "params": params, "settings": settings}
 
     def _read_camera_values(self, keys) -> dict[str, Any]:
         values = {}

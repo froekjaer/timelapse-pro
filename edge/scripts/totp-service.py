@@ -147,6 +147,63 @@ CAMERA_CONFIG_OPTIONS = [
     ("/main/actions/manualfocusdrive", "Manuel focus drive (Nikon Z30)"),
 ]
 FOCUS_DRIVE_OPTIONS = ["Near 1", "Near 2", "Near 3", "Far 1", "Far 2", "Far 3", "500", "-500", "1000", "-1000"]
+FOCUS_DRIVE_PATHS = ("/main/actions/manualfocusdrive", "/main/actions/manualfocusdrive2")
+
+# The camera's own choices, fetched with "Hent kameraets valg" through the
+# camera.config.read service operation (choices=true). Kept in memory until
+# the service restarts or the technician fetches again.
+_CAMERA_CHOICES: dict = {}
+
+
+def _parse_service_json(output: str) -> dict | None:
+    start = output.find("{")
+    if start < 0:
+        return None
+    try:
+        data, _end = json.JSONDecoder().raw_decode(output[start:])
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _choice_labels(info: dict | None) -> list[str]:
+    return [c.get("label", "") for c in (info or {}).get("choices", []) if c.get("label")]
+
+
+def _photo_value_options() -> dict[str, list[str]]:
+    """Per photo setting: the camera's own values if fetched, else generic."""
+    settings = (_CAMERA_CHOICES.get("result") or {}).get("settings") or {}
+    out = {}
+    for key, generic in PHOTO_VALUE_OPTIONS.items():
+        labels = _choice_labels(settings.get(key))
+        out[key] = labels or generic
+    return out
+
+
+def _photo_setting_path(key: str) -> str:
+    info = ((_CAMERA_CHOICES.get("result") or {}).get("settings") or {}).get(key)
+    return (info or {}).get("path") or PHOTO_SETTING_PATHS.get(key, key)
+
+
+def _focus_drive_info() -> dict | None:
+    params = (_CAMERA_CHOICES.get("result") or {}).get("params") or []
+    by_path = {p.get("path"): p for p in params}
+    return next((by_path[p] for p in FOCUS_DRIVE_PATHS if p in by_path), None)
+
+
+def _focus_drive_options() -> list[str]:
+    info = _focus_drive_info()
+    if not info:
+        return FOCUS_DRIVE_OPTIONS
+    labels = _choice_labels(info)
+    if labels:
+        return labels
+    try:
+        low, high = float(info["bottom"]), float(info["top"])
+    except (KeyError, TypeError, ValueError):
+        return FOCUS_DRIVE_OPTIONS
+    steps = [-1000, -500, -200, -100, -50, 50, 100, 200, 500, 1000]
+    return [str(v) for v in steps if low <= v <= high] or FOCUS_DRIVE_OPTIONS
 
 
 def _default_config() -> dict:
@@ -1675,8 +1732,24 @@ def _technician_page(msg: str = "", output: str = "") -> str:
     video_status = VIDEO_MANAGER.status()
     service_policy = _service_policy_snapshot()
     generated = status.get("generated_at", "")
+    choices = _CAMERA_CHOICES.get("result") or {}
+    settings = choices.get("settings") or {}
+
+    def _photo_label(key: str, label: str) -> str:
+        if not settings:
+            return label
+        info = settings.get(key)
+        if not info:
+            return f"{label} (findes ikke på kameraet)"
+        state = f"{label} = {info.get('current', '')}"
+        if info.get("readonly"):
+            return f"{state} (skrivebeskyttet)"
+        if info.get("path") != PHOTO_SETTING_PATHS.get(key):
+            state += f" (via {info['path'].rsplit('/', 1)[-1]})"
+        return state
+
     photo_options = "".join(
-        f'<option value="{key}">{label}</option>'
+        f'<option value="{key}">{html.escape(_photo_label(key, label))}</option>'
         for key, label in [
             ("exposure_comp", "Eksponeringskompensation"),
             ("iso", "ISO"),
@@ -1687,12 +1760,38 @@ def _technician_page(msg: str = "", output: str = "") -> str:
             ("image_format", "Billedformat"),
         ]
     )
-    focus_options = _option_list(FOCUS_DRIVE_OPTIONS)
-    config_options = "".join(
-        f'<option value="{html.escape(path)}">{html.escape(label)} - {html.escape(path)}</option>'
-        for path, label in CAMERA_CONFIG_OPTIONS
-    )
-    photo_values_json = json.dumps(PHOTO_VALUE_OPTIONS, ensure_ascii=False)
+    focus_options = _option_list(_focus_drive_options())
+    focus_info = _focus_drive_info()
+    if focus_info and focus_info.get("bottom") is not None:
+        focus_range_hint = (f'<p class="hint">Kameraets område: {html.escape(str(focus_info.get("bottom")))} … '
+                            f'{html.escape(str(focus_info.get("top")))} (negativ = nær, positiv = fjern).</p>')
+    else:
+        focus_range_hint = ""
+    writable_params = [p for p in choices.get("params") or [] if not p.get("readonly")]
+    if writable_params:
+        config_options = "".join(
+            f'<option value="{html.escape(p["path"])}">{html.escape(p["path"].rsplit("/", 1)[-1])} — '
+            f'{html.escape(p.get("label", ""))} (nu: {html.escape(str(p.get("current", "")))})</option>'
+            for p in sorted(writable_params, key=lambda p: p["path"])
+        )
+    else:
+        config_options = "".join(
+            f'<option value="{html.escape(path)}">{html.escape(label)} - {html.escape(path)}</option>'
+            for path, label in CAMERA_CONFIG_OPTIONS
+        )
+    config_info_json = json.dumps(
+        {p["path"]: {k: p.get(k) for k in ("type", "current", "bottom", "top", "step")} | {"choices": _choice_labels(p)}
+         for p in writable_params}, ensure_ascii=False)
+    photo_current_json = json.dumps({k: (v or {}).get("current", "") for k, v in settings.items()}, ensure_ascii=False)
+    photo_readonly_json = json.dumps([k for k, v in settings.items() if (v or {}).get("readonly")], ensure_ascii=False)
+    if _CAMERA_CHOICES.get("fetched_at"):
+        choices_status = (f'<p class="hint">Kameraets egne valg hentet {html.escape(_CAMERA_CHOICES["fetched_at"])}'
+                          f' ({len(choices.get("params") or [])} parametre).</p>')
+    elif _CAMERA_CHOICES.get("error"):
+        choices_status = f'<p class="msg">Kunne ikke hente kameraets valg: {html.escape(_CAMERA_CHOICES["error"])}</p>'
+    else:
+        choices_status = '<p class="hint">Viser generelle værdier. Tryk "Hent kameraets valg" for præcis de værdier kameraet selv tilbyder.</p>'
+    photo_values_json = json.dumps(_photo_value_options(), ensure_ascii=False)
     latest_panel = _image_panel()
     msg_html = f'<p class="msg ok">{html.escape(msg)}</p>' if msg else ""
     output_html = (
@@ -1854,6 +1953,13 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         <button name="action" value="photo-status">Fotostatus</button>
       </form>
     </div>
+    <div class="card wide">
+      <h2>Kameraets valgmuligheder</h2>
+      {choices_status}
+      <form method="post" action="/mgmt/technician/camera-choices">
+        <button>Hent kameraets valg</button>
+      </form>
+    </div>
     <div class="card">
       <h2>Fototeknik</h2>
       <form method="post" action="/mgmt/technician/photo">
@@ -1862,13 +1968,14 @@ def _technician_page(msg: str = "", output: str = "") -> str:
         <label>Ny værdi</label>
         <select name="value" id="photo-value"></select>
         <label>Manuel værdi</label>
-        <input name="value_manual" placeholder="Skriv manuelt hvis værdien ikke står i listen">
-        <button>Sæt fotoparameter</button>
+        <input name="value_manual" placeholder="Kun hvis værdien ikke står i listen">
+        <button id="photo-submit">Sæt fotoparameter</button>
       </form>
     </div>
     <div class="card">
       <h2>Fokus</h2>
       <p class="hint">Focus drive flytter objektivets fokusmotor i små trin. Brug Near for at flytte fokus tættere på kameraet og Far for længere væk. Tag testbillede efter små ændringer.</p>
+      {focus_range_hint}
       <form method="post" action="/mgmt/technician/focus">
         <label>Focus drive</label>
         <select name="value">{focus_options}</select>
@@ -1882,12 +1989,13 @@ def _technician_page(msg: str = "", output: str = "") -> str:
       <h2>Kamera config</h2>
       <form method="post" action="/mgmt/technician/config">
         <label>Config path</label>
-        <select name="path">{config_options}</select>
+        <select name="path" id="config-path" onchange="updateConfigValues()">{config_options}</select>
         <label>Ny værdi</label>
-        <input name="value" list="camera-config-values" placeholder="Vælg eller skriv værdi">
+        <input name="value" id="config-value" list="camera-config-values" placeholder="Vælg eller skriv værdi">
         <datalist id="camera-config-values">
           {_option_list(sorted(set(sum(PHOTO_VALUE_OPTIONS.values(), []))))}
         </datalist>
+        <p class="hint" id="config-hint"></p>
         <button>Sæt config</button>
       </form>
     </div>
@@ -1922,18 +2030,48 @@ def _technician_page(msg: str = "", output: str = "") -> str:
 </div>
 <script>
 const PHOTO_VALUES = {photo_values_json};
+const PHOTO_CURRENT = {photo_current_json};
+const PHOTO_READONLY = {photo_readonly_json};
+const CONFIG_INFO = {config_info_json};
 function updatePhotoValues() {{
   const key = document.getElementById('photo-key').value;
   const select = document.getElementById('photo-value');
+  const readonly = PHOTO_READONLY.includes(key);
   select.innerHTML = '';
   (PHOTO_VALUES[key] || []).forEach((value) => {{
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = value;
+    option.textContent = value === PHOTO_CURRENT[key] ? `${{value}}  ← nu` : value;
+    option.selected = value === PHOTO_CURRENT[key];
     select.appendChild(option);
   }});
+  select.disabled = readonly;
+  document.getElementById('photo-submit').disabled = readonly;
 }}
 updatePhotoValues();
+
+function updateConfigValues() {{
+  const path = document.getElementById('config-path').value;
+  const info = CONFIG_INFO[path];
+  const input = document.getElementById('config-value');
+  const list = document.getElementById('camera-config-values');
+  const hint = document.getElementById('config-hint');
+  if (!info) {{ hint.textContent = ''; return; }}
+  list.innerHTML = '';
+  let values = info.choices || [];
+  if (!values.length && info.type === 'TOGGLE') values = ['0', '1'];
+  values.forEach((value) => {{
+    const option = document.createElement('option');
+    option.value = value;
+    list.appendChild(option);
+  }});
+  input.value = '';
+  input.placeholder = info.current ? `Nu: ${{info.current}}` : 'Vælg værdi';
+  if (values.length) hint.textContent = `Kameraets valg: ${{values.join(' · ')}}`;
+  else if (info.bottom != null) hint.textContent = `Tal mellem ${{info.bottom}} og ${{info.top}} (trin ${{info.step || 1}})`;
+  else hint.textContent = 'Fri tekst (kameraet oplyser ingen valg)';
+}}
+if (Object.keys(CONFIG_INFO).length) updateConfigValues();
 
 const VIDEO_STATE_LABELS = {{
   stopped: 'Stoppet', starting: 'Starter', running: 'Kører',
@@ -2312,13 +2450,26 @@ async def mgmt_technician_focus(request: Request, value: str = Form("")):
     return HTMLResponse(_technician_page("Focus drive sendt" if ok else "Focus drive fejlede", output))
 
 
+@app.post("/mgmt/technician/camera-choices", response_class=HTMLResponse)
+async def mgmt_technician_camera_choices(request: Request):
+    ok, output = _run_tech_cli("--service-operation", "camera.config.read", "--service-param", "choices=true", timeout=150)
+    data = _parse_service_json(output) if ok else None
+    result = (data or {}).get("result", data) if isinstance(data, dict) else None
+    if isinstance(result, dict) and result.get("params"):
+        _CAMERA_CHOICES.clear()
+        _CAMERA_CHOICES.update({"result": result, "fetched_at": time.strftime("%Y-%m-%d %H:%M")})
+        return HTMLResponse(_technician_page(f"Kameraets valg hentet ({len(result['params'])} parametre)"))
+    _CAMERA_CHOICES["error"] = (result or {}).get("error") if isinstance(result, dict) else "intet svar fra kameraet"
+    return HTMLResponse(_technician_page("Kunne ikke hente kameraets valg", output))
+
+
 @app.post("/mgmt/technician/photo", response_class=HTMLResponse)
 async def mgmt_technician_photo(request: Request, key: str = Form(...), value: str = Form(""), value_manual: str = Form("")):
     key = (key or "").strip()
     value = (value_manual or value or "").strip()
     if not key or not value:
         return HTMLResponse(_technician_page("Fotoparameter mangler", "Vælg parameter og skriv ny værdi."))
-    path = PHOTO_SETTING_PATHS.get(key, key)
+    path = _photo_setting_path(key)
     ok, output = _run_tech_cli("--service-operation", "camera.config.set_temporary", "--service-param", f"path={path}", "--service-param", f"value={value}", timeout=90)
     return HTMLResponse(_technician_page("Fotoparameter sat" if ok else "Fotoparameter fejlede", output))
 
