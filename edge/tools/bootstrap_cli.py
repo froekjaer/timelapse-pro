@@ -317,9 +317,7 @@ def camera_menu(base_dir: Path) -> None:
         elif choice == "4":
             camera_autofocus()
         elif choice == "5":
-            value = input("Focus drive value, fx 'Near 1', 'Far 1' eller '500': ").strip()
-            if value:
-                camera_focus_drive(value)
+            choose_focus_drive()
         elif choice == "6":
             raw = input("Output mappe [/tmp/timelapse-tech-captures]: ").strip()
             capture_test(Path(raw or "/tmp/timelapse-tech-captures"), base_dir)
@@ -332,11 +330,11 @@ def camera_menu(base_dir: Path) -> None:
         elif choice == "9":
             camera_list_config()
         elif choice == "10":
-            raw = input("gphoto2 path, fx /main/capturesettings/focusmode: ").strip()
-            if raw:
-                camera_get_config(raw)
+            path = choose_config_path()
+            if path:
+                camera_get_config(path)
         elif choice == "11":
-            path = input("gphoto2 path, fx /main/capturesettings/liveviewaffocus: ").strip()
+            path = choose_config_path(writable_only=True)
             info = gphoto_config_info(path) if path else None
             if path and info is None:
                 print(f"{path} findes ikke på dette kamera (se punkt 9 for alle paths)")
@@ -1325,6 +1323,59 @@ def camera_summary(base_dir: Path, compact: bool = False) -> bool:
         print()
         print("Tip: Brug 'Vis alle kamera config paths' for at se mulige fokus- og eksponeringsvalg.")
     return ok
+
+
+def choose_config_path(writable_only: bool = False) -> str | None:
+    """Search the camera's own config paths and pick one by number instead of
+    typing a gphoto2 path (Peter, 2026-10-04)."""
+    result = run(["gphoto2", "--list-all-config"], check=False, timeout=30)
+    if result.returncode != 0:
+        print(result.stderr or result.stdout or "Kunne ikke laese kameraets config")
+        return None
+    entries: list[tuple[str, str, bool]] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("/main/"):
+            entries.append((line, "", False))
+        elif entries and line.startswith("Label:"):
+            path, _label, ro = entries[-1]
+            entries[-1] = (path, line.split(":", 1)[1].strip(), ro)
+        elif entries and line.startswith("Readonly:"):
+            path, label, _ro = entries[-1]
+            entries[-1] = (path, label, line.split(":", 1)[1].strip() == "1")
+    if writable_only:
+        entries = [e for e in entries if not e[2]]
+    term = input("Soeg (fx focus, iso, white; tom = alle): ").strip().lower()
+    if term:
+        entries = [e for e in entries if term in e[0].lower() or term in e[1].lower()]
+    if not entries:
+        print("Ingen config paths matcher")
+        return None
+    for idx, (path, label, ro) in enumerate(entries, 1):
+        print(f"  {idx:3d}. {path}  {label}{'  (skrivebeskyttet)' if ro else ''}")
+    raw = input("Vaelg nummer (tom = afbryd): ").strip()
+    if raw.isdigit() and 1 <= int(raw) <= len(entries):
+        return entries[int(raw) - 1][0]
+    if raw:
+        print("Ugyldigt valg")
+    return None
+
+
+def choose_focus_drive() -> bool:
+    """Focus drive with the camera's own range/steps instead of guessing."""
+    for path in ("/main/actions/manualfocusdrive", "/main/actions/manualfocusdrive2"):
+        info = gphoto_config_info(path)
+        if info is None or info.get("readonly"):
+            continue
+        if "bottom" in info:
+            print("Negativ = fokus naermere kameraet, positiv = laengere vaek. Start med smaa trin (fx 100-500).")
+        value = choose_config_value(info)
+        if value is None:
+            print("Afbrudt")
+            return False
+        return camera_set_config(path, value)
+    print("Manual focus drive blev ikke fundet. Kamera/objektiv understoetter muligvis ikke remote focus.")
+    return False
 
 
 def camera_list_config() -> bool:

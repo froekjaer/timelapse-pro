@@ -400,7 +400,8 @@ CAMERA_PROFILES = {
                     "AWB White": "Automatic",
                     "Cloudy": "Cloudy",
                     "Daylight": "Daylight",
-                    "Tungsten": "Incandescent",
+                    # Z30 lists "Tungsten" itself (LAB scan 2026-10-03); "Incandescent" does not exist on it.
+                    "Tungsten": "Tungsten",
                     "Fluorescent": "Fluorescent",
                     "Flash": "Flash",
                 },
