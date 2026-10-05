@@ -104,7 +104,8 @@ def test_gps_time_reader_uses_wall_clock_deadline_not_fixed_line_count() -> None
 
 def test_edge_service_creates_persistent_breakglass_log_root_before_agent() -> None:
     source = _source("edge/scripts/timelapse-edge.service")
-    assert "ExecStartPre=/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions" in source
+    # "+" = outside the ProtectSystem sandbox (ramlog can delete the dir; lab.60 Edge2).
+    assert "ExecStartPre=+/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions" in source
 
 
 def test_new_edge_images_remove_competing_legacy_tunnel_unit() -> None:

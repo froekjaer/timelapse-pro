@@ -119,11 +119,13 @@ def test_nightly_reboot_decisions():
 
 def test_agent_manages_the_units_and_they_exist():
     src = (ROOT / "edge" / "agent.py").read_text(encoding="utf-8")
+    units = (ROOT / "edge" / "managed_units.py").read_text(encoding="utf-8")
     for unit in ("timelapse-watchdog.service", "timelapse-system-baseline.service", "timelapse-bt-address.service",
                  "timelapse-nightly-reboot.service", "timelapse-nightly-reboot.timer"):
-        assert f'"{unit}"' in src
+        assert f'"{unit}"' in units
         assert (SCRIPTS / unit).is_file()
-    assert 'timer_driven_units = {"timelapse-nightly-reboot.service"}' in src
+    assert 'TIMER_DRIVEN_UNITS = frozenset({"timelapse-nightly-reboot.service"})' in units
+    assert "from managed_units import MANAGED_UNITS, TIMER_DRIVEN_UNITS" in src
     for script in ("timelapse_system_baseline.py", "timelapse_bt_address.py", "timelapse_nightly_reboot.py"):
         assert f'"edge/scripts/{script}"' in src
 

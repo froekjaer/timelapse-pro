@@ -413,6 +413,17 @@ class EdgeAgent:
         except OSError as exc:
             log.debug("agent-features not written: %s", exc)
 
+    def _reconcile_managed_units(self) -> None:
+        """Install managed units this release introduced (see edge/managed_units.py)."""
+        try:
+            from managed_units import reconcile_managed_units
+            result = reconcile_managed_units(Path(__file__).resolve().parent.parent)
+            if result["installed"] or result["updated"]:
+                log.info("Managed units afstemt: installeret=%s opdateret=%s",
+                         result["installed"], result["updated"])
+        except Exception as exc:
+            log.warning("Afstemning af managed units fejlede: %s", exc)
+
     def _startup(self) -> None:
         """Perform startup tasks after boot/resume."""
         log.info("Running startup sequence…")
@@ -423,6 +434,7 @@ class EdgeAgent:
         self._check_backup_request()
         self._repair_sshd_authorized_keys_command_missing_u_token()
         self._repair_emergency_breakglass_account()
+        self._reconcile_managed_units()
 
         # 2. Send startup heartbeat
         self._send_heartbeat(check_updates=False)
@@ -2673,25 +2685,9 @@ class EdgeAgent:
         unit_backup = recovery_dir / "systemd-backup"
         guard_started = False
         rollback_ready = False
-        managed_units = (
-            "timelapse-bt-pan.service",
-            "timelapse-bt-agent.service",
-            "timelapse-ble-technician.service",
-            "timelapse-captive.service",
-            "timelapse-wifi-ap.service",
-            "timelapse-totp.service",
-            "timelapse-timesync.service",
-            "timelapse-timesync.timer",
-            # System baseline (Edge1/Edge2 comparison 2026-10-04): previously
-            # hand-installed on one Edge only, or not at all.
-            "timelapse-watchdog.service",
-            "timelapse-system-baseline.service",
-            "timelapse-bt-address.service",
-            "timelapse-nightly-reboot.service",
-            "timelapse-nightly-reboot.timer",
-        )
-        # Started by its timer; has no [Install] section, so never `enable` it.
-        timer_driven_units = {"timelapse-nightly-reboot.service"}
+        from managed_units import MANAGED_UNITS, TIMER_DRIVEN_UNITS
+        managed_units = MANAGED_UNITS
+        timer_driven_units = TIMER_DRIVEN_UNITS
         managed_unit_files = (*managed_units, "timelapse-edge.service")
         management_runtime_paths = {
             "edge/scripts/timelapse-bt-pan.sh",

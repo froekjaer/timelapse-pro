@@ -36,7 +36,11 @@ SyslogIdentifier=timelapse-edge
 # The edge agent may start before timelapse-totp.service.  Create the
 # persistent audit root here so boot ordering cannot cause repeated
 # break-glass read-only failures.
-ExecStartPre=/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions
+# "+" runs this one step outside the ProtectSystem sandbox. Orange Pi ramlog
+# (rsync --delete /var/log/ -> /var/log.hdd/ when /var/log passes 75%) can
+# delete /var/log.hdd/timelapse; the sandboxed mkdir then failed with
+# "Read-only file system" and the agent could not start (Edge2, lab.60).
+ExecStartPre=+/bin/mkdir -p /var/log.hdd/timelapse/breakglass/sessions /var/log/timelapse
 
 # Security hardening
 NoNewPrivileges=yes
