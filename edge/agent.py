@@ -2682,7 +2682,16 @@ class EdgeAgent:
             "timelapse-totp.service",
             "timelapse-timesync.service",
             "timelapse-timesync.timer",
+            # System baseline (Edge1/Edge2 comparison 2026-10-04): previously
+            # hand-installed on one Edge only, or not at all.
+            "timelapse-watchdog.service",
+            "timelapse-system-baseline.service",
+            "timelapse-bt-address.service",
+            "timelapse-nightly-reboot.service",
+            "timelapse-nightly-reboot.timer",
         )
+        # Started by its timer; has no [Install] section, so never `enable` it.
+        timer_driven_units = {"timelapse-nightly-reboot.service"}
         managed_unit_files = (*managed_units, "timelapse-edge.service")
         management_runtime_paths = {
             "edge/scripts/timelapse-bt-pan.sh",
@@ -2693,6 +2702,9 @@ class EdgeAgent:
             "edge/scripts/timelapse-wifi-ap.sh",
             "edge/scripts/gen-bt-cert.sh",
             "edge/scripts/sync-time.sh",
+            "edge/scripts/timelapse_system_baseline.py",
+            "edge/scripts/timelapse_bt_address.py",
+            "edge/scripts/timelapse_nightly_reboot.py",
             *(f"edge/scripts/{unit}" for unit in managed_unit_files),
         }
         management_changed = any(
@@ -2781,7 +2793,16 @@ class EdgeAgent:
                     _shutil.copy2(source, target)
                 _sp.run(["systemctl", "daemon-reload"], check=True, capture_output=True, text=True)
                 for service in managed_unit_files:
+                    if service in timer_driven_units:
+                        continue
                     _sp.run(["systemctl", "enable", service], check=True, capture_output=True, text=True)
+                # Baseline first (it migrates the old BT address), then the
+                # BT address, both before bt-pan restarts below. Failures are
+                # reported by the units themselves and never roll back a
+                # verified application release.
+                for service in ("timelapse-system-baseline.service", "timelapse-bt-address.service",
+                                "timelapse-nightly-reboot.timer", "timelapse-watchdog.service"):
+                    _sp.run(["systemctl", "restart", service], check=False, capture_output=True, text=True)
 
                 # Bluetooth hardware or its vendor driver can be unavailable
                 # on an otherwise healthy Edge.  That must be visible, but it

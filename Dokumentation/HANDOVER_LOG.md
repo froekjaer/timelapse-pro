@@ -29,6 +29,14 @@
 
 ## Log
 
+### Handover 2026-10-04 22:30 — fra Claude til Peter/næste session: Edge system-baseline — det kun én Edge havde, er nu på alle Edges og i ISO'en
+
+- **Peters beslutninger (2026-10-04):** natlig reboot på alle Edges (konfigurerbar); Edge1 SSH strammes som Edge2/ISO; Edge1's AI-SDK/modeller/repo-kopi bliver (AI/QA-test); `.bak`-filer slettes.
+- **Fakta fundet:** NPU/QA-modeller bruges IKKE i drift (begge: `model_path: null`, `npu_ready: false`, CPU-fallback). Begge kører selvbygget gphoto2 2.5.32/libgphoto2 2.5.34 i /usr/local, og main's builder bygger allerede det samme (#257's apt-pin 2.5.27 er derfor forældet). Agent kører som root på begge → #257's sudoers-grant og GPIO-udev-regel er ikke nødvendige (udeladt bevidst). Edge2's `/etc/machine-id` er Orange Pi-base-imagets (2025-06-12) → alle images fra builderen delte samme machine-id. Edge2's Bluetooth-adresse er AIC8800-pladsholderen `10:11:12:13:14:15` (samme på alle boards); Edge1 havde en håndlavet `bt-set-addr.service`.
+- **Ændret (ny PR):** `edge/scripts/timelapse_system_baseline.py` + unit (journald volatile+ratelimit som Edge2; sshd `PermitRootLogin no`/`PasswordAuthentication no` som inject, `sshd -t` før reload, restore ved fejl, Match-blokke urørt; fjerner Edge1's to håndlavede reboot-cron; migrerer Edge1's BT-adresse til `/etc/timelapse/bt-address`). `timelapse_bt_address.py` + unit (unik, stabil adresse fra device-id → MAC → machine-id; Edge1 beholder sin). `timelapse_nightly_reboot.py` + service/timer (hver 5. min; genstarter kun i vinduet, efter min. oppetid, ikke ved afventende opdatering/aktiv tekniker-session, og holder kameraets vedligeholdslås). `timelapse-watchdog.service` nu i repo. Alle fem som managed units i agenten (installeres/aktiveres ved app-opdatering). Headend: `system.nightly_reboot` {enabled, time 03:00, window 30, min_uptime 6} i fabriksdefaults; Global Config → System (tidspunkt som dropdown) + kamerasiden (Vedligehold). Builder: Dockerfile + inject kopierer/aktiverer timesync, watchdog, baseline, BT-adresse, nightly-reboot; inject nulstiller machine-id.
+- **Verificeret:** `tests/test_edge_system_baseline.py` 10/10 (inkl. Edge1's rigtige sshd_config → præcis de 2 linjer ændres; Edge1's BT-unit → `2C:88:C9:35:A4:A2` = live hciconfig). Fuld testkørsel: 82 fejl/errors på branch vs 83 på main, ingen nye. tsc + eslint-gate grønne. IKKE kørt på Edge endnu.
+- **Effekt ved udrulning:** Edge2 får ny BT-adresse → tidligere parrede telefoner skal parre igen. Edge1's journal bliver volatil (som Edge2). Edge2's machine-id ændres ikke (kun nye images).
+
 ### Handover 2026-10-04 21:40 — fra Claude til Peter/næste session: Python-sporet installerer nu også krævede, manglende pakker; edge/cmdb i release-manifest
 
 - **Hvorfor:** Edge1/Edge2-sammenligningen (`EDGE1_EDGE2_COMPARISON_2026-10-04_CLAUDE.md`) viste Edge1 uden `qrcode` + `websockets` i måneder: `_reconcile_python_packages_from_pypi` så kun installerede, forældede pakker.

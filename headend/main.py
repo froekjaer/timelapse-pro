@@ -13663,6 +13663,7 @@ _FACTORY_CONFIG_DEFAULTS = {
         "error_recovery_sleep_s": 30,
         "min_sleep_s": 60,
         "api_timeout_s": 15,
+        "nightly_reboot": {"enabled": True, "time": "03:00", "window_minutes": 30, "min_uptime_hours": 6},
         "device_pki": {
             "certificate_lifetime_days": 3650,
             "expired_certificate_policy": "grace_period",
