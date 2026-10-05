@@ -1,0 +1,15 @@
+edge_qa_viplite — portable Edge QA VIPLite wrapper (no OpenCV; input via --input-raw)
+
+sha256:   15c166384ee6a8d48adb8f63255db94b4d51396127077233807e63c92e2e2c20
+built:    2026-10-05 on TL-043EB9E72EFD (Orange Pi 4 Pro, Ubuntu 22.04.5, gcc 11.4.0, glibc 2.35)
+command:  edge/tools/build_edge_qa_viplite.sh <src>/edge/npu_viplite <out>
+sources:  edge/npu_viplite/edge_qa_viplite.cpp + vendor/libawnn_viplite/{awnn_lib.c,awnn_quantize.c}
+links:    libNBGlinker.so, libVIPhal.so (Orange Pi base image, /lib) + libstdc++/libc
+verified: runs on both Edges (Jammy + Noble); identical scores to the old OpenCV
+          build on Edge1 for 3/3 captures (edge_qa_edge_cnn_mini.nb, nchw_rgb uint8)
+
+Model edge/ai/models/edge_qa_edge_cnn_mini.nb
+sha256:   d98274bdf7bf36745300cbf8da4ebc2e07a1c95f62b6c0e21b86f247ca8eda24
+          (= the ACUITY export installed 2026-07-02, HANDOVER_LOG_ARKIV_2026-06-28_til_2026-07-07.md)
+status:   candidate only — runs in quality.edge_ai.npu_influence = "shadow" until a
+          model passes the Travbyen real-world acceptance suite.

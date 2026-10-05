@@ -18,6 +18,12 @@ Steps (each reported in /run/timelapse/system-baseline.json):
                timelapse-reboot and `0 4 * * * /sbin/reboot` in orangepi's
                crontab); replaced by timelapse-nightly-reboot.timer, which
                is configurable from the Headend (system.nightly_reboot)
+  ramlog     — keeps Orange Pi ramlog's `rsync --delete /var/log/ ->
+               /var/log.hdd/` (runs every 15 min once /var/log passes 75 %)
+               away from /var/log.hdd/timelapse, which holds break-glass
+               session recordings and the SIEM pending-event queues. Without
+               it they were deleted on Edge2 and the agent could not restart
+               (lab.60, 2026-10-05)
   bt-address — migrates Edge1's hand-made bt-set-addr.service address to
                /etc/timelapse/bt-address and disables that unit
                (timelapse-bt-address.service applies the address each boot)
@@ -129,6 +135,27 @@ def legacy_reboot_cron(root: Path, apply: bool = True) -> dict:
     return {"status": "changed" if removed else "ok", "removed": removed}
 
 
+RAMLOG_DEFAULTS = "etc/default/orangepi-ramlog"
+RAMLOG_MARKER = "# timelapse-system-baseline: keep /var/log.hdd/timelapse out of ramlog sync"
+RAMLOG_LINES = (
+    RAMLOG_MARKER,
+    "XTRA_RSYNC_TO=(--exclude=/timelapse/)",
+    "XTRA_RSYNC_FROM=(--exclude=/timelapse/)",
+)
+
+
+def ramlog_exclude(root: Path, apply: bool = True) -> dict:
+    path = root / RAMLOG_DEFAULTS
+    if not path.is_file():
+        return {"status": "skipped", "reason": "no orangepi-ramlog"}
+    text = path.read_text(encoding="utf-8")
+    if RAMLOG_MARKER in text:
+        return {"status": "ok"}
+    # Appended last: in bash the last assignment wins over the vendor's.
+    path.write_text(text.rstrip("\n") + "\n\n" + "\n".join(RAMLOG_LINES) + "\n", encoding="utf-8")
+    return {"status": "changed"}
+
+
 def _address_from_hcitool_cmd(unit_text: str) -> str | None:
     match = re.search(r"0x3f\s+0x0070((?:\s+[0-9A-Fa-f]{2}){6})", unit_text)
     if not match:
@@ -152,7 +179,8 @@ def migrate_bt_address(root: Path, apply: bool = True) -> dict:
     return {"status": "changed", "address": address}
 
 
-STEPS = (("journald", journald), ("sshd", sshd), ("cron", legacy_reboot_cron), ("bt_address", migrate_bt_address))
+STEPS = (("journald", journald), ("sshd", sshd), ("cron", legacy_reboot_cron), ("ramlog", ramlog_exclude),
+         ("bt_address", migrate_bt_address))
 
 
 def main(argv: list[str]) -> int:

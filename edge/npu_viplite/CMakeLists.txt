@@ -26,6 +26,7 @@ include_directories(
   ${JPEG_INCLUDE_DIR}
 )
 
+add_compile_definitions(TIMELAPSE_WITH_OPENCV)
 add_executable(edge_qa_viplite
   edge_qa_viplite.cpp
   "${LOCAL_AWNN}/awnn_lib.c"

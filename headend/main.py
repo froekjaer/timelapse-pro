@@ -13652,6 +13652,7 @@ _FACTORY_CONFIG_DEFAULTS = {
             "runner": "/opt/timelapse/venv/bin/python /opt/timelapse/edge/tools/edge_qa_npu_runner.py",
             "model_path": "",
             "vendor_binary": "",
+            "npu_influence": "shadow",
             "timeout_s": 8,
             "lens_obstruction_enabled": True,
             "direct_sun_detection_enabled": True,

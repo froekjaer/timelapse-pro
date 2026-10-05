@@ -257,8 +257,10 @@ class QualityChecker:
 
         npu_result = self._npu.analyse(filepath) if self._npu else None
         if npu_result:
-            report["npu"] = {**report.get("npu", {}), **npu_result}
-            report = self._merge_npu_result(report, npu_result)
+            influence = getattr(self._npu, "influence", "shadow")
+            report["npu"] = {**report.get("npu", {}), **npu_result, "influence": influence}
+            if influence == "merge":
+                report = self._merge_npu_result(report, npu_result)
 
         optimizer_result = self._autonomous_optimizer_report(filepath, report)
         if optimizer_result:

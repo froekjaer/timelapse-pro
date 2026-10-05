@@ -26,6 +26,15 @@ except Exception:  # pragma: no cover - used when imported as edge.ai.*
 
 log = logging.getLogger(__name__)
 
+# Shipped in every app release and image (2026-10-05), so the NPU runs on
+# every Edge without per-device setup. Config (quality.edge_ai.model_path /
+# vendor_binary) still overrides. The model is a candidate, not an accepted
+# QA model — see npu_influence below.
+_EDGE_ROOT = Path(__file__).resolve().parents[1]
+BUNDLED_MODEL = _EDGE_ROOT / "ai" / "models" / "edge_qa_edge_cnn_mini.nb"
+BUNDLED_VENDOR_BINARY = _EDGE_ROOT / "npu_viplite" / "bin" / "edge_qa_viplite"
+BUNDLED_VENDOR_ARGS = "--input-layout nchw_rgb --input-dtype uint8"
+
 
 class NpuQualityAdapter:
     """Best-effort wrapper around a local vendor NPU quality runner."""
@@ -42,11 +51,19 @@ class NpuQualityAdapter:
         self._model = str(
             edge_ai.get("model_path")
             or os.getenv("TIMELAPSE_EDGE_AI_MODEL", "")
+            or (BUNDLED_MODEL if BUNDLED_MODEL.is_file() else "")
         ).strip()
         self._vendor_binary = str(
             edge_ai.get("vendor_binary")
             or os.getenv("TIMELAPSE_EDGE_AI_VENDOR_BINARY", "")
+            or (f"{BUNDLED_VENDOR_BINARY} {BUNDLED_VENDOR_ARGS}" if BUNDLED_VENDOR_BINARY.is_file() else "")
         ).strip()
+        # "shadow" (default): run on the NPU and record the result with every
+        # capture, but the CPU QA verdict stands. "merge": a confident NPU
+        # result may set anomaly/cause. Only switch to merge once a model has
+        # passed real-world acceptance (Travbyen suite) — 2026-10-05.
+        influence = str(edge_ai.get("npu_influence") or "shadow").strip().lower()
+        self.influence = influence if influence in {"shadow", "merge"} else "shadow"
         self._timeout_s = int(edge_ai.get("timeout_s", 8))
         self._min_confidence = float(edge_ai.get("min_confidence", self._policy.confidence_floor))
 
@@ -72,6 +89,7 @@ class NpuQualityAdapter:
             "model_present": bool(self._model and Path(self._model).exists()),
             "vendor_binary": self._vendor_binary or None,
             "min_confidence": self._min_confidence,
+            "influence": self.influence,
             "runtime": "vendor_npu_json_runner",
         }
 
