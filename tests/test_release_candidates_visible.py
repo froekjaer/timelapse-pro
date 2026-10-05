@@ -96,3 +96,27 @@ def test_old_higher_version_tag_does_not_win_in_real_git(tmp_path):
     git("commit", "-q", "--allow-empty", "-m", "b", date="2026-10-04T19:00:00")
     git("tag", "-a", "v2.8.1-lab.59", "-m", "new", date="2026-10-04T19:05:00")
     assert rc.latest_release_tag(lambda args: git(*args)) == "v2.8.1-lab.59"
+
+
+def test_update_hint_never_proposes_a_downgrade(tmp_path):
+    """#329 (2026-10-05): Edge1 on lab.61, Headend checkout on lab.60 → the
+    Headend offered lab.60 as an "update". Only a strictly newer commit counts."""
+    import os
+    import subprocess
+
+    def git(*args):
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=tmp_path,
+                              env=env, capture_output=True, text=True, check=True).stdout.strip()
+
+    git("init", "-q")
+    git("commit", "-q", "--allow-empty", "-m", "lab.60")
+    lab60 = git("rev-parse", "HEAD")
+    git("commit", "-q", "--allow-empty", "-m", "lab.61")
+    lab61 = git("rev-parse", "HEAD")
+    assert rc.is_newer_release(str(tmp_path), lab60, lab61) is True          # real update
+    assert rc.is_newer_release(str(tmp_path), lab61, lab60) is False         # downgrade
+    assert rc.is_newer_release(str(tmp_path), lab61, lab61) is False         # current
+    assert rc.is_newer_release(str(tmp_path), "deadbeef", lab61) is False    # unknown commit
+    src = (ROOT / "headend" / "main.py").read_text(encoding="utf-8")
+    assert "and _is_newer_release(repo_dir, edge_version, headend_version):" in src

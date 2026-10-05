@@ -29,6 +29,11 @@
 
 ## Log
 
+### Handover 2026-10-05 10:55 — fra Claude til Peter/næste session: lab.61 verificeret på Edge1; Headend foreslog nedgradering (#329) → rettet
+
+- **lab.61 på Edge1 (#328, deployed 10:47):** release-kvittering v2.8.1-lab.61 (`fa9a6f28`). Alle nye units enabled/active (watchdog, system-baseline, bt-address, nightly-reboot.timer, timesync.timer); `bt-set-addr` fjernet. Baseline: journald volatile (changed), sshd `PermitRootLogin no`/`PasswordAuthentication no` (changed — ny nøgle-login over tunnelen OK bagefter), begge håndlavede reboot-cron fjernet, BT-adresse migreret `2C:88:C9:35:A4:A2` (uændret i hciconfig). `ExecStartPre=+…` i aktiv unit. Tunnel forbundet 10:47:25. Capture 10:50 QA PASSED (blur 2240). Nightly-reboot-timer kørte 10:50 og genstartede korrekt ikke (uden for vindue).
+- **Fejl fundet:** #329 "opdatering tilgængelig (edge fa9a6f28 → headend 84f47245)" = forslag om at *nedgradere* Edge1 til lab.60, fordi Headend-checkouten stadig er lab.60 og hint-logikken kun tjekkede "commit forskellig". Rettet: `services/release_candidates.is_newer_release()` (git merge-base --is-ancestor) — kun et strengt nyere Headend-commit giver hint. #329 må ikke godkendes.
+
 ### Handover 2026-10-05 10:45 — fra Claude til Peter/næste session: lab.60-udrulning (Edge1 delvis, Edge2 rullet tilbage) → lab.61-rettelse; NPU-status afklaret
 
 - **lab.60 resultat:** Edge1 (#325, 10:01) fik ny app-kode (fx `edge/cmdb/executor.py` udskiftet, captures QA PASSED), men **ingen af de nye units blev installeret** (baseline, BT-adresse, nightly-reboot, sshd/cron uændret). Edge2 (#324) **rullet tilbage** af guarden (`post_restart_health_timeout`) — kører lab.59 igen, tunnel og heartbeat OK.
