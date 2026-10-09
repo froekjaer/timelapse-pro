@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { X } from 'lucide-react'
 import { startAuthentication } from '@simplewebauthn/browser'
+import { useAbortPasskeyOnLeave, withPasskeyDeadline } from '../lib/passkey'
 import { getApiUrl } from '../api/client'
 
 const RESIZE_PREFIX = '\x01RESIZE:'
@@ -39,7 +40,7 @@ async function headendAssertion(): Promise<unknown | null> {
   const begin = await res.json()
   if (!begin.available) return null
   try {
-    return await startAuthentication({ optionsJSON: begin.options })
+    return await withPasskeyDeadline(startAuthentication({ optionsJSON: begin.options }))
   } catch {
     return null   // passkey dialog cancelled → password + TOTP instead
   }
@@ -68,6 +69,7 @@ function websocketUrl(path: string) {
 }
 
 export function SshTerminalModal({ deviceId, onClose }: { deviceId: string; onClose: () => void }) {
+  useAbortPasskeyOnLeave()
   const containerRef = useRef<HTMLDivElement>(null)
   const backdropPress = useRef(false)
   const [error, setError] = useState<string | null>(null)

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Camera, Lock, User, Eye, EyeOff, AlertTriangle, Smartphone, Fingerprint } from 'lucide-react'
-import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
+import { browserSupportsWebAuthnAutofill, startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser'
 import { useAuth } from '../context/AuthContext'
 
 export default function LoginPage() {
@@ -106,6 +106,44 @@ export default function LoginPage() {
     return () => { window.removeEventListener('pagehide', abort); abort() }
   }, [])
 
+  // Passkey AutoFill (Peter 2026-10-09: Safari hung after login-begin).
+  // Apple's recommended flow: ask for any passkey for this site without a
+  // username; Safari offers it as a suggestion in the username field and runs
+  // Touch ID from there. With no passkey on this Mac it shows none instead of
+  // waiting. The button below stays as a fallback (it cancels this request).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        if (!(await browserSupportsWebAuthnAutofill())) return
+        const apiUrl = (await import('../api/client')).getApiUrl()
+        const begin = await fetch(`${apiUrl}/api/auth/webauthn/login-begin`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+        })
+        if (!begin.ok || cancelled) return
+        const result = await startAuthentication({ optionsJSON: await begin.json(), useBrowserAutofill: true })
+        if (cancelled) return
+        setLoading(true)
+        const res = await fetch(`${apiUrl}/api/auth/webauthn/login-complete`, {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(result),
+        })
+        if (!res.ok) throw new Error('Passkey-login fejlede — prøv igen eller log ind med adgangskode.')
+        const data = await res.json()
+        acceptSessionUser({ username: data.username, role: data.role, customer_id: data.customer_id ?? null })
+        navigate(from, { replace: true })
+      } catch (e: any) {
+        // AbortError: the button flow or leaving the page took over — expected.
+        if (!cancelled && e?.name !== 'AbortError' && e?.name !== 'NotAllowedError') setError(e?.message ?? 'Passkey-login fejlede')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   async function handleWebAuthn() {
     const typedUsername = currentUsername()
     if (!typedUsername) { setError('Indtast brugernavn først'); return }
@@ -192,7 +230,7 @@ export default function LoginPage() {
               <input
                 ref={usernameRef}
                 type="text"
-                autoComplete="username"
+                autoComplete="username webauthn"
                 value={username}
                 onChange={e => { if (mfaRequired || mfaSetupRequired) resetMfaStep(); setUsername(e.target.value) }}
                 onInput={e => setUsername(e.currentTarget.value)}

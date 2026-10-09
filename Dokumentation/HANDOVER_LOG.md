@@ -29,6 +29,15 @@
 
 ## Log
 
+### Handover 2026-10-09 12:45 — fra Claude til Peter/næste session: Safari-passkey hænger igen på MacBook → passkey AutoFill + timeout/abort på registrering og konsol-step-up
+
+- **Peter:** "Nu hænger login igen på Safari på min Macbook Pro. Chrome virker fint … fotografer bruger kun Mac og Safari."
+- **Evidens (nginx):** Safari 27.0.1 fra MacBook'en (93.165.242.137) kaldte `login-begin` 12:11:32, 12:13:01, 12:14:03 — aldrig `login-complete`. Samme mønster som 2026-09-24..27 (rodårsag dengang: fastlåst `com.apple.AuthenticationServices.Helper` på Mac'en, kun genstart hjalp; fire server-side ændringer hjalp ikke) og som 2026-10-03 22:58/22:59 før ny passkey blev registreret (derefter OK 23:40). Server svarer normalt (20–215 ms). Passkey #10 "Macbook Pro" (iCloud, internal+hybrid, 2026-10-03) findes stadig. Ingen konsol-step-up fra MacBook'ens Safari siden 3/10 (hypotese om hængende step-up afvist).
+- **Bemærk:** setting `webauthn_login_allow_credentials` står stadig på `list` (Peters test 2026-09-27) → login-begin sender listen inkl. #6 "Claude-browser" uden transports. Kodens standard er `discoverable` (tom liste, Apples flow).
+- **Ændret (ny PR):** passkey AutoFill (WebAuthn conditional mediation): `LoginPage` starter ved indlæsning en brugernavn-løs forespørgsel (`useBrowserAutofill`, `autocomplete="username webauthn"`), så Safari viser passkey'en som forslag i brugernavnsfeltet og kører Touch ID derfra; knappen er fortsat fallback. Server: `services/webauthn_autofill.py` — tom allowCredentials, user verification påkrævet, challenge pr. værdi (engangs, 5 min, maks 200 åbne), bruger findes fra credential + userHandle-tjek; `login-begin`/`login-complete` uden brugernavn bruger den (ingen nye routes; main.py 17549). Nye passkeys registreres discoverable (`ResidentKeyRequirement.PREFERRED`). Opfølgningen fra 2026-09-27 lukket: passkey-*registrering* (UsersPage) og konsol-step-up (SshTerminalModal) har nu 75 s deadline + abort ved pagehide/unmount (`lib/passkey.ts`) — en hængende registrering satte Helper fast 2026-09-24.
+- **Verificeret:** software-authenticator-test (rigtig P-256-signatur gennem py_webauthn): AutoFill-login OK, uden UV afvist, replay afvist, udløbet/ukendt/fremmed userHandle afvist, ubegrænset vækst forhindret. CI-ækvivalent 1691 passed. tsc + eslint-gate grønne. **Ikke verificeret i Safari** — kræver Peters MacBook efter deploy. Ingen garanti for at det omgår en fastlåst Helper.
+- **Runbook nu (MacBook):** `ps -o pid,lstart,command -A | grep AuthenticationServices.Helper` — gammel instans ⇒ genstart Mac'en.
+
 ### Handover 2026-10-05 10:45 — fra Claude til Peter/næste session: lab.60-udrulning (Edge1 delvis, Edge2 rullet tilbage) → lab.61-rettelse; NPU-status afklaret
 
 - **lab.60 resultat:** Edge1 (#325, 10:01) fik ny app-kode (fx `edge/cmdb/executor.py` udskiftet, captures QA PASSED), men **ingen af de nye units blev installeret** (baseline, BT-adresse, nightly-reboot, sshd/cron uændret). Edge2 (#324) **rullet tilbage** af guarden (`post_restart_health_timeout`) — kører lab.59 igen, tunnel og heartbeat OK.

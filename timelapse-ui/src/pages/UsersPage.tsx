@@ -7,6 +7,7 @@ import {
   Eye, EyeOff, Settings, ChevronDown, ChevronRight, X, Pencil, Fingerprint, Trash, Terminal
 } from 'lucide-react'
 import { startRegistration } from '@simplewebauthn/browser'
+import { useAbortPasskeyOnLeave, withPasskeyDeadline } from '../lib/passkey'
 import { getApiUrl } from '../api/client'
 import { useAuth } from '../context/AuthContext'
 import { InfoTooltip } from '../components/InfoTooltip'
@@ -276,6 +277,7 @@ function PolicyEditor({ policy, onSaved }: { policy: Policy; onSaved: (p: Policy
 
 // ── Hoved-komponent ────────────────────────────────────────────────────────
 export default function UsersPage() {
+  useAbortPasskeyOnLeave()
   const { user: me } = useAuth()
   const [users,     setUsers]     = useState<UserRec[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -547,7 +549,7 @@ export default function UsersPage() {
     setWaErr(null); setWaLoading(true)
     try {
       const opts = await api('/api/auth/webauthn/register-begin', { method: 'POST', body: JSON.stringify({}) })
-      const result = await startRegistration({ optionsJSON: opts })
+      const result = await withPasskeyDeadline(startRegistration({ optionsJSON: opts }))
       await api('/api/auth/webauthn/register-complete', {
         method: 'POST',
         body: JSON.stringify({ ...result, deviceName: waDeviceName || 'Denne enhed' })
