@@ -261,7 +261,19 @@ def _mfa_required_for_role(policy: dict, role: str | None) -> bool:
 def _mfa_required_for_user(db: Session, user: User | None, **scope) -> bool:
     if not user:
         return False
-    policy = _resolve_session_policy(db, user, **scope)
+    policies = [_resolve_session_policy(db, user, **scope)]
+    if not scope:
+        # Many-to-many customers (2026-10-10): the strictest attached customer
+        # applies — membership of a lenient customer must not relax another's
+        # MFA requirement. Lazy import: tenant_scope depends only on database.
+        from tenant_scope import user_customer_ids
+        legacy = str(getattr(user, "customer_id", None) or "")
+        policies += [_resolve_session_policy(db, user, customer_id=c)
+                     for c in sorted(user_customer_ids(user)) if c != legacy]
+    return any(_mfa_required_by_policy(policy, user) for policy in policies)
+
+
+def _mfa_required_by_policy(policy: dict, user: User) -> bool:
     exempt = {str(v).strip().lower() for v in (policy.get("mfa_exempt_usernames") or [])}
     if user.username.strip().lower() in exempt:
         return False

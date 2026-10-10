@@ -81,16 +81,33 @@ def test_all_requested_capabilities_are_checked(monkeypatch):
 
 def test_edge_tenant_binding_rejects_cross_tenant_admin():
     db = _Db(SimpleNamespace(customer_id="customer-b"))
-    user = SimpleNamespace(customer_id="customer-a")
+    user = SimpleNamespace(role="admin", customer_id="customer-a")
     with pytest.raises(HTTPException) as exc:
         _resolve_edge_tenant(db, edge_id="TL-1", requested_tenant=None, user=user)
     assert exc.value.status_code == 403
 
 
-def test_edge_tenant_binding_uses_actual_edge_owner_for_global_admin():
+def test_edge_tenant_binding_uses_actual_edge_owner_for_super_admin():
     db = _Db(SimpleNamespace(customer_id="customer-b"))
-    user = SimpleNamespace(customer_id=None)
+    user = SimpleNamespace(role="super_admin", customer_id=None)
     assert _resolve_edge_tenant(db, edge_id="TL-1", requested_tenant=None, user=user) == "customer-b"
+
+
+def test_edge_tenant_binding_rejects_admin_without_customer():
+    # Central role model (2026-10-10): no implicit global access except super_admin.
+    db = _Db(SimpleNamespace(customer_id="customer-b"))
+    user = SimpleNamespace(role="admin", customer_id=None)
+    with pytest.raises(HTTPException) as exc:
+        _resolve_edge_tenant(db, edge_id="TL-1", requested_tenant=None, user=user)
+    assert exc.value.status_code == 403
+
+
+def test_edge_tenant_binding_rejects_spoofed_requested_tenant():
+    db = _Db(SimpleNamespace(customer_id="customer-a"))
+    user = SimpleNamespace(role="admin", customer_id="customer-a")
+    with pytest.raises(HTTPException) as exc:
+        _resolve_edge_tenant(db, edge_id="TL-1", requested_tenant="customer-b", user=user)
+    assert exc.value.status_code == 403
 
 
 def test_edge_resource_must_match_edge_id():

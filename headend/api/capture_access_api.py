@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from database import CaptureAccessLog, get_db
-from tenant_scope import _is_platform_admin
 from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
+from tenant_scope import _allowed_customer_ids
 
 
 router = APIRouter(prefix="/api/audit/capture-access", tags=["Audit"])
@@ -37,10 +37,11 @@ def search_capture_access(
 ):
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     query = db.query(CaptureAccessLog).filter(CaptureAccessLog.accessed_at >= since)
-    if not _is_platform_admin(user) and user.role != "auditor":
-        if not user.customer_id:
+    if _allowed_customer_ids(db, user) is not None and user.role != "auditor":
+        customers = _allowed_customer_ids(db, user) or set()
+        if not customers:
             return []
-        query = query.filter(CaptureAccessLog.customer_id == user.customer_id)
+        query = query.filter(CaptureAccessLog.customer_id.in_(sorted(customers)))
     if username:
         query = query.filter(CaptureAccessLog.username.ilike(f"%{username}%"))
     if device_id:

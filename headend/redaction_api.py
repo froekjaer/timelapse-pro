@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import Capture, Settings, User, get_db
 from auth import get_current_user
+from tenant_scope import _allowed_customer_ids
 
 router = APIRouter(prefix="/api/redaction", tags=["redaction"])
 log = logging.getLogger(__name__)
@@ -74,17 +75,15 @@ def _ensure_capture_access(db: Session, user: User, capture: Capture) -> None:
     captures.  Legacy captures without that tag fall back to the existing
     central device-access policy instead of silently becoming globally visible.
     """
-    if getattr(user, "role", None) == "super_admin":
+    allowed = _allowed_customer_ids(db, user)
+    if allowed is None:   # super_admin only
         return
-
-    user_customer_id = getattr(user, "customer_id", None)
     capture_customer_id = getattr(capture, "customer_id", None)
 
-    # Existing Headend semantics allow explicitly global (customer_id=None)
-    # administrative/operator principals.  Tenant-bound principals must match
-    # the capture's immutable customer tag exactly.
+    # Central role model (tenant_scope): only super_admin is global; every other
+    # principal must hold the capture's immutable customer tag.
     if capture_customer_id:
-        if user_customer_id is not None and str(user_customer_id) != str(capture_customer_id):
+        if str(capture_customer_id) not in allowed:
             raise HTTPException(status_code=403, detail="Ingen adgang til denne capture")
         return
 
@@ -97,13 +96,10 @@ def _ensure_capture_access(db: Session, user: User, capture: Capture) -> None:
 
 def _tenant_scope_query(query, user: User):
     """Apply fail-closed tenant scope to capture collection/count queries."""
-    if getattr(user, "role", None) == "super_admin":
+    allowed = _allowed_customer_ids(None, user)
+    if allowed is None:   # super_admin only
         return query
-    customer_id = getattr(user, "customer_id", None)
-    if customer_id is None:
-        # Preserve the existing explicit global-principal semantics.
-        return query
-    return query.filter(Capture.customer_id == str(customer_id))
+    return query.filter(Capture.customer_id.in_(sorted(allowed) or ["__none__"]))
 
 
 def now_utc() -> datetime:

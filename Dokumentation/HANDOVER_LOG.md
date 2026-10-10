@@ -29,6 +29,23 @@
 
 ## Log
 
+### Handover 2026-10-10 — fra Claude til Peter/næste session: PR B — central autorisationsmodel med mange-til-mange kunder
+
+- **Peter:** "En bruger skal kunne være tilknyttet flere kunder, uanset rolle … Kun `super_admin` må få implicit global adgang." Rollen er global pr. bruger; kundetilknytninger er mange-til-mange.
+- **Fundet før ændring (kode):** ingen mange-til-mange- eller kundespecifik rollestruktur fandtes (kun `users.customer_id`, kommenteret "null = adgang til alle kunder"). Brugeroprettelse/-redigering krævede ingen kunde og kunne ikke rydde kunden. "Admin uden kunde = global" fandtes centralt (`_is_platform_admin`) og lokalt (`redaction_api.py`, `ai/integration.py`, `trust_service_api.py`, `technician_keys.py`). Kundespecifikke roller indføres ikke.
+- **Ændring:** tabel `user_customers` (+ `headend/migrations/v40_user_customers.sql`, idempotent backfill ved opstart), `services/user_customers.py` (eneste skrivevej; `users.customer_id` bevares som spejl af en eneste tilknytning ellers NULL). `tenant_scope`: `_is_platform_admin` = kun super_admin; alle helpers bygger på kundemængden (`user_customer_ids`/`_allowed_customer_ids`). Lokale implementeringer bragt på linje: redaction, AI-platformadmin, billedadgangslog, kunderisiko, kamera-feltadgang, trust-grant-binding (Edge-ejer + kundemængde), trust-policy (principal med kundemængde), SSH-nøgleadministration (admin kun for brugere helt inden for egne kunder; aldrig super_admin), SSH-nøglereplikering (følger modellen), commissioning-nøgle (manglede enhedstjek), MFA (strengeste tilknyttede kunde). Brugerstyring i UI: flervalg af kunder.
+- **Bevidst uændret:** tekniker-/recovery-grant og browserterminal-grant (allerede beskyttet af central enhedskontrol) — ingen SSH-/TOTP-/recovery-/rollback-funktion er fjernet.
+- **Tests:** `headend/tests/test_multi_customer_authorization.py` (31): 0/1/2/flere kunder × alle roller, ophævelse, rolleskift, manipulerede customer_id/device_id, backfill uden genopstandelse, API, MFA, trust, SSH-nøgler, redaction. Seks eksisterende tests kodede den gamle "global uden kunde"-semantik → opdateret. Mutationstjek: gamle undtagelse tilbage ⇒ 8 fejl. Fuld suite 1788 passed; UI build + lint-gate OK.
+- **Migrations-/rollbackplan:** `Dokumentation/MIGRATION_PLAN_USER_CUSTOMERS_v40.md`. Prod-forhåndstjek kørt read-only (resultater givet Peter direkte, ikke i repo). NB rollback: gammel kode opfatter admin med NULL kunde som global — flerkunde-brugere skal håndteres før rollback.
+- **Status:** merged? NEJ. Deployet? NEJ. Stakket på PR A. Afventer uafhængig review.
+
+### Handover 2026-10-10 — fra Claude til Peter/næste session: PR A — opdateringsbeslutninger er kunde-afgrænsede
+
+- **Peter:** "En admin må kun godkende opdateringer for de kunder, vedkommende er autoriseret til … For opdateringer med targets fra flere kunder skal ALLE berørte targets autoriseres … `super_admin` kan godkende på tværs af alle kunder."
+- **Ændring:** ny `headend/services/update_tenant_authority.py`. Godkend, stop, afvis, promote, rollback, change-ticket (opret/godkend/afvis) og compliance-accept kræver, at scope OG alle berørte enheder (inkl. eksisterende target-rækker) ligger i brugerens kunder; ellers 403 og intet skrives. Global scope, ukendte og kundeløse enheder kun `super_admin`. Release-engineering (Headend-deploy, artifact-katalog, OS-bundle build/bind, auto-deploy-evaluering) kun `super_admin`. Ny central `tenant_scope._allowed_customer_ids` (ingen implicit global adgang for admin uden kunde) — PR B udvider den til mange-til-mange.
+- **Tests:** `headend/tests/test_update_approval_tenant_isolation.py` (36). Tre eksisterende testfiler brugte "admin uden kunde" som global bruger → nu `super_admin`. Mutationstjek: fjernes vagterne, fejler 6 tests. Fuld suite: 1755 passed; 4 kendte lokale gpg-fejl.
+- **Prod-data (read-only):** ingen admin-/operator-brugere i dag, så ingen eksisterende bruger mister adgang.
+- **Status:** merged? NEJ. Deployet? NEJ. Afventer uafhængig review.
 ### Handover 2026-10-10 — fra Claude til Peter/næste session: Security remediation P0 — tenant-afgrænsning (diagnostik, backup/resilience)
 
 - **Opgave (Peter):** ret to tenant-isolationsfund fra den uafhængige audit af `main@650f954f`; separat branch `claude/security-tenant-isolation-p0-20261010`, ingen produktionsændringer, ingen merge uden uafhængig review. Holdt adskilt fra Golden Edge-sporet; ingen SSH/TOTP/recovery/rollback-funktion er ændret eller fjernet.
@@ -39,6 +56,7 @@
 - **Peter (2026-10-10):** MFA-undtagelse og testkonti slettet i produktions-DB (SA-01) — udført af Peter, ikke verificeret af Claude (DB-adgang ikke tilgængelig i sessionen).
 - **Parallelle PR'er (målt med `git merge-tree` mod main og mod denne branch):** #159/#163/#246/#258/#259 får præcis samme konflikter med og uden denne PR (alle er allerede CONFLICTING mod main, 127–210 commits bagud). #253 får én ny konflikt i `ssh_tunnel_active` (den erstatter kroppen med `active_reverse_tunnels(db)`); ved løsning SKAL tenant-filteret bevares: `return _visible_only(db, _user, active_reverse_tunnels(db), lambda r: r["device_id"])`.
 - **Ikke rettet — separat spor:** (1) rollemodellen i koden afviger fra Peters regel: `_is_platform_admin` giver også *admin uden customer_id* global adgang, og brugeroprettelse/-redigering kræver ikke customer_id for admin/operator/viewer; (2) opdateringsgodkendelse: `approve_update` og `_user_can_approve_update` lader enhver admin godkende opdateringer uanset tenant, og operator godkender hvis blot ét target er eget.
+- **Arkitekturkorrektion (Peter 2026-10-10):** #297 forudsatte én kunde pr. bruger og accepterede admin uden kunde som platform-admin. PR B (mange-til-mange) er merget ind i denne branch; #297's helpers bygger nu på kundemængden, `_ensure_platform_admin` = kun super_admin, og testene afviser eksplicit admin uden kunde. Fuld suite: 1825 passed. Integrationsrækkefølge: #298 (A) → #299 (B) → #297.
 - **Status:** merged? NEJ. Deployet? NEJ. PR afventer uafhængig review.
 
 ### Handover 2026-10-10 11:45 — fra Claude til Peter/næste session: LAB-start viser rigtige trin (feedback) i stedet for gættet nedtælling

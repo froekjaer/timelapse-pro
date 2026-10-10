@@ -2,9 +2,9 @@
 
 Customer-bound admins (role=admin with customer_id) must only reach Edge
 diagnostics, capture sessions, backup requests, tunnel logs and lifecycle
-transitions for devices in their own tenant. Platform admins (super_admin, or
-admin without customer_id) keep full access. Platform-wide snapshots are
-platform-admin only.
+transitions for devices in their own tenant. Only super_admin has global
+access (central role model, 2026-10-10); an admin without customers gets
+nothing. Platform-wide snapshots are super_admin only.
 
 Same pattern as test_c04_device_admin_tenant_isolation.py: route functions are
 called directly against a real sqlite session so the actual tenant-resolution
@@ -66,8 +66,10 @@ def _tenant_admin(customer_id=OWN_CUSTOMER):
     return MagicMock(username="tenant-admin", role="admin", customer_id=customer_id)
 
 
-def _platform_admin():
-    return MagicMock(username="platform-admin", role="admin", customer_id=None)
+def _admin_without_customer():
+    # Formerly treated as a platform admin; under the central role model it
+    # has no customer data at all.
+    return MagicMock(username="no-customer-admin", role="admin", customer_id=None)
 
 
 def _super_admin():
@@ -105,10 +107,13 @@ def test_diag_list_other_tenant_device_is_rejected(db):
                    limit=200, _user=_tenant_admin(), db=db) == 403
 
 
-def test_diag_list_platform_admin_sees_all(db):
+def test_diag_list_super_admin_sees_all_admin_without_customer_sees_nothing(db):
     rows = diag.list_communications(device_id=None, transport_security=None, limit=1000,
-                                    _user=_platform_admin(), db=db)
+                                    _user=_super_admin(), db=db)
     assert {OWN_DEVICE, FOREIGN_DEVICE} <= {r["device_id"] for r in rows}
+    rows = diag.list_communications(device_id=None, transport_security=None, limit=1000,
+                                    _user=_admin_without_customer(), db=db)
+    assert not {r["device_id"] for r in rows} & set(DEVICES)
 
 
 def test_diag_export_is_tenant_scoped(db, monkeypatch):
@@ -155,8 +160,10 @@ def test_capture_start_other_tenant_device_rejected(db):
 def test_capture_start_global_session_is_platform_only(db):
     assert _status(diag.start_capture, device_id=None, duration_minutes=5, max_packets=None,
                    _user=_tenant_admin(), db=db) == 403
+    assert _status(diag.start_capture, device_id=None, duration_minutes=5, max_packets=None,
+                   _user=_admin_without_customer(), db=db) == 403
     session = diag.start_capture(device_id=None, duration_minutes=5, max_packets=None,
-                                 _user=_platform_admin(), db=db)
+                                 _user=_super_admin(), db=db)
     assert session["device_id"] is None
 
 
@@ -196,7 +203,7 @@ def test_capture_status_hides_other_tenants_and_global_sessions(db):
 def test_resilience_assessment_is_platform_admin_only(db):
     assert _status(main.resilience_assessment, _user=_tenant_admin(), db=db) == 403
     assert isinstance(main.resilience_assessment(_user=_super_admin(), db=db), dict)
-    assert isinstance(main.resilience_assessment(_user=_platform_admin(), db=db), dict)
+    assert _status(main.resilience_assessment, _user=_admin_without_customer(), db=db) == 403
 
 
 def test_trigger_edge_backup_other_tenant_rejected(db):
@@ -338,7 +345,20 @@ def _route_role_check(path: str, method: str):
 ])
 def test_platform_surfaces_are_super_admin_only(db, method, path):
     check = _route_role_check(path, method)
-    for user in (_tenant_admin(), _platform_admin()):
+    for user in (_tenant_admin(), _admin_without_customer()):
         with pytest.raises(HTTPException) as exc:
             check(request=None, user=user, db=db)
         assert exc.value.status_code == 403
+
+
+def test_multi_customer_admin_sees_both_customers_and_nothing_else(db):
+    from types import SimpleNamespace
+    both = SimpleNamespace(username="two-customers", role="admin", customer_id=None,
+                           customer_links=[SimpleNamespace(customer_id=OWN_CUSTOMER),
+                                           SimpleNamespace(customer_id=FOREIGN_CUSTOMER)])
+    rows = diag.list_communications(device_id=None, transport_security=None, limit=1000, _user=both, db=db)
+    assert {r["device_id"] for r in rows} & set(DEVICES) == set(DEVICES)
+    only_own = SimpleNamespace(username="one-customer", role="operator", customer_id=None,
+                               customer_links=[SimpleNamespace(customer_id=OWN_CUSTOMER)])
+    assert main.trigger_edge_backup(OWN_DEVICE, _user=only_own, db=db)["status"] == "ok"
+    assert _status(main.trigger_edge_backup, FOREIGN_DEVICE, _user=only_own, db=db) == 403

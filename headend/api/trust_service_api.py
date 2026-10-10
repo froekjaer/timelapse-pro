@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from database import Device, get_db
+from database import Device, Site, get_db
 from auth import _session_is_mfa_verified, _session_payload
+from tenant_scope import _allowed_customer_ids
 from trust.dmz import SECURE_SERVICE_DMZ_SPEC
 from trust.grants import (
     GrantDenied,
@@ -36,20 +37,30 @@ class RevokeGrantPayload(BaseModel):
 
 
 def _resolve_edge_tenant(db: Session, *, edge_id: str, requested_tenant: str | None, user) -> str | None:
-    """Bind a grant request to the actual Edge owner and caller tenant."""
+    """Bind a grant request to the actual Edge owner and the caller's customers.
+
+    Central role model (tenant_scope): super_admin may act for any customer;
+    anyone else must be attached to the Edge's customer. A caller-supplied
+    tenant can only ever name the Edge's own customer."""
     edge = db.query(Device).filter_by(device_id=edge_id).first()
     if not edge:
         raise HTTPException(status_code=404, detail="Edge not found")
 
     edge_tenant = str(edge.customer_id) if getattr(edge, "customer_id", None) else None
-    caller_tenant = str(user.customer_id) if getattr(user, "customer_id", None) else None
-    requested = str(requested_tenant) if requested_tenant else caller_tenant or edge_tenant
-
-    if caller_tenant and edge_tenant and caller_tenant != edge_tenant:
-        raise HTTPException(status_code=403, detail="Edge tenant boundary denied")
+    allowed = _allowed_customer_ids(db, user)
+    if allowed is not None:
+        edge_customers = {edge_tenant} if edge_tenant else set()
+        if getattr(edge, "site_id", None):
+            site = db.query(Site).filter_by(id=edge.site_id).first()
+            if site and site.customer_id:
+                edge_customers.add(str(site.customer_id))
+        # Every customer the Edge is bound to must be one of the caller's.
+        if not edge_customers or not edge_customers <= allowed:
+            raise HTTPException(status_code=403, detail="Edge tenant boundary denied")
+    requested = str(requested_tenant) if requested_tenant else edge_tenant
     if requested and edge_tenant and requested != edge_tenant:
         raise HTTPException(status_code=403, detail="Requested tenant does not own Edge")
-    if caller_tenant and requested and caller_tenant != requested:
+    if requested and allowed is not None and requested not in allowed:
         raise HTTPException(status_code=403, detail="Caller tenant boundary denied")
     return requested
 

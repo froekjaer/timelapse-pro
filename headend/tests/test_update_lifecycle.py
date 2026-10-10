@@ -37,7 +37,7 @@ import main  # noqa: E402
 
 class _FakeUser:
     """Minimal stand-in for det require_role() normalt injicerer som current_user."""
-    def __init__(self, username="tester", role="admin", customer_id=None):
+    def __init__(self, username="tester", role="super_admin", customer_id=None):
         self.username = username
         self.role = role
         self.customer_id = customer_id

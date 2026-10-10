@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from database import Customer, CustomerRiskInput, CustomerRiskProfile, get_db
 from auth import _ROLE_HIERARCHY, _mfa_required_for_user, _session_is_mfa_verified, _session_payload, get_current_user
-from tenant_scope import _is_platform_admin
+from tenant_scope import _allowed_customer_ids, _is_platform_admin
 
 
 router = APIRouter(prefix="/api/customer-risk", tags=["GRC"])
@@ -42,9 +42,8 @@ def _require_risk_admin(request: Request, db: Session = Depends(get_db)):
 
 
 def _ensure_customer_scope(user, customer_id: str) -> None:
-    if _is_platform_admin(user):
-        return
-    if not user.customer_id or str(user.customer_id) != customer_id:
+    allowed = _allowed_customer_ids(None, user)
+    if allowed is not None and str(customer_id) not in allowed:
         raise HTTPException(status_code=404, detail="Kunde ikke fundet")
 
 

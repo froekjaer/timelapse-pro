@@ -22,6 +22,7 @@ def test_access_log_uses_capture_tenant() -> None:
 
 
 def test_capture_access_search_is_tenant_scoped_and_filterable() -> None:
-    assert "CaptureAccessLog.customer_id == user.customer_id" in API
+    assert "CaptureAccessLog.customer_id.in_(sorted(customers))" in API
+    assert "_allowed_customer_ids(db, user)" in API
     for field in ("username", "device_id", "filename", "action", "hours"):
         assert f"{field}:" in API

@@ -21,7 +21,7 @@ def test_session_responses_honor_user_exemption():
 
 
 def test_user_resolver_checks_exemptions_before_role_default():
-    start = AUTH.index("def _mfa_required_for_user(")
+    start = AUTH.index("def _mfa_required_by_policy(")
     end = AUTH.index("\n\ndef ", start)
     resolver = AUTH[start:end]
     assert resolver.index("mfa_exempt_usernames") < resolver.index("_mfa_required_for_role")

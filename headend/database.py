@@ -39,7 +39,7 @@ from sqlalchemy import (
     String, Text, create_engine, event,
     LargeBinary, BigInteger, Numeric, UniqueConstraint, JSON, text
 )
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://timelapse@localhost/timelapse_db")
 
@@ -339,6 +339,24 @@ class User(Base):
     is_active     = Column(Boolean, default=True)
     created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     last_login    = Column(DateTime)
+    # Many-to-many customer membership (Peter, 2026-10-10: "En bruger skal kunne
+    # være tilknyttet flere kunder, uanset rolle"). Source of truth for tenant
+    # authorization — see tenant_scope.user_customer_ids(). `customer_id` above
+    # is kept as a legacy mirror (the sole membership, else NULL) for rollback
+    # safety and display; it is never a grant of global access.
+    customer_links = relationship("UserCustomer", cascade="all, delete-orphan",
+                                  lazy="selectin", passive_deletes=True)
+
+
+class UserCustomer(Base):
+    """A user's attachment to one customer. The user's role (users.role) is
+    global for now and applies to every attached customer."""
+    __tablename__ = "user_customers"
+
+    user_id     = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    customer_id = Column(String(36), ForeignKey("customers.id", ondelete="CASCADE"), primary_key=True, index=True)
+    created_at  = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_by  = Column(String(100))
 
 
 class UserSSHKey(Base):

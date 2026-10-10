@@ -24,7 +24,7 @@ DEVICE_ID = "TL-TESTDEVICE-STOPAPPROVAL"
 
 
 class _FakeUser:
-    def __init__(self, username="admin", role="admin"):
+    def __init__(self, username="admin", role="super_admin"):
         self.username = username
         self.role = role
 

@@ -109,7 +109,7 @@ from tenant_scope import (
     _is_platform_admin, FIELD_ROLES, _has_field_access,
     _ensure_customer_access, _ensure_site_access,
     _visible_customer_query, _visible_site_query, _visible_device_query, _ensure_platform_admin,
-    _visible_only, _tenant_inventories,
+    _visible_only, _tenant_inventories, _allowed_customer_ids, _visible_device_ids, user_customer_ids,
 )
 from importer import router as import_router
 from ai.model_results import persist_edge_ai_result as _persist_edge_ai_result
@@ -127,6 +127,8 @@ from services.update_promotion import build_update_promotion_context, serialize_
 from services.update_supersession import device_already_at_update_version, supersede_pending_app_updates, reset_stale_targets_on_block
 from services.headend_update_state import mark_headend_update_deployed, mark_headend_update_failed
 from services.update_authority import update_applies_to_device as _update_applies_to_device
+from services import update_tenant_authority as _uta
+from services.user_customers import backfill_user_customers as _backfill_user_customers, set_user_customers as _set_user_customers
 from services.config_merge import merge_missing_defaults as _merge_missing_defaults
 from services.python_requirements import missing_required_packages as _missing_required_packages, edge_requirements_text as _edge_requirements_text
 from services.release_candidates import is_newer_release as _is_newer_release, latest_release_tag as _latest_release_tag, candidates_for_commit as _release_candidates, describe_candidates as _describe_candidates
@@ -375,6 +377,7 @@ def _debug_mode_auto_timeout_loop(interval_minutes: float = 15.0) -> None:
 @app.on_event("startup")
 def startup():
     create_tables()
+    _backfill_user_customers(__import__('database').engine)
     if background_jobs_enabled():
         start_headend_log_collector()
     # DB migration — tilføj nye kolonner hvis de mangler
@@ -1229,13 +1232,15 @@ class UserCreateRequest(BaseModel):
     email:       Optional[str] = None
     password:    str
     role:        str = "viewer"
-    customer_id: Optional[str] = None
+    customer_id: Optional[str] = None         # legacy single customer; customer_ids wins
+    customer_ids: Optional[list[str]] = None
     field_role:  str = "none"
 
 class UserUpdateRequest(BaseModel):
     email:       Optional[str] = None
     role:        Optional[str] = None
     customer_id: Optional[str] = None
+    customer_ids: Optional[list[str]] = None
     is_active:   Optional[bool] = None
     field_role:  Optional[str] = None
 
@@ -1701,6 +1706,7 @@ def list_users(
             "email":       u.email,
             "role":        u.role,
             "customer_id": u.customer_id,
+            "customer_ids": sorted(user_customer_ids(u)),
             "is_active":   u.is_active,
             "created_at":  u.created_at.isoformat() if u.created_at else None,
             "last_login":  u.last_login.isoformat() if u.last_login else None,
@@ -1784,9 +1790,9 @@ def create_user(
         email         = req.email,
         password_hash = _hash_password(req.password),
         role          = req.role,
-        customer_id   = req.customer_id,
         field_role    = req.field_role,
     )
+    _set_user_customers(db, u, req.customer_ids if req.customer_ids is not None else [req.customer_id], _user.username)
     db.add(u); db.commit(); db.refresh(u)
     log.info("Bruger oprettet: %s (%s)", u.username, u.role)
     return {"id": u.id, "username": u.username}
@@ -1806,10 +1812,12 @@ def update_user(
         raise HTTPException(status_code=400, detail="Ugyldig rolle")
     if req.field_role and req.field_role not in FIELD_ROLES:
         raise HTTPException(status_code=400, detail="Ugyldig field_role")
-    for field in ["email", "role", "customer_id", "is_active", "field_role"]:
+    for field in ["email", "role", "is_active", "field_role"]:
         val = getattr(req, field)
         if val is not None:
             setattr(u, field, val)
+    if req.customer_ids is not None or "customer_id" in req.model_fields_set:
+        _set_user_customers(db, u, req.customer_ids if req.customer_ids is not None else [req.customer_id], _user.username)
     db.commit()
     return {"ok": True}
 
@@ -2141,7 +2149,7 @@ def list_unassigned_devices(
     if not _is_platform_admin(_user):
         # Tenant-admins må ikke se eller claim'e globale/andre kunders
         # unassigned devices. Platform admin beholder global commissioning.
-        query = query.filter(Device.customer_id == _user.customer_id)
+        query = query.filter(Device.customer_id.in_(sorted(_allowed_customer_ids(db, _user)) or ["__none__"]))
     devices = query.order_by(Device.created_at.desc()).all()
 
     return [
@@ -5553,7 +5561,7 @@ def headend_platform_update_status(
 @app.post("/api/updates/{update_id}/headend-deploy")
 def start_headend_platform_update(
     update_id: int,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     update = db.query(PendingUpdate).filter_by(id=update_id).first()
@@ -6648,7 +6656,7 @@ def _auto_approve_update_for_target(
 
 @app.post("/api/updates/auto-deploy/evaluate")
 def evaluate_auto_deploy_updates(
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Evaluer pending updates mod resolved customer/site/device update policy."""
@@ -7559,7 +7567,7 @@ def _upsert_blocked_os_updates_from_plan(
 @app.post("/api/updates/os-catalog/import-apt-list")
 def import_os_catalog_from_lab_apt_list(
     payload: OsCatalogImportPayload,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Importer lab/mirror apt output, reconcile mod CMDB og opret blokerede OS update-poster."""
@@ -7650,7 +7658,7 @@ def import_os_catalog_from_lab_apt_list(
 @app.post("/api/updates/os-catalog/refresh-from-builder")
 def refresh_os_catalog_from_mac_builder(
     payload: OsCatalogBuilderPayload,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Generér OS update-katalog fra CMDB inventory via Mac Headend Docker/arm64 builder."""
@@ -7699,7 +7707,7 @@ def refresh_os_catalog_from_mac_builder(
 @app.post("/api/updates/os-catalog/refresh-from-builder-job")
 def start_refresh_os_catalog_from_mac_builder_job(
     payload: OsCatalogBuilderPayload,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
 ):
     """Start asynkront job der genererer OS update-katalog fra CMDB via Mac Docker-builder."""
     payload_data = payload.dict()
@@ -7806,7 +7814,7 @@ def list_update_artifacts(
 
 @app.post("/api/updates/artifacts/catalog-current")
 def catalog_current_release_artifact(
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db)
 ):
     """Registrer den aktuelle Headend/UI release-manifest som signeret artifact."""
@@ -8918,7 +8926,7 @@ def _infer_architecture_for_os_bundle(packages: list[dict]) -> str:
 @app.post("/api/updates/artifacts/catalog-from-git-tag")
 def catalog_artifact_from_git_tag(
     payload: dict,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """
@@ -8967,7 +8975,7 @@ def catalog_artifact_from_git_tag(
 @app.post("/api/updates/artifacts/catalog-os-bundle")
 def catalog_os_update_artifact(
     payload: dict,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Registrer en lab-bygget offline OS update bundle som signeret artifact."""
@@ -9074,7 +9082,7 @@ def catalog_os_update_artifact(
 @app.post("/api/updates/artifacts/catalog-python-bundle")
 def catalog_python_update_artifact(
     payload: dict,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Registrer et Headend-bygget offline Python wheel-bundle som signeret artifact."""
@@ -9182,7 +9190,7 @@ def catalog_python_update_artifact(
 def build_catalog_and_bind_os_bundle(
     update_id: int,
     payload: dict,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Byg et offline OS bundle via Headend-styret builder, registrér artifact og bind til update."""
@@ -9280,7 +9288,7 @@ def build_catalog_and_bind_os_bundle(
 def start_build_catalog_and_bind_os_bundle_job(
     update_id: int,
     payload: dict,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Start asynkront job der bygger offline OS bundle, registrerer artifact og binder det til update."""
@@ -9309,7 +9317,7 @@ def start_build_catalog_and_bind_os_bundle_job(
 def bind_artifact_to_update(
     update_id: int,
     payload: dict,
-    current_user=require_role("super_admin", "admin"),
+    current_user=require_role("super_admin"),
     db: Session = Depends(get_db),
 ):
     """Bind et signeret artifact til en konkret update og gør den klar til godkendelse."""
@@ -9847,6 +9855,7 @@ def create_change_ticket_for_update(
     update = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not update:
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    _ensure_update_authority(db, current_user, update)
     existing = db.query(ChangeTicket).filter_by(pending_update_id=update_id).first()
     if existing:
         return _ticket_to_dict(existing)
@@ -9873,6 +9882,7 @@ def approve_change_ticket(
     ticket = db.query(ChangeTicket).filter_by(ticket_id=ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=404, detail="Change ticket ikke fundet")
+    _uta.ensure_ticket_authority(db, current_user, ticket, _resolve_update_targets)
     decided_at = now_utc()
     signed_payload = {
         "ticket_id": ticket.ticket_id,
@@ -9923,6 +9933,7 @@ def reject_change_ticket(
     ticket = db.query(ChangeTicket).filter_by(ticket_id=ticket_id).first()
     if not ticket:
         raise HTTPException(status_code=404, detail="Change ticket ikke fundet")
+    _uta.ensure_ticket_authority(db, current_user, ticket, _resolve_update_targets)
     decided_at = now_utc()
     signed_payload = {
         "ticket_id": ticket.ticket_id,
@@ -10026,6 +10037,7 @@ def approve_update(
         raise HTTPException(status_code=400, detail=f"Kan ikke godkende opdatering med status '{u.status}'")
     if payload.scope == "device" and not payload.scope_id and not payload.target_device_ids:
         raise HTTPException(status_code=400, detail="Device scope kræver scope_id eller target_device_ids")
+    _uta.ensure_approval_authority(db, current_user, u, payload, _resolve_update_targets, _resolve_approval_environment)
     _assert_update_has_required_artifact(db, u)
 
     artifact = _find_artifact_for_update(db, u)
@@ -10109,6 +10121,7 @@ def stop_update_approval(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    _ensure_update_authority(db, current_user, u)
     if u.status != "approved":
         raise HTTPException(status_code=400, detail=f"Kan kun stoppe en godkendt opdatering, ikke status '{u.status}'")
     in_flight = _find_in_flight_target(db, u.id)
@@ -10138,34 +10151,15 @@ def _control_summary_state(controls: list[dict]) -> dict:
 
 
 def _approval_targets_for_update(db: Session, update: PendingUpdate) -> list[dict]:
-    targets = []
-    device_map = {d.device_id: d for d in _resolve_update_targets(db, update)}
-    if not device_map and update.scope == "device" and update.scope_id:
-        device = db.query(Device).filter_by(device_id=update.scope_id).first()
-        if device:
-            device_map[device.device_id] = device
-    for device in device_map.values():
-        targets.append({
-            "device_id": device.device_id,
-            "customer_id": device.customer_id,
-            "customer_name": device.customer_name,
-            "site_id": device.site_id,
-            "site_name": device.site_name,
-            "camera_name": device.camera_name,
-        })
-    return targets
+    return _uta.approval_targets(db, update, _resolve_update_targets)
 
 
-def _user_can_approve_update(user: User, update: PendingUpdate, targets: list[dict]) -> bool:
-    if user.role in ("super_admin", "admin"):
-        return True
-    if user.role != "operator":
-        return False
-    if not user.customer_id:
-        return False
-    if update.scope == "customer" and update.scope_id == user.customer_id:
-        return True
-    return any(t.get("customer_id") == user.customer_id for t in targets)
+def _user_can_approve_update(db: Session, user: User, update: PendingUpdate) -> bool:
+    return _uta.user_may_decide_update(db, user, update, _resolve_update_targets)
+
+
+def _ensure_update_authority(db: Session, user: User, update: PendingUpdate) -> None:
+    _uta.ensure_update_authority(db, user, update, _resolve_update_targets)
 
 
 def _compliance_approval_state(db: Session, update: PendingUpdate) -> dict:
@@ -10212,7 +10206,7 @@ def _approval_queue(db: Session, user: User) -> list[dict]:
     queue = []
     for update in updates:
         targets = _approval_targets_for_update(db, update)
-        if not _user_can_approve_update(user, update, targets):
+        if not _user_can_approve_update(db, user, update):
             continue
         ticket = db.query(ChangeTicket).filter_by(pending_update_id=update.id).first()
         artifact = _find_artifact_for_update(db, update)
@@ -10380,7 +10374,7 @@ def compliance_accept_update(
     if not update:
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
     targets = _approval_targets_for_update(db, update)
-    if not _user_can_approve_update(current_user, update, targets):
+    if not _user_can_approve_update(db, current_user, update):
         raise HTTPException(status_code=403, detail="Du kan ikke godkende denne opdatering")
     if update.status != "pending":
         raise HTTPException(status_code=400, detail=f"Kan ikke godkende update med status {update.status}")
@@ -10452,6 +10446,7 @@ def reject_update(
     u = db.query(PendingUpdate).filter_by(id=update_id, status="pending").first()
     if not u:
         raise HTTPException(status_code=404, detail="Opdatering ikke fundet")
+    _ensure_update_authority(db, current_user, u)
     u.status      = "rejected"
     u.approved_by = current_user.username
     u.approved_at = now_utc()
@@ -10472,6 +10467,7 @@ def promote_update(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404)
+    _ensure_update_authority(db, current_user, u)
     target_environment = (payload.target_environment or "production").strip().lower()
     if target_environment not in {"staging", "production"}:
         raise HTTPException(status_code=400, detail="target_environment skal være staging eller production")
@@ -10546,6 +10542,7 @@ def force_rollback(
     u = db.query(PendingUpdate).filter_by(id=update_id).first()
     if not u:
         raise HTTPException(status_code=404)
+    _ensure_update_authority(db, current_user, u)
     u.status = "rollback_requested"
     db.commit()
     log.info("Rollback anmodet for opdatering %d af %s", update_id, current_user.username)
@@ -17052,15 +17049,7 @@ def _query_capture_candidates(db: Session, payload: dict, spec: dict) -> list[Ca
 
 
 def _allowed_capture_device_ids(db: Session, user: User | None) -> set[str] | None:
-    if _is_platform_admin(user):
-        return None
-    if not user or not getattr(user, "customer_id", None):
-        return set()
-    site_ids = [row[0] for row in db.query(Site.id).filter(Site.customer_id == user.customer_id).all()]
-    devices = db.query(Device.device_id).filter(
-        (Device.customer_id == user.customer_id) | (Device.site_id.in_(site_ids))
-    ).all()
-    return {row[0] for row in devices}
+    return _visible_device_ids(db, user)
 
 
 def _capture_tenant_clause(user: User | None, allowed_device_ids: set[str]):
@@ -17089,10 +17078,11 @@ def _capture_tenant_clause(user: User | None, allowed_device_ids: set[str]):
     `IS NULL` af SQLAlchemy og fejlagtigt matche alle endnu ubackfillede rækker på
     tværs af ALLE kunder for sådan en bruger.
     """
-    if not user or not getattr(user, "customer_id", None):
+    customers = sorted(user_customer_ids(user))
+    if not customers:
         return _sql_false()
     return or_(
-        Capture.customer_id == user.customer_id,
+        Capture.customer_id.in_(customers),
         and_(Capture.customer_id.is_(None), Capture.device_id.in_(allowed_device_ids)),
     )
 
@@ -17113,9 +17103,10 @@ app.include_router(create_headend_console_router(get_current_user, _session_payl
 
 
 def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> bool:
-    if _is_platform_admin(user):
+    customers = _allowed_customer_ids(db, user)
+    if customers is None:
         return True
-    if not user or not getattr(user, "customer_id", None):
+    if not customers:
         return False
     # Fase 3 (2026-07-03): foretræk capture.customer_id (frosset ved optagelsestidspunkt)
     # frem for et live device→kunde-opslag — se _capture_tenant_clause() ovenfor for
@@ -17123,7 +17114,7 @@ def _capture_is_allowed(db: Session, user: User | None, capture: Capture) -> boo
     # med sig" til en ny kunde).
     capture_customer_id = getattr(capture, "customer_id", None)
     if capture_customer_id:
-        return capture_customer_id == user.customer_id
+        return str(capture_customer_id) in customers
     allowed = _allowed_capture_device_ids(db, user)
     return allowed is None or capture.device_id in allowed
 
