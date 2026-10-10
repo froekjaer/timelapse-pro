@@ -44,6 +44,15 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["Edge Sync"])
 
 
+@router.on_event("startup")
+def _start_edge_wake() -> None:
+    # Wake Edges through their SSH tunnel when there is something for them
+    # (services/edge_wake.py). Registered here so main.py stays unchanged.
+    from services.edge_wake import start_edge_wake_watcher
+
+    start_edge_wake_watcher()
+
+
 class EdgeSyncRequest(BaseModel):
     timestamp: str
     diagnostics: dict
